@@ -1,0 +1,5 @@
+:doc needs a name, as in :doc list.map
+no builtin named 'nope'
+no builtin named 'list.nope'
+no builtin named 'json.Nope'
+no builtin named 'Unit'

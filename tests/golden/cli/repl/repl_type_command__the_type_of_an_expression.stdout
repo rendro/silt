@@ -1,0 +1,11 @@
+Silt REPL (type :quit to exit, :help for commands)
+Int
+Fn(a, a) -> () where a: Equal + Display
+Fn(List(a), Fn(a) -> b) -> List(b)
+Fn(List(a)) -> List(a) where a: Compare
+Fn(List(a), Fn(a) -> b) -> Map(b, List(a)) where b: Hash
+Fn(a) -> a
+Fn(a, a) -> Bool where a: Equal
+Bool
+List(Option(a))
+Fn({name: a, ...b}) -> a

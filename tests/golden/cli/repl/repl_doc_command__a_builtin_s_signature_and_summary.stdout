@@ -1,0 +1,13 @@
+Silt REPL (type :quit to exit, :help for commands)
+list.map(xs: List(a), f: Fn(a) -> b) -> List(b)
+Transform each element
+println(value: a) -> () where a: Display
+Print a value with trailing newline
+math.pi: Float
+Pi (3.14159...)
+type UuidError { Invalid(String), Other(String) }
+uuid.is_valid(s: String) -> Bool
+uuid.nil() -> String
+uuid.parse(s: String) -> Result(String, UuidError)
+uuid.v4() -> String
+uuid.v7() -> String

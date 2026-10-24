@@ -1,0 +1,2 @@
+-- cmd: repl
+-- stdin: :type println("not printed")\nlet n = 1\n:type n + 1\nn\n:quit\n

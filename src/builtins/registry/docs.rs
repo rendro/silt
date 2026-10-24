@@ -10,7 +10,10 @@
 //!   (`## \`list.map\``);
 //! - in a table whose second column is headed `Type argument`, that
 //!   cell of each decoding builtin's row: what its type argument may be
-//!   ([`Decoding::type_arguments`](super::Decoding::type_arguments)).
+//!   ([`Decoding::type_arguments`](super::Decoding::type_arguments));
+//! - on a page that is no module's (`globals.md`), the same of the
+//!   prelude's functions: their rows of a table of functions, which
+//!   lists all of them, and the signature blocks of their sections.
 //!
 //! `tests/meta/stdlib_reference_tests.rs` renders every page and
 //! compares it with the file (`SILT_BLESS=1` rewrites the files).
@@ -372,6 +375,263 @@ pub fn signature_block(module: &str, name: &str) -> Option<String> {
     Some(section_signature(module, row))
 }
 
+// ── Declarations, as the language card and the REPL's `:doc` write them
+
+/// The lines that state the module `module`: its types and traits as
+/// declarations (without `pub`), its opaque types, then each function
+/// and constant in the order of their names, as its signature block
+/// writes it; a row of a cargo feature beyond its module's says so.
+pub fn module_lines(module: &Module) -> Vec<String> {
+    let mut lines = declarations(module.types);
+    lines.extend(declarations(module.traits));
+    lines.extend((module.opaque.iter()).map(|(name, arity)| opaque_line(name, *arity)));
+    let mut rows: Vec<&Row> = module.rows.iter().collect();
+    rows.sort_by_key(|row| row.name);
+    lines.extend(rows.into_iter().map(|row| {
+        let line = section_signature(module, row);
+        match row.feature {
+            Some(feature) => format!("{line}  -- cargo feature `{feature}`"),
+            None => line,
+        }
+    }));
+    lines
+}
+
+/// The lines that state the prelude: its types, its opaque types and
+/// its functions, as [`module_lines`] writes a module's.
+pub fn prelude_lines() -> Vec<String> {
+    let mut lines = declarations(super::PRELUDE_TYPES);
+    lines.extend(
+        (super::PRELUDE_OPAQUE.iter())
+            .filter(|(name, _)| *name != crate::defs::TYPE_OF)
+            .map(|(name, arity)| opaque_line(name, *arity)),
+    );
+    let mut rows: Vec<&Row> = registry().prelude.iter().collect();
+    rows.sort_by_key(|row| row.name);
+    lines.extend(rows.into_iter().map(prelude_signature));
+    lines
+}
+
+/// The signature block of a function of the prelude: `println(value:
+/// a) -> () where a: Display`.
+fn prelude_signature(row: &Row) -> String {
+    row.signature.trim_start_matches("fn ").to_string()
+}
+
+/// The declarations of a module's text of types or traits, one a line,
+/// without `pub`.
+fn declarations(text: &str) -> Vec<String> {
+    (text.lines())
+        .map(|line| line.trim().trim_start_matches("pub ").to_string())
+        .filter(|line| !line.is_empty())
+        .collect()
+}
+
+/// The line of an opaque type: `type Handle(a)  -- opaque`, a type
+/// whose values only the module's functions make and take.
+fn opaque_line(name: &str, arity: usize) -> String {
+    let params: Vec<String> = (b'a'..)
+        .take(arity)
+        .map(|c| char::from(c).to_string())
+        .collect();
+    match params.is_empty() {
+        true => format!("type {name}  -- opaque"),
+        false => format!("type {name}({})  -- opaque", params.join(", ")),
+    }
+}
+
+/// The line among `lines` that declares `keyword name`: `type Value {
+/// ... }` for `("type", "Value")`, also `type Handle(a)  -- opaque`.
+fn declaring<'a>(lines: &'a [String], keyword: &str, name: &str) -> Option<&'a String> {
+    lines.iter().find(|line| {
+        line.strip_prefix(keyword)
+            .and_then(|rest| rest.strip_prefix(' '))
+            .and_then(|rest| rest.strip_prefix(name))
+            .is_some_and(|rest| matches!(rest.chars().next(), None | Some(' ' | '(' | ':')))
+    })
+}
+
+/// The lines of the module part of `qualified` (`json` of
+/// `json.Value`), or the prelude's for a bare name, with the name
+/// after the module.
+fn lines_of(qualified: &str) -> Option<(Vec<String>, &str)> {
+    match qualified.split_once('.') {
+        Some((module, name)) => Some((module_lines(registry().module(module)?), name)),
+        None => Some((prelude_lines(), qualified)),
+    }
+}
+
+/// The declaration of the builtin type `name` as [`module_lines`]
+/// writes it: a type of the prelude by its bare name (`Option`), a
+/// module's with its module (`json.Value`, `task.Handle`).
+pub fn type_line(name: &str) -> Option<String> {
+    let (lines, name) = lines_of(name)?;
+    declaring(&lines, "type", name).cloned()
+}
+
+/// The declaration of the builtin trait `name`: a trait of a module
+/// as its module states it (`json.Encode`), one of the prelude
+/// (`Display`) as the checker declares it, on one line.
+pub fn trait_line(name: &str) -> Option<String> {
+    if name.contains('.') {
+        let (lines, name) = lines_of(name)?;
+        return declaring(&lines, "trait", name).cloned();
+    }
+    let decl = (crate::typechecker::builtin_trait_decls().into_iter())
+        .find(|t| crate::intern::resolve(t.name) == name)?;
+    Some(trait_text(&decl))
+}
+
+/// What the documentation of the prelude's trait `name` says first: its
+/// first sentence.
+pub fn prelude_trait_summary(name: &str) -> Option<String> {
+    let decl = (crate::typechecker::builtin_trait_decls().into_iter())
+        .find(|t| crate::intern::resolve(t.name) == name)?;
+    summary(decl.doc.as_deref()?)
+}
+
+/// `trait Compare: Equal { fn compare(self, other: Self) -> Int }`.
+fn trait_text(decl: &crate::ast::TraitDecl) -> String {
+    use crate::ast::{PatternKind, TypeExpr, TypeExprKind};
+    fn ty(te: &TypeExpr) -> String {
+        let all = |types: &[TypeExpr]| types.iter().map(ty).collect::<Vec<_>>().join(", ");
+        match &te.kind {
+            TypeExprKind::Named { name, .. } => crate::intern::resolve(*name),
+            TypeExprKind::Generic { name, args, .. } => {
+                format!("{}({})", crate::intern::resolve(*name), all(args))
+            }
+            TypeExprKind::Tuple(elems) => format!("({})", all(elems)),
+            TypeExprKind::Function(params, ret) => format!("Fn({}) -> {}", all(params), ty(ret)),
+            TypeExprKind::SelfType => "Self".to_string(),
+            _ => "_".to_string(),
+        }
+    }
+    let mut header = format!("trait {}", decl.name);
+    if !decl.supertraits.is_empty() {
+        let supers: Vec<String> = (decl.supertraits.iter())
+            .map(|s| crate::intern::resolve(s.name))
+            .collect();
+        header.push_str(&format!(": {}", supers.join(" + ")));
+    }
+    let methods: Vec<String> = (decl.methods.iter())
+        .map(|f| {
+            let params: Vec<String> = (f.params.iter())
+                .map(|p| {
+                    let name = match &p.pattern.kind {
+                        PatternKind::Ident(name) => crate::intern::resolve(*name),
+                        _ => "_".to_string(),
+                    };
+                    match &p.ty {
+                        Some(t) => format!("{name}: {}", ty(t)),
+                        None => name,
+                    }
+                })
+                .collect();
+            let ret = f.return_type.as_ref().map_or("()".to_string(), ty);
+            format!("fn {}({}) -> {ret}", f.name, params.join(", "))
+        })
+        .collect();
+    match methods.is_empty() {
+        true => format!("{header} {{}}"),
+        false => format!("{header} {{ {} }}", methods.join("; ")),
+    }
+}
+
+/// The enum the builtin variant `name` is of, as [`type_line`] writes
+/// it, and its name as [`type_line`] takes it: a variant of the prelude
+/// by its bare name (`Some`), a module's with its module
+/// (`channel.Message`) or with its module and its enum
+/// (`time.Weekday.Monday`).
+pub fn variant_enum(name: &str) -> Option<(String, String)> {
+    let registry = registry();
+    let (module, ty, variant) = match name.split('.').collect::<Vec<_>>()[..] {
+        [variant] => (None, None, variant),
+        [module, variant] => (Some(module), None, variant),
+        [module, ty, variant] => (Some(module), Some(ty), variant),
+        _ => return None,
+    };
+    let decls = match module {
+        Some(module) => &registry.module(module)?.type_decls,
+        None => &registry.prelude_types,
+    };
+    let decl = (decls.iter())
+        .filter(|decl| ty.is_none_or(|ty| decl.name == ty))
+        .find(|decl| decl.variants().iter().any(|(v, _)| *v == variant))?;
+    let name = match module {
+        Some(module) => format!("{module}.{}", decl.name),
+        None => decl.name.to_string(),
+    };
+    Some((type_line(&name)?, name))
+}
+
+/// The summary of the builtin type `name` (`json.Value`): the first
+/// sentence of what documents it ([`type_docs`]).
+pub fn type_summary(name: &str) -> Option<String> {
+    summary(type_docs().get(name)?)
+}
+
+/// The summary of the variant `variant` of the builtin enum `ty`
+/// (`io.IoError`, `NotFound`) where its docs are a table of the
+/// variants (an error enum's): the last cell of its row.
+pub fn variant_meaning(ty: &str, variant: &str) -> Option<String> {
+    let body = type_docs().get(ty)?;
+    body.lines().find_map(|line| {
+        let cells = table_cells(line)?;
+        let first = cells.first()?.trim_matches('`');
+        let name = first.split_once('(').map_or(first, |(name, _)| name);
+        (name == variant && cells.len() >= 2).then(|| cells[cells.len() - 1].clone())
+    })
+}
+
+/// The summary of `key` from its own section of a reference page
+/// (`## \`json.Value\``, `## \`Some\``): the first sentence below the
+/// section's signature block.
+pub fn section_summary(key: &str) -> Option<String> {
+    (pages().into_iter())
+        .flat_map(|(_, page)| iter_sections(page))
+        .find(|(keys, _)| keys.iter().any(|k| k == key))
+        .and_then(|(_, body)| summary(&body))
+}
+
+/// The first sentence of the prose of `text`, past its code blocks,
+/// headings and tables, on one line; a sentence that only says whose
+/// variant a name is and how to write it (`A variant of \`channel\`:
+/// write \`channel.Closed\`.`) does not count.
+fn summary(text: &str) -> Option<String> {
+    let mut paragraphs: Vec<String> = Vec::new();
+    let mut current: Vec<&str> = Vec::new();
+    let mut fence = false;
+    for line in text.lines() {
+        let fence_line = line.trim_start().starts_with("```");
+        fence ^= fence_line;
+        let prose =
+            !fence_line && !fence && !line.trim().is_empty() && !line.starts_with(['#', '|']);
+        if prose {
+            current.extend(line.split_whitespace());
+        } else if !current.is_empty() {
+            paragraphs.push(current.join(" "));
+            current.clear();
+        }
+    }
+    if !current.is_empty() {
+        paragraphs.push(current.join(" "));
+    }
+    paragraphs.iter().find_map(|paragraph| {
+        let mut rest = paragraph.as_str();
+        while !rest.is_empty() {
+            let (sentence, after) = match rest.find(". ") {
+                Some(end) => (&rest[..=end], &rest[end + 2..]),
+                None => (rest, ""),
+            };
+            if !sentence.starts_with("A variant of `") {
+                return Some(sentence.to_string());
+            }
+            rest = after;
+        }
+        None
+    })
+}
+
 /// The module whose part of a page a `# ` heading opens (`# postgres
 /// (opt-in feature)`), if it opens one.
 fn heading_module(line: &str) -> Option<&'static Module> {
@@ -421,9 +681,13 @@ pub fn render_page(page: &str) -> Result<String, Vec<String>> {
     let mut listed: HashSet<(&str, &str)> = HashSet::new();
     let mut listed_decoders: HashSet<(&str, &str)> = HashSet::new();
     let mut modules: Vec<&'static Module> = Vec::new();
-    // The row whose section has just opened: its signature block is
-    // the first fence, if a plain one comes before any prose.
-    let mut pending: Option<(&'static Module, &'static Row)> = None;
+    // The functions of the prelude a table lists, on a page that is no
+    // module's (`globals.md`).
+    let mut listed_prelude: HashSet<&str> = HashSet::new();
+    // The row whose section has just opened (of a module, or of the
+    // prelude): its signature block is the first fence, if a plain one
+    // comes before any prose.
+    let mut pending: Option<(Option<&'static Module>, &'static Row)> = None;
     let mut replacing = false;
     for line in page.lines() {
         if replacing {
@@ -439,7 +703,10 @@ pub fn render_page(page: &str) -> Result<String, Vec<String>> {
                 && line.trim() == "```"
             {
                 out.push(line.to_string());
-                out.push(section_signature(m, row));
+                out.push(match m {
+                    Some(m) => section_signature(m, row),
+                    None => prelude_signature(row),
+                });
                 replacing = true;
                 continue;
             }
@@ -471,13 +738,18 @@ pub fn render_page(page: &str) -> Result<String, Vec<String>> {
                     return None;
                 };
                 // `## \`list.map\``, or the bare `## \`map\`` in the
-                // part of the page that is the module's.
-                let (m, f) = match key.split_once('.') {
-                    Some((m, f)) => (registry().module(m)?, f),
-                    None => (module?, key.as_str()),
+                // part of the page that is the module's; `## \`println\``
+                // in no module's part.
+                let (m, f) = match (key.split_once('.'), module) {
+                    (Some((m, f)), _) => (registry().module(m)?, f),
+                    (None, Some(m)) => (m, key.as_str()),
+                    (None, None) => {
+                        let row = registry().prelude.iter().find(|row| row.name == *key)?;
+                        return Some((None, row));
+                    }
                 };
                 let row = m.rows.iter().find(|row| row.name == f)?;
-                Some((m, row))
+                Some((Some(m), row))
             });
         } else if !line.trim().is_empty() {
             pending = None;
@@ -508,6 +780,24 @@ pub fn render_page(page: &str) -> Result<String, Vec<String>> {
                 )),
             }
         }
+        if in_summary
+            && module.is_none()
+            && let Some(cells) = table_cells(line)
+            && let Some(name) = cells[0].strip_prefix('`').and_then(|c| c.strip_suffix('`'))
+            && let Some(row) = registry().prelude.iter().find(|row| row.name == name)
+        {
+            listed_prelude.insert(row.name);
+            let mut cells = cells.clone();
+            if cells.len() >= 2 {
+                cells[1] = format!("`{}`", summary_signature(row));
+            }
+            if cells.len() >= 3 {
+                let last = cells.len() - 1;
+                cells[last] = row.summary.to_string();
+            }
+            out.push(format!("| {} |", cells.join(" | ")));
+            continue;
+        }
         if in_type_arguments
             && let Some(m) = module
             && let Some(cells) = table_cells(line)
@@ -530,6 +820,13 @@ pub fn render_page(page: &str) -> Result<String, Vec<String>> {
             }
         }
         out.push(line.to_string());
+    }
+    if !listed_prelude.is_empty() {
+        for row in &registry().prelude {
+            if !listed_prelude.contains(row.name) {
+                problems.push(format!("no table of the page lists `{}`", row.name));
+            }
+        }
     }
     for m in modules {
         for row in &m.rows {
@@ -749,5 +1046,39 @@ mod tests {
         let files: Vec<String> = pages().into_iter().map(|(file, _)| file).collect();
         assert!(files.contains(&"int-float.md".to_string()), "{files:?}");
         assert!(files.contains(&"io-fs.md".to_string()), "{files:?}");
+    }
+
+    /// On a page that is no module's, the prelude's functions are
+    /// written from their rows: a table's signature and summary cells,
+    /// a section's signature block; a table that lists some of them
+    /// lists all of them.
+    #[test]
+    fn the_prelude_s_functions_are_written_from_the_rows() {
+        let page = "# Globals\n\n| Name | Signature | Description |\n|---|---|---|\n\
+                    | `print` | `stale` | stale |\n| `println` | `stale` | stale |\n\
+                    | `panic` | `stale` | stale |\n| `Ok` | `(a) -> Result(a, e)` | kept |\n\n\
+                    ## `panic`\n\n```\nstale\n```\n";
+        let page = render_page(page).expect("a page");
+        assert!(
+            page.contains(
+                "| `println` | `(a) -> () where a: Display` | Print a value with trailing newline |"
+            ),
+            "{page}"
+        );
+        assert!(
+            page.contains("| `Ok` | `(a) -> Result(a, e)` | kept |"),
+            "{page}"
+        );
+        assert!(
+            page.contains("```\npanic(message: a) -> Never where a: Display\n```"),
+            "{page}"
+        );
+        let problems =
+            render_page("| Name | Signature | Description |\n|---|---|---|\n| `print` | x | y |\n")
+                .expect_err("problems");
+        assert!(
+            problems.contains(&"no table of the page lists `println`".to_string()),
+            "{problems:?}"
+        );
     }
 }

@@ -1,0 +1,5 @@
+-- cmd: repl
+-- A type and a trait show their declarations and what their docs say
+-- first; a variant shows its enum; a type of the language its module's
+-- first sentence.
+-- stdin: :doc Option\n:doc Result\n:doc List\n:doc Map\n:doc Int\n:doc Bool\n:doc Bytes\n:doc Equal\n:doc Display\n:doc Compare\n:doc Hash\n:doc Error\n:doc Number\n:doc Some\n:doc None\n:doc Ok\n:doc Err\n:doc json.Value\n:doc json.Encode\n:doc json.Decode\n:doc channel.Recv\n:doc channel.Send\n:doc channel.Sent\n:doc channel.Received\n:doc channel.Closed\n:doc channel.Empty\n:doc channel.Message\n:doc list.Stop\n:doc list.Continue\n:doc io.IoError\n:doc io.NotFound\n:doc task.Handle\n:doc time.Weekday.Monday\n:quit\n
