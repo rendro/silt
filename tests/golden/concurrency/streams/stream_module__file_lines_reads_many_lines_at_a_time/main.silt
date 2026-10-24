@@ -1,0 +1,61 @@
+-- stream.file_lines reads many lines at a time and gives them one by
+-- one: a file of several such reads gives every line, in order, each
+-- without its `\n` or `\r\n` (empty lines and a last line without a
+-- newline too); a line that is no UTF-8 is an error that ends the
+-- stream after the lines before it.
+import bytes
+import channel
+import io
+import list
+import stream
+import string
+
+fn line(i: Int) -> String {
+  match {
+    i % 7 == 0 -> ""
+    _ -> "line {i} of the file, {string.repeat("x", i % 50)}"
+  }
+}
+
+fn main() {
+  let n = 6001
+  let lines = list.map(0..n - 1) { i -> line(i) }
+  let text = list.map(0..n - 1) { i ->
+    match {
+      i == n - 1 -> line(i)
+      i % 3 == 0 -> "{line(i)}\r\n"
+      _ -> "{line(i)}\n"
+    }
+  } |> string.join("")
+  match io.write_file("many.txt", text) {
+    Ok(_) -> ()
+    Err(e) -> panic("{e}")
+  }
+  let read = stream.collect(stream.file_lines("many.txt"))
+  println(list.length(read))
+  println(read == list.map(lines) { l -> Ok(l) })
+  println(list.get(read, 4999))
+
+  let raw = match bytes.from_list([97, 10, 98, 10, 255, 10, 99, 10]) {
+    Ok(b) -> b
+    Err(e) -> panic("{e}")
+  }
+  match stream.write_to_file(stream.from_list([raw]), "bad.txt") {
+    Ok(_) -> ()
+    Err(e) -> panic("{e}")
+  }
+  let ch = stream.file_lines("bad.txt")
+  loop {
+    match channel.receive(ch) {
+      Some(Ok(l)) -> {
+        println("ok {l}")
+        loop()
+      }
+      Some(Err(e)) -> {
+        println("err {e}")
+        loop()
+      }
+      None -> println("end")
+    }
+  }
+}
