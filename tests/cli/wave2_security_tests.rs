@@ -154,46 +154,12 @@ fn update_escapes_an_unknown_flag() {
 #[test]
 fn update_escapes_an_extra_argument() {
     let ws = fresh_workspace("update_extra");
-    let out = silt(&ws, &ws, &["update", "first", "sec\tond"]);
+    let out = silt(&ws, &ws, &["update", "sec\tond"]);
     assert_failed_printably(&out, "extra argument");
     assert!(
         out.stderr
             .contains("silt update: unexpected extra argument 'sec\\tond'"),
         "{out:?}"
-    );
-    let _ = fs::remove_dir_all(&ws);
-}
-
-/// FAILS on the base commit: the dependency name was printed with a
-/// raw tab.
-#[test]
-fn update_escapes_an_undeclared_dependency_name() {
-    let ws = fresh_workspace("update_name");
-    let app = ws.join("app");
-    write_package(&app, "app", &[], "main.silt", MAIN);
-    let out = silt(&ws, &app, &["update", "no\tsuch"]);
-    assert_failed_printably(&out, "undeclared dependency");
-    assert!(
-        out.stderr
-            .contains("silt update: dependency `no\\tsuch` is not declared in "),
-        "{out:?}"
-    );
-    let _ = fs::remove_dir_all(&ws);
-}
-
-/// FAILS on the base commit: the manifest path was printed with a raw
-/// tab. Unix only: a tab cannot be part of a Windows file name.
-#[cfg(unix)]
-#[test]
-fn update_escapes_the_manifest_path() {
-    let ws = fresh_workspace("update_path");
-    let app = ws.join("pkg\tdir");
-    write_package(&app, "app", &[], "main.silt", MAIN);
-    let out = silt(&ws, &app, &["update", "missing"]);
-    assert_failed_printably(&out, "manifest path");
-    assert!(
-        out.stderr.contains("pkg\\tdir/silt.toml"),
-        "the path must be shown with `\\t`; {out:?}"
     );
     let _ = fs::remove_dir_all(&ws);
 }

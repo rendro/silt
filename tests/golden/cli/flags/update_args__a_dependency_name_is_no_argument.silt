@@ -1,0 +1,4 @@
+-- cmd: update dep
+-- exit: 1
+-- `silt update` regenerates the whole lock and takes no arguments.
+fn main() {}

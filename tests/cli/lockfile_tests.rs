@@ -270,54 +270,6 @@ fn test_silt_update_works() {
 }
 
 #[test]
-fn test_silt_update_named_dep_works() {
-    let ws = fresh_workspace("named_update");
-    let app = ws.join("app");
-    let dep = ws.join("dep");
-    write_lib_package(&dep, "dep", &[], "pub fn k() { 5 }\n");
-    write_package(
-        &app,
-        "named_update_app",
-        &[r#"dep = { path = "../dep" }"#.to_string()],
-        "import dep\nfn main() { println(dep.k()) }\n",
-    );
-
-    let out = silt_cmd()
-        .args(["update", "dep"])
-        .current_dir(&app)
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "silt update <name> failed: stderr={}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert!(app.join("silt.lock").is_file(), "silt.lock not written");
-}
-
-#[test]
-fn test_silt_update_named_dep_unknown_errors() {
-    let ws = fresh_workspace("named_unknown");
-    let app = ws.join("app");
-    write_package(&app, "noop_app", &[], "fn main() {}\n");
-
-    let out = silt_cmd()
-        .args(["update", "no_such_dep"])
-        .current_dir(&app)
-        .output()
-        .unwrap();
-    assert!(
-        !out.status.success(),
-        "expected failure for unknown dep name"
-    );
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("not declared"),
-        "expected 'not declared' error; got: {stderr}"
-    );
-}
-
-#[test]
 fn test_silt_update_outside_package_errors() {
     let dir = fresh_workspace("outside");
     let out = silt_cmd().arg("update").current_dir(&dir).output().unwrap();

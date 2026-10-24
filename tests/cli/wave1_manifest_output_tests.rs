@@ -1098,14 +1098,14 @@ const LOCAL_FORMS: [&str; 4] = [
 ];
 
 /// Ask silt whether it accepts `url` as the `git` value of a
-/// dependency, without git being run: `silt update <name>` loads the
+/// dependency, without git being run: `silt remove <name>` loads the
 /// manifest, and stops when `<name>` is not a declared dependency.
 fn validate_url(url: &str) -> Outcome {
     let ws = fresh_workspace("url");
     let app = ws.join("app");
     let line = format!("remote = {{ git = {}, branch = \"main\" }}", toml_str(url));
     write_app(&app, &manifest("app", &dependencies(&line)));
-    let out = silt(&ws, &app, &["update", "zzz_not_declared"]);
+    let out = silt(&ws, &app, &["remove", "zzz_not_declared"]);
     assert!(
         !app.join("silt.lock").exists() && !ws.join("cache").exists(),
         "the URL check must not resolve anything; url={url:?} {out:?}"
@@ -1121,7 +1121,7 @@ fn assert_url_accepted(url: &str) {
     assert_eq!(out.code, Some(1), "{context}: {out:?}");
     assert!(
         out.stderr
-            .contains("dependency `zzz_not_declared` is not declared")
+            .contains("no dependency 'zzz_not_declared' in silt.toml")
             && !out.stderr.contains("invalid"),
         "{context}: the URL must be accepted; {out:?}"
     );
