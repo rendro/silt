@@ -1,0 +1,17 @@
+-- An impl's method may restate a bound the trait declares for it as a
+-- supertrait of it (`where a: Greet` for the declared `a: Loud`): called on
+-- a known type and through a bound, it runs the same.
+trait Greet { fn greet(self) -> String }
+trait Loud: Greet { fn loud(self) -> String }
+type K { K }
+trait Greet for K { fn greet(self) -> String { "K.greet" } }
+trait Loud for K { fn loud(self) -> String { "K.LOUD" } }
+trait Both { fn both(self, x: a) -> String where a: Loud }
+trait Both for Int {
+  fn both(self, x: a) -> String where a: Greet { "{Greet.greet(x)}" }
+}
+fn via(n: t, x: a) -> String where t: Both, a: Loud { Both.both(n, x) }
+fn main() {
+  println(Both.both(1, K))
+  println(via(1, K))
+}

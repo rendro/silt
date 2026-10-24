@@ -1,0 +1,17 @@
+-- An impl's method may restate a bound of the impl's header as a
+-- supertrait of it (`where a: Greet` under the header's `a: Loud`).
+trait Greet { fn greet(self) -> String }
+trait Loud: Greet { fn loud(self) -> String }
+type Box(a) { Bx(a) }
+type K { K }
+trait Greet for K { fn greet(self) -> String { "K" } }
+trait Loud for K { fn loud(self) -> String { "K!" } }
+trait Two { fn two(self) -> String }
+trait Two for Box(a) where a: Loud {
+  fn two(self) -> String where a: Greet { match self { Bx(x) -> Greet.greet(x) } }
+}
+fn via(t: s) -> String where s: Two { Two.two(t) }
+fn main() {
+  println(Two.two(Bx(K)))
+  println(via(Bx(K)))
+}

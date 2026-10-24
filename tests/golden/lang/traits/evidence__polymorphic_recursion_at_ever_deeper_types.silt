@@ -1,0 +1,12 @@
+-- Polymorphic recursion: each call is at a deeper type (Box of Box of ...),
+-- so the evidence each passes on is deeper; a debug build passes it on at no
+-- cost of its depth.
+trait Greet { fn greet(self) -> Int }
+type Box(a) { Bx(a) }
+trait Greet for Int { fn greet(self) -> Int { 0 } }
+trait Greet for Box(a) where a: Greet { fn greet(self) -> Int { match self { Bx(x) -> Greet.greet(x) + 1 } } }
+fn nest(x: a, n: Int) -> Int where a: Greet {
+  match n { 0 -> Greet.greet(x)
+    _ -> nest(Bx(x), n - 1) }
+}
+fn main() { println(nest(1, 10000)) }

@@ -675,9 +675,11 @@ impl<'a> Compiler<'a> {
         &mut self,
         name: String,
         method: &crate::ast::FnDecl,
+        layout: crate::evidence::Layout,
     ) -> Result<(), Diagnostic> {
         let span = method.span;
         self.begin_function(name, method.params.len(), span)?;
+        self.emitter().evidence_owner(method.body.span, layout);
 
         self.compile_params(&method.params, span)?;
 
@@ -688,10 +690,7 @@ impl<'a> Compiler<'a> {
         self.emit_body_return(span)?;
 
         let (func, _) = self.end_function(span)?;
-        let vm_closure = Arc::new(VmClosure {
-            function: Arc::new(func),
-            upvalues: vec![],
-        });
+        let vm_closure = Arc::new(VmClosure::new(Arc::new(func), vec![]));
         let closure_val = Value::VmClosure(vm_closure);
         let fi = self.add_constant(closure_val, span)?;
         self.emit(Asm::Constant { k: fi }, span)
@@ -707,7 +706,11 @@ impl<'a> Compiler<'a> {
         method: &crate::ast::FnDecl,
     ) -> Result<(), Diagnostic> {
         let span = method.span;
-        self.compile_method(format!("{trait_name}.{}", method.name), method)?;
+        self.compile_method(
+            format!("{trait_name}.{}", method.name),
+            method,
+            crate::evidence::Layout::Default,
+        )?;
         let slot = self
             .globals
             .default_method(t, &resolve(method.name))
@@ -722,6 +725,7 @@ impl<'a> Compiler<'a> {
                 let span = fn_decl.span;
                 // Push a new context for the function body.
                 self.begin_function(resolve(fn_decl.name), fn_decl.params.len(), span)?;
+                (self.emitter()).evidence_owner(fn_decl.body.span, crate::evidence::Layout::Scheme);
 
                 self.compile_params(&fn_decl.params, span)?;
 
@@ -736,10 +740,7 @@ impl<'a> Compiler<'a> {
                 let (func, _) = self.end_function(span)?;
 
                 // Store the function as a VmClosure constant in the enclosing chunk.
-                let vm_closure = Arc::new(VmClosure {
-                    function: Arc::new(func),
-                    upvalues: vec![],
-                });
+                let vm_closure = Arc::new(VmClosure::new(Arc::new(func), vec![]));
                 let closure_val = Value::VmClosure(vm_closure);
                 let fi = self.add_constant(closure_val, span)?;
                 self.emit(Asm::Constant { k: fi }, span)?;
@@ -822,10 +823,15 @@ impl<'a> Compiler<'a> {
                     return Ok(());
                 };
                 let type_name = self.type_info(ty).name.clone();
+                (self.globals).note_impl(t, ty, &type_name, &trait_impl.evidence);
 
                 for method in &trait_impl.methods {
                     let span = method.span;
-                    self.compile_method(format!("{type_name}.{}", method.name), method)?;
+                    self.compile_method(
+                        format!("{type_name}.{}", method.name),
+                        method,
+                        crate::evidence::Layout::ImplMethod,
+                    )?;
                     let slot = self
                         .globals
                         .method(t, ty, &resolve(method.name))
@@ -975,10 +981,7 @@ impl<'a> Compiler<'a> {
         self.emit(Asm::Unit, span)?;
         self.emit(Asm::Return, span)?;
         let (init, _) = self.end_function(span)?;
-        let init_closure = Arc::new(VmClosure {
-            function: Arc::new(init),
-            upvalues: vec![],
-        });
+        let init_closure = Arc::new(VmClosure::new(Arc::new(init), vec![]));
         let ci = self.add_constant(Value::VmClosure(init_closure), span)?;
         self.emit(Asm::Constant { k: ci }, span)?;
         self.emit(Asm::Call { argc: 0 }, span)?;
@@ -1155,6 +1158,12 @@ impl<'a> Compiler<'a> {
         let tail = self.in_tail_position;
         let before = self.emitter().height();
         self.compile_expr_kind(expr)?;
+        // (A use of a definition with bounds loads it last.)
+        if let Some(site) = &expr.ev
+            && matches!(expr.kind, ExprKind::Ident(_) | ExprKind::FieldAccess(..))
+        {
+            self.emitter().evidence_site(site);
+        }
         let emitter = self.emitter();
         if !emitter.reachable() {
             // The expression does not return (`return`, `panic`, a
@@ -1496,6 +1505,8 @@ impl<'a> Compiler<'a> {
                     None => return Err(checker_missed(span, "a closure outside any code")),
                 };
                 self.begin_function(name.clone(), params.len(), span)?;
+                self.emitter()
+                    .evidence_owner(span, crate::evidence::Layout::Scheme);
                 if let Some(closure) = self.contexts.last_mut() {
                     closure.closures = name;
                 }
@@ -1524,10 +1535,7 @@ impl<'a> Compiler<'a> {
 
                 let (func, upvalue_descs) = self.end_function(span)?;
 
-                let vm_closure = Arc::new(VmClosure {
-                    function: Arc::new(func),
-                    upvalues: vec![],
-                });
+                let vm_closure = Arc::new(VmClosure::new(Arc::new(func), vec![]));
                 let closure_val = Value::VmClosure(vm_closure);
                 let fi = self.add_constant(closure_val, span)?;
 
@@ -1967,17 +1975,24 @@ impl<'a> Compiler<'a> {
                 let idx = self.add_constant(descriptor, span)?;
                 self.emit(Asm::Constant { k: idx }, span)?;
                 self.compile_operands(args.iter().copied())?;
-                self.emit_call_method(*method, args.len() + 1, t, 0, tail, span)?;
+                let site = callee.ev.as_deref();
+                self.emit_call_method(*method, args.len() + 1, t, 0, tail, site, span)?;
             } else if let Some(TypeMember::Slot(slot)) = member {
                 // `Pt.make(1)`, `m.Pt.make(1)`: a method reached
                 // through its type.
                 self.emit(Asm::GetGlobal { slot }, span)?;
+                if let Some(site) = &callee.ev {
+                    self.emitter().evidence_site(site);
+                }
                 self.compile_operands(args.iter().copied())?;
                 let argc = args.len();
                 self.emit_call(argc, tail, span)?;
             } else if let Some(def) = self.value_def(callee.res) {
                 // A module's function: `m.f(1)`.
                 self.emit_global_value(def, span)?;
+                if let Some(site) = &callee.ev {
+                    self.emitter().evidence_site(site);
+                }
                 self.compile_operands(args.iter().copied())?;
                 let argc = args.len();
                 self.emit_call(argc, tail, span)?;
@@ -2008,11 +2023,20 @@ impl<'a> Compiler<'a> {
         tail: bool,
     ) -> Result<(), Diagnostic> {
         use crate::ast::Selection;
+        #[cfg(debug_assertions)]
+        if let Some(selection) = callee.sel {
+            let function = self.emitter().name().to_string();
+            crate::vm::evidence::check_selection(selection, callee.ev.as_deref(), &function, span)
+                .map_err(|message| Diagnostic::error(Code::CompilerBug, span, message))?;
+        }
         match callee.sel {
             Some(Selection::Impl { tr, ty })
                 if let Some(slot) = self.globals.method(tr, ty, &resolve(method)) =>
             {
                 self.emit(Asm::GetGlobal { slot }, span)?;
+                if let Some(site) = &callee.ev {
+                    self.emitter().evidence_site(site);
+                }
                 self.compile_operands(args.iter().copied())?;
                 self.emit_call(args.len(), tail, span)
             }
@@ -2020,11 +2044,14 @@ impl<'a> Compiler<'a> {
             // type `Self` (a builtin trait's is the first).
             Some(Selection::Dynamic { tr, at }) if usize::from(at) < args.len() => {
                 self.compile_operands(args.iter().copied())?;
-                self.emit_call_method(method, args.len(), tr, usize::from(at), tail, span)
+                let at = usize::from(at);
+                let site = callee.ev.as_deref();
+                self.emit_call_method(method, args.len(), tr, at, tail, site, span)
             }
             Some(Selection::Impl { tr, .. } | Selection::Native { tr }) if !args.is_empty() => {
                 self.compile_operands(args.iter().copied())?;
-                self.emit_call_method(method, args.len(), tr, 0, tail, span)
+                let site = callee.ev.as_deref();
+                self.emit_call_method(method, args.len(), tr, 0, tail, site, span)
             }
             _ => Err(checker_missed(
                 span,
@@ -2060,7 +2087,8 @@ impl<'a> Compiler<'a> {
             // descriptor carries.
             Some(Selection::Dynamic { tr, .. }) => {
                 self.compile_operands(with_receiver)?;
-                self.emit_call_method(method, args.len() + 1, tr, 0, tail, span)
+                let site = callee.ev.as_deref();
+                self.emit_call_method(method, args.len() + 1, tr, 0, tail, site, span)
             }
             Some(Selection::Impl { .. } | Selection::Native { .. } | Selection::Field) | None => {
                 Err(checker_missed(
@@ -2490,7 +2518,9 @@ impl<'a> Compiler<'a> {
 
     /// Emit `CallMethod` of `method` of the trait `t` with `argc`
     /// values on the stack, found by the type of the one at `at` (the
-    /// receiver); in tail position (`tail`), `TailCallMethod; Return`.
+    /// receiver), which passes on the evidence `site`; in tail position
+    /// (`tail`), `TailCallMethod; Return`.
+    #[allow(clippy::too_many_arguments)]
     fn emit_call_method(
         &mut self,
         method: Symbol,
@@ -2498,6 +2528,7 @@ impl<'a> Compiler<'a> {
         t: crate::defs::TraitId,
         at: usize,
         tail: bool,
+        site: Option<&crate::evidence::Site>,
         span: Span,
     ) -> Result<(), Diagnostic> {
         let method = self
@@ -2513,27 +2544,27 @@ impl<'a> Compiler<'a> {
             };
             limit_diagnostic(limit, span)
         })?;
-        if tail {
-            self.emit(
-                Asm::TailCallMethod {
-                    method,
-                    argc,
-                    of,
-                    at,
-                },
-                span,
-            )?;
-            self.emit(Asm::Return, span)
-        } else {
-            self.emit(
-                Asm::CallMethod {
-                    method,
-                    argc,
-                    of,
-                    at,
-                },
-                span,
-            )
+        let call = match tail {
+            true => Asm::TailCallMethod {
+                method,
+                argc,
+                of,
+                at,
+            },
+            false => Asm::CallMethod {
+                method,
+                argc,
+                of,
+                at,
+            },
+        };
+        self.emit(call, span)?;
+        if let Some(site) = site {
+            self.emitter().evidence_site(site);
+        }
+        match tail {
+            true => self.emit(Asm::Return, span),
+            false => Ok(()),
         }
     }
 

@@ -1,0 +1,26 @@
+-- The impls for every tuple and every function restate the bound the
+-- trait declares; their methods call the trait's other methods on `self`.
+trait Greet { fn greet(self) -> String }
+type K { K }
+trait Greet for K { fn greet(self) -> String { "K" } }
+trait Tag {
+  fn tag(self) -> String
+  fn tag2(self) -> String { "d({Tag.tag(self)})" }
+  fn with(self, x: a) -> String where a: Greet
+}
+trait Tag for Tuple {
+  fn tag(self) -> String { "tuple" }
+  fn with(self, x: a) -> String where a: Greet { "{Tag.tag2(self)}+{Greet.greet(x)}" }
+}
+trait Tag for Fn {
+  fn tag(self) -> String { "fn" }
+  fn with(self, x: a) -> String where a: Greet { "{Tag.tag(self)}+{Greet.greet(x)}+{Tag.tag2(self)}" }
+}
+fn via(t: s, x: a) -> String where s: Tag, a: Greet { "{Tag.with(t, x)} {Tag.tag2(t)}" }
+fn main() {
+  println(Tag.with((1, 2), K))
+  println(Tag.with({ x -> x + 1 }, K))
+  println(via((1, "a"), K))
+  println(via({ -> 1 }, K))
+  println(Tag.tag2((1, 2)))
+}

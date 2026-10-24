@@ -110,6 +110,9 @@ impl TypeChecker {
             .filter(|v| self.tables.vars.is_generalizable(*v))
             .collect();
         let mut preds: Vec<Pred> = Vec::new();
+        // The evidence of each trait predicate the scheme takes: a bound
+        // of the definition.
+        let mut taken = Vec::new();
         // The variables of a function's parameters: a type one of them
         // gives a builtin, the function passes on.
         let passed: Vec<TyVar> = match (&ty, self.passing_on) {
@@ -187,6 +190,14 @@ impl TypeChecker {
                     continue;
                 }
                 self.wanted[i].in_scheme = true;
+                if let Pred::Trait { tr, args, .. } = pred {
+                    let node = super::evidence::EvNode::Bound {
+                        var: subject,
+                        tr: *tr,
+                        args: args.iter().map(|t| self.apply(t)).collect(),
+                    };
+                    taken.push((self.wanted[i].ev, node));
+                }
                 let pred = match pred {
                     // (The definition passes a `json.Decode` it owes of
                     // a parameter's type on.)
@@ -294,6 +305,9 @@ impl TypeChecker {
                     }
                 }
             }
+        }
+        for (ev, node) in taken {
+            self.ev_set(Some(ev), node);
         }
         Scheme { vars, preds, ty }
     }
@@ -448,6 +462,7 @@ impl TypeChecker {
                 .any(|(name, _)| tr.is_builtin(name))
             {
                 let _ = self.unify_types(subject, &Type::Unit);
+                self.ev_set(Some(wanted.ev), super::evidence::EvNode::Structural(*tr));
                 continue;
             }
             {
@@ -488,10 +503,13 @@ impl TypeChecker {
         for &v in &scheme.vars {
             mapping.insert(v, self.fresh_var());
         }
+        self.ev.use_ev = None;
         if !scheme.preds.is_empty() {
             let origin = self.use_origin();
             // (The uses a definition took from its body stay apart.)
             let mut groups: HashMap<usize, usize> = HashMap::new();
+            // The evidence of each trait the use owes, for the use.
+            let mut owed = Vec::new();
             for pred in &scheme.preds {
                 // (A predicate decided now may make a use of its own.)
                 self.use_id = match pred {
@@ -503,7 +521,13 @@ impl TypeChecker {
                     }),
                     _ => use_id,
                 };
-                self.want(pred.substitute(&mapping), origin);
+                let ev = self.want(pred.substitute(&mapping), origin);
+                if let (Pred::Trait { .. }, Some(ev)) = (pred, ev) {
+                    owed.push(ev);
+                }
+            }
+            if !owed.is_empty() {
+                self.ev.use_ev = Some(owed);
             }
         }
         // A row variable the type writes more than once: what a declared

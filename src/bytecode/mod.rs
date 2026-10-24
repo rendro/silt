@@ -132,6 +132,13 @@ pub struct Globals {
     /// each with its name.
     traits: Rows<(TraitId, String)>,
     trait_indexes: Layers<TraitId, u16>,
+    /// In a debug build, what each impl proves of its type from its
+    /// header (`crate::vm::evidence`), and the name of its type, which a
+    /// message of the check writes.
+    #[cfg(debug_assertions)]
+    impls: Layers<(TraitId, TypeId), Arc<crate::evidence::ImplEvidence>>,
+    #[cfg(debug_assertions)]
+    impl_types: Layers<TypeId, String>,
 }
 
 impl Globals {
@@ -159,7 +166,53 @@ impl Globals {
             shown: before.shown.clone(),
             encoded: before.encoded.clone(),
             decoded: before.decoded.clone(),
+            #[cfg(debug_assertions)]
+            impls: before.impls.clone(),
+            #[cfg(debug_assertions)]
+            impl_types: before.impl_types.clone(),
         }
+    }
+
+    /// What the impl of `t` for the type `ty`, named `name`, proves of
+    /// it from its header (debug builds only keep it).
+    pub fn note_impl(
+        &mut self,
+        t: TraitId,
+        ty: TypeId,
+        name: &str,
+        evidence: &crate::evidence::ImplEvidence,
+    ) {
+        #[cfg(debug_assertions)]
+        {
+            self.impls.insert((t, ty), Arc::new(evidence.clone()));
+            if self.impl_types.get(&ty).is_none() {
+                self.impl_types.insert(ty, name.to_string());
+            }
+        }
+        #[cfg(not(debug_assertions))]
+        let _ = (t, ty, name, evidence);
+    }
+
+    /// What the impl of `t` for `ty` proves of its type.
+    #[cfg(debug_assertions)]
+    pub(crate) fn impl_evidence(
+        &self,
+        t: TraitId,
+        ty: TypeId,
+    ) -> Option<&crate::evidence::ImplEvidence> {
+        self.impls.get(&(t, ty)).map(Arc::as_ref)
+    }
+
+    /// The name of a type an impl in the program is for.
+    #[cfg(debug_assertions)]
+    pub(crate) fn impl_type_name(&self, ty: TypeId) -> Option<&str> {
+        self.impl_types.get(&ty).map(String::as_str)
+    }
+
+    /// The name of the trait `t`, if a call names it.
+    #[cfg(debug_assertions)]
+    pub(crate) fn trait_named(&self, t: TraitId) -> Option<&str> {
+        self.trait_name(*self.trait_indexes.get(&t)?)
     }
 
     /// The number of slots.
@@ -625,6 +678,11 @@ pub struct Function {
     upvalue_count: u8,
     /// The compiled bytecode.
     chunk: Chunk,
+    /// In a debug build, the trait evidence of the function's code
+    /// (`crate::vm::evidence`): none for code that passes none on and
+    /// is no definition with bounds.
+    #[cfg(debug_assertions)]
+    evidence: Option<Box<crate::evidence::FnEvidence>>,
 }
 
 impl Function {
@@ -662,6 +720,12 @@ impl Function {
         &self.chunk
     }
 
+    /// The trait evidence of the function's code.
+    #[cfg(debug_assertions)]
+    pub(crate) fn evidence(&self) -> Option<&crate::evidence::FnEvidence> {
+        self.evidence.as_deref()
+    }
+
     /// A function made of `code` and `constants` as they are, unverified:
     /// what the verifier's tests hand it.
     #[cfg(test)]
@@ -681,6 +745,8 @@ impl Function {
                 spans: Vec::new(),
                 constant_dedup: HashMap::new(),
             },
+            #[cfg(debug_assertions)]
+            evidence: None,
         }
     }
 }
@@ -711,6 +777,22 @@ pub(crate) fn call_global_script(slot: u16, name: &str) -> Function {
 pub struct VmClosure {
     pub function: Arc<Function>,
     pub upvalues: Vec<Value>,
+    /// In a debug build, the trait evidence the closure's body sees
+    /// (`crate::vm::evidence`).
+    #[cfg(debug_assertions)]
+    pub(crate) ev: Option<Arc<crate::vm::evidence::Env>>,
+}
+
+impl VmClosure {
+    /// The closure of `function` with the captured values `upvalues`.
+    pub fn new(function: Arc<Function>, upvalues: Vec<Value>) -> Self {
+        VmClosure {
+            function,
+            upvalues,
+            #[cfg(debug_assertions)]
+            ev: None,
+        }
+    }
 }
 
 impl Drop for VmClosure {

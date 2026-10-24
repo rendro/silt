@@ -148,10 +148,7 @@ fn handle_reflexive_eq_hash_dedup() {
 
 /// A closure of `function` that captured `captures`.
 fn closure_of(function: &Arc<Function>, captures: Vec<Value>) -> Value {
-    Value::VmClosure(Arc::new(VmClosure {
-        function: function.clone(),
-        upvalues: captures,
-    }))
+    Value::VmClosure(Arc::new(VmClosure::new(function.clone(), captures)))
 }
 
 /// Asserts the contract for two values that are equal: they hash
@@ -351,10 +348,7 @@ fn variant_constructor_reflexive_eq_hash_dedup() {
 fn opaque_values_distinct_across_discriminants() {
     let h = Arc::new(TaskHandle::new(1));
     let func = Arc::new(Function::returning_unit("f".into(), 0));
-    let closure = Arc::new(VmClosure {
-        function: func,
-        upvalues: Vec::new(),
-    });
+    let closure = Arc::new(VmClosure::new(func, Vec::new()));
     let handle = Value::Handle(h);
     let vm_closure = Value::VmClosure(closure);
     let builtin = builtin("panic");

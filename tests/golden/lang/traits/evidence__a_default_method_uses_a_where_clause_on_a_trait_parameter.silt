@@ -1,0 +1,24 @@
+-- A default method uses a `where` clause the trait declares on its
+-- parameter (`trait Pr(a) where a: Greet`): the impl's trait argument has it.
+trait Greet { fn greet(self) -> String }
+type K { K }
+type J { J }
+trait Greet for K { fn greet(self) -> String { "K" } }
+trait Greet for J { fn greet(self) -> String { "J" } }
+trait Pr(a) where a: Greet {
+  fn item(self) -> a
+  fn pr(self) -> String { "pr {Greet.greet(Pr.item(self))}" }
+  fn pr2(self, x: a) -> String
+}
+type Holder { Holder }
+type Holder2 { Holder2 }
+trait Pr(K) for Holder { fn item(self) -> K { K }
+  fn pr2(self, x: K) -> String { Greet.greet(x) } }
+trait Pr(J) for Holder2 { fn item(self) -> J { J }
+  fn pr2(self, x: J) -> String { Greet.greet(x) } }
+fn via(h: s, type a) -> String where s: Pr(a), a: Greet { "{Pr.pr(h)} {Greet.greet(Pr.item(h))} {Pr.pr2(h, Pr.item(h))}" }
+fn main() {
+  println(Pr.pr(Holder))
+  println(via(Holder, K))
+  println(via(Holder2, J))
+}

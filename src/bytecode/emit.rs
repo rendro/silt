@@ -136,6 +136,8 @@ impl Emitter {
                 arity: narrowed,
                 upvalue_count: 0,
                 chunk: Chunk::new(),
+                #[cfg(debug_assertions)]
+                evidence: None,
             },
             height: arity,
             reachable: true,
@@ -287,6 +289,32 @@ impl Emitter {
         }
         state.bound = Some((here, self.height));
         Ok(())
+    }
+
+    /// The function is the definition with bounds `owner`
+    /// (`crate::evidence::Evidence::Param`), which numbers its bounds as
+    /// `layout` says. Only a debug build keeps it.
+    pub fn evidence_owner(&mut self, owner: Span, layout: crate::evidence::Layout) {
+        #[cfg(debug_assertions)]
+        {
+            let evidence = self.function.evidence.get_or_insert_with(Default::default);
+            evidence.owner = Some((owner, layout));
+        }
+        #[cfg(not(debug_assertions))]
+        let _ = (owner, layout);
+    }
+
+    /// The instruction emitted last passes on the evidence `site`. Only
+    /// a debug build keeps it.
+    pub fn evidence_site(&mut self, site: &crate::evidence::Site) {
+        #[cfg(debug_assertions)]
+        {
+            let at = u32::try_from(self.function.chunk.code.len()).unwrap_or(u32::MAX);
+            let evidence = self.function.evidence.get_or_insert_with(Default::default);
+            evidence.sites.push((at, site.clone()));
+        }
+        #[cfg(not(debug_assertions))]
+        let _ = site;
     }
 
     /// The function, with `upvalue_count` upvalues (more than a closure
@@ -490,10 +518,10 @@ mod tests {
         let mut e = Emitter::new("f".into(), 0, span()).unwrap();
         let f = e
             .constant(
-                Value::VmClosure(std::sync::Arc::new(crate::bytecode::VmClosure {
-                    function: std::sync::Arc::new(inner),
-                    upvalues: vec![],
-                })),
+                Value::VmClosure(std::sync::Arc::new(crate::bytecode::VmClosure::new(
+                    std::sync::Arc::new(inner),
+                    vec![],
+                ))),
                 span(),
             )
             .unwrap();

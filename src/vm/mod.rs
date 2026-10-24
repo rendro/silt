@@ -8,6 +8,8 @@ pub(crate) mod decode;
 pub(crate) mod dispatch;
 mod encode;
 pub mod error;
+#[cfg(debug_assertions)]
+pub(crate) mod evidence;
 mod io;
 mod io_op;
 mod iter;
@@ -667,10 +669,7 @@ impl Vm {
         let floor = self.frames.len();
         let stack_floor = self.stack.len();
         assert_eq!(script.upvalue_count(), 0, "a script captures nothing");
-        let closure = Arc::new(VmClosure {
-            function: script,
-            upvalues: vec![],
-        });
+        let closure = Arc::new(VmClosure::new(script, vec![]));
         self.frames.push(Frame::Code(CallFrame {
             closure,
             ip: 0,

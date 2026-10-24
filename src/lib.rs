@@ -23,6 +23,7 @@ pub mod compiler;
 pub mod defs;
 pub mod diagnostic;
 pub mod disassemble;
+pub mod evidence;
 pub mod feature_stub;
 pub mod file_discovery;
 pub mod format;

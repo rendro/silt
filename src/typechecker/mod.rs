@@ -17,6 +17,7 @@ mod declare_traits;
 mod declare_types;
 pub(crate) mod decodable;
 mod env;
+mod evidence;
 mod exhaustiveness;
 mod infer;
 mod inference;
@@ -387,6 +388,8 @@ pub struct TypeChecker {
     /// What the checks of a session share; see [`Tables`]. Moved in
     /// for one module's check and out again after it.
     pub(super) tables: Tables,
+    /// The evidence of the trait predicates the module's uses owe.
+    pub(super) ev: evidence::Ledger,
 }
 
 impl Default for TypeChecker {
@@ -458,6 +461,7 @@ impl TypeChecker {
             receiver_taken: false,
             method_trait: None,
             trait_call_self: HashMap::new(),
+            ev: evidence::Ledger::default(),
             trait_receiver: None,
             impl_var_names: HashMap::new(),
             spelled: HashMap::new(),
@@ -1046,6 +1050,7 @@ impl TypeChecker {
 
         // After all passes, resolve any remaining type variables in annotations
         self.resolve_all_types(program);
+        self.write_evidence(program, &env);
 
         // The order the top-level `let`s are initialised in: what each
         // call means is known now.
@@ -1357,6 +1362,13 @@ impl TypeChecker {
                             let owner = target.to_string();
                             self.body_owner =
                                 Some(builtin_needs::body_key(trait_key, &owner, method.name));
+                            let bounds = self.method_body_bounds(
+                                trait_key,
+                                target,
+                                method.name,
+                                &sig.bounds,
+                            );
+                            self.ev.methods.insert(method.body.span, bounds);
                             self.check_method_body(method, &sig, env);
                             self.body_owner = None;
                         }

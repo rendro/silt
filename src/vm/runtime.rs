@@ -472,10 +472,7 @@ impl OwnClosures {
     #[cold]
     #[inline(never)]
     fn copy(&mut self, slot: u16, shared: &Arc<VmClosure>) -> Arc<VmClosure> {
-        let own = Arc::new(VmClosure {
-            function: shared.function.clone(),
-            upvalues: shared.upvalues.clone(),
-        });
+        let own = Arc::new(VmClosure::clone(shared));
         self.forget(slot);
         if 2 * (self.taken + 1) > self.places.len() {
             let places = (2 * self.places.len()).max(8);

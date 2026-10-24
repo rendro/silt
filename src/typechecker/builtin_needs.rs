@@ -573,7 +573,8 @@ impl TypeChecker {
                         asker,
                     }) => {
                         self.wanted[k].solved = true;
-                        self.verify_trait_obligation(tr, &args, &subject, origin, asker);
+                        let ev = Some(self.wanted[k].ev);
+                        self.verify_trait_obligation(tr, &args, &subject, origin, asker, ev);
                     }
                     _ => {}
                 }
