@@ -1,0 +1,11 @@
+-- exit: 1
+-- `n - 1` as one instruction (`SubConst`) overflows as `Sub` does,
+-- blamed on the whole `n - 1`.
+fn down(n: Int) -> Int {
+  n - 1
+}
+
+fn main() {
+  let least = -9223372036854775807 - 1
+  println(down(least))
+}

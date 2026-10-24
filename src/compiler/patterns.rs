@@ -1160,7 +1160,7 @@ mod tests {
                 "f"
             ),
             [
-                GetLocal, JumpIfTrue, Constant, Jump, Constant, SetLocal, GetLocal, Constant, Add,
+                GetLocal, JumpIfTrue, Constant, Jump, Constant, SetLocal, GetLocal, AddConst,
                 Return
             ]
         );
@@ -1227,13 +1227,11 @@ mod tests {
                 Constant,
                 Jump,
                 GetLocal,
-                Constant,
-                Add,
+                AddConst,
                 Slide,
                 SetLocal,
                 GetLocal,
-                Constant,
-                Add,
+                AddConst,
                 Return
             ]
         );

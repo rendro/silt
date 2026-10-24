@@ -121,6 +121,46 @@ pub struct Emitter {
     /// (`Return`, `Panic`).
     ended: bool,
     labels: Vec<LabelState>,
+    /// The last instruction emitted, when the next one may be fused
+    /// with it: no label is bound since (see [`Emitter::emit`]).
+    last: Option<Last>,
+}
+
+/// An instruction that the next one can be fused with, where it starts
+/// and what the height was before it.
+#[derive(Clone, Copy)]
+struct Last {
+    first: First,
+    at: usize,
+    height: usize,
+}
+
+/// An instruction that is the first of a fused pair.
+#[derive(Clone, Copy)]
+enum First {
+    /// `Constant k` of an Int.
+    Int(Const),
+}
+
+impl First {
+    /// What `asm` is as the first of a pair, if it is one.
+    fn of(asm: &Asm<'_>, chunk: &Chunk) -> Option<First> {
+        match *asm {
+            Asm::Constant { k } if matches!(chunk.constant(k), Value::Int(_)) => {
+                Some(First::Int(k))
+            }
+            _ => None,
+        }
+    }
+
+    /// The one instruction that this and `next` are, if they fuse.
+    fn fused<'a>(self, next: &Asm<'a>) -> Option<Asm<'a>> {
+        match (self, next) {
+            (First::Int(k), Asm::Add) => Some(Asm::AddConst { k }),
+            (First::Int(k), Asm::Sub) => Some(Asm::SubConst { k }),
+            _ => None,
+        }
+    }
 }
 
 impl Emitter {
@@ -141,6 +181,7 @@ impl Emitter {
             reachable: true,
             ended: false,
             labels: Vec::new(),
+            last: None,
         })
     }
 
@@ -189,7 +230,29 @@ impl Emitter {
     }
 
     /// Append the instruction `asm`, blamed on `span`.
+    ///
+    /// Some pairs of instructions are written as one, a superinstruction,
+    /// when the second follows the first with no label between them
+    /// (nothing jumps to the second): `Constant k; Add` of an Int `k` is
+    /// `AddConst k`, and `Sub` likewise. The pair's instruction is blamed
+    /// on the second's span.
     pub fn emit(&mut self, asm: Asm<'_>, span: Span) -> Result<(), Diagnostic> {
+        let fused = self
+            .last
+            .and_then(|last| Some((last, last.first.fused(&asm)?)));
+        match fused {
+            Some((last, fused)) => {
+                self.function.chunk.truncate(last.at);
+                self.height = last.height;
+                self.write(fused, span)
+            }
+            None => self.write(asm, span),
+        }
+    }
+
+    /// [`Emitter::emit`] of an instruction as it is.
+    fn write(&mut self, asm: Asm<'_>, span: Span) -> Result<(), Diagnostic> {
+        let (at, before) = (self.function.chunk.len(), self.height);
         let effect = asm.effect();
         let op = asm.op().name();
         if self.reachable && effect.pops > self.height {
@@ -228,6 +291,11 @@ impl Emitter {
             self.reachable = false;
         }
         self.ended = matches!(effect.flow, Flow::End);
+        self.last = First::of(&asm, &self.function.chunk).map(|first| Last {
+            first,
+            at,
+            height: before,
+        });
         Ok(())
     }
 
@@ -254,6 +322,7 @@ impl Emitter {
         span: Span,
     ) -> Result<(), Diagnostic> {
         let here = self.function.chunk.len();
+        self.last = None;
         if self.labels[label.0].bound.is_some() {
             return Err(self.bug(span, "a label is bound twice".into()));
         }
@@ -605,6 +674,91 @@ mod tests {
         let (at, last) = f.chunk().instrs().last().unwrap();
         assert_eq!(at, 80_000);
         assert!(matches!(last, crate::bytecode::Instr::Jump { to: 0 }));
+    }
+
+    /// The ops of the code `emit` writes into a function of one
+    /// parameter that returns what it leaves.
+    fn fused_ops(emit: impl FnOnce(&mut Emitter)) -> Vec<Op> {
+        let mut e = Emitter::new("f".into(), 1, span()).unwrap();
+        emit(&mut e);
+        e.emit(Asm::Return, span()).unwrap();
+        let f = e.finish(0).unwrap();
+        f.chunk().instrs().map(|(_, instr)| instr.op()).collect()
+    }
+
+    #[test]
+    fn an_int_constant_and_an_add_or_a_sub_are_one_instruction() {
+        let at = |start| Span {
+            start,
+            end: start + 1,
+            ..span()
+        };
+        let mut e = Emitter::new("f".into(), 1, span()).unwrap();
+        let one = e.constant(Value::Int(1), span()).unwrap();
+        e.emit(Asm::GetLocal { slot: 0 }, at(1)).unwrap();
+        e.emit(Asm::Constant { k: one }, at(2)).unwrap();
+        e.emit(Asm::Add, at(3)).unwrap();
+        assert_eq!(e.height(), 2);
+        e.emit(Asm::Constant { k: one }, at(4)).unwrap();
+        e.emit(Asm::Sub, at(5)).unwrap();
+        e.emit(Asm::Return, at(6)).unwrap();
+        let f = e.finish(0).unwrap();
+        let instrs: Vec<_> = f.chunk().instrs().collect();
+        let ops: Vec<Op> = instrs.iter().map(|(_, instr)| instr.op()).collect();
+        assert_eq!(ops, [Op::GetLocal, Op::AddConst, Op::SubConst, Op::Return]);
+        // Each is blamed on the span of its `Add` or `Sub`.
+        let spans: Vec<u32> = instrs
+            .iter()
+            .map(|(offset, _)| f.chunk().span_at(*offset).start)
+            .collect();
+        assert_eq!(spans, [1, 3, 5, 6]);
+    }
+
+    #[test]
+    fn a_constant_that_is_no_int_is_not_fused() {
+        let ops = fused_ops(|e| {
+            let half = e.constant(Value::Float(crate::value::Float::new(0.5).unwrap()), span());
+            e.emit(Asm::GetLocal { slot: 0 }, span()).unwrap();
+            e.emit(Asm::Constant { k: half.unwrap() }, span()).unwrap();
+            e.emit(Asm::Add, span()).unwrap();
+        });
+        assert_eq!(ops, [Op::GetLocal, Op::Constant, Op::Add, Op::Return]);
+    }
+
+    #[test]
+    fn nothing_is_fused_across_a_label() {
+        // `n + (match c { true -> 1, false -> 2 })`: the `Add` is where
+        // both arms go on, so the second arm's constant is not its
+        // operand on the first's path.
+        let ops = fused_ops(|e| {
+            let (one, two) = (
+                e.constant(Value::Int(1), span()),
+                e.constant(Value::Int(2), span()),
+            );
+            let (other, end) = (e.label(), e.label());
+            e.emit(Asm::GetLocal { slot: 0 }, span()).unwrap();
+            e.emit(Asm::True, span()).unwrap();
+            e.emit(Asm::JumpIfFalse { to: other }, span()).unwrap();
+            e.emit(Asm::Constant { k: one.unwrap() }, span()).unwrap();
+            e.emit(Asm::Jump { to: end }, span()).unwrap();
+            e.bind(other, span()).unwrap();
+            e.emit(Asm::Constant { k: two.unwrap() }, span()).unwrap();
+            e.bind(end, span()).unwrap();
+            e.emit(Asm::Add, span()).unwrap();
+        });
+        assert_eq!(
+            ops,
+            [
+                Op::GetLocal,
+                Op::True,
+                Op::JumpIfFalse,
+                Op::Constant,
+                Op::Jump,
+                Op::Constant,
+                Op::Add,
+                Op::Return
+            ]
+        );
     }
 
     #[test]

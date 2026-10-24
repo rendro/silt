@@ -137,6 +137,8 @@ fn disassemble_instruction(
         }
 
         Instr::Constant { k }
+        | Instr::AddConst { k }
+        | Instr::SubConst { k }
         | Instr::TestEqual { k }
         | Instr::GetFieldNamed { name: k }
         | Instr::DestructRecordFieldNamed { name: k }

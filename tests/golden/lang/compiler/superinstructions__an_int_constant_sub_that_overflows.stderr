@@ -1,0 +1,9 @@
+error[runtime]: integer overflow: -9223372036854775808 - 1
+ --> superinstructions__an_int_constant_sub_that_overflows.silt:5:3
+   |
+ 5 |   n - 1
+   |   ^^^^^ integer overflow: -9223372036854775808 - 1
+
+call stack:
+  -> down  at superinstructions__an_int_constant_sub_that_overflows.silt:5:3
+  -> main  at superinstructions__an_int_constant_sub_that_overflows.silt:10:11

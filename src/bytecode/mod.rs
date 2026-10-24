@@ -546,6 +546,15 @@ impl Chunk {
         self.code.push(byte);
     }
 
+    /// Take the code from `at` on off again, with its spans: the
+    /// instruction there is fused with the next one.
+    fn truncate(&mut self, at: usize) {
+        self.code.truncate(at);
+        while self.spans.last().is_some_and(|(offset, _)| *offset >= at) {
+            self.spans.pop();
+        }
+    }
+
     /// Add a constant to the pool, returning its index; `None` when the
     /// pool is full (65,536 constants).
     /// Deduplicates integers, booleans, strings, and floats via O(1) HashMap lookup.

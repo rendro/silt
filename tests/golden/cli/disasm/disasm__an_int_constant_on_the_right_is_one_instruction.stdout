@@ -1,0 +1,64 @@
+== <script> (arity=0, upvalues=0) ==
+0000  Constant             0     ; <fn:up>
+0003  SetGlobal            0     ; up
+0006  Pop
+0007  Constant             1     ; <fn:down>
+0010  SetGlobal            1     ; down
+0013  Pop
+0014  Constant             2     ; <fn:left>
+0017  SetGlobal            2     ; left
+0020  Pop
+0021  Constant             3     ; <fn:half>
+0024  SetGlobal            3     ; half
+0027  Pop
+0028  Constant             4     ; <fn:main>
+0031  SetGlobal            4     ; main
+0034  Pop
+0035  GetGlobal            4     ; main
+0038  Call                 0
+0040  Return
+
+== up (arity=1, upvalues=0) ==
+0000  GetLocal             0
+0003  AddConst             0     ; 1
+0006  Return
+
+== down (arity=1, upvalues=0) ==
+0000  GetLocal             0
+0003  SubConst             0     ; 2
+0006  Return
+
+== left (arity=1, upvalues=0) ==
+0000  Constant             0     ; 1
+0003  GetLocal             0
+0006  Add
+0007  Return
+
+== half (arity=1, upvalues=0) ==
+0000  GetLocal             0
+0003  Constant             0     ; 0.5
+0006  Add
+0007  Return
+
+== main (arity=0, upvalues=0) ==
+0000  Constant             0     ; <builtin:println>
+0003  GetGlobal            0     ; up
+0006  Constant             1     ; 1
+0009  Call                 1
+0011  GetGlobal            1     ; down
+0014  Constant             1     ; 1
+0017  Call                 1
+0019  Add
+0020  GetGlobal            2     ; left
+0023  Constant             1     ; 1
+0026  Call                 1
+0028  Add
+0029  Call                 1
+0031  Pop
+0032  Constant             0     ; <builtin:println>
+0035  GetGlobal            3     ; half
+0038  Constant             2     ; 1.0
+0041  Call                 1
+0043  TailCall             1
+0045  Return
+

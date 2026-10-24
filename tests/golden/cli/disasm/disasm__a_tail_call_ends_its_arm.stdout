@@ -15,18 +15,16 @@
 0006  JumpIfFalse          9     -> 0018
 0009  Pop
 0010  GetLocal             1
-0013  Jump                 21    -> 0039
+0013  Jump                 19    -> 0037
 0018  Pop
 0019  GetGlobal            0     ; count
 0022  GetLocal             0
-0025  Constant             1     ; 1
-0028  Sub
-0029  GetLocal             1
-0032  Constant             1     ; 1
-0035  Add
-0036  TailCall             2
-0038  Return
-0039  Return
+0025  SubConst             1     ; 1
+0028  GetLocal             1
+0031  AddConst             1     ; 1
+0034  TailCall             2
+0036  Return
+0037  Return
 
 == main (arity=0, upvalues=0) ==
 0000  Constant             0     ; <builtin:println>
