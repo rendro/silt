@@ -18,7 +18,7 @@ pub(crate) struct Wanted {
     /// gives the method, each at the argument that gives it.
     pub(super) places: super::builtin_needs::Places,
     /// Its node in the module's evidence (`evidence::Ledger`).
-    pub(super) ev: super::evidence::EvId,
+    pub(super) ev: super::evidence::EvRef,
 }
 
 /// What waits for a type to be known.
@@ -236,7 +236,7 @@ impl TypeChecker {
             solved: false,
             in_scheme: false,
             places: Vec::new(),
-            ev,
+            ev: self.ev_here(ev),
         });
         self.solve_wanted(self.wanted.len() - 1);
         ev
@@ -1376,7 +1376,7 @@ impl TypeChecker {
         ty: &Type,
         origin: Origin,
         asker: Option<Asker>,
-        ev: Option<super::evidence::EvId>,
+        ev: Option<super::evidence::EvRef>,
     ) {
         let span = origin.span;
         let resolved = self.apply(ty);
@@ -1756,7 +1756,7 @@ impl TypeChecker {
         bound_trait_args: &[Type],
         resolved: &Type,
         origin: Origin,
-        ev: Option<super::evidence::EvId>,
+        ev: Option<super::evidence::EvRef>,
     ) {
         let span = origin.span;
         let resolved = resolved.clone();
@@ -1944,10 +1944,14 @@ impl TypeChecker {
         // every tuple or function says nothing of the parts.)
         let mut subs = Vec::with_capacity(header.len());
         for pred in header {
-            subs.push(match linked {
+            let dictionary = super::evidence::passes_dictionary(&pred);
+            let ev = match linked {
                 true => self.want(pred.substitute(&fresh), origin),
                 false => None,
-            });
+            };
+            if dictionary {
+                subs.push(ev);
+            }
         }
         let subs = (subs.into_iter())
             .map(|sub| sub.unwrap_or_else(|| self.ev_new(super::evidence::EvNode::Pending)))

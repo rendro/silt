@@ -244,6 +244,13 @@ pub fn builtin_trait_of_method(method: &str) -> Option<TraitId> {
 
 /// The id of the builtin trait `name`; `None` when no builtin trait has
 /// that name.
+/// Whether `t` is a builtin trait (the prelude's, or a builtin module's
+/// like `json.Encode`).
+pub fn is_builtin_trait(t: TraitId) -> bool {
+    let first = builtin_types().len();
+    (first..first + builtin_traits().len()).contains(&(t.0.0 as usize))
+}
+
 pub fn builtin_trait_id(name: &str) -> Option<TraitId> {
     builtin_traits()
         .iter()

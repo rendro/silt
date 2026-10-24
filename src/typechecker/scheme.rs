@@ -522,7 +522,7 @@ impl TypeChecker {
                     _ => use_id,
                 };
                 let ev = self.want(pred.substitute(&mapping), origin);
-                if let (Pred::Trait { .. }, Some(ev)) = (pred, ev) {
+                if let (true, Some(ev)) = (super::evidence::passes_dictionary(pred), ev) {
                     owed.push(ev);
                 }
             }

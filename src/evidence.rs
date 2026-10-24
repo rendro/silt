@@ -46,6 +46,17 @@ pub enum Evidence {
     Native { tr: TraitId, ty: TypeId },
     /// The checker accepted the predicate with nothing to show for it.
     Missing,
+    /// Not known yet: a REPL input left the predicate to an input after
+    /// it, which decides its type ([`Late`]).
+    Pending(Late),
+}
+
+/// A predicate a REPL input left to a later one: the input (a module of
+/// the session) and the predicate's place among its evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Late {
+    pub cell: crate::session::ModuleId,
+    pub id: u32,
 }
 
 /// What an impl's declaration proves of its type, from the predicates

@@ -2452,6 +2452,14 @@ impl TypeChecker {
                         callee: Some(name),
                         op: None,
                     });
+                    // (A `let`'s closure used inside itself.)
+                    if let Type::Var(var) = scheme.ty
+                        && scheme.vars.is_empty()
+                        && let Some((_, _, value)) = (self.ev.defining.iter().rev())
+                            .find(|(n, v, _)| *n == name && *v == var)
+                    {
+                        self.ev.self_refs.insert(span, *value);
+                    }
                     self.instantiate(&scheme)
                 } else if name == intern("self") {
                     // `self` is resolved at runtime — allow without error
@@ -3770,7 +3778,11 @@ impl TypeChecker {
                     let itself = self.fresh_var();
                     env.push();
                     env.define(*name, Scheme::mono(itself.clone()));
+                    if let Type::Var(var) = itself {
+                        self.ev.defining.push((*name, var, value_span));
+                    }
                     let val_ty = self.infer_expr(value, env);
+                    self.ev.defining.pop();
                     env.pop();
                     self.unify(&itself, &val_ty, value_span);
                     val_ty

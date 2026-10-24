@@ -941,6 +941,10 @@ pub struct Program {
     /// use of one is no error of its own. Empty for a text that parses.
     pub unknown: Vec<Symbol>,
     pub statements: StatementMarks,
+    /// For a REPL input: the evidence of predicates earlier inputs left
+    /// to it (`crate::evidence::Evidence::Pending`), which it decided;
+    /// written by the typechecker.
+    pub late_evidence: Vec<(crate::evidence::Late, crate::evidence::Evidence)>,
 }
 
 /// What the parser saw of statements that the tree does not hold.
