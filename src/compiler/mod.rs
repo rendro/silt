@@ -338,10 +338,11 @@ pub struct Compiler<'a> {
     /// The definitions that take dictionaries, by the span that names
     /// them (`crate::evidence::Evidence::Param`), with what they take.
     owners: HashMap<Span, crate::evidence::Shape>,
-    /// While the callee of a call is compiled: the dictionaries it
-    /// pushed after itself, which the call passes as its first
-    /// arguments (a definition with bounds called: no `Bind`).
-    callee_dicts: Option<usize>,
+    /// While the callee of a call is compiled: the call's span. A
+    /// definition with bounds called is passed its dictionaries as its
+    /// first arguments (no `Bind`); a `let` general in a bound makes its
+    /// value where the call is.
+    callee_call: Option<Span>,
     /// The dictionary of the impl of each method of an impl whose header
     /// asks nothing, by the method's body: its template's place
     /// (`Compiler::own_dicts_of`).
@@ -429,7 +430,7 @@ impl<'a> Compiler<'a> {
             owners: HashMap::new(),
             own_dicts: HashMap::new(),
             pattern_lets: HashMap::new(),
-            callee_dicts: None,
+            callee_call: None,
         };
         compiler.owners = (compiler.units.modules.iter())
             .flat_map(|unit| unit.program.dict_owners.iter().copied())
@@ -1363,8 +1364,9 @@ impl<'a> Compiler<'a> {
             {
                 if self.makes_its_value(expr) {
                     let n = self.pass_dicts(bounds, expr.span)?;
-                    self.emit(Asm::Call { argc: n }, expr.span)?;
-                } else if self.callee_dicts.is_none() {
+                    let at = self.callee_call.unwrap_or(expr.span);
+                    self.emit(Asm::Call { argc: n }, at)?;
+                } else if self.callee_call.is_none() {
                     let n = self.pass_dicts(bounds, expr.span)?;
                     self.emit(Asm::Bind { n }, expr.span)?;
                 }
@@ -2247,9 +2249,9 @@ impl<'a> Compiler<'a> {
         } else {
             // Normal function call: a function with bounds is passed its
             // dictionaries first.
-            let around = self.callee_dicts.replace(0);
+            let around = self.callee_call.replace(span);
             let compiled = self.compile_expr(callee);
-            self.callee_dicts = around;
+            self.callee_call = around;
             compiled?;
             let (dicts, keep) = self.callee_dicts_of(callee, span, tail)?;
             self.compile_operands(args.iter().copied())?;

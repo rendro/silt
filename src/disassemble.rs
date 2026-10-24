@@ -40,13 +40,15 @@ fn name_lines(chunk: &Chunk, names: impl Iterator<Item = Const>, label: &str) ->
 // ── Instruction disassembly ───────────────────────────────────────
 
 /// Disassemble the instruction `instr`, decoded at `offset`; the one
-/// after it is at `next`.
+/// after it is at `next`. The first `hidden` slots of the frame hold the
+/// function's dictionaries.
 fn disassemble_instruction(
     chunk: &Chunk,
     globals: &Globals,
     offset: usize,
     instr: Instr,
     next: usize,
+    hidden: usize,
 ) -> String {
     let code = chunk.code();
     let name = instr.op().name();
@@ -119,7 +121,6 @@ fn disassemble_instruction(
         | Instr::DestructListRest { start: n }
         | Instr::GetField { index: n }
         | Instr::DestructRecordField { index: n }
-        | Instr::GetLocal { slot: n }
         | Instr::SetLocal { slot: n }
         | Instr::Slide { slot: n }
         | Instr::MakeList { count: n }
@@ -129,6 +130,12 @@ fn disassemble_instruction(
         | Instr::SuperDict { index: n }
         | Instr::WhereDict { index: n }
         | Instr::Bind { n } => with_number(n),
+
+        // GetLocal: the slot, and of a hidden parameter, what it is.
+        Instr::GetLocal { slot } if slot < hidden => {
+            format!("{offset:04}  {name:<20} {slot:<5} ; dictionary {slot}")
+        }
+        Instr::GetLocal { slot } => with_number(slot),
 
         // MakeDict: the impl, and how many dictionaries its header has.
         Instr::MakeDict { k, n } => with_constant_and_count(k, n),
@@ -247,6 +254,9 @@ fn disassemble_instruction(
             for capture in captures.iter(code) {
                 let locality = if capture.is_local { "local" } else { "upvalue" };
                 write!(line, "\n      |  {locality} {}", capture.index).unwrap();
+                if capture.is_local && capture.index < hidden {
+                    write!(line, " (dictionary {})", capture.index).unwrap();
+                }
             }
             line
         }
@@ -291,12 +301,12 @@ fn disassemble_instruction(
 
 /// Disassemble a complete `Chunk`, returning the formatted output.
 /// Global slots are named by `globals`.
-fn disassemble_chunk(chunk: &Chunk, globals: &Globals, name: &str) -> String {
+fn disassemble_chunk(chunk: &Chunk, globals: &Globals, name: &str, hidden: usize) -> String {
     let mut output = format!("== {name} ==\n");
     let mut offset = 0;
     while let Some((instr, next)) = decode(chunk.code(), offset) {
         output.push_str(&disassemble_instruction(
-            chunk, globals, offset, instr, next,
+            chunk, globals, offset, instr, next, hidden,
         ));
         output.push('\n');
         offset = next;
@@ -309,13 +319,19 @@ fn disassemble_chunk(chunk: &Chunk, globals: &Globals, name: &str) -> String {
 ///
 /// Recursively disassembles nested functions found as `VmClosure` constants.
 pub fn disassemble_function(func: &Function, globals: &Globals) -> String {
+    // (A function with bounds takes its dictionaries before what the
+    // program wrote, in its first slots.)
+    let dictionaries = match func.hidden() {
+        0 => String::new(),
+        n => format!(", dictionaries={n}"),
+    };
     let header = format!(
-        "{} (arity={}, upvalues={})",
+        "{} (arity={}{dictionaries}, upvalues={})",
         func.name(),
         func.arity() - func.hidden(),
         func.upvalue_count()
     );
-    let mut output = disassemble_chunk(func.chunk(), globals, &header);
+    let mut output = disassemble_chunk(func.chunk(), globals, &header, func.hidden());
 
     // Recurse into nested functions stored as VmClosure constants.
     for constant in func.chunk().constants() {
