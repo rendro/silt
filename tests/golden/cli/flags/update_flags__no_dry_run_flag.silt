@@ -1,0 +1,5 @@
+-- cmd: update --dry-run
+-- exit: 1
+-- `silt update` regenerates the lock; updating silt itself is `silt
+-- self-update`, whose flags `silt update` does not take.
+fn main() {}

@@ -148,42 +148,6 @@ fn test_self_update_rename_works() {
     );
     assert!(
         stdout.contains("--dry-run") && stdout.contains("--force"),
-        "help banner missing legacy flags: {stdout}"
-    );
-}
-
-#[test]
-fn test_silt_update_legacy_flags_redirect() {
-    // Anyone passing the old self-update flags (`--dry-run`, `--force`,
-    // `--version=...`) should land on the redirect to `silt self-update`,
-    // regardless of whether they're inside a package — because the only
-    // reason to pass those flags is to invoke the old self-updater, and
-    // we'd rather break that loudly than silently rewrite their lockfile.
-    let pkg = fresh_dir("old_update_dry_run");
-    write_package(&pkg, "dryrun_pkg", "fn main() {}\n");
-    let out = silt_cmd()
-        .args(["update", "--dry-run"])
-        .current_dir(&pkg)
-        .output()
-        .expect("failed to invoke silt update --dry-run");
-    assert_eq!(out.status.code(), Some(2));
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("silt update has been renamed to silt self-update"),
-        "stderr lacked redirect message for --dry-run: {stderr}"
-    );
-
-    // The same redirect must fire from outside a package too.
-    let outside = fresh_dir("old_update_force");
-    let out2 = silt_cmd()
-        .args(["update", "--force"])
-        .current_dir(&outside)
-        .output()
-        .expect("failed to invoke silt update --force");
-    assert_eq!(out2.status.code(), Some(2));
-    let stderr2 = String::from_utf8_lossy(&out2.stderr);
-    assert!(
-        stderr2.contains("silt update has been renamed to silt self-update"),
-        "stderr lacked redirect message: {stderr2}"
+        "help banner missing its flags: {stdout}"
     );
 }

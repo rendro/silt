@@ -1,6 +1,5 @@
 //! `silt update [<dep-name>]` — regenerate `silt.lock` for the current
-//! package's dependencies. Also handles the back-compat redirect for
-//! legacy self-update flag shapes so old scripts get a clear pointer.
+//! package's dependencies.
 
 use std::path::PathBuf;
 use std::process;
@@ -14,12 +13,6 @@ use crate::cli::package::{PackageFailure, die_on_manifest_error, find_project_ro
 
 /// Dispatch `silt update [<dep-name>]`.
 ///
-/// `silt update` manages package dependencies in v0.7+. It also
-/// keeps a back-compat redirect for legacy self-update flags so
-/// scripts that ran `silt update --dry-run` against old binaries
-/// get a clear pointer to `silt self-update` rather than a
-/// confusing "must be run inside a package" error.
-///
 /// Argument shapes:
 ///  - `silt update` (no args): regenerate the lock for the
 ///    current package's full dep tree.
@@ -29,19 +22,12 @@ use crate::cli::package::{PackageFailure, die_on_manifest_error, find_project_ro
 ///    versions to bump), but the API is wired up so PR-future-2
 ///    can implement targeted updates without touching the
 ///    dispatch.
-///  - Legacy self-update flags (`--dry-run`, `--force`,
-///    `--version=...`): print the redirect to `self-update` and
-///    exit 2. Never silently invoke either path — that would
-///    bite anyone scripting the old API.
 pub(crate) fn dispatch(args: &[String]) {
-    let mut saw_self_update_flag = false;
     let mut wants_help = false;
     let mut positional: Option<String> = None;
     for arg in &args[2..] {
         match arg.as_str() {
             "--help" | "-h" => wants_help = true,
-            "--dry-run" | "--force" => saw_self_update_flag = true,
-            other if other.starts_with("--version=") => saw_self_update_flag = true,
             other if other.starts_with('-') => {
                 eprintln!("silt update: unknown flag '{}'", escape_for_display(other));
                 eprintln!("Run 'silt update --help' for usage.");
@@ -71,16 +57,6 @@ pub(crate) fn dispatch(args: &[String]) {
         println!();
         println!("To update the silt binary itself, use `silt self-update` instead.");
         process::exit(0);
-    }
-    // Legacy redirect: keep firing on `--dry-run` / `--force` /
-    // `--version=...` no matter where we are, because anyone
-    // passing those flags is clearly trying to drive the old
-    // self-updater.
-    if saw_self_update_flag {
-        eprintln!(
-            "silt update has been renamed to silt self-update; the new silt update manages package dependencies. To update the silt binary itself, use 'silt self-update'."
-        );
-        process::exit(2);
     }
     run_dependency_update(positional.as_deref());
 }
