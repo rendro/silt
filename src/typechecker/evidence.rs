@@ -84,6 +84,69 @@ impl TypeChecker {
         }
     }
 
+    /// How many predicates the header of the impl of `tr` for `head`
+    /// asks, and how many bounds `tr` declares for its method `method`:
+    /// the first parts of what a use of the impl's method owes.
+    fn method_parts(&self, tr: TraitKey, head: TypeRef, method: Symbol) -> (usize, usize) {
+        let header = (self.tables.impl_preds.get(&(tr, head))).map_or(0, Vec::len);
+        let declared = (self.tables.traits.get(&tr))
+            .and_then(|info| info.method_bounds.get(&method))
+            .map_or(0, Vec::len);
+        (header, declared)
+    }
+
+    /// The bounds of the body of the impl's method `method` of the impl
+    /// of `tr` for `head`, from what its body is checked with (`bounds`):
+    /// the predicates of the header, then the bounds the trait declares
+    /// for the method, then, for an impl for every function or tuple,
+    /// the trait of `self`. A bound the method's `where` restates is one
+    /// of these (or a supertrait of one), not a bound of its own: a call
+    /// passes the evidence of these, in this order.
+    pub(super) fn method_body_bounds(
+        &self,
+        tr: TraitKey,
+        head: TypeRef,
+        method: Symbol,
+        bounds: &[Pred],
+    ) -> Vec<BoundKey> {
+        let (header, declared) = self.method_parts(tr, head, method);
+        let own = header + declared;
+        let mut kept: Vec<Pred> = bounds.iter().take(own).cloned().collect();
+        // (The trait of `self`, which the body is checked with last.)
+        if bounds.len() > own
+            && let Some(last @ Pred::Trait { subject, tr: t, .. }) = bounds.last()
+            && *t == tr
+            && matches!(self.apply(subject), Type::Var(v) if self.shape_vars.contains_key(&v))
+        {
+            kept.push(last.clone());
+        }
+        self.trait_bounds(&kept)
+    }
+
+    /// The evidence a use of the impl's method `method` of the impl of
+    /// `tr` for `head` passes on, from what the use owes (`owed`, the
+    /// nodes of the trait predicates of the method's scheme): the
+    /// receiver's (the impl, with the evidence of its header) and that of
+    /// each bound the trait declares for the method. (What the method's
+    /// own `where` restates is owed after those, and passes nothing on.)
+    pub(super) fn method_site(
+        &mut self,
+        tr: TraitKey,
+        head: TypeRef,
+        method: Symbol,
+        mut owed: Vec<EvId>,
+    ) -> (EvId, Vec<EvId>) {
+        let (header, declared) = self.method_parts(tr, head, method);
+        let mut own = owed.split_off(header.min(owed.len()));
+        own.truncate(declared);
+        let recv = self.ev_new(EvNode::Impl {
+            tr,
+            ty: head,
+            subs: owed,
+        });
+        (recv, own)
+    }
+
     /// The trait bounds of a scheme's predicates, in order.
     pub(super) fn trait_bounds(&self, preds: &[Pred]) -> Vec<BoundKey> {
         preds

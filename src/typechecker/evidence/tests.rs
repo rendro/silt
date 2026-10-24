@@ -246,3 +246,41 @@ fn main() {
         "{found:?}"
     );
 }
+
+/// A bound an impl's method restates is the bound the trait declares,
+/// not one of its own: in the impl for every tuple, `x: a` with the
+/// restated `a: Greet` is the declared bound (the first), and `self`'s
+/// trait comes after the declared bounds.
+#[test]
+fn a_restated_bound_is_the_declared_one_and_self_comes_after_them() {
+    let (found, bodies) = sites(
+        r#"
+trait Greet { fn greet(self) -> String }
+type K { K }
+trait Greet for K { fn greet(self) -> String { "K" } }
+trait Tag {
+  fn tag(self) -> String
+  fn with(self, x: a) -> String where a: Greet
+}
+trait Tag for Tuple {
+  fn tag(self) -> String { "tuple" }
+  fn with(self, x: a) -> String where a: Greet { "{Tag.tag(self)}+{Greet.greet(x)}" }
+}
+fn main() { println(Tag.with((1, 2), K)) }
+"#,
+    );
+    let owner = body(&bodies, "Tuple.with");
+    let recv = |name: &str| {
+        (found.iter())
+            .filter(|(n, _)| n == name)
+            .find_map(|(_, site)| match site {
+                Site::Method {
+                    recv: Evidence::Param { owner: o, k },
+                    ..
+                } if *o == owner => Some(*k),
+                _ => None,
+            })
+    };
+    assert_eq!(recv("Greet.greet"), Some(0), "{found:?}");
+    assert_eq!(recv("Tag.tag"), Some(1), "{found:?}");
+}

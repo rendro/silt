@@ -521,6 +521,17 @@ impl TypeChecker {
         matches
     }
 
+    /// The evidence of `Type.method` at `span`, the method of an impl
+    /// reached through its type `head`, just instantiated: as a call of
+    /// the impl's method passes it on (`method_site`).
+    fn type_method_site(&mut self, head: TypeRef, entry: &MethodEntry, method: Symbol, span: Span) {
+        let owed = self.ev.use_ev.take().unwrap_or_default();
+        if let Some(tr) = self.entry_trait(entry, method) {
+            let site = self.method_site(tr, head, method, owed);
+            self.ev.calls.insert(span, site);
+        }
+    }
+
     /// The type of a use of the method `method` at `span`, from its
     /// scheme: the use owes the scheme's predicates.
     pub(super) fn instantiate_method(
@@ -693,6 +704,7 @@ impl TypeChecker {
                 self.method_trait = self.entry_trait(&entry, field);
                 let scheme = self.method_scheme(&entry);
                 let instantiated = self.instantiate_method(&scheme, field, span);
+                self.type_method_site(name, &entry, field, span);
                 Some(self.apply(&instantiated))
             }
         }
@@ -836,17 +848,9 @@ impl TypeChecker {
                 let ty = self.instantiate_method(&scheme, field, span);
                 // The impl's header's predicates come first among the
                 // method's.
-                let mut owed = self.ev.use_ev.take().unwrap_or_default();
-                let header = (self.tables.impl_preds.get(&(tr, head)))
-                    .map_or(0, |preds| self.trait_bounds(preds).len())
-                    .min(owed.len());
-                let own = owed.split_off(header);
-                let recv_ev = self.ev_new(evidence::EvNode::Impl {
-                    tr,
-                    ty: head,
-                    subs: owed,
-                });
-                self.ev.calls.insert(span, (recv_ev, own));
+                let owed = self.ev.use_ev.take().unwrap_or_default();
+                let site = self.method_site(tr, head, field, owed);
+                self.ev.calls.insert(span, site);
                 if let Type::Fun(params, _) = &ty
                     && let Some(first) = params.first()
                 {
@@ -2580,6 +2584,7 @@ impl TypeChecker {
                         self.method_trait = self.entry_trait(&entry, field);
                         let scheme = self.method_scheme(&entry);
                         let ty = self.instantiate_method(&scheme, field, span);
+                        self.type_method_site(key.0, &entry, field, span);
                         let ty = self.apply(&ty);
                         expr.ty = Some(ty.clone());
                         return ty;

@@ -1362,8 +1362,12 @@ impl TypeChecker {
                             let owner = target.to_string();
                             self.body_owner =
                                 Some(builtin_needs::body_key(trait_key, &owner, method.name));
-                            // (The bounds its body has are the method's.)
-                            let bounds = self.trait_bounds(&sig.bounds);
+                            let bounds = self.method_body_bounds(
+                                trait_key,
+                                target,
+                                method.name,
+                                &sig.bounds,
+                            );
                             self.ev.methods.insert(method.body.span, bounds);
                             self.check_method_body(method, &sig, env);
                             self.body_owner = None;
