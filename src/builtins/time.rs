@@ -57,7 +57,7 @@ fn time_parse_err(err: chrono::ParseError) -> Value {
     };
     Value::variant(
         bv::ERR,
-        vec![Value::variant(variant, vec![Value::String(msg.into())])],
+        [Value::variant(variant, [Value::String(msg.into())])],
     )
 }
 
@@ -65,9 +65,9 @@ fn time_parse_err(err: chrono::ParseError) -> Value {
 fn invalid_format_err(why: String) -> Value {
     Value::variant(
         bv::ERR,
-        vec![Value::variant(
+        [Value::variant(
             bv::TIME_INVALID_FORMAT,
-            vec![Value::String(why.into())],
+            [Value::String(why.into())],
         )],
     )
 }
@@ -77,9 +77,9 @@ fn invalid_format_err(why: String) -> Value {
 fn time_out_of_range_err(msg: String) -> Value {
     Value::variant(
         bv::ERR,
-        vec![Value::variant(
+        [Value::variant(
             bv::TIME_OUT_OF_RANGE,
-            vec![Value::String(msg.into())],
+            [Value::String(msg.into())],
         )],
     )
 }
@@ -332,7 +332,7 @@ fn duration_of(name: &str, n: i64, per_unit: i64) -> Result<Value, VmError> {
 
 /// `Ok(value)`.
 fn ok(value: Value) -> Value {
-    Value::variant(bv::OK, vec![value])
+    Value::variant(bv::OK, [value])
 }
 
 /// The type a pattern is of: what its format writes and its parse
@@ -762,7 +762,7 @@ builtins! {
             Weekday::Sat => bv::SATURDAY,
             Weekday::Sun => bv::SUNDAY,
         };
-        Ok(Value::variant(day, vec![]))
+        Ok(Value::variant(day, []))
     }
 
     fn days_between(from: Date, to: Date) -> Result<i64, VmError> {

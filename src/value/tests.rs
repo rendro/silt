@@ -176,8 +176,8 @@ fn hash_eq_record_values() {
 
 #[test]
 fn hash_eq_variant_values() {
-    let a = Value::variant(bv::OK, vec![Value::Int(42)]);
-    let b = Value::variant(bv::OK, vec![Value::Int(42)]);
+    let a = Value::variant(bv::OK, [Value::Int(42)]);
+    let b = Value::variant(bv::OK, [Value::Int(42)]);
     assert_eq!(a, b);
     assert_eq!(hash_of(&a), hash_of(&b));
 }
@@ -279,15 +279,15 @@ fn ord_time_ns_tiebreaker() {
 
 #[test]
 fn ord_weekday_variants() {
-    let monday = Value::variant(bv::MONDAY, vec![]);
-    let tuesday = Value::variant(bv::TUESDAY, vec![]);
-    let friday = Value::variant(bv::FRIDAY, vec![]);
-    let sunday = Value::variant(bv::SUNDAY, vec![]);
+    let monday = Value::variant(bv::MONDAY, []);
+    let tuesday = Value::variant(bv::TUESDAY, []);
+    let friday = Value::variant(bv::FRIDAY, []);
+    let sunday = Value::variant(bv::SUNDAY, []);
     assert!(monday < tuesday, "Monday < Tuesday");
     assert!(tuesday < friday, "Tuesday < Friday");
     assert!(friday < sunday, "Friday < Sunday");
     assert_eq!(
-        Value::variant(bv::WEDNESDAY, vec![]).cmp(&Value::variant(bv::WEDNESDAY, vec![])),
+        Value::variant(bv::WEDNESDAY, []).cmp(&Value::variant(bv::WEDNESDAY, [])),
         Ordering::Equal,
     );
 }
@@ -296,8 +296,8 @@ fn ord_weekday_variants() {
 fn ord_result_variants_decl_order() {
     // Result is declared as `type Result(a, e) { Ok(a), Err(e) }`,
     // so Ok has ordinal 0, Err ordinal 1, and `Ok < Err`.
-    let ok = Value::variant(bv::OK, vec![Value::Int(1)]);
-    let err = Value::variant(bv::ERR, vec![Value::String("e".into())]);
+    let ok = Value::variant(bv::OK, [Value::Int(1)]);
+    let err = Value::variant(bv::ERR, [Value::String("e".into())]);
     assert!(ok < err, "Ok declared before Err → Ok < Err");
 }
 
@@ -309,7 +309,7 @@ fn variants_of_one_name_in_two_enums_stay_apart() {
     let a = TypeInfo::new_enum(TypeId(DefId(9000)), "A", &[("Red", 0), ("Blue", 0)]);
     let b = TypeInfo::new_enum(TypeId(DefId(9001)), "B", &[("Blue", 0), ("Red", 0)]);
     let value = |ty: &Arc<TypeInfo>, name: &str| {
-        Value::variant(Tag::named(ty, name).expect("a variant"), vec![])
+        Value::variant(Tag::named(ty, name).expect("a variant"), [])
     };
     assert!(value(&a, "Red") < value(&a, "Blue"));
     assert!(value(&b, "Blue") < value(&b, "Red"));
@@ -330,7 +330,7 @@ fn the_hash_of_a_variant_holds_nothing_of_its_type() {
     };
     let boxed = |ty: &Arc<TypeInfo>| {
         let tag = Tag::named(ty, "Box").expect("a variant");
-        Value::variant(tag, vec![Value::Int(3), Value::Int(4)])
+        Value::variant(tag, [Value::Int(3), Value::Int(4)])
     };
     let (here, there) = (shape(9010, "Shape"), shape(9011, "Other"));
     assert_eq!(hash_of(&boxed(&here)), hash_of(&boxed(&there)));
@@ -357,7 +357,7 @@ fn a_variant_is_shared_not_copied() {
     let tag = |name: &str| Tag::named(&ty, name).expect("a variant");
     let held = Arc::strong_count(&ty);
 
-    let end = Value::variant(tag("End"), vec![]);
+    let end = Value::variant(tag("End"), []);
     let ends = vec![end.clone(); 3];
     assert_eq!(Arc::strong_count(&ty), held + 4);
     let Value::Variant(variant) = &end else {
@@ -368,7 +368,7 @@ fn a_variant_is_shared_not_copied() {
     assert!(Arc::ptr_eq(variant.ty(), &ty));
     drop(ends);
 
-    let link = Value::variant(tag("Link"), vec![Value::Int(1), end.clone()]);
+    let link = Value::variant(tag("Link"), [Value::Int(1), end.clone()]);
     let copy = link.clone();
     let (Value::Variant(first), Value::Variant(second)) = (&link, &copy) else {
         panic!("two variants");
@@ -679,7 +679,7 @@ fn records_are_ordered_and_hashed_in_declaration_order() {
 /// that are equal are in no order and hash alike.
 #[test]
 fn values_of_every_kind_have_one_key() {
-    let none = Value::variant(bv::NONE, vec![]);
+    let none = Value::variant(bv::NONE, []);
     let ascending = [
         Value::Unit,
         Value::Bool(false),
@@ -701,10 +701,10 @@ fn values_of_every_kind_have_one_key() {
         Value::set([Value::Int(1)]),
         Value::set([Value::Int(1), Value::Int(2)]),
         Value::anon_record([("x", Value::Int(1))]),
-        Value::variant(bv::OK, vec![Value::Int(1)]),
-        Value::variant(bv::OK, vec![Value::Int(2)]),
-        Value::variant(bv::ERR, vec![Value::Int(0)]),
-        Value::variant(bv::SOME, vec![none.clone()]),
+        Value::variant(bv::OK, [Value::Int(1)]),
+        Value::variant(bv::OK, [Value::Int(2)]),
+        Value::variant(bv::ERR, [Value::Int(0)]),
+        Value::variant(bv::SOME, [none.clone()]),
         none,
         Value::Bytes(Arc::new(vec![1, 2])),
         Value::Bytes(Arc::new(vec![1, 3])),
@@ -738,7 +738,7 @@ fn a_deep_value_is_compared_and_hashed_without_the_native_stack() {
     // level.
     let last = |n: i64, rest: Value| {
         let record = Value::record(node.clone(), vec![Value::Int(n), rest]);
-        Value::variant(bv::OK, vec![Value::list(vec![record])])
+        Value::variant(bv::OK, [Value::list(vec![record])])
     };
     let first = |n: i64, rest: Value| Value::tuple(vec![rest, Value::Int(n)]);
     let shapes: [&dyn Fn(i64, Value) -> Value; 2] = [&last, &first];
@@ -865,12 +865,10 @@ fn the_key_is_the_same_where_the_walk_changes_its_stack() {
         // (An Int is the first member of a set, before one that has
         // parts, and a variant the last, after a set.)
         &|inner, pre, post| {
-            let after = Value::variant(last.clone(), vec![Value::Int(post)]);
+            let after = Value::variant(last.clone(), [Value::Int(post)]);
             Value::set([Value::Int(pre), inner, after])
         },
-        &|inner, pre, post| {
-            Value::variant(w.clone(), vec![Value::Int(pre), inner, Value::Int(post)])
-        },
+        &|inner, pre, post| Value::variant(w.clone(), [Value::Int(pre), inner, Value::Int(post)]),
         &|inner, pre, post| {
             Value::record(
                 record.clone(),
@@ -1083,12 +1081,12 @@ fn display_tuple() {
 
 #[test]
 fn display_variant_no_fields() {
-    assert_eq!(format!("{}", Value::variant(bv::NONE, vec![])), "None");
+    assert_eq!(format!("{}", Value::variant(bv::NONE, [])), "None");
 }
 
 #[test]
 fn display_variant_with_fields() {
-    let v = Value::variant(bv::SOME, vec![Value::Int(42)]);
+    let v = Value::variant(bv::SOME, [Value::Int(42)]);
     assert_eq!(format!("{}", v), "Some(42)");
 }
 
@@ -1213,20 +1211,20 @@ fn a_value_is_shown_and_inspected_by_one_formatter() {
             "[2024-03-09]",
             "[Date {year: 2024, month: 3, day: 9}]",
         ),
-        (Value::variant(bv::NONE, vec![]), "None", "None"),
+        (Value::variant(bv::NONE, []), "None", "None"),
         (
-            Value::variant(bv::SOME, vec![text("x")]),
+            Value::variant(bv::SOME, [text("x")]),
             "Some(x)",
             "Some(\"x\")",
         ),
         (
-            Value::variant(bv::OK, vec![Value::tuple(vec![Value::Int(1), Value::Unit])]),
+            Value::variant(bv::OK, [Value::tuple(vec![Value::Int(1), Value::Unit])]),
             "Ok((1, ()))",
             "Ok((1, ()))",
         ),
         // A builtin error is shown as its message.
         (
-            Value::variant(bv::IO_NOT_FOUND, vec![text("f.txt")]),
+            Value::variant(bv::IO_NOT_FOUND, [text("f.txt")]),
             "file not found: f.txt",
             "NotFound(\"f.txt\")",
         ),
@@ -1256,10 +1254,10 @@ fn a_deep_value_is_written_and_dropped_without_the_native_stack() {
     let node = record_type(9202, "Node", &["next", "tag"]);
     let shapes: [(&dyn Fn(Value) -> Value, &str, &str); 3] = [
         // A variant in a variant.
-        (&|rest| Value::variant(bv::SOME, vec![rest]), "Some(", ")"),
+        (&|rest| Value::variant(bv::SOME, [rest]), "Some(", ")"),
         // A list in a variant, and a tuple of one in it.
         (
-            &|rest| Value::variant(bv::OK, vec![Value::list(vec![Value::tuple(vec![rest])])]),
+            &|rest| Value::variant(bv::OK, [Value::list(vec![Value::tuple(vec![rest])])]),
             "Ok([(",
             ",)])",
         ),
@@ -1285,8 +1283,8 @@ fn a_deep_value_is_written_and_dropped_without_the_native_stack() {
         drop(again);
     }
     // A chain ten times as long, of a list of a program's own.
-    let chain = (0..10 * DEPTH as i64).fold(Value::variant(bv::NONE, vec![]), |rest, n| {
-        Value::variant(bv::SOME, vec![Value::tuple(vec![Value::Int(n), rest])])
+    let chain = (0..10 * DEPTH as i64).fold(Value::variant(bv::NONE, []), |rest, n| {
+        Value::variant(bv::SOME, [Value::tuple(vec![Value::Int(n), rest])])
     });
     drop(chain);
 }
@@ -1347,7 +1345,7 @@ fn a_value_nested_through_any_holder_is_dropped_without_the_native_stack() {
             0 => Value::list(vec![rest]),
             1 => Value::tuple(vec![rest, Value::Int(n)]),
             2 => Value::set([rest]),
-            _ => Value::variant(bv::SOME, vec![rest]),
+            _ => Value::variant(bv::SOME, [rest]),
         },
     ];
     for wrap in shapes {

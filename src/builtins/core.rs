@@ -58,7 +58,7 @@ pub(crate) mod result {
         fn map(r: Res, f: &Value) -> Step {
             match r.inner {
                 Ok(value) => call_then("result.map", f.clone(), value.clone(), |new| {
-                    Ok(Value::variant(bv::OK, vec![new]))
+                    Ok(Value::variant(bv::OK, [new]))
                 }),
                 Err(_) => Step::Done(r.whole.clone()),
             }
@@ -68,7 +68,7 @@ pub(crate) mod result {
             match r.inner {
                 Ok(_) => Step::Done(r.whole.clone()),
                 Err(error) => call_then("result.map_err", f.clone(), error.clone(), |new| {
-                    Ok(Value::variant(bv::ERR, vec![new]))
+                    Ok(Value::variant(bv::ERR, [new]))
                 }),
             }
         }
@@ -112,7 +112,7 @@ pub(crate) mod option {
         fn map(opt: Opt, f: &Value) -> Step {
             match opt.inner {
                 Some(value) => call_then("option.map", f.clone(), value.clone(), |new| {
-                    Ok(Value::variant(bv::SOME, vec![new]))
+                    Ok(Value::variant(bv::SOME, [new]))
                 }),
                 None => Step::Done(opt.whole.clone()),
             }
@@ -127,8 +127,8 @@ pub(crate) mod option {
 
         fn to_result(opt: Opt, error: &Value) -> Value {
             match opt.inner {
-                Some(value) => Value::variant(bv::OK, vec![value.clone()]),
-                None => Value::variant(bv::ERR, vec![error.clone()]),
+                Some(value) => Value::variant(bv::OK, [value.clone()]),
+                None => Value::variant(bv::ERR, [error.clone()]),
             }
         }
 

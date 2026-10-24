@@ -969,7 +969,7 @@ mod tests {
         let option = crate::types::TypeRef::builtin("Option").id;
         assert!(registry.error_module(option).is_none());
         // The text of a variant, and of a value shown.
-        let interrupted = Value::variant(crate::typeinfo::bv::IO_INTERRUPTED, vec![]);
+        let interrupted = Value::variant(crate::typeinfo::bv::IO_INTERRUPTED, []);
         let io = registry.module("io").expect("io");
         let message = io.message.as_ref().expect("IoError.message");
         let Ok(Step::Done(Value::String(text))) = message.call(&mut vm, &[interrupted.clone()])

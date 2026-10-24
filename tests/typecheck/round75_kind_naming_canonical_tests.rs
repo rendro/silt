@@ -102,7 +102,7 @@ fn build_all_variants() -> AllVariants {
         tuple: Value::tuple(vec![Value::Int(1), Value::Int(2)]),
         record: Value::record(point_type(), vec![Value::Int(1)]),
         // A variant names its enum type.
-        variant: Value::variant(bv::SOME, vec![Value::Int(1)]),
+        variant: Value::variant(bv::SOME, [Value::Int(1)]),
         vm_closure: Value::VmClosure(Arc::new(VmClosure {
             function: Arc::new(Function::returning_unit("f".to_string(), 0)),
             upvalues: Vec::new(),

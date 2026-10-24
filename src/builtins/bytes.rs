@@ -52,34 +52,34 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
 // ── Helpers ────────────────────────────────────────────────────────────
 
 fn bytes_err(variant: Value) -> Value {
-    Value::variant(bv::ERR, vec![variant])
+    Value::variant(bv::ERR, [variant])
 }
 
 fn err_utf8(offset: usize) -> Value {
     bytes_err(Value::variant(
         bv::BYTES_INVALID_UTF8,
-        vec![Value::Int(offset as i64)],
+        [Value::Int(offset as i64)],
     ))
 }
 
 fn err_hex(msg: impl Into<Arc<str>>) -> Value {
     bytes_err(Value::variant(
         bv::BYTES_INVALID_HEX,
-        vec![Value::String(msg.into())],
+        [Value::String(msg.into())],
     ))
 }
 
 fn err_base64(msg: impl Into<Arc<str>>) -> Value {
     bytes_err(Value::variant(
         bv::BYTES_INVALID_BASE64,
-        vec![Value::String(msg.into())],
+        [Value::String(msg.into())],
     ))
 }
 
 fn err_byte_range(value: i64) -> Value {
     bytes_err(Value::variant(
         bv::BYTES_BYTE_OUT_OF_RANGE,
-        vec![Value::Int(value)],
+        [Value::Int(value)],
     ))
 }
 

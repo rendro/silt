@@ -8,11 +8,11 @@ use crate::value::{IntTotal, MAX_COLLECTION_LEN, Value};
 use crate::vm::{Flow, Native, Step, Vm, VmError, call_then, item_arg, iterate, next, stop};
 
 fn some(value: Value) -> Value {
-    Value::variant(bv::SOME, vec![value])
+    Value::variant(bv::SOME, [value])
 }
 
 fn none() -> Value {
-    Value::variant(bv::NONE, Vec::new())
+    Value::variant(bv::NONE, [])
 }
 
 /// Runtime backstop for the ordering/equality-consuming collection

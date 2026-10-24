@@ -63,7 +63,7 @@ impl DecodeError {
             DecodeError::Utf8 => bv::ENCODING_INVALID_UTF8,
         };
         let text = Value::String(format!("{at}{self}").into());
-        Value::variant(bv::ERR, vec![Value::variant(variant, vec![text])])
+        Value::variant(bv::ERR, [Value::variant(variant, [text])])
     }
 }
 

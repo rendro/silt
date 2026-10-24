@@ -85,7 +85,7 @@ pub(crate) fn too_long_text(name: &str, len: usize) -> VmError {
 }
 
 pub(crate) fn ok(v: Value) -> Value {
-    Value::variant(bv::OK, vec![v])
+    Value::variant(bv::OK, [v])
 }
 
 /// Convert a 4-bit nibble (0..=15) to its ASCII hex character.

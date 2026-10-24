@@ -154,7 +154,7 @@ fn partial_eq_reflexivity_every_variant() {
         Value::list(vec![Value::Int(1), Value::Int(2)]),
         Value::List(silt::value::List::ints(1, 5).expect("a list")),
         Value::tuple(vec![Value::Int(1), Value::String("x".into())]),
-        Value::variant(bv::OK, vec![Value::Int(1)]),
+        Value::variant(bv::OK, [Value::Int(1)]),
         Value::VariantConstructor(bv::SOME.tag()),
         builtin("println"),
         Value::VmClosure(closure_arc),

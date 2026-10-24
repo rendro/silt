@@ -305,8 +305,8 @@ impl Ret for Vec<u8> {
 impl Ret for Option<Value> {
     fn ret(self) -> Result<Step, VmError> {
         Ok(Step::Done(match self {
-            Some(value) => Value::variant(bv::SOME, vec![value]),
-            None => Value::variant(bv::NONE, vec![]),
+            Some(value) => Value::variant(bv::SOME, [value]),
+            None => Value::variant(bv::NONE, []),
         }))
     }
 }
