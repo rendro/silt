@@ -462,41 +462,57 @@ fn on_tcp(stream: &Arc<crate::runtime::handle::TcpStreamHandle>) -> On {
 }
 
 /// A source that reads from something that blocks: `read` gives the
-/// next item, `None` at the end. An `Err(_)` item is the last; so is
-/// the error of a read that could not run (`on`'s failure).
+/// next items, those one read brings (a source of lines reads up to
+/// [`READ_AT_ONCE`] bytes of them at a time, so that a line is not an
+/// operation of the I/O pool of its own), none at the end. An `Err(_)`
+/// item is the last; so is the error of a read that could not run
+/// (`on`'s failure). The items of a read are emitted one by one before
+/// the next read.
 fn reading(
     vm: &mut Vm,
     name: &'static str,
     on: On,
-    read: impl FnMut() -> Option<Value> + Send + 'static,
+    read: impl FnMut() -> Vec<Value> + Send + 'static,
 ) -> Result<Step, VmError> {
     let read = Arc::new(Mutex::new(read));
     let mut failed = false;
+    let mut items = std::collections::VecDeque::new();
     stage(vm, name, vec![], DEFAULT_CAPACITY, move |got| {
+        // The next item read, which ends the source if it is an error.
+        fn emit(item: Value, failed: &mut bool) -> Next {
+            *failed = matches!(&item, Value::Variant(item) if item.is(bv::ERR));
+            Next::Emit(item)
+        }
         Ok(match got {
-            Got::Start | Got::Emitted if !failed => {
-                let read = read.clone();
-                Next::Io(
-                    Box::new(move || match (read.lock())() {
-                        Some(item) => Value::variant(bv::SOME, [item]),
-                        None => Value::variant(bv::NONE, []),
-                    }),
-                    on.clone(),
-                )
-            }
-            Got::Io(Value::Variant(read)) if read.is(bv::SOME) => {
-                let item = read.fields().last().cloned().unwrap_or(Value::Unit);
-                failed = matches!(&item, Value::Variant(item) if item.is(bv::ERR));
-                Next::Emit(item)
+            Got::Start | Got::Emitted if !failed => match items.pop_front() {
+                Some(item) => emit(item, &mut failed),
+                None => {
+                    let read = read.clone();
+                    Next::Io(Box::new(move || Value::list((read.lock())())), on.clone())
+                }
+            },
+            Got::Io(Value::List(read)) => {
+                items.extend(read.iter());
+                match items.pop_front() {
+                    Some(item) => emit(item, &mut failed),
+                    None => Next::Done(Value::Unit),
+                }
             }
             // The read could not run.
             Got::Io(Value::Variant(error)) if error.is(bv::ERR) => {
-                failed = true;
-                Next::Emit(Value::Variant(error))
+                emit(Value::Variant(error), &mut failed)
             }
             _ => Next::Done(Value::Unit),
         })
     })
+}
+
+/// A `read` of [`reading`] that gives one item a read, or none at the
+/// end.
+fn one_a_read(
+    mut read: impl FnMut() -> Option<Value> + Send + 'static,
+) -> impl FnMut() -> Vec<Value> + Send + 'static {
+    move || read().into_iter().collect()
 }
 
 /// The value inside `Ok(_)`, if `v` is one.
@@ -657,7 +673,7 @@ builtins! {
         };
         let path = path.to_string();
         let mut file: Option<std::fs::File> = None;
-        reading(vm, "stream.file_chunks", ON_A_FILE, move || {
+        reading(vm, "stream.file_chunks", ON_A_FILE, one_a_read(move || {
             use std::io::{Read, Seek};
             if file.is_none() {
                 match std::fs::File::open(&path) {
@@ -687,24 +703,60 @@ builtins! {
                 }
                 Err(e) => Some(err_io(&e)),
             }
-        })
+        }))
     }
 
     fn file_lines(vm, path: &str) -> Result<Step, VmError> {
         let path = path.to_string();
-        let mut lines: Option<std::io::Lines<std::io::BufReader<std::fs::File>>> = None;
+        let mut file: Option<std::io::BufReader<std::fs::File>> = None;
+        let mut ended = false;
+        // The lines of up to READ_AT_ONCE bytes a read, each without its
+        // `\n` or `\r\n` (as `BufRead::lines` gives them).
         reading(vm, "stream.file_lines", ON_A_FILE, move || {
             use std::io::BufRead;
-            if lines.is_none() {
+            let mut lines = Vec::new();
+            if ended {
+                return lines;
+            }
+            if file.is_none() {
                 match std::fs::File::open(&path) {
-                    Ok(file) => lines = Some(std::io::BufReader::new(file).lines()),
-                    Err(e) => return Some(err_io(&e)),
+                    Ok(opened) => file = Some(std::io::BufReader::new(opened)),
+                    Err(e) => {
+                        ended = true;
+                        lines.push(err_io(&e));
+                        return lines;
+                    }
                 }
             }
-            match lines.as_mut()?.next()? {
-                Ok(line) => Some(ok(Value::String(line.into()))),
-                Err(e) => Some(err_io(&e)),
+            let Some(reader) = file.as_mut() else {
+                return lines;
+            };
+            let mut bytes = 0;
+            while bytes < READ_AT_ONCE {
+                let mut line = String::new();
+                match reader.read_line(&mut line) {
+                    Ok(0) => {
+                        ended = true;
+                        break;
+                    }
+                    Ok(read) => {
+                        bytes += read;
+                        if line.ends_with('\n') {
+                            line.pop();
+                            if line.ends_with('\r') {
+                                line.pop();
+                            }
+                        }
+                        lines.push(ok(Value::String(line.into())));
+                    }
+                    Err(e) => {
+                        ended = true;
+                        lines.push(err_io(&e));
+                        break;
+                    }
+                }
             }
+            lines
         })
     }
 
@@ -718,7 +770,7 @@ builtins! {
             vm,
             "stream.tcp_chunks",
             on_tcp(&stream_handle),
-            move || {
+            one_a_read(move || {
                 let mut buf = vec![0u8; n.min(READ_AT_ONCE)];
                 let read = stream_handle.read(&mut buf);
                 match read {
@@ -729,7 +781,7 @@ builtins! {
                     }
                     Err(e) => Some(super::tcp::tcp_io_err(super::tcp::Doing::Using, &e)),
                 }
-            },
+            }),
         )
     }
 
@@ -737,7 +789,7 @@ builtins! {
     fn tcp_lines(vm, stream: TcpStream) -> Result<Step, VmError> {
         let stream_handle = stream.clone();
         let mut at_end = false;
-        reading(vm, "stream.tcp_lines", on_tcp(&stream_handle), move || {
+        reading(vm, "stream.tcp_lines", on_tcp(&stream_handle), one_a_read(move || {
             // The stream is behind a lock and cannot be wrapped in a
             // buffered reader that outlives one call, so a line is read
             // byte by byte: the network buffer dominates the cost.
@@ -769,7 +821,7 @@ builtins! {
             }
             let line = String::from_utf8_lossy(&current).to_string();
             Some(ok(Value::String(line.into())))
-        })
+        }))
     }
 
     // ── Transforms ────────────────────────────────────────────────────────
@@ -1308,7 +1360,12 @@ mod tests {
             failure: io_failure,
             stop: Some(stop),
         };
-        let started = reading(&mut vm, "test.source", on, move || next.recv().ok());
+        let started = reading(
+            &mut vm,
+            "test.source",
+            on,
+            one_a_read(move || next.recv().ok()),
+        );
         let Ok(Step::Done(Value::Channel(out))) = started else {
             panic!("the source did not start");
         };
