@@ -6986,3 +6986,139 @@ mod interpolation {
         assert_eq!(*seen.lock().unwrap(), [before, before]);
     }
 }
+
+/// An instruction that fuses two costs the steps of the two, and a
+/// slice ends between its parts where it ended between the two.
+mod fused_steps {
+    use super::*;
+    use crate::bytecode::{Op, VmClosure};
+    use crate::vm::run::Slice;
+    use crate::vm::runtime::CallFrame;
+
+    /// Where `fuse` is false, a label between two instructions keeps
+    /// them apart.
+    fn apart(e: &mut Emitter, fuse: bool) {
+        if !fuse {
+            let between = e.label();
+            e.bind(between, span()).unwrap();
+        }
+    }
+
+    /// `loop i = 0 { match i <cmp> 5 { true -> loop(i + 1) false -> i } }`
+    /// for `<` or `!=`, with its pairs fused or kept apart.
+    fn count_to_five(compare: Asm<'static>, fuse: bool) -> Arc<Function> {
+        make_function(|e| {
+            let zero = e.constant(Value::Int(0), span()).unwrap();
+            let five = e.constant(Value::Int(5), span()).unwrap();
+            let one = e.constant(Value::Int(1), span()).unwrap();
+            let (start, end) = (e.label(), e.label());
+            e.emit(Asm::Constant { k: zero }, span()).unwrap();
+            e.bind(start, span()).unwrap();
+            e.emit(Asm::GetLocal { slot: 0 }, span()).unwrap();
+            e.emit(Asm::Constant { k: five }, span()).unwrap();
+            e.emit(compare, span()).unwrap();
+            apart(e, fuse);
+            e.emit(Asm::JumpIfFalse { to: end }, span()).unwrap();
+            e.emit(Asm::GetLocal { slot: 0 }, span()).unwrap();
+            e.emit(Asm::Constant { k: one }, span()).unwrap();
+            apart(e, fuse);
+            e.emit(Asm::Add, span()).unwrap();
+            // (`Recur` is always the two, `Recur` and the jump back:
+            // the count at slice 1 below holds it to two steps.)
+            e.emit(
+                Asm::Recur {
+                    argc: 1,
+                    first: 0,
+                    to: start,
+                },
+                span(),
+            )
+            .unwrap();
+            e.bind(end, span()).unwrap();
+            e.emit(Asm::GetLocal { slot: 0 }, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        })
+    }
+
+    /// The ops of `script`.
+    fn ops(script: &Function) -> Vec<Op> {
+        script
+            .chunk()
+            .instrs()
+            .map(|(_, instr)| instr.op())
+            .collect()
+    }
+
+    /// Run `script` in slices of `slice` steps: what it ends with, and
+    /// how many slices ran out of steps.
+    fn sliced(script: Arc<Function>, slice: usize) -> (Result<Value, String>, usize) {
+        let mut vm = Vm::new(crate::HostIo::process());
+        vm.frames.push(Frame::Code(CallFrame {
+            closure: Arc::new(VmClosure {
+                function: script,
+                upvalues: vec![],
+            }),
+            ip: 0,
+            base_slot: 0,
+        }));
+        let mut slices = 0;
+        loop {
+            match vm.run_frames(0, slice) {
+                Ok(Slice::OutOfBudget) => slices += 1,
+                Ok(Slice::Done(value)) => return (Ok(value), slices),
+                Ok(_) => panic!("the script neither waits nor gives way"),
+                Err(error) => return (Err(error.message), slices),
+            }
+        }
+    }
+
+    #[test]
+    fn a_fused_instruction_costs_the_steps_of_the_two_it_fuses() {
+        for compare in [Asm::Lt, Asm::Neq] {
+            let fused = count_to_five(compare, true);
+            let apart = count_to_five(compare, false);
+            assert!(ops(&fused).contains(&Op::AddConst), "{:?}", ops(&fused));
+            assert!(!ops(&apart).contains(&Op::AddConst), "{:?}", ops(&apart));
+            for slice in [1, 2, 3, 7, 1000] {
+                let (fused_end, fused_slices) = sliced(fused.clone(), slice);
+                let (apart_end, apart_slices) = sliced(apart.clone(), slice);
+                assert_eq!(fused_end, Ok(Value::Int(5)), "{compare:?} at slice {slice}");
+                assert_eq!(apart_end, fused_end);
+                assert_eq!(fused_slices, apart_slices, "{compare:?} at slice {slice}");
+            }
+            // At slice 1 a slice is a step: the 52 steps of the two
+            // instructions before the loop, five rounds of 9, the last
+            // test of 4 and the 2 after it, all but the last running out.
+            assert_eq!(sliced(fused, 1).1, 1 + 5 * 9 + 4 + 2 - 1);
+        }
+    }
+
+    #[test]
+    fn the_second_part_of_a_fused_instruction_fails_as_its_instruction() {
+        let overflow = |fuse| {
+            make_function(|e| {
+                let most = e.constant(Value::Int(i64::MAX), span()).unwrap();
+                let one = e.constant(Value::Int(1), span()).unwrap();
+                e.emit(Asm::Constant { k: most }, span()).unwrap();
+                e.emit(Asm::Constant { k: one }, span()).unwrap();
+                apart(e, fuse);
+                e.emit(Asm::Add, span()).unwrap();
+                e.emit(Asm::Return, span()).unwrap();
+            })
+        };
+        let message = format!("integer overflow: {} + 1", i64::MAX);
+        for slice in [1, 2, 3] {
+            assert_eq!(
+                sliced(overflow(true), slice),
+                (Err(message.clone()), slice_count(slice))
+            );
+            assert_eq!(sliced(overflow(false), slice).0, Err(message.clone()));
+        }
+    }
+
+    /// The slices that run out before the `Add` of three steps fails in
+    /// slices of `slice`.
+    fn slice_count(slice: usize) -> usize {
+        2 / slice
+    }
+}
