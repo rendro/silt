@@ -151,6 +151,46 @@ fn an_add_of_a_constant_refuses_what_an_add_refuses() {
 }
 
 #[test]
+fn equality_of_two_ints_and_of_an_int_and_another_kind() {
+    let run = |a: Value, b: Value, op: Asm<'static>| {
+        let script = make_function(|e| {
+            let a = e.constant(a, span()).unwrap();
+            let b = e.constant(b, span()).unwrap();
+            e.emit(Asm::Constant { k: a }, span()).unwrap();
+            e.emit(Asm::Constant { k: b }, span()).unwrap();
+            e.emit(op, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        Vm::new(crate::HostIo::process())
+            .run(script)
+            .map_err(|e| e.message)
+    };
+    assert_eq!(
+        run(Value::Int(3), Value::Int(3), Asm::Eq),
+        Ok(Value::Bool(true))
+    );
+    assert_eq!(
+        run(Value::Int(3), Value::Int(4), Asm::Eq),
+        Ok(Value::Bool(false))
+    );
+    assert_eq!(
+        run(Value::Int(3), Value::Int(4), Asm::Neq),
+        Ok(Value::Bool(true))
+    );
+    assert_eq!(
+        run(Value::Int(-3), Value::Int(-3), Asm::Neq),
+        Ok(Value::Bool(false))
+    );
+    for op in [Asm::Eq, Asm::Neq] {
+        assert_eq!(
+            run(Value::Int(1), Value::String("1".into()), op),
+            Err("unsupported operation: cannot compare Int and String".to_string()),
+            "{op:?}"
+        );
+    }
+}
+
+#[test]
 fn a_comparison_and_its_jump_refuse_what_the_comparison_refuses() {
     for (compare, jump) in [(Asm::Lt, true), (Asm::Geq, false), (Asm::Eq, true)] {
         // (Fused: one `JumpIfNot..` instruction.)

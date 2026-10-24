@@ -62,6 +62,23 @@ fn equality_operands(a: &Value, b: &Value) -> Result<(), VmError> {
     }
 }
 
+/// Whether `a` and `b` are equal, for `==` and `!=`. Two Ints are
+/// compared in the caller, the instruction loop, as [`ordering`]
+/// compares them; anything else is a call.
+#[inline(always)]
+fn equal(a: &Value, b: &Value) -> Result<bool, VmError> {
+    match (a, b) {
+        (Value::Int(a), Value::Int(b)) => Ok(a == b),
+        _ => other_equal(a, b),
+    }
+}
+
+/// [`equal`] of operands that are not two Ints.
+fn other_equal(a: &Value, b: &Value) -> Result<bool, VmError> {
+    equality_operands(a, b)?;
+    Ok(a == b)
+}
+
 /// What an instruction did that a method of the VM ran for the loop.
 pub(super) enum DispatchResult {
     /// Go on with the next instruction of the function's frame on top
@@ -674,11 +691,13 @@ impl Vm {
         macro_rules! jump_unless_equal {
             ($equal:expr, $to:expr) => {{
                 let (a, b) = operands!();
-                if let Err(error) = equality_operands(a, b) {
-                    refuse!(error);
-                }
-                if (*a == *b) != $equal {
-                    ip = $to;
+                match equal(a, b) {
+                    Ok(holds) => {
+                        if holds != $equal {
+                            ip = $to;
+                        }
+                    }
+                    Err(error) => refuse!(error),
                 }
                 pop_done(&mut self.stack);
                 pop_done(&mut self.stack);
@@ -741,20 +760,18 @@ impl Vm {
                 }
                 Instr::Eq => {
                     let (a, b) = operands!();
-                    if let Err(error) = equality_operands(a, b) {
-                        refuse!(error);
+                    match equal(a, b) {
+                        Ok(holds) => put(a, Value::Bool(holds)),
+                        Err(error) => refuse!(error),
                     }
-                    let holds = *a == *b;
-                    put(a, Value::Bool(holds));
                     pop_done(&mut self.stack);
                 }
                 Instr::Neq => {
                     let (a, b) = operands!();
-                    if let Err(error) = equality_operands(a, b) {
-                        refuse!(error);
+                    match equal(a, b) {
+                        Ok(holds) => put(a, Value::Bool(!holds)),
+                        Err(error) => refuse!(error),
                     }
-                    let holds = *a != *b;
-                    put(a, Value::Bool(holds));
                     pop_done(&mut self.stack);
                 }
                 Instr::Lt => compare!(Ordering::is_lt),
@@ -1580,8 +1597,8 @@ impl Vm {
         let equal = |vm: &mut Vm, equal: bool| -> Result<(), VmError> {
             let b = pop(&mut vm.stack);
             let a = pop(&mut vm.stack);
-            equality_operands(&a, &b)?;
-            vm.stack.push(Value::Bool((a == b) == equal));
+            let holds = other_equal(&a, &b)?;
+            vm.stack.push(Value::Bool(holds == equal));
             Ok(())
         };
         let half = match instr {
