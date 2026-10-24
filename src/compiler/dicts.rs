@@ -665,7 +665,7 @@ impl Compiler<'_> {
         let slot = *self.globals.template_at(template)?.methods.get(index)?;
         let default = self.globals.default_method(tr, &resolve(method));
         (slot != u16::MAX && default != Some(slot) && u16::try_from(template).is_ok())
-            .then(|| (slot, template as usize))
+            .then_some((slot, template as usize))
     }
 
     /// The method `method` of the trait `tr`, through the dictionary
