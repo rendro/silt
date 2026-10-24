@@ -809,10 +809,10 @@ pub struct TraitImpl {
     ///   - the bound type satisfies each declared trait bound.
     pub assoc_type_bindings: Vec<AssocTypeBinding>,
     pub span: Span,
-    /// The evidence that the impl's type has each supertrait of the
-    /// trait, from the predicates of its header
-    /// (`crate::evidence::IMPL_HEADER`); written by the typechecker.
-    pub supers: Vec<(crate::defs::TraitId, crate::evidence::Evidence)>,
+    /// What the impl proves of its type from the predicates of its
+    /// header: its trait's supertraits, the `where` clauses on the
+    /// trait's parameters; written by the typechecker.
+    pub evidence: crate::evidence::ImplEvidence,
 }
 
 #[derive(Debug, Clone)]

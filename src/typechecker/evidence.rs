@@ -301,15 +301,16 @@ impl TypeChecker {
         None
     }
 
-    /// The evidence that the type of the impl of `tr` for `head` has
-    /// each supertrait of `tr`, from the predicates of the impl's
-    /// header.
-    fn impl_supers(&self, tr: TraitKey, head: TypeRef) -> Vec<(crate::defs::TraitId, Evidence)> {
+    /// What the impl of `tr` for `head` proves from the predicates of its
+    /// header: that its type has each supertrait of `tr`, and that its
+    /// trait arguments meet the `where` clauses `tr` declares on its
+    /// parameters.
+    fn impl_evidence(&self, tr: TraitKey, head: TypeRef) -> crate::evidence::ImplEvidence {
         let (Some(info), Some(self_ty)) = (
             self.tables.traits.get(&tr),
             self.tables.impl_self_types.get(&(tr, head)),
         ) else {
-            return Vec::new();
+            return Default::default();
         };
         let header = Owner {
             tag: crate::evidence::IMPL_HEADER,
@@ -320,7 +321,7 @@ impl TypeChecker {
         let impl_args = (self.tables.impl_trait_args.get(&(tr, head)))
             .cloned()
             .unwrap_or_default();
-        (info.supertraits.iter().enumerate())
+        let supers = (info.supertraits.iter().enumerate())
             .map(|(i, sup)| {
                 let args: Vec<Type> = match info.supertrait_args.get(i) {
                     Some(exprs) if !exprs.is_empty() => (exprs.iter())
@@ -329,6 +330,27 @@ impl TypeChecker {
                     _ => Vec::new(),
                 };
                 (sup.id, self.evidence_of(*sup, &args, self_ty, &header, 0))
+            })
+            .collect();
+        let wheres = (self.param_wheres(tr).into_iter())
+            .map(|(i, bound)| match impl_args.get(i) {
+                Some(arg) => self.evidence_of(bound, &[], arg, &header, 0),
+                None => Evidence::Missing,
+            })
+            .collect();
+        crate::evidence::ImplEvidence { supers, wheres }
+    }
+
+    /// The `where` clauses the trait `tr` declares on its parameters
+    /// (`trait Pr(a) where a: Greet`), in order: the parameter's place
+    /// and the trait.
+    fn param_wheres(&self, tr: TraitKey) -> Vec<(usize, TraitKey)> {
+        let Some(info) = self.tables.traits.get(&tr) else {
+            return Vec::new();
+        };
+        (info.param_where_clauses.iter())
+            .filter_map(|(param, bound)| {
+                Some((info.params.iter().position(|p| p == param)?, *bound))
             })
             .collect()
     }
@@ -423,7 +445,7 @@ impl TypeChecker {
                 }
                 Decl::TraitImpl(ti) => {
                     if let (Some(target), Some(tr)) = (self.impl_target(ti), self.impl_trait(ti)) {
-                        ti.supers = self.impl_supers(tr, target);
+                        ti.evidence = self.impl_evidence(tr, target);
                     }
                     for method in &mut ti.methods {
                         let tag = method.body.span;
@@ -438,11 +460,15 @@ impl TypeChecker {
                     };
                     let own_args: Vec<Type> =
                         info.param_var_ids.iter().map(|v| Type::Var(*v)).collect();
+                    let wheres: Vec<BoundKey> = (self.param_wheres(tr).into_iter())
+                        .map(|(i, bound)| (info.param_var_ids[i], bound, Vec::new()))
+                        .collect();
                     for method in t.methods.iter_mut().filter(|m| !m.is_signature_only) {
                         let mut bounds = vec![(info.self_var, tr, own_args.clone())];
                         if let Some(preds) = info.method_bounds.get(&method.name) {
                             bounds.extend(self.trait_bounds(preds));
                         }
+                        bounds.extend(wheres.iter().cloned());
                         let tag = method.body.span;
                         self.evidence_in(&mut method.body, &mut Vec::new(), tag, bounds);
                     }

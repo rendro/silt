@@ -823,7 +823,7 @@ impl<'a> Compiler<'a> {
                     return Ok(());
                 };
                 let type_name = self.type_info(ty).name.clone();
-                self.globals.note_supers(t, ty, &trait_impl.supers);
+                (self.globals).note_impl(t, ty, &type_name, &trait_impl.evidence);
 
                 for method in &trait_impl.methods {
                     let span = method.span;

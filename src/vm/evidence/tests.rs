@@ -8,6 +8,7 @@ use crate::bytecode::{Asm, Emitter, Globals, VmClosure};
 use crate::defs::{DefId, TraitId, TypeId};
 use crate::evidence::{Evidence, Site};
 use crate::source::Span;
+use crate::value::Value;
 
 const TR: TraitId = TraitId(DefId(1));
 const INT: TypeId = TypeId(DefId(2));
@@ -47,7 +48,7 @@ fn found(ty: TypeId, impl_found: bool) -> Found<'static> {
         native_row: false,
         vm_default: false,
         method: "m",
-        type_name: "T",
+        receiver: &Value::Unit,
     }
 }
 
@@ -66,7 +67,7 @@ fn a_call_on_a_bound_is_checked_against_the_callers_evidence() {
     let int = Ground::Impl {
         tr: TR,
         ty: INT,
-        subs: Some(Vec::new()),
+        subs: Some(Arc::from(Vec::new())),
     };
     let code = running(site, int);
     let globals = Globals::default();

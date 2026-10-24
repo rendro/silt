@@ -198,7 +198,9 @@ fn main() { () }
     let (ast, _) = crate::session::testing::analyze_str(source);
     let supers = (ast.decls.iter())
         .find_map(|decl| match decl {
-            Decl::TraitImpl(ti) if resolve(ti.trait_name) == "Sub" => Some(ti.supers.clone()),
+            Decl::TraitImpl(ti) if resolve(ti.trait_name) == "Sub" => {
+                Some(ti.evidence.supers.clone())
+            }
             _ => None,
         })
         .expect("the impl of Sub");
@@ -283,4 +285,36 @@ fn main() { println(Tag.with((1, 2), K)) }
     };
     assert_eq!(recv("Greet.greet"), Some(0), "{found:?}");
     assert_eq!(recv("Tag.tag"), Some(1), "{found:?}");
+}
+
+/// A `where` clause a trait declares on its parameter is a bound of its
+/// default methods, after their own: `Greet.greet` on a value of the
+/// parameter's type names it.
+#[test]
+fn a_where_clause_on_a_trait_parameter_is_a_bound_of_its_defaults() {
+    let (found, bodies) = sites(
+        r#"
+trait Greet { fn greet(self) -> String }
+type K { K }
+trait Greet for K { fn greet(self) -> String { "K" } }
+trait Pr(a) where a: Greet {
+  fn item(self) -> a
+  fn pr(self) -> String { Greet.greet(Pr.item(self)) }
+}
+type Holder { Holder }
+trait Pr(K) for Holder { fn item(self) -> K { K } }
+fn main() { println(Pr.pr(Holder)) }
+"#,
+    );
+    let owner = body(&bodies, "Pr.pr");
+    let greet = (found.iter())
+        .find(|(n, _)| n == "Greet.greet")
+        .map(|(_, site)| site);
+    assert!(
+        matches!(
+            greet,
+            Some(Site::Method { recv: Evidence::Param { owner: o, k: 1 }, .. }) if *o == owner
+        ),
+        "{found:?}"
+    );
 }

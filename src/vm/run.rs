@@ -467,7 +467,13 @@ impl Vm {
             };
         }
         // A load of a definition with bounds passes evidence on, in a
-        // debug build (`super::evidence`).
+        // debug build (`super::evidence`). The instructions that put a
+        // callable on the stack from a slot (`GetGlobal`, `GetLocal`,
+        // `GetUpvalue`) bind its evidence here; `MakeClosure` gives a new
+        // closure the evidence of the body that makes it, and
+        // `call_method` binds the method it finds. An instruction that
+        // loads or calls a closure from a slot some other way needs the
+        // same hook, or the calls through it go unchecked without a word.
         macro_rules! evidence_load {
             () => {
                 #[cfg(debug_assertions)]
@@ -1625,7 +1631,7 @@ impl Vm {
             found => found,
         };
         #[cfg(debug_assertions)]
-        let bound = self.evidence_call(trait_index, receiver_type, method, found)?;
+        let bound = self.evidence_call(trait_index, receiver_slot + at, method, found)?;
         // (A method that is a closure, which a written method is, is
         // taken by its pointer, as `Call` takes one: the VM's own copy
         // of the closure in the global's slot is not cloned and moved.)

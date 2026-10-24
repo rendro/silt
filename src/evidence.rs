@@ -48,6 +48,18 @@ pub enum Evidence {
     Missing,
 }
 
+/// What an impl's declaration proves of its type, from the predicates
+/// of its header (`IMPL_HEADER`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ImplEvidence {
+    /// That the type has each supertrait of the trait.
+    pub supers: Vec<(TraitId, Evidence)>,
+    /// That the impl's trait arguments meet the `where` clauses the trait
+    /// declares on its parameters (`trait Pr(a) where a: Greet`), each in
+    /// the order the trait declares them.
+    pub wheres: Vec<Evidence>,
+}
+
 /// The evidence a place in the code passes on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Site {
@@ -68,7 +80,8 @@ pub enum Layout {
     /// the bounds the trait declares for the method.
     ImplMethod,
     /// A trait's default method: `Self: Trait`, then the bounds the
-    /// trait declares for the method.
+    /// trait declares for the method, then the `where` clauses the trait
+    /// declares on its parameters.
     Default,
 }
 

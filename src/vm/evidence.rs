@@ -54,11 +54,13 @@ pub(crate) struct Env {
 #[derive(Debug, Clone)]
 pub(crate) enum Ground {
     /// The impl of `tr` for `ty`, with the evidence of its header's
-    /// predicates (`None`: not known).
+    /// predicates (`None`: not known). (Shared: a call passes evidence
+    /// on at no cost of its size, as polymorphic recursion makes it
+    /// deeper at each call.)
     Impl {
         tr: TraitId,
         ty: TypeId,
-        subs: Option<Vec<Ground>>,
+        subs: Option<Arc<[Ground]>>,
     },
     /// The trait `tr` for `ty`, by an impl or by its structure: a
     /// supertrait of a trait of the type.
@@ -149,13 +151,10 @@ fn ground(ev: &Evidence, env: Option<&Arc<Env>>, globals: &Globals) -> Ground {
                 tr,
                 ty,
                 subs: Some(subs),
-            } if let Some(ev) = globals.super_evidence(tr, ty, *to) => {
-                let header = Arc::new(Env {
-                    owner: crate::evidence::IMPL_HEADER,
-                    grounds: Some(subs),
-                    parent: None,
-                });
-                ground(ev, Some(&header), globals)
+            } if let Some(ev) = (globals.impl_evidence(tr, ty))
+                .and_then(|impl_ev| impl_ev.supers.iter().find(|(s, _)| s == to)) =>
+            {
+                ground(&ev.1, Some(&header(subs)), globals)
             }
             Ground::Impl { ty, .. } | Ground::Super { ty, .. } | Ground::Native { ty, .. } => {
                 Ground::Super { tr: *to, ty }
@@ -167,6 +166,36 @@ fn ground(ev: &Evidence, env: Option<&Arc<Env>>, globals: &Globals) -> Ground {
         Evidence::Native { tr, ty } => Ground::Native { tr: *tr, ty: *ty },
         Evidence::Missing => Ground::Missing,
     }
+}
+
+/// The level of an impl's header: the evidence of its predicates.
+fn header(subs: Arc<[Ground]>) -> Arc<Env> {
+    Arc::new(Env {
+        owner: crate::evidence::IMPL_HEADER,
+        grounds: Some(subs.to_vec()),
+        parent: None,
+    })
+}
+
+/// The evidence that the impl `recv` names meets the `where` clauses
+/// its trait declares on its parameters: a default method's last
+/// bounds.
+fn wheres(recv: &Ground, globals: &Globals) -> Vec<Ground> {
+    let Ground::Impl {
+        tr,
+        ty,
+        subs: Some(subs),
+    } = recv
+    else {
+        return Vec::new();
+    };
+    let Some(impl_ev) = globals.impl_evidence(*tr, *ty) else {
+        return Vec::new();
+    };
+    let header = header(subs.clone());
+    (impl_ev.wheres.iter())
+        .map(|ev| ground(ev, Some(&header), globals))
+        .collect()
 }
 
 /// The closure `callee` with the level of its own bounds, which the
@@ -195,24 +224,25 @@ fn bind(
                 ty,
                 subs: Some(subs),
             } => {
-                let recv = Ground::Impl {
+                let mut grounds = subs.to_vec();
+                grounds.extend(own.iter().map(|ev| ground(ev, env, globals)));
+                grounds.push(Ground::Impl {
                     tr,
                     ty,
-                    subs: Some(subs.clone()),
-                };
-                let mut grounds = subs;
-                grounds.extend(own.iter().map(|ev| ground(ev, env, globals)));
-                grounds.push(recv);
+                    subs: Some(subs),
+                });
                 Some(grounds)
             }
             _ => None,
         },
-        (Site::Method { recv, own }, Layout::Default) => Some(
-            std::iter::once(recv)
-                .chain(own)
-                .map(|ev| ground(ev, env, globals))
-                .collect(),
-        ),
+        (Site::Method { recv, own }, Layout::Default) => {
+            let recv = ground(recv, env, globals);
+            let wheres = wheres(&recv, globals);
+            let mut grounds = vec![recv];
+            grounds.extend(own.iter().map(|ev| ground(ev, env, globals)));
+            grounds.extend(wheres);
+            Some(grounds)
+        }
         (Site::Method { .. }, Layout::Scheme) => None,
     };
     let mut bound = VmClosure::clone(callee);
@@ -256,9 +286,48 @@ pub(crate) struct Found<'a> {
     /// (`message` of `Error`, for an impl that leaves it out): no impl
     /// has code for it.
     pub(crate) vm_default: bool,
-    /// For a message: the method's name, the receiver's type's.
+    /// For a message: the method's name, the receiver.
     pub(crate) method: &'a str,
-    pub(crate) type_name: &'a str,
+    pub(crate) receiver: &'a Value,
+}
+
+/// The name of the type `ty`, as a message of the check writes it.
+fn type_name(ty: TypeId, found: &Found<'_>, globals: &Globals) -> String {
+    if ty == found.ty {
+        return crate::types::canonical::dispatch_type_name(found.receiver).to_string();
+    }
+    (globals.impl_type_name(ty).map(str::to_string))
+        .or_else(|| (crate::defs::builtin_types().get(ty.0.0 as usize)).map(|(n, _)| n.to_string()))
+        .unwrap_or_else(|| format!("type #{}", ty.0.0))
+}
+
+/// The name of the trait `tr`, as a message of the check writes it.
+fn trait_name(tr: TraitId, globals: &Globals) -> String {
+    (globals.trait_named(tr).map(str::to_string)).unwrap_or_else(|| format!("trait #{}", tr.0.0))
+}
+
+/// What the evidence `named` says, as a message of the check writes it.
+fn shown(named: &Ground, found: &Found<'_>, globals: &Globals) -> String {
+    match named {
+        Ground::Impl { tr, ty, .. } => format!(
+            "the impl of '{}' for '{}'",
+            trait_name(*tr, globals),
+            type_name(*ty, found, globals)
+        ),
+        Ground::Super { tr, ty } => format!(
+            "supertrait '{}' of '{}'",
+            trait_name(*tr, globals),
+            type_name(*ty, found, globals)
+        ),
+        Ground::Structural(tr) => format!("'{}' by the type's structure", trait_name(*tr, globals)),
+        Ground::Native { tr, ty } => format!(
+            "the impl of '{}' the runtime provides for '{}'",
+            trait_name(*tr, globals),
+            type_name(*ty, found, globals)
+        ),
+        Ground::Missing => "nothing".to_string(),
+        Ground::Unknown => "what the VM cannot work out".to_string(),
+    }
 }
 
 /// Check the call of a method that the code of `running`, at the
@@ -293,8 +362,16 @@ pub(crate) fn check_call(
         Ground::Missing | Ground::Unknown => None,
     };
     if reporting().is_some() {
+        // (A body the runtime calls, a `Display` impl that `println`
+        // runs, a `json.Encode` impl that `json.stringify` runs, has no
+        // evidence: no call of silt's passed any on.)
+        let by_runtime = env.is_none()
+            && (running.function.evidence())
+                .and_then(|ev| ev.owner)
+                .is_some_and(|(_, layout)| layout != Layout::Scheme);
         let class = match (&named, agrees) {
             (Ground::Missing, _) => "missing",
+            (_, None) if by_runtime => "unchecked-by-runtime",
             (_, None) => "unchecked",
             (_, Some(true)) => "agrees",
             (_, Some(false)) => "disagrees",
@@ -302,14 +379,19 @@ pub(crate) fn check_call(
         note(class, running.function.name(), ip);
     }
     if agrees == Some(false) {
+        let receiver = type_name(found.ty, found, globals);
+        let tr = found
+            .tr
+            .map_or_else(String::new, |tr| trait_name(tr, globals));
         let what = match found.impl_found {
-            true => format!("the impl for '{}'", found.type_name),
-            false => format!("no impl for '{}' (the VM's own method)", found.type_name),
+            true => format!("the impl of '{tr}' for '{receiver}'"),
+            false => format!("no impl of '{tr}' for '{receiver}' (the VM's own method)"),
         };
         let message = format!(
-            "evidence: the call of '{}' in '{}' (offset {ip}) found {what}, but the checker named {named:?}",
+            "evidence: the call of '{}' in '{}' (offset {ip}) found {what}, but the checker named {}",
             found.method,
-            running.function.name()
+            running.function.name(),
+            shown(&named, found, globals)
         );
         if reporting().is_some() {
             let program: Vec<String> = std::env::args().skip(1).collect();
@@ -388,16 +470,18 @@ pub(crate) fn made_in(running: &VmClosure, mut made: VmClosure) -> VmClosure {
 impl super::Vm {
     /// Check the `CallMethod` being run (its frame's `ip` saved), of
     /// the method with the id `method` of the trait `trait_index`
-    /// names, on a receiver of the type `ty`, which found the global
+    /// names, on the receiver in the stack slot `receiver`, which found the global
     /// slot `found` (none: the VM's own method). The closure in that
     /// slot with the level of its bounds, when the call gives it one.
     pub(super) fn evidence_call(
         &self,
         trait_index: u16,
-        ty: TypeId,
+        receiver: usize,
         method: u16,
         found: Option<u16>,
     ) -> Result<Option<Arc<VmClosure>>, VmError> {
+        let receiver = &self.stack[receiver];
+        let ty = crate::types::canonical::dispatch_type_for_value(receiver);
         let frame = self.frame();
         let callee = match found.and_then(|slot| self.view.global(slot)) {
             Some(Value::VmClosure(callee)) => Some(callee),
@@ -423,7 +507,7 @@ impl super::Vm {
             native_row,
             vm_default: message_of_error && !native_row,
             method,
-            type_name: &format!("{ty:?}"),
+            receiver,
         };
         check_call(&frame.closure, frame.ip, &found, callee, entry)
     }

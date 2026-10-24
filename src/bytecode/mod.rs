@@ -132,10 +132,13 @@ pub struct Globals {
     /// each with its name.
     traits: Rows<(TraitId, String)>,
     trait_indexes: Layers<TraitId, u16>,
-    /// In a debug build, the evidence that the type of each impl has
-    /// the supertraits of its trait (`crate::vm::evidence`).
+    /// In a debug build, what each impl proves of its type from its
+    /// header (`crate::vm::evidence`), and the name of its type, which a
+    /// message of the check writes.
     #[cfg(debug_assertions)]
-    supers: Layers<(TraitId, TypeId), Arc<[(TraitId, crate::evidence::Evidence)]>>,
+    impls: Layers<(TraitId, TypeId), Arc<crate::evidence::ImplEvidence>>,
+    #[cfg(debug_assertions)]
+    impl_types: Layers<TypeId, String>,
 }
 
 impl Globals {
@@ -164,35 +167,52 @@ impl Globals {
             encoded: before.encoded.clone(),
             decoded: before.decoded.clone(),
             #[cfg(debug_assertions)]
-            supers: before.supers.clone(),
+            impls: before.impls.clone(),
+            #[cfg(debug_assertions)]
+            impl_types: before.impl_types.clone(),
         }
     }
 
-    /// The evidence that the type `ty` of the impl of `t` has each
-    /// supertrait of `t` (debug builds only keep it).
-    pub fn note_supers(
+    /// What the impl of `t` for the type `ty`, named `name`, proves of
+    /// it from its header (debug builds only keep it).
+    pub fn note_impl(
         &mut self,
         t: TraitId,
         ty: TypeId,
-        supers: &[(TraitId, crate::evidence::Evidence)],
+        name: &str,
+        evidence: &crate::evidence::ImplEvidence,
     ) {
         #[cfg(debug_assertions)]
-        self.supers.insert((t, ty), supers.into());
+        {
+            self.impls.insert((t, ty), Arc::new(evidence.clone()));
+            if self.impl_types.get(&ty).is_none() {
+                self.impl_types.insert(ty, name.to_string());
+            }
+        }
         #[cfg(not(debug_assertions))]
-        let _ = (t, ty, supers);
+        let _ = (t, ty, name, evidence);
     }
 
-    /// The evidence that the type `ty` of the impl of `t` has the
-    /// supertrait `sup`.
+    /// What the impl of `t` for `ty` proves of its type.
     #[cfg(debug_assertions)]
-    pub(crate) fn super_evidence(
+    pub(crate) fn impl_evidence(
         &self,
         t: TraitId,
         ty: TypeId,
-        sup: TraitId,
-    ) -> Option<&crate::evidence::Evidence> {
-        let supers = self.supers.get(&(t, ty))?;
-        supers.iter().find(|(s, _)| *s == sup).map(|(_, ev)| ev)
+    ) -> Option<&crate::evidence::ImplEvidence> {
+        self.impls.get(&(t, ty)).map(Arc::as_ref)
+    }
+
+    /// The name of a type an impl in the program is for.
+    #[cfg(debug_assertions)]
+    pub(crate) fn impl_type_name(&self, ty: TypeId) -> Option<&str> {
+        self.impl_types.get(&ty).map(String::as_str)
+    }
+
+    /// The name of the trait `t`, if a call names it.
+    #[cfg(debug_assertions)]
+    pub(crate) fn trait_named(&self, t: TraitId) -> Option<&str> {
+        self.trait_name(*self.trait_indexes.get(&t)?)
     }
 
     /// The number of slots.

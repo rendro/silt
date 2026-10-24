@@ -2097,7 +2097,7 @@ impl<'src> Parser<'src> {
                 where_clauses,
                 methods,
                 assoc_type_bindings,
-                supers: Vec::new(),
+                evidence: Default::default(),
                 span: self.close(span),
             }))
         }
