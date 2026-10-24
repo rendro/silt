@@ -1,8 +1,8 @@
 -- cmd: check
 -- exit: 1
 -- verdict: same
--- stderr-contains: error[type]: type 'Option' has no method 'compare'
--- stderr-contains: error[type]: type 'Result' has no method 'compare'
+-- stderr-contains: error[type]: type 'Option(_)' has no method 'compare'
+-- stderr-contains: error[type]: type 'Result(_, _)' has no method 'compare'
 -- stderr-contains: error[type]: type 'Map(_, _)' has no method 'compare'
 -- stderr-contains: error[type]: type 'time.Weekday' has no method 'nope'
 -- stderr-not-contains: undefined variable

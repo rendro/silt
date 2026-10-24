@@ -1,8 +1,8 @@
 -- cmd: check
 -- exit: 1
--- A type of a builtin module is no value (but json.Value): given to a
--- decoder as its type argument, the help says how a decoder decodes it,
--- and never names a spelling that is refused the same way.
+-- A type of a builtin module is a value, but no type argument of a
+-- decoder (but json.Value): given to one, the decoder refuses it, and the
+-- help says how a decoder decodes it where it decodes it at all.
 import json
 import time
 import toml
