@@ -12,7 +12,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use silt::builtins::registry::decoding::{Family, Leaf};
-use silt::builtins::registry::docs::{pages, render_page, signature_block};
+use silt::builtins::registry::docs::{pages, render_card, render_page, signature_block};
 use silt::builtins::registry::registry;
 
 #[test]
@@ -35,6 +35,26 @@ fn the_reference_pages_are_what_the_registry_renders() {
         "these pages of docs/stdlib/ differ from what the builtin registry renders: \
          {stale:?}. Run `SILT_BLESS=1 cargo nextest run --test meta stdlib_reference` \
          and review the diff."
+    );
+}
+
+/// The standard library part of `docs/language-card.md`, below its
+/// marker line, is what the builtin registry renders
+/// (`silt::builtins::registry::docs::render_card`); `SILT_BLESS=1`
+/// rewrites it.
+#[test]
+fn the_language_card_is_what_the_registry_renders() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("docs/language-card.md");
+    let card = std::fs::read_to_string(&path).expect("docs/language-card.md");
+    let rendered = render_card(&card).expect("docs/language-card.md has no marker line");
+    if rendered != card && std::env::var_os("SILT_BLESS").is_some() {
+        std::fs::write(&path, &rendered).expect("write the card");
+        return;
+    }
+    assert!(
+        rendered == card,
+        "docs/language-card.md differs from what the builtin registry renders. Run \
+         `SILT_BLESS=1 cargo nextest run --test meta language_card` and review the diff."
     );
 }
 

@@ -34,4 +34,5 @@ This guide is split into focused pages:
 
 ## Other Guides
 
+- [Language card](language-card.md) -- the syntax in brief and every builtin signature, on one page
 - [Concurrency](concurrency.md) -- CSP model, tasks, channels, select, fan-out patterns

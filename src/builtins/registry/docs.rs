@@ -854,6 +854,33 @@ pub fn render_page(page: &str) -> Result<String, Vec<String>> {
     Ok(text)
 }
 
+/// The line of the language card (`docs/language-card.md`) after which
+/// [`render_card`] writes the card from the registry.
+pub const CARD_MARKER: &str = "<!-- Generated from the builtin registry from here on: \
+     SILT_BLESS=1 cargo nextest run --test meta language_card -->";
+
+/// The language card `card` with its standard library written from the
+/// registry: the prose up to [`CARD_MARKER`] as it is, then the
+/// prelude's types and functions and each module's types, traits,
+/// functions and constants, one declaration a line, whether the cargo
+/// feature of a module is built or not. `None` when `card` has no
+/// marker line.
+pub fn render_card(card: &str) -> Option<String> {
+    let (prose, _) = card.split_once(CARD_MARKER)?;
+    let mut out = format!("{prose}{CARD_MARKER}\n");
+    out.push_str("\n### Prelude\n\n```\n");
+    out.push_str(&(prelude_lines().join("\n") + "\n```\n"));
+    for module in &registry().modules {
+        let heading = match module.feature {
+            Some(feature) => format!("{} (cargo feature `{feature}`)", module.name),
+            None => module.name.to_string(),
+        };
+        out.push_str(&format!("\n### {heading}\n\n```\n"));
+        out.push_str(&(module_lines(module).join("\n") + "\n```\n"));
+    }
+    Some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
