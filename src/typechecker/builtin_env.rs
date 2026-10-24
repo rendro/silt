@@ -110,44 +110,10 @@ fn module_of(qualified: &str) -> &str {
 
 // ── What the builtin scope is made of ───────────────────────────────
 
-/// What a use of `qualified`, a type of a builtin module that is no
-/// value (`time.DateTime`), as a value is told: only `json.Value` of a
-/// module's types is a value, and a decoder decodes such a type, where
-/// it decodes it at all, as the type of a record's field.
-pub(crate) fn module_type_is_no_value_help(qualified: &str) -> String {
-    let no_value = "only `json.Value` of a module's types can be given as a value";
-    let decoded = crate::builtins::registry::decoding::Leaf::ALL
-        .iter()
-        .any(|leaf| leaf.name() == qualified);
-    match decoded {
-        true => format!(
-            "{no_value}; a decoder decodes a `{qualified}` as the type of a record's field: \
-             `type R {{ at: {qualified} }}`"
-        ),
-        false => no_value.to_string(),
-    }
-}
-
-/// The same, for the bare `name` of `qualified` used as a value (not
-/// imported, or imported by its name: `import time.{ DateTime }`).
-pub(crate) fn bare_module_type_is_no_value_help(name: &str, qualified: &str) -> String {
-    format!(
-        "`{name}` is the type `{qualified}`, and {}",
-        module_type_is_no_value_help(qualified)
-    )
-}
-
-/// Whether `module.name` is a type of a builtin module that is no value
-/// (every one of them but `json.Value`).
-pub(crate) fn is_module_type_no_value(module: &str, name: &str) -> bool {
-    (module, name) != ("json", "Value")
-        && crate::defs::builtin_types()
-            .iter()
-            .any(|(n, m)| *n == name && *m == Some(module))
-}
-
 /// Bind the types that are values: the descriptors of the primitive and
-/// container types, and of `json.Value`.
+/// container types and of the opaque types, the prelude's (`Bytes`) and
+/// the modules' (`task.Handle`). (A declared type is bound with its
+/// declaration, `enter_registry`.)
 fn register_prelude(checker: &mut TypeChecker, env: &mut TypeEnv) {
     // A primitive type written as a value is its descriptor, of the type
     // `TypeOf(T)`, not a value of the type: `Int * 2` does not check.
@@ -194,16 +160,27 @@ fn register_prelude(checker: &mut TypeChecker, env: &mut TypeEnv) {
             },
         );
     }
-    // `json.Value` written as a value is its descriptor, which the json
-    // decoders take as their type argument. No other type of a module
-    // is a value.
-    env.define(
-        intern("json.Value"),
-        Scheme::mono(Type::type_of(Type::Generic(
-            TypeRef::builtin("Value"),
-            Vec::new(),
-        ))),
-    );
+    // An opaque type written as a value is its descriptor too, of any
+    // of its instances: `Bytes`, `task.Handle`.
+    let registry = crate::builtins::registry::registry();
+    let opaque = (crate::builtins::registry::PRELUDE_OPAQUE.iter())
+        .filter(|(name, _)| *name != crate::defs::TYPE_OF)
+        .map(|(name, arity)| (name.to_string(), *name, *arity))
+        .chain(registry.enabled_modules().flat_map(|m| {
+            (m.opaque.iter())
+                .map(move |(name, arity)| (format!("{}.{name}", m.name), *name, *arity))
+        }));
+    for (bound, name, arity) in opaque {
+        let (args, vars): (Vec<Type>, Vec<TyVar>) = (0..arity).map(|_| checker.fresh_tv()).unzip();
+        env.define(
+            intern(&bound),
+            Scheme {
+                vars,
+                preds: vec![],
+                ty: Type::type_of(Type::Generic(TypeRef::builtin(name), args)),
+            },
+        );
+    }
 }
 
 /// Enter the builtin registry: the prelude's enums and functions and,
@@ -261,12 +238,25 @@ fn enter_registry(checker: &mut TypeChecker, env: &mut TypeEnv) {
         }
     }
     // A declaration also binds its type as a value and stamps the impls
-    // a program's type derives. A builtin type is not a value, and which
-    // traits it derives is `register_builtin_trait_impls`'s to say.
+    // a program's type derives. Which traits a builtin type derives is
+    // `register_builtin_trait_impls`'s to say. A builtin type is a value
+    // as a program's type is, its descriptor (`d(Option)`,
+    // `d(time.Weekday)` for a `type a` parameter): one of the prelude by
+    // its name, one of a module as `module.Type`.
     let impls = checker.tables.trait_impl_set.clone();
     let mut as_values = TypeEnv::new();
     for td in &types {
         checker.register_type_decl(td, &mut as_values);
+        let module = (crate::defs::builtin_types().iter())
+            .find(|(name, _)| *name == resolve(td.name))
+            .and_then(|(_, module)| *module);
+        if let Some(scheme) = as_values.lookup(td.name) {
+            let bound = match module {
+                Some(module) => intern(&format!("{module}.{}", td.name)),
+                None => td.name,
+            };
+            env.define(bound, scheme.clone());
+        }
     }
     checker.tables.trait_impl_set = impls;
     // Each variant's scheme is the builtin scope's, as `Enum.Variant`:

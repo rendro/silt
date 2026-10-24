@@ -2547,13 +2547,6 @@ impl Resolver<'_> {
             )),
             None => {
                 let elsewhere = self.elsewhere(name);
-                let no_value = |(module, _): &(Symbol, Option<Symbol>)| {
-                    super::builtin_env::is_module_type_no_value(&resolve(*module), &name_str)
-                };
-                let no_value_module = elsewhere
-                    .first()
-                    .filter(|_| elsewhere.iter().all(no_value))
-                    .map(|(module, _)| *module);
                 // A trait of a module: it is imported by its name.
                 let trait_module = (elsewhere.first())
                     .filter(|(module, _)| {
@@ -2561,12 +2554,7 @@ impl Resolver<'_> {
                     })
                     .filter(|(module, _)| self.is_trait_of(*module, name))
                     .map(|(module, _)| *module);
-                if let Some(module) = no_value_module {
-                    Some(super::builtin_env::bare_module_type_is_no_value_help(
-                        &name_str,
-                        &format!("{module}.{name}"),
-                    ))
-                } else if let Some(module) = trait_module {
+                if let Some(module) = trait_module {
                     message = format!("trait '{name_str}' is not in scope");
                     Some(format!("import it: `import {module}.{{ {name} }}`"))
                 } else if !elsewhere.is_empty() {

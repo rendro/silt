@@ -19,8 +19,25 @@ fn the_builtin_scope_binds_the_prelude_and_the_registry_s_rows() {
     for name in ["HttpError.Timeout", "IntError.Other", "FloatError.Other"] {
         assert!(env.root.lookup(intern(name)).is_some(), "{name} is bound");
     }
-    // A builtin type is not a value.
+    // A builtin type is a value, its descriptor: one of a module through
+    // its module only, one of the prelude by its name.
     assert!(env.root.lookup(intern("Duration")).is_none());
+    for name in [
+        "time.Duration",
+        "json.Value",
+        "task.Handle",
+        "Option",
+        "Result",
+        "Bytes",
+    ] {
+        let scheme = env.root.lookup(intern(name));
+        assert!(
+            scheme.is_some_and(
+                |s| matches!(&s.ty, Type::Generic(t, _) if t.is_builtin(crate::defs::TYPE_OF))
+            ),
+            "{name} is a type value"
+        );
+    }
 }
 
 /// Each declared type of the registry has exactly the builtin traits its

@@ -1,0 +1,6 @@
+error[type]: `json.parse` cannot decode `time.Date`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, or a type with a `json.Decode` impl
+ --> json_value__a_module_s_other_types_are_no_decoder_argument.silt:8:27
+   |
+ 8 |   println(json.parse("1", time.Date))
+   |                           ^^^^^^^^^ `json.parse` cannot decode `time.Date`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, or a type with a `json.Decode` impl
+  = help: a decoder decodes a `time.Date` as the type of a record's field: `type R { at: time.Date }`

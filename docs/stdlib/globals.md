@@ -20,15 +20,21 @@ No import or qualification needed.
 | `Some` | `(a) -> Option(a)` | Construct a present Option |
 | `None` | `Option(a)` | The absent Option value (not a function) |
 
-Additionally, four **type descriptors** are in the global namespace for use with
-`json.parse_map` and similar type-directed APIs:
+A type written as a value is its **type descriptor**, for a `type a`
+parameter (`json.parse_map(text, Int)`, a function of your own) and for
+a trait method that makes a value (`Int.empty()`). The prelude's types
+need no import:
 
 | Name | Description |
 |------|-------------|
-| `Int` | Integer type descriptor |
-| `Float` | Float type descriptor |
-| `String` | String type descriptor |
-| `Bool` | Boolean type descriptor |
+| `Int`, `Float`, `String`, `Bool` | The primitive types |
+| `List`, `Map`, `Set`, `Channel` | The container types, of any element types |
+| `Option`, `Result` | The prelude's enums |
+| `Bytes` | Byte strings |
+
+A type of a builtin module is a value through its module, as its other
+members are (`time.Weekday`, `task.Handle`, `json.Value`), and a type of
+the program by its name.
 
 ## Variants of builtin modules
 
