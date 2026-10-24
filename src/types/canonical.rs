@@ -691,6 +691,8 @@ pub fn dispatch_type_for_value(val: &Value) -> TypeId {
         Value::Handle(_) => kinds.handle,
         Value::TcpListener(_) => kinds.tcp_listener,
         Value::TcpStream(_) => kinds.tcp_stream,
+        // (No method is found by a dictionary.)
+        Value::Dict(_) => kinds.unit,
     }
 }
 

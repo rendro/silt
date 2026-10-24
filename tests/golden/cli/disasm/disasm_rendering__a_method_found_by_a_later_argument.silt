@@ -1,8 +1,10 @@
 -- cmd: disasm
 -- A call through a trait whose argument of type Self is not the first,
--- on a bounded type variable: `CallMethod` finds the method by that
--- argument, which the disassembly names.
--- stdout-contains: TailCallMethod       0     2   ; "scale" of Scale, by argument 2
+-- on a bounded type variable: `CallDict` calls the method of the
+-- variable's dictionary (in the callee's slot, below the arguments)
+-- and checks the receiver at that argument, which the disassembly
+-- names.
+-- stdout-contains: TailCallDict         0     2   ; receiver: argument 2
 trait Scale {
   fn scale(by: Int, x: Self) -> Self
 }

@@ -159,6 +159,8 @@ fn main() {
             } => *to,
             other => panic!("expected a step to the supertrait, got {other:?}"),
         },
+        // (`Named` is the first of `Loud`'s supertraits.)
+        index: 0,
     };
     assert!(
         named
@@ -318,10 +320,11 @@ fn main() { println(Pr.pr(Holder)) }
 }
 
 /// A use of a definition inside the group it is checked with, where it
-/// has one type (its own body too), and a `let`'s closure used inside
-/// itself pass the evidence of their bounds from the user's own.
+/// has one type (its own body too), passes the evidence of its bounds
+/// from the user's own; a `let`'s closure used inside itself passes
+/// none.
 #[test]
-fn a_use_inside_its_group_or_itself_passes_the_users_bounds() {
+fn a_use_inside_its_group_passes_the_users_bounds() {
     let (found, bodies) = sites(
         r#"
 trait Greet { fn greet(self) -> String }
@@ -363,5 +366,6 @@ fn main() {
     };
     assert_eq!(param_of("pong"), Some(body(&bodies, "ping")), "{found:?}");
     assert_eq!(param_of("ping"), Some(body(&bodies, "pong")), "{found:?}");
-    assert!(param_of("go").is_some(), "{found:?}");
+    // (A closure used inside itself is the closure: it has them.)
+    assert!(param_of("go").is_none(), "{found:?}");
 }

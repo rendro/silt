@@ -77,13 +77,6 @@ pub(crate) struct Ledger {
     /// The predicates of earlier REPL inputs this one solved: each with
     /// the node of its evidence here.
     pub(super) late: Vec<(crate::evidence::Late, EvId)>,
-    /// The closure literals of the `let`s being checked, innermost last:
-    /// each with its name, the variable it is of inside itself and the
-    /// span of its value.
-    pub(super) defining: Vec<(Symbol, TyVar, Span)>,
-    /// The uses of a `let`'s closure inside itself, by the span of the
-    /// use: the span of the `let`'s value.
-    pub(super) self_refs: HashMap<Span, Span>,
     /// The bounds of the module's top-level definitions, by name, when
     /// the evidence is written.
     pub(super) tops: HashMap<Symbol, Vec<BoundKey>>,
@@ -120,6 +113,14 @@ impl TypeChecker {
             return;
         };
         if at.module != self.module {
+            // (Only a program trait's evidence is code to an input.)
+            let tr = match &node {
+                EvNode::Impl { tr, .. } | EvNode::Bound { tr, .. } | EvNode::Structural(tr) => *tr,
+                EvNode::Pending => return,
+            };
+            if !has_dictionary(tr) {
+                return;
+            }
             let id = self.ev_new(node);
             let late = crate::evidence::Late {
                 cell: at.module,
@@ -325,9 +326,10 @@ impl TypeChecker {
             }
             for (k, (_, t, a)) in mine() {
                 if let Some(path) = self.super_path(*t, a, tr, args) {
-                    return path.into_iter().fold(param(k), |of, to| Evidence::Super {
+                    return (path.into_iter()).fold(param(k), |of, (to, index)| Evidence::Super {
                         of: Box::new(of),
                         to: to.id,
+                        index,
                     });
                 }
             }
@@ -336,16 +338,17 @@ impl TypeChecker {
     }
 
     /// The supertraits from `from(from_args)` to `to(to_args)`, one step
-    /// at a time, if `to` is one of `from`'s.
+    /// at a time, if `to` is one of `from`'s: each with its place among
+    /// the supertraits of the trait before it.
     fn super_path(
         &self,
         from: TraitKey,
         from_args: &[Type],
         to: TraitKey,
         to_args: &[Type],
-    ) -> Option<Vec<TraitKey>> {
+    ) -> Option<Vec<(TraitKey, u16)>> {
         let mut seen: Vec<TraitKey> = vec![from];
-        let mut next: Vec<(TraitKey, Vec<Type>, Vec<TraitKey>)> =
+        let mut next: Vec<(TraitKey, Vec<Type>, Vec<(TraitKey, u16)>)> =
             vec![(from, from_args.to_vec(), Vec::new())];
         while !next.is_empty() {
             let mut later = Vec::new();
@@ -361,7 +364,7 @@ impl TypeChecker {
                         _ => Vec::new(),
                     };
                     let mut path = path.clone();
-                    path.push(*sup);
+                    path.push((*sup, u16::try_from(i).unwrap_or(u16::MAX)));
                     if *sup == to && self.bound_args_agree(&sup_args, to_args) {
                         return Some(path);
                     }
@@ -515,8 +518,20 @@ impl TypeChecker {
 
     /// `write_evidence`, the module's top-level bounds being known.
     fn write_evidence_of(&self, program: &mut Program, env: &TypeEnv) {
+        use crate::evidence::{Layout, Shape};
         program.late_evidence = (self.ev.late.iter())
             .map(|(late, id)| (*late, self.ev_final(*id, &[], 0)))
+            .collect();
+        let count = |n: usize| u16::try_from(n).unwrap_or(u16::MAX);
+        let scheme = |n: usize| Shape {
+            layout: Layout::Scheme,
+            header: 0,
+            own: count(n),
+        };
+        // (A `let` inside a body that the checker generalises over a
+        // bound.)
+        let mut owners: Vec<(Span, Shape)> = (self.ev.lets.iter())
+            .map(|(tag, bounds)| (*tag, scheme(bounds.len())))
             .collect();
         for decl in &mut program.decls {
             match decl {
@@ -526,6 +541,9 @@ impl TypeChecker {
                         .map(|scheme| self.trait_bounds(&scheme.preds))
                         .unwrap_or_default();
                     let tag = f.body.span;
+                    if !bounds.is_empty() {
+                        owners.push((tag, scheme(bounds.len())));
+                    }
                     self.evidence_in(&mut f.body, &mut Vec::new(), tag, bounds);
                 }
                 Decl::Let { pattern, value, .. } => {
@@ -537,11 +555,29 @@ impl TypeChecker {
                         _ => Vec::new(),
                     };
                     let tag = value.span;
+                    if !bounds.is_empty() {
+                        owners.push((tag, scheme(bounds.len())));
+                    }
                     self.evidence_in(value, &mut Vec::new(), tag, bounds);
                 }
                 Decl::TraitImpl(ti) => {
                     if let (Some(target), Some(tr)) = (self.impl_target(ti), self.impl_trait(ti)) {
                         ti.evidence = self.impl_evidence(tr, target);
+                        // A method of a program trait's impl takes the
+                        // impl's dictionary, then those of the bounds the
+                        // trait declares for it.
+                        if has_dictionary(tr) {
+                            for method in &ti.methods {
+                                let (header, own) =
+                                    self.method_parts(tr, target, method.name, true);
+                                let shape = Shape {
+                                    layout: Layout::ImplMethod,
+                                    header: count(header),
+                                    own: count(own),
+                                };
+                                owners.push((method.body.span, shape));
+                            }
+                        }
                     }
                     for method in &mut ti.methods {
                         let tag = method.body.span;
@@ -561,9 +597,16 @@ impl TypeChecker {
                         .collect();
                     for method in t.methods.iter_mut().filter(|m| !m.is_signature_only) {
                         let mut bounds = vec![(info.self_var, tr, own_args.clone())];
-                        if let Some(preds) = info.method_bounds.get(&method.name) {
-                            bounds.extend(self.trait_bounds(preds));
-                        }
+                        let own = (info.method_bounds.get(&method.name))
+                            .map(|preds| self.trait_bounds(preds))
+                            .unwrap_or_default();
+                        let shape = Shape {
+                            layout: Layout::Default,
+                            header: 0,
+                            own: count(own.len()),
+                        };
+                        owners.push((method.body.span, shape));
+                        bounds.extend(own);
                         bounds.extend(wheres.iter().cloned());
                         let tag = method.body.span;
                         self.evidence_in(&mut method.body, &mut Vec::new(), tag, bounds);
@@ -572,36 +615,30 @@ impl TypeChecker {
                 _ => {}
             }
         }
+        program.dict_owners = owners;
     }
 
     /// The evidence of the use `expr` of the name `name`, a definition
     /// with bounds that owes none where it is used: a top-level
     /// definition of the module used in the group it is checked with (in
-    /// its own body too), where it has one type; a `let`'s closure used
-    /// inside itself. Each bound is the user's, as the definitions of a
-    /// group share their variables (the bounds of the group are on each).
+    /// its own body too), where it has one type. Each bound is the
+    /// user's, as the definitions of a group share their variables (the
+    /// bounds of the group are on each). (A `let`'s closure used inside
+    /// itself is the closure, which has its dictionaries.)
     fn unowed_bounds(&self, expr: &Expr, name: Symbol, owners: &[Owner]) -> Option<Vec<Evidence>> {
-        let bounds: Vec<BoundKey> = match expr.res {
-            Some(crate::defs::Res::Def(id)) => {
-                let def = self.def(id)?;
-                if def.module != self.module
-                    || !matches!(
-                        def.kind,
-                        crate::defs::DefKind::Fn | crate::defs::DefKind::Let
-                    )
-                {
-                    return None;
-                }
-                self.ev.tops.get(&name)?.clone()
-            }
-            _ => {
-                let tag = self.ev.self_refs.get(&expr.span)?;
-                (owners.iter())
-                    .find(|owner| owner.tag == *tag)?
-                    .bounds
-                    .clone()
-            }
+        let Some(crate::defs::Res::Def(id)) = expr.res else {
+            return None;
         };
+        let def = self.def(id)?;
+        if def.module != self.module
+            || !matches!(
+                def.kind,
+                crate::defs::DefKind::Fn | crate::defs::DefKind::Let
+            )
+        {
+            return None;
+        }
+        let bounds = self.ev.tops.get(&name)?;
         Some(
             (bounds.iter())
                 .map(|(var, tr, args)| self.bound_evidence(*var, *tr, args, owners))

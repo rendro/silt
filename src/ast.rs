@@ -945,6 +945,10 @@ pub struct Program {
     /// to it (`crate::evidence::Evidence::Pending`), which it decided;
     /// written by the typechecker.
     pub late_evidence: Vec<(crate::evidence::Late, crate::evidence::Evidence)>,
+    /// The definitions that take dictionaries, by the span that names
+    /// them (`crate::evidence::Evidence::Param`), with what they take;
+    /// written by the typechecker.
+    pub dict_owners: Vec<(Span, crate::evidence::Shape)>,
 }
 
 /// What the parser saw of statements that the tree does not hold.

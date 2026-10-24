@@ -1,0 +1,24 @@
+-- A function with bounds that calls itself in tail position with the
+-- dictionaries it was passed keeps them where they are; one that passes
+-- them in another order, or others, passes them. Each runs in one frame.
+trait Score { fn score(self) -> Int }
+type P { n: Int }
+type Q { n: Int }
+trait Score for P { fn score(self) -> Int { self.n } }
+trait Score for Q { fn score(self) -> Int { self.n * 10 } }
+fn total(x: a, n: Int, acc: Int) -> Int where a: Score {
+  match n {
+    0 -> acc
+    _ -> total(x, n - 1, acc + Score.score(x))
+  }
+}
+fn swap(x: a, y: b, n: Int, acc: Int) -> Int where a: Score, b: Score {
+  match n {
+    0 -> acc
+    _ -> swap(y, x, n - 1, acc + Score.score(x))
+  }
+}
+fn main() {
+  println(total(P { n: 1 }, 200000, 0))
+  println(swap(P { n: 1 }, Q { n: 1 }, 200001, 0))
+}

@@ -72,6 +72,7 @@ fn rank(value: &Value) -> u8 {
         Value::TypeDescriptor(_) => 19,
         Value::PrimitiveDescriptor(_) => 20,
         Value::HostFn(_) => 21,
+        Value::Dict(_) => 22,
     }
 }
 
@@ -136,7 +137,20 @@ fn cmp_other_heads(a: &Value, b: &Value) -> Ordering {
         (Value::VariantConstructor(a), Value::VariantConstructor(b)) => a.cmp(b),
         (Value::TypeDescriptor(a), Value::TypeDescriptor(b)) => a.id.cmp(&b.id),
         (Value::PrimitiveDescriptor(a), Value::PrimitiveDescriptor(b)) => a.cmp(b),
+        // (No program compares a dictionary: which impl, then where.)
+        (Value::Dict(a), Value::Dict(b)) => dict_key(a).cmp(&dict_key(b)),
         _ => rank(a).cmp(&rank(b)),
+    }
+}
+
+/// What two dictionaries are ordered by: which impl, then which one.
+/// (No program compares a dictionary.)
+fn dict_key(dict: &crate::bytecode::dict::Dict) -> (u32, usize) {
+    match dict {
+        crate::bytecode::dict::Dict::Of(index) => (*index, 0),
+        crate::bytecode::dict::Dict::Built(built) => {
+            (built.template.index, Arc::as_ptr(built) as usize)
+        }
     }
 }
 
@@ -192,6 +206,7 @@ fn hash_head<H: Hasher>(value: &Value, state: &mut H) {
         Value::VariantConstructor(tag) => tag.hash(state),
         Value::TypeDescriptor(ty) => ty.id.hash(state),
         Value::PrimitiveDescriptor(name) => name.hash(state),
+        Value::Dict(dict) => dict_key(dict).hash(state),
     }
 }
 

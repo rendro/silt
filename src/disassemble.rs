@@ -102,7 +102,8 @@ fn disassemble_instruction(
         | Instr::ListConcat
         | Instr::QuestionMark
         | Instr::Panic
-        | Instr::GetClosure => format!("{offset:04}  {name}"),
+        | Instr::GetClosure
+        | Instr::FrameDict => format!("{offset:04}  {name}"),
 
         // ── A count, an index or a slot ───────────────────────
         Instr::GetUpvalue { index: n }
@@ -123,7 +124,33 @@ fn disassemble_instruction(
         | Instr::Slide { slot: n }
         | Instr::MakeList { count: n }
         | Instr::MakeMap { pairs: n }
-        | Instr::MakeSet { count: n } => with_number(n),
+        | Instr::MakeSet { count: n }
+        | Instr::DictMethod { method: n }
+        | Instr::DictSub { k: n }
+        | Instr::SuperDict { index: n }
+        | Instr::WhereDict { index: n }
+        | Instr::Bind { n } => with_number(n),
+
+        // MakeDict: the impl, and how many dictionaries its header has.
+        Instr::MakeDict { k, n } => with_constant_and_count(k, n),
+        // CallDict: the method's place in its trait, the arguments (the
+        // dictionaries among them), and the receiver.
+        Instr::CallChecked { argc, at, template }
+        | Instr::TailCallChecked { argc, at, template } => format!(
+            "{offset:04}  {name:<20} {argc:<5} {template:<3} ; receiver: argument {}",
+            usize::from(at) + 1
+        ),
+        Instr::TailCallKeep { argc, keep } => {
+            format!("{offset:04}  {name:<20} {argc:<5} {keep:<3} ; keeps {keep}")
+        }
+        Instr::CallDict { method, argc, at } | Instr::TailCallDict { method, argc, at } => match at
+        {
+            u8::MAX => format!("{offset:04}  {name:<20} {method:<5} {argc}"),
+            at => format!(
+                "{offset:04}  {name:<20} {method:<5} {argc:<3} ; receiver: argument {}",
+                usize::from(at) + 1
+            ),
+        },
 
         // Recur: the bindings, the first of their slots, and the jump
         // back.
@@ -282,7 +309,7 @@ pub fn disassemble_function(func: &Function, globals: &Globals) -> String {
     let header = format!(
         "{} (arity={}, upvalues={})",
         func.name(),
-        func.arity(),
+        func.arity() - func.hidden(),
         func.upvalue_count()
     );
     let mut output = disassemble_chunk(func.chunk(), globals, &header);

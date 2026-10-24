@@ -18,6 +18,7 @@ use crate::source::Span;
 use crate::typeinfo::TypeInfo;
 use crate::value::Value;
 
+pub mod dict;
 pub mod emit;
 pub mod ops;
 pub mod verify;
@@ -132,6 +133,20 @@ pub struct Globals {
     /// each with its name.
     traits: Rows<(TraitId, String)>,
     trait_indexes: Layers<TraitId, u16>,
+    /// The methods of each trait a program declares, in the order it
+    /// declares them, each with the place of its parameter `self` (none
+    /// for a method that takes no value of the type): a dictionary's
+    /// methods are in this order.
+    trait_methods: Layers<TraitId, Arc<[(String, Option<u8>)]>>,
+    /// The dictionary template of each impl of a trait a program
+    /// declares (`dict`).
+    templates: Layers<(TraitId, TypeId), Arc<dict::Template>>,
+    /// The templates by their places (`dict::Template::index`): what a
+    /// dictionary of an impl whose header asks nothing names.
+    template_rows: Rows<Arc<dict::Template>>,
+    /// The slot of each dictionary a REPL entry left to a later one
+    /// (`crate::evidence::Late`), which that one fills.
+    pending: Layers<crate::evidence::Late, u16>,
     /// In a debug build, what each impl proves of its type from its
     /// header (`crate::vm::evidence`), and the name of its type, which a
     /// message of the check writes.
@@ -166,11 +181,74 @@ impl Globals {
             shown: before.shown.clone(),
             encoded: before.encoded.clone(),
             decoded: before.decoded.clone(),
+            trait_methods: before.trait_methods.clone(),
+            templates: before.templates.clone(),
+            // (Code of the entry may still name one.)
+            template_rows: self.template_rows.clone(),
+            // (A slot a later entry fills stays: what it names of the
+            // earlier entry's code is still there.)
+            pending: self.pending.clone(),
             #[cfg(debug_assertions)]
             impls: before.impls.clone(),
             #[cfg(debug_assertions)]
             impl_types: before.impl_types.clone(),
         }
+    }
+
+    /// The methods of the trait `t` a program declares, in order, each
+    /// with the place of its `self`.
+    pub fn note_trait_methods(&mut self, t: TraitId, methods: Vec<(String, Option<u8>)>) {
+        if self.trait_methods.get(&t).is_none() {
+            self.trait_methods.insert(t, methods.into());
+        }
+    }
+
+    /// The methods of the trait `t`, if a program declares it.
+    pub fn trait_methods(&self, t: TraitId) -> Option<&[(String, Option<u8>)]> {
+        self.trait_methods.get(&t).map(|methods| &methods[..])
+    }
+
+    /// The place of the method `method` among those of the trait `t`,
+    /// with the place of its `self`.
+    pub fn trait_method(&self, t: TraitId, method: &str) -> Option<(usize, Option<u8>)> {
+        let methods = self.trait_methods(t)?;
+        let k = methods.iter().position(|(name, _)| name == method)?;
+        Some((k, methods[k].1))
+    }
+
+    /// The dictionary template of the impl of `t` for `ty`.
+    pub fn template(&self, t: TraitId, ty: TypeId) -> Option<&Arc<dict::Template>> {
+        self.templates.get(&(t, ty))
+    }
+
+    /// Enter the dictionary template of the impl of `t` for `ty`.
+    pub fn add_template(&mut self, template: Arc<dict::Template>) {
+        let key = (template.tr, template.ty);
+        if self.templates.get(&key).is_none() {
+            self.template_rows.push(template.clone());
+            self.templates.insert(key, template);
+        }
+    }
+
+    /// The place the template entered next takes.
+    pub fn next_template_index(&self) -> u32 {
+        u32::try_from(self.template_rows.len()).unwrap_or(u32::MAX)
+    }
+
+    /// The template at the place `index`.
+    pub fn template_at(&self, index: u32) -> Option<&Arc<dict::Template>> {
+        self.template_rows.get(index as usize)
+    }
+
+    /// The slot of the dictionary `late` a REPL entry left to a later
+    /// one: a new one the first time.
+    pub fn pending_slot(&mut self, late: crate::evidence::Late) -> Option<u16> {
+        if let Some(slot) = self.pending.get(&late) {
+            return Some(*slot);
+        }
+        let slot = self.add(format!("<pending dictionary {}>", late.id))?;
+        self.pending.insert(late, slot);
+        Some(slot)
     }
 
     /// What the impl of `t` for the type `ty`, named `name`, proves of
@@ -687,6 +765,14 @@ pub struct Function {
     upvalue_count: u8,
     /// The compiled bytecode.
     chunk: Chunk,
+    /// How many of its parameters, the first, are hidden: the
+    /// dictionaries of a definition with bounds (`dict`). The program
+    /// wrote the others.
+    hidden: u8,
+    /// Whether it is a method of an impl of a trait a program declares,
+    /// whose dictionary a call leaves in the slot of the callee
+    /// (`Instr::FrameDict`).
+    dict_slot: bool,
     /// In a debug build, the trait evidence of the function's code
     /// (`crate::vm::evidence`): none for code that passes none on and
     /// is no definition with bounds.
@@ -717,6 +803,17 @@ impl Function {
     /// The number of parameters.
     pub fn arity(&self) -> usize {
         usize::from(self.arity)
+    }
+
+    /// How many of its first parameters are hidden dictionaries.
+    pub fn hidden(&self) -> usize {
+        usize::from(self.hidden)
+    }
+
+    /// Whether a call leaves its dictionary in the slot of the callee:
+    /// a method of an impl of a trait a program declares.
+    pub fn dict_slot(&self) -> bool {
+        self.dict_slot
     }
 
     /// The number of upvalues the function captures.
@@ -754,6 +851,8 @@ impl Function {
                 spans: Vec::new(),
                 constant_dedup: HashMap::new(),
             },
+            hidden: 0,
+            dict_slot: false,
             #[cfg(debug_assertions)]
             evidence: None,
         }
@@ -786,6 +885,9 @@ pub(crate) fn call_global_script(slot: u16, name: &str) -> Function {
 pub struct VmClosure {
     pub function: Arc<Function>,
     pub upvalues: Vec<Value>,
+    /// What a call of it is given before its arguments: the dictionaries
+    /// of a definition with bounds used as a value (`Instr::Bind`).
+    pub bound: Box<[Value]>,
     /// In a debug build, the trait evidence the closure's body sees
     /// (`crate::vm::evidence`).
     #[cfg(debug_assertions)]
@@ -798,6 +900,7 @@ impl VmClosure {
         VmClosure {
             function,
             upvalues,
+            bound: Box::default(),
             #[cfg(debug_assertions)]
             ev: None,
         }

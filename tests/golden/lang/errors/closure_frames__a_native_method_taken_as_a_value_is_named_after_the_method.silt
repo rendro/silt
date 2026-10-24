@@ -1,7 +1,7 @@
 -- exit: 1
--- A trait's method taken as a value where the impl is found when it
--- runs is a frame under the method's name, as a written method is: the
--- program wrote no closure there.
+-- A trait's method taken as a value where the impl is not known where
+-- it is written is the method of the impl the dictionary names: it has
+-- no frame of its own, as the program wrote no closure there.
 import list
 
 type Inner {
