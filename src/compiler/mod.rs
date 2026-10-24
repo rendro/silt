@@ -2620,7 +2620,7 @@ impl<'a> Compiler<'a> {
     fn variant_value(&self, expr: &Expr) -> Option<Value> {
         let tag = self.variant_tag(Some(expr.res?))?;
         Some(match tag.arity() {
-            0 => Value::variant(tag, Vec::new()),
+            0 => Value::variant(tag, []),
             _ => Value::VariantConstructor(tag),
         })
     }

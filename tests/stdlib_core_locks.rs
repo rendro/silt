@@ -32,7 +32,7 @@ fn test_option_map_some_applies_callback() {
 import option
 fn main() { option.map(Some(5), { n -> n * 2 }) }
     "#);
-    assert_eq!(result, Value::variant(bv::SOME, vec![Value::Int(10)]));
+    assert_eq!(result, Value::variant(bv::SOME, [Value::Int(10)]));
 }
 
 #[test]
@@ -43,7 +43,7 @@ fn test_option_map_none_propagates() {
 import option
 fn main() { option.map(None, { n -> n * 2 }) }
     "#);
-    assert_eq!(result, Value::variant(bv::NONE, Vec::new()));
+    assert_eq!(result, Value::variant(bv::NONE, []));
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -58,7 +58,7 @@ fn test_option_to_result_some_becomes_ok() {
 import option
 fn main() { option.to_result(Some(42), "missing") }
     "#);
-    assert_eq!(result, Value::variant(bv::OK, vec![Value::Int(42)]));
+    assert_eq!(result, Value::variant(bv::OK, [Value::Int(42)]));
 }
 
 #[test]
@@ -71,7 +71,7 @@ fn main() { option.to_result(None, "missing") }
     "#);
     assert_eq!(
         result,
-        Value::variant(bv::ERR, vec![Value::String("missing".into())])
+        Value::variant(bv::ERR, [Value::String("missing".into())])
     );
 }
 
@@ -89,7 +89,7 @@ fn test_option_flat_map_some_applies_callback() {
 import option
 fn main() { option.flat_map(Some(3), { n -> Some(n + 10) }) }
     "#);
-    assert_eq!(result, Value::variant(bv::SOME, vec![Value::Int(13)]));
+    assert_eq!(result, Value::variant(bv::SOME, [Value::Int(13)]));
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -130,7 +130,7 @@ fn test_result_flat_map_ok_applies_callback() {
 import result
 fn main() { result.flat_map(Ok(4), { n -> Ok(n * n) }) }
     "#);
-    assert_eq!(result, Value::variant(bv::OK, vec![Value::Int(16)]));
+    assert_eq!(result, Value::variant(bv::OK, [Value::Int(16)]));
 }
 
 #[test]
@@ -143,7 +143,7 @@ fn main() { result.flat_map(Err("fail"), { n -> Ok(n * n) }) }
     "#);
     assert_eq!(
         result,
-        Value::variant(bv::ERR, vec![Value::String("fail".into())])
+        Value::variant(bv::ERR, [Value::String("fail".into())])
     );
 }
 
@@ -160,7 +160,7 @@ fn test_result_map_err_on_err_applies_callback() {
 import result
 fn main() { result.map_err(Err(3), { e -> e + 100 }) }
     "#);
-    assert_eq!(result, Value::variant(bv::ERR, vec![Value::Int(103)]));
+    assert_eq!(result, Value::variant(bv::ERR, [Value::Int(103)]));
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -176,7 +176,7 @@ fn test_result_map_on_ok_applies_callback() {
 import result
 fn main() { result.map(Ok(6), { v -> v * 7 }) }
     "#);
-    assert_eq!(result, Value::variant(bv::OK, vec![Value::Int(42)]));
+    assert_eq!(result, Value::variant(bv::OK, [Value::Int(42)]));
 }
 
 // ════════════════════════════════════════════════════════════════════

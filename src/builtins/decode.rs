@@ -660,18 +660,17 @@ impl Error {
         let [mismatch, missing, other] = rules.errors;
         let string = |s: std::string::String| Value::String(s.into());
         match self {
-            Error::TypeMismatch(expected, actual) => Value::variant(
-                mismatch,
-                vec![Value::String(expected.into()), string(actual)],
-            ),
-            Error::MissingField(path) => Value::variant(missing, vec![string(path)]),
-            Error::Other(message) => Value::variant(other, vec![string(message)]),
+            Error::TypeMismatch(expected, actual) => {
+                Value::variant(mismatch, [Value::String(expected.into()), string(actual)])
+            }
+            Error::MissingField(path) => Value::variant(missing, [string(path)]),
+            Error::Other(message) => Value::variant(other, [string(message)]),
             Error::Given(error) => error,
             // (Only a record's field holds such a type, and `record`
             // names it: this is the fallback.)
             Error::Unsupported(declared) => Value::variant(
                 other,
-                vec![string(format!(
+                [string(format!(
                     "a value of type {declared} cannot be decoded"
                 ))],
             ),
@@ -683,8 +682,8 @@ impl Error {
 /// `rules`.
 pub(crate) fn result(rules: &Rules, decoded: Result<Value, Error>) -> Value {
     match decoded {
-        Ok(value) => Value::variant(bv::OK, vec![value]),
-        Err(e) => Value::variant(bv::ERR, vec![e.variant(rules)]),
+        Ok(value) => Value::variant(bv::OK, [value]),
+        Err(e) => Value::variant(bv::ERR, [e.variant(rules)]),
     }
 }
 
@@ -803,7 +802,7 @@ pub(crate) fn record<D: Document>(
                 e => e,
             })?,
             None => match field {
-                FieldType::Option(_) => Value::variant(bv::NONE, Vec::new()),
+                FieldType::Option(_) => Value::variant(bv::NONE, []),
                 _ => return Err(Error::MissingField(at.to_string())),
             },
         });
@@ -916,8 +915,8 @@ pub(crate) fn value<D: Document>(
         // (TOML has no null: a key it leaves out is a `None`, which
         // `record` decodes.)
         FieldType::Option(inner) => match node {
-            Node::Null => Ok(Value::variant(bv::NONE, Vec::new())),
-            _ => Ok(Value::variant(bv::SOME, vec![value(rt, doc, inner, at)?])),
+            Node::Null => Ok(Value::variant(bv::NONE, [])),
+            _ => Ok(Value::variant(bv::SOME, [value(rt, doc, inner, at)?])),
         },
         FieldType::Map(inner) => match node {
             Node::Table(table) => {
@@ -1027,7 +1026,7 @@ pub(crate) fn variant<D: Document>(
                 );
                 return Err(Error::other(message, at));
             }
-            return Ok(Value::variant(tag, Vec::new()));
+            return Ok(Value::variant(tag, []));
         }
         Node::Table(table) => table,
         _ => return Err(Error::mismatch(D::RULES.variant, doc.kind(), at)),
@@ -1087,7 +1086,7 @@ fn json_part<D: Document>(doc: &D, at: &At) -> Result<Value, Error> {
             for (index, item) in items.iter().enumerate() {
                 values.push(json_part(item, &at.index(index))?);
             }
-            Value::variant(bv::JSON_ARRAY, vec![Value::list(values)])
+            Value::variant(bv::JSON_ARRAY, [Value::list(values)])
         }
         Node::Table(table) => {
             let entries = D::entries(table);
@@ -1095,7 +1094,7 @@ fn json_part<D: Document>(doc: &D, at: &At) -> Result<Value, Error> {
             for (key, item) in entries {
                 members.push((Value::String(key.into()), json_part(item, &at.key(key))?));
             }
-            Value::variant(bv::JSON_OBJECT, vec![Value::map(members)])
+            Value::variant(bv::JSON_OBJECT, [Value::map(members)])
         }
         _ => json_value(doc),
     })
@@ -1105,24 +1104,24 @@ fn json_part<D: Document>(doc: &D, at: &At) -> Result<Value, Error> {
 /// as one, as for an `Int` field, and a `Float` otherwise.
 pub(crate) fn json_value<D: Document>(doc: &D) -> Value {
     match doc.node() {
-        Node::Null => Value::variant(bv::JSON_NULL, Vec::new()),
-        Node::Bool(b) => Value::variant(bv::JSON_BOOL, vec![Value::Bool(b)]),
-        Node::Int(n) => Value::variant(bv::JSON_INT, vec![Value::Int(n)]),
+        Node::Null => Value::variant(bv::JSON_NULL, []),
+        Node::Bool(b) => Value::variant(bv::JSON_BOOL, [Value::Bool(b)]),
+        Node::Int(n) => Value::variant(bv::JSON_INT, [Value::Int(n)]),
         Node::Float(f) => match Float::new(f) {
-            Some(f) => Value::variant(bv::JSON_FLOAT, vec![Value::Float(f)]),
+            Some(f) => Value::variant(bv::JSON_FLOAT, [Value::Float(f)]),
             // (A document has no NaN.)
-            None => Value::variant(bv::JSON_NULL, Vec::new()),
+            None => Value::variant(bv::JSON_NULL, []),
         },
-        Node::String(s) => Value::variant(bv::JSON_STRING, vec![Value::String(s.into())]),
+        Node::String(s) => Value::variant(bv::JSON_STRING, [Value::String(s.into())]),
         // (A format with such literals decodes no `json.Value`.)
-        Node::Datetime(s) => Value::variant(bv::JSON_STRING, vec![Value::String(s.into())]),
+        Node::Datetime(s) => Value::variant(bv::JSON_STRING, [Value::String(s.into())]),
         Node::Array(items) => Value::variant(
             bv::JSON_ARRAY,
-            vec![Value::list(items.iter().map(json_value).collect())],
+            [Value::list(items.iter().map(json_value).collect())],
         ),
         Node::Table(table) => Value::variant(
             bv::JSON_OBJECT,
-            vec![Value::map(D::entries(table).map(|(key, item)| {
+            [Value::map(D::entries(table).map(|(key, item)| {
                 (Value::String(key.into()), json_value(item))
             }))],
         ),

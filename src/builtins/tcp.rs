@@ -32,12 +32,12 @@ use crate::vm::{Leave, Step, Vm, VmError};
 pub(crate) fn tcp_timeout_err(failure: crate::vm::IoFailure<'_>) -> Value {
     use crate::vm::IoFailure;
     let error = match failure {
-        IoFailure::Timeout(_) => Value::variant(bv::TCP_TIMEOUT, vec![]),
+        IoFailure::Timeout(_) => Value::variant(bv::TCP_TIMEOUT, []),
         IoFailure::Panicked(why) | IoFailure::Refused(why) => {
-            Value::variant(bv::TCP_OTHER, vec![Value::String(why.into())])
+            Value::variant(bv::TCP_OTHER, [Value::String(why.into())])
         }
     };
-    Value::variant(bv::ERR, vec![error])
+    Value::variant(bv::ERR, [error])
 }
 
 /// What `TcpError`'s `message` says of the variant `tag` with `fields`:
@@ -101,7 +101,7 @@ mod tls {
             let shut = shutter.clone();
             vm.io("tcp", tcp_timeout_err, Leave::closes(move || shut.shut()), move |_| {
                 match do_connect_tls(&addr, &hostname, next_id, &shutter) {
-                    Ok(handle) => Value::variant(bv::OK, vec![Value::TcpStream(handle)]),
+                    Ok(handle) => Value::variant(bv::OK, [Value::TcpStream(handle)]),
                     Err(NoTls::Connection(e)) => tcp_io_err(Doing::Connecting, &e),
                     Err(NoTls::Tls(e)) => tls_err(e),
                 }
@@ -169,7 +169,7 @@ mod tls {
     fn tls_err(why: impl Into<Arc<str>>) -> Value {
         Value::variant(
             bv::ERR,
-            vec![Value::variant(bv::TCP_TLS, vec![Value::String(why.into())])],
+            [Value::variant(bv::TCP_TLS, [Value::String(why.into())])],
         )
     }
 
@@ -224,7 +224,7 @@ mod tls {
                     })
                 });
                 match wrapped {
-                    Ok(handle) => Value::variant(bv::OK, vec![Value::TcpStream(handle)]),
+                    Ok(handle) => Value::variant(bv::OK, [Value::TcpStream(handle)]),
                     Err(why) => {
                         let _ = socket.shutdown(std::net::Shutdown::Both);
                         tls_err(why)
@@ -408,7 +408,7 @@ pub(crate) fn tcp_io_err(doing: Doing, err: &std::io::Error) -> Value {
     use std::io::ErrorKind;
     let reason = || vec![Value::String(err.to_string().into())];
     let variant = match (err.kind(), doing) {
-        (ErrorKind::TimedOut | ErrorKind::WouldBlock, _) => Value::variant(bv::TCP_TIMEOUT, vec![]),
+        (ErrorKind::TimedOut | ErrorKind::WouldBlock, _) => Value::variant(bv::TCP_TIMEOUT, []),
         (_, Doing::Connecting) => Value::variant(bv::TCP_CONNECT, reason()),
         (_, Doing::Binding) => Value::variant(bv::TCP_BIND, reason()),
         (
@@ -418,10 +418,10 @@ pub(crate) fn tcp_io_err(doing: Doing, err: &std::io::Error) -> Value {
             | ErrorKind::NotConnected
             | ErrorKind::UnexpectedEof,
             Doing::Using,
-        ) => Value::variant(bv::TCP_CLOSED, vec![]),
+        ) => Value::variant(bv::TCP_CLOSED, []),
         (_, Doing::Using) => Value::variant(bv::TCP_OTHER, reason()),
     };
-    Value::variant(bv::ERR, vec![variant])
+    Value::variant(bv::ERR, [variant])
 }
 
 /// Build `Err(Other(msg))` for string-form failures (TLS stringly
@@ -429,13 +429,13 @@ pub(crate) fn tcp_io_err(doing: Doing, err: &std::io::Error) -> Value {
 fn err(s: impl Into<Arc<str>>) -> Value {
     Value::variant(
         bv::ERR,
-        vec![Value::variant(bv::TCP_OTHER, vec![Value::String(s.into())])],
+        [Value::variant(bv::TCP_OTHER, [Value::String(s.into())])],
     )
 }
 
 /// Build `Err(Closed)`.
 fn err_closed() -> Value {
-    Value::variant(bv::ERR, vec![Value::variant(bv::TCP_CLOSED, vec![])])
+    Value::variant(bv::ERR, [Value::variant(bv::TCP_CLOSED, [])])
 }
 
 /// What an accept on a listener that an `http.serve` has to itself
@@ -489,7 +489,7 @@ pub(crate) fn accept_op(
         match accepting.accept(wanted, server) {
             Ok(Accepted::Conn(stream)) => Value::variant(
                 bv::OK,
-                vec![Value::TcpStream(TcpStreamHandle::plain(next_id, stream))],
+                [Value::TcpStream(TcpStreamHandle::plain(next_id, stream))],
             ),
             // Given up: nobody reads the value, or a task that was
             // cancelled, or whose time is over, in the steps it has
@@ -607,7 +607,7 @@ builtins! {
             match TcpStream::connect(&addr) {
                 Ok(stream) => Value::variant(
                     bv::OK,
-                    vec![Value::TcpStream(TcpStreamHandle::plain(next_id, stream))],
+                    [Value::TcpStream(TcpStreamHandle::plain(next_id, stream))],
                 ),
                 Err(e) => tcp_io_err(Doing::Connecting, &e),
             }
@@ -629,7 +629,7 @@ builtins! {
             match stream.read(&mut buf) {
                 Ok(n) => {
                     buf.truncate(n);
-                    Value::variant(bv::OK, vec![Value::Bytes(Arc::new(buf))])
+                    Value::variant(bv::OK, [Value::Bytes(Arc::new(buf))])
                 }
                 Err(e) => {
                     // If the stream was closed (locally) while/before this
@@ -637,7 +637,7 @@ builtins! {
                     // cancellation error (Windows: WSACancelBlockingCall /
                     // WSA_OPERATION_ABORTED from CancelIoEx in close()).
                     if stream.is_closed() {
-                        Value::variant(bv::OK, vec![Value::Bytes(Arc::new(Vec::new()))])
+                        Value::variant(bv::OK, [Value::Bytes(Arc::new(Vec::new()))])
                     } else {
                         tcp_io_err(Doing::Using, &e)
                     }
@@ -653,7 +653,7 @@ builtins! {
         let stream = stream.clone();
         on_connection(vm, &stream.clone(), move || {
             match stream.read_exact(n) {
-                Ok(buf) => Value::variant(bv::OK, vec![Value::Bytes(Arc::new(buf))]),
+                Ok(buf) => Value::variant(bv::OK, [Value::Bytes(Arc::new(buf))]),
                 Err(e) => tcp_io_err(Doing::Using, &e),
             }
         })
@@ -663,7 +663,7 @@ builtins! {
         let (stream, buf) = (stream.clone(), data.clone());
         on_connection(vm, &stream.clone(), move || {
             match stream.write_all(&buf) {
-                Ok(()) => Value::variant(bv::OK, vec![Value::Unit]),
+                Ok(()) => Value::variant(bv::OK, [Value::Unit]),
                 Err(e) => tcp_io_err(Doing::Using, &e),
             }
         })

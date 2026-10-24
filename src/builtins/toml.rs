@@ -67,7 +67,7 @@ use crate::typeinfo::FieldType;
 //   Other(message)
 
 fn toml_err_wrap(inner: Value) -> Value {
-    Value::variant(bv::ERR, vec![inner])
+    Value::variant(bv::ERR, [inner])
 }
 
 /// Classify a `toml::de::Error` into one of the `TomlError` variants.
@@ -78,7 +78,7 @@ pub(crate) fn toml_de_error_to_variant(err: &::toml::de::Error) -> Value {
     let offset = err.span().map(|s| s.start as i64).unwrap_or(0);
     Value::variant(
         bv::TOML_SYNTAX,
-        vec![Value::String(err.message().into()), Value::Int(offset)],
+        [Value::String(err.message().into()), Value::Int(offset)],
     )
 }
 
@@ -90,10 +90,7 @@ pub(crate) fn toml_de_result_err(err: &::toml::de::Error) -> Value {
 /// Build `Err(Other(msg))` for ad-hoc failures (unknown type,
 /// serialization errors, document-shape violations, etc.).
 pub(crate) fn toml_unknown_err<S: Into<Arc<str>>>(msg: S) -> Value {
-    toml_err_wrap(Value::variant(
-        bv::TOML_OTHER,
-        vec![Value::String(msg.into())],
-    ))
+    toml_err_wrap(Value::variant(bv::TOML_OTHER, [Value::String(msg.into())]))
 }
 
 /// What `TomlError`'s `message` says of the variant `tag` with `fields`:
@@ -273,7 +270,7 @@ fn from_impl(error: &Value, at: &str) -> Value {
         _ if json.is(bv::JSON_SYNTAX) => {
             let message =
                 super::json::error_text(json.name(), &fields).unwrap_or_else(|| error.to_string());
-            return Value::variant(bv::TOML_OTHER, vec![Value::String(message.into())]);
+            return Value::variant(bv::TOML_OTHER, [Value::String(message.into())]);
         }
         _ => return error,
     };
@@ -375,7 +372,7 @@ fn text(caller: &str, data: Result<Data, VmError>, pretty: bool) -> Result<Value
         Ok(s) if s.len() > crate::value::MAX_COLLECTION_LEN => {
             Err(super::common::too_long_text(caller, s.len()))
         }
-        Ok(s) => Ok(Value::variant(bv::OK, vec![Value::String(s.into())])),
+        Ok(s) => Ok(Value::variant(bv::OK, [Value::String(s.into())])),
         Err(e) => Ok(toml_unknown_err(format!("{caller}: {e}"))),
     }
 }
