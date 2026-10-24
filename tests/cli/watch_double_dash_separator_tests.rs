@@ -160,3 +160,66 @@ fn check_dash_w_after_separator_does_one_shot_check() {
         "`silt check <file> -- -w` must one-shot check and exit 0, not enter watch mode"
     );
 }
+
+/// `silt run -w <file> -- --help`: the `--help` is the program's, so the
+/// watcher starts and runs the program, which sees it, and goes on
+/// watching; silt prints no help. (The watcher took any `--help` as a
+/// request for help, one after `--` too, ran the command once and
+/// stopped.)
+#[cfg(feature = "watch")]
+#[test]
+fn run_watch_with_help_after_separator_watches_and_forwards_arg() {
+    use std::io::{BufRead, BufReader};
+    use std::process::Stdio;
+
+    let dir = fresh_dir("run_w_help");
+    let script = dir.join("dump_args.silt");
+    write_args_dumper(&script);
+    let mut child = Command::new(env!("CARGO_BIN_EXE_silt"))
+        .args(["run", "-w"])
+        .arg(&script)
+        .args(["--", "--help"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("failed to spawn silt");
+    let stdout = child.stdout.take().expect("stdout");
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            let Ok(line) = line else { break };
+            if tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    // The first line of the program's own output, past what the watcher
+    // writes before each run.
+    let mut seen = Vec::new();
+    let found = loop {
+        match rx.recv_timeout(Duration::from_secs(15)) {
+            Ok(line) if line.trim() == "--help" => break true,
+            Ok(line) if line.starts_with("Usage:") => break false,
+            Ok(line) => seen.push(line),
+            Err(_) => break false,
+        }
+    };
+    // And it goes on watching: its output does not end. (One that
+    // ends within the wait is a watcher that ran the program once and
+    // stopped.)
+    let watching = found
+        && !matches!(
+            rx.recv_timeout(Duration::from_secs(3)),
+            Err(mpsc::RecvTimeoutError::Disconnected)
+        );
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(
+        found,
+        "`silt run -w <file> -- --help` must run the program with `--help`; got: {seen:?}"
+    );
+    assert!(
+        watching,
+        "`silt run -w <file> -- --help` must go on watching"
+    );
+}

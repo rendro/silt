@@ -219,6 +219,7 @@ fn main() {
 
 ```sh
 silt run <file.silt>       -- run a program
+silt run <file.silt> -- a b   -- run it with the arguments a and b (io.args())
 silt run -w <file.silt>    -- run and re-run on file changes
 silt check <file.silt>     -- type-check without running
 silt check --format json <file.silt>   -- type-check with JSON output (for CI/editors)

@@ -1,0 +1,8 @@
+-- cmd: test --
+-- exit: 1
+-- `silt test` runs no program that could read arguments after `--`.
+import test
+
+fn test_one() {
+  test.assert(true)
+}

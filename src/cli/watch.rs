@@ -117,7 +117,7 @@ fn handle_watch(args: &[String]) {
     //      otherwise hang silently forever, because the initial rerun
     //      prints a 1-line usage banner and the loop just sits there
     //      waiting for saves).
-    let wants_help = filtered.iter().any(|a| a == "--help" || a == "-h");
+    let wants_help = crate::cli::help::asks_for_help(&filtered);
     if wants_help {
         // Run the subcommand once so its own help handler fires, then
         // return without entering the watch loop.

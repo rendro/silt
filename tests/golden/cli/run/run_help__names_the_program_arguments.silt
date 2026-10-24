@@ -1,0 +1,4 @@
+-- cmd: run --help
+fn main() {
+  println("not run")
+}

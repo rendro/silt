@@ -192,6 +192,11 @@ whose channel is closed while it waits to send.
 
 Receive and send arms can be mixed freely in the same call.
 
+The arms of one call are of one type, `ChannelOp(a)`. To receive from
+channels of different types, map each to a channel of one enum and merge
+them: see [Receiving from channels of different
+types](../concurrency.md#receiving-from-channels-of-different-types).
+
 Receive-only form:
 
 ```silt

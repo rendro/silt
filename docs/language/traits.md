@@ -727,7 +727,8 @@ and `==`, do what they would. A record is ordered by its fields
 in the order the type declares them, an enum by its variants in the
 order it declares them and then by their payloads. A
 hand-written `trait Equal for T`, `trait Compare for T` or
-`trait Hash for T` is an error:
+`trait Hash for T` is an error (what to write instead is in
+[Equality and order idioms](#equality-and-order-idioms)):
 
 ```silt
 type Version { major: Int, minor: Int }
@@ -735,6 +736,9 @@ trait Compare for Version { ... }
 -- error: trait 'Compare' cannot be implemented by hand: it is derived
 -- structurally for every type whose fields support it — remove this
 -- impl; Equal, Compare and Hash are derived
+-- help: to compare, order or hash by something else (a key, a
+-- normalised value), see "Equality and order idioms" in
+-- docs/language/traits.md
 ```
 
 What "every field supports them" means, for `Equal`, `Hash`, `Compare`
@@ -785,6 +789,82 @@ The `Error` trait has supertrait `Display` and one method,
 `message(self) -> String`. Each stdlib error enum (`IoError`,
 `JsonError`, `HttpError`, …) implements it explicitly, and user code
 can implement it on its own error types.
+
+### Equality and order idioms
+
+Since `==`, `<` and map keys always use a type's structure, a type
+compares by something else through what it holds or how it is used,
+not through an impl:
+
+- **Normalise once, in a constructor function.** A value that has
+  several spellings of one meaning (an e-mail address in any case, a
+  path with a trailing slash) is made by one function that writes the
+  one spelling. Its `==`, its hash and its order are then the meaning's.
+- **Key a map by an id**, not by the record: `map.set(users, u.id, u)`.
+  Two versions of one record (an old and a new name) are one entry, and
+  the record may hold what has no `Hash`.
+- **Key a record that holds a function by its name.** A function has no
+  `Equal` or `Hash`, so neither has a record with one: keep such records
+  in a map from their names, and compare the names.
+- **Sort by a key** with `list.sort_by`: a tuple key sorts by its parts
+  in turn, `|> list.reverse` sorts descending, and `list.sort_with`
+  takes a comparison of two elements (`Compare.compare(b, a)` for
+  descending order).
+- **Find duplicates by a key** with `list.unique_by`, which keeps the
+  first element of each key.
+- **Order versions as records.** A record compares field by field in the
+  order the type declares them, so `Version { major, minor, patch }`
+  orders versions as versions are ordered, with `<`, `list.sort` and
+  map keys, and needs no impl.
+
+```silt
+import list
+import map
+import string
+
+type Email {
+  address: String,
+}
+
+fn email(text: String) -> Email {
+  Email { address: string.to_lower(string.trim(text)) }
+}
+
+type Version {
+  major: Int,
+  minor: Int,
+  patch: Int,
+}
+
+type Command {
+  name: String,
+  run: Fn(Int) -> Int,
+}
+
+fn main() {
+  println(email(" Ann@Example.com") == email("ann@example.com")) -- true
+
+  let v1 = Version { major: 1, minor: 10, patch: 0 }
+  let v2 = Version { major: 1, minor: 9, patch: 3 }
+  println(v2 < v1) -- true
+
+  let commands = [
+    Command { name: "double", run: { n -> n * 2 } },
+    Command { name: "negate", run: { n -> -n } },
+  ]
+  let by_name = map.from_entries(list.map(commands) { c -> (c.name, c) })
+  match map.get(by_name, "double") {
+    Some(c) -> println(c.run(21)) -- 42
+    None -> println("no such command")
+  }
+
+  let words = ["Apple", "avocado", "Banana", "apple"]
+  let firsts = list.unique_by(words) { w -> string.to_lower(string.slice(w, 0, 1)) }
+  println(firsts) -- [Apple, Banana]
+  let ranked = list.sort_by(words) { w -> (string.length(w), w) } |> list.reverse
+  println(ranked) -- [avocado, Banana, apple, Apple]
+}
+```
 
 ## Where an Impl Is Written
 

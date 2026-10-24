@@ -1,0 +1,15 @@
+-- The error of a hand-written impl of a sealed trait points at what to
+-- write instead: the idioms section of the traits page.
+-- cmd: check
+-- exit: 1
+-- stderr-contains: trait 'Equal' cannot be implemented by hand
+-- stderr-contains: = help: to compare, order or hash by something else (a key, a normalised value), see "Equality and order idioms" in docs/language/traits.md
+type Email { address: String }
+
+trait Equal for Email {
+  fn equal(self, other: Email) -> Bool {
+    true
+  }
+}
+
+fn main() {}

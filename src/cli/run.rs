@@ -11,13 +11,13 @@ use silt::session::{Entry, LockPolicy};
 use silt::source::{FileId, SourceMap, Span};
 use silt::vm::{Vm, VmError};
 
-use crate::cli::help::{run_help_text, run_usage_banner};
+use crate::cli::help::{asks_for_help, run_help_text, run_usage_banner};
 use crate::cli::package::resolve_package_entry_point;
 use crate::cli::paths::{ProgramFiles, door_diagnostics, open_entry_or_exit};
 
 /// Dispatch `silt run [--disassemble] [<file>] [-- <program-args>...]`.
 pub(crate) fn dispatch(args: &[String]) {
-    if args[2..].iter().any(|a| a == "--help" || a == "-h") {
+    if asks_for_help(&args[2..]) {
         print!("{}", run_help_text());
         process::exit(0);
     }

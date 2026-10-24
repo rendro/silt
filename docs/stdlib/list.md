@@ -691,13 +691,15 @@ fn main() {
 list.sort(xs: List(a)) -> List(a) where a: Compare
 ```
 
-Returns a new list sorted in natural (ascending) order.
+Returns a new list sorted in natural (ascending) order. For the
+descending order, reverse the sorted list:
 
 ```silt
 import list
 
 fn main() {
   println(list.sort([3, 1, 2])) -- [1, 2, 3]
+  println(list.sort([3, 1, 2]) |> list.reverse) -- [3, 2, 1]
 }
 ```
 
@@ -733,16 +735,35 @@ list.sort_by(xs: List(a), key: Fn(a) -> b) -> List(a) where b: Compare
 ```
 
 Returns a new list sorted by the result of applying the key function to each
-element.
+element. The sort is stable: elements with equal keys keep their order.
+
+A tuple key sorts by its first part, then by the next where the first
+parts are equal, and so on. A part of an `Int` or `Float` key sorts
+descending when it is negated; for the descending order of a key that
+cannot be negated, use `list.sort_with` (or `|> list.reverse` on the
+sorted list, which also reverses the order of equal keys).
 
 ```silt
 import list
 import string
 
+type Player {
+  name: String,
+  score: Int,
+}
+
 fn main() {
   let words = ["banana", "fig", "apple"]
   let sorted = words |> list.sort_by { w -> string.length(w) }
   println(sorted) -- [fig, apple, banana]
+  let players = [
+    Player { name: "Bo", score: 7 },
+    Player { name: "Al", score: 9 },
+    Player { name: "Cy", score: 7 },
+  ]
+  -- By score, highest first, then by name.
+  let ranked = players |> list.sort_by { p -> (-p.score, p.name) }
+  println(list.map(ranked) { p -> p.name }) -- [Al, Bo, Cy]
 }
 ```
 
@@ -756,6 +777,7 @@ list.sort_with(xs: List(a), cmp: Fn(a, a) -> Int) -> List(a)
 Returns a new list sorted by the comparison function: `cmp(a, b)` is below
 0 when `a` comes before `b`, 0 when the two are equal, and above 0 when `a`
 comes after `b`. The sort is stable: equal elements keep their order.
+`Compare.compare(b, a)` sorts descending, by any key that has `Compare`.
 
 ```silt
 import list
