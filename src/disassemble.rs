@@ -52,11 +52,12 @@ fn disassemble_instruction(
     let name = instr.op().name();
     // The operand of a jump is its distance from the next instruction,
     // negative for a jump back.
+    let distance = |target: usize| match target >= next {
+        true => (target - next).to_string(),
+        false => format!("-{}", next - target),
+    };
     let jump = |target: usize| {
-        let distance = match target >= next {
-            true => (target - next).to_string(),
-            false => format!("-{}", next - target),
-        };
+        let distance = distance(target);
         format!("{offset:04}  {name:<20} {distance:<5} -> {target:04}")
     };
     // An instruction whose one operand is a constant.
@@ -124,8 +125,11 @@ fn disassemble_instruction(
         | Instr::MakeMap { pairs: n }
         | Instr::MakeSet { count: n } => with_number(n),
 
-        Instr::Recur { argc, first } => {
-            format!("{offset:04}  {name:<20} {argc}  slot {first}")
+        // Recur: the bindings, the first of their slots, and the jump
+        // back.
+        Instr::Recur { argc, first, to } => {
+            let distance = distance(to);
+            format!("{offset:04}  {name:<20} {argc}  slot {first}  {distance:<5} -> {to:04}")
         }
 
         // ── A constant ────────────────────────────────────────
@@ -137,6 +141,8 @@ fn disassemble_instruction(
         }
 
         Instr::Constant { k }
+        | Instr::AddConst { k }
+        | Instr::SubConst { k }
         | Instr::TestEqual { k }
         | Instr::GetFieldNamed { name: k }
         | Instr::DestructRecordFieldNamed { name: k }
@@ -161,7 +167,15 @@ fn disassemble_instruction(
         }
 
         // ── Jumps: the distance and the target offset ─────────
-        Instr::Jump { to } | Instr::JumpIfFalse { to } | Instr::JumpIfTrue { to } => jump(to),
+        Instr::Jump { to }
+        | Instr::JumpIfFalse { to }
+        | Instr::JumpIfTrue { to }
+        | Instr::JumpIfNotLt { to }
+        | Instr::JumpIfNotGt { to }
+        | Instr::JumpIfNotLeq { to }
+        | Instr::JumpIfNotGeq { to }
+        | Instr::JumpIfNotEq { to }
+        | Instr::JumpIfNotNeq { to } => jump(to),
 
         // CallBuiltin: the number of arguments, and the builtin by its
         // name (its id is its place among the rows of this build).

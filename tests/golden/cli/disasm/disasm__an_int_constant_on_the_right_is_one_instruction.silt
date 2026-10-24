@@ -1,0 +1,24 @@
+-- cmd: disasm
+-- An Int constant on the right of `+` or `-` is one instruction with
+-- the operation (`AddConst`, `SubConst`). On the left it is not, nor is
+-- a Float constant.
+fn up(n: Int) -> Int {
+  n + 1
+}
+
+fn down(n: Int) -> Int {
+  n - 2
+}
+
+fn left(n: Int) -> Int {
+  1 + n
+}
+
+fn half(x: Float) -> Float {
+  x + 0.5
+}
+
+fn main() {
+  println(up(1) + down(1) + left(1))
+  println(half(1.0))
+}

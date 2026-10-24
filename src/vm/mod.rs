@@ -136,6 +136,10 @@ pub struct Vm {
     /// The value the builtin's frame on top is resumed with, when a
     /// slice ended between the value and the frame.
     pending_input: Option<Value>,
+    /// The second part of the instruction before the `ip` of the
+    /// function's frame on top, when a slice ended between the two
+    /// parts of an instruction that fuses two (`run::Half`).
+    half: Option<run::Half>,
     pub(crate) stack: Vec<Value>,
     /// The arguments of the builtin being called, off the stack for the
     /// time of the call ([`Vm::with_args`]). Between calls it is empty
@@ -266,6 +270,7 @@ impl Vm {
             owns_runtime: true,
             frames: Vec::new(),
             pending_input: None,
+            half: None,
             native_frames: 0,
             stack: Vec::new(),
             builtin_args: Vec::new(),
@@ -605,6 +610,7 @@ impl Vm {
             owns_runtime: false,
             frames: Vec::new(),
             pending_input: None,
+            half: None,
             native_frames: 0,
             stack: Vec::new(),
             builtin_args: Vec::new(),

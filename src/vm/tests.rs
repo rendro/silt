@@ -126,6 +126,56 @@ fn test_comparison() {
     assert_eq!(result, Value::Bool(true));
 }
 
+/// The message of the error `build`'s script ends with.
+fn script_error(build: impl FnOnce(&mut Emitter)) -> String {
+    let script = make_function(build);
+    let mut vm = Vm::new(crate::HostIo::process());
+    vm.run(script).unwrap_err().message
+}
+
+#[test]
+fn an_add_of_a_constant_refuses_what_an_add_refuses() {
+    // (Fused: `AddConst`.)
+    let message = script_error(|e| {
+        let a = e.constant(Value::String("a".into()), span()).unwrap();
+        let one = e.constant(Value::Int(1), span()).unwrap();
+        e.emit(Asm::Constant { k: a }, span()).unwrap();
+        e.emit(Asm::Constant { k: one }, span()).unwrap();
+        e.emit(Asm::Add, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
+    });
+    assert_eq!(
+        message,
+        "cannot apply '+' to String and Int; build strings with interpolation, e.g. \"{a}{b}\""
+    );
+}
+
+#[test]
+fn a_comparison_and_its_jump_refuse_what_the_comparison_refuses() {
+    for (compare, jump) in [(Asm::Lt, true), (Asm::Geq, false), (Asm::Eq, true)] {
+        // (Fused: one `JumpIfNot..` instruction.)
+        let message = script_error(|e| {
+            let one = e.constant(Value::Int(1), span()).unwrap();
+            let a = e.constant(Value::String("a".into()), span()).unwrap();
+            let end = e.label();
+            e.emit(Asm::Constant { k: one }, span()).unwrap();
+            e.emit(Asm::Constant { k: a }, span()).unwrap();
+            e.emit(compare, span()).unwrap();
+            match jump {
+                true => e.emit(Asm::JumpIfFalse { to: end }, span()).unwrap(),
+                false => e.emit(Asm::JumpIfTrue { to: end }, span()).unwrap(),
+            }
+            e.bind(end, span()).unwrap();
+            e.emit(Asm::Unit, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        assert_eq!(
+            message, "unsupported operation: cannot compare Int and String",
+            "{compare:?}"
+        );
+    }
+}
+
 #[test]
 fn test_boolean_not() {
     let script = make_function(|e| {
@@ -5499,14 +5549,18 @@ mod slots_in_place {
             for i in 0..count {
                 push(e, samples[(i + 1) % count].clone());
             }
+            // (A jump to the next instruction.)
+            let next = e.label();
             e.emit(
                 Asm::Recur {
                     argc: count,
                     first: 0,
+                    to: next,
                 },
                 span(),
             )
             .unwrap();
+            e.bind(next, span()).unwrap();
             e.emit(Asm::MakeTuple { count }, span()).unwrap();
             e.emit(Asm::Return, span()).unwrap();
         });
@@ -5527,7 +5581,17 @@ mod slots_in_place {
             for _ in 0..6 {
                 probe(e, k);
             }
-            e.emit(Asm::Recur { argc: 3, first: 0 }, span()).unwrap();
+            let next = e.label();
+            e.emit(
+                Asm::Recur {
+                    argc: 3,
+                    first: 0,
+                    to: next,
+                },
+                span(),
+            )
+            .unwrap();
+            e.bind(next, span()).unwrap();
             e.emit(Asm::Unit, span()).unwrap();
             e.emit(Asm::Return, span()).unwrap();
         });
@@ -6905,5 +6969,365 @@ mod interpolation {
         assert_eq!(text(result), "spinxspin");
         // While the value was made, and after the instruction ran.
         assert_eq!(*seen.lock().unwrap(), [before, before]);
+    }
+}
+
+/// An instruction that fuses two costs the steps of the two, and a
+/// slice ends between its parts where it ended between the two.
+mod fused_steps {
+    use super::*;
+    use crate::bytecode::{Op, VmClosure};
+    use crate::vm::run::Slice;
+    use crate::vm::runtime::CallFrame;
+
+    /// Where `fuse` is false, a label between two instructions keeps
+    /// them apart.
+    fn apart(e: &mut Emitter, fuse: bool) {
+        if !fuse {
+            let between = e.label();
+            e.bind(between, span()).unwrap();
+        }
+    }
+
+    /// A counting loop: `loop i = start { match i <compare> bound { .. } }`
+    /// that leaves when the comparison is `exit_if` and otherwise goes
+    /// on with `i + 1` (`up`) or `i - 1`.
+    #[derive(Clone, Copy, Debug)]
+    struct Counting {
+        compare: Asm<'static>,
+        exit_if: bool,
+        start: i64,
+        bound: i64,
+        up: bool,
+        /// What it ends with, its rounds, and the fused jump its
+        /// comparison and jump are.
+        ends_with: i64,
+        rounds: u64,
+        jump: Op,
+    }
+
+    impl Counting {
+        /// Its steps: the start, the rounds of nine (two fused pairs of
+        /// two, Recur's two), the last test of four and the two after.
+        fn steps(&self) -> u64 {
+            1 + 9 * self.rounds + 4 + 2
+        }
+    }
+
+    /// Every fused jump, from its comparison before a `JumpIfFalse` and
+    /// from the opposite one before a `JumpIfTrue`, with `AddConst` and
+    /// `SubConst`.
+    const COUNTINGS: [Counting; 12] = {
+        const fn c(
+            compare: Asm<'static>,
+            exit_if: bool,
+            (start, bound, up): (i64, i64, bool),
+            (ends_with, rounds, jump): (i64, u64, Op),
+        ) -> Counting {
+            Counting {
+                compare,
+                exit_if,
+                start,
+                bound,
+                up,
+                ends_with,
+                rounds,
+                jump,
+            }
+        }
+        [
+            c(Asm::Lt, false, (0, 5, true), (5, 5, Op::JumpIfNotLt)),
+            c(Asm::Geq, true, (0, 5, true), (5, 5, Op::JumpIfNotLt)),
+            c(Asm::Gt, false, (10, 5, false), (5, 5, Op::JumpIfNotGt)),
+            c(Asm::Leq, true, (10, 5, false), (5, 5, Op::JumpIfNotGt)),
+            c(Asm::Leq, false, (0, 4, true), (5, 5, Op::JumpIfNotLeq)),
+            c(Asm::Gt, true, (0, 4, true), (5, 5, Op::JumpIfNotLeq)),
+            c(Asm::Geq, false, (10, 6, false), (5, 5, Op::JumpIfNotGeq)),
+            c(Asm::Lt, true, (10, 6, false), (5, 5, Op::JumpIfNotGeq)),
+            c(Asm::Neq, false, (0, 5, true), (5, 5, Op::JumpIfNotNeq)),
+            c(Asm::Eq, true, (0, 5, true), (5, 5, Op::JumpIfNotNeq)),
+            c(Asm::Eq, false, (5, 5, true), (6, 1, Op::JumpIfNotEq)),
+            c(Asm::Neq, true, (5, 5, true), (6, 1, Op::JumpIfNotEq)),
+        ]
+    };
+
+    /// The loop `counting`, with its pairs fused or kept apart.
+    fn counting(counting: Counting, fuse: bool) -> Arc<Function> {
+        make_function(|e| {
+            let start = e.constant(Value::Int(counting.start), span()).unwrap();
+            let bound = e.constant(Value::Int(counting.bound), span()).unwrap();
+            let one = e.constant(Value::Int(1), span()).unwrap();
+            let (top, end) = (e.label(), e.label());
+            e.emit(Asm::Constant { k: start }, span()).unwrap();
+            e.bind(top, span()).unwrap();
+            e.emit(Asm::GetLocal { slot: 0 }, span()).unwrap();
+            e.emit(Asm::Constant { k: bound }, span()).unwrap();
+            e.emit(counting.compare, span()).unwrap();
+            apart(e, fuse);
+            let leave = match counting.exit_if {
+                true => Asm::JumpIfTrue { to: end },
+                false => Asm::JumpIfFalse { to: end },
+            };
+            e.emit(leave, span()).unwrap();
+            e.emit(Asm::GetLocal { slot: 0 }, span()).unwrap();
+            e.emit(Asm::Constant { k: one }, span()).unwrap();
+            apart(e, fuse);
+            let step = match counting.up {
+                true => Asm::Add,
+                false => Asm::Sub,
+            };
+            e.emit(step, span()).unwrap();
+            // (`Recur` is always the two, `Recur` and the jump back:
+            // the counts at slice 1 below hold it to two steps.)
+            e.emit(
+                Asm::Recur {
+                    argc: 1,
+                    first: 0,
+                    to: top,
+                },
+                span(),
+            )
+            .unwrap();
+            e.bind(end, span()).unwrap();
+            e.emit(Asm::GetLocal { slot: 0 }, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        })
+    }
+
+    /// The ops of `script`.
+    fn ops(script: &Function) -> Vec<Op> {
+        script
+            .chunk()
+            .instrs()
+            .map(|(_, instr)| instr.op())
+            .collect()
+    }
+
+    /// Run `script` in slices of `slice` steps: what it ends with, and
+    /// how many slices ran out of steps.
+    fn sliced(script: Arc<Function>, slice: usize) -> (Result<Value, String>, usize) {
+        let mut vm = Vm::new(crate::HostIo::process());
+        vm.frames.push(Frame::Code(CallFrame {
+            closure: Arc::new(VmClosure {
+                function: script,
+                upvalues: vec![],
+            }),
+            ip: 0,
+            base_slot: 0,
+        }));
+        let mut slices = 0;
+        loop {
+            match vm.run_frames(0, slice) {
+                Ok(Slice::OutOfBudget) => slices += 1,
+                Ok(Slice::Done(value)) => return (Ok(value), slices),
+                Ok(_) => panic!("the script neither waits nor gives way"),
+                Err(error) => return (Err(error.message), slices),
+            }
+        }
+    }
+
+    #[test]
+    fn a_fused_instruction_costs_the_steps_of_the_two_it_fuses() {
+        for case in COUNTINGS {
+            let fused = counting(case, true);
+            let apart = counting(case, false);
+            let arith = match case.up {
+                true => Op::AddConst,
+                false => Op::SubConst,
+            };
+            for op in [case.jump, arith] {
+                assert!(ops(&fused).contains(&op), "{case:?}: {:?}", ops(&fused));
+                assert!(!ops(&apart).contains(&op), "{case:?}: {:?}", ops(&apart));
+            }
+            for slice in [1, 2, 3, 7, 1000] {
+                let (fused_end, fused_slices) = sliced(fused.clone(), slice);
+                let (apart_end, apart_slices) = sliced(apart.clone(), slice);
+                assert_eq!(
+                    fused_end,
+                    Ok(Value::Int(case.ends_with)),
+                    "{case:?} at {slice}"
+                );
+                assert_eq!(apart_end, fused_end, "{case:?} at {slice}");
+                assert_eq!(fused_slices, apart_slices, "{case:?} at slice {slice}");
+            }
+            // At slice 1 a slice is a step, and all but the last run out.
+            assert_eq!(sliced(fused, 1).1 as u64, case.steps() - 1, "{case:?}");
+        }
+    }
+
+    #[test]
+    fn the_second_part_of_a_fused_instruction_fails_as_its_instruction() {
+        let overflow = |fuse| {
+            make_function(|e| {
+                let most = e.constant(Value::Int(i64::MAX), span()).unwrap();
+                let one = e.constant(Value::Int(1), span()).unwrap();
+                e.emit(Asm::Constant { k: most }, span()).unwrap();
+                e.emit(Asm::Constant { k: one }, span()).unwrap();
+                apart(e, fuse);
+                e.emit(Asm::Add, span()).unwrap();
+                e.emit(Asm::Return, span()).unwrap();
+            })
+        };
+        let message = format!("integer overflow: {} + 1", i64::MAX);
+        for slice in [1, 2, 3] {
+            assert_eq!(
+                sliced(overflow(true), slice),
+                (Err(message.clone()), slice_count(slice))
+            );
+            assert_eq!(sliced(overflow(false), slice).0, Err(message.clone()));
+        }
+    }
+
+    /// The slices that run out before the `Add` of three steps fails in
+    /// slices of `slice`.
+    fn slice_count(slice: usize) -> usize {
+        2 / slice
+    }
+
+    /// What `script` ends with at the step budget `steps`, every slice
+    /// one step: its value, or whether the budget ended it.
+    fn at_budget(script: Arc<Function>, steps: u64) -> Result<Value, bool> {
+        let mut vm = Vm::new(crate::HostIo::process());
+        vm.set_time_slice(1);
+        vm.set_step_budget(steps);
+        vm.run(script).map_err(|error| error.out_of_steps)
+    }
+
+    #[test]
+    fn every_step_budget_ends_a_fused_instruction_where_it_ended_the_two() {
+        for case in COUNTINGS {
+            let fused = counting(case, true);
+            let apart = counting(case, false);
+            // Every budget up to past the script's steps: a budget of
+            // its steps runs it to its end, one step less does not.
+            for steps in 0..=case.steps() + 4 {
+                let ended = at_budget(fused.clone(), steps);
+                assert_eq!(
+                    ended,
+                    at_budget(apart.clone(), steps),
+                    "{case:?}, {steps} steps"
+                );
+                assert_eq!(
+                    ended.is_ok(),
+                    steps >= case.steps(),
+                    "{case:?}, {steps} steps"
+                );
+            }
+        }
+    }
+
+    /// Nine functions that count in a loop of fused instructions (a
+    /// round of nine steps, three of them first parts), each with two
+    /// steps more before the loop than the one before: whatever step a
+    /// count of steps ends a function at, three of them are ended
+    /// between the two parts of a fused instruction. A function whose
+    /// time is over runs a slice of one step at a time and is ended
+    /// when its late steps are used up; a cancelled task the same, at
+    /// a place the cancel happens to come.
+    const COUNTING: &str = "
+import task
+import time
+
+fn spin(n: Int) -> Int {
+  loop i = n {
+    match i < 1000000000 {
+      true -> loop(i + 1)
+      false -> i
+    }
+  }
+}
+
+fn spins(k: Int) -> Int {
+  match k {
+    0 -> spin(0)
+    1 -> spin(1 + 0)
+    2 -> spin(1 + 0 + 0)
+    3 -> spin(1 + 0 + 0 + 0)
+    4 -> spin(1 + 0 + 0 + 0 + 0)
+    5 -> spin(1 + 0 + 0 + 0 + 0 + 0)
+    6 -> spin(1 + 0 + 0 + 0 + 0 + 0 + 0)
+    7 -> spin(1 + 0 + 0 + 0 + 0 + 0 + 0 + 0)
+    _ -> spin(1 + 0 + 0 + 0 + 0 + 0 + 0 + 0 + 0)
+  }
+}
+
+fn total(n: Int) -> Int {
+  loop i = 0, acc = 0 {
+    match i < n {
+      true -> loop(i + 1, acc + i - 1)
+      false -> acc
+    }
+  }
+}
+
+fn main() {
+  let ended = loop k = 0, timeouts = 0 {
+    match k < 9 {
+      true -> match task.deadline(time.ms(0), { -> spins(k) }) {
+        Ok(_) -> loop(k + 1, timeouts)
+        Err(_) -> loop(k + 1, timeouts + 1)
+      }
+      false -> timeouts
+    }
+  }
+  let cancelled = loop k = 0 {
+    match k < 9 {
+      true -> {
+        let h = task.spawn({ -> spins(k) })
+        time.sleep(time.ms(1))
+        task.cancel(h)
+        loop(k + 1)
+      }
+      false -> k
+    }
+  }
+  println(\"{ended} {cancelled} {total(1000)}\")
+}
+";
+
+    /// The output of `source` run on `vm`, and whether it ran to its
+    /// end.
+    fn printed(vm: &mut Vm, out: &crate::Buffer, source: &str) -> (String, bool) {
+        let program =
+            crate::session::testing::compile_str(source).unwrap_or_else(|e| panic!("{e:?}"));
+        let ok = vm.run_program(&program).is_ok();
+        (out.take(), ok)
+    }
+
+    /// A task ended between the parts of a fused instruction, by its
+    /// deadline or by a cancel, leaves nothing behind (its own VM goes
+    /// with it), and neither does a program the step budget ends
+    /// there: the next program the VM runs computes what it computes
+    /// on a VM of its own.
+    #[test]
+    fn a_run_ended_between_the_parts_of_a_fused_instruction_leaves_nothing() {
+        let out = crate::Buffer::new();
+        let mut vm = Vm::new(crate::HostIo::buffer(&out));
+        vm.set_time_slice(1);
+        assert_eq!(
+            printed(&mut vm, &out, COUNTING),
+            ("9 9 498500\n".to_string(), true)
+        );
+        // The program's own code ended at every step of a stretch of
+        // rounds by the budget, then run to its end.
+        let counting = "fn main() {\n  let r = loop i = 0, acc = 0 {\n    match i < 50 {\n      true -> loop(i + 1, acc + i - 1)\n      false -> acc\n    }\n  }\n  println(r)\n}\n";
+        for steps in 1..40 {
+            vm.set_step_budget(steps);
+            assert_eq!(
+                printed(&mut vm, &out, counting),
+                (String::new(), false),
+                "{steps}"
+            );
+            vm.set_step_budget(u64::MAX);
+            assert_eq!(
+                printed(&mut vm, &out, counting),
+                ("1175\n".to_string(), true),
+                "{steps}"
+            );
+        }
+        assert_eq!(
+            printed(&mut vm, &out, COUNTING),
+            ("9 9 498500\n".to_string(), true)
+        );
     }
 }

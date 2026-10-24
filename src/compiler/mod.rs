@@ -1746,10 +1746,10 @@ impl<'a> Compiler<'a> {
                     Asm::Recur {
                         argc: args.len(),
                         first,
+                        to: start,
                     },
                     span,
                 )?;
-                self.emit(Asm::Jump { to: start }, span)?;
             } // All expression kinds are handled above. If new ones are added,
               // the match will become non-exhaustive and the compiler will error.
         }
@@ -2130,9 +2130,10 @@ impl<'a> Compiler<'a> {
         self.begin_scope();
 
         // The bindings occupy the slots from the current frame height on;
-        // `Recur` writes the new values there and cuts the frame back to
-        // just above them. With no bindings that is the frame as it is
-        // now, with every enclosing local still in place.
+        // `Recur` writes the new values there, cuts the frame back to
+        // just above them and jumps back to the start. With no bindings
+        // that is the frame as it is now, with every enclosing local
+        // still in place.
         let first_slot = self.emitter().height();
 
         // The initial values are of the enclosing scope, all of them, as
@@ -3628,7 +3629,8 @@ fn f(x) {
 "#,
         );
         let f = find_fn(&fns, "f");
-        assert!(has_op(f.chunk(), Op::JumpIfFalse));
+        // The comparison and its jump are one instruction.
+        assert!(has_op(f.chunk(), Op::JumpIfNotGt));
     }
 
     #[test]
@@ -3644,9 +3646,9 @@ fn f(x) {
 "#,
         );
         let f = find_fn(&fns, "f");
-        // Guard compiles to a condition + JumpIfFalse
-        assert!(has_op(f.chunk(), Op::Gt));
-        assert!(has_op(f.chunk(), Op::JumpIfFalse));
+        // Guard compiles to a condition + JumpIfFalse, here one
+        // instruction that compares and jumps
+        assert!(has_op(f.chunk(), Op::JumpIfNotGt));
     }
 
     // ── Pipe compilation ───────────────────────────────────────────
@@ -3965,7 +3967,7 @@ fn f(x) {
 "#,
         );
         let f = find_fn(&fns, "f");
-        assert!(has_op(f.chunk(), Op::JumpIfFalse));
+        assert!(has_op(f.chunk(), Op::JumpIfNotGt));
     }
 
     // ── `loop(...)` outside a loop is an error ─────────────────────
@@ -4074,9 +4076,10 @@ fn f(expected, actual) {
 "#,
         );
         let f = find_fn(&fns, "f");
-        // Pin pattern uses Dup + GetLocal + Eq
+        // Pin pattern uses Dup + GetLocal + Eq, and the Eq is one
+        // instruction with the jump after it
         assert!(has_op(f.chunk(), Op::Dup));
-        assert!(has_op(f.chunk(), Op::Eq));
+        assert!(has_op(f.chunk(), Op::JumpIfNotEq));
     }
 
     /// A program with more top-level definitions than a `u16` slot can
