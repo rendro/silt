@@ -418,34 +418,13 @@ impl TypeChecker {
                 // are represented as Type::Generic(name, args). Look up
                 // the record definition and validate the field.
                 let type_name = *type_name;
-                let type_args = type_args.clone();
-                if let Some(rec_info) = self.tables.records.get(&type_name).cloned()
-                    && let Some((_, ft)) = rec_info.fields.iter().find(|(n, _)| *n == field)
+                if self.tables.records.contains_key(&type_name)
+                    && let Some((_, ft)) = self
+                        .instantiate_record_fields_with_args(type_name, type_args)
+                        .into_iter()
+                        .find(|(n, _)| *n == field)
                 {
-                    // Same fresh-var fallback as in infer_expr (T1 audit fix):
-                    // never return the template TyVar; if the caller's
-                    // type_args are missing/mismatched, use fresh vars.
-                    let field_ty = if let Some(param_var_ids) =
-                        self.tables.record_param_var_ids.get(&type_name).cloned()
-                    {
-                        let mapping: HashMap<TyVar, Type> =
-                            if type_args.len() == param_var_ids.len() {
-                                param_var_ids
-                                    .iter()
-                                    .zip(type_args.iter())
-                                    .map(|(&v, t)| (v, t.clone()))
-                                    .collect()
-                            } else {
-                                param_var_ids
-                                    .iter()
-                                    .map(|&v| (v, self.fresh_var()))
-                                    .collect()
-                            };
-                        let substituted = substitute_vars(ft, &mapping);
-                        self.apply(&substituted)
-                    } else {
-                        self.apply(ft)
-                    };
+                    let field_ty = self.apply(&ft);
                     self.unify(&result_ty, &field_ty, span);
                     return;
                 }
@@ -985,18 +964,7 @@ impl TypeChecker {
                 fields.iter().map(|(k, v)| (*k, v.clone())).collect()
             }
             Type::Generic(name, args) if self.tables.records.contains_key(name) => {
-                let fields = self.tables.records[name].fields.clone();
-                match self.tables.record_param_var_ids.get(name).cloned() {
-                    Some(params) if params.len() == args.len() => {
-                        let mapping: HashMap<TyVar, Type> =
-                            params.iter().copied().zip(args.iter().cloned()).collect();
-                        fields
-                            .iter()
-                            .map(|(n, t)| (*n, substitute_vars(t, &mapping)))
-                            .collect()
-                    }
-                    _ => fields,
-                }
+                self.instantiate_record_fields_with_args(*name, args)
             }
             other => {
                 self.error(
@@ -1319,10 +1287,10 @@ impl TypeChecker {
         match &ty {
             // Anonymous (structural) records are CONCRETE types — they
             // carry a definite shape — but no user impl can ever target
-            // them (impls bind to nominal heads only). Round 73 B2:
-            // returning `None` here let `verify_trait_obligation` and
+            // them (impls bind to nominal heads only).
+            // Returning `None` here would let `verify_trait_obligation` and
             // its callers in inference.rs treat AnonRecord receivers as
-            // "still polymorphic, defer", which silently bypassed
+            // "still polymorphic, defer", which silently bypasses
             // user-trait `where` constraints — a soundness hole.
             // Returning the builtin `<anon>` type makes the existing
             // `trait_impl_set.contains(...)` check fire the "does not
@@ -1359,12 +1327,11 @@ impl TypeChecker {
             // heads `"Tuple"`/`"Fn"` with the expanded structural self
             // type. Their positional args are the element types (params
             // plus return for `Fn`) so `verify_trait_obligation`'s
-            // self-type-args comparison sees them. Pre-fix both shapes
-            // fell through to `Vec::new()`: obligated-vs-impl args
-            // compared as empty-vs-empty and ANY tuple/function satisfied
-            // a bound whose only impl targeted a concrete alias shape
-            // (round-102 hole, same class as the head-key-only bug it
-            // fixed). A subject of another length than such an impl's
+            // self-type-args comparison sees them. Falling through to
+            // `Vec::new()`, obligated-vs-impl args would compare as
+            // empty-vs-empty and ANY tuple/function would satisfy
+            // a bound whose only impl targeted a concrete alias shape.
+            // A subject of another length than such an impl's
             // self type is refused by the caller; the impl for every
             // tuple (`trait T for Tuple`) has a variable for its self
             // type and no positional args at all.
@@ -1989,13 +1956,13 @@ impl TypeChecker {
 
     /// Consistency-tracking variant of the per-slot compatibility walk
     /// for `verify_trait_obligation`'s self-type-args check.
-    /// Round 104: the stateless per-pair `trait_arg_compatible` lost the
+    /// A stateless per-pair `trait_arg_compatible` would lose the
     /// cross-slot linkage of NON-LINEAR impl self types — a repeated
     /// binder, reachable only via alias expansion (the parser rejects
     /// duplicate binders in direct impl targets): `Pair(a) = (a, a)` →
     /// `(Var a', Var a')`, ditto `Square(a) = Map(a, a)`. An obligated
-    /// `(Int, Fn)` deferred each slot against `Var a'` alone, satisfied
-    /// the bound, and died at runtime. Here a binding map is
+    /// `(Int, Fn)` would defer each slot against `Var a'` alone, satisfy
+    /// the bound, and die at runtime. Here a binding map is
     /// threaded across ALL slots: the first obligated type an impl-side
     /// `Var` meets binds it; every re-encounter must be compatible with
     /// that binding. Obligated-side `Var`s still defer (inference may
@@ -2143,11 +2110,11 @@ impl TypeChecker {
                         .zip(a2.iter())
                         .all(|(x, y)| Self::trait_arg_compatible_canon(x, y))
             }
-            // Round 79 TS-B1: structurally compare anonymous records so
+            // Structurally compare anonymous records so
             // bounds like `where a: Convert({a: Int, b: String})` accept
             // an impl whose trait-arg is the byte-equal record. Without
-            // this arm two equal `AnonRecord` values fell through to the
-            // `_ => false` catch-all and the obligation was rejected.
+            // this arm two equal `AnonRecord` values would fall through to
+            // the `_ => false` catch-all and the obligation be rejected.
             (
                 Type::AnonRecord {
                     fields: f1,

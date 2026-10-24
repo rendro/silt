@@ -364,7 +364,7 @@ impl TypeChecker {
                 // Skip the cascade if the value expression itself already
                 // produced an error — fixing that root cause would also
                 // resolve the inference failure, so the "cannot infer"
-                // follow-up is misleading (round 62 G4).
+                // follow-up is misleading.
                 if self.value_already_errored(value) {
                     continue;
                 }

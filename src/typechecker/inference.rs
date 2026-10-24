@@ -31,10 +31,9 @@ impl RecurPos {
     }
 }
 
-/// GAP (round 17 F5): pick the singular or plural form of a word
+/// Pick the singular or plural form of a word
 /// based on `n`. Used to render arity/field/binding counts in
-/// typechecker diagnostics without the awkward "1 argument(s)" that
-/// tooling and users had been complaining about.
+/// typechecker diagnostics without an awkward "1 argument(s)".
 pub(super) fn plural<'a>(n: usize, singular: &'a str, plural_form: &'a str) -> &'a str {
     if n == 1 { singular } else { plural_form }
 }
@@ -74,10 +73,9 @@ pub(super) fn on_type_call(on: &str, method: Symbol, method_ty: &Type) -> String
     format!("`{on}.{method}({args})`")
 }
 
-/// BROKEN (round 26 B2): render a set of symbols for a user-facing
-/// diagnostic. `BTreeSet<Symbol>` formatted with `{:?}` leaks the
-/// interner's Debug form (`Symbol(6: "x")`) — awful to read and exposes
-/// implementation detail. This helper resolves each symbol to its
+/// Render a set of symbols for a user-facing
+/// diagnostic. `BTreeSet<Symbol>` formatted with `{:?}` would show the
+/// interner's Debug form (`Symbol(6: "x")`). This helper resolves each symbol to its
 /// source-level name and joins them inside `{}` braces in sorted order
 /// (the BTreeSet iteration order is already lexicographic on symbol
 /// id, so we sort by the resolved string to keep output stable across
@@ -94,7 +92,7 @@ pub(super) fn format_symbol_set(set: &BTreeSet<Symbol>) -> String {
 /// decls, stdlib builtins) — the caller hands us `env`. If no candidate
 /// passes the suggest-similar threshold, we emit the plain error.
 ///
-/// Closes round-17 deferred finding #4: see `src/typechecker/suggest.rs`.
+/// See `src/typechecker/suggest.rs`.
 /// Lock: tests/lang/diagnostic_suggestion_tests.rs.
 pub(super) fn format_undefined_variable_message(
     name: Symbol,
@@ -143,14 +141,13 @@ pub(super) fn format_undefined_variable_message(
     (base, help)
 }
 
-/// GAP (round 26 L5): append a "did you mean `<cand>`?" hint when a
+/// Append a "did you mean `<cand>`?" hint when a
 /// record-field diagnostic mentions a name that's close in edit
 /// distance to one of the record's declared fields. Used by every
 /// "record 'X' has no field 'Y'" / "unknown field 'Y' in X" site so
 /// `u.nam` on `type User { name, age }` gets `did you mean \`name\`?`.
 /// Delegates to `suggest::suggest_similar` for the threshold policy
-/// (matches the round-24 short-name tightening — single-edit only for
-/// names up to 5 chars; scaled for longer names).
+/// (single-edit only for names up to 5 chars; scaled for longer names).
 pub(super) fn format_record_field_suggestion(
     base: String,
     field: Symbol,
@@ -184,10 +181,10 @@ impl TypeChecker {
         for (i, super_name) in info.supertraits.iter().enumerate() {
             let super_args: Vec<Type> = match info.supertrait_args.get(i) {
                 Some(exprs) if !exprs.is_empty() => {
-                    // LATENT (round 88): a bare parametric type name
+                    // A bare parametric type name
                     // (`Box` where `type Box(a) { ... }`) among the
                     // supertrait's arguments would silently produce a
-                    // 0-arity type that matches no impl.
+                    // 0-arity type that matches no impl: it is an error.
                     for te in exprs.iter() {
                         self.check_supertrait_arg_parametric_arity(te, &info);
                     }
@@ -1238,18 +1235,18 @@ impl TypeChecker {
                 );
                 continue;
             };
-            // G1 (round 60, extended round 101): a where-clause bound
+            // A where-clause bound
             // must supply exactly the trait's declared number of type
             // arguments. Zero args on a parameterized trait
-            // (`trait Cast(to)` + `where a: Cast`) leaves the implied
+            // (`trait Cast(to)` + `where a: Cast`) would leave the implied
             // `to` unresolved; a nonzero length MISMATCH
             // (`where a: Cast(Int, String)`) is worse — the
             // parameterized-trait verification in
-            // `verify_trait_obligation` only runs its round-58
+            // `verify_trait_obligation` only runs its
             // positional arg-compatibility zip when the bound's and
             // the impl's arg lists have equal length, so a mismatched
-            // bound silently degraded to a bare "implements Cast"
-            // check and matched ANY `Cast(*)` impl. The arity check
+            // bound would degrade to a bare "implements Cast"
+            // check and match ANY `Cast(*)` impl. The arity check
             // lives at the user-written syntax sites (here, plus the
             // impl-level and method-level where-clause loops in
             // `register_trait_impl`) because bare `&[]` is legitimate
@@ -1301,7 +1298,7 @@ impl TypeChecker {
         // Set the expected return type for return and ? validation
         let prev_return_type = self.current_return_type.take();
         self.current_return_type = Some(ret_type.clone());
-        // Round 93: fresh `?`-site tracking per fn body, so a failed
+        // Fresh `?`-site tracking per fn body, so a failed
         // body/return unify can point back at the `?` that demanded a
         // Result/Option return.
         let prev_qmark_spans = std::mem::take(&mut self.current_qmark_spans);
@@ -1347,9 +1344,9 @@ impl TypeChecker {
         self.note_qmark_requirement_on_ret_mismatch(from, body_type, ret);
     }
 
-    /// GAP (round 93): when the body/return-type unify fails AND the
+    /// When the body/return-type unify fails AND the
     /// return type was driven to Result/Option by a `?` in the body,
-    /// append a note naming the `?` site. Without this, `?` inside an
+    /// append a note naming the `?` site: else a `?` inside an
     /// unannotated (effectively unit-returning) fn surfaces as a bare
     /// "type mismatch: expected Result(_, String), got ()" with the
     /// caret on the fn header — no pointer to the `?` that created the
@@ -2269,12 +2266,11 @@ impl TypeChecker {
                     let first_entry = iter.next().unwrap();
                     let first_k = self.infer_expr(&mut first_entry.0, env);
                     let first_v = self.infer_expr(&mut first_entry.1, env);
-                    // GAP (round 93): the unify calls here used to pass the
-                    // established type as t1 and the deviant entry as t2,
-                    // reversing the documented t1=got/t2=expected convention
-                    // (`#{ "a": 1, 2: 3 }` reported "expected Int, got
-                    // String"). Fixed direction, and — mirroring the list-
-                    // literal arm above — replace the raw unify mismatch
+                    // The unify calls here pass the deviant entry as t1 and
+                    // the established type as t2, the documented
+                    // t1=got/t2=expected convention (`#{ "a": 1, 2: 3 }`
+                    // expects String, got Int), and, mirroring the list-
+                    // literal arm above, replace the raw unify mismatch
                     // with a curated map-level message.
                     for (idx, (k, v)) in iter.enumerate() {
                         let entry_num = idx + 2; // 1-based; entry 1 set the type
@@ -2314,10 +2310,9 @@ impl TypeChecker {
                     let tv = self.fresh_var();
                     Type::Set(Box::new(tv))
                 } else {
-                    // GAP (round 93): same direction fix + curated message
-                    // as the map arm above — `#[1, 2, "x"]` used to report
-                    // "expected String, got Int". Mirror the list-literal
-                    // wording for set elements.
+                    // The same direction and curated message as the map arm
+                    // above (`#[1, 2, "x"]` expects Int, got String), in the
+                    // list-literal wording for set elements.
                     let elem_type = self.fresh_var();
                     for (idx, e) in elems.iter_mut().enumerate() {
                         let espan = e.span;
@@ -2620,41 +2615,15 @@ impl TypeChecker {
                         }
                     }
                     Type::Generic(type_name, type_args) => {
-                        // Check record field definitions, substituting type parameters
-                        if let Some(rec_info) = self.tables.records.get(type_name).cloned()
-                            && let Some((_, ft)) = rec_info.fields.iter().find(|(n, _)| *n == field)
+                        // A field of a declared record, at the record's type
+                        // arguments.
+                        if self.tables.records.contains_key(type_name)
+                            && let Some((_, ft)) = self
+                                .instantiate_record_fields_with_args(*type_name, type_args)
+                                .into_iter()
+                                .find(|(n, _)| *n == field)
                         {
-                            // Substitute the record's type parameters with concrete type args.
-                            // When `type_args` is empty but the record is actually
-                            // parameterized (which can now only happen if unification
-                            // reached here with mismatched arity), instantiate fresh
-                            // type vars for each param — never return the shared
-                            // template TyVar, which would get mutated across uses
-                            // (T1 audit fix; mirrors the check_pattern path).
-                            let resolved = if let Some(param_var_ids) =
-                                self.tables.record_param_var_ids.get(type_name).cloned()
-                            {
-                                let mapping: HashMap<TyVar, Type> =
-                                    if type_args.len() == param_var_ids.len() {
-                                        param_var_ids
-                                            .iter()
-                                            .zip(type_args.iter())
-                                            .map(|(&v, t)| (v, t.clone()))
-                                            .collect()
-                                    } else {
-                                        // Arity mismatch (already reported elsewhere).
-                                        // Fall back to fresh vars to avoid leaking
-                                        // the shared template TyVars.
-                                        param_var_ids
-                                            .iter()
-                                            .map(|&v| (v, self.fresh_var()))
-                                            .collect()
-                                    };
-                                let substituted = substitute_vars(ft, &mapping);
-                                self.apply(&substituted)
-                            } else {
-                                self.apply(ft)
-                            };
+                            let resolved = self.apply(&ft);
                             expr.ty = Some(resolved.clone());
                             return resolved;
                         }
@@ -2664,9 +2633,9 @@ impl TypeChecker {
                         self.no_field(&obj_ty, field, Some(obj), &fields, span);
                         Type::Error
                     }
-                    // GAP (round 92): `t.0` parses as a FieldAccess with an
+                    // `t.0` parses as a FieldAccess with an
                     // all-numeric field name, but tuple indexing is
-                    // intentionally unsupported (round 69 decision): the
+                    // intentionally unsupported: the
                     // targeted diagnostic points at destructuring instead.
                     Type::Tuple(_)
                         if !resolve(field).is_empty()
@@ -2818,7 +2787,7 @@ impl TypeChecker {
                 let inner_ty = self.infer_expr(inner, env);
                 let inner_ty = self.apply(&inner_ty);
 
-                // Round 93: remember the `?` site so a later body/return
+                // Remember the `?` site so a later body/return
                 // unify failure can point back here (see
                 // `note_qmark_requirement_on_ret_mismatch`).
                 self.current_qmark_spans.push(span);
@@ -2929,15 +2898,14 @@ impl TypeChecker {
                     })
                     .collect();
 
-                // BROKEN (round 93): a lambda is its own `?`/`return`
+                // A lambda is its own `?`/`return`
                 // boundary — the VM's Op::QuestionMark pops exactly ONE
                 // frame (the lambda's), so `?` inside a lambda must
                 // validate against the LAMBDA's return type, not the
                 // enclosing named fn's. Establish a fresh return-type
-                // context for the body, mirroring check_body.
-                // Without this, `{ x -> x? + 1 }` was checked against the
-                // outer fn's return type and a Variant escaped into a
-                // List(Int) at runtime.
+                // context for the body, mirroring check_body: checked
+                // against the outer fn's return type, `{ x -> x? + 1 }`
+                // would let a Variant escape into a List(Int) at runtime.
                 let lambda_ret = self.fresh_var();
                 let prev_return_type = self.current_return_type.replace(lambda_ret.clone());
                 let prev_qmark_spans = std::mem::take(&mut self.current_qmark_spans);
@@ -2963,11 +2931,11 @@ impl TypeChecker {
 
             ExprKind::RecordCreate { name, fields, .. } => {
                 let name = *name;
-                // GAP (round 35 F4): duplicate fields in a record literal
-                // (e.g. `User { name: "a", name: "b" }`) used to slip past
-                // the typechecker because downstream processing went through
-                // a HashSet that silently deduped them. Mirror the record
-                // type declaration's duplicate-field check: walk once and
+                // A field written twice in a record literal
+                // (e.g. `User { name: "a", name: "b" }`) is an error:
+                // downstream processing goes through a HashSet that would
+                // silently dedupe them. Mirror the record type
+                // declaration's duplicate-field check: walk once and
                 // emit a diagnostic per duplicate.
                 {
                     let mut seen: std::collections::HashSet<Symbol> =
@@ -3048,7 +3016,7 @@ impl TypeChecker {
                         rec_info.fields.iter().map(|(n, _)| *n).collect();
                     for (field_name, _) in &field_types {
                         if !declared.contains(field_name) {
-                            // GAP (round 26 L5): append a did-you-mean
+                            // Append a did-you-mean
                             // hint for record-literal typos — e.g.
                             // `User { nam: ... }` → `did you mean \`name\`?`.
                             let base = format!("unknown field '{}' in {}", field_name, name);
@@ -3078,8 +3046,8 @@ impl TypeChecker {
                 let base_span = base.span;
                 let base_ty = self.infer_expr(base, env);
                 let resolved = self.apply(&base_ty);
-                // GAP (round 35 F4): duplicate fields in a record-update
-                // expression (e.g. `r.{ age: 1, age: 2 }`) used to be
+                // A field written twice in a record-update
+                // expression (e.g. `r.{ age: 1, age: 2 }`) would be
                 // silently deduped downstream. Emit a diagnostic per
                 // duplicate so the typo is surfaced at compile time.
                 {
@@ -3129,7 +3097,7 @@ impl TypeChecker {
                             };
                             self.unify(&resolved, &extended, span);
                         } else {
-                            // ERR-GAP (round 81 F3): mirror the sibling
+                            // Mirror the sibling
                             // Record / Generic record-update sites and
                             // append a did-you-mean hint when the typo
                             // is close to one of the closed row's fields.
@@ -3147,32 +3115,10 @@ impl TypeChecker {
                     handled = true;
                 }
                 if let Type::Generic(type_name, type_args) = &resolved
-                    && let Some(rec_info) = self.tables.records.get(type_name).cloned()
+                    && self.tables.records.contains_key(type_name)
                 {
-                    let instantiated_fields: Vec<(Symbol, Type)> = if let Some(param_var_ids) =
-                        self.tables.record_param_var_ids.get(type_name).cloned()
-                    {
-                        let mapping: HashMap<TyVar, Type> =
-                            if type_args.len() == param_var_ids.len() {
-                                param_var_ids
-                                    .iter()
-                                    .zip(type_args.iter())
-                                    .map(|(&v, t)| (v, t.clone()))
-                                    .collect()
-                            } else {
-                                param_var_ids
-                                    .iter()
-                                    .map(|&v| (v, self.fresh_var()))
-                                    .collect()
-                            };
-                        rec_info
-                            .fields
-                            .iter()
-                            .map(|(n, t)| (*n, substitute_vars(t, &mapping)))
-                            .collect()
-                    } else {
-                        rec_info.fields.clone()
-                    };
+                    let instantiated_fields =
+                        self.instantiate_record_fields_with_args(*type_name, type_args);
                     let declared: std::collections::HashMap<Symbol, Type> = instantiated_fields
                         .iter()
                         .map(|(n, t)| (*n, t.clone()))
@@ -3182,7 +3128,7 @@ impl TypeChecker {
                         if let Some(declared_ty) = declared.get(field_name) {
                             self.unify_field(*field_name, &ft, declared_ty, field_expr.span);
                         } else {
-                            // GAP (round 26 L5): did-you-mean on the
+                            // Did-you-mean on the
                             // generic-record update path.
                             let base = format!("unknown field '{field_name}' in {type_name}");
                             self.error_help(
@@ -3299,10 +3245,10 @@ impl TypeChecker {
                         let scrutinee_ty = self.infer_expr(scrutinee, env);
                         let result_ty = self.fresh_var();
 
-                        // GAP (round 93): every arm checks its pattern
+                        // Every arm checks its pattern
                         // against the SAME scrutinee, so a wrong-scrutinee
                         // match (`match 42` with an `Ok(v)` and an `Err(e)` arm)
-                        // used to print the identical "expected Result(_, _),
+                        // would print the identical "expected Result(_, _),
                         // got Int" once per arm, plus a non-exhaustive
                         // cascade. Dedup identical (message, span, severity)
                         // diagnostics across the arm loop — genuinely
@@ -3359,9 +3305,7 @@ impl TypeChecker {
                                     if seen_arm_diags.insert(key) {
                                         // Re-inserting a pre-built Diagnostic drained
                                         // above for dedup — not a new emission site,
-                                        // so `self.error(...)` does not apply. This
-                                        // is the sanctioned exception counted by the
-                                        // round-83 STYLE lock (threshold 1).
+                                        // so `self.error(...)` does not apply.
                                         self.errors.push(d);
                                     }
                                 }
@@ -3384,7 +3328,7 @@ impl TypeChecker {
                         // scrutinee type is fully resolved through unification.
                         // Skipped when the scrutinee type already failed to
                         // match the arms — exhaustiveness over a broken match
-                        // is a cascade, not new information (round 93).
+                        // is a cascade, not new information.
                         // So is a scrutinee of a type already reported.
                         let resolved_scrutinee_ty = self.apply(&scrutinee_ty);
                         if !any_pattern_mismatch && resolved_scrutinee_ty != Type::Error {
@@ -3874,14 +3818,14 @@ impl TypeChecker {
         }
     }
 
-    /// LATENT (round 88): walk a supertrait-arg `TypeExpr` and emit a
+    /// Walk a supertrait-arg `TypeExpr` and emit a
     /// diagnostic at every `Named(sym)` that refers to a *parametric*
     /// user-defined type (enum, record, or alias with arity > 0) used
     /// without its arguments — e.g. `trait Sub: Super(Box)` where
     /// `type Box(a) { ... }`. `resolve_supertrait_arg` falls through
     /// such names to `Type::Generic(sym, [])`, which then never matches
-    /// any downstream impl's actual args, so the obligation silently
-    /// goes unsatisfied. With this check the user sees a clean arity
+    /// any downstream impl's actual args, so the obligation would
+    /// silently go unsatisfied. With this check the user sees a clean arity
     /// diagnostic at the supertrait declaration's span instead.
     ///
     /// Names that map to a trait param (`info.params`), builtin
@@ -4068,7 +4012,7 @@ fn written_type(te: &TypeExpr, name: Symbol) -> Option<TypeRef> {
 /// (`Generic`, `Tuple`) recurse. Unmapped names and concrete primitives
 /// fall through to their `Type::…` counterparts.
 ///
-/// INVARIANT (round 101): the shapes produced here must be
+/// INVARIANT: the shapes produced here must be
 /// CANONICAL — identical to what `resolve_type_expr` builds for the
 /// same surface syntax on the impl side — because
 /// `trait_arg_compatible_canon` compares them structurally and
@@ -4090,9 +4034,9 @@ pub(super) fn resolve_supertrait_arg(
             }
             // Bare type name that isn't a trait param — interpret as a
             // concrete type reference (Int, String, or user type).
-            // Round 101: mirror `resolve_type_expr` (mod.rs Named arm)
-            // exactly for primitives — Unit/() previously
-            // fell through to `Type::Generic`, which never compares
+            // Mirror `resolve_type_expr` (mod.rs Named arm)
+            // exactly for primitives: a Unit/() falling
+            // through to `Type::Generic` would never compare
             // equal to the canonical `Type::Unit` the
             // impl side produces, spuriously failing
             // `trait_arg_compatible_canon` with identical Display
@@ -4116,11 +4060,11 @@ pub(super) fn resolve_supertrait_arg(
                 .iter()
                 .map(|a| resolve_supertrait_arg(a, trait_info, base_args))
                 .collect();
-            // Round 101: builtin container heads must produce the same
+            // Builtin container heads must produce the same
             // canonical `Type::…` shapes `resolve_type_expr` builds for
             // the impl side (mod.rs Generic arm). `canonicalize()` does
             // NOT collapse `Generic("List",[T])` onto `Type::List(T)`,
-            // so leaving these as `Type::Generic` made supertrait args
+            // so leaving these as `Type::Generic` would make supertrait args
             // like `List(b)` incomparable with the registered impl's
             // `Type::List(Int)`. Wrong-arity forms fall through to
             // `Type::Generic` (they can't match any canonical impl

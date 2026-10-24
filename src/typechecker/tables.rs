@@ -353,7 +353,7 @@ pub struct Tables {
     /// Tracks which (trait_name, type) pairs have been implemented.
     pub(super) trait_impl_set:
         Table<std::collections::HashSet<(TraitKey, TypeRef)>, (TraitKey, TypeRef)>,
-    /// GAP-2: Maps `(trait_name, type_name)` → the span of the
+    /// Maps `(trait_name, type_name)` → the span of the
     /// `trait T for U { ... }` declaration, so the missing-method
     /// diagnostic in `validate_trait_impls` can point at the impl
     /// block's real source location.

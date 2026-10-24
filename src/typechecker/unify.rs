@@ -340,9 +340,12 @@ impl TypeChecker {
 
     // ── Unification ─────────────────────────────────────────────────
 
-    /// Helper: substitute record param vars with the call-site type
-    /// args and return the field list. Used by anon×nominal-via-Generic
-    /// unification.
+    /// The fields of the declared record `name` at the type arguments
+    /// `args`, each with its type. With a wrong number of arguments
+    /// (reported where the type is written) each parameter is a fresh
+    /// variable: the record's own parameter variables are shared by
+    /// every use of it, and a use that decided one would decide it for
+    /// all. No fields for a name that is no record.
     pub(super) fn instantiate_record_fields_with_args(
         &mut self,
         name: TypeRef,
@@ -375,17 +378,11 @@ impl TypeChecker {
         }
     }
 
-    /// Round 74 Fix #5: canonical wording for the occurs-check
-    /// diagnostic emitted from every unification site (main `Var(v) ↔ t`
+    /// The one wording of the occurs-check
+    /// diagnostic, emitted from every unification site (main `Var(v) ↔ t`
     /// arm, plus the row-unif arms in `unify_anon_anon` and
-    /// `open_row_is`). Pre-fix: the row-unif
-    /// arms emitted the terse `"infinite type"` while the main arm
-    /// emitted `"infinite type: the type variable appears inside {t}"`.
-    /// Routing all six sites through this helper keeps the diagnostic
-    /// shape uniform — "collapse equivalent dual shapes to one unified
-    /// form" applies to diagnostic wording too. A future user
-    /// debugging an occurs-check failure shouldn't see two different
-    /// messages depending on which arm tripped.
+    /// `open_row_is`): an occurs-check failure reads the same whichever
+    /// arm tripped.
     pub fn infinite_type_message(t: &Type) -> String {
         format!("infinite type: the type variable appears inside {t}")
     }
@@ -512,14 +509,14 @@ impl TypeChecker {
             (RowTail::Var(v), RowTail::Closed) => {
                 // Open × Closed: open must be a subset of closed; bind
                 // v to a closed record carrying the leftover closed fields.
-                // Round 75 DEAD-5: shared with the symmetric
+                // Shared with the symmetric
                 // Closed×Open arm via `unify_open_closed`.
                 self.unify_open_closed(&only_in_1, only_in_2, v, out);
             }
             (RowTail::Closed, RowTail::Var(v)) => {
                 // Closed × Open: symmetric — open side (only_in_2) must
                 // not have extras; bind v to leftover from the closed
-                // side (only_in_1). Round 75 DEAD-5.
+                // side (only_in_1).
                 self.unify_open_closed(&only_in_2, only_in_1, v, out);
             }
             (RowTail::Var(v1), RowTail::Var(v2)) if v1 == v2 => {
@@ -562,14 +559,14 @@ impl TypeChecker {
         }
     }
 
-    /// Round 75 DEAD-5: dedupe of the byte-symmetric Open×Closed and
-    /// Closed×Open arms in `unify_anon_anon`. Bind a row-tail var
+    /// The byte-symmetric Open×Closed and
+    /// Closed×Open arms of `unify_anon_anon`. Bind a row-tail var
     /// `v` from the open side to a closed-tailed leftover record made
     /// of the closed side's extra fields. Reject if the open side has
     /// fields the closed side does not declare. The occurs-check
-    /// barrier is preserved (round-73f Fix #2 lock); the canonical
-    /// `Self::infinite_type_message` wording stays in lockstep with
-    /// the other 4 occurs-check sites in this module.
+    /// barrier is kept, with the canonical
+    /// `Self::infinite_type_message` wording of the other
+    /// occurs-check sites in this module.
     ///
     /// `open_extras` are fields present on the open side but missing
     /// from the closed side (rejected — they cannot be added to a
@@ -1055,9 +1052,9 @@ impl TypeChecker {
 
             (Type::Generic(n1, a1), Type::Generic(n2, a2)) => {
                 if n1 != n2 {
-                    // Round 80 BROKEN B1+B2: this arm formatted the bare
-                    // `Symbol` heads, which dropped type args (`Bag(String)`
-                    // → `Bag`) and leaked the internal `TypeOf` head
+                    // Formatting the bare
+                    // `Symbol` heads would drop type args (`Bag(String)`
+                    // → `Bag`) and show the internal `TypeOf` head
                     // (`type Person` → `TypeOf`). Format via the parent
                     // `Type` values so `Type::Display`'s args rendering
                     // and TypeOf special-casing apply (mirrors the

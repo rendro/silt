@@ -70,7 +70,7 @@ impl TypeChecker {
     // ── Register type declarations ──────────────────────────────────
 
     pub(super) fn register_type_decl(&mut self, td: &TypeDecl, env: &mut TypeEnv) {
-        // BROKEN #1: Reject redefinition of reserved type-system sentinel
+        // Reject redefinition of reserved type-system sentinel
         // names. `TypeOf` is used internally as the head of
         // `Type::builtin("TypeOf", [..])` to represent a type
         // descriptor (e.g. the runtime value produced by `Employee` when
@@ -91,17 +91,16 @@ impl TypeChecker {
             );
             return;
         }
-        // Round 80 BROKEN B3: a type-decl whose name shadows a builtin
+        // A type-decl whose name shadows a builtin
         // scalar/container type (Int, Float, Bool, String, Unit, List,
         // Map, Set, Channel, Tuple, Fn, Fun, Handle, Bytes,
         // TcpListener, TcpStream — the authoritative list is
-        // `BUILTIN_TYPES` in `src/types/builtins.rs`) silently overwrote
-        // the builtin binding, and what was then said of the type's
-        // structural traits went by fields the *builtin* type does
-        // not have, producing an unspanned cascade of "unknown method
-        // 'x' on type Int" errors. Reject at the declaration site with
-        // a single clear diagnostic. Mirrors the variant-shadow error
-        // shape below.
+        // `BUILTIN_TYPES` in `src/types/builtins.rs`) is rejected at
+        // the declaration with one diagnostic: it would overwrite the
+        // builtin binding, and what is said of the type's structural
+        // traits would go by fields the *builtin* type does not have
+        // (a cascade of "unknown method 'x' on type Int" errors with no
+        // place). Mirrors the variant-shadow error shape below.
         if crate::types::builtins::lookup(td_name_str.as_str()).is_some() {
             self.errors.push(
                 Diagnostic::error(
@@ -307,7 +306,7 @@ impl TypeChecker {
                 // be `TypeOf(Employee)` rather than `Employee` itself —
                 // otherwise the typechecker would let users write things
                 // like `Employee.field` or use the descriptor as an
-                // instance (T2 audit fix; mirrors primitive descriptors).
+                // instance (as primitive descriptors are).
                 //
                 // For parameterized records (`type Box(a) { ... }`),
                 // fresh type vars are generated for each param so
@@ -506,16 +505,15 @@ impl TypeChecker {
                 ),
                 target_te.span,
             );
-            // Round 79 LATENT TS-L1: when a cycle is detected closing
+            // When a cycle is detected closing
             // on the alias under registration (`td.name`), every other
             // alias in the cycle chain was registered earlier with a
-            // target that pointed back through the now-known-cyclic
+            // target that points back through the now-known-cyclic
             // path. With `type A = B; type B = A`, A registered first
             // (B not yet visible) with target Generic("B"); B then
-            // detects the cycle but A is still in the alias map
-            // pretending A→Generic("B") is valid, so a later
-            // `let v: A = 42` reports "expected B, got Int" instead of
-            // a coherent cycle diagnostic. Walk the chain (excluding
+            // detects the cycle, and A left in the alias map would make
+            // a later `let v: A = 42` report "expected B, got Int"
+            // instead of the cycle. Walk the chain (excluding
             // td.name itself, which never registered) and unregister
             // each entry so use-site canonicalisation no longer sees
             // a half-built alias path.

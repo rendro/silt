@@ -756,15 +756,11 @@ fn main() {
 fn test_type_error_has_error_severity() {
     // A type mismatch should produce Severity::Error.
     //
-    // LATENT fix (audit round 36): previously this test only asserted that
-    // *some* error with Error severity existed — any unrelated diagnostic
-    // with Error severity would satisfy it. Narrow the lock to the specific
-    // Int/String mismatch under test: find the diagnostic whose message
-    // mentions both "Int" and "String" and assert IT has Error severity.
-    // Per the "test must fail on a mutated source" rule for weak-lock
-    // strengthenings: if the typechecker regressed to produce the Int/String
-    // mismatch as a Warning, this strengthened assertion would fail where
-    // the old `any()` check would still pass due to unrelated errors.
+    // The lock is on the specific Int/String mismatch under test, not on
+    // *some* error with Error severity (any unrelated diagnostic would
+    // satisfy that): find the diagnostic whose message mentions both
+    // "Int" and "String" and assert IT has Error severity, so the test
+    // fails if the mismatch becomes a Warning.
     let errors = check_errors(
         r#"
             fn main() {
@@ -953,18 +949,12 @@ fn test_where_constraint_satisfied() {
 
 #[test]
 fn test_where_constraint_violated() {
-    // GAP (round 17 F4): the previous test only bound `where x: Showable`
-    // on `x` which never referenced a valid type variable — the
-    // constraint-introduction check fired with a suggestion string
-    // that happened to contain "Showable", and the test's disjunctive
-    // assertion (`contains("does not implement") || contains("Showable")`)
-    // matched the wrong branch. It was green against a codebase that
-    // completely dropped the "does not implement" check.
-    //
-    // Pin the real path: declare `display` with a proper typed
+    // Pin the real path (a `where x: Showable` on a value `x`, not a type
+    // variable, would only reach the constraint-introduction check,
+    // whose suggestion also contains "Showable"): declare `display` with a proper typed
     // parameter `x: a where a: Showable`, implement Showable for Int
     // only, then call `display("text")`. Int satisfies; String does
-    // not. Must now produce "type 'String' does not implement trait
+    // not. Must produce "type 'String' does not implement trait
     // 'Showable'".
     let errors = check_errors(
         r#"
@@ -1794,24 +1784,12 @@ fn main() {
 fn test_loop_recur_arity_mismatch() {
     // loop has 2 bindings, recur has 1 argument.
     //
-    // LATENT fix (audit round 36): previously the assertion was a 2-way
-    // substring OR — `contains("binding") || contains("argument")` — so
-    // many unrelated diagnostics could satisfy it (e.g. any diagnostic
-    // that says "unused binding" or "argument count"). The real message
-    // produced by typechecker/inference.rs is
+    // The message produced by typechecker/inference.rs is
     // `loop has N binding(s), but `loop(...)` supplies M argument(s)`.
-    //
-    // Strengthening:
-    //   - AND-chain specific phrases "loop has" && "`loop(...)` supplies"
-    //   - require Severity::Error (GAP #163 established recur arity
-    //     mismatch is an Error, not a Warning)
-    //
-    // Per the "test must fail on a mutated source" rule for weak-lock
-    // strengthenings: if the message were reworded, or if the emitter
-    // regressed to `self.warning(...)` instead of `self.error(...)`,
-    // this strengthened check would fail where the old OR-substring
-    // check could still pass. The current code passes both — this is a
-    // correct-just-under-locked scenario, so the strengthening is valid.
+    // The lock requires both specific phrases, "loop has" and
+    // "`loop(...)` supplies" (a substring like "binding" or "argument"
+    // would match unrelated diagnostics), and Severity::Error: a recur
+    // arity mismatch is an Error, not a Warning.
     let errors = check_errors(
         r#"
 fn main() {
@@ -1837,7 +1815,7 @@ fn main() {
     assert_eq!(
         recur_err.severity,
         Severity::Error,
-        "recur arity mismatch must be Error severity (GAP #163), got {:?} for message {:?}",
+        "recur arity mismatch must be Error severity, got {:?} for message {:?}",
         recur_err.severity,
         recur_err.message
     );
@@ -2264,4 +2242,39 @@ fn main() {
         errors.iter().any(|e| e.code == Code::TypeMismatch),
         "with the type error: {errors:?}"
     );
+}
+
+/// The fields of a record at a wrong number of type arguments are at
+/// fresh variables, never at the record's own parameter variables,
+/// which every use of the record shares; at the right number, at the
+/// arguments.
+#[test]
+fn record_fields_at_a_wrong_number_of_arguments_take_fresh_variables() {
+    use crate::intern::intern;
+    let mut tc = TypeChecker::new();
+    let rec = TypeRef {
+        id: crate::defs::TypeId(crate::defs::DefId(u32::MAX - 2)),
+        name: intern("FieldsAtArgsBox"),
+    };
+    let Type::Var(param) = tc.fresh_var() else {
+        unreachable!("a fresh variable")
+    };
+    tc.tables.record_param_var_ids.insert(rec, vec![param]);
+    tc.tables.records.insert(
+        rec,
+        RecordInfo {
+            fields: vec![(intern("v"), Type::Var(param))],
+        },
+    );
+    let at_int = tc.instantiate_record_fields_with_args(rec, &[Type::Int]);
+    assert_eq!(at_int, vec![(intern("v"), Type::Int)]);
+    for args in [&[][..], &[Type::Int, Type::Bool][..]] {
+        let fields = tc.instantiate_record_fields_with_args(rec, args);
+        match fields.as_slice() {
+            [(v, Type::Var(var))] if *v == intern("v") => {
+                assert_ne!(*var, param, "the template variable leaked at {args:?}")
+            }
+            other => panic!("expected one field at a fresh variable, got {other:?}"),
+        }
+    }
 }

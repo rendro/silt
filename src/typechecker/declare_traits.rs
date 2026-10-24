@@ -213,7 +213,7 @@ impl TypeChecker {
             // `trait Ordered for MyType { ... }` holds when MyType has
             // Equal by its structure.
             //
-            // B1 (round 60): when the supertrait reference carries args
+            // When the supertrait reference carries args
             // (`trait Holds(b): Carry(b)` + `impl Holds(Int) for Bag`),
             // resolve those args through the enclosing trait's
             // params→impl-args mapping and require the matching impl to
@@ -369,20 +369,10 @@ impl TypeChecker {
     // ── Register trait declarations ─────────────────────────────────
 
     /// User-source entry point for trait declaration registration.
-    /// Round 62 (item 3 of type-design improvements): trait registration
-    /// was previously two paths — this one for user `trait X { ... }`
-    /// declarations, and a hand-rolled `register_builtin_trait_decl` for
-    /// Display/Compare/Equal/Hash plus a one-off block for `Error`. The
-    /// two drifted: the built-in path didn't run the duplicate-method
-    /// check, didn't honor where_clauses or supertraits in general, and
-    /// any future feature added here had to be manually mirrored into
-    /// the built-in path.
-    ///
-    /// The unification: built-in traits now synthesize `TraitDecl` AST
-    /// nodes in `builtin_trait_decls()` and feed them through
-    /// `register_trait_decl_inner` directly (skipping only the
-    /// redefinition guard, which is keyed off user input). Future
-    /// trait-decl features automatically apply to built-ins.
+    /// The builtin traits are `TraitDecl` nodes too
+    /// (`builtin_trait_decls()`), fed to `register_trait_decl_inner`
+    /// directly: they skip only the redefinition guard, which is about
+    /// what a program writes.
     pub(super) fn register_trait_decl_user(&mut self, t: &TraitDecl) {
         // Reject redefinition of builtin trait names. The compiler has
         // already preregistered TraitInfo and the structural traits for these
@@ -479,11 +469,10 @@ impl TypeChecker {
                 }
             }
         }
-        // GAP (round 35 F6): duplicate method names in a trait
-        // declaration used to silently overwrite each other in the
-        // trait's `methods` Vec (first entry won for method lookup but
-        // the second's signature won for any HashMap-based bookkeeping
-        // like `default_method_bodies`). Emit a diagnostic per dup.
+        // A method name written twice in a trait declaration is an
+        // error, one per duplicate: the two would otherwise disagree
+        // (the first wins a method lookup, the second the HashMap-based
+        // bookkeeping like `default_method_bodies`).
         {
             let mut seen: std::collections::HashSet<Symbol> = std::collections::HashSet::new();
             for m in &t.methods {
@@ -776,8 +765,8 @@ impl TypeChecker {
 
     /// Convert a type name Symbol to a Type.
     ///
-    /// Round 74 Fix #1: include the `Unit`/`()` arm so a user-declared
-    /// `trait T for Unit { ... }` impl receives a `Type::Unit` self_type
+    /// The `Unit`/`()` arm gives a user-declared
+    /// `trait T for Unit { ... }` impl a `Type::Unit` self_type
     /// rather than the `Type::Generic("Unit", [])` fallback, which never
     /// unifies with the canonical `Type::Unit` receiver.
     fn type_from_name(ty: TypeRef) -> Type {
@@ -966,7 +955,7 @@ impl TypeChecker {
                 .extend(ti.methods.iter().map(|m| m.name));
             return;
         }
-        // Round-23 GAP #1: reject trait impls whose target type was never
+        // Reject trait impls whose target type was never
         // declared: `trait Greet for Widget { ... }` with no `type
         // Widget` would attach methods to a phantom type. A lowercase
         // target (`trait Display for a { ... }`) names a type variable,
@@ -1050,7 +1039,7 @@ impl TypeChecker {
         }
 
         self.tables.trait_impl_set.insert(impl_key);
-        // GAP-2: record the impl block's real span for validate_trait_impls
+        // Record the impl block's real span for validate_trait_impls
         // to use when reporting missing-method diagnostics.
         self.tables.trait_impl_spans.insert(impl_key, ti.span);
 
@@ -1147,14 +1136,11 @@ impl TypeChecker {
                     // `resolve_type_expr`'s bare-name annotation
                     // semantics: synthesize a fresh var per element slot
                     // so the self_type unifies with any concrete receiver
-                    // (`List(Int)`, `Map(String, Bool)`, ...). Pre-fix
-                    // these fell through to `type_from_name`'s
-                    // `Generic("List", [])`, which unify's catch-all
-                    // rejected against `Type::List(Int)` with the
-                    // self-contradictory "type mismatch: expected List,
-                    // got List(Int)" — even though the SAME impl
-                    // dispatched fine through a where-bound fn
-                    // (head-keyed obligation + runtime dispatch). The
+                    // (`List(Int)`, `Map(String, Bool)`, ...), not
+                    // `type_from_name`'s `Generic("List", [])`, which
+                    // unify's catch-all would reject against
+                    // `Type::List(Int)` with the self-contradictory "type
+                    // mismatch: expected List, got List(Int)". The
                     // fresh vars are per-registration, like the alias /
                     // user-arity branches: `method_scheme`
                     // quantifies them, new at each use.
@@ -1205,13 +1191,12 @@ impl TypeChecker {
                 .and_then(crate::types::builtins::lookup)
                 .filter(|b| b.kind == crate::types::builtins::BuiltinKind::Container)
                 .and_then(|b| b.arity.map(|a| (a as usize, "builtin")));
-            // Round 74 Fix #2: include user-declared type aliases in the
-            // arity table. Without this, `trait Show for Pair(a)` where
-            // `type Pair(a) = (a, a)` skipped the arity check (the alias
-            // is not a record / enum / builtin container) and fell
-            // through to the `_ => Type::Generic("Pair", [tv])` arm at
-            // the bottom — producing an impl whose self_type never
-            // unifies with any concrete `(Int, Int)` receiver.
+            // User-declared type aliases are in the arity table too:
+            // `trait Show for Pair(a)` where `type Pair(a) = (a, a)` is
+            // checked for its arity, and does not fall through to the
+            // `_ => Type::Generic("Pair", [tv])` arm at the bottom, an
+            // impl whose self_type would never unify with a concrete
+            // `(Int, Int)` receiver.
             let alias_arity: Option<(usize, &'static str)> = self
                 .tables
                 .type_alias_arity
@@ -1250,7 +1235,7 @@ impl TypeChecker {
                 .iter()
                 .map(|arg_te| self.resolve_type_expr(arg_te, &mut impl_param_map))
                 .collect();
-            // Round 74 Fix #2: parametric alias as trait-impl target —
+            // A parametric alias as trait-impl target:
             // expand the alias by substituting `resolved_args` through
             // the alias's stored target. Mirrors the non-parametric
             // alias path at line ~5617 (which calls
@@ -1259,13 +1244,12 @@ impl TypeChecker {
             // fresh tyvar). Here we map `param_var_ids[i]` → the
             // user-supplied type-arg at the same index.
             //
-            // Without this, `trait Show for Pair(a)` (with
-            // `type Pair(a) = (a, a)`) produced
-            // `Type::Generic("Pair", [tv])` as the self_type. A
-            // concrete `(1, 2)` receiver typed as `(Int, Int)` —
-            // canonicalised by `resolve_type_expr` of the annotation
-            // `Pair(Int)` to `(Int, Int)` — would not unify with the
-            // phantom `Generic("Pair", _)`.
+            // So `trait Show for Pair(a)` (with `type Pair(a) = (a, a)`)
+            // has the self type `(a, a)`, not a phantom
+            // `Type::Generic("Pair", [tv])`, which a concrete `(1, 2)`
+            // receiver typed as `(Int, Int)` (as `resolve_type_expr`
+            // canonicalises the annotation `Pair(Int)`) would not unify
+            // with.
             if let Some(info) = self.tables.resolver.lookup_alias(written) {
                 let mut mapping: HashMap<TyVar, Type> = HashMap::new();
                 for (i, &var_id) in info.param_var_ids.iter().enumerate() {
@@ -1363,7 +1347,7 @@ impl TypeChecker {
                 continue;
             };
             let trait_name = &trait_key;
-            // Round 101: the bound's arity must match the trait's
+            // The bound's arity must match the trait's
             // declared param count in BOTH directions (see
             // check_where_bound_arity). Skip registering the malformed
             // bound — a length-mismatched arg list would sail past
@@ -1416,15 +1400,9 @@ impl TypeChecker {
                 .insert((trait_key, target_type), impl_level_constraints.clone());
         }
 
-        // GAP (round 35 F5): extraneous trait-impl methods — methods on
-        // the impl whose names aren't declared in the trait — used to
-        // get silently registered into the method_table. Reject each
-        // method whose name is not in the trait's declared method list.
-        //
-        // GAP (round 35 F6): duplicate method names within a single
-        // trait impl used to silently overwrite the earlier definition
-        // in the method_table. Track a seen-set and reject the second
-        // (and subsequent) occurrences.
+        // A method of the impl whose name the trait does not declare is
+        // rejected, and so is each second (and later) method of one
+        // name in the impl: neither enters the method_table.
         // Validate trait_args against the trait's declared parameter
         // count. `trait Foo(a, b)` must be implemented as `trait Foo(X, Y) for T`;
         // a parameterless trait must be `trait Foo for T` (no args).
@@ -1549,8 +1527,8 @@ impl TypeChecker {
             // Register into the canonical assoc-binding registry. The
             // registry keys on the canonical target head (so an alias
             // and its target collapse), parallel to method_table's
-            // canonical_head routing above. Round 76 BROKEN T1:
-            // the registry refuses self- or mutually-referential
+            // canonical_head routing above.
+            // The registry refuses self- or mutually-referential
             // bindings that would otherwise drive `canonicalize` into
             // infinite recursion (stack overflow). Skip the
             // `impl_binding_map` insertion on cycle so the per-method
@@ -1897,7 +1875,7 @@ impl TypeChecker {
                     continue;
                 };
                 let trait_name = &trait_key;
-                // Round 101: bound arity must match the trait's declared
+                // The bound's arity must match the trait's declared
                 // param count (see check_where_bound_arity — it dedupes
                 // against the identical diagnostic the check of the
                 // method's body emits for the same span).
@@ -2313,21 +2291,20 @@ impl TypeChecker {
             .insert(target_type, method, trait_key, entry);
     }
 
-    /// Round 60 G1, extended round 101: a where-clause bound must
+    /// A where-clause bound must
     /// supply exactly the trait's declared number of type arguments.
     /// Returns `true` when the arity matches (or the trait is unknown
     /// — the caller has already reported that).
     ///
     /// Both directions are soundness-relevant, not just hygiene: the
     /// parameterized-trait verification in `verify_trait_obligation`
-    /// only runs its round-58 positional arg-compatibility zip when
+    /// only runs its positional arg-compatibility zip when
     /// `impl_args.len() == bound_trait_args.len()`, so a
     /// length-mismatched bound like `where a: Cast(Int, String)` on a
-    /// one-param `trait Cast(to)` silently degraded to a bare
-    /// "implements Cast" check — matching (and dispatching through!)
+    /// one-param `trait Cast(to)` would degrade to a bare
+    /// "implements Cast" check, matching (and dispatching through!)
     /// any `Cast(*)` impl. Zero args on a parameterized trait
-    /// additionally leaves the implied params unresolved (the original
-    /// round-60 direction).
+    /// would leave the implied params unresolved as well.
     ///
     /// Callers: the fn-level where-clause loop in
     /// `check_body`, and the impl-level and method-level
