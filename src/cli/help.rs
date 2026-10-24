@@ -111,6 +111,15 @@ pub(crate) fn usage_text() -> String {
 /// noise. Keep in sync with the match arms in `run_main`.
 pub(crate) const GLOBAL_FLAGS: &[&str] = &["--version", "-V", "-v", "--help", "-h", "help"];
 
+/// Whether `--help` or `-h` is one of silt's own arguments in `args`:
+/// the ones before `--`, after which every argument is the program's
+/// (`silt run main.silt -- --help` runs the program with `--help`).
+pub(crate) fn asks_for_help(args: &[String]) -> bool {
+    (args.iter())
+        .take_while(|a| *a != "--")
+        .any(|a| a == "--help" || a == "-h")
+}
+
 /// Single source of truth for the `silt check` usage banner line.
 /// Both the `--help` path and the "no arguments given" path render
 /// from this so they can't drift apart. A regression test in
@@ -131,7 +140,7 @@ pub(crate) fn check_usage_banner() -> &'static str {
 /// also accepts no file argument when invoked inside a package — the
 /// optional-no-arg behavior is documented separately in the help text.
 pub(crate) fn run_usage_banner() -> &'static str {
-    "silt run [--watch] [--disassemble] <file.silt>"
+    "silt run [--watch] [--disassemble] <file.silt> [-- <args>...]"
 }
 
 /// Single source of truth for the `silt test` usage banner line.
@@ -172,10 +181,12 @@ pub(crate) fn run_help_text() -> String {
     s.push_str("Options:\n");
     s.push_str("  --watch, -w         Re-run on file changes\n");
     s.push_str("  --disassemble       Show bytecode disassembly instead of running\n");
+    s.push_str("  -- <args>...        Pass the arguments after it to the program (io.args())\n");
     s.push('\n');
     s.push_str("Examples:\n");
     s.push_str("  silt run                      (inside a package, runs src/main.silt)\n");
     s.push_str("  silt run main.silt\n");
+    s.push_str("  silt run main.silt -- input.txt\n");
     s.push_str("  silt run --watch main.silt\n");
     s.push_str("  silt run --disassemble main.silt\n");
     s

@@ -1,0 +1,9 @@
+-- cmd: run -- --help -h
+-- What follows `--` is the program's, a help flag too: the program
+-- runs and sees it in io.args(), and silt prints no help.
+import io
+import list
+
+fn main() {
+  io.args() |> list.each { arg -> println(arg) }
+}

@@ -8,13 +8,13 @@ use silt::disassemble::disassemble_function;
 use silt::intern::intern;
 use silt::session::{ENTRY_POINT, Entry, LockPolicy};
 
-use crate::cli::help::disasm_usage_banner;
+use crate::cli::help::{asks_for_help, disasm_usage_banner};
 use crate::cli::package::resolve_package_entry_point;
 use crate::cli::paths::{ProgramFiles, door_diagnostics, open_entry_or_exit};
 
 /// Dispatch `silt disasm [<file>]`.
 pub(crate) fn dispatch(args: &[String]) {
-    if args[2..].iter().any(|a| a == "--help" || a == "-h") {
+    if asks_for_help(&args[2..]) {
         println!("Usage: {}", disasm_usage_banner());
         println!();
         println!("Prints the compiled bytecode disassembly for <file.silt>.");
