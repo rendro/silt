@@ -2887,6 +2887,21 @@ impl TypeChecker {
                 // `note_qmark_requirement_on_ret_mismatch`).
                 self.current_qmark_spans.push(span);
 
+                // A `?` returns from the function as `return` does: not
+                // from one that never returns. (A closure's `?` ends the
+                // closure: its body has a return type of its own.)
+                if let (Some(Type::Never), Some(name)) = (&self.current_return_type, self.never_fn)
+                {
+                    self.error(
+                        Code::InvalidControlFlow,
+                        format!(
+                            "'?' in '{name}', which is declared to return `Never`: `?` returns \
+                             the `Err` or `None` it meets, and such a function never returns"
+                        ),
+                        span,
+                    );
+                }
+
                 // ? operator on Result(a,e) returns a, propagates Err(e)
                 // ? operator on Option(a) returns a, propagates None
                 // (The one check, also of an operand known only later:

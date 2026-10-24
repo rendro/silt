@@ -1,0 +1,39 @@
+-- cmd: check
+-- exit: 1
+-- A `?` returns from its function as `return` does, the `Err` or `None`
+-- it meets: in a function declared `-> Never` it is an error, on a
+-- `Result` and on an `Option`, also where the function ends an `else`
+-- block. A closure's `?` ends the closure, and is fine.
+import int
+import list
+
+fn on_result(s: String) -> Never {
+  let n = int.parse(s)?
+  panic("{n}")
+}
+
+fn on_option(xs: List(Int)) -> Never {
+  let h = list.get(xs, 0)?
+  panic("{h}")
+}
+
+fn fail(s: String) -> Never {
+  let _ = int.parse(s)?
+  panic("parsed")
+}
+
+fn port(text: String) -> Int {
+  when let Ok(n) = int.parse(text) else {
+    fail(text)
+  }
+  n
+}
+
+fn in_closure() -> Never {
+  let f = { s -> Ok(int.parse(s)? + 1) }
+  panic("{f("1")}")
+}
+
+fn main() {
+  println(port("8080"))
+}

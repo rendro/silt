@@ -224,8 +224,8 @@ fn get_or_die(opt) {
 
 A function may say that it never returns: `-> Never` as its return type.
 Its body must not end: it ends in `panic`, in a call of another function
-that returns `Never`, or in a `loop` that never stops, and a `return` in
-it is an error. A call of it then never returns either, so it can end a
+that returns `Never`, or in a `loop` that never stops, and neither a
+`return` nor a `?` may stand in it (each returns from the function). A call of it then never returns either, so it can end a
 block that must leave, as `panic` can:
 
 ```silt

@@ -27,6 +27,14 @@ fn inside() -> List(Never) {
   []
 }
 
+fn with_args() -> Never(Int) {
+  panic("x")
+}
+
+fn nested_args(x: Never(List(Never))) -> Int {
+  1
+}
+
 trait T {
   fn m(self) -> Never
 }
