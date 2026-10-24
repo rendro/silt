@@ -82,10 +82,10 @@ fn btreemap_keyed_by_distinct_handles_retains_all() {
 // ── VmClosure ──────────────────────────────────────────────────────
 
 fn mk_closure(name: &str) -> Value {
-    Value::VmClosure(Arc::new(VmClosure {
-        function: Arc::new(Function::returning_unit(name.to_string(), 0)),
-        upvalues: Vec::new(),
-    }))
+    Value::VmClosure(Arc::new(VmClosure::new(
+        Arc::new(Function::returning_unit(name.to_string(), 0)),
+        Vec::new(),
+    )))
 }
 
 /// Closures of two functions (even if the names collide) must not be
@@ -120,10 +120,10 @@ fn btreeset_of_distinct_closures_retains_all() {
 /// runs the same function with the same captures).
 #[test]
 fn ord_vmclosure_same_arc_equal() {
-    let f = Arc::new(VmClosure {
-        function: Arc::new(Function::returning_unit("id".into(), 0)),
-        upvalues: Vec::new(),
-    });
+    let f = Arc::new(VmClosure::new(
+        Arc::new(Function::returning_unit("id".into(), 0)),
+        Vec::new(),
+    ));
     let a = Value::VmClosure(f.clone());
     let b = Value::VmClosure(f);
     assert_eq!(a.cmp(&b), Ordering::Equal);

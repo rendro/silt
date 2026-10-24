@@ -466,6 +466,14 @@ impl Vm {
                 self.frame_mut().ip = ip
             };
         }
+        // A load of a definition with bounds passes evidence on, in a
+        // debug build (`super::evidence`).
+        macro_rules! evidence_load {
+            () => {
+                #[cfg(debug_assertions)]
+                super::evidence::bind_load(&mut self.stack, closure, ip, &self.view.entry);
+            };
+        }
         // An error of the instruction being run. Its frame is on top:
         // nothing that fails in the loop has changed the frames.
         macro_rules! fail {
@@ -740,30 +748,36 @@ impl Vm {
                         }
                     }
                 }
-                Instr::GetLocal { slot } => push_copy!(self.stack, self.stack[base + slot]),
+                Instr::GetLocal { slot } => {
+                    push_copy!(self.stack, self.stack[base + slot]);
+                    evidence_load!();
+                }
                 Instr::SetLocal { slot } => {
                     let top = self.stack.len() - 1;
                     set_copy!(self.stack, base + slot, self.stack[top]);
                 }
-                Instr::GetGlobal { slot } => match self.view.global(slot) {
-                    // (A closure: the VM's own copy of it.)
-                    Some(Value::VmClosure(shared)) => {
-                        let own = self.own.of(slot, shared);
-                        push_closure(&mut self.stack, own);
-                    }
-                    Some(value) => push_copy!(self.stack, *value),
-                    // (Not set in this VM's slots: see the function.)
-                    None => {
-                        let newest = &self.runtime.newest;
-                        match (self.view).global_of_newest(&mut self.view_count, newest, slot) {
-                            Ok(value) => {
-                                let value = self.own.value(slot, value);
-                                self.stack.push(value);
+                Instr::GetGlobal { slot } => {
+                    match self.view.global(slot) {
+                        // (A closure: the VM's own copy of it.)
+                        Some(Value::VmClosure(shared)) => {
+                            let own = self.own.of(slot, shared);
+                            push_closure(&mut self.stack, own);
+                        }
+                        Some(value) => push_copy!(self.stack, *value),
+                        // (Not set in this VM's slots: see the function.)
+                        None => {
+                            let newest = &self.runtime.newest;
+                            match (self.view).global_of_newest(&mut self.view_count, newest, slot) {
+                                Ok(value) => {
+                                    let value = self.own.value(slot, value);
+                                    self.stack.push(value);
+                                }
+                                Err(error) => fail!(error),
                             }
-                            Err(error) => fail!(error),
                         }
                     }
-                },
+                    evidence_load!();
+                }
                 Instr::SetGlobal { slot } => {
                     let value = peek(&self.stack).clone();
                     save!();
@@ -774,7 +788,10 @@ impl Vm {
                     }
                     load!();
                 }
-                Instr::GetUpvalue { index } => push_copy!(self.stack, closure.upvalues[index]),
+                Instr::GetUpvalue { index } => {
+                    push_copy!(self.stack, closure.upvalues[index]);
+                    evidence_load!();
+                }
                 Instr::GetClosure => {
                     let Some(Frame::Code(frame)) = self.frames.last() else {
                         unreachable!("an instruction runs in a function's frame")
@@ -875,8 +892,10 @@ impl Vm {
                         })
                         .collect();
                     let function = chunk.closure(f).function.clone();
-                    self.stack
-                        .push(Value::VmClosure(Arc::new(VmClosure { function, upvalues })));
+                    let made = VmClosure::new(function, upvalues);
+                    #[cfg(debug_assertions)]
+                    let made = super::evidence::made_in(closure, made);
+                    self.stack.push(Value::VmClosure(Arc::new(made)));
                 }
                 Instr::MakeTuple { count } => {
                     let start = self.stack.len() - count;
@@ -1605,6 +1624,8 @@ impl Vm {
             None => self.method_of_newest(trait_index, receiver_type, method),
             found => found,
         };
+        #[cfg(debug_assertions)]
+        let bound = self.evidence_call(trait_index, receiver_type, method, found)?;
         // (A method that is a closure, which a written method is, is
         // taken by its pointer, as `Call` takes one: the VM's own copy
         // of the closure in the global's slot is not cloned and moved.)
@@ -1614,6 +1635,8 @@ impl Vm {
             match sort(func) {
                 Sort::Closure(shared) => {
                     let closure = self.own.of(slot, shared);
+                    #[cfg(debug_assertions)]
+                    let closure = bound.unwrap_or(closure);
                     // In tail position the method takes the current
                     // frame over, as a tail-called function does.
                     if tail {

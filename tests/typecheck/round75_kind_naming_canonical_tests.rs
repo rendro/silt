@@ -103,10 +103,10 @@ fn build_all_variants() -> AllVariants {
         record: Value::record(point_type(), vec![Value::Int(1)]),
         // A variant names its enum type.
         variant: Value::variant(bv::SOME, vec![Value::Int(1)]),
-        vm_closure: Value::VmClosure(Arc::new(VmClosure {
-            function: Arc::new(Function::returning_unit("f".to_string(), 0)),
-            upvalues: Vec::new(),
-        })),
+        vm_closure: Value::VmClosure(Arc::new(VmClosure::new(
+            Arc::new(Function::returning_unit("f".to_string(), 0)),
+            Vec::new(),
+        ))),
         builtin_fn: builtin("println"),
         variant_constructor: Value::VariantConstructor(bv::SOME.tag()),
         type_descriptor: Value::TypeDescriptor(point_type()),

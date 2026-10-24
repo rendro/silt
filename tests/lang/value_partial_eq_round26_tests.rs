@@ -61,10 +61,10 @@ fn partial_eq_handle_different_ids() {
 // ── VmClosure ─────────────────────────────────────────────────────
 
 fn mk_closure(name: &str) -> Arc<VmClosure> {
-    Arc::new(VmClosure {
-        function: Arc::new(Function::returning_unit(name.to_string(), 0)),
-        upvalues: Vec::new(),
-    })
+    Arc::new(VmClosure::new(
+        Arc::new(Function::returning_unit(name.to_string(), 0)),
+        Vec::new(),
+    ))
 }
 
 /// Same Arc → equal.

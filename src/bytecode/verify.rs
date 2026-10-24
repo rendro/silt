@@ -436,10 +436,10 @@ mod tests {
         let mut e = Emitter::new("inner".into(), 0, Span::BUILTIN).unwrap();
         e.emit(Asm::GetUpvalue { index: 0 }, Span::BUILTIN).unwrap();
         e.emit(Asm::Return, Span::BUILTIN).unwrap();
-        Value::VmClosure(Arc::new(VmClosure {
-            function: Arc::new(e.finish(1).unwrap()),
-            upvalues: vec![],
-        }))
+        Value::VmClosure(Arc::new(VmClosure::new(
+            Arc::new(e.finish(1).unwrap()),
+            vec![],
+        )))
     }
 
     #[test]

@@ -239,10 +239,10 @@ fn the_vm_of_a_task_finds_the_slots_of_a_later_program() {
 #[test]
 fn a_vm_reads_its_own_copy_of_a_global_closure() {
     fn closure(name: &str, captured: i64) -> Arc<VmClosure> {
-        Arc::new(VmClosure {
-            function: Arc::new(Function::returning_unit(name.into(), 0)),
-            upvalues: vec![Value::Int(captured)],
-        })
+        Arc::new(VmClosure::new(
+            Arc::new(Function::returning_unit(name.into(), 0)),
+            vec![Value::Int(captured)],
+        ))
     }
     /// What `GetGlobal` of slot 0 pushes.
     fn read(vm: &mut Vm) -> Arc<VmClosure> {
@@ -294,10 +294,10 @@ fn a_vm_reads_its_own_copy_of_a_global_closure() {
 #[test]
 fn the_copies_of_a_vm_are_as_many_as_the_slots_it_read() {
     fn closure(captured: i64) -> Arc<VmClosure> {
-        Arc::new(VmClosure {
-            function: Arc::new(Function::returning_unit("f".into(), 0)),
-            upvalues: vec![Value::Int(captured)],
-        })
+        Arc::new(VmClosure::new(
+            Arc::new(Function::returning_unit("f".into(), 0)),
+            vec![Value::Int(captured)],
+        ))
     }
     let mut own = runtime::OwnClosures::default();
     assert_eq!(own.places(), 0);
@@ -2638,10 +2638,10 @@ fn test_tail_call_rejects_arity_mismatch() {
     use crate::bytecode::VmClosure;
 
     // Callee: expects 2 arguments.
-    let closure = Arc::new(VmClosure {
-        function: Arc::new(Function::returning_unit("two_arg".to_string(), 2)),
-        upvalues: vec![],
-    });
+    let closure = Arc::new(VmClosure::new(
+        Arc::new(Function::returning_unit("two_arg".to_string(), 2)),
+        vec![],
+    ));
 
     // Script: push the closure, push ONE int, then TailCall argc=1.
     // This simulates a buggy emitter sending the wrong argc for a
@@ -2889,10 +2889,7 @@ mod error_places {
         let outer = make_function(|e| {
             push(
                 e,
-                Value::VmClosure(Arc::new(VmClosure {
-                    function: inner.clone(),
-                    upvalues: vec![],
-                })),
+                Value::VmClosure(Arc::new(VmClosure::new(inner.clone(), vec![]))),
             );
             e.emit(Asm::Call { argc: 0 }, call).unwrap();
             e.emit(Asm::Return, span()).unwrap();
@@ -3930,10 +3927,10 @@ fn main() {
         let mut vm = Vm::new(crate::HostIo::process());
         vm.load(&program);
         vm.frames.push(Frame::Code(CallFrame {
-            closure: Arc::new(VmClosure {
-                function: Arc::new(program.functions[0].clone()),
-                upvalues: vec![],
-            }),
+            closure: Arc::new(VmClosure::new(
+                Arc::new(program.functions[0].clone()),
+                vec![],
+            )),
             ip: 0,
             base_slot: 0,
         }));
@@ -4207,10 +4204,10 @@ mod type_confusion {
     }
 
     fn function(arity: u8) -> Value {
-        Value::VmClosure(Arc::new(VmClosure {
-            function: Arc::new(Function::returning_unit("f".to_string(), arity)),
-            upvalues: vec![],
-        }))
+        Value::VmClosure(Arc::new(VmClosure::new(
+            Arc::new(Function::returning_unit("f".to_string(), arity)),
+            vec![],
+        )))
     }
 
     /// Run the code `build` emits, which must stop at its last
@@ -4755,10 +4752,10 @@ mod pushes_that_make_room {
     const COUNT: usize = 300;
 
     fn closure() -> Value {
-        Value::VmClosure(Arc::new(VmClosure {
-            function: Arc::new(Function::returning_unit("f".to_string(), 0)),
-            upvalues: vec![],
-        }))
+        Value::VmClosure(Arc::new(VmClosure::new(
+            Arc::new(Function::returning_unit("f".to_string(), 0)),
+            vec![],
+        )))
     }
 
     /// A value of every sort the instruction loop builds in place (a
@@ -4893,10 +4890,10 @@ mod pushes_that_make_room {
                 |_| {},
                 |e| e.emit(Asm::GetUpvalue { index: 0 }, span()).unwrap(),
             );
-            let inner = Value::VmClosure(Arc::new(VmClosure {
-                function: Arc::new(inner.finish(1).unwrap_or_else(|e| panic!("{e:?}"))),
-                upvalues: vec![sample.clone()],
-            }));
+            let inner = Value::VmClosure(Arc::new(VmClosure::new(
+                Arc::new(inner.finish(1).unwrap_or_else(|e| panic!("{e:?}"))),
+                vec![sample.clone()],
+            )));
             let script = make_function(|e| {
                 let k = e.constant(inner, span()).unwrap();
                 e.emit(Asm::Constant { k }, span()).unwrap();
@@ -5024,10 +5021,10 @@ mod seen_drops {
         let closures = host(
             "closures",
             Arc::new(move |_| {
-                Ok(Value::VmClosure(Arc::new(crate::bytecode::VmClosure {
-                    function: function.clone(),
-                    upvalues: vec![new_probe()],
-                })))
+                Ok(Value::VmClosure(Arc::new(crate::bytecode::VmClosure::new(
+                    function.clone(),
+                    vec![new_probe()],
+                ))))
             }),
         );
         (probes, closures, log)
@@ -5089,10 +5086,7 @@ mod seen_drops {
         let mut vm = Vm::new(crate::HostIo::process());
         let floor = vm.frames.len();
         vm.frames.push(Frame::Code(CallFrame {
-            closure: Arc::new(crate::bytecode::VmClosure {
-                function: script,
-                upvalues: vec![],
-            }),
+            closure: Arc::new(crate::bytecode::VmClosure::new(script, vec![])),
             ip: 0,
             base_slot: 0,
         }));
@@ -5359,10 +5353,10 @@ mod slots_in_place {
     }
 
     fn closure() -> Value {
-        Value::VmClosure(Arc::new(VmClosure {
-            function: Arc::new(Function::returning_unit("f".to_string(), 0)),
-            upvalues: vec![],
-        }))
+        Value::VmClosure(Arc::new(VmClosure::new(
+            Arc::new(Function::returning_unit("f".to_string(), 0)),
+            vec![],
+        )))
     }
 
     /// A value of every sort the instruction loop knows (`Sort` in
@@ -5624,10 +5618,7 @@ mod calls_and_returns {
         let outer = make_function(|e| {
             push(
                 e,
-                Value::VmClosure(Arc::new(VmClosure {
-                    function: script,
-                    upvalues: vec![],
-                })),
+                Value::VmClosure(Arc::new(VmClosure::new(script, vec![]))),
             );
             e.emit(Asm::Call { argc: 0 }, span()).unwrap();
             e.emit(Asm::Return, span()).unwrap();
@@ -5648,13 +5639,13 @@ mod calls_and_returns {
     /// A value of every kind that can be called is called by `Call`.
     #[test]
     fn a_call_of_every_kind_of_function() {
-        let closure = Value::VmClosure(Arc::new(VmClosure {
-            function: make_function_of(1, |e| {
+        let closure = Value::VmClosure(Arc::new(VmClosure::new(
+            make_function_of(1, |e| {
                 e.emit(Asm::GetLocal { slot: 0 }, span()).unwrap();
                 e.emit(Asm::Return, span()).unwrap();
             }),
-            upvalues: vec![],
-        }));
+            vec![],
+        )));
         let host = Value::HostFn(Arc::new(HostFn {
             name: "same".to_string(),
             call: Arc::new(|args| Ok(args[0].clone())),
@@ -5735,10 +5726,10 @@ mod parts_in_place {
             Value::Bool(true),
             Value::Bool(false),
             Value::Unit,
-            Value::VmClosure(Arc::new(VmClosure {
-                function: Arc::new(Function::returning_unit("f".to_string(), 0)),
-                upvalues: vec![],
-            })),
+            Value::VmClosure(Arc::new(VmClosure::new(
+                Arc::new(Function::returning_unit("f".to_string(), 0)),
+                vec![],
+            ))),
             Value::String("text".into()),
             Value::list(vec![Value::Int(1), Value::Unit]),
             Value::anon_record([("x", Value::Int(1))]),
@@ -6078,10 +6069,7 @@ mod methods_in_place {
     }
 
     fn closure(function: Arc<Function>) -> Value {
-        Value::VmClosure(Arc::new(VmClosure {
-            function,
-            upvalues: vec![],
-        }))
+        Value::VmClosure(Arc::new(VmClosure::new(function, vec![])))
     }
 
     /// A function that gives the list of what it was called with.
@@ -6133,10 +6121,7 @@ mod methods_in_place {
         let script = make_function(build);
         let floor = vm.frames.len();
         vm.frames.push(Frame::Code(CallFrame {
-            closure: Arc::new(VmClosure {
-                function: script,
-                upvalues: vec![],
-            }),
+            closure: Arc::new(VmClosure::new(script, vec![])),
             ip: 0,
             base_slot: 0,
         }));
@@ -6599,10 +6584,10 @@ mod slide_in_place {
             float(2.5),
             Value::Bool(true),
             Value::Unit,
-            Value::VmClosure(Arc::new(VmClosure {
-                function: Arc::new(Function::returning_unit("f".to_string(), 0)),
-                upvalues: vec![],
-            })),
+            Value::VmClosure(Arc::new(VmClosure::new(
+                Arc::new(Function::returning_unit("f".to_string(), 0)),
+                vec![],
+            ))),
             Value::String("text".into()),
             Value::list(vec![Value::Int(1), Value::Unit]),
         ]

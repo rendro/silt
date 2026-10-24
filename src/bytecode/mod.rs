@@ -132,6 +132,10 @@ pub struct Globals {
     /// each with its name.
     traits: Rows<(TraitId, String)>,
     trait_indexes: Layers<TraitId, u16>,
+    /// In a debug build, the evidence that the type of each impl has
+    /// the supertraits of its trait (`crate::vm::evidence`).
+    #[cfg(debug_assertions)]
+    supers: Layers<(TraitId, TypeId), Arc<[(TraitId, crate::evidence::Evidence)]>>,
 }
 
 impl Globals {
@@ -159,7 +163,36 @@ impl Globals {
             shown: before.shown.clone(),
             encoded: before.encoded.clone(),
             decoded: before.decoded.clone(),
+            #[cfg(debug_assertions)]
+            supers: before.supers.clone(),
         }
+    }
+
+    /// The evidence that the type `ty` of the impl of `t` has each
+    /// supertrait of `t` (debug builds only keep it).
+    pub fn note_supers(
+        &mut self,
+        t: TraitId,
+        ty: TypeId,
+        supers: &[(TraitId, crate::evidence::Evidence)],
+    ) {
+        #[cfg(debug_assertions)]
+        self.supers.insert((t, ty), supers.into());
+        #[cfg(not(debug_assertions))]
+        let _ = (t, ty, supers);
+    }
+
+    /// The evidence that the type `ty` of the impl of `t` has the
+    /// supertrait `sup`.
+    #[cfg(debug_assertions)]
+    pub(crate) fn super_evidence(
+        &self,
+        t: TraitId,
+        ty: TypeId,
+        sup: TraitId,
+    ) -> Option<&crate::evidence::Evidence> {
+        let supers = self.supers.get(&(t, ty))?;
+        supers.iter().find(|(s, _)| *s == sup).map(|(_, ev)| ev)
     }
 
     /// The number of slots.
@@ -625,6 +658,11 @@ pub struct Function {
     upvalue_count: u8,
     /// The compiled bytecode.
     chunk: Chunk,
+    /// In a debug build, the trait evidence of the function's code
+    /// (`crate::vm::evidence`): none for code that passes none on and
+    /// is no definition with bounds.
+    #[cfg(debug_assertions)]
+    evidence: Option<Box<crate::evidence::FnEvidence>>,
 }
 
 impl Function {
@@ -662,6 +700,12 @@ impl Function {
         &self.chunk
     }
 
+    /// The trait evidence of the function's code.
+    #[cfg(debug_assertions)]
+    pub(crate) fn evidence(&self) -> Option<&crate::evidence::FnEvidence> {
+        self.evidence.as_deref()
+    }
+
     /// A function made of `code` and `constants` as they are, unverified:
     /// what the verifier's tests hand it.
     #[cfg(test)]
@@ -681,6 +725,8 @@ impl Function {
                 spans: Vec::new(),
                 constant_dedup: HashMap::new(),
             },
+            #[cfg(debug_assertions)]
+            evidence: None,
         }
     }
 }
@@ -711,6 +757,22 @@ pub(crate) fn call_global_script(slot: u16, name: &str) -> Function {
 pub struct VmClosure {
     pub function: Arc<Function>,
     pub upvalues: Vec<Value>,
+    /// In a debug build, the trait evidence the closure's body sees
+    /// (`crate::vm::evidence`).
+    #[cfg(debug_assertions)]
+    pub(crate) ev: Option<Arc<crate::vm::evidence::Env>>,
+}
+
+impl VmClosure {
+    /// The closure of `function` with the captured values `upvalues`.
+    pub fn new(function: Arc<Function>, upvalues: Vec<Value>) -> Self {
+        VmClosure {
+            function,
+            upvalues,
+            #[cfg(debug_assertions)]
+            ev: None,
+        }
+    }
 }
 
 impl Drop for VmClosure {

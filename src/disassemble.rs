@@ -370,10 +370,7 @@ mod tests {
         let output = disassembly(4, 1, |e| {
             let f = e
                 .constant(
-                    Value::VmClosure(Arc::new(VmClosure {
-                        function: Arc::new(inner),
-                        upvalues: vec![],
-                    })),
+                    Value::VmClosure(Arc::new(VmClosure::new(Arc::new(inner), vec![]))),
                     span(),
                 )
                 .unwrap();

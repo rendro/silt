@@ -1324,12 +1324,7 @@ fn a_value_nested_through_any_holder_is_dropped_without_the_native_stack() {
         &|n, rest| Value::map([(rest, Value::Int(n))]),
         &|_, rest| Value::set([rest]),
         // A closure that has captured the next level.
-        &|_, rest| {
-            Value::VmClosure(Arc::new(VmClosure {
-                function: function.clone(),
-                upvalues: vec![rest],
-            }))
-        },
+        &|_, rest| Value::VmClosure(Arc::new(VmClosure::new(function.clone(), vec![rest]))),
         // A channel in which the next level waits.
         &|n, rest| {
             let channel = Channel::new(n as usize, 1);
