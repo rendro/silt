@@ -1,0 +1,8 @@
+-- cmd: -w
+-- exit: 1
+-- requires-feature: watch
+-- A file with `-w` before it is no command either, and the command to
+-- write keeps the flag where it stands.
+fn main() {
+  println("not run")
+}

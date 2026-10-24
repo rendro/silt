@@ -78,7 +78,7 @@ pub(crate) fn dispatch(args: &[String]) {
 
 /// Disassemble a file's bytecode without running it: the program that
 /// starts at `main` when the file binds one, otherwise its declarations.
-pub(crate) fn disasm_file(path: &str) {
+fn disasm_file(path: &str) {
     silt::intern::reset();
     // Read-only command — never writes `silt.lock`. A lock that no
     // longer matches the manifest is a package error ("silt.lock is out

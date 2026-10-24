@@ -1,4 +1,0 @@
--- cmd:
-fn main() {
-  println("direct-run")
-}

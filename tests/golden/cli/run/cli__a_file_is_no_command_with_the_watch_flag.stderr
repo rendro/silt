@@ -1,0 +1,3 @@
+Unknown command: 'cli__a_file_is_no_command_with_the_watch_flag.silt'
+  Did you mean 'silt run -w cli__a_file_is_no_command_with_the_watch_flag.silt'?
+Run 'silt' with no arguments to see available commands.

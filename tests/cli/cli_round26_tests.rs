@@ -13,8 +13,6 @@
 //! - G3: `silt disasm --help` advertises `--watch` in an Options section
 //!       (the watch interceptor already supported it; help text just didn't
 //!       document it).
-//! - G4: `silt foo.silt --help` matches `silt run --help` byte-for-byte
-//!       (the legacy convenience path was dropping the Examples section).
 //! - G6: `silt add` unknown-flag error includes the `Run 'silt add --help'
 //!       for usage.` nudge on a second stderr line, matching every other
 //!       subcommand.
@@ -224,34 +222,6 @@ fn test_silt_disasm_help_documents_watch_flag() {
     assert!(
         stdout.contains("--watch"),
         "expected --watch flag documented in `silt disasm --help`, got:\n{stdout}"
-    );
-}
-
-// ── G4: `silt foo.silt --help` == `silt run --help` ─────────────────
-
-#[test]
-fn test_silt_file_help_matches_run_help() {
-    let run_help = silt_cmd()
-        .args(["run", "--help"])
-        .output()
-        .expect("failed to run silt run --help");
-    let file_help = silt_cmd()
-        .args(["foo.silt", "--help"])
-        .output()
-        .expect("failed to run silt foo.silt --help");
-    assert!(run_help.status.success());
-    assert!(file_help.status.success());
-    let run_stdout = String::from_utf8_lossy(&run_help.stdout).into_owned();
-    let file_stdout = String::from_utf8_lossy(&file_help.stdout).into_owned();
-    assert_eq!(
-        run_stdout, file_stdout,
-        "`silt foo.silt --help` must match `silt run --help` byte-for-byte\n\
-         run output:\n{run_stdout}\n---\nfile output:\n{file_stdout}"
-    );
-    // Sanity: the shared text must include the Examples section.
-    assert!(
-        file_stdout.contains("Examples:"),
-        "expected Examples section in shared help text, got:\n{file_stdout}"
     );
 }
 

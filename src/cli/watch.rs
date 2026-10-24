@@ -157,6 +157,9 @@ fn handle_watch(args: &[String]) {
                     "error: --watch requires a runnable subcommand (run, check, test, disasm)"
                 );
             }
+            // A file is run by `silt run`, which watches: the command to
+            // write keeps the flags where they are.
+            Some(s) if s.ends_with(".silt") => crate::cli::help::file_is_no_command(s, &args[1..]),
             Some(s) => {
                 eprintln!(
                     "error: silt {s} does not support --watch (only run, check, test, disasm do)"

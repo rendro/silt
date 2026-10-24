@@ -50,10 +50,7 @@ pub(crate) fn usage_text() -> String {
     out.push_str("silt — a statically-typed, expression-based language\n");
     out.push('\n');
     out.push_str("Usage:\n");
-    out.push_str(&line(
-        "silt run [--watch] [--disassemble] <file.silt>",
-        &run_desc,
-    ));
+    out.push_str(&line("silt run [--watch] <file.silt>", &run_desc));
     out.push_str(&line(
         "silt check [--format json] [--watch] <file.silt>",
         &check_desc,
@@ -111,6 +108,38 @@ pub(crate) fn usage_text() -> String {
 /// noise. Keep in sync with the match arms in `run_main`.
 pub(crate) const GLOBAL_FLAGS: &[&str] = &["--version", "-V", "-v", "--help", "-h", "help"];
 
+/// What silt says when its first argument is no command but a file
+/// (`silt hello.silt`), and exits 1: `silt run` runs it, and the command
+/// to write keeps every argument (`args`, after the program's name) in
+/// its place, `silt -w hello.silt` as `silt run -w hello.silt`.
+pub(crate) fn file_is_no_command(file: &str, args: &[String]) -> ! {
+    let written: Vec<String> = args.iter().map(|arg| shell_word(arg)).collect();
+    eprintln!("Unknown command: '{file}'");
+    eprintln!("  Did you mean 'silt run {}'?", written.join(" "));
+    eprintln!("Run 'silt' with no arguments to see available commands.");
+    std::process::exit(1);
+}
+
+/// `arg` as a shell reads it back: as it is when it holds only
+/// characters a shell takes literally, else in double quotes, with `"`,
+/// `\`, `$` and `` ` `` escaped.
+fn shell_word(arg: &str) -> String {
+    let plain =
+        !arg.is_empty() && (arg.chars()).all(|c| c.is_alphanumeric() || "-_./=:,+@%^".contains(c));
+    if plain {
+        return arg.to_string();
+    }
+    let mut out = String::from("\"");
+    for c in arg.chars() {
+        if matches!(c, '"' | '\\' | '$' | '`') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out.push('"');
+    out
+}
+
 /// Whether `--help` or `-h` is one of silt's own arguments in `args`:
 /// the ones before `--`, after which every argument is the program's
 /// (`silt run main.silt -- --help` runs the program with `--help`).
@@ -140,7 +169,7 @@ pub(crate) fn check_usage_banner() -> &'static str {
 /// also accepts no file argument when invoked inside a package — the
 /// optional-no-arg behavior is documented separately in the help text.
 pub(crate) fn run_usage_banner() -> &'static str {
-    "silt run [--watch] [--disassemble] <file.silt> [-- <args>...]"
+    "silt run [--watch] <file.silt> [-- <args>...]"
 }
 
 /// Single source of truth for the `silt test` usage banner line.
@@ -170,17 +199,13 @@ pub(crate) fn disasm_usage_banner() -> &'static str {
     "silt disasm [<file.silt>]"
 }
 
-/// Full body of `silt run --help`, rendered to stdout. Shared by the
-/// explicit `silt run --help` path and the legacy
-/// `silt <file>.silt --help` convenience shim so the two can't drift
-/// apart.
+/// Full body of `silt run --help`, rendered to stdout.
 pub(crate) fn run_help_text() -> String {
     let mut s = String::new();
     s.push_str(&format!("Usage: {}\n", run_usage_banner()));
     s.push('\n');
     s.push_str("Options:\n");
     s.push_str("  --watch, -w         Re-run on file changes\n");
-    s.push_str("  --disassemble       Show bytecode disassembly instead of running\n");
     s.push_str("  -- <args>...        Pass the arguments after it to the program (io.args())\n");
     s.push('\n');
     s.push_str("Examples:\n");
@@ -188,6 +213,23 @@ pub(crate) fn run_help_text() -> String {
     s.push_str("  silt run main.silt\n");
     s.push_str("  silt run main.silt -- input.txt\n");
     s.push_str("  silt run --watch main.silt\n");
-    s.push_str("  silt run --disassemble main.silt\n");
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The command a file argument is told to write reads back as the
+    /// arguments it was given: a word of plain characters as it is, any
+    /// other in double quotes with what a shell reads in them escaped.
+    #[test]
+    fn a_shell_word_reads_back_as_the_argument() {
+        assert_eq!(shell_word("hello.silt"), "hello.silt");
+        assert_eq!(shell_word("-w"), "-w");
+        assert_eq!(shell_word("my file.silt"), "\"my file.silt\"");
+        assert_eq!(shell_word(""), "\"\"");
+        assert_eq!(shell_word("a$b`c\"d\\e"), "\"a\\$b\\`c\\\"d\\\\e\"");
+        assert_eq!(shell_word("it's"), "\"it's\"");
+    }
 }
