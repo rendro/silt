@@ -120,17 +120,18 @@ impl Vm {
                 invoke_host_fn(&host, args).map(Entered::Value)
             }),
             Value::VariantConstructor(tag) => {
-                // (The variant takes the list of its fields.)
-                let args = self.stack.split_off(func_slot + 1);
-                self.stack.truncate(func_slot);
-                let arity = tag.arity();
-                if args.len() != arity {
+                // (The fields are taken off the stack into the variant:
+                // one of a single field makes no list of them.)
+                let (arity, given) = (tag.arity(), self.stack.len() - func_slot - 1);
+                if given != arity {
+                    self.stack.truncate(func_slot);
                     return Err(VmError::type_confusion(format!(
-                        "variant constructor '{tag}' expects {arity} arguments, got {}",
-                        args.len()
+                        "variant constructor '{tag}' expects {arity} arguments, got {given}"
                     )));
                 }
-                Ok(Entered::Value(Value::variant(tag, args)))
+                let variant = Value::variant(tag, self.stack.drain(func_slot + 1..));
+                self.stack.truncate(func_slot);
+                Ok(Entered::Value(variant))
             }
             other => {
                 self.stack.truncate(func_slot);
