@@ -229,7 +229,7 @@ LSP server with diagnostics, hover types, go-to-definition, go-to-type-definitio
 
 ## Documentation
 
-New here? Read **[Why silt](docs/why-silt.md)** to see how it compares to Rust, Go, Gleam, and OCaml. Then start with **[Getting Started](docs/getting-started.md)** to install silt and walk through the essentials, and see the **[Language Guide](docs/language-guide.md)** for the complete reference. Stdlib documentation is delivered through the LSP — hover any built-in name (`list.map`, `math.cos`, `Result`, …) in your editor to see its docs.
+New here? Read **[Why silt](docs/why-silt.md)** to see how it compares to Rust, Go, Gleam, and OCaml. Then start with **[Getting Started](docs/getting-started.md)** to install silt and walk through the essentials, and see the **[Language Guide](docs/language-guide.md)** for the complete reference. The **[Language card](docs/language-card.md)** puts the syntax in brief and the signature of every builtin function on one page. Stdlib documentation is delivered through the LSP — hover any built-in name (`list.map`, `math.cos`, `Result`, …) in your editor to see its docs.
 
 Deeper dives: **[Concurrency](docs/concurrency.md)**, **[FFI](docs/ffi.md)** (embedding silt in Rust), and **[Editor Setup](docs/editor-setup.md)**.
 

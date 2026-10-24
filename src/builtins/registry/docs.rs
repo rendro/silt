@@ -854,6 +854,79 @@ pub fn render_page(page: &str) -> Result<String, Vec<String>> {
     Ok(text)
 }
 
+/// The line of the language card (`docs/language-card.md`) after which
+/// [`render_card`] writes the card from the registry.
+pub const CARD_MARKER: &str = "<!-- Generated from the builtin registry from here on: \
+     SILT_BLESS=1 cargo nextest run --test meta language_card -->";
+
+/// The language card `card` with its standard library written from the
+/// registry: the prose up to [`CARD_MARKER`] as it is, then the
+/// prelude's types and functions and each module's types, traits,
+/// functions and constants, one declaration a line, whether the cargo
+/// feature of a module is built or not. `None` when `card` has no
+/// marker line.
+pub fn render_card(card: &str) -> Option<String> {
+    let (prose, _) = card.split_once(CARD_MARKER)?;
+    let registry = registry();
+    let mut out = format!("{prose}{CARD_MARKER}\n");
+    let mut prelude: Vec<String> = declarations(super::PRELUDE_TYPES);
+    prelude.extend(
+        (super::PRELUDE_OPAQUE.iter())
+            .filter(|(name, _)| *name != crate::defs::TYPE_OF)
+            .map(|(name, arity)| opaque_line(name, *arity)),
+    );
+    let mut functions: Vec<String> = (registry.prelude.iter())
+        .map(|row| row.signature.trim_start_matches("fn ").to_string())
+        .collect();
+    functions.sort();
+    prelude.extend(functions);
+    out.push_str("\n### Prelude\n\n```\n");
+    out.push_str(&(prelude.join("\n") + "\n```\n"));
+    for module in &registry.modules {
+        let mut lines = declarations(module.types);
+        lines.extend(declarations(module.traits));
+        lines.extend((module.opaque.iter()).map(|(name, arity)| opaque_line(name, *arity)));
+        let mut rows: Vec<&Row> = module.rows.iter().collect();
+        rows.sort_by_key(|row| row.name);
+        lines.extend(rows.into_iter().map(|row| {
+            let line = section_signature(module, row);
+            match row.feature {
+                Some(feature) => format!("{line}  -- cargo feature `{feature}`"),
+                None => line,
+            }
+        }));
+        let heading = match module.feature {
+            Some(feature) => format!("{} (cargo feature `{feature}`)", module.name),
+            None => module.name.to_string(),
+        };
+        out.push_str(&format!("\n### {heading}\n\n```\n"));
+        out.push_str(&(lines.join("\n") + "\n```\n"));
+    }
+    Some(out)
+}
+
+/// The declarations of a module's text of types or traits, one a line,
+/// without `pub`.
+fn declarations(text: &str) -> Vec<String> {
+    (text.lines())
+        .map(|line| line.trim().trim_start_matches("pub ").to_string())
+        .filter(|line| !line.is_empty())
+        .collect()
+}
+
+/// The line of the card for an opaque type: `type Handle(a)`, a type
+/// whose values only the module's functions make and take.
+fn opaque_line(name: &str, arity: usize) -> String {
+    let params: Vec<String> = (b'a'..)
+        .take(arity)
+        .map(|c| char::from(c).to_string())
+        .collect();
+    match params.is_empty() {
+        true => format!("type {name}  -- opaque"),
+        false => format!("type {name}({})  -- opaque", params.join(", ")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
