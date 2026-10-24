@@ -126,6 +126,56 @@ fn test_comparison() {
     assert_eq!(result, Value::Bool(true));
 }
 
+/// The message of the error `build`'s script ends with.
+fn script_error(build: impl FnOnce(&mut Emitter)) -> String {
+    let script = make_function(build);
+    let mut vm = Vm::new(crate::HostIo::process());
+    vm.run(script).unwrap_err().message
+}
+
+#[test]
+fn an_add_of_a_constant_refuses_what_an_add_refuses() {
+    // (Fused: `AddConst`.)
+    let message = script_error(|e| {
+        let a = e.constant(Value::String("a".into()), span()).unwrap();
+        let one = e.constant(Value::Int(1), span()).unwrap();
+        e.emit(Asm::Constant { k: a }, span()).unwrap();
+        e.emit(Asm::Constant { k: one }, span()).unwrap();
+        e.emit(Asm::Add, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
+    });
+    assert_eq!(
+        message,
+        "cannot apply '+' to String and Int; build strings with interpolation, e.g. \"{a}{b}\""
+    );
+}
+
+#[test]
+fn a_comparison_and_its_jump_refuse_what_the_comparison_refuses() {
+    for (compare, jump) in [(Asm::Lt, true), (Asm::Geq, false), (Asm::Eq, true)] {
+        // (Fused: one `JumpIfNot..` instruction.)
+        let message = script_error(|e| {
+            let one = e.constant(Value::Int(1), span()).unwrap();
+            let a = e.constant(Value::String("a".into()), span()).unwrap();
+            let end = e.label();
+            e.emit(Asm::Constant { k: one }, span()).unwrap();
+            e.emit(Asm::Constant { k: a }, span()).unwrap();
+            e.emit(compare, span()).unwrap();
+            match jump {
+                true => e.emit(Asm::JumpIfFalse { to: end }, span()).unwrap(),
+                false => e.emit(Asm::JumpIfTrue { to: end }, span()).unwrap(),
+            }
+            e.bind(end, span()).unwrap();
+            e.emit(Asm::Unit, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        assert_eq!(
+            message, "unsupported operation: cannot compare Int and String",
+            "{compare:?}"
+        );
+    }
+}
+
 #[test]
 fn test_boolean_not() {
     let script = make_function(|e| {
