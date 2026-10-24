@@ -426,16 +426,23 @@ impl<'a> Compiler<'a> {
             };
             for method in decl.methods.into_iter().filter(|m| !m.is_signature_only) {
                 let name = resolve(method.name);
-                let left_out = (impls.iter()).any(|ti| {
+                let Some(first) = (impls.iter()).find(|ti| {
                     self.impl_trait(ti) == Some(t)
                         && !ti.methods.iter().any(|written| written.name == method.name)
-                });
-                if !left_out || globals.default_method(t, &name).is_some() {
+                }) else {
+                    continue;
+                };
+                if globals.default_method(t, &name).is_some() {
                     continue;
                 }
                 globals
                     .add_default_method(t, &name, format!("{}.{name}", decl.name))
                     .ok_or_else(|| too_many_globals(globals.len() + 1, method.span))?;
+                // (Its code is silt's, which has no place in the program:
+                // the code that installs it has the place of the first
+                // impl that leaves it out.)
+                let mut method = method;
+                method.span = first.span;
                 installs.push((t, method));
             }
         }

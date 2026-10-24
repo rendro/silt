@@ -734,18 +734,32 @@ impl Vm {
     /// `middle` and `main` both tail-called) would render a single-frame
     /// stack that drops both intermediate names.
     pub(crate) fn enrich_error(&self, mut err: VmError) -> VmError {
+        /// Whether the function `name`, at the place `span`, is code silt
+        /// compiled for a builtin trait (`Error.message`'s default): code
+        /// with no place in the program that is no synthetic frame
+        /// (`<script>`, which the call stack's rendering leaves out).
+        fn silts_own(name: &str, span: crate::source::Span) -> bool {
+            !span.is_in_source() && !name.starts_with('<')
+        }
         if err.span.is_some() {
             return err;
         }
         // Capture span from current frame's IP position.
-        // A builtin's error is its caller's: the innermost function.
+        // A builtin's error is its caller's: the innermost function. So
+        // is the error of code silt compiled for a builtin trait's
+        // default method (`Error.message`), which has no place in the
+        // program: the error is the call's.
+        let place = |frame: &crate::vm::runtime::CallFrame| {
+            (frame.closure.function.chunk()).span_at(frame.ip.saturating_sub(1))
+        };
         let innermost = self.frames.iter().rev().find_map(|frame| match frame {
-            Frame::Code(frame) => Some(frame),
-            Frame::Native(_) => None,
+            Frame::Code(frame) if !silts_own(frame.closure.function.name(), place(frame)) => {
+                Some(frame)
+            }
+            Frame::Code(_) | Frame::Native(_) => None,
         });
         if let Some(frame) = innermost {
-            let ip = frame.ip.saturating_sub(1);
-            let span = frame.closure.function.chunk().span_at(ip);
+            let span = place(frame);
             if span.is_in_source() {
                 err.span = Some(span);
             }
@@ -765,9 +779,11 @@ impl Vm {
                 continue;
             };
             let func_name = frame.closure.function.name().to_string();
-            let ip = frame.ip.saturating_sub(1);
-            let span = frame.closure.function.chunk().span_at(ip);
-            stack.push((func_name, span));
+            let span = place(frame);
+            // (Silt's own code is no frame of the program's.)
+            if !silts_own(&func_name, span) {
+                stack.push((func_name, span));
+            }
             // Newer (later-pushed) entries for this depth are more recent
             // callers, so they come first: the chain stays callee-first.
             // A caller's place is the tail call: the instruction before
