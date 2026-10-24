@@ -58,6 +58,30 @@ jobs:
       - name: cargo fmt
         run: cargo fmt -- --check
 
+  rust-version:
+    # The oldest Rust that builds silt is the package's `rust-version` in
+    # Cargo.toml. Check the library and the binary on it, with no
+    # features and with all of them, so that code which needs a newer
+    # Rust fails here and not where someone builds silt. It keeps no
+    # cache: the repository's cache is over its limit, and no other job
+    # builds with this toolchain.
+    name: Check on rust-version
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install the rust-version toolchain
+        id: toolchain
+        run: |
+          version=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)
+          test -n "$version"
+          rustup toolchain install "$version" --profile minimal --no-self-update
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: cargo check (no features)
+        run: cargo +${{ steps.toolchain.outputs.version }} check --no-default-features --lib --bins
+      - name: cargo check (all features)
+        run: cargo +${{ steps.toolchain.outputs.version }} check --all-features --lib --bins
+
   test-linux:
     # Split Linux test runs across 5 parallel matrix partitions so total
     # wall-clock approximates max(slowest partition) instead of the sum.
