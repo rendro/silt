@@ -316,6 +316,10 @@ pub struct Compiler<'a> {
     /// The name a local `let` gives the closure compiled next, its
     /// value.
     closure_name: Option<Symbol>,
+    /// The default methods of the builtin traits that this program
+    /// installs (the first REPL entry, or a program; a later entry finds
+    /// them installed), each with its trait: `Error.message`.
+    builtin_defaults: Vec<(crate::defs::TraitId, crate::ast::FnDecl)>,
 }
 
 /// The names two or more types of the program's modules have (two
@@ -391,10 +395,63 @@ impl<'a> Compiler<'a> {
             globals: Globals::default(),
             own_slots: HashMap::new(),
             closure_name: None,
+            builtin_defaults: Vec::new(),
         };
+        compiler.builtin_defaults = compiler.assign_builtin_defaults(&mut globals)?;
         compiler.own_slots = compiler.assign_slots(&mut globals)?;
         compiler.globals = globals;
         Ok(compiler)
+    }
+
+    /// Give a global slot to each default method of a builtin trait
+    /// (`Error.message`) that an impl of the program leaves out and no
+    /// earlier REPL entry installed: the methods this program compiles,
+    /// each with its trait.
+    fn assign_builtin_defaults(
+        &self,
+        globals: &mut Globals,
+    ) -> Result<Vec<(crate::defs::TraitId, crate::ast::FnDecl)>, Diagnostic> {
+        let impls: Vec<&crate::ast::TraitImpl> = (self.units.modules.iter().enumerate())
+            .filter(|(index, _)| !self.units.earlier.installed.contains(index))
+            .flat_map(|(_, unit)| &unit.program.decls)
+            .filter_map(|decl| match decl {
+                Decl::TraitImpl(ti) => Some(ti),
+                _ => None,
+            })
+            .collect();
+        let mut installs = Vec::new();
+        for decl in crate::typechecker::builtin_trait_decls() {
+            let Some(t) = crate::defs::builtin_trait_id(&resolve(decl.name)) else {
+                continue;
+            };
+            for method in decl.methods.into_iter().filter(|m| !m.is_signature_only) {
+                let name = resolve(method.name);
+                let left_out = (impls.iter()).any(|ti| {
+                    self.impl_trait(ti) == Some(t)
+                        && !ti.methods.iter().any(|written| written.name == method.name)
+                });
+                if !left_out || globals.default_method(t, &name).is_some() {
+                    continue;
+                }
+                globals
+                    .add_default_method(t, &name, format!("{}.{name}", decl.name))
+                    .ok_or_else(|| too_many_globals(globals.len() + 1, method.span))?;
+                installs.push((t, method));
+            }
+        }
+        Ok(installs)
+    }
+
+    /// Compile the default methods of the builtin traits this program
+    /// installs into their slots.
+    fn compile_builtin_defaults(&mut self) -> Result<(), Diagnostic> {
+        for (t, method) in std::mem::take(&mut self.builtin_defaults) {
+            let name = crate::defs::builtin_traits()
+                .get((t.0.0 as usize).wrapping_sub(crate::defs::builtin_types().len()))
+                .map_or("?", |(name, _)| name);
+            self.compile_default_method(t, name, &method)?;
+        }
+        Ok(())
     }
 
     /// Give a global slot to each definition the program installs:
@@ -555,6 +612,7 @@ impl<'a> Compiler<'a> {
     ) -> Result<Vec<Function>, Diagnostic> {
         // Push a top-level script context.
         self.begin_function("<script>".into(), 0, Span::BUILTIN)?;
+        self.compile_builtin_defaults()?;
 
         let order = self.units.modules[self.units.entry].let_order.clone();
         for decl in Self::decls_in_init_order(&program.decls, &order) {
@@ -600,6 +658,7 @@ impl<'a> Compiler<'a> {
     /// the REPL where `main()` is not the entry-point.
     pub fn compile_declarations(&mut self, program: &Program) -> Result<Vec<Function>, Diagnostic> {
         self.begin_function("<script>".into(), 0, Span::BUILTIN)?;
+        self.compile_builtin_defaults()?;
 
         let order = self.units.modules[self.units.entry].let_order.clone();
         for decl in Self::decls_in_init_order(&program.decls, &order) {

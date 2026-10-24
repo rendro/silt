@@ -16,9 +16,9 @@ use super::*;
 /// - `Compare`: `fn compare(self, other: Self) -> Int` (signature only).
 /// - `Equal`:   `fn equal(self, other: Self) -> Bool` (signature only).
 /// - `Hash`:    `fn hash(self) -> Int` (signature only).
-/// - `Error: Display { fn message(self) -> String }`, with a default:
-///   an impl may leave `message` out, and the VM then shows the value
-///   as `display` does.
+/// - `Error: Display { fn message(self) -> String { "{self}" } }`: an
+///   impl may leave `message` out, and its message is then the value
+///   shown as `display` shows it.
 pub fn builtin_trait_decls() -> Vec<TraitDecl> {
     let dummy_span = Span::BUILTIN;
     let self_sym = intern("self");
@@ -69,11 +69,17 @@ pub fn builtin_trait_decls() -> Vec<TraitDecl> {
         }
     }
 
-    // `Error.message` has a default: an impl may leave it out. (What
-    // it does is the VM's: it shows the value, as `display` does. No
-    // program declares the trait, so the body here is never checked or
-    // compiled.)
-    let error_default_body = Expr::new(ExprKind::Unit, dummy_span);
+    // `Error.message` has a default: an impl may leave it out. It shows
+    // the value, as `display` does: `"{self}"`. (No program declares the
+    // trait, so the body is not checked; each program compiles it once,
+    // into the default's slot.)
+    let error_default_body = Expr::new(
+        ExprKind::StringInterp(vec![StringPart::Expr(Expr::new(
+            ExprKind::Ident(self_sym),
+            dummy_span,
+        ))]),
+        dummy_span,
+    );
     let error_message_fn = FnDecl {
         name: intern("message"),
         params: vec![self_param(self_sym, dummy_span)],
