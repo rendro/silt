@@ -14,7 +14,7 @@ No import or qualification needed.
 |------|-----------|-------------|
 | `print` | `(a) -> () where a: Display` | Print a value without trailing newline |
 | `println` | `(a) -> () where a: Display` | Print a value with trailing newline |
-| `panic` | `(a) -> b where a: Display` | Crash with an error message |
+| `panic` | `(a) -> Never where a: Display` | Crash with an error message |
 | `Ok` | `(a) -> Result(a, e)` | Construct a success Result |
 | `Err` | `(e) -> Result(a, e)` | Construct an error Result |
 | `Some` | `(a) -> Option(a)` | Construct a present Option |
@@ -108,12 +108,14 @@ fn main() {
 ## `panic`
 
 ```
-panic(value: a) -> b where a: Display
+panic(message: a) -> Never where a: Display
 ```
 
 Terminates execution with an error message. Accepts any value that implements
-`Display`. The return type is polymorphic because `panic` never returns -- it
-can appear anywhere a value is expected.
+`Display`. It never returns: its result is of type `Never`, the type of an expression
+that does not return (`return`, `loop(...)`), which goes with every type, so
+`panic` can stand wherever a value is expected and ends an `else` block that
+must leave. `Never` is not written in an annotation.
 
 ```silt
 -- noexec

@@ -3,7 +3,7 @@ Commands:
   :help, :h      Show this help
   :quit, :q      Exit the REPL
   :type <expr>   Show the type of an expression without running it
-  :doc <name>    Show a builtin's signature and summary (list.map, println, string)
+  :doc <name>    Show a builtin's signature and summary (list.map, Option, string)
   <Tab>          Autocomplete builtins and user-defined names
 
 Enter expressions to evaluate, or declarations (fn, type, trait, import).

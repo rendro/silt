@@ -26,17 +26,17 @@ pub(super) fn prelude() -> Vec<RowSpec> {
     vec![
         f(
             "fn print(value: a) -> () where a: Display",
-            "Write a value to stdout",
+            "Print a value without trailing newline",
             prelude::print,
         ),
         f(
             "fn println(value: a) -> () where a: Display",
-            "Write a value and a newline to stdout",
+            "Print a value with trailing newline",
             prelude::println,
         ),
         f(
             "fn panic(message: a) -> Never where a: Display",
-            "Stop the program with an error",
+            "Crash with an error message",
             prelude::panic,
         ),
     ]

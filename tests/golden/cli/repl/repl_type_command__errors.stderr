@@ -1,4 +1,4 @@
-:type needs an expression, as in :type list.map
+:type needs an expression, as in :type [1, 2]
 :type takes an expression, not a declaration
 error[type]: undefined variable 'nope'
  --> <repl:2>:1:1

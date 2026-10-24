@@ -1,0 +1,60 @@
+Silt REPL (type :quit to exit, :help for commands)
+type Option(a) { Some(a), None }
+type Result(a, e) { Ok(a), Err(e) }
+type List(a)  -- builtin
+Functions for working with ordered, immutable lists (`List(a)`).
+type Map(a, b)  -- builtin
+Functions for working with immutable, ordered maps (`Map(k, v)`).
+type Int  -- builtin
+Functions for parsing, converting, and comparing integers.
+type Bool  -- builtin
+type Bytes  -- opaque
+trait Equal { fn equal(self, other: Self) -> Bool }
+Whether two values are equal: `==` and `!=` need it.
+trait Display { fn display(self) -> String }
+How a value is shown: `println`, `print`, interpolation and `string.from` show it so.
+trait Compare: Equal { fn compare(self, other: Self) -> Int }
+The order of values: `<`, `>`, `<=` and `>=` need it.
+trait Hash { fn hash(self) -> Int }
+A value as a map's key or a set's element.
+trait Error: Display { fn message(self) -> String }
+An error a program reports: `message` says what went wrong.
+trait Number {}
+The types arithmetic is on, `Int` and `Float`: `+`, `-`, `*`, `/`, `%` and unary `-` need it.
+type Option(a) { Some(a), None }
+Constructs a present variant of `Option`.
+type Option(a) { Some(a), None }
+The absent variant of `Option`.
+type Result(a, e) { Ok(a), Err(e) }
+Constructs a success variant of `Result`.
+type Result(a, e) { Ok(a), Err(e) }
+Constructs an error variant of `Result`.
+type Value { Null, Bool(Bool), Int(Int), Float(Float), String(String), Array(List(Value)), Object(Map(String, Value)) }
+A JSON document as it is, for input whose shape is not known in advance: any document reads into it.
+trait Encode { fn encode(self) -> Value }
+What `json.stringify` and `json.pretty` need of the value they write.
+trait Decode { fn decode(value: Value) -> Result(Self, JsonError) }
+What `json.parse`, `json.parse_list`, `json.parse_map` and `json.decode` need of the type they decode into.
+type ChannelOp(a) { Recv(Channel(a)), Send(Channel(a), a) }
+Builds a receive arm for `channel.select`.
+type ChannelOp(a) { Recv(Channel(a)), Send(Channel(a), a) }
+Builds a send arm for `channel.select`.
+type Selected(a) { Received(Channel(a), Option(a)), Sent(Channel(a)) }
+What `channel.select` gives when an arm built with `channel.Send(ch, value)` completes: the value was handed off.
+type Selected(a) { Received(Channel(a), Option(a)), Sent(Channel(a)) }
+What `channel.select` gives when an arm built with `channel.Recv(ch)` completes: `channel.Received(ch, Some(value))` for a value, `channel.Received(ch, None)` when `ch` is closed and empty.
+type ChannelResult(a) { Message(a), Empty, Closed }
+Indicates the channel has been closed and is empty.
+type ChannelResult(a) { Message(a), Empty, Closed }
+Indicates the channel buffer is currently empty but not closed.
+type ChannelResult(a) { Message(a), Empty, Closed }
+Wraps a value received from a channel.
+type Step(a) { Stop(a), Continue(a) }
+Signals early termination from `list.fold_until`.
+type Step(a) { Stop(a), Continue(a) }
+Signals continuation in `list.fold_until`.
+type IoError { NotFound(String), PermissionDenied(String), AlreadyExists(String), InvalidInput(String), Interrupted, UnexpectedEof, WriteZero, Other(String) }
+type IoError { NotFound(String), PermissionDenied(String), AlreadyExists(String), InvalidInput(String), Interrupted, UnexpectedEof, WriteZero, Other(String) }
+file or directory missing
+type Handle(a)  -- opaque
+type Weekday { Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday }

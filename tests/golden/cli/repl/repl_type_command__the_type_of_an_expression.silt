@@ -1,2 +1,2 @@
 -- cmd: repl
--- stdin: :type 1 + 2\nimport list\n:type list.map\n:type list.sort\n:type list.group_by\nfn id(x) { x }\n:type id\nfn same(a, b) { a == b }\n:type same\n:type same(1, 2)\n:type [None]\n:type { x -> x.name }\n:quit\n
+-- stdin: :type 1 + 2\nimport list\nimport test\n:type test.assert_eq\n:type list.map\n:type list.sort\n:type list.group_by\nfn id(x) { x }\n:type id\nfn same(a, b) { a == b }\n:type same\n:type same(1, 2)\n:type [None]\n:type { x -> x.name }\n:quit\n
