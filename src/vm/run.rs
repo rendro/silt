@@ -545,20 +545,6 @@ impl Vm {
                 self.frame_mut().ip = ip
             };
         }
-        // A load of a definition with bounds passes evidence on, in a
-        // debug build (`super::evidence`). The instructions that put a
-        // callable on the stack from a slot (`GetGlobal`, `GetLocal`,
-        // `GetUpvalue`) bind its evidence here; `MakeClosure` gives a new
-        // closure the evidence of the body that makes it, and
-        // `call_method` binds the method it finds. An instruction that
-        // loads or calls a closure from a slot some other way needs the
-        // same hook, or the calls through it go unchecked without a word.
-        macro_rules! evidence_load {
-            () => {
-                #[cfg(debug_assertions)]
-                super::evidence::bind_load(&mut self.stack, closure, ip, &self.view.entry);
-            };
-        }
         // An error of the instruction being run. Its frame is on top:
         // nothing that fails in the loop has changed the frames.
         macro_rules! fail {
@@ -980,7 +966,6 @@ impl Vm {
                 }
                 Instr::GetLocal { slot } => {
                     push_copy!(self.stack, self.stack[base + slot]);
-                    evidence_load!();
                 }
                 Instr::SetLocal { slot } => {
                     let top = self.stack.len() - 1;
@@ -1006,7 +991,6 @@ impl Vm {
                             }
                         }
                     }
-                    evidence_load!();
                 }
                 Instr::SetGlobal { slot } => {
                     let value = peek(&self.stack).clone();
@@ -1020,7 +1004,6 @@ impl Vm {
                 }
                 Instr::GetUpvalue { index } => {
                     push_copy!(self.stack, closure.upvalues[index]);
-                    evidence_load!();
                 }
                 Instr::GetClosure => {
                     let Some(Frame::Code(frame)) = self.frames.last() else {
@@ -1147,8 +1130,6 @@ impl Vm {
                         .collect();
                     let function = chunk.closure(f).function.clone();
                     let made = VmClosure::new(function, upvalues);
-                    #[cfg(debug_assertions)]
-                    let made = super::evidence::made_in(closure, made);
                     self.stack.push(Value::VmClosure(Arc::new(made)));
                 }
                 Instr::MakeTuple { count } => {
@@ -2112,8 +2093,6 @@ impl Vm {
             None => self.method_of_newest(trait_index, receiver_type, method),
             found => found,
         };
-        #[cfg(debug_assertions)]
-        let bound = self.evidence_call(trait_index, receiver_slot + at, method, found)?;
         // (A method that is a closure, which a written method is, is
         // taken by its pointer, as `Call` takes one: the VM's own copy
         // of the closure in the global's slot is not cloned and moved.)
@@ -2123,8 +2102,6 @@ impl Vm {
             match sort(func) {
                 Sort::Closure(shared) => {
                     let closure = self.own.of(slot, shared);
-                    #[cfg(debug_assertions)]
-                    let closure = bound.unwrap_or(closure);
                     // In tail position the method takes the current
                     // frame over, as a tail-called function does.
                     if tail {

@@ -562,9 +562,10 @@ fn main() {
 
 The rules:
 
-- **Dispatch is by the descriptor's carried type name.** At runtime the
-  descriptor `Int` resolves to the `Default` impl for `Int`; `Todo`
-  resolves to `Default for Todo`; etc.
+- **The impl is the bound's.** A call of `default(Int)` passes, with the
+  descriptor, the impl `Default for Int` that `where a: Default` asks
+  for; `a.default()` calls its method. `default(Todo)` passes
+  `Default for Todo`; etc.
 - **The descriptor is a dispatch key, not an argument.** It occupies no
   parameter of the method: `a.empty()` passes nothing.
 - **A method that takes a value of the type is called through its

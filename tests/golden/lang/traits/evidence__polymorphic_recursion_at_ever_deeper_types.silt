@@ -1,6 +1,6 @@
 -- Polymorphic recursion: each call is at a deeper type (Box of Box of ...),
--- so the evidence each passes on is deeper; a debug build passes it on at no
--- cost of its depth.
+-- so the dictionary each passes on is deeper: it is made of the one the call
+-- was passed, at no cost of its depth.
 trait Greet { fn greet(self) -> Int }
 type Box(a) { Bx(a) }
 trait Greet for Int { fn greet(self) -> Int { 0 } }
