@@ -1,0 +1,2 @@
+silt test takes no program arguments: '--' passes arguments to a program run by 'silt run'
+Run 'silt test --help' for usage.

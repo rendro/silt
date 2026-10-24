@@ -40,6 +40,14 @@ pub(crate) fn dispatch(args: &[String]) {
             }
             filter = Some(value.to_string());
             i += 1;
+        } else if args[i] == "--" {
+            // The tests are functions of the files, called with no
+            // arguments: nothing could read what would follow.
+            eprintln!(
+                "silt test takes no program arguments: '--' passes arguments to a program run by 'silt run'"
+            );
+            eprintln!("Run 'silt test --help' for usage.");
+            process::exit(1);
         } else if args[i] == "--help" || args[i] == "-h" {
             println!("Usage: {}", test_usage_banner());
             println!();
