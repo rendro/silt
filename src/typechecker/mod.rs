@@ -102,6 +102,9 @@ pub struct TypeChecker {
     pub(super) written_bounds: HashMap<TyVar, Vec<(TraitKey, Vec<Type>)>>,
     /// The expected return type of the enclosing function (if any).
     pub(super) current_return_type: Option<Type>,
+    /// The function whose body is being checked, when it is declared to
+    /// return `Never`: a `return` in it is an error.
+    pub(super) never_fn: Option<Symbol>,
     /// The types of the module being checked that have a written
     /// `Display`, `json.Encode` or `json.Decode` impl, each with the
     /// trait, known before the impls are registered: such a type has
@@ -385,9 +388,13 @@ pub struct TypeChecker {
     /// functions have no bodies to check.
     pub(super) signatures_only: bool,
     /// Whether the declarations read are rows of the builtin registry.
-    /// A row's text may say what a program's cannot: the type `Never`,
-    /// and a result of a type no parameter fixes (`set.new() -> Set(a)`).
+    /// A row's text may say what a program's cannot: the type `Never`
+    /// anywhere, and a result of a type no parameter fixes
+    /// (`set.new() -> Set(a)`).
     pub(super) registry_rows: bool,
+    /// Whether the annotation being resolved is a function's return
+    /// type that is `Never`, the one place a program may write it.
+    pub(super) never_return: bool,
     /// What the checks of a session share; see [`Tables`]. Moved in
     /// for one module's check and out again after it.
     pub(super) tables: Tables,
@@ -409,6 +416,7 @@ impl TypeChecker {
             bounds: HashMap::new(),
             written_bounds: HashMap::new(),
             current_return_type: None,
+            never_fn: None,
             written: std::collections::HashSet::new(),
             lacking: std::collections::HashSet::new(),
             decode_gaps: Vec::new(),
@@ -492,6 +500,7 @@ impl TypeChecker {
             named_types: std::collections::HashSet::new(),
             signatures_only: false,
             registry_rows: false,
+            never_return: false,
             tables: Tables::default(),
         }
     }

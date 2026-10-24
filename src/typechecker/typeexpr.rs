@@ -271,10 +271,24 @@ impl TypeChecker {
                 if self.names_rejected(te.res, *name) {
                     return Type::Error;
                 }
-                // The type of what never returns: only a builtin's
-                // signature says it (`panic`).
-                if self.registry_rows && module.is_none() && name_str == "Never" {
-                    return Type::Never;
+                // The type of what never returns: a builtin's signature
+                // says it anywhere (`panic`), a program only as a
+                // function's return type (`fn fail(..) -> Never`), unless
+                // it declares a type of that name.
+                if module.is_none()
+                    && name_str == "Never"
+                    && self.named_type(te.res, *name).is_none()
+                {
+                    if self.registry_rows || self.never_return {
+                        return Type::Never;
+                    }
+                    self.error(
+                        Code::InvalidTypeAnnotation,
+                        "`Never` can only be the return type of a function: \
+                         `fn fail(message: String) -> Never`",
+                        te.span,
+                    );
+                    return Type::Error;
                 }
                 let Some(ty) = self.named_type(te.res, *name) else {
                     // Lowercase names in type annotations are type variables

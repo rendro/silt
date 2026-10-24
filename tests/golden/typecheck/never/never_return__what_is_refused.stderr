@@ -1,0 +1,35 @@
+error[type]: 'ends' is declared to return `Never`, but its body can return — end it with 'panic', a call of a function that returns `Never` or a `loop` that never ends
+ --> never_return__what_is_refused.silt:6:20
+   |
+ 6 | fn ends() -> Never {
+   |                    ^ 'ends' is declared to return `Never`, but its body can return — end it with 'panic', a call of a function that returns `Never` or a `loop` that never ends
+
+error[type]: 'return' in 'returns', which is declared to return `Never`: such a function never returns
+ --> never_return__what_is_refused.silt:12:10
+    |
+ 12 |     0 -> return panic("zero")
+    |          ^^^^^^^^^^^^^^^^^^^^ 'return' in 'returns', which is declared to return `Never`: such a function never returns
+
+error[type]: `Never` can only be the return type of a function: `fn fail(message: String) -> Never`
+ --> never_return__what_is_refused.silt:22:13
+    |
+ 22 | fn param(x: Never) -> Int {
+    |             ^^^^^ `Never` can only be the return type of a function: `fn fail(message: String) -> Never`
+
+error[type]: `Never` can only be the return type of a function: `fn fail(message: String) -> Never`
+ --> never_return__what_is_refused.silt:26:21
+    |
+ 26 | fn inside() -> List(Never) {
+    |                     ^^^^^ `Never` can only be the return type of a function: `fn fail(message: String) -> Never`
+
+error[type]: `Never` can only be the return type of a function: `fn fail(message: String) -> Never`
+ --> never_return__what_is_refused.silt:31:17
+    |
+ 31 |   fn m(self) -> Never
+    |                 ^^^^^ `Never` can only be the return type of a function: `fn fail(message: String) -> Never`
+
+error[type]: 'when let' else body must diverge — end it with 'return', 'panic', a call of a function that returns `Never` or, inside a loop, 'loop(...)'
+ --> never_return__what_is_refused.silt:35:30
+    |
+ 35 |   when let [x, ..] = xs else {
+    |                              ^ 'when let' else body must diverge — end it with 'return', 'panic', a call of a function that returns `Never` or, inside a loop, 'loop(...)'

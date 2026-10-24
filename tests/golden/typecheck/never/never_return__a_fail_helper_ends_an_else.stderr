@@ -1,0 +1,10 @@
+error[runtime]: panic: failed: empty
+ --> never_return__a_fail_helper_ends_an_else.silt:6:3
+   |
+ 6 |   panic("failed: {message}")
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^ panic: failed: empty
+
+call stack:
+  -> fail  at never_return__a_fail_helper_ends_an_else.silt:6:3
+  -> first  at never_return__a_fail_helper_ends_an_else.silt:17:5
+  -> main  at never_return__a_fail_helper_ends_an_else.silt:33:11

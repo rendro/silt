@@ -1,0 +1,34 @@
+-- exit: 1
+-- A function declared `-> Never` never returns, so a call of it ends
+-- an `else` that must leave, as `panic` does; a loop that never stops
+-- is such a body too.
+fn fail(message: String) -> Never {
+  panic("failed: {message}")
+}
+
+fn forever() -> Never {
+  loop n = 0 {
+    loop(n + 1)
+  }
+}
+
+fn first(xs: List(Int)) -> Int {
+  when let [x, ..] = xs else {
+    fail("empty")
+  }
+  x
+}
+
+fn positive(n: Int) -> Int {
+  when n > 0 else {
+    fail("{n} is not positive")
+  }
+  n
+}
+
+fn main() {
+  println(first([7, 8]))
+  println(positive(3))
+  let _ = forever
+  println(first([]))
+}

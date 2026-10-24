@@ -1,0 +1,43 @@
+-- cmd: check
+-- exit: 1
+-- `-> Never` is checked: the body must not end, a `return` is an error,
+-- and `Never` written anywhere but as a function's whole return type is
+-- an error. A closure's `return` ends the closure, and is fine.
+fn ends() -> Never {
+  1
+}
+
+fn returns(x: Int) -> Never {
+  match x {
+    0 -> return panic("zero")
+    _ -> panic("other")
+  }
+}
+
+fn closure() -> Never {
+  let f = { x -> return x }
+  panic("{f(1)}")
+}
+
+fn param(x: Never) -> Int {
+  1
+}
+
+fn inside() -> List(Never) {
+  []
+}
+
+trait T {
+  fn m(self) -> Never
+}
+
+fn not_leaving(xs: List(Int)) -> Int {
+  when let [x, ..] = xs else {
+    println("no")
+  }
+  x
+}
+
+fn main() {
+  println(1)
+}

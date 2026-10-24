@@ -1362,6 +1362,8 @@ impl TypeChecker {
         // Set the expected return type for return and ? validation
         let prev_return_type = self.current_return_type.take();
         self.current_return_type = Some(ret_type.clone());
+        let never = matches!(ret_type, Type::Never);
+        let prev_never_fn = std::mem::replace(&mut self.never_fn, never.then_some(f.name));
         // Fresh `?`-site tracking per fn body, so a failed
         // body/return unify can point back at the `?` that demanded a
         // Result/Option return.
@@ -1376,9 +1378,23 @@ impl TypeChecker {
         let body_type = self.infer_expr(&mut f.body, env);
         self.fn_frames.pop();
         env.pop();
+        // A function that returns `Never` never returns: its body does
+        // not end (`Never` would unify with what it ends with).
+        if never && !matches!(self.apply(&body_type), Type::Never | Type::Error) {
+            self.error(
+                Code::InvalidControlFlow,
+                format!(
+                    "'{}' is declared to return `Never`, but its body can return — end it with \
+                     'panic', a call of a function that returns `Never` or a `loop` that never ends",
+                    f.name
+                ),
+                f.body.span,
+            );
+        }
         self.unify_body_result(&f.body, &body_type, &ret_type);
         self.settle_open_bound_uses();
 
+        self.never_fn = prev_never_fn;
         self.current_return_type = prev_return_type;
         self.current_qmark_spans = prev_qmark_spans;
         self.sig_names = prev_names;
@@ -3501,8 +3517,22 @@ impl TypeChecker {
                 } else {
                     Type::Unit
                 };
-                if let Some(expected_ret) = self.current_return_type.clone() {
-                    self.unify(&ret_val_ty, &expected_ret, span);
+                match (&self.current_return_type, self.never_fn) {
+                    // (A closure's `return` ends the closure: its body
+                    // has a return type of its own.)
+                    (Some(Type::Never), Some(name)) => self.error(
+                        Code::InvalidControlFlow,
+                        format!(
+                            "'return' in '{name}', which is declared to return `Never`: such a \
+                             function never returns"
+                        ),
+                        span,
+                    ),
+                    (Some(expected_ret), _) => {
+                        let expected_ret = expected_ret.clone();
+                        self.unify(&ret_val_ty, &expected_ret, span);
+                    }
+                    (None, _) => {}
                 }
                 Type::Never
             }
@@ -3857,8 +3887,8 @@ impl TypeChecker {
                 if !matches!(resolved_else, Type::Never | Type::Error) {
                     self.error(
                         Code::InvalidControlFlow,
-                        "'when let' else body must diverge — end it with 'return', 'panic' or, \
-                         inside a loop, 'loop(...)'"
+                        "'when let' else body must diverge — end it with 'return', 'panic', a call \
+                         of a function that returns `Never` or, inside a loop, 'loop(...)'"
                             .to_string(),
                         else_body.span,
                     );
@@ -3887,8 +3917,8 @@ impl TypeChecker {
                 if !matches!(resolved_else, Type::Never | Type::Error) {
                     self.error(
                         Code::InvalidControlFlow,
-                        "'when' else body must diverge — end it with 'return', 'panic' or, \
-                         inside a loop, 'loop(...)'"
+                        "'when' else body must diverge — end it with 'return', 'panic', a call of \
+                         a function that returns `Never` or, inside a loop, 'loop(...)'"
                             .to_string(),
                         else_body.span,
                     );
