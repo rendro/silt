@@ -222,6 +222,35 @@ fn get_or_die(opt) {
 }
 ```
 
+A function may say that it never returns: `-> Never` as its return type.
+Its body must not end: it ends in `panic`, in a call of another function
+that returns `Never`, or in a `loop` that never stops, and neither a
+`return` nor a `?` may stand in it (each returns from the function). A call of it then never returns either, so it can end a
+block that must leave, as `panic` can:
+
+```silt
+import int
+
+fn fail(message: String) -> Never {
+  panic("config: {message}")
+}
+
+fn port(text: String) -> Int {
+  when let Ok(n) = int.parse(text) else {
+    fail("'{text}' is not a port")
+  }
+  n
+}
+
+fn main() {
+  println(port("8080")) -- 8080
+}
+```
+
+`Never` is written only there, as the whole return type of a function
+declared with `fn` (not of a trait's method): anywhere else in an
+annotation it is an error.
+
 ## Result and Option Utilities
 
 ```silt

@@ -115,7 +115,8 @@ Terminates execution with an error message. Accepts any value that implements
 `Display`. It never returns: its result is of type `Never`, the type of an expression
 that does not return (`return`, `loop(...)`), which goes with every type, so
 `panic` can stand wherever a value is expected and ends an `else` block that
-must leave. `Never` is not written in an annotation (see [the Never
+must leave. A program writes `Never` only as the return type of a
+function that never returns either (see [the Never
 type](../language/error-handling.md#never-type)).
 
 ```silt

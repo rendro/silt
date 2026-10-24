@@ -165,7 +165,8 @@ fn main() {
   `_ -> ...` arm.
 - `when let Some(x) = e else { return d }` binds `x` for the rest of the
   block; `when cond else { ... }` checks a condition. The `else` block
-  must leave: `return`, `panic(...)`, or `loop(...)`.
+  must leave: `return`, `panic(...)`, a call of a function that returns
+  `Never`, or `loop(...)`.
 - `loop i = 0, acc = [] { ... loop(i + 1, next) ... }` binds state and
   starts again where `loop(...)` is called, in tail position; its value
   is that of a round that does not call it.
@@ -177,7 +178,9 @@ Errors are values: `Result(a, e)` and `Option(a)`. `e?` gives the `Ok` or
 error type must be the same (`?` converts nothing). A `?` at the end of
 a pipeline applies to all of it. The error enums of the standard library
 have the `Error` trait (`Error.message(e)`). `panic(msg)` stops the
-program.
+program. A function declared `-> Never` (the one place `Never` is
+written) never returns either: its body ends in `panic`, in a call of
+another such function or in an endless `loop`.
 
 ## Traits
 

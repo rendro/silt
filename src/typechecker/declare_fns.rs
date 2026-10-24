@@ -85,7 +85,13 @@ impl TypeChecker {
         let pre_return_keys: std::collections::HashSet<Symbol> =
             param_map.keys().copied().collect();
         let ret_type = if let Some(te) = &f.return_type {
+            // `-> Never`, the whole annotation, is the one place a
+            // program writes `Never`.
+            let never = matches!(&te.kind, TypeExprKind::Named { module: None, name, .. }
+                if resolve(*name) == "Never");
+            let prev_never = std::mem::replace(&mut self.never_return, never);
             let resolved = self.resolve_type_expr(te, &mut param_map);
+            self.never_return = prev_never;
             for name in param_map.keys() {
                 if !pre_return_keys.contains(name) && !self.registry_rows {
                     let n = resolve(*name);

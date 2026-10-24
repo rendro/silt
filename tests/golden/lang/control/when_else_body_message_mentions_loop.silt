@@ -1,9 +1,10 @@
 -- The else body of `when let` and `when` must diverge; the error names
--- `loop(...)` as well as `return` and `panic`.
+-- `loop(...)` as well as `return`, `panic` and a call of a function that
+-- returns `Never`.
 -- cmd: check
 -- exit: 1
--- stderr-contains: 'when let' else body must diverge — end it with 'return', 'panic' or, inside a loop, 'loop(...)'
--- stderr-contains: 'when' else body must diverge — end it with 'return', 'panic' or, inside a loop, 'loop(...)'
+-- stderr-contains: 'when let' else body must diverge — end it with 'return', 'panic', a call of a function that returns `Never` or, inside a loop, 'loop(...)'
+-- stderr-contains: 'when' else body must diverge — end it with 'return', 'panic', a call of a function that returns `Never` or, inside a loop, 'loop(...)'
 fn f(x: Option(Int)) -> Int {
   when let Some(n) = x else { 0 }
   when n > 0 else { 1 }

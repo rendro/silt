@@ -1,5 +1,11 @@
 use super::*;
 
+/// The error of `Never` written where a program may not write it: it
+/// is written only as the whole return type of a function declared with
+/// `fn`.
+const NEVER_ELSEWHERE: &str = "`Never` is written only as the whole return type of a function \
+     declared with `fn` (not of a trait's or an impl's method): `fn fail(message: String) -> Never`";
+
 impl TypeChecker {
     // ── Resolved names ──────────────────────────────────────────────
 
@@ -271,10 +277,19 @@ impl TypeChecker {
                 if self.names_rejected(te.res, *name) {
                     return Type::Error;
                 }
-                // The type of what never returns: only a builtin's
-                // signature says it (`panic`).
-                if self.registry_rows && module.is_none() && name_str == "Never" {
-                    return Type::Never;
+                // The type of what never returns: a builtin's signature
+                // says it anywhere (`panic`), a program only as a
+                // function's return type (`fn fail(..) -> Never`), unless
+                // it declares a type of that name.
+                if module.is_none()
+                    && name_str == "Never"
+                    && self.named_type(te.res, *name).is_none()
+                {
+                    if self.registry_rows || self.never_return {
+                        return Type::Never;
+                    }
+                    self.error(Code::InvalidTypeAnnotation, NEVER_ELSEWHERE, te.span);
+                    return Type::Error;
                 }
                 let Some(ty) = self.named_type(te.res, *name) else {
                     // Lowercase names in type annotations are type variables
@@ -321,7 +336,9 @@ impl TypeChecker {
                     }
                 }
             }
-            TypeExprKind::Generic { name, args, .. } => {
+            TypeExprKind::Generic {
+                module, name, args, ..
+            } => {
                 // A type the resolver resolved to nothing takes any
                 // arguments; nothing is known about it.
                 if te.res == Some(crate::defs::Res::Error) {
@@ -330,11 +347,21 @@ impl TypeChecker {
                     }
                     return Type::Error;
                 }
+                let name_str = resolve(*name);
+                // `Never(..)`: `Never` takes no arguments, and is no type
+                // where it has them (unless a type of that name is
+                // declared). One error: its arguments are not looked at.
+                if module.is_none()
+                    && name_str == "Never"
+                    && self.named_type(te.res, *name).is_none()
+                {
+                    self.error(Code::InvalidTypeAnnotation, NEVER_ELSEWHERE, te.span);
+                    return Type::Error;
+                }
                 let resolved_args: Vec<Type> = args
                     .iter()
                     .map(|a| self.resolve_type_expr(a, param_vars))
                     .collect();
-                let name_str = resolve(*name);
                 if self.names_rejected(te.res, *name) {
                     return Type::Error;
                 }

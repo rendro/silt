@@ -1,0 +1,14 @@
+-- A program's own type named `Never` is that type, as a return type too.
+type Never {
+  Never(Int),
+}
+
+fn make() -> Never {
+  Never(1)
+}
+
+fn main() {
+  match make() {
+    Never(n) -> println(n) -- 1
+  }
+}

@@ -1,0 +1,17 @@
+error[type]: '?' in 'on_result', which is declared to return `Never`: `?` returns the `Err` or `None` it meets, and such a function never returns
+ --> never_return__a_question_mark_returns.silt:11:11
+    |
+ 11 |   let n = int.parse(s)?
+    |           ^^^^^^^^^^^^^ '?' in 'on_result', which is declared to return `Never`: `?` returns the `Err` or `None` it meets, and such a function never returns
+
+error[type]: '?' in 'on_option', which is declared to return `Never`: `?` returns the `Err` or `None` it meets, and such a function never returns
+ --> never_return__a_question_mark_returns.silt:16:11
+    |
+ 16 |   let h = list.get(xs, 0)?
+    |           ^^^^^^^^^^^^^^^^ '?' in 'on_option', which is declared to return `Never`: `?` returns the `Err` or `None` it meets, and such a function never returns
+
+error[type]: '?' in 'fail', which is declared to return `Never`: `?` returns the `Err` or `None` it meets, and such a function never returns
+ --> never_return__a_question_mark_returns.silt:21:11
+    |
+ 21 |   let _ = int.parse(s)?
+    |           ^^^^^^^^^^^^^ '?' in 'fail', which is declared to return `Never`: `?` returns the `Err` or `None` it meets, and such a function never returns

@@ -1,0 +1,47 @@
+error[type]: 'ends' is declared to return `Never`, but its body can return — end it with 'panic', a call of a function that returns `Never` or a `loop` that never ends
+ --> never_return__what_is_refused.silt:6:20
+   |
+ 6 | fn ends() -> Never {
+   |                    ^ 'ends' is declared to return `Never`, but its body can return — end it with 'panic', a call of a function that returns `Never` or a `loop` that never ends
+
+error[type]: 'return' in 'returns', which is declared to return `Never`: such a function never returns
+ --> never_return__what_is_refused.silt:12:10
+    |
+ 12 |     0 -> return panic("zero")
+    |          ^^^^^^^^^^^^^^^^^^^^ 'return' in 'returns', which is declared to return `Never`: such a function never returns
+
+error[type]: `Never` is written only as the whole return type of a function declared with `fn` (not of a trait's or an impl's method): `fn fail(message: String) -> Never`
+ --> never_return__what_is_refused.silt:22:13
+    |
+ 22 | fn param(x: Never) -> Int {
+    |             ^^^^^ `Never` is written only as the whole return type of a function declared with `fn` (not of a trait's or an impl's method): `fn fail(message: String) -> Never`
+
+error[type]: `Never` is written only as the whole return type of a function declared with `fn` (not of a trait's or an impl's method): `fn fail(message: String) -> Never`
+ --> never_return__what_is_refused.silt:26:21
+    |
+ 26 | fn inside() -> List(Never) {
+    |                     ^^^^^ `Never` is written only as the whole return type of a function declared with `fn` (not of a trait's or an impl's method): `fn fail(message: String) -> Never`
+
+error[type]: `Never` is written only as the whole return type of a function declared with `fn` (not of a trait's or an impl's method): `fn fail(message: String) -> Never`
+ --> never_return__what_is_refused.silt:30:19
+    |
+ 30 | fn with_args() -> Never(Int) {
+    |                   ^^^^^^^^^^ `Never` is written only as the whole return type of a function declared with `fn` (not of a trait's or an impl's method): `fn fail(message: String) -> Never`
+
+error[type]: `Never` is written only as the whole return type of a function declared with `fn` (not of a trait's or an impl's method): `fn fail(message: String) -> Never`
+ --> never_return__what_is_refused.silt:34:19
+    |
+ 34 | fn nested_args(x: Never(List(Never))) -> Int {
+    |                   ^^^^^^^^^^^^^^^^^^ `Never` is written only as the whole return type of a function declared with `fn` (not of a trait's or an impl's method): `fn fail(message: String) -> Never`
+
+error[type]: `Never` is written only as the whole return type of a function declared with `fn` (not of a trait's or an impl's method): `fn fail(message: String) -> Never`
+ --> never_return__what_is_refused.silt:39:17
+    |
+ 39 |   fn m(self) -> Never
+    |                 ^^^^^ `Never` is written only as the whole return type of a function declared with `fn` (not of a trait's or an impl's method): `fn fail(message: String) -> Never`
+
+error[type]: 'when let' else body must diverge — end it with 'return', 'panic', a call of a function that returns `Never` or, inside a loop, 'loop(...)'
+ --> never_return__what_is_refused.silt:43:30
+    |
+ 43 |   when let [x, ..] = xs else {
+    |                              ^ 'when let' else body must diverge — end it with 'return', 'panic', a call of a function that returns `Never` or, inside a loop, 'loop(...)'
