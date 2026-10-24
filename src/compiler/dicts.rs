@@ -45,6 +45,47 @@ fn no_dictionary(span: Span, what: &str) -> Diagnostic {
     )
 }
 
+/// What an impl's header has too many of when its dictionary cannot hold
+/// them.
+const HEADER_PREDICATES: &str = "predicates of an impl's header";
+
+/// The error of a definition that has `count` of `what`, more than the
+/// `max` the dictionary instructions can name.
+fn limit(what: &'static str, count: usize, max: usize, span: Span) -> Diagnostic {
+    crate::bytecode::emit::limit_diagnostic(crate::bytecode::ops::Limit { what, count, max }, span)
+}
+
+/// The trait `t` has no more methods, supertraits and `where` clauses on
+/// its parameters than the dictionary instructions can name (`CallDict`,
+/// `DictMethod`, `SuperDict`, `WhereDict`, which name one by its place):
+/// the error counts what the trait declares.
+fn trait_limits(t: &crate::ast::TraitDecl) -> Result<(), Diagnostic> {
+    let places = |operand: usize| operand + 1;
+    let parts = [
+        (
+            "methods of a trait",
+            t.methods.len(),
+            places(usize::from(u16::MAX)),
+        ),
+        (
+            "supertraits of a trait",
+            t.supertraits.len(),
+            places(usize::from(u8::MAX)),
+        ),
+        (
+            "where clauses of a trait's parameters",
+            t.param_where_clauses.len(),
+            places(usize::from(u8::MAX)),
+        ),
+    ];
+    for (what, count, max) in parts {
+        if count > max {
+            return Err(limit(what, count, max, t.span));
+        }
+    }
+    Ok(())
+}
+
 /// Whether `t` is a trait whose values are passed with dictionaries: one
 /// a program declares.
 pub(super) fn has_dictionary(t: TraitId) -> bool {
@@ -201,6 +242,15 @@ impl Compiler<'_> {
                     // of `self` (an impl for every function or tuple) is
                     // the impl's dictionary itself.
                     Layout::ImplMethod if k < header => {
+                        // (As many as `MakeDict` takes.)
+                        if header > usize::from(u8::MAX) {
+                            return Err(limit(
+                                HEADER_PREDICATES,
+                                header,
+                                usize::from(u8::MAX),
+                                span,
+                            ));
+                        }
                         self.load_frame_dict(*owner, span)?;
                         self.emit(Asm::DictSub { k }, span)
                     }
@@ -288,6 +338,7 @@ impl Compiler<'_> {
                 if let Decl::Trait(t) = decl
                     && let Some(id) = self.declared_trait(unit.id, t.name)
                 {
+                    trait_limits(t)?;
                     globals.note_trait_methods(id, declared_methods(t));
                 }
             }
