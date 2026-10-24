@@ -96,9 +96,15 @@ impl Value {
     }
 
     /// The variant `tag` (a [`Tag`], or a builtin variant of
-    /// [`crate::typeinfo::bv`]) with the fields `fields`.
-    pub fn variant(tag: impl Into<Tag>, fields: Vec<Value>) -> Value {
-        Value::Variant(Variant::new(tag.into(), fields))
+    /// [`crate::typeinfo::bv`]) with the fields `fields`: an array of
+    /// them (`[x]`, `[]`), which a variant of one field holds without a
+    /// list of its own, or a list.
+    pub fn variant<F>(tag: impl Into<Tag>, fields: F) -> Value
+    where
+        F: IntoIterator<Item = Value>,
+        F::IntoIter: ExactSizeIterator,
+    {
+        Value::Variant(Variant::new(tag.into(), fields.into_iter()))
     }
 
     /// The tuple of `items`.

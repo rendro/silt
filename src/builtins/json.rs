@@ -26,7 +26,7 @@ use crate::vm::{Step, Vm, VmError};
 //   Other(message)
 
 fn json_err_wrap(inner: Value) -> Value {
-    Value::variant(bv::ERR, vec![inner])
+    Value::variant(bv::ERR, [inner])
 }
 
 /// Classify a `serde_json::Error` of reading `text` into one of the
@@ -42,10 +42,10 @@ pub(crate) fn json_error_to_variant(err: &serde_json::Error, text: &[u8]) -> Val
             let offset = syntax_offset(err, text) as i64;
             Value::variant(
                 bv::JSON_SYNTAX,
-                vec![Value::String(err.to_string().into()), Value::Int(offset)],
+                [Value::String(err.to_string().into()), Value::Int(offset)],
             )
         }
-        _ => Value::variant(bv::JSON_OTHER, vec![Value::String(err.to_string().into())]),
+        _ => Value::variant(bv::JSON_OTHER, [Value::String(err.to_string().into())]),
     }
 }
 
@@ -84,10 +84,7 @@ fn syntax_offset(err: &serde_json::Error, text: &[u8]) -> usize {
 /// Build `Err(Other(msg))` for ad-hoc failures (unknown type
 /// descriptor, internal unexpected results, etc.).
 pub(crate) fn json_unknown_err<S: Into<Arc<str>>>(msg: S) -> Value {
-    json_err_wrap(Value::variant(
-        bv::JSON_OTHER,
-        vec![Value::String(msg.into())],
-    ))
+    json_err_wrap(Value::variant(bv::JSON_OTHER, [Value::String(msg.into())]))
 }
 
 /// What `JsonError`'s `message` says of the variant `tag` with `fields`:
@@ -649,7 +646,7 @@ mod tests {
             .spawn(|| {
                 let nested = |levels: usize| {
                     (0..levels / 2).fold(Value::Int(1), |inner, _| {
-                        Value::variant(bv::OK, vec![Value::list(vec![inner])])
+                        Value::variant(bv::OK, [Value::list(vec![inner])])
                     })
                 };
                 let deepest = nested(MAX_ENCODE_DEPTH);

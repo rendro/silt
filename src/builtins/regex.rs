@@ -34,8 +34,8 @@ fn groups(caps: &regex::Captures) -> Value {
 
 fn option(found: Option<Value>) -> Value {
     match found {
-        Some(value) => Value::variant(bv::SOME, vec![value]),
-        None => Value::variant(bv::NONE, vec![]),
+        Some(value) => Value::variant(bv::SOME, [value]),
+        None => Value::variant(bv::NONE, []),
     }
 }
 
@@ -96,16 +96,13 @@ fn pattern_err(pattern: &str, error: &regex::Error) -> Value {
             let (what, at) = syntax_error(pattern, report);
             Value::variant(
                 bv::REGEX_INVALID_PATTERN,
-                vec![Value::String(what.into()), Value::Int(at as i64)],
+                [Value::String(what.into()), Value::Int(at as i64)],
             )
         }
-        regex::Error::CompiledTooBig(_) => Value::variant(bv::REGEX_TOO_BIG, vec![]),
-        other => Value::variant(
-            bv::REGEX_OTHER,
-            vec![Value::String(other.to_string().into())],
-        ),
+        regex::Error::CompiledTooBig(_) => Value::variant(bv::REGEX_TOO_BIG, []),
+        other => Value::variant(bv::REGEX_OTHER, [Value::String(other.to_string().into())]),
     };
-    Value::variant(bv::ERR, vec![variant])
+    Value::variant(bv::ERR, [variant])
 }
 
 /// What a function of the pattern gives: `Ok` of what `found` makes of

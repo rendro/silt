@@ -1087,7 +1087,7 @@ mod tests {
 
     #[test]
     fn dispatch_type_for_value_variant_uses_its_type() {
-        let v = Value::variant(crate::typeinfo::bv::SOME, vec![Value::Int(7)]);
+        let v = Value::variant(crate::typeinfo::bv::SOME, [Value::Int(7)]);
         assert_eq!(dispatch_type_for_value(&v), crate::typeinfo::ty::OPTION);
         assert_eq!(dispatch_type_name(&v), "Option");
     }

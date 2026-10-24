@@ -423,29 +423,29 @@ fn err_io(e: &std::io::Error) -> Value {
     use std::io::ErrorKind;
     let msg = e.to_string();
     let inner = match e.kind() {
-        ErrorKind::NotFound => Value::variant(bv::IO_NOT_FOUND, vec![Value::String(msg.into())]),
+        ErrorKind::NotFound => Value::variant(bv::IO_NOT_FOUND, [Value::String(msg.into())]),
         ErrorKind::PermissionDenied => {
-            Value::variant(bv::IO_PERMISSION_DENIED, vec![Value::String(msg.into())])
+            Value::variant(bv::IO_PERMISSION_DENIED, [Value::String(msg.into())])
         }
         ErrorKind::AlreadyExists => {
-            Value::variant(bv::IO_ALREADY_EXISTS, vec![Value::String(msg.into())])
+            Value::variant(bv::IO_ALREADY_EXISTS, [Value::String(msg.into())])
         }
         ErrorKind::InvalidInput | ErrorKind::InvalidData => {
-            Value::variant(bv::IO_INVALID_INPUT, vec![Value::String(msg.into())])
+            Value::variant(bv::IO_INVALID_INPUT, [Value::String(msg.into())])
         }
-        ErrorKind::Interrupted => Value::variant(bv::IO_INTERRUPTED, vec![]),
-        ErrorKind::UnexpectedEof => Value::variant(bv::IO_UNEXPECTED_EOF, vec![]),
-        ErrorKind::WriteZero => Value::variant(bv::IO_WRITE_ZERO, vec![]),
-        _ => Value::variant(bv::IO_OTHER, vec![Value::String(msg.into())]),
+        ErrorKind::Interrupted => Value::variant(bv::IO_INTERRUPTED, []),
+        ErrorKind::UnexpectedEof => Value::variant(bv::IO_UNEXPECTED_EOF, []),
+        ErrorKind::WriteZero => Value::variant(bv::IO_WRITE_ZERO, []),
+        _ => Value::variant(bv::IO_OTHER, [Value::String(msg.into())]),
     };
-    Value::variant(bv::ERR, vec![inner])
+    Value::variant(bv::ERR, [inner])
 }
 
 /// Build an `Err(Other(msg))` for string-only failures.
 fn err_io_unknown(s: impl Into<Arc<str>>) -> Value {
     Value::variant(
         bv::ERR,
-        vec![Value::variant(bv::IO_OTHER, vec![Value::String(s.into())])],
+        [Value::variant(bv::IO_OTHER, [Value::String(s.into())])],
     )
 }
 
@@ -478,8 +478,8 @@ fn reading(
                 let read = read.clone();
                 Next::Io(
                     Box::new(move || match (read.lock())() {
-                        Some(item) => Value::variant(bv::SOME, vec![item]),
-                        None => Value::variant(bv::NONE, vec![]),
+                        Some(item) => Value::variant(bv::SOME, [item]),
+                        None => Value::variant(bv::NONE, []),
                     }),
                     on.clone(),
                 )
@@ -1230,8 +1230,8 @@ builtins! {
         sink("stream.first", ch, move |got| {
             Ok(match got {
                 Got::Start => Next::Take(0),
-                Got::Value(_, v) => Next::Done(Value::variant(bv::SOME, vec![v])),
-                Got::End => Next::Done(Value::variant(bv::NONE, vec![])),
+                Got::Value(_, v) => Next::Done(Value::variant(bv::SOME, [v])),
+                Got::End => Next::Done(Value::variant(bv::NONE, [])),
                 _ => return unexpected(),
             })
         })
@@ -1248,8 +1248,8 @@ builtins! {
                     Next::Take(0)
                 }
                 Got::End => Next::Done(match last.take() {
-                    Some(v) => Value::variant(bv::SOME, vec![v]),
-                    None => Value::variant(bv::NONE, vec![]),
+                    Some(v) => Value::variant(bv::SOME, [v]),
+                    None => Value::variant(bv::NONE, []),
                 }),
                 _ => return unexpected(),
             })

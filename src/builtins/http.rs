@@ -69,7 +69,7 @@ fn make_http_request_value(
     Value::builtin_record(
         ty::REQUEST,
         [
-            ("method", Value::variant(method, vec![])),
+            ("method", Value::variant(method, [])),
             ("path", Value::String(path.into())),
             ("query", Value::String(query.into())),
             ("headers", Value::Map(headers)),
@@ -232,12 +232,12 @@ pub fn redact_http_url_userinfo(msg: &str) -> String {
 fn http_timeout_err(failure: crate::vm::IoFailure<'_>) -> Value {
     use crate::vm::IoFailure;
     let error = match failure {
-        IoFailure::Timeout(_) => Value::variant(bv::HTTP_TIMEOUT, vec![]),
+        IoFailure::Timeout(_) => Value::variant(bv::HTTP_TIMEOUT, []),
         IoFailure::Panicked(why) | IoFailure::Refused(why) => {
-            Value::variant(bv::HTTP_OTHER, vec![Value::String(why.into())])
+            Value::variant(bv::HTTP_OTHER, [Value::String(why.into())])
         }
     };
-    Value::variant(bv::ERR, vec![error])
+    Value::variant(bv::ERR, [error])
 }
 
 /// The `HttpError` of a failure of the transport library, for a
@@ -281,15 +281,15 @@ fn http_error(error: &ureq::Error, url: &str) -> Value {
     };
     let invalid_url = || {
         let url = redact_http_url_userinfo(url);
-        Value::variant(bv::HTTP_INVALID_URL, vec![Value::String(url.into())])
+        Value::variant(bv::HTTP_INVALID_URL, [Value::String(url.into())])
     };
     let https = url
         .get(.."https://".len())
         .is_some_and(|scheme| scheme.eq_ignore_ascii_case("https://"));
     match error {
-        Error::Timeout(_) => Value::variant(bv::HTTP_TIMEOUT, vec![]),
+        Error::Timeout(_) => Value::variant(bv::HTTP_TIMEOUT, []),
         Error::Io(io) => match io.kind() {
-            ErrorKind::TimedOut | ErrorKind::WouldBlock => Value::variant(bv::HTTP_TIMEOUT, vec![]),
+            ErrorKind::TimedOut | ErrorKind::WouldBlock => Value::variant(bv::HTTP_TIMEOUT, []),
             ErrorKind::ConnectionRefused
             | ErrorKind::AddrNotAvailable
             | ErrorKind::NetworkUnreachable
@@ -299,7 +299,7 @@ fn http_error(error: &ureq::Error, url: &str) -> Value {
             | ErrorKind::ConnectionReset
             | ErrorKind::ConnectionAborted
             | ErrorKind::BrokenPipe
-            | ErrorKind::NotConnected => Value::variant(bv::HTTP_CLOSED_EARLY, vec![]),
+            | ErrorKind::NotConnected => Value::variant(bv::HTTP_CLOSED_EARLY, []),
             ErrorKind::InvalidData if https => Value::variant(bv::HTTP_TLS, why()),
             _ => Value::variant(bv::HTTP_OTHER, why()),
         },
@@ -313,14 +313,14 @@ fn http_error(error: &ureq::Error, url: &str) -> Value {
             ErrorKind::ConnectionReset
             | ErrorKind::ConnectionAborted
             | ErrorKind::BrokenPipe
-            | ErrorKind::NotConnected => Value::variant(bv::HTTP_CLOSED_EARLY, vec![]),
+            | ErrorKind::NotConnected => Value::variant(bv::HTTP_CLOSED_EARLY, []),
             // Two things end a packed body before its end, and both are
             // this kind: the connection, which the library reports
             // with an error of its own inside, and packed bytes that
             // stop short in a body that is all there, which the
             // unpacker reports as the bare kind.
             ErrorKind::UnexpectedEof if under.get_ref().is_some() => {
-                Value::variant(bv::HTTP_CLOSED_EARLY, vec![])
+                Value::variant(bv::HTTP_CLOSED_EARLY, [])
             }
             _ => Value::variant(bv::HTTP_INVALID_RESPONSE, why()),
         },
@@ -363,8 +363,8 @@ fn refuse_port(url: &str) -> Option<Value> {
         return None;
     }
     let url = redact_http_url_userinfo(url);
-    let invalid = Value::variant(bv::HTTP_INVALID_URL, vec![Value::String(url.into())]);
-    Some(Value::variant(bv::ERR, vec![invalid]))
+    let invalid = Value::variant(bv::HTTP_INVALID_URL, [Value::String(url.into())]);
+    Some(Value::variant(bv::ERR, [invalid]))
 }
 
 /// What a request of the transport library came to, as the value of
@@ -380,13 +380,13 @@ fn finish_http_response(
     head: bool,
 ) -> Value {
     match result.and_then(|response| ureq_response_to_value(response, head)) {
-        Ok(Some(response)) => Value::variant(bv::OK, vec![response]),
+        Ok(Some(response)) => Value::variant(bv::OK, [response]),
         Ok(None) => {
             let why = format!("the body is larger than {} bytes", wire::BODY_MAX);
-            let error = Value::variant(bv::HTTP_INVALID_RESPONSE, vec![Value::String(why.into())]);
-            Value::variant(bv::ERR, vec![error])
+            let error = Value::variant(bv::HTTP_INVALID_RESPONSE, [Value::String(why.into())]);
+            Value::variant(bv::ERR, [error])
         }
-        Err(error) => Value::variant(bv::ERR, vec![http_error(&error, url)]),
+        Err(error) => Value::variant(bv::ERR, [http_error(&error, url)]),
     }
 }
 
@@ -479,9 +479,9 @@ fn do_http_request(
         other => {
             return Value::variant(
                 bv::ERR,
-                vec![Value::variant(
+                [Value::variant(
                     bv::HTTP_INVALID_URL,
-                    vec![Value::String(format!("unknown method: {other}").into())],
+                    [Value::String(format!("unknown method: {other}").into())],
                 )],
             );
         }
@@ -1546,7 +1546,7 @@ builtins! {
             out.entry(Value::String(key.into())).or_default().push(Value::String(val.into()));
         }
         let pairs = out.into_iter().map(|(key, values)| (key, Value::list(values)));
-        Value::variant(bv::OK, vec![Value::map(pairs)])
+        Value::variant(bv::OK, [Value::map(pairs)])
     }
 }
 

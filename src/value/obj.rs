@@ -5,7 +5,10 @@
 //! order its type declares them (an anonymous record's in name order).
 //! A variant without fields (`None`, `Red`) points to its type alone,
 //! the one object all such variants of the type share, and nothing is
-//! made for it. A clone is a count: of the object, or of the type.
+//! made for it. A variant of one field (`Some(x)`, `Ok(x)`) holds the
+//! field in its object, which is one allocation; one of more holds them
+//! in a list beside the type. A clone is a count: of the object, or of
+//! the type.
 //!
 //! How the two are stored is this file's own. The rest of silt has
 //! which variant a variant is ([`Variant::is`], [`Variant::name`],
@@ -37,6 +40,20 @@ impl Drop for Obj {
     }
 }
 
+/// What a variant of one field points to: its type and the field.
+struct One {
+    ty: Arc<TypeInfo>,
+    field: Value,
+}
+
+impl Drop for One {
+    fn drop(&mut self) {
+        // On no native stack, however deep the fields nest
+        // (`Some(Some(...))`).
+        drop_held(std::mem::replace(&mut self.field, Value::Unit));
+    }
+}
+
 /// A variant: `None`, `Some(1)`, `Link(1, rest)`.
 #[derive(Clone)]
 pub struct Variant {
@@ -49,21 +66,27 @@ pub struct Variant {
 enum Of {
     /// No fields: the type.
     Type(Arc<TypeInfo>),
-    /// The type and the fields, of which there is one at least.
+    /// The type and the one field.
+    One(Arc<One>),
+    /// The type and the fields, of which there are two at least.
     Obj(Arc<Obj>),
 }
 
 impl Variant {
     /// The variant `tag` with the fields `fields` ([`Value::variant`]).
-    pub(super) fn new(tag: Tag, fields: Vec<Value>) -> Variant {
+    pub(super) fn new(tag: Tag, mut fields: impl ExactSizeIterator<Item = Value>) -> Variant {
         debug_assert_eq!(tag.arity(), fields.len(), "the fields of {tag}");
         let ordinal = tag.ordinal();
         let ty = tag.into_ty();
-        let of = match fields.is_empty() {
-            true => Of::Type(ty),
-            false => Of::Obj(Arc::new(Obj {
+        let of = match fields.len() {
+            0 => Of::Type(ty),
+            1 => match fields.next() {
+                Some(field) => Of::One(Arc::new(One { ty, field })),
+                None => unreachable!("an iterator of one field gives one"),
+            },
+            _ => Of::Obj(Arc::new(Obj {
                 ty,
-                fields: fields.into_boxed_slice(),
+                fields: fields.collect(),
             })),
         };
         Variant { of, ordinal }
@@ -73,6 +96,7 @@ impl Variant {
     pub fn ty(&self) -> &Arc<TypeInfo> {
         match &self.of {
             Of::Type(ty) => ty,
+            Of::One(one) => &one.ty,
             Of::Obj(obj) => &obj.ty,
         }
     }
@@ -114,6 +138,7 @@ impl Variant {
     pub fn fields(&self) -> &[Value] {
         match &self.of {
             Of::Type(_) => &[],
+            Of::One(one) => std::slice::from_ref(&one.field),
             Of::Obj(obj) => &obj.fields,
         }
     }
@@ -247,5 +272,29 @@ impl Record {
                 .map(|(name, value)| (name, value.clone()))
                 .collect(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::typeinfo::bv;
+
+    /// A variant of one field holds it in its one object; one of none
+    /// is its type; one of more holds a list of them.
+    #[test]
+    fn a_variant_of_one_field_is_one_object() {
+        let one = Variant::new(bv::SOME.into(), [Value::Int(1)].into_iter());
+        assert!(matches!(one.of, Of::One(_)));
+        assert_eq!(one.fields(), [Value::Int(1)]);
+        assert!(one.is(bv::SOME));
+        let clone = one.clone();
+        match (&one.of, &clone.of) {
+            (Of::One(a), Of::One(b)) => assert!(Arc::ptr_eq(a, b)),
+            _ => unreachable!(),
+        }
+        let none = Variant::new(bv::NONE.into(), [].into_iter());
+        assert!(matches!(none.of, Of::Type(_)));
+        assert!(none.fields().is_empty());
     }
 }

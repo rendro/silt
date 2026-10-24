@@ -43,15 +43,15 @@ fn find_first_invalid_digit(s: &str, allow_decimal: bool) -> usize {
 fn classify_int_parse_error(err: &std::num::ParseIntError, s: &str) -> Value {
     use std::num::IntErrorKind;
     match err.kind() {
-        IntErrorKind::Empty => Value::variant(bv::INT_EMPTY, vec![]),
-        IntErrorKind::PosOverflow => Value::variant(bv::INT_OVERFLOW, vec![]),
-        IntErrorKind::NegOverflow => Value::variant(bv::INT_UNDERFLOW, vec![]),
+        IntErrorKind::Empty => Value::variant(bv::INT_EMPTY, []),
+        IntErrorKind::PosOverflow => Value::variant(bv::INT_OVERFLOW, []),
+        IntErrorKind::NegOverflow => Value::variant(bv::INT_UNDERFLOW, []),
         // InvalidDigit, Zero, and any future-added kinds fall through
         // to `InvalidDigit(offset)`: std doesn't promise IntErrorKind
         // stays exhaustive, so the `_` arm is not dead code even today.
         _ => {
             let offset = find_first_invalid_digit(s.trim(), false) as i64;
-            Value::variant(bv::INT_INVALID_DIGIT, vec![Value::Int(offset)])
+            Value::variant(bv::INT_INVALID_DIGIT, [Value::Int(offset)])
         }
     }
 }
@@ -65,10 +65,10 @@ fn classify_float_parse_error(_err: &std::num::ParseFloatError, s: &str) -> Valu
     let trimmed = s.trim();
     // A string that's only a sign has no digits → treat as empty.
     if trimmed.is_empty() || trimmed == "+" || trimmed == "-" {
-        return Value::variant(bv::FLOAT_EMPTY, vec![]);
+        return Value::variant(bv::FLOAT_EMPTY, []);
     }
     let offset = find_first_invalid_digit(trimmed, true) as i64;
-    Value::variant(bv::FLOAT_INVALID_DIGIT, vec![Value::Int(offset)])
+    Value::variant(bv::FLOAT_INVALID_DIGIT, [Value::Int(offset)])
 }
 
 /// What a variant of `IntError` or of `FloatError` reads as: the two
@@ -162,8 +162,8 @@ pub(crate) mod int {
     builtins! {
         fn parse(s: &str) -> Value {
             match s.trim().parse::<i64>() {
-                Ok(n) => Value::variant(bv::OK, vec![Value::Int(n)]),
-                Err(e) => Value::variant(bv::ERR, vec![classify_int_parse_error(&e, s)]),
+                Ok(n) => Value::variant(bv::OK, [Value::Int(n)]),
+                Err(e) => Value::variant(bv::ERR, [classify_int_parse_error(&e, s)]),
             }
         }
 
@@ -209,21 +209,21 @@ pub(crate) mod float {
                 // way `int.parse` does (`Underflow` below the range,
                 // `Overflow` above it).
                 Ok(n) => match Float::new(n) {
-                    Some(n) => Value::variant(bv::OK, vec![Value::Float(n)]),
+                    Some(n) => Value::variant(bv::OK, [Value::Float(n)]),
                     None => {
                         let spelled = s.trim().trim_start_matches(['+', '-']);
                         let err = if !spelled.starts_with(|c: char| c.is_ascii_digit() || c == '.')
                         {
-                            Value::variant(bv::FLOAT_NOT_FINITE, vec![])
+                            Value::variant(bv::FLOAT_NOT_FINITE, [])
                         } else if n < 0.0 {
-                            Value::variant(bv::FLOAT_UNDERFLOW, vec![])
+                            Value::variant(bv::FLOAT_UNDERFLOW, [])
                         } else {
-                            Value::variant(bv::FLOAT_OVERFLOW, vec![])
+                            Value::variant(bv::FLOAT_OVERFLOW, [])
                         };
-                        Value::variant(bv::ERR, vec![err])
+                        Value::variant(bv::ERR, [err])
                     }
                 },
-                Err(e) => Value::variant(bv::ERR, vec![classify_float_parse_error(&e, s)]),
+                Err(e) => Value::variant(bv::ERR, [classify_float_parse_error(&e, s)]),
             }
         }
 

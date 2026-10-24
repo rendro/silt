@@ -50,7 +50,7 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
 }
 
 fn crypto_err(variant: Value) -> Value {
-    Value::variant(bv::ERR, vec![variant])
+    Value::variant(bv::ERR, [variant])
 }
 
 builtins! {
@@ -104,14 +104,14 @@ builtins! {
 
     fn random_bytes(n: i64) -> Value {
         if !(0..=RANDOM_BYTES_CAP).contains(&n) {
-            return crypto_err(Value::variant(bv::CRYPTO_INVALID_LENGTH, vec![Value::Int(n)]));
+            return crypto_err(Value::variant(bv::CRYPTO_INVALID_LENGTH, [Value::Int(n)]));
         }
         let mut buf = vec![0u8; n as usize];
         if let Err(e) = getrandom::getrandom(&mut buf) {
             let text = format!("CSPRNG failure: {e}");
             return crypto_err(Value::variant(
                 bv::CRYPTO_OTHER,
-                vec![Value::String(text.into())],
+                [Value::String(text.into())],
             ));
         }
         ok(Value::Bytes(Arc::new(buf)))
