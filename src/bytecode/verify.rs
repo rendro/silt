@@ -747,8 +747,20 @@ mod tests {
             rejected(code, vec![]),
             "at offset 1: `Slide` cuts a frame of 0 values back to 5"
         );
-        // `Recur` of one binding into slot 3 of a frame of one value.
-        let code = vec![op(Op::Unit), op(Op::Recur), 1, 3, 0, op(Op::Return)];
+        // `Recur` of one binding into slot 3 of a frame of one value,
+        // jumping to the next instruction.
+        let code = vec![
+            op(Op::Unit),
+            op(Op::Recur),
+            1,
+            3,
+            0,
+            0,
+            0,
+            0,
+            0,
+            op(Op::Return),
+        ];
         assert_eq!(
             rejected(code, vec![]),
             "at offset 1: `Recur` cuts a frame of 0 values back to 3"

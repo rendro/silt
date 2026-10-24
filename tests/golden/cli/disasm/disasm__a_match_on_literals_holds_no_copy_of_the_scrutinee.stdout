@@ -17,20 +17,17 @@
 0003  Constant             0     ; 0
 0006  GetLocal             1
 0009  GetLocal             0
-0012  Geq
-0013  JumpIfFalse          8     -> 0024
-0016  GetLocal             2
-0019  Jump                 23    -> 0047
-0024  GetLocal             1
-0027  Constant             1     ; 1
-0030  Add
-0031  GetLocal             2
-0034  GetLocal             1
-0037  Add
-0038  Recur                2  slot 1
-0042  Jump                 -41   -> 0006
-0047  Slide                1
-0050  Return
+0012  JumpIfNotGeq         8     -> 0023
+0015  GetLocal             2
+0018  Jump                 21    -> 0044
+0023  GetLocal             1
+0026  AddConst             1     ; 1
+0029  GetLocal             2
+0032  GetLocal             1
+0035  Add
+0036  Recur                2  slot 1  -38   -> 0006
+0044  Slide                1
+0047  Return
 
 == fib (arity=1, upvalues=0) ==
 0000  GetLocal             0
@@ -38,25 +35,23 @@
 0006  JumpIfFalse          9     -> 0018
 0009  Pop
 0010  Constant             0     ; 0
-0013  Jump                 41    -> 0059
+0013  Jump                 39    -> 0057
 0018  TestEqual            1     ; 1
 0021  JumpIfFalse          9     -> 0033
 0024  Pop
 0025  Constant             1     ; 1
-0028  Jump                 26    -> 0059
+0028  Jump                 24    -> 0057
 0033  Pop
 0034  GetGlobal            1     ; fib
 0037  GetLocal             0
-0040  Constant             1     ; 1
-0043  Sub
-0044  Call                 1
-0046  GetGlobal            1     ; fib
-0049  GetLocal             0
-0052  Constant             2     ; 2
-0055  Sub
-0056  Call                 1
-0058  Add
-0059  Return
+0040  SubConst             1     ; 1
+0043  Call                 1
+0045  GetGlobal            1     ; fib
+0048  GetLocal             0
+0051  SubConst             2     ; 2
+0054  Call                 1
+0056  Add
+0057  Return
 
 == main (arity=0, upvalues=0) ==
 0000  Constant             0     ; <builtin:println>

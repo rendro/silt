@@ -25,6 +25,7 @@
 //! | Kind | Encoded as | In [`Asm`] | In [`Instr`] | The verifier checks |
 //! |---|---|---|---|---|
 //! | `U8` | `u8` | `usize` | `usize` | |
+//! | `Byte` | `u8` | `usize` | `u8` | |
 //! | `U16` | `u16` | `usize` | `usize` | |
 //! | `Slot` | `u16` | `usize` | `usize` | below the frame's height |
 //! | `Cut` | `u16` | `usize` | `usize` | (through the row's `cut`) |
@@ -41,8 +42,8 @@
 //! | `Captures` | `u8` count, then `u8 is_local, u8 index` each | `&[UpvalueDesc]` | [`Operands<UpvalueDesc>`] | each names a slot below the height or an upvalue of the function |
 //! | `Segments` | `u8` count, `u8` count of values, then `u8 is_literal, u16 constant` each | `&[Segment]` | [`Segments`] | each literal a string in the pool; as many values as the count of values says |
 //!
-//! A narrowed operand (`U8`, `U16`, `Upvalue`, `Strs`, `Captures`,
-//! `Segments`)
+//! A narrowed operand (`U8`, `Byte`, `U16`, `Upvalue`, `Strs`,
+//! `Captures`, `Segments`)
 //! carries, in parentheses, what a program has too many of when the
 //! operand does not fit. That is the text of the compile error, and the
 //! only one for the limit: the compiler does not check sizes itself.
@@ -368,6 +369,9 @@ macro_rules! asm_ty {
     (U8, $lt:lifetime) => {
         usize
     };
+    (Byte, $lt:lifetime) => {
+        usize
+    };
     (U16, $lt:lifetime) => {
         usize
     };
@@ -433,6 +437,7 @@ macro_rules! asm_ty {
 /// The type of an operand of the kind in [`Instr`].
 macro_rules! instr_ty {
     (U8) => { usize };
+    (Byte) => { u8 };
     (U16) => { usize };
     (Slot) => { usize };
     (Cut) => { usize };
@@ -458,6 +463,9 @@ macro_rules! instr_ty {
 /// Write the operand `$v` of the kind to the writer `$w`.
 macro_rules! encode_operand {
     (U8, $v:expr, $what:expr, $w:expr) => {
+        $w.u8(narrow_u8($v, $what)?)
+    };
+    (Byte, $v:expr, $what:expr, $w:expr) => {
         $w.u8(narrow_u8($v, $what)?)
     };
     (U16, $v:expr, $what:expr, $w:expr) => {
@@ -555,6 +563,9 @@ macro_rules! decode_operand {
     (U8, $r:expr) => {
         usize::from($r.u8()?)
     };
+    (Byte, $r:expr) => {
+        $r.u8()?
+    };
     (U16, $r:expr) => {
         usize::from($r.u16()?)
     };
@@ -620,6 +631,9 @@ macro_rules! decode_operand {
 /// The decoded operand `$v` of the kind, for the verifier.
 macro_rules! checked_operand {
     (U8, $v:expr) => {
+        Operand::Plain
+    };
+    (Byte, $v:expr) => {
         Operand::Plain
     };
     (U16, $v:expr) => {
@@ -763,7 +777,10 @@ macro_rules! ops {
                 }
             }
 
-            /// What the instruction does to the frame.
+            /// What the instruction does to the frame. (A row says it once
+            /// for both: a `Byte` operand, narrow in an [`Instr`], is a
+            /// `usize` here already.)
+            #[allow(clippy::useless_conversion)]
             pub fn effect(&self) -> Effect {
                 match *self {
                     $( Self::$name $( { $( $field, )* } )? => {
@@ -868,6 +885,12 @@ ops! {
     Mul => pops 2, pushes 1;
     Div => pops 2, pushes 1;
     Mod => pops 2, pushes 1;
+    /// `Constant k; Add` of an Int constant, as one instruction: TOS
+    /// plus the constant. (The emitter fuses the two.)
+    AddConst { k: Int } => pops 1, pushes 1;
+    /// `Constant k; Sub` of an Int constant, as one instruction: TOS
+    /// minus the constant.
+    SubConst { k: Int } => pops 1, pushes 1;
 
     // ── Comparison ─────────────────────────────────────────────
     Eq => pops 2, pushes 1;
@@ -965,6 +988,21 @@ ops! {
     JumpIfFalse { to: Fwd } => pops 1, pushes 0, branch;
     /// Pop TOS; jump forward if truthy.
     JumpIfTrue { to: Fwd } => pops 1, pushes 0, branch;
+    /// `Lt; JumpIfFalse` as one instruction: pop two values, and jump
+    /// forward unless the first is less than the second. (The emitter
+    /// fuses a comparison with the conditional jump after it; `Geq;
+    /// JumpIfTrue` is this one too.)
+    JumpIfNotLt { to: Fwd } => pops 2, pushes 0, branch;
+    /// `Gt; JumpIfFalse`, and `Leq; JumpIfTrue`.
+    JumpIfNotGt { to: Fwd } => pops 2, pushes 0, branch;
+    /// `Leq; JumpIfFalse`, and `Gt; JumpIfTrue`.
+    JumpIfNotLeq { to: Fwd } => pops 2, pushes 0, branch;
+    /// `Geq; JumpIfFalse`, and `Lt; JumpIfTrue`.
+    JumpIfNotGeq { to: Fwd } => pops 2, pushes 0, branch;
+    /// `Eq; JumpIfFalse`, and `Neq; JumpIfTrue`.
+    JumpIfNotEq { to: Fwd } => pops 2, pushes 0, branch;
+    /// `Neq; JumpIfFalse`, and `Eq; JumpIfTrue`.
+    JumpIfNotNeq { to: Fwd } => pops 2, pushes 0, branch;
     /// Discard TOS.
     Pop => pops 1, pushes 0;
     /// Duplicate TOS.
@@ -1015,10 +1053,12 @@ ops! {
     DestructMapValue { key: Str } => pops 1, pushes 2;
 
     // ── Loop ───────────────────────────────────────────────────
-    /// Store the top `argc` values in the slots from `first` on and cut
-    /// the frame back to just above them: the next round of a loop
-    /// whose bindings those slots are. Followed by the jump back.
-    Recur { argc: U8("bindings of a loop"), first: Cut } => pops argc, cut first, pushes argc;
+    /// Store the top `argc` values in the slots from `first` on, cut
+    /// the frame back to just above them and jump back to `to`: the
+    /// next round of a loop whose bindings those slots are. (The count
+    /// is a `Byte`, so that the decoded instruction of three operands
+    /// stays three words.)
+    Recur { argc: Byte("bindings of a loop"), first: Cut, to: Rel } => pops usize::from(argc), cut first, pushes usize::from(argc), jump;
 
     // ── Error handling ─────────────────────────────────────────
     /// Unwrap Ok/Some or early-return Err/None.

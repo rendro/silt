@@ -1,0 +1,29 @@
+-- cmd: disasm
+-- A comparison whose Bool only decides a branch is one instruction with
+-- the conditional jump: `JumpIfNot<comparison>` jumps unless the
+-- comparison holds. With the `false` arm first the jump is taken when
+-- it holds, which is the opposite comparison not holding. A comparison
+-- whose Bool is a value stays a comparison.
+fn smaller(a: Int, b: Int) -> Int {
+  match {
+    a < b -> a
+    _ -> b
+  }
+}
+
+fn same(a: Int, b: Int) -> String {
+  match a == b {
+    false -> "different"
+    true -> "same"
+  }
+}
+
+fn both(a: Int, b: Int) -> Bool {
+  a > 0 && b > 0
+}
+
+fn main() {
+  println(smaller(1, 2))
+  println(same(1, 2))
+  println(both(1, 2))
+}

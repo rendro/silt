@@ -83,12 +83,11 @@
 0025  Dup
 0026  SetLocal             6
 0029  GetLocal             6
-0032  Constant             0     ; 1
-0035  Add
-0036  Jump                 4     -> 0045
-0041  Constant             1     ; "non-exhaustive match: no arm matched"
-0044  Panic
-0045  Return
+0032  AddConst             0     ; 1
+0035  Jump                 4     -> 0044
+0040  Constant             1     ; "non-exhaustive match: no arm matched"
+0043  Panic
+0044  Return
 
 == main (arity=0, upvalues=0) ==
 0000  Constant             0     ; <builtin:println>

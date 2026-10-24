@@ -1,10 +1,10 @@
 -- cmd: disasm
--- stdout-contains: Recur                2  slot 2
--- stdout-contains: 0050  Recur
--- stdout-contains: 0054  Jump                 -41   -> 0018
--- Recur carries a u8 arg_count and a u16 first_slot (3 operand bytes):
--- the next instruction starts 4 bytes after Recur. It is the jump back
--- to the start of the loop, whose distance is negative.
+-- stdout-contains: 0048  Recur                2  slot 2  -38   -> 0018
+-- stdout-contains: 0056  Slide
+-- Recur carries a u8 count of bindings, a u16 first slot and the i32
+-- distance of its jump back to the start of the loop, which is
+-- negative (7 operand bytes): the next instruction starts 8 bytes
+-- after Recur.
 fn main() {
   let a = 1
   let b = 2

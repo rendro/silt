@@ -1,0 +1,115 @@
+-- A comparison whose Bool only decides a branch is one instruction with
+-- the jump (`JumpIfNotLt` and its siblings), whichever arm comes first:
+-- every comparison of Ints, Floats and Strings branches as its Bool
+-- says, in a match on it, in a match of conditions and in a `when`.
+import list
+
+fn lt(a: t, b: t) -> String where t: Compare {
+  match a < b {
+    true -> "T"
+    false -> "F"
+  }
+}
+
+fn lt2(a: t, b: t) -> String where t: Compare {
+  match a < b {
+    false -> "F"
+    true -> "T"
+  }
+}
+
+fn gt(a: t, b: t) -> String where t: Compare {
+  match a > b {
+    true -> "T"
+    false -> "F"
+  }
+}
+
+fn gt2(a: t, b: t) -> String where t: Compare {
+  match a > b {
+    false -> "F"
+    true -> "T"
+  }
+}
+
+fn le(a: t, b: t) -> String where t: Compare {
+  match a <= b {
+    true -> "T"
+    false -> "F"
+  }
+}
+
+fn le2(a: t, b: t) -> String where t: Compare {
+  match a <= b {
+    false -> "F"
+    true -> "T"
+  }
+}
+
+fn ge(a: t, b: t) -> String where t: Compare {
+  match a >= b {
+    true -> "T"
+    false -> "F"
+  }
+}
+
+fn ge2(a: t, b: t) -> String where t: Compare {
+  match a >= b {
+    false -> "F"
+    true -> "T"
+  }
+}
+
+fn eq(a: t, b: t) -> String where t: Compare {
+  match a == b {
+    true -> "T"
+    false -> "F"
+  }
+}
+
+fn eq2(a: t, b: t) -> String where t: Compare {
+  match a == b {
+    false -> "F"
+    true -> "T"
+  }
+}
+
+fn ne(a: t, b: t) -> String where t: Compare {
+  match a != b {
+    true -> "T"
+    false -> "F"
+  }
+}
+
+fn ne2(a: t, b: t) -> String where t: Compare {
+  match a != b {
+    false -> "F"
+    true -> "T"
+  }
+}
+
+fn row(a: t, b: t) -> String where t: Compare {
+  "{lt(a, b)}{gt(a, b)}{le(a, b)}{ge(a, b)}{eq(a, b)}{ne(a, b)} {lt2(a, b)}{gt2(a, b)}{le2(a, b)}{ge2(a, b)}{eq2(a, b)}{ne2(a, b)}"
+}
+
+fn smaller(a: Int, b: Int) -> Int {
+  match {
+    a < b -> a
+    _ -> b
+  }
+}
+
+fn checked(n: Int) -> String {
+  when n >= 0 else { return "negative" }
+  "fine"
+}
+
+fn main() {
+  list.each([(1, 2), (2, 1), (2, 2)]) { (a, b) -> println(row(a, b)) }
+  list.each([(1.5, 2.5), (2.5, 1.5), (2.5, 2.5)]) { (a, b) -> println(row(a, b)) }
+  list.each([("a", "b"), ("b", "a"), ("b", "b")]) { (a, b) -> println(row(a, b)) }
+  println(smaller(3, 4))
+  println(smaller(4, 3))
+  println(checked(1))
+  println(checked(-1))
+}

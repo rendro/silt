@@ -393,6 +393,41 @@ fn peek(stack: &[Value]) -> &Value {
         .expect("verified code looks at a value it pushed")
 }
 
+/// The second part of an instruction that fuses two (a
+/// superinstruction), left for the next run of the loop: the first ran
+/// with the last step of a slice. A fused instruction costs the steps
+/// of the two it fuses, and a slice ends between them as it ended
+/// between the two.
+#[derive(Clone, Copy)]
+pub(super) enum Half {
+    /// `Add` or `Sub` of the two values on top (`AddConst`, `SubConst`).
+    Arith(Op),
+    /// Take the Bool on top off, and jump to the offset if it is false
+    /// (`JumpIfNotLt` and its siblings).
+    Branch(usize),
+    /// Jump to the offset (`Recur`).
+    Jump(usize),
+}
+
+/// Whether the opcode `byte` is of an instruction that fuses two (see
+/// [`Half`]).
+#[cold]
+fn fuses_two(byte: u8) -> bool {
+    [
+        Op::AddConst,
+        Op::SubConst,
+        Op::JumpIfNotLt,
+        Op::JumpIfNotGt,
+        Op::JumpIfNotLeq,
+        Op::JumpIfNotGeq,
+        Op::JumpIfNotEq,
+        Op::JumpIfNotNeq,
+        Op::Recur,
+    ]
+    .iter()
+    .any(|op| *op as u8 == byte)
+}
+
 /// How a run of the instruction loop ended ([`Vm::run_frames`]).
 pub(super) enum Slice {
     /// The frames above the floor are finished, with this value.
@@ -429,6 +464,16 @@ impl Vm {
         // earlier run had for it when the budget ran out, or unit.
         if self.frames.len() == floor {
             return Ok(Slice::Done(Value::Unit));
+        }
+        // An instruction of two that an earlier run ran half of goes on
+        // with its second part, a step of its own.
+        if let Some(half) = self.half {
+            if budget == 0 {
+                return Ok(Slice::OutOfBudget);
+            }
+            budget -= 1;
+            self.half = None;
+            self.second_part(half)?;
         }
         if let Some(Frame::Native(_)) = self.frames.last() {
             let input = self.pending_input.take().unwrap_or(Value::Unit);
@@ -579,6 +624,66 @@ impl Vm {
                 pop_done(&mut self.stack);
             }};
         }
+        // `AddConst`, `SubConst`: the second operand is the Int
+        // constant, read where it is in the pool; the first is on top
+        // of the stack, and the result is written over it. A refused
+        // operand leaves the stack.
+        macro_rules! arithmetic_const {
+            ($op:expr, $k:expr) => {{
+                let b = chunk.constant($k);
+                let Some(a) = self.stack.last_mut() else {
+                    unreachable!("verified code has the operand on the stack")
+                };
+                if let (Value::Int(x), Value::Int(y)) = (&*a, b) {
+                    match int_arithmetic($op, *x, *y) {
+                        Ok(n) => put(a, Value::Int(n)),
+                        Err(error) => {
+                            pop_done(&mut self.stack);
+                            fail!(error)
+                        }
+                    }
+                } else {
+                    match float_arithmetic($op, a, b) {
+                        Ok(f) => put(a, Value::Float(f)),
+                        Err(error) => {
+                            pop_done(&mut self.stack);
+                            fail!(error)
+                        }
+                    }
+                }
+            }};
+        }
+        // A comparison fused with the conditional jump after it: the
+        // operands are compared where they lie, both leave the stack,
+        // and the jump is taken unless the comparison holds.
+        macro_rules! jump_unless {
+            ($holds:expr, $to:expr) => {{
+                let (a, b) = operands!();
+                match ordering(a, b) {
+                    Ok(ordering) => {
+                        if !$holds(ordering) {
+                            ip = $to;
+                        }
+                    }
+                    Err(error) => refuse!(error),
+                }
+                pop_done(&mut self.stack);
+                pop_done(&mut self.stack);
+            }};
+        }
+        macro_rules! jump_unless_equal {
+            ($equal:expr, $to:expr) => {{
+                let (a, b) = operands!();
+                if let Err(error) = equality_operands(a, b) {
+                    refuse!(error);
+                }
+                if (*a == *b) != $equal {
+                    ip = $to;
+                }
+                pop_done(&mut self.stack);
+                pop_done(&mut self.stack);
+            }};
+        }
         macro_rules! compare {
             ($holds:expr) => {{
                 let (a, b) = operands!();
@@ -591,11 +696,27 @@ impl Vm {
         }
 
         loop {
-            if budget == 0 {
-                save!();
-                return Ok(Slice::OutOfBudget);
+            // An instruction that fuses two takes two steps, the second
+            // in its arm: one runs with two steps left at least. With
+            // one, it runs its first part and the slice ends: the next
+            // run runs the second (`Half`).
+            if budget <= 1 {
+                if budget == 0 {
+                    save!();
+                    return Ok(Slice::OutOfBudget);
+                }
+                if fuses_two(code[ip]) {
+                    save!();
+                    return self.first_part();
+                }
             }
             budget -= 1;
+            // (A half-run instruction is finished before any other
+            // starts: at the entry above.)
+            debug_assert!(
+                self.half.is_none(),
+                "an instruction starts while one is half run"
+            );
             let (instr, next) = decode(code, ip).expect("verified code decodes");
             ip = next;
             match instr {
@@ -608,6 +729,16 @@ impl Vm {
                 Instr::Mul => arithmetic!(Op::Mul),
                 Instr::Div => arithmetic!(Op::Div),
                 Instr::Mod => arithmetic!(Op::Mod),
+                // An instruction that fuses two takes its second step in
+                // its arm (see the loop's head).
+                Instr::AddConst { k } => {
+                    budget -= 1;
+                    arithmetic_const!(Op::Add, k)
+                }
+                Instr::SubConst { k } => {
+                    budget -= 1;
+                    arithmetic_const!(Op::Sub, k)
+                }
                 Instr::Eq => {
                     let (a, b) = operands!();
                     if let Err(error) = equality_operands(a, b) {
@@ -1029,6 +1160,30 @@ impl Vm {
                     }
                     pop_done(&mut self.stack);
                 }
+                Instr::JumpIfNotLt { to } => {
+                    budget -= 1;
+                    jump_unless!(Ordering::is_lt, to)
+                }
+                Instr::JumpIfNotGt { to } => {
+                    budget -= 1;
+                    jump_unless!(Ordering::is_gt, to)
+                }
+                Instr::JumpIfNotLeq { to } => {
+                    budget -= 1;
+                    jump_unless!(Ordering::is_le, to)
+                }
+                Instr::JumpIfNotGeq { to } => {
+                    budget -= 1;
+                    jump_unless!(Ordering::is_ge, to)
+                }
+                Instr::JumpIfNotEq { to } => {
+                    budget -= 1;
+                    jump_unless_equal!(true, to)
+                }
+                Instr::JumpIfNotNeq { to } => {
+                    budget -= 1;
+                    jump_unless_equal!(false, to)
+                }
                 Instr::Pop => pop_done(&mut self.stack),
                 Instr::Dup => {
                     let top = self.stack.len() - 1;
@@ -1202,15 +1357,19 @@ impl Vm {
                     }
                 }
                 Instr::Recur {
-                    argc: arg_count,
+                    argc,
                     first: first_slot,
+                    to,
                 } => {
+                    budget -= 1;
+                    let arg_count = usize::from(argc);
                     let start = self.stack.len() - arg_count;
                     for i in 0..arg_count {
                         set_copy!(self.stack, base + first_slot + i, self.stack[start + i]);
                     }
                     // Truncate all the way back to just after loop bindings.
                     self.stack.truncate(base + first_slot + arg_count);
+                    ip = to;
                 }
                 // `?` on an `Ok` or a `Some` writes what the variant
                 // holds over the variant, as a read of a field does.
@@ -1387,6 +1546,123 @@ impl Vm {
         self.stack.truncate(stack_floor);
         self.tco_elided.prune(floor);
         self.pending_input = None;
+        self.half = None;
+    }
+
+    /// Run the first part of the instruction at the `ip` of the
+    /// function's frame on top, one that fuses two: the slice has one
+    /// step left, and ends with the part ([`Half`]). The `ip` goes past
+    /// the instruction. An error is the part's, blamed on the
+    /// instruction.
+    #[cold]
+    #[inline(never)]
+    fn first_part(&mut self) -> Result<Slice, VmError> {
+        debug_assert!(
+            self.half.is_none(),
+            "an instruction starts while one is half run"
+        );
+        let Some(Frame::Code(frame)) = self.frames.last_mut() else {
+            unreachable!("an instruction runs in a function's frame")
+        };
+        let (closure, base) = (frame.closure.clone(), frame.base_slot);
+        let chunk = closure.function.chunk();
+        let (instr, next) = decode(chunk.code(), frame.ip).expect("verified code decodes");
+        frame.ip = next;
+        // A comparison's Bool, in place of its operands, which leave
+        // the stack if it refuses them.
+        let compared = |vm: &mut Vm, holds: fn(Ordering) -> bool| -> Result<(), VmError> {
+            let b = pop(&mut vm.stack);
+            let a = pop(&mut vm.stack);
+            let ordering = ordering(&a, &b)?;
+            vm.stack.push(Value::Bool(holds(ordering)));
+            Ok(())
+        };
+        let equal = |vm: &mut Vm, equal: bool| -> Result<(), VmError> {
+            let b = pop(&mut vm.stack);
+            let a = pop(&mut vm.stack);
+            equality_operands(&a, &b)?;
+            vm.stack.push(Value::Bool((a == b) == equal));
+            Ok(())
+        };
+        let half = match instr {
+            Instr::AddConst { k } | Instr::SubConst { k } => {
+                self.stack.push(chunk.constant(k).clone());
+                let op = match instr {
+                    Instr::AddConst { .. } => Op::Add,
+                    _ => Op::Sub,
+                };
+                Half::Arith(op)
+            }
+            Instr::JumpIfNotLt { to } => {
+                compared(self, Ordering::is_lt)?;
+                Half::Branch(to)
+            }
+            Instr::JumpIfNotGt { to } => {
+                compared(self, Ordering::is_gt)?;
+                Half::Branch(to)
+            }
+            Instr::JumpIfNotLeq { to } => {
+                compared(self, Ordering::is_le)?;
+                Half::Branch(to)
+            }
+            Instr::JumpIfNotGeq { to } => {
+                compared(self, Ordering::is_ge)?;
+                Half::Branch(to)
+            }
+            Instr::JumpIfNotEq { to } => {
+                equal(self, true)?;
+                Half::Branch(to)
+            }
+            Instr::JumpIfNotNeq { to } => {
+                equal(self, false)?;
+                Half::Branch(to)
+            }
+            Instr::Recur { argc, first, to } => {
+                // The values on top over the loop's bindings, the old
+                // values let go of in the bindings' order, and the frame
+                // cut back to just above them.
+                let argc = usize::from(argc);
+                let values = self.stack.split_off(self.stack.len() - argc);
+                for (i, value) in values.into_iter().enumerate() {
+                    self.stack[base + first + i] = value;
+                }
+                self.stack.truncate(base + first + argc);
+                Half::Jump(to)
+            }
+            other => unreachable!("`{}` fuses no two instructions", other.op().name()),
+        };
+        self.half = Some(half);
+        Ok(Slice::OutOfBudget)
+    }
+
+    /// The second part of the instruction of two whose first part ran
+    /// at the end of the last slice ([`Half`]), in the function's frame
+    /// on top, whose `ip` is past the instruction. An error is the
+    /// part's, blamed on the instruction.
+    #[cold]
+    #[inline(never)]
+    fn second_part(&mut self, half: Half) -> Result<(), VmError> {
+        let Some(Frame::Code(frame)) = self.frames.last_mut() else {
+            unreachable!("the first part ran in a function's frame")
+        };
+        match half {
+            Half::Arith(op) => {
+                let b = pop(&mut self.stack);
+                let a = pop(&mut self.stack);
+                let value = match (&a, &b) {
+                    (Value::Int(x), Value::Int(y)) => Value::Int(int_arithmetic(op, *x, *y)?),
+                    _ => Value::Float(float_arithmetic(op, &a, &b)?),
+                };
+                self.stack.push(value);
+            }
+            Half::Branch(to) => {
+                if matches!(pop(&mut self.stack), Value::Bool(false)) {
+                    frame.ip = to;
+                }
+            }
+            Half::Jump(to) => frame.ip = to,
+        }
+        Ok(())
     }
 
     /// Run the frames above the first `floor` to their end on the

@@ -1,0 +1,23 @@
+-- `n + 1` and `n - 3` run as one instruction each (`AddConst`,
+-- `SubConst`): what they compute is the same, also where the right
+-- operand is a constant only on one path of a match (no fusion where
+-- the paths meet).
+fn pick(n: Int, c: Bool) -> Int {
+  n + (match c {
+    true -> 1
+    false -> 2
+  })
+}
+
+fn down(n: Int) -> Int {
+  n - 3
+}
+
+fn main() {
+  println(pick(10, true))
+  println(pick(10, false))
+  println(down(10))
+  let big = 9223372036854775807
+  println(down(big))
+  println(big - 1 + 1)
+}
