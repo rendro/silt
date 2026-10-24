@@ -956,6 +956,7 @@ mod tests {
             op(Op::Unit),
             op(Op::CallDict),
             0,
+            0,
             1,
             1,
             op(Op::Return),

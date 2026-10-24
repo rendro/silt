@@ -296,6 +296,7 @@ fn parser_invariants_reject_decl_span_past_source() {
         statements: Default::default(),
         late_evidence: Vec::new(),
         dict_owners: Vec::new(),
+        pattern_lets: Vec::new(),
     };
     let err = check_parser_invariants(src, &tokens, &bogus_program).unwrap_err();
     assert!(
@@ -336,6 +337,7 @@ fn parser_invariants_reject_decls_from_empty_source() {
         statements: Default::default(),
         late_evidence: Vec::new(),
         dict_owners: Vec::new(),
+        pattern_lets: Vec::new(),
     };
     let err = check_parser_invariants(src, &tokens, &bogus_program).unwrap_err();
     assert!(err.contains("empty-of-tokens"), "unexpected error: {err}");
