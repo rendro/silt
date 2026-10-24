@@ -36,6 +36,11 @@ and [channel / task](channel-task.md) for the primitive channel operations.
 | `tcp_chunks` | `(TcpStream, Int) -> Channel(Result(Bytes, TcpError))` | Read TCP in chunks |
 | `tcp_lines` | `(TcpStream) -> Channel(Result(String, TcpError))` | Read TCP line-by-line |
 
+`file_lines` reads the file up to 64 KiB of lines at a time and emits
+them one by one, so it can be ahead of what has been received by that
+much: a file that changes while it is read gives lines from before the
+change as far as it is ahead.
+
 ### Transforms
 
 | Function | Signature |
