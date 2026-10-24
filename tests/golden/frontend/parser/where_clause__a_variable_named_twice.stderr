@@ -1,20 +1,34 @@
 error[parse]: type variable 'a' is named twice in this where clause
- --> where_clause__a_variable_named_twice.silt:10:56
+ --> where_clause__a_variable_named_twice.silt:11:56
     |
- 10 | fn f(x: a, y: b) -> String where a: Equal, b: Display, a: Conv(Int) + Hash {
+ 11 | fn f(x: a, y: b) -> String where a: Equal, b: Display, a: Conv(Int) + Hash {
     |                                                        ^ type variable 'a' is named twice in this where clause
   = help: join its bounds with '+': where a: Equal + Conv(Int) + Hash
 
 error[parse]: type variable 't' is named twice in this where clause
- --> where_clause__a_variable_named_twice.silt:16:46
+ --> where_clause__a_variable_named_twice.silt:17:46
     |
- 16 | trait Conv(Int) for Box(t) where t: Display, t: Hash {
+ 17 | trait Conv(Int) for Box(t) where t: Display, t: Hash {
     |                                              ^ type variable 't' is named twice in this where clause
   = help: join its bounds with '+': where t: Display + Hash
 
 error[parse]: type variable 'a' is named twice in this where clause
- --> where_clause__a_variable_named_twice.silt:23:52
+ --> where_clause__a_variable_named_twice.silt:24:52
     |
- 23 |   fn shout(self, x: a) -> String where a: Display, a: Equal
+ 24 |   fn shout(self, x: a) -> String where a: Display, a: Equal
     |                                                    ^ type variable 'a' is named twice in this where clause
   = help: join its bounds with '+': where a: Display + Equal
+
+error[parse]: type variable 'a' is named twice in this where clause
+ --> where_clause__a_variable_named_twice.silt:27:40
+    |
+ 27 | fn twice(x: a) -> Bool where a: Equal, a: Equal {
+    |                                        ^ type variable 'a' is named twice in this where clause
+  = help: join its bounds with '+': where a: Equal
+
+error[parse]: type variable 'a' is named twice in this where clause
+ --> where_clause__a_variable_named_twice.silt:31:49
+    |
+ 31 | fn spaced(x: a) -> String where a: Conv( Int ), a: Conv(List(  Int)) {
+    |                                                 ^ type variable 'a' is named twice in this where clause
+  = help: join its bounds with '+': where a: Conv(Int) + Conv(List(Int))

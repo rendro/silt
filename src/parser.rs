@@ -1762,10 +1762,15 @@ impl<'src> Parser<'src> {
             if !clauses[..k].iter().any(|(earlier, ..)| earlier == param) {
                 continue;
             }
-            let all: Vec<&str> = (clauses.iter())
+            let mut all: Vec<&str> = Vec::new();
+            for bound in (clauses.iter())
                 .filter(|(p, ..)| p == param)
                 .flat_map(|(_, _, written, _)| written.iter().map(String::as_str))
-                .collect();
+            {
+                if !all.contains(&bound) {
+                    all.push(bound);
+                }
+            }
             return Err(Diagnostic::error(
                 Code::InvalidDeclaration,
                 *span,
@@ -1782,18 +1787,21 @@ impl<'src> Parser<'src> {
             .collect())
     }
 
-    /// The source text of the tokens `range` (indices), from the start of
-    /// the first to the end of the last.
+    /// The tokens `range` (indices) as `silt fmt` spaces a type: each
+    /// token's text, a space after `,` and `:` and around `->`, none
+    /// elsewhere (`Conv( List(  Int ) )` is `Conv(List(Int))`).
     fn text_of(&self, range: std::ops::Range<usize>) -> String {
-        match (
-            self.tokens.get(range.start),
-            range.end.checked_sub(1).and_then(|e| self.tokens.get(e)),
-        ) {
-            (Some(first), Some(last)) if range.start < range.end => {
-                self.source[first.span.start as usize..last.span.end as usize].to_string()
+        let mut out = String::new();
+        for tok in self.tokens.get(range).unwrap_or_default() {
+            let text = &self.source[tok.span.start as usize..tok.span.end as usize];
+            match tok.kind {
+                Token::Arrow => out.push_str(" -> "),
+                Token::Comma => out.push_str(", "),
+                Token::Colon => out.push_str(": "),
+                _ => out.push_str(text),
             }
-            _ => String::new(),
         }
+        out
     }
 
     /// Parse a name that may carry one module qualifier: `Shape` or

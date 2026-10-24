@@ -167,6 +167,21 @@ impl TypeChecker {
     /// `trait Ordered: Equal` makes both traits' methods callable on `a`,
     /// and `v: Sub(Int)` with `trait Sub(a): Super(a)` says
     /// `v: Super(Int)`.
+    /// [`Self::declare_bound`] of a bound a `where` clause writes, which
+    /// is remembered as written.
+    pub(super) fn declare_written_bound(
+        &mut self,
+        var: TyVar,
+        trait_name: TraitKey,
+        args: Vec<Type>,
+    ) {
+        let written = self.written_bounds.entry(var).or_default();
+        if !written.iter().any(|(t, a)| *t == trait_name && *a == args) {
+            written.push((trait_name, args.clone()));
+        }
+        self.declare_bound(var, trait_name, args);
+    }
+
     pub(super) fn declare_bound(&mut self, var: TyVar, trait_name: TraitKey, args: Vec<Type>) {
         // (Two bounds of one trait at different arguments are two
         // bounds: `where a: Conv(Int) + Conv(String)`.)
@@ -402,16 +417,11 @@ impl TypeChecker {
                 self.show_trait(own)
             ),
             // A variable with bounds of its own takes one more with `+`.
-            _ => match self.bounds.get(&r.var).filter(|bounds| !bounds.is_empty()) {
+            _ => match (self.written_bounds.get(&r.var)).filter(|bounds| !bounds.is_empty()) {
                 Some(bounds) => {
-                    // The bounds the clause writes: not those that are
-                    // in scope as another's supertrait at its arguments.
+                    // The bounds the clause writes, every one of them, and
+                    // not the supertraits they bring.
                     let mut written: Vec<String> = (bounds.iter())
-                        .filter(|bound| {
-                            !(bounds.iter()).any(|other| {
-                                other != *bound && self.supers_at(other).contains(bound)
-                            })
-                        })
                         .map(|(t, args)| self.show_bound(*t, args))
                         .collect();
                     written.push(bound.clone());
@@ -1326,7 +1336,7 @@ impl TypeChecker {
                 ..
             } = pred
             {
-                self.declare_bound(*var, *tr, args.clone());
+                self.declare_written_bound(*var, *tr, args.clone());
             }
         }
 

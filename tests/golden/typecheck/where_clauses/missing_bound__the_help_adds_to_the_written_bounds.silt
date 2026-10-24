@@ -1,8 +1,8 @@
 -- cmd: check
 -- exit: 1
 -- A variable that lacks a bound its body needs: the help adds the bound
--- to the ones the where clause writes, with `+` (not those a supertrait
--- brings), or writes a where clause when there is none.
+-- to the ones the where clause writes, with `+`, every one of them (not
+-- those a supertrait brings), or writes a where clause when there is none.
 trait Loud {
   fn loud(self) -> String
 }
@@ -29,6 +29,10 @@ trait Sub(b): Conv(b) {
 
 fn mixed(x: a, y: a) -> Bool where a: Sub(Int) + Conv(String) {
   x == y
+}
+
+fn written(x: a) -> Set(a) where a: Compare + Equal {
+  #[x]
 }
 
 fn none(x: a, y: a) -> Bool {

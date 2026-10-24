@@ -19,9 +19,16 @@ error[type]: type variable `a` is not known to implement trait 'Equal', which '=
     |   ^^^^^^ type variable `a` is not known to implement trait 'Equal', which '==' needs
   = help: add `+ Equal` to the bounds of `a`: `where a: Sub(Int) + Conv(String) + Equal`
 
-error[type]: type variable `a` is not known to implement trait 'Equal', which '==' needs
+error[type]: type variable `a` is not known to implement trait 'Hash'
  --> missing_bound__the_help_adds_to_the_written_bounds.silt:35:3
     |
- 35 |   x == y
+ 35 |   #[x]
+    |   ^^^^ type variable `a` is not known to implement trait 'Hash'
+  = help: add `+ Hash` to the bounds of `a`: `where a: Compare + Equal + Hash`
+
+error[type]: type variable `a` is not known to implement trait 'Equal', which '==' needs
+ --> missing_bound__the_help_adds_to_the_written_bounds.silt:39:3
+    |
+ 39 |   x == y
     |   ^^^^^^ type variable `a` is not known to implement trait 'Equal', which '==' needs
   = help: add `where a: Equal`

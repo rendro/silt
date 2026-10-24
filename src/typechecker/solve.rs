@@ -1220,7 +1220,7 @@ impl TypeChecker {
     /// The supertraits the bound `bound` brings into scope, at the
     /// arguments it gives them, theirs too: what `declare_bound` adds
     /// with it.
-    pub(super) fn supers_at(&self, bound: &(TraitKey, Vec<Type>)) -> Vec<(TraitKey, Vec<Type>)> {
+    fn supers_at(&self, bound: &(TraitKey, Vec<Type>)) -> Vec<(TraitKey, Vec<Type>)> {
         let mut found: Vec<(TraitKey, Vec<Type>)> = Vec::new();
         let mut next = vec![bound.clone()];
         while let Some((t, args)) = next.pop() {
