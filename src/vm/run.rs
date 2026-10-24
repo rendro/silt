@@ -1270,15 +1270,18 @@ impl Vm {
                     }
                 }
                 Instr::Recur {
-                    argc: arg_count,
+                    argc,
                     first: first_slot,
+                    to,
                 } => {
+                    let arg_count = usize::from(argc);
                     let start = self.stack.len() - arg_count;
                     for i in 0..arg_count {
                         set_copy!(self.stack, base + first_slot + i, self.stack[start + i]);
                     }
                     // Truncate all the way back to just after loop bindings.
                     self.stack.truncate(base + first_slot + arg_count);
+                    ip = to;
                 }
                 // `?` on an `Ok` or a `Some` writes what the variant
                 // holds over the variant, as a read of a field does.

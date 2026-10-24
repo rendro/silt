@@ -52,11 +52,12 @@ fn disassemble_instruction(
     let name = instr.op().name();
     // The operand of a jump is its distance from the next instruction,
     // negative for a jump back.
+    let distance = |target: usize| match target >= next {
+        true => (target - next).to_string(),
+        false => format!("-{}", next - target),
+    };
     let jump = |target: usize| {
-        let distance = match target >= next {
-            true => (target - next).to_string(),
-            false => format!("-{}", next - target),
-        };
+        let distance = distance(target);
         format!("{offset:04}  {name:<20} {distance:<5} -> {target:04}")
     };
     // An instruction whose one operand is a constant.
@@ -124,8 +125,11 @@ fn disassemble_instruction(
         | Instr::MakeMap { pairs: n }
         | Instr::MakeSet { count: n } => with_number(n),
 
-        Instr::Recur { argc, first } => {
-            format!("{offset:04}  {name:<20} {argc}  slot {first}")
+        // Recur: the bindings, the first of their slots, and the jump
+        // back.
+        Instr::Recur { argc, first, to } => {
+            let distance = distance(to);
+            format!("{offset:04}  {name:<20} {argc}  slot {first}  {distance:<5} -> {to:04}")
         }
 
         // ── A constant ────────────────────────────────────────
