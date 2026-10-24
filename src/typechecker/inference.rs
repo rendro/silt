@@ -3831,14 +3831,23 @@ impl TypeChecker {
                             PatternMode::Binding(BindingSite::Let),
                         );
                         // Each name the pattern binds to a part of a value
-                        // is general as the part is.
+                        // is general as the part is; the value's bounds are
+                        // all the names'.
                         if is_value {
                             self.exit_level();
-                            for name in collect_pattern_vars(pattern) {
+                            let mut bounds = Vec::new();
+                            for (name, at) in super::names::binders(pattern) {
                                 if let Some(bound) = env.lookup(name).cloned() {
                                     let scheme = self.generalize_let(&bound.ty, &own);
+                                    let places = self.pattern_places(&scheme, &mut bounds);
+                                    if !places.is_empty() {
+                                        self.ev.pattern_lets.insert(at, places);
+                                    }
                                     env.define(name, scheme);
                                 }
+                            }
+                            if !bounds.is_empty() {
+                                self.ev.lets.insert(value_span, bounds);
                             }
                         }
                     }

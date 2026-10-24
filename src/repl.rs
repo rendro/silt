@@ -946,6 +946,37 @@ mod tests {
         assert_eq!(value(&mut repl, "f()"), "int");
     }
 
+    /// An entry whose value is general in a bound of a program's trait
+    /// shows it as it is, of no type: no dictionary is passed for the
+    /// bound, and a method taken as a value is shown as the trait's.
+    #[test]
+    fn an_entry_general_in_a_bound_shows_its_value() {
+        let mut repl = repl();
+        let setup = [
+            "trait Nm { fn nm(self) -> String }",
+            "trait Nm for Int { fn nm(self) -> String { \"i\" } }",
+            "fn greet2(x: a) -> String where a: Nm { Nm.nm(x) }",
+            "let shout = { x -> \"{Nm.nm(x)}!\" }",
+            "let (h, n) = (greet2, 1)",
+        ];
+        for entry in setup {
+            let evaluation = repl.eval(entry);
+            assert!(
+                evaluation.committed,
+                "`{entry}` must run: {:?}",
+                evaluation.diagnostics
+            );
+        }
+        assert_eq!(value(&mut repl, "greet2"), "<fn:greet2>");
+        assert_eq!(value(&mut repl, "Nm.nm"), "<fn:Nm.nm>");
+        assert_eq!(value(&mut repl, "(greet2, 1)"), "(<fn:greet2>, 1)");
+        assert_eq!(value(&mut repl, "Some(greet2)"), "Some(<fn:greet2>)");
+        assert_eq!(value(&mut repl, "shout"), "<fn:closure in shout>");
+        assert_eq!(value(&mut repl, "h"), "<fn:greet2>");
+        assert_eq!(value(&mut repl, "h(n)"), "i");
+        assert_eq!(value(&mut repl, "shout(n)"), "i!");
+    }
+
     /// The value `input` returns, which must run.
     fn value(repl: &mut Repl, input: &str) -> String {
         let evaluation = repl.eval(input);

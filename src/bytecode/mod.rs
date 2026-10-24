@@ -832,6 +832,26 @@ impl Function {
         self.evidence.as_deref()
     }
 
+    /// The function `name` of no parameters made of `code` and
+    /// `constants` as they are, which silt writes itself.
+    pub(crate) fn of_code(name: String, code: Vec<u8>, constants: Vec<Value>) -> Self {
+        Function {
+            name,
+            arity: 0,
+            upvalue_count: 0,
+            chunk: Chunk {
+                code,
+                constants,
+                spans: Vec::new(),
+                constant_dedup: HashMap::new(),
+            },
+            hidden: 0,
+            dict_slot: false,
+            #[cfg(debug_assertions)]
+            evidence: None,
+        }
+    }
+
     /// A function made of `code` and `constants` as they are, unverified:
     /// what the verifier's tests hand it.
     #[cfg(test)]

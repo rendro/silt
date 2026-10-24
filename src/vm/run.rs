@@ -1048,9 +1048,9 @@ impl Vm {
                     ok!(self.make_dict(&proto, n));
                     load!();
                 }
-                Instr::DictMethod { method } => {
+                Instr::DictMethod { method, of } => {
                     save!();
-                    ok!(self.dict_method(method));
+                    ok!(self.dict_method(method, of));
                     load!();
                 }
                 Instr::DictSub { k } => {
@@ -2015,12 +2015,12 @@ impl Vm {
     /// the dictionary below the top `argc` values with them.
     fn call_dict(
         &mut self,
-        method: u8,
+        method: usize,
         argc: usize,
         at: u8,
         tail: bool,
     ) -> Result<DispatchResult, VmError> {
-        let callee = self.dict_callee(usize::from(method), argc, usize::from(at))?;
+        let callee = self.dict_callee(method, argc, usize::from(at))?;
         // (The dictionary's slot, below the arguments, is the callee's:
         // the method takes the dictionary from it, and its result goes
         // there.)

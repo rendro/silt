@@ -171,8 +171,18 @@ impl Vm {
 
     /// `DictMethod`: the method `method` of the dictionary on top, then
     /// the dictionary.
-    pub(super) fn dict_method(&mut self, method: usize) -> Result<(), VmError> {
+    ///
+    /// Here, in `DictSub`, `SuperDict`, `WhereDict` and `Bind`, unit is a
+    /// dictionary no code will use: the one a part of a pattern's value
+    /// needs that another name of the pattern takes
+    /// (`Compiler::compile_pattern_thunk`). What is made of it is unit.
+    pub(super) fn dict_method(&mut self, method: usize, of: u16) -> Result<(), VmError> {
         let top = self.stack.len() - 1;
+        if matches!(self.stack[top], Value::Unit) {
+            self.stack[top] = self.undecided_method(method, of);
+            self.stack.push(Value::Unit);
+            return Ok(());
+        }
         self.sees_template_at(top)?;
         let template = dict(&self.stack[top])?.template(&self.view.entry);
         let slot = template.and_then(|template| template.methods.get(method).copied());
@@ -185,6 +195,32 @@ impl Vm {
         Ok(())
     }
 
+    /// `DictMethod` of no dictionary: the method `method` of the trait
+    /// `of` (the trait's `trait_index`) where no type was decided for it,
+    /// a value that is shown as the method is (`<fn:Nm.nm>`) and is
+    /// never called: the value of a REPL entry general in a bound, which
+    /// the entry only shows (`Compiler::compile_program`).
+    #[cold]
+    fn undecided_method(&self, method: usize, of: u16) -> Value {
+        let globals = &self.view.entry;
+        let trait_name = globals.trait_name(of).unwrap_or("?");
+        let method_name = (globals.trait_at(of))
+            .and_then(|t| globals.trait_methods(t))
+            .and_then(|methods| methods.get(method).map(|(name, _)| name.clone()))
+            .unwrap_or_default();
+        let name = format!("{trait_name}.{method_name}");
+        let message = format!("the method '{name}' was called with no type decided for it");
+        let code = vec![
+            crate::bytecode::Op::Constant as u8,
+            0,
+            0,
+            crate::bytecode::Op::Panic as u8,
+        ];
+        let function =
+            crate::bytecode::Function::of_code(name, code, vec![Value::String(message.into())]);
+        Value::VmClosure(Arc::new(VmClosure::new(Arc::new(function), vec![])))
+    }
+
     /// `DictSub`, `SuperDict`, `WhereDict`: the dictionary on top's
     /// dictionary that `which` takes from it.
     pub(super) fn dict_part(
@@ -192,6 +228,9 @@ impl Vm {
         which: impl FnOnce(&Dict, &crate::bytecode::Globals) -> Value,
     ) -> Result<(), VmError> {
         let top = self.stack.len() - 1;
+        if matches!(self.stack[top], Value::Unit) {
+            return Ok(());
+        }
         self.sees_template_at(top)?;
         let part = which(dict(&self.stack[top])?, &self.view.entry);
         self.stack[top] = part;
@@ -205,6 +244,9 @@ impl Vm {
     pub(super) fn bind(&mut self, n: usize) -> Result<(), VmError> {
         let values: Vec<Value> = self.stack.drain(self.stack.len() - n..).collect();
         let top = self.stack.len() - 1;
+        if matches!(self.stack[top], Value::Unit) {
+            return Ok(());
+        }
         let Value::VmClosure(closure) = &self.stack[top] else {
             return Err(VmError::type_confusion(format!(
                 "dictionaries bound to a value of kind {}",

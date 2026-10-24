@@ -464,6 +464,65 @@ impl Compiler<'_> {
         )
     }
 
+    /// Compile the name `name` (at `at` in `pattern`) of the `let` of
+    /// `pattern` to `value`, which is general in a bound: the function of
+    /// the name's dictionaries that makes the value again, with them in
+    /// their places among the value's (`Program::pattern_lets`; a bound of
+    /// the value that only another name has is unit there, which no part
+    /// of the value this name takes uses), and takes the name's part. Leave
+    /// it on the stack; the number of the name's dictionaries.
+    pub(super) fn compile_pattern_thunk(
+        &mut self,
+        pattern: &crate::ast::Pattern,
+        value: &crate::ast::Expr,
+        name: Symbol,
+        at: Span,
+    ) -> Result<usize, Diagnostic> {
+        let span = value.span;
+        let places = self.pattern_lets.get(&at).cloned().unwrap_or_default();
+        let all = self.shape(span).map_or(0, Self::hidden_count);
+        let closures = self.contexts.last().map(|around| around.closures.clone());
+        self.begin_function(resolve(name), places.len(), span)?;
+        if let (Some(closures), Some(context)) = (closures, self.contexts.last_mut()) {
+            context.closures = closures;
+        }
+        let ctx = self.ctx_mut();
+        let depth = ctx.scope_depth;
+        for k in 0..places.len() {
+            ctx.locals.push(Local {
+                name: dict_name(at, k),
+                depth,
+                slot: k,
+            });
+        }
+        self.emitter().hidden_params(places.len());
+        for place in 0..all {
+            match places.iter().position(|p| usize::from(*p) == place) {
+                Some(slot) => self.emit(Asm::GetLocal { slot }, span)?,
+                None => self.emit(Asm::Unit, span)?,
+            }
+            self.add_local(dict_name(span, place), span)?;
+        }
+        self.compile_expr(value)?;
+        self.add_local(intern("__let_val__"), span)?;
+        self.compile_pattern_bind_checked(pattern, span)?;
+        let slot = (self.resolve_local(name))
+            .ok_or_else(|| no_dictionary(at, "a name its pattern does not bind"))?;
+        self.emit(Asm::GetLocal { slot }, span)?;
+        self.emit(Asm::Return, span)?;
+        let (func, captures) = self.end_function(span)?;
+        let closure = Arc::new(crate::bytecode::VmClosure::new(Arc::new(func), vec![]));
+        let f = self.add_constant(Value::VmClosure(closure), span)?;
+        self.emit(
+            Asm::MakeClosure {
+                f,
+                captures: &captures,
+            },
+            span,
+        )?;
+        Ok(places.len())
+    }
+
     /// Fill the slots of the dictionaries earlier REPL entries left to
     /// this one (`Program::late_evidence`), first.
     pub(super) fn fill_late_dicts(
@@ -570,6 +629,19 @@ impl Compiler<'_> {
             }
             _ => None,
         }
+    }
+
+    /// The trait `tr` as an operand names it (`Globals::trait_index`).
+    fn trait_operand(&mut self, tr: TraitId, span: Span) -> Result<u16, Diagnostic> {
+        let name = resolve(self.units.defs.get(tr.0).name);
+        self.globals.trait_index(tr, name).ok_or_else(|| {
+            let limit = crate::bytecode::ops::Limit {
+                what: "traits whose methods a program calls",
+                count: usize::from(u16::MAX) + 2,
+                max: usize::from(u16::MAX) + 1,
+            };
+            crate::bytecode::emit::limit_diagnostic(limit, span)
+        })
     }
 
     /// The method `method` of the trait `tr`: its place among the
@@ -681,7 +753,8 @@ impl Compiler<'_> {
     ) -> Result<(), Diagnostic> {
         let (index, _) = self.method_place(tr, method, span)?;
         self.compile_evidence(recv, span)?;
-        self.emit(Asm::DictMethod { method: index }, span)?;
+        let of = self.trait_operand(tr, span)?;
+        self.emit(Asm::DictMethod { method: index, of }, span)?;
         let n = 1 + self.pass_dicts(own, span)?;
         self.emit(Asm::Bind { n }, span)
     }

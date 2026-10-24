@@ -346,6 +346,10 @@ pub struct Compiler<'a> {
     /// asks nothing, by the method's body: its template's place
     /// (`Compiler::own_dicts_of`).
     own_dicts: HashMap<Span, u32>,
+    /// Each name a `let` general in a bound binds with a pattern of
+    /// several names: the places of its bounds among the value's
+    /// (`crate::ast::Program::pattern_lets`).
+    pattern_lets: HashMap<Span, Vec<u16>>,
 }
 
 /// The names two or more types of the program's modules have (two
@@ -424,10 +428,14 @@ impl<'a> Compiler<'a> {
             builtin_defaults: Vec::new(),
             owners: HashMap::new(),
             own_dicts: HashMap::new(),
+            pattern_lets: HashMap::new(),
             callee_dicts: None,
         };
         compiler.owners = (compiler.units.modules.iter())
             .flat_map(|unit| unit.program.dict_owners.iter().copied())
+            .collect();
+        compiler.pattern_lets = (compiler.units.modules.iter())
+            .flat_map(|unit| unit.program.pattern_lets.iter().cloned())
             .collect();
         compiler.builtin_defaults = compiler.assign_builtin_defaults(&mut globals)?;
         compiler.own_slots = compiler.assign_slots(&mut globals)?;
@@ -674,10 +682,25 @@ impl<'a> Compiler<'a> {
                 })
             })
             .unwrap_or(Span::BUILTIN);
+        // (A REPL entry whose value is general in a bound is called with
+        // no dictionaries, unit in their places: it only shows its value,
+        // which no type is decided for.)
+        let undecided = entry
+            .and_then(|def| {
+                let name = self.units.defs.get(def).name;
+                program.decls.iter().find_map(|decl| match decl {
+                    Decl::Fn(f) if f.name == name => self.shape(f.body.span),
+                    _ => None,
+                })
+            })
+            .map_or(0, Self::hidden_count);
         match entry.and_then(|def| self.globals.def(def)) {
             Some(slot) => {
                 self.emit(Asm::GetGlobal { slot }, span)?;
-                self.emit(Asm::Call { argc: 0 }, span)?;
+                for _ in 0..undecided {
+                    self.emit(Asm::Unit, span)?;
+                }
+                self.emit(Asm::Call { argc: undecided }, span)?;
             }
             None => {
                 self.emit(Asm::Unit, span)?;
@@ -885,15 +908,22 @@ impl<'a> Compiler<'a> {
                     .last_mut()
                     .map(|context| std::mem::replace(&mut context.closures, closures));
                 // (A `let` general in a bound is the function of its
-                // dictionaries that makes its value.)
+                // dictionaries that makes its value; of each name of a
+                // pattern, the function that makes the name's part.)
                 let compiled = match (&pattern.kind, self.shape(value.span)) {
                     (PatternKind::Ident(name), Some(_)) => self.compile_thunk(*name, value, None),
+                    (_, Some(_)) => self.install_pattern_thunks(pattern, value, span),
                     _ => self.compile_expr(value),
                 };
                 if let (Some(context), Some(around)) = (self.contexts.last_mut(), around) {
                     context.closures = around;
                 }
                 compiled?;
+                if self.shape(value.span).is_some()
+                    && !matches!(pattern.kind, PatternKind::Ident(_))
+                {
+                    return Ok(());
+                }
                 match &pattern.kind {
                     PatternKind::Ident(name) => {
                         let slot = self.own_slot(*name, span)?;
@@ -986,6 +1016,26 @@ impl<'a> Compiler<'a> {
     /// `pattern` binds, whose value is on the stack: each binder goes to
     /// its global slot in `slots`. The pattern is bound as a block's `let`
     /// would bind it, then each local is copied to its global.
+    /// The top-level `let` of `pattern`, of several names, to `value`,
+    /// which is general in a bound: each name's global is the function
+    /// that makes its part (`compile_pattern_thunk`), or the part.
+    fn install_pattern_thunks(
+        &mut self,
+        pattern: &crate::ast::Pattern,
+        value: &Expr,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        for (name, at) in crate::typechecker::names::binders(pattern) {
+            if self.compile_pattern_thunk(pattern, value, name, at)? == 0 {
+                self.emit(Asm::Call { argc: 0 }, span)?;
+            }
+            let slot = self.own_slot(name, span)?;
+            self.emit(Asm::SetGlobal { slot }, span)?;
+            self.emit(Asm::Pop, span)?;
+        }
+        Ok(())
+    }
+
     fn install_destructured(
         &mut self,
         pattern: &crate::ast::Pattern,
@@ -1129,6 +1179,20 @@ impl<'a> Compiler<'a> {
                 match (&pattern.kind, self.shape(value.span)) {
                     (PatternKind::Ident(name), Some(_)) => {
                         self.compile_thunk(*name, value, own_name)?;
+                    }
+                    // Each name of a pattern: the function that makes its
+                    // part, a local.
+                    (_, Some(_)) => {
+                        for (name, at) in crate::typechecker::names::binders(pattern) {
+                            if self.compile_pattern_thunk(pattern, value, name, at)? == 0 {
+                                self.emit(Asm::Call { argc: 0 }, value.span)?;
+                            }
+                            self.add_local(name, value.span)?;
+                        }
+                        if is_last {
+                            self.emit(Asm::Unit, value.span)?;
+                        }
+                        return Ok(());
                     }
                     _ => {
                         self.closure_name = own_name;

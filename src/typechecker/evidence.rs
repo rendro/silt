@@ -69,6 +69,11 @@ pub(crate) struct Ledger {
     /// The bounds of each `let` inside a body that the checker
     /// generalises over a trait predicate, by the span of its value.
     pub(super) lets: HashMap<Span, Vec<BoundKey>>,
+    /// Each name a `let` inside a body binds with a pattern of several
+    /// names, generalised over a trait predicate, by the span of the
+    /// name: the place of each of its bounds among the `let`'s
+    /// (`Program::pattern_lets`).
+    pub(super) pattern_lets: HashMap<Span, Vec<u16>>,
     /// The bounds of the body of each method of the module's impls, by
     /// the span of the body: the predicates of the impl's header, the
     /// method's, and for an impl for every function or tuple the trait
@@ -218,6 +223,24 @@ impl TypeChecker {
 
     /// The bounds of a scheme's predicates that pass a dictionary, in
     /// order.
+    /// The bounds of `scheme`, the scheme of a name a `let` binds with a
+    /// pattern of several names, each as the place it has among those of
+    /// the `let`'s value, `all`, which get the ones they do not have yet.
+    pub(super) fn pattern_places(&self, scheme: &Scheme, all: &mut Vec<BoundKey>) -> Vec<u16> {
+        (self.trait_bounds(&scheme.preds).into_iter())
+            .map(|bound| {
+                let at = match all.iter().position(|b| *b == bound) {
+                    Some(at) => at,
+                    None => {
+                        all.push(bound);
+                        all.len() - 1
+                    }
+                };
+                u16::try_from(at).unwrap_or(u16::MAX)
+            })
+            .collect()
+    }
+
     pub(super) fn trait_bounds(&self, preds: &[Pred]) -> Vec<BoundKey> {
         preds
             .iter()
@@ -533,6 +556,7 @@ impl TypeChecker {
         let mut owners: Vec<(Span, Shape)> = (self.ev.lets.iter())
             .map(|(tag, bounds)| (*tag, scheme(bounds.len())))
             .collect();
+        let mut pattern_lets: Vec<(Span, Vec<u16>)> = Vec::new();
         for decl in &mut program.decls {
             match decl {
                 Decl::Fn(f) => {
@@ -552,7 +576,20 @@ impl TypeChecker {
                             .lookup(*name)
                             .map(|scheme| self.trait_bounds(&scheme.preds))
                             .unwrap_or_default(),
-                        _ => Vec::new(),
+                        // (Each name of a pattern is general as its part
+                        // is: the value's bounds are all the names'.)
+                        _ => {
+                            let mut bounds = Vec::new();
+                            for (name, at) in super::names::binders(pattern) {
+                                if let Some(scheme) = env.lookup(name) {
+                                    let places = self.pattern_places(scheme, &mut bounds);
+                                    if !places.is_empty() {
+                                        pattern_lets.push((at, places));
+                                    }
+                                }
+                            }
+                            bounds
+                        }
                     };
                     let tag = value.span;
                     if !bounds.is_empty() {
@@ -616,6 +653,13 @@ impl TypeChecker {
             }
         }
         program.dict_owners = owners;
+        pattern_lets.extend(
+            self.ev
+                .pattern_lets
+                .iter()
+                .map(|(at, places)| (*at, places.clone())),
+        );
+        program.pattern_lets = pattern_lets;
     }
 
     /// The evidence of the use `expr` of the name `name`, a definition

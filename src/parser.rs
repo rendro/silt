@@ -1082,6 +1082,7 @@ impl<'src> Parser<'src> {
             statements: std::mem::take(&mut self.statements),
             late_evidence: Vec::new(),
             dict_owners: Vec::new(),
+            pattern_lets: Vec::new(),
         }
     }
 

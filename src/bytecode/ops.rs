@@ -1095,10 +1095,10 @@ ops! {
     /// dictionary stays in the slot of the callee, where the method takes
     /// it from (`FrameDict`). The argument `at` of them is the receiver,
     /// which must be of the dictionary's type (none: `u8::MAX`).
-    CallDict { method: Byte("methods of a trait"), argc: U8("arguments of a method call, its dictionaries included"), at: Byte("the argument a method call finds its method by") } => pops argc + 1, pushes 1;
+    CallDict { method: U16("methods of a trait"), argc: U8("arguments of a method call, its dictionaries included"), at: Byte("the argument a method call finds its method by") } => pops argc + 1, pushes 1;
     /// `CallDict` in tail position: a method that is a closure runs in
     /// the current frame. Followed by `Return`.
-    TailCallDict { method: Byte("methods of a trait"), argc: U8("arguments of a method call, its dictionaries included"), at: Byte("the argument a method call finds its method by") } => pops argc + 1, pushes 1;
+    TailCallDict { method: U16("methods of a trait"), argc: U8("arguments of a method call, its dictionaries included"), at: Byte("the argument a method call finds its method by") } => pops argc + 1, pushes 1;
     /// `Call` of an impl's method through the dictionary of the impl,
     /// whose header asks nothing (the program's `template`th): the
     /// argument `at` is the receiver, which must be of the impl's type.
@@ -1109,7 +1109,7 @@ ops! {
     /// the slot of its callee holds (`CallDict`).
     FrameDict => pops 0, pushes 1;
     /// Pop a dictionary; push its method `method` and the dictionary.
-    DictMethod { method: U8("methods of a trait") } => pops 1, pushes 2;
+    DictMethod { method: U16("methods of a trait"), of: Trait } => pops 1, pushes 2;
     /// Pop a dictionary; push the dictionary of the `k`th predicate of
     /// its impl's header.
     DictSub { k: U8("predicates of an impl's header") } => pops 1, pushes 1;

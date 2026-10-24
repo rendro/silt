@@ -125,7 +125,6 @@ fn disassemble_instruction(
         | Instr::MakeList { count: n }
         | Instr::MakeMap { pairs: n }
         | Instr::MakeSet { count: n }
-        | Instr::DictMethod { method: n }
         | Instr::DictSub { k: n }
         | Instr::SuperDict { index: n }
         | Instr::WhereDict { index: n }
@@ -213,6 +212,10 @@ fn disassemble_instruction(
         // with the trait whose method it calls (shown after the name
         // when the call names one), and the argument it is found by
         // where that is not the first.
+        Instr::DictMethod { method, of } => match globals.trait_name(of) {
+            Some(tr) => format!("{offset:04}  {name:<20} {method:<5} ; of {tr}"),
+            None => format!("{offset:04}  {name:<20} {method}"),
+        },
         Instr::CallMethod {
             method,
             argc,

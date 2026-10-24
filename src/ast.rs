@@ -949,6 +949,11 @@ pub struct Program {
     /// them (`crate::evidence::Evidence::Param`), with what they take;
     /// written by the typechecker.
     pub dict_owners: Vec<(Span, crate::evidence::Shape)>,
+    /// Each name a `let` general in a bound binds with a pattern of
+    /// several names, by the span of the name in the pattern: the place
+    /// of each of the name's bounds among those of the `let`'s value;
+    /// written by the typechecker.
+    pub pattern_lets: Vec<(Span, Vec<u16>)>,
 }
 
 /// What the parser saw of statements that the tree does not hold.
