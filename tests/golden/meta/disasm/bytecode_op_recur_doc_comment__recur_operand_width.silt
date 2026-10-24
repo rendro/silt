@@ -1,7 +1,7 @@
 -- cmd: disasm
 -- stdout-contains: Recur                2  slot 2
--- stdout-contains: 0050  Recur
--- stdout-contains: 0054  Jump                 -41   -> 0018
+-- stdout-contains: 0049  Recur
+-- stdout-contains: 0053  Jump                 -40   -> 0018
 -- Recur carries a u8 arg_count and a u16 first_slot (3 operand bytes):
 -- the next instruction starts 4 bytes after Recur. It is the jump back
 -- to the start of the loop, whose distance is negative.

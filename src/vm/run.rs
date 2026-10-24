@@ -579,6 +579,35 @@ impl Vm {
                 pop_done(&mut self.stack);
             }};
         }
+        // `AddConst`, `SubConst`: the second operand is the Int
+        // constant, read where it is in the pool; the first is on top
+        // of the stack, and the result is written over it. A refused
+        // operand leaves the stack.
+        macro_rules! arithmetic_const {
+            ($op:expr, $k:expr) => {{
+                let b = chunk.constant($k);
+                let Some(a) = self.stack.last_mut() else {
+                    unreachable!("verified code has the operand on the stack")
+                };
+                if let (Value::Int(x), Value::Int(y)) = (&*a, b) {
+                    match int_arithmetic($op, *x, *y) {
+                        Ok(n) => put(a, Value::Int(n)),
+                        Err(error) => {
+                            pop_done(&mut self.stack);
+                            fail!(error)
+                        }
+                    }
+                } else {
+                    match float_arithmetic($op, a, b) {
+                        Ok(f) => put(a, Value::Float(f)),
+                        Err(error) => {
+                            pop_done(&mut self.stack);
+                            fail!(error)
+                        }
+                    }
+                }
+            }};
+        }
         macro_rules! compare {
             ($holds:expr) => {{
                 let (a, b) = operands!();
@@ -608,6 +637,8 @@ impl Vm {
                 Instr::Mul => arithmetic!(Op::Mul),
                 Instr::Div => arithmetic!(Op::Div),
                 Instr::Mod => arithmetic!(Op::Mod),
+                Instr::AddConst { k } => arithmetic_const!(Op::Add, k),
+                Instr::SubConst { k } => arithmetic_const!(Op::Sub, k),
                 Instr::Eq => {
                     let (a, b) = operands!();
                     if let Err(error) = equality_operands(a, b) {

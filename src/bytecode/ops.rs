@@ -868,6 +868,12 @@ ops! {
     Mul => pops 2, pushes 1;
     Div => pops 2, pushes 1;
     Mod => pops 2, pushes 1;
+    /// `Constant k; Add` of an Int constant, as one instruction: TOS
+    /// plus the constant. (The emitter fuses the two.)
+    AddConst { k: Int } => pops 1, pushes 1;
+    /// `Constant k; Sub` of an Int constant, as one instruction: TOS
+    /// minus the constant.
+    SubConst { k: Int } => pops 1, pushes 1;
 
     // ── Comparison ─────────────────────────────────────────────
     Eq => pops 2, pushes 1;

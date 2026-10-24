@@ -1,0 +1,10 @@
+-- exit: 1
+-- `n + 1` as one instruction (`AddConst`) overflows as `Add` does,
+-- blamed on the whole `n + 1`.
+fn up(n: Int) -> Int {
+  n + 1
+}
+
+fn main() {
+  println(up(9223372036854775807))
+}
