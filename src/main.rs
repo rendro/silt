@@ -198,11 +198,8 @@ fn run_main(args: Vec<String>) {
         "fmt" => cli::fmt::dispatch(&args),
         "init" => cli::init::dispatch(&args),
         "self-update" => cli::self_update::dispatch(&args),
-        // `silt update` manages package dependencies in v0.7+. It also
-        // keeps a back-compat redirect for legacy self-update flags so
-        // scripts that ran `silt update --dry-run` against old binaries
-        // get a clear pointer to `silt self-update` rather than a
-        // confusing "must be run inside a package" error.
+        // `silt update` regenerates the lock of the package's
+        // dependencies.
         "update" => cli::update::dispatch(&args),
         // `silt add <name> --path <path>` or
         // `silt add <name> --git <url> (--rev|--branch|--tag) <ref>` —

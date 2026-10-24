@@ -1,0 +1,58 @@
+-- A type of the prelude given to a `type a` parameter is its descriptor,
+-- as a program's type is: `Option`, `Result` and `Bytes` work as `List`
+-- and `Int` do.
+trait Default {
+  fn default() -> Self
+}
+
+trait Default for Option(a) {
+  fn default() -> Self {
+    None
+  }
+}
+
+trait Default for List(a) {
+  fn default() -> Self {
+    []
+  }
+}
+
+trait Name {
+  fn name() -> String
+}
+
+trait Name for Result(a, e) {
+  fn name() -> String {
+    "result"
+  }
+}
+
+trait Name for Bytes {
+  fn name() -> String {
+    "bytes"
+  }
+}
+
+trait Name for Int {
+  fn name() -> String {
+    "int"
+  }
+}
+
+fn d(type a) -> a where a: Default {
+  a.default()
+}
+
+fn n(type a) -> String where a: Name {
+  a.name()
+}
+
+fn main() {
+  let x: Option(String) = d(Option)
+  println(x)
+  let l: List(Int) = d(List)
+  println(l)
+  println(n(Result))
+  println(n(Bytes))
+  println(n(Int))
+}

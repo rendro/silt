@@ -66,12 +66,19 @@ pub fn builtin_docs() -> &'static HashMap<String, String> {
                 docs.insert(name.clone(), strip_frontmatter(module.page).to_string());
                 names.insert(name);
             }
-            // A variant is named with its module, like a function: the
-            // bare name is not one variant's (`Closed` is `channel`'s,
-            // `tcp`'s and `postgres`'s). So is a type with a section of
-            // its own (`json.Value`).
+            // A type is named with its module, like a function, and is a
+            // value too, its descriptor: its section where it has one
+            // (`json.Value`), its module's page otherwise. So is a
+            // variant: the bare name is not one variant's (`Closed` is
+            // `channel`'s, `tcp`'s and `postgres`'s).
+            let types = (module.type_decls.iter().map(|ty| ty.name))
+                .chain(module.opaque.iter().map(|(name, _)| *name));
+            for ty in types {
+                let name = format!("{}.{ty}", module.name);
+                docs.insert(name.clone(), strip_frontmatter(module.page).to_string());
+                names.insert(name);
+            }
             for ty in &module.type_decls {
-                names.insert(format!("{}.{}", module.name, ty.name));
                 for (variant, _) in ty.variants() {
                     names.insert(format!("{}.{variant}", module.name));
                 }

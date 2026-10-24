@@ -2,8 +2,8 @@
 -- exit: 1
 -- An impl's and a pattern's messages write a type, a trait and a
 -- variant of another module as a program writes them (`json.Value`,
--- `json.Encode`, `json.Int`), and a type imported by its name that is
--- no value says so.
+-- `json.Encode`, `json.Int`), and a type imported by its name is written
+-- with its module where a decoder refuses it.
 import json
 import json.{ Encode }
 import time.{ DateTime }

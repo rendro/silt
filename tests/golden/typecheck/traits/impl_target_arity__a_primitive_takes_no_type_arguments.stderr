@@ -1,0 +1,11 @@
+error[type]: type argument count mismatch for builtin 'Int' in trait impl: expected 0, got 1
+ --> impl_target_arity__a_primitive_takes_no_type_arguments.silt:10:1
+    |
+ 10 | trait Greet for Int(a) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^ type argument count mismatch for builtin 'Int' in trait impl: expected 0, got 1
+
+error[type]: type argument count mismatch for builtin 'String' in trait impl: expected 0, got 2
+ --> impl_target_arity__a_primitive_takes_no_type_arguments.silt:16:1
+    |
+ 16 | trait Greet for String(a, b) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type argument count mismatch for builtin 'String' in trait impl: expected 0, got 2

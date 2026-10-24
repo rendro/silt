@@ -2472,24 +2472,7 @@ impl TypeChecker {
                     );
                     Type::Error
                 } else {
-                    let (message, mut help) = format_undefined_variable_message(name, env, "");
-                    // A type of a builtin module imported by its name
-                    // (`import time.{ DateTime }`): it is no value.
-                    if let Some((module, t)) = self
-                        .res_type(expr.res)
-                        .and_then(|t| self.other_module(t).map(|m| (m, t)))
-                        .filter(|(m, t)| {
-                            super::builtin_env::is_module_type_no_value(
-                                &resolve(*m),
-                                &resolve(t.name),
-                            )
-                        })
-                    {
-                        help = Some(super::builtin_env::bare_module_type_is_no_value_help(
-                            &resolve(name),
-                            &format!("{module}.{}", t.name),
-                        ));
-                    }
+                    let (message, help) = format_undefined_variable_message(name, env, "");
                     self.error_help(Code::UndefinedVariable, (message, help), span);
                     self.fresh_var()
                 }
@@ -2525,31 +2508,7 @@ impl TypeChecker {
                                 _ => String::new(),
                             };
                             let message = format!("'{module}{field}' is not a value");
-                            // (A type of a builtin module: as a program
-                            // writes it, whatever the module's name here.)
-                            let help = self
-                                .res_type(expr.res)
-                                .and_then(|t| self.other_module(t).map(|m| (m, t)))
-                                .filter(|(m, t)| {
-                                    super::builtin_env::is_module_type_no_value(
-                                        &resolve(*m),
-                                        &resolve(t.name),
-                                    )
-                                })
-                                .map(|(m, t)| {
-                                    super::builtin_env::module_type_is_no_value_help(&format!(
-                                        "{m}.{}",
-                                        t.name
-                                    ))
-                                });
-                            match help {
-                                Some(help) => self.error_help(
-                                    Code::UndefinedVariable,
-                                    (message, Some(help)),
-                                    span,
-                                ),
-                                None => self.error(Code::UndefinedVariable, message, span),
-                            }
+                            self.error(Code::UndefinedVariable, message, span);
                             Type::Error
                         }
                     };

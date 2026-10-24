@@ -314,6 +314,27 @@ impl TypeChecker {
                 &help,
             );
         }
+        // Any other builtin type (`time.DateTime`, `Bytes`, `task.Handle`)
+        // is no type argument of a decoder; a decoder decodes some of
+        // them as the type of a record's field.
+        if !is_primitive {
+            let accepted = decoding.type_arguments(str::to_string);
+            let decoded = (family.leaves().iter()).any(|leaf| leaf.name() == type_name);
+            let help = match decoded {
+                true => format!(
+                    "a decoder decodes a `{type_name}` as the type of a record's field: \
+                     `type R {{ at: {type_name} }}`"
+                ),
+                false => family.type_argument_help().to_string(),
+            };
+            return refusal(
+                Code::Undecodable,
+                format!(
+                    "`{builtin_name}` cannot decode `{type_name}`: its type argument must be {accepted}"
+                ),
+                &help,
+            );
+        }
         None
     }
 

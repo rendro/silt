@@ -3,18 +3,18 @@ error[type]: undefined variable 'DateTime'
     |
  12 |   let _ = json.parse("1", DateTime)
     |                           ^^^^^^^^ undefined variable 'DateTime'
-  = help: `DateTime` is the type `time.DateTime`, and only `json.Value` of a module's types can be given as a value; a decoder decodes a `time.DateTime` as the type of a record's field: `type R { at: time.DateTime }`
+  = help: did you mean `time.DateTime`? or import the name: `import time.{ DateTime }`
 
-error[type]: 'time.DateTime' is not a value
+error[type]: `toml.parse_map` cannot decode `time.DateTime`: its type argument must be Int, Float, String, Bool, a record type, an enum type, or a type with a `json.Decode` impl
  --> a_type_of_a_module_given_as_a_value_is_told_how_to_decode_it.silt:11:53
     |
  11 |   let _ = toml.parse_map("a = 1979-05-27T00:32:00", time.DateTime)
-    |                                                     ^^^^^^^^^^^^^ 'time.DateTime' is not a value
-  = help: only `json.Value` of a module's types can be given as a value; a decoder decodes a `time.DateTime` as the type of a record's field: `type R { at: time.DateTime }`
+    |                                                     ^^^^^^^^^^^^^ `toml.parse_map` cannot decode `time.DateTime`: its type argument must be Int, Float, String, Bool, a record type, an enum type, or a type with a `json.Decode` impl
+  = help: a decoder decodes a `time.DateTime` as the type of a record's field: `type R { at: time.DateTime }`
 
-error[type]: 'time.Duration' is not a value
+error[type]: `json.parse` cannot decode `time.Duration`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, or a type with a `json.Decode` impl
  --> a_type_of_a_module_given_as_a_value_is_told_how_to_decode_it.silt:13:27
     |
  13 |   let _ = json.parse("1", time.Duration)
-    |                           ^^^^^^^^^^^^^ 'time.Duration' is not a value
-  = help: only `json.Value` of a module's types can be given as a value
+    |                           ^^^^^^^^^^^^^ `json.parse` cannot decode `time.Duration`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, or a type with a `json.Decode` impl
+  = help: declare a record type with a field of the type you want, and decode into the record

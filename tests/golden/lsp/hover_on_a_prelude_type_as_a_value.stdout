@@ -1,5 +1,3 @@
-11:19 error undefined variable 'Option'
-11:27 error undefined variable 'Bytes'
 > hover 10:16
 ```silt
 type List(a)
@@ -8,7 +6,14 @@ type List(a)
 ```silt
 type Set(a)
 ```
-> hover 11:19
-(nothing)
-> hover 11:27
-(nothing)
+> hover 11:17
+```silt
+type Option(a) {
+  Some(a),
+  None,
+}
+```
+> hover 11:25
+```silt
+type Bytes
+```
