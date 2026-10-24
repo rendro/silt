@@ -315,7 +315,11 @@ impl Emitter {
             chunk: &mut self.function.chunk,
             labels: &mut self.labels,
             span,
-            arriving: self.reachable.then_some(popped),
+            // (A jump arrives with the frame the instruction leaves:
+            // `Recur` cuts it and pushes before it jumps.)
+            arriving: self
+                .reachable
+                .then_some(effect.cut.unwrap_or(popped) + effect.pushes),
             bug: None,
         };
         asm.encode(&mut out)
@@ -880,6 +884,34 @@ mod tests {
                 Op::Return
             ]
         );
+    }
+
+    #[test]
+    fn a_recur_jumps_back_with_the_frame_it_leaves() {
+        // A loop of two bindings in slots 1 and 2 of a function of one
+        // parameter: at its start the frame holds three values.
+        let recur = |first| {
+            let mut e = Emitter::new("f".into(), 1, span()).unwrap();
+            let start = e.label();
+            e.emit(Asm::Unit, span()).unwrap();
+            e.emit(Asm::Unit, span()).unwrap();
+            e.bind(start, span()).unwrap();
+            e.emit(Asm::Unit, span()).unwrap();
+            e.emit(Asm::Unit, span()).unwrap();
+            e.emit(
+                Asm::Recur {
+                    argc: 2,
+                    first,
+                    to: start,
+                },
+                span(),
+            )
+        };
+        recur(1).unwrap();
+        // Cut back to slot 0 and two pushed, the frame holds two.
+        let err = recur(0).unwrap_err();
+        assert_eq!(err.code, Code::CompilerBug);
+        assert!(err.message.contains("jumps back with a height"), "{err:?}");
     }
 
     #[test]

@@ -1738,10 +1738,10 @@ impl<'a> Compiler<'a> {
                     Asm::Recur {
                         argc: args.len(),
                         first,
+                        to: start,
                     },
                     span,
                 )?;
-                self.emit(Asm::Jump { to: start }, span)?;
             } // All expression kinds are handled above. If new ones are added,
               // the match will become non-exhaustive and the compiler will error.
         }
@@ -2102,9 +2102,10 @@ impl<'a> Compiler<'a> {
         self.begin_scope();
 
         // The bindings occupy the slots from the current frame height on;
-        // `Recur` writes the new values there and cuts the frame back to
-        // just above them. With no bindings that is the frame as it is
-        // now, with every enclosing local still in place.
+        // `Recur` writes the new values there, cuts the frame back to
+        // just above them and jumps back to the start. With no bindings
+        // that is the frame as it is now, with every enclosing local
+        // still in place.
         let first_slot = self.emitter().height();
 
         // The initial values are of the enclosing scope, all of them, as

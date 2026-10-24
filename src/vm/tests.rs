@@ -5555,14 +5555,18 @@ mod slots_in_place {
             for i in 0..count {
                 push(e, samples[(i + 1) % count].clone());
             }
+            // (A jump to the next instruction.)
+            let next = e.label();
             e.emit(
                 Asm::Recur {
                     argc: count,
                     first: 0,
+                    to: next,
                 },
                 span(),
             )
             .unwrap();
+            e.bind(next, span()).unwrap();
             e.emit(Asm::MakeTuple { count }, span()).unwrap();
             e.emit(Asm::Return, span()).unwrap();
         });
@@ -5583,7 +5587,17 @@ mod slots_in_place {
             for _ in 0..6 {
                 probe(e, k);
             }
-            e.emit(Asm::Recur { argc: 3, first: 0 }, span()).unwrap();
+            let next = e.label();
+            e.emit(
+                Asm::Recur {
+                    argc: 3,
+                    first: 0,
+                    to: next,
+                },
+                span(),
+            )
+            .unwrap();
+            e.bind(next, span()).unwrap();
             e.emit(Asm::Unit, span()).unwrap();
             e.emit(Asm::Return, span()).unwrap();
         });
