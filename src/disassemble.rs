@@ -163,7 +163,15 @@ fn disassemble_instruction(
         }
 
         // ── Jumps: the distance and the target offset ─────────
-        Instr::Jump { to } | Instr::JumpIfFalse { to } | Instr::JumpIfTrue { to } => jump(to),
+        Instr::Jump { to }
+        | Instr::JumpIfFalse { to }
+        | Instr::JumpIfTrue { to }
+        | Instr::JumpIfNotLt { to }
+        | Instr::JumpIfNotGt { to }
+        | Instr::JumpIfNotLeq { to }
+        | Instr::JumpIfNotGeq { to }
+        | Instr::JumpIfNotEq { to }
+        | Instr::JumpIfNotNeq { to } => jump(to),
 
         // CallBuiltin: the number of arguments, and the builtin by its
         // name (its id is its place among the rows of this build).

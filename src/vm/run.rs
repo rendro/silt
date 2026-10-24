@@ -594,6 +594,37 @@ impl Vm {
                 }
             }};
         }
+        // A comparison fused with the conditional jump after it: the
+        // operands are compared where they lie, both leave the stack,
+        // and the jump is taken unless the comparison holds.
+        macro_rules! jump_unless {
+            ($holds:expr, $to:expr) => {{
+                let (a, b) = operands!();
+                match ordering(a, b) {
+                    Ok(ordering) => {
+                        if !$holds(ordering) {
+                            ip = $to;
+                        }
+                    }
+                    Err(error) => refuse!(error),
+                }
+                pop_done(&mut self.stack);
+                pop_done(&mut self.stack);
+            }};
+        }
+        macro_rules! jump_unless_equal {
+            ($equal:expr, $to:expr) => {{
+                let (a, b) = operands!();
+                if let Err(error) = equality_operands(a, b) {
+                    refuse!(error);
+                }
+                if (*a == *b) != $equal {
+                    ip = $to;
+                }
+                pop_done(&mut self.stack);
+                pop_done(&mut self.stack);
+            }};
+        }
         macro_rules! compare {
             ($holds:expr) => {{
                 let (a, b) = operands!();
@@ -1035,6 +1066,12 @@ impl Vm {
                     }
                     pop_done(&mut self.stack);
                 }
+                Instr::JumpIfNotLt { to } => jump_unless!(Ordering::is_lt, to),
+                Instr::JumpIfNotGt { to } => jump_unless!(Ordering::is_gt, to),
+                Instr::JumpIfNotLeq { to } => jump_unless!(Ordering::is_le, to),
+                Instr::JumpIfNotGeq { to } => jump_unless!(Ordering::is_ge, to),
+                Instr::JumpIfNotEq { to } => jump_unless_equal!(true, to),
+                Instr::JumpIfNotNeq { to } => jump_unless_equal!(false, to),
                 Instr::Pop => pop_done(&mut self.stack),
                 Instr::Dup => {
                     let top = self.stack.len() - 1;

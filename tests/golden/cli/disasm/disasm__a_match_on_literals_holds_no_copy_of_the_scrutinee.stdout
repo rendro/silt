@@ -17,19 +17,18 @@
 0003  Constant             0     ; 0
 0006  GetLocal             1
 0009  GetLocal             0
-0012  Geq
-0013  JumpIfFalse          8     -> 0024
-0016  GetLocal             2
-0019  Jump                 22    -> 0046
-0024  GetLocal             1
-0027  AddConst             1     ; 1
-0030  GetLocal             2
-0033  GetLocal             1
-0036  Add
-0037  Recur                2  slot 1
-0041  Jump                 -40   -> 0006
-0046  Slide                1
-0049  Return
+0012  JumpIfNotGeq         8     -> 0023
+0015  GetLocal             2
+0018  Jump                 22    -> 0045
+0023  GetLocal             1
+0026  AddConst             1     ; 1
+0029  GetLocal             2
+0032  GetLocal             1
+0035  Add
+0036  Recur                2  slot 1
+0040  Jump                 -39   -> 0006
+0045  Slide                1
+0048  Return
 
 == fib (arity=1, upvalues=0) ==
 0000  GetLocal             0

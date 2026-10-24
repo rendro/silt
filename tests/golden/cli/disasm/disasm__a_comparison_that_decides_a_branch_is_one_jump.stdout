@@ -1,0 +1,73 @@
+== <script> (arity=0, upvalues=0) ==
+0000  Constant             0     ; <fn:smaller>
+0003  SetGlobal            0     ; smaller
+0006  Pop
+0007  Constant             1     ; <fn:same>
+0010  SetGlobal            1     ; same
+0013  Pop
+0014  Constant             2     ; <fn:both>
+0017  SetGlobal            2     ; both
+0020  Pop
+0021  Constant             3     ; <fn:main>
+0024  SetGlobal            3     ; main
+0027  Pop
+0028  GetGlobal            3     ; main
+0031  Call                 0
+0033  Return
+
+== smaller (arity=2, upvalues=0) ==
+0000  GetLocal             0
+0003  GetLocal             1
+0006  JumpIfNotLt          8     -> 0017
+0009  GetLocal             0
+0012  Jump                 12    -> 0029
+0017  GetLocal             1
+0020  Jump                 4     -> 0029
+0025  Constant             0     ; "non-exhaustive match: no condition was true"
+0028  Panic
+0029  Return
+
+== same (arity=2, upvalues=0) ==
+0000  GetLocal             0
+0003  GetLocal             1
+0006  JumpIfNotNeq         8     -> 0017
+0009  Constant             0     ; "different"
+0012  Jump                 3     -> 0020
+0017  Constant             1     ; "same"
+0020  Return
+
+== both (arity=2, upvalues=0) ==
+0000  GetLocal             0
+0003  Constant             0     ; 0
+0006  Gt
+0007  Dup
+0008  JumpIfFalse          8     -> 0019
+0011  Pop
+0012  GetLocal             1
+0015  Constant             0     ; 0
+0018  Gt
+0019  Return
+
+== main (arity=0, upvalues=0) ==
+0000  Constant             0     ; <builtin:println>
+0003  GetGlobal            0     ; smaller
+0006  Constant             1     ; 1
+0009  Constant             2     ; 2
+0012  Call                 2
+0014  Call                 1
+0016  Pop
+0017  Constant             0     ; <builtin:println>
+0020  GetGlobal            1     ; same
+0023  Constant             1     ; 1
+0026  Constant             2     ; 2
+0029  Call                 2
+0031  Call                 1
+0033  Pop
+0034  Constant             0     ; <builtin:println>
+0037  GetGlobal            2     ; both
+0040  Constant             1     ; 1
+0043  Constant             2     ; 2
+0046  Call                 2
+0048  TailCall             1
+0050  Return
+

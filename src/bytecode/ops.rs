@@ -971,6 +971,21 @@ ops! {
     JumpIfFalse { to: Fwd } => pops 1, pushes 0, branch;
     /// Pop TOS; jump forward if truthy.
     JumpIfTrue { to: Fwd } => pops 1, pushes 0, branch;
+    /// `Lt; JumpIfFalse` as one instruction: pop two values, and jump
+    /// forward unless the first is less than the second. (The emitter
+    /// fuses a comparison with the conditional jump after it; `Geq;
+    /// JumpIfTrue` is this one too.)
+    JumpIfNotLt { to: Fwd } => pops 2, pushes 0, branch;
+    /// `Gt; JumpIfFalse`, and `Leq; JumpIfTrue`.
+    JumpIfNotGt { to: Fwd } => pops 2, pushes 0, branch;
+    /// `Leq; JumpIfFalse`, and `Gt; JumpIfTrue`.
+    JumpIfNotLeq { to: Fwd } => pops 2, pushes 0, branch;
+    /// `Geq; JumpIfFalse`, and `Lt; JumpIfTrue`.
+    JumpIfNotGeq { to: Fwd } => pops 2, pushes 0, branch;
+    /// `Eq; JumpIfFalse`, and `Neq; JumpIfTrue`.
+    JumpIfNotEq { to: Fwd } => pops 2, pushes 0, branch;
+    /// `Neq; JumpIfFalse`, and `Eq; JumpIfTrue`.
+    JumpIfNotNeq { to: Fwd } => pops 2, pushes 0, branch;
     /// Discard TOS.
     Pop => pops 1, pushes 0;
     /// Duplicate TOS.
