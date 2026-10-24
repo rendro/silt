@@ -2,6 +2,7 @@
 name = "silt"
 version = "0.24.0"
 edition = "2024"
+rust-version = "1.95"
 description = "A minimal, statically-typed, expression-based language with CSP concurrency"
 license = "MIT"
 repository = "https://github.com/rendro/silt"
