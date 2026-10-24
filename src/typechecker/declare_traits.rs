@@ -1182,18 +1182,19 @@ impl TypeChecker {
             }
         } else {
             // Arity check. Covers user-declared record/enum targets via
-            // record_param_var_ids / self.tables.enums, AND builtin parameterized
-            // containers (List, Set, Channel, Map) whose arities are fixed
-            // by the language. Without the builtin arm, `trait X for List(a, b)`
-            // fell through to `_ => Type::Generic("List", [a, b])` below,
-            // silently producing a phantom 2-arg List type with no diagnostic.
-            // Derive fixed-arity builtin entries from the authoritative
-            // table. Variadic shapes (`Tuple`, `Fn`, `Fun`, `Handle`)
-            // carry `arity: None` and are intentionally skipped — they
-            // do not participate in this trait-impl arity check.
+            // record_param_var_ids / self.tables.enums, AND the builtin
+            // types whose arities are fixed by the language: the
+            // containers (List, Set, Channel, Map) and the primitives,
+            // which take none. Without the builtin arm, `trait X for
+            // List(a, b)` or `trait X for Int(a)` fell through to
+            // `_ => Type::Generic(..)` below, silently producing a phantom
+            // type that no value has. Derive fixed-arity builtin entries
+            // from the authoritative table. Variadic shapes (`Tuple`,
+            // `Fn`, `Fun`, `Handle`) carry `arity: None` and are
+            // intentionally skipped — they do not participate in this
+            // trait-impl arity check.
             let builtin_arity: Option<(usize, &'static str)> = builtin_type_name(written)
                 .and_then(crate::types::builtins::lookup)
-                .filter(|b| b.kind == crate::types::builtins::BuiltinKind::Container)
                 .and_then(|b| b.arity.map(|a| (a as usize, "builtin")));
             // User-declared type aliases are in the arity table too:
             // `trait Show for Pair(a)` where `type Pair(a) = (a, a)` is
@@ -1280,6 +1281,12 @@ impl TypeChecker {
                             Box::new(iter.next().unwrap()),
                             Box::new(iter.next().unwrap()),
                         )
+                    }
+                    // A primitive takes no arguments (the error above
+                    // says so): the impl is for the type itself, not a
+                    // phantom `Int(_)` that no value has.
+                    _ if matches!(expected_arity, Some((0, "builtin"))) => {
+                        Self::type_from_name(target_type)
                     }
                     _ => Type::Generic(written, resolved_args),
                 }

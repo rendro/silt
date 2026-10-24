@@ -1,0 +1,24 @@
+-- cmd: check
+-- exit: 1
+-- A primitive type takes no type arguments, in an impl's header too:
+-- `trait Greet for Int(a)` is the arity error, and the impl stands for
+-- `Int` (the call of its method checks).
+trait Greet {
+  fn greet(self) -> String
+}
+
+trait Greet for Int(a) {
+  fn greet(self) -> String {
+    "int"
+  }
+}
+
+trait Greet for String(a, b) {
+  fn greet(self) -> String {
+    "string"
+  }
+}
+
+fn main() {
+  println(Greet.greet(1))
+}
