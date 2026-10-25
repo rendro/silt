@@ -1,0 +1,24 @@
+-- cmd: check
+-- exit: 1
+-- The helps of a trait argument nothing decides name the trait at the
+-- arguments of the type's first impl at written types, and the type the
+-- call gives there; a method passed as an argument, no `let`'s whole
+-- value, gets the help of a call.
+-- stderr-contains: = help: annotate the type the call gives (`let n: String = ...`), or call it where a bound decides it (`where t: Conv(String)`)
+-- stderr-contains: = help: annotate the type the call gives (`let n: Int = ...`), or call it where a bound decides it (`where t: From(Int)`)
+-- stderr-not-contains: Conv(Int)
+-- stderr-not-contains: annotate the function's type
+import list
+trait Conv(b) { fn conv(self) -> b }
+trait Conv(String) for Int { fn conv(self) -> String { "s{self}" } }
+trait Conv(Bool) for Int { fn conv(self) -> Bool { true } }
+trait From(e) { fn from(source: e) -> Self }
+type A { A(Int), S(String) }
+trait From(Int) for A { fn from(e: Int) -> A { A(e) } }
+trait From(String) for A { fn from(e: String) -> A { S(e) } }
+fn main() {
+  let x = Conv.conv(3)
+  let xs = []
+  let ys = list.map(xs, A.from)
+  println("{list.length(ys)}")
+}

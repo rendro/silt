@@ -350,6 +350,9 @@ pub struct TypeChecker {
     /// unknown (see `unused`), by the level of the variable each is:
     /// the scope that decides it.
     pub(super) statement_calls: Vec<Vec<unused::StatementCall>>,
+    /// The types of statements left unknown because they are a trait
+    /// argument a use waits for: a statement's `()` decides none.
+    pub(super) statement_trait_args: std::collections::HashSet<TyVar>,
     /// The functions and closures whose body is being checked,
     /// outermost first, each with its parameters' types.
     pub(super) fn_frames: Vec<unused::FnFrame>,
@@ -496,6 +499,7 @@ impl TypeChecker {
             cells: Default::default(),
             defs: None,
             statement_calls: Vec::new(),
+            statement_trait_args: Default::default(),
             fn_frames: Vec::new(),
             frame_owner: None,
             local_statement_units: HashMap::new(),

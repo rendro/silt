@@ -1008,6 +1008,44 @@ mod tests {
         assert_eq!(value(&mut repl, "sh(A.from(3))"), "a3");
     }
 
+    /// An entry is its own definition: a trait argument nothing in it
+    /// decides is an error there, never one a later entry decides.
+    #[test]
+    fn an_entry_whose_trait_argument_nothing_in_it_decides_fails() {
+        let mut repl = repl();
+        let setup = [
+            "trait Conv(b) { fn conv(self) -> b }",
+            "trait Conv(String) for Int { fn conv(self) -> String { \"s{self}\" } }",
+            "trait Conv(Bool) for Int { fn conv(self) -> Bool { true } }",
+        ];
+        for entry in setup {
+            let evaluation = repl.eval(entry);
+            assert!(
+                evaluation.committed,
+                "`{entry}` must run: {:?}",
+                evaluation.diagnostics
+            );
+        }
+        let undecided = repl.eval("let x = Conv.conv(6)");
+        assert!(!undecided.committed, "the entry must fail");
+        let messages: Vec<&str> = (undecided.diagnostics.iter())
+            .map(|d| d.message.as_str())
+            .collect();
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.starts_with("cannot decide which impl of 'Conv(_)'")),
+            "{messages:?}"
+        );
+        assert!(
+            !messages
+                .iter()
+                .any(|m| m.contains("compiler bug") || m.contains("pending")),
+            "{messages:?}"
+        );
+        assert_eq!(value(&mut repl, "let y: String = Conv.conv(6)\ny"), "s6");
+    }
+
     /// The value `input` returns, which must run.
     fn value(repl: &mut Repl, input: &str) -> String {
         let evaluation = repl.eval(input);

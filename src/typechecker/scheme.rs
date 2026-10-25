@@ -377,7 +377,9 @@ impl TypeChecker {
         let mut recorded = self.wanted.split_off(self.closed_mark);
         // A use whose trait arguments nothing decided, of a type that has
         // impls of the trait at several: which impl it means is unknown
-        // (before anything else is decided for its lack).
+        // (before anything else is decided for its lack). The definition
+        // the use is in decides them, a top-level `let` as a function: no
+        // later one does.
         for wanted in &mut recorded {
             let Goal::Pred(Pred::Trait {
                 tr, args, subject, ..
@@ -388,7 +390,6 @@ impl TypeChecker {
             if wanted.solved
                 || matches!(self.apply(subject), Type::Var(_) | Type::Rigid(_))
                 || !self.waits_for_trait_args(*tr, subject, args)
-                || args.iter().any(|arg| self.waits_for_outer(arg))
             {
                 continue;
             }
@@ -535,55 +536,80 @@ impl TypeChecker {
             self.show_bound(tr, args),
             self.show_type(&self.apply(subject))
         );
-        let at_int: Vec<Type> = (args.iter())
-            .map(|_| Type::Generic(TypeRef::builtin("Int"), Vec::new()))
-            .collect();
-        let example = self.show_bound(tr, &at_int);
-        // (A method whose type mentions no parameter of its trait: no
-        // annotation of what a call gives decides one.)
         let info = self.tables.traits.get(&tr);
+        // The example: the trait arguments of the first impl the type has
+        // at written types (a placeholder where it has only one for every
+        // argument), and the method's type at them.
+        let subject_ty = self.apply(subject);
+        let at_impl: Option<Vec<Type>> = (self.type_name_for_impl(&subject_ty)).and_then(|head| {
+            let at = (self.tables.impl_args_of(tr, head).iter()).find(|heads| heads.is_exact())?;
+            self.tables.impl_trait_args.get(&(tr, head, *at)).cloned()
+        });
+        let example = match &at_impl {
+            Some(impl_args) => self.show_bound(tr, impl_args),
+            None => {
+                let name = self.show_trait(tr);
+                let places: Vec<&str> = (args.iter().zip(["T", "U", "V", "W"].iter().cycle()))
+                    .map(|(_, letter)| *letter)
+                    .collect();
+                format!("{name}({})", places.join(", "))
+            }
+        };
         let declared = origin.callee.and_then(|method| {
             let (_, ty) = info?.methods.iter().find(|(name, _)| *name == method)?;
             Some((method, ty))
         });
-        let undecidable = declared.filter(|(_, ty)| {
+        // The method's type at the example's trait arguments.
+        let at_example = |ty: &Type| -> Option<Type> {
+            let (info, impl_args) = (info?, at_impl.as_ref()?);
+            let mut mapping: HashMap<TyVar, Type> = HashMap::new();
+            mapping.insert(info.self_var, subject_ty.clone());
+            mapping.extend(info.param_var_ids.iter().copied().zip(impl_args.clone()));
+            Some(substitute_vars(ty, &mapping))
+        };
+        let mentions_param = |ty: &Type| {
             info.is_some_and(|info| {
-                !free_vars_in(ty)
-                    .iter()
-                    .any(|v| info.param_var_ids.contains(v))
+                (free_vars_in(ty).iter()).any(|v| info.param_var_ids.contains(v))
             })
+        };
+        // (A method whose type mentions no parameter of its trait: no
+        // annotation of what a call gives decides one.)
+        let undecidable = declared.filter(|(_, ty)| !mentions_param(ty));
+        // What a call gives, at the example, where that decides it.
+        let given = declared.and_then(|(_, ty)| match ty {
+            Type::Fun(_, ret) if mentions_param(ret) => at_example(ret),
+            _ => None,
         });
-        let help = match (undecidable, self.method_values.get(&origin.span)) {
+        let given_shown = given.map_or_else(|| "Int".to_string(), |ty| self.show_type(&ty));
+        let statement = (args.iter()).any(
+            |arg| matches!(self.apply(arg), Type::Var(v) if self.statement_trait_args.contains(&v)),
+        );
+        // A method taken as a value: the whole value of a `let`, whose
+        // type says which.
+        let value_let =
+            (self.method_value_lets.get(&origin.span)).zip(self.method_values.get(&origin.span));
+        let help = match (undecidable, value_let) {
             (Some((method, _)), _) => format!(
                 "nothing a call of '{method}' gives decides the trait argument: call it where a \
                  bound decides it (`where t: {example}`)"
             ),
-            // A method taken as a value: its type says which, at the
-            // trait arguments of an impl the type has.
-            (None, Some(written)) => {
-                let shown = (declared.zip(info)).and_then(|((_, ty), info)| {
-                    let subject = self.apply(subject);
-                    let head = self.type_name_for_impl(&subject)?;
-                    let first = *self.tables.impl_args_of(tr, head).first()?;
-                    let impl_args = self.tables.impl_trait_args.get(&(tr, head, first))?;
-                    let mut mapping: HashMap<TyVar, Type> = HashMap::new();
-                    mapping.insert(info.self_var, subject);
-                    mapping.extend(info.param_var_ids.iter().copied().zip(impl_args.clone()));
-                    Some(self.show_type(&substitute_vars(ty, &mapping)))
-                });
-                // (Named as the `let` names it, if one does.)
-                let name = (self.method_value_lets.get(&origin.span))
-                    .map_or_else(|| "f".to_string(), |name| name.to_string());
+            (None, Some((name, written))) => {
+                let shown = declared.and_then(|(_, ty)| at_example(ty));
                 match shown {
-                    Some(ty) => {
-                        format!("annotate the function's type: `let {name}: {ty} = {written}`")
-                    }
+                    Some(ty) => format!(
+                        "annotate the function's type: `let {name}: {} = {written}`",
+                        self.show_type(&ty)
+                    ),
                     None => "annotate the function's type".to_string(),
                 }
             }
+            // (A statement's value: the `let` to write for it.)
+            (None, None) if statement => {
+                format!("annotate the value, `let s: {given_shown} = ...`")
+            }
             (None, None) => format!(
-                "annotate the type the call gives (`let n: Int = ...`), or call it where a bound \
-                 decides it (`where t: {example}`)"
+                "annotate the type the call gives (`let n: {given_shown} = ...`), or call it \
+                 where a bound decides it (`where t: {example}`)"
             ),
         };
         Diagnostic::error(Code::AmbiguousType, origin.span, message).with_help(help)

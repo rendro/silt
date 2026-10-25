@@ -136,6 +136,12 @@ impl TypeChecker {
                         if self.caller_supplies(v, &call.frames) {
                             continue;
                         }
+                        // (A trait argument a use waits for is the use's
+                        // to decide: the statement's `()` is none.)
+                        if self.a_waiting_trait_argument(v) {
+                            self.statement_trait_args.insert(v);
+                            continue;
+                        }
                         let handed = self.params_mentioning(v, &call.frames);
                         if self.unify_types(&call.ty, &Type::Unit).is_ok() {
                             fixed.push(call.span);
@@ -151,6 +157,22 @@ impl TypeChecker {
             }
         }
         fixed
+    }
+
+    /// Whether `v` is a trait argument a use waits for, of a type with
+    /// impls of the trait at several.
+    fn a_waiting_trait_argument(&self, v: TyVar) -> bool {
+        (self.wanted.iter()).any(|wanted| match &wanted.goal {
+            Goal::Pred(Pred::Trait {
+                tr, args, subject, ..
+            }) => {
+                !wanted.solved
+                    && !matches!(self.apply(subject), Type::Var(_) | Type::Rigid(_))
+                    && self.waits_for_trait_args(*tr, subject, args)
+                    && (args.iter()).any(|arg| free_vars_in(&self.apply(arg)).contains(&v))
+            }
+            _ => false,
+        })
     }
 
     /// Check again, with `recheck`, what a scope owes for the types of
@@ -512,6 +534,9 @@ impl TypeChecker {
                 let Some(ty) = &e.ty else { continue };
                 let message = match self.statement_type(ty) {
                     Type::Unit | Type::Never | Type::Error => continue,
+                    // (A trait argument nothing decides: that error says
+                    // to annotate the value.)
+                    Type::Var(v) if self.statement_trait_args.contains(&v) => continue,
                     Type::Var(_) => {
                         "this value is unused; write `let _ = ...` to discard it".to_string()
                     }

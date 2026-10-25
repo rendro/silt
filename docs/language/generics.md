@@ -811,10 +811,11 @@ fn into(x: a, type b) -> b where a: Convert(b) {
 
 The same pattern adapts to fallible conversions by changing the trait
 method's return type to `Result(b, e)` for whatever error type the
-caller wants. (`Convert(Int) for String` and `Convert(Float) for
-String` would *want* to coexist, but see the
-"Parameterized trait declarations" subsection above for the current
-deferred limitation around trait-arg-keyed impls.)
+caller wants. A type has one impl of the trait for each trait
+argument, so `Convert(Int) for String` and `Convert(Float) for String`
+are two impls, and the use's trait argument says which one it reaches:
+`into("7", Int)` the first, `into("7", Float)` the second (see the
+"Parameterized trait declarations" subsection above).
 
 ### User-defined generic container
 
