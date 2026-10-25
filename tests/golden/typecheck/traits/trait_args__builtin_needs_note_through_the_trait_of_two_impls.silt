@@ -1,0 +1,26 @@
+-- cmd: check
+-- exit: 1
+-- requires-feature: postgres
+-- The same with impls at two trait arguments: the call reaches the impl
+-- its trait argument says, and is refused at the argument, naming it.
+-- stderr-contains: error[type]: the connection of `postgres.execute` must be a postgres.PgPool or a postgres.PgTx
+-- stderr-contains: :24:22
+-- stderr-contains: = note: `S.ex` passes it to `postgres.execute`
+-- stderr-not-contains: :25:
+import postgres
+trait Q(b) { fn ex(self, k: b, c: x) -> String }
+type S { S }
+trait Q(Int) for S {
+  fn ex(self, k: Int, c: x) -> String {
+    match postgres.execute(c, "select 1", ()) {
+      Ok(n) -> "ok {n}"
+      Err(e) -> "err {e}"
+    }
+  }
+}
+trait Q(String) for S { fn ex(self, k: String, c: x) -> String { "s" } }
+fn main() {
+  let pool = 5
+  println(Q.ex(S, 1, pool))
+  println(Q.ex(S, "one", pool))
+}

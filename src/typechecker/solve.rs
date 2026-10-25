@@ -17,6 +17,9 @@ pub(crate) struct Wanted {
     /// For a call of a trait method (`Pred::Via`): the types the call
     /// gives the method, each at the argument that gives it.
     pub(super) places: super::builtin_needs::Places,
+    /// For the call of a trait method itself (`Tr.m(x, ..)`, `x.m(..)`):
+    /// each parameter of the method's type, the argument that gives it.
+    pub(super) arguments: super::builtin_needs::Arguments,
     /// Its node in the module's evidence (`evidence::Ledger`).
     pub(super) ev: super::evidence::EvRef,
 }
@@ -236,6 +239,7 @@ impl TypeChecker {
             solved: false,
             in_scheme: false,
             places: Vec::new(),
+            arguments: Vec::new(),
             ev: self.ev_here(ev),
         });
         self.solve_wanted(self.wanted.len() - 1);
@@ -316,8 +320,12 @@ impl TypeChecker {
 
     /// Whether `subject: tr(args)` waits for its trait arguments: the
     /// impls of the trait for the subject's type that could be the use's
-    /// are several (or one the module wrote twice, while an argument is
-    /// open), so which impl the use reaches is not known yet.
+    /// are several, or one that would decide a part the use leaves open
+    /// (`From(List(Int))` for a use at `From(List(_))`), or one while an
+    /// argument is still a type variable nothing decided; so which impl
+    /// the use reaches is not known yet. (Its trait arguments choose the
+    /// impl, never its being the only one: a second impl never changes
+    /// what a use that compiled means.)
     pub(super) fn waits_for_trait_args(&self, tr: TraitKey, subject: &Type, args: &[Type]) -> bool {
         if args.is_empty() || (args.iter()).any(|arg| matches!(self.apply(arg), Type::Error)) {
             return false;
@@ -327,8 +335,33 @@ impl TypeChecker {
         let Some(head) = self.type_name_for_impl(&subject) else {
             return false;
         };
-        (self.duplicated_impls.contains(&(tr, head)) && self.trait_args_open(args))
-            || self.impls_fitting(tr, head, args).len() > 1
+        if self.tables.impl_args_of(tr, head).is_empty() {
+            return false;
+        }
+        if self.trait_args_open(args) {
+            return true;
+        }
+        match self.impls_fitting(tr, head, args).as_slice() {
+            [] => false,
+            [key] => {
+                let written = (self.tables.impl_trait_args.get(key)).map_or(&[][..], Vec::as_slice);
+                !self.fixes_nothing(written, args)
+            }
+            _ => true,
+        }
+    }
+
+    /// Whether the impl's trait arguments `written` are the use's `args`
+    /// with nothing the use leaves open decided by them: a type variable
+    /// of the use meets only one of the impl's, which stands for it.
+    fn fixes_nothing(&self, written: &[Type], args: &[Type]) -> bool {
+        let canon = |ty: &Type| {
+            crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(ty))
+        };
+        let mut mapping: HashMap<TyVar, Type> = HashMap::new();
+        written.len() == args.len()
+            && (written.iter().zip(args))
+                .all(|(written, arg)| match_one_way(&canon(written), &canon(arg), &mut mapping))
     }
 
     pub(super) fn solve_wanted(&mut self, from: usize) {
@@ -2439,16 +2472,15 @@ impl TypeChecker {
     /// rows each time. (For a call that is ambiguous the first
     /// candidate's: `ambiguous_method_call` reports it.)
     /// The trait whose method `method` a use on the type `ty` means,
-    /// when the type has an impl of it at several trait arguments: the
+    /// when it is a trait with parameters that has impls for the type: the
     /// use's trait arguments choose the impl (`From` for `AppError`).
     pub(super) fn trait_of_impls_by_args(&self, ty: TypeRef, method: Symbol) -> Option<TraitKey> {
         let providers = self.method_providers(ty, method);
         let Ok(Some(tr)) = self.meant_provider(&providers) else {
             return None;
         };
-        let several = self.tables.impl_methods.args_of(ty, method, tr).len() > 1
-            || self.duplicated_impls.contains(&(tr, ty));
-        several.then_some(tr)
+        let params = (self.tables.traits.get(&tr)).is_some_and(|info| !info.params.is_empty());
+        (params && !self.tables.impl_methods.args_of(ty, method, tr).is_empty()).then_some(tr)
     }
 
     pub(super) fn method_entry(&self, ty: TypeRef, method: Symbol) -> Option<MethodEntry> {
@@ -2609,4 +2641,52 @@ fn occurs(v: TyVar, ty: &Type, subst: &HashMap<TyVar, Type>) -> bool {
     free_vars_in(ty)
         .into_iter()
         .any(|w| w == v || subst.get(&w).is_some_and(|bound| occurs(v, bound, subst)))
+}
+
+/// Whether `pattern` (an impl's trait argument, its variables in
+/// `mapping` as they are matched) stands for `ty` (a use's) as it is:
+/// each variable of the pattern for one type, consistently; a variable of
+/// the use only for a variable of the pattern.
+fn match_one_way(pattern: &Type, ty: &Type, mapping: &mut HashMap<TyVar, Type>) -> bool {
+    let all = |xs: &[Type], ys: &[Type], mapping: &mut HashMap<TyVar, Type>| {
+        xs.len() == ys.len() && (xs.iter().zip(ys)).all(|(x, y)| match_one_way(x, y, mapping))
+    };
+    match (pattern, ty) {
+        (Type::Var(v), _) => match mapping.get(v) {
+            Some(bound) => bound == ty,
+            None => {
+                mapping.insert(*v, ty.clone());
+                true
+            }
+        },
+        (_, Type::Var(_)) => false,
+        (Type::Error, _) | (_, Type::Error) => true,
+        (Type::List(x), Type::List(y))
+        | (Type::Set(x), Type::Set(y))
+        | (Type::Channel(x), Type::Channel(y)) => match_one_way(x, y, mapping),
+        (Type::Map(xk, xv), Type::Map(yk, yv)) => {
+            match_one_way(xk, yk, mapping) && match_one_way(xv, yv, mapping)
+        }
+        (Type::Tuple(xs), Type::Tuple(ys)) => all(xs, ys, mapping),
+        (Type::Fun(xs, x), Type::Fun(ys, y)) => {
+            all(xs, ys, mapping) && match_one_way(x, y, mapping)
+        }
+        (Type::Generic(x, xs), Type::Generic(y, ys)) => x == y && all(xs, ys, mapping),
+        (
+            Type::AnonRecord {
+                fields: xs,
+                tail: x_tail,
+            },
+            Type::AnonRecord {
+                fields: ys,
+                tail: y_tail,
+            },
+        ) => {
+            x_tail == y_tail
+                && xs.len() == ys.len()
+                && (xs.iter())
+                    .all(|(name, x)| ys.get(name).is_some_and(|y| match_one_way(x, y, mapping)))
+        }
+        _ => pattern == ty,
+    }
 }

@@ -58,6 +58,11 @@ pub(super) type CallArguments = [(Span, Option<Symbol>, Type)];
 /// the type by.
 pub(super) type Places = Vec<(Type, Origin, Option<Symbol>)>;
 
+/// Each parameter of a trait method's type at its call: the argument
+/// that gives it, with the alias it names a type by (none for the
+/// receiver a method call takes).
+pub(super) type Arguments = Vec<Option<(Origin, Option<Symbol>)>>;
+
 /// A call of a trait method on a value of a known type, waiting for the
 /// bodies of the module: in the body `in_body`, at `origin`, a note
 /// naming `passer`.
@@ -68,6 +73,8 @@ pub(crate) struct ViaUse {
     pub(super) origin: Origin,
     /// The types the call gives the method, each at its argument.
     pub(super) places: Places,
+    /// The call's arguments, if it is the call of the method itself.
+    pub(super) arguments: Arguments,
     pub(super) in_body: Option<Symbol>,
 }
 
@@ -76,7 +83,9 @@ pub(crate) struct ViaUse {
 /// whose type is an annotation variable of a caller.
 #[derive(Clone, Debug)]
 pub(crate) enum Leaf {
-    Check(BuiltinCheck, Type),
+    /// The check, the type, and the parameter of the method whose type
+    /// it is, if one is (not for a method the method calls in turn).
+    Check(BuiltinCheck, Type, Option<usize>),
     Via(ViaNeed),
 }
 
@@ -86,6 +95,7 @@ struct Placing {
     passer: Option<Symbol>,
     origin: Origin,
     places: Places,
+    arguments: Arguments,
 }
 
 /// The keys `TypeChecker::leaves` keeps what it found by.
@@ -163,7 +173,7 @@ impl TypeChecker {
         need: ViaNeed,
         passer: Option<Symbol>,
         origin: Origin,
-        places: Places,
+        (places, arguments): (Places, Arguments),
         in_body: Option<Symbol>,
     ) -> bool {
         match self.apply(&need.receiver) {
@@ -175,6 +185,7 @@ impl TypeChecker {
                     passer,
                     origin,
                     places,
+                    arguments,
                     in_body,
                 });
                 false
@@ -235,12 +246,12 @@ impl TypeChecker {
                 let mut grown = false;
                 for leaf in leaves.iter() {
                     match leaf {
-                        Leaf::Check(check, ty) => match self.apply(ty) {
+                        Leaf::Check(check, ty, param) => match self.apply(ty) {
                             Type::Rigid(r) => grown |= self.add_builtin_need(r, *check, in_body),
                             Type::Var(_) | Type::Error | Type::Never => {}
                             ty => {
                                 if let Some(placing) = placing {
-                                    self.check_placed(*check, &ty, placing);
+                                    self.check_placed(*check, &ty, *param, placing);
                                 }
                             }
                         },
@@ -258,12 +269,24 @@ impl TypeChecker {
 
     /// Check `check` of the type `ty`, where the use `placing` gave it,
     /// naming the function the caller called.
-    fn check_placed(&mut self, check: BuiltinCheck, ty: &Type, placing: &Placing) {
-        let (origin, written) = (placing.places.iter())
-            .find(|(given, ..)| self.apply(given) == *ty)
-            .map_or((placing.origin, None), |(_, origin, written)| {
-                (*origin, *written)
-            });
+    fn check_placed(
+        &mut self,
+        check: BuiltinCheck,
+        ty: &Type,
+        param: Option<usize>,
+        placing: &Placing,
+    ) {
+        // (At the argument of the method's parameter whose type it is,
+        // if the call is the method's own; else where a type argument
+        // gives it.)
+        let argument = param.and_then(|param| placing.arguments.get(param).copied().flatten());
+        let (origin, written) = argument.unwrap_or_else(|| {
+            (placing.places.iter())
+                .find(|(given, ..)| self.apply(given) == *ty)
+                .map_or((placing.origin, None), |(_, origin, written)| {
+                    (*origin, *written)
+                })
+        });
         let check = match check {
             BuiltinCheck::Decodes {
                 builtin, decoding, ..
@@ -363,10 +386,19 @@ impl TypeChecker {
                     _ => None,
                 })
                 .collect();
-            for pred in &preds {
+            // (The parameter of the method whose type a predicate's
+            // subject is in.)
+            let param_of = |subject: &Type| {
+                let (Type::Var(v), Type::Fun(params, _)) = (subject, &scheme.ty) else {
+                    return None;
+                };
+                (params.iter()).position(|param| free_vars_in(param).contains(v))
+            };
+            for (pred, written) in preds.iter().zip(&scheme.preds) {
                 match pred {
                     Pred::Builtin { check, subject, .. } => {
-                        out.push(Leaf::Check(*check, self.apply(subject)));
+                        let param = param_of(written.subject());
+                        out.push(Leaf::Check(*check, self.apply(subject), param));
                     }
                     Pred::Given {
                         subject,
@@ -374,8 +406,9 @@ impl TypeChecker {
                         body,
                         ..
                     } => {
+                        let param = param_of(written.subject());
                         for check in self.builtin_needs_of(*var, *body) {
-                            out.push(Leaf::Check(check, self.apply(subject)));
+                            out.push(Leaf::Check(check, self.apply(subject), param));
                         }
                         for via in self.vias_of(*var, *body).iter() {
                             let via = self.at_use(via, &given);
@@ -407,7 +440,7 @@ impl TypeChecker {
         let mut leaves: Vec<Leaf> = Vec::with_capacity(out.len());
         for leaf in out {
             let known = leaves.iter().any(|seen| match (seen, &leaf) {
-                (Leaf::Check(a, x), Leaf::Check(b, y)) => a == b && x == y,
+                (Leaf::Check(a, x, p), Leaf::Check(b, y, q)) => a == b && x == y && p == q,
                 (Leaf::Via(a), Leaf::Via(b)) => a == b,
                 _ => false,
             });
@@ -426,8 +459,13 @@ impl TypeChecker {
             Type::Rigid(_) => out.push(Leaf::Via(via)),
             Type::Var(_) | Type::Error | Type::Never => {}
             receiver => {
+                // (A method the method calls: its parameters are none of
+                // the call's.)
                 let leaves = self.leaves(via.tr, via.method, &receiver, &via.method_ty);
-                out.extend(leaves.iter().cloned());
+                out.extend(leaves.iter().map(|leaf| match leaf {
+                    Leaf::Check(check, ty, _) => Leaf::Check(*check, ty.clone(), None),
+                    via => via.clone(),
+                }));
             }
         }
     }
@@ -768,6 +806,7 @@ impl TypeChecker {
                 passer: Some(use_.passer),
                 origin: use_.origin,
                 places,
+                arguments: Vec::new(),
             };
             for via in vias {
                 self.apply_via(&via, use_.in_body, Some(&placing));
@@ -783,10 +822,19 @@ impl TypeChecker {
             let places = (use_.places.into_iter())
                 .filter(|(given, ..)| !written.contains(&self.apply(given)))
                 .collect();
+            // (The call of a trait method itself names the method of the
+            // impl it reaches, as a call on the type does: `S.ex`.)
+            let passer = use_.passer.or_else(|| {
+                let receiver = self.apply(&use_.need.receiver);
+                let head = self.type_name_for_impl(&receiver)?;
+                (!use_.arguments.is_empty())
+                    .then(|| intern(&format!("{head}.{}", use_.need.method)))
+            });
             let placing = Placing {
-                passer: use_.passer,
+                passer,
                 origin: use_.origin,
                 places,
+                arguments: use_.arguments,
             };
             self.apply_via(&use_.need, use_.in_body, Some(&placing));
         }

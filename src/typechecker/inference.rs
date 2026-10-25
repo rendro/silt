@@ -894,7 +894,11 @@ impl TypeChecker {
         // impl written: the method of that impl, as a function of the
         // impl's module calls it, owing what the impl's header and the
         // method's body ask (`dispatch_method_entry`).
-        if let Some((recv, _)) = &receiver {
+        // (Of a trait with parameters, the method's type is the trait's:
+        // which impl the call reaches its trait arguments say.)
+        if let Some((recv, _)) = &receiver
+            && info.params.is_empty()
+        {
             let recv = self.apply(recv);
             let entry = match crate::types::canonical::canonicalize(&self.tables.resolver, &recv) {
                 Type::Var(_) | Type::Rigid(_) | Type::Error | Type::Never => None,
@@ -1960,6 +1964,26 @@ impl TypeChecker {
                 // parameter is owed for that argument: a bound that
                 // fails is reported at it.
                 for k in owed_before..self.wanted.len() {
+                    // The call of a trait method itself (its type is the
+                    // callee's): each parameter's argument, for what the
+                    // impl's method gives a builtin.
+                    if let (Goal::Pred(Pred::Via { method_ty, .. }), CallForm::Call) =
+                        (&self.wanted[k].goal, form)
+                        && self.apply(method_ty) == callee_ty
+                    {
+                        let origin = self.wanted[k].origin;
+                        let arguments = (0..params.len())
+                            .map(|param| {
+                                let arg = args.get(param.checked_sub(implicit_self)?)?;
+                                let origin = Origin {
+                                    span: arg.span,
+                                    ..origin
+                                };
+                                Some((origin, self.alias_named(arg)))
+                            })
+                            .collect();
+                        self.wanted[k].arguments = arguments;
+                    }
                     // (A trait method's call is at the type it is given,
                     // not at its receiver: where it was given, if that is
                     // known.)

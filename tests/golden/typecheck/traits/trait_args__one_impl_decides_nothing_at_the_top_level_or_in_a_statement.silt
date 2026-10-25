@@ -1,0 +1,25 @@
+-- cmd: check
+-- exit: 1
+-- With one impl of a trait with a parameter, as with several: a top-level
+-- `let` decides its own trait arguments, a statement's `()` decides none,
+-- and an impl for every trait argument still leaves the use to decide
+-- (the help's example is a placeholder: no impl is at a written type).
+-- stderr-contains: :17:19
+-- stderr-contains: :21:13
+-- stderr-contains: = help: annotate the value, `let s: String = ...`
+-- stderr-contains: :22:15
+-- stderr-contains: = help: nothing a call of 'w' gives decides the trait argument: call it where a bound decides it (`where t: W(T)`)
+-- stderr-not-contains: compiler bug
+-- stderr-not-contains: Conv(())
+-- stderr-not-contains: not fully known
+trait Conv(b) { fn conv(self) -> b }
+trait Conv(String) for Int { fn conv(self) -> String { "s{self}" } }
+let c = Conv.conv(3)
+trait W(x) { fn w(self) -> Int }
+trait W(x) for Int { fn w(self) -> Int { 1 } }
+fn main() {
+  Conv.conv(4)
+  let _ = W.w(1)
+  let s: String = c
+  println(s)
+}

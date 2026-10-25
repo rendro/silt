@@ -1,0 +1,23 @@
+-- cmd: check
+-- exit: 1
+-- The only impl that could fit a use decides no part of its trait
+-- arguments: `From(List(Int))` for a use at `From(List(_))` is undecided
+-- (a second impl `From(List(String))` would change what it meant), also
+-- beside an impl that cannot fit (`From(Int)`); `From(List(a))` decides
+-- nothing the use leaves open, and is reached.
+-- stderr-contains: :20:11
+-- stderr-contains: cannot decide which impl of 'From(List(_))' for 'A' this use of 'from' means: its trait argument is not decided here
+-- stderr-not-contains: :21:
+import list
+trait From(e) { fn from(source: e) -> Self }
+type A { A(String) }
+type B { B(String) }
+trait From(List(Int)) for A { fn from(e: List(Int)) -> A { A("ints") } }
+trait From(Int) for A { fn from(e: Int) -> A { A("int") } }
+trait From(List(a)) for B { fn from(e: List(a)) -> B { B("any list") } }
+fn main() {
+  let xs = list.drop([], 0)
+  let a = A.from(xs)
+  let b = B.from(list.drop([], 0))
+  println("x")
+}

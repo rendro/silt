@@ -446,7 +446,7 @@ impl TypeChecker {
                             method_ty: method_ty.clone(),
                         };
                         let in_body = self.body_owner;
-                        let places = wanted.places.clone();
+                        let places = (wanted.places.clone(), wanted.arguments.clone());
                         self.via_owed(need, *passer, wanted.origin, places, in_body);
                     }
                     continue;

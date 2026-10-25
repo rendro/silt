@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[type]: cannot decide which impl of 'Conv(_)' for 'Int' this use of 's' means: its trait argument is not decided here
+-- A bound's trait argument is the use's to decide, not the type's only
+-- impl's: nothing decides the `y` of `s(3, y)` in `w`, so which impl the
+-- use means is unknown.
+trait Conv(to) { fn conv(self) -> to }
+trait Conv(String) for Int { fn conv(self) -> String { "an int" } }
+fn s(x: a, y: b) -> b where a: Conv(b) { Conv.conv(x) }
+fn w(y) { s(3, y) }
+fn main() { println(w(1) + 1) }
