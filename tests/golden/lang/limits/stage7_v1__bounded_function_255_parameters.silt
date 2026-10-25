@@ -3,6 +3,7 @@
 -- A function with a bound takes its dictionary first, hidden: its
 -- limit is one parameter less, and the error counts what was written.
 -- stderr-contains: too many parameters of a function: 255 (the limit is 254)
+-- stderr-contains: = help: each bound on a trait the program declares takes one of the 255 places
 trait Tr {
   fn tr(self) -> Int
 }

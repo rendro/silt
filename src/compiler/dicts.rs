@@ -242,15 +242,6 @@ impl Compiler<'_> {
                     // of `self` (an impl for every function or tuple) is
                     // the impl's dictionary itself.
                     Layout::ImplMethod if k < header => {
-                        // (As many as `MakeDict` takes.)
-                        if header > usize::from(u8::MAX) {
-                            return Err(limit(
-                                HEADER_PREDICATES,
-                                header,
-                                usize::from(u8::MAX),
-                                span,
-                            ));
-                        }
                         self.load_frame_dict(*owner, span)?;
                         self.emit(Asm::DictSub { k }, span)
                     }
@@ -352,9 +343,11 @@ impl Compiler<'_> {
                 if let Decl::TraitImpl(ti) = decl
                     && let (Some(ty), Some(t)) = (self.impl_type(ti), self.impl_trait(ti))
                     && has_dictionary(t)
-                    && impls.insert((t, ty), ti).is_none()
                 {
-                    keys.push((t, ty));
+                    self.header_limit(ti)?;
+                    if impls.insert((t, ty), ti).is_none() {
+                        keys.push((t, ty));
+                    }
                 }
             }
         }
@@ -362,6 +355,27 @@ impl Compiler<'_> {
             self.enter_template(key, &impls, globals, 0)?;
         }
         Ok(())
+    }
+
+    /// The header of the impl `ti` asks no more traits a program declares
+    /// than its dictionary holds (as many as `MakeDict` takes): the error,
+    /// at the impl, counts what the header asks, whether or not the impl
+    /// is used.
+    fn header_limit(&self, ti: &TraitImpl) -> Result<(), Diagnostic> {
+        let max = usize::from(u8::MAX);
+        let asked = (ti.where_clauses.iter())
+            .filter(|wc| match wc.trait_res {
+                Some(crate::defs::Res::Def(id)) => matches!(
+                    self.units.defs.get(id).kind,
+                    crate::defs::DefKind::Trait(t) if has_dictionary(t)
+                ),
+                _ => false,
+            })
+            .count();
+        match asked > max {
+            true => Err(limit(HEADER_PREDICATES, asked, max, ti.span)),
+            false => Ok(()),
+        }
     }
 
     /// The dictionary of the impl of each method of an impl whose header
@@ -830,7 +844,11 @@ impl Compiler<'_> {
                 count: written,
                 max,
             };
-            return Err(crate::bytecode::emit::limit_diagnostic(limit, span));
+            return Err(
+                crate::bytecode::emit::limit_diagnostic(limit, span).with_help(
+                    "each bound on a trait the program declares takes one of the 255 places",
+                ),
+            );
         }
         self.begin_function(name, hidden + written, span)
     }

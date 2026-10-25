@@ -10,27 +10,37 @@ use crate::value::Value;
 // ── Helpers ───────────────────────────────────────────────────────
 
 /// Format a constant value for a disassembly comment.
-fn constant_comment(chunk: &Chunk, k: Const) -> String {
+fn constant_comment(chunk: &Chunk, globals: &Globals, k: Const) -> String {
     match chunk.constant(k) {
         // A function is shown by its name; any other constant as a
         // program writes it.
         function @ (Value::VmClosure(_) | Value::BuiltinFn(_) | Value::HostFn(_)) => {
             format!("{function}")
         }
+        // A dictionary by its impl, as one that is built prints.
+        Value::Dict(crate::bytecode::dict::Dict::Of(index)) => match globals.template_at(*index) {
+            Some(template) => format!("<dict:{}>", template.name),
+            None => format!("<dict:{index}>"),
+        },
         constant => format!("{constant:?}"),
     }
 }
 
 /// The lines of a list of names: one continuation line per entry, with
 /// `label` as the per-entry prefix (`"field"` or `"exclude"`).
-fn name_lines(chunk: &Chunk, names: impl Iterator<Item = Const>, label: &str) -> String {
+fn name_lines(
+    chunk: &Chunk,
+    globals: &Globals,
+    names: impl Iterator<Item = Const>,
+    label: &str,
+) -> String {
     let mut lines = String::new();
     for k in names {
         write!(
             lines,
             "\n      |  {label} {:<5} ; {}",
             k.index(),
-            constant_comment(chunk, k)
+            constant_comment(chunk, globals, k)
         )
         .unwrap();
     }
@@ -64,14 +74,14 @@ fn disassemble_instruction(
     };
     // An instruction whose one operand is a constant.
     let with_constant = |k: Const| {
-        let comment = constant_comment(chunk, k);
+        let comment = constant_comment(chunk, globals, k);
         format!("{offset:04}  {name:<20} {:<5} ; {comment}", k.index())
     };
     // An instruction whose one operand is a number.
     let with_number = |n: usize| format!("{offset:04}  {name:<20} {n}");
     // An instruction whose operands are a constant and a count.
     let with_constant_and_count = |k: Const, count: usize| {
-        let comment = constant_comment(chunk, k);
+        let comment = constant_comment(chunk, globals, k);
         format!(
             "{offset:04}  {name:<20} {:<5} {count:<3} ; {comment}",
             k.index()
@@ -190,8 +200,8 @@ fn disassemble_instruction(
 
         // ── The two bounds of a range pattern ─────────────────
         Instr::TestIntRange { lo, hi } | Instr::TestFloatRange { lo, hi } => {
-            let lo_comment = constant_comment(chunk, lo);
-            let hi_comment = constant_comment(chunk, hi);
+            let lo_comment = constant_comment(chunk, globals, lo);
+            let hi_comment = constant_comment(chunk, globals, hi);
             format!(
                 "{offset:04}  {name:<20} {:<5} {:<5} ; {lo_comment}..{hi_comment}",
                 lo.index(),
@@ -270,7 +280,7 @@ fn disassemble_instruction(
                         line,
                         "\n      |  literal {:<5} ; {}",
                         k.index(),
-                        constant_comment(chunk, k)
+                        constant_comment(chunk, globals, k)
                     )
                     .unwrap(),
                     Segment::Value => line.push_str("\n      |  value"),
@@ -282,17 +292,18 @@ fn disassemble_instruction(
         // ── MakeRecord: the type, then the field names ────────
         Instr::MakeRecord { ty, fields } => {
             with_constant_and_count(ty, fields.len())
-                + &name_lines(chunk, fields.iter(code), "field")
+                + &name_lines(chunk, globals, fields.iter(code), "field")
         }
 
         // ── A list of names ───────────────────────────────────
         //   RecordUpdate:        label "field".
         //   DestructRecordRest:  label "exclude".
         Instr::RecordUpdate { fields } => {
-            with_number(fields.len()) + &name_lines(chunk, fields.iter(code), "field")
+            with_number(fields.len()) + &name_lines(chunk, globals, fields.iter(code), "field")
         }
         Instr::DestructRecordRest { excluded } => {
-            with_number(excluded.len()) + &name_lines(chunk, excluded.iter(code), "exclude")
+            with_number(excluded.len())
+                + &name_lines(chunk, globals, excluded.iter(code), "exclude")
         }
     }
 }
