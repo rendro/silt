@@ -1645,12 +1645,10 @@ impl<'a> Compiler<'a> {
                 compiled?;
             }
 
-            // `Int.empty` of a program's trait, as a value: through the
-            // dictionary, with it bound.
-            ExprKind::FieldAccess(_, method, _)
-                if matches!(self.type_member(expr)?, Some(TypeMember::Dict))
-                    && self.dict_call(expr).is_some() =>
-            {
+            // `Int.empty` of a program's trait, as a value, or `t.empty` of
+            // a `type t` bounded by one: through the dictionary, with it
+            // bound. (The type named or held is no value of the method.)
+            ExprKind::FieldAccess(_, method, _) if self.dict_call(expr).is_some() => {
                 let (tr, recv, own) = self.dict_call(expr).expect("a call through a dictionary");
                 let (recv, own) = (recv.clone(), own.to_vec());
                 self.compile_dict_method_value(tr, &recv, &own, *method, span)?;
