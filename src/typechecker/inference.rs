@@ -679,6 +679,20 @@ impl TypeChecker {
                     );
                     return None;
                 }
+                // Bounds of one trait with parameters (at one trait
+                // argument or at several): the method as the trait declares
+                // it, with the variable for `Self`; which bound the use
+                // reaches its trait arguments say, as through the trait.
+                let mut traits: Vec<TraitKey> = matches.iter().map(|(t, _)| *t).collect();
+                distinct(&mut traits);
+                if let [tr] = traits.as_slice()
+                    && (self.tables.traits.get(tr)).is_some_and(|info| !info.params.is_empty())
+                    && self.self_param(*tr, field).is_none()
+                {
+                    let tr = *tr;
+                    self.method_trait = Some(tr);
+                    return Some(self.through_trait(tr, field, inner.clone(), None, span));
+                }
                 if matches.len() > 1 {
                     let traits: Vec<TraitKey> = matches.iter().map(|(t, _)| *t).collect();
                     self.ambiguous_bound_method(
