@@ -18,7 +18,7 @@ fn main() {
   println(sh(A.from((1, 2))))
   println(sh(A.from((1, 2, 3))))
   println(sh(A.from({ x -> x + 1 })))
-  println(sh(A.from({ x, y -> x + y })))
+  println(sh(A.from({ x: Int, y: Int -> x + y })))
   let f: Fn(List(String)) -> A = A.from
   println(sh(f(["x", "y"])))
 }
