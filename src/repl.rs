@@ -907,6 +907,45 @@ mod tests {
         Repl::new(ProjectSetup::None)
     }
 
+    /// A bound an entry leaves to a later entry, which decides the type
+    /// it is of (what is sent on a channel), gets its evidence from the
+    /// later entry: the earlier entry's evidence names it as pending, the
+    /// later entry's has it, the impl for the type it decided.
+    #[test]
+    fn a_bound_a_later_entry_decides_gets_its_evidence_there() {
+        let mut repl = repl();
+        let setup = [
+            "trait Greet { fn greet(self) -> String }",
+            "trait Greet for Int { fn greet(self) -> String { \"int\" } }",
+            "fn hello(x: a) -> String where a: Greet { Greet.greet(x) }",
+            "import channel",
+            "let ch = channel.new(4)",
+            "fn f() -> String {\n  match channel.receive(ch) {\n    Some(m) -> hello(m)\n    None -> \"none\"\n  }\n}",
+        ];
+        for entry in setup {
+            let evaluation = repl.eval(entry);
+            assert!(
+                evaluation.committed,
+                "`{entry}` must run: {:?}",
+                evaluation.diagnostics
+            );
+        }
+        let earlier = repl.committed.expect("a committed entry");
+        let evaluation = repl.eval("channel.send(ch, 3)");
+        assert!(evaluation.committed, "{:?}", evaluation.diagnostics);
+        let later = repl.committed.expect("the entry that decides");
+        let late = (repl.session.module_analysis(later))
+            .map(|analysis| analysis.ast.late_evidence.clone())
+            .unwrap_or_default();
+        match late.as_slice() {
+            [(pending, crate::evidence::Evidence::Impl { .. })] => {
+                assert_eq!(pending.cell, earlier, "{late:?}")
+            }
+            other => panic!("expected the impl of Greet for Int, got {other:?}"),
+        }
+        assert_eq!(value(&mut repl, "f()"), "int");
+    }
+
     /// The value `input` returns, which must run.
     fn value(repl: &mut Repl, input: &str) -> String {
         let evaluation = repl.eval(input);

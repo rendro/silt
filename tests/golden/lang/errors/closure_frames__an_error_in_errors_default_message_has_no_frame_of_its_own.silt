@@ -1,0 +1,15 @@
+-- exit: 1
+-- An impl of Error that leaves `message` out has silt's default, which
+-- shows the value: a Display that fails under it fails at its own place,
+-- and the call stack names no frame of silt's code between it and the
+-- call of `Error.message`.
+type E { E(Int) }
+trait Display for E {
+  fn display(self) -> String { match self { E(n) -> "e{10 / n}" } }
+}
+trait Error for E {}
+fn m(e: a) -> String where a: Error { Error.message(e) }
+fn main() {
+  println(m(E(2)))
+  println(m(E(0)))
+}

@@ -1969,3 +1969,34 @@ fn a_slice_given_away_costs_one_step_at_any_slice() {
         }
     }
 }
+
+/// Wherever a program's budget ends it, the error names a place of the
+/// program: in the code that installs Error's default `message`, the impl
+/// that leaves it out; in that default, which is silt's code, the call
+/// of `Error.message`.
+#[test]
+fn a_budget_that_ends_in_errors_default_message_names_a_place_of_the_program() {
+    let source = "type E { E(Int) }\ntrait Error for E {}\n\
+                  fn m(e: a) -> String where a: Error { Error.message(e) }\n\
+                  fn main() {\n  println(Error.message(E(1)))\n  println(m(E(2)))\n}\n";
+    let mut ended = 0;
+    for steps in 0..200 {
+        let (result, _) = run_whole(source, |vm| {
+            vm.set_time_slice(1);
+            vm.set_step_budget(steps);
+        });
+        let Err(error) = result else {
+            break;
+        };
+        assert!(error.out_of_steps, "{error:?}");
+        assert!(
+            error.span.is_some(),
+            "the budget of {steps} steps: {error:?}"
+        );
+        ended += 1;
+    }
+    assert!(
+        (10..200).contains(&ended),
+        "the program ends after {ended} steps"
+    );
+}

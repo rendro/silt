@@ -1080,6 +1080,7 @@ impl<'src> Parser<'src> {
             decls,
             unknown: std::mem::take(&mut self.unknown),
             statements: std::mem::take(&mut self.statements),
+            late_evidence: Vec::new(),
         }
     }
 

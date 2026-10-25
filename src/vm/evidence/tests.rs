@@ -46,7 +46,6 @@ fn found(ty: TypeId, impl_found: bool) -> Found<'static> {
         ty,
         impl_found,
         native_row: false,
-        vm_default: false,
         method: "m",
         receiver: &Value::Unit,
     }
@@ -104,29 +103,6 @@ fn structural_evidence_is_the_vms_own_method_and_unknown_is_not_checked() {
     };
     let code = running(elsewhere, Ground::Unknown);
     assert!(check_call(&code, 1, &found(STR, true), None, &globals).is_ok());
-}
-
-/// A written impl that leaves a builtin trait's default out agrees with
-/// the default the VM supplies, for the impl's type only.
-#[test]
-fn a_builtin_default_the_vm_supplies_answers_for_a_written_impl() {
-    let site = Site::Method {
-        recv: Evidence::Impl {
-            tr: TR,
-            ty: INT,
-            subs: Vec::new(),
-        },
-        own: Vec::new(),
-    };
-    let globals = Globals::default();
-    let code = running(site, Ground::Unknown);
-    let supplied = |ty| Found {
-        vm_default: true,
-        ..found(ty, false)
-    };
-    assert!(check_call(&code, 1, &supplied(INT), None, &globals).is_ok());
-    assert!(check_call(&code, 1, &supplied(STR), None, &globals).is_err());
-    assert!(check_call(&code, 1, &found(INT, false), None, &globals).is_err());
 }
 
 /// An impl the runtime provides agrees only with the call the VM

@@ -2038,16 +2038,6 @@ impl Vm {
                 self.stack.truncate(receiver_slot);
                 self.push(result?);
             }
-            // `message` of an `Error` impl that leaves it out is the
-            // value's `display`.
-            None if method_name == "message"
-                && argc == 1
-                && slots.trait_at(trait_index) == crate::defs::builtin_trait_id("Error") =>
-            {
-                self.stack.truncate(receiver_slot);
-                let step = self.shown(&receiver)?;
-                return self.enter_step(step);
-            }
             None => {
                 return Err(VmError::type_confusion(format!(
                     "no method '{method_name}' for type '{}'",

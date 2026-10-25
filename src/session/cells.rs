@@ -88,6 +88,7 @@ impl CellInfo {
             decls: checked.decls[self.cell_imports..].to_vec(),
             unknown: Vec::new(),
             statements: Default::default(),
+            late_evidence: checked.late_evidence.clone(),
         }
     }
 }

@@ -1327,6 +1327,7 @@ impl TypeChecker {
         // sharing a type_var, so the resolution loop handles both forms
         // with a single path.
         let mut impl_level_constraints: Vec<Pred> = Vec::new();
+        let impl_trait = trait_key;
         for wc in &ti.where_clauses {
             let unknown = wc.trait_res == Some(crate::defs::Res::Error)
                 || self
@@ -1358,6 +1359,46 @@ impl TypeChecker {
                 continue;
             };
             let trait_name = &trait_key;
+            // The runtime runs an impl of a builtin trait found by the
+            // value (println shows a value, json.stringify encodes it)
+            // with no caller to pass what a bound of a program's trait
+            // needs: such an impl asks only builtin traits.
+            if !super::evidence::has_dictionary(impl_trait)
+                && super::evidence::has_dictionary(*trait_name)
+            {
+                let shown = self.show_trait(impl_trait);
+                let message = format!(
+                    "an impl of '{shown}' can ask only 'Display', 'Equal', 'Compare', 'Hash', \
+                     'json.Encode', 'json.Decode' or 'Error' of its type's variables: the runtime \
+                     runs it with nothing else"
+                );
+                // (Each help points at what the impl can do instead.)
+                let help = [
+                    (
+                        "Display",
+                        "show the part with `{x}` and bound it by Display",
+                    ),
+                    (
+                        "Encode",
+                        "encode the part with `json.encode(x)` and bound it by json.Encode",
+                    ),
+                    (
+                        "Decode",
+                        "decode the part with `json.decode` and bound it by json.Decode",
+                    ),
+                    ("Error", "show the part with `{x}` and bound it by Display"),
+                ]
+                .iter()
+                .find(|(tr, _)| impl_trait.is_builtin(tr))
+                .map(|(_, help)| help.to_string());
+                self.error_help(Code::InvalidTraitImpl, (message, help), ti.span);
+                // (What the body asks of the variable is not reported
+                // again.)
+                if let Some(Type::Var(tv)) = impl_param_map.get(type_param) {
+                    self.unknown_bounds.insert(*tv);
+                }
+                continue;
+            }
             // The bound's arity must match the trait's
             // declared param count in BOTH directions (see
             // check_where_bound_arity). Skip registering the malformed

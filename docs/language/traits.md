@@ -429,6 +429,23 @@ trait Greet for Box(a) where a: Greet + Loud {
 }
 ```
 
+An impl of `Display`, `json.Encode`, `json.Decode` or `Error` asks only
+builtin traits (`Display`, `Equal`, `Compare`, `Hash`, `json.Encode`,
+`json.Decode`, `Error`) of its type's variables. The runtime runs such
+an impl itself (`println` shows the value, `json.stringify` encodes it),
+with no caller to give what a bound of a program's own trait needs.
+Show or encode the part through the builtin trait instead:
+
+```silt
+trait Display for Box(a) where a: Display {
+  fn display(self) -> String {
+    match self {
+      Box(inner) -> "box {inner}"
+    }
+  }
+}
+```
+
 ### An impl's method adds no bound
 
 A bound on the impl's type variable belongs on the impl's header. An

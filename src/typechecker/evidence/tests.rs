@@ -125,10 +125,10 @@ fn a_bound_is_a_param_of_its_function_and_a_use_names_the_impl() {
 }
 
 /// A bound reached through a supertrait is the bound, then the step to
-/// the supertrait; a trait the type has by its structure is
-/// structural; the default method's `Self` is its first bound.
+/// the supertrait; the default method's `Self` is its first bound; a
+/// builtin trait's bound passes no evidence (the value finds it).
 #[test]
-fn a_supertrait_is_a_step_from_the_bound_and_structure_is_structural() {
+fn a_supertrait_is_a_step_from_the_bound_and_a_builtin_bound_passes_none() {
     let (found, bodies) = sites(
         r#"
 trait Named { fn name(self) -> String }
@@ -175,10 +175,8 @@ fn main() {
     let order = (found.iter())
         .find(|(n, _)| n == "order")
         .map(|(_, site)| site);
-    assert!(
-        matches!(order, Some(Site::Ref(bounds)) if matches!(bounds.as_slice(), [Evidence::Structural { .. }])),
-        "{found:?}"
-    );
+    // (A builtin trait is found by the value: its bound passes nothing.)
+    assert!(order.is_none(), "{found:?}");
 }
 
 /// An impl records the evidence of its trait's supertraits from its
@@ -317,4 +315,53 @@ fn main() { println(Pr.pr(Holder)) }
         ),
         "{found:?}"
     );
+}
+
+/// A use of a definition inside the group it is checked with, where it
+/// has one type (its own body too), and a `let`'s closure used inside
+/// itself pass the evidence of their bounds from the user's own.
+#[test]
+fn a_use_inside_its_group_or_itself_passes_the_users_bounds() {
+    let (found, bodies) = sites(
+        r#"
+trait Greet { fn greet(self) -> String }
+trait Greet for Int { fn greet(self) -> String { "int" } }
+fn ping(x, n) {
+  match n {
+    0 -> Greet.greet(x)
+    _ -> pong(x, n - 1)
+  }
+}
+fn pong(x, n) {
+  match n {
+    0 -> Greet.greet(x)
+    _ -> ping(x, n - 1)
+  }
+}
+fn main() {
+  let go = { x, n ->
+    match n {
+      0 -> Greet.greet(x)
+      _ -> go(x, n - 1)
+    }
+  }
+  println(ping(1, 3))
+  println(go(1, 2))
+}
+"#,
+    );
+    let param_of = |name: &str| {
+        (found.iter())
+            .filter(|(n, _)| n == name)
+            .find_map(|(_, site)| match site {
+                Site::Ref(bounds) => match bounds.as_slice() {
+                    [Evidence::Param { owner, k: 0 }] => Some(*owner),
+                    _ => None,
+                },
+                _ => None,
+            })
+    };
+    assert_eq!(param_of("pong"), Some(body(&bodies, "ping")), "{found:?}");
+    assert_eq!(param_of("ping"), Some(body(&bodies, "pong")), "{found:?}");
+    assert!(param_of("go").is_some(), "{found:?}");
 }

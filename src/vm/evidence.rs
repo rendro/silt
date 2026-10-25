@@ -19,10 +19,7 @@
 //! found: the impl of the call's trait for the type of the receiver, or
 //! none (the VM's own structural method), or the row of the builtin
 //! registry that answers for a builtin type (an impl the runtime
-//! provides). A written impl may leave out a builtin trait's default the
-//! VM supplies (`message` of `Error`, which is the value's display): the
-//! impl then has no code for the call, and the VM's default answers. A
-//! difference is a
+//! provides). A difference is a
 //! disagreement: by default an error of the program, which fails its
 //! golden case and is a finding of the oracle; with `SILT_EVIDENCE=report`
 //! it is written to stderr and the program goes on. Evidence the VM
@@ -165,6 +162,7 @@ fn ground(ev: &Evidence, env: Option<&Arc<Env>>, globals: &Globals) -> Ground {
         Evidence::Structural { tr } => Ground::Structural(*tr),
         Evidence::Native { tr, ty } => Ground::Native { tr: *tr, ty: *ty },
         Evidence::Missing => Ground::Missing,
+        Evidence::Pending(_) => Ground::Unknown,
     }
 }
 
@@ -282,10 +280,6 @@ pub(crate) struct Found<'a> {
     /// Whether the VM answers the call by the receiver's type's row of
     /// the builtin registry for the call's trait.
     pub(crate) native_row: bool,
-    /// Whether the call is of a builtin trait's default the VM supplies
-    /// (`message` of `Error`, for an impl that leaves it out): no impl
-    /// has code for it.
-    pub(crate) vm_default: bool,
     /// For a message: the method's name, the receiver.
     pub(crate) method: &'a str,
     pub(crate) receiver: &'a Value,
@@ -352,7 +346,7 @@ pub(crate) fn check_call(
     let named = ground(recv, env, globals);
     let agrees = match &named {
         Ground::Impl { tr, ty, .. } => {
-            Some(Some(*tr) == found.tr && *ty == found.ty && (found.impl_found || found.vm_default))
+            Some(Some(*tr) == found.tr && *ty == found.ty && found.impl_found)
         }
         Ground::Super { tr, ty } => Some(Some(*tr) == found.tr && *ty == found.ty),
         Ground::Structural(tr) => Some(Some(*tr) == found.tr && !found.impl_found),
@@ -370,6 +364,10 @@ pub(crate) fn check_call(
                 .and_then(|ev| ev.owner)
                 .is_some_and(|(_, layout)| layout != Layout::Scheme);
         let class = match (&named, agrees) {
+            // (A builtin trait is found by the value: no evidence.)
+            (Ground::Missing, _) if found.tr.is_some_and(crate::defs::is_builtin_trait) => {
+                "value-driven"
+            }
             (Ground::Missing, _) => "missing",
             (_, None) if by_runtime => "unchecked-by-runtime",
             (_, None) => "unchecked",
@@ -490,12 +488,10 @@ impl super::Vm {
         let entry = &self.view.entry;
         let tr = entry.trait_at(trait_index);
         let method = entry.method_name(method).unwrap_or("?");
-        // (The message of a builtin module's error enum is its row's;
-        // that of an `Error` impl that leaves it out, the value's
-        // display, a builtin trait's default the VM supplies.)
-        let message_of_error =
-            found.is_none() && method == "message" && tr == crate::defs::builtin_trait_id("Error");
-        let native_row = message_of_error
+        // (The message of a builtin module's error enum is its row's.)
+        let native_row = found.is_none()
+            && method == "message"
+            && tr == crate::defs::builtin_trait_id("Error")
             && crate::builtins::registry::registry()
                 .error_module(ty)
                 .and_then(|module| module.message.as_ref())
@@ -505,7 +501,6 @@ impl super::Vm {
             ty,
             impl_found: found.is_some(),
             native_row,
-            vm_default: message_of_error && !native_row,
             method,
             receiver,
         };

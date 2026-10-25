@@ -1,0 +1,10 @@
+error[runtime]: division by zero
+ --> closure_frames__an_error_in_errors_default_message_has_no_frame_of_its_own.silt:8:56
+   |
+ 8 |   fn display(self) -> String { match self { E(n) -> "e{10 / n}" } }
+   |                                                        ^^^^^^ division by zero
+
+call stack:
+  -> E.display  at closure_frames__an_error_in_errors_default_message_has_no_frame_of_its_own.silt:8:56
+  -> m  at closure_frames__an_error_in_errors_default_message_has_no_frame_of_its_own.silt:11:39
+  -> main  at closure_frames__an_error_in_errors_default_message_has_no_frame_of_its_own.silt:14:11
