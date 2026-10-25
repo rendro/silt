@@ -1294,8 +1294,7 @@ impl TypeChecker {
                         args => format!("{}({})", self.show_trait(*t), args.join(", ")),
                     })
                     .collect();
-                given.sort();
-                given.dedup();
+                dedup_in_order(&mut given);
                 self.errors.push(
                     Diagnostic::error(
                         Code::AmbiguousMethod,
@@ -1310,7 +1309,28 @@ impl TypeChecker {
                     ),
                 );
             }
-            false => self.ambiguous_method(method, on, traits, span),
+            // (The traits in the order the bounds are written.)
+            false => {
+                let mut written: Vec<String> = (in_scope.iter())
+                    .filter(|(t, _)| traits.contains(t))
+                    .map(|(t, _)| self.show_trait(*t))
+                    .collect();
+                dedup_in_order(&mut written);
+                self.errors.push(
+                    Diagnostic::error(
+                        Code::AmbiguousMethod,
+                        span,
+                        format!(
+                            "ambiguous method '{method}' on {on}: provided by traits {}",
+                            written.join(", ")
+                        ),
+                    )
+                    .with_help(
+                        "say which is meant: annotate the receiver's type, or bound it with a \
+                         `where` clause",
+                    ),
+                );
+            }
         }
         let mut bounds: Vec<String> = (named.into_iter())
             .map(|(t, args)| {
@@ -1321,8 +1341,7 @@ impl TypeChecker {
                 }
             })
             .collect();
-        bounds.sort();
-        bounds.dedup();
+        dedup_in_order(&mut bounds);
         let (all, both) = match bounds.split_last() {
             Some((last, [one])) => (format!("{one} and {last}"), "both"),
             Some((last, rest)) if !rest.is_empty() => {
@@ -2689,4 +2708,10 @@ fn match_one_way(pattern: &Type, ty: &Type, mapping: &mut HashMap<TyVar, Type>) 
         }
         _ => pattern == ty,
     }
+}
+
+/// `items` without repeats, each where it first is.
+fn dedup_in_order(items: &mut Vec<String>) {
+    let mut seen = std::collections::HashSet::new();
+    items.retain(|item| seen.insert(item.clone()));
 }

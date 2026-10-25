@@ -680,7 +680,9 @@ impl TypeChecker {
                 }
                 let inner = inner.clone();
                 self.var_as_type = None;
+                self.descriptor_var = Some(name);
                 let found = self.resolve_type_descriptor_method(&inner, field, span);
+                self.descriptor_var = None;
                 self.var_as_type = Some(name);
                 found
             }
@@ -760,13 +762,12 @@ impl TypeChecker {
                 }
                 if matches.len() > 1 {
                     let traits: Vec<TraitKey> = matches.iter().map(|(t, _)| *t).collect();
-                    self.ambiguous_bound_method(
-                        field,
-                        &format!("`type {inner}`"),
-                        *r,
-                        &traits,
-                        span,
-                    );
+                    // (A type variable used as a type is named as written.)
+                    let on = match self.descriptor_var {
+                        Some(name) => format!("`{name}`"),
+                        None => format!("`type {inner}`"),
+                    };
+                    self.ambiguous_bound_method(field, &on, *r, &traits, span);
                     return None;
                 }
                 if self.self_param(matches[0].0, field).is_some() {
