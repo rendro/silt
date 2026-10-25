@@ -680,18 +680,69 @@ impl TypeChecker {
     /// is still unknown.
     pub(super) fn open_vias(&mut self) -> Vec<usize> {
         let len = self.wanted.len();
-        self.waiting_vias
-            .retain(|&k| k < len && !self.wanted[k].solved);
+        // (A call whose method's type has no variable left takes no type
+        // argument any more: it waits for none.)
+        let waiting = std::mem::take(&mut self.waiting_vias);
+        self.waiting_vias = (waiting.into_iter())
+            .filter(|&k| {
+                k < len
+                    && !self.wanted[k].solved
+                    && match &self.wanted[k].goal {
+                        Goal::Pred(Pred::Via { method_ty, .. }) => self.has_variable(method_ty),
+                        _ => true,
+                    }
+            })
+            .collect();
         let scope = self.wanted_marks.last().copied().unwrap_or(0);
         (self.waiting_vias.iter().copied())
             .filter(|&k| k >= scope)
             .filter(|&k| match &self.wanted[k].goal {
-                Goal::Pred(Pred::Via { method_ty, .. }) => {
-                    super::inference::type_of_var(&self.apply(method_ty)).is_some()
-                }
+                Goal::Pred(Pred::Via { method_ty, .. }) => self.takes_open_type(method_ty),
                 _ => false,
             })
             .collect()
+    }
+
+    /// Whether the method type `ty`, as the session has it now, takes a
+    /// type argument still unknown (`type_of_var` of it applied), read
+    /// without building it: every call reads each waiting call's.
+    fn takes_open_type(&self, ty: &Type) -> bool {
+        match self.resolved(ty) {
+            Type::Generic(name, args) if name.is_builtin(crate::defs::TYPE_OF) => {
+                (args.first()).is_some_and(|arg| matches!(self.resolved(arg), Type::Var(_)))
+            }
+            Type::Fun(params, ret) => {
+                (params.iter().chain([&**ret])).any(|ty| self.takes_open_type(ty))
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether `ty`, as the session has it now, has a variable nothing
+    /// decided yet, read without building it.
+    fn has_variable(&self, ty: &Type) -> bool {
+        match self.resolved(ty) {
+            Type::Var(_) => true,
+            Type::Fun(params, ret) => {
+                params.iter().any(|t| self.has_variable(t)) || self.has_variable(ret)
+            }
+            Type::Generic(_, ts) | Type::Tuple(ts) => ts.iter().any(|t| self.has_variable(t)),
+            Type::List(t) | Type::Set(t) | Type::Channel(t) => self.has_variable(t),
+            Type::Map(k, v) => self.has_variable(k) || self.has_variable(v),
+            Type::AnonRecord { .. } | Type::AssocProj { .. } => true,
+            _ => false,
+        }
+    }
+
+    /// `ty` with the variables it is at its outside followed to what they
+    /// stand for.
+    fn resolved<'a>(&'a self, mut ty: &'a Type) -> &'a Type {
+        while let Type::Var(v) = ty
+            && let Some(Some(bound)) = self.tables.vars.subst.get(*v)
+        {
+            ty = bound;
+        }
+        ty
     }
 
     /// Point each of the calls `open` of trait methods whose type argument

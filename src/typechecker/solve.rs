@@ -2689,20 +2689,26 @@ fn key_text(ty: &Type, vars: &mut Vec<TyVar>) -> String {
 
 /// Unify `a` and `b` in the substitution `subst` alone (`could_unify`).
 fn probe_unify(a: &Type, b: &Type, subst: &mut HashMap<TyVar, Type>) -> bool {
-    let resolve = |ty: &Type, subst: &HashMap<TyVar, Type>| {
-        let mut ty = ty.clone();
-        while let Type::Var(v) = ty
-            && let Some(bound) = subst.get(&v)
+    // (A variable the substitution binds, followed to what it stands for:
+    // a copy only then.)
+    let resolve = |ty: &Type, subst: &HashMap<TyVar, Type>| -> Option<Type> {
+        let Type::Var(v) = ty else {
+            return None;
+        };
+        let mut bound = subst.get(v)?;
+        while let Type::Var(w) = bound
+            && let Some(next) = subst.get(w)
         {
-            ty = bound.clone();
+            bound = next;
         }
-        ty
+        Some(bound.clone())
     };
-    let (a, b) = (resolve(a, subst), resolve(b, subst));
+    let (ra, rb) = (resolve(a, subst), resolve(b, subst));
+    let (a, b) = (ra.as_ref().unwrap_or(a), rb.as_ref().unwrap_or(b));
     let all = |xs: &[Type], ys: &[Type], subst: &mut HashMap<TyVar, Type>| {
         xs.len() == ys.len() && (xs.iter().zip(ys)).all(|(x, y)| probe_unify(x, y, subst))
     };
-    match (&a, &b) {
+    match (a, b) {
         (Type::Error, _) | (_, Type::Error) => true,
         (Type::Var(x), Type::Var(y)) if x == y => true,
         (Type::Var(x), other) | (other, Type::Var(x)) => {
@@ -2833,6 +2839,7 @@ pub(crate) enum OuterHead {
     Map,
     Tuple(usize),
     Fun(usize),
+    Record,
 }
 
 fn outer_head(ty: &Type) -> Option<OuterHead> {
@@ -2849,6 +2856,7 @@ fn outer_head(ty: &Type) -> Option<OuterHead> {
         Type::Map(..) => OuterHead::Map,
         Type::Tuple(parts) => OuterHead::Tuple(parts.len()),
         Type::Fun(params, _) => OuterHead::Fun(params.len()),
+        Type::AnonRecord { .. } => OuterHead::Record,
         _ => return None,
     })
 }
