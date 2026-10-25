@@ -288,13 +288,45 @@ impl TypeChecker {
     /// The impls of `tr` for the type `head` whose trait arguments could
     /// be the use's `args`.
     pub(super) fn impls_fitting(&self, tr: TraitKey, head: TypeRef, args: &[Type]) -> Vec<ImplKey> {
-        (self.tables.impl_args_of(tr, head).iter())
+        let impls = self.tables.impl_args_of(tr, head);
+        if args.is_empty() {
+            return impls.iter().map(|key| (tr, head, *key)).collect();
+        }
+        let args: Vec<Type> = (args.iter())
+            .map(|arg| {
+                crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(arg))
+            })
+            .collect();
+        (impls.iter())
             .map(|key| (tr, head, *key))
             .filter(|key| {
-                let written = (self.tables.impl_trait_args.get(key)).map_or(&[][..], Vec::as_slice);
-                args.is_empty() || written.is_empty() || self.could_unify(args, written).is_some()
+                let written = self.canon_impl_args(*key);
+                written.is_empty() || {
+                    let mut subst: HashMap<TyVar, Type> = HashMap::new();
+                    written.len() == args.len()
+                        && (args.iter().zip(written.iter()))
+                            .all(|(arg, written)| probe_unify(arg, written, &mut subst))
+                }
             })
             .collect()
+    }
+
+    /// The trait arguments of the impl `key`, canonical, as kept for the
+    /// module (`canon_impl_args`): none while the impl's are not known.
+    fn canon_impl_args(&self, key: ImplKey) -> std::rc::Rc<[Type]> {
+        if let Some(found) = self.canon_impl_args.borrow().get(&key) {
+            return found.clone();
+        }
+        let Some(written) = self.tables.impl_trait_args.get(&key) else {
+            return std::rc::Rc::from([]);
+        };
+        let canon: std::rc::Rc<[Type]> = (written.iter())
+            .map(|arg| {
+                crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(arg))
+            })
+            .collect();
+        self.canon_impl_args.borrow_mut().insert(key, canon.clone());
+        canon
     }
 
     /// The impl of `tr` for the type `head` a use at the trait arguments
