@@ -297,36 +297,75 @@ impl TypeChecker {
                 crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(arg))
             })
             .collect();
-        (impls.iter())
-            .map(|key| (tr, head, *key))
-            .filter(|key| {
-                let written = self.canon_impl_args(*key);
+        let index = self.impl_index(tr, head);
+        // (Only the impls whose first trait argument has the use's outer
+        // type, or is a variable, are unified with the use's.)
+        let heads: Vec<Option<OuterHead>> = args.iter().map(outer_head).collect();
+        let mut at: Vec<usize> = match heads.first().copied().flatten() {
+            Some(first) => (index.by_first.get(&Some(first)).into_iter().flatten())
+                .chain(index.by_first.get(&None).into_iter().flatten())
+                .copied()
+                .collect(),
+            None => (0..index.impls.len()).collect(),
+        };
+        at.sort_unstable();
+        (at.into_iter())
+            .map(|i| &index.impls[i])
+            .filter(|(_, written)| {
                 written.is_empty() || {
+                    let apart = (written.iter().zip(&heads)).any(|(written, head)| {
+                        head.is_some_and(|head| outer_head(written).is_some_and(|w| w != head))
+                    });
                     let mut subst: HashMap<TyVar, Type> = HashMap::new();
-                    written.len() == args.len()
+                    !apart
+                        && written.len() == args.len()
                         && (args.iter().zip(written.iter()))
                             .all(|(arg, written)| probe_unify(arg, written, &mut subst))
                 }
             })
+            .map(|(key, _)| *key)
             .collect()
     }
 
-    /// The trait arguments of the impl `key`, canonical, as kept for the
-    /// module (`canon_impl_args`): none while the impl's are not known.
-    fn canon_impl_args(&self, key: ImplKey) -> std::rc::Rc<[Type]> {
-        if let Some(found) = self.canon_impl_args.borrow().get(&key) {
+    /// The impls of `tr` for the type `head`, as `impls_fitting` reads
+    /// them (`ImplIndex`), kept for the module's other uses while no impl
+    /// is added: not while an impl's trait arguments are not known yet.
+    fn impl_index(&self, tr: TraitKey, head: TypeRef) -> std::rc::Rc<ImplIndex> {
+        let impls = self.tables.impl_args_of(tr, head);
+        if let Some(found) = self.impl_index.borrow().get(&(tr, head))
+            && found.impls.len() == impls.len()
+        {
             return found.clone();
         }
-        let Some(written) = self.tables.impl_trait_args.get(&key) else {
-            return std::rc::Rc::from([]);
-        };
-        let canon: std::rc::Rc<[Type]> = (written.iter())
-            .map(|arg| {
-                crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(arg))
-            })
-            .collect();
-        self.canon_impl_args.borrow_mut().insert(key, canon.clone());
-        canon
+        let mut index = ImplIndex::default();
+        let mut known = true;
+        for (i, args) in impls.iter().enumerate() {
+            let key = (tr, head, *args);
+            let canon: std::rc::Rc<[Type]> = match self.tables.impl_trait_args.get(&key) {
+                Some(written) => (written.iter())
+                    .map(|arg| {
+                        crate::types::canonical::canonicalize(
+                            &self.tables.resolver,
+                            &self.apply(arg),
+                        )
+                    })
+                    .collect(),
+                None => {
+                    known = false;
+                    std::rc::Rc::from([])
+                }
+            };
+            let first = canon.first().and_then(outer_head);
+            index.by_first.entry(first).or_default().push(i);
+            index.impls.push((key, canon));
+        }
+        let index = std::rc::Rc::new(index);
+        if known {
+            self.impl_index
+                .borrow_mut()
+                .insert((tr, head), index.clone());
+        }
+        index
     }
 
     /// The impl of `tr` for the type `head` a use at the trait arguments
@@ -2780,4 +2819,45 @@ fn holds_record(ty: &Type) -> bool {
         Type::Map(k, v) => holds_record(k) || holds_record(v),
         _ => false,
     }
+}
+
+/// The outer type of a trait argument, as `impls_fitting` tells impls
+/// apart before unifying: none for a variable (or what meets anything).
+#[derive(PartialEq, Eq, Hash, Clone, Copy)]
+pub(crate) enum OuterHead {
+    Named(TypeRef),
+    Prim(u8),
+    List,
+    Set,
+    Channel,
+    Map,
+    Tuple(usize),
+    Fun(usize),
+}
+
+fn outer_head(ty: &Type) -> Option<OuterHead> {
+    Some(match ty {
+        Type::Generic(name, _) => OuterHead::Named(*name),
+        Type::Int => OuterHead::Prim(0),
+        Type::Float => OuterHead::Prim(1),
+        Type::Bool => OuterHead::Prim(2),
+        Type::String => OuterHead::Prim(3),
+        Type::Unit => OuterHead::Prim(4),
+        Type::List(_) => OuterHead::List,
+        Type::Set(_) => OuterHead::Set,
+        Type::Channel(_) => OuterHead::Channel,
+        Type::Map(..) => OuterHead::Map,
+        Type::Tuple(parts) => OuterHead::Tuple(parts.len()),
+        Type::Fun(params, _) => OuterHead::Fun(params.len()),
+        _ => return None,
+    })
+}
+
+/// The impls of a trait for a type as `impls_fitting` reads them: each
+/// with its trait arguments, canonical, and by the outer type of its
+/// first trait argument (`None`: a variable, which every use meets).
+#[derive(Default)]
+pub(crate) struct ImplIndex {
+    impls: Vec<(ImplKey, std::rc::Rc<[Type]>)>,
+    by_first: HashMap<Option<OuterHead>, Vec<usize>>,
 }

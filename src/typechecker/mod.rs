@@ -406,10 +406,11 @@ pub struct TypeChecker {
     /// The trait arguments each impl of the module writes, with the
     /// names of their type variables, for a message that names them.
     pub(super) impl_written: HashMap<ImplKey, (Vec<Type>, Vec<(TyVar, Symbol)>)>,
-    /// The trait arguments of each impl a use was matched against, as
-    /// the matching reads them (canonical: aliases expanded), kept for
-    /// the module's other uses (`impls_fitting`).
-    pub(super) canon_impl_args: std::cell::RefCell<HashMap<ImplKey, std::rc::Rc<[Type]>>>,
+    /// The impls of each trait for each type a use was matched against,
+    /// as the matching reads them (`solve::ImplIndex`), kept for the
+    /// module's other uses (`impls_fitting`).
+    pub(super) impl_index:
+        std::cell::RefCell<HashMap<(TraitKey, TypeRef), std::rc::Rc<solve::ImplIndex>>>,
     /// Whether the module is a REPL cell: its `let`s are offered to the
     /// next cell, which may fix what is unknown of their types.
     pub(super) is_cell: bool,
@@ -538,7 +539,7 @@ impl TypeChecker {
             blanket_traits: std::collections::HashSet::new(),
             duplicated_impls: std::collections::HashSet::new(),
             impl_written: HashMap::new(),
-            canon_impl_args: Default::default(),
+            impl_index: Default::default(),
             is_cell: false,
             named_types: std::collections::HashSet::new(),
             signatures_only: false,
