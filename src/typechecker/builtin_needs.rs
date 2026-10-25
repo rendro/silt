@@ -813,6 +813,21 @@ impl TypeChecker {
             }
         }
         for use_ in std::mem::take(&mut self.via_waiting) {
+            // (A call on a type whose method asks nothing of what it is
+            // given has nothing to place.)
+            let receiver = self.apply(&use_.need.receiver);
+            if !matches!(
+                receiver,
+                Type::Var(_) | Type::Rigid(_) | Type::Error | Type::Never
+            ) {
+                let need = &use_.need;
+                if self
+                    .leaves(need.tr, need.method, &receiver, &need.method_ty)
+                    .is_empty()
+                {
+                    continue;
+                }
+            }
             // (A type the calling function writes as the method's type
             // argument itself, `x.one(List(Int))`, is none the call
             // gives: no place names it.)

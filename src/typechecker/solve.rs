@@ -2133,10 +2133,15 @@ impl TypeChecker {
                 .iter()
                 .map(|t| substitute_vars(t, &fresh))
                 .collect();
+            // (An impl that fits the use was found so; a record is
+            // compared again, by its fields and its row as written.)
+            let fitted = !fitting.is_empty();
             for (bound_arg, impl_arg) in bound_trait_args.iter().zip(&impl_trait_args) {
                 let b = self.apply(bound_arg);
                 let i = self.apply(impl_arg);
-                if !self.trait_arg_compatible(&b, &i) {
+                if (!fitted || holds_record(&b) || holds_record(&i))
+                    && !self.trait_arg_compatible(&b, &i)
+                {
                     self.error(
                         Code::MissingTraitImpl,
                         format!(
@@ -2763,4 +2768,16 @@ fn match_one_way(pattern: &Type, ty: &Type, mapping: &mut HashMap<TyVar, Type>) 
 fn dedup_in_order(items: &mut Vec<String>) {
     let mut seen = std::collections::HashSet::new();
     items.retain(|item| seen.insert(item.clone()));
+}
+
+/// Whether `ty` has an anonymous record in it.
+fn holds_record(ty: &Type) -> bool {
+    match ty {
+        Type::AnonRecord { .. } => true,
+        Type::Generic(_, ts) | Type::Tuple(ts) => ts.iter().any(holds_record),
+        Type::Fun(params, ret) => params.iter().any(holds_record) || holds_record(ret),
+        Type::List(t) | Type::Set(t) | Type::Channel(t) => holds_record(t),
+        Type::Map(k, v) => holds_record(k) || holds_record(v),
+        _ => false,
+    }
 }
