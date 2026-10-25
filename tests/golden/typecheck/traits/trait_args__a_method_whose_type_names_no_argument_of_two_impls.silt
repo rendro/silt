@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- A method whose type mentions no parameter of its trait, of a type with
+-- impls at several trait arguments: no call can decide which.
+-- stderr-contains: = help: nothing a call of 'w' gives decides the trait argument: call it where a bound decides it (`where t: W(Int)`)
+trait W(a) { fn w(self) -> Int }
+type T { T }
+trait W(Int) for T { fn w(self) -> Int { 1 } }
+trait W(String) for T { fn w(self) -> Int { 2 } }
+fn main() {
+  println(W.w(T))
+}

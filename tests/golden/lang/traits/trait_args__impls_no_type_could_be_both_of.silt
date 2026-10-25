@@ -1,0 +1,16 @@
+-- Two impls no one type could be both of are two impls: `T(a, b, a, b)`
+-- beside `T(List(c), List(d), d, c)` (one type would hold itself), and
+-- records of other fields.
+trait T(p, q, r, s) { fn mk(w: p, x: q, y: r, z: s) -> Self }
+trait From(e) { fn from(source: e) -> Self }
+type A { A(String) }
+fn sh(a: A) -> String { match a { A(s) -> s } }
+trait T(a, b, a, b) for A { fn mk(w: a, x: b, y: a, z: b) -> A { A("abab") } }
+trait T(List(c), List(d), d, c) for A { fn mk(w: List(c), x: List(d), y: d, z: c) -> A { A("lists") } }
+trait From({ x: Int }) for A { fn from(e: { x: Int }) -> A { A("x") } }
+trait From({ y: String }) for A { fn from(e: { y: String }) -> A { A("y") } }
+fn main() {
+  println(sh(A.mk(1, 2, 1, 2)))
+  println(sh(A.from({ x: 1 })))
+  println(sh(A.from({ y: "s" })))
+}

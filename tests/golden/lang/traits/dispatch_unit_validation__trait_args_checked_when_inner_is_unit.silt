@@ -1,7 +1,7 @@
 -- cmd: check
 -- exit: 1
 -- stderr-contains: error[type]
--- stderr-contains: does not implement trait 'T(Int)'
+-- stderr-contains: does not implement trait 'T(Int)': the matched impl is 'T(String)'
 -- An impl's `where a: T(Int)` bound is validated when `a` resolves
 -- to Unit, which only implements T(String).
 trait T(c) { fn m(self) -> c }

@@ -1,58 +1,72 @@
 use super::*;
 
+/// What a trait asks of a type variable for a type to have it: the
+/// variable, the trait and the trait arguments (none: any).
+type Need = (TyVar, TraitKey, Vec<Type>);
+
 impl TypeChecker {
     /// Whether the impl of `tr` for `head` was reported for a type
     /// variable of its type that its header does not give a trait the
-    /// supertrait `sup` asks of it at that type (`'a' needs 'Equal'`).
+    /// supertrait `sup`, at the trait arguments `sup_args`, asks of it at
+    /// that type (`'a' needs 'Equal'`, `'a' needs 'Sup(Int)'`).
     fn supertrait_needs_reported(
         &mut self,
-        tr: TraitKey,
-        head: TypeRef,
+        key: ImplKey,
         sup: TraitKey,
+        sup_args: &[Type],
         span: Span,
     ) -> bool {
-        let Some(self_ty) = self.tables.impl_self_types.get(&(tr, head)).cloned() else {
+        let (tr, _, _) = key;
+        let Some(self_ty) = self.tables.impl_self_types.get(&key).cloned() else {
             return false;
         };
-        let mut needs: Vec<(TyVar, TraitKey)> = Vec::new();
-        if !self.trait_needs(sup, &self_ty, 0, &mut needs) {
+        let mut needs: Vec<Need> = Vec::new();
+        if !self.trait_needs(sup, sup_args, &self_ty, 0, &mut needs) {
             return false;
         }
-        // What the header gives, with the supertraits of each bound.
-        let mut given: Vec<(TyVar, TraitKey)> = Vec::new();
-        for pred in self
-            .tables
-            .impl_preds
-            .get(&(tr, head))
-            .into_iter()
-            .flatten()
-        {
+        // What the header gives, with the supertraits of each bound (at
+        // any trait arguments: those of a bound's supertraits are not
+        // read here).
+        let mut given: Vec<(TyVar, TraitKey, Option<Vec<Type>>)> = Vec::new();
+        for pred in self.tables.impl_preds.get(&key).into_iter().flatten() {
             if let Pred::Trait {
                 tr: bound,
                 subject: Type::Var(v),
+                args,
                 ..
             } = pred
             {
-                given.push((*v, *bound));
-                given.extend(self.supertraits_of(*bound).into_iter().map(|s| (*v, s)));
+                given.push((*v, *bound, Some(args.clone())));
+                given.extend((self.supertraits_of(*bound).into_iter()).map(|s| (*v, s, None)));
             }
         }
-        let mut missing: Vec<(TyVar, TraitKey)> = Vec::new();
-        for need in needs.iter().filter(|need| !given.contains(need)) {
+        // (A bound at other trait arguments gives no need at these: one
+        // impl is no other.)
+        let gives = |(v, t, args): &Need| {
+            (given.iter()).any(|(gv, gt, gargs)| {
+                gv == v
+                    && gt == t
+                    && (args.is_empty()
+                        || gargs.as_ref().is_none_or(|gargs| {
+                            gargs.len() == args.len()
+                                && (gargs.iter().zip(args))
+                                    .all(|(g, a)| self.apply(g) == self.apply(a))
+                        }))
+            })
+        };
+        let mut missing: Vec<Need> = Vec::new();
+        for need in needs.iter().filter(|need| !gives(need)) {
             if !missing.contains(need) {
-                missing.push(*need);
+                missing.push(need.clone());
             }
         }
-        let Some(&(var, trait_needed)) = missing.first() else {
+        let Some((var, trait_needed, needed_args)) = missing.first().cloned() else {
             return false;
         };
         // The impl's type variables by the names its header writes
         // (letters for those of a bare target, which names none).
-        let mut names: Vec<(TyVar, Symbol)> = self
-            .impl_var_names
-            .get(&(tr, head))
-            .cloned()
-            .unwrap_or_default();
+        let mut names: Vec<(TyVar, Symbol)> =
+            self.impl_var_names.get(&key).cloned().unwrap_or_default();
         let named = !names.is_empty();
         for v in free_vars_in(&self_ty) {
             if !names.iter().any(|(known, _)| *known == v) {
@@ -79,14 +93,22 @@ impl TypeChecker {
                 .map_or_else(|| "a".to_string(), |(_, name)| resolve(*name))
         };
         let var_name = name_of(var);
+        // (Of traits with parameters, at the impl's and the supertrait's
+        // trait arguments.)
+        let impl_args = self
+            .tables
+            .impl_trait_args
+            .get(&key)
+            .cloned()
+            .unwrap_or_default();
         let (tr_shown, sup_shown, needed) = (
-            self.show_trait(tr),
-            self.show_trait(sup),
-            self.show_trait(trait_needed),
+            self.show_bound(tr, &impl_args),
+            self.show_bound(sup, sup_args),
+            self.show_bound(trait_needed, &needed_args),
         );
         // The help names every variable that needs a bound.
         let bounds: Vec<String> = (missing.iter())
-            .map(|(v, t)| format!("{}: {}", name_of(*v), self.show_trait(*t)))
+            .map(|(v, t, args)| format!("{}: {}", name_of(*v), self.show_bound(*t, args)))
             .collect();
         let bounds = bounds.join(", ");
         let help = match named {
@@ -107,25 +129,28 @@ impl TypeChecker {
         true
     }
 
-    /// What the trait `tr` asks of the type variables of `ty` for `ty`
-    /// to have it, gathered into `needs`: the variable itself; a part of
-    /// a type that has the trait by its structure; what the header of
-    /// the impl written for the type's head asks, at the type's
+    /// What the trait `tr` at the trait arguments `args` asks of the
+    /// type variables of `ty` for `ty` to have it, gathered into
+    /// `needs`: the variable itself; a part of a type that has the trait
+    /// by its structure; what the header of the impl written for the
+    /// type's head (at those trait arguments) asks, at the type's
     /// arguments. `false` where a part that is no variable lacks it.
     fn trait_needs(
         &self,
         tr: TraitKey,
+        args: &[Type],
         ty: &Type,
         depth: usize,
-        needs: &mut Vec<(TyVar, TraitKey)>,
+        needs: &mut Vec<Need>,
     ) -> bool {
         if depth > 16 {
             return true;
         }
         let ty = crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(ty));
         if let Type::Var(v) = ty {
-            if !needs.contains(&(v, tr)) {
-                needs.push((v, tr));
+            let need = (v, tr, args.to_vec());
+            if !needs.contains(&need) {
+                needs.push(need);
             }
             return true;
         }
@@ -143,36 +168,57 @@ impl TypeChecker {
             }
             for part in walk.open {
                 if let Type::Var(v) = part
-                    && !needs.contains(&(v, tr))
+                    && !needs.contains(&(v, tr, Vec::new()))
                 {
-                    needs.push((v, tr));
+                    needs.push((v, tr, Vec::new()));
                 }
             }
-            return (walk.written.iter()).all(|part| self.trait_needs(tr, part, depth + 1, needs));
+            return (walk.written.iter())
+                .all(|part| self.trait_needs(tr, &[], part, depth + 1, needs));
         }
         if !self.tables.trait_impl_set.contains(&(tr, head)) {
             return false;
         }
-        let Some(impl_ty) = self.tables.impl_self_types.get(&(tr, head)) else {
+        // (The impl a part's type reaches: of a trait with parameters,
+        // the one at the trait arguments, or the one impl it has for the
+        // type if it has one.)
+        let at = self.impl_reached(tr, head, args);
+        let Some(key) = at.or_else(|| self.tables.one_impl(tr, head)) else {
+            return true;
+        };
+        let Some(impl_ty) = self.tables.impl_self_types.get(&key) else {
             return true;
         };
         let mut mapping: HashMap<TyVar, Type> = HashMap::new();
         super::builtin_needs::match_type(impl_ty, &ty, &free_vars_in(impl_ty), &mut mapping);
-        (self
-            .tables
-            .impl_preds
-            .get(&(tr, head))
-            .into_iter()
-            .flatten())
-        .all(|pred| match pred {
+        if let Some(impl_args) = self.tables.impl_trait_args.get(&key) {
+            for (written, asked) in impl_args.iter().zip(args) {
+                super::builtin_needs::match_type(
+                    written,
+                    asked,
+                    &free_vars_in(written),
+                    &mut mapping,
+                );
+            }
+        }
+        (self.tables.impl_preds.get(&key).into_iter().flatten()).all(|pred| match pred {
             Pred::Trait {
-                tr: bound, subject, ..
-            } => self.trait_needs(
-                *bound,
-                &substitute_vars(subject, &mapping),
-                depth + 1,
-                needs,
-            ),
+                tr: bound,
+                subject,
+                args: bound_args,
+                ..
+            } => {
+                let bound_args: Vec<Type> = (bound_args.iter())
+                    .map(|arg| substitute_vars(arg, &mapping))
+                    .collect();
+                self.trait_needs(
+                    *bound,
+                    &bound_args,
+                    &substitute_vars(subject, &mapping),
+                    depth + 1,
+                    needs,
+                )
+            }
             _ => true,
         })
     }
@@ -186,12 +232,12 @@ impl TypeChecker {
         // The impls this module writes: an impl is validated where it
         // is written, once, and not again by every module checked after
         // it in the session.
-        let impl_pairs: Vec<(TraitKey, TypeRef)> = self.tables.trait_impl_set.added().collect();
-        for (trait_name, type_name) in &impl_pairs {
+        let impl_keys: Vec<ImplKey> = self.tables.impl_keys.added().collect();
+        for impl_key in &impl_keys {
+            let (trait_name, type_name, args_key) = (&impl_key.0, &impl_key.1, impl_key.2);
             // The impl block, for the messages. (A row without one is
             // no written impl: nothing to validate.)
-            let Some(&diag_span) = self.tables.trait_impl_spans.get(&(*trait_name, *type_name))
-            else {
+            let Some(&diag_span) = self.tables.trait_impl_spans.get(impl_key) else {
                 continue;
             };
 
@@ -224,7 +270,7 @@ impl TypeChecker {
             let enclosing_args: Vec<Type> = self
                 .tables
                 .impl_trait_args
-                .get(&(*trait_name, *type_name))
+                .get(impl_key)
                 .cloned()
                 .unwrap_or_default();
             for (i, supertrait) in trait_info.supertraits.iter().enumerate() {
@@ -242,36 +288,44 @@ impl TypeChecker {
                     );
                     continue;
                 }
+                // Resolve the supertrait's expected args against the
+                // enclosing trait's impl args (none for the bare
+                // `: Super` form).
+                let expected_super_args: Vec<Type> = (trait_info.supertrait_args.get(i))
+                    .into_iter()
+                    .flatten()
+                    .map(|te| {
+                        crate::typechecker::inference::resolve_supertrait_arg(
+                            te,
+                            &trait_info,
+                            &enclosing_args,
+                        )
+                    })
+                    .collect();
                 // The supertrait holds at the impl's own type, its type
                 // variables having what the impl's header gives them
                 // (`trait Same for Box(a) where a: Equal`), not at the
-                // head alone: a `Box(a)` has `Equal` when its `a` does.
-                if self.supertrait_needs_reported(*trait_name, *type_name, *supertrait, diag_span) {
+                // head alone: a `Box(a)` has `Equal` when its `a` does,
+                // `Sup(Int)` when its `a` has `Sup(Int)`.
+                if self.supertrait_needs_reported(
+                    *impl_key,
+                    *supertrait,
+                    &expected_super_args,
+                    diag_span,
+                ) {
                     continue;
                 }
-                // Resolve the supertrait's expected args against the
-                // enclosing trait's impl args. Skip when there are no
-                // supertrait args declared (bare `: Super` form).
-                let arg_exprs = trait_info.supertrait_args.get(i);
-                let expected_super_args: Vec<Type> = match arg_exprs {
-                    Some(exprs) if !exprs.is_empty() => exprs
-                        .iter()
-                        .map(|te| {
-                            crate::typechecker::inference::resolve_supertrait_arg(
-                                te,
-                                &trait_info,
-                                &enclosing_args,
-                            )
-                        })
-                        .collect(),
-                    _ => continue,
-                };
-                let actual_super_args = self
-                    .tables
-                    .impl_trait_args
-                    .get(&(*supertrait, *type_name))
-                    .cloned()
-                    .unwrap_or_default();
+                // (Skipped for the bare form.)
+                if expected_super_args.is_empty() {
+                    continue;
+                }
+                // (The supertrait's impl for those trait arguments.)
+                let actual_super_args =
+                    (self.impl_reached(*supertrait, *type_name, &expected_super_args))
+                        .or_else(|| self.tables.one_impl(*supertrait, *type_name))
+                        .and_then(|key| self.tables.impl_trait_args.get(&key))
+                        .cloned()
+                        .unwrap_or_default();
                 let len_ok = actual_super_args.len() == expected_super_args.len();
                 let pos_ok = len_ok
                     && expected_super_args
@@ -291,12 +345,31 @@ impl TypeChecker {
                     };
                     let (tr, sup) = (self.show_trait(*trait_name), self.show_trait(*supertrait));
                     let ty = self.show_type(&Type::Generic(*type_name, Vec::new()));
-                    self.error(Code::InvalidTraitImpl,
+                    // (The impls the type has, where none is the one: each at
+                    // its trait arguments.)
+                    let found: Vec<String> = match actual_super_args.is_empty() {
+                        false => vec![format!("{sup}({})", fmt_args(&actual_super_args))],
+                        true => (self.tables.impl_args_of(*supertrait, *type_name).iter())
+                            .filter_map(|at| {
+                                (self.tables.impl_trait_args).get(&(*supertrait, *type_name, *at))
+                            })
+                            .map(|args| self.show_bound(*supertrait, args))
+                            .collect(),
+                    };
+                    let found: Vec<String> = found
+                        .iter()
+                        .map(|impl_| format!("impl {impl_} for {ty}"))
+                        .collect();
+                    let found = match found.is_empty() {
+                        true => format!("found no impl of {sup} for {ty}"),
+                        false => format!("found {}", found.join(" and ")),
+                    };
+                    self.error(
+                        Code::InvalidTraitImpl,
                         format!(
-                            "impl {tr}({}) for {ty} requires impl {sup}({}) for {ty}, but found impl {sup}({}) for {ty}",
+                            "impl {tr}({}) for {ty} requires impl {sup}({}) for {ty}, but {found}",
                             fmt_args(&enclosing_args),
                             fmt_args(&expected_super_args),
-                            fmt_args(&actual_super_args),
                         ),
                         diag_span,
                     );
@@ -310,17 +383,22 @@ impl TypeChecker {
                 let provided = self
                     .tables
                     .impl_methods
-                    .get(*type_name, *method_name, *trait_name)
+                    .get_at(*type_name, *method_name, *trait_name, args_key)
                     .is_some();
                 if !provided && !trait_info.default_method_bodies.contains_key(method_name) {
                     // No impl method AND the trait does not provide a
                     // default body — the impl is genuinely missing a
                     // required method.
+                    // (A trait with parameters is named at the impl's.)
+                    let shown = match self.tables.impl_trait_args.get(impl_key) {
+                        Some(args) if !args.is_empty() => self.show_bound(*trait_name, args),
+                        _ => self.show_trait(*trait_name),
+                    };
                     self.error(
                         Code::InvalidTraitImpl,
                         format!(
                             "trait impl '{}' for '{}' is missing method '{}'",
-                            self.show_trait(*trait_name),
+                            shown,
                             self.show_type(&Type::Generic(*type_name, Vec::new())),
                             method_name
                         ),
@@ -331,7 +409,7 @@ impl TypeChecker {
                     // the method among them: it is entered with the
                     // type the trait declares, so a use of it is not
                     // reported as well.
-                    let impl_key = (*trait_name, *type_name);
+                    let impl_key = *impl_key;
                     let mut mapping: HashMap<TyVar, Type> = HashMap::new();
                     if let Some(self_type) = self.tables.impl_self_types.get(&impl_key) {
                         mapping.insert(trait_info.self_var, self_type.clone());
@@ -354,6 +432,7 @@ impl TypeChecker {
                     self.register_method_entry(
                         *type_name,
                         *method_name,
+                        args_key,
                         MethodEntry {
                             method_type: substitute_vars(method_ty, &mapping),
                             structural: false,
@@ -993,10 +1072,33 @@ impl TypeChecker {
             );
             return;
         };
-        let impl_key = (trait_key, target_type);
+        let args_key = self.impl_args_key_of(ti);
+        let impl_key = (trait_key, target_type, args_key);
 
-        // Coherence check: reject duplicate user-defined impls.
-        if self.tables.trait_impl_set.contains(&impl_key) {
+        // Coherence check: one impl for a trait, a type and its trait
+        // arguments: two whose trait arguments could be one are two impls
+        // one use could mean.
+        // An impl whose trait arguments name an unknown type is that
+        // error and no impl.
+        let (written_args, written_names) = self.impl_written_args(ti, false);
+        if written_args.iter().any(Type::holds_error) {
+            self.impl_written_args(ti, true);
+            self.duplicated_impls.insert((trait_key, target_type));
+            return;
+        }
+        let met = self.impl_met(ti, trait_key, target_type, args_key);
+        if let Some(met) = met {
+            self.duplicate_impl(ti, trait_key, target_type, args_key, met);
+            self.duplicated_impls.insert((trait_key, target_type));
+            return;
+        }
+        (self.impl_written).insert(impl_key, (written_args, written_names));
+        if self
+            .tables
+            .trait_impl_set
+            .contains(&(trait_key, target_type))
+            && self.tables.impl_args_of(trait_key, target_type).is_empty()
+        {
             // A builtin type is stamped with the structural traits it
             // has: that is no impl. (Where an impl of one may be
             // written is `impl_in_its_module`'s to say.)
@@ -1042,7 +1144,7 @@ impl TypeChecker {
             return;
         }
 
-        self.tables.trait_impl_set.insert(impl_key);
+        self.tables.add_impl(impl_key);
         // Record the impl block's real span for validate_trait_impls
         // to use when reporting missing-method diagnostics.
         self.tables.trait_impl_spans.insert(impl_key, ti.span);
@@ -1303,11 +1405,11 @@ impl TypeChecker {
         // impl in the place of the structural one) should win here too.
         self.tables
             .impl_self_types
-            .insert((trait_key, target_type), self_type.clone());
+            .insert(impl_key, self_type.clone());
         // The names the header gives the impl's type variables, for a
         // message about one (`validate_trait_impls`).
         self.impl_var_names.insert(
-            (trait_key, target_type),
+            impl_key,
             (impl_param_map.iter())
                 .filter_map(|(name, ty)| match self.apply(ty) {
                     Type::Var(v) => Some((v, *name)),
@@ -1449,7 +1551,7 @@ impl TypeChecker {
         if !impl_level_constraints.is_empty() {
             self.tables
                 .impl_preds
-                .insert((trait_key, target_type), impl_level_constraints.clone());
+                .insert(impl_key, impl_level_constraints.clone());
         }
 
         // A method of the impl whose name the trait does not declare is
@@ -1493,7 +1595,7 @@ impl TypeChecker {
                     .collect();
                 self.tables
                     .impl_trait_args
-                    .insert((trait_key, target_type), resolved_trait_args.clone());
+                    .insert(impl_key, resolved_trait_args.clone());
                 if !trait_info.param_where_clauses.is_empty() {
                     for (param_name, bound_trait) in &trait_info.param_where_clauses {
                         let Some(idx) = trait_info.params.iter().position(|p| p == param_name)
@@ -2031,12 +2133,13 @@ impl TypeChecker {
             self.register_method_entry(
                 target_type,
                 method.name,
+                args_key,
                 MethodEntry {
                     method_type: fn_type,
                     structural: false,
                     trait_name: Some(trait_key),
                     preds: (method_constraints.iter().cloned())
-                        .chain(self.given_to(&method_rigid, trait_key, target_type, method.name))
+                        .chain(self.given_to(&method_rigid, impl_key, method.name))
                         .collect(),
                 },
             );
@@ -2063,7 +2166,7 @@ impl TypeChecker {
             }
             if let Type::Fun(params, ret) = body_type {
                 self.impl_sigs.insert(
-                    (target_type, method.name, trait_key),
+                    (target_type, method.name, trait_key, args_key),
                     FnSig {
                         params,
                         ret: *ret,
@@ -2119,6 +2222,7 @@ impl TypeChecker {
                 self.register_method_entry(
                     target_type,
                     *name,
+                    args_key,
                     MethodEntry {
                         method_type: substitute_vars(ty, &mapping),
                         structural: false,
@@ -2243,18 +2347,13 @@ impl TypeChecker {
     /// for the annotation variables `rigid` of its body: what the body
     /// asks of each for the builtins it gives it to (`Pred::Given`); a
     /// note names it `Src.load`.
-    fn given_to(
-        &self,
-        rigid: &[RigidId],
-        trait_key: TraitKey,
-        target: TypeRef,
-        method: Symbol,
-    ) -> Vec<Pred> {
+    fn given_to(&self, rigid: &[RigidId], impl_key: ImplKey, method: Symbol) -> Vec<Pred> {
         if self.registry_rows {
             return Vec::new();
         }
+        let (trait_key, target, _) = impl_key;
         let passer = intern(&format!("{target}.{method}"));
-        let body = super::builtin_needs::body_key(trait_key, &target.to_string(), method);
+        let body = super::builtin_needs::body_key(trait_key, &impl_owner(impl_key), method);
         (rigid.iter())
             .map(|r| Pred::Given {
                 subject: Type::Var(r.var),
@@ -2336,11 +2435,160 @@ impl TypeChecker {
         preds
     }
 
-    fn register_method_entry(&mut self, target_type: TypeRef, method: Symbol, entry: MethodEntry) {
+    fn register_method_entry(
+        &mut self,
+        target_type: TypeRef,
+        method: Symbol,
+        args: ImplArgs,
+        entry: MethodEntry,
+    ) {
         let trait_key = entry.trait_name.expect("an impl's method has its trait");
         self.tables
             .impl_methods
-            .insert(target_type, method, trait_key, entry);
+            .insert(target_type, method, trait_key, args, entry);
+    }
+
+    /// The key of the trait arguments `ti` writes (`ImplArgs`). Kept by
+    /// the impl's span for what reads the impl after (`impl_args_keys`).
+    pub(super) fn impl_args_key_of(&mut self, ti: &TraitImpl) -> ImplArgs {
+        if let Some(key) = self.impl_args_keys.get(&ti.span) {
+            return *key;
+        }
+        let (args, _) = self.impl_written_args(ti, false);
+        let key = self.impl_args_key(&args);
+        self.impl_args_keys.insert(ti.span, key);
+        key
+    }
+
+    /// The trait arguments `ti` writes, each type variable of its header
+    /// a new one, with the names of the variables. What is wrong with
+    /// them is reported with `report`, else where the impl's trait
+    /// arguments are resolved for good.
+    fn impl_written_args(
+        &mut self,
+        ti: &TraitImpl,
+        report: bool,
+    ) -> (Vec<Type>, Vec<(TyVar, Symbol)>) {
+        let mut scratch: HashMap<Symbol, Type> = HashMap::new();
+        for &name in &ti.target_param_names {
+            scratch.insert(name, self.fresh_var());
+        }
+        let reported = self.errors.len();
+        let args: Vec<Type> = (ti.trait_args.iter())
+            .map(|te| self.resolve_type_expr(te, &mut scratch))
+            .collect();
+        if !report {
+            self.errors.truncate(reported);
+        }
+        let names = (scratch.iter())
+            .filter_map(|(name, ty)| match self.apply(ty) {
+                Type::Var(v) => Some((v, *name)),
+                _ => None,
+            })
+            .collect();
+        (args, names)
+    }
+
+    /// The trait `tr` at the trait arguments `args`, each type variable
+    /// by its name in `names` (`_` for one without).
+    fn show_named(&self, tr: TraitKey, args: &[Type], names: &[(TyVar, Symbol)]) -> String {
+        let mapping: HashMap<TyVar, Type> = (names.iter())
+            .map(|(var, name)| {
+                let rigid = RigidId {
+                    var: *var,
+                    name: *name,
+                };
+                (*var, Type::Rigid(rigid))
+            })
+            .collect();
+        let named: Vec<Type> = (args.iter())
+            .map(|arg| substitute_vars(&self.apply(arg), &mapping))
+            .collect();
+        self.show_bound(tr, &named)
+    }
+
+    /// The impl of `tr` for `ty` written before whose trait arguments
+    /// could be those `ti` writes: one use could mean either.
+    fn impl_met(
+        &mut self,
+        ti: &TraitImpl,
+        tr: TraitKey,
+        ty: TypeRef,
+        args: ImplArgs,
+    ) -> Option<ImplArgs> {
+        let (written, _) = self.impl_written_args(ti, false);
+        (self.tables.impl_args_of(tr, ty).iter())
+            .copied()
+            .find(|earlier| {
+                let theirs = (self.tables.impl_trait_args.get(&(tr, ty, *earlier)))
+                    .map_or(&[][..], Vec::as_slice);
+                *earlier == args || self.could_unify(&written, theirs).is_some()
+            })
+    }
+
+    /// Report the impl `ti` of `tr` for `ty` at the trait arguments
+    /// `args`, which one use could mean as well as the impl written before
+    /// at `met`.
+    fn duplicate_impl(
+        &mut self,
+        ti: &TraitImpl,
+        tr: TraitKey,
+        ty: TypeRef,
+        args: ImplArgs,
+        met: ImplArgs,
+    ) {
+        let trait_name = self.impl_trait_name(ti);
+        let target = self.impl_target_name(ti, ty);
+        let (written_args, names) = self.impl_written_args(ti, false);
+        let written = match written_args.is_empty() {
+            true => trait_name.clone(),
+            false => self.show_named(tr, &written_args, &names),
+        };
+        let (message, help) = if args == met {
+            (
+                format!("duplicate implementation of trait '{written}' for type '{target}'"),
+                None,
+            )
+        } else {
+            // (The trait arguments a use of both would have. The impls'
+            // variables by their names, as written.)
+            let (earlier_args, earlier_names) = match self.impl_written.get(&(tr, ty, met)) {
+                Some((args, names)) => (args.clone(), names.clone()),
+                None => (
+                    (self.tables.impl_trait_args.get(&(tr, ty, met)))
+                        .cloned()
+                        .unwrap_or_default(),
+                    Vec::new(),
+                ),
+            };
+            let earlier = self.show_named(tr, &earlier_args, &earlier_names);
+            let subst = self
+                .could_unify(&written_args, &earlier_args)
+                .unwrap_or_default();
+            let both: Vec<Type> = (written_args.iter())
+                .map(|arg| {
+                    let mut arg = arg.clone();
+                    for _ in 0..=subst.len() {
+                        arg = substitute_vars(&arg, &subst);
+                    }
+                    arg
+                })
+                .collect();
+            let all_names: Vec<(TyVar, Symbol)> =
+                names.iter().chain(&earlier_names).copied().collect();
+            let both = self.show_named(tr, &both, &all_names);
+            (
+                format!(
+                    "duplicate implementation of trait '{trait_name}' for type '{target}': the \
+                     impls of '{earlier}' and '{written}' overlap: both are for '{both}'"
+                ),
+                Some(
+                    "give each impl trait arguments of its own, which no other impl's could be"
+                        .to_string(),
+                ),
+            )
+        };
+        self.error_help(Code::DuplicateDeclaration, (message, help), ti.span);
     }
 
     /// A where-clause bound must

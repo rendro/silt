@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- An impl whose trait argument names an unknown type is that error and no
+-- impl: it meets no other, before or after it, and its uses say nothing
+-- more.
+-- stderr-contains: unknown type 'Nope'
+-- stderr-contains: unknown type 'Gone'
+-- stderr-not-contains: duplicate
+-- stderr-not-contains: does not implement
+trait From(e) { fn from(source: e) -> Self }
+type A { A(String) }
+fn sh(a: A) -> String { match a { A(s) -> s } }
+trait From(List(Nope)) for A { fn from(e: List(Nope)) -> A { A("nope") } }
+trait From(List(Int)) for A { fn from(e: List(Int)) -> A { A("li") } }
+trait From(List(Gone)) for A { fn from(e: List(Gone)) -> A { A("gone") } }
+fn main() { println(sh(A.from([1]))) }

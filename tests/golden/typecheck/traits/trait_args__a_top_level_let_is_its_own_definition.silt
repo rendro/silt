@@ -1,0 +1,23 @@
+-- cmd: check
+-- exit: 1
+-- A top-level `let` is its own definition: a trait argument nothing in it
+-- decides is an error at its use, though a function or the next `let`
+-- would decide it; that error is the one of a `let` nothing uses.
+-- stderr-contains: :16:19
+-- stderr-contains: :17:19
+-- stderr-contains: :19:24
+-- stderr-contains: cannot decide which impl of 'Conv(_)' for 'Int' this use of 'conv' means: its trait argument is not decided here
+-- stderr-not-contains: compiler bug
+-- stderr-not-contains: not fully known
+trait Conv(b) { fn conv(self) -> b }
+trait Conv(String) for Int { fn conv(self) -> String { "s{self}" } }
+trait Conv(Bool) for Int { fn conv(self) -> Bool { true } }
+let annotated: String = Conv.conv(1)
+let c = Conv.conv(3)
+let e = Conv.conv(4)
+let d: String = e
+let unused = Conv.conv(5)
+fn main() {
+  let s: String = c
+  println("{annotated} {s} {d}")
+}

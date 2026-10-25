@@ -27,6 +27,9 @@ pub struct Template {
     pub index: u32,
     pub tr: TraitId,
     pub ty: TypeId,
+    /// The impl's trait arguments (its key among the trait's impls for
+    /// the type).
+    pub args: crate::defs::ImplArgs,
     /// The impl, as a message names it: `Greet for Box`.
     pub name: String,
     /// The global slot of each method of the trait, in the order the

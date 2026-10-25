@@ -31,6 +31,28 @@ pub struct TypeId(pub DefId);
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
 pub struct TraitId(pub DefId);
 
+/// The trait arguments of an impl, in full, as one key beside its trait
+/// and the head of its type: an impl of a trait for a type is one of its
+/// trait arguments (`From(List(Int)) for A` and `From(List(String)) for
+/// A` are two). The key is the arguments' canonical text, which the
+/// typechecker writes (aliases expanded, the impl's type variables
+/// numbered as they first appear); a trait of no parameters has
+/// [`ImplArgs::none`].
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct ImplArgs(crate::intern::Symbol);
+
+impl ImplArgs {
+    /// The key of the impls of a trait of no parameters.
+    pub fn none() -> ImplArgs {
+        ImplArgs(crate::intern::intern(""))
+    }
+
+    /// The key of the trait arguments whose canonical text is `text`.
+    pub fn of(text: &str) -> ImplArgs {
+        ImplArgs(crate::intern::intern(text))
+    }
+}
+
 /// Whether other modules may name a definition.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Vis {

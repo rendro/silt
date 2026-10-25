@@ -199,6 +199,11 @@ pub struct TypeChecker {
     /// `x.f` there is a call of the function a field holds, which waits
     /// for the type of `x` (`unknown_receiver`).
     pub(super) callee_position: bool,
+    /// The accesses `x.m` that are no callee, by their span, as written:
+    /// for a message about a method taken as a value.
+    pub(super) method_values: HashMap<Span, String>,
+    /// The name a `let` binds such an access to, by the access's span.
+    pub(super) method_value_lets: HashMap<Span, Symbol>,
     /// The receiver and the name of the callee just checked, when it is
     /// `x.m` and the type of `x` is unknown: `check_call` lets the call
     /// wait (`Goal::Select`).
@@ -291,7 +296,7 @@ pub struct TypeChecker {
     /// The signature of each method written in an impl of the module, as
     /// its body sees it, by the impl's type, the method and the trait,
     /// until the body is checked.
-    pub(super) impl_sigs: HashMap<(TypeRef, Symbol, TraitKey), FnSig>,
+    pub(super) impl_sigs: HashMap<(TypeRef, Symbol, TraitKey, ImplArgs), FnSig>,
     /// Set by the inference of a call through a trait (`Greet.greet(x)`)
     /// whose argument of type `Self` was checked with the callee
     /// (`trait_receiver`): read by `check_call` right after the callee,
@@ -311,7 +316,10 @@ pub struct TypeChecker {
     pub(super) trait_receiver: Option<(Type, Span)>,
     /// The type variables of each impl this module writes, by the names
     /// its header gives them (`trait Same for Box(a)`).
-    pub(super) impl_var_names: HashMap<(TraitKey, TypeRef), Vec<(TyVar, Symbol)>>,
+    pub(super) impl_var_names: HashMap<ImplKey, Vec<(TyVar, Symbol)>>,
+    /// The key of the trait arguments of each impl the module writes,
+    /// by the impl's span (`impl_args_key_of`).
+    pub(super) impl_args_keys: HashMap<Span, ImplArgs>,
     /// The names the module binds definitions of other modules to (an
     /// item it imports, `import shapes.{ Area }`), for a help that
     /// writes one as the module does.
@@ -342,6 +350,12 @@ pub struct TypeChecker {
     /// unknown (see `unused`), by the level of the variable each is:
     /// the scope that decides it.
     pub(super) statement_calls: Vec<Vec<unused::StatementCall>>,
+    /// The types of statements left unknown because they are a trait
+    /// argument a use waits for: a statement's `()` decides none.
+    pub(super) statement_trait_args: std::collections::HashSet<TyVar>,
+    /// The trait arguments a use was reported for leaving undecided:
+    /// the type of a top-level `let` they are in is not reported again.
+    pub(super) reported_trait_args: std::collections::HashSet<TyVar>,
     /// The functions and closures whose body is being checked,
     /// outermost first, each with its parameters' types.
     pub(super) fn_frames: Vec<unused::FnFrame>,
@@ -377,6 +391,14 @@ pub struct TypeChecker {
     /// The traits of the module's rejected impls for every type
     /// (`trait T for a`): a type that lacks one is not reported again.
     pub(super) blanket_traits: std::collections::HashSet<TraitKey>,
+    /// The traits and types this module wrote a duplicate impl of, or an
+    /// impl whose trait arguments name an unknown type: its error is the
+    /// one, and a use of the trait for the type says no more (whichever
+    /// impl it meant).
+    pub(super) duplicated_impls: std::collections::HashSet<(TraitKey, TypeRef)>,
+    /// The trait arguments each impl of the module writes, with the
+    /// names of their type variables, for a message that names them.
+    pub(super) impl_written: HashMap<ImplKey, (Vec<Type>, Vec<(TyVar, Symbol)>)>,
     /// Whether the module is a REPL cell: its `let`s are offered to the
     /// next cell, which may fix what is unknown of their types.
     pub(super) is_cell: bool,
@@ -446,6 +468,8 @@ impl TypeChecker {
             given_closed: 0,
             passing_on: None,
             callee_position: false,
+            method_values: HashMap::new(),
+            method_value_lets: HashMap::new(),
             unknown_receiver: None,
             current_qmark_spans: Vec::new(),
             qmark_decided: HashMap::new(),
@@ -476,6 +500,7 @@ impl TypeChecker {
             ev: evidence::Ledger::default(),
             trait_receiver: None,
             impl_var_names: HashMap::new(),
+            impl_args_keys: HashMap::new(),
             spelled: HashMap::new(),
             module_spelled: HashMap::new(),
             seen_traits: std::collections::HashSet::new(),
@@ -485,6 +510,8 @@ impl TypeChecker {
             cells: Default::default(),
             defs: None,
             statement_calls: Vec::new(),
+            statement_trait_args: Default::default(),
+            reported_trait_args: Default::default(),
             fn_frames: Vec::new(),
             frame_owner: None,
             local_statement_units: HashMap::new(),
@@ -496,6 +523,8 @@ impl TypeChecker {
             rejected_types: std::collections::HashSet::new(),
             unresolved_impl_methods: std::collections::HashSet::new(),
             blanket_traits: std::collections::HashSet::new(),
+            duplicated_impls: std::collections::HashSet::new(),
+            impl_written: HashMap::new(),
             is_cell: false,
             named_types: std::collections::HashSet::new(),
             signatures_only: false,
@@ -896,6 +925,10 @@ impl TypeChecker {
                 if free_vars_in(&ty).iter().all(|v| scheme.vars.contains(v)) {
                     continue;
                 }
+                // (A trait argument nothing decides: that error says it.)
+                if (free_vars_in(&ty).iter()).any(|v| self.reported_trait_args.contains(v)) {
+                    continue;
+                }
                 self.errors.push(
                     Diagnostic::error(
                         Code::AmbiguousType,
@@ -1294,6 +1327,10 @@ impl TypeChecker {
         if let (PatternKind::Ident(name), ExprKind::Lambda { .. }) = (&pattern.kind, &value.kind) {
             self.frame_owner = Some(unused::FrameOwner::TopLevel(*name));
         }
+        if let (PatternKind::Ident(name), ExprKind::FieldAccess(..)) = (&pattern.kind, &value.kind)
+        {
+            self.method_value_lets.insert(value.span, *name);
+        }
         let mut val_ty = self.infer_expr(value, env);
         if let Some(te) = ty {
             // (A type variable the annotation introduces is rigid; a
@@ -1364,20 +1401,21 @@ impl TypeChecker {
                     else {
                         continue;
                     };
+                    let args = self.impl_args_key_of(ti);
                     for method in ti.methods.iter_mut() {
-                        let Some(sig) = self.impl_sigs.remove(&(target, method.name, trait_key))
+                        let Some(sig) =
+                            (self.impl_sigs).remove(&(target, method.name, trait_key, args))
                         else {
                             continue;
                         };
                         // (A parser-recovery stub's empty body is not
                         // user code, here as for a function.)
                         if !method.is_recovery_stub {
-                            let owner = target.to_string();
+                            let owner = impl_owner((trait_key, target, args));
                             self.body_owner =
                                 Some(builtin_needs::body_key(trait_key, &owner, method.name));
                             let bounds = self.method_body_bounds(
-                                trait_key,
-                                target,
+                                (trait_key, target, args),
                                 method.name,
                                 &sig.bounds,
                             );

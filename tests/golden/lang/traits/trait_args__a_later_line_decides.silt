@@ -1,0 +1,23 @@
+-- A use whose trait argument a later line of the same definition decides
+-- waits for it: the `let` is not general in it.
+trait From(e) { fn from(source: e) -> Self }
+type A { A(Int), S(String) }
+trait From(Int) for A { fn from(e: Int) -> A { A(e) } }
+trait From(String) for A { fn from(e: String) -> A { S(e) } }
+fn sh(a: A) -> String {
+  match a {
+    A(n) -> "a{n}"
+    S(s) -> "s{s}"
+  }
+}
+import list
+fn main() {
+  let f = A.from
+  println(sh(f(1)))
+  let g = { y -> A.from(y) }
+  println(sh(g("z")))
+  let xs = list.drop([""], 1)
+  let ys = list.map(xs, A.from)
+  let zs: List(String) = xs
+  println("{list.map(ys, sh)} {zs}")
+}

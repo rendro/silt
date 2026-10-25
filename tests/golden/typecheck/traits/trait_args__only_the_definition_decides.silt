@@ -1,0 +1,34 @@
+-- cmd: check
+-- exit: 1
+-- Only the definition itself decides a trait argument: an unannotated
+-- function whose body does not is refused, whatever its callers give it;
+-- a top-level `let` of a method value nothing decides is refused with the
+-- function's type to write; an empty list a `let` makes general is no
+-- list a later annotation decides.
+-- stderr-contains: cannot decide which impl of 'From(_)' for 'A' this use of 'from' means: its trait argument is not decided here
+-- stderr-contains: = help: annotate the value you pass (`let x: Int = ...`), or call it where a bound decides it (`where t: From(Int)`)
+-- stderr-contains: = help: annotate the function's type: `let conv: Fn(Int) -> A = A.from`
+-- stderr-contains: :24:12
+-- stderr-contains: :25:12
+-- stderr-contains: :31:25
+trait From(e) { fn from(source: e) -> Self }
+type A { A(Int), S(String) }
+trait From(Int) for A { fn from(e: Int) -> A { A(e) } }
+trait From(String) for A { fn from(e: String) -> A { S(e) } }
+fn sh(a: A) -> String {
+  match a {
+    A(n) -> "a{n}"
+    S(s) -> "s{s}"
+  }
+}
+fn mk(y) { A.from(y) }
+let conv = A.from
+import list
+fn main() {
+  println(sh(mk(1)))
+  println(sh(conv(1)))
+  let xs = []
+  let ys = list.map(xs, A.from)
+  let zs: List(String) = xs
+  println("{ys} {zs}")
+}

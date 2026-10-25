@@ -422,11 +422,13 @@ trait Convertible(Int) for String {
   }
 }
 
--- Adding a second impl on the same source type with a different
--- trait argument (e.g. `trait Convertible(Float) for String`) is
--- a deferred limitation today: the impl key ignores trait params,
--- so the second impl collides with the first as a duplicate. See
--- `docs/proposals/error-from-trait.md` for the full write-up.
+-- A second impl for String at another trait argument: the argument a
+-- use decides selects it.
+trait Convertible(Float) for String {
+  fn convert(self) -> Float {
+    0.0
+  }
+}
 ```
 
 A parameterized trait can bound its own parameters with `where`
@@ -461,14 +463,12 @@ fn use_parent(x: b, type a) -> a where b: Child(a) {
 }
 ```
 
-`Convertible(Int)` and `Convertible(Float)` would *want* to coexist
-as distinct impls keyed by their trait argument, but today this is a
-**deferred limitation**: the impl key ignores trait params, so
-`impl Convertible(Int) for String` and `impl Convertible(Float) for
-String` collide as duplicates. The same source type (`String`) cannot
-yet implement the trait multiple times with different target
-arguments. See `docs/proposals/error-from-trait.md` for the full
-analysis and the workarounds available today.
+`Convertible(Int)` and `Convertible(Float)` are two impls for `String`,
+told apart by their whole trait argument: `let n: Int = Convertible.convert(s)`
+reaches the first, `let x: Float = Convertible.convert(s)` the second. A use
+whose trait argument nothing decides means no impl, and is an error. See
+[Traits — Parameterized Traits](traits.md#parameterized-traits) for how
+impls are told apart, and `From`.
 
 In a `where` clause, trait arguments can be concrete types or
 lowercase type variables bound elsewhere in the signature:
@@ -811,10 +811,11 @@ fn into(x: a, type b) -> b where a: Convert(b) {
 
 The same pattern adapts to fallible conversions by changing the trait
 method's return type to `Result(b, e)` for whatever error type the
-caller wants. (`Convert(Int) for String` and `Convert(Float) for
-String` would *want* to coexist, but see the
-"Parameterized trait declarations" subsection above for the current
-deferred limitation around trait-arg-keyed impls.)
+caller wants. A type has one impl of the trait for each trait
+argument, so `Convert(Int) for String` and `Convert(Float) for String`
+are two impls, and the use's trait argument says which one it reaches:
+`into("7", Int)` the first, `into("7", Float)` the second (see the
+"Parameterized trait declarations" subsection above).
 
 ### User-defined generic container
 

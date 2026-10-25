@@ -9,7 +9,7 @@ use std::sync::Arc;
 use crate::ast::{Decl, TraitImpl};
 use crate::bytecode::dict::{Dict, Recipe, Template};
 use crate::bytecode::{Asm, Globals};
-use crate::defs::{TraitId, TypeId};
+use crate::defs::{ImplArgs, TraitId, TypeId};
 use crate::diagnostic::{Code, Diagnostic};
 use crate::evidence::{Evidence, IMPL_HEADER, Layout, Shape};
 use crate::intern::{Symbol, intern, resolve};
@@ -17,6 +17,9 @@ use crate::source::Span;
 use crate::value::Value;
 
 use super::{Compiler, Local};
+
+/// An impl: its trait, its type's head and its trait arguments.
+type ImplKey = (TraitId, TypeId, ImplArgs);
 
 /// The name of the `k`th hidden parameter of the definition `owner`, a
 /// name no program can write.
@@ -220,8 +223,8 @@ impl Compiler<'_> {
             return self.emit(Asm::Constant { k }, span);
         }
         match ev {
-            Evidence::Impl { tr, ty, subs } => {
-                let template = self.template_of(*tr, *ty, span)?;
+            Evidence::Impl { tr, ty, args, subs } => {
+                let template = self.template_of((*tr, *ty, *args), span)?;
                 for sub in subs {
                     self.compile_evidence(sub, span)?;
                 }
@@ -281,24 +284,20 @@ impl Compiler<'_> {
     /// The dictionary `ev` names when it is the same wherever the code
     /// runs: an impl whose header's dictionaries are too.
     fn constant_dict(&self, ev: &Evidence) -> Option<Value> {
-        let Evidence::Impl { tr, ty, subs } = ev else {
+        let Evidence::Impl { tr, ty, args, subs } = ev else {
             return None;
         };
-        let template = self.globals.template(*tr, *ty)?.clone();
+        let template = self.globals.template(*tr, *ty, *args)?.clone();
         let subs = (subs.iter())
             .map(|sub| self.constant_dict(sub))
             .collect::<Option<Box<[Value]>>>()?;
         Some(Value::Dict(Dict::new(&template, subs.into_iter())))
     }
 
-    /// The template of the impl of `tr` for `ty`.
-    fn template_of(
-        &self,
-        tr: TraitId,
-        ty: TypeId,
-        span: Span,
-    ) -> Result<Arc<Template>, Diagnostic> {
-        (self.globals.template(tr, ty).cloned()).ok_or_else(|| {
+    /// The template of the impl `key`.
+    fn template_of(&self, key: ImplKey, span: Span) -> Result<Arc<Template>, Diagnostic> {
+        let (tr, ty, args) = key;
+        (self.globals.template(tr, ty, args).cloned()).ok_or_else(|| {
             no_dictionary(span, "the dictionary of an impl the program does not have")
         })
     }
@@ -336,7 +335,7 @@ impl Compiler<'_> {
         }
         // (In the order of the program: a template's place is the same
         // in each compile of it.)
-        let mut impls: HashMap<(TraitId, TypeId), &TraitImpl> = HashMap::new();
+        let mut impls: HashMap<ImplKey, &TraitImpl> = HashMap::new();
         let mut keys = Vec::new();
         for unit in &units {
             for decl in &unit.program.decls {
@@ -345,8 +344,8 @@ impl Compiler<'_> {
                     && has_dictionary(t)
                 {
                     self.header_limit(ti)?;
-                    if impls.insert((t, ty), ti).is_none() {
-                        keys.push((t, ty));
+                    if impls.insert((t, ty, ti.args_key), ti).is_none() {
+                        keys.push((t, ty, ti.args_key));
                     }
                 }
             }
@@ -392,7 +391,7 @@ impl Compiler<'_> {
                 let (Some(ty), Some(t)) = (self.impl_type(ti), self.impl_trait(ti)) else {
                     continue;
                 };
-                let Some(template) = globals.template(t, ty) else {
+                let Some(template) = globals.template(t, ty, ti.args_key) else {
                     continue;
                 };
                 for method in &ti.methods {
@@ -410,12 +409,12 @@ impl Compiler<'_> {
     /// its recipes name).
     fn enter_template(
         &self,
-        key: (TraitId, TypeId),
-        impls: &HashMap<(TraitId, TypeId), &TraitImpl>,
+        key: ImplKey,
+        impls: &HashMap<ImplKey, &TraitImpl>,
         globals: &mut Globals,
         depth: usize,
     ) -> Result<Option<Arc<Template>>, Diagnostic> {
-        if let Some(template) = globals.template(key.0, key.1) {
+        if let Some(template) = globals.template(key.0, key.1, key.2) {
             return Ok(Some(template.clone()));
         }
         let Some(ti) = impls.get(&key) else {
@@ -427,10 +426,10 @@ impl Compiler<'_> {
                 "impls whose dictionaries make each other",
             ));
         }
-        let (tr, ty) = key;
+        let (tr, ty, args) = key;
         let methods = (globals.trait_methods(tr).unwrap_or_default().to_vec())
             .into_iter()
-            .map(|(name, _)| globals.method(tr, ty, &name).unwrap_or(u16::MAX))
+            .map(|(name, _)| globals.method_at(tr, ty, args, &name).unwrap_or(u16::MAX))
             .collect();
         let mut supers = Vec::new();
         for (_, ev) in &ti.evidence.supers {
@@ -440,12 +439,14 @@ impl Compiler<'_> {
         for ev in &ti.evidence.wheres {
             wheres.push(self.recipe(ev, impls, globals, depth)?);
         }
+        let shown_args = &ti.shown_args;
         let template = Arc::new(Template {
             index: globals.next_template_index(),
             tr,
             ty,
+            args,
             name: format!(
-                "{} for {}",
+                "{}{shown_args} for {}",
                 self.units.defs.get(tr.0).name,
                 self.type_info(ty).name
             ),
@@ -462,13 +463,13 @@ impl Compiler<'_> {
     fn recipe(
         &self,
         ev: &Evidence,
-        impls: &HashMap<(TraitId, TypeId), &TraitImpl>,
+        impls: &HashMap<ImplKey, &TraitImpl>,
         globals: &mut Globals,
         depth: usize,
     ) -> Result<Recipe, Diagnostic> {
         Ok(match ev {
-            Evidence::Impl { tr, ty, subs } => {
-                match self.enter_template((*tr, *ty), impls, globals, depth + 1)? {
+            Evidence::Impl { tr, ty, args, subs } => {
+                match self.enter_template((*tr, *ty, *args), impls, globals, depth + 1)? {
                     Some(template) => {
                         let mut parts = Vec::new();
                         for sub in subs {

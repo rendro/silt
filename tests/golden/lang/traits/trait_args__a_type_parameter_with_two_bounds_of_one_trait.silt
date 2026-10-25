@@ -1,0 +1,18 @@
+-- A type parameter bounded by one trait at two trait arguments: `t.from(x)`
+-- reaches the bound its argument says.
+import list
+trait From(e) { fn from(source: e) -> Self }
+type A { A(Int), S(String) }
+trait From(Int) for A { fn from(e: Int) -> A { A(e) } }
+trait From(String) for A { fn from(e: String) -> A { S(e) } }
+type B { B(String) }
+trait From(Int) for B { fn from(e: Int) -> B { B("bi{e}") } }
+trait From(String) for B { fn from(e: String) -> B { B("bs{e}") } }
+fn sh(a: A) -> String { match a { A(n) -> "a{n}"
+ S(s) -> "s{s}" } }
+fn shb(b: B) -> String { match b { B(s) -> s } }
+fn mk(type t) -> List(t) where t: From(String) + From(Int) { [t.from(1), t.from("x"), t.from(2)] }
+fn main() {
+  println(list.map(mk(A), sh))
+  println(list.map(mk(B), shb))
+}

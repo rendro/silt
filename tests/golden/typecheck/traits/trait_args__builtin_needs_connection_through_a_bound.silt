@@ -1,0 +1,22 @@
+-- cmd: check
+-- exit: 1
+-- requires-feature: postgres
+-- What an impl's method gives a builtin is checked at its uses, whatever the
+-- number of the type's impls of the trait.
+-- stderr-contains: error[type]: the connection of `postgres.execute` must be a postgres.PgPool or a postgres.PgTx
+import postgres
+trait Q(b) { fn ex(self, k: b, c: x) -> Int }
+type S { S }
+trait Q(Int) for S {
+  fn ex(self, k: Int, c: x) -> Int {
+    match postgres.execute(c, "select 1", ()) {
+      Ok(n) -> n
+      Err(_) -> -1
+    }
+  }
+}
+trait Q(String) for S { fn ex(self, k: String, c: x) -> Int { 0 } }
+fn via(v: a, c: y) -> Int where a: Q(Int) { Q.ex(v, 1, c) }
+fn main() {
+  println(via(S, 5))
+}

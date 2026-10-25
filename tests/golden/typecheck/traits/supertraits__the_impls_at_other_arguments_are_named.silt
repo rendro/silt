@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- A supertrait's impl at the trait arguments the impl asks is missing:
+-- the error names the impls the type has, each at its arguments.
+-- stderr-contains: error[type]: impl Sub(List(Int)) for A requires impl Sup(List(Int)) for A, but found impl Sup(List(String)) for A and impl Sup(Bool) for A
+-- stderr-not-contains: Sup()
+trait Sup(b) { fn sup(self) -> Int }
+trait Sub(b): Sup(b) { fn sub(self) -> Int }
+type A { A(Int) }
+trait Sup(List(String)) for A { fn sup(self) -> Int { 1 } }
+trait Sup(Bool) for A { fn sup(self) -> Int { 1 } }
+trait Sub(List(Int)) for A { fn sub(self) -> Int { 2 } }
+fn via(x: t) -> Int where t: Sub(List(Int)) { Sup.sup(x) }
+fn main() { println(via(A(1))) }

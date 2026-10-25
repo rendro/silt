@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- An overlap names each impl's type variables as the impl writes them: a
+-- variable written twice is one type (`Eq2(c, c)` meets `Eq2(a, b)`).
+-- stderr-contains: error[type]: duplicate implementation of trait 'Eq2' for type 'A': the impls of 'Eq2(Int, Int)' and 'Eq2(a, a)' overlap: both are for 'Eq2(Int, Int)'
+-- stderr-contains: error[type]: duplicate implementation of trait 'Eq2' for type 'B': the impls of 'Eq2(c, c)' and 'Eq2(a, b)' overlap: both are for 'Eq2(c, c)'
+trait Eq2(p, q) { fn mk(x: p, y: q) -> Self }
+type A { A(String) }
+type B { B(String) }
+trait Eq2(Int, Int) for A { fn mk(x: Int, y: Int) -> A { A("ii") } }
+trait Eq2(a, a) for A { fn mk(x: a, y: a) -> A { A("same") } }
+trait Eq2(c, c) for B { fn mk(x: c, y: c) -> B { B("same") } }
+trait Eq2(a, b) for B { fn mk(x: a, y: b) -> B { B("any") } }
+fn main() { println(1) }

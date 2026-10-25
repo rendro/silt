@@ -1,0 +1,16 @@
+-- A method that makes a value, taken as a value on a `type t` parameter
+-- (`list.map(xs, t.mk)`), is the method of the bound's impl: the type the
+-- parameter holds is no value of the method.
+import list
+trait Mk { fn mk(n: Int) -> Self }
+trait From(e) { fn from(source: e) -> Self }
+type A { A(Int) }
+trait Mk for A { fn mk(n: Int) -> A { A(n) } }
+trait From(Int) for A { fn from(e: Int) -> A { A(e * 10) } }
+fn sh(a: A) -> String { match a { A(n) -> "a{n}" } }
+fn all(xs: List(Int), type t) -> List(t) where t: Mk { list.map(xs, t.mk) }
+fn conv_all(xs: List(e), type t) -> List(t) where t: From(e) { list.map(xs, t.from) }
+fn main() {
+  println(list.map(all([1, 2], A), sh))
+  println(list.map(conv_all([1, 2], A), sh))
+}

@@ -559,7 +559,8 @@ impl TypeChecker {
     fn type_method_site(&mut self, head: TypeRef, entry: &MethodEntry, method: Symbol, span: Span) {
         let owed = self.ev.use_ev.take().unwrap_or_default();
         if let Some(tr) = self.entry_trait(entry, method) {
-            let site = self.method_site(tr, head, method, owed);
+            let key = (self.tables.one_impl(tr, head)).unwrap_or((tr, head, ImplArgs::none()));
+            let site = self.method_site(key, method, owed);
             self.ev.calls.insert(span, site);
         }
     }
@@ -678,6 +679,30 @@ impl TypeChecker {
                     );
                     return None;
                 }
+                // Bounds of one trait with parameters (at one trait
+                // argument or at several): the method as the trait declares
+                // it, with the variable for `Self`; which bound the use
+                // reaches its trait arguments say, as through the trait.
+                // At several, a method whose type mentions no parameter of
+                // the trait can never say which: ambiguous, as below.
+                let mut traits: Vec<TraitKey> = matches.iter().map(|(t, _)| *t).collect();
+                distinct(&mut traits);
+                if let [tr] = traits.as_slice()
+                    && (self.tables.traits.get(tr)).is_some_and(|info| {
+                        !info.params.is_empty()
+                            && (matches.len() == 1
+                                || (info.methods.iter()).any(|(name, ty)| {
+                                    *name == field
+                                        && (free_vars_in(ty).iter())
+                                            .any(|v| info.param_var_ids.contains(v))
+                                }))
+                    })
+                    && self.self_param(*tr, field).is_none()
+                {
+                    let tr = *tr;
+                    self.method_trait = Some(tr);
+                    return Some(self.through_trait(tr, field, inner.clone(), None, span));
+                }
                 if matches.len() > 1 {
                     let traits: Vec<TraitKey> = matches.iter().map(|(t, _)| *t).collect();
                     self.ambiguous_bound_method(
@@ -710,6 +735,13 @@ impl TypeChecker {
                 // the effective type name (same path as
                 // `type_name_for_impl`).
                 let name = self.type_name_for_impl(&inner)?;
+                if let Some(tr) = self.trait_of_impls_by_args(name, field)
+                    && self.self_param(tr, field).is_none()
+                    && self.private_owner(tr).is_none()
+                {
+                    self.method_trait = Some(tr);
+                    return Some(self.through_trait(tr, field, inner.clone(), None, span));
+                }
                 let entry = self.method_entry(name, field)?;
                 if let Some(tr) = self.entry_trait(&entry, field)
                     && self.self_param(tr, field).is_some()
@@ -881,7 +913,8 @@ impl TypeChecker {
                 // The impl's header's predicates come first among the
                 // method's.
                 let owed = self.ev.use_ev.take().unwrap_or_default();
-                let site = self.method_site(tr, head, field, owed);
+                let key = (self.tables.one_impl(tr, head)).unwrap_or((tr, head, ImplArgs::none()));
+                let site = self.method_site(key, field, owed);
                 self.ev.calls.insert(span, site);
                 if let Type::Fun(params, _) = &ty
                     && let Some(first) = params.first()
@@ -893,6 +926,34 @@ impl TypeChecker {
             }
         }
         let self_ty = self.fresh_var();
+        if let Some((recv, _)) = &receiver {
+            self.unify(recv, &self_ty, span);
+        }
+        let at = receiver.as_ref().map(|(_, at)| *at);
+        self.through_trait(tr, field, self_ty, at, span)
+    }
+
+    /// The type of a use of the method `field` of the trait `tr` on the
+    /// type `self_ty` (at the receiver `receiver` of a call through the
+    /// trait, if it has one): the method's type as the trait declares it,
+    /// with `self_ty` for `Self` and new variables for the trait's
+    /// parameters. The use owes `self_ty: tr(..)` at those, whose evidence
+    /// is the impl the call reaches, and the method's own bounds.
+    pub(super) fn through_trait(
+        &mut self,
+        tr: TraitKey,
+        field: Symbol,
+        self_ty: Type,
+        receiver: Option<Span>,
+        span: Span,
+    ) -> Type {
+        let Some(info) = self.tables.traits.get(&tr).cloned() else {
+            return Type::Error;
+        };
+        let Some((_, method_ty)) = info.methods.iter().find(|(n, _)| *n == field).cloned() else {
+            return Type::Error;
+        };
+        let method_ty = &method_ty;
         let mut mapping: HashMap<TyVar, Type> = HashMap::new();
         mapping.insert(info.self_var, self_ty.clone());
         let params: Vec<Type> = info
@@ -929,9 +990,6 @@ impl TypeChecker {
             preds,
             ty,
         };
-        if let Some((recv, _)) = &receiver {
-            self.unify(recv, &self_ty, span);
-        }
         let recv_ev = self.want(
             Pred::Trait {
                 tr,
@@ -940,7 +998,7 @@ impl TypeChecker {
                 asker: None,
             },
             Origin {
-                span: receiver.as_ref().map_or(span, |(_, at)| *at),
+                span: receiver.unwrap_or(span),
                 callee: Some(field),
                 op: None,
             },
@@ -2481,6 +2539,11 @@ impl TypeChecker {
             ExprKind::FieldAccess(obj, field, _) => {
                 self.receiver_taken = false;
                 let field = *field;
+                // (An access that is no callee is a value: a message about
+                // it writes it as it is written.)
+                if !called && let ExprKind::Ident(name) = obj.kind {
+                    self.method_values.insert(span, format!("{name}.{field}"));
+                }
                 // What the resolver said the access names: nothing (it
                 // reported why, or the module failed to load), a variant
                 // (`m.Red`, `Shape.Red`, `m.Shape.Red`), whose constructor
@@ -2532,6 +2595,21 @@ impl TypeChecker {
                 };
                 if let Some(ty) = type_ref {
                     let key = (canonical_head(&self.tables.resolver, ty), field);
+                    // A trait with an impl for the type at each of several
+                    // trait arguments (`From`): the method as the trait
+                    // declares it; which impl the use reaches its trait
+                    // arguments say.
+                    if let Some(tr) = self.trait_of_impls_by_args(key.0, field)
+                        && self.self_param(tr, field).is_none()
+                        && self.private_owner(tr).is_none()
+                    {
+                        let instance = (self.type_instance(ty))
+                            .unwrap_or_else(|| Type::Generic(key.0, Vec::new()));
+                        self.method_trait = Some(tr);
+                        let ty = self.through_trait(tr, field, instance, None, span);
+                        expr.ty = Some(ty.clone());
+                        return ty;
+                    }
                     if let Some(entry) = self.method_entry(key.0, key.1) {
                         if let Some(trait_name) = entry.trait_name
                             && self.private_owner(trait_name).is_some()
@@ -3753,6 +3831,11 @@ impl TypeChecker {
         match stmt {
             Stmt::Let { pattern, ty, value } => {
                 let value_span = value.span;
+                if let (PatternKind::Ident(name), ExprKind::FieldAccess(..)) =
+                    (&pattern.kind, &value.kind)
+                {
+                    self.method_value_lets.insert(value_span, *name);
+                }
                 // A `let` generalises only a syntactic value: its value is
                 // then checked one level deeper, and the variables left
                 // at that level are the ones to quantify.

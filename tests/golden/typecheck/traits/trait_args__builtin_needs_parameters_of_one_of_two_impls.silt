@@ -1,0 +1,24 @@
+-- cmd: check
+-- exit: 1
+-- requires-feature: postgres
+-- What an impl's method gives a builtin is checked at its uses, whatever the
+-- number of the type's impls of the trait.
+-- stderr-contains: error[type]: the parameters of `postgres.execute` must be a tuple, got `List(Int)`
+import postgres
+trait Q(b) { fn ex(self, k: b, c: postgres.PgPool, p: x) -> String }
+type S { S }
+trait Q(Int) for S {
+  fn ex(self, k: Int, c: postgres.PgPool, p: x) -> String {
+    match postgres.execute(c, "select $1", p) {
+      Ok(n) -> "ok {n}"
+      Err(e) -> "err {e}"
+    }
+  }
+}
+trait Q(String) for S { fn ex(self, k: String, c: postgres.PgPool, p: x) -> String { "s" } }
+fn main() {
+  match postgres.connect("postgresql://nobody@127.0.0.1:1/none") {
+    Ok(pool) -> println(Q.ex(S, 1, pool, [1, 2]))
+    Err(e) -> println("no connection")
+  }
+}

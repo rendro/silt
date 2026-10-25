@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- A call that stands as a statement gives its value to nothing: its `()`
+-- decides no trait argument, and the error says to annotate the value.
+-- stderr-contains: :13:13
+-- stderr-contains: = help: annotate the value, `let s: String = ...`
+-- stderr-not-contains: Conv(())
+-- stderr-not-contains: is unused
+trait Conv(b) { fn conv(self) -> b }
+trait Conv(String) for Int { fn conv(self) -> String { "s{self}" } }
+trait Conv(Bool) for Int { fn conv(self) -> Bool { true } }
+fn main() {
+  Conv.conv(3)
+  println("x")
+}

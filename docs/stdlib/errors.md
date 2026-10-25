@@ -251,6 +251,7 @@ fn load_config(path: String) -> Result(Config, AppError) {
 
 A `?` that ends a pipeline applies to the whole pipeline, so the pipeline
 is a single expression terminated by `?`. See [`examples/cross_module_errors.silt`](../../examples/cross_module_errors.silt)
-for a longer walkthrough. A separate proposal
-([`error-from-trait.md`](../proposals/error-from-trait.md)) tracks the
-design for a `.into()`-based ergonomics layer over this pattern.
+for a longer walkthrough. A program can name each conversion once, in an impl of a `From` trait it
+declares, and pass it to `result.map_err` (`result.map_err(r, AppError.from)`):
+see [Traits — Parameterized Traits](../language/traits.md#parameterized-traits)
+and [`error-from-trait.md`](../proposals/error-from-trait.md).

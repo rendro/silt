@@ -518,9 +518,69 @@ trait From(Celsius) for Fahrenheit {
 ```
 
 Parameterized traits may have supertraits (`trait Child(a): Parent(a)`) and
-`where` clauses on both the trait declaration and its methods. A type has
-at most one impl of a trait, whatever its arguments: `trait From(Celsius)
-for Fahrenheit` and `trait From(Kelvin) for Fahrenheit` are a duplicate.
+`where` clauses on both the trait declaration and its methods.
+
+A type has one impl of a trait for each trait argument: `trait
+From(Celsius) for Fahrenheit` and `trait From(Kelvin) for Fahrenheit` are
+two impls, and a use reaches the one its trait argument says. The
+argument is the type the use gives or asks: `Fahrenheit.from(c)` with a
+`Celsius` takes the first, and `result.map_err(r, AppError.from)` takes the
+impl for the error type of `r`. Where nothing decides the trait argument
+of a use, which impl it means is unknown, and that is an error (annotate
+the type it gives). Impls are told apart by their whole trait arguments:
+`From(List(Int))` and `From(List(String))` for one type are two impls, and
+so are `From((Int, Int))` and `From((Int, Int, Int))`. Two impls whose
+trait arguments could be one type are a duplicate: an impl whose trait
+argument is a type variable (`trait From(a) for Fahrenheit`) is for every
+argument, the type's only impl of the trait, and `From(List(a))` meets
+`From(List(Int))`. A use reaches the one impl whose trait arguments its own
+could be; while two still could (`From(List(_))` with both impls above),
+it waits for the rest of its definition to decide.
+
+`From` is no builtin trait: a program declares it, and its impls, as above.
+It converts errors to a program's own error type where one function calls
+into several modules, each with its error type:
+
+```silt
+import io
+import json
+import result
+
+type Config {
+  name: String,
+}
+
+type AppError {
+  IoProblem(io.IoError),
+  JsonProblem(json.JsonError),
+}
+
+trait From(e) {
+  fn from(source: e) -> Self
+}
+
+trait From(io.IoError) for AppError {
+  fn from(e: io.IoError) -> AppError {
+    IoProblem(e)
+  }
+}
+
+trait From(json.JsonError) for AppError {
+  fn from(e: json.JsonError) -> AppError {
+    JsonProblem(e)
+  }
+}
+
+fn load_config(path: String) -> Result(Config, AppError) {
+  let raw = result.map_err(io.read_file(path), AppError.from)?
+  let config = result.map_err(json.parse(raw, Config), AppError.from)?
+  Ok(config)
+}
+```
+
+`?` only propagates the error; the conversion is the call written at each
+place, `AppError.from`.
+
 The full specification — including how trait parameters flow through
 `where` clauses — lives in
 [Generics — Parameterized trait declarations](generics.md#parameterized-trait-declarations).

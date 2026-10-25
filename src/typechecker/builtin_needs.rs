@@ -277,6 +277,36 @@ impl TypeChecker {
         self.check_builtin_argument(check, ty, placing.passer, origin);
     }
 
+    /// The method `method` of the impl of `tr` for the type `receiver`
+    /// that a call of the type `method_ty` reaches: of a trait with
+    /// parameters, the impl at the trait arguments that type gives them
+    /// (the trait's own signature read against it); none while they are
+    /// undecided.
+    fn reached_method(
+        &self,
+        tr: TraitKey,
+        receiver: &Type,
+        method: Symbol,
+        method_ty: &Type,
+    ) -> Option<&MethodEntry> {
+        let head = self.type_name_for_impl(receiver)?;
+        if let Some(entry) = self.tables.impl_methods.get(head, method, tr) {
+            return Some(entry);
+        }
+        let info = self.tables.traits.get(&tr)?;
+        let (_, declared) = info.methods.iter().find(|(name, _)| *name == method)?;
+        let mut vars = info.param_var_ids.clone();
+        vars.push(info.self_var);
+        vars.extend(free_vars_in(declared));
+        let mut mapping: HashMap<TyVar, Type> = HashMap::new();
+        match_type(declared, method_ty, &vars, &mut mapping);
+        let args: Vec<Type> = (info.param_var_ids.iter())
+            .map(|v| mapping.get(v).cloned().unwrap_or(Type::Var(*v)))
+            .collect();
+        let (_, _, at) = self.impl_reached(tr, head, &args)?;
+        self.tables.impl_methods.get_at(head, method, tr, at)
+    }
+
     /// What the method `method` of the impl of `tr` for `receiver` (or
     /// the trait's default it takes), called with the type `method_ty`,
     /// asks: the checks of the types it gives builtins, and the trait
@@ -311,9 +341,7 @@ impl TypeChecker {
             return Rc::new(Vec::new());
         }
         let mut out = Vec::new();
-        let entry = self
-            .type_name_for_impl(&receiver)
-            .and_then(|head| self.tables.impl_methods.get(head, method, tr))
+        let entry = (self.reached_method(tr, &receiver, method, &method_ty))
             .filter(|entry| !entry.structural)
             .cloned();
         if let Some(entry) = entry {
@@ -765,7 +793,7 @@ impl TypeChecker {
         // What another module, or a later REPL entry, reads of this
         // module's impls and traits: the needs, decided.
         for key in self.tables.impl_methods.own_keys() {
-            let Some(entry) = self.tables.impl_methods.get(key.0, key.1, key.2) else {
+            let Some(entry) = (self.tables.impl_methods).get_at(key.0, key.1, key.2, key.3) else {
                 continue;
             };
             let settled = self.settled_preds(&entry.preds);

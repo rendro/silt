@@ -380,6 +380,9 @@ const MATCH_ARM: &str = "bytes of code in a match arm";
 enum TypeMember {
     /// The method of an impl: its global.
     Slot(u16),
+    /// The method of an impl of a trait a program declares, which a call
+    /// reaches through the impl's dictionary.
+    Dict,
     /// The VM's own method of the trait.
     Native(crate::defs::TraitId),
 }
@@ -586,9 +589,10 @@ impl<'a> Compiler<'a> {
         let type_name = self.type_info(ty).name.clone();
         for method in &ti.methods {
             globals
-                .add_method(
+                .add_method_at(
                     t,
                     ty,
+                    ti.args_key,
                     &resolve(method.name),
                     format!("{type_name}.{}", method.name),
                 )
@@ -601,7 +605,7 @@ impl<'a> Compiler<'a> {
                 .any(|written| resolve(written.name) == method)
             {
                 globals
-                    .default_for(t, ty, &method, slot)
+                    .default_for_at(t, ty, ti.args_key, &method, slot)
                     .ok_or_else(|| too_many_method_names(ti.trait_name_span))?;
             }
         }
@@ -972,7 +976,7 @@ impl<'a> Compiler<'a> {
                     self.compile_method(format!("{type_name}.{}", method.name), method)?;
                     let slot = self
                         .globals
-                        .method(t, ty, &resolve(method.name))
+                        .method_at(t, ty, trait_impl.args_key, &resolve(method.name))
                         .ok_or_else(|| checker_missed(span, "an impl method with no slot"))?;
                     self.emit(Asm::SetGlobal { slot }, span)?;
                     self.emit(Asm::Pop, span)?;
@@ -1641,12 +1645,10 @@ impl<'a> Compiler<'a> {
                 compiled?;
             }
 
-            // `Int.empty` of a program's trait, as a value: through the
-            // dictionary, with it bound.
-            ExprKind::FieldAccess(_, method, _)
-                if matches!(self.type_member(expr)?, Some(TypeMember::Slot(_)))
-                    && self.dict_call(expr).is_some() =>
-            {
+            // `Int.empty` of a program's trait, as a value, or `t.empty` of
+            // a `type t` bounded by one: through the dictionary, with it
+            // bound. (The type named or held is no value of the method.)
+            ExprKind::FieldAccess(_, method, _) if self.dict_call(expr).is_some() => {
                 let (tr, recv, own) = self.dict_call(expr).expect("a call through a dictionary");
                 let (recv, own) = (recv.clone(), own.to_vec());
                 self.compile_dict_method_value(tr, &recv, &own, *method, span)?;
@@ -2190,7 +2192,7 @@ impl<'a> Compiler<'a> {
                 self.emit(Asm::Constant { k: idx }, span)?;
                 self.compile_operands(args.iter().copied())?;
                 self.emit_call_method(*method, args.len() + 1, t, 0, tail, span)?;
-            } else if let (Some(TypeMember::Slot(_)), Some((tr, recv, own))) =
+            } else if let (Some(TypeMember::Dict), Some((tr, recv, own))) =
                 (&member, self.dict_call(callee))
             {
                 // `Pt.make(1)`, `Int.empty()`: a method of a program's
@@ -2832,6 +2834,9 @@ impl<'a> Compiler<'a> {
                 &format!("the method '{}.{field}' of no trait", def.name),
             ));
         };
+        if dicts::has_dictionary(t) {
+            return Ok(Some(TypeMember::Dict));
+        }
         Ok(Some(
             match self.globals.method(t, ty.id, &resolve(*field)) {
                 Some(slot) => TypeMember::Slot(slot),
