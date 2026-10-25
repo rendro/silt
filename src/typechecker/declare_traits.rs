@@ -1372,9 +1372,25 @@ impl TypeChecker {
                      'json.Encode', 'json.Decode' or 'Error' of its type's variables: the runtime \
                      runs it with nothing else"
                 );
-                let help = impl_trait
-                    .is_builtin("Display")
-                    .then(|| "show the part with `{x}` and bound it by Display".to_string());
+                // (Each help points at what the impl can do instead.)
+                let help = [
+                    (
+                        "Display",
+                        "show the part with `{x}` and bound it by Display",
+                    ),
+                    (
+                        "Encode",
+                        "encode the part with `json.encode(x)` and bound it by json.Encode",
+                    ),
+                    (
+                        "Decode",
+                        "decode the part with `json.decode` and bound it by json.Decode",
+                    ),
+                    ("Error", "show the part with `{x}` and bound it by Display"),
+                ]
+                .iter()
+                .find(|(tr, _)| impl_trait.is_builtin(tr))
+                .map(|(_, help)| help.to_string());
                 self.error_help(Code::InvalidTraitImpl, (message, help), ti.span);
                 // (What the body asks of the variable is not reported
                 // again.)

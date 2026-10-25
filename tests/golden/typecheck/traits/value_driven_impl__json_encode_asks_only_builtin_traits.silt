@@ -3,6 +3,7 @@
 -- json.stringify runs an impl of json.Encode itself: its header asks
 -- only builtin traits of its type's variables.
 -- stderr-contains: error[type]: an impl of 'json.Encode' can ask only 'Display', 'Equal', 'Compare', 'Hash', 'json.Encode', 'json.Decode' or 'Error' of its type's variables: the runtime runs it with nothing else
+-- stderr-contains: encode the part with `json.encode(x)` and bound it by json.Encode
 import json
 trait Name { fn name(self) -> String }
 type Box(a) { Bx(a) }

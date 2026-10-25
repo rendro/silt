@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- The runtime runs an impl of Error itself (a failure's message): its
+-- header asks only builtin traits of its type's variables.
+-- stderr-contains: error[type]: an impl of 'Error' can ask only 'Display', 'Equal', 'Compare', 'Hash', 'json.Encode', 'json.Decode' or 'Error' of its type's variables: the runtime runs it with nothing else
+-- stderr-contains: show the part with `{x}` and bound it by Display
+trait Name { fn name(self) -> String }
+type Box(a) { Bx(a) }
+trait Display for Box(a) where a: Display { fn display(self) -> String { match self { Bx(x) -> "{x}" } } }
+trait Error for Box(a) where a: Name {
+  fn message(self) -> String { match self { Bx(x) -> Name.name(x) } }
+}
+fn main() { println(1) }
