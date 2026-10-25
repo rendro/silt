@@ -330,6 +330,12 @@ impl TypeChecker {
         if args.is_empty() || (args.iter()).any(|arg| matches!(self.apply(arg), Type::Error)) {
             return false;
         }
+        // (Trait arguments with no variable left fit one impl at most,
+        // and leave it nothing to decide.)
+        let open = self.trait_args_open(args);
+        if !open && (args.iter()).all(|arg| free_vars_in(&self.apply(arg)).is_empty()) {
+            return false;
+        }
         let subject =
             crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(subject));
         let Some(head) = self.type_name_for_impl(&subject) else {
@@ -338,7 +344,7 @@ impl TypeChecker {
         if self.tables.impl_args_of(tr, head).is_empty() {
             return false;
         }
-        if self.trait_args_open(args) {
+        if open {
             return true;
         }
         match self.impls_fitting(tr, head, args).as_slice() {
@@ -367,7 +373,22 @@ impl TypeChecker {
     pub(super) fn solve_wanted(&mut self, from: usize) {
         let mut i = from;
         while i < self.wanted.len() {
-            if !self.wanted[i].solved {
+            // (What still waits is passed over as it is: a trait method's
+            // call waits for its scope's end, a use for its trait
+            // arguments.)
+            let waits = match &self.wanted[i].goal {
+                _ if self.wanted[i].solved => true,
+                Goal::Pred(Pred::Via { .. }) => true,
+                Goal::Pred(Pred::Trait {
+                    tr, args, subject, ..
+                }) => {
+                    let subject = self.apply(subject);
+                    matches!(subject, Type::Var(_))
+                        || self.waits_for_trait_args(*tr, &subject, args)
+                }
+                _ => false,
+            };
+            if !waits {
                 let origin = self.wanted[i].origin;
                 match self.wanted[i].goal.clone() {
                     Goal::Pred(Pred::Trait {
@@ -376,24 +397,20 @@ impl TypeChecker {
                         subject,
                         asker,
                     }) => {
+                        // (Decided: it waited for its subject and trait
+                        // arguments above.)
                         let subject = self.apply(&subject);
-                        // (Where the type has impls of the trait at several
-                        // trait arguments, the use waits for its own.)
-                        if !matches!(subject, Type::Var(_))
-                            && !self.waits_for_trait_args(tr, &subject, &args)
-                        {
-                            self.wanted[i].solved = true;
-                            // One error for one type at one place: a use
-                            // that owes two traits its type has neither
-                            // of (`test.assert_eq(f, f)`) says the first.
-                            let reported = self.errors.len();
-                            let ev = Some(self.wanted[i].ev);
-                            self.verify_trait_obligation(tr, &args, &subject, origin, asker, ev);
-                            if self.errors.len() > reported {
-                                let key = (origin.span, self.show_type(&subject));
-                                if !self.lacking.insert(key) {
-                                    self.errors.truncate(reported);
-                                }
+                        self.wanted[i].solved = true;
+                        // One error for one type at one place: a use that
+                        // owes two traits its type has neither of
+                        // (`test.assert_eq(f, f)`) says the first.
+                        let reported = self.errors.len();
+                        let ev = Some(self.wanted[i].ev);
+                        self.verify_trait_obligation(tr, &args, &subject, origin, asker, ev);
+                        if self.errors.len() > reported {
+                            let key = (origin.span, self.show_type(&subject));
+                            if !self.lacking.insert(key) {
+                                self.errors.truncate(reported);
                             }
                         }
                     }
