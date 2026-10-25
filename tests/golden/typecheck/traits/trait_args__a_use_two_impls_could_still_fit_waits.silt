@@ -4,9 +4,10 @@
 -- with `From(List(Int))` and `From(List(String))`) waits: a later line of
 -- the definition decides it; where none does, which impl it means is not
 -- known.
--- stderr-contains: :22:14
+-- stderr-contains: :23:14
 -- stderr-contains: cannot decide which impl of 'From(List(_))' for 'A' this use of 'from' means: its trait argument is not decided here
--- stderr-not-contains: :18:
+-- stderr-not-contains: :19:
+-- stderr-contains: = help: annotate the value you pass (`let x: List(Int) = ...`), or call it where a bound decides it (`where t: From(List(Int))`)
 import list
 trait From(e) { fn from(source: e) -> Self }
 type A { A(String) }

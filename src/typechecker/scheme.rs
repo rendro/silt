@@ -585,7 +585,14 @@ impl TypeChecker {
             Type::Fun(_, ret) if mentions_param(ret) => at_example(ret),
             _ => None,
         });
-        let given_shown = given.map_or_else(|| "Int".to_string(), |ty| self.show_type(&ty));
+        let given_shown =
+            (given.as_ref()).map_or_else(|| "Int".to_string(), |ty| self.show_type(ty));
+        // Else what a call is given, where that decides it (`A.from(x)`).
+        let passed = declared.and_then(|(_, ty)| match ty {
+            Type::Fun(params, _) => (params.iter()).find(|param| mentions_param(param)),
+            _ => None,
+        });
+        let passed = passed.and_then(|param| at_example(param));
         let statement = (args.iter()).any(
             |arg| matches!(self.apply(arg), Type::Var(v) if self.statement_trait_args.contains(&v)),
         );
@@ -612,10 +619,17 @@ impl TypeChecker {
             (None, None) if statement => {
                 format!("annotate the value, `let s: {given_shown} = ...`")
             }
-            (None, None) => format!(
-                "annotate the type the call gives (`let n: {given_shown} = ...`), or call it \
-                 where a bound decides it (`where t: {example}`)"
-            ),
+            (None, None) => match (&given, &passed) {
+                (None, Some(passed)) => format!(
+                    "annotate the value you pass (`let x: {} = ...`), or call it where a bound \
+                     decides it (`where t: {example}`)",
+                    self.show_type(passed)
+                ),
+                _ => format!(
+                    "annotate the type the call gives (`let n: {given_shown} = ...`), or call it \
+                     where a bound decides it (`where t: {example}`)"
+                ),
+            },
         };
         Diagnostic::error(Code::AmbiguousType, origin.span, message).with_help(help)
     }

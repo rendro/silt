@@ -5,7 +5,7 @@
 -- call gives there; a method passed as an argument, no `let`'s whole
 -- value, gets the help of a call.
 -- stderr-contains: = help: annotate the type the call gives (`let n: String = ...`), or call it where a bound decides it (`where t: Conv(String)`)
--- stderr-contains: = help: annotate the type the call gives (`let n: Int = ...`), or call it where a bound decides it (`where t: From(Int)`)
+-- stderr-contains: = help: annotate the value you pass (`let x: Int = ...`), or call it where a bound decides it (`where t: From(Int)`)
 -- stderr-not-contains: Conv(Int)
 -- stderr-not-contains: annotate the function's type
 import list

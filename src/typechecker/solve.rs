@@ -2562,7 +2562,7 @@ fn probe_unify(a: &Type, b: &Type, subst: &mut HashMap<TyVar, Type>) -> bool {
         (Type::Error, _) | (_, Type::Error) => true,
         (Type::Var(x), Type::Var(y)) if x == y => true,
         (Type::Var(x), other) | (other, Type::Var(x)) => {
-            if free_vars_in(other).contains(x) {
+            if occurs(*x, other, subst) {
                 return false;
             }
             subst.insert(*x, other.clone());
@@ -2581,7 +2581,32 @@ fn probe_unify(a: &Type, b: &Type, subst: &mut HashMap<TyVar, Type>) -> bool {
         // (A projection not reduced yet, or a record: what the checker
         // decides of them later.)
         (Type::AssocProj { .. }, _) | (_, Type::AssocProj { .. }) => true,
-        (Type::AnonRecord { .. }, Type::AnonRecord { .. }) => true,
+        // Records field by field: a field one of them lacks is in the
+        // other's open row, if it has one.
+        (
+            Type::AnonRecord {
+                fields: xs,
+                tail: x_tail,
+            },
+            Type::AnonRecord {
+                fields: ys,
+                tail: y_tail,
+            },
+        ) => {
+            let open = |tail: &RowTail| matches!(tail, RowTail::Var(_));
+            (xs.iter()).all(|(name, x)| match ys.get(name) {
+                Some(y) => probe_unify(x, y, subst),
+                None => open(y_tail),
+            }) && (ys.keys()).all(|name| xs.contains_key(name) || open(x_tail))
+        }
         _ => a == b,
     }
+}
+
+/// Whether the variable `v` is in `ty`, read through `subst`: binding it
+/// to `ty` would make a type of infinite size.
+fn occurs(v: TyVar, ty: &Type, subst: &HashMap<TyVar, Type>) -> bool {
+    free_vars_in(ty)
+        .into_iter()
+        .any(|w| w == v || subst.get(&w).is_some_and(|bound| occurs(v, bound, subst)))
 }

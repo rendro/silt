@@ -4,7 +4,7 @@
 -- one error: the uses of the trait for the type say nothing more,
 -- whichever impl they meant.
 -- stderr-contains: duplicate implementation of trait 'From(Int)' for type 'A'
--- stderr-contains: duplicate implementation of trait 'From' for type 'B': the impls of 'From(_)' and 'From(Fn(Int, Int) -> Int)' overlap
+-- stderr-contains: duplicate implementation of trait 'From' for type 'B': the impls of 'From(e)' and 'From(Fn(Int, Int) -> Int)' overlap
 -- stderr-not-contains: type mismatch
 -- stderr-not-contains: expects 1 argument
 -- stderr-not-contains: does not implement

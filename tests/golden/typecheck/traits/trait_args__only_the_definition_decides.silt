@@ -6,7 +6,7 @@
 -- function's type to write; an empty list a `let` makes general is no
 -- list a later annotation decides.
 -- stderr-contains: cannot decide which impl of 'From(_)' for 'A' this use of 'from' means: its trait argument is not decided here
--- stderr-contains: = help: annotate the type the call gives (`let n: Int = ...`), or call it where a bound decides it (`where t: From(Int)`)
+-- stderr-contains: = help: annotate the value you pass (`let x: Int = ...`), or call it where a bound decides it (`where t: From(Int)`)
 -- stderr-contains: = help: annotate the function's type: `let conv: Fn(Int) -> A = A.from`
 -- stderr-contains: :24:12
 -- stderr-contains: :25:12

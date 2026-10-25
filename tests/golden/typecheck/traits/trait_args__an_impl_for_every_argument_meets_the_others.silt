@@ -1,7 +1,7 @@
 -- exit: 1
 -- An impl for every trait argument meets each other impl of the trait for
 -- the type: a use could mean either.
--- stderr-contains: duplicate implementation of trait 'Wrap' for type 'B': the impls of 'Wrap(_)' and 'Wrap(String)' overlap: both are for 'Wrap(String)'
+-- stderr-contains: duplicate implementation of trait 'Wrap' for type 'B': the impls of 'Wrap(x)' and 'Wrap(String)' overlap: both are for 'Wrap(String)'
 -- stderr-contains: = help: give each impl trait arguments of its own, which no other impl's could be
 trait Wrap(e) { fn wrap(source: e) -> Self }
 type A { A(Int) }
