@@ -2026,12 +2026,18 @@ impl TypeChecker {
                 // parameter is owed for that argument: a bound that
                 // fails is reported at it.
                 for k in owed_before..self.wanted.len() {
+                    // (A trait method's call: its method's type, once.)
+                    let via_ty = match &self.wanted[k].goal {
+                        Goal::Pred(Pred::Via { method_ty, .. }) => Some(self.apply(method_ty)),
+                        _ => None,
+                    };
                     // The call of a trait method itself (its type is the
                     // callee's): each parameter's argument, for what the
-                    // impl's method gives a builtin.
-                    if let (Goal::Pred(Pred::Via { method_ty, .. }), CallForm::Call) =
-                        (&self.wanted[k].goal, form)
-                        && self.apply(method_ty) == callee_ty
+                    // impl's method gives a builtin. (A call inside this
+                    // one placed its own.)
+                    if let (Some(via_ty), CallForm::Call) = (&via_ty, form)
+                        && self.wanted[k].arguments.is_empty()
+                        && *via_ty == callee_ty
                     {
                         let origin = self.wanted[k].origin;
                         let arguments = (0..params.len())
@@ -2053,12 +2059,7 @@ impl TypeChecker {
                         self.wanted[k].origin.span = *at;
                         continue;
                     }
-                    let type_given = match &self.wanted[k].goal {
-                        Goal::Pred(Pred::Via { method_ty, .. }) => {
-                            type_of_var(&self.apply(method_ty))
-                        }
-                        _ => None,
-                    };
+                    let type_given = via_ty.as_ref().and_then(type_of_var);
                     let Type::Var(v) = (match (&self.wanted[k].goal, &type_given) {
                         (_, Some(given)) => given,
                         (Goal::Pred(pred), None) => pred.subject(),
