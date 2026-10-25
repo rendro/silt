@@ -3,7 +3,7 @@ error[type]: type 'a' has no field 'empty'
    |
  8 | fn of(x: a) -> a where a: Monoid { x.empty() }
    |                                    ^^^^^^^ type 'a' has no field 'empty'
-  = help: `empty` is a method of trait `Monoid` that makes a value: call it on the type, `a.empty()`, where `a` is a `type a` parameter
+  = help: `empty` is a method of trait `Monoid` that makes a value: call it on the type, `a.empty()`
 
 error[type]: type 'Int' has no field 'display'
  --> dot_after_a_value__a_method_of_a_builtin_trait_or_that_makes_a_value.silt:11:11

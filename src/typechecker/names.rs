@@ -371,6 +371,7 @@ pub fn resolve_module(
         own_aliases: HashMap::new(),
         diagnostics,
         hidden_modules: Vec::new(),
+        type_vars: Vec::new(),
     };
     resolver.alias_heads(program);
     for decl in &mut program.decls {
@@ -1074,6 +1075,34 @@ struct Resolver<'a> {
     own_aliases: HashMap<DefId, DefId>,
     diagnostics: Vec<Diagnostic>,
     hidden_modules: Vec<HiddenModule>,
+    /// The type variables of the signature of the function or method
+    /// being resolved and of the header of its impl: `a.empty()` calls a
+    /// method of a bound of `a` where no value is named `a`.
+    type_vars: Vec<Symbol>,
+}
+
+/// The type variables `te` writes (lowercase bare names), into `out`.
+fn type_vars_of(te: &TypeExpr, out: &mut Vec<Symbol>) {
+    match &te.kind {
+        TypeExprKind::Named {
+            module: None, name, ..
+        } if resolve(*name).starts_with(|c: char| c.is_lowercase() || c == '_') => {
+            if !out.contains(name) {
+                out.push(*name);
+            }
+        }
+        TypeExprKind::Named { .. } | TypeExprKind::SelfType => {}
+        TypeExprKind::Generic { args, .. } => args.iter().for_each(|t| type_vars_of(t, out)),
+        TypeExprKind::Tuple(parts) => parts.iter().for_each(|t| type_vars_of(t, out)),
+        TypeExprKind::Function(params, ret) => {
+            params.iter().for_each(|t| type_vars_of(t, out));
+            type_vars_of(ret, out);
+        }
+        TypeExprKind::AssocProj { receiver, .. } => type_vars_of(receiver, out),
+        TypeExprKind::AnonRecord { fields, .. } => {
+            fields.iter().for_each(|(_, t)| type_vars_of(t, out));
+        }
+    }
 }
 
 /// The closure of a local `let f = { … }`, whose own name is a local of
@@ -1447,9 +1476,17 @@ impl Resolver<'_> {
                 for binding in &mut ti.assoc_type_bindings {
                     self.type_expr(&mut binding.ty);
                 }
+                // (The header's type variables are its methods' too.)
+                let mut header = ti.target_param_names.clone();
+                for te in ti.trait_args.iter().chain(&ti.target_type_args) {
+                    type_vars_of(te, &mut header);
+                }
+                header.extend(ti.where_clauses.iter().map(|wc| wc.type_param));
+                let around = std::mem::replace(&mut self.type_vars, header);
                 for m in &mut ti.methods {
                     self.fn_decl(m);
                 }
+                self.type_vars = around;
             }
             Decl::Let {
                 pattern, ty, value, ..
@@ -1493,6 +1530,22 @@ impl Resolver<'_> {
     }
 
     fn fn_decl(&mut self, f: &mut FnDecl) {
+        let around = self.type_vars.clone();
+        for te in f
+            .params
+            .iter()
+            .filter_map(|p| p.ty.as_ref())
+            .chain(&f.return_type)
+        {
+            type_vars_of(te, &mut self.type_vars);
+        }
+        self.type_vars
+            .extend(f.where_clauses.iter().map(|wc| wc.type_param));
+        self.fn_decl_inner(f);
+        self.type_vars = around;
+    }
+
+    fn fn_decl_inner(&mut self, f: &mut FnDecl) {
         for wc in &mut f.where_clauses {
             self.where_clause(wc);
         }
@@ -2827,6 +2880,12 @@ impl Resolver<'_> {
             None if matches!(self.imports.get(&head_name), Some(Imported::Poisoned)) => {
                 obj.res = Some(Res::Error);
                 Some(Res::Error)
+            }
+            // `a.empty()`: a method of the bound of a type variable of the
+            // signature, which no value is named.
+            None if self.type_vars.contains(&head_name) => {
+                obj.res = Some(Res::Local);
+                None
             }
             None => {
                 self.unresolved_value(head_name, head_span);

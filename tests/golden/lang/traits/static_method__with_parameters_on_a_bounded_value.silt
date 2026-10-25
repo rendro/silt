@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: help: `make` is a method of trait `Mk` that makes a value: call it on the type, `a.make(..)`, where `a` is a `type a` parameter
+-- stderr-contains: help: `make` is a method of trait `Mk` that makes a value: call it on the type, `a.make(..)`
 -- stderr-contains: help: `join` is a method of trait `Mk`: call it as `Mk.join(x, ..)`
 -- stderr-contains: :29:3
 -- stderr-contains: :33:3

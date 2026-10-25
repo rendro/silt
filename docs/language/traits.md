@@ -592,9 +592,10 @@ The full specification — including how trait parameters flow through
 Some trait methods take no value of the type and only make one —
 constructors like `default()` or `empty()`. A call through the trait
 could not say which impl it means, so these are called on a **type**:
-either a bare type name (`Int.empty()`) or a `type a` parameter inside a
-generic function (`a.empty()`). A method that takes a value of the type
-is called through its trait (`Monoid.combine(2, 3)`), never on a type:
+either a bare type name (`Int.empty()`) or, inside a generic function, a
+type variable with the bound (`a.empty()` where `a: Monoid`). A method
+that takes a value of the type is called through its trait
+(`Monoid.combine(2, 3)`), never on a type:
 
 ```silt
 trait Monoid {
