@@ -1853,11 +1853,25 @@ impl TypeChecker {
         // type, which decides them. (A use waits for them where the type
         // has several: `waits_for_trait_args`.)
         let heads = self.use_arg_heads(bound_trait_args);
-        let at = heads.and_then(|heads| self.tables.impl_at(trait_name, type_name, heads));
+        // (A trait argument that is a type variable is some type: only an
+        // impl for every argument at its place is for it.)
+        let rigid: Vec<bool> = (bound_trait_args.iter())
+            .map(|arg| matches!(self.apply(arg), Type::Rigid(_)))
+            .collect();
+        let for_rigid = |written: ArgHeads| {
+            (written.heads().iter().zip(&rigid)).all(|(head, rigid)| !*rigid || head.is_none())
+        };
+        let at = heads
+            .and_then(|heads| self.tables.impl_at(trait_name, type_name, heads))
+            .filter(|key| for_rigid(key.2));
         let key = match (at, heads) {
             (Some(key), _) => Some(key),
             (None, None) => self.tables.one_impl(trait_name, type_name),
-            (None, Some(_)) => None,
+            // Of a trait argument that is a type variable, no impl.
+            (None, Some(_)) if rigid.contains(&true) => None,
+            // One impl, at another trait argument: its own is reported
+            // below, as the matched impl.
+            (None, Some(_)) => self.tables.one_impl(trait_name, type_name),
         };
         if key.is_none() && !self.tables.impl_args_of(trait_name, type_name).is_empty() {
             let message = format!(

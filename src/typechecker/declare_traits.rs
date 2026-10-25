@@ -304,11 +304,16 @@ impl TypeChecker {
                     // No impl method AND the trait does not provide a
                     // default body — the impl is genuinely missing a
                     // required method.
+                    // (A trait with parameters is named at the impl's.)
+                    let shown = match self.tables.impl_trait_args.get(impl_key) {
+                        Some(args) if !args.is_empty() => self.show_bound(*trait_name, args),
+                        _ => self.show_trait(*trait_name),
+                    };
                     self.error(
                         Code::InvalidTraitImpl,
                         format!(
                             "trait impl '{}' for '{}' is missing method '{}'",
-                            self.show_trait(*trait_name),
+                            shown,
                             self.show_type(&Type::Generic(*type_name, Vec::new())),
                             method_name
                         ),
@@ -2418,15 +2423,30 @@ impl TypeChecker {
                 None,
             )
         } else {
-            let (every, one) = match args.is_exact() {
-                true => (earlier, written),
-                false => (written, earlier),
+            let (every, one, open) = match args.is_exact() {
+                true => (earlier, written, met),
+                false => (written, earlier, args),
+            };
+            // (Which of its trait arguments the impl is for every one of:
+            // all, or those of the places a type variable has.)
+            let heads = open.heads();
+            let places: Vec<&str> = (heads.iter().enumerate())
+                .filter(|(_, head)| head.is_none())
+                .map(|(i, _)| {
+                    ["first", "second", "third", "fourth"]
+                        .get(i)
+                        .copied()
+                        .unwrap_or("next")
+                })
+                .collect();
+            let which = match places.len() == heads.len() {
+                true => "trait argument".to_string(),
+                false => format!("{} trait argument", places.join(" and ")),
             };
             (
                 format!(
                     "duplicate implementation of trait '{trait_name}' for type '{target}': the impl \
-                     of '{every}' is for every trait argument, and the impl of '{one}' is for one of \
-                     them"
+                     of '{every}' is for every {which}, and the impl of '{one}' is for one of them"
                 ),
                 Some("give each impl a trait argument of a type of its own".to_string()),
             )

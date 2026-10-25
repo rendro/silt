@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- A missing method of one of two impls names the impl's trait argument.
+-- stderr-contains: error[type]: trait impl 'From(String)' for 'A' is missing method 'from'
+trait From(e) { fn from(source: e) -> Self }
+type A { A(Int) }
+trait From(Int) for A { fn from(e: Int) -> A { A(e) } }
+trait From(String) for A {}
+fn main() { println(A.from("x")) }

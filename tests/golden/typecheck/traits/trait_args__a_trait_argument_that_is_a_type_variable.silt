@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- A trait argument that is a type variable is some type: no impl at a
+-- type's own argument is for it, and the error names none.
+-- stderr-contains: error[type]: type 'A' does not implement trait 'From(e)'
+-- stderr-not-contains: the matched impl
+trait From(e) { fn from(source: e) -> Self }
+type A { A(Int), S(String) }
+trait From(Int) for A { fn from(e: Int) -> A { A(e) } }
+trait From(String) for A { fn from(e: String) -> A { S(e) } }
+fn f(x: e) -> A { A.from(x) }
+fn main() {
+  match f("s") {
+    A(n) -> println("A {n}")
+    S(s) -> println("S {s}")
+  }
+}
