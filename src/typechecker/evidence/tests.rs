@@ -303,7 +303,8 @@ trait Pr(a) where a: Greet {
 }
 type Holder { Holder }
 trait Pr(K) for Holder { fn item(self) -> K { K } }
-fn main() { println(Pr.pr(Holder)) }
+fn show(h: s) -> String where s: Pr(K) { Pr.pr(h) }
+fn main() { println(show(Holder)) }
 "#,
     );
     let owner = body(&bodies, "Pr.pr");

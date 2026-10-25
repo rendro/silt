@@ -9,7 +9,8 @@ trait Has for Tuple { type Item = Int
   fn item(self) -> Int { 2 } }
 fn c(x: a, type b) -> b where a: Conv(b) { Conv.conv(x) }
 fn main() {
-  println(Conv.conv({ x -> x }))
+  let n: Int = Conv.conv({ x -> x })
+  println(n)
   println(c({ x -> x + 1 }, Int))
   println(Has.item((1, 2)))
 }

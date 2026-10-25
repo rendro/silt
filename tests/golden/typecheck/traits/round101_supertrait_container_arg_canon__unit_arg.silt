@@ -4,4 +4,7 @@ trait Carry(c) { fn carry(self) -> c }
 trait Holds(b): Carry(Unit) { fn hold(self) -> b }
 trait Carry(Unit) for Bag { fn carry(self) -> Unit { () } }
 trait Holds(Int) for Bag { fn hold(self) -> Int { 1 } }
-fn main() { println("{Holds.hold(Bag { n: 1 })}") }
+fn main() {
+  let h: Int = Holds.hold(Bag { n: 1 })
+  println("{h}")
+}

@@ -521,18 +521,20 @@ Parameterized traits may have supertraits (`trait Child(a): Parent(a)`) and
 `where` clauses on both the trait declaration and its methods.
 
 A type has one impl of a trait for each trait argument: `trait
-From(Celsius) for Fahrenheit` and `trait From(Kelvin) for Fahrenheit` are
-two impls, and a use reaches the one its trait argument says. The
+From(Celsius) for Fahrenheit` and `trait From(Kelvin) for Fahrenheit`
+are two impls, and a use reaches the one its trait argument says. The
 argument is the type the use gives or asks: `Fahrenheit.from(c)` with a
-`Celsius` takes the first, and `result.map_err(r, AppError.from)` takes the
-impl for the error type of `r`. Where nothing decides the trait argument
-of a use, which impl it means is unknown, and that is an error (annotate
-the type it gives). Impls are told apart by their whole trait arguments:
-`From(List(Int))` and `From(List(String))` for one type are two impls, and
-so are `From((Int, Int))` and `From((Int, Int, Int))`. Two impls whose
-trait arguments could be one type are a duplicate: an impl whose trait
-argument is a type variable (`trait From(a) for Fahrenheit`) is for every
-argument, the type's only impl of the trait, and `From(List(a))` meets
+`Celsius` takes the first, and `result.map_err(r, AppError.from)` takes
+the impl for the error type of `r`. Where nothing decides the trait
+argument of a use, which impl it means is unknown, and that is an error,
+even where the type has only one impl of the trait (annotate the type it
+gives, or call it where a bound decides it: `where t: From(Celsius)`).
+Impls are told apart by their whole trait arguments: `From(List(Int))` and
+`From(List(String))` for one type are two impls, and so are
+`From((Int, Int))` and `From((Int, Int, Int))`. Two impls whose trait
+arguments could be one type are a duplicate: an impl whose trait argument
+is a type variable (`trait From(a) for Fahrenheit`) is for every argument,
+the type's only impl of the trait, and `From(List(a))` meets
 `From(List(Int))`. A use reaches the one impl whose trait arguments its own
 could be; while two still could (`From(List(_))` with both impls above),
 it waits for the rest of its definition to decide.

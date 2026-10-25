@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- A method whose type mentions no parameter of its trait is called where
+-- a bound decides the trait argument: no annotation of what a call gives
+-- can.
+-- stderr-contains: error[type]: cannot decide which impl of 'W(_)' for 'String' this use of 'w' means: its trait argument is not decided here
+-- stderr-contains: = help: nothing a call of 'w' gives decides the trait argument: call it where a bound decides it (`where t: W(Int)`)
+trait W(a) { fn w(self) -> Int }
+trait W(Int) for String { fn w(self) -> Int { 2 } }
+fn go(x: t) -> Int where t: W(Int) { W.w(x) }
+fn main() {
+  println(go("s"))
+  println(W.w("s"))
+}

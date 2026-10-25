@@ -1,10 +1,11 @@
--- The same, used at the type the impl says.
+-- A use whose argument decides the bound's trait argument reaches the
+-- impl at it: `y` is a String in `w` and in `g`.
 trait Conv(to) { fn conv(self) -> to }
 trait Conv(String) for Int { fn conv(self) -> String { "an int" } }
 fn s(x: a, y: b) -> b where a: Conv(b) { Conv.conv(x) }
-fn w(y) { s(3, y) }
+fn w(y: String) -> String { s(3, y) }
 fn main() {
-  let g = { y -> s(3, y) }
+  let g = { y: String -> s(3, y) }
   println(w("x"))
   println(g("y"))
 }

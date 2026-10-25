@@ -316,8 +316,10 @@ impl TypeChecker {
 
     /// Whether `subject: tr(args)` waits for its trait arguments: the
     /// impls of the trait for the subject's type that could be the use's
-    /// are several (or one the module wrote twice, while an argument is
-    /// open), so which impl the use reaches is not known yet.
+    /// are several, or one while an argument is still a type variable
+    /// nothing decided, so which impl the use reaches is not known yet.
+    /// (Its trait arguments choose the impl, never its being the only
+    /// one.)
     pub(super) fn waits_for_trait_args(&self, tr: TraitKey, subject: &Type, args: &[Type]) -> bool {
         if args.is_empty() || (args.iter()).any(|arg| matches!(self.apply(arg), Type::Error)) {
             return false;
@@ -327,7 +329,7 @@ impl TypeChecker {
         let Some(head) = self.type_name_for_impl(&subject) else {
             return false;
         };
-        (self.duplicated_impls.contains(&(tr, head)) && self.trait_args_open(args))
+        (self.trait_args_open(args) && !self.tables.impl_args_of(tr, head).is_empty())
             || self.impls_fitting(tr, head, args).len() > 1
     }
 
@@ -2439,16 +2441,15 @@ impl TypeChecker {
     /// rows each time. (For a call that is ambiguous the first
     /// candidate's: `ambiguous_method_call` reports it.)
     /// The trait whose method `method` a use on the type `ty` means,
-    /// when the type has an impl of it at several trait arguments: the
+    /// when it is a trait with parameters that has impls for the type: the
     /// use's trait arguments choose the impl (`From` for `AppError`).
     pub(super) fn trait_of_impls_by_args(&self, ty: TypeRef, method: Symbol) -> Option<TraitKey> {
         let providers = self.method_providers(ty, method);
         let Ok(Some(tr)) = self.meant_provider(&providers) else {
             return None;
         };
-        let several = self.tables.impl_methods.args_of(ty, method, tr).len() > 1
-            || self.duplicated_impls.contains(&(tr, ty));
-        several.then_some(tr)
+        let params = (self.tables.traits.get(&tr)).is_some_and(|info| !info.params.is_empty());
+        (params && !self.tables.impl_methods.args_of(ty, method, tr).is_empty()).then_some(tr)
     }
 
     pub(super) fn method_entry(&self, ty: TypeRef, method: Symbol) -> Option<MethodEntry> {

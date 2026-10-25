@@ -17,8 +17,9 @@ trait Pr(K) for Holder { fn item(self) -> K { K }
 trait Pr(J) for Holder2 { fn item(self) -> J { J }
   fn pr2(self, x: J) -> String { Greet.greet(x) } }
 fn via(h: s, type a) -> String where s: Pr(a), a: Greet { "{Pr.pr(h)} {Greet.greet(Pr.item(h))} {Pr.pr2(h, Pr.item(h))}" }
+fn pr_of(h: s) -> String where s: Pr(K) { Pr.pr(h) }
 fn main() {
-  println(Pr.pr(Holder))
+  println(pr_of(Holder))
   println(via(Holder, K))
   println(via(Holder2, J))
 }

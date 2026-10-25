@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- A trait's argument is decided by the use, never by the type's only impl:
+-- printed, `Convert.convert("s")` gives a type nothing decides.
+-- stderr-contains: error[type]: cannot decide which impl of 'Convert(_)' for 'String' this use of 'convert' means: its trait argument is not decided here
+-- stderr-contains: = help: annotate the type the call gives (`let n: Int = ...`), or call it where a bound decides it (`where t: Convert(Int)`)
+trait Convert(b) { fn convert(self) -> b }
+trait Convert(Int) for String { fn convert(self) -> Int { 1 } }
+fn main() {
+  let n: Int = Convert.convert("s")
+  println(n)
+  println(Convert.convert("s"))
+}
