@@ -199,6 +199,9 @@ pub struct TypeChecker {
     /// `x.f` there is a call of the function a field holds, which waits
     /// for the type of `x` (`unknown_receiver`).
     pub(super) callee_position: bool,
+    /// The accesses `x.m` that are no callee, by their span, as written:
+    /// for a message about a method taken as a value.
+    pub(super) method_values: HashMap<Span, String>,
     /// The receiver and the name of the callee just checked, when it is
     /// `x.m` and the type of `x` is unknown: `check_call` lets the call
     /// wait (`Goal::Select`).
@@ -449,6 +452,7 @@ impl TypeChecker {
             given_closed: 0,
             passing_on: None,
             callee_position: false,
+            method_values: HashMap::new(),
             unknown_receiver: None,
             current_qmark_spans: Vec::new(),
             qmark_decided: HashMap::new(),

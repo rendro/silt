@@ -71,6 +71,16 @@ impl TypeChecker {
                 continue;
             }
             let mentioned: Vec<Type> = match &self.wanted[i].goal {
+                // A use whose trait arguments are still undecided: what
+                // decides them may come later in the definition, so the
+                // `let` is not general in them.
+                Goal::Pred(Pred::Trait {
+                    tr, args, subject, ..
+                }) if !matches!(self.apply(subject), Type::Var(_) | Type::Rigid(_))
+                    && self.waits_for_trait_args(*tr, subject, args) =>
+                {
+                    args.clone()
+                }
                 Goal::Pred(_) => continue,
                 Goal::Select {
                     recv, args, result, ..
@@ -525,11 +535,53 @@ impl TypeChecker {
             self.show_bound(tr, args),
             self.show_type(&self.apply(subject))
         );
-        let example = self.show_bound(tr, &[Type::Generic(TypeRef::builtin("Int"), Vec::new())]);
-        Diagnostic::error(Code::AmbiguousType, origin.span, message).with_help(format!(
-            "annotate the type the call gives (`let n: Int = ...`), or call it where a bound \
-             decides it (`where t: {example}`)"
-        ))
+        let at_int: Vec<Type> = (args.iter())
+            .map(|_| Type::Generic(TypeRef::builtin("Int"), Vec::new()))
+            .collect();
+        let example = self.show_bound(tr, &at_int);
+        // (A method whose type mentions no parameter of its trait: no
+        // annotation of what a call gives decides one.)
+        let info = self.tables.traits.get(&tr);
+        let declared = origin.callee.and_then(|method| {
+            let (_, ty) = info?.methods.iter().find(|(name, _)| *name == method)?;
+            Some((method, ty))
+        });
+        let undecidable = declared.filter(|(_, ty)| {
+            info.is_some_and(|info| {
+                !free_vars_in(ty)
+                    .iter()
+                    .any(|v| info.param_var_ids.contains(v))
+            })
+        });
+        let help = match (undecidable, self.method_values.get(&origin.span)) {
+            (Some((method, _)), _) => format!(
+                "nothing a call of '{method}' gives decides the trait argument: call it where a \
+                 bound decides it (`where t: {example}`)"
+            ),
+            // A method taken as a value: its type says which, at the
+            // trait arguments of an impl the type has.
+            (None, Some(written)) => {
+                let shown = (declared.zip(info)).and_then(|((_, ty), info)| {
+                    let subject = self.apply(subject);
+                    let head = self.type_name_for_impl(&subject)?;
+                    let first = *self.tables.impl_args_of(tr, head).first()?;
+                    let impl_args = self.tables.impl_trait_args.get(&(tr, head, first))?;
+                    let mut mapping: HashMap<TyVar, Type> = HashMap::new();
+                    mapping.insert(info.self_var, subject);
+                    mapping.extend(info.param_var_ids.iter().copied().zip(impl_args.clone()));
+                    Some(self.show_type(&substitute_vars(ty, &mapping)))
+                });
+                match shown {
+                    Some(ty) => format!("annotate the function's type: `let f: {ty} = {written}`"),
+                    None => "annotate the function's type".to_string(),
+                }
+            }
+            (None, None) => format!(
+                "annotate the type the call gives (`let n: Int = ...`), or call it where a bound \
+                 decides it (`where t: {example}`)"
+            ),
+        };
+        Diagnostic::error(Code::AmbiguousType, origin.span, message).with_help(help)
     }
 
     /// Whether `ty` is a variable still unresolved that the scope

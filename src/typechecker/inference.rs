@@ -2515,6 +2515,11 @@ impl TypeChecker {
             ExprKind::FieldAccess(obj, field, _) => {
                 self.receiver_taken = false;
                 let field = *field;
+                // (An access that is no callee is a value: a message about
+                // it writes it as it is written.)
+                if !called && let ExprKind::Ident(name) = obj.kind {
+                    self.method_values.insert(span, format!("{name}.{field}"));
+                }
                 // What the resolver said the access names: nothing (it
                 // reported why, or the module failed to load), a variant
                 // (`m.Red`, `Shape.Red`, `m.Shape.Red`), whose constructor
