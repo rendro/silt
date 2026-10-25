@@ -1,0 +1,23 @@
+-- cmd: check
+-- exit: 1
+-- requires-feature: postgres
+-- A call through a trait with a parameter takes the method's type from the
+-- trait; what the impl's method gives a builtin is still refused at the
+-- argument that gives it, naming the method.
+-- stderr-contains: error[type]: the connection of `postgres.execute` must be a postgres.PgPool or a postgres.PgTx
+-- stderr-contains: :22:22
+-- stderr-contains: = note: `S.ex` passes it to `postgres.execute`
+import postgres
+trait Q(b) { fn ex(self, k: b, c: x) -> String }
+type S { S }
+trait Q(Int) for S {
+  fn ex(self, k: Int, c: x) -> String {
+    match postgres.execute(c, "select 1", ()) {
+      Ok(n) -> "ok {n}"
+      Err(e) -> "err {e}"
+    }
+  }
+}
+fn main() {
+  println(Q.ex(S, 1, 5))
+}

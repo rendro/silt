@@ -1964,6 +1964,26 @@ impl TypeChecker {
                 // parameter is owed for that argument: a bound that
                 // fails is reported at it.
                 for k in owed_before..self.wanted.len() {
+                    // The call of a trait method itself (its type is the
+                    // callee's): each parameter's argument, for what the
+                    // impl's method gives a builtin.
+                    if let (Goal::Pred(Pred::Via { method_ty, .. }), CallForm::Call) =
+                        (&self.wanted[k].goal, form)
+                        && self.apply(method_ty) == callee_ty
+                    {
+                        let origin = self.wanted[k].origin;
+                        let arguments = (0..params.len())
+                            .map(|param| {
+                                let arg = args.get(param.checked_sub(implicit_self)?)?;
+                                let origin = Origin {
+                                    span: arg.span,
+                                    ..origin
+                                };
+                                Some((origin, self.alias_named(arg)))
+                            })
+                            .collect();
+                        self.wanted[k].arguments = arguments;
+                    }
                     // (A trait method's call is at the type it is given,
                     // not at its receiver: where it was given, if that is
                     // known.)

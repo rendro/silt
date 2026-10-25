@@ -17,6 +17,9 @@ pub(crate) struct Wanted {
     /// For a call of a trait method (`Pred::Via`): the types the call
     /// gives the method, each at the argument that gives it.
     pub(super) places: super::builtin_needs::Places,
+    /// For the call of a trait method itself (`Tr.m(x, ..)`, `x.m(..)`):
+    /// each parameter of the method's type, the argument that gives it.
+    pub(super) arguments: super::builtin_needs::Arguments,
     /// Its node in the module's evidence (`evidence::Ledger`).
     pub(super) ev: super::evidence::EvRef,
 }
@@ -236,6 +239,7 @@ impl TypeChecker {
             solved: false,
             in_scheme: false,
             places: Vec::new(),
+            arguments: Vec::new(),
             ev: self.ev_here(ev),
         });
         self.solve_wanted(self.wanted.len() - 1);
