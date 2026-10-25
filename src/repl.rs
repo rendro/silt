@@ -1043,7 +1043,9 @@ mod tests {
                 .any(|m| m.contains("compiler bug") || m.contains("pending")),
             "{messages:?}"
         );
-        assert_eq!(value(&mut repl, "let y: String = Conv.conv(6)\ny"), "s6");
+        let decided = "let y: String = Conv.conv(6)";
+        assert!(repl.eval(decided).committed, "`{decided}` must run");
+        assert_eq!(value(&mut repl, "y"), "s6");
     }
 
     /// The value `input` returns, which must run.
