@@ -1,0 +1,20 @@
+-- The same at two types, in a closure the body makes.
+import list
+trait Monoid { fn empty() -> Self
+  fn combine(a: Self, b: Self) -> Self }
+trait Monoid for Int { fn empty() -> Int { 0 }
+  fn combine(a: Int, b: Int) -> Int { a + b } }
+trait Monoid for String { fn empty() -> String { "" }
+  fn combine(a: String, b: String) -> String { "{a}{b}" } }
+fn concat_all(xs: List(a)) -> a where a: Monoid {
+  let f = { acc, x -> Monoid.combine(acc, x) }
+  list.fold(xs, a.empty(), f)
+}
+fn nested(xs: List(a)) -> List(a) where a: Monoid {
+  list.map(xs) { x -> Monoid.combine(x, a.empty()) }
+}
+fn main() {
+  println(concat_all([1, 2, 3]))
+  println(concat_all(["x", "y"]))
+  println(nested(["p"]))
+}

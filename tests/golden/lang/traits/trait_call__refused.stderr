@@ -24,7 +24,7 @@ error[type]: method 'empty' of trait 'Monoid' takes no value of the type, so it 
     |
  23 |   let e = Monoid.empty()
     |           ^^^^^^^^^^^^ method 'empty' of trait 'Monoid' takes no value of the type, so it is called on a type
-  = help: call it on a type, `T.empty()`, or on a `type a` parameter, `a.empty()`
+  = help: call it on a type, `T.empty()`, or on a type variable with the bound, `a.empty()`
 
 error[type]: type 'String' does not implement trait 'Greet'
  --> trait_call__refused.silt:24:23

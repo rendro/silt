@@ -1,7 +1,7 @@
 -- cmd: check
 -- exit: 1
 -- stderr-contains: error[type]: type 'b' has no field 'total'
--- stderr-contains: help: `total` is a method of trait `Vals` that makes a value: call it on the type, `b.total()`, where `b` is a `type b` parameter
+-- stderr-contains: help: `total` is a method of trait `Vals` that makes a value: call it on the type, `b.total()`
 -- stderr-not-contains: panicked
 -- A method the trait declares without `self` is called on a type: a
 -- value of a bounded type variable has no field of its name (the

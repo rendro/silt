@@ -620,6 +620,17 @@ impl TypeChecker {
     /// The descriptor occupies no parameter of the method:
     /// `receiver_taken` stays false, so the call unifies its arguments
     /// with all of the method's parameters.
+    /// The type variable the signature being checked (or its impl's
+    /// header) names `name`, as its body sees it.
+    fn sig_type_var(&self, name: Symbol) -> Option<Type> {
+        let ty = self.sig_names.get(&name)?;
+        match self.apply(ty) {
+            Type::Var(v) => Some(self.rigid_of.get(&v).cloned().unwrap_or(Type::Var(v))),
+            ty @ Type::Rigid(_) => Some(ty),
+            _ => None,
+        }
+    }
+
     pub(super) fn resolve_type_descriptor_method(
         &mut self,
         inner: &Type,
@@ -629,6 +640,52 @@ impl TypeChecker {
         let inner = self.apply(inner);
         match &inner {
             // A type still unknown has no methods to look up.
+            Type::Var(_) | Type::Rigid(_) if let Some(name) = self.var_as_type => {
+                let bounds: Vec<TraitKey> = match &inner {
+                    Type::Rigid(r) => (self.bounds.get(&r.var).into_iter().flatten())
+                        .map(|(t, _)| *t)
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                if bounds.is_empty() {
+                    self.error_help(
+                        Code::UnknownMethod,
+                        (
+                            format!(
+                                "no method '{field}' on type variable `{name}`: it has no bounds"
+                            ),
+                            Some(format!(
+                                "add a bound whose trait has the method: `where {name}: SomeTrait`"
+                            )),
+                        ),
+                        span,
+                    );
+                    return None;
+                }
+                if let Type::Rigid(r) = &inner
+                    && self.bound_methods(*r, field).is_empty()
+                {
+                    let mut shown: Vec<TraitKey> = bounds.clone();
+                    distinct(&mut shown);
+                    let shown: Vec<String> = shown.iter().map(|t| self.show_trait(*t)).collect();
+                    self.error(
+                        Code::UnknownMethod,
+                        format!(
+                            "no method '{field}' on type variable `{name}`: its bounds ({}) give none",
+                            shown.join(" + ")
+                        ),
+                        span,
+                    );
+                    return None;
+                }
+                let inner = inner.clone();
+                self.var_as_type = None;
+                self.descriptor_var = Some(name);
+                let found = self.resolve_type_descriptor_method(&inner, field, span);
+                self.descriptor_var = None;
+                self.var_as_type = Some(name);
+                found
+            }
             Type::Var(_) => {
                 self.error(
                     Code::UnknownMethod,
@@ -705,13 +762,12 @@ impl TypeChecker {
                 }
                 if matches.len() > 1 {
                     let traits: Vec<TraitKey> = matches.iter().map(|(t, _)| *t).collect();
-                    self.ambiguous_bound_method(
-                        field,
-                        &format!("`type {inner}`"),
-                        *r,
-                        &traits,
-                        span,
-                    );
+                    // (A type variable used as a type is named as written.)
+                    let on = match self.descriptor_var {
+                        Some(name) => format!("`{name}`"),
+                        None => format!("`type {inner}`"),
+                    };
+                    self.ambiguous_bound_method(field, &on, *r, &traits, span);
                     return None;
                 }
                 if self.self_param(matches[0].0, field).is_some() {
@@ -883,7 +939,7 @@ impl TypeChecker {
                     ),
                 )
                 .with_help(format!(
-                    "call it on a type, {}, or on a `type a` parameter, {}",
+                    "call it on a type, {}, or on a type variable with the bound, {}",
                     on_type_call("T", field, method_ty),
                     on_type_call("a", field, method_ty)
                 )),
@@ -1040,9 +1096,24 @@ impl TypeChecker {
             Some(ExprKind::Ident(name)) => resolve(*name),
             _ => placeholder.to_string(),
         };
-        let help = match self.method_help(ty, field, &written) {
-            Some(help) => Some(help),
-            None => format_record_field_suggestion(base.clone(), field, fields).1,
+        // A value named as a type variable of the signature whose bound has
+        // the method: the value is meant, as always.
+        let hidden = match recv.map(|recv| &recv.kind) {
+            Some(ExprKind::Ident(name)) => match self.sig_type_var(*name) {
+                Some(Type::Rigid(r)) if !self.bound_methods(r, field).is_empty() => Some(*name),
+                _ => None,
+            },
+            _ => None,
+        };
+        let help = match hidden {
+            Some(name) => Some(format!(
+                "`{name}` is also a type variable here, and the value is meant: rename one to \
+                 call the method of the type variable's bound"
+            )),
+            None => match self.method_help(ty, field, &written) {
+                Some(help) => Some(help),
+                None => format_record_field_suggestion(base.clone(), field, fields).1,
+            },
         };
         self.error_help(Code::UnknownField, (base, help), span);
     }
@@ -1086,23 +1157,16 @@ impl TypeChecker {
                 ));
             }
             let shown = self.spell_trait(tr);
-            // (A type variable is called on as the `type a` parameter
-            // that would name it.)
-            let (on, parameter) = match ty {
-                Type::Rigid(r) => (
-                    r.name.to_string(),
-                    format!(", where `{0}` is a `type {0}` parameter", r.name),
-                ),
-                _ => (
-                    self.type_name_for_impl(ty)
-                        .map_or_else(|| "T".to_string(), |t| self.spell_type(t)),
-                    String::new(),
-                ),
+            // (A type variable with the bound is called on as a type.)
+            let on = match ty {
+                Type::Rigid(r) => r.name.to_string(),
+                _ => (self.type_name_for_impl(ty))
+                    .map_or_else(|| "T".to_string(), |t| self.spell_type(t)),
             };
             let args = if params > 0 { ".." } else { "" };
             return Some(format!(
                 "`{field}` is a method of trait `{shown}` that makes a value: call it on the type, \
-                 `{on}.{field}({args})`{parameter}"
+                 `{on}.{field}({args})`"
             ));
         }
         let module = match ty {
@@ -2708,6 +2772,22 @@ impl TypeChecker {
                         expr.ty = Some(Type::Error);
                         return Type::Error;
                     }
+                }
+
+                // `a.empty()`: a type variable of the signature (or the
+                // impl's header) that no value is named, as a type: the
+                // method of a bound of it that makes a value.
+                if let ExprKind::Ident(name) = obj.kind
+                    && obj.res == Some(crate::defs::Res::Local)
+                    && env.lookup(name).is_none()
+                    && let Some(ty) = self.sig_type_var(name)
+                {
+                    self.var_as_type = Some(name);
+                    let resolved = self.resolve_type_descriptor_method(&ty, field, span);
+                    self.var_as_type = None;
+                    let ty = resolved.unwrap_or(Type::Error);
+                    expr.ty = Some(ty.clone());
+                    return ty;
                 }
 
                 // Could be record.field — infer the object type

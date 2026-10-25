@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- A value named as a type variable of the signature is the value: its
+-- dot names a field, and the help says to rename one.
+-- stderr-contains: error[type]: type 'List(a)' has no field 'empty'
+-- stderr-contains: = help: `a` is also a type variable here, and the value is meant: rename one to call the method of the type variable's bound
+trait Monoid { fn empty() -> Self }
+trait Monoid for Int { fn empty() -> Int { 0 } }
+fn shadow(a: List(a)) -> a where a: Monoid { a.empty() }
+fn main() { println(shadow([1])) }

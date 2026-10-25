@@ -221,7 +221,8 @@ fn main() {
 
 - A method is called through its trait, `Describe.describe(t)`; a dot
   after a value is always a field. A method that makes a value is called
-  on a type: `Int.empty()`, or `a.empty()` for a `type a` parameter.
+  on a type: `Int.empty()`, or `a.empty()` for a type variable with the
+  bound (`where a: Monoid`) or a `type a` parameter.
 - Bounds: `where a: Equal + Hash, b: Display`. A supertrait:
   `trait Loud: Describe { ... }`. A trait may give default bodies,
   associated types (`type Item`, `Self::Item`) and parameters

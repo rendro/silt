@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- A method two bounds of a type variable give: the error names the
+-- variable as written (no `type a` parameter is there) and the bounds in
+-- the order the `where` clause writes them.
+-- stderr-contains: error[type]: ambiguous method 'mk' on `a`: provided by traits Mk2, Mk
+-- stderr-contains: = help: the bounds `Mk2` and `Mk` both give `mk`: call it from a function bounded by only one of them
+trait Mk { fn mk() -> Self }
+trait Mk2 { fn mk() -> Self }
+trait Mk for Int { fn mk() -> Int { 1 } }
+trait Mk2 for Int { fn mk() -> Int { 2 } }
+fn f(x: a) -> a where a: Mk2 + Mk { a.mk() }
+fn main() { println(f(0)) }

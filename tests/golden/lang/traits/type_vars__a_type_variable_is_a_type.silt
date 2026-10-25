@@ -1,0 +1,22 @@
+-- A type variable the signature or the impl's header binds is a type in
+-- the body where no value is named so: `a.empty()` calls the method of a
+-- bound of `a` that makes a value, through the bound's dictionary, with
+-- no `type a` parameter; in closures too.
+import list
+trait Monoid { fn empty() -> Self
+  fn combine(a: Self, b: Self) -> Self }
+trait Monoid for Int { fn empty() -> Int { 0 }
+  fn combine(a: Int, b: Int) -> Int { a + b } }
+fn concat_all(xs: List(a)) -> a where a: Monoid {
+  list.fold(xs, a.empty()) { acc, x -> Monoid.combine(acc, x) }
+}
+trait Default { fn default() -> Self }
+trait Default for Int { fn default() -> Int { 7 } }
+type Box(a) { Box(a) }
+trait Default for Box(a) where a: Default { fn default() -> Box(a) { Box(a.default()) } }
+fn main() {
+  println(concat_all([1, 2, 3]))
+  match Box.default() {
+    Box(n) -> println(n + 0)
+  }
+}

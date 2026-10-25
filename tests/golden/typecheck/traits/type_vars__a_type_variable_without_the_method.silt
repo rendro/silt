@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- A type variable used as a type has the methods of its bounds only.
+-- stderr-contains: error[type]: no method 'empty' on type variable `a`: it has no bounds
+-- stderr-contains: = help: add a bound whose trait has the method: `where a: SomeTrait`
+-- stderr-contains: error[type]: no method 'empty' on type variable `a`: its bounds (Display) give none
+trait Monoid { fn empty() -> Self }
+trait Monoid for Int { fn empty() -> Int { 0 } }
+fn nob(xs: List(a)) -> Int { a.empty() }
+fn wrong(xs: List(a)) -> a where a: Display { a.empty() }
+fn main() { println(1) }

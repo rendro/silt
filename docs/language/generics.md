@@ -535,9 +535,9 @@ error. See [Built-in Traits](traits.md#built-in-traits).
 
 Some trait methods take no value of the type and only make one —
 constructors like `default()` or `empty()`. A call through the trait
-could not say which impl it means, so these are called on a **type
-descriptor**: either a bare type
-name (`Int.default()`) or a `type a` parameter (`a.default()`):
+could not say which impl it means, so these are called on a **type**:
+a bare type name (`Int.default()`), a type variable of the signature
+with the bound (`a.default()`), or a `type a` parameter:
 
 ```silt
 trait Default {
@@ -566,6 +566,15 @@ The rules:
   descriptor, the impl `Default for Int` that `where a: Default` asks
   for; `a.default()` calls its method. `default(Todo)` passes
   `Default for Todo`; etc.
+- **A type variable is a type.** A type variable the signature binds
+  (or the impl's header, in its methods) is a type in the body, where no
+  value is named so: `fn concat_all(xs: List(a)) -> a where a: Monoid`
+  calls `a.empty()` with no `type a` parameter, and `trait Default for
+  Box(a) where a: Default` makes `Box(a.default())`. A `type a`
+  parameter stays the way to pass a type to a call (`default(Int)`,
+  `json.parse(body, Todo)`). A value named `a` (a parameter `a: List(a)`)
+  is the value: `a.empty()` is then a field of it, and the error says to
+  rename one.
 - **The descriptor is a dispatch key, not an argument.** It occupies no
   parameter of the method: `a.empty()` passes nothing.
 - **A method that takes a value of the type is called through its
@@ -579,7 +588,7 @@ The rules:
 - **A method that makes a value is called on a type, never on a value
   or through its trait.** `x.default()` on a value `x: a` is an error (a
   dot after a value names a field) whose help names the call to write:
-  `a.default()`, with a `type a` parameter. `Default.default()` is an
+  `a.default()`. `Default.default()` is an
   error that says to call it on a type.
 - **Ambiguity across traits is rejected.** If both `Foo` and `Bar`
   declare a method `build` and `a` is constrained to `Foo + Bar`,

@@ -262,6 +262,13 @@ pub struct TypeChecker {
     /// checked, by name: an annotation in the body that writes one of the
     /// names means the same variable.
     pub(super) sig_names: HashMap<Symbol, Type>,
+    /// While the method of a type variable used as a type (`a.empty()`,
+    /// no value named `a`) is looked up: the variable's name, for the
+    /// messages.
+    pub(super) var_as_type: Option<Symbol>,
+    /// While a type variable's method is looked up as a descriptor's:
+    /// its name, for the messages (`on \`a\``, not `on \`type a\``).
+    pub(super) descriptor_var: Option<Symbol>,
     /// Each annotation variable of a declaration whose body was or is
     /// being checked, as its body sees it: rigid.
     pub(super) rigid_of: HashMap<TyVar, Type>,
@@ -484,6 +491,8 @@ impl TypeChecker {
             at: Span::BUILTIN,
             expected_closure: None,
             sig_names: HashMap::new(),
+            var_as_type: None,
+            descriptor_var: None,
             rigid_of: HashMap::new(),
             let_vars: std::collections::HashSet::new(),
             var_written: HashMap::new(),
