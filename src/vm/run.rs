@@ -4,6 +4,7 @@ use std::cmp::Ordering;
 use std::sync::Arc;
 
 use crate::builtins::registry::registry;
+use crate::bytecode::dict::Dict;
 use crate::bytecode::{Chunk, Instr, Op, Segment, Segments, VmClosure, decode};
 use crate::scheduler::{Blocks, SliceResult};
 use crate::typeinfo::bv;
@@ -122,7 +123,11 @@ fn loaded(frames: &[Frame]) -> (&VmClosure, &Chunk, &[u8], usize, usize) {
 #[inline(always)]
 fn put(slot: &mut Value, value: Value) {
     match slot {
-        Value::Int(_) | Value::Float(_) | Value::Bool(_) | Value::Unit => {
+        Value::Int(_)
+        | Value::Float(_)
+        | Value::Bool(_)
+        | Value::Unit
+        | Value::Dict(Dict::Of(_)) => {
             std::mem::forget(std::mem::replace(slot, value));
         }
         Value::String(_)
@@ -142,7 +147,8 @@ fn put(slot: &mut Value, value: Value) {
         | Value::Handle(_)
         | Value::Bytes(_)
         | Value::TcpListener(_)
-        | Value::TcpStream(_) => *slot = value,
+        | Value::TcpStream(_)
+        | Value::Dict(_) => *slot = value,
     }
 }
 
@@ -154,7 +160,8 @@ fn put(slot: &mut Value, value: Value) {
 
 /// A value as the instructions that copy one sort it: a number, a Bool
 /// or unit, which owns nothing and is built where it goes; a closure,
-/// which is one pointer and is built where it goes too; a value of any
+/// which is one pointer and is built where it goes too; the dictionary
+/// of an impl whose header asks nothing, a number too; a value of any
 /// other kind, which is cloned and moved.
 enum Sort<'a> {
     Int(i64),
@@ -162,6 +169,7 @@ enum Sort<'a> {
     Bool(bool),
     Unit,
     Closure(&'a Arc<VmClosure>),
+    Dict(u32),
     Other(&'a Value),
 }
 
@@ -191,7 +199,9 @@ fn sort(value: &Value) -> Sort<'_> {
         | Value::Handle(_)
         | Value::Bytes(_)
         | Value::TcpListener(_)
-        | Value::TcpStream(_) => Sort::Other(value),
+        | Value::TcpStream(_)
+        | Value::Dict(Dict::Built(_)) => Sort::Other(value),
+        Value::Dict(Dict::Of(index)) => Sort::Dict(*index),
     }
 }
 
@@ -218,7 +228,7 @@ pub(super) fn push_with<T>(stack: &mut Vec<T>, make: impl FnOnce() -> T) {
     }
 }
 
-// These five are not inlined into the loop: there rustc 1.99.0 calls
+// These six are not inlined into the loop: there rustc 1.99.0 calls
 // `Vec::push_mut` out of line and copies the value in (measured 2026-10-12).
 
 #[inline(never)]
@@ -242,6 +252,11 @@ fn push_unit(stack: &mut Vec<Value>) {
 }
 
 #[inline(never)]
+fn push_dict(stack: &mut Vec<Value>, index: u32) {
+    push_with(stack, || Value::Dict(Dict::Of(index)));
+}
+
+#[inline(never)]
 fn push_closure(stack: &mut Vec<Value>, closure: Arc<VmClosure>) {
     push_with(stack, move || Value::VmClosure(closure));
 }
@@ -255,6 +270,7 @@ macro_rules! push_copy {
             Sort::Float(f) => push_float(&mut $stack, f),
             Sort::Bool(b) => push_bool(&mut $stack, b),
             Sort::Unit => push_unit(&mut $stack),
+            Sort::Dict(index) => push_dict(&mut $stack, index),
             Sort::Closure(closure) => {
                 let closure = closure.clone();
                 push_closure(&mut $stack, closure);
@@ -279,6 +295,7 @@ macro_rules! set_copy {
             Sort::Float(f) => put(&mut $stack[to], Value::Float(f)),
             Sort::Bool(b) => put(&mut $stack[to], Value::Bool(b)),
             Sort::Unit => put(&mut $stack[to], Value::Unit),
+            Sort::Dict(index) => put(&mut $stack[to], Value::Dict(Dict::Of(index))),
             Sort::Closure(_) | Sort::Other(_) => {
                 let value = $value.clone();
                 put(&mut $stack[to], value);
@@ -307,7 +324,7 @@ fn open_slot(stack: &mut Vec<Value>, at: usize) {
 #[inline(always)]
 fn pop_done(stack: &mut Vec<Value>) {
     match sort(peek(stack)) {
-        Sort::Int(_) | Sort::Float(_) | Sort::Bool(_) | Sort::Unit => {
+        Sort::Int(_) | Sort::Float(_) | Sort::Bool(_) | Sort::Unit | Sort::Dict(_) => {
             std::mem::forget(stack.pop());
         }
         Sort::Closure(_) | Sort::Other(_) => drop(stack.pop()),
@@ -602,6 +619,60 @@ impl Vm {
                 }
             };
         }
+        // `Call`: call the function under the top `argc` values with
+        // them.
+        macro_rules! call {
+            ($argc:expr) => {{
+                let argc = $argc;
+                let func_slot = self.stack.len() - 1 - argc;
+                save!();
+                // (A closure is called by its pointer: the value in
+                // the slot is not cloned and moved.)
+                let entered = match sort(&self.stack[func_slot]) {
+                    Sort::Closure(closure) => {
+                        let closure = closure.clone();
+                        ok!(self.call_closure(closure, argc, func_slot))
+                    }
+                    Sort::Int(_)
+                    | Sort::Float(_)
+                    | Sort::Bool(_)
+                    | Sort::Unit
+                    | Sort::Dict(_)
+                    | Sort::Other(_) => {
+                        let callee = self.stack[func_slot].clone();
+                        ok!(self.call_value(callee, argc, func_slot))
+                    }
+                };
+                go_on!(self.entered(entered));
+            }};
+        }
+        // `TailCall`: the function under the top `argc` values takes the
+        // frame over, called with them.
+        macro_rules! tail_call {
+            ($argc:expr) => {{
+                let argc = $argc;
+                let func_slot = self.stack.len() - 1 - argc;
+                let callee = self.stack[func_slot].clone();
+                save!();
+                if let Value::VmClosure(callee) = callee {
+                    let argc =
+                        super::dicts::with_bound(&mut self.stack, &callee, func_slot + 1, argc);
+                    if argc != callee.function.arity() {
+                        fail!(VmError::type_confusion(format!(
+                            "function '{}' expects {} arguments, got {}",
+                            callee.function.name(),
+                            callee.function.arity(),
+                            argc
+                        )));
+                    }
+                    self.reuse_frame(callee, func_slot + 1, argc);
+                    load!();
+                } else {
+                    let entered = ok!(self.call_value(callee, argc, func_slot));
+                    go_on!(self.entered(entered));
+                }
+            }};
+        }
         // An instruction of two operands reads them where they lie, on
         // top of the stack, and writes its result over the first; the
         // second is let go of. Nothing is taken off the stack and
@@ -792,7 +863,11 @@ impl Vm {
                             }
                         },
                         Sort::Float(n) => put(&mut self.stack[top], Value::Float(-n)),
-                        Sort::Bool(_) | Sort::Unit | Sort::Closure(_) | Sort::Other(_) => {
+                        Sort::Bool(_)
+                        | Sort::Unit
+                        | Sort::Closure(_)
+                        | Sort::Dict(_)
+                        | Sort::Other(_) => {
                             let value = pop(&mut self.stack);
                             fail!(VmError::type_confusion(format!(
                                 "cannot negate {}",
@@ -809,6 +884,7 @@ impl Vm {
                         | Sort::Float(_)
                         | Sort::Unit
                         | Sort::Closure(_)
+                        | Sort::Dict(_)
                         | Sort::Other(_) => {
                             let value = pop(&mut self.stack);
                             fail!(VmError::type_confusion(format!(
@@ -952,46 +1028,69 @@ impl Vm {
                     };
                     push_closure(&mut self.stack, frame.closure.clone());
                 }
-                Instr::Call { argc } => {
-                    let func_slot = self.stack.len() - 1 - argc;
-                    save!();
-                    // (A closure is called by its pointer: the value in
-                    // the slot is not cloned and moved.)
-                    let entered = match sort(&self.stack[func_slot]) {
-                        Sort::Closure(closure) => {
-                            let closure = closure.clone();
-                            ok!(self.call_closure(closure, argc, func_slot))
-                        }
-                        Sort::Int(_)
-                        | Sort::Float(_)
-                        | Sort::Bool(_)
-                        | Sort::Unit
-                        | Sort::Other(_) => {
-                            let callee = self.stack[func_slot].clone();
-                            ok!(self.call_value(callee, argc, func_slot))
-                        }
-                    };
-                    go_on!(self.entered(entered));
+                Instr::FrameDict => {
+                    // (A function with the instruction is called with its
+                    // dictionary below its arguments: its frame starts
+                    // above a slot.)
+                    push_copy!(self.stack, self.stack[base - 1]);
                 }
-                Instr::TailCall { argc } => {
-                    let func_slot = self.stack.len() - 1 - argc;
-                    let callee = self.stack[func_slot].clone();
+                Instr::CallDict { method, argc, at } => {
                     save!();
-                    if let Value::VmClosure(callee) = callee {
-                        if argc != callee.function.arity() {
-                            fail!(VmError::type_confusion(format!(
-                                "function '{}' expects {} arguments, got {}",
-                                callee.function.name(),
-                                callee.function.arity(),
-                                argc
-                            )));
-                        }
-                        self.reuse_frame(callee, func_slot + 1, argc);
-                        load!();
-                    } else {
-                        let entered = ok!(self.call_value(callee, argc, func_slot));
-                        go_on!(self.entered(entered));
-                    }
+                    go_on!(ok!(self.call_dict(method, argc, at, false)));
+                }
+                Instr::TailCallDict { method, argc, at } => {
+                    save!();
+                    go_on!(ok!(self.call_dict(method, argc, at, true)));
+                }
+                Instr::MakeDict { k, n } => {
+                    let proto = chunk.constant(k).clone();
+                    save!();
+                    ok!(self.make_dict(&proto, n));
+                    load!();
+                }
+                Instr::DictMethod { method, of } => {
+                    save!();
+                    ok!(self.dict_method(method, of));
+                    load!();
+                }
+                Instr::DictSub { k } => {
+                    save!();
+                    ok!(self.dict_part(|dict, _| dict.sub(k)));
+                    load!();
+                }
+                Instr::SuperDict { index } => {
+                    save!();
+                    ok!(self.dict_part(|dict, globals| dict.super_dict(index, globals)));
+                    load!();
+                }
+                Instr::WhereDict { index } => {
+                    save!();
+                    ok!(self.dict_part(|dict, globals| dict.where_dict(index, globals)));
+                    load!();
+                }
+                Instr::Bind { n } => {
+                    save!();
+                    ok!(self.bind(n));
+                    load!();
+                }
+                Instr::Call { argc } => call!(argc),
+                Instr::CallChecked { argc, at, template } => {
+                    let at = self.stack.len() - argc + usize::from(at);
+                    save!();
+                    ok!(self.check_receiver(template, at));
+                    call!(argc)
+                }
+                Instr::TailCall { argc } => tail_call!(argc),
+                Instr::TailCallChecked { argc, at, template } => {
+                    let at = self.stack.len() - argc + usize::from(at);
+                    save!();
+                    ok!(self.check_receiver(template, at));
+                    tail_call!(argc)
+                }
+                Instr::TailCallKeep { argc, keep } => {
+                    save!();
+                    ok!(self.tail_call_keep(argc, keep));
+                    load!();
                 }
                 Instr::Return => {
                     let frames = self.frames.len();
@@ -1024,6 +1123,7 @@ impl Vm {
                         | Sort::Bool(_)
                         | Sort::Unit
                         | Sort::Closure(_)
+                        | Sort::Dict(_)
                         | Sort::Other(_) => returned!(pop(&mut self.stack)),
                     }
                 }
@@ -1451,7 +1551,7 @@ impl Vm {
                             Sort::Float(f) => put(&mut self.stack[to], Value::Float(f)),
                             Sort::Bool(b) => put(&mut self.stack[to], Value::Bool(b)),
                             Sort::Unit => put(&mut self.stack[to], Value::Unit),
-                            Sort::Closure(_) | Sort::Other(_) => {
+                            Sort::Closure(_) | Sort::Dict(_) | Sort::Other(_) => {
                                 let value = std::mem::replace(&mut self.stack[top], Value::Unit);
                                 put(&mut self.stack[to], value);
                             }
@@ -1841,11 +1941,28 @@ impl Vm {
     /// the stack's slot `args_at` on as its arguments: a tail call.
     #[inline(always)]
     fn reuse_frame(&mut self, closure: Arc<VmClosure>, args_at: usize, argc: usize) {
+        self.reuse_frame_after(closure, args_at, argc, 0);
+    }
+
+    /// [`Vm::reuse_frame`] with the frame's first `keep` values kept as
+    /// the callee's first arguments: the `argc` values from the stack's
+    /// slot `args_at` on follow them.
+    fn reuse_frame_after(
+        &mut self,
+        closure: Arc<VmClosure>,
+        args_at: usize,
+        argc: usize,
+        keep: usize,
+    ) {
         let base = self.frame().base_slot;
-        for i in 0..argc {
-            self.stack[base + i] = self.stack[args_at + i].clone();
+        // (A method takes its dictionary from below its arguments.)
+        if closure.function.dict_slot() {
+            self.stack[base - 1] = self.stack[args_at - 1].clone();
         }
-        self.stack.truncate(base + argc);
+        for i in 0..argc {
+            self.stack[base + keep + i] = self.stack[args_at + i].clone();
+        }
+        self.stack.truncate(base + keep + argc);
         // The caller, which the callee takes the place of, goes to the
         // log, for the call stack of an error: its function and where
         // it had come to, which is past the tail call. (No name and no
@@ -1855,6 +1972,78 @@ impl Vm {
         let caller = std::mem::replace(&mut frame.closure, closure);
         let caller_ip = std::mem::replace(&mut frame.ip, 0);
         self.tco_elided.log(depth, &caller.function, caller_ip);
+    }
+
+    /// `TailCallKeep`: the tail call of the function below the top
+    /// `argc` values with the frame's first `keep` values, then those.
+    fn tail_call_keep(&mut self, argc: usize, keep: usize) -> Result<(), VmError> {
+        let func_slot = self.stack.len() - 1 - argc;
+        if let Value::VmClosure(callee) = &self.stack[func_slot]
+            && callee.bound.is_empty()
+            && keep + argc == callee.function.arity()
+        {
+            let callee = callee.clone();
+            self.reuse_frame_after(callee, func_slot + 1, argc, keep);
+            return Ok(());
+        }
+        // (Not what the compiler makes: the values kept go under the
+        // others, and the call is `TailCall`'s.)
+        let base = self.frame().base_slot;
+        let kept: Vec<Value> = self.stack[base..base + keep].to_vec();
+        self.stack.splice(func_slot + 1..func_slot + 1, kept);
+        let argc = argc + keep;
+        let Value::VmClosure(callee) = self.stack[func_slot].clone() else {
+            return Err(VmError::type_confusion(format!(
+                "cannot call value of type {}",
+                self.stack[func_slot].kind()
+            )));
+        };
+        let argc = super::dicts::with_bound(&mut self.stack, &callee, func_slot + 1, argc);
+        if argc != callee.function.arity() {
+            return Err(VmError::type_confusion(format!(
+                "function '{}' expects {} arguments, got {}",
+                callee.function.name(),
+                callee.function.arity(),
+                argc
+            )));
+        }
+        self.reuse_frame(callee, func_slot + 1, argc);
+        Ok(())
+    }
+
+    /// `CallDict`, `TailCallDict` (`tail`): call the method `method` of
+    /// the dictionary below the top `argc` values with them.
+    fn call_dict(
+        &mut self,
+        method: usize,
+        argc: usize,
+        at: u8,
+        tail: bool,
+    ) -> Result<DispatchResult, VmError> {
+        let callee = self.dict_callee(method, argc, usize::from(at))?;
+        // (The dictionary's slot, below the arguments, is the callee's:
+        // the method takes the dictionary from it, and its result goes
+        // there.)
+        let func_slot = self.stack.len() - 1 - argc;
+        let Value::VmClosure(callee) = callee else {
+            let entered = self.call_value(callee, argc, func_slot)?;
+            return Ok(self.entered(entered));
+        };
+        if !tail {
+            let entered = self.call_closure(callee, argc, func_slot)?;
+            return Ok(self.entered(entered));
+        }
+        let argc = super::dicts::with_bound(&mut self.stack, &callee, func_slot + 1, argc);
+        if argc != callee.function.arity() {
+            return Err(VmError::type_confusion(format!(
+                "function '{}' expects {} arguments, got {}",
+                callee.function.name(),
+                callee.function.arity(),
+                argc
+            )));
+        }
+        self.reuse_frame(callee, func_slot + 1, argc);
+        Ok(DispatchResult::Continue)
     }
 
     /// The global slot of the method of the impl of the trait
@@ -1941,6 +2130,8 @@ impl Vm {
                     if tail {
                         let args_at = receiver_slot + usize::from(descriptor_receiver);
                         let argc = self.stack.len() - args_at;
+                        let argc =
+                            super::dicts::with_bound(&mut self.stack, &closure, args_at, argc);
                         if argc != closure.function.arity() {
                             return Err(VmError::type_confusion(format!(
                                 "function '{}' expects {} arguments, got {}",
@@ -1962,7 +2153,12 @@ impl Vm {
                     let entered = self.call_closure(closure, argc, receiver_slot)?;
                     return Ok(self.entered(entered));
                 }
-                Sort::Int(_) | Sort::Float(_) | Sort::Bool(_) | Sort::Unit | Sort::Other(_) => {
+                Sort::Int(_)
+                | Sort::Float(_)
+                | Sort::Bool(_)
+                | Sort::Unit
+                | Sort::Dict(_)
+                | Sort::Other(_) => {
                     let func = func.clone();
                     if !descriptor_receiver {
                         open_slot(&mut self.stack, receiver_slot);

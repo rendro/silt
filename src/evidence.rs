@@ -33,9 +33,14 @@ pub enum Evidence {
     },
     /// The bound `k` of the enclosing definition `owner`.
     Param { owner: Span, k: u16 },
-    /// The supertrait `to` of what `of` proves: the impl of `to` for
-    /// the same type.
-    Super { of: Box<Evidence>, to: TraitId },
+    /// The supertrait `to` of what `of` proves, the `index`th of the
+    /// supertraits its trait declares: the impl of `to` for the same
+    /// type.
+    Super {
+        of: Box<Evidence>,
+        to: TraitId,
+        index: u16,
+    },
     /// The trait holds by the type's structure (Equal, Compare, Hash;
     /// Display and the json traits where no impl is written).
     Structural { tr: TraitId },
@@ -94,6 +99,20 @@ pub enum Layout {
     /// trait declares for the method, then the `where` clauses the trait
     /// declares on its parameters.
     Default,
+}
+
+/// The dictionaries a definition the compiler compiles takes, before
+/// its written parameters (`Program::dict_owners`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Shape {
+    pub layout: Layout,
+    /// For a method of an impl: the predicates of the impl's header that
+    /// pass a dictionary (reached through the impl's own dictionary).
+    pub header: u16,
+    /// For a function or a `let`: its bounds; for a method of an impl or
+    /// a trait's default: the bounds the trait declares for the method
+    /// (after the dictionary of the impl, the method's first).
+    pub own: u16,
 }
 
 /// What a compiled function's code knows of evidence.

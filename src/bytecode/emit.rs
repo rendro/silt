@@ -211,6 +211,8 @@ impl Emitter {
                 arity: narrowed,
                 upvalue_count: 0,
                 chunk: Chunk::new(),
+                hidden: 0,
+                dict_slot: false,
                 #[cfg(debug_assertions)]
                 evidence: None,
             },
@@ -400,6 +402,23 @@ impl Emitter {
         }
         state.bound = Some((here, self.height));
         Ok(())
+    }
+
+    /// How many of the function's first parameters are hidden.
+    pub fn hidden(&self) -> usize {
+        self.function.hidden()
+    }
+
+    /// The first `n` of the function's parameters are hidden (the
+    /// dictionaries of a definition with bounds).
+    pub fn hidden_params(&mut self, n: usize) {
+        self.function.hidden = u8::try_from(n).unwrap_or(u8::MAX);
+    }
+
+    /// The function is a method of an impl of a program's trait: a call
+    /// leaves the impl's dictionary in the slot of the callee.
+    pub fn takes_dict_slot(&mut self) {
+        self.function.dict_slot = true;
     }
 
     /// The function is the definition with bounds `owner`

@@ -1,0 +1,29 @@
+-- cmd: disasm
+-- A bounded function's tail call that passes the dictionary it was
+-- passed keeps it in place (`TailCallKeep`, which names how many it
+-- keeps); a method of an impl whose header asks a bound takes the
+-- impl's dictionary from below its arguments (`FrameDict`) and the
+-- header's dictionary from it (`DictSub`). A call on a type whose impl
+-- asks nothing calls the impl's method, with its receiver checked
+-- (`CallChecked`, which names the impl's template, the first here).
+-- stdout-contains: TailCallKeep         3     1   ; keeps 1
+-- stdout-contains: FrameDict
+-- stdout-contains: DictSub              0
+-- stdout-contains: CallChecked          1     0   ; receiver: argument 1
+trait Score { fn score(self) -> Int }
+type P { n: Int }
+trait Score for P { fn score(self) -> Int { self.n } }
+type Bx(a) { Bx(a) }
+trait Score for Bx(a) where a: Score {
+  fn score(self) -> Int { match self { Bx(x) -> Score.score(x) + 1 } }
+}
+fn total(x: a, n: Int, acc: Int) -> Int where a: Score {
+  match n {
+    0 -> acc
+    _ -> total(x, n - 1, acc + Score.score(x))
+  }
+}
+fn main() {
+  println(total(Bx(P { n: 1 }), 3, 0))
+  println(Score.score(P { n: 2 }))
+}

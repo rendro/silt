@@ -1,0 +1,13 @@
+-- A `let` that is general in a bound stays general: its value is made
+-- at each use, with the dictionaries of that use.
+trait Name { fn name(self) -> String }
+type K { K }
+type J { J }
+trait Name for K { fn name(self) -> String { "k" } }
+trait Name for J { fn name(self) -> String { "j" } }
+let shout = { x -> "{Name.name(x)}!" }
+fn main() {
+  let twice = { x -> "{Name.name(x)}{Name.name(x)}" }
+  println("{shout(K)} {shout(J)}")
+  println("{twice(K)} {twice(J)}")
+}

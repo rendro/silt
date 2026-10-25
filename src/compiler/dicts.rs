@@ -1,0 +1,855 @@
+//! Dictionaries in the compiled code (`crate::bytecode::dict`): the
+//! hidden parameters of the definitions that take them, the code that
+//! makes or finds the dictionary the checker's evidence names, and the
+//! templates of the impls.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use crate::ast::{Decl, TraitImpl};
+use crate::bytecode::dict::{Dict, Recipe, Template};
+use crate::bytecode::{Asm, Globals};
+use crate::defs::{TraitId, TypeId};
+use crate::diagnostic::{Code, Diagnostic};
+use crate::evidence::{Evidence, IMPL_HEADER, Layout, Shape};
+use crate::intern::{Symbol, intern, resolve};
+use crate::source::Span;
+use crate::value::Value;
+
+use super::{Compiler, Local};
+
+/// The name of the `k`th hidden parameter of the definition `owner`, a
+/// name no program can write.
+pub(super) fn dict_name(owner: Span, k: usize) -> Symbol {
+    intern(&format!(
+        "<dict {:?}:{}:{} {k}>",
+        owner.file, owner.start, owner.end
+    ))
+}
+
+/// The name of the local that keeps the dictionary of the method
+/// `owner` of an impl, for the functions in it (`keep_frame_dict`).
+fn frame_dict_name(owner: Span) -> Symbol {
+    intern(&format!(
+        "<dict {:?}:{}:{} of the impl>",
+        owner.file, owner.start, owner.end
+    ))
+}
+
+/// A defect in silt: evidence the compiler cannot turn into code.
+fn no_dictionary(span: Span, what: &str) -> Diagnostic {
+    Diagnostic::error(
+        Code::CompilerBug,
+        span,
+        format!("compiler bug: {what} reached the compiler; the typechecker reports it"),
+    )
+}
+
+/// What an impl's header has too many of when its dictionary cannot hold
+/// them.
+const HEADER_PREDICATES: &str = "predicates of an impl's header";
+
+/// The error of a definition that has `count` of `what`, more than the
+/// `max` the dictionary instructions can name.
+fn limit(what: &'static str, count: usize, max: usize, span: Span) -> Diagnostic {
+    crate::bytecode::emit::limit_diagnostic(crate::bytecode::ops::Limit { what, count, max }, span)
+}
+
+/// The trait `t` has no more methods, supertraits and `where` clauses on
+/// its parameters than the dictionary instructions can name (`CallDict`,
+/// `DictMethod`, `SuperDict`, `WhereDict`, which name one by its place):
+/// the error counts what the trait declares.
+fn trait_limits(t: &crate::ast::TraitDecl) -> Result<(), Diagnostic> {
+    let places = |operand: usize| operand + 1;
+    let parts = [
+        (
+            "methods of a trait",
+            t.methods.len(),
+            places(usize::from(u16::MAX)),
+        ),
+        (
+            "supertraits of a trait",
+            t.supertraits.len(),
+            places(usize::from(u8::MAX)),
+        ),
+        (
+            "where clauses of a trait's parameters",
+            t.param_where_clauses.len(),
+            places(usize::from(u8::MAX)),
+        ),
+    ];
+    for (what, count, max) in parts {
+        if count > max {
+            return Err(limit(what, count, max, t.span));
+        }
+    }
+    Ok(())
+}
+
+/// Whether `t` is a trait whose values are passed with dictionaries: one
+/// a program declares.
+pub(super) fn has_dictionary(t: TraitId) -> bool {
+    !crate::defs::is_builtin_trait(t)
+}
+
+/// The methods of a trait as a program declares them, each with the
+/// place of its first parameter of type `Self` (`self`, or one
+/// written `x: Self`).
+pub(super) fn declared_methods(t: &crate::ast::TraitDecl) -> Vec<(String, Option<u8>)> {
+    t.methods
+        .iter()
+        .map(|method| {
+            let at = method.params.iter().position(|param| match &param.ty {
+                Some(ty) => matches!(ty.kind, crate::ast::TypeExprKind::SelfType),
+                None => matches!(param.pattern.kind,
+                    crate::ast::PatternKind::Ident(name) if name == intern("self")),
+            });
+            (
+                resolve(method.name),
+                at.and_then(|at| u8::try_from(at).ok()),
+            )
+        })
+        .collect()
+}
+
+impl Compiler<'_> {
+    /// What the definition `owner` takes before its written parameters.
+    pub(super) fn shape(&self, owner: Span) -> Option<Shape> {
+        self.owners.get(&owner).copied()
+    }
+
+    /// The number of hidden parameters of a definition of the shape
+    /// `shape`: a function's or a `let`'s bounds; a method's, its
+    /// trait's bounds for it (the dictionary of its impl is not one: a
+    /// call leaves it below the arguments, in the slot of the callee).
+    pub(super) fn hidden_count(shape: Shape) -> usize {
+        usize::from(shape.own)
+    }
+
+    /// Enter the hidden parameters of the definition `owner`, whose
+    /// function is being compiled: its first locals.
+    pub(super) fn hidden_params(&mut self, owner: Span) -> usize {
+        let Some(shape) = self.shape(owner) else {
+            return 0;
+        };
+        let n = Self::hidden_count(shape);
+        if shape.layout != Layout::Scheme {
+            self.ctx_mut().frame_dict = Some(owner);
+            self.emitter().takes_dict_slot();
+        }
+        let ctx = self.ctx_mut();
+        let depth = ctx.scope_depth;
+        for k in 0..n {
+            ctx.locals.push(Local {
+                name: dict_name(owner, k),
+                depth,
+                slot: k,
+            });
+        }
+        self.emitter().hidden_params(n);
+        n
+    }
+
+    /// Push the value of the hidden parameter `k` of the definition
+    /// `owner`, which the code being compiled is in.
+    fn load_hidden(&mut self, owner: Span, k: usize, span: Span) -> Result<(), Diagnostic> {
+        let name = dict_name(owner, k);
+        if let Some(slot) = self.resolve_local(name) {
+            self.emit(Asm::GetLocal { slot }, span)
+        } else if let Some(index) = self.resolve_upvalue(name) {
+            self.emit(Asm::GetUpvalue { index }, span)
+        } else {
+            Err(no_dictionary(
+                span,
+                "a bound of a definition the code is not in",
+            ))
+        }
+    }
+
+    /// Push the dictionary of the impl whose method `owner` the code
+    /// being compiled is in: the one a call left below the arguments, or
+    /// the local that keeps it for a function in the method.
+    fn load_frame_dict(&mut self, owner: Span, span: Span) -> Result<(), Diagnostic> {
+        // (The dictionary of an impl whose header asks nothing is the
+        // same wherever the method runs.)
+        if let Some(&index) = self.own_dicts.get(&owner) {
+            let k = self.add_constant(Value::Dict(Dict::Of(index)), span)?;
+            return self.emit(Asm::Constant { k }, span);
+        }
+        let name = frame_dict_name(owner);
+        if let Some(slot) = self.resolve_local(name) {
+            self.emit(Asm::GetLocal { slot }, span)
+        } else if self.ctx().frame_dict == Some(owner) {
+            self.emit(Asm::FrameDict, span)
+        } else if let Some(index) = self.resolve_upvalue(name) {
+            self.emit(Asm::GetUpvalue { index }, span)
+        } else {
+            Err(no_dictionary(
+                span,
+                "the dictionary of a method the code is not in",
+            ))
+        }
+    }
+
+    /// Keep the dictionary of the impl of `method`, whose parameters are
+    /// bound, in a local, if functions in the method's body may need it
+    /// (a closure, or a `let` general in a bound): they capture it.
+    pub(super) fn keep_frame_dict(
+        &mut self,
+        method: &crate::ast::FnDecl,
+    ) -> Result<(), Diagnostic> {
+        let owner = method.body.span;
+        if self.ctx().frame_dict != Some(owner) || self.own_dicts.contains_key(&owner) {
+            return Ok(());
+        }
+        let nested = super::any_expr(&method.body, &mut |e| {
+            matches!(e.kind, crate::ast::ExprKind::Lambda { .. })
+                || (e.span != owner && self.shape(e.span).is_some())
+        });
+        if nested {
+            self.emit(Asm::FrameDict, owner)?;
+            self.add_local(frame_dict_name(owner), owner)?;
+        }
+        Ok(())
+    }
+
+    /// Push the dictionary the evidence `ev` names.
+    pub(super) fn compile_evidence(&mut self, ev: &Evidence, span: Span) -> Result<(), Diagnostic> {
+        if let Some(dict) = self.constant_dict(ev) {
+            let k = self.add_constant(dict, span)?;
+            return self.emit(Asm::Constant { k }, span);
+        }
+        match ev {
+            Evidence::Impl { tr, ty, subs } => {
+                let template = self.template_of(*tr, *ty, span)?;
+                for sub in subs {
+                    self.compile_evidence(sub, span)?;
+                }
+                let proto = Value::Dict(Dict::Of(template.index));
+                let k = self.add_constant(proto, span)?;
+                self.emit(Asm::MakeDict { k, n: subs.len() }, span)
+            }
+            Evidence::Param { owner, k } => {
+                let k = usize::from(*k);
+                let Some(shape) = self.shape(*owner) else {
+                    return Err(no_dictionary(span, "a bound of a definition with none"));
+                };
+                let (header, own) = (usize::from(shape.header), usize::from(shape.own));
+                match shape.layout {
+                    Layout::Scheme => self.load_hidden(*owner, k, span),
+                    // The header's bounds are the impl's dictionary's;
+                    // after the trait's bounds for the method, the trait
+                    // of `self` (an impl for every function or tuple) is
+                    // the impl's dictionary itself.
+                    Layout::ImplMethod if k < header => {
+                        self.load_frame_dict(*owner, span)?;
+                        self.emit(Asm::DictSub { k }, span)
+                    }
+                    Layout::ImplMethod if k < header + own => {
+                        self.load_hidden(*owner, k - header, span)
+                    }
+                    Layout::ImplMethod => self.load_frame_dict(*owner, span),
+                    // `Self: Trait` is the impl's dictionary; after the
+                    // trait's bounds for the method, its `where` clauses
+                    // on its parameters are the dictionary's.
+                    Layout::Default if k == 0 => self.load_frame_dict(*owner, span),
+                    Layout::Default if k <= own => self.load_hidden(*owner, k - 1, span),
+                    Layout::Default => {
+                        self.load_frame_dict(*owner, span)?;
+                        self.emit(Asm::WhereDict { index: k - 1 - own }, span)
+                    }
+                }
+            }
+            Evidence::Super { of, index, .. } => {
+                self.compile_evidence(of, span)?;
+                let index = usize::from(*index);
+                self.emit(Asm::SuperDict { index }, span)
+            }
+            Evidence::Pending(late) => {
+                let slot = (self.globals.pending_slot(*late))
+                    .ok_or_else(|| super::too_many_globals(self.globals.len() + 1, span))?;
+                self.emit(Asm::GetGlobal { slot }, span)
+            }
+            Evidence::Structural { .. } | Evidence::Native { .. } => Err(no_dictionary(
+                span,
+                "the dictionary of a trait found by the value",
+            )),
+            Evidence::Missing => Err(no_dictionary(span, "a bound with no evidence")),
+        }
+    }
+
+    /// The dictionary `ev` names when it is the same wherever the code
+    /// runs: an impl whose header's dictionaries are too.
+    fn constant_dict(&self, ev: &Evidence) -> Option<Value> {
+        let Evidence::Impl { tr, ty, subs } = ev else {
+            return None;
+        };
+        let template = self.globals.template(*tr, *ty)?.clone();
+        let subs = (subs.iter())
+            .map(|sub| self.constant_dict(sub))
+            .collect::<Option<Box<[Value]>>>()?;
+        Some(Value::Dict(Dict::new(&template, subs.into_iter())))
+    }
+
+    /// The template of the impl of `tr` for `ty`.
+    fn template_of(
+        &self,
+        tr: TraitId,
+        ty: TypeId,
+        span: Span,
+    ) -> Result<Arc<Template>, Diagnostic> {
+        (self.globals.template(tr, ty).cloned()).ok_or_else(|| {
+            no_dictionary(span, "the dictionary of an impl the program does not have")
+        })
+    }
+
+    /// Push the dictionaries `bounds` names, in order: their number.
+    pub(super) fn pass_dicts(
+        &mut self,
+        bounds: &[Evidence],
+        span: Span,
+    ) -> Result<usize, Diagnostic> {
+        for ev in bounds {
+            self.compile_evidence(ev, span)?;
+        }
+        Ok(bounds.len())
+    }
+
+    /// Give each trait a program declares its methods, in order, and
+    /// each impl of one the dictionary template of its type: those of
+    /// the modules this program installs.
+    pub(super) fn enter_templates(&self, globals: &mut Globals) -> Result<(), Diagnostic> {
+        let units: Vec<_> = (self.units.modules.iter().enumerate())
+            .filter(|(index, _)| !self.units.earlier.installed.contains(index))
+            .map(|(_, unit)| unit)
+            .collect();
+        // (The traits first: an impl may come before its trait.)
+        for unit in &units {
+            for decl in &unit.program.decls {
+                if let Decl::Trait(t) = decl
+                    && let Some(id) = self.declared_trait(unit.id, t.name)
+                {
+                    trait_limits(t)?;
+                    globals.note_trait_methods(id, declared_methods(t));
+                }
+            }
+        }
+        // (In the order of the program: a template's place is the same
+        // in each compile of it.)
+        let mut impls: HashMap<(TraitId, TypeId), &TraitImpl> = HashMap::new();
+        let mut keys = Vec::new();
+        for unit in &units {
+            for decl in &unit.program.decls {
+                if let Decl::TraitImpl(ti) = decl
+                    && let (Some(ty), Some(t)) = (self.impl_type(ti), self.impl_trait(ti))
+                    && has_dictionary(t)
+                {
+                    self.header_limit(ti)?;
+                    if impls.insert((t, ty), ti).is_none() {
+                        keys.push((t, ty));
+                    }
+                }
+            }
+        }
+        for key in keys {
+            self.enter_template(key, &impls, globals, 0)?;
+        }
+        Ok(())
+    }
+
+    /// The header of the impl `ti` asks no more traits a program declares
+    /// than its dictionary holds (as many as `MakeDict` takes): the error,
+    /// at the impl, counts what the header asks, whether or not the impl
+    /// is used.
+    fn header_limit(&self, ti: &TraitImpl) -> Result<(), Diagnostic> {
+        let max = usize::from(u8::MAX);
+        let asked = (ti.where_clauses.iter())
+            .filter(|wc| match wc.trait_res {
+                Some(crate::defs::Res::Def(id)) => matches!(
+                    self.units.defs.get(id).kind,
+                    crate::defs::DefKind::Trait(t) if has_dictionary(t)
+                ),
+                _ => false,
+            })
+            .count();
+        match asked > max {
+            true => Err(limit(HEADER_PREDICATES, asked, max, ti.span)),
+            false => Ok(()),
+        }
+    }
+
+    /// The dictionary of the impl of each method of an impl whose header
+    /// asks nothing: the place of its template, by the method's body
+    /// (`load_frame_dict`).
+    pub(super) fn own_dicts_of(&self, globals: &Globals) -> HashMap<Span, u32> {
+        let mut own = HashMap::new();
+        for (index, unit) in self.units.modules.iter().enumerate() {
+            if self.units.earlier.installed.contains(&index) {
+                continue;
+            }
+            for decl in &unit.program.decls {
+                let Decl::TraitImpl(ti) = decl else { continue };
+                let (Some(ty), Some(t)) = (self.impl_type(ti), self.impl_trait(ti)) else {
+                    continue;
+                };
+                let Some(template) = globals.template(t, ty) else {
+                    continue;
+                };
+                for method in &ti.methods {
+                    let owner = method.body.span;
+                    if self.shape(owner).is_some_and(|shape| shape.header == 0) {
+                        own.insert(owner, template.index);
+                    }
+                }
+            }
+        }
+        own
+    }
+
+    /// `enter_templates` for the impl `key` (and, first, for the impls
+    /// its recipes name).
+    fn enter_template(
+        &self,
+        key: (TraitId, TypeId),
+        impls: &HashMap<(TraitId, TypeId), &TraitImpl>,
+        globals: &mut Globals,
+        depth: usize,
+    ) -> Result<Option<Arc<Template>>, Diagnostic> {
+        if let Some(template) = globals.template(key.0, key.1) {
+            return Ok(Some(template.clone()));
+        }
+        let Some(ti) = impls.get(&key) else {
+            return Ok(None);
+        };
+        if depth > 32 {
+            return Err(no_dictionary(
+                ti.span,
+                "impls whose dictionaries make each other",
+            ));
+        }
+        let (tr, ty) = key;
+        let methods = (globals.trait_methods(tr).unwrap_or_default().to_vec())
+            .into_iter()
+            .map(|(name, _)| globals.method(tr, ty, &name).unwrap_or(u16::MAX))
+            .collect();
+        let mut supers = Vec::new();
+        for (_, ev) in &ti.evidence.supers {
+            supers.push(self.recipe(ev, impls, globals, depth)?);
+        }
+        let mut wheres = Vec::new();
+        for ev in &ti.evidence.wheres {
+            wheres.push(self.recipe(ev, impls, globals, depth)?);
+        }
+        let template = Arc::new(Template {
+            index: globals.next_template_index(),
+            tr,
+            ty,
+            name: format!(
+                "{} for {}",
+                self.units.defs.get(tr.0).name,
+                self.type_info(ty).name
+            ),
+            methods,
+            supers: supers.into(),
+            wheres: wheres.into(),
+        });
+        globals.add_template(template.clone());
+        Ok(Some(template))
+    }
+
+    /// How the dictionary `ev` names is made from the dictionaries of an
+    /// impl's header.
+    fn recipe(
+        &self,
+        ev: &Evidence,
+        impls: &HashMap<(TraitId, TypeId), &TraitImpl>,
+        globals: &mut Globals,
+        depth: usize,
+    ) -> Result<Recipe, Diagnostic> {
+        Ok(match ev {
+            Evidence::Impl { tr, ty, subs } => {
+                match self.enter_template((*tr, *ty), impls, globals, depth + 1)? {
+                    Some(template) => {
+                        let mut parts = Vec::new();
+                        for sub in subs {
+                            parts.push(self.recipe(sub, impls, globals, depth + 1)?);
+                        }
+                        Recipe::Dict {
+                            template,
+                            subs: parts.into(),
+                        }
+                    }
+                    None => Recipe::ByValue,
+                }
+            }
+            Evidence::Param { owner, k } if *owner == IMPL_HEADER => Recipe::Header(*k),
+            Evidence::Super { of, index, .. } => {
+                Recipe::Super(Box::new(self.recipe(of, impls, globals, depth)?), *index)
+            }
+            _ => Recipe::ByValue,
+        })
+    }
+}
+
+impl Compiler<'_> {
+    /// Compile `value`, the value of the `let` of `name` that is general
+    /// in a bound, as the function of its dictionaries that makes the
+    /// value (each use calls it with its own), and leave the function on
+    /// the stack. `own_name`: the name the `let` gives a closure that is
+    /// the value.
+    pub(super) fn compile_thunk(
+        &mut self,
+        name: Symbol,
+        value: &crate::ast::Expr,
+        own_name: Option<Symbol>,
+    ) -> Result<(), Diagnostic> {
+        let span = value.span;
+        let hidden = self.shape(span).map_or(0, Self::hidden_count);
+        // (The closures in it are named as they would be without it.)
+        let closures = self.contexts.last().map(|around| around.closures.clone());
+        self.begin_function(resolve(name), hidden, span)?;
+        if let (Some(closures), Some(context)) = (closures, self.contexts.last_mut()) {
+            context.closures = closures;
+        }
+        self.hidden_params(span);
+        self.closure_name = own_name;
+        self.in_tail_position = true;
+        self.compile_expr(value)?;
+        self.in_tail_position = false;
+        self.emit_body_return(span)?;
+        let (func, captures) = self.end_function(span)?;
+        let closure = Arc::new(crate::bytecode::VmClosure::new(Arc::new(func), vec![]));
+        let f = self.add_constant(Value::VmClosure(closure), span)?;
+        self.emit(
+            Asm::MakeClosure {
+                f,
+                captures: &captures,
+            },
+            span,
+        )
+    }
+
+    /// Compile the name `name` (at `at` in `pattern`) of the `let` of
+    /// `pattern` to `value`, which is general in a bound: the function of
+    /// the name's dictionaries that makes the value again, with them in
+    /// their places among the value's (`Program::pattern_lets`; a bound of
+    /// the value that only another name has is unit there, which no part
+    /// of the value this name takes uses), and takes the name's part. Leave
+    /// it on the stack; the number of the name's dictionaries.
+    pub(super) fn compile_pattern_thunk(
+        &mut self,
+        pattern: &crate::ast::Pattern,
+        value: &crate::ast::Expr,
+        name: Symbol,
+        at: Span,
+    ) -> Result<usize, Diagnostic> {
+        let span = value.span;
+        let places = self.pattern_lets.get(&at).cloned().unwrap_or_default();
+        let all = self.shape(span).map_or(0, Self::hidden_count);
+        let closures = self.contexts.last().map(|around| around.closures.clone());
+        self.begin_function(resolve(name), places.len(), span)?;
+        if let (Some(closures), Some(context)) = (closures, self.contexts.last_mut()) {
+            context.closures = closures;
+        }
+        let ctx = self.ctx_mut();
+        let depth = ctx.scope_depth;
+        for k in 0..places.len() {
+            ctx.locals.push(Local {
+                name: dict_name(at, k),
+                depth,
+                slot: k,
+            });
+        }
+        self.emitter().hidden_params(places.len());
+        for place in 0..all {
+            match places.iter().position(|p| usize::from(*p) == place) {
+                Some(slot) => self.emit(Asm::GetLocal { slot }, span)?,
+                None => self.emit(Asm::Unit, span)?,
+            }
+            self.add_local(dict_name(span, place), span)?;
+        }
+        self.compile_expr(value)?;
+        self.add_local(intern("__let_val__"), span)?;
+        self.compile_pattern_bind_checked(pattern, span)?;
+        let slot = (self.resolve_local(name))
+            .ok_or_else(|| no_dictionary(at, "a name its pattern does not bind"))?;
+        self.emit(Asm::GetLocal { slot }, span)?;
+        self.emit(Asm::Return, span)?;
+        let (func, captures) = self.end_function(span)?;
+        let closure = Arc::new(crate::bytecode::VmClosure::new(Arc::new(func), vec![]));
+        let f = self.add_constant(Value::VmClosure(closure), span)?;
+        self.emit(
+            Asm::MakeClosure {
+                f,
+                captures: &captures,
+            },
+            span,
+        )?;
+        Ok(places.len())
+    }
+
+    /// Fill the slots of the dictionaries earlier REPL entries left to
+    /// this one (`Program::late_evidence`), first.
+    pub(super) fn fill_late_dicts(
+        &mut self,
+        program: &crate::ast::Program,
+    ) -> Result<(), Diagnostic> {
+        let span = Span::BUILTIN;
+        for (late, ev) in &program.late_evidence {
+            self.compile_evidence(ev, span)?;
+            let slot = (self.globals.pending_slot(*late))
+                .ok_or_else(|| super::too_many_globals(self.globals.len() + 1, span))?;
+            self.emit(Asm::SetGlobal { slot }, span)?;
+            self.emit(Asm::Pop, span)?;
+        }
+        Ok(())
+    }
+}
+
+impl Compiler<'_> {
+    /// Whether the use `expr` of a definition with bounds names a `let`
+    /// that is general in one: the function of its dictionaries that
+    /// makes its value (`compile_thunk`), called where it is used.
+    pub(super) fn makes_its_value(&self, expr: &crate::ast::Expr) -> bool {
+        match expr.res {
+            Some(crate::defs::Res::Local) => true,
+            Some(crate::defs::Res::Def(id)) => {
+                self.units.defs.get(id).kind == crate::defs::DefKind::Let
+            }
+            _ => false,
+        }
+    }
+
+    /// The callee `callee` of a call just compiled is a function with
+    /// bounds: push its dictionaries (they are its first arguments).
+    /// Their number, and, of a call in tail position (`tail`), the
+    /// number of the first that are the frame's own first values, which
+    /// the call keeps where they are instead (`emit_call_keeping`).
+    pub(super) fn callee_dicts_of(
+        &mut self,
+        callee: &crate::ast::Expr,
+        span: Span,
+        tail: bool,
+    ) -> Result<(usize, usize), Diagnostic> {
+        match callee.ev.as_deref() {
+            Some(crate::evidence::Site::Ref(bounds)) if !self.makes_its_value(callee) => {
+                let keep = if tail { self.kept_dicts(bounds) } else { 0 };
+                Ok((self.pass_dicts(&bounds[keep..], span)?, keep))
+            }
+            _ => Ok((0, 0)),
+        }
+    }
+
+    /// How many of the dictionaries `bounds` are those the function
+    /// being compiled was passed first, in their order: in its frame's
+    /// first slots.
+    fn kept_dicts(&self, bounds: &[Evidence]) -> usize {
+        let own = |(i, ev): (usize, &Evidence)| match ev {
+            Evidence::Param { owner, k } => {
+                usize::from(*k) == i
+                    && self
+                        .shape(*owner)
+                        .is_some_and(|s| s.layout == Layout::Scheme)
+                    && self.resolve_local(dict_name(*owner, i)) == Some(i)
+            }
+            _ => false,
+        };
+        bounds.iter().enumerate().take_while(|&ev| own(ev)).count()
+    }
+
+    /// `emit_call`, of a call that keeps the frame's first `keep` values
+    /// as its callee's first arguments.
+    pub(super) fn emit_call_keeping(
+        &mut self,
+        argc: usize,
+        keep: usize,
+        tail: bool,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        if keep == 0 {
+            return self.emit_call(argc, tail, span);
+        }
+        self.emit(Asm::TailCallKeep { argc, keep }, span)?;
+        self.emit(Asm::Return, span)
+    }
+}
+
+impl Compiler<'_> {
+    /// The trait of a dictionary whose method the access `callee`
+    /// (`Tr.m`, `T.m`, `a.m` for a `type a`) calls, if it is one: a
+    /// trait a program declares, with the evidence of the call.
+    pub(super) fn dict_call<'e>(
+        &self,
+        callee: &'e crate::ast::Expr,
+    ) -> Option<(TraitId, &'e Evidence, &'e [Evidence])> {
+        let Some(crate::defs::Res::Def(id)) = callee.res else {
+            return None;
+        };
+        let crate::defs::DefKind::Trait(tr) = self.units.defs.get(id).kind else {
+            return None;
+        };
+        match callee.ev.as_deref() {
+            Some(crate::evidence::Site::Method { recv, own }) if has_dictionary(tr) => {
+                Some((tr, recv, own))
+            }
+            _ => None,
+        }
+    }
+
+    /// The trait `tr` as an operand names it (`Globals::trait_index`).
+    fn trait_operand(&mut self, tr: TraitId, span: Span) -> Result<u16, Diagnostic> {
+        let name = resolve(self.units.defs.get(tr.0).name);
+        self.globals.trait_index(tr, name).ok_or_else(|| {
+            let limit = crate::bytecode::ops::Limit {
+                what: "traits whose methods a program calls",
+                count: usize::from(u16::MAX) + 2,
+                max: usize::from(u16::MAX) + 1,
+            };
+            crate::bytecode::emit::limit_diagnostic(limit, span)
+        })
+    }
+
+    /// The method `method` of the trait `tr`: its place among the
+    /// trait's, and that of its `self`.
+    fn method_place(
+        &self,
+        tr: TraitId,
+        method: Symbol,
+        span: Span,
+    ) -> Result<(usize, Option<u8>), Diagnostic> {
+        (self.globals.trait_method(tr, &resolve(method)))
+            .ok_or_else(|| no_dictionary(span, "a method its trait does not declare"))
+    }
+
+    /// Call the method `method` of the trait `tr` through the dictionary
+    /// `recv` names, with the dictionaries `own` names and the arguments
+    /// `args` (in tail position: `tail`).
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn compile_dict_call(
+        &mut self,
+        tr: TraitId,
+        recv: &Evidence,
+        own: &[Evidence],
+        method: Symbol,
+        args: &[&crate::ast::Expr],
+        span: Span,
+        tail: bool,
+    ) -> Result<(), Diagnostic> {
+        let (index, at) = self.method_place(tr, method, span)?;
+        if let Some((slot, template)) = self.checked_call(tr, recv, method, index) {
+            // The method of an impl whose header asks nothing, through
+            // its dictionary: a call of the method's global, with the
+            // receiver checked.
+            self.emit(Asm::GetGlobal { slot }, span)?;
+            let dicts = self.pass_dicts(own, span)?;
+            self.compile_operands(args.iter().copied())?;
+            let argc = dicts + args.len();
+            let Some(at) = at else {
+                return self.emit_call(argc, tail, span);
+            };
+            let at = dicts + usize::from(at);
+            if !tail {
+                return self.emit(Asm::CallChecked { argc, at, template }, span);
+            }
+            self.emit(Asm::TailCallChecked { argc, at, template }, span)?;
+            return self.emit(Asm::Return, span);
+        }
+        // (The dictionary is in the slot of the callee: the method takes
+        // it from there.)
+        self.compile_evidence(recv, span)?;
+        let dicts = self.pass_dicts(own, span)?;
+        self.compile_operands(args.iter().copied())?;
+        let argc = dicts + args.len();
+        let at = at.map_or(usize::from(u8::MAX), |at| dicts + usize::from(at));
+        match tail {
+            true => {
+                self.emit(
+                    Asm::TailCallDict {
+                        method: index,
+                        argc,
+                        at,
+                    },
+                    span,
+                )?;
+                self.emit(Asm::Return, span)
+            }
+            false => self.emit(
+                Asm::CallDict {
+                    method: index,
+                    argc,
+                    at,
+                },
+                span,
+            ),
+        }
+    }
+
+    /// The global slot of the method `method` (the trait's `index`th) of
+    /// the impl whose dictionary `recv` names, and the place of the
+    /// impl's template, if the dictionary is the same wherever the code
+    /// runs and the method is the impl's own (a trait's default takes
+    /// the dictionary of the impl it runs for).
+    fn checked_call(
+        &self,
+        tr: TraitId,
+        recv: &Evidence,
+        method: Symbol,
+        index: usize,
+    ) -> Option<(u16, usize)> {
+        let Some(Value::Dict(Dict::Of(template))) = self.constant_dict(recv) else {
+            return None;
+        };
+        let slot = *self.globals.template_at(template)?.methods.get(index)?;
+        let default = self.globals.default_method(tr, &resolve(method));
+        (slot != u16::MAX && default != Some(slot) && u16::try_from(template).is_ok())
+            .then_some((slot, template as usize))
+    }
+
+    /// The method `method` of the trait `tr`, through the dictionary
+    /// `recv` names, as a value: with that dictionary and those `own`
+    /// names bound.
+    pub(super) fn compile_dict_method_value(
+        &mut self,
+        tr: TraitId,
+        recv: &Evidence,
+        own: &[Evidence],
+        method: Symbol,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        let (index, _) = self.method_place(tr, method, span)?;
+        self.compile_evidence(recv, span)?;
+        let of = self.trait_operand(tr, span)?;
+        self.emit(Asm::DictMethod { method: index, of }, span)?;
+        let n = 1 + self.pass_dicts(own, span)?;
+        self.emit(Asm::Bind { n }, span)
+    }
+}
+
+impl Compiler<'_> {
+    /// `begin_function` for a function the program wrote with `written`
+    /// parameters, after `hidden` dictionaries: the limit of parameters
+    /// is the VM's less the hidden ones, and a function over it is
+    /// reported with the parameters the program wrote.
+    pub(super) fn begin_function_after(
+        &mut self,
+        name: String,
+        written: usize,
+        hidden: usize,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        let max = usize::from(u8::MAX).saturating_sub(hidden);
+        if hidden > 0 && written > max {
+            let limit = crate::bytecode::ops::Limit {
+                what: "parameters of a function",
+                count: written,
+                max,
+            };
+            return Err(
+                crate::bytecode::emit::limit_diagnostic(limit, span).with_help(
+                    "each bound on a trait the program declares takes one of the 255 places",
+                ),
+            );
+        }
+        self.begin_function(name, hidden + written, span)
+    }
+}

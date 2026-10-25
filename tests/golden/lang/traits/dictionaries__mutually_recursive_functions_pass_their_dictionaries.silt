@@ -1,0 +1,24 @@
+-- Two functions that call each other, with no annotations, are checked
+-- together and share their bound: each passes the dictionary it was
+-- passed to the other, in tail position, 100001 times.
+trait Greet { fn greet(self) -> String }
+type K { K }
+type J { J }
+trait Greet for K { fn greet(self) -> String { "K" } }
+trait Greet for J { fn greet(self) -> String { "J" } }
+fn ev(x, n) {
+  match n {
+    0 -> Greet.greet(x)
+    _ -> od(x, n - 1)
+  }
+}
+fn od(x, n) {
+  match n {
+    0 -> "odd {Greet.greet(x)}"
+    _ -> ev(x, n - 1)
+  }
+}
+fn main() {
+  println(ev(K, 100001))
+  println(od(J, 100001))
+}

@@ -1,0 +1,5 @@
+d(tuple)+K
+fn+K+d(fn)
+d(tuple)+K d(tuple)
+fn+K+d(fn) d(fn)
+d(tuple)

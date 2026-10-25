@@ -10,27 +10,37 @@ use crate::value::Value;
 // ── Helpers ───────────────────────────────────────────────────────
 
 /// Format a constant value for a disassembly comment.
-fn constant_comment(chunk: &Chunk, k: Const) -> String {
+fn constant_comment(chunk: &Chunk, globals: &Globals, k: Const) -> String {
     match chunk.constant(k) {
         // A function is shown by its name; any other constant as a
         // program writes it.
         function @ (Value::VmClosure(_) | Value::BuiltinFn(_) | Value::HostFn(_)) => {
             format!("{function}")
         }
+        // A dictionary by its impl, as one that is built prints.
+        Value::Dict(crate::bytecode::dict::Dict::Of(index)) => match globals.template_at(*index) {
+            Some(template) => format!("<dict:{}>", template.name),
+            None => format!("<dict:{index}>"),
+        },
         constant => format!("{constant:?}"),
     }
 }
 
 /// The lines of a list of names: one continuation line per entry, with
 /// `label` as the per-entry prefix (`"field"` or `"exclude"`).
-fn name_lines(chunk: &Chunk, names: impl Iterator<Item = Const>, label: &str) -> String {
+fn name_lines(
+    chunk: &Chunk,
+    globals: &Globals,
+    names: impl Iterator<Item = Const>,
+    label: &str,
+) -> String {
     let mut lines = String::new();
     for k in names {
         write!(
             lines,
             "\n      |  {label} {:<5} ; {}",
             k.index(),
-            constant_comment(chunk, k)
+            constant_comment(chunk, globals, k)
         )
         .unwrap();
     }
@@ -40,13 +50,15 @@ fn name_lines(chunk: &Chunk, names: impl Iterator<Item = Const>, label: &str) ->
 // ── Instruction disassembly ───────────────────────────────────────
 
 /// Disassemble the instruction `instr`, decoded at `offset`; the one
-/// after it is at `next`.
+/// after it is at `next`. The first `hidden` slots of the frame hold the
+/// function's dictionaries.
 fn disassemble_instruction(
     chunk: &Chunk,
     globals: &Globals,
     offset: usize,
     instr: Instr,
     next: usize,
+    hidden: usize,
 ) -> String {
     let code = chunk.code();
     let name = instr.op().name();
@@ -62,14 +74,14 @@ fn disassemble_instruction(
     };
     // An instruction whose one operand is a constant.
     let with_constant = |k: Const| {
-        let comment = constant_comment(chunk, k);
+        let comment = constant_comment(chunk, globals, k);
         format!("{offset:04}  {name:<20} {:<5} ; {comment}", k.index())
     };
     // An instruction whose one operand is a number.
     let with_number = |n: usize| format!("{offset:04}  {name:<20} {n}");
     // An instruction whose operands are a constant and a count.
     let with_constant_and_count = |k: Const, count: usize| {
-        let comment = constant_comment(chunk, k);
+        let comment = constant_comment(chunk, globals, k);
         format!(
             "{offset:04}  {name:<20} {:<5} {count:<3} ; {comment}",
             k.index()
@@ -102,7 +114,8 @@ fn disassemble_instruction(
         | Instr::ListConcat
         | Instr::QuestionMark
         | Instr::Panic
-        | Instr::GetClosure => format!("{offset:04}  {name}"),
+        | Instr::GetClosure
+        | Instr::FrameDict => format!("{offset:04}  {name}"),
 
         // ── A count, an index or a slot ───────────────────────
         Instr::GetUpvalue { index: n }
@@ -118,12 +131,42 @@ fn disassemble_instruction(
         | Instr::DestructListRest { start: n }
         | Instr::GetField { index: n }
         | Instr::DestructRecordField { index: n }
-        | Instr::GetLocal { slot: n }
         | Instr::SetLocal { slot: n }
         | Instr::Slide { slot: n }
         | Instr::MakeList { count: n }
         | Instr::MakeMap { pairs: n }
-        | Instr::MakeSet { count: n } => with_number(n),
+        | Instr::MakeSet { count: n }
+        | Instr::DictSub { k: n }
+        | Instr::SuperDict { index: n }
+        | Instr::WhereDict { index: n }
+        | Instr::Bind { n } => with_number(n),
+
+        // GetLocal: the slot, and of a hidden parameter, what it is.
+        Instr::GetLocal { slot } if slot < hidden => {
+            format!("{offset:04}  {name:<20} {slot:<5} ; dictionary {slot}")
+        }
+        Instr::GetLocal { slot } => with_number(slot),
+
+        // MakeDict: the impl, and how many dictionaries its header has.
+        Instr::MakeDict { k, n } => with_constant_and_count(k, n),
+        // CallDict: the method's place in its trait, the arguments (the
+        // dictionaries among them), and the receiver.
+        Instr::CallChecked { argc, at, template }
+        | Instr::TailCallChecked { argc, at, template } => format!(
+            "{offset:04}  {name:<20} {argc:<5} {template:<3} ; receiver: argument {}",
+            usize::from(at) + 1
+        ),
+        Instr::TailCallKeep { argc, keep } => {
+            format!("{offset:04}  {name:<20} {argc:<5} {keep:<3} ; keeps {keep}")
+        }
+        Instr::CallDict { method, argc, at } | Instr::TailCallDict { method, argc, at } => match at
+        {
+            u8::MAX => format!("{offset:04}  {name:<20} {method:<5} {argc}"),
+            at => format!(
+                "{offset:04}  {name:<20} {method:<5} {argc:<3} ; receiver: argument {}",
+                usize::from(at) + 1
+            ),
+        },
 
         // Recur: the bindings, the first of their slots, and the jump
         // back.
@@ -157,8 +200,8 @@ fn disassemble_instruction(
 
         // ── The two bounds of a range pattern ─────────────────
         Instr::TestIntRange { lo, hi } | Instr::TestFloatRange { lo, hi } => {
-            let lo_comment = constant_comment(chunk, lo);
-            let hi_comment = constant_comment(chunk, hi);
+            let lo_comment = constant_comment(chunk, globals, lo);
+            let hi_comment = constant_comment(chunk, globals, hi);
             format!(
                 "{offset:04}  {name:<20} {:<5} {:<5} ; {lo_comment}..{hi_comment}",
                 lo.index(),
@@ -186,6 +229,10 @@ fn disassemble_instruction(
         // with the trait whose method it calls (shown after the name
         // when the call names one), and the argument it is found by
         // where that is not the first.
+        Instr::DictMethod { method, of } => match globals.trait_name(of) {
+            Some(tr) => format!("{offset:04}  {name:<20} {method:<5} ; of {tr}"),
+            None => format!("{offset:04}  {name:<20} {method}"),
+        },
         Instr::CallMethod {
             method,
             argc,
@@ -217,6 +264,9 @@ fn disassemble_instruction(
             for capture in captures.iter(code) {
                 let locality = if capture.is_local { "local" } else { "upvalue" };
                 write!(line, "\n      |  {locality} {}", capture.index).unwrap();
+                if capture.is_local && capture.index < hidden {
+                    write!(line, " (dictionary {})", capture.index).unwrap();
+                }
             }
             line
         }
@@ -230,7 +280,7 @@ fn disassemble_instruction(
                         line,
                         "\n      |  literal {:<5} ; {}",
                         k.index(),
-                        constant_comment(chunk, k)
+                        constant_comment(chunk, globals, k)
                     )
                     .unwrap(),
                     Segment::Value => line.push_str("\n      |  value"),
@@ -242,17 +292,18 @@ fn disassemble_instruction(
         // ── MakeRecord: the type, then the field names ────────
         Instr::MakeRecord { ty, fields } => {
             with_constant_and_count(ty, fields.len())
-                + &name_lines(chunk, fields.iter(code), "field")
+                + &name_lines(chunk, globals, fields.iter(code), "field")
         }
 
         // ── A list of names ───────────────────────────────────
         //   RecordUpdate:        label "field".
         //   DestructRecordRest:  label "exclude".
         Instr::RecordUpdate { fields } => {
-            with_number(fields.len()) + &name_lines(chunk, fields.iter(code), "field")
+            with_number(fields.len()) + &name_lines(chunk, globals, fields.iter(code), "field")
         }
         Instr::DestructRecordRest { excluded } => {
-            with_number(excluded.len()) + &name_lines(chunk, excluded.iter(code), "exclude")
+            with_number(excluded.len())
+                + &name_lines(chunk, globals, excluded.iter(code), "exclude")
         }
     }
 }
@@ -261,12 +312,12 @@ fn disassemble_instruction(
 
 /// Disassemble a complete `Chunk`, returning the formatted output.
 /// Global slots are named by `globals`.
-fn disassemble_chunk(chunk: &Chunk, globals: &Globals, name: &str) -> String {
+fn disassemble_chunk(chunk: &Chunk, globals: &Globals, name: &str, hidden: usize) -> String {
     let mut output = format!("== {name} ==\n");
     let mut offset = 0;
     while let Some((instr, next)) = decode(chunk.code(), offset) {
         output.push_str(&disassemble_instruction(
-            chunk, globals, offset, instr, next,
+            chunk, globals, offset, instr, next, hidden,
         ));
         output.push('\n');
         offset = next;
@@ -279,13 +330,19 @@ fn disassemble_chunk(chunk: &Chunk, globals: &Globals, name: &str) -> String {
 ///
 /// Recursively disassembles nested functions found as `VmClosure` constants.
 pub fn disassemble_function(func: &Function, globals: &Globals) -> String {
+    // (A function with bounds takes its dictionaries before what the
+    // program wrote, in its first slots.)
+    let dictionaries = match func.hidden() {
+        0 => String::new(),
+        n => format!(", dictionaries={n}"),
+    };
     let header = format!(
-        "{} (arity={}, upvalues={})",
+        "{} (arity={}{dictionaries}, upvalues={})",
         func.name(),
-        func.arity(),
+        func.arity() - func.hidden(),
         func.upvalue_count()
     );
-    let mut output = disassemble_chunk(func.chunk(), globals, &header);
+    let mut output = disassemble_chunk(func.chunk(), globals, &header, func.hidden());
 
     // Recurse into nested functions stored as VmClosure constants.
     for constant in func.chunk().constants() {

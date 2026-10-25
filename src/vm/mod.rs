@@ -5,6 +5,7 @@
 mod arithmetic;
 mod calls;
 pub(crate) mod decode;
+mod dicts;
 pub(crate) mod dispatch;
 mod encode;
 pub mod error;
@@ -690,6 +691,8 @@ impl Vm {
     /// ([`Vm::execute_slice`]).
     pub(crate) fn start_task(&mut self, closure: Arc<VmClosure>) {
         self.stack = vec![Value::Unit];
+        // (A closure with dictionaries bound is called with them.)
+        dicts::with_bound(&mut self.stack, &closure, 1, 0);
         self.frames = vec![Frame::Code(CallFrame {
             closure,
             ip: 0,

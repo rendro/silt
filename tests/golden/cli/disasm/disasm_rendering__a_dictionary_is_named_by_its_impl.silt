@@ -1,0 +1,16 @@
+-- cmd: disasm
+-- A dictionary a constant holds, and one `MakeDict` makes, are named by
+-- their impl.
+-- stdout-contains: Constant             1     ; <dict:Sz for Int>
+-- stdout-contains: MakeDict             1     1   ; <dict:Sz for Bx>
+trait Sz { fn sz(self) -> Int }
+trait Sz for Int { fn sz(self) -> Int { 1 } }
+type Bx(a) { Bx(a) }
+trait Sz for Bx(a) where a: Sz { fn sz(self) -> Int { match self { Bx(x) -> Sz.sz(x) + 1 } } }
+fn nest(x: a, n: Int) -> Int where a: Sz {
+  match n {
+    0 -> Sz.sz(x)
+    _ -> nest(Bx(x), n - 1)
+  }
+}
+fn main() { println(nest(1, 3)) }

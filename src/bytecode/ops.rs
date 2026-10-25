@@ -941,6 +941,11 @@ ops! {
     /// Tail-call: reuse current frame. Followed by `Return`, which
     /// returns the result of a callee that is not a closure.
     TailCall { argc: U8("arguments of a call") } => pops argc + 1, pushes 1;
+    /// `TailCall` of a function whose first `keep` arguments are the
+    /// frame's first `keep` values, which stay where they are (a
+    /// function with bounds that calls itself, or another, with the
+    /// dictionaries it was passed): the top `argc` values follow them.
+    TailCallKeep { argc: U8("arguments of a call"), keep: U8("arguments of a call") } => pops argc + 1, pushes 1;
     /// Return TOS to caller.
     Return => pops 1, pushes 0, end;
     /// Call the builtin, a row of the builtin registry, with the top
@@ -1079,6 +1084,45 @@ ops! {
     /// in the current frame. Followed by `Return`, which returns the
     /// result of any other.
     TailCallMethod { method: Method, argc: U8("arguments of a method call, the receiver included"), of: Trait, at: U8("the argument a method call finds its method by") } => pops argc, pushes 1;
+
+    // ── Dictionaries (`super::dict`) ───────────────────────────
+    /// Pop `n` dictionaries, the header's of the impl whose dictionary
+    /// the constant `k` is (with none), and push the impl's dictionary
+    /// of them.
+    MakeDict { k: Const, n: U8("predicates of an impl's header") } => pops n, pushes 1;
+    /// Call the method `method` (its place among the trait's methods) of
+    /// the dictionary below the top `argc` values, with those values: the
+    /// dictionary stays in the slot of the callee, where the method takes
+    /// it from (`FrameDict`). The argument `at` of them is the receiver,
+    /// which must be of the dictionary's type (none: `u8::MAX`).
+    CallDict { method: U16("methods of a trait"), argc: U8("arguments of a method call, its dictionaries included"), at: Byte("the argument a method call finds its method by") } => pops argc + 1, pushes 1;
+    /// `CallDict` in tail position: a method that is a closure runs in
+    /// the current frame. Followed by `Return`.
+    TailCallDict { method: U16("methods of a trait"), argc: U8("arguments of a method call, its dictionaries included"), at: Byte("the argument a method call finds its method by") } => pops argc + 1, pushes 1;
+    /// `Call` of an impl's method through the dictionary of the impl,
+    /// whose header asks nothing (the program's `template`th): the
+    /// argument `at` is the receiver, which must be of the impl's type.
+    CallChecked { argc: U8("arguments of a method call, its dictionaries included"), at: Byte("the argument a method call finds its method by"), template: U16("impls of a program's traits") } => pops argc + 1, pushes 1;
+    /// `CallChecked` in tail position. Followed by `Return`.
+    TailCallChecked { argc: U8("arguments of a method call, its dictionaries included"), at: Byte("the argument a method call finds its method by"), template: U16("impls of a program's traits") } => pops argc + 1, pushes 1;
+    /// Push the dictionary of the impl whose method the frame runs: what
+    /// the slot of its callee holds (`CallDict`).
+    FrameDict => pops 0, pushes 1;
+    /// Pop a dictionary; push its method `method` and the dictionary.
+    DictMethod { method: U16("methods of a trait"), of: Trait } => pops 1, pushes 2;
+    /// Pop a dictionary; push the dictionary of the `k`th predicate of
+    /// its impl's header.
+    DictSub { k: U8("predicates of an impl's header") } => pops 1, pushes 1;
+    /// Pop a dictionary; push the dictionary of the `index`th supertrait
+    /// of its trait.
+    SuperDict { index: U8("supertraits of a trait") } => pops 1, pushes 1;
+    /// Pop a dictionary; push the dictionary of the `index`th `where`
+    /// clause its trait declares on its parameters.
+    WhereDict { index: U8("where clauses of a trait's parameters") } => pops 1, pushes 1;
+    /// Pop `n` values and the closure below them; push the closure that,
+    /// called, is called with those values before its arguments: a
+    /// definition with bounds as a value, with its dictionaries.
+    Bind { n: U8("dictionaries of a definition") } => pops n + 1, pushes 1;
 
     /// Move TOS down to the frame's slot `slot` and drop every value
     /// that was above that slot: pop TOS, cut the frame back to `slot`

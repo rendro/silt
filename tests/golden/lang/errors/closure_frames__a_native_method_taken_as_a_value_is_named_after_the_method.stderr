@@ -6,6 +6,5 @@ error[runtime]: division by zero
 
 call stack:
   -> Inner.div  at closure_frames__a_native_method_taken_as_a_value_is_named_after_the_method.silt:17:5
-  -> Div.div  at closure_frames__a_native_method_taken_as_a_value_is_named_after_the_method.silt:22:16
   -> all  at closure_frames__a_native_method_taken_as_a_value_is_named_after_the_method.silt:22:3
   -> main  at closure_frames__a_native_method_taken_as_a_value_is_named_after_the_method.silt:26:11

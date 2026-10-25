@@ -1,0 +1,15 @@
+-- exit: 1
+-- A recursive `let` general in a bound makes its value at each use: a
+-- recursion that overflows is labelled at the call, as for a function.
+trait Nm { fn nm(self) -> Int }
+trait Nm for Int { fn nm(self) -> Int { 1 } }
+trait Nm for String { fn nm(self) -> Int { 2 } }
+let deep = { x, n -> match n {
+  0 -> Nm.nm(x)
+  _ -> 1 + deep(x, n - 1)
+} }
+fn main() {
+  println(deep(1, 5000))
+  println(deep("a", 5000))
+  println(deep("a", 100000))
+}

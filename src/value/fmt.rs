@@ -347,6 +347,12 @@ fn begin<'a>(
         Value::Bytes(b) => return f.write_str(&format_bytes_preview(b)).map(|()| None),
         Value::TcpListener(t) => return write!(f, "<tcp-listener:{}>", t.id).map(|()| None),
         Value::TcpStream(t) => return write!(f, "<tcp-stream:{}>", t.id).map(|()| None),
+        Value::Dict(crate::bytecode::dict::Dict::Built(d)) => {
+            return write!(f, "<dict:{}>", d.template.name).map(|()| None);
+        }
+        Value::Dict(crate::bytecode::dict::Dict::Of(index)) => {
+            return write!(f, "<dict:{index}>").map(|()| None);
+        }
     };
     Ok(Some(Open {
         parts,

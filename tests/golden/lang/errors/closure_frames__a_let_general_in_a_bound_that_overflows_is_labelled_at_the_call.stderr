@@ -1,0 +1,24 @@
+error[runtime]: stack overflow: recursion depth exceeded 100000 frames
+ --> closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:9:12
+   |
+ 9 |   _ -> 1 + deep(x, n - 1)
+   |            ^^^^^^^^^^^^^^ stack overflow: recursion depth exceeded 100000 frames
+  = help: a call in tail position, of a function or a method, reuses its caller's frame; a call whose result is still used (`1 + f(n - 1)`) takes a frame of its own
+
+call stack:
+  -> closure in deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:9:12
+  -> closure in deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:9:12
+  -> closure in deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:9:12
+  -> closure in deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:9:12
+  -> closure in deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:9:12
+  -> closure in deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:9:12
+  -> closure in deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:9:12
+  -> closure in deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:9:12
+  -> closure in deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:9:12
+  -> closure in deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:9:12
+  ... (99984 more frames)
+  -> closure in deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:9:12
+  -> closure in deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:9:12
+  -> closure in deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:9:12
+  -> closure in deep  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:9:12
+  -> main  at closure_frames__a_let_general_in_a_bound_that_overflows_is_labelled_at_the_call.silt:14:11

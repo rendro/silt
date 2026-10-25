@@ -868,6 +868,13 @@ fn ambiguous_import(
     d
 }
 
+/// The names `pattern` binds, with their spans, in order.
+pub(crate) fn binders(pattern: &Pattern) -> Vec<(Symbol, Span)> {
+    let mut out = Vec::new();
+    pattern_binders(pattern, &mut out);
+    out
+}
+
 /// The names `pattern` binds, with their spans.
 fn pattern_binders(pattern: &Pattern, out: &mut Vec<(Symbol, Span)>) {
     match &pattern.kind {

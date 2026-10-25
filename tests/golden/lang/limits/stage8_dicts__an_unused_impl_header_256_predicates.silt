@@ -1,0 +1,521 @@
+-- exit: 1
+-- stderr-contains: error[compile]
+-- An impl's header that asks more traits a program declares than its
+-- dictionary holds is refused at the impl, used or not.
+-- stderr-contains: too many predicates of an impl's header: 256 (the limit is 255)
+trait T0 { fn t0(self) -> Int }
+trait T1 { fn t1(self) -> Int }
+trait T2 { fn t2(self) -> Int }
+trait T3 { fn t3(self) -> Int }
+trait T4 { fn t4(self) -> Int }
+trait T5 { fn t5(self) -> Int }
+trait T6 { fn t6(self) -> Int }
+trait T7 { fn t7(self) -> Int }
+trait T8 { fn t8(self) -> Int }
+trait T9 { fn t9(self) -> Int }
+trait T10 { fn t10(self) -> Int }
+trait T11 { fn t11(self) -> Int }
+trait T12 { fn t12(self) -> Int }
+trait T13 { fn t13(self) -> Int }
+trait T14 { fn t14(self) -> Int }
+trait T15 { fn t15(self) -> Int }
+trait T16 { fn t16(self) -> Int }
+trait T17 { fn t17(self) -> Int }
+trait T18 { fn t18(self) -> Int }
+trait T19 { fn t19(self) -> Int }
+trait T20 { fn t20(self) -> Int }
+trait T21 { fn t21(self) -> Int }
+trait T22 { fn t22(self) -> Int }
+trait T23 { fn t23(self) -> Int }
+trait T24 { fn t24(self) -> Int }
+trait T25 { fn t25(self) -> Int }
+trait T26 { fn t26(self) -> Int }
+trait T27 { fn t27(self) -> Int }
+trait T28 { fn t28(self) -> Int }
+trait T29 { fn t29(self) -> Int }
+trait T30 { fn t30(self) -> Int }
+trait T31 { fn t31(self) -> Int }
+trait T32 { fn t32(self) -> Int }
+trait T33 { fn t33(self) -> Int }
+trait T34 { fn t34(self) -> Int }
+trait T35 { fn t35(self) -> Int }
+trait T36 { fn t36(self) -> Int }
+trait T37 { fn t37(self) -> Int }
+trait T38 { fn t38(self) -> Int }
+trait T39 { fn t39(self) -> Int }
+trait T40 { fn t40(self) -> Int }
+trait T41 { fn t41(self) -> Int }
+trait T42 { fn t42(self) -> Int }
+trait T43 { fn t43(self) -> Int }
+trait T44 { fn t44(self) -> Int }
+trait T45 { fn t45(self) -> Int }
+trait T46 { fn t46(self) -> Int }
+trait T47 { fn t47(self) -> Int }
+trait T48 { fn t48(self) -> Int }
+trait T49 { fn t49(self) -> Int }
+trait T50 { fn t50(self) -> Int }
+trait T51 { fn t51(self) -> Int }
+trait T52 { fn t52(self) -> Int }
+trait T53 { fn t53(self) -> Int }
+trait T54 { fn t54(self) -> Int }
+trait T55 { fn t55(self) -> Int }
+trait T56 { fn t56(self) -> Int }
+trait T57 { fn t57(self) -> Int }
+trait T58 { fn t58(self) -> Int }
+trait T59 { fn t59(self) -> Int }
+trait T60 { fn t60(self) -> Int }
+trait T61 { fn t61(self) -> Int }
+trait T62 { fn t62(self) -> Int }
+trait T63 { fn t63(self) -> Int }
+trait T64 { fn t64(self) -> Int }
+trait T65 { fn t65(self) -> Int }
+trait T66 { fn t66(self) -> Int }
+trait T67 { fn t67(self) -> Int }
+trait T68 { fn t68(self) -> Int }
+trait T69 { fn t69(self) -> Int }
+trait T70 { fn t70(self) -> Int }
+trait T71 { fn t71(self) -> Int }
+trait T72 { fn t72(self) -> Int }
+trait T73 { fn t73(self) -> Int }
+trait T74 { fn t74(self) -> Int }
+trait T75 { fn t75(self) -> Int }
+trait T76 { fn t76(self) -> Int }
+trait T77 { fn t77(self) -> Int }
+trait T78 { fn t78(self) -> Int }
+trait T79 { fn t79(self) -> Int }
+trait T80 { fn t80(self) -> Int }
+trait T81 { fn t81(self) -> Int }
+trait T82 { fn t82(self) -> Int }
+trait T83 { fn t83(self) -> Int }
+trait T84 { fn t84(self) -> Int }
+trait T85 { fn t85(self) -> Int }
+trait T86 { fn t86(self) -> Int }
+trait T87 { fn t87(self) -> Int }
+trait T88 { fn t88(self) -> Int }
+trait T89 { fn t89(self) -> Int }
+trait T90 { fn t90(self) -> Int }
+trait T91 { fn t91(self) -> Int }
+trait T92 { fn t92(self) -> Int }
+trait T93 { fn t93(self) -> Int }
+trait T94 { fn t94(self) -> Int }
+trait T95 { fn t95(self) -> Int }
+trait T96 { fn t96(self) -> Int }
+trait T97 { fn t97(self) -> Int }
+trait T98 { fn t98(self) -> Int }
+trait T99 { fn t99(self) -> Int }
+trait T100 { fn t100(self) -> Int }
+trait T101 { fn t101(self) -> Int }
+trait T102 { fn t102(self) -> Int }
+trait T103 { fn t103(self) -> Int }
+trait T104 { fn t104(self) -> Int }
+trait T105 { fn t105(self) -> Int }
+trait T106 { fn t106(self) -> Int }
+trait T107 { fn t107(self) -> Int }
+trait T108 { fn t108(self) -> Int }
+trait T109 { fn t109(self) -> Int }
+trait T110 { fn t110(self) -> Int }
+trait T111 { fn t111(self) -> Int }
+trait T112 { fn t112(self) -> Int }
+trait T113 { fn t113(self) -> Int }
+trait T114 { fn t114(self) -> Int }
+trait T115 { fn t115(self) -> Int }
+trait T116 { fn t116(self) -> Int }
+trait T117 { fn t117(self) -> Int }
+trait T118 { fn t118(self) -> Int }
+trait T119 { fn t119(self) -> Int }
+trait T120 { fn t120(self) -> Int }
+trait T121 { fn t121(self) -> Int }
+trait T122 { fn t122(self) -> Int }
+trait T123 { fn t123(self) -> Int }
+trait T124 { fn t124(self) -> Int }
+trait T125 { fn t125(self) -> Int }
+trait T126 { fn t126(self) -> Int }
+trait T127 { fn t127(self) -> Int }
+trait T128 { fn t128(self) -> Int }
+trait T129 { fn t129(self) -> Int }
+trait T130 { fn t130(self) -> Int }
+trait T131 { fn t131(self) -> Int }
+trait T132 { fn t132(self) -> Int }
+trait T133 { fn t133(self) -> Int }
+trait T134 { fn t134(self) -> Int }
+trait T135 { fn t135(self) -> Int }
+trait T136 { fn t136(self) -> Int }
+trait T137 { fn t137(self) -> Int }
+trait T138 { fn t138(self) -> Int }
+trait T139 { fn t139(self) -> Int }
+trait T140 { fn t140(self) -> Int }
+trait T141 { fn t141(self) -> Int }
+trait T142 { fn t142(self) -> Int }
+trait T143 { fn t143(self) -> Int }
+trait T144 { fn t144(self) -> Int }
+trait T145 { fn t145(self) -> Int }
+trait T146 { fn t146(self) -> Int }
+trait T147 { fn t147(self) -> Int }
+trait T148 { fn t148(self) -> Int }
+trait T149 { fn t149(self) -> Int }
+trait T150 { fn t150(self) -> Int }
+trait T151 { fn t151(self) -> Int }
+trait T152 { fn t152(self) -> Int }
+trait T153 { fn t153(self) -> Int }
+trait T154 { fn t154(self) -> Int }
+trait T155 { fn t155(self) -> Int }
+trait T156 { fn t156(self) -> Int }
+trait T157 { fn t157(self) -> Int }
+trait T158 { fn t158(self) -> Int }
+trait T159 { fn t159(self) -> Int }
+trait T160 { fn t160(self) -> Int }
+trait T161 { fn t161(self) -> Int }
+trait T162 { fn t162(self) -> Int }
+trait T163 { fn t163(self) -> Int }
+trait T164 { fn t164(self) -> Int }
+trait T165 { fn t165(self) -> Int }
+trait T166 { fn t166(self) -> Int }
+trait T167 { fn t167(self) -> Int }
+trait T168 { fn t168(self) -> Int }
+trait T169 { fn t169(self) -> Int }
+trait T170 { fn t170(self) -> Int }
+trait T171 { fn t171(self) -> Int }
+trait T172 { fn t172(self) -> Int }
+trait T173 { fn t173(self) -> Int }
+trait T174 { fn t174(self) -> Int }
+trait T175 { fn t175(self) -> Int }
+trait T176 { fn t176(self) -> Int }
+trait T177 { fn t177(self) -> Int }
+trait T178 { fn t178(self) -> Int }
+trait T179 { fn t179(self) -> Int }
+trait T180 { fn t180(self) -> Int }
+trait T181 { fn t181(self) -> Int }
+trait T182 { fn t182(self) -> Int }
+trait T183 { fn t183(self) -> Int }
+trait T184 { fn t184(self) -> Int }
+trait T185 { fn t185(self) -> Int }
+trait T186 { fn t186(self) -> Int }
+trait T187 { fn t187(self) -> Int }
+trait T188 { fn t188(self) -> Int }
+trait T189 { fn t189(self) -> Int }
+trait T190 { fn t190(self) -> Int }
+trait T191 { fn t191(self) -> Int }
+trait T192 { fn t192(self) -> Int }
+trait T193 { fn t193(self) -> Int }
+trait T194 { fn t194(self) -> Int }
+trait T195 { fn t195(self) -> Int }
+trait T196 { fn t196(self) -> Int }
+trait T197 { fn t197(self) -> Int }
+trait T198 { fn t198(self) -> Int }
+trait T199 { fn t199(self) -> Int }
+trait T200 { fn t200(self) -> Int }
+trait T201 { fn t201(self) -> Int }
+trait T202 { fn t202(self) -> Int }
+trait T203 { fn t203(self) -> Int }
+trait T204 { fn t204(self) -> Int }
+trait T205 { fn t205(self) -> Int }
+trait T206 { fn t206(self) -> Int }
+trait T207 { fn t207(self) -> Int }
+trait T208 { fn t208(self) -> Int }
+trait T209 { fn t209(self) -> Int }
+trait T210 { fn t210(self) -> Int }
+trait T211 { fn t211(self) -> Int }
+trait T212 { fn t212(self) -> Int }
+trait T213 { fn t213(self) -> Int }
+trait T214 { fn t214(self) -> Int }
+trait T215 { fn t215(self) -> Int }
+trait T216 { fn t216(self) -> Int }
+trait T217 { fn t217(self) -> Int }
+trait T218 { fn t218(self) -> Int }
+trait T219 { fn t219(self) -> Int }
+trait T220 { fn t220(self) -> Int }
+trait T221 { fn t221(self) -> Int }
+trait T222 { fn t222(self) -> Int }
+trait T223 { fn t223(self) -> Int }
+trait T224 { fn t224(self) -> Int }
+trait T225 { fn t225(self) -> Int }
+trait T226 { fn t226(self) -> Int }
+trait T227 { fn t227(self) -> Int }
+trait T228 { fn t228(self) -> Int }
+trait T229 { fn t229(self) -> Int }
+trait T230 { fn t230(self) -> Int }
+trait T231 { fn t231(self) -> Int }
+trait T232 { fn t232(self) -> Int }
+trait T233 { fn t233(self) -> Int }
+trait T234 { fn t234(self) -> Int }
+trait T235 { fn t235(self) -> Int }
+trait T236 { fn t236(self) -> Int }
+trait T237 { fn t237(self) -> Int }
+trait T238 { fn t238(self) -> Int }
+trait T239 { fn t239(self) -> Int }
+trait T240 { fn t240(self) -> Int }
+trait T241 { fn t241(self) -> Int }
+trait T242 { fn t242(self) -> Int }
+trait T243 { fn t243(self) -> Int }
+trait T244 { fn t244(self) -> Int }
+trait T245 { fn t245(self) -> Int }
+trait T246 { fn t246(self) -> Int }
+trait T247 { fn t247(self) -> Int }
+trait T248 { fn t248(self) -> Int }
+trait T249 { fn t249(self) -> Int }
+trait T250 { fn t250(self) -> Int }
+trait T251 { fn t251(self) -> Int }
+trait T252 { fn t252(self) -> Int }
+trait T253 { fn t253(self) -> Int }
+trait T254 { fn t254(self) -> Int }
+trait T255 { fn t255(self) -> Int }
+trait T0 for Int { fn t0(self) -> Int { 0 } }
+trait T1 for Int { fn t1(self) -> Int { 1 } }
+trait T2 for Int { fn t2(self) -> Int { 2 } }
+trait T3 for Int { fn t3(self) -> Int { 3 } }
+trait T4 for Int { fn t4(self) -> Int { 4 } }
+trait T5 for Int { fn t5(self) -> Int { 5 } }
+trait T6 for Int { fn t6(self) -> Int { 6 } }
+trait T7 for Int { fn t7(self) -> Int { 7 } }
+trait T8 for Int { fn t8(self) -> Int { 8 } }
+trait T9 for Int { fn t9(self) -> Int { 9 } }
+trait T10 for Int { fn t10(self) -> Int { 10 } }
+trait T11 for Int { fn t11(self) -> Int { 11 } }
+trait T12 for Int { fn t12(self) -> Int { 12 } }
+trait T13 for Int { fn t13(self) -> Int { 13 } }
+trait T14 for Int { fn t14(self) -> Int { 14 } }
+trait T15 for Int { fn t15(self) -> Int { 15 } }
+trait T16 for Int { fn t16(self) -> Int { 16 } }
+trait T17 for Int { fn t17(self) -> Int { 17 } }
+trait T18 for Int { fn t18(self) -> Int { 18 } }
+trait T19 for Int { fn t19(self) -> Int { 19 } }
+trait T20 for Int { fn t20(self) -> Int { 20 } }
+trait T21 for Int { fn t21(self) -> Int { 21 } }
+trait T22 for Int { fn t22(self) -> Int { 22 } }
+trait T23 for Int { fn t23(self) -> Int { 23 } }
+trait T24 for Int { fn t24(self) -> Int { 24 } }
+trait T25 for Int { fn t25(self) -> Int { 25 } }
+trait T26 for Int { fn t26(self) -> Int { 26 } }
+trait T27 for Int { fn t27(self) -> Int { 27 } }
+trait T28 for Int { fn t28(self) -> Int { 28 } }
+trait T29 for Int { fn t29(self) -> Int { 29 } }
+trait T30 for Int { fn t30(self) -> Int { 30 } }
+trait T31 for Int { fn t31(self) -> Int { 31 } }
+trait T32 for Int { fn t32(self) -> Int { 32 } }
+trait T33 for Int { fn t33(self) -> Int { 33 } }
+trait T34 for Int { fn t34(self) -> Int { 34 } }
+trait T35 for Int { fn t35(self) -> Int { 35 } }
+trait T36 for Int { fn t36(self) -> Int { 36 } }
+trait T37 for Int { fn t37(self) -> Int { 37 } }
+trait T38 for Int { fn t38(self) -> Int { 38 } }
+trait T39 for Int { fn t39(self) -> Int { 39 } }
+trait T40 for Int { fn t40(self) -> Int { 40 } }
+trait T41 for Int { fn t41(self) -> Int { 41 } }
+trait T42 for Int { fn t42(self) -> Int { 42 } }
+trait T43 for Int { fn t43(self) -> Int { 43 } }
+trait T44 for Int { fn t44(self) -> Int { 44 } }
+trait T45 for Int { fn t45(self) -> Int { 45 } }
+trait T46 for Int { fn t46(self) -> Int { 46 } }
+trait T47 for Int { fn t47(self) -> Int { 47 } }
+trait T48 for Int { fn t48(self) -> Int { 48 } }
+trait T49 for Int { fn t49(self) -> Int { 49 } }
+trait T50 for Int { fn t50(self) -> Int { 50 } }
+trait T51 for Int { fn t51(self) -> Int { 51 } }
+trait T52 for Int { fn t52(self) -> Int { 52 } }
+trait T53 for Int { fn t53(self) -> Int { 53 } }
+trait T54 for Int { fn t54(self) -> Int { 54 } }
+trait T55 for Int { fn t55(self) -> Int { 55 } }
+trait T56 for Int { fn t56(self) -> Int { 56 } }
+trait T57 for Int { fn t57(self) -> Int { 57 } }
+trait T58 for Int { fn t58(self) -> Int { 58 } }
+trait T59 for Int { fn t59(self) -> Int { 59 } }
+trait T60 for Int { fn t60(self) -> Int { 60 } }
+trait T61 for Int { fn t61(self) -> Int { 61 } }
+trait T62 for Int { fn t62(self) -> Int { 62 } }
+trait T63 for Int { fn t63(self) -> Int { 63 } }
+trait T64 for Int { fn t64(self) -> Int { 64 } }
+trait T65 for Int { fn t65(self) -> Int { 65 } }
+trait T66 for Int { fn t66(self) -> Int { 66 } }
+trait T67 for Int { fn t67(self) -> Int { 67 } }
+trait T68 for Int { fn t68(self) -> Int { 68 } }
+trait T69 for Int { fn t69(self) -> Int { 69 } }
+trait T70 for Int { fn t70(self) -> Int { 70 } }
+trait T71 for Int { fn t71(self) -> Int { 71 } }
+trait T72 for Int { fn t72(self) -> Int { 72 } }
+trait T73 for Int { fn t73(self) -> Int { 73 } }
+trait T74 for Int { fn t74(self) -> Int { 74 } }
+trait T75 for Int { fn t75(self) -> Int { 75 } }
+trait T76 for Int { fn t76(self) -> Int { 76 } }
+trait T77 for Int { fn t77(self) -> Int { 77 } }
+trait T78 for Int { fn t78(self) -> Int { 78 } }
+trait T79 for Int { fn t79(self) -> Int { 79 } }
+trait T80 for Int { fn t80(self) -> Int { 80 } }
+trait T81 for Int { fn t81(self) -> Int { 81 } }
+trait T82 for Int { fn t82(self) -> Int { 82 } }
+trait T83 for Int { fn t83(self) -> Int { 83 } }
+trait T84 for Int { fn t84(self) -> Int { 84 } }
+trait T85 for Int { fn t85(self) -> Int { 85 } }
+trait T86 for Int { fn t86(self) -> Int { 86 } }
+trait T87 for Int { fn t87(self) -> Int { 87 } }
+trait T88 for Int { fn t88(self) -> Int { 88 } }
+trait T89 for Int { fn t89(self) -> Int { 89 } }
+trait T90 for Int { fn t90(self) -> Int { 90 } }
+trait T91 for Int { fn t91(self) -> Int { 91 } }
+trait T92 for Int { fn t92(self) -> Int { 92 } }
+trait T93 for Int { fn t93(self) -> Int { 93 } }
+trait T94 for Int { fn t94(self) -> Int { 94 } }
+trait T95 for Int { fn t95(self) -> Int { 95 } }
+trait T96 for Int { fn t96(self) -> Int { 96 } }
+trait T97 for Int { fn t97(self) -> Int { 97 } }
+trait T98 for Int { fn t98(self) -> Int { 98 } }
+trait T99 for Int { fn t99(self) -> Int { 99 } }
+trait T100 for Int { fn t100(self) -> Int { 100 } }
+trait T101 for Int { fn t101(self) -> Int { 101 } }
+trait T102 for Int { fn t102(self) -> Int { 102 } }
+trait T103 for Int { fn t103(self) -> Int { 103 } }
+trait T104 for Int { fn t104(self) -> Int { 104 } }
+trait T105 for Int { fn t105(self) -> Int { 105 } }
+trait T106 for Int { fn t106(self) -> Int { 106 } }
+trait T107 for Int { fn t107(self) -> Int { 107 } }
+trait T108 for Int { fn t108(self) -> Int { 108 } }
+trait T109 for Int { fn t109(self) -> Int { 109 } }
+trait T110 for Int { fn t110(self) -> Int { 110 } }
+trait T111 for Int { fn t111(self) -> Int { 111 } }
+trait T112 for Int { fn t112(self) -> Int { 112 } }
+trait T113 for Int { fn t113(self) -> Int { 113 } }
+trait T114 for Int { fn t114(self) -> Int { 114 } }
+trait T115 for Int { fn t115(self) -> Int { 115 } }
+trait T116 for Int { fn t116(self) -> Int { 116 } }
+trait T117 for Int { fn t117(self) -> Int { 117 } }
+trait T118 for Int { fn t118(self) -> Int { 118 } }
+trait T119 for Int { fn t119(self) -> Int { 119 } }
+trait T120 for Int { fn t120(self) -> Int { 120 } }
+trait T121 for Int { fn t121(self) -> Int { 121 } }
+trait T122 for Int { fn t122(self) -> Int { 122 } }
+trait T123 for Int { fn t123(self) -> Int { 123 } }
+trait T124 for Int { fn t124(self) -> Int { 124 } }
+trait T125 for Int { fn t125(self) -> Int { 125 } }
+trait T126 for Int { fn t126(self) -> Int { 126 } }
+trait T127 for Int { fn t127(self) -> Int { 127 } }
+trait T128 for Int { fn t128(self) -> Int { 128 } }
+trait T129 for Int { fn t129(self) -> Int { 129 } }
+trait T130 for Int { fn t130(self) -> Int { 130 } }
+trait T131 for Int { fn t131(self) -> Int { 131 } }
+trait T132 for Int { fn t132(self) -> Int { 132 } }
+trait T133 for Int { fn t133(self) -> Int { 133 } }
+trait T134 for Int { fn t134(self) -> Int { 134 } }
+trait T135 for Int { fn t135(self) -> Int { 135 } }
+trait T136 for Int { fn t136(self) -> Int { 136 } }
+trait T137 for Int { fn t137(self) -> Int { 137 } }
+trait T138 for Int { fn t138(self) -> Int { 138 } }
+trait T139 for Int { fn t139(self) -> Int { 139 } }
+trait T140 for Int { fn t140(self) -> Int { 140 } }
+trait T141 for Int { fn t141(self) -> Int { 141 } }
+trait T142 for Int { fn t142(self) -> Int { 142 } }
+trait T143 for Int { fn t143(self) -> Int { 143 } }
+trait T144 for Int { fn t144(self) -> Int { 144 } }
+trait T145 for Int { fn t145(self) -> Int { 145 } }
+trait T146 for Int { fn t146(self) -> Int { 146 } }
+trait T147 for Int { fn t147(self) -> Int { 147 } }
+trait T148 for Int { fn t148(self) -> Int { 148 } }
+trait T149 for Int { fn t149(self) -> Int { 149 } }
+trait T150 for Int { fn t150(self) -> Int { 150 } }
+trait T151 for Int { fn t151(self) -> Int { 151 } }
+trait T152 for Int { fn t152(self) -> Int { 152 } }
+trait T153 for Int { fn t153(self) -> Int { 153 } }
+trait T154 for Int { fn t154(self) -> Int { 154 } }
+trait T155 for Int { fn t155(self) -> Int { 155 } }
+trait T156 for Int { fn t156(self) -> Int { 156 } }
+trait T157 for Int { fn t157(self) -> Int { 157 } }
+trait T158 for Int { fn t158(self) -> Int { 158 } }
+trait T159 for Int { fn t159(self) -> Int { 159 } }
+trait T160 for Int { fn t160(self) -> Int { 160 } }
+trait T161 for Int { fn t161(self) -> Int { 161 } }
+trait T162 for Int { fn t162(self) -> Int { 162 } }
+trait T163 for Int { fn t163(self) -> Int { 163 } }
+trait T164 for Int { fn t164(self) -> Int { 164 } }
+trait T165 for Int { fn t165(self) -> Int { 165 } }
+trait T166 for Int { fn t166(self) -> Int { 166 } }
+trait T167 for Int { fn t167(self) -> Int { 167 } }
+trait T168 for Int { fn t168(self) -> Int { 168 } }
+trait T169 for Int { fn t169(self) -> Int { 169 } }
+trait T170 for Int { fn t170(self) -> Int { 170 } }
+trait T171 for Int { fn t171(self) -> Int { 171 } }
+trait T172 for Int { fn t172(self) -> Int { 172 } }
+trait T173 for Int { fn t173(self) -> Int { 173 } }
+trait T174 for Int { fn t174(self) -> Int { 174 } }
+trait T175 for Int { fn t175(self) -> Int { 175 } }
+trait T176 for Int { fn t176(self) -> Int { 176 } }
+trait T177 for Int { fn t177(self) -> Int { 177 } }
+trait T178 for Int { fn t178(self) -> Int { 178 } }
+trait T179 for Int { fn t179(self) -> Int { 179 } }
+trait T180 for Int { fn t180(self) -> Int { 180 } }
+trait T181 for Int { fn t181(self) -> Int { 181 } }
+trait T182 for Int { fn t182(self) -> Int { 182 } }
+trait T183 for Int { fn t183(self) -> Int { 183 } }
+trait T184 for Int { fn t184(self) -> Int { 184 } }
+trait T185 for Int { fn t185(self) -> Int { 185 } }
+trait T186 for Int { fn t186(self) -> Int { 186 } }
+trait T187 for Int { fn t187(self) -> Int { 187 } }
+trait T188 for Int { fn t188(self) -> Int { 188 } }
+trait T189 for Int { fn t189(self) -> Int { 189 } }
+trait T190 for Int { fn t190(self) -> Int { 190 } }
+trait T191 for Int { fn t191(self) -> Int { 191 } }
+trait T192 for Int { fn t192(self) -> Int { 192 } }
+trait T193 for Int { fn t193(self) -> Int { 193 } }
+trait T194 for Int { fn t194(self) -> Int { 194 } }
+trait T195 for Int { fn t195(self) -> Int { 195 } }
+trait T196 for Int { fn t196(self) -> Int { 196 } }
+trait T197 for Int { fn t197(self) -> Int { 197 } }
+trait T198 for Int { fn t198(self) -> Int { 198 } }
+trait T199 for Int { fn t199(self) -> Int { 199 } }
+trait T200 for Int { fn t200(self) -> Int { 200 } }
+trait T201 for Int { fn t201(self) -> Int { 201 } }
+trait T202 for Int { fn t202(self) -> Int { 202 } }
+trait T203 for Int { fn t203(self) -> Int { 203 } }
+trait T204 for Int { fn t204(self) -> Int { 204 } }
+trait T205 for Int { fn t205(self) -> Int { 205 } }
+trait T206 for Int { fn t206(self) -> Int { 206 } }
+trait T207 for Int { fn t207(self) -> Int { 207 } }
+trait T208 for Int { fn t208(self) -> Int { 208 } }
+trait T209 for Int { fn t209(self) -> Int { 209 } }
+trait T210 for Int { fn t210(self) -> Int { 210 } }
+trait T211 for Int { fn t211(self) -> Int { 211 } }
+trait T212 for Int { fn t212(self) -> Int { 212 } }
+trait T213 for Int { fn t213(self) -> Int { 213 } }
+trait T214 for Int { fn t214(self) -> Int { 214 } }
+trait T215 for Int { fn t215(self) -> Int { 215 } }
+trait T216 for Int { fn t216(self) -> Int { 216 } }
+trait T217 for Int { fn t217(self) -> Int { 217 } }
+trait T218 for Int { fn t218(self) -> Int { 218 } }
+trait T219 for Int { fn t219(self) -> Int { 219 } }
+trait T220 for Int { fn t220(self) -> Int { 220 } }
+trait T221 for Int { fn t221(self) -> Int { 221 } }
+trait T222 for Int { fn t222(self) -> Int { 222 } }
+trait T223 for Int { fn t223(self) -> Int { 223 } }
+trait T224 for Int { fn t224(self) -> Int { 224 } }
+trait T225 for Int { fn t225(self) -> Int { 225 } }
+trait T226 for Int { fn t226(self) -> Int { 226 } }
+trait T227 for Int { fn t227(self) -> Int { 227 } }
+trait T228 for Int { fn t228(self) -> Int { 228 } }
+trait T229 for Int { fn t229(self) -> Int { 229 } }
+trait T230 for Int { fn t230(self) -> Int { 230 } }
+trait T231 for Int { fn t231(self) -> Int { 231 } }
+trait T232 for Int { fn t232(self) -> Int { 232 } }
+trait T233 for Int { fn t233(self) -> Int { 233 } }
+trait T234 for Int { fn t234(self) -> Int { 234 } }
+trait T235 for Int { fn t235(self) -> Int { 235 } }
+trait T236 for Int { fn t236(self) -> Int { 236 } }
+trait T237 for Int { fn t237(self) -> Int { 237 } }
+trait T238 for Int { fn t238(self) -> Int { 238 } }
+trait T239 for Int { fn t239(self) -> Int { 239 } }
+trait T240 for Int { fn t240(self) -> Int { 240 } }
+trait T241 for Int { fn t241(self) -> Int { 241 } }
+trait T242 for Int { fn t242(self) -> Int { 242 } }
+trait T243 for Int { fn t243(self) -> Int { 243 } }
+trait T244 for Int { fn t244(self) -> Int { 244 } }
+trait T245 for Int { fn t245(self) -> Int { 245 } }
+trait T246 for Int { fn t246(self) -> Int { 246 } }
+trait T247 for Int { fn t247(self) -> Int { 247 } }
+trait T248 for Int { fn t248(self) -> Int { 248 } }
+trait T249 for Int { fn t249(self) -> Int { 249 } }
+trait T250 for Int { fn t250(self) -> Int { 250 } }
+trait T251 for Int { fn t251(self) -> Int { 251 } }
+trait T252 for Int { fn t252(self) -> Int { 252 } }
+trait T253 for Int { fn t253(self) -> Int { 253 } }
+trait T254 for Int { fn t254(self) -> Int { 254 } }
+trait T255 for Int { fn t255(self) -> Int { 255 } }
+type Bx(a) { Bx(a) }
+trait Sh { fn sh(self) -> Int }
+trait Sh for Bx(a) where a: T0 + T1 + T2 + T3 + T4 + T5 + T6 + T7 + T8 + T9 + T10 + T11 + T12 + T13 + T14 + T15 + T16 + T17 + T18 + T19 + T20 + T21 + T22 + T23 + T24 + T25 + T26 + T27 + T28 + T29 + T30 + T31 + T32 + T33 + T34 + T35 + T36 + T37 + T38 + T39 + T40 + T41 + T42 + T43 + T44 + T45 + T46 + T47 + T48 + T49 + T50 + T51 + T52 + T53 + T54 + T55 + T56 + T57 + T58 + T59 + T60 + T61 + T62 + T63 + T64 + T65 + T66 + T67 + T68 + T69 + T70 + T71 + T72 + T73 + T74 + T75 + T76 + T77 + T78 + T79 + T80 + T81 + T82 + T83 + T84 + T85 + T86 + T87 + T88 + T89 + T90 + T91 + T92 + T93 + T94 + T95 + T96 + T97 + T98 + T99 + T100 + T101 + T102 + T103 + T104 + T105 + T106 + T107 + T108 + T109 + T110 + T111 + T112 + T113 + T114 + T115 + T116 + T117 + T118 + T119 + T120 + T121 + T122 + T123 + T124 + T125 + T126 + T127 + T128 + T129 + T130 + T131 + T132 + T133 + T134 + T135 + T136 + T137 + T138 + T139 + T140 + T141 + T142 + T143 + T144 + T145 + T146 + T147 + T148 + T149 + T150 + T151 + T152 + T153 + T154 + T155 + T156 + T157 + T158 + T159 + T160 + T161 + T162 + T163 + T164 + T165 + T166 + T167 + T168 + T169 + T170 + T171 + T172 + T173 + T174 + T175 + T176 + T177 + T178 + T179 + T180 + T181 + T182 + T183 + T184 + T185 + T186 + T187 + T188 + T189 + T190 + T191 + T192 + T193 + T194 + T195 + T196 + T197 + T198 + T199 + T200 + T201 + T202 + T203 + T204 + T205 + T206 + T207 + T208 + T209 + T210 + T211 + T212 + T213 + T214 + T215 + T216 + T217 + T218 + T219 + T220 + T221 + T222 + T223 + T224 + T225 + T226 + T227 + T228 + T229 + T230 + T231 + T232 + T233 + T234 + T235 + T236 + T237 + T238 + T239 + T240 + T241 + T242 + T243 + T244 + T245 + T246 + T247 + T248 + T249 + T250 + T251 + T252 + T253 + T254 + T255 { fn sh(self) -> Int { match self { Bx(x) -> T255.t255(x) } } }
+fn main() { println(1) }

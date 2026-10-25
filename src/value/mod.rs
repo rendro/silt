@@ -80,6 +80,9 @@ pub enum Value {
     /// transparently — the TLS layer in v0.9 PR 3 will substitute a
     /// rustls-wrapped stream behind the same `Arc<Mutex<Box<dyn ReadWrite>>>`.
     TcpStream(Arc<TcpStreamHandle>),
+    /// A dictionary (`bytecode::dict`): no program value is one; the
+    /// code passes it, hidden, to what has bounds of a program's trait.
+    Dict(bytecode::dict::Dict),
     Unit,
 }
 
@@ -189,6 +192,7 @@ impl Value {
             Value::Bytes(_) => "Bytes",
             Value::TcpListener(_) => "TcpListener",
             Value::TcpStream(_) => "TcpStream",
+            Value::Dict(_) => "Dict",
             Value::Unit => "Unit",
         }
     }

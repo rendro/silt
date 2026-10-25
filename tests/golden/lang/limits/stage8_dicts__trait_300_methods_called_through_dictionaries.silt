@@ -1,0 +1,916 @@
+-- A trait of 300 methods: its last is called through a bound's
+-- dictionary, through an impl's, and on a known type.
+trait Big {
+  fn m0(self) -> Int
+  fn m1(self) -> Int
+  fn m2(self) -> Int
+  fn m3(self) -> Int
+  fn m4(self) -> Int
+  fn m5(self) -> Int
+  fn m6(self) -> Int
+  fn m7(self) -> Int
+  fn m8(self) -> Int
+  fn m9(self) -> Int
+  fn m10(self) -> Int
+  fn m11(self) -> Int
+  fn m12(self) -> Int
+  fn m13(self) -> Int
+  fn m14(self) -> Int
+  fn m15(self) -> Int
+  fn m16(self) -> Int
+  fn m17(self) -> Int
+  fn m18(self) -> Int
+  fn m19(self) -> Int
+  fn m20(self) -> Int
+  fn m21(self) -> Int
+  fn m22(self) -> Int
+  fn m23(self) -> Int
+  fn m24(self) -> Int
+  fn m25(self) -> Int
+  fn m26(self) -> Int
+  fn m27(self) -> Int
+  fn m28(self) -> Int
+  fn m29(self) -> Int
+  fn m30(self) -> Int
+  fn m31(self) -> Int
+  fn m32(self) -> Int
+  fn m33(self) -> Int
+  fn m34(self) -> Int
+  fn m35(self) -> Int
+  fn m36(self) -> Int
+  fn m37(self) -> Int
+  fn m38(self) -> Int
+  fn m39(self) -> Int
+  fn m40(self) -> Int
+  fn m41(self) -> Int
+  fn m42(self) -> Int
+  fn m43(self) -> Int
+  fn m44(self) -> Int
+  fn m45(self) -> Int
+  fn m46(self) -> Int
+  fn m47(self) -> Int
+  fn m48(self) -> Int
+  fn m49(self) -> Int
+  fn m50(self) -> Int
+  fn m51(self) -> Int
+  fn m52(self) -> Int
+  fn m53(self) -> Int
+  fn m54(self) -> Int
+  fn m55(self) -> Int
+  fn m56(self) -> Int
+  fn m57(self) -> Int
+  fn m58(self) -> Int
+  fn m59(self) -> Int
+  fn m60(self) -> Int
+  fn m61(self) -> Int
+  fn m62(self) -> Int
+  fn m63(self) -> Int
+  fn m64(self) -> Int
+  fn m65(self) -> Int
+  fn m66(self) -> Int
+  fn m67(self) -> Int
+  fn m68(self) -> Int
+  fn m69(self) -> Int
+  fn m70(self) -> Int
+  fn m71(self) -> Int
+  fn m72(self) -> Int
+  fn m73(self) -> Int
+  fn m74(self) -> Int
+  fn m75(self) -> Int
+  fn m76(self) -> Int
+  fn m77(self) -> Int
+  fn m78(self) -> Int
+  fn m79(self) -> Int
+  fn m80(self) -> Int
+  fn m81(self) -> Int
+  fn m82(self) -> Int
+  fn m83(self) -> Int
+  fn m84(self) -> Int
+  fn m85(self) -> Int
+  fn m86(self) -> Int
+  fn m87(self) -> Int
+  fn m88(self) -> Int
+  fn m89(self) -> Int
+  fn m90(self) -> Int
+  fn m91(self) -> Int
+  fn m92(self) -> Int
+  fn m93(self) -> Int
+  fn m94(self) -> Int
+  fn m95(self) -> Int
+  fn m96(self) -> Int
+  fn m97(self) -> Int
+  fn m98(self) -> Int
+  fn m99(self) -> Int
+  fn m100(self) -> Int
+  fn m101(self) -> Int
+  fn m102(self) -> Int
+  fn m103(self) -> Int
+  fn m104(self) -> Int
+  fn m105(self) -> Int
+  fn m106(self) -> Int
+  fn m107(self) -> Int
+  fn m108(self) -> Int
+  fn m109(self) -> Int
+  fn m110(self) -> Int
+  fn m111(self) -> Int
+  fn m112(self) -> Int
+  fn m113(self) -> Int
+  fn m114(self) -> Int
+  fn m115(self) -> Int
+  fn m116(self) -> Int
+  fn m117(self) -> Int
+  fn m118(self) -> Int
+  fn m119(self) -> Int
+  fn m120(self) -> Int
+  fn m121(self) -> Int
+  fn m122(self) -> Int
+  fn m123(self) -> Int
+  fn m124(self) -> Int
+  fn m125(self) -> Int
+  fn m126(self) -> Int
+  fn m127(self) -> Int
+  fn m128(self) -> Int
+  fn m129(self) -> Int
+  fn m130(self) -> Int
+  fn m131(self) -> Int
+  fn m132(self) -> Int
+  fn m133(self) -> Int
+  fn m134(self) -> Int
+  fn m135(self) -> Int
+  fn m136(self) -> Int
+  fn m137(self) -> Int
+  fn m138(self) -> Int
+  fn m139(self) -> Int
+  fn m140(self) -> Int
+  fn m141(self) -> Int
+  fn m142(self) -> Int
+  fn m143(self) -> Int
+  fn m144(self) -> Int
+  fn m145(self) -> Int
+  fn m146(self) -> Int
+  fn m147(self) -> Int
+  fn m148(self) -> Int
+  fn m149(self) -> Int
+  fn m150(self) -> Int
+  fn m151(self) -> Int
+  fn m152(self) -> Int
+  fn m153(self) -> Int
+  fn m154(self) -> Int
+  fn m155(self) -> Int
+  fn m156(self) -> Int
+  fn m157(self) -> Int
+  fn m158(self) -> Int
+  fn m159(self) -> Int
+  fn m160(self) -> Int
+  fn m161(self) -> Int
+  fn m162(self) -> Int
+  fn m163(self) -> Int
+  fn m164(self) -> Int
+  fn m165(self) -> Int
+  fn m166(self) -> Int
+  fn m167(self) -> Int
+  fn m168(self) -> Int
+  fn m169(self) -> Int
+  fn m170(self) -> Int
+  fn m171(self) -> Int
+  fn m172(self) -> Int
+  fn m173(self) -> Int
+  fn m174(self) -> Int
+  fn m175(self) -> Int
+  fn m176(self) -> Int
+  fn m177(self) -> Int
+  fn m178(self) -> Int
+  fn m179(self) -> Int
+  fn m180(self) -> Int
+  fn m181(self) -> Int
+  fn m182(self) -> Int
+  fn m183(self) -> Int
+  fn m184(self) -> Int
+  fn m185(self) -> Int
+  fn m186(self) -> Int
+  fn m187(self) -> Int
+  fn m188(self) -> Int
+  fn m189(self) -> Int
+  fn m190(self) -> Int
+  fn m191(self) -> Int
+  fn m192(self) -> Int
+  fn m193(self) -> Int
+  fn m194(self) -> Int
+  fn m195(self) -> Int
+  fn m196(self) -> Int
+  fn m197(self) -> Int
+  fn m198(self) -> Int
+  fn m199(self) -> Int
+  fn m200(self) -> Int
+  fn m201(self) -> Int
+  fn m202(self) -> Int
+  fn m203(self) -> Int
+  fn m204(self) -> Int
+  fn m205(self) -> Int
+  fn m206(self) -> Int
+  fn m207(self) -> Int
+  fn m208(self) -> Int
+  fn m209(self) -> Int
+  fn m210(self) -> Int
+  fn m211(self) -> Int
+  fn m212(self) -> Int
+  fn m213(self) -> Int
+  fn m214(self) -> Int
+  fn m215(self) -> Int
+  fn m216(self) -> Int
+  fn m217(self) -> Int
+  fn m218(self) -> Int
+  fn m219(self) -> Int
+  fn m220(self) -> Int
+  fn m221(self) -> Int
+  fn m222(self) -> Int
+  fn m223(self) -> Int
+  fn m224(self) -> Int
+  fn m225(self) -> Int
+  fn m226(self) -> Int
+  fn m227(self) -> Int
+  fn m228(self) -> Int
+  fn m229(self) -> Int
+  fn m230(self) -> Int
+  fn m231(self) -> Int
+  fn m232(self) -> Int
+  fn m233(self) -> Int
+  fn m234(self) -> Int
+  fn m235(self) -> Int
+  fn m236(self) -> Int
+  fn m237(self) -> Int
+  fn m238(self) -> Int
+  fn m239(self) -> Int
+  fn m240(self) -> Int
+  fn m241(self) -> Int
+  fn m242(self) -> Int
+  fn m243(self) -> Int
+  fn m244(self) -> Int
+  fn m245(self) -> Int
+  fn m246(self) -> Int
+  fn m247(self) -> Int
+  fn m248(self) -> Int
+  fn m249(self) -> Int
+  fn m250(self) -> Int
+  fn m251(self) -> Int
+  fn m252(self) -> Int
+  fn m253(self) -> Int
+  fn m254(self) -> Int
+  fn m255(self) -> Int
+  fn m256(self) -> Int
+  fn m257(self) -> Int
+  fn m258(self) -> Int
+  fn m259(self) -> Int
+  fn m260(self) -> Int
+  fn m261(self) -> Int
+  fn m262(self) -> Int
+  fn m263(self) -> Int
+  fn m264(self) -> Int
+  fn m265(self) -> Int
+  fn m266(self) -> Int
+  fn m267(self) -> Int
+  fn m268(self) -> Int
+  fn m269(self) -> Int
+  fn m270(self) -> Int
+  fn m271(self) -> Int
+  fn m272(self) -> Int
+  fn m273(self) -> Int
+  fn m274(self) -> Int
+  fn m275(self) -> Int
+  fn m276(self) -> Int
+  fn m277(self) -> Int
+  fn m278(self) -> Int
+  fn m279(self) -> Int
+  fn m280(self) -> Int
+  fn m281(self) -> Int
+  fn m282(self) -> Int
+  fn m283(self) -> Int
+  fn m284(self) -> Int
+  fn m285(self) -> Int
+  fn m286(self) -> Int
+  fn m287(self) -> Int
+  fn m288(self) -> Int
+  fn m289(self) -> Int
+  fn m290(self) -> Int
+  fn m291(self) -> Int
+  fn m292(self) -> Int
+  fn m293(self) -> Int
+  fn m294(self) -> Int
+  fn m295(self) -> Int
+  fn m296(self) -> Int
+  fn m297(self) -> Int
+  fn m298(self) -> Int
+  fn m299(self) -> Int
+}
+type K { K }
+trait Big for K {
+  fn m0(self) -> Int { 0 }
+  fn m1(self) -> Int { 1 }
+  fn m2(self) -> Int { 2 }
+  fn m3(self) -> Int { 3 }
+  fn m4(self) -> Int { 4 }
+  fn m5(self) -> Int { 5 }
+  fn m6(self) -> Int { 6 }
+  fn m7(self) -> Int { 7 }
+  fn m8(self) -> Int { 8 }
+  fn m9(self) -> Int { 9 }
+  fn m10(self) -> Int { 10 }
+  fn m11(self) -> Int { 11 }
+  fn m12(self) -> Int { 12 }
+  fn m13(self) -> Int { 13 }
+  fn m14(self) -> Int { 14 }
+  fn m15(self) -> Int { 15 }
+  fn m16(self) -> Int { 16 }
+  fn m17(self) -> Int { 17 }
+  fn m18(self) -> Int { 18 }
+  fn m19(self) -> Int { 19 }
+  fn m20(self) -> Int { 20 }
+  fn m21(self) -> Int { 21 }
+  fn m22(self) -> Int { 22 }
+  fn m23(self) -> Int { 23 }
+  fn m24(self) -> Int { 24 }
+  fn m25(self) -> Int { 25 }
+  fn m26(self) -> Int { 26 }
+  fn m27(self) -> Int { 27 }
+  fn m28(self) -> Int { 28 }
+  fn m29(self) -> Int { 29 }
+  fn m30(self) -> Int { 30 }
+  fn m31(self) -> Int { 31 }
+  fn m32(self) -> Int { 32 }
+  fn m33(self) -> Int { 33 }
+  fn m34(self) -> Int { 34 }
+  fn m35(self) -> Int { 35 }
+  fn m36(self) -> Int { 36 }
+  fn m37(self) -> Int { 37 }
+  fn m38(self) -> Int { 38 }
+  fn m39(self) -> Int { 39 }
+  fn m40(self) -> Int { 40 }
+  fn m41(self) -> Int { 41 }
+  fn m42(self) -> Int { 42 }
+  fn m43(self) -> Int { 43 }
+  fn m44(self) -> Int { 44 }
+  fn m45(self) -> Int { 45 }
+  fn m46(self) -> Int { 46 }
+  fn m47(self) -> Int { 47 }
+  fn m48(self) -> Int { 48 }
+  fn m49(self) -> Int { 49 }
+  fn m50(self) -> Int { 50 }
+  fn m51(self) -> Int { 51 }
+  fn m52(self) -> Int { 52 }
+  fn m53(self) -> Int { 53 }
+  fn m54(self) -> Int { 54 }
+  fn m55(self) -> Int { 55 }
+  fn m56(self) -> Int { 56 }
+  fn m57(self) -> Int { 57 }
+  fn m58(self) -> Int { 58 }
+  fn m59(self) -> Int { 59 }
+  fn m60(self) -> Int { 60 }
+  fn m61(self) -> Int { 61 }
+  fn m62(self) -> Int { 62 }
+  fn m63(self) -> Int { 63 }
+  fn m64(self) -> Int { 64 }
+  fn m65(self) -> Int { 65 }
+  fn m66(self) -> Int { 66 }
+  fn m67(self) -> Int { 67 }
+  fn m68(self) -> Int { 68 }
+  fn m69(self) -> Int { 69 }
+  fn m70(self) -> Int { 70 }
+  fn m71(self) -> Int { 71 }
+  fn m72(self) -> Int { 72 }
+  fn m73(self) -> Int { 73 }
+  fn m74(self) -> Int { 74 }
+  fn m75(self) -> Int { 75 }
+  fn m76(self) -> Int { 76 }
+  fn m77(self) -> Int { 77 }
+  fn m78(self) -> Int { 78 }
+  fn m79(self) -> Int { 79 }
+  fn m80(self) -> Int { 80 }
+  fn m81(self) -> Int { 81 }
+  fn m82(self) -> Int { 82 }
+  fn m83(self) -> Int { 83 }
+  fn m84(self) -> Int { 84 }
+  fn m85(self) -> Int { 85 }
+  fn m86(self) -> Int { 86 }
+  fn m87(self) -> Int { 87 }
+  fn m88(self) -> Int { 88 }
+  fn m89(self) -> Int { 89 }
+  fn m90(self) -> Int { 90 }
+  fn m91(self) -> Int { 91 }
+  fn m92(self) -> Int { 92 }
+  fn m93(self) -> Int { 93 }
+  fn m94(self) -> Int { 94 }
+  fn m95(self) -> Int { 95 }
+  fn m96(self) -> Int { 96 }
+  fn m97(self) -> Int { 97 }
+  fn m98(self) -> Int { 98 }
+  fn m99(self) -> Int { 99 }
+  fn m100(self) -> Int { 100 }
+  fn m101(self) -> Int { 101 }
+  fn m102(self) -> Int { 102 }
+  fn m103(self) -> Int { 103 }
+  fn m104(self) -> Int { 104 }
+  fn m105(self) -> Int { 105 }
+  fn m106(self) -> Int { 106 }
+  fn m107(self) -> Int { 107 }
+  fn m108(self) -> Int { 108 }
+  fn m109(self) -> Int { 109 }
+  fn m110(self) -> Int { 110 }
+  fn m111(self) -> Int { 111 }
+  fn m112(self) -> Int { 112 }
+  fn m113(self) -> Int { 113 }
+  fn m114(self) -> Int { 114 }
+  fn m115(self) -> Int { 115 }
+  fn m116(self) -> Int { 116 }
+  fn m117(self) -> Int { 117 }
+  fn m118(self) -> Int { 118 }
+  fn m119(self) -> Int { 119 }
+  fn m120(self) -> Int { 120 }
+  fn m121(self) -> Int { 121 }
+  fn m122(self) -> Int { 122 }
+  fn m123(self) -> Int { 123 }
+  fn m124(self) -> Int { 124 }
+  fn m125(self) -> Int { 125 }
+  fn m126(self) -> Int { 126 }
+  fn m127(self) -> Int { 127 }
+  fn m128(self) -> Int { 128 }
+  fn m129(self) -> Int { 129 }
+  fn m130(self) -> Int { 130 }
+  fn m131(self) -> Int { 131 }
+  fn m132(self) -> Int { 132 }
+  fn m133(self) -> Int { 133 }
+  fn m134(self) -> Int { 134 }
+  fn m135(self) -> Int { 135 }
+  fn m136(self) -> Int { 136 }
+  fn m137(self) -> Int { 137 }
+  fn m138(self) -> Int { 138 }
+  fn m139(self) -> Int { 139 }
+  fn m140(self) -> Int { 140 }
+  fn m141(self) -> Int { 141 }
+  fn m142(self) -> Int { 142 }
+  fn m143(self) -> Int { 143 }
+  fn m144(self) -> Int { 144 }
+  fn m145(self) -> Int { 145 }
+  fn m146(self) -> Int { 146 }
+  fn m147(self) -> Int { 147 }
+  fn m148(self) -> Int { 148 }
+  fn m149(self) -> Int { 149 }
+  fn m150(self) -> Int { 150 }
+  fn m151(self) -> Int { 151 }
+  fn m152(self) -> Int { 152 }
+  fn m153(self) -> Int { 153 }
+  fn m154(self) -> Int { 154 }
+  fn m155(self) -> Int { 155 }
+  fn m156(self) -> Int { 156 }
+  fn m157(self) -> Int { 157 }
+  fn m158(self) -> Int { 158 }
+  fn m159(self) -> Int { 159 }
+  fn m160(self) -> Int { 160 }
+  fn m161(self) -> Int { 161 }
+  fn m162(self) -> Int { 162 }
+  fn m163(self) -> Int { 163 }
+  fn m164(self) -> Int { 164 }
+  fn m165(self) -> Int { 165 }
+  fn m166(self) -> Int { 166 }
+  fn m167(self) -> Int { 167 }
+  fn m168(self) -> Int { 168 }
+  fn m169(self) -> Int { 169 }
+  fn m170(self) -> Int { 170 }
+  fn m171(self) -> Int { 171 }
+  fn m172(self) -> Int { 172 }
+  fn m173(self) -> Int { 173 }
+  fn m174(self) -> Int { 174 }
+  fn m175(self) -> Int { 175 }
+  fn m176(self) -> Int { 176 }
+  fn m177(self) -> Int { 177 }
+  fn m178(self) -> Int { 178 }
+  fn m179(self) -> Int { 179 }
+  fn m180(self) -> Int { 180 }
+  fn m181(self) -> Int { 181 }
+  fn m182(self) -> Int { 182 }
+  fn m183(self) -> Int { 183 }
+  fn m184(self) -> Int { 184 }
+  fn m185(self) -> Int { 185 }
+  fn m186(self) -> Int { 186 }
+  fn m187(self) -> Int { 187 }
+  fn m188(self) -> Int { 188 }
+  fn m189(self) -> Int { 189 }
+  fn m190(self) -> Int { 190 }
+  fn m191(self) -> Int { 191 }
+  fn m192(self) -> Int { 192 }
+  fn m193(self) -> Int { 193 }
+  fn m194(self) -> Int { 194 }
+  fn m195(self) -> Int { 195 }
+  fn m196(self) -> Int { 196 }
+  fn m197(self) -> Int { 197 }
+  fn m198(self) -> Int { 198 }
+  fn m199(self) -> Int { 199 }
+  fn m200(self) -> Int { 200 }
+  fn m201(self) -> Int { 201 }
+  fn m202(self) -> Int { 202 }
+  fn m203(self) -> Int { 203 }
+  fn m204(self) -> Int { 204 }
+  fn m205(self) -> Int { 205 }
+  fn m206(self) -> Int { 206 }
+  fn m207(self) -> Int { 207 }
+  fn m208(self) -> Int { 208 }
+  fn m209(self) -> Int { 209 }
+  fn m210(self) -> Int { 210 }
+  fn m211(self) -> Int { 211 }
+  fn m212(self) -> Int { 212 }
+  fn m213(self) -> Int { 213 }
+  fn m214(self) -> Int { 214 }
+  fn m215(self) -> Int { 215 }
+  fn m216(self) -> Int { 216 }
+  fn m217(self) -> Int { 217 }
+  fn m218(self) -> Int { 218 }
+  fn m219(self) -> Int { 219 }
+  fn m220(self) -> Int { 220 }
+  fn m221(self) -> Int { 221 }
+  fn m222(self) -> Int { 222 }
+  fn m223(self) -> Int { 223 }
+  fn m224(self) -> Int { 224 }
+  fn m225(self) -> Int { 225 }
+  fn m226(self) -> Int { 226 }
+  fn m227(self) -> Int { 227 }
+  fn m228(self) -> Int { 228 }
+  fn m229(self) -> Int { 229 }
+  fn m230(self) -> Int { 230 }
+  fn m231(self) -> Int { 231 }
+  fn m232(self) -> Int { 232 }
+  fn m233(self) -> Int { 233 }
+  fn m234(self) -> Int { 234 }
+  fn m235(self) -> Int { 235 }
+  fn m236(self) -> Int { 236 }
+  fn m237(self) -> Int { 237 }
+  fn m238(self) -> Int { 238 }
+  fn m239(self) -> Int { 239 }
+  fn m240(self) -> Int { 240 }
+  fn m241(self) -> Int { 241 }
+  fn m242(self) -> Int { 242 }
+  fn m243(self) -> Int { 243 }
+  fn m244(self) -> Int { 244 }
+  fn m245(self) -> Int { 245 }
+  fn m246(self) -> Int { 246 }
+  fn m247(self) -> Int { 247 }
+  fn m248(self) -> Int { 248 }
+  fn m249(self) -> Int { 249 }
+  fn m250(self) -> Int { 250 }
+  fn m251(self) -> Int { 251 }
+  fn m252(self) -> Int { 252 }
+  fn m253(self) -> Int { 253 }
+  fn m254(self) -> Int { 254 }
+  fn m255(self) -> Int { 255 }
+  fn m256(self) -> Int { 256 }
+  fn m257(self) -> Int { 257 }
+  fn m258(self) -> Int { 258 }
+  fn m259(self) -> Int { 259 }
+  fn m260(self) -> Int { 260 }
+  fn m261(self) -> Int { 261 }
+  fn m262(self) -> Int { 262 }
+  fn m263(self) -> Int { 263 }
+  fn m264(self) -> Int { 264 }
+  fn m265(self) -> Int { 265 }
+  fn m266(self) -> Int { 266 }
+  fn m267(self) -> Int { 267 }
+  fn m268(self) -> Int { 268 }
+  fn m269(self) -> Int { 269 }
+  fn m270(self) -> Int { 270 }
+  fn m271(self) -> Int { 271 }
+  fn m272(self) -> Int { 272 }
+  fn m273(self) -> Int { 273 }
+  fn m274(self) -> Int { 274 }
+  fn m275(self) -> Int { 275 }
+  fn m276(self) -> Int { 276 }
+  fn m277(self) -> Int { 277 }
+  fn m278(self) -> Int { 278 }
+  fn m279(self) -> Int { 279 }
+  fn m280(self) -> Int { 280 }
+  fn m281(self) -> Int { 281 }
+  fn m282(self) -> Int { 282 }
+  fn m283(self) -> Int { 283 }
+  fn m284(self) -> Int { 284 }
+  fn m285(self) -> Int { 285 }
+  fn m286(self) -> Int { 286 }
+  fn m287(self) -> Int { 287 }
+  fn m288(self) -> Int { 288 }
+  fn m289(self) -> Int { 289 }
+  fn m290(self) -> Int { 290 }
+  fn m291(self) -> Int { 291 }
+  fn m292(self) -> Int { 292 }
+  fn m293(self) -> Int { 293 }
+  fn m294(self) -> Int { 294 }
+  fn m295(self) -> Int { 295 }
+  fn m296(self) -> Int { 296 }
+  fn m297(self) -> Int { 297 }
+  fn m298(self) -> Int { 298 }
+  fn m299(self) -> Int { 299 }
+}
+type Bx(a) { Bx(a) }
+trait Big for Bx(a) where a: Big {
+  fn m0(self) -> Int { match self { Bx(x) -> Big.m0(x) + 1000 } }
+  fn m1(self) -> Int { match self { Bx(x) -> Big.m1(x) + 1000 } }
+  fn m2(self) -> Int { match self { Bx(x) -> Big.m2(x) + 1000 } }
+  fn m3(self) -> Int { match self { Bx(x) -> Big.m3(x) + 1000 } }
+  fn m4(self) -> Int { match self { Bx(x) -> Big.m4(x) + 1000 } }
+  fn m5(self) -> Int { match self { Bx(x) -> Big.m5(x) + 1000 } }
+  fn m6(self) -> Int { match self { Bx(x) -> Big.m6(x) + 1000 } }
+  fn m7(self) -> Int { match self { Bx(x) -> Big.m7(x) + 1000 } }
+  fn m8(self) -> Int { match self { Bx(x) -> Big.m8(x) + 1000 } }
+  fn m9(self) -> Int { match self { Bx(x) -> Big.m9(x) + 1000 } }
+  fn m10(self) -> Int { match self { Bx(x) -> Big.m10(x) + 1000 } }
+  fn m11(self) -> Int { match self { Bx(x) -> Big.m11(x) + 1000 } }
+  fn m12(self) -> Int { match self { Bx(x) -> Big.m12(x) + 1000 } }
+  fn m13(self) -> Int { match self { Bx(x) -> Big.m13(x) + 1000 } }
+  fn m14(self) -> Int { match self { Bx(x) -> Big.m14(x) + 1000 } }
+  fn m15(self) -> Int { match self { Bx(x) -> Big.m15(x) + 1000 } }
+  fn m16(self) -> Int { match self { Bx(x) -> Big.m16(x) + 1000 } }
+  fn m17(self) -> Int { match self { Bx(x) -> Big.m17(x) + 1000 } }
+  fn m18(self) -> Int { match self { Bx(x) -> Big.m18(x) + 1000 } }
+  fn m19(self) -> Int { match self { Bx(x) -> Big.m19(x) + 1000 } }
+  fn m20(self) -> Int { match self { Bx(x) -> Big.m20(x) + 1000 } }
+  fn m21(self) -> Int { match self { Bx(x) -> Big.m21(x) + 1000 } }
+  fn m22(self) -> Int { match self { Bx(x) -> Big.m22(x) + 1000 } }
+  fn m23(self) -> Int { match self { Bx(x) -> Big.m23(x) + 1000 } }
+  fn m24(self) -> Int { match self { Bx(x) -> Big.m24(x) + 1000 } }
+  fn m25(self) -> Int { match self { Bx(x) -> Big.m25(x) + 1000 } }
+  fn m26(self) -> Int { match self { Bx(x) -> Big.m26(x) + 1000 } }
+  fn m27(self) -> Int { match self { Bx(x) -> Big.m27(x) + 1000 } }
+  fn m28(self) -> Int { match self { Bx(x) -> Big.m28(x) + 1000 } }
+  fn m29(self) -> Int { match self { Bx(x) -> Big.m29(x) + 1000 } }
+  fn m30(self) -> Int { match self { Bx(x) -> Big.m30(x) + 1000 } }
+  fn m31(self) -> Int { match self { Bx(x) -> Big.m31(x) + 1000 } }
+  fn m32(self) -> Int { match self { Bx(x) -> Big.m32(x) + 1000 } }
+  fn m33(self) -> Int { match self { Bx(x) -> Big.m33(x) + 1000 } }
+  fn m34(self) -> Int { match self { Bx(x) -> Big.m34(x) + 1000 } }
+  fn m35(self) -> Int { match self { Bx(x) -> Big.m35(x) + 1000 } }
+  fn m36(self) -> Int { match self { Bx(x) -> Big.m36(x) + 1000 } }
+  fn m37(self) -> Int { match self { Bx(x) -> Big.m37(x) + 1000 } }
+  fn m38(self) -> Int { match self { Bx(x) -> Big.m38(x) + 1000 } }
+  fn m39(self) -> Int { match self { Bx(x) -> Big.m39(x) + 1000 } }
+  fn m40(self) -> Int { match self { Bx(x) -> Big.m40(x) + 1000 } }
+  fn m41(self) -> Int { match self { Bx(x) -> Big.m41(x) + 1000 } }
+  fn m42(self) -> Int { match self { Bx(x) -> Big.m42(x) + 1000 } }
+  fn m43(self) -> Int { match self { Bx(x) -> Big.m43(x) + 1000 } }
+  fn m44(self) -> Int { match self { Bx(x) -> Big.m44(x) + 1000 } }
+  fn m45(self) -> Int { match self { Bx(x) -> Big.m45(x) + 1000 } }
+  fn m46(self) -> Int { match self { Bx(x) -> Big.m46(x) + 1000 } }
+  fn m47(self) -> Int { match self { Bx(x) -> Big.m47(x) + 1000 } }
+  fn m48(self) -> Int { match self { Bx(x) -> Big.m48(x) + 1000 } }
+  fn m49(self) -> Int { match self { Bx(x) -> Big.m49(x) + 1000 } }
+  fn m50(self) -> Int { match self { Bx(x) -> Big.m50(x) + 1000 } }
+  fn m51(self) -> Int { match self { Bx(x) -> Big.m51(x) + 1000 } }
+  fn m52(self) -> Int { match self { Bx(x) -> Big.m52(x) + 1000 } }
+  fn m53(self) -> Int { match self { Bx(x) -> Big.m53(x) + 1000 } }
+  fn m54(self) -> Int { match self { Bx(x) -> Big.m54(x) + 1000 } }
+  fn m55(self) -> Int { match self { Bx(x) -> Big.m55(x) + 1000 } }
+  fn m56(self) -> Int { match self { Bx(x) -> Big.m56(x) + 1000 } }
+  fn m57(self) -> Int { match self { Bx(x) -> Big.m57(x) + 1000 } }
+  fn m58(self) -> Int { match self { Bx(x) -> Big.m58(x) + 1000 } }
+  fn m59(self) -> Int { match self { Bx(x) -> Big.m59(x) + 1000 } }
+  fn m60(self) -> Int { match self { Bx(x) -> Big.m60(x) + 1000 } }
+  fn m61(self) -> Int { match self { Bx(x) -> Big.m61(x) + 1000 } }
+  fn m62(self) -> Int { match self { Bx(x) -> Big.m62(x) + 1000 } }
+  fn m63(self) -> Int { match self { Bx(x) -> Big.m63(x) + 1000 } }
+  fn m64(self) -> Int { match self { Bx(x) -> Big.m64(x) + 1000 } }
+  fn m65(self) -> Int { match self { Bx(x) -> Big.m65(x) + 1000 } }
+  fn m66(self) -> Int { match self { Bx(x) -> Big.m66(x) + 1000 } }
+  fn m67(self) -> Int { match self { Bx(x) -> Big.m67(x) + 1000 } }
+  fn m68(self) -> Int { match self { Bx(x) -> Big.m68(x) + 1000 } }
+  fn m69(self) -> Int { match self { Bx(x) -> Big.m69(x) + 1000 } }
+  fn m70(self) -> Int { match self { Bx(x) -> Big.m70(x) + 1000 } }
+  fn m71(self) -> Int { match self { Bx(x) -> Big.m71(x) + 1000 } }
+  fn m72(self) -> Int { match self { Bx(x) -> Big.m72(x) + 1000 } }
+  fn m73(self) -> Int { match self { Bx(x) -> Big.m73(x) + 1000 } }
+  fn m74(self) -> Int { match self { Bx(x) -> Big.m74(x) + 1000 } }
+  fn m75(self) -> Int { match self { Bx(x) -> Big.m75(x) + 1000 } }
+  fn m76(self) -> Int { match self { Bx(x) -> Big.m76(x) + 1000 } }
+  fn m77(self) -> Int { match self { Bx(x) -> Big.m77(x) + 1000 } }
+  fn m78(self) -> Int { match self { Bx(x) -> Big.m78(x) + 1000 } }
+  fn m79(self) -> Int { match self { Bx(x) -> Big.m79(x) + 1000 } }
+  fn m80(self) -> Int { match self { Bx(x) -> Big.m80(x) + 1000 } }
+  fn m81(self) -> Int { match self { Bx(x) -> Big.m81(x) + 1000 } }
+  fn m82(self) -> Int { match self { Bx(x) -> Big.m82(x) + 1000 } }
+  fn m83(self) -> Int { match self { Bx(x) -> Big.m83(x) + 1000 } }
+  fn m84(self) -> Int { match self { Bx(x) -> Big.m84(x) + 1000 } }
+  fn m85(self) -> Int { match self { Bx(x) -> Big.m85(x) + 1000 } }
+  fn m86(self) -> Int { match self { Bx(x) -> Big.m86(x) + 1000 } }
+  fn m87(self) -> Int { match self { Bx(x) -> Big.m87(x) + 1000 } }
+  fn m88(self) -> Int { match self { Bx(x) -> Big.m88(x) + 1000 } }
+  fn m89(self) -> Int { match self { Bx(x) -> Big.m89(x) + 1000 } }
+  fn m90(self) -> Int { match self { Bx(x) -> Big.m90(x) + 1000 } }
+  fn m91(self) -> Int { match self { Bx(x) -> Big.m91(x) + 1000 } }
+  fn m92(self) -> Int { match self { Bx(x) -> Big.m92(x) + 1000 } }
+  fn m93(self) -> Int { match self { Bx(x) -> Big.m93(x) + 1000 } }
+  fn m94(self) -> Int { match self { Bx(x) -> Big.m94(x) + 1000 } }
+  fn m95(self) -> Int { match self { Bx(x) -> Big.m95(x) + 1000 } }
+  fn m96(self) -> Int { match self { Bx(x) -> Big.m96(x) + 1000 } }
+  fn m97(self) -> Int { match self { Bx(x) -> Big.m97(x) + 1000 } }
+  fn m98(self) -> Int { match self { Bx(x) -> Big.m98(x) + 1000 } }
+  fn m99(self) -> Int { match self { Bx(x) -> Big.m99(x) + 1000 } }
+  fn m100(self) -> Int { match self { Bx(x) -> Big.m100(x) + 1000 } }
+  fn m101(self) -> Int { match self { Bx(x) -> Big.m101(x) + 1000 } }
+  fn m102(self) -> Int { match self { Bx(x) -> Big.m102(x) + 1000 } }
+  fn m103(self) -> Int { match self { Bx(x) -> Big.m103(x) + 1000 } }
+  fn m104(self) -> Int { match self { Bx(x) -> Big.m104(x) + 1000 } }
+  fn m105(self) -> Int { match self { Bx(x) -> Big.m105(x) + 1000 } }
+  fn m106(self) -> Int { match self { Bx(x) -> Big.m106(x) + 1000 } }
+  fn m107(self) -> Int { match self { Bx(x) -> Big.m107(x) + 1000 } }
+  fn m108(self) -> Int { match self { Bx(x) -> Big.m108(x) + 1000 } }
+  fn m109(self) -> Int { match self { Bx(x) -> Big.m109(x) + 1000 } }
+  fn m110(self) -> Int { match self { Bx(x) -> Big.m110(x) + 1000 } }
+  fn m111(self) -> Int { match self { Bx(x) -> Big.m111(x) + 1000 } }
+  fn m112(self) -> Int { match self { Bx(x) -> Big.m112(x) + 1000 } }
+  fn m113(self) -> Int { match self { Bx(x) -> Big.m113(x) + 1000 } }
+  fn m114(self) -> Int { match self { Bx(x) -> Big.m114(x) + 1000 } }
+  fn m115(self) -> Int { match self { Bx(x) -> Big.m115(x) + 1000 } }
+  fn m116(self) -> Int { match self { Bx(x) -> Big.m116(x) + 1000 } }
+  fn m117(self) -> Int { match self { Bx(x) -> Big.m117(x) + 1000 } }
+  fn m118(self) -> Int { match self { Bx(x) -> Big.m118(x) + 1000 } }
+  fn m119(self) -> Int { match self { Bx(x) -> Big.m119(x) + 1000 } }
+  fn m120(self) -> Int { match self { Bx(x) -> Big.m120(x) + 1000 } }
+  fn m121(self) -> Int { match self { Bx(x) -> Big.m121(x) + 1000 } }
+  fn m122(self) -> Int { match self { Bx(x) -> Big.m122(x) + 1000 } }
+  fn m123(self) -> Int { match self { Bx(x) -> Big.m123(x) + 1000 } }
+  fn m124(self) -> Int { match self { Bx(x) -> Big.m124(x) + 1000 } }
+  fn m125(self) -> Int { match self { Bx(x) -> Big.m125(x) + 1000 } }
+  fn m126(self) -> Int { match self { Bx(x) -> Big.m126(x) + 1000 } }
+  fn m127(self) -> Int { match self { Bx(x) -> Big.m127(x) + 1000 } }
+  fn m128(self) -> Int { match self { Bx(x) -> Big.m128(x) + 1000 } }
+  fn m129(self) -> Int { match self { Bx(x) -> Big.m129(x) + 1000 } }
+  fn m130(self) -> Int { match self { Bx(x) -> Big.m130(x) + 1000 } }
+  fn m131(self) -> Int { match self { Bx(x) -> Big.m131(x) + 1000 } }
+  fn m132(self) -> Int { match self { Bx(x) -> Big.m132(x) + 1000 } }
+  fn m133(self) -> Int { match self { Bx(x) -> Big.m133(x) + 1000 } }
+  fn m134(self) -> Int { match self { Bx(x) -> Big.m134(x) + 1000 } }
+  fn m135(self) -> Int { match self { Bx(x) -> Big.m135(x) + 1000 } }
+  fn m136(self) -> Int { match self { Bx(x) -> Big.m136(x) + 1000 } }
+  fn m137(self) -> Int { match self { Bx(x) -> Big.m137(x) + 1000 } }
+  fn m138(self) -> Int { match self { Bx(x) -> Big.m138(x) + 1000 } }
+  fn m139(self) -> Int { match self { Bx(x) -> Big.m139(x) + 1000 } }
+  fn m140(self) -> Int { match self { Bx(x) -> Big.m140(x) + 1000 } }
+  fn m141(self) -> Int { match self { Bx(x) -> Big.m141(x) + 1000 } }
+  fn m142(self) -> Int { match self { Bx(x) -> Big.m142(x) + 1000 } }
+  fn m143(self) -> Int { match self { Bx(x) -> Big.m143(x) + 1000 } }
+  fn m144(self) -> Int { match self { Bx(x) -> Big.m144(x) + 1000 } }
+  fn m145(self) -> Int { match self { Bx(x) -> Big.m145(x) + 1000 } }
+  fn m146(self) -> Int { match self { Bx(x) -> Big.m146(x) + 1000 } }
+  fn m147(self) -> Int { match self { Bx(x) -> Big.m147(x) + 1000 } }
+  fn m148(self) -> Int { match self { Bx(x) -> Big.m148(x) + 1000 } }
+  fn m149(self) -> Int { match self { Bx(x) -> Big.m149(x) + 1000 } }
+  fn m150(self) -> Int { match self { Bx(x) -> Big.m150(x) + 1000 } }
+  fn m151(self) -> Int { match self { Bx(x) -> Big.m151(x) + 1000 } }
+  fn m152(self) -> Int { match self { Bx(x) -> Big.m152(x) + 1000 } }
+  fn m153(self) -> Int { match self { Bx(x) -> Big.m153(x) + 1000 } }
+  fn m154(self) -> Int { match self { Bx(x) -> Big.m154(x) + 1000 } }
+  fn m155(self) -> Int { match self { Bx(x) -> Big.m155(x) + 1000 } }
+  fn m156(self) -> Int { match self { Bx(x) -> Big.m156(x) + 1000 } }
+  fn m157(self) -> Int { match self { Bx(x) -> Big.m157(x) + 1000 } }
+  fn m158(self) -> Int { match self { Bx(x) -> Big.m158(x) + 1000 } }
+  fn m159(self) -> Int { match self { Bx(x) -> Big.m159(x) + 1000 } }
+  fn m160(self) -> Int { match self { Bx(x) -> Big.m160(x) + 1000 } }
+  fn m161(self) -> Int { match self { Bx(x) -> Big.m161(x) + 1000 } }
+  fn m162(self) -> Int { match self { Bx(x) -> Big.m162(x) + 1000 } }
+  fn m163(self) -> Int { match self { Bx(x) -> Big.m163(x) + 1000 } }
+  fn m164(self) -> Int { match self { Bx(x) -> Big.m164(x) + 1000 } }
+  fn m165(self) -> Int { match self { Bx(x) -> Big.m165(x) + 1000 } }
+  fn m166(self) -> Int { match self { Bx(x) -> Big.m166(x) + 1000 } }
+  fn m167(self) -> Int { match self { Bx(x) -> Big.m167(x) + 1000 } }
+  fn m168(self) -> Int { match self { Bx(x) -> Big.m168(x) + 1000 } }
+  fn m169(self) -> Int { match self { Bx(x) -> Big.m169(x) + 1000 } }
+  fn m170(self) -> Int { match self { Bx(x) -> Big.m170(x) + 1000 } }
+  fn m171(self) -> Int { match self { Bx(x) -> Big.m171(x) + 1000 } }
+  fn m172(self) -> Int { match self { Bx(x) -> Big.m172(x) + 1000 } }
+  fn m173(self) -> Int { match self { Bx(x) -> Big.m173(x) + 1000 } }
+  fn m174(self) -> Int { match self { Bx(x) -> Big.m174(x) + 1000 } }
+  fn m175(self) -> Int { match self { Bx(x) -> Big.m175(x) + 1000 } }
+  fn m176(self) -> Int { match self { Bx(x) -> Big.m176(x) + 1000 } }
+  fn m177(self) -> Int { match self { Bx(x) -> Big.m177(x) + 1000 } }
+  fn m178(self) -> Int { match self { Bx(x) -> Big.m178(x) + 1000 } }
+  fn m179(self) -> Int { match self { Bx(x) -> Big.m179(x) + 1000 } }
+  fn m180(self) -> Int { match self { Bx(x) -> Big.m180(x) + 1000 } }
+  fn m181(self) -> Int { match self { Bx(x) -> Big.m181(x) + 1000 } }
+  fn m182(self) -> Int { match self { Bx(x) -> Big.m182(x) + 1000 } }
+  fn m183(self) -> Int { match self { Bx(x) -> Big.m183(x) + 1000 } }
+  fn m184(self) -> Int { match self { Bx(x) -> Big.m184(x) + 1000 } }
+  fn m185(self) -> Int { match self { Bx(x) -> Big.m185(x) + 1000 } }
+  fn m186(self) -> Int { match self { Bx(x) -> Big.m186(x) + 1000 } }
+  fn m187(self) -> Int { match self { Bx(x) -> Big.m187(x) + 1000 } }
+  fn m188(self) -> Int { match self { Bx(x) -> Big.m188(x) + 1000 } }
+  fn m189(self) -> Int { match self { Bx(x) -> Big.m189(x) + 1000 } }
+  fn m190(self) -> Int { match self { Bx(x) -> Big.m190(x) + 1000 } }
+  fn m191(self) -> Int { match self { Bx(x) -> Big.m191(x) + 1000 } }
+  fn m192(self) -> Int { match self { Bx(x) -> Big.m192(x) + 1000 } }
+  fn m193(self) -> Int { match self { Bx(x) -> Big.m193(x) + 1000 } }
+  fn m194(self) -> Int { match self { Bx(x) -> Big.m194(x) + 1000 } }
+  fn m195(self) -> Int { match self { Bx(x) -> Big.m195(x) + 1000 } }
+  fn m196(self) -> Int { match self { Bx(x) -> Big.m196(x) + 1000 } }
+  fn m197(self) -> Int { match self { Bx(x) -> Big.m197(x) + 1000 } }
+  fn m198(self) -> Int { match self { Bx(x) -> Big.m198(x) + 1000 } }
+  fn m199(self) -> Int { match self { Bx(x) -> Big.m199(x) + 1000 } }
+  fn m200(self) -> Int { match self { Bx(x) -> Big.m200(x) + 1000 } }
+  fn m201(self) -> Int { match self { Bx(x) -> Big.m201(x) + 1000 } }
+  fn m202(self) -> Int { match self { Bx(x) -> Big.m202(x) + 1000 } }
+  fn m203(self) -> Int { match self { Bx(x) -> Big.m203(x) + 1000 } }
+  fn m204(self) -> Int { match self { Bx(x) -> Big.m204(x) + 1000 } }
+  fn m205(self) -> Int { match self { Bx(x) -> Big.m205(x) + 1000 } }
+  fn m206(self) -> Int { match self { Bx(x) -> Big.m206(x) + 1000 } }
+  fn m207(self) -> Int { match self { Bx(x) -> Big.m207(x) + 1000 } }
+  fn m208(self) -> Int { match self { Bx(x) -> Big.m208(x) + 1000 } }
+  fn m209(self) -> Int { match self { Bx(x) -> Big.m209(x) + 1000 } }
+  fn m210(self) -> Int { match self { Bx(x) -> Big.m210(x) + 1000 } }
+  fn m211(self) -> Int { match self { Bx(x) -> Big.m211(x) + 1000 } }
+  fn m212(self) -> Int { match self { Bx(x) -> Big.m212(x) + 1000 } }
+  fn m213(self) -> Int { match self { Bx(x) -> Big.m213(x) + 1000 } }
+  fn m214(self) -> Int { match self { Bx(x) -> Big.m214(x) + 1000 } }
+  fn m215(self) -> Int { match self { Bx(x) -> Big.m215(x) + 1000 } }
+  fn m216(self) -> Int { match self { Bx(x) -> Big.m216(x) + 1000 } }
+  fn m217(self) -> Int { match self { Bx(x) -> Big.m217(x) + 1000 } }
+  fn m218(self) -> Int { match self { Bx(x) -> Big.m218(x) + 1000 } }
+  fn m219(self) -> Int { match self { Bx(x) -> Big.m219(x) + 1000 } }
+  fn m220(self) -> Int { match self { Bx(x) -> Big.m220(x) + 1000 } }
+  fn m221(self) -> Int { match self { Bx(x) -> Big.m221(x) + 1000 } }
+  fn m222(self) -> Int { match self { Bx(x) -> Big.m222(x) + 1000 } }
+  fn m223(self) -> Int { match self { Bx(x) -> Big.m223(x) + 1000 } }
+  fn m224(self) -> Int { match self { Bx(x) -> Big.m224(x) + 1000 } }
+  fn m225(self) -> Int { match self { Bx(x) -> Big.m225(x) + 1000 } }
+  fn m226(self) -> Int { match self { Bx(x) -> Big.m226(x) + 1000 } }
+  fn m227(self) -> Int { match self { Bx(x) -> Big.m227(x) + 1000 } }
+  fn m228(self) -> Int { match self { Bx(x) -> Big.m228(x) + 1000 } }
+  fn m229(self) -> Int { match self { Bx(x) -> Big.m229(x) + 1000 } }
+  fn m230(self) -> Int { match self { Bx(x) -> Big.m230(x) + 1000 } }
+  fn m231(self) -> Int { match self { Bx(x) -> Big.m231(x) + 1000 } }
+  fn m232(self) -> Int { match self { Bx(x) -> Big.m232(x) + 1000 } }
+  fn m233(self) -> Int { match self { Bx(x) -> Big.m233(x) + 1000 } }
+  fn m234(self) -> Int { match self { Bx(x) -> Big.m234(x) + 1000 } }
+  fn m235(self) -> Int { match self { Bx(x) -> Big.m235(x) + 1000 } }
+  fn m236(self) -> Int { match self { Bx(x) -> Big.m236(x) + 1000 } }
+  fn m237(self) -> Int { match self { Bx(x) -> Big.m237(x) + 1000 } }
+  fn m238(self) -> Int { match self { Bx(x) -> Big.m238(x) + 1000 } }
+  fn m239(self) -> Int { match self { Bx(x) -> Big.m239(x) + 1000 } }
+  fn m240(self) -> Int { match self { Bx(x) -> Big.m240(x) + 1000 } }
+  fn m241(self) -> Int { match self { Bx(x) -> Big.m241(x) + 1000 } }
+  fn m242(self) -> Int { match self { Bx(x) -> Big.m242(x) + 1000 } }
+  fn m243(self) -> Int { match self { Bx(x) -> Big.m243(x) + 1000 } }
+  fn m244(self) -> Int { match self { Bx(x) -> Big.m244(x) + 1000 } }
+  fn m245(self) -> Int { match self { Bx(x) -> Big.m245(x) + 1000 } }
+  fn m246(self) -> Int { match self { Bx(x) -> Big.m246(x) + 1000 } }
+  fn m247(self) -> Int { match self { Bx(x) -> Big.m247(x) + 1000 } }
+  fn m248(self) -> Int { match self { Bx(x) -> Big.m248(x) + 1000 } }
+  fn m249(self) -> Int { match self { Bx(x) -> Big.m249(x) + 1000 } }
+  fn m250(self) -> Int { match self { Bx(x) -> Big.m250(x) + 1000 } }
+  fn m251(self) -> Int { match self { Bx(x) -> Big.m251(x) + 1000 } }
+  fn m252(self) -> Int { match self { Bx(x) -> Big.m252(x) + 1000 } }
+  fn m253(self) -> Int { match self { Bx(x) -> Big.m253(x) + 1000 } }
+  fn m254(self) -> Int { match self { Bx(x) -> Big.m254(x) + 1000 } }
+  fn m255(self) -> Int { match self { Bx(x) -> Big.m255(x) + 1000 } }
+  fn m256(self) -> Int { match self { Bx(x) -> Big.m256(x) + 1000 } }
+  fn m257(self) -> Int { match self { Bx(x) -> Big.m257(x) + 1000 } }
+  fn m258(self) -> Int { match self { Bx(x) -> Big.m258(x) + 1000 } }
+  fn m259(self) -> Int { match self { Bx(x) -> Big.m259(x) + 1000 } }
+  fn m260(self) -> Int { match self { Bx(x) -> Big.m260(x) + 1000 } }
+  fn m261(self) -> Int { match self { Bx(x) -> Big.m261(x) + 1000 } }
+  fn m262(self) -> Int { match self { Bx(x) -> Big.m262(x) + 1000 } }
+  fn m263(self) -> Int { match self { Bx(x) -> Big.m263(x) + 1000 } }
+  fn m264(self) -> Int { match self { Bx(x) -> Big.m264(x) + 1000 } }
+  fn m265(self) -> Int { match self { Bx(x) -> Big.m265(x) + 1000 } }
+  fn m266(self) -> Int { match self { Bx(x) -> Big.m266(x) + 1000 } }
+  fn m267(self) -> Int { match self { Bx(x) -> Big.m267(x) + 1000 } }
+  fn m268(self) -> Int { match self { Bx(x) -> Big.m268(x) + 1000 } }
+  fn m269(self) -> Int { match self { Bx(x) -> Big.m269(x) + 1000 } }
+  fn m270(self) -> Int { match self { Bx(x) -> Big.m270(x) + 1000 } }
+  fn m271(self) -> Int { match self { Bx(x) -> Big.m271(x) + 1000 } }
+  fn m272(self) -> Int { match self { Bx(x) -> Big.m272(x) + 1000 } }
+  fn m273(self) -> Int { match self { Bx(x) -> Big.m273(x) + 1000 } }
+  fn m274(self) -> Int { match self { Bx(x) -> Big.m274(x) + 1000 } }
+  fn m275(self) -> Int { match self { Bx(x) -> Big.m275(x) + 1000 } }
+  fn m276(self) -> Int { match self { Bx(x) -> Big.m276(x) + 1000 } }
+  fn m277(self) -> Int { match self { Bx(x) -> Big.m277(x) + 1000 } }
+  fn m278(self) -> Int { match self { Bx(x) -> Big.m278(x) + 1000 } }
+  fn m279(self) -> Int { match self { Bx(x) -> Big.m279(x) + 1000 } }
+  fn m280(self) -> Int { match self { Bx(x) -> Big.m280(x) + 1000 } }
+  fn m281(self) -> Int { match self { Bx(x) -> Big.m281(x) + 1000 } }
+  fn m282(self) -> Int { match self { Bx(x) -> Big.m282(x) + 1000 } }
+  fn m283(self) -> Int { match self { Bx(x) -> Big.m283(x) + 1000 } }
+  fn m284(self) -> Int { match self { Bx(x) -> Big.m284(x) + 1000 } }
+  fn m285(self) -> Int { match self { Bx(x) -> Big.m285(x) + 1000 } }
+  fn m286(self) -> Int { match self { Bx(x) -> Big.m286(x) + 1000 } }
+  fn m287(self) -> Int { match self { Bx(x) -> Big.m287(x) + 1000 } }
+  fn m288(self) -> Int { match self { Bx(x) -> Big.m288(x) + 1000 } }
+  fn m289(self) -> Int { match self { Bx(x) -> Big.m289(x) + 1000 } }
+  fn m290(self) -> Int { match self { Bx(x) -> Big.m290(x) + 1000 } }
+  fn m291(self) -> Int { match self { Bx(x) -> Big.m291(x) + 1000 } }
+  fn m292(self) -> Int { match self { Bx(x) -> Big.m292(x) + 1000 } }
+  fn m293(self) -> Int { match self { Bx(x) -> Big.m293(x) + 1000 } }
+  fn m294(self) -> Int { match self { Bx(x) -> Big.m294(x) + 1000 } }
+  fn m295(self) -> Int { match self { Bx(x) -> Big.m295(x) + 1000 } }
+  fn m296(self) -> Int { match self { Bx(x) -> Big.m296(x) + 1000 } }
+  fn m297(self) -> Int { match self { Bx(x) -> Big.m297(x) + 1000 } }
+  fn m298(self) -> Int { match self { Bx(x) -> Big.m298(x) + 1000 } }
+  fn m299(self) -> Int { match self { Bx(x) -> Big.m299(x) + 1000 } }
+}
+fn g(x: a) -> Int where a: Big { Big.m299(x) }
+fn main() {
+  println(g(K))
+  println(g(Bx(K)))
+  println(Big.m299(Bx(Bx(K))))
+}

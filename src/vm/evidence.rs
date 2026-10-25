@@ -143,7 +143,7 @@ fn ground(ev: &Evidence, env: Option<&Arc<Env>>, globals: &Globals) -> Ground {
             .unwrap_or(Ground::Unknown),
         // The impl's own evidence of the supertrait, at the evidence of
         // its header; or the supertrait of the type, whatever has it.
-        Evidence::Super { of, to } => match ground(of, env, globals) {
+        Evidence::Super { of, to, .. } => match ground(of, env, globals) {
             Ground::Impl {
                 tr,
                 ty,

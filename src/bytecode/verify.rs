@@ -361,6 +361,33 @@ fn check(
         Instr::CallMethod { argc: 0, .. } | Instr::TailCallMethod { argc: 0, .. } => {
             return fail(format!("`{op}` has no receiver"));
         }
+        Instr::TailCallKeep { keep, .. } if keep > function.arity() => {
+            return fail(format!(
+                "`{op}` keeps {keep} values of a function of {} parameters",
+                function.arity()
+            ));
+        }
+        Instr::FrameDict if !function.dict_slot() => {
+            return fail(format!(
+                "`{op}` in a function a call leaves no dictionary to"
+            ));
+        }
+        Instr::CallDict { argc, at, .. }
+        | Instr::TailCallDict { argc, at, .. }
+        | Instr::CallChecked { argc, at, .. }
+        | Instr::TailCallChecked { argc, at, .. }
+            if usize::from(at) >= argc && at != u8::MAX =>
+        {
+            return fail(format!(
+                "`{op}` checks the receiver at argument {} of {argc}",
+                usize::from(at) + 1
+            ));
+        }
+        Instr::MakeDict { k, .. } if !matches!(chunk.constant(k), Value::Dict(_)) => {
+            return fail(format!(
+                "`{op}` makes the dictionary of a constant that is none"
+            ));
+        }
         Instr::CallMethod { argc, at, .. } | Instr::TailCallMethod { argc, at, .. }
             if at >= argc =>
         {
@@ -900,6 +927,63 @@ mod tests {
         assert_eq!(
             rejected(code, hi()),
             "at offset 0: no instruction is encoded here"
+        );
+    }
+
+    #[test]
+    fn bad_19_dictionary_instructions_out_of_place() {
+        // The dictionary a call leaves below the arguments is there only
+        // for a method of an impl.
+        assert_eq!(
+            rejected(vec![op(Op::FrameDict), op(Op::Return)], vec![]),
+            "at offset 0: `FrameDict` in a function a call leaves no dictionary to"
+        );
+        let mut e = Emitter::new("m".into(), 0, Span::BUILTIN).unwrap();
+        e.takes_dict_slot();
+        e.emit(Asm::FrameDict, Span::BUILTIN).unwrap();
+        e.emit(Asm::Return, Span::BUILTIN).unwrap();
+        e.finish(0).unwrap();
+        // A tail call keeps no more values than the function's arguments.
+        let code = vec![op(Op::Unit), op(Op::TailCallKeep), 0, 2, op(Op::Return)];
+        verify(&Function::unverified(2, 0, code.clone(), vec![])).unwrap();
+        assert_eq!(
+            rejected_fn(Function::unverified(1, 0, code, vec![])),
+            "at offset 1: `TailCallKeep` keeps 2 values of a function of 1 parameters"
+        );
+        // A receiver checked at an argument the call does not have.
+        let code = vec![
+            op(Op::Unit),
+            op(Op::Unit),
+            op(Op::CallDict),
+            0,
+            0,
+            1,
+            1,
+            op(Op::Return),
+        ];
+        assert_eq!(
+            rejected(code, vec![]),
+            "at offset 2: `CallDict` checks the receiver at argument 2 of 1"
+        );
+        let code = vec![
+            op(Op::Unit),
+            op(Op::Unit),
+            op(Op::CallChecked),
+            1,
+            1,
+            0,
+            0,
+            op(Op::Return),
+        ];
+        assert_eq!(
+            rejected(code, vec![]),
+            "at offset 2: `CallChecked` checks the receiver at argument 2 of 1"
+        );
+        // The dictionary `MakeDict` makes is of an impl's.
+        let code = vec![op(Op::MakeDict), 0, 0, 0, op(Op::Return)];
+        assert_eq!(
+            rejected(code, vec![Value::Int(7)]),
+            "at offset 0: `MakeDict` makes the dictionary of a constant that is none"
         );
     }
 

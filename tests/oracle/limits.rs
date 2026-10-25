@@ -2000,3 +2000,54 @@ fn a_budget_that_ends_in_errors_default_message_names_a_place_of_the_program() {
         "the program ends after {ended} steps"
     );
 }
+
+/// The fewest steps (at slice 1) in which `source` ends: every
+/// instruction is one step.
+fn steps_to_end(source: &str) -> u64 {
+    let ends = |steps: u64| {
+        let (result, _) = run_whole(source, |vm| {
+            vm.set_time_slice(1);
+            vm.set_step_budget(steps);
+        });
+        !result.is_err_and(|error| error.out_of_steps)
+    };
+    let (mut low, mut high) = (0, 1);
+    while !ends(high) {
+        (low, high) = (high, high * 2);
+    }
+    while high - low > 1 {
+        let mid = (low + high) / 2;
+        if ends(mid) { high = mid } else { low = mid }
+    }
+    high
+}
+
+/// The steps programs with a program's traits take: each instruction is
+/// one step, so a call through a bound's dictionary is one more (the
+/// dictionary pushed) than the value-driven call of 0.25.0, a level of
+/// polymorphic recursion four more (the dictionary made, taken and
+/// passed), and a use of a `let` general in a bound one call more (its
+/// value is made at each use). Locked so that a change is seen.
+#[test]
+fn programs_with_trait_bounds_take_the_steps_of_their_instructions() {
+    let bounded = "trait Sc { fn sc(self) -> Int }\ntype P { n: Int }\n\
+                   trait Sc for P { fn sc(self) -> Int { self.n } }\n\
+                   fn total(x: a, n: Int, acc: Int) -> Int where a: Sc {\n  match n {\n    \
+                   0 -> acc\n    _ -> total(x, n - 1, acc + Sc.sc(x))\n  }\n}\n\
+                   fn main() { println(total(P { n: 2 }, 200, 0)) }\n";
+    let polyrec = "trait Sz { fn sz(self) -> Int }\ntrait Sz for Int { fn sz(self) -> Int { 1 } }\n\
+                   type Bx(a) { Bx(a) }\n\
+                   trait Sz for Bx(a) where a: Sz { fn sz(self) -> Int { match self { Bx(x) -> Sz.sz(x) + 1 } } }\n\
+                   fn nest(x: a, n: Int) -> Int where a: Sz {\n  match n {\n    \
+                   0 -> Sz.sz(x)\n    _ -> nest(Bx(x), n - 1)\n  }\n}\n\
+                   fn main() { println(nest(1, 50)) }\n";
+    let lets = "trait Nm { fn nm(self) -> String }\ntrait Nm for Int { fn nm(self) -> String { \"i\" } }\n\
+                trait Nm for String { fn nm(self) -> String { \"s\" } }\n\
+                let shout = { x -> \"{Nm.nm(x)}!\" }\nfn main() {\n  println(shout(1))\n  \
+                println(shout(\"a\"))\n  let twice = { x -> \"{Nm.nm(x)}{Nm.nm(x)}\" }\n  \
+                println(\"{twice(1)} {twice(\"b\")}\")\n}\n";
+    // (0.25.0: 3428, 1530 and 79.)
+    assert_eq!(steps_to_end(bounded), 3629);
+    assert_eq!(steps_to_end(polyrec), 1732);
+    assert_eq!(steps_to_end(lets), 101);
+}

@@ -34,6 +34,7 @@ use crate::types::canonical::{Resolver, canonical_head};
 use crate::types::{Type, TypeRef};
 use crate::value::{HostFn, Value};
 
+mod dicts;
 mod patterns;
 
 // ── Types at run time ───────────────────────────────────────────────
@@ -123,6 +124,10 @@ struct CompileContext {
     /// locals there were before the pattern bound any. A pin in the
     /// pattern is one of those (see `Compiler::compile_pattern_bind`).
     pattern_floor: Option<usize>,
+    /// For a method of an impl of a trait a program declares: the
+    /// method, whose dictionary a call leaves below its arguments
+    /// (`Instr::FrameDict`).
+    frame_dict: Option<Span>,
 }
 
 struct LoopInfo {
@@ -170,60 +175,70 @@ fn name_without_binding(span: Span, name: Symbol) -> Diagnostic {
 /// local of the name, one bound in `expr`, counts too: it costs the
 /// closure a slot it does not use, not a wrong value.)
 fn reads_local(expr: &Expr, name: Symbol) -> bool {
-    let reads = |e: &Expr| reads_local(e, name);
+    any_expr(expr, &mut |e| {
+        matches!(e.kind, ExprKind::Ident(n) if n == name) && e.res == Some(crate::defs::Res::Local)
+    })
+}
+
+/// Whether `found` holds of `expr` or of an expression in it.
+pub(super) fn any_expr(expr: &Expr, found: &mut impl FnMut(&Expr) -> bool) -> bool {
+    if found(expr) {
+        return true;
+    }
+    let mut inner = |e: &Expr| any_expr(e, found);
     match &expr.kind {
-        ExprKind::Ident(n) => *n == name && expr.res == Some(crate::defs::Res::Local),
-        ExprKind::Int(_)
+        ExprKind::Ident(_)
+        | ExprKind::Int(_)
         | ExprKind::Float(_)
         | ExprKind::Bool(_)
         | ExprKind::StringLit(_)
         | ExprKind::Unit => false,
         ExprKind::StringInterp(parts) => parts
             .iter()
-            .any(|part| matches!(part, StringPart::Expr(e) if reads(e))),
+            .any(|part| matches!(part, StringPart::Expr(e) if inner(e))),
         ExprKind::List(elems) => elems.iter().any(|elem| match elem {
-            ListElem::Single(e) | ListElem::Spread(e) => reads(e),
+            ListElem::Single(e) | ListElem::Spread(e) => inner(e),
         }),
-        ExprKind::Map(entries) => entries.iter().any(|(k, v)| reads(k) || reads(v)),
+        ExprKind::Map(entries) => entries.iter().any(|(k, v)| inner(k) || inner(v)),
         ExprKind::SetLit(elems) | ExprKind::Tuple(elems) | ExprKind::Recur(elems) => {
-            elems.iter().any(reads)
+            elems.iter().any(&mut inner)
         }
         ExprKind::FieldAccess(e, ..)
         | ExprKind::Unary(_, e)
         | ExprKind::QuestionMark(e)
-        | ExprKind::Ascription(e, _) => reads(e),
+        | ExprKind::Ascription(e, _) => inner(e),
         ExprKind::Binary(a, _, b) | ExprKind::Pipe(a, b) | ExprKind::Range(a, b) => {
-            reads(a) || reads(b)
+            inner(a) || inner(b)
         }
-        ExprKind::Call(callee, args) => reads(callee) || args.iter().any(reads),
-        ExprKind::Lambda { body, .. } => reads(body),
-        ExprKind::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| reads(e)),
+        ExprKind::Call(callee, args) => inner(callee) || args.iter().any(&mut inner),
+        ExprKind::Lambda { body, .. } => inner(body),
+        ExprKind::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| inner(e)),
         ExprKind::RecordUpdate { expr, fields } => {
-            reads(expr) || fields.iter().any(|(_, e)| reads(e))
+            inner(expr) || fields.iter().any(|(_, e)| inner(e))
         }
         ExprKind::AnonRecord { spread, fields } => {
-            spread.as_deref().is_some_and(reads) || fields.iter().any(|(_, e)| reads(e))
+            spread.as_deref().is_some_and(&mut inner) || fields.iter().any(|(_, e)| inner(e))
         }
         ExprKind::Match { expr, arms } => {
-            expr.as_deref().is_some_and(reads)
+            expr.as_deref().is_some_and(&mut inner)
                 || arms
                     .iter()
-                    .any(|arm| arm.guard.as_deref().is_some_and(reads) || reads(&arm.body))
+                    .any(|arm| arm.guard.as_deref().is_some_and(&mut inner) || inner(&arm.body))
         }
-        ExprKind::Return(e) => e.as_deref().is_some_and(reads),
+        ExprKind::Return(e) => e.as_deref().is_some_and(&mut inner),
         ExprKind::Block(stmts) => stmts.iter().any(|stmt| match stmt {
-            Stmt::Let { value, .. } => reads(value),
+            Stmt::Let { value, .. } => inner(value),
             Stmt::When {
                 expr, else_body, ..
-            } => reads(expr) || reads(else_body),
+            } => inner(expr) || inner(else_body),
             Stmt::WhenBool {
                 condition,
                 else_body,
-            } => reads(condition) || reads(else_body),
-            Stmt::Expr(e) => reads(e),
+            } => inner(condition) || inner(else_body),
+            Stmt::Expr(e) => inner(e),
         }),
         ExprKind::Loop { bindings, body } => {
-            bindings.iter().any(|(_, _, e)| reads(e)) || reads(body)
+            bindings.iter().any(|(_, _, e)| inner(e)) || inner(body)
         }
     }
 }
@@ -320,6 +335,22 @@ pub struct Compiler<'a> {
     /// installs (the first REPL entry, or a program; a later entry finds
     /// them installed), each with its trait: `Error.message`.
     builtin_defaults: Vec<(crate::defs::TraitId, crate::ast::FnDecl)>,
+    /// The definitions that take dictionaries, by the span that names
+    /// them (`crate::evidence::Evidence::Param`), with what they take.
+    owners: HashMap<Span, crate::evidence::Shape>,
+    /// While the callee of a call is compiled: the call's span. A
+    /// definition with bounds called is passed its dictionaries as its
+    /// first arguments (no `Bind`); a `let` general in a bound makes its
+    /// value where the call is.
+    callee_call: Option<Span>,
+    /// The dictionary of the impl of each method of an impl whose header
+    /// asks nothing, by the method's body: its template's place
+    /// (`Compiler::own_dicts_of`).
+    own_dicts: HashMap<Span, u32>,
+    /// Each name a `let` general in a bound binds with a pattern of
+    /// several names: the places of its bounds among the value's
+    /// (`crate::ast::Program::pattern_lets`).
+    pattern_lets: HashMap<Span, Vec<u16>>,
 }
 
 /// The names two or more types of the program's modules have (two
@@ -396,9 +427,21 @@ impl<'a> Compiler<'a> {
             own_slots: HashMap::new(),
             closure_name: None,
             builtin_defaults: Vec::new(),
+            owners: HashMap::new(),
+            own_dicts: HashMap::new(),
+            pattern_lets: HashMap::new(),
+            callee_call: None,
         };
+        compiler.owners = (compiler.units.modules.iter())
+            .flat_map(|unit| unit.program.dict_owners.iter().copied())
+            .collect();
+        compiler.pattern_lets = (compiler.units.modules.iter())
+            .flat_map(|unit| unit.program.pattern_lets.iter().cloned())
+            .collect();
         compiler.builtin_defaults = compiler.assign_builtin_defaults(&mut globals)?;
         compiler.own_slots = compiler.assign_slots(&mut globals)?;
+        compiler.enter_templates(&mut globals)?;
+        compiler.own_dicts = compiler.own_dicts_of(&globals);
         compiler.globals = globals;
         Ok(compiler)
     }
@@ -620,6 +663,7 @@ impl<'a> Compiler<'a> {
         // Push a top-level script context.
         self.begin_function("<script>".into(), 0, Span::BUILTIN)?;
         self.compile_builtin_defaults()?;
+        self.fill_late_dicts(program)?;
 
         let order = self.units.modules[self.units.entry].let_order.clone();
         for decl in Self::decls_in_init_order(&program.decls, &order) {
@@ -639,10 +683,25 @@ impl<'a> Compiler<'a> {
                 })
             })
             .unwrap_or(Span::BUILTIN);
+        // (A REPL entry whose value is general in a bound is called with
+        // no dictionaries, unit in their places: it only shows its value,
+        // which no type is decided for.)
+        let undecided = entry
+            .and_then(|def| {
+                let name = self.units.defs.get(def).name;
+                program.decls.iter().find_map(|decl| match decl {
+                    Decl::Fn(f) if f.name == name => self.shape(f.body.span),
+                    _ => None,
+                })
+            })
+            .map_or(0, Self::hidden_count);
         match entry.and_then(|def| self.globals.def(def)) {
             Some(slot) => {
                 self.emit(Asm::GetGlobal { slot }, span)?;
-                self.emit(Asm::Call { argc: 0 }, span)?;
+                for _ in 0..undecided {
+                    self.emit(Asm::Unit, span)?;
+                }
+                self.emit(Asm::Call { argc: undecided }, span)?;
             }
             None => {
                 self.emit(Asm::Unit, span)?;
@@ -666,6 +725,7 @@ impl<'a> Compiler<'a> {
     pub fn compile_declarations(&mut self, program: &Program) -> Result<Vec<Function>, Diagnostic> {
         self.begin_function("<script>".into(), 0, Span::BUILTIN)?;
         self.compile_builtin_defaults()?;
+        self.fill_late_dicts(program)?;
 
         let order = self.units.modules[self.units.entry].let_order.clone();
         for decl in Self::decls_in_init_order(&program.decls, &order) {
@@ -744,10 +804,13 @@ impl<'a> Compiler<'a> {
         layout: crate::evidence::Layout,
     ) -> Result<(), Diagnostic> {
         let span = method.span;
-        self.begin_function(name, method.params.len(), span)?;
+        let hidden = self.shape(method.body.span).map_or(0, Self::hidden_count);
+        self.begin_function_after(name, method.params.len(), hidden, span)?;
+        self.hidden_params(method.body.span);
         self.emitter().evidence_owner(method.body.span, layout);
 
         self.compile_params(&method.params, span)?;
+        self.keep_frame_dict(method)?;
 
         // The body is in tail position, like a function's.
         self.in_tail_position = true;
@@ -789,9 +852,18 @@ impl<'a> Compiler<'a> {
         match decl {
             Decl::Fn(fn_decl) => {
                 let span = fn_decl.span;
-                // Push a new context for the function body.
-                self.begin_function(resolve(fn_decl.name), fn_decl.params.len(), span)?;
-                (self.emitter()).evidence_owner(fn_decl.body.span, crate::evidence::Layout::Scheme);
+                // Push a new context for the function body: its hidden
+                // parameters first, if it has bounds.
+                let tag = fn_decl.body.span;
+                let hidden = self.shape(tag).map_or(0, Self::hidden_count);
+                self.begin_function_after(
+                    resolve(fn_decl.name),
+                    fn_decl.params.len(),
+                    hidden,
+                    span,
+                )?;
+                self.hidden_params(tag);
+                (self.emitter()).evidence_owner(tag, crate::evidence::Layout::Scheme);
 
                 self.compile_params(&fn_decl.params, span)?;
 
@@ -836,11 +908,23 @@ impl<'a> Compiler<'a> {
                     .contexts
                     .last_mut()
                     .map(|context| std::mem::replace(&mut context.closures, closures));
-                let compiled = self.compile_expr(value);
+                // (A `let` general in a bound is the function of its
+                // dictionaries that makes its value; of each name of a
+                // pattern, the function that makes the name's part.)
+                let compiled = match (&pattern.kind, self.shape(value.span)) {
+                    (PatternKind::Ident(name), Some(_)) => self.compile_thunk(*name, value, None),
+                    (_, Some(_)) => self.install_pattern_thunks(pattern, value, span),
+                    _ => self.compile_expr(value),
+                };
                 if let (Some(context), Some(around)) = (self.contexts.last_mut(), around) {
                     context.closures = around;
                 }
                 compiled?;
+                if self.shape(value.span).is_some()
+                    && !matches!(pattern.kind, PatternKind::Ident(_))
+                {
+                    return Ok(());
+                }
                 match &pattern.kind {
                     PatternKind::Ident(name) => {
                         let slot = self.own_slot(*name, span)?;
@@ -933,6 +1017,26 @@ impl<'a> Compiler<'a> {
     /// `pattern` binds, whose value is on the stack: each binder goes to
     /// its global slot in `slots`. The pattern is bound as a block's `let`
     /// would bind it, then each local is copied to its global.
+    /// The top-level `let` of `pattern`, of several names, to `value`,
+    /// which is general in a bound: each name's global is the function
+    /// that makes its part (`compile_pattern_thunk`), or the part.
+    fn install_pattern_thunks(
+        &mut self,
+        pattern: &crate::ast::Pattern,
+        value: &Expr,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        for (name, at) in crate::typechecker::names::binders(pattern) {
+            if self.compile_pattern_thunk(pattern, value, name, at)? == 0 {
+                self.emit(Asm::Call { argc: 0 }, span)?;
+            }
+            let slot = self.own_slot(name, span)?;
+            self.emit(Asm::SetGlobal { slot }, span)?;
+            self.emit(Asm::Pop, span)?;
+        }
+        Ok(())
+    }
+
     fn install_destructured(
         &mut self,
         pattern: &crate::ast::Pattern,
@@ -1067,12 +1171,35 @@ impl<'a> Compiler<'a> {
                 // dead-coding the binding (and the implicit Unit result).
                 // Only `Stmt::Expr` legitimately inherits tail position.
                 self.in_tail_position = false;
-                if let (PatternKind::Ident(name), ExprKind::Lambda { .. }) =
-                    (&pattern.kind, &value.kind)
-                {
-                    self.closure_name = Some(*name);
+                let own_name = match (&pattern.kind, &value.kind) {
+                    (PatternKind::Ident(name), ExprKind::Lambda { .. }) => Some(*name),
+                    _ => None,
+                };
+                // (A `let` general in a bound is the function of its
+                // dictionaries that makes its value.)
+                match (&pattern.kind, self.shape(value.span)) {
+                    (PatternKind::Ident(name), Some(_)) => {
+                        self.compile_thunk(*name, value, own_name)?;
+                    }
+                    // Each name of a pattern: the function that makes its
+                    // part, a local.
+                    (_, Some(_)) => {
+                        for (name, at) in crate::typechecker::names::binders(pattern) {
+                            if self.compile_pattern_thunk(pattern, value, name, at)? == 0 {
+                                self.emit(Asm::Call { argc: 0 }, value.span)?;
+                            }
+                            self.add_local(name, value.span)?;
+                        }
+                        if is_last {
+                            self.emit(Asm::Unit, value.span)?;
+                        }
+                        return Ok(());
+                    }
+                    _ => {
+                        self.closure_name = own_name;
+                        self.compile_expr(value)?;
+                    }
                 }
-                self.compile_expr(value)?;
                 let span = value.span;
 
                 match &pattern.kind {
@@ -1229,6 +1356,21 @@ impl<'a> Compiler<'a> {
             && matches!(expr.kind, ExprKind::Ident(_) | ExprKind::FieldAccess(..))
         {
             self.emitter().evidence_site(site);
+            // It is passed its dictionaries: a `let` that is general in
+            // a bound makes its value with them; a function, as a value,
+            // has them bound (called, the call passes them).
+            if let crate::evidence::Site::Ref(bounds) = &**site
+                && !bounds.is_empty()
+            {
+                if self.makes_its_value(expr) {
+                    let n = self.pass_dicts(bounds, expr.span)?;
+                    let at = self.callee_call.unwrap_or(expr.span);
+                    self.emit(Asm::Call { argc: n }, at)?;
+                } else if self.callee_call.is_none() {
+                    let n = self.pass_dicts(bounds, expr.span)?;
+                    self.emit(Asm::Bind { n }, expr.span)?;
+                }
+            }
         }
         let emitter = self.emitter();
         if !emitter.reachable() {
@@ -1405,6 +1547,16 @@ impl<'a> Compiler<'a> {
             // selected, or the function `{ a, b -> Tr.m(a, b) }`, which
             // finds it where it runs. The program wrote no closure there:
             // the function has the method's name, `Tr.m`.
+            // `Tr.m` of a trait a program declares, as a value: the
+            // method of the dictionary the evidence names, with it bound.
+            ExprKind::FieldAccess(of, method, _)
+                if self.res_trait(of.res).is_some() && self.dict_call(expr).is_some() =>
+            {
+                let (tr, recv, own) = self.dict_call(expr).expect("a call through a dictionary");
+                let (recv, own) = (recv.clone(), own.to_vec());
+                self.compile_dict_method_value(tr, &recv, &own, *method, span)?;
+            }
+
             ExprKind::FieldAccess(of, method, _) if self.res_trait(of.res).is_some() => {
                 let tr = self.res_trait(of.res).expect("a trait");
                 if let Some(crate::ast::Selection::Impl { tr, ty }) = expr.sel
@@ -1500,6 +1652,17 @@ impl<'a> Compiler<'a> {
                     context.closures = around;
                 }
                 compiled?;
+            }
+
+            // `Int.empty` of a program's trait, as a value: through the
+            // dictionary, with it bound.
+            ExprKind::FieldAccess(_, method, _)
+                if matches!(self.type_member(expr)?, Some(TypeMember::Slot(_)))
+                    && self.dict_call(expr).is_some() =>
+            {
+                let (tr, recv, own) = self.dict_call(expr).expect("a call through a dictionary");
+                let (recv, own) = (recv.clone(), own.to_vec());
+                self.compile_dict_method_value(tr, &recv, &own, *method, span)?;
             }
 
             ExprKind::FieldAccess(..)
@@ -2043,6 +2206,13 @@ impl<'a> Compiler<'a> {
                 self.compile_operands(args.iter().copied())?;
                 let site = callee.ev.as_deref();
                 self.emit_call_method(*method, args.len() + 1, t, 0, tail, site, span)?;
+            } else if let (Some(TypeMember::Slot(_)), Some((tr, recv, own))) =
+                (&member, self.dict_call(callee))
+            {
+                // `Pt.make(1)`, `Int.empty()`: a method of a program's
+                // trait reached through its type, through the dictionary.
+                let (recv, own) = (recv.clone(), own.to_vec());
+                self.compile_dict_call(tr, &recv, &own, *method, args, span, tail)?;
             } else if let Some(TypeMember::Slot(slot)) = member {
                 // `Pt.make(1)`, `m.Pt.make(1)`: a method reached
                 // through its type.
@@ -2059,19 +2229,34 @@ impl<'a> Compiler<'a> {
                 if let Some(site) = &callee.ev {
                     self.emitter().evidence_site(site);
                 }
+                let dicts = match (self.makes_its_value(callee), callee.ev.as_deref()) {
+                    // (A `let` that is general in a bound: its value.)
+                    (true, Some(crate::evidence::Site::Ref(bounds))) => {
+                        let n = self.pass_dicts(bounds, span)?;
+                        self.emit(Asm::Call { argc: n }, span)?;
+                        (0, 0)
+                    }
+                    _ => self.callee_dicts_of(callee, span, tail)?,
+                };
                 self.compile_operands(args.iter().copied())?;
-                let argc = args.len();
-                self.emit_call(argc, tail, span)?;
+                let argc = dicts.0 + args.len();
+                self.emit_call_keeping(argc, dicts.1, tail, span)?;
             } else {
                 // A field's function, or a method on a type held in a
                 // value (`a.empty()` for a `type a`).
                 self.compile_method_call(callee, receiver, *method, args, span, tail)?;
             }
         } else {
-            // Normal function call.
-            self.compile_operands(std::iter::once(callee).chain(args.iter().copied()))?;
-            let argc = args.len();
-            self.emit_call(argc, tail, span)?;
+            // Normal function call: a function with bounds is passed its
+            // dictionaries first.
+            let around = self.callee_call.replace(span);
+            let compiled = self.compile_expr(callee);
+            self.callee_call = around;
+            compiled?;
+            let (dicts, keep) = self.callee_dicts_of(callee, span, tail)?;
+            self.compile_operands(args.iter().copied())?;
+            let argc = dicts + args.len();
+            self.emit_call_keeping(argc, keep, tail, span)?;
         }
         Ok(())
     }
@@ -2094,6 +2279,13 @@ impl<'a> Compiler<'a> {
             let function = self.emitter().name().to_string();
             crate::vm::evidence::check_selection(selection, callee.ev.as_deref(), &function, span)
                 .map_err(|message| Diagnostic::error(Code::CompilerBug, span, message))?;
+        }
+        // A method of a trait a program declares: through the dictionary
+        // the evidence names, the impl's whether the checker knows it or
+        // not.
+        if let Some((tr, recv, own)) = self.dict_call(callee) {
+            let (recv, own) = (recv.clone(), own.to_vec());
+            return self.compile_dict_call(tr, &recv, &own, method, args, span, tail);
         }
         match callee.sel {
             Some(Selection::Impl { tr, ty })
@@ -2140,6 +2332,13 @@ impl<'a> Compiler<'a> {
         tail: bool,
     ) -> Result<(), Diagnostic> {
         use crate::ast::Selection;
+        // A method of a trait a program declares on a type held in a
+        // value (`a.empty()` for a `type a`): through the dictionary of
+        // the bound (the value is no argument of it).
+        if let Some((tr, recv, own)) = self.dict_call(callee) {
+            let (recv, own) = (recv.clone(), own.to_vec());
+            return self.compile_dict_call(tr, &recv, &own, method, args, span, tail);
+        }
         let with_receiver = std::iter::once(receiver).chain(args.iter().copied());
         match callee.sel {
             // The function a field holds: an ordinary call of it.
@@ -2750,6 +2949,7 @@ impl<'a> Compiler<'a> {
             upvalues: Vec::new(),
             loop_stack: Vec::new(),
             pattern_floor: None,
+            frame_dict: None,
         });
         Ok(())
     }
@@ -2941,7 +3141,9 @@ impl<'a> Compiler<'a> {
     /// slots `0..params.len()`.
     fn compile_params(&mut self, params: &[Param], span: Span) -> Result<(), Diagnostic> {
         let mut destructured = Vec::new();
-        for (slot, param) in params.iter().enumerate() {
+        // (After the hidden parameters, if the function has any.)
+        let first = self.ctx().emitter.hidden();
+        for (slot, param) in (first..).zip(params) {
             let name = match &param.pattern.kind {
                 PatternKind::Ident(name) => *name,
                 _ => {
@@ -3897,16 +4099,17 @@ fn main() {
 }
 "#,
         );
-        // The method of an impl the checker selected: a call of its
-        // global, a tail call here.
+        // A method of a program's trait where the checker knows the impl,
+        // whose header asks nothing: the impl's method is called, its
+        // receiver checked, a tail call here.
         let main = find_fn(&fns, "main");
         assert!(!has_op(main.chunk(), Op::CallMethod));
-        assert!(has_op(main.chunk(), Op::GetGlobal));
-        assert!(has_op(main.chunk(), Op::TailCall));
-        // The method of a bounded variable is found where the code runs:
-        // in tail position, to run in the caller's frame.
+        assert!(has_op(main.chunk(), Op::TailCallChecked));
+        // On a bounded variable, through the dictionary the function is
+        // given: in tail position, to run in the caller's frame.
         let shown = find_fn(&fns, "shown");
-        assert!(has_op(shown.chunk(), Op::TailCallMethod));
+        assert!(has_op(shown.chunk(), Op::TailCallDict));
+        assert!(!has_op(shown.chunk(), Op::TailCallMethod));
         // A field that holds a function is read and called.
         let field = find_fn(&fns, "field");
         assert!(has_op(field.chunk(), Op::GetFieldNamed));

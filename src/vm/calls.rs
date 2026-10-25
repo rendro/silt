@@ -94,6 +94,7 @@ impl Vm {
         argc: usize,
         func_slot: usize,
     ) -> Result<Entered, VmError> {
+        let argc = super::dicts::with_bound(&mut self.stack, &closure, func_slot + 1, argc);
         if argc != closure.function.arity() {
             return Err(VmError::type_confusion(format!(
                 "function '{}' expects {} arguments, got {}",

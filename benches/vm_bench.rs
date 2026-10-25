@@ -531,6 +531,81 @@ fn main() {
 
     println!();
 
+    // ── Traits ──────────────────────────────────────────────────────
+    println!("── Traits ─────────────────────────────────────────────────────");
+
+    const SCORE: &str = r#"
+trait Score { fn score(self) -> Int }
+type P { n: Int }
+trait Score for P { fn score(self) -> Int { self.n } }
+type Bx(a) { Bx(a) }
+trait Score for Bx(a) where a: Score {
+  fn score(self) -> Int { match self { Bx(x) -> Score.score(x) + 1 } }
+}
+"#;
+
+    bench(
+        "trait: bounded call 200K",
+        &format!(
+            r#"{SCORE}
+fn total(x: a, n: Int, acc: Int) -> Int where a: Score {{
+  match n {{
+    0 -> acc
+    _ -> total(x, n - 1, acc + Score.score(x))
+  }}
+}}
+fn main() {{ total(P {{ n: 1 }}, 200000, 0) }}
+"#
+        ),
+    );
+
+    bench(
+        "trait: call on a known type 200K",
+        &format!(
+            r#"{SCORE}
+fn total(n: Int, acc: Int) -> Int {{
+  match n {{
+    0 -> acc
+    _ -> total(n - 1, acc + Score.score(P {{ n: 1 }}))
+  }}
+}}
+fn main() {{ total(200000, 0) }}
+"#
+        ),
+    );
+
+    bench(
+        "trait: polymorphic recursion 1K x 20",
+        &format!(
+            r#"{SCORE}
+import list
+fn nest(x: a, n: Int) -> Int where a: Score {{
+  match n {{
+    0 -> Score.score(x)
+    _ -> nest(Bx(x), n - 1)
+  }}
+}}
+fn main() {{ list.fold(1..20, 0) {{ acc, _ -> acc + nest(P {{ n: 1 }}, 1000) }} }}
+"#
+        ),
+    );
+
+    bench(
+        "trait: bounded fn as a value 50K",
+        &format!(
+            r#"{SCORE}
+import list
+fn twice(x: a) -> Int where a: Score {{ Score.score(x) * 2 }}
+fn main() {{
+  let ps = list.map(1..50000) {{ n -> P {{ n: n }} }}
+  list.length(list.map(ps, twice))
+}}
+"#
+        ),
+    );
+
+    println!();
+
     // ── Arithmetic ──────────────────────────────────────────────────
     println!("── Arithmetic ─────────────────────────────────────────────────");
 

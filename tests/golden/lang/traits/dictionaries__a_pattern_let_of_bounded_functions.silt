@@ -1,0 +1,24 @@
+-- A `let` whose pattern binds several names, of a value general in a
+-- bound, at the top level and in a body: each name stays general, made
+-- again at each use with the dictionaries of that use.
+trait Nm { fn nm(self) -> String }
+trait Nm for Int { fn nm(self) -> String { "i" } }
+trait Nm for String { fn nm(self) -> String { "s" } }
+trait Ld: Nm { fn ld(self) -> String }
+trait Ld for Int { fn ld(self) -> String { "I{Nm.nm(self)}" } }
+trait Ld for String { fn ld(self) -> String { "S{Nm.nm(self)}" } }
+fn greet2(x: a) -> String where a: Nm { Nm.nm(x) }
+type P(a, b) { P(a, b) }
+let (f, g) = (greet2, { x -> "<{Nm.nm(x)}>" })
+let P(m, l) = P(Nm.nm, Ld.ld)
+fn main() {
+  println("{f(1)} {f("a")} {g(1)} {g("b")}")
+  println("{m(1)} {m("a")} {l(1)} {l("a")}")
+  let (h, n) = (Nm.nm, 1)
+  println("{h(n)} {h("c")}")
+  let (k, s) = (Some(greet2), "z")
+  println(match k {
+    Some(q) -> "{q(2)}{s}"
+    None -> ""
+  })
+}

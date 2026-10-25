@@ -1,0 +1,32 @@
+-- A closure in a method reaches the impl's dictionary (the header's
+-- `a: Name` of `Bx(a)`), and one in a default method reaches `Self`'s:
+-- the method keeps the dictionary its call left below its arguments.
+import list
+trait Name {
+  fn name(self) -> String
+  fn twice(self) -> String {
+    let f = { x -> Name.name(x) }
+    "{f(self)}{f(self)}"
+  }
+}
+type K { K }
+trait Name for K { fn name(self) -> String { "k" } }
+type Bx(a) { Bx(a) }
+trait Name for Bx(a) where a: Name {
+  fn name(self) -> String {
+    match self {
+      Bx(x) -> {
+        let parts = list.map([x, x]) { y -> Name.name(y) }
+        "bx({list.length(parts)}:{Name.name(x)})"
+      }
+    }
+  }
+}
+fn via(x: a) -> String where a: Name {
+  let g = Name.twice
+  g(x)
+}
+fn main() {
+  println(Name.twice(Bx(Bx(K))))
+  println(via(Bx(K)))
+}

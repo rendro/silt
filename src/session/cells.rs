@@ -89,6 +89,8 @@ impl CellInfo {
             unknown: Vec::new(),
             statements: Default::default(),
             late_evidence: checked.late_evidence.clone(),
+            dict_owners: checked.dict_owners.clone(),
+            pattern_lets: checked.pattern_lets.clone(),
         }
     }
 }

@@ -2452,14 +2452,6 @@ impl TypeChecker {
                         callee: Some(name),
                         op: None,
                     });
-                    // (A `let`'s closure used inside itself.)
-                    if let Type::Var(var) = scheme.ty
-                        && scheme.vars.is_empty()
-                        && let Some((_, _, value)) = (self.ev.defining.iter().rev())
-                            .find(|(n, v, _)| *n == name && *v == var)
-                    {
-                        self.ev.self_refs.insert(span, *value);
-                    }
                     self.instantiate(&scheme)
                 } else if name == intern("self") {
                     // `self` is resolved at runtime — allow without error
@@ -3778,11 +3770,7 @@ impl TypeChecker {
                     let itself = self.fresh_var();
                     env.push();
                     env.define(*name, Scheme::mono(itself.clone()));
-                    if let Type::Var(var) = itself {
-                        self.ev.defining.push((*name, var, value_span));
-                    }
                     let val_ty = self.infer_expr(value, env);
-                    self.ev.defining.pop();
                     env.pop();
                     self.unify(&itself, &val_ty, value_span);
                     val_ty
@@ -3843,14 +3831,23 @@ impl TypeChecker {
                             PatternMode::Binding(BindingSite::Let),
                         );
                         // Each name the pattern binds to a part of a value
-                        // is general as the part is.
+                        // is general as the part is; the value's bounds are
+                        // all the names'.
                         if is_value {
                             self.exit_level();
-                            for name in collect_pattern_vars(pattern) {
+                            let mut bounds = Vec::new();
+                            for (name, at) in super::names::binders(pattern) {
                                 if let Some(bound) = env.lookup(name).cloned() {
                                     let scheme = self.generalize_let(&bound.ty, &own);
+                                    let places = self.pattern_places(&scheme, &mut bounds);
+                                    if !places.is_empty() {
+                                        self.ev.pattern_lets.insert(at, places);
+                                    }
                                     env.define(name, scheme);
                                 }
+                            }
+                            if !bounds.is_empty() {
+                                self.ev.lets.insert(value_span, bounds);
                             }
                         }
                     }
