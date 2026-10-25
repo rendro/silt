@@ -274,8 +274,14 @@ impl TypeChecker {
         }
         let subject =
             crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(subject));
-        (self.type_name_for_impl(&subject))
-            .is_some_and(|head| self.tables.impl_args_of(tr, head).len() > 1)
+        (self.type_name_for_impl(&subject)).is_some_and(|head| self.several_impls(tr, head))
+    }
+
+    /// Whether the type `head` has impls of `tr` at several trait
+    /// arguments, or one the module wrote twice (which it meant is
+    /// unknown).
+    pub(super) fn several_impls(&self, tr: TraitKey, head: TypeRef) -> bool {
+        self.tables.impl_args_of(tr, head).len() > 1 || self.duplicated_impls.contains(&(tr, head))
     }
 
     pub(super) fn solve_wanted(&mut self, from: usize) {
@@ -1848,6 +1854,17 @@ impl TypeChecker {
             self.error(Code::MissingTraitImpl, message, span);
             return;
         }
+        // Of an impl the module wrote twice, the duplicate's error is
+        // the one: what the use gives the trait is nothing more to
+        // decide (`Error`).
+        if self.duplicated_impls.contains(&(trait_name, type_name)) {
+            for arg in bound_trait_args {
+                for v in free_vars_in(&self.apply(arg)) {
+                    let _ = self.unify_types(&Type::Var(v), &Type::Error);
+                }
+            }
+            return;
+        }
         // The impl of the trait arguments: the one written for their
         // heads; while they are undecided, the trait's one impl for the
         // type, which decides them. (A use waits for them where the type
@@ -2393,7 +2410,9 @@ impl TypeChecker {
         let Ok(Some(tr)) = self.meant_provider(&providers) else {
             return None;
         };
-        (self.tables.impl_methods.args_of(ty, method, tr).len() > 1).then_some(tr)
+        let several = self.tables.impl_methods.args_of(ty, method, tr).len() > 1
+            || self.duplicated_impls.contains(&(tr, ty));
+        several.then_some(tr)
     }
 
     pub(super) fn method_entry(&self, ty: TypeRef, method: Symbol) -> Option<MethodEntry> {

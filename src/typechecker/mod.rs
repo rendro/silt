@@ -388,6 +388,10 @@ pub struct TypeChecker {
     /// The traits of the module's rejected impls for every type
     /// (`trait T for a`): a type that lacks one is not reported again.
     pub(super) blanket_traits: std::collections::HashSet<TraitKey>,
+    /// The traits and types this module wrote a duplicate impl of: its
+    /// error is the one, and a use of the trait for the type says no
+    /// more (whichever impl it meant).
+    pub(super) duplicated_impls: std::collections::HashSet<(TraitKey, TypeRef)>,
     /// Whether the module is a REPL cell: its `let`s are offered to the
     /// next cell, which may fix what is unknown of their types.
     pub(super) is_cell: bool,
@@ -511,6 +515,7 @@ impl TypeChecker {
             rejected_types: std::collections::HashSet::new(),
             unresolved_impl_methods: std::collections::HashSet::new(),
             blanket_traits: std::collections::HashSet::new(),
+            duplicated_impls: std::collections::HashSet::new(),
             is_cell: false,
             named_types: std::collections::HashSet::new(),
             signatures_only: false,

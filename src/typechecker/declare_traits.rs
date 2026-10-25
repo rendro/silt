@@ -95,7 +95,12 @@ impl TypeChecker {
         let var_name = name_of(var);
         // (Of traits with parameters, at the impl's and the supertrait's
         // trait arguments.)
-        let impl_args = self.tables.impl_trait_args.get(&key).cloned().unwrap_or_default();
+        let impl_args = self
+            .tables
+            .impl_trait_args
+            .get(&key)
+            .cloned()
+            .unwrap_or_default();
         let (tr_shown, sup_shown, needed) = (
             self.show_bound(tr, &impl_args),
             self.show_bound(sup, sup_args),
@@ -1062,6 +1067,7 @@ impl TypeChecker {
             .copied();
         if let Some(met) = met {
             self.duplicate_impl(ti, trait_key, target_type, arg_heads, met);
+            self.duplicated_impls.insert((trait_key, target_type));
             return;
         }
         if self
