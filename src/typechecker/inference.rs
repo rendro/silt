@@ -1007,17 +1007,19 @@ impl TypeChecker {
         receiver: Option<Span>,
         span: Span,
     ) -> Type {
-        let Some(info) = self.tables.traits.get(&tr).cloned() else {
+        // (What the call reads of the trait, not the whole of it.)
+        let Some(info) = self.tables.traits.get(&tr) else {
             return Type::Error;
         };
         let Some((_, method_ty)) = info.methods.iter().find(|(n, _)| *n == field).cloned() else {
             return Type::Error;
         };
+        let (self_var, param_var_ids) = (info.self_var, info.param_var_ids.clone());
+        let bounds = info.method_bounds.get(&field).cloned().unwrap_or_default();
         let method_ty = &method_ty;
         let mut mapping: HashMap<TyVar, Type> = HashMap::new();
-        mapping.insert(info.self_var, self_ty.clone());
-        let params: Vec<Type> = info
-            .param_var_ids
+        mapping.insert(self_var, self_ty.clone());
+        let params: Vec<Type> = param_var_ids
             .iter()
             .map(|v| {
                 let fresh = self.fresh_var();
@@ -1026,11 +1028,7 @@ impl TypeChecker {
             })
             .collect();
         let ty = substitute_vars(method_ty, &mapping);
-        let preds: Vec<Pred> = info
-            .method_bounds
-            .get(&field)
-            .into_iter()
-            .flatten()
+        let preds: Vec<Pred> = (bounds.iter())
             .map(|pred| pred.substitute(&mapping))
             .chain([Pred::Via {
                 tr,

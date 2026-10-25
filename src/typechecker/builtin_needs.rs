@@ -812,7 +812,39 @@ impl TypeChecker {
                 self.apply_via(&via, use_.in_body, Some(&placing));
             }
         }
+        // (The traits an impl's method of which asks something of what it
+        // is given, or calls a trait method that may: a call on a type of
+        // another trait's method has nothing to place.)
+        let asking: std::collections::HashSet<TraitKey> = (self.tables.impl_methods.keys())
+            .filter(|key| {
+                (self.tables.impl_methods.get_at(key.0, key.1, key.2, key.3)).is_some_and(|entry| {
+                    (entry.preds.iter()).any(|pred| {
+                        matches!(
+                            pred,
+                            Pred::Builtin { .. } | Pred::Given { .. } | Pred::Via { .. }
+                        )
+                    })
+                })
+            })
+            .map(|key| key.2)
+            .collect();
         for use_ in std::mem::take(&mut self.via_waiting) {
+            // (A call on a type whose method asks nothing of what it is
+            // given has nothing to place.)
+            let receiver = self.apply(&use_.need.receiver);
+            if !matches!(
+                receiver,
+                Type::Var(_) | Type::Rigid(_) | Type::Error | Type::Never
+            ) {
+                let need = &use_.need;
+                if !asking.contains(&need.tr)
+                    || self
+                        .leaves(need.tr, need.method, &receiver, &need.method_ty)
+                        .is_empty()
+                {
+                    continue;
+                }
+            }
             // (A type the calling function writes as the method's type
             // argument itself, `x.one(List(Int))`, is none the call
             // gives: no place names it.)

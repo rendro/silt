@@ -288,13 +288,84 @@ impl TypeChecker {
     /// The impls of `tr` for the type `head` whose trait arguments could
     /// be the use's `args`.
     pub(super) fn impls_fitting(&self, tr: TraitKey, head: TypeRef, args: &[Type]) -> Vec<ImplKey> {
-        (self.tables.impl_args_of(tr, head).iter())
-            .map(|key| (tr, head, *key))
-            .filter(|key| {
-                let written = (self.tables.impl_trait_args.get(key)).map_or(&[][..], Vec::as_slice);
-                args.is_empty() || written.is_empty() || self.could_unify(args, written).is_some()
+        let impls = self.tables.impl_args_of(tr, head);
+        if args.is_empty() {
+            return impls.iter().map(|key| (tr, head, *key)).collect();
+        }
+        let args: Vec<Type> = (args.iter())
+            .map(|arg| {
+                crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(arg))
             })
+            .collect();
+        let index = self.impl_index(tr, head);
+        // (Only the impls whose first trait argument has the use's outer
+        // type, or is a variable, are unified with the use's.)
+        let heads: Vec<Option<OuterHead>> = args.iter().map(outer_head).collect();
+        let mut at: Vec<usize> = match heads.first().copied().flatten() {
+            Some(first) => (index.by_first.get(&Some(first)).into_iter().flatten())
+                .chain(index.by_first.get(&None).into_iter().flatten())
+                .copied()
+                .collect(),
+            None => (0..index.impls.len()).collect(),
+        };
+        at.sort_unstable();
+        (at.into_iter())
+            .map(|i| &index.impls[i])
+            .filter(|(_, written)| {
+                written.is_empty() || {
+                    let apart = (written.iter().zip(&heads)).any(|(written, head)| {
+                        head.is_some_and(|head| outer_head(written).is_some_and(|w| w != head))
+                    });
+                    let mut subst: HashMap<TyVar, Type> = HashMap::new();
+                    !apart
+                        && written.len() == args.len()
+                        && (args.iter().zip(written.iter()))
+                            .all(|(arg, written)| probe_unify(arg, written, &mut subst))
+                }
+            })
+            .map(|(key, _)| *key)
             .collect()
+    }
+
+    /// The impls of `tr` for the type `head`, as `impls_fitting` reads
+    /// them (`ImplIndex`), kept for the module's other uses while no impl
+    /// is added: not while an impl's trait arguments are not known yet.
+    fn impl_index(&self, tr: TraitKey, head: TypeRef) -> std::rc::Rc<ImplIndex> {
+        let impls = self.tables.impl_args_of(tr, head);
+        if let Some(found) = self.impl_index.borrow().get(&(tr, head))
+            && found.impls.len() == impls.len()
+        {
+            return found.clone();
+        }
+        let mut index = ImplIndex::default();
+        let mut known = true;
+        for (i, args) in impls.iter().enumerate() {
+            let key = (tr, head, *args);
+            let canon: std::rc::Rc<[Type]> = match self.tables.impl_trait_args.get(&key) {
+                Some(written) => (written.iter())
+                    .map(|arg| {
+                        crate::types::canonical::canonicalize(
+                            &self.tables.resolver,
+                            &self.apply(arg),
+                        )
+                    })
+                    .collect(),
+                None => {
+                    known = false;
+                    std::rc::Rc::from([])
+                }
+            };
+            let first = canon.first().and_then(outer_head);
+            index.by_first.entry(first).or_default().push(i);
+            index.impls.push((key, canon));
+        }
+        let index = std::rc::Rc::new(index);
+        if known {
+            self.impl_index
+                .borrow_mut()
+                .insert((tr, head), index.clone());
+        }
+        index
     }
 
     /// The impl of `tr` for the type `head` a use at the trait arguments
@@ -330,6 +401,12 @@ impl TypeChecker {
         if args.is_empty() || (args.iter()).any(|arg| matches!(self.apply(arg), Type::Error)) {
             return false;
         }
+        // (Trait arguments with no variable left fit one impl at most,
+        // and leave it nothing to decide.)
+        let open = self.trait_args_open(args);
+        if !open && (args.iter()).all(|arg| free_vars_in(&self.apply(arg)).is_empty()) {
+            return false;
+        }
         let subject =
             crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(subject));
         let Some(head) = self.type_name_for_impl(&subject) else {
@@ -338,7 +415,7 @@ impl TypeChecker {
         if self.tables.impl_args_of(tr, head).is_empty() {
             return false;
         }
-        if self.trait_args_open(args) {
+        if open {
             return true;
         }
         match self.impls_fitting(tr, head, args).as_slice() {
@@ -367,7 +444,22 @@ impl TypeChecker {
     pub(super) fn solve_wanted(&mut self, from: usize) {
         let mut i = from;
         while i < self.wanted.len() {
-            if !self.wanted[i].solved {
+            // (What still waits is passed over as it is: a trait method's
+            // call waits for its scope's end, a use for its trait
+            // arguments.)
+            let waits = match &self.wanted[i].goal {
+                _ if self.wanted[i].solved => true,
+                Goal::Pred(Pred::Via { .. }) => true,
+                Goal::Pred(Pred::Trait {
+                    tr, args, subject, ..
+                }) => {
+                    let subject = self.apply(subject);
+                    matches!(subject, Type::Var(_))
+                        || self.waits_for_trait_args(*tr, &subject, args)
+                }
+                _ => false,
+            };
+            if !waits {
                 let origin = self.wanted[i].origin;
                 match self.wanted[i].goal.clone() {
                     Goal::Pred(Pred::Trait {
@@ -376,24 +468,20 @@ impl TypeChecker {
                         subject,
                         asker,
                     }) => {
+                        // (Decided: it waited for its subject and trait
+                        // arguments above.)
                         let subject = self.apply(&subject);
-                        // (Where the type has impls of the trait at several
-                        // trait arguments, the use waits for its own.)
-                        if !matches!(subject, Type::Var(_))
-                            && !self.waits_for_trait_args(tr, &subject, &args)
-                        {
-                            self.wanted[i].solved = true;
-                            // One error for one type at one place: a use
-                            // that owes two traits its type has neither
-                            // of (`test.assert_eq(f, f)`) says the first.
-                            let reported = self.errors.len();
-                            let ev = Some(self.wanted[i].ev);
-                            self.verify_trait_obligation(tr, &args, &subject, origin, asker, ev);
-                            if self.errors.len() > reported {
-                                let key = (origin.span, self.show_type(&subject));
-                                if !self.lacking.insert(key) {
-                                    self.errors.truncate(reported);
-                                }
+                        self.wanted[i].solved = true;
+                        // One error for one type at one place: a use that
+                        // owes two traits its type has neither of
+                        // (`test.assert_eq(f, f)`) says the first.
+                        let reported = self.errors.len();
+                        let ev = Some(self.wanted[i].ev);
+                        self.verify_trait_obligation(tr, &args, &subject, origin, asker, ev);
+                        if self.errors.len() > reported {
+                            let key = (origin.span, self.show_type(&subject));
+                            if !self.lacking.insert(key) {
+                                self.errors.truncate(reported);
                             }
                         }
                     }
@@ -2084,10 +2172,15 @@ impl TypeChecker {
                 .iter()
                 .map(|t| substitute_vars(t, &fresh))
                 .collect();
+            // (An impl that fits the use was found so; a record is
+            // compared again, by its fields and its row as written.)
+            let fitted = !fitting.is_empty();
             for (bound_arg, impl_arg) in bound_trait_args.iter().zip(&impl_trait_args) {
                 let b = self.apply(bound_arg);
                 let i = self.apply(impl_arg);
-                if !self.trait_arg_compatible(&b, &i) {
+                if (!fitted || holds_record(&b) || holds_record(&i))
+                    && !self.trait_arg_compatible(&b, &i)
+                {
                     self.error(
                         Code::MissingTraitImpl,
                         format!(
@@ -2714,4 +2807,57 @@ fn match_one_way(pattern: &Type, ty: &Type, mapping: &mut HashMap<TyVar, Type>) 
 fn dedup_in_order(items: &mut Vec<String>) {
     let mut seen = std::collections::HashSet::new();
     items.retain(|item| seen.insert(item.clone()));
+}
+
+/// Whether `ty` has an anonymous record in it.
+fn holds_record(ty: &Type) -> bool {
+    match ty {
+        Type::AnonRecord { .. } => true,
+        Type::Generic(_, ts) | Type::Tuple(ts) => ts.iter().any(holds_record),
+        Type::Fun(params, ret) => params.iter().any(holds_record) || holds_record(ret),
+        Type::List(t) | Type::Set(t) | Type::Channel(t) => holds_record(t),
+        Type::Map(k, v) => holds_record(k) || holds_record(v),
+        _ => false,
+    }
+}
+
+/// The outer type of a trait argument, as `impls_fitting` tells impls
+/// apart before unifying: none for a variable (or what meets anything).
+#[derive(PartialEq, Eq, Hash, Clone, Copy)]
+pub(crate) enum OuterHead {
+    Named(TypeRef),
+    Prim(u8),
+    List,
+    Set,
+    Channel,
+    Map,
+    Tuple(usize),
+    Fun(usize),
+}
+
+fn outer_head(ty: &Type) -> Option<OuterHead> {
+    Some(match ty {
+        Type::Generic(name, _) => OuterHead::Named(*name),
+        Type::Int => OuterHead::Prim(0),
+        Type::Float => OuterHead::Prim(1),
+        Type::Bool => OuterHead::Prim(2),
+        Type::String => OuterHead::Prim(3),
+        Type::Unit => OuterHead::Prim(4),
+        Type::List(_) => OuterHead::List,
+        Type::Set(_) => OuterHead::Set,
+        Type::Channel(_) => OuterHead::Channel,
+        Type::Map(..) => OuterHead::Map,
+        Type::Tuple(parts) => OuterHead::Tuple(parts.len()),
+        Type::Fun(params, _) => OuterHead::Fun(params.len()),
+        _ => return None,
+    })
+}
+
+/// The impls of a trait for a type as `impls_fitting` reads them: each
+/// with its trait arguments, canonical, and by the outer type of its
+/// first trait argument (`None`: a variable, which every use meets).
+#[derive(Default)]
+pub(crate) struct ImplIndex {
+    impls: Vec<(ImplKey, std::rc::Rc<[Type]>)>,
+    by_first: HashMap<Option<OuterHead>, Vec<usize>>,
 }
