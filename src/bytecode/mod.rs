@@ -12,7 +12,7 @@ use std::hash::{BuildHasherDefault, Hasher};
 use std::sync::Arc;
 
 use crate::builtins::registry::BuiltinId;
-use crate::defs::{DefId, TraitId, TypeId};
+use crate::defs::{ArgHeads, DefId, TraitId, TypeId};
 use crate::layers::{Layers, Rows};
 use crate::source::Span;
 use crate::typeinfo::TypeInfo;
@@ -115,6 +115,12 @@ pub struct Globals {
     /// The slot of each impl's method: by the impl's trait, the type it
     /// is for and the id of the method's name.
     methods: Layers<(TraitId, TypeId, u16), u16, BuildHasherDefault<MethodHasher>>,
+    /// The slot of each method of an impl of a trait with parameters at
+    /// its trait arguments (`ArgHeads`; a trait has an impl for a type at
+    /// each): by the trait, the type, the heads of the trait arguments
+    /// and the id of the method's name. A call reaches it through the
+    /// impl's dictionary only.
+    arg_methods: Layers<(TraitId, TypeId, ArgHeads, u16), u16>,
     /// The default methods of each trait: the body the trait writes,
     /// compiled once, by the trait and the method's place among the
     /// trait's default methods, with the method's name. An impl that
@@ -140,7 +146,7 @@ pub struct Globals {
     trait_methods: Layers<TraitId, Arc<[(String, Option<u8>)]>>,
     /// The dictionary template of each impl of a trait a program
     /// declares (`dict`).
-    templates: Layers<(TraitId, TypeId), Arc<dict::Template>>,
+    templates: Layers<(TraitId, TypeId, ArgHeads), Arc<dict::Template>>,
     /// The templates by their places (`dict::Template::index`): what a
     /// dictionary of an impl whose header asks nothing names.
     template_rows: Rows<Arc<dict::Template>>,
@@ -170,6 +176,7 @@ impl Globals {
             trait_indexes: self.trait_indexes.clone(),
             defs: before.defs.clone(),
             methods: before.methods.clone(),
+            arg_methods: before.arg_methods.clone(),
             defaults: before.defaults.clone(),
             shown: before.shown.clone(),
             encoded: before.encoded.clone(),
@@ -205,14 +212,15 @@ impl Globals {
         Some((k, methods[k].1))
     }
 
-    /// The dictionary template of the impl of `t` for `ty`.
-    pub fn template(&self, t: TraitId, ty: TypeId) -> Option<&Arc<dict::Template>> {
-        self.templates.get(&(t, ty))
+    /// The dictionary template of the impl of `t` for `ty` at the trait
+    /// arguments `args`.
+    pub fn template(&self, t: TraitId, ty: TypeId, args: ArgHeads) -> Option<&Arc<dict::Template>> {
+        self.templates.get(&(t, ty, args))
     }
 
-    /// Enter the dictionary template of the impl of `t` for `ty`.
+    /// Enter the dictionary template of an impl.
     pub fn add_template(&mut self, template: Arc<dict::Template>) {
-        let key = (template.tr, template.ty);
+        let key = (template.tr, template.ty, template.args);
         if self.templates.get(&key).is_none() {
             self.template_rows.push(template.clone());
             self.templates.insert(key, template);
@@ -255,7 +263,17 @@ impl Globals {
     }
 
     /// The slot of the method `method` of the impl of the trait `t` for
-    /// the type `ty`.
+    /// the type `ty` at the trait arguments `args`.
+    pub fn method_at(&self, t: TraitId, ty: TypeId, args: ArgHeads, method: &str) -> Option<u16> {
+        if args == ArgHeads::none() {
+            return self.method(t, ty, method);
+        }
+        let method = *self.method_ids.get(method)?;
+        self.arg_methods.get(&(t, ty, args, method)).copied()
+    }
+
+    /// The slot of the method `method` of the impl of the trait `t` for
+    /// the type `ty` (of a trait of no parameters).
     pub fn method(&self, t: TraitId, ty: TypeId, method: &str) -> Option<u16> {
         let method = *self.method_ids.get(method)?;
         self.methods.get(&(t, ty, method)).copied()
@@ -414,6 +432,25 @@ impl Globals {
     /// its method is the trait's default, in `slot`. `None` when the
     /// name of the method would need an id and none is left
     /// ([`Globals::method_id`]).
+    pub fn default_for_at(
+        &mut self,
+        t: TraitId,
+        ty: TypeId,
+        args: ArgHeads,
+        method: &str,
+        slot: u16,
+    ) -> Option<()> {
+        if args == ArgHeads::none() {
+            return self.default_for(t, ty, method, slot);
+        }
+        if self.method_at(t, ty, args, method).is_none() {
+            let method = self.method_id(method)?;
+            self.arg_methods.insert((t, ty, args, method), slot);
+        }
+        Some(())
+    }
+
+    /// [`Globals::default_for_at`] of an impl of a trait of no parameters.
     pub fn default_for(&mut self, t: TraitId, ty: TypeId, method: &str, slot: u16) -> Option<()> {
         if self.method(t, ty, method).is_none() {
             let method = self.method_id(method)?;
@@ -428,6 +465,27 @@ impl Globals {
     /// a REPL session as in a file, and what an entry that failed when
     /// it ran had defined is taken back before it is defined again,
     /// see [`Globals::without_definitions_since`].)
+    pub fn add_method_at(
+        &mut self,
+        t: TraitId,
+        ty: TypeId,
+        args: ArgHeads,
+        method: &str,
+        name: String,
+    ) -> Option<u16> {
+        if args == ArgHeads::none() {
+            return self.add_method(t, ty, method, name);
+        }
+        if let Some(slot) = self.method_at(t, ty, args, method) {
+            return Some(slot);
+        }
+        let id = self.method_id(method)?;
+        let slot = self.add(name)?;
+        self.arg_methods.insert((t, ty, args, id), slot);
+        Some(slot)
+    }
+
+    /// [`Globals::add_method_at`] of an impl of a trait of no parameters.
     pub fn add_method(
         &mut self,
         t: TraitId,

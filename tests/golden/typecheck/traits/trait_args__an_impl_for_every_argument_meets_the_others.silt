@@ -1,0 +1,11 @@
+-- exit: 1
+-- An impl for every trait argument meets each other impl of the trait for
+-- the type.
+-- stderr-contains: duplicate implementation of trait 'Wrap' for type 'B': the impl of 'Wrap(_)' is for every trait argument, and the impl of 'Wrap(String)' is for one of them
+trait Wrap(e) { fn wrap(source: e) -> Self }
+type A { A(Int) }
+trait Wrap(Int) for A { fn wrap(e: Int) -> A { A(e) } }
+type B(x) { B(x) }
+trait Wrap(x) for B(x) { fn wrap(e: x) -> B(x) { B(e) } }
+trait Wrap(String) for B(x) { fn wrap(e: String) -> B(x) { panic("no") } }
+fn main() { println(1) }

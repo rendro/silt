@@ -1,0 +1,8 @@
+-- exit: 1
+-- Two impls of a trait for a type at one trait argument are a duplicate.
+-- stderr-contains: duplicate implementation of trait 'From(Int)' for type 'A'
+trait From(e) { fn from(source: e) -> Self }
+type A { A(Int) }
+trait From(Int) for A { fn from(e: Int) -> A { A(e) } }
+trait From(Int) for A { fn from(e: Int) -> A { A(e + 1) } }
+fn main() { println(1) }

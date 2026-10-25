@@ -2153,6 +2153,7 @@ impl<'src> Parser<'src> {
                 methods,
                 assoc_type_bindings,
                 evidence: Default::default(),
+                arg_heads: crate::defs::ArgHeads::none(),
                 span: self.close(span),
             }))
         }

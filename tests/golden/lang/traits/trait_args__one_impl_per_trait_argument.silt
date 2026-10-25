@@ -1,0 +1,24 @@
+-- A trait with a parameter has an impl for a type at each trait argument;
+-- the argument a use decides selects it, directly, through a bound, and
+-- through an impl whose header asks it.
+trait Conv(b) { fn conv(self) -> b }
+trait Conv(String) for Int { fn conv(self) -> String { "s{self}" } }
+trait Conv(Bool) for Int { fn conv(self) -> Bool { self > 0 } }
+type Bx(a) { Bx(a) }
+trait Conv(String) for Bx(a) where a: Conv(String) { fn conv(self) -> String { match self { Bx(x) -> "bx({Conv.conv(x)})" } } }
+fn via(x: a, type b) -> b where a: Conv(b) { Conv.conv(x) }
+fn twice(x: a) -> String where a: Conv(String) {
+  let s: String = Conv.conv(x)
+  "{s}{s}"
+}
+fn main() {
+  let s: String = Conv.conv(3)
+  let b: Bool = Conv.conv(3)
+  println("{s} {b}")
+  let t = via(4, String)
+  let u = via(-1, Bool)
+  println("{t} {u}")
+  println(twice(Bx(5)))
+  let w = via(Bx(Bx(6)), String)
+  println(w)
+}

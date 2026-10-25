@@ -977,6 +977,37 @@ mod tests {
         assert_eq!(value(&mut repl, "shout(n)"), "i!");
     }
 
+    /// A later entry adds an impl of a trait for a type at another trait
+    /// argument; one that fails takes its impl back, and the impl is
+    /// added again by a later entry.
+    #[test]
+    fn a_later_entry_adds_an_impl_at_another_trait_argument() {
+        let mut repl = repl();
+        let setup = [
+            "trait From(e) { fn from(source: e) -> Self }",
+            "type A { A(Int), S(String) }",
+            "trait From(Int) for A { fn from(e: Int) -> A { A(e) } }",
+            "fn sh(a: A) -> String {\n  match a {\n    A(n) -> \"a{n}\"\n    S(s) -> \"s{s}\"\n  }\n}",
+        ];
+        for entry in setup {
+            let evaluation = repl.eval(entry);
+            assert!(
+                evaluation.committed,
+                "`{entry}` must run: {:?}",
+                evaluation.diagnostics
+            );
+        }
+        assert_eq!(value(&mut repl, "sh(A.from(1))"), "a1");
+        let failing =
+            "trait From(String) for A { fn from(e: String) -> A { S(e) } }\nlet z: Int = \"s\"";
+        assert!(!repl.eval(failing).committed, "`{failing}` must fail");
+        assert_eq!(value(&mut repl, "sh(A.from(2))"), "a2");
+        let added = "trait From(String) for A { fn from(e: String) -> A { S(e) } }";
+        assert!(repl.eval(added).committed, "`{added}` must run");
+        assert_eq!(value(&mut repl, "sh(A.from(\"x\"))"), "sx");
+        assert_eq!(value(&mut repl, "sh(A.from(3))"), "a3");
+    }
+
     /// The value `input` returns, which must run.
     fn value(repl: &mut Repl, input: &str) -> String {
         let evaluation = repl.eval(input);

@@ -328,6 +328,7 @@ fn enter_registry(checker: &mut TypeChecker, env: &mut TypeEnv) {
                     ty,
                     intern(method),
                     key,
+                    ArgHeads::none(),
                     MethodEntry {
                         method_type: Type::Fun(vec![self_ty.clone()], Box::new(Type::String)),
                         structural: false,

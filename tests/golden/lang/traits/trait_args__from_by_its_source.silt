@@ -1,0 +1,49 @@
+-- From as docs/proposals/error-from-trait.md writes it: a trait the program
+-- declares, an impl for each source, `AppError.from` passed to
+-- result.map_err (the impl its trait argument says), called and taken as
+-- a value; `?` only propagates.
+import io
+import json
+import result
+type Config { name: String }
+type AppError {
+  IoProblem(io.IoError),
+  JsonProblem(json.JsonError),
+  Custom(String),
+}
+trait From(e) {
+  fn from(source: e) -> Self
+}
+trait From(io.IoError) for AppError {
+  fn from(e: io.IoError) -> AppError { IoProblem(e) }
+}
+trait From(json.JsonError) for AppError {
+  fn from(e: json.JsonError) -> AppError { JsonProblem(e) }
+}
+trait From(String) for AppError {
+  fn from(e: String) -> AppError { Custom(e) }
+}
+fn parse(raw: String) -> Result(Config, AppError) {
+  let config = result.map_err(json.parse(raw, Config), AppError.from)?
+  Ok(config)
+}
+fn show(e: AppError) -> String {
+  match e {
+    IoProblem(e) -> "io: {e}"
+    JsonProblem(e) -> "json: {e}"
+    Custom(s) -> "custom: {s}"
+  }
+}
+fn main() {
+  match parse("\{\"name\": \"x\"}") {
+    Ok(c) -> println(c.name)
+    Err(e) -> println(show(e))
+  }
+  match parse("nope") {
+    Ok(c) -> println(c.name)
+    Err(e) -> println(show(e))
+  }
+  println(show(AppError.from("direct")))
+  let f: Fn(String) -> AppError = AppError.from
+  println(show(f("as a value")))
+}

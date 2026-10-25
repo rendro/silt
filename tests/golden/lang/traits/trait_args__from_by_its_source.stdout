@@ -1,0 +1,4 @@
+x
+json: json syntax error at byte 1: expected ident at line 1 column 2
+custom: direct
+custom: as a value

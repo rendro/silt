@@ -1,4 +1,5 @@
 use super::*;
+pub(crate) use crate::defs::ArgHeads;
 
 // ── Type declaration info ───────────────────────────────────────────
 
@@ -266,9 +267,13 @@ pub(super) const STRUCTURAL_METHODS: [(&str, &str); 6] = [
     ("Decode", "decode"),
 ];
 
+/// The key of an impl: its trait, the head of the type it is for, and
+/// the heads of its trait arguments (`crate::defs::ArgHeads`).
+pub(super) type ImplKey = (TraitKey, TypeRef, ArgHeads);
+
 /// The key of an impl's method: the type the impl is for, the method's
-/// name, the impl's trait.
-pub(super) type ImplMethodKey = (TypeRef, Symbol, TraitKey);
+/// name, the impl's trait and the heads of its trait arguments.
+pub(super) type ImplMethodKey = (TypeRef, Symbol, TraitKey, ArgHeads);
 
 /// The methods of the session's impls: one row for each method of each
 /// impl, by its type, its name and its trait, entered by the module that
@@ -281,18 +286,60 @@ pub(super) struct ImplMethods {
     rows: Table<HashMap<ImplMethodKey, MethodEntry>, ImplMethodKey>,
     /// For a type and a method name, the traits whose impls have rows.
     by_name: HashMap<(TypeRef, Symbol), Vec<TraitKey>>,
+    /// For a type, a method name and a trait, the trait arguments of the
+    /// impls that have rows.
+    args_of: HashMap<(TypeRef, Symbol, TraitKey), Vec<ArgHeads>>,
 }
 
 impl ImplMethods {
-    /// Enter the method `method` of the impl of `tr` for `ty`.
-    pub(super) fn insert(&mut self, ty: TypeRef, method: Symbol, tr: TraitKey, entry: MethodEntry) {
-        if self.rows.insert((ty, method, tr), entry).is_none() {
-            self.by_name.entry((ty, method)).or_default().push(tr);
+    /// Enter the method `method` of the impl of `tr` for `ty` at the
+    /// trait arguments `args`.
+    pub(super) fn insert(
+        &mut self,
+        ty: TypeRef,
+        method: Symbol,
+        tr: TraitKey,
+        args: ArgHeads,
+        entry: MethodEntry,
+    ) {
+        if self.rows.insert((ty, method, tr, args), entry).is_none() {
+            let traits = self.by_name.entry((ty, method)).or_default();
+            if !traits.contains(&tr) {
+                traits.push(tr);
+            }
+            self.args_of.entry((ty, method, tr)).or_default().push(args);
         }
     }
 
+    /// The method `method` of the impl of `tr` for `ty` at the trait
+    /// arguments `args`.
+    pub(super) fn get_at(
+        &self,
+        ty: TypeRef,
+        method: Symbol,
+        tr: TraitKey,
+        args: ArgHeads,
+    ) -> Option<&MethodEntry> {
+        self.rows.get(&(ty, method, tr, args))
+    }
+
+    /// The method `method` of the impl of `tr` for `ty`, when the trait
+    /// has one impl for the type: what a trait of no parameters has (of a
+    /// trait with parameters, which impl a use reaches its trait arguments
+    /// say).
     pub(super) fn get(&self, ty: TypeRef, method: Symbol, tr: TraitKey) -> Option<&MethodEntry> {
-        self.rows.get(&(ty, method, tr))
+        match self.args_of.get(&(ty, method, tr)).map(Vec::as_slice) {
+            Some([args]) => self.rows.get(&(ty, method, tr, *args)),
+            _ => None,
+        }
+    }
+
+    /// The trait arguments of the impls of `tr` for `ty` that have a
+    /// method `method`.
+    pub(super) fn args_of(&self, ty: TypeRef, method: Symbol, tr: TraitKey) -> &[ArgHeads] {
+        self.args_of
+            .get(&(ty, method, tr))
+            .map_or(&[], |args| args.as_slice())
     }
 
     /// The traits whose impls give the type `ty` a method `method`.
@@ -324,6 +371,14 @@ impl ImplMethods {
         if self.rows.remove(key).is_none() {
             return;
         }
+        let of = (key.0, key.1, key.2);
+        if let Some(args) = self.args_of.get_mut(&of) {
+            args.retain(|args| *args != key.3);
+            if !args.is_empty() {
+                return;
+            }
+            self.args_of.remove(&of);
+        }
         let name = (key.0, key.1);
         if let Some(traits) = self.by_name.get_mut(&name) {
             traits.retain(|tr| *tr != key.2);
@@ -353,16 +408,22 @@ pub struct Tables {
     /// Tracks which (trait_name, type) pairs have been implemented.
     pub(super) trait_impl_set:
         Table<std::collections::HashSet<(TraitKey, TypeRef)>, (TraitKey, TypeRef)>,
-    /// Maps `(trait_name, type_name)` → the span of the
-    /// `trait T for U { ... }` declaration, so the missing-method
-    /// diagnostic in `validate_trait_impls` can point at the impl
-    /// block's real source location.
-    pub(super) trait_impl_spans: HashMap<(TraitKey, TypeRef), Span>,
+    /// The impls the session's modules write, by their keys: the rows of
+    /// `trait_impl_spans`, `impl_preds`, `impl_trait_args` and
+    /// `impl_self_types`.
+    pub(super) impl_keys: Table<std::collections::HashSet<ImplKey>, ImplKey>,
+    /// For a trait and the head of a type, the trait arguments of the
+    /// impls written (`impl_keys`).
+    pub(super) impl_args: HashMap<(TraitKey, TypeRef), Vec<ArgHeads>>,
+    /// The span of each impl's `trait T for U { ... }` declaration, so
+    /// the missing-method diagnostic in `validate_trait_impls` can point
+    /// at the impl block's real source location.
+    pub(super) trait_impl_spans: HashMap<ImplKey, Span>,
     /// What each impl's header asks of its type variables
     /// (`trait Greet for Box(a) where a: Greet`), on the variables of the
     /// impl's self type (`impl_self_types`): a use that the impl answers
     /// owes them at the subject's parts (`verify_trait_obligation`).
-    pub(super) impl_preds: HashMap<(TraitKey, TypeRef), Vec<Pred>>,
+    pub(super) impl_preds: HashMap<ImplKey, Vec<Pred>>,
     /// Maps `(trait_name, target_head)` → the resolved trait args supplied
     /// at impl site. For `trait TryInto(Float) for String { ... }` this
     /// stores `(TryInto, String) -> [Float]`. `verify_trait_obligation`
@@ -371,7 +432,7 @@ pub struct Tables {
     /// Float) is rejected — closing the soundness hole where parameterized-
     /// trait where-clause verification previously ignored trait args.
     /// Absent for parameter-less traits.
-    pub(super) impl_trait_args: HashMap<(TraitKey, TypeRef), Vec<Type>>,
+    pub(super) impl_trait_args: HashMap<ImplKey, Vec<Type>>,
     /// Maps `(trait_name, target_head)` → the impl's full (canonicalized)
     /// self type as constructed by `register_trait_impl`. Coherence
     /// guarantees at most one user impl per key. Consulted by
@@ -387,7 +448,7 @@ pub struct Tables {
     /// they keep matching every instantiation. Absent for impls that
     /// never pass through `register_trait_impl` (the stamps of the
     /// structural traits) — the check silently skips those.
-    pub(super) impl_self_types: HashMap<(TraitKey, TypeRef), Type>,
+    pub(super) impl_self_types: HashMap<ImplKey, Type>,
     /// Maps record type names to their type parameter TyVar ids.
     pub(super) record_param_var_ids: HashMap<TypeRef, Vec<TyVar>>,
     /// Phase D: declared type aliases. Tracks every alias the
@@ -465,6 +526,7 @@ pub struct Rows {
     traits: Vec<TraitKey>,
     impl_methods: Vec<ImplMethodKey>,
     impls: Vec<(TraitKey, TypeRef)>,
+    impl_keys: Vec<ImplKey>,
     schemes: Vec<crate::defs::DefId>,
 }
 
@@ -487,7 +549,7 @@ impl Tables {
     /// rows of, by trait and name.
     pub fn makers_of(&self, ty: crate::defs::TypeId) -> Vec<(crate::defs::TraitId, Symbol)> {
         let mut found: Vec<(crate::defs::TraitId, Symbol)> = Vec::new();
-        for (of, name, tr) in self.impl_methods.keys() {
+        for (of, name, tr, _) in self.impl_methods.keys() {
             let Some(info) = (of.id == ty).then(|| self.traits.get(tr)).flatten() else {
                 continue;
             };
@@ -576,9 +638,11 @@ impl Tables {
         rows.extend(keys("alias-arity", self.type_alias_arity.keys()));
         rows.extend(keys("trait", self.traits.keys()));
         rows.extend(keys("impl", self.trait_impl_set.iter()));
+        rows.extend(keys("impl-key", self.impl_keys.iter()));
+        rows.extend(keys("impl-args", self.impl_args.keys()));
         rows.extend(keys("impl-span", self.trait_impl_spans.keys()));
         rows.extend(keys("impl-preds", self.impl_preds.keys()));
-        rows.extend(keys("impl-args", self.impl_trait_args.keys()));
+        rows.extend(keys("impl-trait-args", self.impl_trait_args.keys()));
         rows.extend(keys("impl-self", self.impl_self_types.keys()));
         rows.extend(keys("method", self.impl_methods.keys()));
         rows.extend(keys(
@@ -617,6 +681,36 @@ impl Tables {
             + self.impl_methods.rows.take_overwritten()
     }
 
+    /// Enter the impl `key`: the type has the trait (`trait_impl_set`).
+    pub(super) fn add_impl(&mut self, key: ImplKey) {
+        self.trait_impl_set.insert((key.0, key.1));
+        if self.impl_keys.insert(key) {
+            self.impl_args
+                .entry((key.0, key.1))
+                .or_default()
+                .push(key.2);
+        }
+    }
+
+    /// The trait arguments of the impls of `tr` for the type `ty`.
+    pub(super) fn impl_args_of(&self, tr: TraitKey, ty: TypeRef) -> &[ArgHeads] {
+        self.impl_args
+            .get(&(tr, ty))
+            .map_or(&[], |args| args.as_slice())
+    }
+
+    /// The key of the impl of `tr` for the type `ty` that a use at trait
+    /// arguments of the heads `args` reaches: the one written for them,
+    /// or one for every head; a trait of no parameters' one impl. None
+    /// where none is written. (One impl per trait argument: two that
+    /// meet are refused when the second is declared.)
+    pub(super) fn impl_at(&self, tr: TraitKey, ty: TypeRef, args: ArgHeads) -> Option<ImplKey> {
+        let written = self.impl_args_of(tr, ty);
+        (written.iter().find(|w| **w == args))
+            .or_else(|| written.iter().find(|w| w.meets(args)))
+            .map(|w| (tr, ty, *w))
+    }
+
     /// The type aliases and associated-type bindings of the session.
     pub fn resolver(&self) -> &crate::types::canonical::Resolver {
         &self.resolver
@@ -641,6 +735,7 @@ impl Tables {
             traits: self.traits.take_added(),
             impl_methods: self.impl_methods.rows.take_added(),
             impls: self.trait_impl_set.take_added(),
+            impl_keys: self.impl_keys.take_added(),
             schemes: self.schemes.take_added(),
         }
     }
@@ -667,17 +762,52 @@ impl Tables {
         for key in rows.impl_methods {
             self.impl_methods.remove(&key);
         }
-        for key in rows.impls {
-            self.trait_impl_set.remove(&key);
+        for key in rows.impl_keys {
+            self.impl_keys.remove(&key);
             self.trait_impl_spans.remove(&key);
             self.impl_preds.remove(&key);
             self.impl_trait_args.remove(&key);
             self.impl_self_types.remove(&key);
-            self.resolver.unregister_assoc_bindings(key.0, key.1);
+            if let Some(args) = self.impl_args.get_mut(&(key.0, key.1)) {
+                args.retain(|args| *args != key.2);
+                if args.is_empty() {
+                    self.impl_args.remove(&(key.0, key.1));
+                }
+            }
+        }
+        for key in rows.impls {
+            // (The type has the trait as long as an impl of an earlier
+            // module gives it.)
+            if !self.impl_args.contains_key(&key) {
+                self.trait_impl_set.remove(&key);
+                self.resolver.unregister_assoc_bindings(key.0, key.1);
+            }
         }
         for id in rows.schemes {
             self.schemes.remove(&id);
             self.statement_units.remove(&id);
         }
+    }
+}
+
+impl Tables {
+    /// The one impl of `tr` for the type `ty`, if it has one and no more.
+    pub(super) fn one_impl(&self, tr: TraitKey, ty: TypeRef) -> Option<ImplKey> {
+        match self.impl_args_of(tr, ty) {
+            [args] => Some((tr, ty, *args)),
+            _ => None,
+        }
+    }
+}
+
+/// The impl `key` as the body of one of its methods is named among the
+/// bodies that ask builtin traits of their variables
+/// (`builtin_needs::body_key`): its type, and the heads of its trait
+/// arguments where it has some (two impls of `From` for one type are two).
+pub(super) fn impl_owner(key: ImplKey) -> String {
+    let (_, ty, args) = key;
+    match args == ArgHeads::none() {
+        true => ty.to_string(),
+        false => format!("{ty}{args:?}"),
     }
 }

@@ -813,6 +813,9 @@ pub struct TraitImpl {
     /// header: its trait's supertraits, the `where` clauses on the
     /// trait's parameters; written by the typechecker.
     pub evidence: crate::evidence::ImplEvidence,
+    /// The heads of its trait arguments, its key beside its trait and
+    /// type (`crate::defs::ArgHeads`); written by the typechecker.
+    pub arg_heads: crate::defs::ArgHeads,
 }
 
 #[derive(Debug, Clone)]

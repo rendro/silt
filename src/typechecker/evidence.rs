@@ -21,6 +21,7 @@ pub(super) enum EvNode {
     Impl {
         tr: TraitKey,
         ty: TypeRef,
+        args: ArgHeads,
         subs: Vec<EvId>,
     },
     /// A bound of the variable `var` of an enclosing definition, by a
@@ -151,18 +152,13 @@ impl TypeChecker {
     /// asks, and how many bounds `tr` declares for its method `method`:
     /// the first parts of what a use of the impl's method owes.
     /// (With `dictionaries`, only those that pass a dictionary.)
-    fn method_parts(
-        &self,
-        tr: TraitKey,
-        head: TypeRef,
-        method: Symbol,
-        dictionaries: bool,
-    ) -> (usize, usize) {
+    fn method_parts(&self, key: ImplKey, method: Symbol, dictionaries: bool) -> (usize, usize) {
+        let tr = key.0;
         let count = |preds: &Vec<Pred>| match dictionaries {
             true => preds.iter().filter(|pred| passes_dictionary(pred)).count(),
             false => preds.len(),
         };
-        let header = (self.tables.impl_preds.get(&(tr, head))).map_or(0, count);
+        let header = (self.tables.impl_preds.get(&key)).map_or(0, count);
         let declared = (self.tables.traits.get(&tr))
             .and_then(|info| info.method_bounds.get(&method))
             .map_or(0, count);
@@ -178,12 +174,12 @@ impl TypeChecker {
     /// passes the evidence of these, in this order.
     pub(super) fn method_body_bounds(
         &self,
-        tr: TraitKey,
-        head: TypeRef,
+        key: ImplKey,
         method: Symbol,
         bounds: &[Pred],
     ) -> Vec<BoundKey> {
-        let (header, declared) = self.method_parts(tr, head, method, false);
+        let tr = key.0;
+        let (header, declared) = self.method_parts(key, method, false);
         let own = header + declared;
         let mut kept: Vec<Pred> = bounds.iter().take(own).cloned().collect();
         // (The trait of `self`, which the body is checked with last.)
@@ -205,17 +201,18 @@ impl TypeChecker {
     /// own `where` restates is owed after those, and passes nothing on.)
     pub(super) fn method_site(
         &mut self,
-        tr: TraitKey,
-        head: TypeRef,
+        key: ImplKey,
         method: Symbol,
         mut owed: Vec<EvId>,
     ) -> (EvId, Vec<EvId>) {
-        let (header, declared) = self.method_parts(tr, head, method, true);
+        let (header, declared) = self.method_parts(key, method, true);
         let mut own = owed.split_off(header.min(owed.len()));
         own.truncate(declared);
+        let (tr, head, args) = key;
         let recv = self.ev_new(EvNode::Impl {
             tr,
             ty: head,
+            args,
             subs: owed,
         });
         (recv, own)
@@ -292,7 +289,7 @@ impl TypeChecker {
     /// Whether the impl of `tr` for `ty` is one the runtime provides: no
     /// program wrote it (it has no impl block).
     fn provided(&self, tr: TraitKey, ty: TypeRef) -> bool {
-        !self.tables.trait_impl_spans.contains_key(&(tr, ty))
+        self.tables.impl_args_of(tr, ty).is_empty()
     }
 
     /// The evidence of the node `id`, in a body inside `owners`
@@ -313,9 +310,10 @@ impl TypeChecker {
                 tr: tr.id,
                 ty: ty.id,
             },
-            Some(EvNode::Impl { tr, ty, subs }) => Evidence::Impl {
+            Some(EvNode::Impl { tr, ty, args, subs }) => Evidence::Impl {
                 tr: tr.id,
                 ty: ty.id,
+                args: *args,
                 subs: subs
                     .iter()
                     .map(|sub| self.ev_final(*sub, owners, depth + 1))
@@ -406,20 +404,21 @@ impl TypeChecker {
     /// header: that its type has each supertrait of `tr`, and that its
     /// trait arguments meet the `where` clauses `tr` declares on its
     /// parameters.
-    fn impl_evidence(&self, tr: TraitKey, head: TypeRef) -> crate::evidence::ImplEvidence {
+    fn impl_evidence(&self, key: ImplKey) -> crate::evidence::ImplEvidence {
+        let tr = key.0;
         let (Some(info), Some(self_ty)) = (
             self.tables.traits.get(&tr),
-            self.tables.impl_self_types.get(&(tr, head)),
+            self.tables.impl_self_types.get(&key),
         ) else {
             return Default::default();
         };
         let header = Owner {
             tag: crate::evidence::IMPL_HEADER,
-            bounds: (self.tables.impl_preds.get(&(tr, head)))
+            bounds: (self.tables.impl_preds.get(&key))
                 .map(|preds| self.trait_bounds(preds))
                 .unwrap_or_default(),
         };
-        let impl_args = (self.tables.impl_trait_args.get(&(tr, head)))
+        let impl_args = (self.tables.impl_trait_args.get(&key))
             .cloned()
             .unwrap_or_default();
         let supers = (info.supertraits.iter().enumerate())
@@ -493,31 +492,34 @@ impl TypeChecker {
                 ty: head.id,
             };
         }
+        // (The impl of the trait arguments: they are decided here, the
+        // arguments of an impl's header.)
+        let at = (self.use_arg_heads(args)).and_then(|heads| self.tables.impl_at(tr, head, heads));
+        let Some(key) = at.or_else(|| self.tables.one_impl(tr, head)) else {
+            return Evidence::Missing;
+        };
         let mut mapping: HashMap<TyVar, Type> = HashMap::new();
-        if let Some(impl_ty) = self.tables.impl_self_types.get(&(tr, head)) {
+        if let Some(impl_ty) = self.tables.impl_self_types.get(&key) {
             super::builtin_needs::match_type(impl_ty, &ty, &free_vars_in(impl_ty), &mut mapping);
         }
-        let subs = (self
-            .tables
-            .impl_preds
-            .get(&(tr, head))
-            .into_iter()
-            .flatten())
-        .filter(|pred| passes_dictionary(pred))
-        .filter_map(|pred| match pred {
-            Pred::Trait {
-                tr, args, subject, ..
-            } => {
-                let args: Vec<Type> = args.iter().map(|t| substitute_vars(t, &mapping)).collect();
-                let subject = substitute_vars(subject, &mapping);
-                Some(self.evidence_of(*tr, &args, &subject, owner, depth + 1))
-            }
-            _ => None,
-        })
-        .collect();
+        let subs = (self.tables.impl_preds.get(&key).into_iter().flatten())
+            .filter(|pred| passes_dictionary(pred))
+            .filter_map(|pred| match pred {
+                Pred::Trait {
+                    tr, args, subject, ..
+                } => {
+                    let args: Vec<Type> =
+                        args.iter().map(|t| substitute_vars(t, &mapping)).collect();
+                    let subject = substitute_vars(subject, &mapping);
+                    Some(self.evidence_of(*tr, &args, &subject, owner, depth + 1))
+                }
+                _ => None,
+            })
+            .collect();
         Evidence::Impl {
             tr: tr.id,
             ty: head.id,
+            args: key.2,
             subs,
         }
     }
@@ -599,14 +601,17 @@ impl TypeChecker {
                 }
                 Decl::TraitImpl(ti) => {
                     if let (Some(target), Some(tr)) = (self.impl_target(ti), self.impl_trait(ti)) {
-                        ti.evidence = self.impl_evidence(tr, target);
+                        let heads =
+                            (self.impl_heads.get(&ti.span).copied()).unwrap_or_else(ArgHeads::none);
+                        ti.arg_heads = heads;
+                        let key = (tr, target, heads);
+                        ti.evidence = self.impl_evidence(key);
                         // A method of a program trait's impl takes the
                         // impl's dictionary, then those of the bounds the
                         // trait declares for it.
                         if has_dictionary(tr) {
                             for method in &ti.methods {
-                                let (header, own) =
-                                    self.method_parts(tr, target, method.name, true);
+                                let (header, own) = self.method_parts(key, method.name, true);
                                 let shape = Shape {
                                     layout: Layout::ImplMethod,
                                     header: count(header),

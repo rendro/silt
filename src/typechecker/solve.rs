@@ -247,6 +247,37 @@ impl TypeChecker {
     /// (`trait Greet for Box(a) where a: Greet`) is owed in turn, by the
     /// same use: checked here if the part is known, waiting like any
     /// predicate if it is not.
+    /// The heads of the trait arguments `args` of a use (`ArgHeads`),
+    /// once each is decided: none while one is a type variable nothing
+    /// has decided. (A rigid variable is some type: every head, which the
+    /// impl's own trait argument is checked against.)
+    pub(super) fn use_arg_heads(&self, args: &[Type]) -> Option<ArgHeads> {
+        let mut heads = Vec::with_capacity(args.len());
+        for arg in args {
+            let arg =
+                crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(arg));
+            heads.push(match arg {
+                Type::Var(_) => return None,
+                Type::Rigid(_) | Type::Error | Type::Never => None,
+                arg => self.type_name_for_impl(&arg).map(|head| head.id),
+            });
+        }
+        Some(ArgHeads::of(heads))
+    }
+
+    /// Whether `subject: tr(args)` waits for its trait arguments: nothing
+    /// has decided them yet, and the subject's type has impls of the trait
+    /// at several, so which impl the use reaches is not known.
+    pub(super) fn waits_for_trait_args(&self, tr: TraitKey, subject: &Type, args: &[Type]) -> bool {
+        if args.is_empty() || self.use_arg_heads(args).is_some() {
+            return false;
+        }
+        let subject =
+            crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(subject));
+        (self.type_name_for_impl(&subject))
+            .is_some_and(|head| self.tables.impl_args_of(tr, head).len() > 1)
+    }
+
     pub(super) fn solve_wanted(&mut self, from: usize) {
         let mut i = from;
         while i < self.wanted.len() {
@@ -260,7 +291,11 @@ impl TypeChecker {
                         asker,
                     }) => {
                         let subject = self.apply(&subject);
-                        if !matches!(subject, Type::Var(_)) {
+                        // (Where the type has impls of the trait at several
+                        // trait arguments, the use waits for its own.)
+                        if !matches!(subject, Type::Var(_))
+                            && !self.waits_for_trait_args(tr, &subject, &args)
+                        {
                             self.wanted[i].solved = true;
                             // One error for one type at one place: a use
                             // that owes two traits its type has neither
@@ -1813,23 +1848,35 @@ impl TypeChecker {
             self.error(Code::MissingTraitImpl, message, span);
             return;
         }
+        // The impl of the trait arguments: the one written for their
+        // heads; while they are undecided, the trait's one impl for the
+        // type, which decides them. (A use waits for them where the type
+        // has several: `waits_for_trait_args`.)
+        let heads = self.use_arg_heads(bound_trait_args);
+        let at = heads.and_then(|heads| self.tables.impl_at(trait_name, type_name, heads));
+        let key = match (at, heads) {
+            (Some(key), _) => Some(key),
+            (None, None) => self.tables.one_impl(trait_name, type_name),
+            (None, Some(_)) => None,
+        };
+        if key.is_none() && !self.tables.impl_args_of(trait_name, type_name).is_empty() {
+            let message = format!(
+                "type '{}' does not implement trait '{}'",
+                self.show_type(&Type::Generic(type_name, vec![])),
+                self.show_bound(trait_name, bound_trait_args)
+            );
+            self.error(Code::MissingTraitImpl, message, span);
+            return;
+        }
+        let impl_args = key.map_or_else(ArgHeads::none, |key| key.2);
         // The impl, with new variables for its own: its self type, its
         // trait arguments and what its header asks.
-        let impl_self = self
-            .tables
-            .impl_self_types
-            .get(&(trait_name, type_name))
-            .cloned();
-        let impl_trait_args = self
-            .tables
-            .impl_trait_args
-            .get(&(trait_name, type_name))
+        let lookup = key.unwrap_or((trait_name, type_name, ArgHeads::none()));
+        let impl_self = self.tables.impl_self_types.get(&lookup).cloned();
+        let impl_trait_args = (self.tables.impl_trait_args.get(&lookup))
             .cloned()
             .unwrap_or_default();
-        let header = self
-            .tables
-            .impl_preds
-            .get(&(trait_name, type_name))
+        let header = (self.tables.impl_preds.get(&lookup))
             .cloned()
             .unwrap_or_default();
         let mut own: Vec<TyVar> = impl_self.iter().flat_map(free_vars_in).collect();
@@ -1961,6 +2008,7 @@ impl TypeChecker {
             super::evidence::EvNode::Impl {
                 tr: trait_name,
                 ty: type_name,
+                args: impl_args,
                 subs,
             },
         );
@@ -2323,6 +2371,17 @@ impl TypeChecker {
     /// reach by its imports it has not. It is decided from the impls'
     /// rows each time. (For a call that is ambiguous the first
     /// candidate's: `ambiguous_method_call` reports it.)
+    /// The trait whose method `method` a use on the type `ty` means,
+    /// when the type has an impl of it at several trait arguments: the
+    /// use's trait arguments choose the impl (`From` for `AppError`).
+    pub(super) fn trait_of_impls_by_args(&self, ty: TypeRef, method: Symbol) -> Option<TraitKey> {
+        let providers = self.method_providers(ty, method);
+        let Ok(Some(tr)) = self.meant_provider(&providers) else {
+            return None;
+        };
+        (self.tables.impl_methods.args_of(ty, method, tr).len() > 1).then_some(tr)
+    }
+
     pub(super) fn method_entry(&self, ty: TypeRef, method: Symbol) -> Option<MethodEntry> {
         let providers = self.method_providers(ty, method);
         let tr = match self.meant_provider(&providers) {

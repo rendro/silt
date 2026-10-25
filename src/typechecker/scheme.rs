@@ -364,7 +364,28 @@ impl TypeChecker {
         self.decide_closed();
         let fixed = self.fix_statement_calls(false);
         self.recheck_fixed(&fixed, Self::decide_closed);
-        let recorded = self.wanted.split_off(self.closed_mark);
+        let mut recorded = self.wanted.split_off(self.closed_mark);
+        // A use whose trait arguments nothing decided, of a type that has
+        // impls of the trait at several: which impl it means is unknown
+        // (before anything else is decided for its lack).
+        for wanted in &mut recorded {
+            let Goal::Pred(Pred::Trait {
+                tr, args, subject, ..
+            }) = &wanted.goal
+            else {
+                continue;
+            };
+            if wanted.solved
+                || matches!(self.apply(subject), Type::Var(_) | Type::Rigid(_))
+                || !self.waits_for_trait_args(*tr, subject, args)
+                || args.iter().any(|arg| self.waits_for_outer(arg))
+            {
+                continue;
+            }
+            wanted.solved = true;
+            let error = self.undecided_trait_args(*tr, args, subject, wanted.origin);
+            self.errors.push(error);
+        }
         // (What stood at the places the scope's goals leave is gone.)
         let kept = self.closed_mark;
         self.waiting_decoders.retain(|&k| k < kept);
@@ -483,6 +504,32 @@ impl TypeChecker {
                 );
             }
         }
+    }
+
+    /// The error of a use whose trait arguments nothing decides: which
+    /// impl of `tr` for `subject` it means is not known (`origin`).
+    fn undecided_trait_args(
+        &self,
+        tr: TraitKey,
+        args: &[Type],
+        subject: &Type,
+        origin: Origin,
+    ) -> Diagnostic {
+        let what = match origin.callee {
+            Some(callee) => format!("this use of '{callee}'"),
+            None => "this".to_string(),
+        };
+        let message = format!(
+            "cannot decide which impl of '{}' for '{}' {what} means: its trait argument is not \
+             decided here",
+            self.show_bound(tr, args),
+            self.show_type(&self.apply(subject))
+        );
+        let example = self.show_bound(tr, &[Type::Generic(TypeRef::builtin("Int"), Vec::new())]);
+        Diagnostic::error(Code::AmbiguousType, origin.span, message).with_help(format!(
+            "annotate the type the call gives (`let n: Int = ...`), or call it where a bound \
+             decides it (`where t: {example}`)"
+        ))
     }
 
     /// Whether `ty` is a variable still unresolved that the scope

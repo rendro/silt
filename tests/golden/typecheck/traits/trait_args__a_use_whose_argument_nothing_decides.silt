@@ -1,0 +1,12 @@
+-- exit: 1
+-- A use of a method of a trait that has impls for the type at several
+-- trait arguments, which nothing decides, means no impl.
+-- stderr-contains: cannot decide which impl of 'From(_)' for 'A' this use of 'from' means
+trait From(e) { fn from(source: e) -> Self }
+type A { A(Int), S(String) }
+trait From(Int) for A { fn from(e: Int) -> A { A(e) } }
+trait From(String) for A { fn from(e: String) -> A { S(e) } }
+fn main() {
+  let f = A.from
+  println(1)
+}
