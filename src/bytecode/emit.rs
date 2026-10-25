@@ -213,8 +213,6 @@ impl Emitter {
                 chunk: Chunk::new(),
                 hidden: 0,
                 dict_slot: false,
-                #[cfg(debug_assertions)]
-                evidence: None,
             },
             height: arity,
             reachable: true,
@@ -419,32 +417,6 @@ impl Emitter {
     /// leaves the impl's dictionary in the slot of the callee.
     pub fn takes_dict_slot(&mut self) {
         self.function.dict_slot = true;
-    }
-
-    /// The function is the definition with bounds `owner`
-    /// (`crate::evidence::Evidence::Param`), which numbers its bounds as
-    /// `layout` says. Only a debug build keeps it.
-    pub fn evidence_owner(&mut self, owner: Span, layout: crate::evidence::Layout) {
-        #[cfg(debug_assertions)]
-        {
-            let evidence = self.function.evidence.get_or_insert_with(Default::default);
-            evidence.owner = Some((owner, layout));
-        }
-        #[cfg(not(debug_assertions))]
-        let _ = (owner, layout);
-    }
-
-    /// The instruction emitted last passes on the evidence `site`. Only
-    /// a debug build keeps it.
-    pub fn evidence_site(&mut self, site: &crate::evidence::Site) {
-        #[cfg(debug_assertions)]
-        {
-            let at = u32::try_from(self.function.chunk.code.len()).unwrap_or(u32::MAX);
-            let evidence = self.function.evidence.get_or_insert_with(Default::default);
-            evidence.sites.push((at, site.clone()));
-        }
-        #[cfg(not(debug_assertions))]
-        let _ = site;
     }
 
     /// The function, with `upvalue_count` upvalues (more than a closure

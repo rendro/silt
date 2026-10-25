@@ -1,9 +1,7 @@
 //! Trait evidence: for each trait predicate the checker solves, what
-//! proves it. The compiler and the VM dispatch as they always have; in
-//! a debug build the VM checks at each call of a method it finds where
-//! the code runs that the impl it finds is the one the evidence names
-//! (`vm::evidence`), so that a checker and a runtime that disagree are
-//! found before anything is compiled from evidence.
+//! proves it. For a trait a program declares, the compiler turns it into
+//! the dictionaries the code passes on (`crate::bytecode::dict`); a
+//! builtin trait is found by the value where the code runs.
 //!
 //! A definition with bounds (a function, a `let` the checker
 //! generalises, a method of an impl or a trait's default method) has a
@@ -113,24 +111,4 @@ pub struct Shape {
     /// a trait's default: the bounds the trait declares for the method
     /// (after the dictionary of the impl, the method's first).
     pub own: u16,
-}
-
-/// What a compiled function's code knows of evidence.
-#[derive(Debug, Clone, Default)]
-pub struct FnEvidence {
-    /// The definition the function is, named as [`Evidence::Param`]
-    /// names it, and how it numbers its bounds.
-    pub owner: Option<(Span, Layout)>,
-    /// The evidence each instruction passes on, by the offset just past
-    /// it, in the order of the code.
-    pub sites: Vec<(u32, Site)>,
-}
-
-impl FnEvidence {
-    /// The evidence the instruction that ends at `at` passes on.
-    pub fn site(&self, at: usize) -> Option<&Site> {
-        let at = u32::try_from(at).ok()?;
-        let k = self.sites.binary_search_by_key(&at, |(end, _)| *end).ok()?;
-        Some(&self.sites[k].1)
-    }
 }

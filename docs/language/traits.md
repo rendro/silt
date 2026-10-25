@@ -583,7 +583,9 @@ its impl, and `make(Box)` gives the type to a `type t` parameter;
 A method named through its trait is a function value, as a module's
 function is: `Trait.method` can be passed directly to a higher-order
 combinator. Where the type of its argument is known the value is the
-method of that impl; in generic code it finds the impl where it runs.
+method of that impl; in generic code it is the method of the impl the
+function was given for its bound (see [How a Method Is
+Found](#how-a-method-is-found)).
 
 ```silt
 import list
@@ -655,6 +657,35 @@ fn shown(n: Int, xs: List(Int)) {
 When the type of `x` is decided later in the same definition (a closure's
 parameter by the call it is passed to), the field is checked against that
 type.
+
+## How a Method Is Found
+
+The impl a call of a method of a trait your program declares reaches is
+chosen by the types, where the program is checked, never by a value
+where it runs:
+
+- On a type the checker knows (`Greet.greet(K)`, `Int.empty()`), the
+  call is the method of that type's impl.
+- In a function with a bound (`fn hello(x: a) -> String where a: Greet`),
+  each call of the function passes the impl its types choose:
+  `hello(K)` passes `Greet for K`, and every `Greet.greet(x)` in the body
+  calls that impl's method. An impl whose header asks a bound
+  (`trait Greet for Box(a) where a: Greet`) is passed with the impl for
+  the type inside: `hello(Box(K))` passes `Greet for Box(a)` with
+  `Greet for K`.
+- A method or a function with a bound taken as a value
+  (`list.map(xs, Greet.greet)`, `list.map(xs, hello)`) keeps the impls
+  it was given, wherever it goes: into a task, through a channel.
+- A `let` that is general in a bound (`let shout = { x -> "{Greet.greet(x)}!" }`)
+  stays general: its value is made again at each use, with the impls of
+  that use, so `shout(K)` and `shout(J)` are each their type's.
+
+The built-in traits (`Equal`, `Compare`, `Hash`, `Display`,
+`json.Encode`, `json.Decode`, `Error`) are found by the value where the
+code runs: `println` shows a `Pt` inside a list with `Pt`'s `Display`,
+at any depth. An impl of `Display`, `json.Encode`, `json.Decode` or
+`Error` asks only built-in traits of its type's variables (see
+[Impl-level where clauses](#impl-level-where-clauses)).
 
 ## Built-in Traits
 

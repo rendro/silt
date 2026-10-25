@@ -801,13 +801,11 @@ impl<'a> Compiler<'a> {
         &mut self,
         name: String,
         method: &crate::ast::FnDecl,
-        layout: crate::evidence::Layout,
     ) -> Result<(), Diagnostic> {
         let span = method.span;
         let hidden = self.shape(method.body.span).map_or(0, Self::hidden_count);
         self.begin_function_after(name, method.params.len(), hidden, span)?;
         self.hidden_params(method.body.span);
-        self.emitter().evidence_owner(method.body.span, layout);
 
         self.compile_params(&method.params, span)?;
         self.keep_frame_dict(method)?;
@@ -835,11 +833,7 @@ impl<'a> Compiler<'a> {
         method: &crate::ast::FnDecl,
     ) -> Result<(), Diagnostic> {
         let span = method.span;
-        self.compile_method(
-            format!("{trait_name}.{}", method.name),
-            method,
-            crate::evidence::Layout::Default,
-        )?;
+        self.compile_method(format!("{trait_name}.{}", method.name), method)?;
         let slot = self
             .globals
             .default_method(t, &resolve(method.name))
@@ -863,7 +857,6 @@ impl<'a> Compiler<'a> {
                     span,
                 )?;
                 self.hidden_params(tag);
-                (self.emitter()).evidence_owner(tag, crate::evidence::Layout::Scheme);
 
                 self.compile_params(&fn_decl.params, span)?;
 
@@ -973,15 +966,10 @@ impl<'a> Compiler<'a> {
                     return Ok(());
                 };
                 let type_name = self.type_info(ty).name.clone();
-                (self.globals).note_impl(t, ty, &type_name, &trait_impl.evidence);
 
                 for method in &trait_impl.methods {
                     let span = method.span;
-                    self.compile_method(
-                        format!("{type_name}.{}", method.name),
-                        method,
-                        crate::evidence::Layout::ImplMethod,
-                    )?;
+                    self.compile_method(format!("{type_name}.{}", method.name), method)?;
                     let slot = self
                         .globals
                         .method(t, ty, &resolve(method.name))
@@ -1355,7 +1343,6 @@ impl<'a> Compiler<'a> {
         if let Some(site) = &expr.ev
             && matches!(expr.kind, ExprKind::Ident(_) | ExprKind::FieldAccess(..))
         {
-            self.emitter().evidence_site(site);
             // It is passed its dictionaries: a `let` that is general in
             // a bound makes its value with them; a function, as a value,
             // has them bound (called, the call passes them).
@@ -1734,8 +1721,6 @@ impl<'a> Compiler<'a> {
                     None => return Err(checker_missed(span, "a closure outside any code")),
                 };
                 self.begin_function(name.clone(), params.len(), span)?;
-                self.emitter()
-                    .evidence_owner(span, crate::evidence::Layout::Scheme);
                 if let Some(closure) = self.contexts.last_mut() {
                     closure.closures = name;
                 }
@@ -2204,8 +2189,7 @@ impl<'a> Compiler<'a> {
                 let idx = self.add_constant(descriptor, span)?;
                 self.emit(Asm::Constant { k: idx }, span)?;
                 self.compile_operands(args.iter().copied())?;
-                let site = callee.ev.as_deref();
-                self.emit_call_method(*method, args.len() + 1, t, 0, tail, site, span)?;
+                self.emit_call_method(*method, args.len() + 1, t, 0, tail, span)?;
             } else if let (Some(TypeMember::Slot(_)), Some((tr, recv, own))) =
                 (&member, self.dict_call(callee))
             {
@@ -2217,18 +2201,12 @@ impl<'a> Compiler<'a> {
                 // `Pt.make(1)`, `m.Pt.make(1)`: a method reached
                 // through its type.
                 self.emit(Asm::GetGlobal { slot }, span)?;
-                if let Some(site) = &callee.ev {
-                    self.emitter().evidence_site(site);
-                }
                 self.compile_operands(args.iter().copied())?;
                 let argc = args.len();
                 self.emit_call(argc, tail, span)?;
             } else if let Some(def) = self.value_def(callee.res) {
                 // A module's function: `m.f(1)`.
                 self.emit_global_value(def, span)?;
-                if let Some(site) = &callee.ev {
-                    self.emitter().evidence_site(site);
-                }
                 let dicts = match (self.makes_its_value(callee), callee.ev.as_deref()) {
                     // (A `let` that is general in a bound: its value.)
                     (true, Some(crate::evidence::Site::Ref(bounds))) => {
@@ -2274,12 +2252,6 @@ impl<'a> Compiler<'a> {
         tail: bool,
     ) -> Result<(), Diagnostic> {
         use crate::ast::Selection;
-        #[cfg(debug_assertions)]
-        if let Some(selection) = callee.sel {
-            let function = self.emitter().name().to_string();
-            crate::vm::evidence::check_selection(selection, callee.ev.as_deref(), &function, span)
-                .map_err(|message| Diagnostic::error(Code::CompilerBug, span, message))?;
-        }
         // A method of a trait a program declares: through the dictionary
         // the evidence names, the impl's whether the checker knows it or
         // not.
@@ -2292,9 +2264,6 @@ impl<'a> Compiler<'a> {
                 if let Some(slot) = self.globals.method(tr, ty, &resolve(method)) =>
             {
                 self.emit(Asm::GetGlobal { slot }, span)?;
-                if let Some(site) = &callee.ev {
-                    self.emitter().evidence_site(site);
-                }
                 self.compile_operands(args.iter().copied())?;
                 self.emit_call(args.len(), tail, span)
             }
@@ -2303,13 +2272,11 @@ impl<'a> Compiler<'a> {
             Some(Selection::Dynamic { tr, at }) if usize::from(at) < args.len() => {
                 self.compile_operands(args.iter().copied())?;
                 let at = usize::from(at);
-                let site = callee.ev.as_deref();
-                self.emit_call_method(method, args.len(), tr, at, tail, site, span)
+                self.emit_call_method(method, args.len(), tr, at, tail, span)
             }
             Some(Selection::Impl { tr, .. } | Selection::Native { tr }) if !args.is_empty() => {
                 self.compile_operands(args.iter().copied())?;
-                let site = callee.ev.as_deref();
-                self.emit_call_method(method, args.len(), tr, 0, tail, site, span)
+                self.emit_call_method(method, args.len(), tr, 0, tail, span)
             }
             _ => Err(checker_missed(
                 span,
@@ -2352,8 +2319,7 @@ impl<'a> Compiler<'a> {
             // descriptor carries.
             Some(Selection::Dynamic { tr, .. }) => {
                 self.compile_operands(with_receiver)?;
-                let site = callee.ev.as_deref();
-                self.emit_call_method(method, args.len() + 1, tr, 0, tail, site, span)
+                self.emit_call_method(method, args.len() + 1, tr, 0, tail, span)
             }
             Some(Selection::Impl { .. } | Selection::Native { .. } | Selection::Field) | None => {
                 Err(checker_missed(
@@ -2794,7 +2760,6 @@ impl<'a> Compiler<'a> {
         t: crate::defs::TraitId,
         at: usize,
         tail: bool,
-        site: Option<&crate::evidence::Site>,
         span: Span,
     ) -> Result<(), Diagnostic> {
         let method = self
@@ -2825,9 +2790,6 @@ impl<'a> Compiler<'a> {
             },
         };
         self.emit(call, span)?;
-        if let Some(site) = site {
-            self.emitter().evidence_site(site);
-        }
         match tail {
             true => self.emit(Asm::Return, span),
             false => Ok(()),

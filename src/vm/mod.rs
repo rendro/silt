@@ -9,8 +9,6 @@ mod dicts;
 pub(crate) mod dispatch;
 mod encode;
 pub mod error;
-#[cfg(debug_assertions)]
-pub(crate) mod evidence;
 mod io;
 mod io_op;
 mod iter;

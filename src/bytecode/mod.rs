@@ -147,13 +147,6 @@ pub struct Globals {
     /// The slot of each dictionary a REPL entry left to a later one
     /// (`crate::evidence::Late`), which that one fills.
     pending: Layers<crate::evidence::Late, u16>,
-    /// In a debug build, what each impl proves of its type from its
-    /// header (`crate::vm::evidence`), and the name of its type, which a
-    /// message of the check writes.
-    #[cfg(debug_assertions)]
-    impls: Layers<(TraitId, TypeId), Arc<crate::evidence::ImplEvidence>>,
-    #[cfg(debug_assertions)]
-    impl_types: Layers<TypeId, String>,
 }
 
 impl Globals {
@@ -188,10 +181,6 @@ impl Globals {
             // (A slot a later entry fills stays: what it names of the
             // earlier entry's code is still there.)
             pending: self.pending.clone(),
-            #[cfg(debug_assertions)]
-            impls: before.impls.clone(),
-            #[cfg(debug_assertions)]
-            impl_types: before.impl_types.clone(),
         }
     }
 
@@ -249,48 +238,6 @@ impl Globals {
         let slot = self.add(format!("<pending dictionary {}>", late.id))?;
         self.pending.insert(late, slot);
         Some(slot)
-    }
-
-    /// What the impl of `t` for the type `ty`, named `name`, proves of
-    /// it from its header (debug builds only keep it).
-    pub fn note_impl(
-        &mut self,
-        t: TraitId,
-        ty: TypeId,
-        name: &str,
-        evidence: &crate::evidence::ImplEvidence,
-    ) {
-        #[cfg(debug_assertions)]
-        {
-            self.impls.insert((t, ty), Arc::new(evidence.clone()));
-            if self.impl_types.get(&ty).is_none() {
-                self.impl_types.insert(ty, name.to_string());
-            }
-        }
-        #[cfg(not(debug_assertions))]
-        let _ = (t, ty, name, evidence);
-    }
-
-    /// What the impl of `t` for `ty` proves of its type.
-    #[cfg(debug_assertions)]
-    pub(crate) fn impl_evidence(
-        &self,
-        t: TraitId,
-        ty: TypeId,
-    ) -> Option<&crate::evidence::ImplEvidence> {
-        self.impls.get(&(t, ty)).map(Arc::as_ref)
-    }
-
-    /// The name of a type an impl in the program is for.
-    #[cfg(debug_assertions)]
-    pub(crate) fn impl_type_name(&self, ty: TypeId) -> Option<&str> {
-        self.impl_types.get(&ty).map(String::as_str)
-    }
-
-    /// The name of the trait `t`, if a call names it.
-    #[cfg(debug_assertions)]
-    pub(crate) fn trait_named(&self, t: TraitId) -> Option<&str> {
-        self.trait_name(*self.trait_indexes.get(&t)?)
     }
 
     /// The number of slots.
@@ -773,11 +720,6 @@ pub struct Function {
     /// whose dictionary a call leaves in the slot of the callee
     /// (`Instr::FrameDict`).
     dict_slot: bool,
-    /// In a debug build, the trait evidence of the function's code
-    /// (`crate::vm::evidence`): none for code that passes none on and
-    /// is no definition with bounds.
-    #[cfg(debug_assertions)]
-    evidence: Option<Box<crate::evidence::FnEvidence>>,
 }
 
 impl Function {
@@ -826,12 +768,6 @@ impl Function {
         &self.chunk
     }
 
-    /// The trait evidence of the function's code.
-    #[cfg(debug_assertions)]
-    pub(crate) fn evidence(&self) -> Option<&crate::evidence::FnEvidence> {
-        self.evidence.as_deref()
-    }
-
     /// The function `name` of no parameters made of `code` and
     /// `constants` as they are, which silt writes itself.
     pub(crate) fn of_code(name: String, code: Vec<u8>, constants: Vec<Value>) -> Self {
@@ -847,8 +783,6 @@ impl Function {
             },
             hidden: 0,
             dict_slot: false,
-            #[cfg(debug_assertions)]
-            evidence: None,
         }
     }
 
@@ -873,8 +807,6 @@ impl Function {
             },
             hidden: 0,
             dict_slot: false,
-            #[cfg(debug_assertions)]
-            evidence: None,
         }
     }
 }
@@ -908,10 +840,6 @@ pub struct VmClosure {
     /// What a call of it is given before its arguments: the dictionaries
     /// of a definition with bounds used as a value (`Instr::Bind`).
     pub bound: Box<[Value]>,
-    /// In a debug build, the trait evidence the closure's body sees
-    /// (`crate::vm::evidence`).
-    #[cfg(debug_assertions)]
-    pub(crate) ev: Option<Arc<crate::vm::evidence::Env>>,
 }
 
 impl VmClosure {
@@ -921,8 +849,6 @@ impl VmClosure {
             function,
             upvalues,
             bound: Box::default(),
-            #[cfg(debug_assertions)]
-            ev: None,
         }
     }
 }
