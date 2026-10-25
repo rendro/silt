@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- The same taken as a value.
+-- stderr-contains: error[type]: type 'Int' has no method 'conv'
+trait Conv(b) { fn conv(self) -> b }
+trait Conv(String) for Int { fn conv(self) -> String { "s{self}" } }
+trait Conv(Bool) for Int { fn conv(self) -> Bool { self > 0 } }
+fn main() {
+  let f: Fn(Int) -> String = Int.conv
+  println(f(3))
+}

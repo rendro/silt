@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- A method that takes a value of its type, called on the type, is refused as
+-- with one impl, whatever the number of the type's impls of the trait.
+-- stderr-contains: error[type]: type 'Int' has no method 'conv'
+-- stderr-contains: = help: `conv` is a method of trait `Conv`: call it as `Conv.conv(x)`
+trait Conv(b) { fn conv(self) -> b }
+trait Conv(String) for Int { fn conv(self) -> String { "s{self}" } }
+trait Conv(Bool) for Int { fn conv(self) -> Bool { self > 0 } }
+fn main() {
+  let s: String = Int.conv(3)
+  let b: Bool = Int.conv(-3)
+  println("{s} {b}")
+}

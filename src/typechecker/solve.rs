@@ -2391,7 +2391,16 @@ impl TypeChecker {
         if self.unreached(tr).is_some() {
             return None;
         }
-        match self.tables.impl_methods.get(ty, method, tr) {
+        // (Of a trait with impls for the type at several trait arguments,
+        // one of them: what the rows say of the method, its trait and its
+        // `self`, is the same in each; which impl a use reaches its trait
+        // arguments say, `trait_of_impls_by_args`.)
+        let rows = self.tables.impl_methods.args_of(ty, method, tr);
+        let row = match rows.first() {
+            Some(args) => self.tables.impl_methods.get_at(ty, method, tr, *args),
+            None => self.tables.impl_methods.get(ty, method, tr),
+        };
+        match row {
             Some(entry) => Some(entry.clone()),
             // The structural trait's: no row, and no type of its own
             // (`structural_method` gives it one for the receiver).
