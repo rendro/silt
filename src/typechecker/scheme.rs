@@ -571,8 +571,13 @@ impl TypeChecker {
                     mapping.extend(info.param_var_ids.iter().copied().zip(impl_args.clone()));
                     Some(self.show_type(&substitute_vars(ty, &mapping)))
                 });
+                // (Named as the `let` names it, if one does.)
+                let name = (self.method_value_lets.get(&origin.span))
+                    .map_or_else(|| "f".to_string(), |name| name.to_string());
                 match shown {
-                    Some(ty) => format!("annotate the function's type: `let f: {ty} = {written}`"),
+                    Some(ty) => {
+                        format!("annotate the function's type: `let {name}: {ty} = {written}`")
+                    }
                     None => "annotate the function's type".to_string(),
                 }
             }

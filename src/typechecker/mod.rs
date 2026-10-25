@@ -202,6 +202,8 @@ pub struct TypeChecker {
     /// The accesses `x.m` that are no callee, by their span, as written:
     /// for a message about a method taken as a value.
     pub(super) method_values: HashMap<Span, String>,
+    /// The name a `let` binds such an access to, by the access's span.
+    pub(super) method_value_lets: HashMap<Span, Symbol>,
     /// The receiver and the name of the callee just checked, when it is
     /// `x.m` and the type of `x` is unknown: `check_call` lets the call
     /// wait (`Goal::Select`).
@@ -453,6 +455,7 @@ impl TypeChecker {
             passing_on: None,
             callee_position: false,
             method_values: HashMap::new(),
+            method_value_lets: HashMap::new(),
             unknown_receiver: None,
             current_qmark_spans: Vec::new(),
             qmark_decided: HashMap::new(),
@@ -1301,6 +1304,10 @@ impl TypeChecker {
         let is_value = self.is_syntactic_value(value);
         if let (PatternKind::Ident(name), ExprKind::Lambda { .. }) = (&pattern.kind, &value.kind) {
             self.frame_owner = Some(unused::FrameOwner::TopLevel(*name));
+        }
+        if let (PatternKind::Ident(name), ExprKind::FieldAccess(..)) = (&pattern.kind, &value.kind)
+        {
+            self.method_value_lets.insert(value.span, *name);
         }
         let mut val_ty = self.infer_expr(value, env);
         if let Some(te) = ty {

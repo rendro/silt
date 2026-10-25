@@ -3831,6 +3831,11 @@ impl TypeChecker {
         match stmt {
             Stmt::Let { pattern, ty, value } => {
                 let value_span = value.span;
+                if let (PatternKind::Ident(name), ExprKind::FieldAccess(..)) =
+                    (&pattern.kind, &value.kind)
+                {
+                    self.method_value_lets.insert(value_span, *name);
+                }
                 // A `let` generalises only a syntactic value: its value is
                 // then checked one level deeper, and the variables left
                 // at that level are the ones to quantify.
