@@ -592,7 +592,7 @@ impl TypeChecker {
             Type::Fun(params, _) => (params.iter()).find(|param| mentions_param(param)),
             _ => None,
         });
-        let passed = passed.and_then(|param| at_example(param));
+        let passed = passed.and_then(&at_example);
         let statement = (args.iter()).any(
             |arg| matches!(self.apply(arg), Type::Var(v) if self.statement_trait_args.contains(&v)),
         );
