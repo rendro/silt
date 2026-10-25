@@ -1,0 +1,24 @@
+-- Impls of a trait with a parameter are told apart by their whole trait
+-- arguments: `From(List(Int))` and `From(List(String))` are two impls, a
+-- pair and a triple are two, functions of one and of two parameters are
+-- two; a use reaches the one its argument could be.
+import list
+trait From(e) { fn from(source: e) -> Self }
+type A { A(String) }
+fn sh(a: A) -> String { match a { A(s) -> s } }
+trait From(List(Int)) for A { fn from(e: List(Int)) -> A { A("ints {list.length(e)}") } }
+trait From(List(String)) for A { fn from(e: List(String)) -> A { A("strings {list.length(e)}") } }
+trait From((Int, Int)) for A { fn from(e: (Int, Int)) -> A { A("pair") } }
+trait From((Int, Int, Int)) for A { fn from(e: (Int, Int, Int)) -> A { A("triple") } }
+trait From(Fn(Int) -> Int) for A { fn from(e: Fn(Int) -> Int) -> A { A("f1 {e(1)}") } }
+trait From(Fn(Int, Int) -> Int) for A { fn from(e: Fn(Int, Int) -> Int) -> A { A("f2 {e(1, 2)}") } }
+fn main() {
+  println(sh(A.from([1, 2])))
+  println(sh(A.from(["a"])))
+  println(sh(A.from((1, 2))))
+  println(sh(A.from((1, 2, 3))))
+  println(sh(A.from({ x -> x + 1 })))
+  println(sh(A.from({ x, y -> x + y })))
+  let f: Fn(List(String)) -> A = A.from
+  println(sh(f(["x", "y"])))
+}

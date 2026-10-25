@@ -296,7 +296,7 @@ pub struct TypeChecker {
     /// The signature of each method written in an impl of the module, as
     /// its body sees it, by the impl's type, the method and the trait,
     /// until the body is checked.
-    pub(super) impl_sigs: HashMap<(TypeRef, Symbol, TraitKey, ArgHeads), FnSig>,
+    pub(super) impl_sigs: HashMap<(TypeRef, Symbol, TraitKey, ImplArgs), FnSig>,
     /// Set by the inference of a call through a trait (`Greet.greet(x)`)
     /// whose argument of type `Self` was checked with the callee
     /// (`trait_receiver`): read by `check_call` right after the callee,
@@ -317,9 +317,9 @@ pub struct TypeChecker {
     /// The type variables of each impl this module writes, by the names
     /// its header gives them (`trait Same for Box(a)`).
     pub(super) impl_var_names: HashMap<ImplKey, Vec<(TyVar, Symbol)>>,
-    /// The heads of the trait arguments of each impl the module writes,
-    /// by the impl's span (`impl_arg_heads_of`).
-    pub(super) impl_heads: HashMap<Span, ArgHeads>,
+    /// The key of the trait arguments of each impl the module writes,
+    /// by the impl's span (`impl_args_key_of`).
+    pub(super) impl_args_keys: HashMap<Span, ImplArgs>,
     /// The names the module binds definitions of other modules to (an
     /// item it imports, `import shapes.{ Area }`), for a help that
     /// writes one as the module does.
@@ -496,7 +496,7 @@ impl TypeChecker {
             ev: evidence::Ledger::default(),
             trait_receiver: None,
             impl_var_names: HashMap::new(),
-            impl_heads: HashMap::new(),
+            impl_args_keys: HashMap::new(),
             spelled: HashMap::new(),
             module_spelled: HashMap::new(),
             seen_traits: std::collections::HashSet::new(),
@@ -1396,21 +1396,21 @@ impl TypeChecker {
                     else {
                         continue;
                     };
-                    let heads = self.impl_arg_heads_of(ti);
+                    let args = self.impl_args_key_of(ti);
                     for method in ti.methods.iter_mut() {
                         let Some(sig) =
-                            (self.impl_sigs).remove(&(target, method.name, trait_key, heads))
+                            (self.impl_sigs).remove(&(target, method.name, trait_key, args))
                         else {
                             continue;
                         };
                         // (A parser-recovery stub's empty body is not
                         // user code, here as for a function.)
                         if !method.is_recovery_stub {
-                            let owner = impl_owner((trait_key, target, heads));
+                            let owner = impl_owner((trait_key, target, args));
                             self.body_owner =
                                 Some(builtin_needs::body_key(trait_key, &owner, method.name));
                             let bounds = self.method_body_bounds(
-                                (trait_key, target, heads),
+                                (trait_key, target, args),
                                 method.name,
                                 &sig.bounds,
                             );

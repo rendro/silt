@@ -12,7 +12,7 @@ use std::hash::{BuildHasherDefault, Hasher};
 use std::sync::Arc;
 
 use crate::builtins::registry::BuiltinId;
-use crate::defs::{ArgHeads, DefId, TraitId, TypeId};
+use crate::defs::{DefId, ImplArgs, TraitId, TypeId};
 use crate::layers::{Layers, Rows};
 use crate::source::Span;
 use crate::typeinfo::TypeInfo;
@@ -116,11 +116,11 @@ pub struct Globals {
     /// is for and the id of the method's name.
     methods: Layers<(TraitId, TypeId, u16), u16, BuildHasherDefault<MethodHasher>>,
     /// The slot of each method of an impl of a trait with parameters at
-    /// its trait arguments (`ArgHeads`; a trait has an impl for a type at
-    /// each): by the trait, the type, the heads of the trait arguments
+    /// its trait arguments (`ImplArgs`; a trait has an impl for a type at
+    /// each): by the trait, the type, the trait arguments
     /// and the id of the method's name. A call reaches it through the
     /// impl's dictionary only.
-    arg_methods: Layers<(TraitId, TypeId, ArgHeads, u16), u16>,
+    arg_methods: Layers<(TraitId, TypeId, ImplArgs, u16), u16>,
     /// The default methods of each trait: the body the trait writes,
     /// compiled once, by the trait and the method's place among the
     /// trait's default methods, with the method's name. An impl that
@@ -146,7 +146,7 @@ pub struct Globals {
     trait_methods: Layers<TraitId, Arc<[(String, Option<u8>)]>>,
     /// The dictionary template of each impl of a trait a program
     /// declares (`dict`).
-    templates: Layers<(TraitId, TypeId, ArgHeads), Arc<dict::Template>>,
+    templates: Layers<(TraitId, TypeId, ImplArgs), Arc<dict::Template>>,
     /// The templates by their places (`dict::Template::index`): what a
     /// dictionary of an impl whose header asks nothing names.
     template_rows: Rows<Arc<dict::Template>>,
@@ -214,7 +214,7 @@ impl Globals {
 
     /// The dictionary template of the impl of `t` for `ty` at the trait
     /// arguments `args`.
-    pub fn template(&self, t: TraitId, ty: TypeId, args: ArgHeads) -> Option<&Arc<dict::Template>> {
+    pub fn template(&self, t: TraitId, ty: TypeId, args: ImplArgs) -> Option<&Arc<dict::Template>> {
         self.templates.get(&(t, ty, args))
     }
 
@@ -264,8 +264,8 @@ impl Globals {
 
     /// The slot of the method `method` of the impl of the trait `t` for
     /// the type `ty` at the trait arguments `args`.
-    pub fn method_at(&self, t: TraitId, ty: TypeId, args: ArgHeads, method: &str) -> Option<u16> {
-        if args == ArgHeads::none() {
+    pub fn method_at(&self, t: TraitId, ty: TypeId, args: ImplArgs, method: &str) -> Option<u16> {
+        if args == ImplArgs::none() {
             return self.method(t, ty, method);
         }
         let method = *self.method_ids.get(method)?;
@@ -436,11 +436,11 @@ impl Globals {
         &mut self,
         t: TraitId,
         ty: TypeId,
-        args: ArgHeads,
+        args: ImplArgs,
         method: &str,
         slot: u16,
     ) -> Option<()> {
-        if args == ArgHeads::none() {
+        if args == ImplArgs::none() {
             return self.default_for(t, ty, method, slot);
         }
         if self.method_at(t, ty, args, method).is_none() {
@@ -469,11 +469,11 @@ impl Globals {
         &mut self,
         t: TraitId,
         ty: TypeId,
-        args: ArgHeads,
+        args: ImplArgs,
         method: &str,
         name: String,
     ) -> Option<u16> {
-        if args == ArgHeads::none() {
+        if args == ImplArgs::none() {
             return self.add_method(t, ty, method, name);
         }
         if let Some(slot) = self.method_at(t, ty, args, method) {

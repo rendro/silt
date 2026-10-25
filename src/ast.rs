@@ -813,9 +813,13 @@ pub struct TraitImpl {
     /// header: its trait's supertraits, the `where` clauses on the
     /// trait's parameters; written by the typechecker.
     pub evidence: crate::evidence::ImplEvidence,
-    /// The heads of its trait arguments, its key beside its trait and
-    /// type (`crate::defs::ArgHeads`); written by the typechecker.
-    pub arg_heads: crate::defs::ArgHeads,
+    /// Its trait arguments, its key beside its trait and type
+    /// (`crate::defs::ImplArgs`); written by the typechecker.
+    pub args_key: crate::defs::ImplArgs,
+    /// Its trait arguments as a message writes them (`(List(Int))`;
+    /// nothing for a trait of no parameters), which name its dictionary;
+    /// written by the typechecker.
+    pub shown_args: String,
 }
 
 #[derive(Debug, Clone)]

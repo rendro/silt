@@ -21,7 +21,7 @@ pub(super) enum EvNode {
     Impl {
         tr: TraitKey,
         ty: TypeRef,
-        args: ArgHeads,
+        args: ImplArgs,
         subs: Vec<EvId>,
     },
     /// A bound of the variable `var` of an enclosing definition, by a
@@ -494,7 +494,7 @@ impl TypeChecker {
         }
         // (The impl of the trait arguments: they are decided here, the
         // arguments of an impl's header.)
-        let at = (self.use_arg_heads(args)).and_then(|heads| self.tables.impl_at(tr, head, heads));
+        let at = self.impl_reached(tr, head, args);
         let Some(key) = at.or_else(|| self.tables.one_impl(tr, head)) else {
             return Evidence::Missing;
         };
@@ -601,10 +601,18 @@ impl TypeChecker {
                 }
                 Decl::TraitImpl(ti) => {
                     if let (Some(target), Some(tr)) = (self.impl_target(ti), self.impl_trait(ti)) {
-                        let heads =
-                            (self.impl_heads.get(&ti.span).copied()).unwrap_or_else(ArgHeads::none);
-                        ti.arg_heads = heads;
-                        let key = (tr, target, heads);
+                        let args = (self.impl_args_keys.get(&ti.span).copied())
+                            .unwrap_or_else(ImplArgs::none);
+                        ti.args_key = args;
+                        let key = (tr, target, args);
+                        ti.shown_args = match self.tables.impl_trait_args.get(&key) {
+                            Some(written) if !written.is_empty() => {
+                                let shown: Vec<String> =
+                                    written.iter().map(|arg| self.show_type(arg)).collect();
+                                format!("({})", shown.join(", "))
+                            }
+                            _ => String::new(),
+                        };
                         ti.evidence = self.impl_evidence(key);
                         // A method of a program trait's impl takes the
                         // impl's dictionary, then those of the bounds the

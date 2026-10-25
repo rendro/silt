@@ -31,53 +31,25 @@ pub struct TypeId(pub DefId);
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
 pub struct TraitId(pub DefId);
 
-/// The heads of the trait arguments of an impl, as one key beside its
-/// trait and the head of its type: an impl of a trait for a type is one
-/// of its trait arguments (`From(io.IoError) for AppError` and
-/// `From(json.JsonError) for AppError` are two). A trait of no
-/// parameters has [`ArgHeads::none`]; a trait argument that is a type
-/// variable (`From(e)`) is every head.
+/// The trait arguments of an impl, in full, as one key beside its trait
+/// and the head of its type: an impl of a trait for a type is one of its
+/// trait arguments (`From(List(Int)) for A` and `From(List(String)) for
+/// A` are two). The key is the arguments' canonical text, which the
+/// typechecker writes (aliases expanded, the impl's type variables
+/// numbered as they first appear); a trait of no parameters has
+/// [`ImplArgs::none`].
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-pub struct ArgHeads(crate::intern::Symbol);
+pub struct ImplArgs(crate::intern::Symbol);
 
-impl ArgHeads {
+impl ImplArgs {
     /// The key of the impls of a trait of no parameters.
-    pub fn none() -> ArgHeads {
-        ArgHeads(crate::intern::intern(""))
+    pub fn none() -> ImplArgs {
+        ImplArgs(crate::intern::intern(""))
     }
 
-    /// The key of the trait arguments whose heads are `heads` (`None`: a
-    /// type variable, every head).
-    pub fn of(heads: impl IntoIterator<Item = Option<TypeId>>) -> ArgHeads {
-        let parts: Vec<String> = (heads.into_iter())
-            .map(|head| head.map_or_else(|| "_".to_string(), |ty| ty.0.0.to_string()))
-            .collect();
-        ArgHeads(crate::intern::intern(&parts.join(",")))
-    }
-
-    /// The head of each trait argument (`None`: every head).
-    pub fn heads(self) -> Vec<Option<TypeId>> {
-        let text = crate::intern::resolve(self.0);
-        if text.is_empty() {
-            return Vec::new();
-        }
-        (text.split(','))
-            .map(|part| part.parse().ok().map(|n| TypeId(DefId(n))))
-            .collect()
-    }
-
-    /// Whether an impl of the key `self` and one of `other` are for one
-    /// trait argument: at each place the heads are one, or one of them is
-    /// every head.
-    pub fn meets(self, other: ArgHeads) -> bool {
-        let (mine, theirs) = (self.heads(), other.heads());
-        mine.len() == theirs.len()
-            && (mine.iter().zip(&theirs)).all(|(a, b)| a.is_none() || b.is_none() || a == b)
-    }
-
-    /// Whether every place has a head of its own (no type variable).
-    pub fn is_exact(self) -> bool {
-        self.heads().iter().all(Option::is_some)
+    /// The key of the trait arguments whose canonical text is `text`.
+    pub fn of(text: &str) -> ImplArgs {
+        ImplArgs(crate::intern::intern(text))
     }
 }
 

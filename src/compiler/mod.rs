@@ -592,7 +592,7 @@ impl<'a> Compiler<'a> {
                 .add_method_at(
                     t,
                     ty,
-                    ti.arg_heads,
+                    ti.args_key,
                     &resolve(method.name),
                     format!("{type_name}.{}", method.name),
                 )
@@ -605,7 +605,7 @@ impl<'a> Compiler<'a> {
                 .any(|written| resolve(written.name) == method)
             {
                 globals
-                    .default_for_at(t, ty, ti.arg_heads, &method, slot)
+                    .default_for_at(t, ty, ti.args_key, &method, slot)
                     .ok_or_else(|| too_many_method_names(ti.trait_name_span))?;
             }
         }
@@ -976,7 +976,7 @@ impl<'a> Compiler<'a> {
                     self.compile_method(format!("{type_name}.{}", method.name), method)?;
                     let slot = self
                         .globals
-                        .method_at(t, ty, trait_impl.arg_heads, &resolve(method.name))
+                        .method_at(t, ty, trait_impl.args_key, &resolve(method.name))
                         .ok_or_else(|| checker_missed(span, "an impl method with no slot"))?;
                     self.emit(Asm::SetGlobal { slot }, span)?;
                     self.emit(Asm::Pop, span)?;

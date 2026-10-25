@@ -545,8 +545,10 @@ impl TypeChecker {
         // argument), and the method's type at them.
         let subject_ty = self.apply(subject);
         let at_impl: Option<Vec<Type>> = (self.type_name_for_impl(&subject_ty)).and_then(|head| {
-            let at = (self.tables.impl_args_of(tr, head).iter()).find(|heads| heads.is_exact())?;
-            self.tables.impl_trait_args.get(&(tr, head, *at)).cloned()
+            (self.tables.impl_args_of(tr, head).iter())
+                .filter_map(|at| self.tables.impl_trait_args.get(&(tr, head, *at)))
+                .find(|args| args.iter().all(|arg| free_vars_in(arg).is_empty()))
+                .cloned()
         });
         let example = match &at_impl {
             Some(impl_args) => self.show_bound(tr, impl_args),

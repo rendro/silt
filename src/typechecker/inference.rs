@@ -559,7 +559,7 @@ impl TypeChecker {
     fn type_method_site(&mut self, head: TypeRef, entry: &MethodEntry, method: Symbol, span: Span) {
         let owed = self.ev.use_ev.take().unwrap_or_default();
         if let Some(tr) = self.entry_trait(entry, method) {
-            let key = (self.tables.one_impl(tr, head)).unwrap_or((tr, head, ArgHeads::none()));
+            let key = (self.tables.one_impl(tr, head)).unwrap_or((tr, head, ImplArgs::none()));
             let site = self.method_site(key, method, owed);
             self.ev.calls.insert(span, site);
         }
@@ -913,7 +913,7 @@ impl TypeChecker {
                 // The impl's header's predicates come first among the
                 // method's.
                 let owed = self.ev.use_ev.take().unwrap_or_default();
-                let key = (self.tables.one_impl(tr, head)).unwrap_or((tr, head, ArgHeads::none()));
+                let key = (self.tables.one_impl(tr, head)).unwrap_or((tr, head, ImplArgs::none()));
                 let site = self.method_site(key, field, owed);
                 self.ev.calls.insert(span, site);
                 if let Type::Fun(params, _) = &ty

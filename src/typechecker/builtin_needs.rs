@@ -303,8 +303,7 @@ impl TypeChecker {
         let args: Vec<Type> = (info.param_var_ids.iter())
             .map(|v| mapping.get(v).cloned().unwrap_or(Type::Var(*v)))
             .collect();
-        let heads = self.use_arg_heads(&args)?;
-        let (_, _, at) = self.tables.impl_at(tr, head, heads)?;
+        let (_, _, at) = self.impl_reached(tr, head, &args)?;
         self.tables.impl_methods.get_at(head, method, tr, at)
     }
 

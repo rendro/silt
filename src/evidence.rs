@@ -22,13 +22,13 @@ pub const IMPL_HEADER: Span = Span::BUILTIN;
 /// What proves that a type implements a trait.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Evidence {
-    /// The impl of `tr` for the head `ty` at the trait arguments of the
-    /// heads `args`, with the evidence of each predicate its header asks
+    /// The impl of `tr` for the head `ty` at the trait arguments `args`,
+    /// with the evidence of each predicate its header asks
     /// (`where a: Greet`), in order.
     Impl {
         tr: TraitId,
         ty: TypeId,
-        args: crate::defs::ArgHeads,
+        args: crate::defs::ImplArgs,
         subs: Vec<Evidence>,
     },
     /// The bound `k` of the enclosing definition `owner`.

@@ -247,41 +247,88 @@ impl TypeChecker {
     /// (`trait Greet for Box(a) where a: Greet`) is owed in turn, by the
     /// same use: checked here if the part is known, waiting like any
     /// predicate if it is not.
-    /// The heads of the trait arguments `args` of a use (`ArgHeads`),
-    /// once each is decided: none while one is a type variable nothing
-    /// has decided. (A rigid variable is some type: every head, which the
-    /// impl's own trait argument is checked against.)
-    pub(super) fn use_arg_heads(&self, args: &[Type]) -> Option<ArgHeads> {
-        let mut heads = Vec::with_capacity(args.len());
-        for arg in args {
-            let arg =
-                crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(arg));
-            heads.push(match arg {
-                Type::Var(_) => return None,
-                Type::Rigid(_) | Type::Error | Type::Never => None,
-                arg => self.type_name_for_impl(&arg).map(|head| head.id),
-            });
+    /// The key of the trait arguments `args` of an impl (`ImplArgs`):
+    /// their canonical text, aliases expanded, each type variable
+    /// numbered as it first appears.
+    pub(super) fn impl_args_key(&self, args: &[Type]) -> ImplArgs {
+        if args.is_empty() {
+            return ImplArgs::none();
         }
-        Some(ArgHeads::of(heads))
+        let mut vars: Vec<TyVar> = Vec::new();
+        let parts: Vec<String> = (args.iter())
+            .map(|arg| {
+                let arg =
+                    crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(arg));
+                key_text(&arg, &mut vars)
+            })
+            .collect();
+        ImplArgs::of(&parts.join(","))
     }
 
-    /// Whether `subject: tr(args)` waits for its trait arguments: nothing
-    /// has decided them yet, and the subject's type has impls of the trait
-    /// at several, so which impl the use reaches is not known.
+    /// Whether the types `a` and `b` could be one: unified each with a
+    /// substitution of its own (no variable of the session is bound),
+    /// aliases expanded. The substitution, if they could.
+    pub(super) fn could_unify(&self, a: &[Type], b: &[Type]) -> Option<HashMap<TyVar, Type>> {
+        if a.len() != b.len() {
+            return None;
+        }
+        let canon = |ty: &Type| {
+            crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(ty))
+        };
+        let mut subst: HashMap<TyVar, Type> = HashMap::new();
+        (a.iter().zip(b))
+            .all(|(a, b)| probe_unify(&canon(a), &canon(b), &mut subst))
+            .then_some(subst)
+    }
+
+    /// The impls of `tr` for the type `head` whose trait arguments could
+    /// be the use's `args`.
+    pub(super) fn impls_fitting(&self, tr: TraitKey, head: TypeRef, args: &[Type]) -> Vec<ImplKey> {
+        (self.tables.impl_args_of(tr, head).iter())
+            .map(|key| (tr, head, *key))
+            .filter(|key| {
+                let written = (self.tables.impl_trait_args.get(key)).map_or(&[][..], Vec::as_slice);
+                args.is_empty() || written.is_empty() || self.could_unify(args, written).is_some()
+            })
+            .collect()
+    }
+
+    /// The impl of `tr` for the type `head` a use at the trait arguments
+    /// `args` reaches: the one impl whose trait arguments could be the
+    /// use's. None where none could, or several still could.
+    pub(super) fn impl_reached(
+        &self,
+        tr: TraitKey,
+        head: TypeRef,
+        args: &[Type],
+    ) -> Option<ImplKey> {
+        match self.impls_fitting(tr, head, args).as_slice() {
+            [key] => Some(*key),
+            _ => None,
+        }
+    }
+
+    /// Whether a trait argument of a use is a type variable nothing has
+    /// decided yet.
+    pub(super) fn trait_args_open(&self, args: &[Type]) -> bool {
+        (args.iter()).any(|arg| matches!(self.apply(arg), Type::Var(_)))
+    }
+
+    /// Whether `subject: tr(args)` waits for its trait arguments: the
+    /// impls of the trait for the subject's type that could be the use's
+    /// are several (or one the module wrote twice, while an argument is
+    /// open), so which impl the use reaches is not known yet.
     pub(super) fn waits_for_trait_args(&self, tr: TraitKey, subject: &Type, args: &[Type]) -> bool {
-        if args.is_empty() || self.use_arg_heads(args).is_some() {
+        if args.is_empty() || (args.iter()).any(|arg| matches!(self.apply(arg), Type::Error)) {
             return false;
         }
         let subject =
             crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(subject));
-        (self.type_name_for_impl(&subject)).is_some_and(|head| self.several_impls(tr, head))
-    }
-
-    /// Whether the type `head` has impls of `tr` at several trait
-    /// arguments, or one the module wrote twice (which it meant is
-    /// unknown).
-    pub(super) fn several_impls(&self, tr: TraitKey, head: TypeRef) -> bool {
-        self.tables.impl_args_of(tr, head).len() > 1 || self.duplicated_impls.contains(&(tr, head))
+        let Some(head) = self.type_name_for_impl(&subject) else {
+            return false;
+        };
+        (self.duplicated_impls.contains(&(tr, head)) && self.trait_args_open(args))
+            || self.impls_fitting(tr, head, args).len() > 1
     }
 
     pub(super) fn solve_wanted(&mut self, from: usize) {
@@ -1865,30 +1912,19 @@ impl TypeChecker {
             }
             return;
         }
-        // The impl of the trait arguments: the one written for their
-        // heads; while they are undecided, the trait's one impl for the
-        // type, which decides them. (A use waits for them where the type
-        // has several: `waits_for_trait_args`.)
-        let heads = self.use_arg_heads(bound_trait_args);
+        // The impl of the trait arguments: the one whose own could be the
+        // use's. (A use waits where several could: `waits_for_trait_args`.)
+        let fitting = self.impls_fitting(trait_name, type_name, bound_trait_args);
         // (A trait argument that is a type variable is some type: only an
         // impl for every argument at its place is for it.)
-        let rigid: Vec<bool> = (bound_trait_args.iter())
-            .map(|arg| matches!(self.apply(arg), Type::Rigid(_)))
-            .collect();
-        let for_rigid = |written: ArgHeads| {
-            (written.heads().iter().zip(&rigid)).all(|(head, rigid)| !*rigid || head.is_none())
-        };
-        let at = heads
-            .and_then(|heads| self.tables.impl_at(trait_name, type_name, heads))
-            .filter(|key| for_rigid(key.2));
-        let key = match (at, heads) {
-            (Some(key), _) => Some(key),
-            (None, None) => self.tables.one_impl(trait_name, type_name),
+        let rigid = (bound_trait_args.iter()).any(|arg| matches!(self.apply(arg), Type::Rigid(_)));
+        let key = match fitting.as_slice() {
+            [key, ..] => Some(*key),
             // Of a trait argument that is a type variable, no impl.
-            (None, Some(_)) if rigid.contains(&true) => None,
-            // One impl, at another trait argument: its own is reported
+            [] if rigid => None,
+            // One impl, at other trait arguments: its own are reported
             // below, as the matched impl.
-            (None, Some(_)) => self.tables.one_impl(trait_name, type_name),
+            [] => self.tables.one_impl(trait_name, type_name),
         };
         if key.is_none() && !self.tables.impl_args_of(trait_name, type_name).is_empty() {
             let message = format!(
@@ -1899,10 +1935,10 @@ impl TypeChecker {
             self.error(Code::MissingTraitImpl, message, span);
             return;
         }
-        let impl_args = key.map_or_else(ArgHeads::none, |key| key.2);
+        let impl_args = key.map_or_else(ImplArgs::none, |key| key.2);
         // The impl, with new variables for its own: its self type, its
         // trait arguments and what its header asks.
-        let lookup = key.unwrap_or((trait_name, type_name, ArgHeads::none()));
+        let lookup = key.unwrap_or((trait_name, type_name, ImplArgs::none()));
         let impl_self = self.tables.impl_self_types.get(&lookup).cloned();
         let impl_trait_args = (self.tables.impl_trait_args.get(&lookup))
             .cloned()
@@ -2475,5 +2511,77 @@ impl TypeChecker {
             )];
         }
         true
+    }
+}
+
+/// The canonical text of the type `ty` in an impl's key: type
+/// constructors by their definitions, each type variable by the place it
+/// first appears in `vars`.
+fn key_text(ty: &Type, vars: &mut Vec<TyVar>) -> String {
+    let all = |tys: &[Type], vars: &mut Vec<TyVar>| -> String {
+        let parts: Vec<String> = tys.iter().map(|ty| key_text(ty, vars)).collect();
+        parts.join(",")
+    };
+    let var = |v: TyVar, vars: &mut Vec<TyVar>| -> String {
+        let at = vars.iter().position(|seen| *seen == v).unwrap_or_else(|| {
+            vars.push(v);
+            vars.len() - 1
+        });
+        format!("_{at}")
+    };
+    match ty {
+        Type::Var(v) => var(*v, vars),
+        Type::Rigid(r) => var(r.var, vars),
+        Type::Generic(name, args) => format!("{:?}({})", name.id, all(args, vars)),
+        Type::Fun(params, ret) => format!("Fn({})->{}", all(params, vars), key_text(ret, vars)),
+        Type::Tuple(parts) => format!("({})", all(parts, vars)),
+        Type::List(x) => format!("List({})", key_text(x, vars)),
+        Type::Set(x) => format!("Set({})", key_text(x, vars)),
+        Type::Channel(x) => format!("Channel({})", key_text(x, vars)),
+        Type::Map(k, v) => format!("Map({},{})", key_text(k, vars), key_text(v, vars)),
+        other => format!("{other:?}"),
+    }
+}
+
+/// Unify `a` and `b` in the substitution `subst` alone (`could_unify`).
+fn probe_unify(a: &Type, b: &Type, subst: &mut HashMap<TyVar, Type>) -> bool {
+    let resolve = |ty: &Type, subst: &HashMap<TyVar, Type>| {
+        let mut ty = ty.clone();
+        while let Type::Var(v) = ty
+            && let Some(bound) = subst.get(&v)
+        {
+            ty = bound.clone();
+        }
+        ty
+    };
+    let (a, b) = (resolve(a, subst), resolve(b, subst));
+    let all = |xs: &[Type], ys: &[Type], subst: &mut HashMap<TyVar, Type>| {
+        xs.len() == ys.len() && (xs.iter().zip(ys)).all(|(x, y)| probe_unify(x, y, subst))
+    };
+    match (&a, &b) {
+        (Type::Error, _) | (_, Type::Error) => true,
+        (Type::Var(x), Type::Var(y)) if x == y => true,
+        (Type::Var(x), other) | (other, Type::Var(x)) => {
+            if free_vars_in(other).contains(x) {
+                return false;
+            }
+            subst.insert(*x, other.clone());
+            true
+        }
+        (Type::Rigid(x), Type::Rigid(y)) => x.var == y.var,
+        (Type::List(x), Type::List(y))
+        | (Type::Set(x), Type::Set(y))
+        | (Type::Channel(x), Type::Channel(y)) => probe_unify(x, y, subst),
+        (Type::Map(xk, xv), Type::Map(yk, yv)) => {
+            probe_unify(xk, yk, subst) && probe_unify(xv, yv, subst)
+        }
+        (Type::Tuple(xs), Type::Tuple(ys)) => all(xs, ys, subst),
+        (Type::Fun(xs, x), Type::Fun(ys, y)) => all(xs, ys, subst) && probe_unify(x, y, subst),
+        (Type::Generic(x, xs), Type::Generic(y, ys)) => x == y && all(xs, ys, subst),
+        // (A projection not reduced yet, or a record: what the checker
+        // decides of them later.)
+        (Type::AssocProj { .. }, _) | (_, Type::AssocProj { .. }) => true,
+        (Type::AnonRecord { .. }, Type::AnonRecord { .. }) => true,
+        _ => a == b,
     }
 }

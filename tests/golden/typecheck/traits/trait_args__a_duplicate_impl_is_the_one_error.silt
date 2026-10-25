@@ -1,26 +1,27 @@
 -- cmd: check
 -- exit: 1
--- An impl written twice (tuples of two lengths and functions of two
--- arities are one outer type each) is the one error: the uses of the
--- trait for the type say nothing more, whichever impl they meant.
--- stderr-contains: duplicate implementation of trait 'From((Int, Int, Int))' for type 'A'
--- stderr-contains: duplicate implementation of trait 'From(Fn(Int, Int) -> Int)' for type 'B'
--- stderr-not-contains: tuple length
+-- An impl written twice, or two whose trait arguments could be one, is the
+-- one error: the uses of the trait for the type say nothing more,
+-- whichever impl they meant.
+-- stderr-contains: duplicate implementation of trait 'From(Int)' for type 'A'
+-- stderr-contains: duplicate implementation of trait 'From' for type 'B': the impls of 'From(_)' and 'From(Fn(Int, Int) -> Int)' overlap
+-- stderr-not-contains: type mismatch
 -- stderr-not-contains: expects 1 argument
 -- stderr-not-contains: does not implement
+-- stderr-not-contains: cannot decide
 -- stderr-not-contains: Number
 trait From(e) { fn from(source: e) -> Self }
 type A { A(String) }
 type B { B(String) }
 fn sa(a: A) -> String { match a { A(s) -> s } }
 fn sb(b: B) -> String { match b { B(s) -> s } }
-trait From((Int, Int)) for A { fn from(e: (Int, Int)) -> A { A("pair") } }
-trait From((Int, Int, Int)) for A { fn from(e: (Int, Int, Int)) -> A { A("triple") } }
-trait From(Fn(Int) -> Int) for B { fn from(e: Fn(Int) -> Int) -> B { B("f1") } }
+trait From(Int) for A { fn from(e: Int) -> A { A("one") } }
+trait From(Int) for A { fn from(e: Int) -> A { A("two") } }
+trait From(e) for B { fn from(e: e) -> B { B("any") } }
 trait From(Fn(Int, Int) -> Int) for B { fn from(e: Fn(Int, Int) -> Int) -> B { B("f2") } }
 fn main() {
-  println(sa(A.from((1, 2))))
-  println(sa(A.from((1, 2, 3))))
+  println(sa(A.from(1)))
+  println(sa(A.from("s")))
   println(sb(B.from({ x -> x })))
   println(sb(B.from({ x, y -> x + y })))
 }

@@ -1,5 +1,5 @@
 use super::*;
-pub(crate) use crate::defs::ArgHeads;
+pub(crate) use crate::defs::ImplArgs;
 
 // ── Type declaration info ───────────────────────────────────────────
 
@@ -268,12 +268,12 @@ pub(super) const STRUCTURAL_METHODS: [(&str, &str); 6] = [
 ];
 
 /// The key of an impl: its trait, the head of the type it is for, and
-/// the heads of its trait arguments (`crate::defs::ArgHeads`).
-pub(super) type ImplKey = (TraitKey, TypeRef, ArgHeads);
+/// its trait arguments (`crate::defs::ImplArgs`).
+pub(super) type ImplKey = (TraitKey, TypeRef, ImplArgs);
 
 /// The key of an impl's method: the type the impl is for, the method's
-/// name, the impl's trait and the heads of its trait arguments.
-pub(super) type ImplMethodKey = (TypeRef, Symbol, TraitKey, ArgHeads);
+/// name, the impl's trait and its trait arguments.
+pub(super) type ImplMethodKey = (TypeRef, Symbol, TraitKey, ImplArgs);
 
 /// The methods of the session's impls: one row for each method of each
 /// impl, by its type, its name and its trait, entered by the module that
@@ -288,7 +288,7 @@ pub(super) struct ImplMethods {
     by_name: HashMap<(TypeRef, Symbol), Vec<TraitKey>>,
     /// For a type, a method name and a trait, the trait arguments of the
     /// impls that have rows.
-    args_of: HashMap<(TypeRef, Symbol, TraitKey), Vec<ArgHeads>>,
+    args_of: HashMap<(TypeRef, Symbol, TraitKey), Vec<ImplArgs>>,
 }
 
 impl ImplMethods {
@@ -299,7 +299,7 @@ impl ImplMethods {
         ty: TypeRef,
         method: Symbol,
         tr: TraitKey,
-        args: ArgHeads,
+        args: ImplArgs,
         entry: MethodEntry,
     ) {
         if self.rows.insert((ty, method, tr, args), entry).is_none() {
@@ -318,7 +318,7 @@ impl ImplMethods {
         ty: TypeRef,
         method: Symbol,
         tr: TraitKey,
-        args: ArgHeads,
+        args: ImplArgs,
     ) -> Option<&MethodEntry> {
         self.rows.get(&(ty, method, tr, args))
     }
@@ -336,7 +336,7 @@ impl ImplMethods {
 
     /// The trait arguments of the impls of `tr` for `ty` that have a
     /// method `method`.
-    pub(super) fn args_of(&self, ty: TypeRef, method: Symbol, tr: TraitKey) -> &[ArgHeads] {
+    pub(super) fn args_of(&self, ty: TypeRef, method: Symbol, tr: TraitKey) -> &[ImplArgs] {
         self.args_of
             .get(&(ty, method, tr))
             .map_or(&[], |args| args.as_slice())
@@ -414,7 +414,7 @@ pub struct Tables {
     pub(super) impl_keys: Table<std::collections::HashSet<ImplKey>, ImplKey>,
     /// For a trait and the head of a type, the trait arguments of the
     /// impls written (`impl_keys`).
-    pub(super) impl_args: HashMap<(TraitKey, TypeRef), Vec<ArgHeads>>,
+    pub(super) impl_args: HashMap<(TraitKey, TypeRef), Vec<ImplArgs>>,
     /// The span of each impl's `trait T for U { ... }` declaration, so
     /// the missing-method diagnostic in `validate_trait_impls` can point
     /// at the impl block's real source location.
@@ -693,22 +693,10 @@ impl Tables {
     }
 
     /// The trait arguments of the impls of `tr` for the type `ty`.
-    pub(super) fn impl_args_of(&self, tr: TraitKey, ty: TypeRef) -> &[ArgHeads] {
+    pub(super) fn impl_args_of(&self, tr: TraitKey, ty: TypeRef) -> &[ImplArgs] {
         self.impl_args
             .get(&(tr, ty))
             .map_or(&[], |args| args.as_slice())
-    }
-
-    /// The key of the impl of `tr` for the type `ty` that a use at trait
-    /// arguments of the heads `args` reaches: the one written for them,
-    /// or one for every head; a trait of no parameters' one impl. None
-    /// where none is written. (One impl per trait argument: two that
-    /// meet are refused when the second is declared.)
-    pub(super) fn impl_at(&self, tr: TraitKey, ty: TypeRef, args: ArgHeads) -> Option<ImplKey> {
-        let written = self.impl_args_of(tr, ty);
-        (written.iter().find(|w| **w == args))
-            .or_else(|| written.iter().find(|w| w.meets(args)))
-            .map(|w| (tr, ty, *w))
     }
 
     /// The type aliases and associated-type bindings of the session.
@@ -802,11 +790,11 @@ impl Tables {
 
 /// The impl `key` as the body of one of its methods is named among the
 /// bodies that ask builtin traits of their variables
-/// (`builtin_needs::body_key`): its type, and the heads of its trait
-/// arguments where it has some (two impls of `From` for one type are two).
+/// (`builtin_needs::body_key`): its type, and its trait arguments
+/// where it has some (two impls of `From` for one type are two).
 pub(super) fn impl_owner(key: ImplKey) -> String {
     let (_, ty, args) = key;
-    match args == ArgHeads::none() {
+    match args == ImplArgs::none() {
         true => ty.to_string(),
         false => format!("{ty}{args:?}"),
     }

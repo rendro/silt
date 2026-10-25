@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- Two impls whose trait arguments could be one are a duplicate, though
+-- they differ: `Pair(Int, _)` meets `Pair(Int, String)`, `W(List(_))`
+-- meets `W(List(Int))`; the error names both and what a use of both is.
+-- stderr-contains: error[type]: duplicate implementation of trait 'Pair' for type 'A': the impls of 'Pair(Int, String)' and 'Pair(Int, _)' overlap: both are for 'Pair(Int, String)'
+-- stderr-contains: error[type]: duplicate implementation of trait 'W' for type 'A': the impls of 'W(List(_))' and 'W(List(Int))' overlap: both are for 'W(List(Int))'
+trait From(e) { fn from(source: e) -> Self }
+type A { A(String) }
+fn sh(a: A) -> String { match a { A(s) -> s } }
+trait Pair(a, b) { fn pair(x: a, y: b) -> Self }
+trait Pair(Int, String) for A { fn pair(x: Int, y: String) -> A { A("is") } }
+trait Pair(Int, y) for A { fn pair(x: Int, z: y) -> A { A("iy") } }
+trait W(a) { fn w(x: a) -> Self }
+trait W(List(a)) for A { fn w(x: List(a)) -> Self { A("l") } }
+trait W(List(Int)) for A { fn w(x: List(Int)) -> Self { A("li") } }
+fn main() { println(sh(A.pair(1, "a"))) }

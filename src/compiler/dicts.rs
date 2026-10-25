@@ -9,7 +9,7 @@ use std::sync::Arc;
 use crate::ast::{Decl, TraitImpl};
 use crate::bytecode::dict::{Dict, Recipe, Template};
 use crate::bytecode::{Asm, Globals};
-use crate::defs::{ArgHeads, TraitId, TypeId};
+use crate::defs::{ImplArgs, TraitId, TypeId};
 use crate::diagnostic::{Code, Diagnostic};
 use crate::evidence::{Evidence, IMPL_HEADER, Layout, Shape};
 use crate::intern::{Symbol, intern, resolve};
@@ -18,9 +18,8 @@ use crate::value::Value;
 
 use super::{Compiler, Local};
 
-/// An impl: its trait, its type's head and the heads of its trait
-/// arguments.
-type ImplKey = (TraitId, TypeId, ArgHeads);
+/// An impl: its trait, its type's head and its trait arguments.
+type ImplKey = (TraitId, TypeId, ImplArgs);
 
 /// The name of the `k`th hidden parameter of the definition `owner`, a
 /// name no program can write.
@@ -345,8 +344,8 @@ impl Compiler<'_> {
                     && has_dictionary(t)
                 {
                     self.header_limit(ti)?;
-                    if impls.insert((t, ty, ti.arg_heads), ti).is_none() {
-                        keys.push((t, ty, ti.arg_heads));
+                    if impls.insert((t, ty, ti.args_key), ti).is_none() {
+                        keys.push((t, ty, ti.args_key));
                     }
                 }
             }
@@ -392,7 +391,7 @@ impl Compiler<'_> {
                 let (Some(ty), Some(t)) = (self.impl_type(ti), self.impl_trait(ti)) else {
                     continue;
                 };
-                let Some(template) = globals.template(t, ty, ti.arg_heads) else {
+                let Some(template) = globals.template(t, ty, ti.args_key) else {
                     continue;
                 };
                 for method in &ti.methods {
@@ -440,17 +439,7 @@ impl Compiler<'_> {
         for ev in &ti.evidence.wheres {
             wheres.push(self.recipe(ev, impls, globals, depth)?);
         }
-        let shown_args = match args.heads().as_slice() {
-            [] => String::new(),
-            heads => {
-                let shown: Vec<String> = (heads.iter())
-                    .map(|head| {
-                        head.map_or_else(|| "_".to_string(), |t| self.type_info(t).name.clone())
-                    })
-                    .collect();
-                format!("({})", shown.join(", "))
-            }
-        };
+        let shown_args = &ti.shown_args;
         let template = Arc::new(Template {
             index: globals.next_template_index(),
             tr,

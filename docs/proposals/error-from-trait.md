@@ -212,12 +212,12 @@ Each source type has one impl, selected by `Self`. Drawback: one
 ## What the compiler does
 
 1. **An impl per trait argument.** An impl is keyed by its trait, the
-   head of its type and the heads of its trait arguments: the two
-   impls above are two, each with its own methods and dictionary.
-   Two impls whose trait arguments have the same heads are a
-   duplicate; an impl whose trait argument is a type variable
-   (`trait From(e) for AppError`) is for every argument, the type's
-   only impl of the trait.
+   head of its type and its whole trait arguments: the two impls above
+   are two, each with its own methods and dictionary, and so are
+   `From(List(Int))` and `From(List(String))`. Two impls whose trait
+   arguments could be one type are a duplicate; an impl whose trait
+   argument is a type variable (`trait From(e) for AppError`) is for
+   every argument, the type's only impl of the trait.
 
 2. **Selection by the trait argument.** `AppError.from(e)` with
    `e: io.IoError` reaches `From(io.IoError) for AppError`: the use

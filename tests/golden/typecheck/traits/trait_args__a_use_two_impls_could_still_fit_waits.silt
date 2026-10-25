@@ -1,0 +1,23 @@
+-- cmd: check
+-- exit: 1
+-- A use whose trait argument two impls could still be (`From(List(_))`
+-- with `From(List(Int))` and `From(List(String))`) waits: a later line of
+-- the definition decides it; where none does, which impl it means is not
+-- known.
+-- stderr-contains: :22:14
+-- stderr-contains: cannot decide which impl of 'From(List(_))' for 'A' this use of 'from' means: its trait argument is not decided here
+-- stderr-not-contains: :18:
+import list
+trait From(e) { fn from(source: e) -> Self }
+type A { A(String) }
+fn sh(a: A) -> String { match a { A(s) -> s } }
+trait From(List(Int)) for A { fn from(e: List(Int)) -> A { A("ints") } }
+trait From(List(String)) for A { fn from(e: List(String)) -> A { A("strings") } }
+fn main() {
+  let xs = list.drop([], 0)
+  let a = A.from(xs)
+  let ys: List(Int) = xs
+  println(sh(a))
+  let zs = list.drop([], 0)
+  println(sh(A.from(zs)))
+}

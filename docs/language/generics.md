@@ -464,7 +464,7 @@ fn use_parent(x: b, type a) -> a where b: Child(a) {
 ```
 
 `Convertible(Int)` and `Convertible(Float)` are two impls for `String`,
-told apart by their trait argument: `let n: Int = Convertible.convert(s)`
+told apart by their whole trait argument: `let n: Int = Convertible.convert(s)`
 reaches the first, `let x: Float = Convertible.convert(s)` the second. A use
 whose trait argument nothing decides means no impl, and is an error. See
 [Traits — Parameterized Traits](traits.md#parameterized-traits) for how
