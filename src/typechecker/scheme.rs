@@ -394,6 +394,9 @@ impl TypeChecker {
                 continue;
             }
             wanted.solved = true;
+            for arg in args {
+                (self.reported_trait_args).extend(free_vars_in(&self.apply(arg)));
+            }
             let error = self.undecided_trait_args(*tr, args, subject, wanted.origin);
             self.errors.push(error);
         }

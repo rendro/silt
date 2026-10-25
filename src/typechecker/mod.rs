@@ -353,6 +353,9 @@ pub struct TypeChecker {
     /// The types of statements left unknown because they are a trait
     /// argument a use waits for: a statement's `()` decides none.
     pub(super) statement_trait_args: std::collections::HashSet<TyVar>,
+    /// The trait arguments a use was reported for leaving undecided:
+    /// the type of a top-level `let` they are in is not reported again.
+    pub(super) reported_trait_args: std::collections::HashSet<TyVar>,
     /// The functions and closures whose body is being checked,
     /// outermost first, each with its parameters' types.
     pub(super) fn_frames: Vec<unused::FnFrame>,
@@ -504,6 +507,7 @@ impl TypeChecker {
             defs: None,
             statement_calls: Vec::new(),
             statement_trait_args: Default::default(),
+            reported_trait_args: Default::default(),
             fn_frames: Vec::new(),
             frame_owner: None,
             local_statement_units: HashMap::new(),
@@ -914,6 +918,10 @@ impl TypeChecker {
                 };
                 let ty = self.apply(&scheme.ty);
                 if free_vars_in(&ty).iter().all(|v| scheme.vars.contains(v)) {
+                    continue;
+                }
+                // (A trait argument nothing decides: that error says it.)
+                if (free_vars_in(&ty).iter()).any(|v| self.reported_trait_args.contains(v)) {
                     continue;
                 }
                 self.errors.push(
