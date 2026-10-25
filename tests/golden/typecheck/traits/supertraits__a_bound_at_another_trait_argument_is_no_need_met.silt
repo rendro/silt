@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- An impl header's bound at one trait argument gives no need at another:
+-- `Sub(Int)` asks `Sup(Int)` of `Box(a)`, whose impl asks `a: Sup(Int)`,
+-- and `where a: Sup(String)` is no such bound.
+-- stderr-contains: error[type]: type 'Box(a)' implements 'Sub(Int)' but does not implement supertrait 'Sup(Int)': 'a' needs 'Sup(Int)'
+-- stderr-contains: = help: add `where a: Sup(Int)` to the impl
+trait Sup(b) { fn sup(self) -> Int }
+trait Sub(b): Sup(b) { fn sub(self) -> Int }
+type Box(a) { Box(a) }
+trait Sup(String) for Int { fn sup(self) -> Int { 5 } }
+trait Sup(Int) for Box(a) where a: Sup(Int) { fn sup(self) -> Int { match self { Box(x) -> Sup.sup(x) + 1 } } }
+trait Sub(Int) for Box(a) where a: Sup(String) { fn sub(self) -> Int { 1 } }
+fn via(x: t) -> Int where t: Sub(Int) { Sup.sup(x) }
+fn main() { println(via(Box(3))) }
