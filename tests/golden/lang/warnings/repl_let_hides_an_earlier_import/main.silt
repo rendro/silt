@@ -1,0 +1,5 @@
+-- cmd: repl
+-- stdin: import list\nlet list = [1, 2]\nlist.map([1], { x -> x })\nlist\n:quit\n
+-- In the REPL a later `let` may replace an import of an earlier entry: it
+-- is accepted, with the warning a local hiding the import gets, and a
+-- later use of the module is told what happened.

@@ -1,0 +1,12 @@
+warning[type]: local 'list' hides the imported module 'list'
+ --> <repl:2>:1:5
+   |
+ 1 | let list = [1, 2]
+   |     ^^^^ local 'list' hides the imported module 'list'
+  = help: rename the local, or import the module under another name: `import list as l`
+error[type]: type 'List(Int)' has no field 'map'
+ --> <repl:3>:1:1
+   |
+ 1 | list.map([1], { x -> x })
+   | ^^^^^^^^ type 'List(Int)' has no field 'map'
+  = help: `list` here is the `let` of an earlier entry, which hides the module `list`; rename it, or import the module under another name

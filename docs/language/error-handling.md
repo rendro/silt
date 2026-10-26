@@ -94,7 +94,7 @@ fn load(path: String) -> Result(String, Wrap) {
 
 fn main() {
   match load("config.toml") {
-    Ok(raw) -> println("loaded")
+    Ok(_) -> println("loaded")
     Err(_) -> println("no config")
   }
 }

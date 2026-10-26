@@ -1,0 +1,6 @@
+warning[type]: 'unused' is never used
+ --> unused_name_run.silt:3:7
+   |
+ 3 |   let unused = 1
+   |       ^^^^^^ 'unused' is never used
+  = help: remove it, or name it `_unused`

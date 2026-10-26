@@ -92,8 +92,8 @@ fn main() {
       _ ->
         -- Use channel.select to wait on both result channels
         match channel.select([channel.Recv(results_1), channel.Recv(results_2)]) {
-          channel.Received(_, Some(result)) -> {
-            let (worker_id, outcome) = result
+          channel.Received(_, Some(received)) -> {
+            let (worker_id, outcome) = received
             match outcome {
               Ok(info) -> {
                 let (path, lines, words, dept, revenue) = info

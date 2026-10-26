@@ -53,3 +53,17 @@ error[type]: `json.parse` cannot decode `time.DateTime`: its type argument must 
  25 |   let _ = json.parse("1", DateTime)
     |                           ^^^^^^^^ `json.parse` cannot decode `time.DateTime`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, or a type with a `json.Decode` impl
   = help: a decoder decodes a `time.DateTime` as the type of a record's field: `type R { at: time.DateTime }`
+
+warning[type]: 'a' is never used
+ --> impl_and_pattern_messages_write_another_modules_names.silt:22:14
+    |
+ 22 |     json.Int(a, b) -> 1
+    |              ^ 'a' is never used
+  = help: remove it, or name it `_a`
+
+warning[type]: 'b' is never used
+ --> impl_and_pattern_messages_write_another_modules_names.silt:22:17
+    |
+ 22 |     json.Int(a, b) -> 1
+    |                 ^ 'b' is never used
+  = help: remove it, or name it `_b`

@@ -1,0 +1,28 @@
+-- cmd: check
+-- exit: 1
+-- A local named like an imported module, an alias or an imported name
+-- warns at its binding, whether or not the module is used after it: a
+-- `let`, a parameter, a closure parameter, a pattern name.
+import list
+import map as m
+import string.{ length }
+
+fn count(list: List(Int)) -> Int {
+  list.length(list)
+}
+
+fn sizes(words: List(String)) -> List(Int) {
+  words |> list.map { length -> string_size(length) }
+}
+
+fn string_size(s: String) -> Int {
+  length(s)
+}
+
+fn lookup() -> Option(Int) {
+  let m = m.from_entries([("a", 1)])
+  match m.get(m, "a") {
+    Some(list) -> Some(list)
+    None -> None
+  }
+}

@@ -319,7 +319,7 @@ fn poll(only) {
 fn main() {
   let gate = channel.new(0)
   let only = channel.new(0)
-  let lost = task.spawn { ->
+  let _lost = task.spawn { ->
     let _ = channel.receive(gate)
     time.sleep(time.ms(1))
     channel.send(only, 1)
@@ -674,7 +674,7 @@ import time
 fn main() {
   let gate = channel.new(0)
   let only = channel.new(0)
-  let lost = task.spawn { ->
+  let _lost = task.spawn { ->
     let _ = channel.receive(gate)
     time.sleep(time.ms(5))
     channel.send(only, 1)

@@ -3,3 +3,10 @@ error[type]: type mismatch: expected Bool, got Int
    |
  4 |     let x = (true >= 1)
    |                      ^ type mismatch: expected Bool, got Int
+
+warning[type]: 'x' is never used
+ --> binop_single_diagnostic_round67__bool_geq_int_single.silt:4:9
+   |
+ 4 |     let x = (true >= 1)
+   |         ^ 'x' is never used
+  = help: remove it, or name it `_x`

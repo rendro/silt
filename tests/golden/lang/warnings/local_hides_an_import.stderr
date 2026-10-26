@@ -1,0 +1,41 @@
+error[type]: type 'List(Int)' has no field 'length'
+ --> local_hides_an_import.silt:11:3
+    |
+ 11 |   list.length(list)
+    |   ^^^^^^^^^^^ type 'List(Int)' has no field 'length'
+  = help: `list` here is the local from line 10, which hides the module `list`; rename the local
+
+error[type]: type 'Map(String, Int)' has no field 'get'
+ --> local_hides_an_import.silt:24:9
+    |
+ 24 |   match m.get(m, "a") {
+    |         ^^^^^ type 'Map(String, Int)' has no field 'get'
+  = help: `m` here is the local from line 23, which hides the module `map` (imported as `m`); rename the local
+
+warning[type]: local 'list' hides the imported module 'list'
+ --> local_hides_an_import.silt:10:10
+    |
+ 10 | fn count(list: List(Int)) -> Int {
+    |          ^^^^ local 'list' hides the imported module 'list'
+  = help: rename the local, or import the module under another name: `import list as l`
+
+warning[type]: local 'length' hides 'length', imported from module 'string'
+ --> local_hides_an_import.silt:15:23
+    |
+ 15 |   words |> list.map { length -> string_size(length) }
+    |                       ^^^^^^ local 'length' hides 'length', imported from module 'string'
+  = help: rename the local
+
+warning[type]: local 'm' hides the imported module 'map'
+ --> local_hides_an_import.silt:23:7
+    |
+ 23 |   let m = m.from_entries([("a", 1)])
+    |       ^ local 'm' hides the imported module 'map'
+  = help: rename the local, or import the module under another name
+
+warning[type]: local 'list' hides the imported module 'list'
+ --> local_hides_an_import.silt:25:10
+    |
+ 25 |     Some(list) -> Some(list)
+    |          ^^^^ local 'list' hides the imported module 'list'
+  = help: rename the local, or import the module under another name: `import list as l`

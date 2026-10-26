@@ -1,10 +1,3 @@
-warning[type]: unused import 'set'
- --> a_refusal_names_the_decoder_and_the_function_that_passes_it_on.silt:10:1
-    |
- 10 | import set
-    | ^^^^^^^^^^ unused import 'set'
-  = help: remove the line `import set`
-
 error[type]: `json.parse` cannot decode `Holder`: field `s` has type `Set(Int)`, which has no decoder
  --> a_refusal_names_the_decoder_and_the_function_that_passes_it_on.silt:15:29
     |
@@ -42,3 +35,10 @@ error[type]: `declared_only` cannot decode `Holder`: field `s` has type `Set(Int
  19 |   let _ = declared_only(Holder)
     |                         ^^^^^^ `declared_only` cannot decode `Holder`: field `s` has type `Set(Int)`, which has no decoder
   = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+
+warning[type]: unused import 'set'
+ --> a_refusal_names_the_decoder_and_the_function_that_passes_it_on.silt:10:1
+    |
+ 10 | import set
+    | ^^^^^^^^^^ unused import 'set'
+  = help: remove the line `import set`

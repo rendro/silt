@@ -1,10 +1,3 @@
-warning[type]: unused import 'list'
- --> hidden_module__an_alias_names_the_module_too.silt:6:1
-   |
- 6 | import list as l
-   | ^^^^^^^^^^^^^^^^ unused import 'list'
-  = help: remove the line `import list as l`
-
 error[type]: type 'List(Int)' has no field 'length'
  --> hidden_module__an_alias_names_the_module_too.silt:10:11
     |
@@ -18,3 +11,17 @@ error[type]: type 'List(Int)' has no field 'length'
  12 |   println(l.length(l))
     |           ^^^^^^^^ type 'List(Int)' has no field 'length'
   = help: `l` here is the local from line 11, which hides the module `list` (imported as `l`); rename the local
+
+warning[type]: unused import 'list'
+ --> hidden_module__an_alias_names_the_module_too.silt:6:1
+   |
+ 6 | import list as l
+   | ^^^^^^^^^^^^^^^^ unused import 'list'
+  = help: remove the line `import list as l`
+
+warning[type]: local 'l' hides the imported module 'list'
+ --> hidden_module__an_alias_names_the_module_too.silt:11:7
+    |
+ 11 |   let l = [2]
+    |       ^ local 'l' hides the imported module 'list'
+  = help: rename the local, or import the module under another name

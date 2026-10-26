@@ -206,9 +206,9 @@ fn caller() -> Int {
 
 A builtin module follows the same rule: after `import list`, a binding named
 `list` hides the module inside its scope: `list.map` there is a field of
-the binding, which a `List` value does not have. No warning is given;
-rename the binding, or import the module under another name
-(`import list as l`), to reach both.
+the binding, which a `List` value does not have. The binding gets a warning
+that it hides the module; rename the binding, or import the module under
+another name (`import list as l`), to reach both.
 
 Type names are not value bindings, so `Shape.Circle` keeps resolving through
 the enum even though `Shape` is in scope. Qualified **type** paths

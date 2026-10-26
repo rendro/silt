@@ -13,3 +13,10 @@ error[type]: type mismatch: expected String, got Int
     |
  15 |   let n: String = helper()
     |                   ^^^^^^^^ type mismatch: expected String, got Int
+
+warning[type]: 'n' is never used
+ --> unclosed_brace__a_declaration_at_the_margin_is_read.silt:15:7
+    |
+ 15 |   let n: String = helper()
+    |       ^ 'n' is never used
+  = help: remove it, or name it `_n`

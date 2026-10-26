@@ -27,3 +27,17 @@ error[type]: type mismatch: expected Mine, got Int
     |
  33 |   let o: Option(Mine) = Some(1)
     |                         ^^^^^^^ type mismatch: expected Mine, got Int
+
+warning[type]: 'd' is never used
+ --> main.silt:32:7
+    |
+ 32 |   let d: Int = time.today()
+    |       ^ 'd' is never used
+  = help: remove it, or name it `_d`
+
+warning[type]: 'o' is never used
+ --> main.silt:33:7
+    |
+ 33 |   let o: Option(Mine) = Some(1)
+    |       ^ 'o' is never used
+  = help: remove it, or name it `_o`

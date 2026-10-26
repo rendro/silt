@@ -1,10 +1,3 @@
-warning[type]: unused import 'Message' from module 'channel'
- --> unused_value__a_call_whose_type_the_caller_supplies.silt:10:18
-    |
- 10 | import channel.{ Message }
-    |                  ^^^^^^^ unused import 'Message' from module 'channel'
-  = help: remove `Message` from the import
-
 error[type]: this value is unused; write `let _ = ...` to discard it
  --> unused_value__a_call_whose_type_the_caller_supplies.silt:19:3
     |
@@ -40,3 +33,10 @@ error[type]: this value is unused; write `let _ = ...` to discard it
     |
  76 |     dbg(x)
     |     ^^^^^^ this value is unused; write `let _ = ...` to discard it
+
+warning[type]: unused import 'Message' from module 'channel'
+ --> unused_value__a_call_whose_type_the_caller_supplies.silt:10:18
+    |
+ 10 | import channel.{ Message }
+    |                  ^^^^^^^ unused import 'Message' from module 'channel'
+  = help: remove `Message` from the import

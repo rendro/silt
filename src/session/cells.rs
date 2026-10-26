@@ -57,6 +57,9 @@ struct Binder {
     span: Span,
     /// For an import, the declaration as written and its span.
     import: Option<(ImportTarget, Span)>,
+    /// For a `let`: the module that an earlier cell imported by the
+    /// name, which the `let` hides.
+    hides: Option<Symbol>,
 }
 
 /// One cell added to the session.
@@ -252,6 +255,14 @@ impl Cells {
         );
     }
 
+    /// Each name that the `let` of a committed cell binds where an
+    /// earlier cell imported a module by that name, with the module.
+    pub fn hidden_imports(&self) -> HashMap<Symbol, Symbol> {
+        (self.scope.iter())
+            .filter_map(|(name, binder)| Some((*name, binder.hides?)))
+            .collect()
+    }
+
     /// What the compiler needs to know of the committed cells to compile
     /// a cell; `index` numbers the modules of its program.
     pub fn earlier(&self, index: &HashMap<ModuleId, usize>) -> EarlierCells {
@@ -291,12 +302,20 @@ impl Cells {
     ) -> Option<ModuleId> {
         let info = &self.info[&id];
         for (name, span, kind, import) in &info.own {
+            let hides = match (kind, self.scope.get(name)) {
+                (Kind::Let, Some(before)) if before.kind == Kind::Module => {
+                    before.import.as_ref().map(|(target, _)| target.module())
+                }
+                (Kind::Let, Some(before)) => before.hides,
+                _ => None,
+            };
             self.scope.insert(
                 *name,
                 Binder {
                     kind: *kind,
                     span: *span,
                     import: import.clone(),
+                    hides,
                 },
             );
         }

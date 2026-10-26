@@ -3,3 +3,10 @@ error[type]: type mismatch: expected Result(_, _), got Int
    |
  5 |   let r = match 42 {
    |                 ^^ type mismatch: expected Result(_, _), got Int
+
+warning[type]: 'e' is never used
+ --> round93_inference_diagnostics__match_wrong_scrutinee_one_error.silt:7:9
+   |
+ 7 |     Err(e) -> 0
+   |         ^ 'e' is never used
+  = help: remove it, or name it `_e`

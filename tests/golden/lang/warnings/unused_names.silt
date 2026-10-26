@@ -1,0 +1,30 @@
+-- cmd: check
+-- A `let` name or a pattern name that nothing reads warns; a parameter,
+-- of a function or of a closure, does not, and neither does a name that
+-- starts with `_`.
+import list
+
+type Point {
+  x: Int,
+  y: Int,
+}
+
+fn f(xs: List(Int), limit: Int) -> Int {
+  let total = 0
+  let _skipped = 1
+  let Point { x, y } = Point { x: 1, y: 2 }
+  let pairs = xs |> list.map { n -> (n, 0) }
+  match pairs {
+    [(a, b), ..] -> a
+    _ -> x
+  }
+}
+
+fn countdown() -> Int {
+  loop n = 3, steps = 0 {
+    match n {
+      0 -> 0
+      _ -> loop(n - 1, 0)
+    }
+  }
+}

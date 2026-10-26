@@ -55,9 +55,9 @@ fn main() {
   println(pk)
 
   -- Two v7s sort by generation time
-  let a = uuid.v7()
-  let b = uuid.v7()
-  -- a < b when compared as strings
+  let _a = uuid.v7()
+  let _b = uuid.v7()
+  -- _a < _b when compared as strings
 
   -- Validate + canonicalize external input
   match uuid.parse("550E8400-E29B-41D4-A716-446655440000") {

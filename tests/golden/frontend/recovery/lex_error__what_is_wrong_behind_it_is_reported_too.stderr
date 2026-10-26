@@ -15,3 +15,10 @@ error[type]: type mismatch: expected Int, got String
     |
  17 |   let s: Int = "x"
     |                ^^^ type mismatch: expected Int, got String
+
+warning[type]: 's' is never used
+ --> lex_error__what_is_wrong_behind_it_is_reported_too.silt:17:7
+    |
+ 17 |   let s: Int = "x"
+    |       ^ 's' is never used
+  = help: remove it, or name it `_s`

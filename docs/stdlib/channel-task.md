@@ -90,8 +90,8 @@ is empty. A negative capacity is an error.
 import channel
 
 fn main() {
-  let rendezvous = channel.new(0) -- true rendezvous (capacity 0)
-  let buffered = channel.new(10) -- buffered (capacity 10)
+  let _rendezvous = channel.new(0) -- true rendezvous (capacity 0)
+  let _buffered = channel.new(10) -- buffered (capacity 10)
 }
 ```
 

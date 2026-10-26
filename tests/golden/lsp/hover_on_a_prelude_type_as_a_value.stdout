@@ -1,3 +1,5 @@
+10:7 warning 'taken' is never used\nhelp: remove it, or name it `_taken`
+11:7 warning 'more' is never used\nhelp: remove it, or name it `_more`
 > hover 10:16
 ```silt
 type List(a)

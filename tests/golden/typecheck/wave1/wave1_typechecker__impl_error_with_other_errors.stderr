@@ -9,3 +9,10 @@ error[type]: type mismatch: expected String, got Int
     |
  14 |   let n: String = helper(1)
     |                   ^^^^^^^^^ type mismatch: expected String, got Int
+
+warning[type]: 'n' is never used
+ --> wave1_typechecker__impl_error_with_other_errors.silt:14:7
+    |
+ 14 |   let n: String = helper(1)
+    |       ^ 'n' is never used
+  = help: remove it, or name it `_n`

@@ -1,0 +1,9 @@
+-- cmd: lsp
+-- The editor shows the warnings about names: a local hiding an import,
+-- a name nothing reads.
+import list
+
+fn count(list: List(Int)) -> Int {
+  let total = 0
+  1
+}

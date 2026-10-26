@@ -37,7 +37,7 @@ fn main() {
   println("Found {total} links")
   println("")
   -- Classify each link and collect counts
-  let result = matches
+  let counts = matches
     |> list.fold((0, 0)) { acc, capture ->
       let (valid_count, invalid_count) = acc
       let text = match list.get(capture, 1) {
@@ -72,7 +72,7 @@ fn main() {
         }
       }
     }
-  let (valid, invalid) = result
+  let (valid, invalid) = counts
   println("")
   println("=== Summary ===")
   println("  Total:   {total}")

@@ -93,7 +93,7 @@ fn bfs(maze, start, goal) {
           let indexed = visited |> list.enumerate
           let found = indexed
             |> list.find { entry ->
-              let (idx, (v, _)) = entry
+              let (_, (v, _)) = entry
               v == node
             }
           let goal_idx = match found {
@@ -108,7 +108,7 @@ fn bfs(maze, start, goal) {
           let indexed = visited |> list.enumerate
           let found = indexed
             |> list.find { entry ->
-              let (idx, (v, _)) = entry
+              let (_, (v, _)) = entry
               v == node
             }
           let node_idx = match found {

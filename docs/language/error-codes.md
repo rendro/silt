@@ -2,7 +2,7 @@
 title: "Error Codes"
 section: "Language"
 order: 14
-description: "What each diagnostic code of silt means: the errors E0001 to E0801 and the warning W0202."
+description: "What each diagnostic code of silt means: the errors E0001 to E0801 and the warnings W0201 to W0203."
 ---
 
 # Error Codes
@@ -153,4 +153,6 @@ line names the fix, which is the one way to silence it.
 
 | Code | Meaning |
 |------|---------|
+| `W0201` | A local that hides an imported module, an alias or an imported name. |
 | `W0202` | An import that nothing in the file uses. |
+| `W0203` | A `let` name or a pattern name that nothing reads. |

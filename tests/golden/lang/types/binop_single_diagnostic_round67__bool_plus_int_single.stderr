@@ -3,3 +3,10 @@ error[type]: operator '+' requires Int or Float, got 'Bool'
    |
  4 |     let x = true + 1
    |             ^^^^ operator '+' requires Int or Float, got 'Bool'
+
+warning[type]: 'x' is never used
+ --> binop_single_diagnostic_round67__bool_plus_int_single.silt:4:9
+   |
+ 4 |     let x = true + 1
+   |         ^ 'x' is never used
+  = help: remove it, or name it `_x`
