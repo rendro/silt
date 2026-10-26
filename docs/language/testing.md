@@ -32,8 +32,8 @@ the module of its trait or of its type, see
 the impl beside the type, or declare the trait in the test file and
 implement it there, or wrap the value in a type the test file declares.
 
-In a package, `silt check` checks the test files too, as `silt test`
-finds them, without running them.
+In a package, `silt check` checks the package's test files too, without
+running them.
 
 ## Function Conventions
 

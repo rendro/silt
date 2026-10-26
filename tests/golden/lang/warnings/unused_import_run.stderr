@@ -1,6 +1,8 @@
 warning[type]: unused import 'list'
- --> unused_import_run.silt:2:1
+ --> unused_import_run.silt:4:1
    |
- 2 | import list
+ 4 | import list
    | ^^^^^^^^^^^ unused import 'list'
   = help: remove the line `import list`
+
+the program on stderr

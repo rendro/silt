@@ -106,18 +106,19 @@ fn find_test_files(dir: &Path) -> Vec<String> {
 }
 
 /// Print what the session found in `path`, in the order and the form
-/// `silt check` prints it, warnings included. `compiled` says whether the
-/// file compiled. Returns `true` when the file failed to compile; a line
-/// that says so is printed last.
+/// `silt check` prints it, warnings included, with the file named
+/// `shown`. `compiled` says whether the file compiled. Returns `true`
+/// when the file failed to compile; a line that says so is printed last.
 fn report_diagnostics(
     path: &str,
+    shown: &str,
     sources: &SourceMap,
     diagnostics: &[Diagnostic],
     compiled: bool,
 ) -> bool {
     // (Rendering a diagnostic runs no code of a program.)
     silt::scheduler::report(|| {
-        silt::diagnostic::eprint_all(&ProgramFiles::new(path, sources), diagnostics)
+        silt::diagnostic::eprint_all(&ProgramFiles::new(shown, sources), diagnostics)
     });
     if compiled && !diagnostics.iter().any(Diagnostic::is_error) {
         return false;
@@ -176,7 +177,16 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
     let mut warned: HashSet<String> = HashSet::new();
 
     for path in &paths {
-        let (mut session, file) = match open_entry(path, LockPolicy::Update) {
+        // A file found in the working directory is named `./a_test.silt`
+        // on its result lines; its diagnostics name it as every other
+        // file of the program is named there, `a_test.silt`.
+        let shown = match file {
+            None => (path.strip_prefix("./"))
+                .or_else(|| path.strip_prefix(".\\"))
+                .unwrap_or(path),
+            Some(_) => path.as_str(),
+        };
+        let (mut session, file) = match open_entry(shown, LockPolicy::Update) {
             Ok(opened) => opened,
             Err(e) => {
                 // An unreadable file cannot be asked for its tests, so
@@ -219,10 +229,15 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             },
         );
         let mut diagnostics = door_diagnostics(&mut session, file, &compiled);
-        let files = ProgramFiles::new(path, session.sources());
+        let files = ProgramFiles::new(shown, session.sources());
         diagnostics.retain(|d| d.is_error() || warned.insert(render_human(&files, d)));
-        let failed_to_compile =
-            report_diagnostics(path, session.sources(), &diagnostics, compiled.is_ok());
+        let failed_to_compile = report_diagnostics(
+            path,
+            shown,
+            session.sources(),
+            &diagnostics,
+            compiled.is_ok(),
+        );
         let program = match compiled {
             Ok(program) if !failed_to_compile => program,
             _ => {
@@ -237,6 +252,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         // Tasks that the file's top-level code spawns are the file's.
         let file_index = owners.add_file(TestFile {
             path: path.clone(),
+            shown: shown.to_string(),
             sources,
             entry: file,
         });
@@ -264,7 +280,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             // failed").
             say(&format!(
                 "{path}: the file's top-level code failed:\n{}\n",
-                render_runtime_error(&e, path, &owners.files[file_index].sources)
+                render_runtime_error(&e, shown, &owners.files[file_index].sources)
             ));
             counts.file_errors.setup += 1;
             continue;
@@ -332,7 +348,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                             test.span,
                             format!("{name} returned Err: {}", vm.show_text(payload)),
                         );
-                        let files = ProgramFiles::new(path, &owners.files[file_index].sources);
+                        let files = ProgramFiles::new(shown, &owners.files[file_index].sources);
                         said += &indented(&render_human(&files, &d));
                         true
                     }
@@ -347,7 +363,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                     // frames, as under `silt run`.
                     said += &indented(&render_runtime_error(
                         &e,
-                        path,
+                        shown,
                         &owners.files[file_index].sources,
                     ));
                     true
@@ -467,7 +483,10 @@ impl FileErrors {
 /// A test file whose code has run, kept to render the failures of the
 /// tasks that its tests spawned.
 struct TestFile {
+    /// As its result lines name it.
     path: String,
+    /// As its diagnostics name it.
+    shown: String,
     /// The text of the file and of every module file it imports.
     sources: SourceMap,
     /// The file itself.
@@ -527,7 +546,7 @@ impl TaskOwners {
         for failure in &taken.failures {
             let error = failure.report_error();
             let rendered = match self.file_of(failure.owner) {
-                Some(file) => render_runtime_error(&error, &file.path, &file.sources),
+                Some(file) => render_runtime_error(&error, &file.shown, &file.sources),
                 None => error.to_string(),
             };
             reports.entry(failure.owner).or_default().push(rendered);
@@ -538,7 +557,7 @@ impl TaskOwners {
             let message = UnjoinedFailures::not_kept_message(count);
             let rendered = match self.file_of(owner) {
                 Some(file) => render_human(
-                    &ProgramFiles::new(&file.path, &file.sources),
+                    &ProgramFiles::new(&file.shown, &file.sources),
                     &Diagnostic::error(
                         Code::UnjoinedTaskFailure,
                         Span::point(file.entry, 0),

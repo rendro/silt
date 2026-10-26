@@ -1,3 +1,10 @@
+warning[type]: unused import 'string'
+ --> src/a_test.silt:2:1
+   |
+ 2 | import string
+   | ^^^^^^^^^^^^^ unused import 'string'
+  = help: remove the line `import string`
+
 warning[type]: unused import 'list'
  --> src/helper.silt:1:1
    |

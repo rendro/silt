@@ -128,6 +128,10 @@ pub(crate) fn vm_run_file(path: &str) {
         Ok(program) if !diagnostics.iter().any(Diagnostic::is_error) => program,
         _ => process::exit(1),
     };
+    // The warnings stand apart from what the program writes.
+    if !diagnostics.is_empty() {
+        eprintln!();
+    }
     // Where a `main` that returns `Err` is reported: at its name, or at
     // the start of the entry file when no function is named `main`.
     let main_span = session
