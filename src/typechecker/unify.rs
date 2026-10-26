@@ -129,6 +129,9 @@ pub(super) struct Fault {
     /// The two types (got, expected) when their heads differ: the report
     /// offers to wrap a value in `Ok(...)` where a `Result` is expected.
     apart: Option<(Type, Type)>,
+    /// What the report says of the parts (a type constructor variable
+    /// against a type that has none, or another first argument).
+    note: Option<String>,
 }
 
 impl Fault {
@@ -138,6 +141,7 @@ impl Fault {
             message: message.into(),
             help: None,
             apart: None,
+            note: None,
         }
     }
 }
@@ -732,6 +736,9 @@ impl TypeChecker {
         for fault in mismatch.0 {
             let mut d = Diagnostic::error(fault.code, span, fault.message);
             d.help.extend(fault.help);
+            if let Some(note) = fault.note {
+                d = d.with_note(note);
+            }
             if let Some((got, expected)) = &fault.apart {
                 Self::add_ok_wrap_fix(&mut d, got, expected);
                 d = self.name_annotation_variables(d, expected, got);
@@ -826,6 +833,7 @@ impl TypeChecker {
             message: format!("type mismatch: expected {expected_shown}, got {got_shown}"),
             help: Self::chain_hint(got, expected),
             apart: Some((got.clone(), expected.clone())),
+            note: None,
         }
     }
 
@@ -911,6 +919,63 @@ impl TypeChecker {
                     }
                 } else {
                     self.bind(*v, t.clone(), out);
+                }
+            }
+
+            // Two type constructor variables applied: one constructor,
+            // one argument.
+            (Type::App(h1, a1), Type::App(h2, a2)) => {
+                let mut heads = Vec::new();
+                self.unify_into(h1, h2, &mut heads);
+                if !heads.is_empty() {
+                    out.push(self.type_mismatch(&t1, &t2));
+                    return;
+                }
+                self.unify_into(a1, a2, out);
+            }
+
+            // A type constructor variable applied, against a type: the
+            // variable is the type's constructor, its argument the type's
+            // first type argument (`m(Int)` is `Result(Int, e)` with `m`
+            // `Result(_, e)`).
+            (Type::App(head, arg), other) | (other, Type::App(head, arg)) => {
+                let applied = match &t1 {
+                    Type::App(..) => &t1,
+                    _ => &t2,
+                };
+                let Some((con, rest, first)) = other.split_constructor() else {
+                    let mut fault = self.type_mismatch(&t1, &t2);
+                    fault.note = Some(format!(
+                        "'{}' stands for a type constructor: it matches a type with a type \
+                         argument, like 'List(Int)' or 'Option(Int)'",
+                        self.show_type(head)
+                    ));
+                    out.push(fault);
+                    return;
+                };
+                let mut heads = Vec::new();
+                self.unify_into(head, &Type::Con(con, rest), &mut heads);
+                if !heads.is_empty() {
+                    out.push(self.type_mismatch(&t1, &t2));
+                    return;
+                }
+                let mut args = Vec::new();
+                self.unify_into(arg, &first, &mut args);
+                if !args.is_empty() {
+                    let mut fault = self.type_mismatch(&t1, &t2);
+                    fault.note = Some(format!(
+                        "'{}' is matched against the first type argument, '{}' here",
+                        self.show_type(&self.apply(applied)),
+                        self.show_type(&self.apply(&first))
+                    ));
+                    out.push(fault);
+                }
+            }
+
+            // Two type constructors: one head, the same other arguments.
+            (Type::Con(c1, r1), Type::Con(c2, r2)) if c1 == c2 && r1.len() == r2.len() => {
+                for (x, y) in r1.iter().zip(r2) {
+                    self.unify_into(x, y, out);
                 }
             }
 
