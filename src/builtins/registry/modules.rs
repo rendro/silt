@@ -16,8 +16,8 @@ use crate::builtins::prelude;
 #[cfg(feature = "tcp")]
 use crate::builtins::tcp;
 use crate::builtins::{
-    bytes, concurrency, core, crypto, encoding, http, io, json, regex, stream, string, time, toml,
-    uuid,
+    applicative, bytes, concurrency, core, crypto, encoding, http, io, json, regex, stream, string,
+    time, toml, uuid,
 };
 
 /// The functions of the prelude: called by their bare names, each
@@ -39,6 +39,27 @@ pub(super) fn prelude() -> Vec<RowSpec> {
             "Crash with an error message",
             prelude::panic,
         ),
+    ]
+}
+
+/// The methods of the built-in impls that no module has as a function,
+/// each a row of its type (`List.map2`): the impls' other methods are
+/// module functions (`list.map`).
+#[rustfmt::skip]
+pub(super) fn impls() -> Vec<(&'static str, Vec<RowSpec>)> {
+    vec![
+        ("List", vec![
+            f("fn pure(x: a) -> List(a)", "The list of the one value", applicative::list::pure),
+            f("fn map2(xs: List(a), ys: List(b), f: Fn(a, b) -> c) -> List(c)", "f of every pair: each element of xs with each of ys", applicative::list::map2),
+        ]),
+        ("Option", vec![
+            f("fn pure(x: a) -> Option(a)", "Some of the value", applicative::option::pure),
+            f("fn map2(xs: Option(a), ys: Option(b), f: Fn(a, b) -> c) -> Option(c)", "f of both values, or the first None", applicative::option::map2),
+        ]),
+        ("Result", vec![
+            f("fn pure(x: a) -> Result(a, e)", "Ok of the value", applicative::result::pure),
+            f("fn map2(xs: Result(a, e), ys: Result(b, e), f: Fn(a, b) -> c) -> Result(c, e)", "f of both values, or the first Err", applicative::result::map2),
+        ]),
     ]
 }
 

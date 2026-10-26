@@ -142,13 +142,13 @@ pub(crate) fn item_arg<S>(_: &S, item: &Value, stack: &mut Vec<Value>) {
 }
 
 /// A builtin that makes one call and makes its value from the result.
-struct CallThen<F> {
+struct CallThen<F, const N: usize> {
     name: &'static str,
-    call: Option<(Value, Value)>,
+    call: Option<(Value, [Value; N])>,
     then: Option<F>,
 }
 
-impl<F> Native for CallThen<F>
+impl<F, const N: usize> Native for CallThen<F, N>
 where
     F: FnOnce(Value) -> Result<Value, VmError> + Send,
 {
@@ -157,23 +157,28 @@ where
     }
 
     fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError> {
-        if let Some((callee, arg)) = self.call.take() {
-            return Ok(vm.call(callee, [arg]));
+        if let Some((callee, args)) = self.call.take() {
+            return Ok(vm.call(callee, args));
         }
         let then = self.then.take().expect("a frame is resumed once per call");
         then(input).map(Step::Done)
     }
 }
 
-/// The builtin `name` as one call of `callee` with `arg`; its value
+/// The builtin `name` as one call of `callee` with `args`; its value
 /// is `then(result)`.
-pub(crate) fn call_then<F>(name: &'static str, callee: Value, arg: Value, then: F) -> Step
+pub(crate) fn call_then<F, const N: usize>(
+    name: &'static str,
+    callee: Value,
+    args: [Value; N],
+    then: F,
+) -> Step
 where
     F: FnOnce(Value) -> Result<Value, VmError> + Send + 'static,
 {
     Step::Run(Box::new(CallThen {
         name,
-        call: Some((callee, arg)),
+        call: Some((callee, args)),
         then: Some(then),
     }))
 }

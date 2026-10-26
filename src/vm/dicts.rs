@@ -8,7 +8,7 @@ use crate::bytecode::VmClosure;
 use crate::bytecode::dict::Dict;
 use crate::value::Value;
 
-use super::{Vm, VmError};
+use super::{Step, Vm, VmError};
 
 /// The dictionary `value` is, as the verified code that names it holds
 /// one there.
@@ -167,6 +167,38 @@ impl Vm {
             name.unwrap_or_default(),
             crate::types::canonical::dispatch_type_name(&self.stack[at])
         ))
+    }
+
+    /// The step of a builtin's frame that calls the method `method` of
+    /// the dictionary `dict` with `args` ([`Step::Call`]): as
+    /// `CallDict` calls it, with the dictionary in the slot of the
+    /// callee, below the arguments, where a method of an impl takes it
+    /// from. (A builtin that is passed a dictionary, `list.traverse`,
+    /// calls its methods so; it trusts the checker with the receiver.)
+    pub(crate) fn call_dict_method(
+        &mut self,
+        dict: &Dict,
+        method: usize,
+        args: impl IntoIterator<Item = Value>,
+    ) -> Result<Step, VmError> {
+        if dict.template(&self.view.entry).is_none() {
+            self.see_template(dict.index())?;
+        }
+        let template = dict.template(&self.view.entry).ok_or_else(no_template)?;
+        let Some(&slot) = template.methods.get(method) else {
+            return Err(VmError::type_confusion(format!(
+                "the dictionary of {} has no method {method}",
+                template.name
+            )));
+        };
+        let callee = self.global_value(slot)?;
+        let func_slot = self.stack.len();
+        self.stack.push(Value::Dict(dict.clone()));
+        self.stack.extend(args);
+        Ok(Step::Call {
+            callee,
+            argc: self.stack.len() - func_slot - 1,
+        })
     }
 
     /// `DictMethod`: the method `method` of the dictionary on top, then
