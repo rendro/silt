@@ -231,7 +231,9 @@ fn main() {
   never imported.
 - Built in: `Display` (by structure, or a written impl), `Equal`, `Hash`
   and `Compare` (always by structure; an impl of them is an error),
-  `Error` (written), `Number` (`Int` and `Float`). A record compares
+  `Error` (written), `Number` (`Int` and `Float`). `Functor`,
+  `Applicative` and `Monad` are traits of type constructors (see
+  [Functors](language/functors.md)). A record compares
   field by field in declared order, an enum by variant order, then
   payload.
 

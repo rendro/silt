@@ -1,7 +1,7 @@
 ---
 title: "Error Codes"
 section: "Language"
-order: 13
+order: 14
 description: "What each diagnostic code of silt means: E0001 to E0801."
 ---
 

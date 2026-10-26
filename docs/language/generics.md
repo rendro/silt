@@ -19,7 +19,9 @@ unambiguous when they must be visible**. Readers should never have to ask
 ## The mental model
 
 1. **Lowercase identifiers in type positions are type variables.**
-   Uppercase identifiers are concrete types or type constructors.
+   One written with a type argument (`m(Int)`) is a type constructor
+   variable. Uppercase identifiers are concrete types or type
+   constructors.
 2. **Type variables bind at their first appearance** in a signature,
    reading left to right.
 3. **Every type variable must be anchored to a parameter.** Either it
@@ -113,6 +115,8 @@ Type variables may appear:
 - As a full parameter type: `x: a`
 - Inside a type constructor: `xs: List(a)`, `m: Map(k, v)`
 - Inside a function type: `f: Fn(a) -> b`
+- Applied, as a type constructor variable: `xs: m(Int)` (see
+  [Functors](functors.md))
 - In the return type, **only if already bound** by a parameter
 
 ### The binding rule
@@ -134,6 +138,9 @@ This rule eliminates the "where did `a` come from?" confusion that
 plagues ML-family languages with implicit `forall`. When the reader
 encounters a type variable, its origin is always a parameter they can
 point to.
+
+A type constructor variable follows the same rule: `m` in `xs: m(Int)`
+appears in a parameter's type, or is a `type m` parameter.
 
 ### A type variable is any type
 
@@ -513,6 +520,27 @@ Among the built-in traits, `Compare` includes `Equal` in the same way
 (a `where a: Compare` bound lets the body use `==`); the example uses a
 user-defined `Ordered` to show the supertrait edge being written.
 
+### Traits of type constructors
+
+A type variable written with a type argument, `m` in `xs: m(Int)`,
+stands for a type constructor: `List(_)`, `Option(_)`, `Result(_, e)`.
+Bounded by one of the built-in traits of type constructors, `Functor`,
+`Applicative` or `Monad`, one function works over all of them:
+
+```silt
+fn double_all(xs: m(Int)) -> m(Int) where m: Functor {
+  Functor.map(xs) { x -> x * 2 }
+}
+
+fn main() {
+  println(double_all([1, 2])) -- [2, 4]
+  println(double_all(Some(3))) -- Some(6)
+}
+```
+
+See [Functors](functors.md) for constructor variables, the three traits,
+their impls and the laws.
+
 ### The four structural traits
 
 `Equal`, `Hash`, `Compare`, and `Display` are traits the language
@@ -863,15 +891,6 @@ When the compiler can't infer a type, annotation or `as` ascription
 always works. Turbofish would be a fourth mechanism serving the same
 purpose.
 
-### No higher-kinded types
-
-No `Functor f` abstracting over type constructors. HKT pays off
-heavily for library authors writing universal abstractions but makes
-type errors and inference substantially harder for everyone else.
-Silt's position: the stdlib provides the common shapes directly
-(`List`, `Option`, `Result`, `Map`), and that covers the overwhelming
-majority of real code.
-
 ### No constants in type parameters
 
 No `Array(n, Int)` where `n` is a value. Fixed-size arrays don't exist
@@ -899,7 +918,11 @@ use cases without introducing a second language stage.
 
 ## Summary of rules
 
-1. Lowercase identifiers in type positions are type variables.
+1. Lowercase identifiers in type positions are type variables. One
+   written with a type argument (`m(Int)`) is a type constructor
+   variable: it stands for a constructor (`Option(_)`), takes one type
+   argument, and is bounded by a trait of type constructors (`where m:
+   Functor`).
 2. Uppercase identifiers are concrete types or type constructors.
 3. Type variables bind at first appearance in a parameter type.
 4. Every type variable must be anchored — appear in a regular

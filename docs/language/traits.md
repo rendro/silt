@@ -9,6 +9,8 @@ order: 7
 Traits define shared behavior. No inheritance, no subclassing -- methods,
 plus associated types (a trait may declare a `type Item` member that each
 impl binds; see [Generics — Associated types](generics.md#associated-types)).
+A trait may also be about a type constructor (`Option(_)`) rather than
+a type: see [Traits of Type Constructors](#traits-of-type-constructors).
 
 ## Declaration and Implementation
 
@@ -364,6 +366,10 @@ Rules:
 - **Only lowercase binders.** `trait X for Box(Int)` is a parse error —
   silt has no specialization.
 - **Binders must be distinct.** `trait X for Pair(a, a)` is a parse error.
+- **`_` is for a trait of type constructors.** `trait Functor for
+  Option(_)` writes `_` for the type argument the trait maps over; in an
+  impl of a trait of types `_` is an error (see [Traits of Type
+  Constructors](#traits-of-type-constructors)).
 - **Arity must match the target.** `trait X for Box(a, b)` on the 1-param
   `Box(a)` is a type error.
 - **The bare form still works.** `trait X for Box { ... }` is an impl for
@@ -587,6 +593,50 @@ The full specification — including how trait parameters flow through
 `where` clauses — lives in
 [Generics — Parameterized trait declarations](generics.md#parameterized-trait-declarations).
 
+## Traits of Type Constructors
+
+A trait whose methods write `Self` with a type argument, `xs: Self(a)`,
+is a trait of **type constructors**: `Self` is `List(_)` or `Option(_)`,
+a type that still needs its first type argument, and `Self(a)` is that
+type at `a`. Its impls write `_` for the argument it is about:
+
+```silt
+import list
+
+trait Container {
+  fn size(xs: Self(a)) -> Int
+}
+
+trait Container for List(_) {
+  fn size(xs) {
+    list.length(xs)
+  }
+}
+
+trait Container for Option(_) {
+  fn size(xs) {
+    match xs {
+      Some(_) -> 1
+      None -> 0
+    }
+  }
+}
+
+fn main() {
+  println(Container.size([1, 2, 3])) -- 3
+  println(Container.size(Some("a"))) -- 1
+}
+```
+
+A trait that writes `Self` in neither form is of its supertraits' kind.
+Such a trait names its parameters with their types (`self` is an error),
+and has no trait parameters, no associated types and no supertrait of
+types; a trait that writes `Self` both with and without a type argument
+is an error. The built-in `Functor`, `Applicative` and `Monad` are traits
+of type constructors; [Functors](functors.md) is about them, about
+generic code over constructors (`where m: Functor`), and about the rules
+of an impl's header.
+
 ## Methods That Make a Value
 
 Some trait methods take no value of the type and only make one —
@@ -635,6 +685,12 @@ for `Int`. Inside a generic function with `type a` and
 concrete type passed in. See
 [Generics — Trait methods on types](generics.md#trait-methods-on-types) for
 the full rules.
+
+A trait of type constructors has them too. `Applicative`'s `pure` makes
+a value: it is called on a type constructor, `Option.pure(1)` (which is
+`Some(1)`), or in generic code on a constructor variable with the bound,
+`m.pure(x)` where `m: Applicative`. Calling it through the trait,
+`Applicative.pure(1)`, is the error above.
 
 A type with a variant of its own name (`type Box(a) { Box(a), Empty }`)
 is the type where a type is meant: `Box.default()` calls the method of
@@ -750,14 +806,21 @@ at any depth. An impl of `Display`, `json.Encode`, `json.Decode` or
 `Error` asks only built-in traits of its type's variables (see
 [Impl-level where clauses](#impl-level-where-clauses)).
 
+Functor, Applicative and Monad are built in too, but they are found by the
+types, like a trait your program declares: generic code over `m` is passed
+the impl for `m`, and the impls for List, Option, Result and Channel are the
+module functions (`list.map`, `option.flat_map`, ...).
+
 ## Built-in Traits
 
-silt ships **six** built-in traits. Four of them — `Equal`, `Hash`,
+silt ships **nine** built-in traits. Four of them — `Equal`, `Hash`,
 `Compare`, `Display` — are **structural**: the language answers them
 itself, for every type made of types that have them (what that means
 for each kind of type is listed below). Of the four only `Display` may
 be written by hand. `Error` is implemented by hand. `Number` is the
-types arithmetic is on, `Int` and `Float`, and nothing else.
+types arithmetic is on, `Int` and `Float`, and nothing else. `Functor`,
+`Applicative` and `Monad` are traits of type constructors (see
+[Functors](functors.md)).
 
 | Trait     | Purpose                          | Who has it | An impl may be written |
 |-----------|----------------------------------|------------|------------------------|
@@ -767,6 +830,9 @@ types arithmetic is on, `Int` and `Float`, and nothing else.
 | `Compare` | Order comparison; includes `Equal` | by structure | no (an error) |
 | `Error`   | Error reporting (`Error.message(e)`) | types with an impl | yes |
 | `Number`  | `+ - * / %` and unary `-`        | Int and Float only | no |
+| `Functor` | `map` over a type constructor | `List`, `Option`, `Result`, `Channel`; types with an impl | yes, for a type of your own |
+| `Applicative` | `pure` and `map2`; includes `Functor` | `List`, `Option`, `Result`; types with an impl | yes, for a type of your own |
+| `Monad` | `flat_map`; includes `Applicative` | `List`, `Option`, `Result`; types with an impl | yes, for a type of your own |
 
 Operators are these traits: `==` and `!=` need `Equal`, `<` `>` `<=`
 `>=` need `Compare`, interpolation and `println` need `Display`,

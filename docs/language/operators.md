@@ -1,7 +1,7 @@
 ---
 title: "Operators and Precedence"
 section: "Language"
-order: 12
+order: 13
 description: "Complete operator reference: symbols, precedence, associativity, and newline-sensitivity rules."
 ---
 
