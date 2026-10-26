@@ -26,6 +26,7 @@ mod manifest_tests;
 mod manifest_unknown_fields_rejected_tests;
 mod not_unicode_tests;
 mod package_graph_lock_tests;
+mod process_exit_tests;
 mod repl_completion_short_commands_tests;
 mod repl_error_render_and_keywords_tests;
 mod repl_keyword_parity_with_lexer_tests;

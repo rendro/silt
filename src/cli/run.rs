@@ -151,9 +151,13 @@ pub(crate) fn vm_run_file(path: &str) {
     let run_result = vm.run_program(&program);
     // `main` has returned; the program ends when its tasks can do no
     // more. After an error of `main`, raised or returned as `Err`,
-    // nothing is waited for: the program has failed.
-    if matches!(&run_result, Ok(value) if returned_err(value).is_none()) {
-        vm.settle();
+    // nothing is waited for: the program has failed. That is its end
+    // from here, before anything of the report is made: a task's
+    // `process.exit` that comes later is ignored, and if one came first
+    // it ends the process and this thread goes no further.
+    match &run_result {
+        Ok(value) if returned_err(value).is_none() => vm.settle(),
+        _ => silt::scheduler::claim_program_failure(),
     }
     // The program has ended. The tasks that failed and that nobody
     // joined or cancelled are reported, and make the run fail. (Not
@@ -232,6 +236,10 @@ pub(crate) fn panic_where_a_test_says(vm: &Vm) {
 /// Returns true if there was one.
 fn report_task_failures(path: &str, sources: &SourceMap, entry: FileId) -> bool {
     let failures = silt::scheduler::take_unjoined_failures();
+    // (The run fails with them: see `claim_program_failure` above.)
+    if !failures.is_empty() {
+        silt::scheduler::claim_program_failure();
+    }
     let mut texts: Vec<String> = Vec::new();
     for failure in &failures.failures {
         texts.push(render_runtime_error(&failure.report_error(), path, sources));

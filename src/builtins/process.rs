@@ -14,10 +14,7 @@ builtins! {
         };
         match vm.exit() {
             Exit::EndsProcess => crate::scheduler::exit_from_the_program(code),
-            Exit::FailsTest => Err(VmError::new(format!(
-                "process.exit({code}) was called in a test: a test ends by returning, or by \
-                 failing an assertion"
-            ))),
+            Exit::FailsTest => Err(VmError::exit_in_a_test(code)),
             Exit::EndsRun => {
                 vm.scheduler().exit(code);
                 Err(VmError::exited(code))

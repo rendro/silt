@@ -86,14 +86,59 @@ impl Output for ProcessStdout {
     }
 }
 
-/// The stderr of the process.
+/// The stderr of the process. A pipe whose reader has gone is an error
+/// of the write, which is dropped: unlike stdout, a closed stderr ends
+/// nothing.
 struct ProcessStderr;
 
 impl Output for ProcessStderr {
     fn write(&self, text: &str) -> io::Result<()> {
         use std::io::Write;
-        io::stderr().lock().write_all(text.as_bytes())
+        without_sigpipe(|| io::stderr().lock().write_all(text.as_bytes()))
     }
+}
+
+/// `write`, with SIGPIPE blocked on the calling thread: a write to a
+/// pipe whose reader has gone fails with `BrokenPipe` instead of
+/// killing the process (the `silt` command sets the signal to its
+/// default), and the signal that write raised is taken off the thread
+/// before the mask is put back.
+#[cfg(unix)]
+fn without_sigpipe(write: impl FnOnce() -> io::Result<()>) -> io::Result<()> {
+    // SAFETY: the sets are zeroed `sigset_t`s, initialised by
+    // `sigemptyset` before they are read, and every pointer passed is
+    // valid or null. The mask changed is the calling thread's own.
+    let (pipe, old) = unsafe {
+        let mut pipe: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut pipe);
+        libc::sigaddset(&mut pipe, libc::SIGPIPE);
+        let mut old: libc::sigset_t = std::mem::zeroed();
+        libc::pthread_sigmask(libc::SIG_BLOCK, &pipe, &mut old);
+        (pipe, old)
+    };
+    let result = write();
+    // SAFETY: as above. `sigwait` is called only for a SIGPIPE that is
+    // pending, so it returns at once.
+    unsafe {
+        if matches!(&result, Err(e) if e.kind() == io::ErrorKind::BrokenPipe) {
+            let mut pending: libc::sigset_t = std::mem::zeroed();
+            libc::sigemptyset(&mut pending);
+            if libc::sigpending(&mut pending) == 0
+                && libc::sigismember(&pending, libc::SIGPIPE) == 1
+            {
+                let mut taken: libc::c_int = 0;
+                libc::sigwait(&pipe, &mut taken);
+            }
+        }
+        libc::pthread_sigmask(libc::SIG_SETMASK, &old, std::ptr::null_mut());
+    }
+    result
+}
+
+/// Elsewhere a write to a closed pipe is an error of the write.
+#[cfg(not(unix))]
+fn without_sigpipe(write: impl FnOnce() -> io::Result<()>) -> io::Result<()> {
+    write()
 }
 
 /// The clock a program reads. Called from the thread that runs the

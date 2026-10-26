@@ -1206,21 +1206,62 @@ pub fn exit_with_status(status: i32) -> ! {
     std::process::exit(status)
 }
 
+/// Which of two ends of a program run by the `silt` command came first:
+/// its failure (a runtime error of `main`, a `main` that returned `Err`,
+/// tasks that failed and that nobody joined), which is reported and
+/// ends the process with 1, or a `process.exit`, which reports nothing
+/// and ends it with its code. The one that comes first is the end: a
+/// report never stands beside the code of an exit, and an exit that
+/// comes after the failure is ignored.
+static PROGRAM_END: AtomicU8 = AtomicU8::new(OPEN);
+const OPEN: u8 = 0;
+const FAILED: u8 = 1;
+const EXITED: u8 = 2;
+
+/// The program run by the `silt` command has failed, and the command
+/// is about to report it and end the process with 1: called before
+/// anything of the report is made. From here on a `process.exit` of the
+/// program is ignored: the thread that calls it waits for the end. If
+/// the program has called `process.exit` first, the calling thread
+/// waits for that to end the process, and never returns.
+pub fn claim_program_failure() {
+    let first = PROGRAM_END.compare_exchange(OPEN, FAILED, Ordering::SeqCst, Ordering::SeqCst);
+    if first == Err(EXITED) {
+        loop {
+            thread::park();
+        }
+    }
+}
+
 /// End the process with `code`, from whichever thread of a program
 /// calls `process.exit(code)` under `silt run`
 /// ([`crate::vm::Exit::EndsProcess`]): no task is waited for, and
-/// nothing is reported. What the program printed to stdout and that
-/// stdout still holds is written out first. Its lock is taken for that
-/// and kept until the process is gone, so nothing is printed after the
-/// exit; a write that is held up by a full pipe holds the lock, and is
-/// waited for no longer than the last words of an internal error
-/// ([`LAST_WORDS`]). (stderr holds nothing: it is not buffered.)
+/// nothing is reported. If the program has failed first
+/// ([`claim_program_failure`]), or another exit came first, the
+/// calling thread waits for that end instead.
+///
+/// What the program printed and stdout still holds is written out
+/// first, all of it, waiting for the reader as a normal end does.
+/// stdout's lock is taken for that and kept until the process is gone,
+/// so nothing is printed after the exit. Only the wait for the lock is
+/// bounded: another task's write that holds it, held up by a full
+/// pipe, is waited for no longer than the last words of an internal
+/// error ([`LAST_WORDS`]), and nothing is flushed then. (stderr holds
+/// nothing: it is not buffered.)
 pub(crate) fn exit_from_the_program(code: u8) -> ! {
     use std::io::Write;
+    let first = PROGRAM_END.compare_exchange(OPEN, EXITED, Ordering::SeqCst, Ordering::SeqCst);
+    if first.is_err() {
+        loop {
+            thread::park();
+        }
+    }
     end_as(WITH_STATUS);
+    let (locked, has_lock) = std::sync::mpsc::channel();
     let (done, flushed) = std::sync::mpsc::channel();
     let flushes = move || {
         let mut stdout = std::io::stdout().lock();
+        let _ = locked.send(());
         let _ = stdout.flush();
         let _ = done.send(());
         loop {
@@ -1233,8 +1274,9 @@ pub(crate) fn exit_from_the_program(code: u8) -> ! {
         .name("silt-exit".into())
         .spawn(flushes)
         .is_ok()
+        && has_lock.recv_timeout(LAST_WORDS).is_ok()
     {
-        let _ = flushed.recv_timeout(LAST_WORDS);
+        let _ = flushed.recv();
     }
     std::process::exit(i32::from(code))
 }
