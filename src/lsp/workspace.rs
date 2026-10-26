@@ -703,10 +703,17 @@ impl Server {
         let source = session
             .sources()
             .get(session.graph().module(module).file?)?;
-        source
+        let text = source
             .text
-            .get(td.span.start as usize..td.span.end as usize)
-            .map(str::to_string)
+            .get(td.span.start as usize..td.span.end as usize)?;
+        // Another module sees an opaque type without what is in it: its
+        // header, `pub opaque type Email`.
+        let outside = doc.module.as_ref().is_some_and(|m| m.id != module);
+        if td.is_opaque && outside {
+            let header = text.split_once('{').map_or(text, |(header, _)| header);
+            return Some(header.trim_end().to_string());
+        }
+        Some(text.to_string())
     }
 
     /// The definition of the type `id` of the session of the open

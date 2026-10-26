@@ -1,0 +1,13 @@
+-- cmd: lsp
+-- lsp: hover 10:18
+-- lsp: hover 10:33
+-- lsp: hover 10:47
+-- lsp: completion 12:8
+-- Outside its module, hover shows an opaque type without what is in it,
+-- and completion offers none of its constructors.
+import mail
+
+fn show(e: mail.Email, u: mail.User, s: mail.Shape) -> String {
+  mail.address(e)
+  mail.
+}

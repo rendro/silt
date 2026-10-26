@@ -1,0 +1,12 @@
+> hover 8:19
+```silt
+pub opaque type Email {
+  Email(String),
+}
+```
+
+---
+
+cmd: lsp
+lsp: hover 8:19
+In its own module, hover shows an opaque type with what is in it.

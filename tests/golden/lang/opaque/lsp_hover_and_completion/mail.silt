@@ -1,0 +1,36 @@
+import string
+
+pub opaque type Email {
+  Email(String),
+}
+
+pub opaque type Shape {
+  Circle(Int),
+  Square(Int),
+}
+
+pub opaque type User {
+  name: String,
+  age: Int,
+}
+
+pub fn parse(text: String) -> Option(Email) {
+  match string.contains(text, "@") {
+    true -> Some(Email(string.to_lower(text)))
+    false -> None
+  }
+}
+
+pub fn address(e: Email) -> String {
+  match e {
+    Email(s) -> s
+  }
+}
+
+pub fn user(name: String) -> User {
+  User { name: name, age: 1 }
+}
+
+pub fn name(u: User) -> String {
+  u.name
+}

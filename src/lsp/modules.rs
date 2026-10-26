@@ -57,7 +57,10 @@ fn members(program: &Program) -> Vec<(Symbol, MemberKind)> {
             }
             Decl::Type(t) if t.is_pub => {
                 out.push((t.name, MemberKind::Type));
-                if let crate::ast::TypeBody::Enum(variants) = &t.body {
+                // (Another module cannot build an opaque type's values.)
+                if let crate::ast::TypeBody::Enum(variants) = &t.body
+                    && !t.is_opaque
+                {
                     out.extend(variants.iter().map(|v| (v.name, MemberKind::Variant)));
                 }
             }
