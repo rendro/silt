@@ -1,0 +1,5 @@
+error[runtime]: panic: map failed on 2
+ --> stage_callback__panic_in_map_through_receive_timeout.silt:18:49
+    |
+ 18 |   read(stream.map(stream.from_list([2])) { x -> panic("map failed on {x}") })
+    |                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^ panic: map failed on 2

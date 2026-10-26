@@ -1,0 +1,89 @@
+-- cmd: test
+-- exit: 1
+-- A panic in a stream stage's callback fails the test that reads
+-- the stage's output, by any read of it.
+import channel
+import stream
+import time
+
+fn receive_of(s) {
+  match channel.receive(s) {
+    Some(v) -> println("got {v}")
+    None -> println("closed")
+  }
+}
+
+fn try_receive_of(s) {
+  match channel.try_receive(s) {
+    channel.Message(v) -> println("got {v}")
+    channel.Closed -> println("closed")
+    channel.Empty -> {
+      time.sleep(time.ms(1))
+      try_receive_of(s)
+    }
+  }
+}
+
+fn receive_timeout_of(s) {
+  match channel.receive_timeout(s, time.seconds(10)) {
+    channel.Message(v) -> println("got {v}")
+    channel.Closed -> println("closed")
+    channel.Empty -> println("no value in time")
+  }
+}
+
+fn select_of(s) {
+  match channel.select([channel.Recv(s)]) {
+    channel.Received(_, Some(v)) -> println("got {v}")
+    channel.Received(_, None) -> println("closed")
+    _ -> println("other")
+  }
+}
+
+fn test_unfold_through_receive() {
+  receive_of(stream.unfold(1) { x -> panic("unfold failed on {x}") })
+}
+
+fn test_map_through_receive() {
+  receive_of(stream.map(stream.from_list([2])) { x -> panic("map failed on {x}") })
+}
+
+fn test_map_through_try_receive() {
+  try_receive_of(stream.map(stream.from_list([2])) { x -> panic("map failed on {x}") })
+}
+
+fn test_map_through_receive_timeout() {
+  receive_timeout_of(stream.map(stream.from_list([2])) { x -> panic("map failed on {x}") })
+}
+
+fn test_map_through_select() {
+  select_of(stream.map(stream.from_list([2])) { x -> panic("map failed on {x}") })
+}
+
+fn test_map_ok_through_receive() {
+  receive_of(stream.map_ok(stream.from_list([Ok(3), Err("no")])) { x -> panic("map_ok failed on {x}") })
+}
+
+fn test_filter_through_receive() {
+  receive_of(stream.filter(stream.from_list([4])) { x -> panic("filter failed on {x}") })
+}
+
+fn test_filter_ok_through_receive() {
+  receive_of(stream.filter_ok(stream.from_list([Ok(5), Err("no")])) { x -> panic("filter_ok failed on {x}") })
+}
+
+fn test_flat_map_through_receive() {
+  receive_of(stream.flat_map(stream.from_list([6])) { x -> panic("flat_map failed on {x}") })
+}
+
+fn test_take_while_through_receive() {
+  receive_of(stream.take_while(stream.from_list([7])) { x -> panic("take_while failed on {x}") })
+}
+
+fn test_drop_while_through_receive() {
+  receive_of(stream.drop_while(stream.from_list([8])) { x -> panic("drop_while failed on {x}") })
+}
+
+fn test_scan_through_receive() {
+  receive_of(stream.scan(stream.from_list([9]), 0) { acc, x -> panic("scan failed on {x}") })
+}

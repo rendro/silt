@@ -1,0 +1,5 @@
+error[runtime]: panic: flat_map failed on 6
+ --> stage_callback__panic_in_flat_map_through_receive.silt:16:54
+    |
+ 16 |   read(stream.flat_map(stream.from_list([6])) { x -> panic("flat_map failed on {x}") })
+    |                                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ panic: flat_map failed on 6

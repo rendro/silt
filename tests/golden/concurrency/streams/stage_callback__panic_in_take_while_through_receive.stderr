@@ -1,0 +1,5 @@
+error[runtime]: panic: take_while failed on 7
+ --> stage_callback__panic_in_take_while_through_receive.silt:16:56
+    |
+ 16 |   read(stream.take_while(stream.from_list([7])) { x -> panic("take_while failed on {x}") })
+    |                                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ panic: take_while failed on 7

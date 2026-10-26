@@ -1,0 +1,74 @@
+  FAIL stage_callback__exit_in_every_stage_fails_its_test.silt::test_unfold_through_receive
+    error[runtime]: process.exit(31) was called in a test: a test ends by returning, or by failing an assertion
+     --> stage_callback__exit_in_every_stage_fails_its_test.silt:45:38
+        |
+     45 |   receive_of(stream.unfold(1) { x -> process.exit(30 + x) })
+        |                                      ^^^^^^^^^^^^^^^^^^^^ process.exit(31) was called in a test: a test ends by returning, or by failing an assertion
+  FAIL stage_callback__exit_in_every_stage_fails_its_test.silt::test_map_through_receive
+    error[runtime]: process.exit(32) was called in a test: a test ends by returning, or by failing an assertion
+     --> stage_callback__exit_in_every_stage_fails_its_test.silt:49:55
+        |
+     49 |   receive_of(stream.map(stream.from_list([2])) { x -> process.exit(30 + x) })
+        |                                                       ^^^^^^^^^^^^^^^^^^^^ process.exit(32) was called in a test: a test ends by returning, or by failing an assertion
+  FAIL stage_callback__exit_in_every_stage_fails_its_test.silt::test_map_through_try_receive
+    error[runtime]: process.exit(32) was called in a test: a test ends by returning, or by failing an assertion
+     --> stage_callback__exit_in_every_stage_fails_its_test.silt:53:59
+        |
+     53 |   try_receive_of(stream.map(stream.from_list([2])) { x -> process.exit(30 + x) })
+        |                                                           ^^^^^^^^^^^^^^^^^^^^ process.exit(32) was called in a test: a test ends by returning, or by failing an assertion
+  FAIL stage_callback__exit_in_every_stage_fails_its_test.silt::test_map_through_receive_timeout
+    error[runtime]: process.exit(32) was called in a test: a test ends by returning, or by failing an assertion
+     --> stage_callback__exit_in_every_stage_fails_its_test.silt:57:63
+        |
+     57 |   receive_timeout_of(stream.map(stream.from_list([2])) { x -> process.exit(30 + x) })
+        |                                                               ^^^^^^^^^^^^^^^^^^^^ process.exit(32) was called in a test: a test ends by returning, or by failing an assertion
+  FAIL stage_callback__exit_in_every_stage_fails_its_test.silt::test_map_through_select
+    error[runtime]: process.exit(32) was called in a test: a test ends by returning, or by failing an assertion
+     --> stage_callback__exit_in_every_stage_fails_its_test.silt:61:54
+        |
+     61 |   select_of(stream.map(stream.from_list([2])) { x -> process.exit(30 + x) })
+        |                                                      ^^^^^^^^^^^^^^^^^^^^ process.exit(32) was called in a test: a test ends by returning, or by failing an assertion
+  FAIL stage_callback__exit_in_every_stage_fails_its_test.silt::test_map_ok_through_receive
+    error[runtime]: process.exit(33) was called in a test: a test ends by returning, or by failing an assertion
+     --> stage_callback__exit_in_every_stage_fails_its_test.silt:65:73
+        |
+     65 |   receive_of(stream.map_ok(stream.from_list([Ok(3), Err("no")])) { x -> process.exit(30 + x) })
+        |                                                                         ^^^^^^^^^^^^^^^^^^^^ process.exit(33) was called in a test: a test ends by returning, or by failing an assertion
+  FAIL stage_callback__exit_in_every_stage_fails_its_test.silt::test_filter_through_receive
+    error[runtime]: process.exit(34) was called in a test: a test ends by returning, or by failing an assertion
+     --> stage_callback__exit_in_every_stage_fails_its_test.silt:69:58
+        |
+     69 |   receive_of(stream.filter(stream.from_list([4])) { x -> process.exit(30 + x) })
+        |                                                          ^^^^^^^^^^^^^^^^^^^^ process.exit(34) was called in a test: a test ends by returning, or by failing an assertion
+  FAIL stage_callback__exit_in_every_stage_fails_its_test.silt::test_filter_ok_through_receive
+    error[runtime]: process.exit(35) was called in a test: a test ends by returning, or by failing an assertion
+     --> stage_callback__exit_in_every_stage_fails_its_test.silt:73:76
+        |
+     73 |   receive_of(stream.filter_ok(stream.from_list([Ok(5), Err("no")])) { x -> process.exit(30 + x) })
+        |                                                                            ^^^^^^^^^^^^^^^^^^^^ process.exit(35) was called in a test: a test ends by returning, or by failing an assertion
+  FAIL stage_callback__exit_in_every_stage_fails_its_test.silt::test_flat_map_through_receive
+    error[runtime]: process.exit(36) was called in a test: a test ends by returning, or by failing an assertion
+     --> stage_callback__exit_in_every_stage_fails_its_test.silt:77:60
+        |
+     77 |   receive_of(stream.flat_map(stream.from_list([6])) { x -> process.exit(30 + x) })
+        |                                                            ^^^^^^^^^^^^^^^^^^^^ process.exit(36) was called in a test: a test ends by returning, or by failing an assertion
+  FAIL stage_callback__exit_in_every_stage_fails_its_test.silt::test_take_while_through_receive
+    error[runtime]: process.exit(37) was called in a test: a test ends by returning, or by failing an assertion
+     --> stage_callback__exit_in_every_stage_fails_its_test.silt:81:62
+        |
+     81 |   receive_of(stream.take_while(stream.from_list([7])) { x -> process.exit(30 + x) })
+        |                                                              ^^^^^^^^^^^^^^^^^^^^ process.exit(37) was called in a test: a test ends by returning, or by failing an assertion
+  FAIL stage_callback__exit_in_every_stage_fails_its_test.silt::test_drop_while_through_receive
+    error[runtime]: process.exit(38) was called in a test: a test ends by returning, or by failing an assertion
+     --> stage_callback__exit_in_every_stage_fails_its_test.silt:85:62
+        |
+     85 |   receive_of(stream.drop_while(stream.from_list([8])) { x -> process.exit(30 + x) })
+        |                                                              ^^^^^^^^^^^^^^^^^^^^ process.exit(38) was called in a test: a test ends by returning, or by failing an assertion
+  FAIL stage_callback__exit_in_every_stage_fails_its_test.silt::test_scan_through_receive
+    error[runtime]: process.exit(39) was called in a test: a test ends by returning, or by failing an assertion
+     --> stage_callback__exit_in_every_stage_fails_its_test.silt:89:64
+        |
+     89 |   receive_of(stream.scan(stream.from_list([9]), 0) { acc, x -> process.exit(30 + x) })
+        |                                                                ^^^^^^^^^^^^^^^^^^^^ process.exit(39) was called in a test: a test ends by returning, or by failing an assertion
+
+12 tests: 0 passed, 12 failed, 0 skipped

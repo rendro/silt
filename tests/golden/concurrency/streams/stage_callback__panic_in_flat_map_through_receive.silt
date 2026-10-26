@@ -1,0 +1,18 @@
+-- exit: 1
+-- A panic in the callback of `stream.flat_map` ends the program
+-- through `channel.receive` on its output, as `channel.each` and the
+-- sinks raise it: the error is the panic, not a close.
+import channel
+import stream
+
+fn read(s) {
+  match channel.receive(s) {
+    Some(v) -> println("got {v}")
+    None -> println("closed")
+  }
+}
+
+fn main() {
+  read(stream.flat_map(stream.from_list([6])) { x -> panic("flat_map failed on {x}") })
+  println("not reached")
+}

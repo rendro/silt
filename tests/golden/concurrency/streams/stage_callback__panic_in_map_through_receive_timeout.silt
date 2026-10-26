@@ -1,0 +1,20 @@
+-- exit: 1
+-- A panic in the callback of `stream.map` ends the program
+-- through `channel.receive_timeout` on its output, as `channel.each` and the
+-- sinks raise it: the error is the panic, not a close.
+import channel
+import stream
+import time
+
+fn read(s) {
+  match channel.receive_timeout(s, time.seconds(10)) {
+    channel.Message(v) -> println("got {v}")
+    channel.Closed -> println("closed")
+    channel.Empty -> println("no value in time")
+  }
+}
+
+fn main() {
+  read(stream.map(stream.from_list([2])) { x -> panic("map failed on {x}") })
+  println("not reached")
+}

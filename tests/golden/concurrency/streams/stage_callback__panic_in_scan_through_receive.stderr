@@ -1,0 +1,5 @@
+error[runtime]: panic: scan failed on 9
+ --> stage_callback__panic_in_scan_through_receive.silt:16:58
+    |
+ 16 |   read(stream.scan(stream.from_list([9]), 0) { acc, x -> panic("scan failed on {x}") })
+    |                                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^ panic: scan failed on 9

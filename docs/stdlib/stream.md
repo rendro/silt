@@ -127,8 +127,9 @@ fn main() {
   raises a runtime error (a division by zero, a `panic`), the stage closes
   its output *with that failure*. The next stage fails with it in turn,
   and the sink at the end raises it: `stream.collect` does not return the
-  values that came before the failure. `channel.each` on a stream raises
-  it too; a plain `channel.receive` sees `None`.
+  values that came before the failure. Every read of a stream raises it
+  too: `channel.each`, `channel.receive`, `channel.try_receive`,
+  `channel.receive_timeout` and a `Recv` arm of `channel.select`.
 - **A pipeline that is cut short stops.** When a stage or a sink reads no
   further (`take`, `take_while`, `first`, a failure downstream), the stage
   that feeds it is stopped, and so on up to the source. So

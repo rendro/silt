@@ -1,0 +1,5 @@
+error[runtime]: panic: filter_ok failed on 5
+ --> stage_callback__panic_in_filter_ok_through_receive.silt:16:70
+    |
+ 16 |   read(stream.filter_ok(stream.from_list([Ok(5), Err("no")])) { x -> panic("filter_ok failed on {x}") })
+    |                                                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ panic: filter_ok failed on 5

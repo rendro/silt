@@ -251,7 +251,7 @@ are done, in order: an impl's `Err` is that row's `Err`, after the rows
 before it, and the stream ends there, as at a row the decoder refuses;
 no impl runs for a row once the stream is closed; an impl that fails
 ends the stream with its failure, as a failing stream stage does:
-`channel.each` raises it, a plain `channel.receive` sees `None`.
+every read of the stream raises it.
 
 `postgres.execute` gives the number of rows the statement affected (for
 a statement that affects no rows, such as `CREATE TABLE`, `0`). A
