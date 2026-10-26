@@ -1,13 +1,13 @@
 -- cmd: lsp
--- lsp: hover 10:15
--- lsp: hover 11:12
+-- lsp: hover 10:16
+-- lsp: hover 11:13
 -- lsp: hover 12:12
 -- The signature of a function over type constructors of another module,
 -- named through its module or imported as an item, as at its declaration.
 import fx
 import fx.{ double_all }
 fn main() {
-  let f = fx.double_all
-  let g = double_all
+  let _f = fx.double_all
+  let _g = double_all
   println(double_all(Some(1)))
 }
