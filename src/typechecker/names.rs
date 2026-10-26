@@ -1504,13 +1504,24 @@ impl Resolver<'_> {
         };
         let d = match imported {
             ImportedName::Module(module) => {
-                let help = match name == module {
-                    true => format!(
+                // The alias suggested is the shortest start of the
+                // module's name that the module binds nothing to: `l`,
+                // then `li`, ...
+                let module_name = resolve(module);
+                let alias = (1..module_name.len())
+                    .filter(|end| module_name.is_char_boundary(*end))
+                    .map(|end| &module_name[..end])
+                    .find(|alias| {
+                        let alias = intern(alias);
+                        !self.scope.values.contains_key(&alias)
+                            && !self.scope.types.contains_key(&alias)
+                    });
+                let help = match (name == module, alias) {
+                    (true, Some(alias)) => format!(
                         "rename the local, or import the module under another name: \
-                         `import {module} as {}`",
-                        resolve(module).chars().next().unwrap_or('m')
+                         `import {module} as {alias}`"
                     ),
-                    false => "rename the local, or import the module under another name".into(),
+                    _ => "rename the local, or import the module under another name".into(),
                 };
                 Diagnostic::warning(
                     Code::HiddenImport,

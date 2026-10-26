@@ -28,7 +28,8 @@
 //! number of uses of one binding whose type is still open (each use
 //! added a link to a chain of type variables that every later use
 //! walked: 8,000 functions that read one channel took eleven times as
-//! long as 2,000).
+//! long as 2,000). And in the number of warnings, each kept once by a
+//! set beside the list of them.
 
 use std::path::Path;
 use std::process::Command;
@@ -280,6 +281,40 @@ fn four_times_the_uses_of_an_open_binding_take_about_four_times_as_long() {
             "`silt check` of 8,000 functions that read one channel took more than six \
              times as long as that of 2,000 in each of three measurements ({}): a use of \
              a binding whose type is open costs more the more uses there are",
+            shown(&over)
+        );
+    }
+}
+
+/// A module of `n` functions, each with a `let` that nothing reads: `n`
+/// warnings.
+fn unused_lets_of(n: usize) -> String {
+    let mut source = String::new();
+    for i in 0..n {
+        source.push_str(&format!(
+            "fn f{i}() -> Int {{\n  let unused{i} = {i}\n  {i}\n}}\n\n"
+        ));
+    }
+    source.push_str("fn main() { println(f0()) }\n");
+    source
+}
+
+/// Four times the warnings take about four times as long: at most six
+/// times. (Keeping each diagnostic once by looking through the list of
+/// those kept made it quadratic: limits_wrap_locals.silt, a module of
+/// many unused names, took 1.9 s to check instead of 0.1 s.)
+#[test]
+fn four_times_the_warnings_take_about_four_times_as_long() {
+    if let Err(over) = grows_within(
+        "warnings",
+        unused_lets_of(2_000),
+        unused_lets_of(8_000),
+        6.0,
+    ) {
+        panic!(
+            "`silt check` of 8,000 unused names took more than six times as long as that \
+             of 2,000 in each of three measurements ({}): keeping each diagnostic once is \
+             no longer linear",
             shown(&over)
         );
     }
