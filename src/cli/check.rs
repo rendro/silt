@@ -144,11 +144,14 @@ fn check_files(path: &str, tests: &[String], format: OutputFormat, deny_warnings
             }
         }
     }
+    // Each once, in the order found (a set beside the list: a program
+    // can have many thousands of warnings).
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
+    let mut seen: std::collections::HashSet<Diagnostic> = std::collections::HashSet::new();
     for file in files {
         let compiled = session.compile(file, Entry::Tests { filter: None });
         for d in door_diagnostics(&mut session, file, &compiled) {
-            if !diagnostics.contains(&d) {
+            if seen.insert(d.clone()) {
                 diagnostics.push(d);
             }
         }

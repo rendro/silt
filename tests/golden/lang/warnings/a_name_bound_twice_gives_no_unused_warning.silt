@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- An import that a top-level declaration binds again is in the bound-twice
+-- error: it gets no unused-import warning beside it.
+import list
+import string.{ length }
+
+let list = 1
+
+fn length(s: String) -> Int {
+  0
+}

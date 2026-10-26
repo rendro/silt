@@ -289,6 +289,7 @@ impl Server {
         }
         let mut diagnostics: BTreeMap<Uri, Vec<Diagnostic>> = BTreeMap::new();
         let mut analysed: Vec<(Uri, ModuleRef)> = Vec::new();
+        let mut seen: HashSet<(String, (u32, u32, u32, u32), String, String)> = HashSet::new();
         for (dir, uris) in &by_project {
             // A session is made again when the project's manifest or
             // lockfile changed, or a file it read from disk changed: as
@@ -327,9 +328,17 @@ impl Server {
                         continue;
                     };
                     let converted = crate::diagnostic::to_lsp(sources, d, &uri_of);
-                    let list = diagnostics.entry(uri).or_default();
-                    if !list.contains(&converted) {
-                        list.push(converted);
+                    // (Each once: a file's diagnostics come with every open
+                    // document that imports it, and can be thousands.)
+                    let r = converted.range;
+                    let key = (
+                        uri.as_str().to_string(),
+                        (r.start.line, r.start.character, r.end.line, r.end.character),
+                        converted.message.clone(),
+                        format!("{:?}{:?}", converted.severity, converted.code),
+                    );
+                    if seen.insert(key) {
+                        diagnostics.entry(uri).or_default().push(converted);
                     }
                 }
                 analysed.push((

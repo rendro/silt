@@ -1,0 +1,21 @@
+error[parse]: 'list' is bound twice at the top level: by the import and by the let binding here
+ --> a_name_bound_twice_gives_no_unused_warning.silt:8:5
+   |
+ 8 | let list = 1
+   |     ^^^^ 'list' is bound twice at the top level: by the import and by the let binding here
+ ::: a_name_bound_twice_gives_no_unused_warning.silt:5:1
+   |
+ 5 | import list
+   | ----------- first bound here, by the import
+  = note: a top-level name can be bound only once
+
+error[parse]: 'length' is bound twice at the top level: by the import and by the function here
+ --> a_name_bound_twice_gives_no_unused_warning.silt:10:4
+    |
+ 10 | fn length(s: String) -> Int {
+    |    ^^^^^^ 'length' is bound twice at the top level: by the import and by the function here
+ ::: a_name_bound_twice_gives_no_unused_warning.silt:6:17
+   |
+ 6 | import string.{ length }
+   |                 ------ first bound here, by the import
+  = note: a top-level name can be bound only once

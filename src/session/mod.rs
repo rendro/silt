@@ -584,6 +584,8 @@ impl Session {
                 .chain(check.diagnostics)
                 .collect(),
         };
+        let diagnostics =
+            without_unused_doubled_imports(&self.graph.module(id).problems, diagnostics);
         ModuleAnalysis {
             ast: Arc::new(ast),
             scope: resolution.scope,
@@ -599,12 +601,10 @@ impl Session {
     /// of the entry's package: a dependency's are not its user's to fix.
     /// Those of an earlier REPL entry were shown with it.
     fn collect_diagnostics(&self, entry: ModuleId, ordering: &Ordering) -> Vec<Diagnostic> {
-        let mut out: Vec<Diagnostic> = Vec::new();
-        let push = |d: &Diagnostic, out: &mut Vec<Diagnostic>| {
-            if !out.contains(d) {
-                out.push(d.clone());
-            }
-        };
+        // (Each once, in the order found: a set beside the list, as a
+        // program can have many thousands of warnings.)
+        let mut out = Unique::default();
+        let push = |d: &Diagnostic, out: &mut Unique| out.push(d);
         if !self.cells.info.contains_key(&entry) {
             if let Some(Err(diagnostics)) = &self.packages {
                 for d in diagnostics {
@@ -675,7 +675,7 @@ impl Session {
                 }
             }
         }
-        out
+        out.list
     }
 
     /// Compile the entry file `entry` for `target`. An analysis with an
@@ -909,6 +909,26 @@ impl Session {
     }
 }
 
+/// `diagnostics` without the unused-import warnings of an import that
+/// is in a bound-twice error of `problems` (a top-level `let` or `fn`
+/// named like it): one message per problem.
+fn without_unused_doubled_imports(
+    problems: &[Diagnostic],
+    mut diagnostics: Vec<Diagnostic>,
+) -> Vec<Diagnostic> {
+    let doubled: Vec<crate::source::Span> = (problems.iter())
+        .filter(|p| p.code == Code::DuplicateTopLevel)
+        .flat_map(|p| p.labels.iter().map(|(span, _)| *span).chain([p.span]))
+        .collect();
+    let overlaps = |a: crate::source::Span, b: crate::source::Span| {
+        a.file == b.file && a.start < b.end.max(b.start + 1) && b.start < a.end.max(a.start + 1)
+    };
+    diagnostics.retain(|d| {
+        d.code != Code::UnusedImport || !doubled.iter().any(|span| overlaps(*span, d.span))
+    });
+    diagnostics
+}
+
 /// The help of an access `m.x` that names nothing because the local `m`
 /// hides the imported module `m`, which has a member `x`
 /// ([`names::HiddenModule`]): it replaces the help of the error that
@@ -936,6 +956,22 @@ fn say_hidden_modules(
                 "`{name}` here is the local from line {line}, which hides the module {hidden}; \
                  rename the local"
             )];
+        }
+    }
+}
+
+/// Diagnostics, each once, in the order they were first given.
+#[derive(Default)]
+pub(crate) struct Unique {
+    pub(crate) list: Vec<Diagnostic>,
+    seen: std::collections::HashSet<Diagnostic>,
+}
+
+impl Unique {
+    /// Add `d` unless it is in already.
+    pub(crate) fn push(&mut self, d: &Diagnostic) {
+        if self.seen.insert(d.clone()) {
+            self.list.push(d.clone());
         }
     }
 }

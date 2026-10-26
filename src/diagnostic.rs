@@ -284,13 +284,13 @@ codes! {
 
 /// A quick fix: a titled set of text edits, each replacing the text of a
 /// span (an empty span inserts).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Fix {
     pub title: String,
     pub edits: Vec<(Span, String)>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Diagnostic {
     pub code: Code,
     pub severity: Severity,
