@@ -75,6 +75,69 @@ impl TypeChecker {
     }
 }
 
+impl TypeChecker {
+    /// The opaque type of another module that decoding `head` would
+    /// build by its structure: `head` itself, or a record or enum type
+    /// in its fields, at any depth. A type with a written `json.Decode`
+    /// impl is the impl's to decode, and is not looked into.
+    fn opaque_decoded(
+        &self,
+        head: TypeRef,
+        seen: &mut std::collections::HashSet<crate::defs::TypeId>,
+    ) -> Option<(TypeRef, Symbol)> {
+        if !seen.insert(head.id) || self.has_decode_impl(head) {
+            return None;
+        }
+        if let Some(module) = self.opaque_outside(head) {
+            return Some((head, module));
+        }
+        let fields: Vec<Type> = match self.tables.is_enum(head) {
+            true => (self.tables.decoded_variant_fields(head).into_iter())
+                .flat_map(|(_, types)| types)
+                .collect(),
+            false => (self.tables.decoded_record_fields(head).into_iter())
+                .map(|(_, ty)| ty)
+                .collect(),
+        };
+        for ty in fields {
+            let mut nested = Vec::new();
+            let _ = self.tables.decoded_field_type(&ty, &mut nested);
+            for id in nested {
+                let Some(def) = self.def(id.0) else {
+                    continue;
+                };
+                let nested = TypeRef { id, name: def.name };
+                if let Some(found) = self.opaque_decoded(nested, seen) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+
+    /// The refusal of decoding `head` at `span` outside the module of an
+    /// opaque type it would build by its structure, if it would build
+    /// one: a decoder builds what a constructor does.
+    pub(super) fn opaque_decode_refusal(&self, head: TypeRef, span: Span) -> Option<Diagnostic> {
+        let (ty, module) = self.opaque_decoded(head, &mut std::collections::HashSet::new())?;
+        Some(
+            Diagnostic::error(
+                Code::Undecodable,
+                span,
+                format!(
+                    "type '{}' cannot be decoded outside module '{module}': it is opaque, and \
+                     '{module}' writes no 'json.Decode' impl for it",
+                    opaque_name(ty, module)
+                ),
+            )
+            .with_help(format!(
+                "decode it inside module '{module}', or write `trait json.Decode for {}` there",
+                ty.name
+            )),
+        )
+    }
+}
+
 /// `ty` of `module`, as the opaque errors name it: `mail.User`.
 pub(super) fn opaque_name(ty: TypeRef, module: Symbol) -> std::string::String {
     format!("{module}.{}", ty.name)

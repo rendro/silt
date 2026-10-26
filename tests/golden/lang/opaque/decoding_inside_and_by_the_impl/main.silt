@@ -1,0 +1,18 @@
+-- Inside its module an opaque type is decoded by its structure, also
+-- through a function of another module the module calls; elsewhere it is
+-- decoded by the module's `json.Decode` impl, which checks the data.
+import json
+import mail
+
+fn main() {
+  println(json.parse("\"A@X.IO\"", mail.Email))
+  println(json.parse("\"nope\"", mail.Email))
+  match mail.decode_inside() {
+    Ok(u) -> println(mail.name(u))
+    Err(e) -> println(Error.message(e))
+  }
+  match mail.decode_through_util() {
+    Ok(u) -> println(mail.name(u))
+    Err(e) -> println(Error.message(e))
+  }
+}

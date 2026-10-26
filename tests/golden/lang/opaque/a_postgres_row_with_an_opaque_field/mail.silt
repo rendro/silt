@@ -1,0 +1,36 @@
+import json
+import string
+import util
+
+pub opaque type Email {
+  Email(String),
+}
+
+pub opaque type User {
+  name: String,
+  age: Int,
+}
+
+trait json.Decode for Email {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.String(s) -> match string.contains(s, "@") {
+        true -> Ok(Email(string.to_lower(s)))
+        false -> Err(json.Other("not an address"))
+      }
+      _ -> Err(json.Other("not a string"))
+    }
+  }
+}
+
+pub fn name(u: User) -> String {
+  u.name
+}
+
+pub fn decode_inside() -> Result(User, json.JsonError) {
+  json.parse("""{"name": "ann", "age": 3}""", User)
+}
+
+pub fn decode_through_util() -> Result(User, json.JsonError) {
+  util.load("""{"name": "bo", "age": 4}""", User)
+}

@@ -169,6 +169,9 @@ impl TypeChecker {
             if self.has_decode_impl(head) {
                 return None;
             }
+            if let Some(refusal) = self.opaque_decode_refusal(head, span) {
+                return Some(refusal);
+            }
             let enum_type = self.tables.is_enum(head);
             // (A generic type first: no impl can be written for one, so
             // the enum's help below could not be followed.)
