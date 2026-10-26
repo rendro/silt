@@ -2864,6 +2864,7 @@ fn test_builtin_panic_converted_to_vm_error() {
         name: "boom",
         module: "test",
         params: Vec::new(),
+        dicts: 0,
         feature: None,
         enabled: true,
         decoding: None,
@@ -3931,6 +3932,7 @@ mod builtin_args {
             name: "probe",
             module: "test",
             params: Vec::new(),
+            dicts: 0,
             feature: None,
             enabled: true,
             decoding: None,
@@ -7381,7 +7383,7 @@ mod applicative {
     use super::*;
     use crate::builtins::collections::list;
     use crate::builtins::typed::TypedCall;
-    use crate::bytecode::dict::{Dict, Template};
+    use crate::bytecode::dict::{Dict, Method, Template};
     use crate::bytecode::{Globals, VmClosure};
     use crate::defs::{DefId, ImplArgs};
 
@@ -7408,7 +7410,7 @@ mod applicative {
             ty: crate::defs::builtin_type_id(ty).unwrap_or(crate::defs::TypeId(DefId(999_998))),
             args: ImplArgs::none(),
             name: format!("Applicative for {ty}"),
-            methods: slots.clone().into(),
+            methods: slots.iter().map(|slot| Method::Global(*slot)).collect(),
             supers: Box::new([]),
             wheres: Box::new([]),
         });

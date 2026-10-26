@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use crate::bytecode::VmClosure;
-use crate::bytecode::dict::Dict;
+use crate::bytecode::dict::{Dict, Method};
 use crate::value::Value;
 
 use super::{Step, Vm, VmError};
@@ -106,7 +106,7 @@ impl Vm {
             self.see_template(index)?;
             return self.dict_callee(method, argc, at);
         };
-        let (Some(&slot), ty) = (template.methods.get(method), template.ty) else {
+        let (Some(&found), ty) = (template.methods.get(method), template.ty) else {
             return Err(VmError::type_confusion(format!(
                 "the dictionary of {} has no method {method}",
                 template.name
@@ -117,9 +117,15 @@ impl Vm {
         {
             return Err(self.wrong_receiver(first - 1, at + 1));
         }
-        match self.view.global(slot) {
-            Some(Value::VmClosure(shared)) => Ok(Value::VmClosure(self.own.of(slot, shared))),
-            _ => self.global_value(slot),
+        self.method_value(found)
+    }
+
+    /// The method `method` of a dictionary as a value: the function in
+    /// its slot, or the builtin.
+    fn method_value(&mut self, method: Method) -> Result<Value, VmError> {
+        match method {
+            Method::Global(slot) => self.global_value(slot),
+            Method::Builtin(id) => Ok(Value::BuiltinFn(id)),
         }
     }
 
@@ -185,13 +191,13 @@ impl Vm {
             self.see_template(dict.index())?;
         }
         let template = dict.template(&self.view.entry).ok_or_else(no_template)?;
-        let Some(&slot) = template.methods.get(method) else {
+        let Some(&found) = template.methods.get(method) else {
             return Err(VmError::type_confusion(format!(
                 "the dictionary of {} has no method {method}",
                 template.name
             )));
         };
-        let callee = self.global_value(slot)?;
+        let callee = self.method_value(found)?;
         let func_slot = self.stack.len();
         self.stack.push(Value::Dict(dict.clone()));
         self.stack.extend(args);
@@ -217,11 +223,11 @@ impl Vm {
         }
         self.sees_template_at(top)?;
         let template = dict(&self.stack[top])?.template(&self.view.entry);
-        let slot = template.and_then(|template| template.methods.get(method).copied());
-        let Some(slot) = slot else {
+        let found = template.and_then(|template| template.methods.get(method).copied());
+        let Some(found) = found else {
             return Err(no_template());
         };
-        let callee = self.global_value(slot)?;
+        let callee = self.method_value(found)?;
         let dict = std::mem::replace(&mut self.stack[top], callee);
         self.stack.push(dict);
         Ok(())
@@ -276,7 +282,12 @@ impl Vm {
     pub(super) fn bind(&mut self, n: usize) -> Result<(), VmError> {
         let values: Vec<Value> = self.stack.drain(self.stack.len() - n..).collect();
         let top = self.stack.len() - 1;
-        if matches!(self.stack[top], Value::Unit) {
+        // (A method of a built-in impl, a builtin, takes no dictionary:
+        // the one of its impl, which a call leaves in the callee's slot,
+        // is all a `DictMethod` binds to it.)
+        if matches!(self.stack[top], Value::Unit)
+            || (matches!(self.stack[top], Value::BuiltinFn(_)) && n == 1)
+        {
             return Ok(());
         }
         let Value::VmClosure(closure) = &self.stack[top] else {

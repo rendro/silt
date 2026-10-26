@@ -1342,9 +1342,15 @@ impl<'a> Compiler<'a> {
     fn compile_expr(&mut self, expr: &Expr) -> Result<(), Diagnostic> {
         let tail = self.in_tail_position;
         let before = self.emitter().height();
-        self.compile_expr_kind(expr)?;
+        if let Some((row, bounds)) = self.builtin_with_dicts(expr) {
+            // (A builtin is no closure to bind its dictionaries to.)
+            self.compile_builtin_value(row, bounds, expr.span)?;
+        } else {
+            self.compile_expr_kind(expr)?;
+        }
         // (A use of a definition with bounds loads it last.)
         if let Some(site) = &expr.ev
+            && self.builtin_with_dicts(expr).is_none()
             && matches!(expr.kind, ExprKind::Ident(_) | ExprKind::FieldAccess(..))
         {
             // It is passed its dictionaries: a `let` that is general in
@@ -2172,8 +2178,14 @@ impl<'a> Compiler<'a> {
         } else if let Some(builtin_name) = self.builtin_module_function(callee) {
             // A builtin module's function: `list.map(...)`.
             let row = self.builtin_row(&builtin_name, span)?;
+            // (One bounded by a trait whose impls are passed is passed
+            // their dictionaries first, `list.traverse`'s Applicative.)
+            let dicts = match callee.ev.as_deref() {
+                Some(crate::evidence::Site::Ref(bounds)) => self.pass_dicts(bounds, span)?,
+                _ => 0,
+            };
             self.compile_operands(args.iter().copied())?;
-            let argc = args.len();
+            let argc = dicts + args.len();
             let builtin = row.id;
             self.emit(Asm::CallBuiltin { builtin, argc }, span)?;
         } else if let ExprKind::FieldAccess(receiver, method, _) = &callee.kind {
@@ -2834,7 +2846,7 @@ impl<'a> Compiler<'a> {
                 &format!("the method '{}.{field}' of no trait", def.name),
             ));
         };
-        if dicts::has_dictionary(t) {
+        if crate::defs::has_dictionary(t) {
             return Ok(Some(TypeMember::Dict));
         }
         Ok(Some(

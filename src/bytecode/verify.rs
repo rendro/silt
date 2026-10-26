@@ -399,7 +399,7 @@ fn check(
         Instr::CallBuiltin { builtin: id, argc } => {
             // (The operand was checked above: it is a row.)
             if let Ok(row) = builtin(op, id) {
-                let takes = row.params.len();
+                let takes = row.arity();
                 if argc != takes {
                     return fail(format!(
                         "`{op}` calls {} with {argc} arguments, and it takes {takes}",

@@ -2789,7 +2789,7 @@ impl TypeChecker {
         preds
     }
 
-    fn register_method_entry(
+    pub(super) fn register_method_entry(
         &mut self,
         target_type: TypeRef,
         method: Symbol,

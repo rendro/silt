@@ -95,7 +95,7 @@ pub fn builtin_trait_decls() -> Vec<TraitDecl> {
         doc: None,
     };
 
-    vec![
+    let mut decls = vec![
         // trait Display { fn display(self) -> String }
         TraitDecl {
             name: intern("Display"),
@@ -238,11 +238,53 @@ pub fn builtin_trait_decls() -> Vec<TraitDecl> {
                     .to_string(),
             ),
         },
-    ]
+    ];
+    // The traits of type constructors, as HK14 writes them: their
+    // impls are passed with dictionaries, like a program's traits.
+    let constructors = crate::builtins::registry::parse(CONSTRUCTOR_TRAITS);
+    decls.extend(constructors.decls.into_iter().map(|decl| match decl {
+        Decl::Trait(td) => td,
+        _ => unreachable!("the text declares traits"),
+    }));
+    decls
 }
 
-/// Register built-in trait declarations (Display/Compare/Equal/Hash/Error)
-/// and say which builtin types have which structural traits.
+/// The declarations of the builtin traits of type constructors, in the
+/// order of their methods that a dictionary of an impl of one holds
+/// (`builtins::applicative::PURE`, `MAP2`).
+const CONSTRUCTOR_TRAITS: &str = "\
+pub trait Functor {
+  fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)
+}
+pub trait Applicative: Functor {
+  fn pure(x: a) -> Self(a)
+  fn map2(xs: Self(a), ys: Self(b), f: Fn(a, b) -> c) -> Self(c)
+}
+pub trait Monad: Applicative {
+  fn flat_map(xs: Self(a), f: Fn(a) -> Self(b)) -> Self(b)
+}
+";
+
+/// Register the builtin traits of the prelude ([`builtin_trait_decls`])
+/// through the unified `register_trait_decl_inner` pipeline: the code
+/// path a program's `trait X { fn ... }` takes, minus the
+/// `BUILTIN_TRAIT_NAMES` redefinition check (which is keyed off user
+/// input and lives on `register_trait_decl_user`). Which of them are
+/// traits of type constructors is settled first, as for a program's.
+/// Before the builtin functions: a row's bound names one
+/// (`list.traverse`'s `where m: Applicative`).
+pub(super) fn register_builtin_traits(checker: &mut TypeChecker) {
+    let decls: Vec<Decl> = builtin_trait_decls().into_iter().map(Decl::Trait).collect();
+    checker.settle_trait_kinds(&decls);
+    for decl in &decls {
+        if let Decl::Trait(td) = decl {
+            checker.register_trait_decl_inner(td);
+        }
+    }
+}
+
+/// Register the traits the builtin modules declare and say which
+/// builtin types have which builtin traits.
 ///
 /// This is the single source of truth for that policy. The builtin
 /// environment every check starts from is built with it, so no two
@@ -257,14 +299,6 @@ pub fn builtin_trait_decls() -> Vec<TraitDecl> {
 /// - A type of the builtin registry: what the registry says (`Option`
 ///   and `Result`: no Compare).
 pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
-    // ── Register built-in trait declarations through the unified
-    //    register_trait_decl_inner pipeline. Same code path user
-    //    `trait X { fn ... }` declarations take, minus the
-    //    BUILTIN_TRAIT_NAMES redefinition check (which is keyed off
-    //    user input and lives on register_trait_decl_user). ─────────
-    for td in builtin_trait_decls() {
-        checker.register_trait_decl_inner(&td);
-    }
     // The traits a builtin module declares (`json.Encode`), from the
     // module's text in the builtin registry.
     let registry = crate::builtins::registry::registry();
@@ -358,11 +392,59 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
     // Bytes are a map key and a set element by their content.
     register_structural_traits_for(checker, &["Bytes"], &["Hash"]);
 
+    register_constructor_impls(checker);
+
     // TcpListener / TcpStream are registered in BUILTIN_TYPES so the
     // trait-impl-target gate says where an impl for them may be
     // written (rather than "type not declared") if a user tries to add
     // their own impls, but no built-in trait impls are stamped — they remain
     // unprintable opaque resources.
+}
+
+/// The impls of the builtin traits of type constructors for the builtin
+/// types (`builtins::applicative::IMPLS`): entered as a program's impl
+/// is, for the type's constructor (`Result(_, e)`), so their evidence
+/// is an impl's, which the compiler passes as a dictionary. Each method
+/// has the type the trait declares for it at that constructor.
+fn register_constructor_impls(checker: &mut TypeChecker) {
+    for (trait_name, type_name, _) in crate::builtins::applicative::IMPLS {
+        let (tr, ty) = (TraitKey::builtin(trait_name), TypeRef::builtin(type_name));
+        let key = (tr, ty, ImplArgs::none());
+        checker.tables.add_impl(key);
+        // The constructor: the type with its first argument open.
+        let first = checker.fresh_var();
+        let full = match *type_name {
+            "List" => Type::List(Box::new(first)),
+            "Channel" => Type::Channel(Box::new(first)),
+            "Result" => Type::Generic(ty, vec![first, checker.fresh_var()]),
+            _ => Type::Generic(ty, vec![first]),
+        };
+        let Some((head, rest, _)) = full.split_constructor() else {
+            unreachable!("{type_name} takes a type argument");
+        };
+        let self_type = Type::Con(head, rest);
+        checker
+            .tables
+            .impl_self_types
+            .insert(key, self_type.clone());
+        let Some(info) = checker.tables.traits.get(&tr).cloned() else {
+            unreachable!("{trait_name} is declared before its impls");
+        };
+        for (method, declared) in &info.methods {
+            let mut mapping: HashMap<TyVar, Type> = HashMap::new();
+            mapping.insert(info.self_var, self_type.clone());
+            for var in free_vars_in(declared) {
+                mapping.entry(var).or_insert_with(|| checker.fresh_var());
+            }
+            let entry = MethodEntry {
+                method_type: substitute_vars(declared, &mapping),
+                structural: false,
+                trait_name: Some(tr),
+                preds: Vec::new(),
+            };
+            checker.register_method_entry(ty, *method, ImplArgs::none(), entry);
+        }
+    }
 }
 
 /// The builtin types that are no record or enum and have a json form,
