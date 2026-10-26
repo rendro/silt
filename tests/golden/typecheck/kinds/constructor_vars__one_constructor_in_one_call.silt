@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- One type constructor variable is one constructor in a call.
+-- stderr-contains: error[type]: type mismatch: expected List(Int), got Option(Int)
+fn same(xs: m(a), ys: m(a)) -> m(a) { xs }
+fn main() {
+  let c = same([1], Some(1))
+  println(1)
+}

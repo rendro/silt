@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- A bound is on a variable: generic code cannot show an `m(Int)`; the
+-- caller, which knows the type, shows it.
+-- stderr-contains: error[type]: type `m(Int)` is not known to implement trait 'Display'
+fn shown(xs: m(Int)) -> String { "{xs}" }
+fn main() { println(1) }

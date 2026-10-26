@@ -1,0 +1,23 @@
+-- A type constructor variable (`m` of `m(a)`) stands for the constructor
+-- of the type a call gives: List, Option, Result with its error type,
+-- Map with its value type, a program's own type with parameters.
+type Tree(a) { Leaf, Node(Tree(a), a, Tree(a)) }
+fn keep(xs: m(a)) -> m(a) { xs }
+fn swap(p: (m(a), m(b))) -> (m(b), m(a)) {
+  match p {
+    (x, y) -> (y, x)
+  }
+}
+fn main() {
+  println(keep([1, 2]))
+  println(keep(Some(3)))
+  let r: Result(Int, String) = keep(Ok(4))
+  println(r)
+  match keep(Node(Leaf, 5, Leaf)) {
+    Node(_, v, _) -> println(v)
+    Leaf -> println("leaf")
+  }
+  println(swap(([1], ["a"])))
+  println(swap((Some(1), None)))
+  println(keep(#{"k": 1}))
+}

@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- A type constructor stands for the first type argument of its type: a
+-- variable written with two is an error.
+-- stderr-contains: error[type]: a type constructor variable takes one type argument: 'm' is given 2
+fn two(xs: m(Int, String)) -> Int { 1 }
+fn main() { println(1) }
