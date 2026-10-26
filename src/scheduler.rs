@@ -286,6 +286,9 @@ struct Inner {
     broken: AtomicBool,
     /// That panic.
     panic: Mutex<Panicked>,
+    /// The code of the first `process.exit` that ended the run
+    /// ([`Scheduler::exit`]).
+    exit: OnceLock<u8>,
     /// Test-only: where the runtime is to panic, once at each
     /// ([`PanicAt`]).
     #[cfg(any(test, feature = "test-hooks"))]
@@ -499,6 +502,7 @@ impl Scheduler {
                 io,
                 broken: AtomicBool::new(false),
                 panic: Mutex::default(),
+                exit: OnceLock::new(),
                 #[cfg(any(test, feature = "test-hooks"))]
                 panic_at: Mutex::new(Vec::new()),
                 #[cfg(any(test, feature = "test-hooks"))]
@@ -850,7 +854,9 @@ impl Scheduler {
         // (`ready`: not as late as when the thread has woken), or was
         // over at once.
         group.parking.fetch_add(1, Ordering::SeqCst);
-        let resumed = match inner.parking.park(id, sleeper, wait, || false) {
+        // (A thread of a program that has exited begins no wait.)
+        let exited = || inner.exit.get().is_some();
+        let resumed = match inner.parking.park(id, sleeper, wait, exited) {
             Some((_, resumed)) => {
                 group.parking.fetch_sub(1, Ordering::SeqCst);
                 resumed
@@ -892,6 +898,34 @@ impl Scheduler {
 }
 
 impl Scheduler {
+    /// The program has called `process.exit(code)`, and that ends the
+    /// run ([`crate::vm::Exit::EndsRun`]). The first call's code is the
+    /// run's; a later one changes nothing. From here on no task runs
+    /// another slice or begins a wait, every wait of the program ends,
+    /// the threads that wait are told, and no failure of a task is
+    /// recorded or reported: the program's own thread ends with the
+    /// error of the exit (`Vm::run`).
+    pub(crate) fn exit(&self, code: u8) {
+        let inner = &self.inner;
+        // The code first: a task or a thread on its way into a wait
+        // reads it, and is refused the wait.
+        if inner.exit.set(code).is_err() {
+            return;
+        }
+        let waiting: Vec<TaskId> =
+            (inner.parking).inspect(|waiting| waiting.iter().map(|w| w.task).collect());
+        for task in waiting {
+            inner.parking.cancel(task);
+        }
+        inner.poke_threads();
+    }
+
+    /// The code of the `process.exit` that ended the run, once there
+    /// has been one ([`Scheduler::exit`]).
+    pub(crate) fn exit_code(&self) -> Option<u8> {
+        self.inner.exit.get().copied()
+    }
+
     /// If a thread of the runtime has panicked, the panic goes on
     /// here, on the calling thread: the program's own, between two
     /// slices of its code, where no catch of a builtin's panic is
@@ -1170,6 +1204,39 @@ fn end_as(how: u8) {
 pub fn exit_with_status(status: i32) -> ! {
     end_as(WITH_STATUS);
     std::process::exit(status)
+}
+
+/// End the process with `code`, from whichever thread of a program
+/// calls `process.exit(code)` under `silt run`
+/// ([`crate::vm::Exit::EndsProcess`]): no task is waited for, and
+/// nothing is reported. What the program printed to stdout and that
+/// stdout still holds is written out first. Its lock is taken for that
+/// and kept until the process is gone, so nothing is printed after the
+/// exit; a write that is held up by a full pipe holds the lock, and is
+/// waited for no longer than the last words of an internal error
+/// ([`LAST_WORDS`]). (stderr holds nothing: it is not buffered.)
+pub(crate) fn exit_from_the_program(code: u8) -> ! {
+    use std::io::Write;
+    end_as(WITH_STATUS);
+    let (done, flushed) = std::sync::mpsc::channel();
+    let flushes = move || {
+        let mut stdout = std::io::stdout().lock();
+        let _ = stdout.flush();
+        let _ = done.send(());
+        loop {
+            thread::park();
+        }
+    };
+    // (No thread: std's clean-up at the exit flushes stdout if its
+    // lock is free.)
+    if thread::Builder::new()
+        .name("silt-exit".into())
+        .spawn(flushes)
+        .is_ok()
+    {
+        let _ = flushed.recv_timeout(LAST_WORDS);
+    }
+    std::process::exit(i32::from(code))
 }
 
 /// Write a report of the `silt` command's own with `write`, while a
@@ -1710,6 +1777,11 @@ impl Inner {
             if self.broken.load(Ordering::SeqCst) {
                 return Resumed::Cancelled;
             }
+            // Nor once the program has exited: its thread waits for
+            // nothing more (`Scheduler::exit` pokes the threads).
+            if self.exit.get().is_some() {
+                return Resumed::Cancelled;
+            }
             // What there is to do for a thread that waits.
             if !self.has_workers.load(Ordering::SeqCst) {
                 let task = self.pop(&mut self.queue.lock());
@@ -1857,9 +1929,13 @@ impl Inner {
     /// the task keeps the worker ([`Inner::keeps_on`]).
     fn run_once(self: &Arc<Self>, mut task: Task, on_worker: bool) -> Option<Task> {
         // A task that was stopped with its owner's runs no further,
-        // nor does one that was cancelled before its first slice.
+        // nor does one of a program that has exited, nor one that was
+        // cancelled before its first slice.
         let cancelled = task.handle.is_cancelled();
-        if task.group.stopped.load(Ordering::SeqCst) || (cancelled && !task.ran) {
+        if task.group.stopped.load(Ordering::SeqCst)
+            || self.exit.get().is_some()
+            || (cancelled && !task.ran)
+        {
             self.end_task(task);
             return None;
         }
@@ -1936,11 +2012,12 @@ impl Inner {
                 // has ended (`ready`), or was over at once.
                 group.parking.fetch_add(1, Ordering::SeqCst);
                 // A task that is stopped with its owner's begins no
-                // wait. One that is cancelled, or whose time is over,
-                // does a send that is ready and is refused the wait
-                // otherwise: that is the wait's own to say.
+                // wait, nor does one of a program that has exited. One
+                // that is cancelled, or whose time is over, does a send
+                // that is ready and is refused the wait otherwise: that
+                // is the wait's own to say.
                 let back = self.parking.park(id, Sleeper::Task(task), wait, || {
-                    group.stopped.load(Ordering::SeqCst)
+                    group.stopped.load(Ordering::SeqCst) || self.exit.get().is_some()
                 });
                 match back {
                     Some((Sleeper::Task(mut task), Resumed::Fired(fired))) => {
@@ -2324,6 +2401,11 @@ impl FailedTasks {
 /// of failures that nobody joined: in the record of the process while
 /// the failures are collected, in the scheduler's own record otherwise.
 fn record_failed_task(inner: &Inner, handle: &Arc<TaskHandle>) {
+    // A program that has exited reports no failure: which tasks had
+    // failed by then is a race.
+    if inner.exit.get().is_some() {
+        return;
+    }
     let handled_since = if COLLECTING.load(Ordering::SeqCst) {
         collected_failures().lock().record(handle)
     } else {
@@ -2351,6 +2433,11 @@ fn report_unjoined_failures(inner: &Inner) -> usize {
         return 0;
     }
     let (handles, not_recorded) = inner.failed_tasks.lock().take();
+    // (Nor after a `process.exit` that ended the run: what had failed
+    // before it is dropped.)
+    if inner.exit.get().is_some() {
+        return 0;
+    }
     // The scheduler knows no files: the diagnostics show no place.
     let no_files = crate::source::SourceMap::new();
     let mut reported = 0;

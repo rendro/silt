@@ -1,0 +1,5 @@
+-- cmd: repl
+-- exit: 5
+-- stdin: import process\nprintln(1)\nprocess.exit(5)\nprintln(2)\n
+-- process.exit ends the REPL session with its code, as :quit ends it with
+-- 0: the entries after it do not run, and nothing is reported.

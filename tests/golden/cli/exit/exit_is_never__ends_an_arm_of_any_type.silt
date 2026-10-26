@@ -1,0 +1,23 @@
+-- exit: 2
+-- process.exit returns Never, as panic does: it ends a match arm of any
+-- type, and a function of the program may return Never by calling it.
+import io
+import process
+
+fn fail(message: String) -> Never {
+  io.eprintln(message)
+  process.exit(2)
+}
+
+fn parse(arg: String) -> Int {
+  match arg {
+    "one" -> 1
+    _ -> fail("usage: count N")
+  }
+}
+
+fn main() {
+  println(parse("one"))
+  let n: Int = parse("two")
+  println(n)
+}

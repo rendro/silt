@@ -1,0 +1,13 @@
+-- exit: 0
+-- After process.exit nothing is reported: a task that failed and that
+-- nobody joined does not make the run fail, and its error is not shown.
+import process
+import task
+import time
+
+fn main() {
+  let _ = task.spawn { -> 1 / 0 }
+  let _ = task.join(task.spawn { -> time.sleep(time.ms(50)) })
+  println("done")
+  process.exit(0)
+}

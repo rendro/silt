@@ -1,0 +1,14 @@
+-- exit: 3
+-- process.exit ends the program with its code. What was printed before it
+-- reaches stdout and stderr, the text that print wrote without a line end
+-- too.
+import io
+import process
+
+fn main() {
+  println("line")
+  print("no newline")
+  io.eprint("err without newline")
+  process.exit(3)
+  println("never")
+}

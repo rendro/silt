@@ -428,6 +428,151 @@ fn a_failed_write_to_stderr_is_ignored() {
     assert_eq!(out.contents(), "on\n");
 }
 
+// ── process.exit ────────────────────────────────────────────────────
+
+/// Run `source` on a VM with its output in `out` (stdout and stderr
+/// both), and give the error that ended the run.
+fn run_to_error(source: &str, out: &Buffer) -> silt::VmError {
+    let program = compile_str(source).unwrap_or_else(|errors| panic!("{errors:?}"));
+    let mut vm = Vm::new(HostIo::buffer(out));
+    let error = vm
+        .run_program(&program)
+        .expect_err("the run ends with an error");
+    drop(vm);
+    error
+}
+
+/// In an embedder's VM `process.exit` ends the run with its code and
+/// the host goes on: the error carries the code, and what the program
+/// printed is there.
+#[test]
+fn exit_ends_the_run_with_its_code() {
+    let out = Buffer::new();
+    let source = "import process\nfn main() {\n  print(\"before\")\n  process.exit(3)\n  println(\"after\")\n}";
+    let error = run_to_error(source, &out);
+    assert_eq!(error.exit, Some(3), "{error:?}");
+    assert_eq!(error.message, "process.exit(3) ended the program");
+    assert_eq!(out.contents(), "before");
+}
+
+/// A code outside 0 to 255 is a runtime error of the call, not an
+/// exit.
+#[test]
+fn an_exit_code_out_of_range_is_a_runtime_error() {
+    for (code, shown) in [
+        ("256", "256"),
+        ("-1", "-1"),
+        ("9223372036854775807", "9223372036854775807"),
+    ] {
+        let out = Buffer::new();
+        let source = format!("import process\nfn main() {{\n  process.exit({code})\n}}");
+        let error = run_to_error(&source, &out);
+        assert_eq!(error.exit, None, "{error:?}");
+        assert_eq!(
+            error.message,
+            format!("process.exit: exit code {shown} is out of range 0 to 255")
+        );
+    }
+}
+
+/// An exit from a task ends the whole run: the program's own thread,
+/// which waits for a value that never comes, ends at once with the
+/// exit's code, and the tasks that sleep are not waited for. A task
+/// that failed and that nobody joined is not reported.
+#[test]
+fn an_exit_from_a_task_ends_the_run_where_the_program_waits() {
+    let out = Buffer::new();
+    let source = r#"
+import channel
+import process
+import task
+import time
+fn main() {
+  let never = channel.new(0)
+  let _ = task.spawn({ -> 1 / 0 })
+  let _ = task.spawn({ -> time.sleep(time.seconds(600)) })
+  let _ = task.spawn({ ->
+    time.sleep(time.ms(20))
+    process.exit(4)
+  })
+  let _ = channel.receive(never)
+  println("never")
+}
+"#;
+    let error = run_to_error(source, &out);
+    assert_eq!(error.exit, Some(4), "{error:?}");
+    assert_eq!(out.contents(), "");
+}
+
+/// The program's own thread that computes and never waits learns of a
+/// task's exit between two of its slices.
+#[test]
+fn an_exit_from_a_task_ends_the_run_where_the_program_computes() {
+    let out = Buffer::new();
+    let source = r#"
+import process
+import task
+fn spin(n: Int) -> Int {
+  match n {
+    0 -> 0
+    _ -> spin(n - 1 + 1)
+  }
+}
+fn main() {
+  let _ = task.spawn({ -> process.exit(5) })
+  println(spin(1))
+}
+"#;
+    let error = run_to_error(source, &out);
+    assert_eq!(error.exit, Some(5), "{error:?}");
+    assert_eq!(out.contents(), "");
+}
+
+/// After an exit the VM runs nothing more: a later run ends at once
+/// with the same exit, and `settle` waits for nothing.
+#[test]
+fn after_an_exit_every_run_of_the_vm_is_the_exit() {
+    let out = Buffer::new();
+    let source = r#"
+import process
+import task
+import time
+fn main() {
+  let _ = task.spawn({ -> time.sleep(time.seconds(600)) })
+  println("ran")
+  process.exit(7)
+}
+"#;
+    let program = compile_str(source).unwrap_or_else(|errors| panic!("{errors:?}"));
+    let mut vm = Vm::new(HostIo::buffer(&out));
+    let first = vm.run_program(&program).expect_err("the exit");
+    assert_eq!(first.exit, Some(7));
+    vm.settle();
+    let again = vm.run_program(&program).expect_err("the exit again");
+    assert_eq!(again.exit, Some(7));
+    drop(vm);
+    assert_eq!(out.contents(), "ran\n");
+}
+
+/// The first exit's code is the run's: two tasks that exit at once end
+/// it with one of their codes.
+#[test]
+fn the_first_exit_is_the_runs() {
+    let out = Buffer::new();
+    let source = r#"
+import list
+import process
+import task
+fn main() {
+  let _ = [1, 2] |> list.map({ n -> task.spawn({ -> process.exit(n) }) })
+  let _ = task.join(task.spawn({ -> process.exit(3) }))
+}
+"#;
+    let error = run_to_error(source, &out);
+    assert!(matches!(error.exit, Some(1..=3)), "{error:?}");
+    assert_eq!(out.contents(), "");
+}
+
 // ── Clock ───────────────────────────────────────────────────────────
 
 /// 2026-10-05T12:00:00Z, in milliseconds since the Unix epoch.

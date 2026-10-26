@@ -939,9 +939,8 @@ fn all_doc_fn_main_blocks_run_if_safe() {
         // they don't contain the bare `loop {` pattern.
         "loop {",
         "while true",
-        // `process.exit` would terminate the subprocess but
-        // is usually paired with demonstration of signal
-        // handling — skip to avoid spurious non-zero exits.
+        // `process.exit` ends the program with a code of its own,
+        // as a rule not 0.
         "process.exit",
     ];
 

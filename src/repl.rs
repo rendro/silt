@@ -179,6 +179,10 @@ pub fn run_repl() {
     let mut typing = false;
 
     loop {
+        // An entry, or a task of one, has called `process.exit`.
+        if repl.borrow().exited().is_some() {
+            break;
+        }
         let prompt = if buffer.is_empty() {
             "silt> "
         } else {
@@ -189,6 +193,10 @@ pub fn run_repl() {
         // the terminal, unwinds through the editor: the terminal is put
         // back before the process ends.)
         match crate::scheduler::unwinding(|| rl.readline(prompt)) {
+            // A task of an earlier entry may have called `process.exit`
+            // while the line was being read: the session has ended, and
+            // the line does not run.
+            Ok(_) if repl.borrow().exited().is_some() => break,
             Ok(line) => {
                 let mut line = line.trim_end();
 
@@ -280,11 +288,19 @@ pub fn run_repl() {
     }
 
     // Tasks that failed and that no input joined or cancelled. A task
-    // that is still running when the session ends is not reported.
-    report_task_failures(&repl.borrow());
+    // that is still running when the session ends is not reported, nor
+    // is any after a `process.exit`.
+    let exited = repl.borrow().exited();
+    if exited.is_none() {
+        report_task_failures(&repl.borrow());
+    }
 
     if let Some(ref p) = history_path {
         let _ = rl.save_history(p);
+    }
+    // The session ends with the exit's code, as `:quit` ends it with 0.
+    if let Some(code) = exited {
+        crate::scheduler::exit_with_status(i32::from(code));
     }
 }
 
@@ -592,9 +608,17 @@ impl Repl {
                 evaluation.value = Some(value);
                 evaluation.committed = true;
             }
+            // A `process.exit` ends the session: nothing to report.
+            Err(e) if e.exit.is_some() => {}
             Err(e) => evaluation.diagnostics.push(e.to_diagnostic()),
         }
         evaluation
+    }
+
+    /// The code of the `process.exit` that an entry, or a task of one,
+    /// called: the session has ended.
+    pub fn exited(&self) -> Option<u8> {
+        self.vm.scheduler().exit_code()
     }
 
     /// What `:type input` shows: `input` checked as the next entry, and

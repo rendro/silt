@@ -16,6 +16,10 @@ pub struct VmError {
     /// ended for it: this is the budget's error, the error of a join
     /// of a task it ended, or a deadlock that followed from it.
     pub out_of_steps: bool,
+    /// The code the program called `process.exit` with, when that is
+    /// what ended the run ([`Exit::EndsRun`](super::Exit::EndsRun)):
+    /// the error of every run of the VM from then on.
+    pub exit: Option<u8>,
     /// Source span where the error occurred (if available).
     pub span: Option<Span>,
     /// Call stack at the time of the error: (function_name, span).
@@ -29,6 +33,7 @@ impl VmError {
             help: Vec::new(),
             type_confusion: false,
             out_of_steps: false,
+            exit: None,
             span: None,
             call_stack: Vec::new(),
         }
@@ -54,6 +59,15 @@ impl VmError {
         VmError {
             out_of_steps: true,
             ..VmError::new("the step budget is used up".into())
+        }
+    }
+
+    /// The program called `process.exit(code)`, which ended the run:
+    /// what still runs of it ends with this.
+    pub(crate) fn exited(code: u8) -> Self {
+        VmError {
+            exit: Some(code),
+            ..VmError::new(format!("process.exit({code}) ended the program"))
         }
     }
 

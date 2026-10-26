@@ -1791,6 +1791,12 @@ impl Vm {
             if program {
                 scheduler.give_panic_on();
             }
+            // A call of `process.exit` has ended the run: no further
+            // slice of it starts.
+            if let Some(code) = scheduler.exit_code() {
+                self.woken = None;
+                return Err(VmError::exited(code));
+            }
             match run {
                 Slice::Done(_) => return Ok(run),
                 // The frame gave way to other tasks, which a thread

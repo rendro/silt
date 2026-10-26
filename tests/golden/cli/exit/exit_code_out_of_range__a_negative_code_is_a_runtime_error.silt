@@ -1,0 +1,10 @@
+-- exit: 1
+-- stderr-contains: error[runtime]: joined task failed: process.exit: exit code -1 is out of range 0 to 255
+-- In a task too the range is checked where exit is called: the task fails,
+-- and the join gives its error on.
+import process
+import task
+
+fn main() {
+  task.join(task.spawn { -> process.exit(-1) })
+}

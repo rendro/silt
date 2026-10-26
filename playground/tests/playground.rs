@@ -88,6 +88,27 @@ fn a_program_that_loops_for_ever_is_ended_by_the_step_budget() {
     );
 }
 
+/// `process.exit` ends the run with its code: 0 is a program that
+/// ended well, another code one that failed, and either way a task that
+/// failed and that nobody joined is not reported.
+#[test]
+fn process_exit_ends_the_run_with_its_code() {
+    let ran = run_it(
+        "import process\nimport task\nfn main() {\n  let _ = task.spawn { -> panic(\"lost\") }\n  print(\"before\")\n  process.exit(0)\n}\n",
+    );
+    assert_eq!(
+        (ran.output.as_str(), ran.error.as_str(), ran.ok),
+        ("before", "", true)
+    );
+    let ran = run_it(
+        "import process\nimport task\nfn main() {\n  task.join(task.spawn { -> process.exit(3) })\n}\n",
+    );
+    assert_eq!(
+        (ran.output.as_str(), ran.error.as_str(), ran.ok),
+        ("", "the program exited with code 3", false)
+    );
+}
+
 #[test]
 fn a_task_that_failed_and_that_nobody_joined_is_reported_in_the_output() {
     let ran = run_it(

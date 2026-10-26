@@ -16,8 +16,8 @@ use crate::builtins::prelude;
 #[cfg(feature = "tcp")]
 use crate::builtins::tcp;
 use crate::builtins::{
-    applicative, bytes, concurrency, core, crypto, encoding, http, io, json, regex, stream, string,
-    time, toml, uuid,
+    applicative, bytes, concurrency, core, crypto, encoding, http, io, json, process, regex,
+    stream, string, time, toml, uuid,
 };
 
 /// The functions of the prelude: called by their bare names, each
@@ -662,6 +662,13 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn parse(s: String) -> Result(String, UuidError)", "Validate + canonicalize any-version UUID", uuid::parse),
                 f("fn nil() -> String", "The all-zero UUID sentinel", uuid::nil),
                 f("fn is_valid(s: String) -> Bool", "Predicate form of `parse`", uuid::is_valid),
+            ],
+        },
+        module! {
+            name: "process",
+            page: "process.md",
+            rows: [
+                f("fn exit(code: Int) -> Never", "End the program with an exit code", process::exit),
             ],
         },
     ]

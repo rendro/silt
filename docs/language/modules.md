@@ -290,6 +290,7 @@ your editor. The built-in modules:
 | `tcp` | TCP listener and stream primitives |
 | `stream` | Lazy iterators backed by tasks and channels |
 | `uuid` | UUID generation and parsing |
+| `process` | The running process: `process.exit` |
 
 The types and enums of a built-in module are its members like any
 other: `time.Weekday` and `time.Monday`, `channel.Message(v)` and

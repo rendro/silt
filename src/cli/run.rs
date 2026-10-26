@@ -8,7 +8,7 @@ use silt::diagnostic::{Code, Diagnostic, render_human};
 use silt::intern::resolve;
 use silt::session::{Entry, LockPolicy};
 use silt::source::{FileId, SourceMap, Span};
-use silt::vm::{Vm, VmError};
+use silt::vm::{Exit, Vm, VmError};
 
 use crate::cli::help::{asks_for_help, run_help_text, run_usage_banner};
 use crate::cli::package::resolve_package_entry_point;
@@ -143,6 +143,9 @@ pub(crate) fn vm_run_file(path: &str) {
     // that has panicked may be ending it with the internal error.
     silt::scheduler::collect_unjoined_failures();
     let mut vm = Vm::new(silt::HostIo::process());
+    // `process.exit` ends the process where it is called, from `main`
+    // or from a task: nothing below runs then.
+    vm.set_exit(Exit::EndsProcess);
     #[cfg(feature = "test-hooks")]
     panic_where_a_test_says(&vm);
     let run_result = vm.run_program(&program);

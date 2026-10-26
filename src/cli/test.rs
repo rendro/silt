@@ -9,7 +9,7 @@ use silt::diagnostic::{Code, Diagnostic, render_human};
 use silt::scheduler::UnjoinedFailures;
 use silt::session::{Entry, EntryPoint, LockPolicy, TestKind, selected_tests};
 use silt::source::{FileId, SourceMap, Span};
-use silt::vm::Vm;
+use silt::vm::{Exit, Vm};
 
 use crate::cli::help::test_usage_banner;
 use crate::cli::paths::{ProgramFiles, door_diagnostics, find_silt_files, open_entry};
@@ -238,6 +238,8 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         let setup_owner = owners.add_owner(file_index);
 
         let mut vm = Vm::new(silt::HostIo::process());
+        // A `process.exit` fails the test it is in: the other tests run.
+        vm.set_exit(Exit::FailsTest);
         #[cfg(feature = "test-hooks")]
         crate::cli::run::panic_where_a_test_says(&vm);
         vm.set_task_owner(setup_owner);
