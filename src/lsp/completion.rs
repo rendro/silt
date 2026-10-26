@@ -520,9 +520,10 @@ impl Server {
     fn checked_facts(&self, doc: &Document) -> Option<Checked> {
         let checked = self.checked_module(doc)?;
         let tables = self.checked_tables(doc)?;
+        let record_fields = self.visible_record_fields(doc, tables);
         Some(Checked {
             program: checked.ast.clone(),
-            record_fields: tables.record_fields(),
+            record_fields,
         })
     }
 
@@ -623,9 +624,11 @@ impl Server {
         let file = project.file(id);
         project.session.analyze(file);
         let tables = project.session.tables();
+        let defs = project.session.defs();
+        let record_fields = super::modules::visible_fields(tables, defs, id);
         let checked = project.session.module_analysis(id).map(|checked| Checked {
             program: checked.ast.clone(),
-            record_fields: tables.record_fields(),
+            record_fields,
         });
         project.set_text(&path, &original);
         for id in open {

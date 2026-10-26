@@ -40,6 +40,21 @@ pub(super) enum MemberKind {
     Variant,
 }
 
+/// The fields of the record types of `tables` that the module `module`
+/// sees: those of an opaque record are its own module's alone.
+pub(super) fn visible_fields(
+    tables: &crate::typechecker::Tables,
+    defs: &crate::defs::DefTable,
+    module: crate::session::ModuleId,
+) -> super::fields::RecordFields {
+    let mut record_fields = tables.record_fields();
+    record_fields.retain(|ty, _| {
+        let def = defs.get(ty.id.0);
+        def.vis != crate::defs::Vis::Opaque || def.module == module
+    });
+    record_fields
+}
+
 /// The exported members of `program`.
 fn members(program: &Program) -> Vec<(Symbol, MemberKind)> {
     let mut out = Vec::new();
@@ -57,7 +72,10 @@ fn members(program: &Program) -> Vec<(Symbol, MemberKind)> {
             }
             Decl::Type(t) if t.is_pub => {
                 out.push((t.name, MemberKind::Type));
-                if let crate::ast::TypeBody::Enum(variants) = &t.body {
+                // (Another module cannot build an opaque type's values.)
+                if let crate::ast::TypeBody::Enum(variants) = &t.body
+                    && !t.is_opaque
+                {
                     out.extend(variants.iter().map(|v| (v.name, MemberKind::Variant)));
                 }
             }
@@ -79,6 +97,23 @@ impl Server {
 
     /// What the checks of the open document `doc`'s session found: its
     /// types, records and methods.
+    /// The fields of the record types of `tables` that the open document
+    /// `doc` sees: those of an opaque record are its module's alone.
+    pub(super) fn visible_record_fields(
+        &self,
+        doc: &Document,
+        tables: &crate::typechecker::Tables,
+    ) -> super::fields::RecordFields {
+        match doc
+            .module
+            .as_ref()
+            .and_then(|m| Some((m, self.projects.get(&m.project)?)))
+        {
+            Some((module, project)) => visible_fields(tables, project.session.defs(), module.id),
+            None => tables.record_fields(),
+        }
+    }
+
     pub(super) fn checked_tables(&self, doc: &Document) -> Option<&crate::typechecker::Tables> {
         let module = doc.module.as_ref()?;
         Some(self.projects.get(&module.project)?.session.tables())

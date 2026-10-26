@@ -30,22 +30,25 @@ impl TypeChecker {
     }
 
     /// `scheme`, the type of the definition `res`, instantiated for a
-    /// use. The rows of a definition of another module are that
-    /// module's: its opaque types pass into them.
+    /// use. The rows and type variables of a definition of another
+    /// module are that module's: its opaque types pass into them.
     pub(super) fn instantiate_def(
         &mut self,
         scheme: &Scheme,
         res: Option<crate::defs::Res>,
     ) -> Type {
+        let module = (self.res_def(res).map(|def| def.module)).filter(|m| *m != self.module);
+        let around = std::mem::replace(&mut self.instantiating, module);
         let ty = self.instantiate(scheme);
+        self.instantiating = around;
         if let Some(def) = self.res_def(res)
             && def.module != self.module
         {
             let module = def.module;
-            let mut rows = Vec::new();
-            super::row_tail_vars(&ty, &mut rows);
-            for row in rows {
-                self.row_owners.insert(row, module);
+            let mut vars = free_vars_in(&ty);
+            super::row_tail_vars(&ty, &mut vars);
+            for var in vars {
+                self.use_owners.insert(var, module);
             }
         }
         ty
@@ -58,7 +61,7 @@ impl TypeChecker {
         let RowTail::Var(v) = tail else {
             return false;
         };
-        let owner = self.row_owners.get(v);
+        let owner = self.use_owners.get(v);
         owner.is_some() && owner.copied() == self.def(ty.id.0).map(|def| def.module)
     }
 
@@ -72,6 +75,204 @@ impl TypeChecker {
         self.errors.push(
             Diagnostic::error(Code::OpaqueType, span, message).with_help(opaque_help(module)),
         );
+    }
+}
+
+impl TypeChecker {
+    /// The opaque type of another module that decoding `head` would
+    /// build by its structure: `head` itself, or a record or enum type
+    /// in its fields, at any depth. A type with a written `json.Decode`
+    /// impl is the impl's to decode, and is not looked into.
+    fn opaque_decoded(
+        &self,
+        head: TypeRef,
+        seen: &mut std::collections::HashSet<crate::defs::TypeId>,
+    ) -> Option<(TypeRef, Symbol)> {
+        if !seen.insert(head.id) || self.has_decode_impl(head) {
+            return None;
+        }
+        if let Some(module) = self.opaque_outside(head) {
+            return Some((head, module));
+        }
+        let fields: Vec<Type> = match self.tables.is_enum(head) {
+            true => (self.tables.decoded_variant_fields(head).into_iter())
+                .flat_map(|(_, types)| types)
+                .collect(),
+            false => (self.tables.decoded_record_fields(head).into_iter())
+                .map(|(_, ty)| ty)
+                .collect(),
+        };
+        for ty in fields {
+            let mut nested = Vec::new();
+            let _ = self.tables.decoded_field_type(&ty, &mut nested);
+            for id in nested {
+                let Some(def) = self.def(id.0) else {
+                    continue;
+                };
+                let nested = TypeRef { id, name: def.name };
+                if let Some(found) = self.opaque_decoded(nested, seen) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+
+    /// The module of the opaque type of another module that decoding
+    /// `ty` would build by its structure, if there is one.
+    pub(super) fn opaque_decoded_module(&self, ty: &Type) -> Option<crate::session::ModuleId> {
+        let Type::Generic(head, _) = ty else {
+            return None;
+        };
+        let (found, _) = self.opaque_decoded(*head, &mut std::collections::HashSet::new())?;
+        self.def(found.id.0).map(|def| def.module)
+    }
+
+    /// The opaque type of another module, without a `json.Encode` impl
+    /// of it, that encoding `ty` would read by its structure: `ty`
+    /// itself, or a type in its parts at any depth.
+    fn opaque_encoded(
+        &self,
+        ty: &Type,
+        seen: &mut std::collections::HashSet<crate::defs::TypeId>,
+    ) -> Option<(TypeRef, Symbol)> {
+        let encode = TraitKey::builtin("Encode");
+        let ty = crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(ty));
+        match &ty {
+            Type::Generic(name, args) => {
+                let head = canonical_head(&self.tables.resolver, *name);
+                if !self.by_structure(encode, head) || !seen.insert(head.id) {
+                    return None;
+                }
+                if let Some(module) = self.opaque_outside(head) {
+                    return Some((head, module));
+                }
+                let mut parts: Vec<Type> = args.clone();
+                if let Some(info) = self.tables.records.get(&head) {
+                    parts.extend(info.fields.iter().map(|(_, t)| t.clone()));
+                } else if let Some(info) = self.tables.enums.get(&head) {
+                    for variant in &info.variants {
+                        parts.extend(variant.field_types.iter().cloned());
+                    }
+                }
+                parts
+                    .iter()
+                    .find_map(|part| self.opaque_encoded(part, seen))
+            }
+            Type::List(t) | Type::Set(t) | Type::Channel(t) => self.opaque_encoded(t, seen),
+            Type::Map(k, v) => {
+                (self.opaque_encoded(k, seen)).or_else(|| self.opaque_encoded(v, seen))
+            }
+            Type::Tuple(parts) => parts
+                .iter()
+                .find_map(|part| self.opaque_encoded(part, seen)),
+            Type::AnonRecord { fields, .. } => fields
+                .values()
+                .find_map(|part| self.opaque_encoded(part, seen)),
+            _ => None,
+        }
+    }
+
+    /// The module of the opaque type of another module that encoding
+    /// `ty` would read by its structure, if there is one.
+    pub(super) fn opaque_encoded_module(&self, ty: &Type) -> Option<crate::session::ModuleId> {
+        let (found, _) = self.opaque_encoded(ty, &mut std::collections::HashSet::new())?;
+        self.def(found.id.0).map(|def| def.module)
+    }
+
+    /// Owe, for each type variable inside `ty` (at any depth, the whole
+    /// excepted), that the encoder `builtin` may encode what it stands
+    /// for: an annotation variable as a need of its function's uses, any
+    /// other one once it is decided or generalised (`BuiltinCheck::Encodes`).
+    pub(super) fn encode_variables_inside(
+        &mut self,
+        builtin: Symbol,
+        ty: &Type,
+        passer: Option<Symbol>,
+        origin: super::solve::Origin,
+    ) {
+        fn walk(ty: &Type, top: bool, out: &mut Vec<Type>) {
+            match ty {
+                Type::Var(_) | Type::Rigid(_) if !top => out.push(ty.clone()),
+                Type::Generic(_, args) | Type::Tuple(args) => {
+                    args.iter().for_each(|t| walk(t, false, out))
+                }
+                Type::List(t) | Type::Set(t) | Type::Channel(t) => walk(t, false, out),
+                Type::Map(k, v) => {
+                    walk(k, false, out);
+                    walk(v, false, out);
+                }
+                Type::AnonRecord { fields, tail } => {
+                    fields.values().for_each(|t| walk(t, false, out));
+                    match tail {
+                        RowTail::Var(v) => out.push(Type::Var(*v)),
+                        RowTail::Rigid(r) => out.push(Type::Rigid(*r)),
+                        RowTail::Closed => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut inside = Vec::new();
+        walk(ty, true, &mut inside);
+        for var in inside {
+            let check = crate::types::BuiltinCheck::Encodes { builtin };
+            match var {
+                Type::Rigid(_) => self.check_builtin_argument(check, &var, passer, origin),
+                _ => {
+                    let pred = Pred::Builtin {
+                        check,
+                        subject: var,
+                        passer,
+                    };
+                    let _ = self.want(pred, origin);
+                }
+            }
+        }
+    }
+
+    /// The error of encoding `ty` at `span` outside the module of an
+    /// opaque type it would read by its structure, if it would read one:
+    /// encoding reads what is in it.
+    pub(super) fn opaque_encode_refusal(&self, ty: &Type, span: Span) -> Option<Diagnostic> {
+        let (found, module) = self.opaque_encoded(ty, &mut std::collections::HashSet::new())?;
+        Some(
+            Diagnostic::error(
+                Code::Undecodable,
+                span,
+                format!(
+                    "type '{}' cannot be encoded outside module '{module}': it is opaque, and \
+                     '{module}' writes no 'json.Encode' impl for it",
+                    opaque_name(found, module)
+                ),
+            )
+            .with_help(format!(
+                "encode it inside module '{module}', or write `trait json.Encode for {}` there",
+                found.name
+            )),
+        )
+    }
+
+    /// The refusal of decoding `head` at `span` outside the module of an
+    /// opaque type it would build by its structure, if it would build
+    /// one: a decoder builds what a constructor does.
+    pub(super) fn opaque_decode_refusal(&self, head: TypeRef, span: Span) -> Option<Diagnostic> {
+        let (ty, module) = self.opaque_decoded(head, &mut std::collections::HashSet::new())?;
+        Some(
+            Diagnostic::error(
+                Code::Undecodable,
+                span,
+                format!(
+                    "type '{}' cannot be decoded outside module '{module}': it is opaque, and \
+                     '{module}' writes no 'json.Decode' impl for it",
+                    opaque_name(ty, module)
+                ),
+            )
+            .with_help(format!(
+                "decode it inside module '{module}', or write `trait json.Decode for {}` there",
+                ty.name
+            )),
+        )
     }
 }
 

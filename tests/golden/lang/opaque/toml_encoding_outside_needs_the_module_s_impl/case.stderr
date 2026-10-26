@@ -1,0 +1,13 @@
+error[type]: type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+ --> main.silt:18:26
+    |
+ 18 |   println(toml.stringify(Mine { u: mail.user("secret") }))
+    |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = help: encode it inside module 'mail', or write `trait json.Encode for User` there
+
+error[type]: type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+ --> main.silt:19:23
+    |
+ 19 |   println(toml.pretty(Mine { u: mail.user("secret") }))
+    |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = help: encode it inside module 'mail', or write `trait json.Encode for User` there

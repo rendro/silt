@@ -25,6 +25,9 @@ pub(crate) struct DecodeGap {
     subject: Type,
     origin: Origin,
     asker: Option<Asker>,
+    /// The module whose definition, at this use, asks for the type: it
+    /// may decode an opaque type of its own.
+    owner: Option<crate::session::ModuleId>,
 }
 
 impl TypeChecker {
@@ -49,13 +52,20 @@ impl TypeChecker {
     /// The use `origin` owes `json.Decode` of `ty`, a type with no
     /// written impl of it, for `asker`: refused, if the decoder has no
     /// value of the type, once the module's bodies are checked.
-    pub(super) fn want_decode(&mut self, ty: &Type, origin: Origin, asker: Option<Asker>) {
+    pub(super) fn want_decode(
+        &mut self,
+        ty: &Type,
+        origin: Origin,
+        asker: Option<Asker>,
+        owner: Option<crate::session::ModuleId>,
+    ) {
         // (As it is now: what a variable in it is bound to later, a
         // type a scope's end picks, is no part of what it was given.)
         self.decode_gaps.push(DecodeGap {
             subject: self.apply(ty),
             origin,
             asker,
+            owner,
         });
     }
 
@@ -143,6 +153,11 @@ impl TypeChecker {
         }
         for gap in std::mem::take(&mut self.decode_gaps) {
             let ty = crate::types::canonical::canonicalize(self.tables.resolver(), &gap.subject);
+            // A definition of an opaque type's module decodes it, wherever
+            // it is called from.
+            if gap.owner.is_some() && gap.owner == self.opaque_decoded_module(&ty) {
+                continue;
+            }
             // A decoder the bound's body hands the type to (`toml.parse`,
             // `postgres.query`) refused it here: that refusal, with the
             // note naming the function that passes it on, is the one

@@ -69,6 +69,12 @@ impl TypeChecker {
         if matches!(ty, Type::Var(_) | Type::Error | Type::Never) {
             return;
         }
+        // What an encoder is given is encoded at any depth: a type
+        // variable in it owes what the whole does (each use of its
+        // function, of the type it gives).
+        if let BuiltinCheck::Params { builtin } | BuiltinCheck::Encodes { builtin } = check {
+            self.encode_variables_inside(builtin, &ty, passer, origin);
+        }
         let span = origin.span;
         let refusal = match check {
             BuiltinCheck::Decodes {
@@ -79,7 +85,10 @@ impl TypeChecker {
             BuiltinCheck::Connection { builtin } => {
                 connection_refusal(&resolve(builtin), &ty, span)
             }
-            BuiltinCheck::Params { builtin } => params_refusal(&resolve(builtin), &ty, span),
+            // (A statement's parameters are sent encoded as json.)
+            BuiltinCheck::Params { builtin } => params_refusal(&resolve(builtin), &ty, span)
+                .or_else(|| self.opaque_encode_refusal(&ty, span)),
+            BuiltinCheck::Encodes { .. } => self.opaque_encode_refusal(&ty, span),
         };
         let Some(mut diagnostic) = refusal else {
             return;
@@ -168,6 +177,9 @@ impl TypeChecker {
         {
             if self.has_decode_impl(head) {
                 return None;
+            }
+            if let Some(refusal) = self.opaque_decode_refusal(head, span) {
+                return Some(refusal);
             }
             let enum_type = self.tables.is_enum(head);
             // (A generic type first: no impl can be written for one, so

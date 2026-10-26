@@ -1,0 +1,53 @@
+-- cmd: check
+-- exit: 1
+-- A generic function that hands its value to toml's encoder, inside a list,
+-- a map, a record, a tuple or as it is, annotated or inferred, passes the
+-- encoding on to each of its uses: one that gives it an opaque value of
+-- another module is refused there; one with the module's impl is not.
+import mail
+import toml
+
+type Box(a) {
+  v: a,
+}
+
+fn as_is(x: a) -> Result(String, toml.TomlError) {
+  toml.stringify(x)
+}
+
+fn in_list(x: a) -> Result(String, toml.TomlError) {
+  toml.stringify(#{"k": [x]})
+}
+
+fn in_map(x: a) -> Result(String, toml.TomlError) {
+  toml.pretty(#{"k": x})
+}
+
+fn in_record(x: a) -> Result(String, toml.TomlError) {
+  toml.stringify(Box { v: x })
+}
+
+fn in_tuple(x: a) -> Result(String, toml.TomlError) {
+  toml.stringify(#{"k": (x, 1)})
+}
+
+fn inferred(x) {
+  toml.stringify(#{"k": x})
+}
+
+fn inferred_list(x) {
+  toml.stringify(#{"k": [Some(x)]})
+}
+
+fn main() {
+  let u = mail.user("secret")
+  println(as_is(Box { v: u }))
+  println(in_list(u))
+  println(in_map(u))
+  println(in_record(u))
+  println(in_tuple(u))
+  println(inferred(u))
+  println(inferred_list(u))
+  println(in_map(mail.email()))
+  println(inferred(mail.email()))
+}

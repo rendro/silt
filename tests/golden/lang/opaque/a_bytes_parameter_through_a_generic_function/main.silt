@@ -1,0 +1,25 @@
+-- cmd: check
+-- requires-feature: postgres
+-- A type with no json form that a statement takes as a parameter (`Bytes`
+-- is `bytea`) goes through a generic function as before: only an opaque
+-- type of another module is refused.
+import bytes
+import postgres
+
+fn send_it(db: postgres.PgPool, x: a) -> Result(Int, postgres.PostgresError) {
+  postgres.execute(db, "select $1", (x,))
+}
+
+fn send_inferred(db, x) {
+  postgres.execute(db, "select $1", ([x],))
+}
+
+fn main() {
+  match postgres.connect("postgres://nobody@127.0.0.1/none") {
+    Ok(db) -> {
+      println(send_it(db, bytes.from_string("ab")))
+      println(send_inferred(db, bytes.from_string("cd")))
+    }
+    Err(e) -> println(Error.message(e))
+  }
+}

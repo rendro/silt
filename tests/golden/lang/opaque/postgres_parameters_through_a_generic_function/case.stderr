@@ -1,0 +1,31 @@
+error[type]: type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+ --> main.silt:39:27
+    |
+ 39 |       println(send_it(db, u))
+    |                           ^ type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = note: `send_it` passes it to `postgres.query`
+  = help: encode it inside module 'mail', or write `trait json.Encode for User` there
+
+error[type]: type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+ --> main.silt:40:29
+    |
+ 40 |       println(send_list(db, u))
+    |                             ^ type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = note: `send_list` passes it to `postgres.execute`
+  = help: encode it inside module 'mail', or write `trait json.Encode for User` there
+
+error[type]: type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+ --> main.silt:41:28
+    |
+ 41 |       println(send_box(db, u))
+    |                            ^ type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = note: `send_box` passes it to `postgres.execute`
+  = help: encode it inside module 'mail', or write `trait json.Encode for User` there
+
+error[type]: type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+ --> main.silt:42:33
+    |
+ 42 |       println(send_inferred(db, u))
+    |                                 ^ type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = note: `send_inferred` passes it to `postgres.execute`
+  = help: encode it inside module 'mail', or write `trait json.Encode for User` there

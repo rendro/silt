@@ -1,0 +1,47 @@
+-- cmd: check
+-- exit: 1
+-- requires-feature: postgres
+-- A generic function that puts its value into a statement's parameters,
+-- as it is or inside a list, a record or an option, annotated or inferred,
+-- passes the encoding on to each of its uses: an opaque value of another
+-- module is refused there; one with the module's impl is not.
+import mail
+import postgres
+
+type Row {
+  v: String,
+}
+
+type Box(a) {
+  v: a,
+}
+
+fn send_it(db: postgres.PgPool, x: a) -> Result(List(Row), postgres.PostgresError) {
+  postgres.query(db, "select $1::text as v", (x,), Row)
+}
+
+fn send_list(db: postgres.PgPool, x: a) -> Result(Int, postgres.PostgresError) {
+  postgres.execute(db, "select $1", ([x],))
+}
+
+fn send_box(db: postgres.PgPool, x: a) -> Result(Int, postgres.PostgresError) {
+  postgres.execute(db, "select $1", (1, Box { v: x }))
+}
+
+fn send_inferred(db, x) {
+  postgres.execute(db, "select $1", (Some(x),))
+}
+
+fn main() {
+  match postgres.connect("postgres://nobody@127.0.0.1/none") {
+    Ok(db) -> {
+      let u = mail.user("secret")
+      println(send_it(db, u))
+      println(send_list(db, u))
+      println(send_box(db, u))
+      println(send_inferred(db, u))
+      println(send_it(db, mail.email()))
+    }
+    Err(e) -> println(Error.message(e))
+  }
+}
