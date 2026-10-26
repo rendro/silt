@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- Outside its module, a field of an opaque record cannot be read.
+import mail
+
+fn main() {
+  let u = mail.user("a")
+  println(u.name)
+}

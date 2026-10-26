@@ -1,0 +1,9 @@
+
+-- In its own module an opaque type is an ordinary type: the module builds,
+-- takes apart, updates, reads, spreads and passes its values on, also into
+-- a function of another module that takes an open row.
+import mail
+
+fn main() {
+  println(mail.everything())
+}

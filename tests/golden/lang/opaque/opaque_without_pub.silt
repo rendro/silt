@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- A private type is not seen outside its module at all: `opaque` needs `pub`.
+opaque type Token {
+  Token(String),
+}

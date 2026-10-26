@@ -1,0 +1,33 @@
+-- cmd: check
+-- exit: 1
+-- In a package, a module outside the opaque type's own gets each error.
+-- stderr-contains: src/main.silt:21:11
+-- stderr-contains: cannot build a 'mail.Email' outside module 'mail': the type is opaque
+-- stderr-contains: cannot build a 'mail.User' outside module 'mail': the type is opaque
+-- stderr-contains: cannot take a 'mail.Email' apart outside module 'mail': the type is opaque
+-- stderr-contains: cannot take a 'mail.User' apart outside module 'mail': the type is opaque
+-- stderr-contains: cannot update a 'mail.User' outside module 'mail': the type is opaque
+-- stderr-contains: cannot read field 'name' of a 'mail.User' outside module 'mail': the type is opaque
+-- stderr-contains: cannot spread a 'mail.User' outside module 'mail': the type is opaque
+-- stderr-contains: type 'mail.User' has no field 'name' outside module 'mail': the type is opaque
+-- stderr-contains: help: use the functions of module 'mail'
+import mail
+
+fn name_of(r: { name: String, ...rest }) -> String {
+  r.name
+}
+
+fn main() {
+  let _ = mail.Email("a@x")
+  let _ = mail.User { name: "a", age: 1 }
+  let v = mail.user("b")
+  match mail.parse("a@x") {
+    Some(mail.Email(s)) -> println(s)
+    _ -> ()
+  }
+  let mail.User { name: _, .. } = v
+  let _ = v.{ age: 2 }
+  println(v.name)
+  println({ ...v })
+  println(name_of(v))
+}

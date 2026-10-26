@@ -1,0 +1,7 @@
+pub fn name_of(r) {
+  r.name
+}
+
+pub fn copy(r) {
+  { ...r }
+}

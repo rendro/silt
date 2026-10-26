@@ -26,6 +26,7 @@ fn arb_ident() -> impl Strategy<Value = String> {
                     | "when"
                     | "return"
                     | "pub"
+                    | "opaque"
                     | "import"
                     | "as"
                     | "else"

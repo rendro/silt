@@ -492,7 +492,13 @@ impl<'src> Parser<'src> {
         self.top_level_item = "statement";
         if matches!(
             self.peek(),
-            Token::Fn | Token::Type | Token::Trait | Token::Pub | Token::Import | Token::Let
+            Token::Fn
+                | Token::Type
+                | Token::Trait
+                | Token::Pub
+                | Token::Opaque
+                | Token::Import
+                | Token::Let
         ) {
             return self.parse_program_recovering();
         }
@@ -1096,7 +1102,13 @@ impl<'src> Parser<'src> {
         }
         let starts_decl = matches!(
             self.peek(),
-            Token::Fn | Token::Type | Token::Trait | Token::Pub | Token::Import | Token::Let
+            Token::Fn
+                | Token::Type
+                | Token::Trait
+                | Token::Pub
+                | Token::Opaque
+                | Token::Import
+                | Token::Let
         );
         let after_foreign_keyword = matches!(
             self.pos.checked_sub(1).and_then(|i| self.tokens.get(i)),
@@ -1132,6 +1144,7 @@ impl<'src> Parser<'src> {
                 | Token::Type
                 | Token::Trait
                 | Token::Pub
+                | Token::Opaque
                 | Token::Import
                 | Token::Let
                     if !first && self.nl_before() && (open == 0 || self.at_margin()) =>
@@ -1172,6 +1185,10 @@ impl<'src> Parser<'src> {
         let rest = match tokens.first().map(|tok| &tok.kind) {
             Some(Token::Pub) => &tokens[1..],
             _ => tokens,
+        };
+        let rest = match rest.first().map(|tok| &tok.kind) {
+            Some(Token::Opaque) => &rest[1..],
+            _ => rest,
         };
         let mut names = Vec::new();
         match rest.first().map(|tok| &tok.kind) {
@@ -1280,6 +1297,7 @@ impl<'src> Parser<'src> {
                 | Token::Type
                 | Token::Trait
                 | Token::Pub
+                | Token::Opaque
                 | Token::Import
                 | Token::Let
                     if self.nl_before() && self.at_margin() =>
@@ -1342,6 +1360,45 @@ impl<'src> Parser<'src> {
                         }
                         Ok(Decl::Type(t))
                     }
+                    Token::Opaque => {
+                        let opaque = self.advance().span;
+                        if !self.at(&Token::Type) {
+                            return Err(Diagnostic::error(
+                                Code::ExpectedDeclaration,
+                                self.span(),
+                                "expected type after pub opaque",
+                            ));
+                        }
+                        let mut t = self.parse_type_decl()?;
+                        if let TypeBody::Alias(target) = &t.body {
+                            let params = match t.params.is_empty() {
+                                true => String::new(),
+                                false => {
+                                    let params: Vec<String> =
+                                        t.params.iter().map(|p| p.to_string()).collect();
+                                    format!("({})", params.join(", "))
+                                }
+                            };
+                            let target =
+                                &self.source[target.span.start as usize..target.span.end as usize];
+                            return Err(Diagnostic::error(
+                                Code::InvalidDeclaration,
+                                opaque,
+                                format!(
+                                    "a type alias cannot be opaque: declare a type, \
+                                     `pub opaque type {name}{params} {{ {name}({target}) }}`",
+                                    name = t.name
+                                ),
+                            ));
+                        }
+                        t.is_pub = true;
+                        t.is_opaque = true;
+                        t.span = span.to(t.span);
+                        if pub_doc.is_some() {
+                            t.doc = pub_doc;
+                        }
+                        Ok(Decl::Type(t))
+                    }
                     Token::Let => {
                         let decl = self.parse_let_decl()?;
                         match decl {
@@ -1386,6 +1443,16 @@ impl<'src> Parser<'src> {
                         "expected fn, type, trait, or let after pub",
                     )),
                 }
+            }
+            // `opaque type T { .. }`: a private type has nothing to hide.
+            Token::Opaque => {
+                let opaque = self.span();
+                let _ = self.parse_type_decl_after_opaque()?;
+                Err(Diagnostic::error(
+                    Code::InvalidDeclaration,
+                    opaque,
+                    "'opaque' needs 'pub': a private type is not seen outside its module at all",
+                ))
             }
             Token::Fn => Ok(Decl::Fn(self.parse_fn_decl()?)),
             Token::Type => Ok(Decl::Type(self.parse_type_decl()?)),
@@ -1573,6 +1640,20 @@ impl<'src> Parser<'src> {
         }
     }
 
+    /// `opaque type ...` behind the `opaque` at hand: the type
+    /// declaration it stands in front of.
+    fn parse_type_decl_after_opaque(&mut self) -> Result<TypeDecl> {
+        self.advance();
+        if !self.at(&Token::Type) {
+            return Err(Diagnostic::error(
+                Code::ExpectedDeclaration,
+                self.span(),
+                "expected type after opaque",
+            ));
+        }
+        self.parse_type_decl()
+    }
+
     fn parse_type_decl(&mut self) -> Result<TypeDecl> {
         let span = self.span();
         let doc = self.doc_for_span(span);
@@ -1623,6 +1704,7 @@ impl<'src> Parser<'src> {
                 params,
                 body,
                 is_pub: false,
+                is_opaque: false,
                 span: self.close(span),
                 name_span,
                 doc,
@@ -1645,6 +1727,7 @@ impl<'src> Parser<'src> {
             params,
             body,
             is_pub: false,
+            is_opaque: false,
             span: self.close(span),
             name_span,
             doc,

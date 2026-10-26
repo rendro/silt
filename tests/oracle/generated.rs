@@ -239,10 +239,10 @@ impl Rng {
 /// The names the generator must not give a variable: keywords, and the
 /// builtin modules.
 const TAKEN: &[&str] = &[
-    "fn", "let", "type", "trait", "impl", "match", "when", "return", "pub", "import", "as", "else",
-    "where", "loop", "true", "false", "main", "list", "string", "map", "set", "int", "float", "io",
-    "fs", "env", "test", "regex", "json", "toml", "math", "channel", "task", "time", "http",
-    "bytes", "tcp", "stream", "result", "option", "uuid",
+    "fn", "let", "type", "trait", "impl", "match", "when", "return", "pub", "opaque", "import",
+    "as", "else", "where", "loop", "true", "false", "main", "list", "string", "map", "set", "int",
+    "float", "io", "fs", "env", "test", "regex", "json", "toml", "math", "channel", "task", "time",
+    "http", "bytes", "tcp", "stream", "result", "option", "uuid",
 ];
 
 /// A variable name: one to three letters, and a digit now and then.

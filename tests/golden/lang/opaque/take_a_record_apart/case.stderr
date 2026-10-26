@@ -1,0 +1,13 @@
+error[type]: cannot take a 'mail.User' apart outside module 'mail': the type is opaque
+ --> main.silt:9:7
+   |
+ 9 |   let mail.User { name, .. } = u
+   |       ^^^^^^^^^^^^^^^^^^^^^^ cannot take a 'mail.User' apart outside module 'mail': the type is opaque
+  = help: use the functions of module 'mail'
+
+error[type]: cannot take a 'mail.User' apart outside module 'mail': the type is opaque
+ --> main.silt:10:7
+    |
+ 10 |   let { age, ..._rest } = u
+    |       ^^^^^^^^^^^^^^^^^ cannot take a 'mail.User' apart outside module 'mail': the type is opaque
+  = help: use the functions of module 'mail'

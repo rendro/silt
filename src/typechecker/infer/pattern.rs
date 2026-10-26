@@ -704,6 +704,17 @@ impl TypeChecker {
                         self.unify(expected, &Type::Generic(rec_ref, args), span);
                         (rec_ref, fields)
                     });
+                if let Some((rec_ref, _)) = &declared
+                    && let Some(module) = self.opaque_outside(*rec_ref)
+                {
+                    let message = format!(
+                        "cannot take a '{}' apart outside module '{module}': the type is opaque",
+                        crate::typechecker::opaque::opaque_name(*rec_ref, module)
+                    );
+                    self.opaque_error(message, module, pattern_span);
+                    self.bind_unresolved(pattern, env);
+                    return Pat::Wild;
+                }
                 let mut subs: Vec<(Symbol, Pat)> = Vec::with_capacity(fields.len());
                 for (field_name, _, sub_pat) in fields.iter_mut() {
                     let field_ty = match &declared {
@@ -870,6 +881,17 @@ impl TypeChecker {
                 }
                 Pat::Lit
             }
+            PatternKind::AnonRecord { .. }
+                if let Some((ty, module)) = self.opaque_value(expected) =>
+            {
+                let message = format!(
+                    "cannot take a '{}' apart outside module '{module}': the type is opaque",
+                    crate::typechecker::opaque::opaque_name(ty, module)
+                );
+                self.opaque_error(message, module, pattern_span);
+                self.bind_unresolved(pattern, env);
+                Pat::Wild
+            }
             PatternKind::AnonRecord { fields, rest } => {
                 // The pattern's type is an open record with a fresh type
                 // for every field it names. The tail is open with or
@@ -944,6 +966,17 @@ impl TypeChecker {
         }
         let pattern_span = pattern.span;
         let res = pattern.res;
+        if let CtorTarget::Enum(enum_ref, _) = &target
+            && let Some(module) = self.opaque_outside(*enum_ref)
+        {
+            let message = format!(
+                "cannot take a '{}' apart outside module '{module}': the type is opaque",
+                crate::typechecker::opaque::opaque_name(*enum_ref, module)
+            );
+            self.opaque_error(message, module, pattern_span);
+            self.bind_unresolved(pattern, env);
+            return Pat::Wild;
+        }
         let PatternKind::Constructor { name, args, .. } = &mut pattern.kind else {
             return Pat::Wild;
         };

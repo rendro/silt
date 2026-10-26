@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- Outside its module, a variant of an opaque type builds nothing: called
+-- through the module, imported by name, or taken as a function value.
+import mail
+import mail.{ Email }
+
+fn main() {
+  let a = mail.Email("A@X.IO")
+  let b = Email("b@x.io")
+  let make = mail.Email
+  println("{a}{b}")
+  println(make)
+}

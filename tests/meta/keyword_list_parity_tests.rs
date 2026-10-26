@@ -23,8 +23,8 @@
 //!     `EXPECTED_CORE_KEYWORDS` here.
 
 const EXPECTED_CORE_KEYWORDS: &[&str] = &[
-    "as", "else", "fn", "import", "let", "loop", "match", "pub", "return", "trait", "type", "when",
-    "where",
+    "as", "else", "fn", "import", "let", "loop", "match", "opaque", "pub", "return", "trait",
+    "type", "when", "where",
 ];
 
 #[test]

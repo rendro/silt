@@ -2526,6 +2526,20 @@ impl TypeChecker {
         let span = expr.span;
         self.at = span;
         let called = std::mem::take(&mut self.callee_position);
+        // A variant of an opaque type of another module builds a value of
+        // it, called or not.
+        if matches!(expr.kind, ExprKind::Ident(_) | ExprKind::FieldAccess(..))
+            && let Some(enum_ty) = self.res_variant_enum(expr.res)
+            && let Some(module) = self.opaque_outside(enum_ty)
+        {
+            let message = format!(
+                "cannot build a '{}' outside module '{module}': the type is opaque",
+                super::opaque::opaque_name(enum_ty, module)
+            );
+            self.opaque_error(message, module, span);
+            expr.ty = Some(Type::Error);
+            return Type::Error;
+        }
         let ty = match &mut expr.kind {
             ExprKind::Int(_) => Type::Int,
             ExprKind::Float(_) => Type::Float,
@@ -2723,7 +2737,7 @@ impl TypeChecker {
                         callee: Some(name),
                         op: None,
                     });
-                    self.instantiate(&scheme)
+                    self.instantiate_def(&scheme, expr.res)
                 } else if name == intern("self") {
                     // `self` is resolved at runtime — allow without error
                     self.fresh_var()
@@ -2771,7 +2785,7 @@ impl TypeChecker {
                 if names_member {
                     let ty = match self.def_scheme(expr.res, env) {
                         Some(scheme) => {
-                            let ty = self.instantiate(&scheme);
+                            let ty = self.instantiate_def(&scheme, expr.res);
                             self.apply(&ty)
                         }
                         None if let Some(ty) = self.alias_value(expr.res, env) => ty,
@@ -2974,6 +2988,20 @@ impl TypeChecker {
                             self.no_field(&obj_ty, field, Some(obj), &candidates, span);
                             Type::Error
                         }
+                    }
+                    Type::Generic(type_name, type_args)
+                        if let Some(module) = self.opaque_outside(*type_name)
+                            && (self.tables.records.get(type_name))
+                                .is_some_and(|rec| rec.fields.iter().any(|(n, _)| *n == field)) =>
+                    {
+                        let _ = type_args;
+                        let message = format!(
+                            "cannot read field '{field}' of a '{}' outside module '{module}': \
+                             the type is opaque",
+                            super::opaque::opaque_name(*type_name, module)
+                        );
+                        self.opaque_error(message, module, span);
+                        Type::Error
                     }
                     Type::Generic(type_name, type_args) => {
                         // A field of a declared record, at the record's type
@@ -3332,6 +3360,20 @@ impl TypeChecker {
                 // The type identity is the bare name: `util.Pt { x: 1 }`
                 // builds a `Pt`.
                 let looked = self.named_record(expr.res, name, span, false);
+                if let Some((rec_ty, ..)) = &looked
+                    && let Some(module) = self.opaque_outside(*rec_ty)
+                {
+                    let message = format!(
+                        "cannot build a '{}' outside module '{module}': the type is opaque",
+                        super::opaque::opaque_name(*rec_ty, module)
+                    );
+                    self.opaque_error(message, module, span);
+                    for (_, e) in fields.iter_mut() {
+                        let _ = self.infer_expr(e, env);
+                    }
+                    expr.ty = Some(Type::Error);
+                    return Type::Error;
+                }
                 if let Some((rec_ty, rec_info, param_ids, fixed)) = looked {
                     // For parameterized record types, create fresh type variables
                     // for each type parameter and substitute them into field types.
@@ -3422,6 +3464,18 @@ impl TypeChecker {
                 let base_span = base.span;
                 let base_ty = self.infer_expr(base, env);
                 let resolved = self.apply(&base_ty);
+                if let Some((ty, module)) = self.opaque_value(&resolved) {
+                    let message = format!(
+                        "cannot update a '{}' outside module '{module}': the type is opaque",
+                        super::opaque::opaque_name(ty, module)
+                    );
+                    self.opaque_error(message, module, span);
+                    for (_, e) in fields.iter_mut() {
+                        let _ = self.infer_expr(e, env);
+                    }
+                    expr.ty = Some(Type::Error);
+                    return Type::Error;
+                }
                 // A field written twice in a record-update
                 // expression (e.g. `r.{ age: 1, age: 2 }`) would be
                 // silently deduped downstream. Emit a diagnostic per

@@ -14,7 +14,7 @@ Silt has a small, fixed keyword set. The full keyword list is:
 
 ```
 as  else  fn  import  let  loop  match
-pub  return  trait  type  when  where
+opaque  pub  return  trait  type  when  where
 ```
 
 This is a forcing function, not an aesthetic choice. Every time we considered

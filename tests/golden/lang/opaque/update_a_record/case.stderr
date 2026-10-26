@@ -1,0 +1,6 @@
+error[type]: cannot update a 'mail.User' outside module 'mail': the type is opaque
+ --> main.silt:8:11
+   |
+ 8 |   let v = u.{ age: 4 }
+   |           ^^^^^^^^^^^^ cannot update a 'mail.User' outside module 'mail': the type is opaque
+  = help: use the functions of module 'mail'

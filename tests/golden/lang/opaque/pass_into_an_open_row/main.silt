@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- Outside its module, an opaque record does not fit an open row, which
+-- would read its fields.
+import mail
+
+fn name_of(r: { name: String, ...rest }) -> String {
+  r.name
+}
+
+fn main() {
+  println(name_of(mail.user("a")))
+}

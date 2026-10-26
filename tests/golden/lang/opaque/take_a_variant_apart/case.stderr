@@ -1,0 +1,6 @@
+error[type]: cannot take a 'mail.Email' apart outside module 'mail': the type is opaque
+ --> main.silt:9:10
+   |
+ 9 |     Some(mail.Email(s)) -> println(s)
+   |          ^^^^^^^^^^^^^ cannot take a 'mail.Email' apart outside module 'mail': the type is opaque
+  = help: use the functions of module 'mail'

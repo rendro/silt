@@ -1,0 +1,5 @@
+error[parse]: 'opaque' needs 'pub': a private type is not seen outside its module at all
+ --> opaque_without_pub.silt:4:1
+   |
+ 4 | opaque type Token {
+   | ^^^^^^ 'opaque' needs 'pub': a private type is not seen outside its module at all

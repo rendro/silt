@@ -1,0 +1,13 @@
+error[type]: type 'mail.User' has no field 'name' outside module 'mail': the type is opaque
+ --> main.silt:11:24
+    |
+ 11 |   println(util.name_of(u))
+    |                        ^ type 'mail.User' has no field 'name' outside module 'mail': the type is opaque
+  = help: use the functions of module 'mail'
+
+error[type]: type 'mail.User' has no field 'name' outside module 'mail': the type is opaque
+ --> main.silt:12:21
+    |
+ 12 |   println(util.copy(u))
+    |                     ^ type 'mail.User' has no field 'name' outside module 'mail': the type is opaque
+  = help: use the functions of module 'mail'
