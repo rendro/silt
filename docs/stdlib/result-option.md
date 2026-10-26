@@ -22,6 +22,29 @@ matching.
 | `unwrap_or` | `(Result(a, b), a) -> a` | Extract value or use default |
 
 
+## Functor, Applicative and Monad
+
+`Result(_, e)`, a result with its error type fixed, has the three
+built-in traits of type constructors (see
+[Functors](../language/functors.md)): `Functor.map` is `result.map`,
+`Monad.flat_map` is `result.flat_map`, `Result.pure(x)` is `Ok(x)`, and
+`Applicative.map2(a, b, f)` is `Ok(f(x, y))` of two `Ok`s, else the first
+`Err`, the left one first:
+
+```silt
+fn main() {
+  let a: Result(Int, String) = Ok(1)
+  let b: Result(Int, String) = Err("no b")
+  let c: Result(Int, String) = Err("no c")
+  println(Applicative.map2(a, a) { x, y -> x + y }) -- Ok(2)
+  println(Applicative.map2(b, c) { x, y -> x + y }) -- Err(no b)
+  println(Result.pure(1) |> Functor.map { x -> x + 1 }) -- Ok(2)
+}
+```
+
+The traits are for generic code; code that knows it has a result writes
+`result.map` and `Ok(x)`.
+
 ## `result.flat_map`
 
 ```
@@ -197,6 +220,25 @@ matching.
 | `to_result` | `(Option(a), b) -> Result(a, b)` | Convert to Result with error value |
 | `unwrap_or` | `(Option(a), a) -> a` | Extract value or use default |
 
+
+## Functor, Applicative and Monad
+
+`Option(_)` has the three built-in traits of type constructors (see
+[Functors](../language/functors.md)): `Functor.map` is `option.map`,
+`Monad.flat_map` is `option.flat_map`, `Option.pure(x)` is `Some(x)`,
+and `Applicative.map2(a, b, f)` is `Some(f(x, y))` of two `Some`s, else
+`None`:
+
+```silt
+fn main() {
+  println(Applicative.map2(Some(1), Some(2)) { x, y -> x + y }) -- Some(3)
+  println(Applicative.map2(Some(1), None) { x, y -> x + y }) -- None
+  println(Option.pure(1)) -- Some(1)
+}
+```
+
+The traits are for generic code; code that knows it has an option writes
+`option.map` and `Some(x)`.
 
 ## `option.flat_map`
 

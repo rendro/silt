@@ -173,3 +173,22 @@ fn main() {
 - **`stream.repeat` is infinite.** Always pair it with `take`,
   `take_while`, or another bounded sink — `collect` on an unbounded
   stream will hang.
+- **A channel is a Functor.** `Functor.map` of a `Channel(_)` is
+  `stream.map` (see [Functors](../language/functors.md)), so generic code
+  bounded by `Functor` starts a stage when it is given a channel. A
+  channel has no `Applicative` or `Monad`.
+
+A function over any Functor, given a stream:
+
+```silt
+import stream
+
+fn double_all(xs: m(Int)) -> m(Int) where m: Functor {
+  Functor.map(xs) { x -> x * 2 }
+}
+
+fn main() {
+  let doubled = stream.from_list([1, 2, 3]) |> double_all |> stream.collect
+  println(doubled) -- [2, 4, 6]
+}
+```

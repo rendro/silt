@@ -1,0 +1,10 @@
+-- cmd: lsp
+-- lsp: hover 7:48
+-- lsp: hover 8:48
+-- lsp: hover 9:40
+-- Hover on Functor, Applicative and Monad shows the declaration and what
+-- the built-in traits' table of the traits page says of each.
+fn double_all(xs: m(Int)) -> m(Int) where m: Functor { Functor.map(xs) { x -> x * 2 } }
+fn wrap(x: Int, type m) -> m(Int) where m: Applicative { m.pure(x) }
+fn same(xs: m(Int)) -> m(Int) where m: Monad { xs }
+fn main() { println(double_all([1])) }

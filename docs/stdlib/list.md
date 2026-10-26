@@ -65,6 +65,26 @@ channel-backed lazy pipelines over the same combinator names.
 | `zip` | `(List(a), List(b)) -> List((a, b))` | Pair elements from two lists |
 
 
+## Functor, Applicative and Monad
+
+`List(_)` has the three built-in traits of type constructors (see
+[Functors](../language/functors.md)): `Functor.map` is `list.map`,
+`Monad.flat_map` is `list.flat_map`, `List.pure(x)` is `[x]`, and
+`Applicative.map2(xs, ys, f)` calls `f` on every pair, for each element
+of `xs` each element of `ys`, in that order:
+
+```silt
+fn main() {
+  println(Functor.map([1, 2]) { x -> x * 10 }) -- [10, 20]
+  println(List.pure(1)) -- [1]
+  println(Applicative.map2([1, 2], ["a", "b"]) { n, s -> "{n}{s}" }) -- [1a, 1b, 2a, 2b]
+}
+```
+
+Code that knows it has a list writes `list.map`; the traits are for
+generic code, and for `list.traverse` and `list.sequence`, which work
+over any Applicative.
+
 ## `list.all`
 
 ```

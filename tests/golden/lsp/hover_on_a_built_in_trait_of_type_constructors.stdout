@@ -1,0 +1,34 @@
+> hover 7:48
+```silt
+trait Functor {
+  fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)
+}
+```
+
+---
+
+`map` over a type constructor. `List`, `Option`, `Result`, `Channel`;
+types with an impl.
+> hover 8:48
+```silt
+trait Applicative: Functor {
+  fn pure(x: a) -> Self(a)
+  fn map2(xs: Self(a), ys: Self(b), f: Fn(a, b) -> c) -> Self(c)
+}
+```
+
+---
+
+`pure` and `map2`; includes `Functor`. `List`, `Option`, `Result`; types
+with an impl.
+> hover 9:40
+```silt
+trait Monad: Applicative {
+  fn flat_map(xs: Self(a), f: Fn(a) -> Self(b)) -> Self(b)
+}
+```
+
+---
+
+`flat_map`; includes `Applicative`. `List`, `Option`, `Result`; types with
+an impl.
