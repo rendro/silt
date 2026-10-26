@@ -41,11 +41,11 @@ pub(super) enum EvNode {
 pub(super) type BoundKey = (TyVar, TraitKey, Vec<Type>);
 
 /// Whether a value of a type with the trait `tr` is passed with the
-/// trait's dictionary (`crate::evidence`): a trait a program declares.
-/// A builtin trait is found by the value (Equal, Compare, Hash, Display,
-/// json.Encode, json.Decode, Error, Number).
+/// trait's dictionary (`crate::evidence`): a trait a program declares,
+/// or a builtin trait of type constructors. The other builtin traits
+/// are found by the value (`crate::defs::VALUE_DRIVEN_TRAITS`).
 pub(super) fn has_dictionary(tr: TraitKey) -> bool {
-    !crate::defs::is_builtin_trait(tr.id)
+    crate::defs::has_dictionary(tr.id)
 }
 
 /// Whether the predicate `pred` passes a dictionary: a trait predicate

@@ -219,7 +219,17 @@ pub fn builtin_types() -> &'static [(&'static str, Option<&'static str>)] {
 }
 
 /// The traits of the prelude: the first of [`builtin_traits`].
-pub const PRELUDE_TRAITS: &[&str] = &["Compare", "Display", "Equal", "Error", "Hash", "Number"];
+pub const PRELUDE_TRAITS: &[&str] = &[
+    "Compare",
+    "Display",
+    "Equal",
+    "Error",
+    "Hash",
+    "Number",
+    "Functor",
+    "Applicative",
+    "Monad",
+];
 
 /// Every builtin trait, with the builtin module that declares it
 /// (`None` for the prelude), in the order of their ids: the `k`th is
@@ -264,15 +274,34 @@ pub fn builtin_trait_of_method(method: &str) -> Option<TraitId> {
     builtin_trait_id(name)
 }
 
-/// The id of the builtin trait `name`; `None` when no builtin trait has
-/// that name.
-/// Whether `t` is a builtin trait (the prelude's, or a builtin module's
-/// like `json.Encode`).
-pub fn is_builtin_trait(t: TraitId) -> bool {
-    let first = builtin_types().len();
-    (first..first + builtin_traits().len()).contains(&(t.0.0 as usize))
+/// The builtin traits that are found by the value: a value of a type
+/// with one reaches its impl where the code runs, and no dictionary is
+/// passed for it (`crate::evidence`). The others, the traits of type
+/// constructors (Functor, Applicative, Monad), are passed with
+/// dictionaries as a program's traits are: `m.pure(x)` has no value of
+/// `m(..)` to find its impl by.
+pub const VALUE_DRIVEN_TRAITS: &[&str] = &[
+    "Compare", "Display", "Equal", "Error", "Hash", "Number", "Encode", "Decode",
+];
+
+/// Whether a value of a type with the trait `t` is passed with the
+/// trait's dictionary: a trait a program declares, or a builtin one that
+/// is not found by the value ([`VALUE_DRIVEN_TRAITS`]).
+pub fn has_dictionary(t: TraitId) -> bool {
+    // (Asked of every predicate the checker meets: by the builtin
+    // trait's place, not its name.)
+    static FOUND_BY_VALUE: OnceLock<Vec<bool>> = OnceLock::new();
+    let found_by_value = FOUND_BY_VALUE.get_or_init(|| {
+        (builtin_traits().iter())
+            .map(|(name, _)| VALUE_DRIVEN_TRAITS.contains(name))
+            .collect()
+    });
+    let k = (t.0.0 as usize).wrapping_sub(builtin_types().len());
+    !found_by_value.get(k).copied().unwrap_or(false)
 }
 
+/// The id of the builtin trait `name`; `None` when no builtin trait has
+/// that name.
 pub fn builtin_trait_id(name: &str) -> Option<TraitId> {
     builtin_traits()
         .iter()

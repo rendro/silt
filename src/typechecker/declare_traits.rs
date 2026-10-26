@@ -1162,6 +1162,13 @@ impl TypeChecker {
         false
     }
 
+    /// Whether both the trait `tr` and the type `ty` are builtin.
+    fn trait_and_type_are_builtin(&self, tr: TraitKey, ty: TypeRef) -> bool {
+        self.defs.as_ref().is_some_and(|defs| {
+            defs.get(tr.id.0).module.is_builtin() && defs.get(ty.id.0).module.is_builtin()
+        })
+    }
+
     /// The trait the impl `ti` implements, as messages name it: as a
     /// program writes it, a trait of another module with its module
     /// (`json.Encode`, `traits.Area`, whatever the impl wrote).
@@ -1388,6 +1395,14 @@ impl TypeChecker {
         if written_args.iter().any(Type::holds_error) {
             self.impl_written_args(ti, true);
             self.duplicated_impls.insert((trait_key, target_type));
+            return;
+        }
+        // A builtin trait's impl for a builtin type is no module's to
+        // write, though silt has one (`trait Functor for List(_)`): that
+        // is the error, not a duplicate of silt's.
+        if self.trait_and_type_are_builtin(trait_key, target_type)
+            && !self.impl_in_its_module(ti, target_type)
+        {
             return;
         }
         let met = self.impl_met(ti, trait_key, target_type, args_key);
@@ -2789,7 +2804,7 @@ impl TypeChecker {
         preds
     }
 
-    fn register_method_entry(
+    pub(super) fn register_method_entry(
         &mut self,
         target_type: TypeRef,
         method: Symbol,

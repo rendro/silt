@@ -12,17 +12,17 @@
 -- stderr-contains: --> constructor_calls__an_inferred_function_keeps_its_element.silt:46:17
 -- stderr-contains: --> constructor_calls__an_inferred_function_keeps_its_element.silt:47:19
 -- stderr-contains: --> constructor_calls__an_inferred_function_keeps_its_element.silt:49:13
-trait Functor {
+trait Mapping {
   fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)
 }
-trait Applicative: Functor {
+trait Combinative: Mapping {
   fn pure(x: a) -> Self(a)
   fn map2(xs: Self(a), ys: Self(b), f: Fn(a, b) -> c) -> Self(c)
 }
-trait Monad: Applicative {
+trait Chain: Combinative {
   fn flat_map(xs: Self(a), f: Fn(a) -> Self(b)) -> Self(b)
 }
-trait Functor for Option(_) {
+trait Mapping for Option(_) {
   fn map(xs, f) {
     match xs {
       Some(x) -> Some(f(x))
@@ -32,13 +32,13 @@ trait Functor for Option(_) {
 }
 import string
 type P { name: String }
-fn twice(xs) { Functor.map(xs) { x -> x * 2 } }
-fn lens(xs) { Functor.map(xs) { x -> string.length(x) } }
-fn names(xs) { Functor.map(xs) { x -> x.name } }
-fn applied(xs) { Functor.map(xs) { f -> f(1) } }
-fn t2(xs: m(a)) where m: Functor { Functor.map(xs) { x -> x * 2 } }
+fn twice(xs) { Mapping.map(xs) { x -> x * 2 } }
+fn lens(xs) { Mapping.map(xs) { x -> string.length(x) } }
+fn names(xs) { Mapping.map(xs) { x -> x.name } }
+fn applied(xs) { Mapping.map(xs) { f -> f(1) } }
+fn t2(xs: m(a)) where m: Mapping { Mapping.map(xs) { x -> x * 2 } }
 fn main() {
-  let g = { xs -> Functor.map(xs) { x -> x * 2 } }
+  let g = { xs -> Mapping.map(xs) { x -> x * 2 } }
   println(names(Some(P { name: "a" })))
   println(applied(Some({ x -> x + 1 })))
   println(twice(Some("s")))

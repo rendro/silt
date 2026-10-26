@@ -64,8 +64,17 @@ pub use unify::*;
 /// so would shadow the compiler's TraitInfo (different method names,
 /// different signatures) and produce nonsensical cascade errors when
 /// the preregistered impls get revalidated against the user's body.
-pub(super) const BUILTIN_TRAIT_NAMES: &[&str] =
-    &["Equal", "Compare", "Hash", "Display", "Error", "Number"];
+pub(super) const BUILTIN_TRAIT_NAMES: &[&str] = &[
+    "Equal",
+    "Compare",
+    "Hash",
+    "Display",
+    "Error",
+    "Number",
+    "Functor",
+    "Applicative",
+    "Monad",
+];
 
 /// The built-in traits a program cannot implement by hand: they are
 /// derived structurally (see `reject_sealed_trait_impls`).

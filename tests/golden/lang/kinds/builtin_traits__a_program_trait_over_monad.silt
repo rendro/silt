@@ -1,0 +1,34 @@
+-- A program's trait over Monad, implemented for the builtin types:
+-- generic code bounded by it reaches every method of the chain below it,
+-- Monad, Applicative and Functor, through their impls for the type.
+trait Settled: Monad {
+  fn label(xs: Self(a)) -> String
+}
+
+trait Settled for List(_) {
+  fn label(xs) { "list" }
+}
+
+trait Settled for Option(_) {
+  fn label(o) { "option" }
+}
+
+trait Settled for Result(_, e) {
+  fn label(r) { "result" }
+}
+
+fn all_ways(xs: m(Int)) -> (String, m(Int), m(Int), m(Int)) where m: Settled {
+  let mapped = Functor.map(xs) { x -> x * 2 }
+  let paired = Applicative.map2(xs, m.pure(100)) { a, b -> a + b }
+  let chained = Monad.flat_map(xs) { x -> m.pure(x - 1) }
+  (Settled.label(xs), mapped, paired, chained)
+}
+
+fn main() {
+  println(all_ways([1, 2]))
+  println(all_ways(Some(3)))
+  let ok: Result(Int, String) = Ok(4)
+  println(all_ways(ok))
+  let err: Result(Int, String) = Err("no")
+  println(all_ways(err))
+}

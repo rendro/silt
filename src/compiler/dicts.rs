@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::ast::{Decl, TraitImpl};
-use crate::bytecode::dict::{Dict, Recipe, Template};
+use crate::bytecode::dict::{Dict, Method, Recipe, Template};
 use crate::bytecode::{Asm, Globals};
 use crate::defs::{ImplArgs, TraitId, TypeId};
 use crate::diagnostic::{Code, Diagnostic};
@@ -89,21 +89,81 @@ fn trait_limits(t: &crate::ast::TraitDecl) -> Result<(), Diagnostic> {
     Ok(())
 }
 
-/// Whether `t` is a trait whose values are passed with dictionaries: one
-/// a program declares.
-pub(super) fn has_dictionary(t: TraitId) -> bool {
-    !crate::defs::is_builtin_trait(t)
+/// Enter the template of each built-in impl of a trait of type
+/// constructors (`builtins::applicative::IMPLS`) the globals do not have
+/// yet. (After the program's own templates: theirs keep their places.
+/// One that a program impl's recipe names is entered with it.)
+fn enter_builtin_templates(globals: &mut Globals) {
+    for (trait_name, type_name, _) in crate::builtins::applicative::IMPLS {
+        if let (Some(tr), Some(ty)) = (
+            crate::defs::builtin_trait_id(trait_name),
+            crate::defs::builtin_type_id(type_name),
+        ) {
+            builtin_template(globals, tr, ty);
+        }
+    }
+}
+
+/// The template of the built-in impl of the trait `tr` for the type
+/// `ty`, entered the first time: its methods are builtins, and its
+/// supertraits' dictionaries are those of the type's built-in impls of
+/// them. `None` where silt has no such impl.
+fn builtin_template(globals: &mut Globals, tr: TraitId, ty: TypeId) -> Option<Arc<Template>> {
+    if let Some(template) = globals.template(tr, ty, ImplArgs::none()) {
+        return Some(template.clone());
+    }
+    let (trait_name, type_name, rows) =
+        (crate::builtins::applicative::IMPLS.iter()).find(|(t, y, _)| {
+            crate::defs::builtin_trait_id(t) == Some(tr)
+                && crate::defs::builtin_type_id(y) == Some(ty)
+        })?;
+    let methods = (rows.iter())
+        .map(|row| {
+            let row = crate::builtins::applicative::method_row(row);
+            Method::Builtin(row.expect("a method of a built-in impl is a row").id)
+        })
+        .collect();
+    let decls = crate::typechecker::builtin_trait_decls();
+    let decl = decls.iter().find(|decl| resolve(decl.name) == *trait_name);
+    let supers = (decl.into_iter().flat_map(|decl| &decl.supertraits))
+        .filter_map(|sup| {
+            let sup = crate::defs::builtin_trait_id(&resolve(sup.name))?;
+            Some(Recipe::Dict {
+                template: builtin_template(globals, sup, ty)?,
+                subs: Box::new([]),
+            })
+        })
+        .collect();
+    let template = Arc::new(Template {
+        index: globals.next_template_index(),
+        tr,
+        ty,
+        args: ImplArgs::none(),
+        name: format!("{trait_name} for {type_name}"),
+        methods,
+        supers,
+        wheres: Box::new([]),
+    });
+    globals.add_template(template.clone());
+    Some(template)
 }
 
 /// The methods of a trait as a program declares them, each with the
 /// place of its first parameter of type `Self` (`self`, or one
-/// written `x: Self`).
+/// written `x: Self`, or `xs: Self(a)` of a trait of type
+/// constructors).
 pub(super) fn declared_methods(t: &crate::ast::TraitDecl) -> Vec<(String, Option<u8>)> {
     t.methods
         .iter()
         .map(|method| {
             let at = method.params.iter().position(|param| match &param.ty {
-                Some(ty) => matches!(ty.kind, crate::ast::TypeExprKind::SelfType),
+                Some(ty) => match &ty.kind {
+                    crate::ast::TypeExprKind::SelfType => true,
+                    crate::ast::TypeExprKind::Generic {
+                        module: None, name, ..
+                    } => *name == intern("Self"),
+                    _ => false,
+                },
                 None => matches!(param.pattern.kind,
                     crate::ast::PatternKind::Ident(name) if name == intern("self")),
             });
@@ -322,7 +382,16 @@ impl Compiler<'_> {
             .filter(|(index, _)| !self.units.earlier.installed.contains(index))
             .map(|(_, unit)| unit)
             .collect();
-        // (The traits first: an impl may come before its trait.)
+        // (The traits first: an impl may come before its trait. The
+        // builtin traits whose impls are passed as dictionaries are
+        // every program's.)
+        for decl in crate::typechecker::builtin_trait_decls() {
+            if let Some(id) = crate::defs::builtin_trait_id(&resolve(decl.name))
+                && crate::defs::has_dictionary(id)
+            {
+                globals.note_trait_methods(id, declared_methods(&decl));
+            }
+        }
         for unit in &units {
             for decl in &unit.program.decls {
                 if let Decl::Trait(t) = decl
@@ -341,7 +410,7 @@ impl Compiler<'_> {
             for decl in &unit.program.decls {
                 if let Decl::TraitImpl(ti) = decl
                     && let (Some(ty), Some(t)) = (self.impl_type(ti), self.impl_trait(ti))
-                    && has_dictionary(t)
+                    && crate::defs::has_dictionary(t)
                 {
                     self.header_limit(ti)?;
                     if impls.insert((t, ty, ti.args_key), ti).is_none() {
@@ -353,6 +422,7 @@ impl Compiler<'_> {
         for key in keys {
             self.enter_template(key, &impls, globals, 0)?;
         }
+        enter_builtin_templates(globals);
         Ok(())
     }
 
@@ -366,7 +436,7 @@ impl Compiler<'_> {
             .filter(|wc| match wc.trait_res {
                 Some(crate::defs::Res::Def(id)) => matches!(
                     self.units.defs.get(id).kind,
-                    crate::defs::DefKind::Trait(t) if has_dictionary(t)
+                    crate::defs::DefKind::Trait(t) if crate::defs::has_dictionary(t)
                 ),
                 _ => false,
             })
@@ -418,7 +488,11 @@ impl Compiler<'_> {
             return Ok(Some(template.clone()));
         }
         let Some(ti) = impls.get(&key) else {
-            return Ok(None);
+            // (A built-in impl, the supertrait's of a program's impl for a
+            // builtin type: `trait Sized: Functor` for `Option(_)`.)
+            let builtin =
+                (key.2 == ImplArgs::none()).then(|| builtin_template(globals, key.0, key.1));
+            return Ok(builtin.flatten());
         };
         if depth > 32 {
             return Err(no_dictionary(
@@ -430,6 +504,7 @@ impl Compiler<'_> {
         let methods = (globals.trait_methods(tr).unwrap_or_default().to_vec())
             .into_iter()
             .map(|(name, _)| globals.method_at(tr, ty, args, &name).unwrap_or(u16::MAX))
+            .map(Method::Global)
             .collect();
         let mut supers = Vec::new();
         for (_, ev) in &ti.evidence.supers {
@@ -608,6 +683,55 @@ impl Compiler<'_> {
 }
 
 impl Compiler<'_> {
+    /// The builtin `expr` names as a value, if it is one that is passed
+    /// dictionaries (`list.traverse`), with their evidence.
+    pub(super) fn builtin_with_dicts<'e>(
+        &self,
+        expr: &'e crate::ast::Expr,
+    ) -> Option<(&'static crate::builtins::registry::Row, &'e [Evidence])> {
+        if self.callee_call.is_some()
+            || !matches!(
+                expr.kind,
+                crate::ast::ExprKind::Ident(_) | crate::ast::ExprKind::FieldAccess(..)
+            )
+        {
+            return None;
+        }
+        let Some(crate::evidence::Site::Ref(bounds)) = expr.ev.as_deref() else {
+            return None;
+        };
+        let name = self
+            .builtin_function(expr.res)
+            .filter(|_| !bounds.is_empty())?;
+        Some((crate::builtins::registry::registry().named(&name)?, bounds))
+    }
+
+    /// The builtin `row`, which is passed the dictionaries `bounds`
+    /// names, as a value: a function of the builtin's arguments that
+    /// calls it with them, bound to the dictionaries as a function with
+    /// bounds is (`list.traverse` given to a function).
+    pub(super) fn compile_builtin_value(
+        &mut self,
+        row: &crate::builtins::registry::Row,
+        bounds: &[Evidence],
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        let argc = row.arity();
+        self.begin_function(row.qualified(), argc, span)?;
+        for slot in 0..argc {
+            self.emit(Asm::GetLocal { slot }, span)?;
+        }
+        let builtin = row.id;
+        self.emit(Asm::CallBuiltin { builtin, argc }, span)?;
+        self.emit(Asm::Return, span)?;
+        let (func, _) = self.end_function(span)?;
+        let closure = crate::bytecode::VmClosure::new(Arc::new(func), vec![]);
+        let k = self.add_constant(Value::VmClosure(Arc::new(closure)), span)?;
+        self.emit(Asm::Constant { k }, span)?;
+        let n = self.pass_dicts(bounds, span)?;
+        self.emit(Asm::Bind { n }, span)
+    }
+
     /// Whether the use `expr` of a definition with bounds names a `let`
     /// that is general in one: the function of its dictionaries that
     /// makes its value (`compile_thunk`), called where it is used.
@@ -690,7 +814,9 @@ impl Compiler<'_> {
             return None;
         };
         match callee.ev.as_deref() {
-            Some(crate::evidence::Site::Method { recv, own }) if has_dictionary(tr) => {
+            Some(crate::evidence::Site::Method { recv, own })
+                if crate::defs::has_dictionary(tr) =>
+            {
                 Some((tr, recv, own))
             }
             _ => None,
@@ -737,7 +863,15 @@ impl Compiler<'_> {
         tail: bool,
     ) -> Result<(), Diagnostic> {
         let (index, at) = self.method_place(tr, method, span)?;
-        if let Some((slot, template)) = self.checked_call(tr, recv, method, index) {
+        if let Some((Method::Builtin(builtin), _)) = self.checked_call(tr, recv, method, index) {
+            // The method of a built-in impl at a known type: a call of
+            // its builtin (`Functor.map([1], f)` is `list.map([1], f)`).
+            let dicts = self.pass_dicts(own, span)?;
+            self.compile_operands(args.iter().copied())?;
+            let argc = dicts + args.len();
+            return self.emit(Asm::CallBuiltin { builtin, argc }, span);
+        }
+        if let Some((Method::Global(slot), template)) = self.checked_call(tr, recv, method, index) {
             // The method of an impl whose header asks nothing, through
             // its dictionary: a call of the method's global, with the
             // receiver checked.
@@ -785,25 +919,28 @@ impl Compiler<'_> {
         }
     }
 
-    /// The global slot of the method `method` (the trait's `index`th) of
-    /// the impl whose dictionary `recv` names, and the place of the
-    /// impl's template, if the dictionary is the same wherever the code
-    /// runs and the method is the impl's own (a trait's default takes
-    /// the dictionary of the impl it runs for).
+    /// The method `method` (the trait's `index`th) of the impl whose
+    /// dictionary `recv` names, and the place of the impl's template, if
+    /// the dictionary is the same wherever the code runs and the method
+    /// is the impl's own (a trait's default takes the dictionary of the
+    /// impl it runs for).
     fn checked_call(
         &self,
         tr: TraitId,
         recv: &Evidence,
         method: Symbol,
         index: usize,
-    ) -> Option<(u16, usize)> {
+    ) -> Option<(Method, usize)> {
         let Some(Value::Dict(Dict::Of(template))) = self.constant_dict(recv) else {
             return None;
         };
-        let slot = *self.globals.template_at(template)?.methods.get(index)?;
+        let found = *self.globals.template_at(template)?.methods.get(index)?;
         let default = self.globals.default_method(tr, &resolve(method));
-        (slot != u16::MAX && default != Some(slot) && u16::try_from(template).is_ok())
-            .then_some((slot, template as usize))
+        let own = match found {
+            Method::Global(slot) => slot != u16::MAX && default != Some(slot),
+            Method::Builtin(_) => true,
+        };
+        (own && u16::try_from(template).is_ok()).then_some((found, template as usize))
     }
 
     /// The method `method` of the trait `tr`, through the dictionary

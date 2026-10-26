@@ -1,0 +1,57 @@
+-- A program's trait whose supertrait is a builtin one, implemented for
+-- the builtin types: generic code bounded by it reaches the supertrait's
+-- methods, which are silt's impls (List, Option, Result, Channel).
+import channel
+import list
+import stream
+
+trait Sized: Functor {
+  fn size(xs: Self(a)) -> Int
+}
+
+trait Sized for List(_) {
+  fn size(xs) { list.length(xs) }
+}
+
+trait Sized for Option(_) {
+  fn size(o) {
+    match o {
+      Some(_) -> 1
+      None -> 0
+    }
+  }
+}
+
+trait Sized for Result(_, e) {
+  fn size(r) {
+    match r {
+      Ok(_) -> 1
+      Err(_) -> 0
+    }
+  }
+}
+
+trait Sized for Channel(_) {
+  fn size(ch) { 0 }
+}
+
+fn grown(xs: m(Int)) -> (Int, m(Int)) where m: Sized {
+  (Sized.size(xs), Functor.map(xs) { x -> x + 1 })
+}
+
+fn main() {
+  println(grown([1, 2]))
+  println(grown(Some(1)))
+  let none: Option(Int) = None
+  println(grown(none))
+  let ok: Result(Int, String) = Ok(5)
+  let err: Result(Int, String) = Err("no")
+  println(grown(ok))
+  println(grown(err))
+  let ch = channel.new(2)
+  channel.send(ch, 7)
+  channel.close(ch)
+  match grown(ch) {
+    (n, more) -> println((n, stream.collect(more)))
+  }
+}

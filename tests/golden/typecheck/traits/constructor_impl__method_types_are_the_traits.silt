@@ -4,11 +4,11 @@
 -- constructor for `Self`: `Self(b)` is `Box(b)` here.
 -- stderr-contains: error[type]: type mismatch: expected Box(b), got Option(b)
 -- stderr-contains: --> constructor_impl__method_types_are_the_traits.silt:12:3
-trait Functor {
+trait Mapping {
   fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)
 }
 type Box(a) { value: a }
-trait Functor for Box(_) {
+trait Mapping for Box(_) {
   fn map(xs: Box(a), f: Fn(a) -> b) -> Option(b) { None }
 }
 fn main() { println(1) }

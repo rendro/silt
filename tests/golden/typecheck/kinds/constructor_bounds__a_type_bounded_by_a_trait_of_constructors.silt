@@ -2,11 +2,11 @@
 -- exit: 1
 -- A type variable is bounded by a trait of types, a type constructor
 -- variable by a trait of type constructors.
--- stderr-contains: error[type]: 'a' is a type, but 'Functor' is a trait of type constructors
+-- stderr-contains: error[type]: 'a' is a type, but 'Mapping' is a trait of type constructors
 -- stderr-contains: = help: write the variable with its type argument, as in `xs: a(Int)`
 -- stderr-contains: --> constructor_bounds__a_type_bounded_by_a_trait_of_constructors.silt:11:28
-trait Functor {
+trait Mapping {
   fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)
 }
-fn f(x: a) -> Int where a: Functor { 1 }
+fn f(x: a) -> Int where a: Mapping { 1 }
 fn main() { println(1) }

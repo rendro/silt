@@ -32,15 +32,26 @@ pub struct Template {
     pub args: crate::defs::ImplArgs,
     /// The impl, as a message names it: `Greet for Box`.
     pub name: String,
-    /// The global slot of each method of the trait, in the order the
-    /// trait declares them: the impl's own, or the trait's default.
-    pub methods: Box<[u16]>,
+    /// Each method of the trait, in the order the trait declares them:
+    /// the impl's own, or the trait's default.
+    pub methods: Box<[Method]>,
     /// The dictionary of each supertrait of the trait, in the order the
     /// trait declares them.
     pub supers: Box<[Recipe]>,
     /// The dictionary of each `where` clause the trait declares on its
     /// parameters, in order.
     pub wheres: Box<[Recipe]>,
+}
+
+/// A method of an impl's dictionary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Method {
+    /// The function in this global slot: the method a program wrote, or
+    /// its trait's default.
+    Global(u16),
+    /// A builtin: the method of a built-in impl (`list.map` is List's
+    /// `Functor.map`), which takes no dictionary.
+    Builtin(crate::builtins::registry::BuiltinId),
 }
 
 /// How a dictionary is made from the dictionaries of an impl's header.

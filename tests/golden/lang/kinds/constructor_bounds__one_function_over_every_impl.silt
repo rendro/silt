@@ -1,5 +1,5 @@
 -- A function bounded by a trait of type constructors (`where m:
--- Functor`) runs over every type with an impl: a program's own types,
+-- Mapping`) runs over every type with an impl: a program's own types,
 -- Option, Result with any error type, and a type whose impl asks a trait
 -- of its fixed argument (`Tagged(_, t) where t: Named`), whose impl is
 -- passed on with that trait's.
@@ -9,14 +9,14 @@ trait Named {
 trait Named for Int {
   fn name(self) -> String { "int {self}" }
 }
-trait Functor {
+trait Mapping {
   fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)
 }
 type Box(a) { value: a }
-trait Functor for Box(_) {
+trait Mapping for Box(_) {
   fn map(xs, f) { Box { value: f(xs.value) } }
 }
-trait Functor for Option(_) {
+trait Mapping for Option(_) {
   fn map(xs, f) {
     match xs {
       Some(x) -> Some(f(x))
@@ -24,7 +24,7 @@ trait Functor for Option(_) {
     }
   }
 }
-trait Functor for Result(_, e) {
+trait Mapping for Result(_, e) {
   fn map(xs, f) {
     match xs {
       Ok(x) -> Ok(f(x))
@@ -33,20 +33,20 @@ trait Functor for Result(_, e) {
   }
 }
 type Tagged(a, t) { value: a, tag: t }
-trait Functor for Tagged(_, t) where t: Named {
+trait Mapping for Tagged(_, t) where t: Named {
   fn map(x, f) {
     println(Named.name(x.tag))
     Tagged { value: f(x.value), tag: x.tag }
   }
 }
-fn double_all(xs: m(Int)) -> m(Int) where m: Functor {
-  Functor.map(xs) { x -> x * 2 }
+fn double_all(xs: m(Int)) -> m(Int) where m: Mapping {
+  Mapping.map(xs) { x -> x * 2 }
 }
-fn quadruple(xs: m(Int)) -> m(Int) where m: Functor {
+fn quadruple(xs: m(Int)) -> m(Int) where m: Mapping {
   double_all(double_all(xs))
 }
-fn shown(xs: m(Int)) -> m(String) where m: Functor {
-  Functor.map(xs) { x -> "<{x}>" }
+fn shown(xs: m(Int)) -> m(String) where m: Mapping {
+  Mapping.map(xs) { x -> "<{x}>" }
 }
 fn main() {
   println(double_all(Box { value: 3 }).value)

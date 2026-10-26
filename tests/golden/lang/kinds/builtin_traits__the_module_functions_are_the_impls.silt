@@ -1,0 +1,21 @@
+-- The module functions stay, and each built-in impl's method is the
+-- module function (HK16): a known type uses its module, generic code the
+-- trait, and the two give the same.
+import list
+import option
+import result
+
+fn twice(xs: m(Int)) -> m(Int) where m: Monad {
+  Monad.flat_map(xs) { x -> Functor.map(m.pure(x)) { y -> y * 2 } }
+}
+
+fn main() {
+  let xs = [1, 2, 3]
+  println(list.map(xs) { x -> x * 2 } == Functor.map(xs) { x -> x * 2 })
+  println(list.flat_map(xs) { x -> [x, x] } == Monad.flat_map(xs) { x -> [x, x] })
+  println(option.map(Some(1)) { x -> x + 1 } == Functor.map(Some(1)) { x -> x + 1 })
+  let r: Result(Int, String) = Ok(1)
+  println(result.flat_map(r) { x -> Ok(x + 1) } == Monad.flat_map(r) { x -> Ok(x + 1) })
+  println(twice(xs) == list.map(xs) { x -> x * 2 })
+  println(twice(Some(4)))
+}

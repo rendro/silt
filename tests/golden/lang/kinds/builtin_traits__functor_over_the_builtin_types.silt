@@ -1,0 +1,40 @@
+-- Functor, Applicative and Monad are built in, named with no import
+-- (HK13, HK14): generic code over `m` runs over List, Option, Result and
+-- Channel (a Functor only) and over a program's own impl.
+import channel
+import stream
+import string
+
+type Box(a) { value: a }
+
+trait Functor for Box(_) {
+  fn map(xs, f) { Box { value: f(xs.value) } }
+}
+
+fn double_all(xs: m(Int)) -> m(Int) where m: Functor {
+  Functor.map(xs) { x -> x * 2 }
+}
+
+fn main() {
+  println(double_all([1, 2, 3]))
+  println(double_all(Some(4)))
+  let none: Option(Int) = None
+  println(double_all(none))
+  let ok: Result(Int, String) = Ok(5)
+  let err: Result(Int, String) = Err("no")
+  println(double_all(ok))
+  println(double_all(err))
+  println(double_all(Box { value: 6 }).value)
+  let ch = channel.new(3)
+  channel.send(ch, 7)
+  channel.send(ch, 8)
+  channel.close(ch)
+  println(stream.collect(double_all(ch)))
+
+  -- The calls of the deck, at known types.
+  println(Functor.map([1, 2]) { x -> x + 1 })
+  println(Some(2) |> Functor.map { x -> x * 10 })
+  println(Applicative.map2(Some(1), Some(2)) { a, b -> a + b })
+  println(Monad.flat_map(["a b", "c"]) { s -> string.split(s, " ") })
+  println(Option.pure(1))
+}

@@ -21,6 +21,7 @@ impl BuiltinEnv {
     fn build() -> Self {
         let mut checker = TypeChecker::new();
         let mut env = TypeEnv::new();
+        register_builtin_traits(&mut checker);
         register_prelude(&mut checker, &mut env);
         enter_registry(&mut checker, &mut env);
         register_builtin_trait_impls(&mut checker);
@@ -412,6 +413,7 @@ pub fn __trait_init_fingerprint_check_program() -> std::collections::BTreeSet<St
     use std::collections::BTreeSet;
     let mut checker = TypeChecker::new();
     let mut env = TypeEnv::new();
+    register_builtin_traits(&mut checker);
     register_prelude(&mut checker, &mut env);
     enter_registry(&mut checker, &mut env);
     register_builtin_trait_impls(&mut checker);
@@ -445,6 +447,7 @@ pub fn __builtin_trait_registration_fingerprint() -> Vec<(
     usize,
 )> {
     let mut checker = TypeChecker::new();
+    register_builtin_traits(&mut checker);
     register_builtin_trait_impls(&mut checker);
     let names = ["Display", "Compare", "Equal", "Hash"];
     let mut out = Vec::new();

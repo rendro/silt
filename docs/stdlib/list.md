@@ -49,6 +49,7 @@ channel-backed lazy pipelines over the same combinator names.
 | `remove_at` | `(List(a), Int) -> Option(List(a))` | The list without the element at index, or None if there is none |
 | `reverse` | `(List(a)) -> List(a)` | Reverse element order |
 | `scan` | `(List(a), b, Fn(b, a) -> b) -> List(b)` | Prefix fold; returns all intermediate accumulators |
+| `sequence` | `(List(m(a))) -> m(List(a)) where m: Applicative` | One Applicative value of the list of the values: the first failure, if there is one |
 | `set` | `(List(a), Int, a) -> Option(List(a))` | The list with the element at index replaced, or None if there is none |
 | `sort` | `(List(a)) -> List(a) where a: Compare` | Sort in natural order |
 | `sort_by` | `(List(a), Fn(a) -> b) -> List(a) where b: Compare` | Sort by key function |
@@ -57,6 +58,7 @@ channel-backed lazy pipelines over the same combinator names.
 | `sum_float` | `(List(Float)) -> Float` | Sum a list of floats (0.0 on empty) |
 | `tail` | `(List(a)) -> List(a)` | All elements except the first |
 | `take` | `(List(a), Int) -> List(a)` | Keep first n elements |
+| `traverse` | `(List(a), Fn(a) -> m(b)) -> m(List(b)) where m: Applicative` | Call f on every element, then one Applicative value of the list of the results: the first failure, if there is one |
 | `unfold` | `(a, Fn(a) -> Option((b, a))) -> List(b)` | Build a list from a seed |
 | `unique` | `(List(a)) -> List(a) where a: Equal` | Remove duplicates, preserving first occurrence |
 | `unique_by` | `(List(a), Fn(a) -> b) -> List(a) where b: Hash` | Keep the first element of each key |
@@ -665,6 +667,28 @@ fn main() {
 ```
 
 
+## `list.sequence`
+
+```
+list.sequence(xs: List(m(a))) -> m(List(a)) where m: Applicative
+```
+
+Turns a list of values of an Applicative `m` (`Option`, `Result`, `List`,
+or a type of your own) into one value of `m` that holds the list: the first
+failure (`None`, `Err`) if there is one. Of lists, it gives every
+combination. It is `list.traverse` with each element as it is.
+
+```silt
+import list
+
+fn main() {
+  println(list.sequence([Some(1), Some(2)])) -- Some([1, 2])
+  println(list.sequence([Some(1), None])) -- None
+  println(list.sequence([[1, 2], [3]])) -- [[1, 3], [2, 3]]
+}
+```
+
+
 ## `list.set`
 
 ```
@@ -862,6 +886,30 @@ import list
 
 fn main() {
   println(list.take([1, 2, 3, 4, 5], 3)) -- [1, 2, 3]
+}
+```
+
+
+## `list.traverse`
+
+```
+list.traverse(xs: List(a), f: Fn(a) -> m(b)) -> m(List(b)) where m: Applicative
+```
+
+Calls `f` on every element, left to right, then gives one value of the
+Applicative `m` that holds the list of the results: the first failure
+(`None`, `Err`) if there is one. `f` is called on every element, also after
+one has failed; for steps that must stop at the first failure, write a
+recursive function with `?`. Of lists, it gives every combination.
+
+```silt
+import int
+import list
+
+fn main() {
+  println(["1", "2"] |> list.traverse(int.parse)) -- Ok([1, 2])
+  println(["1", "x"] |> list.traverse(int.parse)) -- Err(invalid digit at byte 0)
+  println(list.traverse([1, 2]) { x -> [x, -x] }) -- [[1, 2], [1, -2], [-1, 2], [-1, -2]]
 }
 ```
 

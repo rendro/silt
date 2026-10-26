@@ -2,21 +2,21 @@
 -- when it writes `Self` in neither form (`Both`). A constructor impl's
 -- fixed arguments are names its `where` may bound (`Tagged(_, t)`), and
 -- a method that only makes a value is called on the type (`Tree.point`).
-trait Functor {
+trait Mapping {
   fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)
 }
-trait Pointed: Functor {
+trait Pointed: Mapping {
   fn point(x: a) -> Self(a)
 }
 trait Both: Pointed {}
 
 type Tree(a) { Leaf, Node(Tree(a), a, Tree(a)) }
 
-trait Functor for Tree(_) {
+trait Mapping for Tree(_) {
   fn map(t, f) {
     match t {
       Leaf -> Leaf
-      Node(l, x, r) -> Node(Functor.map(l, f), f(x), Functor.map(r, f))
+      Node(l, x, r) -> Node(Mapping.map(l, f), f(x), Mapping.map(r, f))
     }
   }
 }
@@ -26,7 +26,7 @@ trait Pointed for Tree(_) {
 trait Both for Tree(_) {}
 
 type Tagged(a, t) { value: a, tag: t }
-trait Functor for Tagged(_, t) where t: Display {
+trait Mapping for Tagged(_, t) where t: Display {
   fn map(x, f) { Tagged { value: f(x.value), tag: x.tag } }
 }
 
@@ -39,8 +39,8 @@ fn show(t: Tree(Int)) -> String {
 
 fn main() {
   let t = Node(Node(Leaf, 1, Leaf), 2, Leaf)
-  println(show(Functor.map(t) { x -> x * 10 }))
-  let tagged = Functor.map(Tagged { value: 1, tag: "a" }) { x -> x + 1 }
+  println(show(Mapping.map(t) { x -> x * 10 }))
+  let tagged = Mapping.map(Tagged { value: 1, tag: "a" }) { x -> x + 1 }
   println("{tagged.value} {tagged.tag}")
   println(show(Tree.point(5)))
 }

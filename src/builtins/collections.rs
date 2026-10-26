@@ -538,12 +538,10 @@ pub(crate) mod list {
 
         // The Applicative's dictionary first, as a function's hidden
         // parameters are (`super::applicative`).
-        #[cfg_attr(not(test), expect(dead_code, reason = "its row comes with the trait Applicative"))]
         fn traverse(dict: &Dict, xs: List, f: &Value) -> Result<Step, VmError> {
             Ok(applicative::traverse("list.traverse", dict, made(xs)?, Some(f.clone())))
         }
 
-        #[cfg_attr(not(test), expect(dead_code, reason = "its row comes with the trait Applicative"))]
         fn sequence(dict: &Dict, xs: List) -> Result<Step, VmError> {
             Ok(applicative::traverse("list.sequence", dict, made(xs)?, None))
         }

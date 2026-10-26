@@ -1,0 +1,61 @@
+-- `list.traverse` and `list.sequence` work over any Applicative (HK18):
+-- the values of a list in one value of the Applicative, or its first
+-- failure; over lists, every combination.
+import int
+import list
+
+type Valid(a) { Valid(a), Invalid(List(String)) }
+
+-- An Applicative of a program's own that collects every failure.
+trait Functor for Valid(_) {
+  fn map(xs, f) {
+    match xs {
+      Valid(x) -> Valid(f(x))
+      Invalid(es) -> Invalid(es)
+    }
+  }
+}
+
+trait Applicative for Valid(_) {
+  fn pure(x) { Valid(x) }
+  fn map2(xs, ys, f) {
+    match (xs, ys) {
+      (Valid(x), Valid(y)) -> Valid(f(x, y))
+      (Invalid(e1), Invalid(e2)) -> Invalid(list.concat(e1, e2))
+      (Invalid(e), _) -> Invalid(e)
+      (_, Invalid(e)) -> Invalid(e)
+    }
+  }
+}
+
+fn checked(s: String) -> Valid(Int) {
+  match int.parse(s) {
+    Ok(n) -> Valid(n)
+    Err(_) -> Invalid(["not a number: {s}"])
+  }
+}
+
+fn all_of(xs: List(m(a))) -> m(List(a)) where m: Applicative { list.sequence(xs) }
+
+fn main() {
+  println(["1", "2"] |> list.traverse(int.parse))
+  println(["1", "x"] |> list.traverse(int.parse))
+  println(list.sequence([Some(1), None]))
+  println(list.sequence([Some(1), Some(2)]))
+  println(list.traverse([1, 2]) { x -> [x, -x] })
+  let none: List(Option(Int)) = []
+  println(list.sequence(none))
+  println(all_of([[1, 2], [3, 4]]))
+  match list.traverse(["1", "a", "2", "b"], checked) {
+    Valid(ns) -> println(ns)
+    Invalid(es) -> println(es)
+  }
+  match list.traverse(["1", "2"], checked) {
+    Valid(ns) -> println(ns)
+    Invalid(es) -> println(es)
+  }
+  -- As a value, with its Applicative decided where it is given.
+  let parse_all = list.traverse
+  println(parse_all(["3", "4"], int.parse))
+  println(list.map([["5"], ["6", "y"]]) { xs -> list.traverse(xs, int.parse) })
+}

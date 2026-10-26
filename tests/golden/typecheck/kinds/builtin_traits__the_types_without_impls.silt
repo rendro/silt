@@ -1,0 +1,23 @@
+-- cmd: check
+-- exit: 1
+-- A set and a map are no Functor (a set's map needs its elements'
+-- Hash; a map's first type argument is its key), and a channel is a
+-- Functor only.
+-- stderr-contains: error[type]: type 'Set(_)' does not implement trait 'Functor'
+-- stderr-contains: error[type]: type 'Map(_, Int)' does not implement trait 'Functor'
+-- stderr-contains: error[type]: type 'Channel(_)' does not implement trait 'Applicative'
+-- stderr-contains: error[type]: type 'Channel(_)' does not implement trait 'Monad'
+import channel
+import set
+
+fn twice(xs: m(Int)) -> m(Int) where m: Functor { Functor.map(xs) { x -> x * 2 } }
+fn wrap(x: Int, type m) -> m(Int) where m: Applicative { m.pure(x) }
+fn again(xs: m(Int)) -> m(Int) where m: Monad { xs }
+
+fn main() {
+  let s = twice(set.new())
+  let m = twice(#{1: 2})
+  let ch: Channel(Int) = channel.new(1)
+  let w: Channel(Int) = wrap(1, Channel)
+  let a = again(ch)
+}

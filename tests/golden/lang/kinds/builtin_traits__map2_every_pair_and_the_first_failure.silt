@@ -1,0 +1,21 @@
+-- `map2` on two lists gives every pair, each of the first with each of
+-- the second; on Option and Result, the first None or Err, the left one
+-- first (HK15).
+fn sum(xs: m(Int), ys: m(Int)) -> m(Int) where m: Applicative {
+  Applicative.map2(xs, ys) { a, b -> a + b }
+}
+
+fn main() {
+  println(Applicative.map2([1, 2], [10, 20]) { a, b -> a + b })
+  println(sum([1, 2, 3], [100]))
+  println(sum([], [1, 2]))
+  println(sum(Some(1), Some(2)))
+  println(sum(None, Some(2)))
+  println(sum(Some(1), None))
+  let one: Result(Int, String) = Ok(1)
+  let a: Result(Int, String) = Err("a")
+  let b: Result(Int, String) = Err("b")
+  println(sum(one, one))
+  println(sum(a, b))
+  println(sum(one, b))
+}

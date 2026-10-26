@@ -95,6 +95,10 @@ pub struct Row {
     /// A function's parameter names, from the signature (`a` for a
     /// `type a` parameter). Empty for a constant.
     pub params: Vec<&'static str>,
+    /// The number of dictionaries a call passes before the arguments:
+    /// one for each bound of a trait whose impls are passed
+    /// (`list.traverse`'s `where m: Applicative`).
+    pub dicts: usize,
     /// The cargo feature the row needs beyond its module's, if any.
     pub feature: Option<&'static str>,
     /// Whether the row's feature and its module's are built.
@@ -115,6 +119,12 @@ pub struct Row {
 impl Row {
     pub fn is_constant(&self) -> bool {
         !self.signature.starts_with("fn ")
+    }
+
+    /// The number of values a call passes: the dictionaries, then the
+    /// arguments.
+    pub fn arity(&self) -> usize {
+        self.dicts + self.params.len()
     }
 
     /// The signature as a call site shows it, `fn string.trim(s: String)
@@ -624,6 +634,7 @@ fn rows(name: &'static str, enabled: bool, specs: Vec<RowSpec>) -> Vec<Row> {
                 name: "",
                 module: name,
                 params: Vec::new(),
+                dicts: 0,
                 feature: spec.feature.map(|(feature, _)| feature),
                 enabled: on,
                 decoding: spec.decoding,
@@ -656,6 +667,9 @@ fn rows(name: &'static str, enabled: bool, specs: Vec<RowSpec>) -> Vec<Row> {
             panic!("the row `{}` of {name} is not a signature", row.signature);
         };
         row.name = leak(resolve(f.name));
+        row.dicts = (f.where_clauses.iter())
+            .filter(|wc| !crate::defs::VALUE_DRIVEN_TRAITS.contains(&&*resolve(wc.trait_name)))
+            .count();
         if !row.is_constant() {
             row.params = f
                 .params

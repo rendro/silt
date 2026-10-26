@@ -1,30 +1,30 @@
 -- Generic code over a constructor reaches a supertrait's methods
--- through its bound (`m: Monad` gives Functor and Applicative), and calls
+-- through its bound (`m: Chain` gives Mapping and Combinative), and calls
 -- a method that only makes a value on the variable (`m.pure(x)`); a
 -- type of a `type m` parameter the signature applies is the constructor
 -- the call names (`wrap(1, Option)`), and is passed on as such.
-trait Functor {
+trait Mapping {
   fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)
 }
-trait Applicative: Functor {
+trait Combinative: Mapping {
   fn pure(x: a) -> Self(a)
   fn map2(xs: Self(a), ys: Self(b), f: Fn(a, b) -> c) -> Self(c)
 }
-trait Monad: Applicative {
+trait Chain: Combinative {
   fn flat_map(xs: Self(a), f: Fn(a) -> Self(b)) -> Self(b)
 }
 type Box(a) { value: a }
-trait Functor for Box(_) {
+trait Mapping for Box(_) {
   fn map(xs, f) { Box { value: f(xs.value) } }
 }
-trait Applicative for Box(_) {
+trait Combinative for Box(_) {
   fn pure(x) { Box { value: x } }
   fn map2(xs, ys, f) { Box { value: f(xs.value, ys.value) } }
 }
-trait Monad for Box(_) {
+trait Chain for Box(_) {
   fn flat_map(xs, f) { f(xs.value) }
 }
-trait Functor for Option(_) {
+trait Mapping for Option(_) {
   fn map(xs, f) {
     match xs {
       Some(x) -> Some(f(x))
@@ -32,7 +32,7 @@ trait Functor for Option(_) {
     }
   }
 }
-trait Applicative for Option(_) {
+trait Combinative for Option(_) {
   fn pure(x) { Some(x) }
   fn map2(xs, ys, f) {
     match (xs, ys) {
@@ -41,7 +41,7 @@ trait Applicative for Option(_) {
     }
   }
 }
-trait Monad for Option(_) {
+trait Chain for Option(_) {
   fn flat_map(xs, f) {
     match xs {
       Some(x) -> f(x)
@@ -49,19 +49,19 @@ trait Monad for Option(_) {
     }
   }
 }
-fn pair_up(xs: m(a), ys: m(b)) -> m((a, b)) where m: Applicative {
-  Applicative.map2(xs, ys) { a, b -> (a, b) }
+fn pair_up(xs: m(a), ys: m(b)) -> m((a, b)) where m: Combinative {
+  Combinative.map2(xs, ys) { a, b -> (a, b) }
 }
-fn shown(xs: m(Int)) -> m(String) where m: Monad {
-  Functor.map(xs) { x -> "{x}" }
+fn shown(xs: m(Int)) -> m(String) where m: Chain {
+  Mapping.map(xs) { x -> "{x}" }
 }
-fn step(xs: m(Int)) -> m(Int) where m: Monad {
-  Monad.flat_map(xs) { x -> m.pure(x + 1) }
+fn step(xs: m(Int)) -> m(Int) where m: Chain {
+  Chain.flat_map(xs) { x -> m.pure(x + 1) }
 }
-fn wrap(x: a, type m) -> m(a) where m: Applicative {
+fn wrap(x: a, type m) -> m(a) where m: Combinative {
   m.pure(x)
 }
-fn wrap_twice(x: a, type m) -> m(m(a)) where m: Applicative {
+fn wrap_twice(x: a, type m) -> m(m(a)) where m: Combinative {
   wrap(wrap(x, m), m)
 }
 fn main() {

@@ -20,6 +20,34 @@ use crate::typeinfo::bv;
 use crate::value::{IntoIter, Value};
 use crate::vm::{Native, Step, Vm, VmError, call_then};
 
+/// The built-in impls of the traits of type constructors (HK13), each
+/// with its methods in the order the trait declares them, and the row
+/// that is each: a module function (`list.map`), or a row of the type
+/// (`List.pure`, [`Registry::impl_row`](super::registry::Registry::impl_row)).
+/// Channel is a Functor only (`stream.map`).
+pub(crate) const IMPLS: &[(&str, &str, &[&str])] = &[
+    ("Functor", "List", &["list.map"]),
+    ("Functor", "Option", &["option.map"]),
+    ("Functor", "Result", &["result.map"]),
+    ("Functor", "Channel", &["stream.map"]),
+    ("Applicative", "List", &["List.pure", "List.map2"]),
+    ("Applicative", "Option", &["Option.pure", "Option.map2"]),
+    ("Applicative", "Result", &["Result.pure", "Result.map2"]),
+    ("Monad", "List", &["list.flat_map"]),
+    ("Monad", "Option", &["option.flat_map"]),
+    ("Monad", "Result", &["result.flat_map"]),
+];
+
+/// The row a method of a built-in impl is ([`IMPLS`]): `list.map`, or
+/// `List.pure`.
+pub(crate) fn method_row(qualified: &str) -> Option<&'static super::registry::Row> {
+    let registry = super::registry::registry();
+    registry.named(qualified).or_else(|| {
+        let (ty, method) = qualified.split_once('.')?;
+        registry.impl_row(ty, method)
+    })
+}
+
 /// The place of `pure` among Applicative's methods, in the order the
 /// trait declares them: a dictionary of an impl holds them so.
 pub(crate) const PURE: usize = 0;

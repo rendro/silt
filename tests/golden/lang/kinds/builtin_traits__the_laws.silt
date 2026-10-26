@@ -1,0 +1,89 @@
+-- The laws of Functor, Applicative and Monad hold for the impls of List,
+-- Option and Result (HK20). Each law gives its two sides, which the
+-- caller compares at the known type.
+import list
+
+fn identity(xs: m(Int)) -> (m(Int), m(Int)) where m: Functor {
+  (Functor.map(xs) { x -> x }, xs)
+}
+
+fn composition(xs: m(Int)) -> (m(Int), m(Int)) where m: Functor {
+  let f = { x -> x + 1 }
+  let g = { x -> x * 2 }
+  (Functor.map(Functor.map(xs, f), g), Functor.map(xs) { x -> g(f(x)) })
+}
+
+fn pure_left(x: Int, ys: m(Int)) -> (m(Int), m(Int)) where m: Applicative {
+  (Applicative.map2(m.pure(x), ys) { a, b -> a - b }, Functor.map(ys) { y -> x - y })
+}
+
+fn pure_right(xs: m(Int), y: Int) -> (m(Int), m(Int)) where m: Applicative {
+  (Applicative.map2(xs, m.pure(y)) { a, b -> a - b }, Functor.map(xs) { x -> x - y })
+}
+
+fn left_unit(x: Int, f: Fn(Int) -> m(Int)) -> (m(Int), m(Int)) where m: Monad {
+  (Monad.flat_map(m.pure(x), f), f(x))
+}
+
+fn right_unit(xs: m(Int)) -> (m(Int), m(Int)) where m: Monad {
+  (Monad.flat_map(xs, m.pure), xs)
+}
+
+fn associativity(xs: m(Int), f: Fn(Int) -> m(Int), g: Fn(Int) -> m(Int)) -> (m(Int), m(Int))
+  where m: Monad
+{
+  (Monad.flat_map(Monad.flat_map(xs, f), g), Monad.flat_map(xs) { x -> Monad.flat_map(f(x), g) })
+}
+
+fn map2_is_flat_map(xs: m(Int), ys: m(Int)) -> (m(Int), m(Int)) where m: Monad {
+  let f = { a, b -> a * 10 + b }
+  (Applicative.map2(xs, ys, f), Monad.flat_map(xs) { x -> Functor.map(ys) { y -> f(x, y) } })
+}
+
+fn same(sides: (a, a)) -> Bool where a: Equal {
+  match sides {
+    (l, r) -> l == r
+  }
+}
+
+fn main() {
+  let xs = [1, 2, 3]
+  let ys = [10, 20]
+  let lf = { x -> [x, x + 100] }
+  let lg = { x -> [x * 2] }
+  println(list.map([identity(xs), composition(xs), pure_left(5, ys), pure_right(xs, 5)], same))
+  println(list.map([left_unit(4, lf), right_unit(xs), associativity(xs, lf, lg), map2_is_flat_map(xs, ys)], same))
+
+  let of = { x ->
+    match x > 2 {
+      true -> None
+      false -> Some(x + 1)
+    }
+  }
+  let og = { x -> Some(x * 3) }
+  for_option(Some(1), of, og)
+  for_option(None, of, og)
+
+  let rf = { x ->
+    match x > 2 {
+      true -> Err("big {x}")
+      false -> Ok(x + 1)
+    }
+  }
+  let rg = { x -> Ok(x * 3) }
+  for_result(Ok(1), rf, rg)
+  for_result(Ok(3), rf, rg)
+  for_result(Err("no"), rf, rg)
+}
+
+fn for_option(o: Option(Int), f: Fn(Int) -> Option(Int), g: Fn(Int) -> Option(Int)) {
+  let other = Some(7)
+  println(list.map([identity(o), composition(o), pure_left(5, o), pure_right(o, 5)], same))
+  println(list.map([left_unit(1, f), left_unit(3, f), right_unit(o), associativity(o, f, g), map2_is_flat_map(o, other), map2_is_flat_map(other, o)], same))
+}
+
+fn for_result(r: Result(Int, String), f: Fn(Int) -> Result(Int, String), g: Fn(Int) -> Result(Int, String)) {
+  let other: Result(Int, String) = Err("other")
+  println(list.map([identity(r), composition(r), pure_left(5, r), pure_right(r, 5)], same))
+  println(list.map([left_unit(1, f), left_unit(3, f), right_unit(r), associativity(r, f, g), map2_is_flat_map(r, other), map2_is_flat_map(other, r)], same))
+}

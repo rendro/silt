@@ -1,0 +1,24 @@
+-- cmd: disasm
+-- A built-in impl's dictionary holds the module functions: generic code
+-- calls through it, with the receiver checked, and a call at a known
+-- type is a call of the module function (HK16). `list.traverse` is
+-- passed its Applicative's dictionary before its arguments.
+-- stdout-contains: TailCallDict         0     2   ; receiver: argument 1
+-- stdout-contains: ; <dict:Functor for List>
+-- stdout-contains: ; <dict:Functor for Option>
+-- stdout-contains: CallBuiltin          2     ; list.map
+-- stdout-contains: CallBuiltin          1     ; Option.pure
+-- stdout-contains: ; <dict:Applicative for Result>
+-- stdout-contains: CallBuiltin          3     ; list.traverse
+import int
+import list
+
+fn bump(xs: m(Int)) -> m(Int) where m: Functor { Functor.map(xs) { x -> x + 1 } }
+
+fn main() {
+  println(bump([1, 2]))
+  println(bump(Some(1)))
+  println(Functor.map([3]) { x -> x * 2 })
+  println(Option.pure(4))
+  println(list.traverse(["5"], int.parse))
+}
