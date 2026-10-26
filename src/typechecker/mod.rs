@@ -429,6 +429,14 @@ pub struct TypeChecker {
     /// The module of the definition whose type is being instantiated
     /// for a use, while it is: its bounds are that module's.
     pub(super) instantiating: Option<crate::session::ModuleId>,
+    /// The module each predicate of the scheme generalised last owes
+    /// for, by its index, if another module's definition owes it.
+    pub(super) generalized_owners: Vec<Option<crate::session::ModuleId>>,
+    /// The schemes of a body's `let`s that hold what uses of another
+    /// module's definitions owe (`let g = mail.name_any`), by their first
+    /// variable: the module of each predicate, by its index. A use of
+    /// the `let` is that module's, as a use of the definition is.
+    pub(super) let_owners: HashMap<TyVar, Vec<Option<crate::session::ModuleId>>>,
     /// Its name, for diagnostics.
     pub(super) module_name: Symbol,
     /// The types the module's own declarations declare, by name: what a
@@ -591,6 +599,8 @@ impl TypeChecker {
             owed_for: HashMap::new(),
             owing: None,
             instantiating: None,
+            generalized_owners: Vec::new(),
+            let_owners: HashMap::new(),
             module_name: intern("main"),
             own_types: HashMap::new(),
             own_traits: HashMap::new(),

@@ -46,12 +46,15 @@ pub(super) fn refused_argument(span: Span, ty: &Type) -> (Span, String) {
 impl TypeChecker {
     /// Check `subject`, the type of an argument of a builtin, as `check`
     /// says, for a use at `origin`. The function or method that passes
-    /// the type on to the builtin, `passer`, is named in a note.
+    /// the type on to the builtin, `passer`, is named in a note; the
+    /// module of the definition that asks it, `owner`, encodes and
+    /// decodes its own opaque types (`opaque_encode_refusal`).
     pub(super) fn check_builtin_argument(
         &mut self,
         check: BuiltinCheck,
         subject: &Type,
         passer: Option<Symbol>,
+        owner: Option<crate::session::ModuleId>,
         origin: Origin,
     ) {
         let ty = canonicalize(self.tables.resolver(), &self.apply(subject));
@@ -73,7 +76,7 @@ impl TypeChecker {
         // variable in it owes what the whole does (each use of its
         // function, of the type it gives).
         if let BuiltinCheck::Params { builtin } | BuiltinCheck::Encodes { builtin } = check {
-            self.encode_variables_inside(builtin, &ty, passer, origin);
+            self.encode_variables_inside(builtin, &ty, passer, owner, origin);
         }
         let span = origin.span;
         let refusal = match check {
@@ -81,14 +84,14 @@ impl TypeChecker {
                 builtin,
                 decoding,
                 written,
-            } => self.decode_refusal(&resolve(builtin), decoding, written, &ty, span),
+            } => self.decode_refusal(&resolve(builtin), decoding, written, &ty, owner, span),
             BuiltinCheck::Connection { builtin } => {
                 connection_refusal(&resolve(builtin), &ty, span)
             }
             // (A statement's parameters are sent encoded as json.)
             BuiltinCheck::Params { builtin } => params_refusal(&resolve(builtin), &ty, span)
-                .or_else(|| self.opaque_encode_refusal(&ty, span)),
-            BuiltinCheck::Encodes { .. } => self.opaque_encode_refusal(&ty, span),
+                .or_else(|| self.opaque_encode_refusal(&ty, span, owner)),
+            BuiltinCheck::Encodes { .. } => self.opaque_encode_refusal(&ty, span, owner),
         };
         let Some(mut diagnostic) = refusal else {
             return;
@@ -117,13 +120,15 @@ impl TypeChecker {
     /// decodes records is refused as well. A record or enum type with a
     /// written `json.Decode` impl is decoded by the impl (toml's and
     /// postgres's decoders too: one data layer, one override), and not
-    /// looked into, at the top and as the type of a field.
+    /// looked into, at the top and as the type of a field. A definition
+    /// of `owner` decodes that module's opaque types.
     pub(super) fn decode_refusal(
         &self,
         builtin_name: &str,
         decoding: Decoding,
         written: Option<Symbol>,
         ty: &Type,
+        owner: Option<crate::session::ModuleId>,
         span: Span,
     ) -> Option<Diagnostic> {
         let head = match ty {
@@ -178,7 +183,7 @@ impl TypeChecker {
             if self.has_decode_impl(head) {
                 return None;
             }
-            if let Some(refusal) = self.opaque_decode_refusal(head, span) {
+            if let Some(refusal) = self.opaque_decode_refusal(head, span, owner) {
                 return Some(refusal);
             }
             let enum_type = self.tables.is_enum(head);

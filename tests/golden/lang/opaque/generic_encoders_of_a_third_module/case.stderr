@@ -1,0 +1,39 @@
+error[type]: type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+ --> main.silt:13:22
+    |
+ 13 |   println(util.as_is(u))
+    |                      ^ type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = note: `util.as_is` passes it to `toml.stringify`
+  = help: encode it inside module 'mail', or write `trait json.Encode for User` there
+
+error[type]: type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+ --> main.silt:14:25
+    |
+ 14 |   println(util.inferred(u))
+    |                         ^ type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = note: `util.inferred` passes it to `toml.stringify`
+  = help: encode it inside module 'mail', or write `trait json.Encode for User` there
+
+error[type]: type 'mail.User' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+ --> main.silt:15:47
+    |
+ 15 |   println(util.load("name = \"bo\"\nage = 7", mail.User))
+    |                                               ^^^^^^^^^ type 'mail.User' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+  = note: `util.load` passes it to `toml.parse`
+  = help: decode it inside module 'mail', or write `trait json.Decode for User` there
+
+error[type]: type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+ --> main.silt:17:17
+    |
+ 17 |   println(as_is(u))
+    |                 ^ type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = note: `as_is` passes it to `toml.stringify`
+  = help: encode it inside module 'mail', or write `trait json.Encode for User` there
+
+error[type]: type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+ --> main.silt:22:17
+    |
+ 22 |   println(mixed(u))
+    |                 ^ type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = note: `mixed` passes it to `toml.stringify`
+  = help: encode it inside module 'mail', or write `trait json.Encode for User` there

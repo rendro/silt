@@ -181,6 +181,7 @@ impl TypeChecker {
                     placed: false,
                     use_id: self.use_id,
                     taken: false,
+                    owner: self.instantiating,
                 });
                 return None;
             }
@@ -210,10 +211,10 @@ impl TypeChecker {
             },
             other => other,
         };
-        // A bound of another module's definition, at this use: that
-        // module's, for its opaque types.
+        // A bound of another module's definition, or what its body asks
+        // of a builtin, at this use: that module's, for its opaque types.
         self.owing = match &pred {
-            Pred::Trait { .. } => self.instantiating,
+            Pred::Trait { .. } | Pred::Builtin { .. } => self.instantiating,
             _ => None,
         };
         let decoder = match &pred {
@@ -577,7 +578,8 @@ impl TypeChecker {
                         let subject = self.apply(&subject);
                         if !matches!(subject, Type::Var(_)) {
                             self.wanted[i].solved = true;
-                            self.check_builtin_argument(check, &subject, passer, origin);
+                            let owner = self.owed_for.get(&self.wanted[i].ev).copied();
+                            self.check_builtin_argument(check, &subject, passer, owner, origin);
                         }
                     }
                     // A trait method's call waits for its scope's end: a
@@ -1680,27 +1682,23 @@ impl TypeChecker {
             // `json.Decode` is what the json decoder decodes: its own
             // judgement, which names the decoder.
             self.ev_set(ev, super::evidence::EvNode::Structural(trait_name));
+            let owner = ev.and_then(|ev| self.owed_for.get(&ev).copied());
             if Self::is_decode(trait_name) {
-                let owner = ev.and_then(|ev| self.owed_for.get(&ev).copied());
                 self.want_decode(&resolved, origin, asker, owner);
                 return;
             }
             // An opaque type of another module is encoded by its module's
             // impl alone, unless a definition of that module asks it.
             if trait_name.is_builtin("Encode")
-                && let Some(refusal) = self.opaque_encode_refusal(&resolved, origin.span)
+                && let Some(refusal) = self.opaque_encode_refusal(&resolved, origin.span, owner)
             {
-                let owner = ev.and_then(|ev| self.owed_for.get(&ev).copied());
-                let found = self.opaque_encoded_module(&resolved);
-                if owner.is_none() || owner != found {
-                    if self
-                        .lacking
-                        .insert((origin.span, format!("json.Encode {}", refusal.message)))
-                    {
-                        self.errors.push(refusal);
-                    }
-                    return;
+                if self
+                    .lacking
+                    .insert((origin.span, format!("json.Encode {}", refusal.message)))
+                {
+                    self.errors.push(refusal);
                 }
+                return;
             }
             let mut walk = Walk::default();
             match self.structure_gap(trait_name, &resolved, &mut walk, 0) {

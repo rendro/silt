@@ -1,0 +1,31 @@
+import json
+import toml
+
+pub opaque type User {
+  name: String,
+  age: Int,
+}
+
+pub fn user(name: String) -> User {
+  User { name: name, age: 1 }
+}
+
+pub fn name_any(r) {
+  r.name
+}
+
+pub fn show(x: a) -> String where a: json.Encode {
+  json.stringify(x)
+}
+
+pub fn load(s: String, type a) -> Result(a, json.JsonError) where a: json.Decode {
+  json.parse(s, a)
+}
+
+pub fn as_toml(x: a) -> Result(String, toml.TomlError) {
+  toml.stringify(x)
+}
+
+pub fn age(u: User) -> Int {
+  u.age
+}

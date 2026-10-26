@@ -1,0 +1,23 @@
+-- A function of the opaque type's own module, bound to a name with
+-- `let`, is still the module's function: a call through the name may do
+-- what a direct call does (read a row, encode, decode).
+import mail
+
+fn main() {
+  let u = mail.user("ann")
+  let name = mail.name_any
+  println(name(u))
+  let show = mail.show
+  println(show(u))
+  let load = mail.load
+  match load("\{\"name\": \"bo\", \"age\": 7}", mail.User) {
+    Ok(v) -> println(mail.age(v))
+    Err(e) -> println(e)
+  }
+  let as_toml = mail.as_toml
+  let again = as_toml
+  match again(u) {
+    Ok(text) -> print(text)
+    Err(e) -> println(e)
+  }
+}

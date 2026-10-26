@@ -1,0 +1,13 @@
+import toml
+
+pub fn as_is(x: a) -> Result(String, toml.TomlError) {
+  toml.stringify(x)
+}
+
+pub fn inferred(x) {
+  toml.stringify(#{"k": x})
+}
+
+pub fn load(s: String, type a) -> Result(a, toml.TomlError) {
+  toml.parse(s, a)
+}
