@@ -1,0 +1,4 @@
+(list, [2, 4], [101, 102], [0, 1])
+(option, Some(6), Some(103), Some(2))
+(result, Ok(8), Ok(104), Ok(3))
+(result, Err(no), Err(no), Err(no))

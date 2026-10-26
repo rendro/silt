@@ -91,50 +91,61 @@ fn trait_limits(t: &crate::ast::TraitDecl) -> Result<(), Diagnostic> {
 
 /// Enter the template of each built-in impl of a trait of type
 /// constructors (`builtins::applicative::IMPLS`) the globals do not have
-/// yet: its methods are builtins, and its supertraits' dictionaries
-/// are those of the type's impls of them, entered before it. (After the
-/// program's own templates: theirs keep their places.)
+/// yet. (After the program's own templates: theirs keep their places.
+/// One that a program impl's recipe names is entered with it.)
 fn enter_builtin_templates(globals: &mut Globals) {
-    let decls = crate::typechecker::builtin_trait_decls();
-    for (trait_name, type_name, rows) in crate::builtins::applicative::IMPLS {
-        let (Some(tr), Some(ty)) = (
+    for (trait_name, type_name, _) in crate::builtins::applicative::IMPLS {
+        if let (Some(tr), Some(ty)) = (
             crate::defs::builtin_trait_id(trait_name),
             crate::defs::builtin_type_id(type_name),
-        ) else {
-            continue;
-        };
-        if globals.template(tr, ty, ImplArgs::none()).is_some() {
-            continue;
+        ) {
+            builtin_template(globals, tr, ty);
         }
-        let methods = (rows.iter())
-            .map(|row| {
-                let row = crate::builtins::applicative::method_row(row);
-                Method::Builtin(row.expect("a method of a built-in impl is a row").id)
-            })
-            .collect();
-        let decl = decls.iter().find(|decl| resolve(decl.name) == *trait_name);
-        let supers = (decl.into_iter().flat_map(|decl| &decl.supertraits))
-            .filter_map(|sup| {
-                let sup = crate::defs::builtin_trait_id(&resolve(sup.name))?;
-                let template = globals.template(sup, ty, ImplArgs::none())?.clone();
-                Some(Recipe::Dict {
-                    template,
-                    subs: Box::new([]),
-                })
-            })
-            .collect();
-        let template = Arc::new(Template {
-            index: globals.next_template_index(),
-            tr,
-            ty,
-            args: ImplArgs::none(),
-            name: format!("{trait_name} for {type_name}"),
-            methods,
-            supers,
-            wheres: Box::new([]),
-        });
-        globals.add_template(template);
     }
+}
+
+/// The template of the built-in impl of the trait `tr` for the type
+/// `ty`, entered the first time: its methods are builtins, and its
+/// supertraits' dictionaries are those of the type's built-in impls of
+/// them. `None` where silt has no such impl.
+fn builtin_template(globals: &mut Globals, tr: TraitId, ty: TypeId) -> Option<Arc<Template>> {
+    if let Some(template) = globals.template(tr, ty, ImplArgs::none()) {
+        return Some(template.clone());
+    }
+    let (trait_name, type_name, rows) =
+        (crate::builtins::applicative::IMPLS.iter()).find(|(t, y, _)| {
+            crate::defs::builtin_trait_id(t) == Some(tr)
+                && crate::defs::builtin_type_id(y) == Some(ty)
+        })?;
+    let methods = (rows.iter())
+        .map(|row| {
+            let row = crate::builtins::applicative::method_row(row);
+            Method::Builtin(row.expect("a method of a built-in impl is a row").id)
+        })
+        .collect();
+    let decls = crate::typechecker::builtin_trait_decls();
+    let decl = decls.iter().find(|decl| resolve(decl.name) == *trait_name);
+    let supers = (decl.into_iter().flat_map(|decl| &decl.supertraits))
+        .filter_map(|sup| {
+            let sup = crate::defs::builtin_trait_id(&resolve(sup.name))?;
+            Some(Recipe::Dict {
+                template: builtin_template(globals, sup, ty)?,
+                subs: Box::new([]),
+            })
+        })
+        .collect();
+    let template = Arc::new(Template {
+        index: globals.next_template_index(),
+        tr,
+        ty,
+        args: ImplArgs::none(),
+        name: format!("{trait_name} for {type_name}"),
+        methods,
+        supers,
+        wheres: Box::new([]),
+    });
+    globals.add_template(template.clone());
+    Some(template)
 }
 
 /// The methods of a trait as a program declares them, each with the
@@ -477,7 +488,11 @@ impl Compiler<'_> {
             return Ok(Some(template.clone()));
         }
         let Some(ti) = impls.get(&key) else {
-            return Ok(None);
+            // (A built-in impl, the supertrait's of a program's impl for a
+            // builtin type: `trait Sized: Functor` for `Option(_)`.)
+            let builtin =
+                (key.2 == ImplArgs::none()).then(|| builtin_template(globals, key.0, key.1));
+            return Ok(builtin.flatten());
         };
         if depth > 32 {
             return Err(no_dictionary(
