@@ -205,10 +205,13 @@ impl Server {
         target_module.file?;
         let (definitions, members) = match session.module_analysis(target) {
             Some(checked) => (
-                build_definitions(
-                    &checked.ast,
-                    Some(&checked.top_level),
-                    &session.tables().record_fields(),
+                super::definitions::with_signatures(
+                    build_definitions(
+                        &checked.ast,
+                        Some(&checked.top_level),
+                        &session.tables().record_fields(),
+                    ),
+                    &checked.signatures,
                 ),
                 members(&checked.ast),
             ),

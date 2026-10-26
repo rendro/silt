@@ -388,15 +388,23 @@ pub struct NotAnExpression;
 /// as letters, in the order they first appear, and what it asks of them
 /// (`Fn(List(a)) -> List(a) where a: Compare`), the bounds of one
 /// variable joined by `+` as the reference pages write them (`where a:
-/// Equal + Display`). A variable the scheme does not quantify is `_`, as
-/// in a diagnostic.
+/// Equal + Display`). A type constructor variable is `m`, `n`, ...
+/// (`Fn(m(Int)) -> m(Int) where m: Functor`). A variable the scheme does
+/// not quantify is `_`, as in a diagnostic.
 pub fn written_scheme(scheme: &Scheme) -> String {
+    let heads = crate::types::constructor_heads(&scheme.ty);
+    let mut constructors = ["m", "n", "o", "p", "q", "r"].into_iter();
+    let mut others = (b'a'..=b'z').map(|letter| char::from(letter).to_string());
     let letters: HashMap<TyVar, Type> = free_vars_in(&scheme.ty)
         .into_iter()
         .filter(|var| scheme.vars.contains(var))
-        .zip(b'a'..=b'z')
-        .map(|(var, letter)| {
-            let name = intern::intern(&char::from(letter).to_string());
+        .map(|var| {
+            let name = match heads.contains(&var) {
+                true => constructors.next().map(String::from),
+                false => others.next(),
+            }
+            .unwrap_or_else(|| "_".to_string());
+            let name = intern::intern(&name);
             (var, Type::Rigid(RigidId { var, name }))
         })
         .collect();

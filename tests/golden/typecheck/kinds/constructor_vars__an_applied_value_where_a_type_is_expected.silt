@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- A value of the type `m(Int)` given where a type is expected: the
+-- mismatch says it all; the notes of what `m(Int)` matches are for an
+-- expected `m(Int)`.
+-- stderr-contains: error[type]: type mismatch: expected Int, got m(Int)
+-- stderr-not-contains: stands for a type constructor
+-- stderr-not-contains: is matched against the first type argument
+fn first(xs: m(Int)) -> Int { xs }
+fn main() { println(1) }

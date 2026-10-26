@@ -150,7 +150,10 @@ pub(super) fn build_signature_from_def(
     let mut label = format!("fn {name}(");
     let mut params_info = Vec::new();
 
-    if let Some(Type::Fun(param_types, ret)) = &def.ty {
+    // (A function over type constructors with its variables named,
+    // `xs: m(Int)`.)
+    let ty = def.signature.as_ref().map(|s| &s.ty).or(def.ty.as_ref());
+    if let Some(Type::Fun(param_types, ret)) = ty {
         for (i, pty) in param_types.iter().enumerate() {
             let pname = def.params.get(i).map(|s| s.as_str()).unwrap_or("_");
             // `type a` parameters carry compile-time type `TypeOf(a)` in the
@@ -285,6 +288,7 @@ mod tests {
     #[test]
     fn test_build_signature_simple() {
         let def = DefInfo {
+            signature: None,
             ty: Some(Type::Fun(vec![Type::Int, Type::Int], Box::new(Type::Int))),
             params: vec!["a".into(), "b".into()],
             doc: None,
@@ -298,6 +302,7 @@ mod tests {
     #[test]
     fn test_build_signature_no_type() {
         let def = DefInfo {
+            signature: None,
             ty: None,
             params: vec!["x".into(), "y".into()],
             doc: None,

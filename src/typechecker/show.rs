@@ -1,6 +1,101 @@
 use super::*;
 
 impl TypeChecker {
+    /// The signature of the function `f`, of the scheme `scheme`, as an
+    /// editor's hover writes one over type constructors (HK8): `fn
+    /// twice(xs: m(Int)) -> m(Int) where m: Functor`, a type constructor
+    /// variable by the name its annotation gives it (else `m`, `n`, ...),
+    /// a type variable by a letter; and the function's type with its
+    /// variables so named. `None` for a function whose type holds no type
+    /// constructor variable.
+    pub(super) fn written_signature(&self, f: &FnDecl, scheme: &Scheme) -> Option<Signature> {
+        let ty = self.apply(&scheme.ty);
+        let Type::Fun(params, ret) = &ty else {
+            return None;
+        };
+        let heads: Vec<TyVar> = (crate::types::constructor_heads(&ty).into_iter())
+            .filter(|v| scheme.vars.contains(v))
+            .collect();
+        if heads.is_empty() || params.len() != f.params.len() {
+            return None;
+        }
+        let mut taken: Vec<String> = Vec::new();
+        let mut mapping: HashMap<TyVar, Type> = HashMap::new();
+        let mut constructors = ["m", "n", "o", "p", "q", "r"].into_iter().map(String::from);
+        let mut letters = ('a'..='z').map(|c| c.to_string());
+        for v in free_vars_in(&ty) {
+            if !scheme.vars.contains(&v) {
+                continue;
+            }
+            let written = (self.tables.constructor_names.get(&v))
+                .map(|name| resolve(*name))
+                .filter(|name| heads.contains(&v) && !taken.contains(name));
+            let name = match written {
+                Some(name) => Some(name),
+                None if heads.contains(&v) => constructors.find(|n| !taken.contains(n)),
+                None => letters.find(|n| !taken.contains(n)),
+            }
+            .unwrap_or_else(|| "_".to_string());
+            taken.push(name.clone());
+            let id = RigidId {
+                var: v,
+                name: intern(&name),
+            };
+            mapping.insert(v, Type::Rigid(id));
+        }
+        let named = |t: &Type| self.show_type(&substitute_vars(t, &mapping));
+        let written_params: Vec<String> = (f.params.iter().zip(params))
+            .map(|(param, ty)| {
+                let name = match &param.pattern.kind {
+                    PatternKind::Ident(n) => resolve(*n),
+                    _ => "_".to_string(),
+                };
+                match param.kind {
+                    ParamKind::Type => format!("type {name}"),
+                    ParamKind::Data => format!("{name}: {}", named(ty)),
+                }
+            })
+            .collect();
+        let mut text = format!("fn {}({})", f.name, written_params.join(", "));
+        if !matches!(**ret, Type::Unit) {
+            text.push_str(&format!(" -> {}", named(ret)));
+        }
+        // Each variable's bounds, by the variable's name, as `where`
+        // writes them.
+        let mut bounds: Vec<(String, Vec<String>)> = Vec::new();
+        for pred in &scheme.preds {
+            let Pred::Trait {
+                tr, args, subject, ..
+            } = pred
+            else {
+                continue;
+            };
+            let Type::Rigid(subject) = substitute_vars(&self.apply(subject), &mapping) else {
+                continue;
+            };
+            let args: Vec<Type> = (args.iter())
+                .map(|arg| substitute_vars(&self.apply(arg), &mapping))
+                .collect();
+            let bound = self.show_bound(*tr, &args);
+            let subject = resolve(subject.name);
+            match bounds.iter_mut().find(|(s, _)| *s == subject) {
+                Some((_, traits)) if traits.contains(&bound) => {}
+                Some((_, traits)) => traits.push(bound),
+                None => bounds.push((subject, vec![bound])),
+            }
+        }
+        if !bounds.is_empty() {
+            let bounds: Vec<String> = (bounds.iter())
+                .map(|(subject, traits)| format!("{subject}: {}", traits.join(" + ")))
+                .collect();
+            text.push_str(&format!(" where {}", bounds.join(", ")));
+        }
+        Some(Signature {
+            text,
+            ty: substitute_vars(&ty, &mapping),
+        })
+    }
+
     // ── Error reporting ─────────────────────────────────────────────
 
     /// The two types of a message, rendered: two types of one name are

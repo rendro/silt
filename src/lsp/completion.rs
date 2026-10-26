@@ -172,7 +172,11 @@ impl Server {
                     Some(Type::Fun(..)) => CompletionItemKind::FUNCTION,
                     _ => CompletionItemKind::VARIABLE,
                 };
-                let detail = def.ty.as_ref().map(|t| format!("{t}"));
+                // (A function over type constructors by its signature.)
+                let detail = match &def.signature {
+                    Some(signature) => Some(signature.text.clone()),
+                    None => def.ty.as_ref().map(|t| format!("{t}")),
+                };
                 let documentation = def.doc.as_ref().map(|d| {
                     Documentation::MarkupContent(MarkupContent {
                         kind: MarkupKind::Markdown,
@@ -644,7 +648,10 @@ fn member_item(view: &ModuleView, member: Symbol, kind: MemberKind) -> Completio
             MemberKind::Type => CompletionItemKind::CLASS,
             MemberKind::Variant => CompletionItemKind::CONSTRUCTOR,
         }),
-        detail: def.and_then(|d| d.ty.as_ref()).map(|t| format!("{t}")),
+        detail: def.and_then(|d| match &d.signature {
+            Some(signature) => Some(signature.text.clone()),
+            None => d.ty.as_ref().map(|t| format!("{t}")),
+        }),
         documentation: def.and_then(|d| d.doc.clone()).map(|d| {
             Documentation::MarkupContent(MarkupContent {
                 kind: MarkupKind::Markdown,

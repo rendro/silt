@@ -1,0 +1,41 @@
+-- cmd: lsp
+-- lsp: hover 30:5
+-- lsp: hover 31:5
+-- lsp: hover 32:5
+-- lsp: hover 33:5
+-- lsp: hover 34:5
+-- lsp: hover 37:11
+-- lsp: hover 38:12
+-- lsp: completion 39:6
+-- lsp: signature 40:22
+-- Hover writes a function over type constructors as its signature: the
+-- constructor variable applied (`m(Int)`), the parameters by name, and
+-- the bounds, inferred for a function without annotations (HK8). At a
+-- call it shows the type the call gives; completion and signature help
+-- write the variables by name too.
+trait Mapping {
+  fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)
+}
+trait Pointed: Mapping {
+  fn point(x: a) -> Self(a)
+}
+trait Mapping for Option(_) {
+  fn map(xs, f) {
+    match xs {
+      Some(x) -> Some(f(x))
+      None -> None
+    }
+  }
+}
+fn twice(xs) { Mapping.map(xs) { x -> x * 2 } }
+fn double_all(xs: m(Int)) -> m(Int) where m: Mapping { Mapping.map(xs) { x -> x * 2 } }
+fn keep(xs: m(a)) -> m(a) { xs }
+fn wrap(x: a, type m) -> m(a) where m: Pointed { m.point(x) }
+fn shown(xs: f(a)) -> f(String) where f: Mapping, a: Display { Mapping.map(xs) { x -> "{x}" } }
+fn main() {
+  println(twice(Some(1)))
+  let k = keep
+  println(double_all(Some(1)))
+  dou
+  println(double_all(Some(2)))
+}

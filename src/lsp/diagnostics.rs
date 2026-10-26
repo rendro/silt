@@ -376,8 +376,10 @@ impl Server {
         match checked {
             Some(checked) => {
                 let records = project.session.tables().record_fields();
-                doc.definitions =
-                    build_definitions(&checked.ast, Some(&checked.top_level), &records);
+                doc.definitions = super::definitions::with_signatures(
+                    build_definitions(&checked.ast, Some(&checked.top_level), &records),
+                    &checked.signatures,
+                );
                 (doc.locals, doc.pattern_names) = collect_local_bindings(
                     &checked.ast,
                     &doc.source.text,

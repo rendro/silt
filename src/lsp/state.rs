@@ -18,6 +18,10 @@ use crate::types::Type;
 
 pub(super) struct DefInfo {
     pub(super) ty: Option<Type>,
+    /// The signature hover writes in place of `ty`, for a function over
+    /// type constructors (`fn twice(xs: m(Int)) -> m(Int) where m:
+    /// Functor`).
+    pub(super) signature: Option<crate::typechecker::Signature>,
     pub(super) params: Vec<String>,
     /// Markdown documentation from a doc comment preceding the decl,
     /// if any. Populated by `build_definitions` from `FnDecl.doc`,

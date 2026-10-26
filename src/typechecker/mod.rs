@@ -1592,6 +1592,17 @@ fn written_defs(te: &TypeExpr, out: &mut std::collections::HashSet<crate::defs::
 
 pub(crate) use crate::types::canonical::{canonical_head, head_of_canon as head_of};
 
+/// A function's signature as an editor writes it, for a function over
+/// type constructors.
+#[derive(Debug, Clone)]
+pub struct Signature {
+    /// `fn twice(xs: m(Int)) -> m(Int) where m: Functor`.
+    pub text: String,
+    /// The function's type, its variables by those names
+    /// (`Fn(m(Int)) -> m(Int)`).
+    pub ty: Type,
+}
+
 /// What checking one module gives.
 pub struct ModuleCheck {
     /// The module's errors and warnings.
@@ -1599,6 +1610,10 @@ pub struct ModuleCheck {
     /// The inferred type of each top-level value the module binds by a
     /// declaration: its functions, its `let`s and the items it imports.
     pub top_level: HashMap<Symbol, Type>,
+    /// The signature an editor writes for each of the module's functions
+    /// over type constructors (`fn twice(xs: m(Int)) -> m(Int) where m:
+    /// Functor`), by name.
+    pub signatures: HashMap<Symbol, Signature>,
     /// The module's top-level `let`s, by the span of each, in the order
     /// they are initialised in: each after the `let`s its initialiser
     /// can reach, and in source order where nothing orders two.
@@ -1724,6 +1739,7 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
     // The type of each top-level value: the module's own, by name; an
     // imported item, by its definition.
     let mut top_level = HashMap::new();
+    let mut signatures = HashMap::new();
     for decl in &program.decls {
         let names: Vec<Symbol> = match decl {
             Decl::Fn(f) => vec![f.name],
@@ -1744,6 +1760,11 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
                 _ => env.lookup(name).cloned(),
             };
             if let Some(scheme) = scheme {
+                if let Decl::Fn(f) = decl
+                    && let Some(text) = checker.written_signature(f, &scheme)
+                {
+                    signatures.insert(name, text);
+                }
                 top_level.insert(name, checker.apply(&scheme.ty));
             }
         }
@@ -1794,6 +1815,7 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
             checker.errors
         },
         top_level,
+        signatures,
         let_order: checker.let_order,
     }
 }

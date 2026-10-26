@@ -974,19 +974,25 @@ impl TypeChecker {
                     Type::App(..) => self.show_type(&t1),
                     _ => self.show_type(&t2),
                 };
+                // (The notes say what the expected `m(Int)` matches: of a
+                // value of the type given where a type is expected, the
+                // mismatch says it all.)
+                let expected_applied = matches!(t2, Type::App(..));
                 let Some((con, rest, first)) = other.split_constructor() else {
                     let mut fault = self.constructor_mismatch(&t1, &t2);
-                    fault.note = Some(format!(
-                        "'{}' stands for a type constructor: it matches a type with a type \
-                         argument, like 'List(Int)' or 'Option(Int)'",
-                        self.show_type(head)
-                    ));
+                    if expected_applied {
+                        fault.note = Some(format!(
+                            "'{}' stands for a type constructor: it matches a type with a type \
+                             argument, like 'List(Int)' or 'Option(Int)'",
+                            self.show_type(head)
+                        ));
+                    }
                     out.push(fault);
                     return;
                 };
                 // (Of a type of one type argument, there is no other to
                 // say it is matched against.)
-                let others = !rest.is_empty();
+                let others = !rest.is_empty() && expected_applied;
                 let mut heads = Vec::new();
                 self.unify_into(head, &Type::Con(con, rest), &mut heads);
                 if !heads.is_empty() {
