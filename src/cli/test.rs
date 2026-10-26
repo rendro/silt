@@ -12,7 +12,7 @@ use silt::source::{FileId, SourceMap, Span};
 use silt::vm::{Exit, Vm};
 
 use crate::cli::help::test_usage_banner;
-use crate::cli::paths::{ProgramFiles, door_diagnostics, find_silt_files, open_entry};
+use crate::cli::paths::{ProgramFiles, door_diagnostics, open_entry, package_test_files};
 use crate::cli::run::{render_runtime_error, returned_err};
 
 /// Dispatch `silt test [--filter <pat>] [path]`.
@@ -88,23 +88,6 @@ pub(crate) fn dispatch(args: &[String]) {
     run_tests(file.as_deref(), filter);
 }
 
-/// Walk `dir` for files named `*_test.silt` or `*.test.silt`. Delegates
-/// the recursive scan to `cli::paths::find_silt_files` so the
-/// skip-list policy (`target/`, `.git/`, `node_modules/`,
-/// `fuzz/corpus/…`) and the sort order live in exactly one place.
-/// This function was once a byte-identical clone of
-/// `find_silt_files` *without* the skip filter, which meant `silt test`
-/// would happily try to execute `.silt` files that had been deposited
-/// under `target/` or vendored under `node_modules/`. Test-file suffix
-/// filtering happens here so the canonical scanner stays
-/// suffix-agnostic.
-fn find_test_files(dir: &Path) -> Vec<String> {
-    find_silt_files(dir)
-        .into_iter()
-        .filter(|name| name.ends_with("_test.silt") || name.ends_with(".test.silt"))
-        .collect()
-}
-
 /// Print what the session found in `path`, in the order and the form
 /// `silt check` prints it, warnings included, with the file named
 /// `shown`. `compiled` says whether the file compiled. Returns `true`
@@ -148,14 +131,14 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         let p = Path::new(f);
         if p.is_dir() {
             // silt test dir/ — find all test files in directory recursively
-            find_test_files(p)
+            package_test_files(p)
         } else {
             // silt test file.silt — single file
             vec![f.to_string()]
         }
     } else {
         // silt test — find all test files in current directory recursively
-        find_test_files(Path::new("."))
+        package_test_files(Path::new("."))
     };
 
     if paths.is_empty() {

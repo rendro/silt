@@ -17,7 +17,6 @@ use crate::cli::help::{check_usage_banner, disasm_usage_banner, run_usage_banner
 #[cfg(feature = "watch")]
 use crate::cli::package::find_project_root;
 #[cfg(feature = "watch")]
-use crate::cli::paths::find_silt_files;
 #[cfg(feature = "watch")]
 use silt::session::LockPolicy;
 #[cfg(feature = "watch")]
@@ -266,9 +265,8 @@ fn entries(sub: &str, positional: Option<&str>) -> Vec<PathBuf> {
             Some(path) => PathBuf::from(path),
             None => cwd,
         };
-        return find_silt_files(&dir)
+        return crate::cli::paths::package_test_files(&dir)
             .into_iter()
-            .filter(|name| name.ends_with("_test.silt") || name.ends_with(".test.silt"))
             .map(PathBuf::from)
             .collect();
     }

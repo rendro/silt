@@ -1,0 +1,7 @@
+-- cmd: test
+-- `silt test` in a package runs its own test files and not those of a
+-- package kept inside it (a directory with a `silt.toml` of its own), as
+-- `silt check` reads them.
+fn main() {
+  println("app")
+}

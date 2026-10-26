@@ -49,10 +49,12 @@ pub(crate) fn find_silt_files(dir: &Path) -> Vec<String> {
     results
 }
 
-/// The test files of the package at `root`, as `silt test` finds them
-/// (`*_test.silt`, `*.test.silt`), sorted. A directory that holds a
-/// `silt.toml` of its own is another package (a path dependency kept
-/// inside this one), and is not looked into.
+/// The test files under `root` (`*_test.silt`, `*.test.silt`), sorted,
+/// as `silt test` and `silt check` find them. The directories of the
+/// skip list (`file_discovery::should_skip_dir`: `target/`, `.git/`,
+/// ...) are not looked into, and neither is a directory that holds a
+/// `silt.toml` of its own: another package (a path dependency kept
+/// inside this one), whose tests are its own.
 pub(crate) fn package_test_files(root: &Path) -> Vec<String> {
     fn walk(dir: &Path, out: &mut Vec<String>) {
         let Ok(entries) = fs::read_dir(dir) else {
