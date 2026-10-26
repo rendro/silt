@@ -288,7 +288,16 @@ pub const VALUE_DRIVEN_TRAITS: &[&str] = &[
 /// trait's dictionary: a trait a program declares, or a builtin one that
 /// is not found by the value ([`VALUE_DRIVEN_TRAITS`]).
 pub fn has_dictionary(t: TraitId) -> bool {
-    builtin_trait_of_id(t.0).is_none_or(|(name, _)| !VALUE_DRIVEN_TRAITS.contains(&name))
+    // (Asked of every predicate the checker meets: by the builtin
+    // trait's place, not its name.)
+    static FOUND_BY_VALUE: OnceLock<Vec<bool>> = OnceLock::new();
+    let found_by_value = FOUND_BY_VALUE.get_or_init(|| {
+        (builtin_traits().iter())
+            .map(|(name, _)| VALUE_DRIVEN_TRAITS.contains(name))
+            .collect()
+    });
+    let k = (t.0.0 as usize).wrapping_sub(builtin_types().len());
+    !found_by_value.get(k).copied().unwrap_or(false)
 }
 
 /// The id of the builtin trait `name`; `None` when no builtin trait has
