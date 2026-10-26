@@ -42,8 +42,8 @@ that returns `Err(e)` ends the program with status 1. `silt run main.silt
 ## Lexical
 
 - Comments: `-- to the end of the line`, `{- a block, {- nested -} -}`.
-- Keywords: `as else fn import let loop match pub return trait type when
-  where`. `true` and `false` are literals.
+- Keywords: `as else fn import let loop match opaque pub return trait type
+  when where`. `true` and `false` are literals.
 - Names: values and functions `snake_case`; types, traits and variants
   `CamelCase`; a type variable is a lowercase name (`a`, `e`, `item`).
 - Each statement and declaration starts on a line of its own.

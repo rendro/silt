@@ -1,0 +1,6 @@
+-- cmd: check
+-- exit: 1
+-- An alias has no constructors to hide: it cannot be opaque.
+pub opaque type Meters = Int
+
+pub opaque type Pair(a) = (a, a)

@@ -1,0 +1,5 @@
+-- cmd: fmt
+-- `silt fmt` keeps `pub opaque type`.
+pub opaque type Stack(a) {
+  Stack(List(a)),
+}

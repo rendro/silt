@@ -669,6 +669,8 @@ pub struct TypeDecl {
     pub params: Vec<Symbol>,
     pub body: TypeBody,
     pub is_pub: bool,
+    /// `pub opaque type`: other modules see the type, not what is in it.
+    pub is_opaque: bool,
     pub span: Span,
     /// Span of the declared name identifier itself (the `Foo` in
     /// `type Foo { ... }`). Mirrors `FnDecl::name_span`; see that doc

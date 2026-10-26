@@ -473,6 +473,7 @@ fn kind_of(token: &Token) -> Option<u32> {
         | Token::When
         | Token::Return
         | Token::Pub
+        | Token::Opaque
         | Token::Import
         | Token::As
         | Token::Else
