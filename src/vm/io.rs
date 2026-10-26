@@ -4,7 +4,8 @@
 //! A [`HostIo`] is given to [`Vm::new`](super::Vm::new) and holds for
 //! everything that VM runs, in the program's thread and in its tasks:
 //!
-//! - `print` and `println` write to its stdout;
+//! - `print` and `println` write to its stdout, `io.eprint` and
+//!   `io.eprintln` to its stderr;
 //! - what the runtime prints for the program (the report of a task
 //!   that failed and was never joined, the log of an `http.serve`
 //!   handler that failed) goes to its stderr;
@@ -28,11 +29,11 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Where text written by a program goes. Called from the thread that
 /// runs the program and from the scheduler's threads, one call for each
-/// `print`, `println` or report.
+/// `print`, `println`, `io.eprint`, `io.eprintln` or report.
 pub trait Output: Send + Sync {
     /// Take `text`. An error returned for a program's `print` or
     /// `println` becomes a runtime error of the program; one returned
-    /// for a report on stderr is dropped. A panic counts as an error.
+    /// for a write to stderr is dropped. A panic counts as an error.
     fn write(&self, text: &str) -> io::Result<()>;
 }
 

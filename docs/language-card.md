@@ -289,6 +289,8 @@ println(value: a) -> () where a: Display
 ```
 type IoError { NotFound(String), PermissionDenied(String), AlreadyExists(String), InvalidInput(String), Interrupted, UnexpectedEof, WriteZero, Other(String) }
 io.args() -> List(String)
+io.eprint(value: a) -> () where a: Display
+io.eprintln(value: a) -> () where a: Display
 io.inspect(x: a) -> String
 io.read_file(path: String) -> Result(String, IoError)
 io.read_line() -> Result(String, IoError)
