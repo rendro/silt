@@ -60,7 +60,8 @@ pub(crate) fn package_test_files(root: &Path) -> Vec<String> {
         };
         for path in entries.filter_map(|e| e.ok()).map(|e| e.path()) {
             if path.is_dir() {
-                if !silt::file_discovery::should_skip_dir(&path) && !path.join("silt.toml").is_file()
+                if !silt::file_discovery::should_skip_dir(&path)
+                    && !path.join("silt.toml").is_file()
                 {
                     walk(&path, out);
                 }
