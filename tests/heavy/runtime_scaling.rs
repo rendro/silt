@@ -533,7 +533,9 @@ import task
 /// A task is started with nothing of the program copied: the VMs of
 /// all tasks have the program's global slots in common. Each had a
 /// copy of them, so 5,000 waiting tasks of a program of 2,000
-/// functions held 400 MB; they hold some 30 MB.
+/// functions held 400 MB; they hold some 60 MB in a local debug
+/// build, and 97 to 105 MB on the CI runners. The limit of 200 MB is
+/// half of what a copy per task costs.
 ///
 /// What is measured is the most memory the program has had resident
 /// while its tasks wait (`VmHWM` of its process, which Linux gives).
@@ -576,7 +578,7 @@ fn five_thousand_waiting_tasks_share_the_programs_globals() {
         .and_then(|kb| kb.trim().trim_end_matches("kB").trim().parse().ok())
         .expect("VmHWM, in kB");
     assert!(
-        resident < 100 * 1024,
+        resident < 200 * 1024,
         "5,000 waiting tasks of a program of 2,000 functions held {resident} kB"
     );
 }
