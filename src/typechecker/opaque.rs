@@ -187,7 +187,7 @@ impl TypeChecker {
         let (found, module) = self.opaque_encoded(ty, &mut std::collections::HashSet::new())?;
         Some(
             Diagnostic::error(
-                Code::OpaqueType,
+                Code::Undecodable,
                 span,
                 format!(
                     "type '{}' cannot be encoded outside module '{module}': it is opaque, and \
