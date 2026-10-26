@@ -98,85 +98,43 @@ impl Output for ProcessStderr {
     }
 }
 
-/// `write`, with SIGPIPE blocked on the calling thread: a write to a
-/// pipe whose reader has gone fails with `BrokenPipe` instead of
-/// killing the process (the `silt` command sets the signal to its
-/// default), and the signal that write raised is taken off the thread
-/// before the mask is put back.
+/// `write`, with SIGPIPE ignored: a write to a pipe whose reader has
+/// gone fails with `BrokenPipe` instead of killing the process (the
+/// `silt` command sets the signal to its default).
+///
+/// The disposition is the process's, not the thread's: on macOS the
+/// signal of a write to a pipe goes to the process, and any thread that
+/// does not block it takes it, so a mask of the writing thread alone
+/// would not do. It is ignored for the time of the write and then put
+/// back as it was, under the lock of the command's reports
+/// (`scheduler::report`), so that no report of the command's is written
+/// meanwhile: such a write keeps its SIGPIPE. A write of the program to
+/// stdout in that time fails with `BrokenPipe` instead of dying by the
+/// signal, and [`ProcessStdout`] ends the process with 141 for it all
+/// the same. (In a process that ignores SIGPIPE, as Rust's programs do,
+/// nothing changes.)
 #[cfg(unix)]
 fn without_sigpipe(write: impl FnOnce() -> io::Result<()>) -> io::Result<()> {
-    // SAFETY: the sets are zeroed `sigset_t`s, initialised by
-    // `sigemptyset` before they are read, and every pointer passed is
-    // valid or null. The mask changed is the calling thread's own.
-    let (pipe, old) = unsafe {
-        let mut pipe: libc::sigset_t = std::mem::zeroed();
-        libc::sigemptyset(&mut pipe);
-        libc::sigaddset(&mut pipe, libc::SIGPIPE);
-        let mut old: libc::sigset_t = std::mem::zeroed();
-        libc::pthread_sigmask(libc::SIG_BLOCK, &pipe, &mut old);
-        (pipe, old)
-    };
-    let result = write();
-    // SAFETY: as above. The mask is put back after the signal is taken.
-    unsafe {
-        if matches!(&result, Err(e) if e.kind() == io::ErrorKind::BrokenPipe) {
-            take_pending(&pipe);
+    crate::scheduler::with_report_lock(|| {
+        // SAFETY: the `sigaction`s are zeroed, which is a valid value of
+        // the C struct, and the handler and mask of the one that is set
+        // are set before it is passed; every pointer passed is valid or
+        // null. The disposition put back is the one read here.
+        let old = unsafe {
+            let mut ignore: libc::sigaction = std::mem::zeroed();
+            ignore.sa_sigaction = libc::SIG_IGN;
+            libc::sigemptyset(&mut ignore.sa_mask);
+            let mut old: libc::sigaction = std::mem::zeroed();
+            libc::sigaction(libc::SIGPIPE, &ignore, &mut old);
+            old
+        };
+        let result = write();
+        // SAFETY: as above.
+        unsafe {
+            libc::sigaction(libc::SIGPIPE, &old, std::ptr::null_mut());
         }
-        libc::pthread_sigmask(libc::SIG_SETMASK, &old, std::ptr::null_mut());
-    }
-    result
-}
-
-/// Take a SIGPIPE that is pending off the calling thread, waiting for
-/// none: `sigtimedwait` with a timeout of zero.
-///
-/// # Safety
-/// `pipe` is a set initialised with `sigemptyset` that holds SIGPIPE,
-/// which the calling thread blocks.
-#[cfg(any(
-    target_os = "linux",
-    target_os = "android",
-    target_os = "freebsd",
-    target_os = "netbsd"
-))]
-unsafe fn take_pending(pipe: &libc::sigset_t) {
-    let none = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
-    // SAFETY: the caller's set; a null `siginfo_t` is allowed.
-    unsafe {
-        libc::sigtimedwait(pipe, std::ptr::null_mut(), &none);
-    }
-}
-
-/// [`take_pending`] where there is no `sigtimedwait` (macOS): `sigwait`,
-/// called only for a SIGPIPE that `sigpending` shows. The one that the
-/// write raised is the calling thread's own, which no other thread can
-/// take, so it returns at once.
-///
-/// # Safety
-/// As for the other `take_pending`.
-#[cfg(all(
-    unix,
-    not(any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "freebsd",
-        target_os = "netbsd"
-    ))
-))]
-unsafe fn take_pending(pipe: &libc::sigset_t) {
-    // SAFETY: a zeroed set, initialised by `sigemptyset` before it is
-    // read; the caller's set.
-    unsafe {
-        let mut pending: libc::sigset_t = std::mem::zeroed();
-        libc::sigemptyset(&mut pending);
-        if libc::sigpending(&mut pending) == 0 && libc::sigismember(&pending, libc::SIGPIPE) == 1 {
-            let mut taken: libc::c_int = 0;
-            libc::sigwait(pipe, &mut taken);
-        }
-    }
+        result
+    })
 }
 
 /// Elsewhere a write to a closed pipe is an error of the write.

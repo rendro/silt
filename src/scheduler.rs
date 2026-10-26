@@ -1281,6 +1281,16 @@ pub(crate) fn exit_from_the_program(code: u8) -> ! {
     std::process::exit(i32::from(code))
 }
 
+/// Run `write`, a write to the process's stderr for the program, under
+/// the lock of the command's reports ([`report`]): no report is
+/// written while it runs. (The lock is reentrant: a report may make
+/// such a write.)
+#[cfg(unix)]
+pub(crate) fn with_report_lock<R>(write: impl FnOnce() -> R) -> R {
+    let _lines = PANIC_LINES.lock();
+    write()
+}
+
 /// Write a report of the `silt` command's own with `write`, while a
 /// program's threads may exist: a program's runtime error, the tasks
 /// that failed and were never joined, a test's result, the errors of
