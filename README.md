@@ -194,6 +194,7 @@ silt run <file.silt>       Run a program
 silt run -w <file.silt>    Run and re-run on file changes
 silt check <file.silt>     Type-check without running
 silt check --format json <file.silt>   Type-check with JSON output (for CI/editors)
+silt check --deny-warnings <file.silt>   Also fail on warnings (for CI)
 silt test [path]           Run test functions
 silt fmt [files...]        Format source code
 silt fmt --check           Check formatting without modifying files
