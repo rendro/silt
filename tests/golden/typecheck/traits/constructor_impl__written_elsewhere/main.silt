@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- An impl of a trait of type constructors is written where its trait or
+-- its type is declared; the message writes the type as the header does.
+-- stderr-contains: error[type]: the impl of trait 'fx.Functor' for type 'List(_)' is written in module 'main', which declares neither the trait nor the type; it may be written in module 'fx', which declares the trait
+-- stderr-contains: error[type]: the impl of trait 'fx.Functor' for type 'Result(_, e)' is written in module 'main', which declares neither the trait nor the type; it may be written in module 'fx', which declares the trait
+import fx
+trait fx.Functor for List(_) {
+  fn map(xs, f) { xs }
+}
+trait fx.Functor for Result(_, e) {
+  fn map(xs, f) { xs }
+}
+fn main() { println(1) }

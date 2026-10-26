@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- A trait of type constructors has no type parameters.
+-- stderr-contains: error[type]: a trait of type constructors has no type parameters: 'MonadError(e)'
+-- stderr-contains: --> constructor_trait__no_type_parameters.silt:6:7
+trait MonadError(e) {
+  fn raise(err: e) -> Self(a)
+}
+fn main() { println(1) }

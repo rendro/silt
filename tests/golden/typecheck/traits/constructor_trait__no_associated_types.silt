@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- A trait of type constructors has no associated types.
+-- stderr-contains: error[type]: a trait of type constructors has no associated types: 'Item'
+-- stderr-contains: --> constructor_trait__no_associated_types.silt:8:3
+trait Holder {
+  fn hold(xs: Self(Int)) -> Int
+  type Item
+}
+fn main() { println(1) }
