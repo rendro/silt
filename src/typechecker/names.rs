@@ -137,8 +137,41 @@ pub struct HiddenModule {
     pub name: Symbol,
     /// The module's own name: `m`, or `list` of `import list as m`.
     pub module: Symbol,
-    /// Where the local is bound.
-    pub local: Span,
+    /// What hides the module.
+    pub by: HiddenBy,
+}
+
+/// What hides a module that an access means.
+#[derive(Clone, Copy, Debug)]
+pub enum HiddenBy {
+    /// A local, bound at this span.
+    Local(Span),
+    /// In the REPL, the `let` of an earlier entry, which binds the name
+    /// an earlier entry imported the module by.
+    EarlierEntry,
+}
+
+/// What the resolver reads of a module besides its declarations.
+pub struct Source<'a> {
+    /// The module's text, which the quick fixes edit.
+    pub text: &'a str,
+    /// Whether its declarations are all of the text: a declaration that
+    /// did not parse may use any import.
+    pub complete: bool,
+    /// For a REPL entry: each name that the `let` of an earlier entry
+    /// binds where an earlier entry imported a module by that name, with
+    /// the module.
+    pub hidden_imports: &'a HashMap<Symbol, Symbol>,
+}
+
+/// What an import of a module binds a name to, for the warning about a
+/// local that hides it.
+#[derive(Clone, Copy)]
+enum ImportedName {
+    /// The module, by its own name or an alias.
+    Module(Symbol),
+    /// An item of `import m.{ name }`, of the module `m`.
+    Item(Symbol),
 }
 
 // ── The builtins ─────────────────────────────────────────────────────
@@ -311,18 +344,15 @@ fn build_builtins() -> (BuiltinDefs, BuiltinScopes) {
 
 /// Resolve `program`, the module `module`: enter its definitions in
 /// `defs`, bind its imports (`imports`, by the module name written after
-/// `import`), and write what each name means on the AST. `text` is the
-/// module's text, which the quick fixes edit; `complete` says whether
-/// its declarations are all of it (a declaration that did not parse
-/// may use any import).
+/// `import`), and write what each name means on the AST. `source` is
+/// what the warnings and their quick fixes read of the module.
 pub fn resolve_module(
     program: &mut Program,
     module: ModuleId,
     kind: ModuleKind,
     imports: &HashMap<Symbol, Imported<'_>>,
     defs: &mut DefTable,
-    text: &str,
-    complete: bool,
+    source: Source<'_>,
 ) -> Resolution {
     defs.clear_module(module);
     let (_, builtins) = builtins();
@@ -364,12 +394,40 @@ pub fn resolve_module(
             scope.values.insert(ti.trait_name, Binding::Poisoned);
         }
     }
+    // The names the imports bind, for the warning about a local that
+    // hides one. (Of a REPL entry, the earlier entries' imports too,
+    // which the session writes before its own declarations.)
+    let mut imported_names = HashMap::new();
+    for decl in &program.decls {
+        let Decl::Import(target, _) = decl else {
+            continue;
+        };
+        let module = target.module();
+        if !matches!(
+            imports.get(&module),
+            Some(Imported::Builtin(_) | Imported::Module(..))
+        ) {
+            continue;
+        }
+        match target {
+            ImportTarget::Module(name) | ImportTarget::Alias(_, name, _) => {
+                imported_names.insert(*name, ImportedName::Module(module));
+            }
+            ImportTarget::Items(_, items) => {
+                for (item, _) in items {
+                    imported_names.insert(*item, ImportedName::Item(module));
+                }
+            }
+        }
+    }
     let mut resolver = Resolver {
         defs,
         kind,
         scope: &scope,
         imports,
         builtins: &builtins,
+        imported_names,
+        hidden_imports: source.hidden_imports,
         locals: Vec::new(),
         previous: HashMap::new(),
         named_closures: Vec::new(),
@@ -385,9 +443,9 @@ pub fn resolve_module(
         resolver.decl(decl);
     }
     // A REPL entry's imports are for the entries after it.
-    if kind == ModuleKind::File && complete {
+    if kind == ModuleKind::File && source.complete {
         let used = resolver.used.take();
-        resolver.unused_imports(program, &used, text);
+        resolver.unused_imports(program, &used, source.text);
     }
     let own_aliases = std::mem::take(&mut resolver.own_aliases);
     let mut diagnostics = resolver.diagnostics;
@@ -1069,9 +1127,12 @@ struct Resolver<'a> {
     scope: &'a ModuleScope,
     imports: &'a HashMap<Symbol, Imported<'a>>,
     builtins: &'a BuiltinScopes,
-    /// The local bindings in scope, innermost last, each with where it
-    /// is bound.
-    locals: Vec<Vec<(Symbol, Span)>>,
+    /// What each name an import binds is bound to.
+    imported_names: HashMap<Symbol, ImportedName>,
+    /// See [`Source::hidden_imports`].
+    hidden_imports: &'a HashMap<Symbol, Symbol>,
+    /// The local bindings in scope, innermost last.
+    locals: Vec<Vec<Local>>,
     /// Top-level names that mean an earlier REPL cell's definition while
     /// the initializer of a cell's `let` that binds them again is
     /// resolved (`let x = x + 1`).
@@ -1094,6 +1155,90 @@ struct Resolver<'a> {
     /// The top-level names looked up: an import whose name is not among
     /// them is unused.
     used: RefCell<HashSet<Symbol>>,
+}
+
+/// A local binding in scope.
+struct Local {
+    name: Symbol,
+    /// Where it is bound.
+    at: Span,
+    /// Whether a use of it was resolved.
+    used: bool,
+    /// The edits that rename it to `_name`, for a `let` or pattern name,
+    /// which is warned about when nothing uses it. `None` for a
+    /// parameter, which a caller, a trait or a callback fixes.
+    rename: Option<Vec<(Span, std::string::String)>>,
+}
+
+/// The names `pattern` binds, each with where it is bound and the edits
+/// that rename it to `_name`: in every alternative of an or-pattern, and
+/// as `field: _field` for a field of a record pattern written alone.
+fn binder_renames(pattern: &Pattern) -> Vec<(Symbol, Span, Vec<(Span, std::string::String)>)> {
+    fn walk(p: &Pattern, out: &mut Vec<(Symbol, Span, Vec<(Span, std::string::String)>)>) {
+        match &p.kind {
+            PatternKind::Ident(name) => {
+                out.push((*name, p.span, vec![(p.span, format!("_{name}"))]))
+            }
+            PatternKind::Tuple(parts) | PatternKind::Constructor { args: parts, .. } => {
+                parts.iter().for_each(|part| walk(part, out));
+            }
+            PatternKind::Record { fields, .. } | PatternKind::AnonRecord { fields, .. } => {
+                for (field, field_span, sub) in fields {
+                    match sub {
+                        Some(sub) => walk(sub, out),
+                        None => out.push((
+                            *field,
+                            *field_span,
+                            vec![(*field_span, format!("{field}: _{field}"))],
+                        )),
+                    }
+                }
+                if let PatternKind::AnonRecord {
+                    rest: Some((rest, rest_span)),
+                    ..
+                } = &p.kind
+                {
+                    out.push((*rest, *rest_span, vec![(*rest_span, format!("_{rest}"))]));
+                }
+            }
+            PatternKind::List(elems, rest) => {
+                elems.iter().for_each(|elem| walk(elem, out));
+                if let Some(rest) = rest {
+                    walk(rest, out);
+                }
+            }
+            // The names are the first alternative's; each is renamed in
+            // every alternative.
+            PatternKind::Or(alts) => {
+                let mut first = Vec::new();
+                if let Some(alt) = alts.first() {
+                    walk(alt, &mut first);
+                }
+                for alt in alts.iter().skip(1) {
+                    let mut more = Vec::new();
+                    walk(alt, &mut more);
+                    for (name, _, edits) in more {
+                        if let Some(binder) = first.iter_mut().find(|(n, ..)| *n == name) {
+                            binder.2.extend(edits);
+                        }
+                    }
+                }
+                out.extend(first);
+            }
+            PatternKind::Map(entries) => entries.iter().for_each(|(_, sub)| walk(sub, out)),
+            PatternKind::Wildcard
+            | PatternKind::Int(_)
+            | PatternKind::Float(_)
+            | PatternKind::Bool(_)
+            | PatternKind::StringLit(..)
+            | PatternKind::Range(..)
+            | PatternKind::FloatRange(..)
+            | PatternKind::Pin(_) => {}
+        }
+    }
+    let mut out = Vec::new();
+    walk(pattern, &mut out);
+    out
 }
 
 /// The bytes of the line, or the lines, that `span` is on in `text`,
@@ -1286,23 +1431,113 @@ impl Resolver<'_> {
         self.locals.push(Vec::new());
     }
 
+    /// Leave the innermost scope, with a warning for each `let` or
+    /// pattern name of it that nothing used. A name that starts with `_`
+    /// is one nothing is meant to use.
     fn pop(&mut self) {
-        self.locals.pop();
+        for local in self.locals.pop().unwrap_or_default() {
+            let Some(rename) = local.rename else {
+                continue;
+            };
+            let name = resolve(local.name);
+            if local.used || name.starts_with('_') {
+                continue;
+            }
+            self.diagnostics.push(
+                Diagnostic::warning(
+                    Code::UnusedName,
+                    local.at,
+                    format!("'{name}' is never used"),
+                )
+                .with_help(format!("remove it, or name it `_{name}`"))
+                .with_fix(format!("name it `_{name}`"), rename),
+            );
+        }
     }
 
-    fn bind_local(&mut self, name: Symbol, at: Span) {
+    /// Bind the local `name` at `at`. `rename` is how a `let` or pattern
+    /// name is renamed to `_name`; `None` for a parameter.
+    fn bind_local(
+        &mut self,
+        name: Symbol,
+        at: Span,
+        rename: Option<Vec<(Span, std::string::String)>>,
+    ) {
+        self.warn_if_hiding(name, at);
+        self.bind(name, at, rename);
+    }
+
+    fn bind(&mut self, name: Symbol, at: Span, rename: Option<Vec<(Span, std::string::String)>>) {
         if self.locals.is_empty() {
             self.push();
         }
-        self.locals.last_mut().expect("a scope").push((name, at));
+        self.locals.last_mut().expect("a scope").push(Local {
+            name,
+            at,
+            used: false,
+            rename,
+        });
     }
 
+    /// Bind the names of `pattern`, a `let`'s, a `when`'s or a match
+    /// arm's.
     fn bind_pattern_locals(&mut self, pattern: &Pattern) {
+        for (name, at, rename) in binder_renames(pattern) {
+            self.bind_local(name, at, Some(rename));
+        }
+    }
+
+    /// Bind the names of `pattern`, a parameter's.
+    fn bind_params(&mut self, pattern: &Pattern) {
         let mut binders = Vec::new();
         pattern_binders(pattern, &mut binders);
         for (name, at) in binders {
-            self.bind_local(name, at);
+            self.bind_local(name, at, None);
         }
+    }
+
+    /// Warn when the local `name`, bound at `at`, hides a module, an
+    /// alias or a name that an import binds.
+    fn warn_if_hiding(&mut self, name: Symbol, at: Span) {
+        let Some(imported) = self.imported_names.get(&name).copied() else {
+            return;
+        };
+        let d = match imported {
+            ImportedName::Module(module) => {
+                // The alias suggested is the shortest start of the
+                // module's name that the module binds nothing to: `l`,
+                // then `li`, ...
+                let module_name = resolve(module);
+                let alias = (1..module_name.len())
+                    .filter(|end| module_name.is_char_boundary(*end))
+                    .map(|end| &module_name[..end])
+                    .find(|alias| {
+                        let alias = intern(alias);
+                        !self.scope.values.contains_key(&alias)
+                            && !self.scope.types.contains_key(&alias)
+                    });
+                let help = match (name == module, alias) {
+                    (true, Some(alias)) => format!(
+                        "rename the local, or import the module under another name: \
+                         `import {module} as {alias}`"
+                    ),
+                    _ => "rename the local, or import the module under another name".into(),
+                };
+                Diagnostic::warning(
+                    Code::HiddenImport,
+                    at,
+                    format!("local '{name}' hides the imported module '{module}'"),
+                )
+                .with_help(help)
+            }
+            ImportedName::Item(module) => Diagnostic::warning(
+                Code::HiddenImport,
+                at,
+                format!("local '{name}' hides '{name}', imported from module '{module}'"),
+            )
+            .with_help("rename the local"),
+        };
+        self.diagnostics.push(d);
     }
 
     fn is_local(&self, name: Symbol) -> bool {
@@ -1314,8 +1549,17 @@ impl Resolver<'_> {
         self.locals
             .iter()
             .rev()
-            .find_map(|scope| scope.iter().rev().find(|(n, _)| *n == name))
-            .map(|(_, at)| *at)
+            .find_map(|scope| scope.iter().rev().find(|l| l.name == name))
+            .map(|l| l.at)
+    }
+
+    /// The local `name` in scope is used here.
+    fn use_local(&mut self, name: Symbol) {
+        if let Some(local) = (self.locals.iter_mut().rev())
+            .find_map(|scope| scope.iter_mut().rev().find(|l| l.name == name))
+        {
+            local.used = true;
+        }
     }
 
     /// The exports of the module a binding names.
@@ -1648,10 +1892,13 @@ impl Resolver<'_> {
                 if self.kind == ModuleKind::Cell {
                     let mut binders = Vec::new();
                     crate::parser::pattern_binders(pattern, &mut binders);
-                    for (name, _) in binders {
+                    for (name, at) in binders {
                         if let Some(binding) = self.earlier_cell_value(name) {
                             self.previous.insert(name, binding);
                         }
+                        // It replaces an import of an earlier entry, as
+                        // a local hides one.
+                        self.warn_if_hiding(name, at);
                     }
                 }
                 self.expr(value);
@@ -1707,7 +1954,7 @@ impl Resolver<'_> {
                 self.type_expr(ty);
             }
             self.pattern(&mut param.pattern);
-            self.bind_pattern_locals(&param.pattern);
+            self.bind_params(&param.pattern);
         }
         self.expr(&mut f.body);
         self.pop();
@@ -1988,6 +2235,9 @@ impl Resolver<'_> {
                     Found::Local => Res::Local,
                     Found::Binding(binding) => self.binding_res(&binding),
                 });
+                if pattern.res == Some(Res::Local) {
+                    self.use_local(*name);
+                }
             }
         }
     }
@@ -2545,7 +2795,7 @@ impl Resolver<'_> {
                         self.type_expr(ty);
                     }
                     self.pattern(&mut param.pattern);
-                    self.bind_pattern_locals(&param.pattern);
+                    self.bind_params(&param.pattern);
                 }
                 self.expr(body);
                 self.pop();
@@ -2606,7 +2856,7 @@ impl Resolver<'_> {
                 }
                 self.push();
                 for (name, at, _) in bindings.iter() {
-                    self.bind_local(*name, *at);
+                    self.bind_local(*name, *at, Some(vec![(*at, format!("_{name}"))]));
                 }
                 self.expr(body);
                 self.pop();
@@ -2621,8 +2871,10 @@ impl Resolver<'_> {
             self.lookup_value(name),
             None | Some(Found::Binding(Binding::Poisoned))
         );
+        // (Within the closure, its name is the closure: a binding of
+        // its own, which no warning is about.)
         self.push();
-        self.bind_local(name, span);
+        self.bind(name, span, None);
         self.named_closures.push(NamedClosure {
             name,
             span,
@@ -2638,6 +2890,7 @@ impl Resolver<'_> {
     fn ident(&mut self, name: Symbol, span: Span) -> Res {
         match self.lookup_value(name) {
             Some(Found::Local) => {
+                self.use_local(name);
                 self.check_named_closure(name, span);
                 Res::Local
             }
@@ -2693,7 +2946,7 @@ impl Resolver<'_> {
         let Some(scope) = self
             .locals
             .iter()
-            .rposition(|s| s.iter().any(|(n, _)| *n == name))
+            .rposition(|s| s.iter().any(|l| l.name == name))
         else {
             return;
         };
@@ -2868,7 +3121,7 @@ impl Resolver<'_> {
             .locals
             .iter()
             .flatten()
-            .map(|(name, _)| name)
+            .map(|local| &local.name)
             .chain(self.scope.values.keys())
             .chain(self.scope.implied.keys())
             .chain(self.builtins.prelude.values.keys())
@@ -2938,6 +3191,7 @@ impl Resolver<'_> {
         };
         let head_span = obj.span;
         if let Some(local) = self.local_at(head_name) {
+            self.use_local(head_name);
             obj.res = Some(Res::Local);
             if let Some(Binding::Module(id)) = self.scope.values.get(&head_name)
                 && self
@@ -2958,7 +3212,7 @@ impl Resolver<'_> {
                     access: span,
                     name: head_name,
                     module,
-                    local,
+                    by: HiddenBy::Local(local),
                 });
             }
             return None;
@@ -2988,6 +3242,20 @@ impl Resolver<'_> {
                 None
             }
             Some(Binding::Def(d)) => {
+                // In the REPL, `list.map` where an earlier entry's `let
+                // list` hides the module `list` that an earlier entry
+                // imported.
+                if let Some(module) = self.hidden_imports.get(&head_name).copied()
+                    && let Some(id) = ModuleId::builtin(&resolve(module))
+                    && (self.module_exports(id)).is_some_and(|e| e.member(field).is_some())
+                {
+                    self.hidden_modules.push(HiddenModule {
+                        access: span,
+                        name: head_name,
+                        module,
+                        by: HiddenBy::EarlierEntry,
+                    });
+                }
                 // `Box.default()` with `type Box(a) { Box(a), .. }`, or with
                 // a type `Box` and a variant `Box` of another type: a
                 // variant has no methods, the type of that name does.

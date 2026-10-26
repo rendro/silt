@@ -1,24 +1,3 @@
-warning[type]: unused import 'list'
- --> hidden_module__a_local_hides_an_imported_module.silt:6:1
-   |
- 6 | import list
-   | ^^^^^^^^^^^ unused import 'list'
-  = help: remove the line `import list`
-
-warning[type]: unused import 'map'
- --> hidden_module__a_local_hides_an_imported_module.silt:7:1
-   |
- 7 | import map
-   | ^^^^^^^^^^ unused import 'map'
-  = help: remove the line `import map`
-
-warning[type]: unused import 'string'
- --> hidden_module__a_local_hides_an_imported_module.silt:8:1
-   |
- 8 | import string
-   | ^^^^^^^^^^^^^ unused import 'string'
-  = help: remove the line `import string`
-
 error[type]: type 'String' has no field 'to_upper'
  --> hidden_module__a_local_hides_an_imported_module.silt:11:3
     |
@@ -46,3 +25,52 @@ error[type]: type 'List(Int)' has no field 'reverse'
  19 |   let f = { list: List(Int) -> list.reverse(list) }
     |                                ^^^^^^^^^^^^ type 'List(Int)' has no field 'reverse'
   = help: `list` here is the local from line 19, which hides the module `list`; rename the local
+
+warning[type]: unused import 'list'
+ --> hidden_module__a_local_hides_an_imported_module.silt:6:1
+   |
+ 6 | import list
+   | ^^^^^^^^^^^ unused import 'list'
+  = help: remove the line `import list`
+
+warning[type]: unused import 'map'
+ --> hidden_module__a_local_hides_an_imported_module.silt:7:1
+   |
+ 7 | import map
+   | ^^^^^^^^^^ unused import 'map'
+  = help: remove the line `import map`
+
+warning[type]: unused import 'string'
+ --> hidden_module__a_local_hides_an_imported_module.silt:8:1
+   |
+ 8 | import string
+   | ^^^^^^^^^^^^^ unused import 'string'
+  = help: remove the line `import string`
+
+warning[type]: local 'string' hides the imported module 'string'
+ --> hidden_module__a_local_hides_an_imported_module.silt:10:10
+    |
+ 10 | fn shout(string: String) -> String {
+    |          ^^^^^^ local 'string' hides the imported module 'string'
+  = help: rename the local, or import the module under another name: `import string as s`
+
+warning[type]: local 'list' hides the imported module 'list'
+ --> hidden_module__a_local_hides_an_imported_module.silt:15:7
+    |
+ 15 |   let list = [3, 1, 2]
+    |       ^^^^ local 'list' hides the imported module 'list'
+  = help: rename the local, or import the module under another name: `import list as l`
+
+warning[type]: local 'map' hides the imported module 'map'
+ --> hidden_module__a_local_hides_an_imported_module.silt:17:7
+    |
+ 17 |   let map = {size: 1}
+    |       ^^^ local 'map' hides the imported module 'map'
+  = help: rename the local, or import the module under another name: `import map as m`
+
+warning[type]: local 'list' hides the imported module 'list'
+ --> hidden_module__a_local_hides_an_imported_module.silt:19:13
+    |
+ 19 |   let f = { list: List(Int) -> list.reverse(list) }
+    |             ^^^^ local 'list' hides the imported module 'list'
+  = help: rename the local, or import the module under another name: `import list as l`

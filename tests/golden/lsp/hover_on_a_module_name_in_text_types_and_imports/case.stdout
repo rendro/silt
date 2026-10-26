@@ -1,4 +1,6 @@
 27:1 warning unused import 'list'\nhelp: remove the line `import list`
+37:7 warning local 'json' hides the imported module 'json'\nhelp: rename the local, or import the module under another name: `import json as j`
+39:13 warning local 'list' hides the imported module 'list'\nhelp: rename the local, or import the module under another name: `import list as l`
 > hover 35:12
 ```silt
 String

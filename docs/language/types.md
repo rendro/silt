@@ -433,6 +433,7 @@ fn main() {
     { name: nm } -> println(nm) -- A
   }
   let { name, ...rest } = Person { name: "B", age: 42 } -- rest is {age: Int}
+  println(name) -- B
   println(rest.age) -- 42
 }
 ```

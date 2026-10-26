@@ -27,3 +27,10 @@ error[type]: function expects 2 arguments, got 1
     |
  12 |   println(float.format(1.5))
     |           ^^^^^^^^^^^^^^^^^ function expects 2 arguments, got 1
+
+warning[type]: 'f' is never used
+ --> conventions__to_string_is_no_function_of_int_or_float.silt:13:7
+    |
+ 13 |   let f = int.to_string
+    |       ^ 'f' is never used
+  = help: remove it, or name it `_f`

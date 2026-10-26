@@ -49,3 +49,10 @@ error[type]: `Greet.greet` expects 1 argument, got 2
     |
  27 |   println(2 |> Greet.greet(1))
     |           ^^^^^^^^^^^^^^^^^^^ `Greet.greet` expects 1 argument, got 2
+
+warning[type]: 'e' is never used
+ --> trait_call__refused.silt:23:7
+    |
+ 23 |   let e = Monoid.empty()
+    |       ^ 'e' is never used
+  = help: remove it, or name it `_e`

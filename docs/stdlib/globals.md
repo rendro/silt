@@ -144,8 +144,8 @@ Constructs a success variant of `Result`.
 
 ```silt
 fn main() {
-  let r = Ok(42)
-  -- r is Result(Int, e)
+  let _r = Ok(42)
+  -- _r is Result(Int, e)
 }
 ```
 
@@ -160,8 +160,8 @@ Constructs an error variant of `Result`.
 
 ```silt
 fn main() {
-  let r = Err("not found")
-  -- r is Result(a, String)
+  let _r = Err("not found")
+  -- _r is Result(a, String)
 }
 ```
 

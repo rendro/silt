@@ -4,7 +4,7 @@
 -- lsp: hover 32:5
 -- lsp: hover 33:5
 -- lsp: hover 34:5
--- lsp: hover 37:11
+-- lsp: hover 37:12
 -- lsp: hover 38:12
 -- lsp: completion 39:6
 -- lsp: signature 40:22
@@ -34,7 +34,7 @@ fn wrap(x: a, type m) -> m(a) where m: Pointed { m.point(x) }
 fn shown(xs: f(a)) -> f(String) where f: Mapping, a: Display { Mapping.map(xs) { x -> "{x}" } }
 fn main() {
   println(twice(Some(1)))
-  let k = keep
+  let _k = keep
   println(double_all(Some(1)))
   dou
   println(double_all(Some(2)))

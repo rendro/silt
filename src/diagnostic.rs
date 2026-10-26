@@ -276,8 +276,13 @@ codes! {
     /// text is left as it is.
     FormatRefused = "E0801", Format;
     // ── warnings ──
+    /// A local named like a module, an alias or a name an import binds,
+    /// which it hides.
+    HiddenImport = "W0201", Resolve;
     /// An import that nothing in its file uses.
     UnusedImport = "W0202", Resolve;
+    /// A `let` or pattern name that nothing uses.
+    UnusedName = "W0203", Resolve;
 }
 
 // ── The diagnostic ──────────────────────────────────────────────────

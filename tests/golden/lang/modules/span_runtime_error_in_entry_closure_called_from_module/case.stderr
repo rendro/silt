@@ -1,3 +1,10 @@
+warning[type]: 'a' is never used
+ --> util.silt:4:8
+   |
+ 4 |   let (a, b) = (s, x / 0)
+   |        ^ 'a' is never used
+  = help: remove it, or name it `_a`
+
 error[runtime]: division by zero
  --> main.silt:8:29
    |

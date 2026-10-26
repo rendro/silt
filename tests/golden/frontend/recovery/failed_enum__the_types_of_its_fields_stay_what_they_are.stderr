@@ -13,3 +13,10 @@ error[type]: operator '+' requires Int or Float, got 'String'; build strings wit
     |
  18 |   a + p.x + "s"
     |             ^^^ operator '+' requires Int or Float, got 'String'; build strings with interpolation, e.g. "{a}{b}"
+
+warning[type]: 's' is never used
+ --> failed_enum__the_types_of_its_fields_stay_what_they_are.silt:22:7
+    |
+ 22 |   let s = Circle(1)
+    |       ^ 's' is never used
+  = help: remove it, or name it `_s`

@@ -1,3 +1,9 @@
+warning[type]: 'b' is never used
+ --> returns__the_log_of_tail_calls_ends_with_its_frame.silt:114:7
+     |
+ 114 |   let b = countu(2)
+     |       ^ 'b' is never used
+  = help: remove it, or name it `_b`
   FAIL returns__the_log_of_tail_calls_ends_with_its_frame.silt::test_stale_int
     error[runtime]: division by zero
      --> returns__the_log_of_tail_calls_ends_with_its_frame.silt:46:3

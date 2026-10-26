@@ -1,0 +1,6 @@
+warning[type]: local 'length' hides 'length', imported from module 'string'
+ --> <repl:2>:1:10
+   |
+ 1 | fn twice(length: Int) -> Int { length * 2 }
+   |          ^^^^^^ local 'length' hides 'length', imported from module 'string'
+  = help: rename the local

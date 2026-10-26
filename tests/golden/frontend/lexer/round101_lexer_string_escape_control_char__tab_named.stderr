@@ -3,3 +3,10 @@ error[lex]: unknown escape sequence: \\t
    |
  6 |   let s = "a\	b"
    |              	^ unknown escape sequence: \\t
+
+warning[type]: 's' is never used
+ --> round101_lexer_string_escape_control_char__tab_named.silt:6:7
+   |
+ 6 |   let s = "a\	b"
+   |       ^ 's' is never used
+  = help: remove it, or name it `_s`

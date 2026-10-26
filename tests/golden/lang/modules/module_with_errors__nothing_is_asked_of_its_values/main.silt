@@ -20,16 +20,16 @@ fn main() {
   println(v == v)
   println(v < v)
   println("{v}")
-  let w = v.{ a: 1 }
+  let _w = v.{ a: 1 }
   println(#{ v: 1 })
   match broken.pair() { (a, b) -> println(a.show() + b) }
-  let (p, q) = broken.pair()
+  let (p, _q) = broken.pair()
   println(p.show())
   let f = { -> broken.thing() }
   println(f().show())
   let xs = [broken.thing()]
   match xs {
-    [h, ..t] -> println(h.show())
+    [h, ..] -> println(h.show())
     _ -> ()
   }
 }

@@ -1,0 +1,13 @@
+warning[type]: unused import 'list'
+ --> the_suggested_alias_is_free.silt:4:1
+   |
+ 4 | import list
+   | ^^^^^^^^^^^ unused import 'list'
+  = help: remove the line `import list`
+
+warning[type]: local 'list' hides the imported module 'list'
+ --> the_suggested_alias_is_free.silt:7:10
+   |
+ 7 | fn count(list: List(Int)) -> Int {
+   |          ^^^^ local 'list' hides the imported module 'list'
+  = help: rename the local, or import the module under another name: `import list as li`

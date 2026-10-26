@@ -1,0 +1,27 @@
+warning[type]: 'total' is never used
+ --> unused_names.silt:13:7
+    |
+ 13 |   let total = 0
+    |       ^^^^^ 'total' is never used
+  = help: remove it, or name it `_total`
+
+warning[type]: 'y' is never used
+ --> unused_names.silt:15:18
+    |
+ 15 |   let Point { x, y } = Point { x: 1, y: 2 }
+    |                  ^ 'y' is never used
+  = help: remove it, or name it `_y`
+
+warning[type]: 'b' is never used
+ --> unused_names.silt:18:10
+    |
+ 18 |     [(a, b), ..] -> a
+    |          ^ 'b' is never used
+  = help: remove it, or name it `_b`
+
+warning[type]: 'steps' is never used
+ --> unused_names.silt:24:15
+    |
+ 24 |   loop n = 3, steps = 0 {
+    |               ^^^^^ 'steps' is never used
+  = help: remove it, or name it `_steps`

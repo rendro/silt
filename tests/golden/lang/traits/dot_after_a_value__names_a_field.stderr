@@ -1,10 +1,3 @@
-warning[type]: unused import 'list'
- --> dot_after_a_value__names_a_field.silt:10:1
-    |
- 10 | import list
-    | ^^^^^^^^^^^ unused import 'list'
-  = help: remove the line `import list`
-
 error[type]: type 'Int' has no field 'frobnicate'
  --> dot_after_a_value__names_a_field.silt:18:11
     |
@@ -65,3 +58,17 @@ error[type]: type 'Int' has no field 'greet'
  27 |   let g = n.greet
     |           ^^^^^^^ type 'Int' has no field 'greet'
   = help: `greet` is a method of trait `Greet`: call it as `Greet.greet(n)`
+
+warning[type]: unused import 'list'
+ --> dot_after_a_value__names_a_field.silt:10:1
+    |
+ 10 | import list
+    | ^^^^^^^^^^^ unused import 'list'
+  = help: remove the line `import list`
+
+warning[type]: 'g' is never used
+ --> dot_after_a_value__names_a_field.silt:27:7
+    |
+ 27 |   let g = n.greet
+    |       ^ 'g' is never used
+  = help: remove it, or name it `_g`

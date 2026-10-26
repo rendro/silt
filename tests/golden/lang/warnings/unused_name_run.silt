@@ -1,0 +1,5 @@
+-- A warning about a name never stops `silt run`.
+fn main() {
+  let unused = 1
+  println("ran")
+}

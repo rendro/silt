@@ -1,3 +1,5 @@
+74:21 warning 'msg' is never used\nhelp: remove it, or name it `_msg`
+135:14 warning 'y' is never used\nhelp: remove it, or name it `_y`
 > hover 74:14
 ```silt
 Fn(String, Int) -> JsonError

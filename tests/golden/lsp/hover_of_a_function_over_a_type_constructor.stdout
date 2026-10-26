@@ -19,7 +19,7 @@ fn wrap(x: a, type m) -> m(a) where m: Pointed
 ```silt
 fn shown(xs: f(a)) -> f(String) where f: Mapping, a: Display
 ```
-> hover 37:11
+> hover 37:12
 ```silt
 fn keep(xs: m(a)) -> m(a)
 ```

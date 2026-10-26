@@ -106,19 +106,48 @@ fn same_name(text: &str, a: &str, b: &str) -> String {
     out
 }
 
+/// `stderr` without its warnings. A rename may change what they say (a
+/// local that hid an import may no longer hide it), and a program under
+/// another name is the same program when its errors and its output are.
+fn without_warnings(stderr: &str) -> String {
+    let mut out = String::new();
+    let mut in_warning = false;
+    for line in stderr.split_inclusive('\n') {
+        if line.starts_with("warning[") {
+            in_warning = true;
+            continue;
+        }
+        if in_warning {
+            // A warning's other lines are indented; a blank line ends it.
+            if line.starts_with(' ') {
+                continue;
+            }
+            in_warning = false;
+            if line.trim().is_empty() {
+                continue;
+            }
+        }
+        out.push_str(line);
+    }
+    out
+}
+
 /// What is compared: the check of every file, the disasm of the entry,
-/// and the run of the entry when `run`.
+/// and the run of the entry when `run`, each without its warnings.
 fn verdict(dir: &Path, files: &[PathBuf], entry: &str, run: bool) -> Vec<String> {
     let mut out = Vec::new();
     for file in files {
         let name = file.to_string_lossy().replace('\\', "/");
         let (code, stdout, stderr) = silt(dir, &["check", &name]);
+        let stderr = without_warnings(&stderr);
         out.push(format!("check {name}: {code:?}\n{stdout}{stderr}"));
     }
     let (code, stdout, stderr) = silt(dir, &["disasm", entry]);
+    let stderr = without_warnings(&stderr);
     out.push(format!("disasm: {code:?}\n{stdout}{stderr}"));
     if run {
         let (code, stdout, stderr) = silt(dir, &["run", entry]);
+        let stderr = without_warnings(&stderr);
         out.push(format!("run: {code:?}\n{stdout}{stderr}"));
     }
     out

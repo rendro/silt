@@ -9,3 +9,10 @@ error[type]: cannot infer the type of `x` — add an annotation, e.g. `let x: So
    |
  7 |   let x = default()
    |           ^^^^^^^^^ cannot infer the type of `x` — add an annotation, e.g. `let x: SomeType = ...`
+
+warning[type]: 'x' is never used
+ --> typechecker_resolve_cascade_after_undefined_variable__unanchored_value_still_cannot_infer.silt:7:7
+   |
+ 7 |   let x = default()
+   |       ^ 'x' is never used
+  = help: remove it, or name it `_x`

@@ -1,0 +1,9 @@
+-- cmd: check
+-- The alias that the hint of a hiding local suggests is free: `l` is
+-- bound, so it is `li`.
+import list
+import set as l
+
+fn count(list: List(Int)) -> Int {
+  l.length(l.from_list(list))
+}

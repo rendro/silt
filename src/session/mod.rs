@@ -538,15 +538,21 @@ impl Session {
             }
         }
         let text = module.file.and_then(|f| self.sources.get(f));
-        let text = text.map_or("", |file| &file.text);
+        let hidden_imports = match kind {
+            ModuleKind::Cell => self.cells.hidden_imports(),
+            _ => HashMap::new(),
+        };
         let resolution = names::resolve_module(
             &mut ast,
             id,
             kind,
             &imported,
             Arc::make_mut(&mut self.defs),
-            text,
-            !module.incomplete,
+            names::Source {
+                text: text.map_or("", |file| &file.text),
+                complete: !module.incomplete,
+                hidden_imports: &hidden_imports,
+            },
         );
         let cell = kind == ModuleKind::Cell;
         let reach = (!cell).then(|| self.graph.reach(id));
@@ -575,13 +581,19 @@ impl Session {
         );
         // Of a text that is cut short only the lexer's error is
         // reported: the declarations behind the cut are missing, and
-        // every use of one would be an error of its own.
+        // every use of one would be an error of its own. The warnings
+        // come after the errors, in the order of the text.
+        let (mut warnings, errors): (Vec<Diagnostic>, Vec<Diagnostic>) = (resolution.diagnostics)
+            .into_iter()
+            .partition(Diagnostic::is_warning);
+        warnings.sort_by_key(|d| d.span.start);
         let diagnostics = match self.graph.module(id).cut_short {
             true => bugs,
             false => bugs
                 .into_iter()
-                .chain(resolution.diagnostics)
+                .chain(errors)
                 .chain(check.diagnostics)
+                .chain(warnings)
                 .collect(),
         };
         let diagnostics =
@@ -939,7 +951,6 @@ fn say_hidden_modules(
     diagnostics: &mut [Diagnostic],
 ) {
     for h in hidden {
-        let (line, _) = sources.line_col((h.local.file, h.local.start));
         for d in diagnostics.iter_mut().filter(|d| {
             d.span == h.access
                 && matches!(
@@ -952,10 +963,19 @@ fn say_hidden_modules(
                 true => format!("`{module}`"),
                 false => format!("`{module}` (imported as `{name}`)"),
             };
-            d.help = vec![format!(
-                "`{name}` here is the local from line {line}, which hides the module {hidden}; \
-                 rename the local"
-            )];
+            d.help = vec![match h.by {
+                names::HiddenBy::Local(local) => {
+                    let (line, _) = sources.line_col((local.file, local.start));
+                    format!(
+                        "`{name}` here is the local from line {line}, which hides the module \
+                         {hidden}; rename the local"
+                    )
+                }
+                names::HiddenBy::EarlierEntry => format!(
+                    "`{name}` here is the `let` of an earlier entry, which hides the module \
+                     {hidden}; rename it, or import the module under another name"
+                ),
+            }];
         }
     }
 }

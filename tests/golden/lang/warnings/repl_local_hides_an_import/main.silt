@@ -1,0 +1,4 @@
+-- cmd: repl
+-- stdin: import string.{ length }\nfn twice(length: Int) -> Int { length * 2 }\ntwice(2)\n:quit\n
+-- In a REPL entry, a local that hides what an earlier entry imported
+-- warns as in a file.

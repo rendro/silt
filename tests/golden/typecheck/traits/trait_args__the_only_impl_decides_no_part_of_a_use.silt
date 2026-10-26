@@ -17,7 +17,7 @@ trait From(Int) for A { fn from(e: Int) -> A { A("int") } }
 trait From(List(a)) for B { fn from(e: List(a)) -> B { B("any list") } }
 fn main() {
   let xs = list.drop([], 0)
-  let a = A.from(xs)
-  let b = B.from(list.drop([], 0))
+  let _ = A.from(xs)
+  let _ = B.from(list.drop([], 0))
   println("x")
 }

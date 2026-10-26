@@ -34,3 +34,10 @@ error[type]: ? operator can only be used inside a function that returns Result o
  30 |   let _ = Some(1)?
     |           ^^^^^^^^ ? operator can only be used inside a function that returns Result or Option
   = note: the ?-ed expression is Option(Int), but the enclosing function returns ()
+
+warning[type]: 'f' is never used
+ --> try__in_a_function_whose_body_gives_no_wrapper_has_one_text.silt:15:7
+    |
+ 15 |   let f = { -> Some(1)? }
+    |       ^ 'f' is never used
+  = help: remove it, or name it `_f`

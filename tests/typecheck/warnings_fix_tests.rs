@@ -82,3 +82,40 @@ fn removing_an_unused_import_keeps_the_comment_behind_it() {
         "-- for later\nimport string\n\nfn main() {\n  println(string.length(\"ab\"))\n}\n"
     );
 }
+
+#[test]
+fn naming_an_unused_name_with_an_underscore_silences_it() {
+    for (text, after) in [
+        (
+            "fn main() {\n  let total = 1\n  println(\"x\")\n}\n",
+            "fn main() {\n  let _total = 1\n  println(\"x\")\n}\n",
+        ),
+        // A field written alone keeps its field.
+        (
+            "type P {\n  x: Int,\n  y: Int,\n}\n\nfn main() {\n  let P { x, y } = P { x: 1, y: 2 }\n  println(x)\n}\n",
+            "type P {\n  x: Int,\n  y: Int,\n}\n\nfn main() {\n  let P { x, y: _y } = P { x: 1, y: 2 }\n  println(x)\n}\n",
+        ),
+        // Every alternative of an or-pattern binds the name.
+        (
+            "type E {\n  A(Int),\n  B(Int),\n}\n\nfn main() {\n  match A(1) {\n    A(n) | B(n) -> println(\"ab\")\n  }\n}\n",
+            "type E {\n  A(Int),\n  B(Int),\n}\n\nfn main() {\n  match A(1) {\n    A(_n) | B(_n) -> println(\"ab\")\n  }\n}\n",
+        ),
+    ] {
+        let found = warnings(text, Code::UnusedName);
+        assert_eq!(found.len(), 1, "{text}: {found:?}");
+        let fixed_text = fixed(text, &found[0]);
+        assert_eq!(fixed_text, after);
+        assert!(
+            check_str(&fixed_text).is_empty(),
+            "{:?}",
+            check_str(&fixed_text)
+        );
+    }
+}
+
+#[test]
+fn a_parameter_that_nothing_uses_does_not_warn() {
+    let text = "fn f(x: Int, y: Int) -> Int {\n  x\n}\n\nfn main() {\n  println(f(1, 2))\n  \
+                let g = { a, b -> a }\n  println(g(1, 2))\n}\n";
+    assert!(check_str(text).is_empty(), "{:?}", check_str(text));
+}

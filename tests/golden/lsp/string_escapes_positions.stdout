@@ -1,2 +1,4 @@
+6:7 warning 's' is never used\nhelp: remove it, or name it `_s`
 6:23 error \u{D800} is a surrogate, not a Unicode scalar value
+7:7 warning 'n' is never used\nhelp: remove it, or name it `_n`
 7:16 error type mismatch: expected Int, got String

@@ -20,7 +20,7 @@ fn get_filename() {
   -- Pre round-74 it returned the silt binary's full argv, forcing a
   -- `|> list.drop(3)` dance to skip `["silt", "run", "this_file.silt"]`.
   match io.args() {
-    [file, ..rest] -> file
+    [file, ..] -> file
     _ -> default_file
   }
 }

@@ -15,3 +15,17 @@ error[type]: type mismatch: expected Int, got List(Int)
    |
  6 |   let c: Int = [1]
    |                ^^^ type mismatch: expected Int, got List(Int)
+
+warning[type]: 'b' is never used
+ --> cli_test_rendering_tests__check_multiple_errors_blank_separator.silt:5:7
+   |
+ 5 |   let b: Int = true
+   |       ^ 'b' is never used
+  = help: remove it, or name it `_b`
+
+warning[type]: 'c' is never used
+ --> cli_test_rendering_tests__check_multiple_errors_blank_separator.silt:6:7
+   |
+ 6 |   let c: Int = [1]
+   |       ^ 'c' is never used
+  = help: remove it, or name it `_c`

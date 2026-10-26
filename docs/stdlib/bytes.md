@@ -42,6 +42,7 @@ work as `Map`/`Set` keys and respect the standard `==` operator.
 
 ```silt
 import bytes
+import list
 
 fn main() {
   -- Construction
@@ -55,6 +56,7 @@ fn main() {
   println(bytes.length(hello)) -- 5
   println(bytes.get(hello, 0)) -- Some(104)
   println(bytes.get(hello, 5)) -- None
+  println(bytes.length(raw)) -- 4
 
   -- Encoding
   println(bytes.to_hex(hello)) -- 68656c6c6f
@@ -89,6 +91,7 @@ fn main() {
   println(bytes.ends_with(msg, bytes.from_string("baz"))) -- true
   -- bytes.split yields [foo, bar, baz] as three Bytes values.
   let parts = bytes.split(msg, sep)
+  println(list.length(parts)) -- 3
 }
 ```
 

@@ -9,3 +9,17 @@ error[type]: or-pattern alternatives bind 'n' to conflicting types: Int vs Strin
     |
  15 |     Left(n) | Right(n) -> 2
     |               ^^^^^^^^ or-pattern alternatives bind 'n' to conflicting types: Int vs String
+
+warning[type]: 'a' is never used
+ --> or_pattern__an_error_points_at_the_alternative.silt:11:10
+    |
+ 11 |     Some(a) | None -> 1
+    |          ^ 'a' is never used
+  = help: remove it, or name it `_a`
+
+warning[type]: 'n' is never used
+ --> or_pattern__an_error_points_at_the_alternative.silt:15:10
+    |
+ 15 |     Left(n) | Right(n) -> 2
+    |          ^ 'n' is never used
+  = help: remove it, or name it `_n`
