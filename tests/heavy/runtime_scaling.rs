@@ -576,7 +576,7 @@ fn five_thousand_waiting_tasks_share_the_programs_globals() {
         .and_then(|kb| kb.trim().trim_end_matches("kB").trim().parse().ok())
         .expect("VmHWM, in kB");
     assert!(
-        resident < 100 * 1024,
-        "5,000 waiting tasks of a program of 2,000 functions held {resident} kB"
+        resident < 1,
+        "DIAG-HWM {resident} kB"
     );
 }
