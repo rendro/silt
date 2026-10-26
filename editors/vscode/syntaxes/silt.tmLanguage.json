@@ -114,7 +114,7 @@
     },
     "keywords": {
       "name": "keyword.control.silt",
-      "match": "\\b(as|else|fn|import|let|loop|match|pub|return|trait|type|when|where)\\b"
+      "match": "\\b(as|else|fn|import|let|loop|match|opaque|pub|return|trait|type|when|where)\\b"
     },
     "booleans": {
       "name": "constant.language.boolean.silt",

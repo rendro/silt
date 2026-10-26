@@ -1,0 +1,11 @@
+error[parse]: a type alias cannot be opaque: declare a type, `pub opaque type Meters { Meters(Int) }`
+ --> opaque_on_an_alias.silt:4:5
+   |
+ 4 | pub opaque type Meters = Int
+   |     ^^^^^^ a type alias cannot be opaque: declare a type, `pub opaque type Meters { Meters(Int) }`
+
+error[parse]: a type alias cannot be opaque: declare a type, `pub opaque type Pair(a) { Pair((a, a)) }`
+ --> opaque_on_an_alias.silt:6:5
+   |
+ 6 | pub opaque type Pair(a) = (a, a)
+   |     ^^^^^^ a type alias cannot be opaque: declare a type, `pub opaque type Pair(a) { Pair((a, a)) }`

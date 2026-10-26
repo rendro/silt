@@ -904,6 +904,10 @@ impl Printer<'_> {
             docs.push(self.tok(Token::Pub));
             docs.push(space());
         }
+        if t.is_opaque {
+            docs.push(self.tok(Token::Opaque));
+            docs.push(space());
+        }
         docs.push(self.tok(Token::Type));
         docs.push(space());
         docs.push(self.name());
