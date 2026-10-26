@@ -1,3 +1,4 @@
+use super::typeexpr::type_expr_text;
 use super::*;
 
 /// What a trait asks of a type variable for a type to have it: the
@@ -394,13 +395,24 @@ impl TypeChecker {
                         Some(args) if !args.is_empty() => self.show_bound(*trait_name, args),
                         _ => self.show_trait(*trait_name),
                     };
+                    // (A type constructor as its header writes it,
+                    // `Result(_, e)`.)
+                    let target = match self.tables.impl_self_types.get(impl_key) {
+                        Some(con @ Type::Con(..)) => {
+                            let rigid: Vec<RigidId> = (self.impl_var_names.get(impl_key))
+                                .into_iter()
+                                .flatten()
+                                .map(|&(var, name)| RigidId { var, name })
+                                .collect();
+                            self.show_type(&rigidify(con, &rigid))
+                        }
+                        _ => self.show_type(&Type::Generic(*type_name, Vec::new())),
+                    };
                     self.error(
                         Code::InvalidTraitImpl,
                         format!(
                             "trait impl '{}' for '{}' is missing method '{}'",
-                            shown,
-                            self.show_type(&Type::Generic(*type_name, Vec::new())),
-                            method_name
+                            shown, target, method_name
                         ),
                         diag_span,
                     );
@@ -471,6 +483,153 @@ impl TypeChecker {
         self.register_trait_decl_inner(t);
     }
 
+    /// Whether `tr` is a trait of type constructors (`Functor`), not of
+    /// types.
+    pub(super) fn is_constructor_trait(&self, tr: TraitKey) -> bool {
+        self.constructor_traits.contains(&tr)
+            || self
+                .tables
+                .traits
+                .get(&tr)
+                .is_some_and(|info| info.constructor)
+    }
+
+    /// Settle which traits of `decls` are traits of type constructors
+    /// (`constructor_traits`), before any is registered: a trait whose
+    /// methods write `Self` with a type argument, and a trait that writes
+    /// it in neither form and has such a supertrait. What a trait
+    /// declares against its kind is reported.
+    pub(super) fn settle_trait_kinds(&mut self, decls: &[Decl]) {
+        let traits: Vec<&TraitDecl> = (decls.iter())
+            .filter_map(|decl| match decl {
+                Decl::Trait(t) => Some(t),
+                _ => None,
+            })
+            .collect();
+        let keys: Vec<TraitKey> = traits.iter().map(|t| self.own_trait(t.name)).collect();
+        for key in &keys {
+            self.constructor_traits.remove(key);
+        }
+        // How each trait's methods write `Self`: with a type argument
+        // (`Some(true)`), without one, or not at all.
+        let mut written: Vec<Option<bool>> = Vec::with_capacity(traits.len());
+        for (t, key) in traits.iter().zip(&keys) {
+            let mut applied: Option<Symbol> = None;
+            let mut bare: Option<(Symbol, Span)> = None;
+            for m in &t.methods {
+                let mut uses = SelfUses::default();
+                for param in &m.params {
+                    if let (ParamKind::Data, Some(te)) = (&param.kind, &param.ty) {
+                        uses.read(te);
+                    }
+                }
+                if let Some(te) = &m.return_type {
+                    uses.read(te);
+                }
+                if uses.applied && applied.is_none() {
+                    applied = Some(m.name);
+                }
+                if let Some(span) = uses.bare
+                    && bare.is_none()
+                {
+                    bare = Some((m.name, span));
+                }
+            }
+            if let (Some(with), Some((without, span))) = (applied, bare) {
+                let message = format!(
+                    "'Self' is written with a type argument in '{with}' and without one in \
+                     '{without}': a trait is for types or for type constructors, not both"
+                );
+                self.error(Code::KindMismatch, message, span);
+            }
+            written.push(match (applied, bare) {
+                (Some(_), _) => Some(true),
+                (None, Some(_)) => Some(false),
+                (None, None) => None,
+            });
+            if applied.is_some() {
+                self.constructor_traits.insert(*key);
+            }
+        }
+        // A trait that does not say is of its supertraits' kind.
+        loop {
+            let mut changed = false;
+            for (i, t) in traits.iter().enumerate() {
+                if written[i].is_some() || self.constructor_traits.contains(&keys[i]) {
+                    continue;
+                }
+                let of_constructors = (t.supertraits.iter()).any(|r| {
+                    self.named_trait(r.res, r.name)
+                        .is_some_and(|sup| self.is_constructor_trait(sup))
+                });
+                if of_constructors {
+                    self.constructor_traits.insert(keys[i]);
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        for (i, t) in traits.iter().enumerate() {
+            let constructor = self.constructor_traits.contains(&keys[i]);
+            for r in &t.supertraits {
+                let Some(sup) = self.named_trait(r.res, r.name) else {
+                    continue;
+                };
+                if self.is_constructor_trait(sup) == constructor {
+                    continue;
+                }
+                let sup_name = self.show_trait(sup);
+                let message = match constructor {
+                    true => format!(
+                        "trait '{}' is a trait of type constructors; its supertrait '{sup_name}' \
+                         is a trait of types",
+                        t.name
+                    ),
+                    false => format!(
+                        "trait '{}' is a trait of types; its supertrait '{sup_name}' is a trait \
+                         of type constructors",
+                        t.name
+                    ),
+                };
+                self.error(Code::KindMismatch, message, r.span);
+            }
+            if !constructor {
+                continue;
+            }
+            if !t.params.is_empty() {
+                let params: Vec<String> = t.params.iter().map(|p| resolve(*p)).collect();
+                let message = format!(
+                    "a trait of type constructors has no type parameters: '{}({})'",
+                    t.name,
+                    params.join(", ")
+                );
+                self.error(Code::InvalidTraitDeclaration, message, t.name_span);
+            }
+            for a in &t.assoc_types {
+                let message = format!(
+                    "a trait of type constructors has no associated types: '{}'",
+                    a.name
+                );
+                self.error(Code::InvalidTraitDeclaration, message, a.span);
+            }
+            for m in &t.methods {
+                if let Some(param) = m.params.first()
+                    && writes_self(m)
+                    && param.ty.is_none()
+                {
+                    self.error(
+                        Code::InvalidTraitDeclaration,
+                        "a trait of type constructors names its parameters: write `xs: Self(a)` \
+                         instead of `self`",
+                        param.pattern.span,
+                    );
+                }
+            }
+        }
+    }
+
     /// Report each supertrait of `t` written with another number of type
     /// arguments than the supertrait has parameters
     /// (`trait Bad: Holds(Int, String)` for `trait Holds(a)`).
@@ -504,6 +663,7 @@ impl TypeChecker {
     /// built-in synthetic decls (via `builtin_trait_decls`).
     pub(super) fn register_trait_decl_inner(&mut self, t: &TraitDecl) {
         let key = self.own_trait(t.name);
+        let constructor = self.constructor_traits.contains(&key);
         // The supertraits and the associated types' bounds. A trait name
         // that names no trait is reported here, unless the resolver
         // reported it.
@@ -589,6 +749,7 @@ impl TypeChecker {
                 receivers: std::collections::HashSet::new(),
                 method_bounds: HashMap::new(),
                 self_var: 0,
+                constructor,
                 var_names: Vec::new(),
                 default_method_bodies: HashMap::new(),
                 assoc_types: pre_assoc_types,
@@ -617,6 +778,10 @@ impl TypeChecker {
         };
         let self_sym = intern("Self");
         let mut var_names: Vec<(TyVar, Symbol)> = vec![(self_var_id, self_sym)];
+        if constructor {
+            self.constructor_vars.insert(self_var_id);
+            self.tables.constructor_names.insert(self_var_id, self_sym);
+        }
         var_names.extend(param_var_ids.iter().copied().zip(t.params.iter().copied()));
         // A trait declares complete signatures: each parameter but `self`
         // is annotated, and a method without a return type returns `()`.
@@ -787,6 +952,7 @@ impl TypeChecker {
                 receivers,
                 method_bounds,
                 self_var: self_var_id,
+                constructor,
                 var_names,
                 default_method_bodies,
                 assoc_types,
@@ -996,11 +1162,113 @@ impl TypeChecker {
     /// keeps its name), a type of another module with its module
     /// (`time.Date`, `shapes.Square`).
     fn impl_target_name(&self, ti: &TraitImpl, target_type: TypeRef) -> String {
-        match self.other_module(target_type) {
+        let head = match self.other_module(target_type) {
             Some(module) if ti.target_type == target_type.name => {
                 format!("{module}.{}", ti.target_type)
             }
             _ => ti.target_type.to_string(),
+        };
+        // A type constructor, with its arguments (`Result(_, e)`).
+        match ti.target_type_args.iter().any(is_hole) {
+            true => {
+                let args: Vec<String> = ti.target_type_args.iter().map(type_expr_text).collect();
+                format!("{head}({})", args.join(", "))
+            }
+            false => head,
+        }
+    }
+
+    /// Whether the header of the impl `ti` of `tr`, for the type
+    /// `written`, fits the trait's kind: an impl of a trait of type
+    /// constructors writes `_` for its type's first type argument
+    /// (`trait Functor for Result(_, e)`), an impl of a trait of types
+    /// names every type argument. What does not fit is reported.
+    fn impl_header_fits(&mut self, ti: &TraitImpl, tr: TraitKey, written: TypeRef) -> bool {
+        let holes: Vec<usize> = (ti.target_type_args.iter().enumerate())
+            .filter(|(_, arg)| is_hole(arg))
+            .map(|(i, _)| i)
+            .collect();
+        let trait_name = self.impl_trait_name(ti);
+        let head = resolve(ti.target_type);
+        let arity = self.type_arity(written).or_else(|| {
+            builtin_type_name(written)
+                .and_then(crate::types::builtins::lookup)
+                .and_then(|b| b.arity)
+                .map(|a| a as usize)
+        });
+        if !self.is_constructor_trait(tr) {
+            if holes.is_empty() {
+                return true;
+            }
+            // Each `_` a name the header does not use yet.
+            let mut letters = ('a'..='z')
+                .map(|c| c.to_string())
+                .filter(|name| !ti.target_param_names.iter().any(|p| resolve(*p) == *name));
+            let args: Vec<String> = (ti.target_type_args.iter())
+                .map(|arg| match is_hole(arg) {
+                    true => letters.next().unwrap_or_else(|| "_".to_string()),
+                    false => type_expr_text(arg),
+                })
+                .collect();
+            let message = format!(
+                "trait '{trait_name}' is for types, not type constructors: name every type argument"
+            );
+            let help = format!("write `trait {trait_name} for {head}({})`", args.join(", "));
+            self.error_help(Code::KindMismatch, (message, Some(help)), ti.span);
+            return false;
+        }
+        if arity == Some(0) {
+            let message =
+                format!("type '{head}' takes no type arguments, so it is not a type constructor");
+            self.error(Code::KindMismatch, message, ti.span);
+            return false;
+        }
+        match holes.as_slice() {
+            [0] => true,
+            [] => {
+                // The header with `_` first: the arguments it writes after
+                // the first, else the type's parameters.
+                let rest: Vec<String> = match ti.target_type_args.split_first() {
+                    Some((_, rest)) => rest.iter().map(type_expr_text).collect(),
+                    None => {
+                        let declared: Vec<String> = (self.tables.enums.get(&written))
+                            .map(|e| e.params.iter().skip(1).map(|p| resolve(*p)).collect())
+                            .unwrap_or_default();
+                        let mut letters = ('b'..='z').map(|c| c.to_string());
+                        (1..arity.unwrap_or(1))
+                            .map(|i| match declared.get(i - 1) {
+                                Some(name) => name.clone(),
+                                None => letters.next().unwrap_or_else(|| "_".to_string()),
+                            })
+                            .collect()
+                    }
+                };
+                let args: Vec<String> = std::iter::once("_".to_string()).chain(rest).collect();
+                let message = format!(
+                    "trait '{trait_name}' is for type constructors: its impl writes '_' for the \
+                     first type argument"
+                );
+                let help = format!("write `trait {trait_name} for {head}({})`", args.join(", "));
+                self.error_help(Code::KindMismatch, (message, Some(help)), ti.span);
+                false
+            }
+            _ => {
+                let message = format!(
+                    "'_' must be the first type argument of '{head}': a type constructor stands \
+                     for its first type argument"
+                );
+                let help = match builtin_type_name(written) {
+                    Some("Result") => {
+                        Some("to change the error of a Result, use `result.map_err`".to_string())
+                    }
+                    Some(_) => None,
+                    None => Some(format!(
+                        "to map another argument of '{head}', declare it first in '{head}'"
+                    )),
+                };
+                self.error_help(Code::KindMismatch, (message, help), ti.span);
+                false
+            }
         }
     }
 
@@ -1076,6 +1344,11 @@ impl TypeChecker {
             );
             return;
         };
+        if !self.impl_header_fits(ti, trait_key, written) {
+            self.unresolved_impl_methods
+                .extend(ti.methods.iter().map(|m| m.name));
+            return;
+        }
         let args_key = self.impl_args_key_of(ti);
         let impl_key = (trait_key, target_type, args_key);
 
@@ -1163,6 +1436,17 @@ impl TypeChecker {
         for &param_name in &ti.target_param_names {
             impl_param_map.insert(param_name, self.fresh_var());
         }
+        // The impl of a trait of type constructors is for the
+        // constructor its header writes, `_` for the argument it maps
+        // over (`impl_header_fits`): the self type is read with `_` a
+        // variable, and is that type's constructor.
+        let hole = intern("_");
+        let mapped = (ti.target_type_args.iter().any(is_hole))
+            .then(|| self.fresh_tv())
+            .map(|(ty, var)| {
+                impl_param_map.insert(hole, ty);
+                var
+            });
 
         // Construct the self_type. Three cases:
         //   1. Bare-target form (`trait X for Int`): target_type_args is
@@ -1395,6 +1679,30 @@ impl TypeChecker {
                         Self::type_from_name(target_type)
                     }
                     _ => Type::Generic(written, resolved_args),
+                }
+            }
+        };
+        let self_type = match mapped {
+            None => self_type,
+            Some(var) => {
+                impl_param_map.remove(&hole);
+                match self.apply(&self_type).split_constructor() {
+                    Some((head, rest, Type::Var(first)))
+                        if first == var && !rest.iter().any(|t| free_vars_in(t).contains(&var)) =>
+                    {
+                        Type::Con(head, rest)
+                    }
+                    // (An alias whose first parameter is not its type's
+                    // first argument.)
+                    _ => {
+                        let message = format!(
+                            "'_' must be the first type argument of '{}': a type constructor \
+                             stands for its first type argument",
+                            resolve(ti.target_type)
+                        );
+                        self.error(Code::KindMismatch, message, ti.span);
+                        Type::Error
+                    }
                 }
             }
         };
@@ -2648,6 +2956,57 @@ impl TypeChecker {
             self.error(Code::ArityMismatch, msg, span);
         }
         false
+    }
+}
+
+/// Whether the impl header argument `arg` is `_`, the argument an impl
+/// of a trait of type constructors maps over.
+fn is_hole(arg: &TypeExpr) -> bool {
+    matches!(&arg.kind, TypeExprKind::Named { module: None, name, .. } if resolve(*name) == "_")
+}
+
+/// Where a signature writes `Self`: with a type argument somewhere
+/// (`Self(a)`), and the first place without one.
+#[derive(Default)]
+struct SelfUses {
+    applied: bool,
+    bare: Option<Span>,
+}
+
+impl SelfUses {
+    fn read(&mut self, te: &TypeExpr) {
+        match &te.kind {
+            TypeExprKind::SelfType => {
+                self.bare.get_or_insert(te.span);
+            }
+            TypeExprKind::Generic {
+                module, name, args, ..
+            } => {
+                if module.is_none() && resolve(*name) == "Self" {
+                    self.applied = true;
+                }
+                for arg in args {
+                    self.read(arg);
+                }
+            }
+            TypeExprKind::Tuple(parts) => {
+                for part in parts {
+                    self.read(part);
+                }
+            }
+            TypeExprKind::Function(params, ret) => {
+                for part in params.iter().chain([&**ret]) {
+                    self.read(part);
+                }
+            }
+            TypeExprKind::AnonRecord { fields, .. } => {
+                for (_, part) in fields {
+                    self.read(part);
+                }
+            }
+            TypeExprKind::AssocProj { receiver, .. } => self.read(receiver),
+            TypeExprKind::Named { .. } => {}
+        }
     }
 }
 

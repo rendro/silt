@@ -995,9 +995,7 @@ impl TypeChecker {
             self.private_method(tr, field, span);
             return Type::Error;
         }
-        let takes_self = matches!(method_ty, Type::Fun(params, _)
-            if params.iter().any(|p| matches!(p, Type::Var(v) if *v == info.self_var)));
-        if !takes_self {
+        if self.self_param(tr, field).is_none() {
             self.errors.push(
                 Diagnostic::error(
                     Code::InvalidMethodCall,
@@ -1350,9 +1348,12 @@ impl TypeChecker {
         let info = self.tables.traits.get(&tr)?;
         let (_, ty) = info.methods.iter().find(|(n, _)| *n == field)?;
         match ty {
-            Type::Fun(params, _) => params
-                .iter()
-                .position(|p| matches!(p, Type::Var(v) if *v == info.self_var)),
+            Type::Fun(params, _) => params.iter().position(|p| match p {
+                Type::Var(v) => *v == info.self_var,
+                // `xs: Self(a)` of a trait of type constructors.
+                Type::App(head, _) => matches!(&**head, Type::Var(v) if *v == info.self_var),
+                _ => false,
+            }),
             _ => None,
         }
     }
