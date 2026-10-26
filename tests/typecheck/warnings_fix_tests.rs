@@ -70,3 +70,15 @@ fn an_import_used_only_in_a_type_or_an_impl_header_is_used() {
                 json.Value.Null\n  }\n}\n\nfn status(_r: http.Request) -> Int {\n  200\n}\n";
     assert!(check_str(text).is_empty(), "{:?}", check_str(text));
 }
+
+#[test]
+fn removing_an_unused_import_keeps_the_comment_behind_it() {
+    let text = "import list -- for later\nimport string\n\nfn main() {\n  println(string.length(\"ab\"))\n}\n";
+    let found = warnings(text, Code::UnusedImport);
+    assert_eq!(found.len(), 1, "{found:?}");
+    let after = fixed(text, &found[0]);
+    assert_eq!(
+        after,
+        "-- for later\nimport string\n\nfn main() {\n  println(string.length(\"ab\"))\n}\n"
+    );
+}

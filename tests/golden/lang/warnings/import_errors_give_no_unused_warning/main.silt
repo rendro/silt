@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- An import that is an error already (a private item, a member the
+-- module does not have, a module that is not there) is not reported
+-- again as unused; the unused names beside it are.
+import helper.{ hidden, shown }
+import string.{ nope, length }
+import nosuch
+import list
+
+fn main() {
+  println(shown())
+}

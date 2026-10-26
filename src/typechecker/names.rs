@@ -1098,13 +1098,19 @@ struct Resolver<'a> {
 
 /// The bytes of the line, or the lines, that `span` is on in `text`,
 /// with the line break after them: what removing a declaration of its
-/// own lines removes.
+/// own lines removes. A comment behind the declaration stays, on a line
+/// of its own: then only the declaration and the blanks behind it go.
 fn lines_of(text: &str, span: Span) -> Range<u32> {
     let (start, end) = (span.start as usize, (span.end as usize).min(text.len()));
     let start = text[..start.min(text.len())]
         .rfind('\n')
         .map_or(0, |at| at + 1);
-    let end = text[end..].find('\n').map_or(text.len(), |at| end + at + 1);
+    let line_end = text[end..].find('\n').map_or(text.len(), |at| end + at + 1);
+    let rest = &text[end..line_end];
+    let end = match rest.trim().is_empty() {
+        true => line_end,
+        false => end + (rest.len() - rest.trim_start().len()),
+    };
     start as u32..end as u32
 }
 
@@ -1188,6 +1194,20 @@ impl Resolver<'_> {
             ) {
                 continue;
             }
+            // An import that is an error already (a name the module does
+            // not have, a private one, one this build lacks, one bound
+            // twice) is not reported again as unused.
+            let erred = |at: Span, diagnostics: &[Diagnostic]| {
+                diagnostics.iter().any(|d| {
+                    d.is_error()
+                        && d.span.file == at.file
+                        && d.span.start >= at.start
+                        && d.span.end <= at.end
+                })
+            };
+            if erred(*span, &self.diagnostics) && !matches!(target, ImportTarget::Items(..)) {
+                continue;
+            }
             let line = format!("import {}", target.written());
             let whole_line = |title: String| {
                 (
@@ -1214,7 +1234,7 @@ impl Resolver<'_> {
                 }
                 ImportTarget::Items(_, items) => {
                     for (at, (item, item_span)) in items.iter().enumerate() {
-                        if used.contains(item) {
+                        if used.contains(item) || erred(*item_span, &self.diagnostics) {
                             continue;
                         }
                         let help = format!("remove `{item}` from the import");
