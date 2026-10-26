@@ -286,6 +286,11 @@ impl TypeChecker {
                 }
             }
             Type::Rigid(r) if !self.rigid_alias.is_empty() => Type::Rigid(self.rigid_rep(*r)),
+            // A constructor variable applied, once the variable is a
+            // constructor, is the full type (`Option(_)` at `Int` is
+            // `Option(Int)`).
+            Type::App(head, arg) => Type::applied(self.apply(head), self.apply(arg)),
+            Type::Con(head, rest) => Type::Con(*head, rest.iter().map(|t| self.apply(t)).collect()),
             _ => ty.clone(),
         }
     }
@@ -1173,6 +1178,8 @@ pub(super) fn rigid_in(ty: &Type) -> Option<RigidId> {
             RowTail::Rigid(r) => Some(*r),
             _ => fields.values().find_map(rigid_in),
         },
+        Type::App(head, arg) => rigid_in(head).or_else(|| rigid_in(arg)),
+        Type::Con(_, rest) => rest.iter().find_map(rigid_in),
         Type::Int
         | Type::Float
         | Type::Bool
@@ -1200,6 +1207,8 @@ fn occurs_in(var: TyVar, ty: &Type) -> bool {
             fields.values().any(|t| occurs_in(var, t))
                 || matches!(tail, RowTail::Var(v) if *v == var)
         }
+        Type::App(head, arg) => occurs_in(var, head) || occurs_in(var, arg),
+        Type::Con(_, rest) => rest.iter().any(|t| occurs_in(var, t)),
         Type::Int
         | Type::Float
         | Type::Bool

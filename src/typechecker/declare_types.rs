@@ -613,6 +613,10 @@ impl TypeChecker {
                 self.find_alias_cycle(ret, visiting)
             }
             Type::AssocProj { receiver, .. } => self.find_alias_cycle(receiver, visiting),
+            Type::App(head, arg) => self
+                .find_alias_cycle(head, visiting)
+                .or_else(|| self.find_alias_cycle(arg, visiting)),
+            Type::Con(_, rest) => rest.iter().find_map(|t| self.find_alias_cycle(t, visiting)),
             Type::AnonRecord { fields, .. } => {
                 for t in fields.values() {
                     if let Some(c) = self.find_alias_cycle(t, visiting) {

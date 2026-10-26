@@ -1510,6 +1510,11 @@ fn row_tail_vars(ty: &Type, out: &mut Vec<TyVar>) {
             row_tail_vars(v, out);
         }
         Type::AssocProj { receiver, .. } => row_tail_vars(receiver, out),
+        Type::App(head, arg) => {
+            row_tail_vars(head, out);
+            row_tail_vars(arg, out);
+        }
+        Type::Con(_, rest) => rest.iter().for_each(|t| row_tail_vars(t, out)),
         Type::Int
         | Type::Float
         | Type::Bool

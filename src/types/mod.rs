@@ -223,9 +223,77 @@ pub enum Type {
         fields: BTreeMap<Symbol, Type>,
         tail: RowTail,
     },
+    /// A type constructor variable applied to a type, `m(Int)`: the head
+    /// is a variable (a unification variable or an annotation's) that
+    /// stands for a type constructor. Once the head is a constructor the
+    /// type is the full type (`Type::applied`).
+    App(Box<Type>, Box<Type>),
+    /// A type constructor: `head` with its first type argument open and
+    /// the others `rest` (`Option(_)`, `Result(_, String)`), what a type
+    /// constructor variable stands for.
+    Con(Head, Vec<Type>),
+}
+
+/// The head of a type constructor ([`Type::Con`]): a named type, or one
+/// of the builtin containers the type representation writes apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Head {
+    Named(TypeRef),
+    List,
+    Map,
+    Set,
+    Channel,
+}
+
+impl Head {
+    /// The full type of the constructor `self` with the arguments `rest`
+    /// after its first, applied to `arg`.
+    pub fn apply(self, mut rest: Vec<Type>, arg: Type) -> Type {
+        match self {
+            Head::Named(r) => {
+                rest.insert(0, arg);
+                Type::Generic(r, rest)
+            }
+            Head::List => Type::List(Box::new(arg)),
+            Head::Set => Type::Set(Box::new(arg)),
+            Head::Channel => Type::Channel(Box::new(arg)),
+            Head::Map => {
+                let value = rest.pop().unwrap_or(Type::Error);
+                Type::Map(Box::new(arg), Box::new(value))
+            }
+        }
+    }
 }
 
 impl Type {
+    /// `head` applied to `arg`: the full type where `head` is a type
+    /// constructor (`Option(_)` at `Int` is `Option(Int)`), else the
+    /// application `head(arg)` of a constructor variable.
+    pub fn applied(head: Type, arg: Type) -> Type {
+        match head {
+            Type::Con(h, rest) => h.apply(rest, arg),
+            other => Type::App(Box::new(other), Box::new(arg)),
+        }
+    }
+
+    /// The type constructor of `self` and its first type argument, where
+    /// it has one: `List(Int)` is `List(_)` at `Int`, `Result(Int, e)` is
+    /// `Result(_, e)` at `Int`, `Map(String, Int)` is `Map(_, Int)` at
+    /// `String`. A type of no type arguments, a function, a tuple, a
+    /// record and a type of types (`type a`) have none.
+    pub fn split_constructor(&self) -> Option<(Head, Vec<Type>, Type)> {
+        match self {
+            Type::Generic(r, args) if !args.is_empty() && !r.is_builtin(crate::defs::TYPE_OF) => {
+                Some((Head::Named(*r), args[1..].to_vec(), args[0].clone()))
+            }
+            Type::List(x) => Some((Head::List, Vec::new(), (**x).clone())),
+            Type::Set(x) => Some((Head::Set, Vec::new(), (**x).clone())),
+            Type::Channel(x) => Some((Head::Channel, Vec::new(), (**x).clone())),
+            Type::Map(k, v) => Some((Head::Map, vec![(**v).clone()], (**k).clone())),
+            _ => None,
+        }
+    }
+
     /// The builtin type `name` with `args` (`Option(a)`, `time.Duration`).
     pub fn builtin(name: &str, args: Vec<Type>) -> Type {
         Type::Generic(TypeRef::builtin(name), args)
@@ -300,6 +368,8 @@ impl Type {
             Type::Map(k, v) => k.holds_error() || v.holds_error(),
             Type::AssocProj { receiver, .. } => receiver.holds_error(),
             Type::AnonRecord { fields, .. } => fields.values().any(Type::holds_error),
+            Type::App(head, arg) => head.holds_error() || arg.holds_error(),
+            Type::Con(_, rest) => rest.iter().any(Type::holds_error),
             Type::Int
             | Type::Float
             | Type::Bool
@@ -339,6 +409,18 @@ impl Type {
             Type::AssocProj { receiver, .. } => receiver.collect_refs(out),
             Type::AnonRecord { fields, .. } => {
                 for t in fields.values() {
+                    t.collect_refs(out);
+                }
+            }
+            Type::App(head, arg) => {
+                head.collect_refs(out);
+                arg.collect_refs(out);
+            }
+            Type::Con(head, rest) => {
+                if let Head::Named(r) = head {
+                    out.push(*r);
+                }
+                for t in rest {
                     t.collect_refs(out);
                 }
             }
@@ -505,6 +587,26 @@ impl std::fmt::Display for Shown<'_> {
                     }
                 }
                 write!(f, "}}")
+            }
+            // A constructor variable applied is written as written:
+            // `m(Int)`.
+            Type::App(head, arg) => write!(f, "{}({})", self.of(head), self.of(arg)),
+            // A type constructor, with `_` for its open first argument:
+            // `Option(_)`, `Result(_, String)`, as an impl header writes
+            // it.
+            Type::Con(head, rest) => {
+                match head {
+                    Head::Named(r) => write!(f, "{}", self.name(r))?,
+                    Head::List => write!(f, "List")?,
+                    Head::Map => write!(f, "Map")?,
+                    Head::Set => write!(f, "Set")?,
+                    Head::Channel => write!(f, "Channel")?,
+                }
+                write!(f, "(_")?;
+                for t in rest {
+                    write!(f, ", {}", self.of(t))?;
+                }
+                write!(f, ")")
             }
         }
     }
@@ -858,6 +960,26 @@ pub fn free_vars_in(ty: &Type) -> Vec<TyVar> {
             }
             fvs
         }
+        Type::App(head, arg) => {
+            let mut fvs = free_vars_in(head);
+            for v in free_vars_in(arg) {
+                if !fvs.contains(&v) {
+                    fvs.push(v);
+                }
+            }
+            fvs
+        }
+        Type::Con(_, rest) => {
+            let mut fvs = Vec::new();
+            for t in rest {
+                for v in free_vars_in(t) {
+                    if !fvs.contains(&v) {
+                        fvs.push(v);
+                    }
+                }
+            }
+            fvs
+        }
         Type::Int
         | Type::Float
         | Type::Bool
@@ -944,6 +1066,8 @@ pub fn map_rigid(ty: &Type, f: &mut impl FnMut(RigidId) -> Type) -> Type {
                 _ => tail.clone(),
             },
         },
+        Type::App(head, arg) => Type::applied(map_rigid(head, f), map_rigid(arg, f)),
+        Type::Con(head, rest) => Type::Con(*head, rest.iter().map(|t| map_rigid(t, f)).collect()),
         Type::Int
         | Type::Float
         | Type::Bool
@@ -985,6 +1109,10 @@ pub fn instance_of(general: &Type, at: &Type, stands: &mut HashMap<TyVar, Type>)
         (Type::Map(gk, gv), Type::Map(ak, av)) => {
             instance_of(gk, ak, stands) && instance_of(gv, av, stands)
         }
+        (Type::App(gh, ga), Type::App(ah, aa)) => {
+            instance_of(gh, ah, stands) && instance_of(ga, aa, stands)
+        }
+        (Type::Con(gh, g), Type::Con(ah, a)) => gh == ah && all(g, a),
         (
             Type::AnonRecord {
                 fields: g,
@@ -1111,6 +1239,14 @@ pub fn substitute_vars(ty: &Type, mapping: &HashMap<TyVar, Type>) -> Type {
                 tail: new_tail,
             }
         }
+        Type::App(head, arg) => Type::applied(
+            substitute_vars(head, mapping),
+            substitute_vars(arg, mapping),
+        ),
+        Type::Con(head, rest) => Type::Con(
+            *head,
+            rest.iter().map(|t| substitute_vars(t, mapping)).collect(),
+        ),
         _ => ty.clone(),
     }
 }

@@ -1842,8 +1842,9 @@ impl TypeChecker {
             })
         };
         match &ty {
-            Type::Error | Type::Never | Type::AssocProj { .. } => None,
-            Type::Var(_) | Type::Rigid(_) => {
+            Type::Error | Type::Never | Type::AssocProj { .. } | Type::Con(..) => None,
+            // (A constructor variable applied is some type, as a variable.)
+            Type::Var(_) | Type::Rigid(_) | Type::App(..) => {
                 if !walk.open.contains(&ty) {
                     walk.open.push(ty.clone());
                 }

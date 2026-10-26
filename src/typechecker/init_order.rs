@@ -137,7 +137,7 @@ fn builtin_through(checker: &TypeChecker, ty: &Type) -> bool {
         Type::Map(k, v) => builtin_through(checker, k) && builtin_through(checker, v),
         Type::Tuple(ts) => all(ts),
         // A type the code does not know here: any type.
-        Type::AssocProj { .. } => false,
+        Type::AssocProj { .. } | Type::App(..) | Type::Con(..) => false,
         // (A function inside a value is not called by a method of the
         // value.)
         Type::Fun(..) => true,
@@ -207,7 +207,9 @@ impl TypeChecker {
     /// catch-all: a form that is not known by its name is any type.
     fn parts_shown(&self, ty: &Type, declared: bool, parts: &mut Parts) {
         match ty {
-            Type::Var(_) | Type::Rigid(_) => parts.outside |= !declared,
+            Type::Var(_) | Type::Rigid(_) | Type::App(..) | Type::Con(..) => {
+                parts.outside |= !declared
+            }
             // The type an impl gives for an associated type, which is
             // not known here: any type.
             Type::AssocProj { .. } => parts.outside = true,
