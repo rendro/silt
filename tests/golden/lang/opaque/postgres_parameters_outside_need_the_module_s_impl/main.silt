@@ -1,0 +1,22 @@
+-- cmd: check
+-- exit: 1
+-- requires-feature: postgres
+-- A statement's parameters are sent encoded as json: outside its module an
+-- opaque value is a parameter only through its module's `json.Encode` impl.
+import mail
+import postgres
+
+type Row {
+  v: String,
+}
+
+fn main() {
+  match postgres.connect("postgres://nobody@127.0.0.1/none") {
+    Ok(db) -> {
+      println(postgres.query(db, "select $1::text as v", (mail.user("secret"),), Row))
+      println(postgres.execute(db, "select $1", (mail.user("secret"),)))
+      println(postgres.execute(db, "select $1", (mail.email(),)))
+    }
+    Err(e) -> println(Error.message(e))
+  }
+}

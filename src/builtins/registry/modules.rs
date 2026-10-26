@@ -363,8 +363,8 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn parse(s: String, type a) -> Result(a, TomlError)", "Parse a TOML document (top-level table) into a record or a variant with fields", toml::parse).decodes(Decoding::TOML_RECORD),
                 f("fn parse_list(s: String, type a) -> Result(List(a), TomlError)", "Parse the one array of a document (such as a `[[items]]` section) into a list", toml::parse_list).decodes(Decoding::TOML),
                 f("fn parse_map(s: String, type a) -> Result(Map(String, a), TomlError)", "Parse a top-level table into a map", toml::parse_map).decodes(Decoding::TOML),
-                f("fn pretty(value: a) -> Result(String, TomlError)", "Pretty-print a value as TOML", toml::pretty),
-                f("fn stringify(value: a) -> Result(String, TomlError)", "Serialize a value as TOML", toml::stringify),
+                f("fn pretty(value: a) -> Result(String, TomlError)", "Pretty-print a value as TOML", toml::pretty).encodes(),
+                f("fn stringify(value: a) -> Result(String, TomlError)", "Serialize a value as TOML", toml::stringify).encodes(),
             ],
         },
         module! {

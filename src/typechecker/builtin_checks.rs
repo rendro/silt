@@ -79,7 +79,10 @@ impl TypeChecker {
             BuiltinCheck::Connection { builtin } => {
                 connection_refusal(&resolve(builtin), &ty, span)
             }
-            BuiltinCheck::Params { builtin } => params_refusal(&resolve(builtin), &ty, span),
+            // (A statement's parameters are sent encoded as json.)
+            BuiltinCheck::Params { builtin } => params_refusal(&resolve(builtin), &ty, span)
+                .or_else(|| self.opaque_encode_refusal(&ty, span)),
+            BuiltinCheck::Encodes { .. } => self.opaque_encode_refusal(&ty, span),
         };
         let Some(mut diagnostic) = refusal else {
             return;

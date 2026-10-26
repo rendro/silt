@@ -396,6 +396,11 @@ fn argument_checks(row: &crate::builtins::registry::Row, ty: &Type) -> Vec<Pred>
     {
         checks.push(pred(BuiltinCheck::Params { builtin }, subject));
     }
+    if row.encodes
+        && let Some(subject) = params.first()
+    {
+        checks.push(pred(BuiltinCheck::Encodes { builtin }, subject));
+    }
     checks
 }
 
