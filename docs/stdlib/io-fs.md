@@ -6,13 +6,16 @@ order: 8
 
 # io
 
-Functions for file I/O, stdin, command-line arguments, and debug inspection.
+Functions for file I/O, stdin, stderr, command-line arguments, and debug
+inspection.
 
 ## Summary
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `args` | `() -> List(String)` | Command-line arguments |
+| `eprint` | `(a) -> () where a: Display` | Print a value to stderr without trailing newline |
+| `eprintln` | `(a) -> () where a: Display` | Print a value to stderr with trailing newline |
 | `inspect` | `(a) -> String` | Debug representation of any value |
 | `read_file` | `(String) -> Result(String, IoError)` | Read entire file as string |
 | `read_line` | `() -> Result(String, IoError)` | Read one line from stdin |
@@ -63,6 +66,41 @@ fn main() {
   list.each(args) { a -> println(a) }
 }
 ```
+
+
+## `io.eprint`
+
+```
+io.eprint(value: a) -> () where a: Display
+```
+
+Prints a value to stderr, as `print` prints it to stdout: shown as `Display`
+says, without a newline. A write to stderr that fails (a closed stderr) is
+ignored: there is nowhere left to say it. Each call writes its whole text at
+once, so the texts of two tasks never mix inside one call's text.
+
+
+## `io.eprintln`
+
+```
+io.eprintln(value: a) -> () where a: Display
+```
+
+Prints a value to stderr followed by a newline, as `println` does to stdout.
+It keeps a program's errors apart from its output: a pipe or a redirection
+takes stdout only.
+
+```silt
+import io
+
+fn main() {
+  println("42")
+  io.eprintln("warning: the input had an empty line")
+}
+```
+
+`silt run main.silt > out.txt` writes `42` to `out.txt` and shows the
+warning.
 
 
 ## `io.inspect`

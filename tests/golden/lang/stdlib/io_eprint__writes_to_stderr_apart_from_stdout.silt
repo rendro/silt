@@ -1,0 +1,14 @@
+-- io.eprint and io.eprintln write to stderr, print and println to stdout:
+-- the two streams hold their own texts, each in the order written.
+import io
+
+fn main() {
+  print("out ")
+  io.eprint("err ")
+  println("line")
+  io.eprintln("line")
+  io.eprintln(42)
+  io.eprintln([1, 2])
+  io.eprint(Some("x"))
+  println("done")
+}

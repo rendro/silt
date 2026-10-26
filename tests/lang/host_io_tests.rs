@@ -1,5 +1,6 @@
 //! The embedder's output and clock (`silt::HostIo`): where a program's
-//! `print`, `println` and the runtime's reports go, and which clock
+//! `print`, `println`, `io.eprint`, `io.eprintln` and the runtime's
+//! reports go, and which clock
 //! `time.*`, the timeouts and the deadlines read.
 
 use std::io;
@@ -369,6 +370,62 @@ fn main() {
         Ok(Value::Unit)
     );
     assert_eq!(out.contents(), "main done\n");
+}
+
+/// `io.eprint` and `io.eprintln` write to stderr, and nothing of them
+/// to stdout: one `write` each, the line end with its text, from the
+/// program's thread and from a task.
+#[test]
+fn eprint_and_eprintln_write_to_stderr_one_write_each() {
+    struct Lines(std::sync::mpsc::Sender<String>);
+
+    impl Output for Lines {
+        fn write(&self, text: &str) -> std::io::Result<()> {
+            self.0.send(text.to_string()).map_err(std::io::Error::other)
+        }
+    }
+
+    let out = Buffer::new();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let source = r#"
+import io
+import task
+fn main() {
+  print("a")
+  io.eprint("b")
+  io.eprintln([1, 2])
+  task.join(task.spawn({ -> io.eprintln("from a task") }))
+  println("c")
+}
+"#;
+    assert_eq!(
+        run(source, HostIo::new(out.clone(), Lines(tx))),
+        Ok(Value::Unit)
+    );
+    assert_eq!(out.contents(), "ac\n");
+    assert_eq!(
+        rx.try_iter().collect::<Vec<_>>(),
+        ["b", "[1, 2]\n", "from a task\n"]
+    );
+}
+
+/// A write to stderr that fails, or that panics, is dropped: the
+/// program goes on, as with a report of the runtime's.
+#[test]
+fn a_failed_write_to_stderr_is_ignored() {
+    let source = "import io\nfn main() {\n  io.eprintln(\"lost\")\n  println(\"on\")\n}";
+    let out = Buffer::new();
+    assert_eq!(
+        run(source, HostIo::new(out.clone(), Closed)),
+        Ok(Value::Unit)
+    );
+    assert_eq!(out.contents(), "on\n");
+    let out = Buffer::new();
+    assert_eq!(
+        run(source, HostIo::new(out.clone(), Panics)),
+        Ok(Value::Unit)
+    );
+    assert_eq!(out.contents(), "on\n");
 }
 
 // ── Clock ───────────────────────────────────────────────────────────

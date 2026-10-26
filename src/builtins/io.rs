@@ -173,6 +173,21 @@ fn io_unknown_err(failure: crate::vm::IoFailure<'_>) -> Value {
 }
 
 builtins! {
+    fn eprint(vm, value: &Value) -> Result<Step, VmError> {
+        vm.show(value, |vm, text| {
+            vm.runtime.io.err(&text);
+            Ok(Step::Done(Value::Unit))
+        })
+    }
+
+    fn eprintln(vm, value: &Value) -> Result<Step, VmError> {
+        vm.show(value, |vm, mut text| {
+            text.push('\n');
+            vm.runtime.io.err(&text);
+            Ok(Step::Done(Value::Unit))
+        })
+    }
+
     fn inspect(x: &Value) -> Result<String, VmError> {
         x.writable()?;
         Ok(x.format_silt())

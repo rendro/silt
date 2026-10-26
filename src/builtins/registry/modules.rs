@@ -54,6 +54,8 @@ pub(super) fn modules() -> Vec<Module> {
             error: "IoError" => io::error_text,
             rows: [
                 f("fn args() -> List(String)", "Command-line arguments", io::args),
+                f("fn eprint(value: a) -> () where a: Display", "Print a value to stderr without trailing newline", io::eprint),
+                f("fn eprintln(value: a) -> () where a: Display", "Print a value to stderr with trailing newline", io::eprintln),
                 f("fn inspect(x: a) -> String", "Debug representation of any value", io::inspect),
                 f("fn read_file(path: String) -> Result(String, IoError)", "Read entire file as string", io::read_file),
                 f("fn read_line() -> Result(String, IoError)", "Read one line from stdin", io::read_line),

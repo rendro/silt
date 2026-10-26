@@ -207,10 +207,10 @@ let vm = Vm::new(HostIo::buffer(&out));
 | `HostIo::process()` | the process's stdout and stderr (what the `silt` command uses) | system |
 | `.clock(clock)` on any of them | unchanged | `clock` |
 
-**Output.** `print` and `println` write to stdout. What the runtime
-prints for the program goes to stderr: the report of a task that failed
-and that nobody joined, and the log of an `http.serve` handler that
-failed. A `Buffer` collects text in memory; its clones share the text,
+**Output.** `print` and `println` write to stdout, `io.eprint` and
+`io.eprintln` to stderr. What the runtime prints for the program goes to
+stderr too: the report of a task that failed and that nobody joined, and
+the log of an `http.serve` handler that failed. A `Buffer` collects text in memory; its clones share the text,
 so the embedder keeps one and reads it with `contents()` or `take()`.
 For anything else, implement `Output`:
 
@@ -224,11 +224,11 @@ impl Output for Lines {
 }
 ```
 
-`write` is called once for each `print`, `println` or report, from the
-thread that runs the program and from the scheduler's threads. An error
-it returns for a `print` or `println` is a runtime error of the program
-(`cannot write to stdout: ...`), and so is a panic inside it; for a
-report on stderr both are dropped.
+`write` is called once for each `print`, `println`, `io.eprint`,
+`io.eprintln` or report, from the thread that runs the program and from
+the scheduler's threads. An error it returns for a `print` or `println`
+is a runtime error of the program (`cannot write to stdout: ...`), and so
+is a panic inside it; for a write to stderr both are dropped.
 
 The report of tasks that failed and that nobody joined is written when
 `run_program` returns, for the tasks that have failed by then. It does
