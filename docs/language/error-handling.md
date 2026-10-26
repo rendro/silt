@@ -124,8 +124,8 @@ error. `Ok(..)` returns, and `main` functions that don't return a
 its own message and code says so:
 
 ```silt
-import io
 import int
+import io
 import process
 
 fn main() {
