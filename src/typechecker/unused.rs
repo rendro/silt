@@ -648,6 +648,10 @@ fn holds(ty: &Type, v: TyVar) -> bool {
         Type::AnonRecord { fields, .. } => fields.values().any(|t| holds(t, v)),
         // The caller's type decides the associated type.
         Type::AssocProj { receiver, .. } => holds(receiver, v),
+        // (What the constructor is decides whether it holds its
+        // argument.)
+        Type::App(head, arg) => holds(head, v) || holds(arg, v),
+        Type::Con(_, rest) => rest.iter().any(|t| holds(t, v)),
         Type::Fun(..)
         | Type::Int
         | Type::Float
@@ -670,7 +674,9 @@ fn holds_result(ty: &Type) -> bool {
         Type::Map(key, value) => holds_result(key) || holds_result(value),
         Type::Tuple(ts) => ts.iter().any(holds_result),
         Type::AnonRecord { fields, .. } => fields.values().any(holds_result),
+        Type::App(_, arg) => holds_result(arg),
         Type::Fun(..)
+        | Type::Con(..)
         | Type::AssocProj { .. }
         | Type::Var(_)
         | Type::Int

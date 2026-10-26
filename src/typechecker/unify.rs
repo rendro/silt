@@ -129,6 +129,9 @@ pub(super) struct Fault {
     /// The two types (got, expected) when their heads differ: the report
     /// offers to wrap a value in `Ok(...)` where a `Result` is expected.
     apart: Option<(Type, Type)>,
+    /// What the report says of the parts (a type constructor variable
+    /// against a type that has none, or another first argument).
+    note: Option<String>,
 }
 
 impl Fault {
@@ -138,6 +141,7 @@ impl Fault {
             message: message.into(),
             help: None,
             apart: None,
+            note: None,
         }
     }
 }
@@ -286,6 +290,11 @@ impl TypeChecker {
                 }
             }
             Type::Rigid(r) if !self.rigid_alias.is_empty() => Type::Rigid(self.rigid_rep(*r)),
+            // A constructor variable applied, once the variable is a
+            // constructor, is the full type (`Option(_)` at `Int` is
+            // `Option(Int)`).
+            Type::App(head, arg) => Type::applied(self.apply(head), self.apply(arg)),
+            Type::Con(head, rest) => Type::Con(*head, rest.iter().map(|t| self.apply(t)).collect()),
             _ => ty.clone(),
         }
     }
@@ -727,6 +736,9 @@ impl TypeChecker {
         for fault in mismatch.0 {
             let mut d = Diagnostic::error(fault.code, span, fault.message);
             d.help.extend(fault.help);
+            if let Some(note) = fault.note {
+                d = d.with_note(note);
+            }
             if let Some((got, expected)) = &fault.apart {
                 Self::add_ok_wrap_fix(&mut d, got, expected);
                 d = self.name_annotation_variables(d, expected, got);
@@ -746,6 +758,11 @@ impl TypeChecker {
     ) -> Diagnostic {
         let mut named: Vec<RigidId> = Vec::new();
         for ty in [expected, got] {
+            // (A type constructor variable applied, `m(Int)`, by its own.)
+            let ty = match ty {
+                Type::App(head, _) => &**head,
+                _ => ty,
+            };
             if let Type::Rigid(r) = ty
                 && !named.contains(r)
             {
@@ -770,8 +787,20 @@ impl TypeChecker {
                 r.name
             ));
         }
+        let constructors = (named.iter()).all(|r| self.constructor_vars.contains(&r.var));
         match named.as_slice() {
             [] => d,
+            // (Of type constructor variables, `m(Int)`.)
+            [r] if constructors => d.with_note(format!(
+                "`{}` is a type constructor variable of the annotation: it stands for any type \
+                 constructor, so the code must check whichever one that is",
+                r.name
+            )),
+            [r, s, ..] if constructors => d.with_note(format!(
+                "`{}` and `{}` are type constructor variables of the annotation: each stands for \
+                 any type constructor, so the code must check whichever ones they are",
+                r.name, s.name
+            )),
             [r] => d.with_note(format!(
                 "`{}` is a type variable of the annotation: it stands for any type, so the \
                  code must check whichever type that is",
@@ -821,6 +850,17 @@ impl TypeChecker {
             message: format!("type mismatch: expected {expected_shown}, got {got_shown}"),
             help: Self::chain_hint(got, expected),
             apart: Some((got.clone(), expected.clone())),
+            note: None,
+        }
+    }
+
+    /// The fault of a type constructor variable applied that meets
+    /// another type: no help of the types' own (an `Option`'s `?`) fits
+    /// a variable that stands for any constructor.
+    fn constructor_mismatch(&self, got: &Type, expected: &Type) -> Fault {
+        Fault {
+            help: None,
+            ..self.type_mismatch(got, expected)
         }
     }
 
@@ -899,13 +939,78 @@ impl TypeChecker {
                                 .to_string(),
                         ));
                     } else {
+                        // (A type constructor variable by its name.)
                         out.push(Fault::new(
                             Code::InfiniteType,
-                            Self::infinite_type_message(t),
+                            format!(
+                                "infinite type: the type variable appears inside {}",
+                                self.show_type(t)
+                            ),
                         ));
                     }
                 } else {
                     self.bind(*v, t.clone(), out);
+                }
+            }
+
+            // Two type constructor variables applied: one constructor,
+            // one argument.
+            (Type::App(h1, a1), Type::App(h2, a2)) => {
+                let mut heads = Vec::new();
+                self.unify_into(h1, h2, &mut heads);
+                if !heads.is_empty() {
+                    out.push(self.constructor_mismatch(&t1, &t2));
+                    return;
+                }
+                self.unify_into(a1, a2, out);
+            }
+
+            // A type constructor variable applied, against a type: the
+            // variable is the type's constructor, its argument the type's
+            // first type argument (`m(Int)` is `Result(Int, e)` with `m`
+            // `Result(_, e)`).
+            (Type::App(head, arg), other) | (other, Type::App(head, arg)) => {
+                let applied = match &t1 {
+                    Type::App(..) => self.show_type(&t1),
+                    _ => self.show_type(&t2),
+                };
+                let Some((con, rest, first)) = other.split_constructor() else {
+                    let mut fault = self.constructor_mismatch(&t1, &t2);
+                    fault.note = Some(format!(
+                        "'{}' stands for a type constructor: it matches a type with a type \
+                         argument, like 'List(Int)' or 'Option(Int)'",
+                        self.show_type(head)
+                    ));
+                    out.push(fault);
+                    return;
+                };
+                // (Of a type of one type argument, there is no other to
+                // say it is matched against.)
+                let others = !rest.is_empty();
+                let mut heads = Vec::new();
+                self.unify_into(head, &Type::Con(con, rest), &mut heads);
+                if !heads.is_empty() {
+                    out.push(self.constructor_mismatch(&t1, &t2));
+                    return;
+                }
+                let mut args = Vec::new();
+                self.unify_into(arg, &first, &mut args);
+                if !args.is_empty() {
+                    let mut fault = self.constructor_mismatch(&t1, &t2);
+                    if others {
+                        fault.note = Some(format!(
+                            "'{applied}' is matched against the first type argument, '{}' here",
+                            self.show_type(&self.apply(&first))
+                        ));
+                    }
+                    out.push(fault);
+                }
+            }
+
+            // Two type constructors: one head, the same other arguments.
+            (Type::Con(c1, r1), Type::Con(c2, r2)) if c1 == c2 && r1.len() == r2.len() => {
+                for (x, y) in r1.iter().zip(r2) {
+                    self.unify_into(x, y, out);
                 }
             }
 
@@ -1173,6 +1278,8 @@ pub(super) fn rigid_in(ty: &Type) -> Option<RigidId> {
             RowTail::Rigid(r) => Some(*r),
             _ => fields.values().find_map(rigid_in),
         },
+        Type::App(head, arg) => rigid_in(head).or_else(|| rigid_in(arg)),
+        Type::Con(_, rest) => rest.iter().find_map(rigid_in),
         Type::Int
         | Type::Float
         | Type::Bool
@@ -1200,6 +1307,8 @@ fn occurs_in(var: TyVar, ty: &Type) -> bool {
             fields.values().any(|t| occurs_in(var, t))
                 || matches!(tail, RowTail::Var(v) if *v == var)
         }
+        Type::App(head, arg) => occurs_in(var, head) || occurs_in(var, arg),
+        Type::Con(_, rest) => rest.iter().any(|t| occurs_in(var, t)),
         Type::Int
         | Type::Float
         | Type::Bool

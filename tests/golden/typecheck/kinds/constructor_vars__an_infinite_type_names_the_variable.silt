@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- The occurs check writes a type constructor variable by its name.
+-- stderr-contains: error[type]: infinite type: the type variable appears inside m(_)
+fn take(x: m(a), y: a) -> Int { 1 }
+fn main() {
+  let q = { z -> take(z, z) }
+  println(1)
+}

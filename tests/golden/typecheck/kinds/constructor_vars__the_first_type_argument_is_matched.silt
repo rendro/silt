@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- `m(Int)` is matched against the first type argument of the type given:
+-- of a Map, its key.
+-- stderr-contains: error[type]: type mismatch: expected m(Int), got Map(String, Int)
+-- stderr-contains: = note: 'm(Int)' is matched against the first type argument, 'String' here
+fn double_all(xs: m(Int)) -> m(Int) { xs }
+fn main() {
+  let b = double_all(#{"a": 1})
+  println(1)
+}

@@ -378,7 +378,9 @@ impl TypeChecker {
                 true => checker.resolve_type_expr(te, param_vars),
                 false => checker.resolve_type_expr_inner(te, param_vars),
             };
+        let outer = self.declaring_type.replace((td.name, td.params.clone()));
         let ty = resolve_in(self, param_vars);
+        self.declaring_type = outer;
         let mut undeclared: Vec<Symbol> = (param_vars.keys())
             .copied()
             .filter(|name| !vars.known.contains(name))
@@ -613,6 +615,10 @@ impl TypeChecker {
                 self.find_alias_cycle(ret, visiting)
             }
             Type::AssocProj { receiver, .. } => self.find_alias_cycle(receiver, visiting),
+            Type::App(head, arg) => self
+                .find_alias_cycle(head, visiting)
+                .or_else(|| self.find_alias_cycle(arg, visiting)),
+            Type::Con(_, rest) => rest.iter().find_map(|t| self.find_alias_cycle(t, visiting)),
             Type::AnonRecord { fields, .. } => {
                 for t in fields.values() {
                     if let Some(c) = self.find_alias_cycle(t, visiting) {

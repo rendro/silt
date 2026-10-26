@@ -1,0 +1,14 @@
+-- A type given to a `type m` parameter that the signature applies is the
+-- constructor of that type (`List` for `List(_)`), whether an earlier
+-- argument decides `m` too or not.
+type Box(a) { Box(a) }
+fn tp(x: m(Int), type m) -> m(Int) { x }
+fn none(x: Int, type m) -> List(m(Int)) { [] }
+fn main() {
+  println(tp([1], List))
+  println(tp(Some(2), Option))
+  let ok: Result(Int, String) = Ok(3)
+  println(tp(ok, Result))
+  let b: List(Box(Int)) = none(1, Box)
+  println(b)
+}

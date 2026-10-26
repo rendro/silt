@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- A type variable is a type or a type constructor in a whole signature,
+-- and in the annotations of its body.
+-- stderr-contains: error[type]: 'm' is written with a type argument in `xs: m(Int)` and without one in `y: m`: a type variable is a type or a type constructor, not both
+-- stderr-contains: error[type]: 'm' is written with a type argument in `xs: m(String)` and without one in `-> m`: a type variable is a type or a type constructor, not both
+-- stderr-contains: error[type]: 'm' is written with a type argument in `xs: m(Int)` and without one in `m`: a type variable is a type or a type constructor, not both
+fn both(xs: m(Int), y: m) -> Int { 1 }
+fn back(xs: m(String)) -> m { xs }
+fn body(xs: m(Int)) -> m(Int) {
+  let y: m = xs
+  xs
+}
+fn main() { println(1) }

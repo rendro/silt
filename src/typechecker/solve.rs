@@ -1627,6 +1627,27 @@ impl TypeChecker {
             self.require_declared_bound(r, trait_name, bound_trait_args, origin);
             return;
         }
+        // An annotation's type constructor variable applied (`m(Int)`):
+        // a bound is on the variable, never on what it is applied to, so
+        // the type is known to implement no trait.
+        if let Type::App(head, _) = &resolved
+            && matches!(self.apply(head), Type::Rigid(_))
+        {
+            // (What asks it, as of a type variable.)
+            let needs = match (origin.callee, origin.op) {
+                (Some(pinned), Some(PIN)) => format!(", which the pin '^{pinned}' needs"),
+                (Some(callee), _) => format!(", which '{callee}' needs"),
+                (None, Some(op)) => format!(", which {op} needs"),
+                (None, None) => String::new(),
+            };
+            let message = format!(
+                "type `{}` is not known to implement trait '{}'{needs}",
+                self.show_type(&resolved),
+                self.show_bound(trait_name, bound_trait_args)
+            );
+            self.error(Code::MissingTraitImpl, message, span);
+            return;
+        }
         let Some(type_name) = self.type_name_for_impl(&resolved) else {
             // Still unknown: the caller lets it wait (`want`).
             return;
@@ -1842,8 +1863,9 @@ impl TypeChecker {
             })
         };
         match &ty {
-            Type::Error | Type::Never | Type::AssocProj { .. } => None,
-            Type::Var(_) | Type::Rigid(_) => {
+            Type::Error | Type::Never | Type::AssocProj { .. } | Type::Con(..) => None,
+            // (A constructor variable applied is some type, as a variable.)
+            Type::Var(_) | Type::Rigid(_) | Type::App(..) => {
                 if !walk.open.contains(&ty) {
                     walk.open.push(ty.clone());
                 }

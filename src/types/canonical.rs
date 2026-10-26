@@ -313,6 +313,10 @@ impl Resolver {
             Type::Map(k, v) => self
                 .find_assoc_cycle(k, visited)
                 .or_else(|| self.find_assoc_cycle(v, visited)),
+            Type::App(head, arg) => self
+                .find_assoc_cycle(head, visited)
+                .or_else(|| self.find_assoc_cycle(arg, visited)),
+            Type::Con(_, rest) => rest.iter().find_map(|t| self.find_assoc_cycle(t, visited)),
             Type::Tuple(elems) => {
                 for e in elems {
                     if let Some(c) = self.find_assoc_cycle(e, visited) {
@@ -427,6 +431,13 @@ pub fn canonicalize(resolver: &Resolver, ty: &Type) -> Type {
         Type::Generic(name, args) => Type::Generic(
             *name,
             args.iter().map(|t| canonicalize(resolver, t)).collect(),
+        ),
+        Type::App(head, arg) => {
+            Type::applied(canonicalize(resolver, head), canonicalize(resolver, arg))
+        }
+        Type::Con(head, rest) => Type::Con(
+            *head,
+            rest.iter().map(|t| canonicalize(resolver, t)).collect(),
         ),
 
         // ── Anonymous structural records ───────────────────────────
@@ -596,6 +607,16 @@ pub fn canonical_name(ty: &Type) -> String {
         // dispatch key of their own, for which no impl is ever
         // registered.
         Type::AnonRecord { .. } => "<anon>".to_string(),
+        // A constructor variable applied: as a variable. A constructor:
+        // its head.
+        Type::App(..) => "_".to_string(),
+        Type::Con(head, _) => match head {
+            crate::types::Head::Named(r) => crate::intern::resolve(r.name),
+            crate::types::Head::List => "List".to_string(),
+            crate::types::Head::Map => "Map".to_string(),
+            crate::types::Head::Set => "Set".to_string(),
+            crate::types::Head::Channel => "Channel".to_string(),
+        },
     }
 }
 
@@ -647,7 +668,16 @@ pub fn head_of_canon(ty: &Type) -> Option<TypeRef> {
         Type::Tuple(_) => "Tuple",
         Type::Fun(_, _) => "Fn",
         Type::Generic(name, _) => return Some(*name),
-        Type::Var(_)
+        // A type constructor is keyed by its head, as its types are.
+        Type::Con(head, _) => match head {
+            crate::types::Head::Named(r) => return Some(*r),
+            crate::types::Head::List => "List",
+            crate::types::Head::Map => "Map",
+            crate::types::Head::Set => "Set",
+            crate::types::Head::Channel => "Channel",
+        },
+        Type::App(..)
+        | Type::Var(_)
         | Type::Rigid(_)
         | Type::Error
         | Type::Never

@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- A variable the signature writes without a type argument is a type: an
+-- annotation in the body that applies it, in a `let` or a closure, is
+-- an error at the application.
+-- stderr-contains: error[type]: 'm' is written with a type argument in `m(Int)` and without one in `y: m`: a type variable is a type or a type constructor, not both
+-- stderr-contains: --> constructor_vars__applied_in_the_body_written_bare_in_the_signature.silt:10:10
+-- stderr-contains: --> constructor_vars__applied_in_the_body_written_bare_in_the_signature.silt:14:16
+fn f(y: m) -> m {
+  let z: m(Int) = y
+  z
+}
+fn g(y: m) -> m {
+  let k = { q: m(Int) -> q }
+  y
+}
+fn main() { println(f(1)) }

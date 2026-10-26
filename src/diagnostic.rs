@@ -203,6 +203,9 @@ codes! {
     /// A type given to a decoder that has no decoder for it (a field of
     /// a type no decoder exists for, an enum, a generic type, ...).
     Undecodable = "E0342", Type;
+    /// A type constructor where a type is needed, or a type where a type
+    /// constructor is needed.
+    KindMismatch = "E0343", Type;
     // ── compile ──
     /// An import of a module that is not there.
     ModuleNotFound = "E0401", Compile;

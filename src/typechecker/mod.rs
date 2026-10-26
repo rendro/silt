@@ -266,6 +266,27 @@ pub struct TypeChecker {
     /// no value named `a`) is looked up: the variable's name, for the
     /// messages.
     pub(super) var_as_type: Option<Symbol>,
+    /// The type variables that stand for a type constructor (`m` of
+    /// `m(Int)`), as their annotations wrote them.
+    pub(super) constructor_vars: std::collections::HashSet<TyVar>,
+    /// While the type declaration of this name is resolved, its
+    /// parameters: they are types (`type parameter 'm' of 'Wrapped' is
+    /// written with a type argument`).
+    pub(super) declaring_type: Option<(Symbol, Vec<Symbol>)>,
+    /// Where a signature first writes each of its type constructor
+    /// variables applied (`xs: m(Int)`), for the error of an annotation
+    /// in its body that writes one without a type argument.
+    pub(super) constructor_labels: HashMap<TyVar, String>,
+    /// Where a signature first writes each of its type variables without
+    /// a type argument (`y: m`), for the error of an annotation in its
+    /// body that applies one.
+    pub(super) bare_labels: HashMap<TyVar, String>,
+    /// The variables of `type a` parameters: one a signature applies
+    /// (`type m` with `-> m(a)`) is a type constructor.
+    pub(super) type_param_vars: std::collections::HashSet<TyVar>,
+    /// While a signature's annotations are resolved: its own check
+    /// reports a variable written both ways (`check_signature_kinds`).
+    pub(super) resolving_signature: bool,
     /// While a type variable's method is looked up as a descriptor's:
     /// its name, for the messages (`on \`a\``, not `on \`type a\``).
     pub(super) descriptor_var: Option<Symbol>,
@@ -497,6 +518,12 @@ impl TypeChecker {
             expected_closure: None,
             sig_names: HashMap::new(),
             var_as_type: None,
+            constructor_vars: Default::default(),
+            declaring_type: None,
+            constructor_labels: HashMap::new(),
+            bare_labels: HashMap::new(),
+            type_param_vars: Default::default(),
+            resolving_signature: false,
             descriptor_var: None,
             rigid_of: HashMap::new(),
             let_vars: std::collections::HashSet::new(),
@@ -1510,6 +1537,11 @@ fn row_tail_vars(ty: &Type, out: &mut Vec<TyVar>) {
             row_tail_vars(v, out);
         }
         Type::AssocProj { receiver, .. } => row_tail_vars(receiver, out),
+        Type::App(head, arg) => {
+            row_tail_vars(head, out);
+            row_tail_vars(arg, out);
+        }
+        Type::Con(_, rest) => rest.iter().for_each(|t| row_tail_vars(t, out)),
         Type::Int
         | Type::Float
         | Type::Bool

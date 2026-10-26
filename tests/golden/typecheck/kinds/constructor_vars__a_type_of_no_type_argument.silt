@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- `m(Int)` matches a type with a type argument only: not Int, a function,
+-- a tuple or a record.
+-- stderr-contains: error[type]: type mismatch: expected m(Int), got Int
+-- stderr-contains: = note: 'm' stands for a type constructor: it matches a type with a type argument, like 'List(Int)' or 'Option(Int)'
+-- stderr-contains: :13:22
+-- stderr-contains: :14:22
+-- stderr-contains: :15:22
+fn double_all(xs: m(Int)) -> m(Int) { xs }
+type P { x: Int }
+fn main() {
+  let a = double_all(42)
+  let b = double_all((1, 2))
+  let c = double_all(P { x: 1 })
+  println(1)
+}

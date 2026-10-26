@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- The parameters of a declared type are types: one written with a type
+-- argument is an error.
+-- stderr-contains: error[type]: type parameter 'm' of 'Wrapped' is written with a type argument: the parameters of a type are types
+type Wrapped(m, a) { W(m(a)) }
+fn main() { println(1) }

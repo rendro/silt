@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- Of a type of one type argument, the mismatch of that argument is the
+-- whole message: no note of the first argument, and no help of the
+-- type's own (an Option's `?`) under a type constructor variable.
+-- stderr-contains: error[type]: type mismatch: expected m(Int), got Option(String)
+-- stderr-not-contains: is matched against the first type argument
+-- stderr-not-contains: to chain through
+fn double_all(xs: m(Int)) -> m(Int) { xs }
+fn main() {
+  println(double_all(Some("s")))
+}

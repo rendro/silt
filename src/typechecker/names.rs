@@ -1016,7 +1016,7 @@ fn placeholder_help(
 
 /// `f`, `list.map`, `a.b.c` as written, for a name or a field access of
 /// names.
-fn shown_path(e: &Expr) -> Option<String> {
+pub(super) fn shown_path(e: &Expr) -> Option<String> {
     match &e.kind {
         ExprKind::Ident(name) if !is_placeholder(e) => Some(resolve(*name)),
         ExprKind::FieldAccess(base, field, _) => Some(format!("{}.{field}", shown_path(base)?)),
@@ -1027,7 +1027,7 @@ fn shown_path(e: &Expr) -> Option<String> {
 /// An argument as the help shows it: as written when it is a name, a
 /// field of one or a short literal; `{ ... }` for a closure, `...` for
 /// anything else.
-fn shown_arg(e: &Expr) -> String {
+pub(super) fn shown_arg(e: &Expr) -> String {
     let short = |s: &str| s.len() <= 20 && !s.contains(['"', '\\', '{', '\n']);
     match &e.kind {
         ExprKind::Int(n) => n.to_string(),

@@ -95,6 +95,7 @@ numbers that are missing belong to codes that are gone.
 | `E0339` | A top-level `let` whose initialiser can reach the `let` itself. |
 | `E0340` | A statement whose value nothing uses. |
 | `E0342` | A type given to a decoder that has no decoder for it (a field of a type no decoder exists for, an enum, a generic type, ...). |
+| `E0343` | A type constructor where a type is needed, or a type where a type constructor is needed. |
 
 ## Compiling and the entry point (4xx, 5xx)
 

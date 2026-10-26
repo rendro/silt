@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- A mismatch of a type constructor variable of the annotation says where
+-- it is declared and what it stands for, as of a type variable.
+-- stderr-contains: error[type]: type mismatch: expected List(Int), got m(Int)
+-- stderr-contains: the type variable `m` is declared here
+-- stderr-contains: = note: `m` is a type constructor variable of the annotation: it stands for any type constructor, so the code must check whichever one that is
+-- stderr-contains: error[type]: type mismatch: expected n(a), got m(a)
+-- stderr-contains: = note: `n` and `m` are type constructor variables of the annotation: each stands for any type constructor, so the code must check whichever ones they are
+fn to_list(xs: m(Int)) -> List(Int) { xs }
+fn other(xs: m(a), ys: n(a)) -> n(a) { xs }
+fn main() { println(1) }
