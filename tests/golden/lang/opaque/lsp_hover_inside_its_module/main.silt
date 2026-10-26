@@ -1,0 +1,12 @@
+-- cmd: lsp
+-- lsp: hover 8:19
+-- In its own module, hover shows an opaque type with what is in it.
+pub opaque type Email {
+  Email(String),
+}
+
+pub fn address(e: Email) -> String {
+  match e {
+    Email(s) -> s
+  }
+}

@@ -1,0 +1,21 @@
+13:1 error expected identifier, found }
+> hover 10:18
+```silt
+pub opaque type Email
+```
+> hover 10:33
+```silt
+pub opaque type User
+```
+> hover 10:47
+```silt
+pub opaque type Shape
+```
+> completion 12:8
+Email
+Shape
+User
+address
+name
+parse
+user
