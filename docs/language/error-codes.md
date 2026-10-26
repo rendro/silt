@@ -94,7 +94,7 @@ numbers that are missing belong to codes that are gone.
 | `E0338` | A field named twice in a record type, literal, pattern or update. |
 | `E0339` | A top-level `let` whose initialiser can reach the `let` itself. |
 | `E0340` | A statement whose value nothing uses. |
-| `E0342` | A type given to a decoder that has no decoder for it (a field of a type no decoder exists for, an enum, a generic type, ...). |
+| `E0342` | A type given to a decoder that has no decoder for it (a field of a type no decoder exists for, an enum, a generic type, ...), or an opaque type decoded or json-encoded outside its module without the module's impl. |
 | `E0343` | A type constructor where a type is needed, or a type where a type constructor is needed. |
 | `E0344` | A value of an opaque type built, taken apart, updated, read, spread or passed into an open row outside its module. |
 
