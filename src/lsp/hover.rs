@@ -31,7 +31,9 @@ impl Server {
         // e.g., for `data.response`, hovering on `response` shows the field type.
         let records = self
             .checked_tables(doc)
-            .map_or_else(RecordFields::new, |tables| tables.record_fields());
+            .map_or_else(RecordFields::new, |tables| {
+                self.visible_record_fields(doc, tables)
+            });
         if let Some((field_name, field_ty)) = find_field_type_at_offset(program, &records, cursor) {
             return Some(Hover {
                 contents: HoverContents::Markup(MarkupContent {

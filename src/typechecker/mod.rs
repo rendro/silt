@@ -415,10 +415,20 @@ pub struct TypeChecker {
     pub(super) local_statement_units: HashMap<Symbol, Vec<(usize, Span)>>,
     /// The module checked.
     pub(super) module: crate::session::ModuleId,
-    /// The row variables of the uses of another module's definitions,
-    /// each with that module: an opaque type of it may pass into such a
-    /// row, which the module's own code reads.
-    pub(super) row_owners: HashMap<TyVar, crate::session::ModuleId>,
+    /// The variables of the uses of another module's definitions, each
+    /// with that module: an opaque type of it may pass into such a row,
+    /// which the module's own code reads, and be decoded for such a
+    /// variable, which the module's own code decodes.
+    pub(super) use_owners: HashMap<TyVar, crate::session::ModuleId>,
+    /// The predicates, by their evidence, that a use of another module's
+    /// definition owes for a variable of it (see `use_owners`), each with
+    /// that module.
+    pub(super) owed_for: HashMap<evidence::EvRef, crate::session::ModuleId>,
+    /// The module of the predicate being entered, for `owed_for`.
+    pub(super) owing: Option<crate::session::ModuleId>,
+    /// The module of the definition whose type is being instantiated
+    /// for a use, while it is: its bounds are that module's.
+    pub(super) instantiating: Option<crate::session::ModuleId>,
     /// Its name, for diagnostics.
     pub(super) module_name: Symbol,
     /// The types the module's own declarations declare, by name: what a
@@ -577,7 +587,10 @@ impl TypeChecker {
             local_statement_units: HashMap::new(),
             fixed_statements: Vec::new(),
             module: crate::session::ModuleId(0),
-            row_owners: HashMap::new(),
+            use_owners: HashMap::new(),
+            owed_for: HashMap::new(),
+            owing: None,
+            instantiating: None,
             module_name: intern("main"),
             own_types: HashMap::new(),
             own_traits: HashMap::new(),

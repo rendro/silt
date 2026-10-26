@@ -1,0 +1,8 @@
+-- cmd: lsp
+-- lsp: completion 7:5
+-- Outside its module, the editor offers no fields of an opaque record.
+import mail
+
+fn f(u: mail.User) -> Int {
+  u.
+}

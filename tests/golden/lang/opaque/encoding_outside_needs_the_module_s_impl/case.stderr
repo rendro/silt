@@ -1,0 +1,27 @@
+error[type]: type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+ --> main.silt:16:26
+    |
+ 16 |   println(json.stringify(mail.user("secret")))
+    |                          ^^^^^^^^^^^^^^^^^^^ type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = help: encode it inside module 'mail', or write `trait json.Encode for User` there
+
+error[type]: type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+ --> main.silt:17:26
+    |
+ 17 |   println(json.stringify([mail.user("a")]))
+    |                          ^^^^^^^^^^^^^^^^ type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = help: encode it inside module 'mail', or write `trait json.Encode for User` there
+
+error[type]: type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+ --> main.silt:18:26
+    |
+ 18 |   println(json.stringify(Wrap { u: mail.user("b") }))
+    |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^ type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = help: encode it inside module 'mail', or write `trait json.Encode for User` there
+
+error[type]: type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+ --> main.silt:19:21
+    |
+ 19 |   println(util.show(mail.user("c")))
+    |                     ^^^^^^^^^^^^^^ type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = help: encode it inside module 'mail', or write `trait json.Encode for User` there

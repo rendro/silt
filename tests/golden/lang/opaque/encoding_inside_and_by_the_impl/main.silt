@@ -1,0 +1,15 @@
+-- Inside its module an opaque value is encoded by its structure; outside,
+-- by the module's `json.Encode` impl. A function of the type's own module
+-- encodes or decodes it wherever it is called from.
+import json
+import mail
+
+fn main() {
+  println(json.stringify(mail.email()))
+  println(mail.inside())
+  println(mail.mshow(mail.user("d")))
+  match mail.mload("""{"name": "e", "age": 2}""", mail.User) {
+    Ok(u) -> println(mail.mshow(u))
+    Err(e) -> println(Error.message(e))
+  }
+}
