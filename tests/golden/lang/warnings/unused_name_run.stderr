@@ -4,3 +4,4 @@ warning[type]: 'unused' is never used
  3 |   let unused = 1
    |       ^^^^^^ 'unused' is never used
   = help: remove it, or name it `_unused`
+
