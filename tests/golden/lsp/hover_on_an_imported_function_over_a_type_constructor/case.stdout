@@ -1,0 +1,12 @@
+> hover 10:15
+```silt
+fn double_all(xs: m(Int)) -> m(Int) where m: Functor
+```
+> hover 11:12
+```silt
+fn double_all(xs: m(Int)) -> m(Int) where m: Functor
+```
+> hover 12:12
+```silt
+Fn(Option(Int)) -> Option(Int)
+```

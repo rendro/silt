@@ -201,8 +201,22 @@ impl Server {
             None
         });
 
+        // A function over type constructors, not at a type a use gives
+        // it: its signature, the bounds with it (HK8).
+        // (Its declaration's name too.)
+        let declared = program.decls.iter().find_map(|decl| match decl {
+            crate::ast::Decl::Fn(f)
+                if (f.name_span.start as usize..f.name_span.end as usize).contains(&cursor) =>
+            {
+                doc.definitions.get(&f.name)
+            }
+            _ => None,
+        });
+        let signature = (def_entry.or(declared))
+            .and_then(|def| def.signature.as_ref().map(|s| s.text.clone()))
+            .filter(|_| ty.as_ref().is_none_or(has_unresolved_vars));
         // If neither a type nor a doc is available, no hover.
-        if ty.is_none() && doc_text.is_none() {
+        if ty.is_none() && doc_text.is_none() && signature.is_none() {
             return None;
         }
 
@@ -217,7 +231,9 @@ impl Server {
         // signature already shows the correct `Fn(String) -> Int`, so
         // dropping the broken top block is strictly an improvement.
         let mut value = String::new();
-        if let Some(t) = ty {
+        if let Some(signature) = signature {
+            value.push_str(&format!("```silt\n{signature}\n```"));
+        } else if let Some(t) = ty {
             // (So does a name the checker has no type for, a function
             // of a feature that is not built: its docs say what it is.)
             let untyped = has_unresolved_vars(&t) || matches!(t, crate::types::Type::Error);

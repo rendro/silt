@@ -20,8 +20,8 @@ pub(super) fn has_unresolved_vars(ty: &Type) -> bool {
         }
         Type::List(inner) | Type::Set(inner) | Type::Channel(inner) => has_unresolved_vars(inner),
         Type::Tuple(elems) => elems.iter().any(has_unresolved_vars),
-        Type::Generic(_, args) => args.iter().any(has_unresolved_vars),
-        Type::Map(k, v) => has_unresolved_vars(k) || has_unresolved_vars(v),
+        Type::Generic(_, args) | Type::Con(_, args) => args.iter().any(has_unresolved_vars),
+        Type::Map(k, v) | Type::App(k, v) => has_unresolved_vars(k) || has_unresolved_vars(v),
         _ => false,
     }
 }

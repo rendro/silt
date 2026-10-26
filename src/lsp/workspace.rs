@@ -272,10 +272,13 @@ impl Server {
                 let def = session.defs().get(def_of_key(session, key)?);
                 let checked = session.module_analysis(def.module)?;
                 // A variant is known under its own name, as its type is.
-                super::definitions::build_definitions(
-                    &checked.ast,
-                    Some(&checked.top_level),
-                    &session.tables().record_fields(),
+                super::definitions::with_signatures(
+                    super::definitions::build_definitions(
+                        &checked.ast,
+                        Some(&checked.top_level),
+                        &session.tables().record_fields(),
+                    ),
+                    &checked.signatures,
                 )
                 .remove(name)
             })

@@ -889,6 +889,42 @@ impl Scheme {
 
 // ── Free functions on types ─────────────────────────────────────────
 
+/// The variables of `ty` applied as type constructors (`m` of `m(Int)`),
+/// each once, in the order they first appear.
+pub fn constructor_heads(ty: &Type) -> Vec<TyVar> {
+    fn walk(ty: &Type, out: &mut Vec<TyVar>) {
+        match ty {
+            Type::App(head, arg) => {
+                if let Type::Var(v) = &**head
+                    && !out.contains(v)
+                {
+                    out.push(*v);
+                }
+                walk(head, out);
+                walk(arg, out);
+            }
+            Type::Fun(params, ret) => {
+                params.iter().for_each(|t| walk(t, out));
+                walk(ret, out);
+            }
+            Type::List(t) | Type::Set(t) | Type::Channel(t) => walk(t, out),
+            Type::Map(k, v) => {
+                walk(k, out);
+                walk(v, out);
+            }
+            Type::Tuple(ts) | Type::Generic(_, ts) | Type::Con(_, ts) => {
+                ts.iter().for_each(|t| walk(t, out))
+            }
+            Type::AnonRecord { fields, .. } => fields.values().for_each(|t| walk(t, out)),
+            Type::AssocProj { receiver, .. } => walk(receiver, out),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    walk(ty, &mut out);
+    out
+}
+
 /// Collect free type variables in a type.
 pub fn free_vars_in(ty: &Type) -> Vec<TyVar> {
     match ty {

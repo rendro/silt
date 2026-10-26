@@ -98,6 +98,9 @@ pub struct ModuleAnalysis {
     pub scope: ModuleScope,
     /// The inferred type of each top-level value the module binds.
     pub top_level: HashMap<crate::intern::Symbol, Type>,
+    /// The signature an editor writes for each function over type
+    /// constructors (`fn twice(xs: m(Int)) -> m(Int) where m: Functor`).
+    pub signatures: HashMap<crate::intern::Symbol, crate::typechecker::Signature>,
     /// The module's top-level `let`s, by the span of each, in the order
     /// they are initialised in.
     pub let_order: Vec<crate::source::Span>,
@@ -575,6 +578,7 @@ impl Session {
             ast: Arc::new(ast),
             scope: resolution.scope,
             top_level: check.top_level,
+            signatures: check.signatures,
             let_order: check.let_order,
             diagnostics,
         }

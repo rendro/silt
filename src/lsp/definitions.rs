@@ -14,6 +14,20 @@ use super::state::DefInfo;
 
 // ── Build definitions map from declarations ────────────────────────
 
+/// `defs` with the signature the checker writes for each function over
+/// type constructors (`signatures`, by name), for hover.
+pub(super) fn with_signatures(
+    mut defs: HashMap<Symbol, DefInfo>,
+    signatures: &HashMap<Symbol, crate::typechecker::Signature>,
+) -> HashMap<Symbol, DefInfo> {
+    for (name, signature) in signatures {
+        if let Some(def) = defs.get_mut(name) {
+            def.signature = Some(signature.clone());
+        }
+    }
+    defs
+}
+
 /// `top_level` is the checker's type of each top-level value (`None`
 /// for a workspace file that is only parsed).
 pub(super) fn build_definitions(
@@ -31,6 +45,7 @@ pub(super) fn build_definitions(
                 defs.insert(
                     f.name,
                     DefInfo {
+                        signature: None,
                         ty: fn_ty,
                         params,
                         doc: f.doc.clone(),
@@ -41,6 +56,7 @@ pub(super) fn build_definitions(
                 defs.insert(
                     t.name,
                     DefInfo {
+                        signature: None,
                         ty: None,
                         params: vec![],
                         doc: t.doc.clone(),
@@ -51,6 +67,7 @@ pub(super) fn build_definitions(
                         defs.insert(
                             v.name,
                             DefInfo {
+                                signature: None,
                                 ty: None,
                                 params: vec![],
                                 // Variants inherit the enum's doc
@@ -69,6 +86,7 @@ pub(super) fn build_definitions(
                 defs.insert(
                     t.name,
                     DefInfo {
+                        signature: None,
                         ty: None,
                         params: vec![],
                         doc: t.doc.clone(),
@@ -126,6 +144,7 @@ fn collect_let_pattern_defs(
             defs.insert(
                 *name,
                 DefInfo {
+                    signature: None,
                     ty: value_ty.cloned(),
                     params: vec![],
                     // Only the bare binding inherits the let's doc; a
@@ -183,6 +202,7 @@ fn collect_let_pattern_defs(
                     defs.insert(
                         *name,
                         DefInfo {
+                            signature: None,
                             ty: lookup_field_ty(*name),
                             params: vec![],
                             doc: None,
@@ -209,6 +229,7 @@ fn collect_let_pattern_defs(
                     defs.insert(
                         *name,
                         DefInfo {
+                            signature: None,
                             ty: lookup_field_ty(*name),
                             params: vec![],
                             doc: None,
@@ -224,6 +245,7 @@ fn collect_let_pattern_defs(
                 defs.insert(
                     *r,
                     DefInfo {
+                        signature: None,
                         ty: None,
                         params: vec![],
                         doc: None,
