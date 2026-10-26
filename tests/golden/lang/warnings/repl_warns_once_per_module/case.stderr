@@ -1,0 +1,6 @@
+warning[type]: unused import 'list'
+ --> helper.silt:1:1
+   |
+ 1 | import list
+   | ^^^^^^^^^^^ unused import 'list'
+  = help: remove the line `import list`

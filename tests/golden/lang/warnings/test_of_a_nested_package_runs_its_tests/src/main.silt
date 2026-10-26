@@ -1,0 +1,5 @@
+-- cmd: test sub
+-- A nested package's own tests run when it is the directory tested.
+fn main() {
+  println("app")
+}

@@ -11,3 +11,17 @@ error[parse]: expected '}' or ',' to continue record type, found EOF
    |
  1 | import m.{ Box, Pt }
    | -------------------- module 'm' is imported here
+
+warning[type]: unused import 'l'
+ --> main.silt:5:1
+   |
+ 5 | import l
+   | ^^^^^^^^ unused import 'l'
+  = help: remove the line `import l`
+
+warning[type]: unused import 'r'
+ --> main.silt:6:1
+   |
+ 6 | import r
+   | ^^^^^^^^ unused import 'r'
+  = help: remove the line `import r`

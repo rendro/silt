@@ -1,0 +1,5 @@
+import string.{ length, trim }
+
+pub fn double(x: Int) -> Int {
+  x * length("ab")
+}

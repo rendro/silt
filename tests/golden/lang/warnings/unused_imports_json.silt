@@ -1,0 +1,8 @@
+-- cmd: check --format json
+-- In JSON a warning has its own code and the severity "warning".
+import list
+import string.{ length, trim }
+
+fn main() {
+  println(length("ab"))
+}

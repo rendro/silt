@@ -1,0 +1,9 @@
+-- cmd: check --deny-warnings
+-- exit: 1
+-- stderr-contains: silt check: 1 warning, denied by --deny-warnings
+-- One warning is one warning.
+import list
+
+fn main() {
+  println("hi")
+}

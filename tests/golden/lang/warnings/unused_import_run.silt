@@ -1,0 +1,9 @@
+-- A warning never stops `silt run`: it is printed before the program starts,
+-- with a blank line between it and what the program writes on stderr.
+import io
+import list
+
+fn main() {
+  println("ran")
+  io.eprintln("the program on stderr")
+}

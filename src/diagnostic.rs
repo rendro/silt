@@ -61,7 +61,8 @@ macro_rules! codes {
         /// What a diagnostic is about. Each code has a stable id
         /// (`E0301`), whose hundreds name its phase: 0 lex, 1 parse,
         /// 2 resolve, 3 type, 4 compile, 5 entry point, 6 package, 7 runtime,
-        /// 8 format.
+        /// 8 format. The letter says its severity: `E` an error, `W` a
+        /// warning.
         #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
         pub enum Code {
             $( $(#[$doc])* $name, )*
@@ -71,9 +72,18 @@ macro_rules! codes {
             /// Every code, in id order.
             pub const ALL: &'static [Code] = &[$(Code::$name),*];
 
-            /// The stable id, `E` and four digits.
+            /// The stable id, `E` or `W` and four digits.
             pub fn id(self) -> &'static str {
                 match self { $(Code::$name => $id,)* }
+            }
+
+            /// Whether a diagnostic of this code is an error or a
+            /// warning: a code is always one of them.
+            pub fn severity(self) -> Severity {
+                match self.id().starts_with('W') {
+                    true => Severity::Warning,
+                    false => Severity::Error,
+                }
             }
 
             pub fn phase(self) -> Phase {
@@ -265,19 +275,22 @@ codes! {
     /// its result failed its own check: a defect of the formatter. The
     /// text is left as it is.
     FormatRefused = "E0801", Format;
+    // ── warnings ──
+    /// An import that nothing in its file uses.
+    UnusedImport = "W0202", Resolve;
 }
 
 // ── The diagnostic ──────────────────────────────────────────────────
 
 /// A quick fix: a titled set of text edits, each replacing the text of a
 /// span (an empty span inserts).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Fix {
     pub title: String,
     pub edits: Vec<(Span, String)>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Diagnostic {
     pub code: Code,
     pub severity: Severity,
@@ -300,6 +313,12 @@ impl Diagnostic {
         debug_assert!(
             !message.contains('\n'),
             "a diagnostic message is one line: {message:?}"
+        );
+        debug_assert_eq!(
+            severity,
+            code.severity(),
+            "{} is always of one severity",
+            code.id()
         );
         Diagnostic {
             code,
@@ -1013,6 +1032,11 @@ mod tests {
         let mut seen = std::collections::HashSet::new();
         for code in Code::ALL {
             assert!(seen.insert(code.id()), "duplicate id {}", code.id());
+            assert!(
+                code.id().len() == 5 && matches!(&code.id()[..1], "E" | "W"),
+                "{code:?} has id {}",
+                code.id()
+            );
             let hundreds = &code.id()[2..3];
             let expected = match code.phase() {
                 Phase::Lex => &["0"][..],
@@ -1167,7 +1191,10 @@ mod tests {
     #[test]
     fn a_warning_has_a_warning_header() {
         let map = sources("let x = 1");
-        let d = Diagnostic::warning(Code::UnreachablePattern, span(4, 5), "unused");
+        let d = Diagnostic {
+            severity: Severity::Warning,
+            ..Diagnostic::error(Code::UnreachablePattern, span(4, 5), "unused")
+        };
         assert!(render_human(&map, &d).starts_with("warning[type]: unused"));
     }
 

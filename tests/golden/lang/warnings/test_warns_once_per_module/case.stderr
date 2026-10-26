@@ -1,0 +1,17 @@
+warning[type]: unused import 'string'
+ --> src/a_test.silt:2:1
+   |
+ 2 | import string
+   | ^^^^^^^^^^^^^ unused import 'string'
+  = help: remove the line `import string`
+
+warning[type]: unused import 'list'
+ --> src/helper.silt:1:1
+   |
+ 1 | import list
+   | ^^^^^^^^^^^ unused import 'list'
+  = help: remove the line `import list`
+  PASS ./src/a_test.silt::test_a
+  PASS ./src/b_test.silt::test_b
+
+2 tests: 2 passed, 0 failed, 0 skipped

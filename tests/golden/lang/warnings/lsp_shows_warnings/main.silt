@@ -1,0 +1,9 @@
+-- cmd: lsp
+-- The editor shows a warning as a warning, in the entry and in a module
+-- of the package that the entry imports.
+import helper
+import list
+
+fn main() {
+  println(helper.double(2))
+}

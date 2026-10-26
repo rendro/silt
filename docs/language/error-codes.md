@@ -2,17 +2,19 @@
 title: "Error Codes"
 section: "Language"
 order: 14
-description: "What each diagnostic code of silt means: E0001 to E0801."
+description: "What each diagnostic code of silt means: the errors E0001 to E0801 and the warning W0202."
 ---
 
 # Error Codes
 
 Every diagnostic silt reports has a code. The terminal shows its kind
-(`error[type]`); `silt check --format json` and the language server give
-the code itself, `E` and four digits. Its hundreds say when the problem
-was found: 0 lexing, 1 parsing, 2 names, 3 types, 4 compiling, 5 the entry
-point, 6 packages, 7 running, 8 formatting. A code keeps its meaning;
-numbers that are missing belong to codes that are gone.
+(`error[type]`, `warning[type]`); `silt check --format json` and the
+language server give the code itself: `E` and four digits for an error,
+`W` and four digits for a warning. Its hundreds say when the problem
+was found: 0 lexing, 1 parsing, 2 names, 3 types, 4 compiling, 5 the
+entry point, 6 packages, 7 running, 8 formatting. A code is always an
+error or always a warning, and keeps its meaning; numbers that are
+missing belong to codes that are gone.
 
 ## Lexing (0xx)
 
@@ -142,3 +144,13 @@ numbers that are missing belong to codes that are gone.
 | Code | Meaning |
 |------|---------|
 | `E0801` | `silt fmt` could not follow the tokens of a file that parses, or its result failed its own check: a defect of the formatter. The text is left as it is. |
+
+## Warnings (Wxxx)
+
+A warning never stops `silt run`, `silt test` or the REPL;
+`silt check --deny-warnings` exits with 1 when there is one. Its help
+line names the fix, which is the one way to silence it.
+
+| Code | Meaning |
+|------|---------|
+| `W0202` | An import that nothing in the file uses. |

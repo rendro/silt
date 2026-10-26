@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- A match whose arms all have guards covers nothing: its error says why
+-- in a help line, and no warning stands beside it.
+fn sign(n: Int) -> String {
+  match n {
+    x when x > 0 -> "positive"
+    x when x <= 0 -> "not positive"
+  }
+}
+
+fn main() {
+  println(sign(3))
+}

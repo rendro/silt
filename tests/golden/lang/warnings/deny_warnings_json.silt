@@ -1,0 +1,9 @@
+-- cmd: check --format json --deny-warnings
+-- exit: 1
+-- With JSON, the warnings are in the JSON on stdout, and the line that
+-- denies them is on stderr.
+import list
+
+fn main() {
+  println("hi")
+}

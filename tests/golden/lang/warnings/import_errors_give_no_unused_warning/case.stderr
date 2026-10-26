@@ -1,0 +1,34 @@
+error[compile]: cannot load module 'nosuch': no such file
+ --> main.silt:8:1
+   |
+ 8 | import nosuch
+   | ^^^^^^^^^^^^^ cannot load module 'nosuch': no such file
+  = note: looked for `nosuch.silt`
+  = help: if 'nosuch' is a separate package, declare it under `[dependencies]` in silt.toml (e.g. `silt add nosuch`)
+
+error[type]: 'hidden' is private to module 'helper'
+ --> main.silt:6:17
+   |
+ 6 | import helper.{ hidden, shown }
+   |                 ^^^^^^ 'hidden' is private to module 'helper'
+  = help: mark it `pub` in module 'helper' to import it from another module
+
+error[type]: module 'string' has no member 'nope'
+ --> main.silt:7:17
+   |
+ 7 | import string.{ nope, length }
+   |                 ^^^^ module 'string' has no member 'nope'
+
+warning[type]: unused import 'length' from module 'string'
+ --> main.silt:7:23
+   |
+ 7 | import string.{ nope, length }
+   |                       ^^^^^^ unused import 'length' from module 'string'
+  = help: remove `length` from the import
+
+warning[type]: unused import 'list'
+ --> main.silt:9:1
+   |
+ 9 | import list
+   | ^^^^^^^^^^^ unused import 'list'
+  = help: remove the line `import list`

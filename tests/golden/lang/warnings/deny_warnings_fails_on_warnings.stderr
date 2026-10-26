@@ -1,0 +1,14 @@
+warning[type]: unused import 'list'
+ --> deny_warnings_fails_on_warnings.silt:5:1
+   |
+ 5 | import list
+   | ^^^^^^^^^^^ unused import 'list'
+  = help: remove the line `import list`
+
+warning[type]: unused import 'trim' from module 'string'
+ --> deny_warnings_fails_on_warnings.silt:6:25
+   |
+ 6 | import string.{ length, trim }
+   |                         ^^^^ unused import 'trim' from module 'string'
+  = help: remove `trim` from the import
+silt check: 2 warnings, denied by --deny-warnings

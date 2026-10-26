@@ -1,0 +1,2 @@
+5:1 warning unused import 'list'\nhelp: remove the line `import list`
+helper.silt:1:25 warning unused import 'trim' from module 'string'\nhelp: remove `trim` from the import

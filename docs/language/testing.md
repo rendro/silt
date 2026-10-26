@@ -17,7 +17,9 @@ Test files must use one of these naming patterns to be auto-discovered:
 - `*.test.silt` (e.g. `math.test.silt`)
 
 Without a path argument, `silt test` searches the current directory
-recursively. You can also pass a specific file or directory:
+recursively, but not a directory that holds a `silt.toml` of its own:
+that is another package, whose tests are its own. You can also pass a
+specific file or directory:
 
 ```
 silt test                      -- search current directory recursively
@@ -31,6 +33,9 @@ the module of its trait or of its type, see
 [Where an Impl Is Written](traits.md#where-an-impl-is-written)): put
 the impl beside the type, or declare the trait in the test file and
 implement it there, or wrap the value in a type the test file declares.
+
+In a package, `silt check` checks the package's test files too, without
+running them.
 
 ## Function Conventions
 

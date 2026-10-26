@@ -1,3 +1,10 @@
+warning[type]: unused import 'list'
+ --> hidden_module__an_alias_names_the_module_too.silt:6:1
+   |
+ 6 | import list as l
+   | ^^^^^^^^^^^^^^^^ unused import 'list'
+  = help: remove the line `import list as l`
+
 error[type]: type 'List(Int)' has no field 'length'
  --> hidden_module__an_alias_names_the_module_too.silt:10:11
     |

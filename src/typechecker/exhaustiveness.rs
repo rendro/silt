@@ -547,9 +547,17 @@ impl TypeChecker {
             Ok(true) => {}
             Ok(false) => {
                 let msg = self.missing_description(&rows, &scrutinee_ty);
-                self.error(
+                // Arms that all have a guard cover nothing: the help says
+                // why.
+                let guarded = !arms.is_empty() && rows.is_empty();
+                let help = guarded.then(|| {
+                    "every arm has a guard, and guards are not counted for coverage; end \
+                     with an arm without one (`_ -> ...`)"
+                        .to_string()
+                });
+                self.error_help(
                     Code::NonExhaustive,
-                    format!("non-exhaustive match: {msg}"),
+                    (format!("non-exhaustive match: {msg}"), help),
                     span,
                 );
             }
@@ -561,15 +569,6 @@ impl TypeChecker {
                     span,
                 );
             }
-        }
-
-        // Warn if ALL arms have guards.
-        if !arms.is_empty() && arms.iter().all(|a| a.guard.is_some()) {
-            self.warning(
-                Code::NonExhaustive,
-                "match may be non-exhaustive: all arms have guards",
-                span,
-            );
         }
     }
 

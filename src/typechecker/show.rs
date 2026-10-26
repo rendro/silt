@@ -356,15 +356,6 @@ impl TypeChecker {
         self.errors.push(Diagnostic::error(code, span, message));
     }
 
-    pub(super) fn warning(
-        &mut self,
-        code: Code,
-        message: impl Into<std::string::String>,
-        span: Span,
-    ) {
-        self.errors.push(Diagnostic::warning(code, span, message));
-    }
-
     /// An error with a message and, when there is one, a help line: what
     /// the `*_message` helpers that suggest a close name return.
     pub(super) fn error_help(

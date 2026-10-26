@@ -1,0 +1,6 @@
+error[type]: non-exhaustive match: not all patterns are covered
+ --> all_guards_match_has_its_reason_as_help.silt:6:9
+   |
+ 6 |   match n {
+   |         ^ non-exhaustive match: not all patterns are covered
+  = help: every arm has a guard, and guards are not counted for coverage; end with an arm without one (`_ -> ...`)

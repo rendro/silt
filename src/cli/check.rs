@@ -1,6 +1,7 @@
-//! `silt check [--format json] <file>` — analyse and compile a program
-//! without executing it, reporting diagnostics.
+//! `silt check [--format json] [--deny-warnings] <file>` — analyse and
+//! compile a program without executing it, reporting diagnostics.
 
+use std::path::Path;
 use std::process;
 
 use silt::diagnostic::{Diagnostic, SourceView};
@@ -8,7 +9,7 @@ use silt::session::{Entry, LockPolicy};
 
 use crate::cli::help::check_usage_banner;
 use crate::cli::package::{EntryPointKind, resolve_package_entry_point_for};
-use crate::cli::paths::{ProgramFiles, door_diagnostics, open_entry_or_exit};
+use crate::cli::paths::{ProgramFiles, door_diagnostics, open_entry_or_exit, package_test_files};
 
 /// Output format for `silt check` — human-readable by default, or
 /// machine-readable JSON when `--format json` is passed.
@@ -18,10 +19,11 @@ pub(crate) enum OutputFormat {
     Json,
 }
 
-/// Dispatch `silt check [--format json] <file>`.
+/// Dispatch `silt check [--format json] [--deny-warnings] <file>`.
 pub(crate) fn dispatch(args: &[String]) {
     let mut file: Option<String> = None;
     let mut format = OutputFormat::Human;
+    let mut deny_warnings = false;
     let mut i = 2;
     while i < args.len() {
         if args[i] == "--" {
@@ -50,11 +52,15 @@ pub(crate) fn dispatch(args: &[String]) {
                 eprintln!("--format requires 'json'");
                 process::exit(1);
             }
+        } else if args[i] == "--deny-warnings" {
+            deny_warnings = true;
+            i += 1;
         } else if args[i] == "--help" || args[i] == "-h" {
             println!("Usage: {}", check_usage_banner());
             println!();
             println!("Options:");
             println!("  --format json       Emit diagnostics as JSON");
+            println!("  --deny-warnings     Exit with 1 when there is a warning");
             println!("  --watch, -w         Re-run on file changes");
             process::exit(0);
         } else if args[i].starts_with('-') {
@@ -93,13 +99,18 @@ pub(crate) fn dispatch(args: &[String]) {
     if format == OutputFormat::Json {
         crate::cli::package::print_manifest_errors_as_json();
     }
-    let path = match file {
-        Some(p) => p,
+    let (path, tests) = match file {
+        Some(p) => (p, Vec::new()),
         // `silt check` accepts a lib-only package
         // (`src/lib.silt` with no `src/main.silt`) — the required shape
         // for dependencies. `silt run`/`silt disasm` keep requiring main.
+        // The package's test files are checked with it, so that one
+        // command sees every warning of the package.
         None => match resolve_package_entry_point_for(EntryPointKind::AllowLib) {
-            Ok(Some(p)) => p.to_string_lossy().into_owned(),
+            Ok(Some(p)) => {
+                let root = p.parent().and_then(Path::parent).unwrap_or(Path::new("."));
+                (p.to_string_lossy().into_owned(), package_test_files(root))
+            }
             Ok(None) => {
                 eprintln!("Usage: {}", check_usage_banner());
                 process::exit(1);
@@ -107,28 +118,60 @@ pub(crate) fn dispatch(args: &[String]) {
             Err(()) => process::exit(1),
         },
     };
-    check_file(&path, format);
+    check_files(&path, &tests, format, deny_warnings);
 }
 
-pub(crate) fn check_file(path: &str, format: OutputFormat) {
+/// Check the entry file `path` and the test files `tests` in one
+/// session, and report what was found, each diagnostic once.
+fn check_files(path: &str, tests: &[String], format: OutputFormat, deny_warnings: bool) {
     silt::intern::reset();
-    // `silt check` checks the file as a module: the session's analysis
+    // `silt check` checks each file as a module: the session's analysis
     // and the compile step, as the language server does. A module needs
     // no `main`; `silt run` asks for one. A `main` the file binds must be
     // able to start, and so must its test functions.
     let (mut session, file) = open_entry_or_exit(path, LockPolicy::Update);
-    let compiled = session.compile(file, Entry::Tests { filter: None });
-    let errors = door_diagnostics(&mut session, file, &compiled);
+    let mut unreadable = false;
+    let mut files = vec![file];
+    for test in tests {
+        match session.open(Path::new(test)) {
+            Ok(file) => files.push(file),
+            Err(e) => {
+                eprintln!(
+                    "error reading {test}: {}",
+                    silt::diagnostic::io_error_text(&e)
+                );
+                unreadable = true;
+            }
+        }
+    }
+    // Each once, in the order found (a set beside the list: a program
+    // can have many thousands of warnings).
+    let mut diagnostics: Vec<Diagnostic> = Vec::new();
+    let mut seen: std::collections::HashSet<Diagnostic> = std::collections::HashSet::new();
+    for file in files {
+        let compiled = session.compile(file, Entry::Tests { filter: None });
+        for d in door_diagnostics(&mut session, file, &compiled) {
+            if seen.insert(d.clone()) {
+                diagnostics.push(d);
+            }
+        }
+    }
 
     let files = ProgramFiles::new(path, session.sources());
     if format == OutputFormat::Json {
-        print_json_errors(&files, &errors);
+        print_json_errors(&files, &diagnostics);
     } else {
         // F14: separate diagnostics with blank lines.
-        silt::diagnostic::eprint_all(&files, &errors);
+        silt::diagnostic::eprint_all(&files, &diagnostics);
     }
 
-    if errors.iter().any(Diagnostic::is_error) {
+    if unreadable || diagnostics.iter().any(Diagnostic::is_error) {
+        process::exit(1);
+    }
+    let warnings = diagnostics.iter().filter(|d| d.is_warning()).count();
+    if deny_warnings && warnings > 0 {
+        let noun = if warnings == 1 { "warning" } else { "warnings" };
+        eprintln!("silt check: {warnings} {noun}, denied by --deny-warnings");
         process::exit(1);
     }
 }

@@ -1,3 +1,10 @@
+warning[type]: unused import 'list'
+ --> dot_after_a_value__names_a_field.silt:10:1
+    |
+ 10 | import list
+    | ^^^^^^^^^^^ unused import 'list'
+  = help: remove the line `import list`
+
 error[type]: type 'Int' has no field 'frobnicate'
  --> dot_after_a_value__names_a_field.silt:18:11
     |

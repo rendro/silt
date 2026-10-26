@@ -1,3 +1,10 @@
+warning[type]: unused import 'set'
+ --> a_refusal_names_the_decoder_and_the_function_that_passes_it_on.silt:10:1
+    |
+ 10 | import set
+    | ^^^^^^^^^^ unused import 'set'
+  = help: remove the line `import set`
+
 error[type]: `json.parse` cannot decode `Holder`: field `s` has type `Set(Int)`, which has no decoder
  --> a_refusal_names_the_decoder_and_the_function_that_passes_it_on.silt:15:29
     |

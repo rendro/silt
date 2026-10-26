@@ -1,0 +1,9 @@
+-- cmd: test
+-- A warning shows above the results of `silt test`, once: the module that
+-- both test files import is warned about with the first. A test file the
+-- runner found is named in its diagnostics as the modules are.
+import helper
+
+fn main() {
+  println(helper.double(2))
+}

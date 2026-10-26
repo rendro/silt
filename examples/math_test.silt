@@ -1,5 +1,3 @@
-import list
-import string
 import test
 
 -- Simple test file demonstrating the built-in test runner.

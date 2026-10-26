@@ -223,6 +223,7 @@ silt run <file.silt> -- a b   -- run it with the arguments a and b (io.args())
 silt run -w <file.silt>    -- run and re-run on file changes
 silt check <file.silt>     -- type-check without running
 silt check --format json <file.silt>   -- type-check with JSON output (for CI/editors)
+silt check --deny-warnings <file.silt>   -- also fail on warnings (for CI)
 silt test [path]           -- run test functions
 silt fmt [files...]        -- format source code
 silt fmt --check           -- check formatting without modifying files

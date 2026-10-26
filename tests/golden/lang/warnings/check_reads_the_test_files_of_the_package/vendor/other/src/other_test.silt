@@ -1,0 +1,1 @@
+fn test_broken() { 1 + "a" }

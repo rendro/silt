@@ -1,3 +1,24 @@
+warning[type]: unused import 'list'
+ --> hidden_module__a_local_hides_an_imported_module.silt:6:1
+   |
+ 6 | import list
+   | ^^^^^^^^^^^ unused import 'list'
+  = help: remove the line `import list`
+
+warning[type]: unused import 'map'
+ --> hidden_module__a_local_hides_an_imported_module.silt:7:1
+   |
+ 7 | import map
+   | ^^^^^^^^^^ unused import 'map'
+  = help: remove the line `import map`
+
+warning[type]: unused import 'string'
+ --> hidden_module__a_local_hides_an_imported_module.silt:8:1
+   |
+ 8 | import string
+   | ^^^^^^^^^^^^^ unused import 'string'
+  = help: remove the line `import string`
+
 error[type]: type 'String' has no field 'to_upper'
  --> hidden_module__a_local_hides_an_imported_module.silt:11:3
     |

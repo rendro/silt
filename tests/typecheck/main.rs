@@ -14,3 +14,4 @@ mod round95_interp_display_runtime_tests;
 mod typeof_render_tests;
 mod unified_trait_registration_tests;
 mod vm_error_display_tests;
+mod warnings_fix_tests;

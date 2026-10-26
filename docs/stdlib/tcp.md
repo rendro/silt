@@ -50,10 +50,8 @@ renders any variant as a string when you don't want to branch on it.
 ## Echo server example
 
 ```silt
-import bytes
 import task
 import tcp
-import time
 
 fn main() {
   match tcp.listen("127.0.0.1:8080") {
