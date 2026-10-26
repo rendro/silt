@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- A type constructor variable without a bound has no methods.
+-- stderr-contains: error[type]: no method 'pure' on type variable `m`: it has no bounds
+-- stderr-contains: = help: add a bound whose trait has the method: `where m: SomeTrait`
+fn f(xs: m(Int)) -> m(Int) { m.pure(1) }
+fn main() { println(1) }

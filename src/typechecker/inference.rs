@@ -1006,11 +1006,25 @@ impl TypeChecker {
                         self.show_trait(tr)
                     ),
                 )
-                .with_help(format!(
-                    "call it on a type, {}, or on a type variable with the bound, {}",
-                    on_type_call("T", field, method_ty),
-                    on_type_call("a", field, method_ty)
-                )),
+                .with_help(match info.constructor {
+                    // (Of a trait of type constructors, on a constructor.)
+                    true => {
+                        let args = match method_ty {
+                            Type::Fun(params, _) if params.len() == 1 => "x",
+                            Type::Fun(params, _) if !params.is_empty() => "..",
+                            _ => "",
+                        };
+                        format!(
+                            "call it on a type constructor, `Option.{field}({args})`, or on a type \
+                             variable with the bound, `m.{field}({args})`"
+                        )
+                    }
+                    false => format!(
+                        "call it on a type, {}, or on a type variable with the bound, {}",
+                        on_type_call("T", field, method_ty),
+                        on_type_call("a", field, method_ty)
+                    ),
+                }),
             );
             return Type::Error;
         }
@@ -1053,12 +1067,36 @@ impl TypeChecker {
                 return self.apply(&ty);
             }
         }
-        let self_ty = self.fresh_var();
+        // `Self` is the receiver's type, or, of a trait of type
+        // constructors, its constructor (`Option(_)` of `Option(Int)`).
+        let (self_ty, self_var) = self.fresh_tv();
+        // (A type constructor variable a message writes `m`, as HK8's
+        // inferred `fn twice(xs: m(Int)) -> m(Int)`.)
+        if info.constructor {
+            self.tables.constructor_names.insert(self_var, intern("m"));
+        }
         if let Some((recv, _)) = &receiver {
-            self.unify(recv, &self_ty, span);
+            let receiver_ty = match info.constructor {
+                true => Type::App(Box::new(self_ty.clone()), Box::new(self.fresh_var())),
+                false => self_ty.clone(),
+            };
+            self.unify(recv, &receiver_ty, span);
         }
         let at = receiver.as_ref().map(|(_, at)| *at);
-        self.through_trait(tr, field, self_ty, at, span)
+        let ty = self.through_trait(tr, field, self_ty, at, span);
+        // The receiver is the method's `Self(a)` parameter, its element
+        // the method's `a` (`String` of `m(String)`): the call does not
+        // unify the receiver it takes with that parameter again.
+        if info.constructor
+            && let Some((recv, recv_at)) = &receiver
+            && let Type::Fun(params, _) = &ty
+            && let Some(param) = (self.self_param(tr, field)).and_then(|i| params.get(i))
+        {
+            let param = param.clone();
+            self.unify(recv, &param, *recv_at);
+            return self.apply(&ty);
+        }
+        ty
     }
 
     /// The type of a use of the method `field` of the trait `tr` on the

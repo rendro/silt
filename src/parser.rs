@@ -2029,6 +2029,10 @@ impl<'src> Parser<'src> {
             self.expect(&Token::Ident(intern::intern("for")))?;
             let target_span = self.span();
             let target_te = self.parse_type_expr()?;
+            let header_span = Span {
+                end: target_te.span.end,
+                ..span
+            };
 
             // Accept only `Named(head)` or `Generic(head, args)` as the
             // impl target. Reject tuple/fn/Unit targets — those have no
@@ -2157,6 +2161,7 @@ impl<'src> Parser<'src> {
                 target_type: target,
                 target_res: None,
                 target_type_span,
+                header_span,
                 target_type_args,
                 target_param_names,
                 where_clauses,

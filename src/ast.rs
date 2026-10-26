@@ -778,6 +778,10 @@ pub struct TraitImpl {
     /// (e.g. `Int` in `for Int`, `Box` in `for Box(a)`). Used by LSP
     /// rename / references on the impl-target reference.
     pub target_type_span: Span,
+    /// Span of the impl's header up to its target type, arguments
+    /// included (`trait Functor for Option(_)`): where a message about
+    /// the header points.
+    pub header_span: Span,
     /// Type arguments on the target, if any. `trait X for Box(a)` yields
     /// `[TypeExpr::Named("a")]`; the bare `trait X for Int` yields `[]`.
     /// Each lowercase `Named` entry binds a fresh type variable in the

@@ -1,0 +1,77 @@
+-- Generic code over a constructor reaches a supertrait's methods
+-- through its bound (`m: Monad` gives Functor and Applicative), and calls
+-- a method that only makes a value on the variable (`m.pure(x)`); a
+-- type of a `type m` parameter the signature applies is the constructor
+-- the call names (`wrap(1, Option)`), and is passed on as such.
+trait Functor {
+  fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)
+}
+trait Applicative: Functor {
+  fn pure(x: a) -> Self(a)
+  fn map2(xs: Self(a), ys: Self(b), f: Fn(a, b) -> c) -> Self(c)
+}
+trait Monad: Applicative {
+  fn flat_map(xs: Self(a), f: Fn(a) -> Self(b)) -> Self(b)
+}
+type Box(a) { value: a }
+trait Functor for Box(_) {
+  fn map(xs, f) { Box { value: f(xs.value) } }
+}
+trait Applicative for Box(_) {
+  fn pure(x) { Box { value: x } }
+  fn map2(xs, ys, f) { Box { value: f(xs.value, ys.value) } }
+}
+trait Monad for Box(_) {
+  fn flat_map(xs, f) { f(xs.value) }
+}
+trait Functor for Option(_) {
+  fn map(xs, f) {
+    match xs {
+      Some(x) -> Some(f(x))
+      None -> None
+    }
+  }
+}
+trait Applicative for Option(_) {
+  fn pure(x) { Some(x) }
+  fn map2(xs, ys, f) {
+    match (xs, ys) {
+      (Some(x), Some(y)) -> Some(f(x, y))
+      _ -> None
+    }
+  }
+}
+trait Monad for Option(_) {
+  fn flat_map(xs, f) {
+    match xs {
+      Some(x) -> f(x)
+      None -> None
+    }
+  }
+}
+fn pair_up(xs: m(a), ys: m(b)) -> m((a, b)) where m: Applicative {
+  Applicative.map2(xs, ys) { a, b -> (a, b) }
+}
+fn shown(xs: m(Int)) -> m(String) where m: Monad {
+  Functor.map(xs) { x -> "{x}" }
+}
+fn step(xs: m(Int)) -> m(Int) where m: Monad {
+  Monad.flat_map(xs) { x -> m.pure(x + 1) }
+}
+fn wrap(x: a, type m) -> m(a) where m: Applicative {
+  m.pure(x)
+}
+fn wrap_twice(x: a, type m) -> m(m(a)) where m: Applicative {
+  wrap(wrap(x, m), m)
+}
+fn main() {
+  println(pair_up(Some(1), Some("a")))
+  println(pair_up(Some(1), None))
+  println(pair_up(Box { value: 1 }, Box { value: 2 }).value)
+  println(shown(Some(7)))
+  println(step(Some(1)))
+  println(step(Box { value: 5 }).value)
+  println(wrap(1, Option))
+  println(wrap("b", Box).value)
+  println(wrap_twice(3, Option))
+}

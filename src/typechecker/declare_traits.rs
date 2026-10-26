@@ -224,6 +224,23 @@ impl TypeChecker {
         })
     }
 
+    /// The type of the impl `key` as a message names it: by its head
+    /// (`Box`), a type constructor as its header writes it
+    /// (`Result(_, e)`).
+    fn impl_type_shown(&self, key: &ImplKey) -> String {
+        match self.tables.impl_self_types.get(key) {
+            Some(con @ Type::Con(..)) => {
+                let rigid: Vec<RigidId> = (self.impl_var_names.get(key))
+                    .into_iter()
+                    .flatten()
+                    .map(|&(var, name)| RigidId { var, name })
+                    .collect();
+                self.show_type(&rigidify(con, &rigid))
+            }
+            _ => self.show_type(&Type::Generic(key.1, Vec::new())),
+        }
+    }
+
     // ── Validate trait implementations ────────────────────────────────
 
     pub(super) fn validate_trait_impls(&mut self) {
@@ -277,7 +294,7 @@ impl TypeChecker {
             for (i, supertrait) in trait_info.supertraits.iter().enumerate() {
                 if !self.head_has_trait(*supertrait, *type_name) {
                     let (ty, tr, sup) = (
-                        self.show_type(&Type::Generic(*type_name, Vec::new())),
+                        self.impl_type_shown(impl_key),
                         self.show_trait(*trait_name),
                         self.show_trait(*supertrait),
                     );
@@ -395,19 +412,7 @@ impl TypeChecker {
                         Some(args) if !args.is_empty() => self.show_bound(*trait_name, args),
                         _ => self.show_trait(*trait_name),
                     };
-                    // (A type constructor as its header writes it,
-                    // `Result(_, e)`.)
-                    let target = match self.tables.impl_self_types.get(impl_key) {
-                        Some(con @ Type::Con(..)) => {
-                            let rigid: Vec<RigidId> = (self.impl_var_names.get(impl_key))
-                                .into_iter()
-                                .flatten()
-                                .map(|&(var, name)| RigidId { var, name })
-                                .collect();
-                            self.show_type(&rigidify(con, &rigid))
-                        }
-                        _ => self.show_type(&Type::Generic(*type_name, Vec::new())),
-                    };
+                    let target = self.impl_type_shown(impl_key);
                     self.error(
                         Code::InvalidTraitImpl,
                         format!(
@@ -882,6 +887,14 @@ impl TypeChecker {
                 ) else {
                     continue;
                 };
+                if !self.bound_fits_kind(
+                    &Type::Var(tv),
+                    (wc.type_param, true),
+                    bound,
+                    wc.trait_name_span,
+                ) {
+                    continue;
+                }
                 let args: Vec<Type> = wc
                     .trait_args
                     .iter()
@@ -1196,7 +1209,16 @@ impl TypeChecker {
                 .and_then(|b| b.arity)
                 .map(|a| a as usize)
         });
-        if !self.is_constructor_trait(tr) {
+        // (A type of no type arguments is no constructor, whatever the
+        // trait: `trait Greet for Int(_)` as `trait Functor for Int(_)`.)
+        let constructor = self.is_constructor_trait(tr);
+        if arity == Some(0) && (constructor || !holes.is_empty()) {
+            let message =
+                format!("type '{head}' takes no type arguments, so it is not a type constructor");
+            self.error(Code::KindMismatch, message, ti.header_span);
+            return false;
+        }
+        if !constructor {
             if holes.is_empty() {
                 return true;
             }
@@ -1214,22 +1236,27 @@ impl TypeChecker {
                 "trait '{trait_name}' is for types, not type constructors: name every type argument"
             );
             let help = format!("write `trait {trait_name} for {head}({})`", args.join(", "));
-            self.error_help(Code::KindMismatch, (message, Some(help)), ti.span);
-            return false;
-        }
-        if arity == Some(0) {
-            let message =
-                format!("type '{head}' takes no type arguments, so it is not a type constructor");
-            self.error(Code::KindMismatch, message, ti.span);
+            self.error_help(Code::KindMismatch, (message, Some(help)), ti.header_span);
             return false;
         }
         match holes.as_slice() {
             [0] => true,
-            [] => {
+            // No `_`, or one more after the first: the header with `_`
+            // first and names after it.
+            [] | [0, ..] => {
                 // The header with `_` first: the arguments it writes after
-                // the first, else the type's parameters.
+                // the first (a name for a second `_`), else the type's
+                // parameters.
+                let mut fresh = ('b'..='z')
+                    .map(|c| c.to_string())
+                    .filter(|name| !ti.target_param_names.iter().any(|p| resolve(*p) == *name));
                 let rest: Vec<String> = match ti.target_type_args.split_first() {
-                    Some((_, rest)) => rest.iter().map(type_expr_text).collect(),
+                    Some((_, rest)) => (rest.iter())
+                        .map(|arg| match is_hole(arg) {
+                            true => fresh.next().unwrap_or_else(|| "_".to_string()),
+                            false => type_expr_text(arg),
+                        })
+                        .collect(),
                     None => {
                         let declared: Vec<String> = (self.tables.enums.get(&written))
                             .map(|e| e.params.iter().skip(1).map(|p| resolve(*p)).collect())
@@ -1249,7 +1276,7 @@ impl TypeChecker {
                      first type argument"
                 );
                 let help = format!("write `trait {trait_name} for {head}({})`", args.join(", "));
-                self.error_help(Code::KindMismatch, (message, Some(help)), ti.span);
+                self.error_help(Code::KindMismatch, (message, Some(help)), ti.header_span);
                 false
             }
             _ => {
@@ -1266,7 +1293,7 @@ impl TypeChecker {
                         "to map another argument of '{head}', declare it first in '{head}'"
                     )),
                 };
-                self.error_help(Code::KindMismatch, (message, help), ti.span);
+                self.error_help(Code::KindMismatch, (message, help), ti.header_span);
                 false
             }
         }
@@ -1834,6 +1861,17 @@ impl TypeChecker {
             match impl_param_map.get(type_param) {
                 Some(ty) => {
                     let resolved = self.apply(ty);
+                    if !self.bound_fits_kind(
+                        &resolved,
+                        (*type_param, false),
+                        *trait_name,
+                        wc.trait_name_span,
+                    ) {
+                        if let Type::Var(tv) = resolved {
+                            self.unknown_bounds.insert(tv);
+                        }
+                        continue;
+                    }
                     if let Type::Var(tv) = resolved {
                         impl_level_constraints.push(Pred::bound(
                             tv,

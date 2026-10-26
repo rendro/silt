@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- `_` in an impl of a trait of types, for a type without type
+-- parameters: the type is no type constructor, whatever the trait.
+-- stderr-contains: error[type]: type 'Int' takes no type arguments, so it is not a type constructor
+-- stderr-not-contains: write `trait Greet for Int(a)`
+trait Greet {
+  fn greet(self) -> String
+}
+trait Greet for Int(_) {
+  fn greet(self) { "hi" }
+}
+fn main() { println(1) }

@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- The type given to a `type m` the signature applies decides the
+-- result's type: `wrap(1, Option)` is an `Option(Int)`.
+-- stderr-contains: error[type]: type mismatch: expected String, got Option(Int)
+trait Applicative {
+  fn pure(x: a) -> Self(a)
+}
+trait Applicative for Option(_) {
+  fn pure(x) { Some(x) }
+}
+fn wrap(x: a, type m) -> m(a) where m: Applicative { m.pure(x) }
+fn main() {
+  let s: String = wrap(1, Option)
+  println(s)
+}

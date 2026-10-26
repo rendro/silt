@@ -1,0 +1,50 @@
+-- cmd: check
+-- exit: 1
+-- A function without annotations that maps over a constructor knows
+-- what its closure does with the element: a call with another element
+-- type is refused (a function, a closure in a `let`, a signature
+-- without a result type).
+-- stderr-contains: error[type]: type mismatch: expected m(Int), got Option(String)
+-- stderr-contains: error[type]: type mismatch: expected m(String), got Option(Int)
+-- stderr-contains: --> constructor_calls__an_inferred_function_keeps_its_element.silt:39:63
+-- stderr-contains: --> constructor_calls__an_inferred_function_keeps_its_element.silt:44:17
+-- stderr-contains: --> constructor_calls__an_inferred_function_keeps_its_element.silt:45:16
+-- stderr-contains: --> constructor_calls__an_inferred_function_keeps_its_element.silt:46:17
+-- stderr-contains: --> constructor_calls__an_inferred_function_keeps_its_element.silt:47:19
+-- stderr-contains: --> constructor_calls__an_inferred_function_keeps_its_element.silt:49:13
+trait Functor {
+  fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)
+}
+trait Applicative: Functor {
+  fn pure(x: a) -> Self(a)
+  fn map2(xs: Self(a), ys: Self(b), f: Fn(a, b) -> c) -> Self(c)
+}
+trait Monad: Applicative {
+  fn flat_map(xs: Self(a), f: Fn(a) -> Self(b)) -> Self(b)
+}
+trait Functor for Option(_) {
+  fn map(xs, f) {
+    match xs {
+      Some(x) -> Some(f(x))
+      None -> None
+    }
+  }
+}
+import string
+type P { name: String }
+fn twice(xs) { Functor.map(xs) { x -> x * 2 } }
+fn lens(xs) { Functor.map(xs) { x -> string.length(x) } }
+fn names(xs) { Functor.map(xs) { x -> x.name } }
+fn applied(xs) { Functor.map(xs) { f -> f(1) } }
+fn t2(xs: m(a)) where m: Functor { Functor.map(xs) { x -> x * 2 } }
+fn main() {
+  let g = { xs -> Functor.map(xs) { x -> x * 2 } }
+  println(names(Some(P { name: "a" })))
+  println(applied(Some({ x -> x + 1 })))
+  println(twice(Some("s")))
+  println(lens(Some(5)))
+  println(names(Some(5)))
+  println(applied(Some(3)))
+  println(twice(Some(2)))
+  println(g(Some("s")))
+}

@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- An impl's header writes `_` once, for the first type argument: a
+-- second is the error of a header that does not write it so, with the
+-- header that does. The message points at the header up to its type.
+-- stderr-contains: error[type]: trait 'Functor' is for type constructors: its impl writes '_' for the first type argument
+-- stderr-contains: = help: write `trait Functor for Pair(_, b)`
+-- stderr-contains: | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ trait 'Functor'
+trait Functor {
+  fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)
+}
+type Pair(a, b) { P(a, b) }
+trait Functor for Pair(_, _) {
+  fn map(xs, f) { xs }
+}
+fn main() { println(1) }

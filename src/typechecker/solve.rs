@@ -1560,6 +1560,9 @@ impl TypeChecker {
                 vec![(**inner).clone()]
             }
             Type::Map(k, v) => vec![(**k).clone(), (**v).clone()],
+            // A type constructor's: those after the first, which it
+            // fixes (`String` of `Result(_, String)`).
+            Type::Con(_, rest) => rest.clone(),
             // Tuple-/Fn-shaped alias impls (`type P2 = (Int, Int)`;
             // `type IntOp = Fn(Int) -> Int`) register under the synthetic
             // heads `"Tuple"`/`"Fn"` with the expanded structural self
@@ -2000,6 +2003,40 @@ impl TypeChecker {
 
     /// Check that `ty` implements `trait_name` by an impl: the one the
     /// type's head has.
+    /// The type `ty`, of the head `head`, that lacks an impl, as a
+    /// message names it: a type by its head (`Box`), a type constructor
+    /// as an impl's header writes it (`Result(_, String)`).
+    fn show_subject(&self, ty: &Type, head: TypeRef) -> String {
+        match ty {
+            // (A fixed argument still unknown by the name an impl's
+            // header would give it, `Result(_, e)`: the type's own
+            // parameter's, else a letter.)
+            Type::Con(con, rest) => {
+                let declared: Vec<Symbol> = match con {
+                    Head::Named(r) => (self.tables.enums.get(r))
+                        .map(|e| e.params.iter().skip(1).copied().collect())
+                        .unwrap_or_default(),
+                    Head::Map => vec![intern("v")],
+                    _ => Vec::new(),
+                };
+                let mut letters = ('b'..='z').map(|c| intern(&c.to_string()));
+                let rest: Vec<Type> = (rest.iter().enumerate())
+                    .map(|(i, arg)| match self.apply(arg) {
+                        Type::Var(var) => {
+                            let name = (declared.get(i).copied())
+                                .or_else(|| letters.next())
+                                .unwrap_or_else(|| intern("_"));
+                            Type::Rigid(RigidId { var, name })
+                        }
+                        arg => arg,
+                    })
+                    .collect();
+                self.show_type(&Type::Con(*con, rest))
+            }
+            _ => self.show_type(&Type::Generic(head, vec![])),
+        }
+    }
+
     fn verify_impl(
         &mut self,
         trait_name: TraitKey,
@@ -2055,7 +2092,7 @@ impl TypeChecker {
                     .unwrap_or_else(|| {
                         format!(
                             "type '{}' does not implement trait '{}'",
-                            self.show_type(&Type::Generic(type_name, vec![])),
+                            self.show_subject(&resolved, type_name),
                             self.show_bound(trait_name, bound_trait_args)
                         )
                     }),
@@ -2091,7 +2128,7 @@ impl TypeChecker {
         if key.is_none() && !self.tables.impl_args_of(trait_name, type_name).is_empty() {
             let message = format!(
                 "type '{}' does not implement trait '{}'",
-                self.show_type(&Type::Generic(type_name, vec![])),
+                self.show_subject(&resolved, type_name),
                 self.show_bound(trait_name, bound_trait_args)
             );
             self.error(Code::MissingTraitImpl, message, span);
@@ -2207,7 +2244,7 @@ impl TypeChecker {
                         Code::MissingTraitImpl,
                         format!(
                             "type '{}' does not implement trait '{}': the matched impl is '{}'",
-                            self.show_type(&Type::Generic(type_name, vec![])),
+                            self.show_subject(&resolved, type_name),
                             self.show_bound(trait_name, bound_trait_args),
                             self.show_bound(trait_name, &impl_trait_args),
                         ),

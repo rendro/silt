@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- A type constructor variable is not bounded by a trait of types.
+-- stderr-contains: error[type]: 'm' is a type constructor, but 'Display' is a trait of types
+-- stderr-contains: --> constructor_bounds__a_constructor_bounded_by_a_trait_of_types.silt:6:34
+fn g(xs: m(Int)) -> Int where m: Display { 1 }
+fn main() { println(1) }

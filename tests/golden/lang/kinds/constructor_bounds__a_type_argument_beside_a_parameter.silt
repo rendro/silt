@@ -1,0 +1,34 @@
+-- A `type m` argument of a function whose parameter applies `m` too
+-- names the same constructor as the parameter's value.
+trait Functor {
+  fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)
+}
+trait Applicative: Functor {
+  fn pure(x: a) -> Self(a)
+}
+type Box(a) { value: a }
+trait Functor for Box(_) {
+  fn map(xs, f) { Box { value: f(xs.value) } }
+}
+trait Applicative for Box(_) {
+  fn pure(x) { Box { value: x } }
+}
+trait Functor for Option(_) {
+  fn map(xs, f) {
+    match xs {
+      Some(x) -> Some(f(x))
+      None -> None
+    }
+  }
+}
+trait Applicative for Option(_) {
+  fn pure(x) { Some(x) }
+}
+fn tb(x: m(Int), type m) -> (m(Int), m(Int)) where m: Applicative {
+  (Functor.map(x) { v -> v + 1 }, m.pure(0))
+}
+fn main() {
+  println(tb(Some(1), Option))
+  let (a, b) = tb(Box { value: 1 }, Box)
+  println("{a.value} {b.value}")
+}

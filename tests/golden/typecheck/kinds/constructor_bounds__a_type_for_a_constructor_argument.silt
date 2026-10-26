@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- A `type m` parameter that the signature applies is given a type
+-- constructor, a type that takes a type argument.
+-- stderr-contains: error[type]: 'Int' is a type, but 'm' is a type constructor
+-- stderr-contains: = help: give a type that takes a type argument, as in `wrap(1, Option)`
+-- stderr-contains: --> constructor_bounds__a_type_for_a_constructor_argument.silt:15:29
+trait Applicative {
+  fn pure(x: a) -> Self(a)
+}
+trait Applicative for Option(_) {
+  fn pure(x) { Some(x) }
+}
+fn wrap(x: a, type m) -> m(a) where m: Applicative { m.pure(x) }
+fn main() { println(wrap(1, Int)) }

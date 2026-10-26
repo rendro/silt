@@ -1,0 +1,47 @@
+-- cmd: check
+-- exit: 1
+-- A call through a trait of type constructors on a value of `m(T)`
+-- gives the method's `a` the element `T`: what the closure, a function
+-- argument or a parameter annotation does with it is checked, in each
+-- argument of the type (`map2`'s both).
+-- stderr-contains: error[type]: type mismatch: expected Int, got String
+-- stderr-contains: error[type]: type mismatch: expected Bool, got String
+-- stderr-contains: --> constructor_calls__the_receivers_element_is_the_methods.silt:34:26
+-- stderr-contains: --> constructor_calls__the_receivers_element_is_the_methods.silt:37:35
+-- stderr-contains: --> constructor_calls__the_receivers_element_is_the_methods.silt:40:67
+-- stderr-contains: --> constructor_calls__the_receivers_element_is_the_methods.silt:42:64
+-- stderr-contains: --> constructor_calls__the_receivers_element_is_the_methods.silt:44:28
+-- stderr-contains: --> constructor_calls__the_receivers_element_is_the_methods.silt:46:65
+trait Functor {
+  fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)
+}
+trait Applicative: Functor {
+  fn pure(x: a) -> Self(a)
+  fn map2(xs: Self(a), ys: Self(b), f: Fn(a, b) -> c) -> Self(c)
+}
+trait Monad: Applicative {
+  fn flat_map(xs: Self(a), f: Fn(a) -> Self(b)) -> Self(b)
+}
+trait Functor for Option(_) {
+  fn map(xs, f) {
+    match xs {
+      Some(x) -> Some(f(x))
+      None -> None
+    }
+  }
+}
+fn t6(xs: m(String)) -> m(Int) where m: Functor {
+  Functor.map(xs) { x -> x * 2 }
+}
+fn t7(xs: m(String)) -> Int where m: Functor {
+  let ys = Functor.map(xs) { x -> x * 2 }
+  1
+}
+fn t9(xs: m(Int)) -> m(String) where m: Functor { Functor.map(xs) { x: String -> x } }
+fn slen(s: String) -> Int { 1 }
+fn a1(xs: m(Int)) -> m(Int) where m: Functor { Functor.map(xs, slen) }
+fn a2(xs: m(Int), ys: m(Bool)) -> m(Int) where m: Applicative {
+  Applicative.map2(xs, ys) { a: String, b: String -> 1 }
+}
+fn a3(xs: m(Int)) -> m(Int) where m: Monad { Monad.flat_map(xs) { x: String -> m.pure(1) } }
+fn main() { println(1) }

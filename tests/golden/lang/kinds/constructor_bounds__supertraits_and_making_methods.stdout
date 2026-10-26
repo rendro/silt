@@ -1,0 +1,9 @@
+Some((1, a))
+None
+(1, 2)
+Some(7)
+Some(2)
+6
+Some(1)
+b
+Some(Some(3))
