@@ -235,6 +235,183 @@ impl TypeChecker {
         }
     }
 
+    /// Whether `ty`, a type variable of an annotation, stands for a type
+    /// constructor.
+    pub(super) fn is_constructor_var(&self, ty: &Type) -> bool {
+        match ty {
+            Type::Var(v) => self.constructor_vars.contains(v),
+            Type::Rigid(r) => self.constructor_vars.contains(&r.var),
+            _ => false,
+        }
+    }
+
+    /// The type `name(args)` of an annotation, where `name` is a type
+    /// constructor variable: it takes one type argument, and a type
+    /// declaration's parameters are types.
+    fn constructor_variable(
+        &mut self,
+        te: &TypeExpr,
+        name: Symbol,
+        args: &[TypeExpr],
+        param_vars: &mut HashMap<Symbol, Type>,
+    ) -> Type {
+        let resolved: Vec<Type> = args
+            .iter()
+            .map(|a| self.resolve_type_expr(a, param_vars))
+            .collect();
+        if let Some((declared, params)) = &self.declaring_type
+            && params.contains(&name)
+        {
+            let message = format!(
+                "type parameter '{name}' of '{declared}' is written with a type argument: the \
+                 parameters of a type are types"
+            );
+            self.error(Code::KindMismatch, message, te.span);
+            return Type::Error;
+        }
+        if resolved.len() != 1 {
+            let message = format!(
+                "a type constructor variable takes one type argument: '{name}' is given {}",
+                resolved.len()
+            );
+            self.error(Code::KindMismatch, message, te.span);
+            return Type::Error;
+        }
+        let head = match param_vars.get(&name) {
+            Some(tv) if self.is_constructor_var(tv) => tv.clone(),
+            // (Written without a type argument elsewhere: its signature's
+            // check says so, `check_signature_kinds`.)
+            Some(_) => return Type::Error,
+            None => {
+                let (tv, var) = self.fresh_tv();
+                self.var_written.insert(var, te.span);
+                self.constructor_vars.insert(var);
+                self.tables.constructor_names.insert(var, name);
+                param_vars.insert(name, tv.clone());
+                tv
+            }
+        };
+        let arg = resolved.into_iter().next().expect("one argument");
+        Type::App(Box::new(head), Box::new(arg))
+    }
+
+    /// Report a type variable that the signature of `f` writes both with
+    /// a type argument and without one: it is a type or a type
+    /// constructor, not both.
+    pub(super) fn check_signature_kinds(&mut self, f: &FnDecl) -> Vec<(Symbol, String)> {
+        // (Each variable: where it is first written applied and where
+        // bare, as the parameter or the result writes it.)
+        let mut applied: Vec<(Symbol, String)> = Vec::new();
+        let mut bare: Vec<(Symbol, String, Span)> = Vec::new();
+        let mut places: Vec<(String, &TypeExpr)> = Vec::new();
+        for param in &f.params {
+            if let (ParamKind::Data, Some(te)) = (&param.kind, &param.ty) {
+                let label = match &param.pattern.kind {
+                    PatternKind::Ident(n) => format!("{n}: {}", type_expr_text(te)),
+                    _ => format!("_: {}", type_expr_text(te)),
+                };
+                places.push((label, te));
+            }
+        }
+        if let Some(te) = &f.return_type {
+            places.push((format!("-> {}", type_expr_text(te)), te));
+        }
+        for (label, te) in &places {
+            self.kind_uses(te, label, &mut applied, &mut bare);
+        }
+        let mut reported: Vec<Symbol> = Vec::new();
+        for (name, without, span) in &bare {
+            let Some((_, with)) = applied.iter().find(|(n, _)| n == name) else {
+                continue;
+            };
+            if reported.contains(name) {
+                continue;
+            }
+            reported.push(*name);
+            let message = format!(
+                "'{name}' is written with a type argument in `{with}` and without one in \
+                 `{without}`: a type variable is a type or a type constructor, not both"
+            );
+            self.error(Code::KindMismatch, message, *span);
+        }
+        applied
+    }
+
+    /// Keep where the signature that resolved `param_map` first wrote
+    /// each of its type constructor variables applied (`applied`, from
+    /// `check_signature_kinds`).
+    pub(super) fn remember_constructor_labels(
+        &mut self,
+        applied: Vec<(Symbol, String)>,
+        param_map: &HashMap<Symbol, Type>,
+    ) {
+        for (name, label) in applied {
+            match param_map.get(&name) {
+                Some(Type::Var(v)) => {
+                    self.constructor_labels.insert(*v, label);
+                }
+                Some(Type::Rigid(r)) => {
+                    self.constructor_labels.insert(r.var, label);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// The type variables `te` writes with a type argument (into
+    /// `applied`) and without one (into `bare`), each first at `label`.
+    fn kind_uses(
+        &self,
+        te: &TypeExpr,
+        label: &str,
+        applied: &mut Vec<(Symbol, String)>,
+        bare: &mut Vec<(Symbol, String, Span)>,
+    ) {
+        let is_variable = |this: &Self, name: Symbol| {
+            let text = resolve(name);
+            this.named_type(te.res, name).is_none()
+                && text.chars().next().is_some_and(char::is_lowercase)
+        };
+        match &te.kind {
+            TypeExprKind::Named {
+                module: None, name, ..
+            } => {
+                if is_variable(self, *name) && !bare.iter().any(|(n, ..)| n == name) {
+                    bare.push((*name, label.to_string(), te.span));
+                }
+            }
+            TypeExprKind::Generic {
+                module, name, args, ..
+            } => {
+                if module.is_none()
+                    && is_variable(self, *name)
+                    && !applied.iter().any(|(n, _)| n == name)
+                {
+                    applied.push((*name, label.to_string()));
+                }
+                for arg in args {
+                    self.kind_uses(arg, label, applied, bare);
+                }
+            }
+            TypeExprKind::Tuple(parts) => {
+                for part in parts {
+                    self.kind_uses(part, label, applied, bare);
+                }
+            }
+            TypeExprKind::Function(params, ret) => {
+                for part in params.iter().chain([&**ret]) {
+                    self.kind_uses(part, label, applied, bare);
+                }
+            }
+            TypeExprKind::AnonRecord { fields, .. } => {
+                for (_, part) in fields {
+                    self.kind_uses(part, label, applied, bare);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Resolve a TypeExpr AST node to our internal Type representation.
     pub(super) fn resolve_type_expr(
         &mut self,
@@ -270,7 +447,29 @@ impl TypeChecker {
                 if module.is_none()
                     && let Some(tv) = param_vars.get(name)
                 {
-                    // A type parameter variable.
+                    // A type parameter variable. (One written with a type
+                    // argument elsewhere is a type constructor: a
+                    // signature's own check says so,
+                    // `check_signature_kinds`; an annotation in its body
+                    // says so here.)
+                    if self.is_constructor_var(tv) {
+                        if !self.resolving_signature {
+                            let var = match tv {
+                                Type::Rigid(r) => r.var,
+                                Type::Var(v) => *v,
+                                _ => unreachable!("a constructor variable is a variable"),
+                            };
+                            let with = (self.constructor_labels.get(&var).cloned())
+                                .unwrap_or_else(|| format!("{name}(a)"));
+                            let message = format!(
+                                "'{name}' is written with a type argument in `{with}` and without \
+                                 one in `{name}`: a type variable is a type or a type constructor, \
+                                 not both"
+                            );
+                            self.error(Code::KindMismatch, message, te.span);
+                        }
+                        return Type::Error;
+                    }
                     return tv.clone();
                 }
                 let name_str = resolve(*name);
@@ -357,6 +556,15 @@ impl TypeChecker {
                 {
                     self.error(Code::InvalidTypeAnnotation, NEVER_ELSEWHERE, te.span);
                     return Type::Error;
+                }
+                // A lowercase name applied is a type constructor variable
+                // (`m(Int)`), unless it is a type spelled in lowercase.
+                if module.is_none()
+                    && self.named_type(te.res, *name).is_none()
+                    && name_str.chars().next().is_some_and(char::is_lowercase)
+                    && self.case_mismatched_type_name(&name_str, true).is_none()
+                {
+                    return self.constructor_variable(te, *name, args, param_vars);
                 }
                 let resolved_args: Vec<Type> = args
                     .iter()
@@ -611,4 +819,49 @@ impl TypeChecker {
 /// has no variants and no fields. `None` for any other builtin type.
 fn opaque_arity(name: &str) -> Option<usize> {
     crate::defs::opaque_type_arity(name)
+}
+
+/// `te` as a program writes it, for a message that quotes it.
+pub(super) fn type_expr_text(te: &TypeExpr) -> String {
+    let all = |types: &[TypeExpr]| {
+        types
+            .iter()
+            .map(type_expr_text)
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    match &te.kind {
+        TypeExprKind::Named { module, name, .. } => Qualifier::written(*module, *name),
+        TypeExprKind::Generic {
+            module, name, args, ..
+        } => format!("{}({})", Qualifier::written(*module, *name), all(args)),
+        TypeExprKind::Tuple(parts) => format!("({})", all(parts)),
+        TypeExprKind::Function(params, ret) => {
+            format!("Fn({}) -> {}", all(params), type_expr_text(ret))
+        }
+        TypeExprKind::SelfType => "Self".to_string(),
+        TypeExprKind::AssocProj {
+            receiver,
+            trait_module,
+            trait_name,
+            assoc_name,
+            ..
+        } => match &receiver.kind {
+            TypeExprKind::SelfType => format!("Self::{assoc_name}"),
+            _ => format!(
+                "<{} as {}>::{assoc_name}",
+                type_expr_text(receiver),
+                Qualifier::written(*trait_module, *trait_name)
+            ),
+        },
+        TypeExprKind::AnonRecord { fields, tail } => {
+            let mut parts: Vec<String> = (fields.iter())
+                .map(|(n, t)| format!("{n}: {}", type_expr_text(t)))
+                .collect();
+            if let Some((row, _)) = tail {
+                parts.push(format!("...{row}"));
+            }
+            format!("{{{}}}", parts.join(", "))
+        }
+    }
 }

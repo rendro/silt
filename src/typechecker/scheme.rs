@@ -650,7 +650,13 @@ impl TypeChecker {
         let use_id = self.uses;
         let mut mapping: HashMap<TyVar, Type> = HashMap::new();
         for &v in &scheme.vars {
-            mapping.insert(v, self.fresh_var());
+            let fresh = self.fresh_var();
+            // (A type constructor variable keeps its name: `m(Int)`.)
+            if let (Some(name), Type::Var(w)) = (self.tables.constructor_names.get(&v), &fresh) {
+                let name = *name;
+                self.tables.constructor_names.insert(*w, name);
+            }
+            mapping.insert(v, fresh);
         }
         self.ev.use_ev = None;
         if !scheme.preds.is_empty() {

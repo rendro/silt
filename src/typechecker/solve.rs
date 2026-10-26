@@ -1627,6 +1627,20 @@ impl TypeChecker {
             self.require_declared_bound(r, trait_name, bound_trait_args, origin);
             return;
         }
+        // An annotation's type constructor variable applied (`m(Int)`):
+        // a bound is on the variable, never on what it is applied to, so
+        // the type is known to implement no trait.
+        if let Type::App(head, _) = &resolved
+            && matches!(self.apply(head), Type::Rigid(_))
+        {
+            let message = format!(
+                "type `{}` is not known to implement trait '{}'",
+                self.show_type(&resolved),
+                self.show_bound(trait_name, bound_trait_args)
+            );
+            self.error(Code::MissingTraitImpl, message, span);
+            return;
+        }
         let Some(type_name) = self.type_name_for_impl(&resolved) else {
             // Still unknown: the caller lets it wait (`want`).
             return;

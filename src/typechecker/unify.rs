@@ -940,8 +940,8 @@ impl TypeChecker {
             // `Result(_, e)`).
             (Type::App(head, arg), other) | (other, Type::App(head, arg)) => {
                 let applied = match &t1 {
-                    Type::App(..) => &t1,
-                    _ => &t2,
+                    Type::App(..) => self.show_type(&t1),
+                    _ => self.show_type(&t2),
                 };
                 let Some((con, rest, first)) = other.split_constructor() else {
                     let mut fault = self.type_mismatch(&t1, &t2);
@@ -964,8 +964,7 @@ impl TypeChecker {
                 if !args.is_empty() {
                     let mut fault = self.type_mismatch(&t1, &t2);
                     fault.note = Some(format!(
-                        "'{}' is matched against the first type argument, '{}' here",
-                        self.show_type(&self.apply(applied)),
+                        "'{applied}' is matched against the first type argument, '{}' here",
                         self.show_type(&self.apply(&first))
                     ));
                     out.push(fault);

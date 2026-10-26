@@ -43,6 +43,8 @@ impl TypeChecker {
         if f.is_recovery_stub {
             self.recovery_stub_names.insert(f.name);
         }
+        let applied = self.check_signature_kinds(f);
+        let outer_signature = std::mem::replace(&mut self.resolving_signature, true);
         let mut param_map = HashMap::new();
         let mut param_types = Vec::new();
 
@@ -110,6 +112,8 @@ impl TypeChecker {
             self.fresh_var()
         };
         self.current_type_anno_span = prev_type_span;
+        self.resolving_signature = outer_signature;
+        self.remember_constructor_labels(applied, &param_map);
 
         let fn_type = Type::Fun(param_types.clone(), Box::new(ret_type.clone()));
         let mut bounds: Vec<Pred> = Vec::new();

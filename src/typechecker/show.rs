@@ -28,6 +28,11 @@ impl TypeChecker {
     /// REPL cell a type of an earlier cell declared again since, which
     /// the cell cannot name, is written with its cell (`<repl:1>.H`).
     fn show_types(&self, types: &[&Type], session: bool) -> Vec<String> {
+        // (A type constructor variable not decided yet is written by its
+        // name, `m(Int)`.)
+        let named: Vec<Type> = types.iter().map(|ty| self.name_constructors(ty)).collect();
+        let types: Vec<&Type> = named.iter().collect();
+        let types = types.as_slice();
         Type::show_all(types, |r, clash| {
             (clash
                 || (session && self.type_name_clashes(r))
@@ -35,6 +40,28 @@ impl TypeChecker {
                 || self.shadowed_cell_type(r))
             .then(|| self.qualified_type(r))
         })
+    }
+
+    /// `ty` with each type constructor variable that is still a
+    /// unification variable written by the name of the annotation's
+    /// variable it is a use of, for a message.
+    fn name_constructors(&self, ty: &Type) -> Type {
+        let mut mapping: HashMap<TyVar, Type> = HashMap::new();
+        collect_app_heads(ty, &mut |v| {
+            if let Some(name) = self.tables.constructor_names.get(&v) {
+                mapping.insert(
+                    v,
+                    Type::Rigid(RigidId {
+                        var: v,
+                        name: *name,
+                    }),
+                );
+            }
+        });
+        match mapping.is_empty() {
+            true => ty.clone(),
+            false => substitute_vars(ty, &mapping),
+        }
     }
 
     /// Whether `r` is, in a REPL cell, a type of an earlier cell that the
@@ -285,5 +312,32 @@ impl TypeChecker {
             ),
             None => format!("unknown type '{name}'"),
         }
+    }
+}
+
+/// Call `f` with each unification variable of `ty` (those of type
+/// constructor variables have names).
+fn collect_app_heads(ty: &Type, f: &mut impl FnMut(TyVar)) {
+    match ty {
+        Type::Var(v) => f(*v),
+        Type::App(head, arg) => {
+            collect_app_heads(head, f);
+            collect_app_heads(arg, f);
+        }
+        Type::Fun(params, ret) => {
+            params.iter().for_each(|t| collect_app_heads(t, f));
+            collect_app_heads(ret, f);
+        }
+        Type::List(t) | Type::Set(t) | Type::Channel(t) => collect_app_heads(t, f),
+        Type::Map(k, v) => {
+            collect_app_heads(k, f);
+            collect_app_heads(v, f);
+        }
+        Type::Tuple(ts) | Type::Generic(_, ts) | Type::Con(_, ts) => {
+            ts.iter().for_each(|t| collect_app_heads(t, f))
+        }
+        Type::AnonRecord { fields, .. } => fields.values().for_each(|t| collect_app_heads(t, f)),
+        Type::AssocProj { receiver, .. } => collect_app_heads(receiver, f),
+        _ => {}
     }
 }

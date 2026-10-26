@@ -378,7 +378,9 @@ impl TypeChecker {
                 true => checker.resolve_type_expr(te, param_vars),
                 false => checker.resolve_type_expr_inner(te, param_vars),
             };
+        let outer = self.declaring_type.replace((td.name, td.params.clone()));
         let ty = resolve_in(self, param_vars);
+        self.declaring_type = outer;
         let mut undeclared: Vec<Symbol> = (param_vars.keys())
             .copied()
             .filter(|name| !vars.known.contains(name))

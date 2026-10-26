@@ -634,6 +634,8 @@ impl TypeChecker {
             for (name, ty) in &trait_param_vars {
                 param_map.insert(*name, ty.clone());
             }
+            let applied = self.check_signature_kinds(m);
+            let outer_signature = std::mem::replace(&mut self.resolving_signature, true);
             let mut param_types = Vec::new();
             for param in &m.params {
                 let ty = match param.kind {
@@ -684,6 +686,8 @@ impl TypeChecker {
                 Some(te) => self.resolve_type_expr(te, &mut param_map),
                 None => Type::Unit,
             };
+            self.resolving_signature = outer_signature;
+            self.remember_constructor_labels(applied, &param_map);
             // The type variables the method's annotations introduce.
             let mut own: Vec<(TyVar, Symbol)> = param_map
                 .iter()
@@ -1920,6 +1924,8 @@ impl TypeChecker {
 
             // What the impl writes. A part it leaves out is the declared
             // one.
+            let applied = self.check_signature_kinds(method);
+            let outer_signature = std::mem::replace(&mut self.resolving_signature, true);
             let mut param_map = impl_names.clone();
             let mut param_types = Vec::new();
             for (i, param) in method.params.iter().enumerate() {
@@ -1957,6 +1963,8 @@ impl TypeChecker {
                 (None, Some(declared)) => declared,
                 (None, None) => self.fresh_var(),
             };
+            self.resolving_signature = outer_signature;
+            self.remember_constructor_labels(applied, &param_map);
             let written = Type::Fun(param_types, Box::new(ret_type));
             // Where the two disagree, the body is checked against what
             // the impl wrote, so the disagreement is reported once.

@@ -266,6 +266,20 @@ pub struct TypeChecker {
     /// no value named `a`) is looked up: the variable's name, for the
     /// messages.
     pub(super) var_as_type: Option<Symbol>,
+    /// The type variables that stand for a type constructor (`m` of
+    /// `m(Int)`), as their annotations wrote them.
+    pub(super) constructor_vars: std::collections::HashSet<TyVar>,
+    /// While the type declaration of this name is resolved, its
+    /// parameters: they are types (`type parameter 'm' of 'Wrapped' is
+    /// written with a type argument`).
+    pub(super) declaring_type: Option<(Symbol, Vec<Symbol>)>,
+    /// Where a signature first writes each of its type constructor
+    /// variables applied (`xs: m(Int)`), for the error of an annotation
+    /// in its body that writes one without a type argument.
+    pub(super) constructor_labels: HashMap<TyVar, String>,
+    /// While a signature's annotations are resolved: its own check
+    /// reports a variable written both ways (`check_signature_kinds`).
+    pub(super) resolving_signature: bool,
     /// While a type variable's method is looked up as a descriptor's:
     /// its name, for the messages (`on \`a\``, not `on \`type a\``).
     pub(super) descriptor_var: Option<Symbol>,
@@ -497,6 +511,10 @@ impl TypeChecker {
             expected_closure: None,
             sig_names: HashMap::new(),
             var_as_type: None,
+            constructor_vars: Default::default(),
+            declaring_type: None,
+            constructor_labels: HashMap::new(),
+            resolving_signature: false,
             descriptor_var: None,
             rigid_of: HashMap::new(),
             let_vars: std::collections::HashSet::new(),

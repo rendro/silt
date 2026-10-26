@@ -433,6 +433,9 @@ pub struct Tables {
     /// trait where-clause verification previously ignored trait args.
     /// Absent for parameter-less traits.
     pub(super) impl_trait_args: HashMap<ImplKey, Vec<Type>>,
+    /// The name an annotation gives each type constructor variable (`m`
+    /// of `m(Int)`), which every use of its scheme writes it by.
+    pub(super) constructor_names: HashMap<TyVar, Symbol>,
     /// Maps `(trait_name, target_head)` → the impl's full (canonicalized)
     /// self type as constructed by `register_trait_impl`. Coherence
     /// guarantees at most one user impl per key. Consulted by
