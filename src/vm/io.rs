@@ -117,22 +117,66 @@ fn without_sigpipe(write: impl FnOnce() -> io::Result<()>) -> io::Result<()> {
         (pipe, old)
     };
     let result = write();
-    // SAFETY: as above. `sigwait` is called only for a SIGPIPE that is
-    // pending, so it returns at once.
+    // SAFETY: as above. The mask is put back after the signal is taken.
     unsafe {
         if matches!(&result, Err(e) if e.kind() == io::ErrorKind::BrokenPipe) {
-            let mut pending: libc::sigset_t = std::mem::zeroed();
-            libc::sigemptyset(&mut pending);
-            if libc::sigpending(&mut pending) == 0
-                && libc::sigismember(&pending, libc::SIGPIPE) == 1
-            {
-                let mut taken: libc::c_int = 0;
-                libc::sigwait(&pipe, &mut taken);
-            }
+            take_pending(&pipe);
         }
         libc::pthread_sigmask(libc::SIG_SETMASK, &old, std::ptr::null_mut());
     }
     result
+}
+
+/// Take a SIGPIPE that is pending off the calling thread, waiting for
+/// none: `sigtimedwait` with a timeout of zero.
+///
+/// # Safety
+/// `pipe` is a set initialised with `sigemptyset` that holds SIGPIPE,
+/// which the calling thread blocks.
+#[cfg(any(
+    target_os = "linux",
+    target_os = "android",
+    target_os = "freebsd",
+    target_os = "netbsd"
+))]
+unsafe fn take_pending(pipe: &libc::sigset_t) {
+    let none = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: the caller's set; a null `siginfo_t` is allowed.
+    unsafe {
+        libc::sigtimedwait(pipe, std::ptr::null_mut(), &none);
+    }
+}
+
+/// [`take_pending`] where there is no `sigtimedwait` (macOS): `sigwait`,
+/// called only for a SIGPIPE that `sigpending` shows. The one that the
+/// write raised is the calling thread's own, which no other thread can
+/// take, so it returns at once.
+///
+/// # Safety
+/// As for the other `take_pending`.
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "freebsd",
+        target_os = "netbsd"
+    ))
+))]
+unsafe fn take_pending(pipe: &libc::sigset_t) {
+    // SAFETY: a zeroed set, initialised by `sigemptyset` before it is
+    // read; the caller's set.
+    unsafe {
+        let mut pending: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut pending);
+        if libc::sigpending(&mut pending) == 0 && libc::sigismember(&pending, libc::SIGPIPE) == 1 {
+            let mut taken: libc::c_int = 0;
+            libc::sigwait(pipe, &mut taken);
+        }
+    }
 }
 
 /// Elsewhere a write to a closed pipe is an error of the write.

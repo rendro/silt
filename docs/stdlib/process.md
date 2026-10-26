@@ -71,6 +71,6 @@ In the REPL, `process.exit` ends the session with its code, as `:quit` does
 with 0. When a task calls it, the entry that runs ends at once where it
 waits, and within about a million steps where it computes; a `time.sleep` of
 the entry itself ends first. While the prompt waits for a line, the session
-ends when the next line is entered, and that line does not run. A program that a Rust program runs through the embedding API ends its
-run with the code, and the host's process goes on (see
-[Embedding](../ffi.md)).
+ends when the next line is entered, and that line does not run. A program
+that a Rust program runs through the embedding API ends its run with the
+code, and the host's process goes on (see [Embedding](../ffi.md)).

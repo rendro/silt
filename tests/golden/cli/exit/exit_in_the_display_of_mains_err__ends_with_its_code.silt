@@ -1,0 +1,15 @@
+-- exit: 4
+-- timeout: 10
+-- The Display of the Err that main returns calls process.exit while the
+-- failure is being rendered: the exit ends the program with its code, and
+-- the failure is not reported.
+import process
+type Bad { code: Int }
+trait Display for Bad {
+  fn display(self) -> String {
+    process.exit(self.code)
+  }
+}
+fn main() -> Result((), Bad) {
+  Err(Bad { code: 4 })
+}

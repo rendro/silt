@@ -151,20 +151,19 @@ pub(crate) fn vm_run_file(path: &str) {
     let run_result = vm.run_program(&program);
     // `main` has returned; the program ends when its tasks can do no
     // more. After an error of `main`, raised or returned as `Err`,
-    // nothing is waited for: the program has failed. That is its end
-    // from here, before anything of the report is made: a task's
-    // `process.exit` that comes later is ignored, and if one came first
-    // it ends the process and this thread goes no further.
-    match &run_result {
-        Ok(value) if returned_err(value).is_none() => vm.settle(),
-        _ => silt::scheduler::claim_program_failure(),
+    // nothing is waited for: the program has failed.
+    if matches!(&run_result, Ok(value) if returned_err(value).is_none()) {
+        vm.settle();
     }
-    // The program has ended. The tasks that failed and that nobody
-    // joined or cancelled are reported, and make the run fail. (Not
-    // when a thread of the runtime has panicked and is ending the
-    // process: nothing of the program's is reported then, here and
-    // in each report below. See `silt::scheduler::report`.)
-    let tasks_failed = report_task_failures(path, &sources, file);
+    // The program has ended. What failed is rendered first: the tasks
+    // that failed and that nobody joined or cancelled, and `main`'s
+    // error or `Err`. Rendering can run code of the program (a
+    // `Display` of `main`'s `Err`), and a `process.exit` there, or in a
+    // task that still runs, ends the process with its code and nothing
+    // is reported. Then the failure claims the end
+    // (`claim_program_failure`): from here an exit is ignored, and the
+    // report is written whole, and the run fails.
+    let (task_texts, tasks_failed) = task_failure_texts(path, &sources, file);
     // A `fn main() -> Result(..)` that evaluates to `Err(..)`
     // is a failed program — surface it. Previously the Ok value of
     // `vm.run` (main's return value) was discarded wholesale, so
@@ -176,24 +175,30 @@ pub(crate) fn vm_run_file(path: &str) {
     // `Ok(..)` and non-Result returns (Unit, Int, ...) are unchanged.
     // `silt test` applies the same rule to a test function, through the
     // same `returned_err`; the REPL has its own `vm.run` handling.
-    if let Ok(value) = &run_result
-        && let Some(payload) = returned_err(value)
-    {
-        let d = Diagnostic::error(
-            Code::MainReturnedErr,
-            main_span,
-            format!("main returned Err: {}", vm.show_text(payload)),
-        );
-        let text = render_human(&ProgramFiles::new(path, &sources), &d);
-        silt::scheduler::report(|| eprintln!("{text}"));
-        silt::scheduler::exit_with_status(1);
+    let main_text = match &run_result {
+        Ok(value) => returned_err(value).map(|payload| {
+            let d = Diagnostic::error(
+                Code::MainReturnedErr,
+                main_span,
+                format!("main returned Err: {}", vm.show_text(payload)),
+            );
+            render_human(&ProgramFiles::new(path, &sources), &d)
+        }),
+        Err(e) => Some(render_runtime_error(e, path, &sources)),
+    };
+    let failed = tasks_failed || main_text.is_some();
+    if failed {
+        silt::scheduler::claim_program_failure();
     }
-    if let Err(e) = run_result {
-        let text = render_runtime_error(&e, path, &sources);
-        silt::scheduler::report(|| eprintln!("{text}"));
-        silt::scheduler::exit_with_status(1);
-    }
-    if tasks_failed {
+    // (Also when there is nothing to say: a process that is ending
+    // with the internal error goes no further than here, and nothing of
+    // the program's is reported then. See `silt::scheduler::report`.)
+    silt::scheduler::report(|| {
+        for text in task_texts.iter().chain(&main_text) {
+            eprintln!("{text}");
+        }
+    });
+    if failed {
         silt::scheduler::exit_with_status(1);
     }
 }
@@ -230,16 +235,12 @@ pub(crate) fn panic_where_a_test_says(vm: &Vm) {
     }
 }
 
-/// Report on stderr the failures of tasks that nobody joined or
-/// cancelled and that have happened so far, each rendered like any other
-/// runtime error of the program at `path`, whose entry file is `entry`.
-/// Returns true if there was one.
-fn report_task_failures(path: &str, sources: &SourceMap, entry: FileId) -> bool {
+/// The failures of tasks that nobody joined or cancelled and that have
+/// happened so far, each rendered like any other runtime error of the
+/// program at `path`, whose entry file is `entry`, and whether there
+/// was one.
+fn task_failure_texts(path: &str, sources: &SourceMap, entry: FileId) -> (Vec<String>, bool) {
     let failures = silt::scheduler::take_unjoined_failures();
-    // (The run fails with them: see `claim_program_failure` above.)
-    if !failures.is_empty() {
-        silt::scheduler::claim_program_failure();
-    }
     let mut texts: Vec<String> = Vec::new();
     for failure in &failures.failures {
         texts.push(render_runtime_error(&failure.report_error(), path, sources));
@@ -255,14 +256,7 @@ fn report_task_failures(path: &str, sources: &SourceMap, entry: FileId) -> bool 
         );
         texts.push(render_human(&ProgramFiles::new(path, sources), &d));
     }
-    // (Also when there is nothing to say: a process that is ending
-    // with the internal error goes no further than here.)
-    silt::scheduler::report(|| {
-        for text in &texts {
-            eprintln!("{text}");
-        }
-    });
-    !failures.is_empty()
+    (texts, !failures.is_empty())
 }
 
 /// Render a runtime error of the program at `path`, the way `silt run`
