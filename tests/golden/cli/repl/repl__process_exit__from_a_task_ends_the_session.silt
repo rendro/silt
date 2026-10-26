@@ -1,0 +1,6 @@
+-- cmd: repl
+-- exit: 6
+-- stdin: import process\nimport task\nlet _ = task.spawn { -> 1 / 0 }\nlet h = task.spawn { -> process.exit(6) }\ntask.join(h)\nprintln(2)\n
+-- A task of an entry that calls process.exit ends the session with that
+-- code; the entry that joins it ends, the next does not run, and the task
+-- that failed and that nobody joined is not reported.

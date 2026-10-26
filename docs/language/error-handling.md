@@ -120,6 +120,25 @@ stderr and exits with status 1, the same exit code as any other runtime
 error. `Ok(..)` returns, and `main` functions that don't return a
 `Result` at all, exit 0 as usual.
 
+`process.exit` is the one way to end with another code. A tool that wants
+its own message and code says so:
+
+```silt
+import int
+import io
+import process
+
+fn main() {
+  match int.parse("forty") {
+    Ok(n) -> println(n)
+    Err(e) -> {
+      io.eprintln("count: {Error.message(e)}")
+      process.exit(2)
+    }
+  }
+}
+```
+
 ## Cross-Module Error Composition
 
 `?` does not convert between typed errors, so a function that calls several

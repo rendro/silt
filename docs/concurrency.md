@@ -534,6 +534,13 @@ has failed: nothing is waited for. Under `silt test`, each test ends in the same
 tasks that the test spawned (see
 [Testing](language/testing.md#spawned-tasks)).
 
+A call of `process.exit(code)`, from `main` or from any task, ends the
+program at once with that exit code: every other task stops where it is,
+nothing is waited for, and the failures of tasks that nobody joined are not
+reported. A program that must finish its work first tells its tasks to stop
+over a channel and joins them, then calls `process.exit` (see
+[process](stdlib/process.md)).
+
 ### Failures that nobody joins
 
 A task that ends with a runtime error (a `panic`, a failed assertion, a
@@ -580,6 +587,9 @@ more than one frame. The rules:
 - **A deadlock shows its cause.** When `main` is told
   `deadlock on main thread`, the failures reported with it are usually the
   reason: a producer that failed before it sent.
+- **An exit reports nothing.** After `process.exit` no failure is reported,
+  and the exit code is the one the program gave: whether a task had failed
+  by then is a race.
 
 Under `silt test`, the failure fails the test that spawned the task (see
 [Testing](language/testing.md#spawned-tasks)). In the REPL it is reported

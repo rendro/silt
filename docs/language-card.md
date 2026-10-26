@@ -800,3 +800,9 @@ uuid.parse(s: String) -> Result(String, UuidError)
 uuid.v4() -> String
 uuid.v7() -> String
 ```
+
+### process
+
+```
+process.exit(code: Int) -> Never
+```

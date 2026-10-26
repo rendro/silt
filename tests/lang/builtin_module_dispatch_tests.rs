@@ -40,6 +40,9 @@ fn module_call(module: &str) -> Option<Option<&'static str>> {
         "encoding" => "encoding.url_encode(\"a b\")",
         "stream" => "stream.from_list([1])",
         "uuid" => "uuid.nil()",
+        // The call ends the program: the line that says it ran comes
+        // first, and the exit's code 0 is the run's.
+        "process" => "{\n    println(\"OK:process\")\n    process.exit(0)\n  }",
         "http" if cfg!(feature = "http") => "http.segments(\"/a/b\")",
         "postgres" if cfg!(feature = "postgres") => "postgres.connect(\"not a url\")",
         // Port 1 on loopback refuses at once; the call returns an Err.

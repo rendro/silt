@@ -139,6 +139,9 @@ pub fn run(source: &str, clock: impl Clock + 'static, steps: u64) -> Run {
     let out = Buffer::new();
     let mut vm = Vm::new(HostIo::buffer(&out).clock(clock));
     vm.set_step_budget(steps);
+    // A `process.exit` ends the run with its code: 0 is a program that
+    // ended well, any other code one that failed.
+    let mut exited = None;
     let failure = match vm.run_program(&program) {
         Ok(value) => match returned_err(&value) {
             Some(payload) => Some(Diagnostic::error(
@@ -153,6 +156,12 @@ pub fn run(source: &str, clock: impl Clock + 'static, steps: u64) -> Run {
                 None
             }
         },
+        Err(silt::VmError {
+            exit: Some(code), ..
+        }) => {
+            exited = Some(code);
+            None
+        }
         Err(e) if e.out_of_steps => Some(
             e.to_diagnostic()
                 .with_note(format!("the playground ends a program after {steps} steps")),
@@ -162,11 +171,16 @@ pub fn run(source: &str, clock: impl Clock + 'static, steps: u64) -> Run {
     // The tasks that have failed and that nobody joined are reported
     // into `out` here at the latest.
     drop(vm);
+    let (ok, error) = match (exited, failure) {
+        (Some(0), _) | (None, None) => (true, String::new()),
+        (Some(code), _) => (false, format!("the program exited with code {code}")),
+        (None, Some(d)) => (false, render_human(session.sources(), &d)),
+    };
     Run {
         diagnostics: rendered,
         output: out.take(),
-        ok: failure.is_none(),
-        error: failure.map_or_else(String::new, |d| render_human(session.sources(), &d)),
+        error,
+        ok,
     }
 }
 

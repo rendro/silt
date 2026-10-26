@@ -1243,16 +1243,20 @@ impl crate::vm::Native for Conn {
                     return;
                 };
                 // The failure is handled here: it is logged, and not
-                // reported as a task that nobody joined.
-                self.handle.mark_joined();
-                // Security: do NOT include VmError details (call stack,
-                // line numbers, panic payload) in the response body — that
-                // leaks implementation details and potentially sensitive
-                // values across the security boundary (MED-1). Log to the
-                // host's stderr instead.
-                vm.runtime
-                    .io
-                    .err(&format!("http.serve: handler error: {e}\n"));
+                // reported as a task that nobody joined. Not a test's
+                // `process.exit`: that fails the test, as the failure of
+                // a task that nobody joined does.
+                if !e.exit_in_a_test {
+                    self.handle.mark_joined();
+                    // Security: do NOT include VmError details (call
+                    // stack, line numbers, panic payload) in the response
+                    // body — that leaks implementation details and
+                    // potentially sensitive values across the security
+                    // boundary (MED-1). Log to the host's stderr instead.
+                    vm.runtime
+                        .io
+                        .err(&format!("http.serve: handler error: {e}\n"));
+                }
                 if !self.go_on_in_a_new_task(vm, reply) && !self.handed_on {
                     let bytes = plain_response(vm, 500, wire::reason(500), unavailable);
                     let _ = self.stream.write_in_turn(&bytes);

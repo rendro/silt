@@ -41,7 +41,7 @@ syntax keyword siltConstructor InvalidUtf8 InvalidHex InvalidBase64 ByteOutOfRan
 syntax keyword siltConstructor InvalidPercent InvalidLength Invalid Bind
 
 " ── Module names (before the dot) ───────────────────────────────────
-syntax match siltModule "\<\(list\|string\|int\|float\|map\|set\|result\|option\|io\|math\|channel\|task\|regex\|json\|test\|fs\|env\|http\|time\|toml\|postgres\|bytes\|crypto\|encoding\|tcp\|stream\|uuid\)\>\ze\."
+syntax match siltModule "\<\(list\|string\|int\|float\|map\|set\|result\|option\|io\|math\|channel\|task\|regex\|json\|test\|fs\|env\|http\|time\|toml\|postgres\|bytes\|crypto\|encoding\|tcp\|stream\|uuid\|process\)\>\ze\."
 
 " ── Comments ────────────────────────────────────────────────────────
 syntax match siltLineComment "--.*$" contains=siltTodo

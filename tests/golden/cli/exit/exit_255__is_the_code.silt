@@ -1,0 +1,6 @@
+-- exit: 255
+import process
+
+fn main() {
+  process.exit(255)
+}

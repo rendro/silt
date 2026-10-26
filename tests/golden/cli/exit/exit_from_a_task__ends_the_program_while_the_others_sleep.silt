@@ -1,0 +1,19 @@
+-- exit: 4
+-- repeat: 3
+-- A task's process.exit ends the whole program at once: main, which
+-- sleeps, and the tasks that sleep are not waited for.
+import process
+import task
+import time
+
+fn main() {
+  let _ = task.spawn { -> time.sleep(time.seconds(600)) }
+  let _ = task.spawn { -> time.sleep(time.seconds(600)) }
+  let _ = task.spawn { ->
+    time.sleep(time.ms(20))
+    print("exiting")
+    process.exit(4)
+  }
+  time.sleep(time.seconds(600))
+  println("never")
+}

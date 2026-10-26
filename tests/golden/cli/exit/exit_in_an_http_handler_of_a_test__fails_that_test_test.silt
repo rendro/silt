@@ -1,0 +1,24 @@
+-- cmd: test
+-- exit: 1
+-- requires-feature: http
+-- requires-feature: tcp
+-- stderr-contains:   FAIL exit_in_an_http_handler_of_a_test__fails_that_test_test.silt::test_handler_exits
+-- stderr-contains: process.exit(7) was called in a test: a test ends by returning, or by failing an assertion
+-- stderr-not-contains: http.serve: handler error
+-- stderr-contains: 1 test: 0 passed, 1 failed, 0 skipped
+-- A process.exit in the handler of an http.serve that a test started fails
+-- the test, as in any task the test spawned: the server does not handle it
+-- as a failed request.
+import http
+import process
+import task
+import tcp
+import test
+
+fn test_handler_exits() {
+  when let Ok(l) = tcp.listen("127.0.0.1:0") else { panic("listen") }
+  let port = tcp.local_port(l)
+  let s = task.spawn { -> http.serve(l) { _req -> process.exit(7) } }
+  let _ = http.get("http://127.0.0.1:{port}/")
+  task.cancel(s)
+}

@@ -22,7 +22,7 @@ use show::write_plain;
 
 pub use error::VmError;
 pub use io::{Buffer, Clock, HostIo, Output, SystemClock};
-pub(crate) use io::{NO_PANIC_TEXT, panic_message};
+pub(crate) use io::{NO_PANIC_TEXT, panic_message, write_stderr};
 pub use io_op::IoFailure;
 pub(crate) use io_op::{ErrFactory, IoOp, Leave, Limit, Wanted};
 pub(crate) use iter::{Flow, call_then, item_arg, iterate, next, stop};
@@ -110,7 +110,7 @@ pub fn submit_panicking_io_for_test(vm: &Vm, failure: fn(IoFailure<'_>) -> Value
 }
 
 use regex::Regex;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use crate::bytecode::{Function, Globals, VmClosure};
@@ -121,6 +121,31 @@ use io_op::IoPool;
 use runtime::{RegexCache, TailCalls};
 
 // ── VM ────────────────────────────────────────────────────────────
+
+/// What a call of `process.exit(code)` does in the programs a VM runs
+/// ([`Vm::set_exit`]). A code outside 0 to 255 is a runtime error of
+/// the call in each case.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Exit {
+    /// The run ends with the code, and the host's process goes on: no
+    /// task of the program runs another slice, and every wait of the
+    /// program ends. Where the program's own code is, it ends with an
+    /// error whose [`VmError::exit`] is the code: at once where it
+    /// waits, within about a million steps where it computes, and when
+    /// a sleep in [`Clock::sleep`] or one call of a builtin or a host
+    /// function returns. So does every later run of the VM. Failures
+    /// of tasks that nobody joined are not reported. What a VM does
+    /// unless told otherwise; the REPL's too.
+    EndsRun,
+    /// The process ends with the code at once, whatever thread calls
+    /// it: what the program printed is written out, and nothing is
+    /// waited for or reported. `silt run`.
+    EndsProcess,
+    /// The call is a runtime error that says a test must not exit:
+    /// `silt test`, whose other tests go on.
+    FailsTest,
+}
 
 pub struct Vm {
     pub(crate) runtime: Arc<Runtime>,
@@ -260,6 +285,7 @@ impl Vm {
                 io,
                 time_slice: Default::default(),
                 steps_left: AtomicU64::new(u64::MAX),
+                exit: AtomicU8::new(Exit::EndsRun as u8),
                 newest: Default::default(),
                 types: Default::default(),
                 refusals: Default::default(),
@@ -341,6 +367,22 @@ impl Vm {
     pub fn set_step_budget(&mut self, steps: u64) {
         let steps = steps.min(u64::MAX - 1);
         self.runtime.steps_left.store(steps, Ordering::Relaxed);
+    }
+
+    /// Say what `process.exit` does in the programs this VM runs, and
+    /// in their tasks, from now on. [`Exit::EndsRun`] until this is
+    /// called.
+    pub fn set_exit(&mut self, exit: Exit) {
+        self.runtime.exit.store(exit as u8, Ordering::Relaxed);
+    }
+
+    /// What `process.exit` does ([`Vm::set_exit`]).
+    pub(crate) fn exit(&self) -> Exit {
+        match self.runtime.exit.load(Ordering::Relaxed) {
+            n if n == Exit::EndsProcess as u8 => Exit::EndsProcess,
+            n if n == Exit::FailsTest as u8 => Exit::FailsTest,
+            _ => Exit::EndsRun,
+        }
     }
 
     /// How many steps the thread that runs the program's own code runs
@@ -670,7 +712,26 @@ impl Vm {
     /// (e.g. successive REPL evaluations sharing the same persistent VM)
     /// don't render phantom call-stack frames from prior entries. See
     /// `tests/cli/repl_frame_leak_tests.rs` for the regression lock.
+    ///
+    /// Once the program has called `process.exit` and that ended the
+    /// run ([`Exit::EndsRun`]), the run's result is the exit's, whatever
+    /// the code on this thread came to meanwhile (a join of a task that
+    /// was stopped, a value), and a run that comes later runs nothing.
     pub(crate) fn run(&mut self, script: Arc<Function>) -> Result<Value, VmError> {
+        if let Some(code) = self.runtime.scheduler.exit_code() {
+            return Err(VmError::exited(code));
+        }
+        let result = self.run_script(script);
+        match self.runtime.scheduler.exit_code() {
+            Some(code) if !result.as_ref().is_err_and(|e| e.exit.is_some()) => {
+                Err(VmError::exited(code))
+            }
+            _ => result,
+        }
+    }
+
+    /// [`Vm::run`] of a program that has not exited.
+    fn run_script(&mut self, script: Arc<Function>) -> Result<Value, VmError> {
         let floor = self.frames.len();
         let stack_floor = self.stack.len();
         assert_eq!(script.upvalue_count(), 0, "a script captures nothing");

@@ -380,6 +380,27 @@ by then leaves no report. An embedder that must not wait for a
 program's background tasks (a playground with a time limit) does not
 call `settle`, and drops the `Vm`.
 
+**`process.exit`** ends the program's run with its code, not your
+process: whatever call into the `Vm` is running (`run_program`,
+`call_test`) returns an error whose `exit` is `Some(code)`, also when a
+task made the call. No task runs further, nothing is waited for, and the
+failures of tasks that nobody joined are not reported. Your thread gets
+the error at once where it waits for a task, a channel or an I/O
+operation, and within about a million steps where it computes; a thread
+asleep in your `Clock::sleep`, or inside one call of a builtin or a host
+function, gets it when that returns. Every later call into that `Vm`
+returns the same error. `vm.set_exit(Exit::EndsProcess)` makes it end
+the process instead, as under `silt run`, and `Exit::FailsTest` makes it
+a runtime error, as under `silt test`.
+
+```rust
+match vm.run_program(&program) {
+    Err(e) if e.exit.is_some() => println!("exit code {:?}", e.exit),
+    Err(e) => eprintln!("silt error: {}", e.message),
+    Ok(_) => {}
+}
+```
+
 **Dropping a Vm** ends its program where it is. The threads that
 served it end (the scheduler's workers, the timer thread, the I/O workers; each when what
 it is doing returns), tasks that are still running or waiting never run

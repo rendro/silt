@@ -547,6 +547,9 @@ pub struct Runtime {
     /// The steps the program may still run ([`Vm::set_step_budget`]);
     /// `u64::MAX` while it has no budget.
     pub(crate) steps_left: std::sync::atomic::AtomicU64,
+    /// What `process.exit` does ([`Vm::set_exit`]): an
+    /// [`Exit`](super::Exit) as its number.
+    pub(crate) exit: std::sync::atomic::AtomicU8,
 
     // ── The program ─────────────────────────────────────────────
     /// The global slots and the tables of the newest program the VM

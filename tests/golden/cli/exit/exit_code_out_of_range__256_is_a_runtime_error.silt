@@ -1,0 +1,10 @@
+-- exit: 1
+-- stderr-contains: error[runtime]: process.exit: exit code 256 is out of range 0 to 255
+-- stderr-contains: --> exit_code_out_of_range__256_is_a_runtime_error.silt:9:3
+-- A code outside 0 to 255 is a runtime error where exit is called; it is
+-- not cut down to 8 bits (256 would arrive as 0).
+import process
+
+fn main() {
+  process.exit(256)
+}

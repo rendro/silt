@@ -159,3 +159,15 @@ failed)`, once, after the file's last test, with the reports under it.
 
 `silt test` exits with code 0 if all tests pass and code 1 if any test fails,
 including a test that failed because a task it spawned failed.
+
+A test does not end the run. A call of `process.exit` in a test, or in a task
+it spawned, fails that test, whatever the code, and the run goes on with the
+next test:
+
+```text
+  FAIL math_test.silt::test_bad_input
+    error[runtime]: process.exit(2) was called in a test: a test ends by returning, or by failing an assertion
+```
+
+To test a tool's exit code, test the function that decides it (one that
+returns the code), and let `main` pass it to `process.exit`.

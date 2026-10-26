@@ -1,0 +1,18 @@
+-- exit: 5
+-- repeat: 3
+-- main waits on a channel nobody sends on; a task's exit ends the program
+-- with its code, not with a deadlock.
+import channel
+import process
+import task
+import time
+
+fn main() {
+  let never = channel.new(0)
+  let _ = task.spawn { ->
+    time.sleep(time.ms(20))
+    process.exit(5)
+  }
+  let _ = channel.receive(never)
+  println("never")
+}
