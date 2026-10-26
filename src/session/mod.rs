@@ -74,7 +74,8 @@ pub struct Analysis {
     /// problems, the entry's parse errors, why an import failed (each
     /// other module's load or parse problems, the imports that resolve to
     /// nothing, the import cycles), the entry's type diagnostics, then
-    /// each other module's type errors. Each diagnostic once.
+    /// each other module's type errors, with its warnings when it is a
+    /// module of the entry's package. Each diagnostic once.
     pub diagnostics: Vec<Diagnostic>,
     /// The modules of the graph, each after the modules it imports; the
     /// entry is last.
@@ -585,8 +586,9 @@ impl Session {
     }
 
     /// The diagnostics of the analysis of `entry`, in the order of
-    /// [`Analysis::diagnostics`]. Another module's warnings are its own:
-    /// they are shown when it is checked as an entry.
+    /// [`Analysis::diagnostics`]. The warnings are those of the modules
+    /// of the entry's package: a dependency's are not its user's to fix.
+    /// Those of an earlier REPL entry were shown with it.
     fn collect_diagnostics(&self, entry: ModuleId, ordering: &Ordering) -> Vec<Diagnostic> {
         let mut out: Vec<Diagnostic> = Vec::new();
         let push = |d: &Diagnostic, out: &mut Vec<Diagnostic>| {
@@ -652,10 +654,15 @@ impl Session {
                 push(d, &mut out);
             }
         }
+        let package = self.graph.module(entry).package;
         for &id in ordering.modules.iter().filter(|&&id| id != entry) {
+            let warnings =
+                self.graph.module(id).package == package && !self.cells.info.contains_key(&id);
             if let Some(analysis) = self.analyses.get(&id) {
-                for d in analysis.diagnostics.iter().filter(|d| d.is_error()) {
-                    push(d, &mut out);
+                for d in analysis.diagnostics.iter() {
+                    if d.is_error() || warnings {
+                        push(d, &mut out);
+                    }
                 }
             }
         }

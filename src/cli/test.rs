@@ -1,7 +1,7 @@
 //! `silt test [--filter <pat>] [path]` — discover, compile, and run
 //! `test_*` functions.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use std::process;
 
@@ -171,6 +171,9 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
     // charged to the test that spawned the task.
     silt::scheduler::collect_unjoined_failures();
     let mut owners = TaskOwners::default();
+    // The warnings shown so far, as rendered: a module that several
+    // test files import is warned about once.
+    let mut warned: HashSet<String> = HashSet::new();
 
     for path in &paths {
         let (mut session, file) = match open_entry(path, LockPolicy::Update) {
@@ -215,7 +218,9 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
                 filter: filter.clone(),
             },
         );
-        let diagnostics = door_diagnostics(&mut session, file, &compiled);
+        let mut diagnostics = door_diagnostics(&mut session, file, &compiled);
+        let files = ProgramFiles::new(path, session.sources());
+        diagnostics.retain(|d| d.is_error() || warned.insert(render_human(&files, d)));
         let failed_to_compile =
             report_diagnostics(path, session.sources(), &diagnostics, compiled.is_ok());
         let program = match compiled {

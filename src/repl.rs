@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -546,6 +546,10 @@ pub struct Repl {
     /// The last cell that ran to its end: later inputs see what its
     /// scope binds.
     committed: Option<ModuleId>,
+    /// The warnings shown so far, each by its place and message: a
+    /// module read for one input is not warned about again under the
+    /// next.
+    warned: HashSet<(Span, String)>,
 }
 
 /// What evaluating one input gives.
@@ -576,7 +580,16 @@ impl Repl {
             vm: Vm::new(crate::HostIo::process()),
             cwd,
             committed: None,
+            warned: HashSet::new(),
         }
+    }
+
+    /// `diagnostics` without the warnings shown under an earlier input.
+    fn not_shown_yet(&mut self, diagnostics: &[Diagnostic]) -> Vec<Diagnostic> {
+        (diagnostics.iter())
+            .filter(|d| d.is_error() || self.warned.insert((d.span, d.message.clone())))
+            .cloned()
+            .collect()
     }
 
     /// The problems of the project the session is in, which no input
@@ -594,12 +607,13 @@ impl Repl {
     pub fn eval(&mut self, input: &str) -> Evaluation {
         let file = self.session.add_cell(input.to_string());
         let analysis = self.session.analyze(file);
+        let (diagnostics, failed) = (analysis.diagnostics.clone(), analysis.has_errors());
         let mut evaluation = Evaluation {
-            diagnostics: analysis.diagnostics.clone(),
+            diagnostics: self.not_shown_yet(&diagnostics),
             value: None,
             committed: false,
         };
-        if analysis.has_errors() {
+        if failed {
             return evaluation;
         }
         let program = match self.session.compile(file, Entry::Cell) {
@@ -636,10 +650,10 @@ impl Repl {
     pub fn type_of(&mut self, input: &str) -> Result<Typed, NotAnExpression> {
         let file = self.session.add_cell(input.to_string());
         let analysis = self.session.analyze(file);
-        let diagnostics = analysis.diagnostics.clone();
-        if analysis.has_errors() {
+        let (diagnostics, failed) = (analysis.diagnostics.clone(), analysis.has_errors());
+        if failed {
             return Ok(Typed {
-                diagnostics,
+                diagnostics: self.not_shown_yet(&diagnostics),
                 ty: None,
             });
         }
@@ -648,7 +662,7 @@ impl Repl {
             .cell_value_scheme(file)
             .ok_or(NotAnExpression)?;
         Ok(Typed {
-            diagnostics,
+            diagnostics: self.not_shown_yet(&diagnostics),
             ty: Some(written_scheme(&scheme)),
         })
     }
