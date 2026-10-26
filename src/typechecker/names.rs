@@ -1092,7 +1092,18 @@ fn type_vars_of(te: &TypeExpr, out: &mut Vec<Symbol>) {
             }
         }
         TypeExprKind::Named { .. } | TypeExprKind::SelfType => {}
-        TypeExprKind::Generic { args, .. } => args.iter().for_each(|t| type_vars_of(t, out)),
+        TypeExprKind::Generic {
+            module, name, args, ..
+        } => {
+            // A type constructor variable applied, `m(Int)`.
+            if module.is_none()
+                && resolve(*name).starts_with(char::is_lowercase)
+                && !out.contains(name)
+            {
+                out.push(*name);
+            }
+            args.iter().for_each(|t| type_vars_of(t, out));
+        }
         TypeExprKind::Tuple(parts) => parts.iter().for_each(|t| type_vars_of(t, out)),
         TypeExprKind::Function(params, ret) => {
             params.iter().for_each(|t| type_vars_of(t, out));

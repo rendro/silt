@@ -168,6 +168,15 @@ impl TypeChecker {
                     );
                     continue;
                 }
+                // A type is bounded by a trait of types, a type
+                // constructor by a trait of type constructors.
+                if let Type::Var(tv) = resolved
+                    && let Some(tr) = self.named_trait(wc.trait_res, *trait_name)
+                    && !self.bound_fits_kind(&resolved, (*type_param, true), tr, wc.trait_name_span)
+                {
+                    self.unknown_bounds.insert(tv);
+                    continue;
+                }
                 if let Type::Var(tv) = resolved
                     && let Some(trait_name) = self.named_trait(wc.trait_res, *trait_name)
                 {

@@ -1176,6 +1176,11 @@ pub(super) fn match_type(
             mapping.entry(*v).or_insert_with(|| ty.clone());
         }
         (Type::Generic(x, xs), Type::Generic(y, ys)) if x == y => zip(xs, ys),
+        (Type::Con(x, xs), Type::Con(y, ys)) if x == y => zip(xs, ys),
+        (Type::App(x, xa), Type::App(y, ya)) => {
+            match_type(x, y, vars, mapping);
+            match_type(xa, ya, vars, mapping);
+        }
         (Type::Tuple(xs), Type::Tuple(ys)) => zip(xs, ys),
         (Type::Fun(xs, x), Type::Fun(ys, y)) => {
             zip(xs, ys);

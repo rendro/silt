@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- A constructor lacking an impl, whose fixed argument is not known yet,
+-- writes it as an impl's header would: by the type's parameter.
+-- stderr-contains: error[type]: type 'Result(_, e)' does not implement trait 'Applicative'
+-- stderr-contains: error[type]: type 'Map(_, v)' does not implement trait 'Applicative'
+trait Applicative {
+  fn pure(x: a) -> Self(a)
+}
+fn wrap(x: a, type m) -> m(a) where m: Applicative { m.pure(x) }
+fn main() {
+  println(wrap(1, Result))
+  println(wrap("s", Map))
+}

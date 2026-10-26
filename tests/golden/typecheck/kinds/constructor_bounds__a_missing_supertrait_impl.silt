@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- An impl of a trait of type constructors needs its supertraits' impls
+-- for the constructor.
+-- stderr-contains: error[type]: type 'Option(_)' implements 'Pointed' but does not implement supertrait 'Functor'
+trait Functor {
+  fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)
+}
+trait Pointed: Functor {
+  fn point(x: a) -> Self(a)
+}
+trait Pointed for Option(_) {
+  fn point(x) { Some(x) }
+}
+fn main() { println(1) }

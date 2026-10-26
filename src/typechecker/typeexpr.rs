@@ -333,6 +333,38 @@ impl TypeChecker {
         Type::App(Box::new(head), Box::new(arg))
     }
 
+    /// Whether the bound `name: tr` of a `where` clause fits the kind of
+    /// the variable `var`, a type or a type constructor, as the trait's;
+    /// what does not is reported at `span` (with a help where the
+    /// variable could be written applied: not an impl header's).
+    pub(super) fn bound_fits_kind(
+        &mut self,
+        var: &Type,
+        (name, appliable): (Symbol, bool),
+        tr: TraitKey,
+        span: Span,
+    ) -> bool {
+        let constructor = self.is_constructor_var(var);
+        if constructor == self.is_constructor_trait(tr) {
+            return true;
+        }
+        let shown = self.show_trait(tr);
+        let (message, help) = match constructor {
+            false => (
+                format!("'{name}' is a type, but '{shown}' is a trait of type constructors"),
+                appliable.then(|| {
+                    format!("write the variable with its type argument, as in `xs: {name}(Int)`")
+                }),
+            ),
+            true => (
+                format!("'{name}' is a type constructor, but '{shown}' is a trait of types"),
+                None,
+            ),
+        };
+        self.error_help(Code::KindMismatch, (message, help), span);
+        false
+    }
+
     /// The type `Self(args)` of an annotation: `Self` takes one type
     /// argument, and stands for a type constructor only in a trait of
     /// type constructors and its impls.

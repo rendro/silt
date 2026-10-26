@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- A constructor without an impl of the bound's trait is named as an
+-- impl header writes it.
+-- stderr-contains: error[type]: type 'Set(_)' does not implement trait 'Functor'
+-- stderr-contains: error[type]: type 'List(_)' does not implement trait 'Functor'
+trait Functor {
+  fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)
+}
+fn double_all(xs: m(Int)) -> m(Int) where m: Functor { Functor.map(xs) { x -> x * 2 } }
+fn main() {
+  println(double_all(#[1, 2]))
+  println(double_all([1]))
+}

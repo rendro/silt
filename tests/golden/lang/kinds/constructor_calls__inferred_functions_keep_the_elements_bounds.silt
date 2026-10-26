@@ -1,0 +1,65 @@
+-- A function without annotations that maps over a constructor keeps what
+-- its closure asks of the element (Number of `x + x`, a program's trait,
+-- Display, Equal) as a bound of the element, beside the constructor's.
+trait Functor {
+  fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)
+}
+trait Applicative: Functor {
+  fn pure(x: a) -> Self(a)
+  fn map2(xs: Self(a), ys: Self(b), f: Fn(a, b) -> c) -> Self(c)
+}
+trait Monad: Applicative {
+  fn flat_map(xs: Self(a), f: Fn(a) -> Self(b)) -> Self(b)
+}
+trait Functor for Option(_) {
+  fn map(xs, f) {
+    match xs {
+      Some(x) -> Some(f(x))
+      None -> None
+    }
+  }
+}
+trait Named {
+  fn name(self) -> String
+}
+trait Named for Int {
+  fn name(self) -> String { "int {self}" }
+}
+type Box(a) { value: a }
+trait Functor for Box(_) {
+  fn map(xs, f) { Box { value: f(xs.value) } }
+}
+trait Applicative for Option(_) {
+  fn pure(x) { Some(x) }
+  fn map2(xs, ys, f) {
+    match (xs, ys) {
+      (Some(x), Some(y)) -> Some(f(x, y))
+      _ -> None
+    }
+  }
+}
+trait Monad for Option(_) {
+  fn flat_map(xs, f) {
+    match xs {
+      Some(x) -> f(x)
+      None -> None
+    }
+  }
+}
+fn add_self(xs) { Functor.map(xs) { x -> x + x } }
+fn plain_add(x) { x + x }
+fn wrap_add(xs) { Functor.map(xs) { x -> plain_add(x) } }
+fn names(xs) { Functor.map(xs) { x -> Named.name(x) } }
+fn shown(xs) { Functor.map(xs) { x -> "{x}" } }
+fn eqs(xs, y) { Functor.map(xs) { x -> x == y } }
+fn chain(xs) { Monad.flat_map(xs) { x -> Functor.map(xs) { y -> x + y } } }
+fn main() {
+  println(add_self(Some(1)))
+  println(add_self(Some(1.5)))
+  println(add_self(Box { value: 2 }).value)
+  println(wrap_add(Some(3)))
+  println(names(Some(1)))
+  println(shown(Some(true)))
+  println(eqs(Some(1), 1))
+  println(chain(Some(5)))
+}

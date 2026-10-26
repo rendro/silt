@@ -269,6 +269,9 @@ pub struct TypeChecker {
     /// The type variables that stand for a type constructor (`m` of
     /// `m(Int)`), as their annotations wrote them.
     pub(super) constructor_vars: std::collections::HashSet<TyVar>,
+    /// The variables of `type a` parameters: one a signature applies
+    /// (`type m` with `-> m(a)`) is a type constructor.
+    pub(super) type_param_vars: std::collections::HashSet<TyVar>,
     /// The traits of type constructors among the module's traits, settled
     /// before they are registered (`settle_trait_kinds`); every trait's
     /// kind is its `TraitInfo::constructor` after.
@@ -285,9 +288,6 @@ pub struct TypeChecker {
     /// a type argument (`y: m`), for the error of an annotation in its
     /// body that applies one.
     pub(super) bare_labels: HashMap<TyVar, String>,
-    /// The variables of `type a` parameters: one a signature applies
-    /// (`type m` with `-> m(a)`) is a type constructor.
-    pub(super) type_param_vars: std::collections::HashSet<TyVar>,
     /// While a signature's annotations are resolved: its own check
     /// reports a variable written both ways (`check_signature_kinds`).
     pub(super) resolving_signature: bool,
@@ -523,11 +523,11 @@ impl TypeChecker {
             sig_names: HashMap::new(),
             var_as_type: None,
             constructor_vars: Default::default(),
+            type_param_vars: Default::default(),
             constructor_traits: Default::default(),
             declaring_type: None,
             constructor_labels: HashMap::new(),
             bare_labels: HashMap::new(),
-            type_param_vars: Default::default(),
             resolving_signature: false,
             descriptor_var: None,
             rigid_of: HashMap::new(),
