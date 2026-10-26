@@ -49,6 +49,35 @@ pub(crate) fn find_silt_files(dir: &Path) -> Vec<String> {
     results
 }
 
+/// The test files of the package at `root`, as `silt test` finds them
+/// (`*_test.silt`, `*.test.silt`), sorted. A directory that holds a
+/// `silt.toml` of its own is another package (a path dependency kept
+/// inside this one), and is not looked into.
+pub(crate) fn package_test_files(root: &Path) -> Vec<String> {
+    fn walk(dir: &Path, out: &mut Vec<String>) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
+        for path in entries.filter_map(|e| e.ok()).map(|e| e.path()) {
+            if path.is_dir() {
+                if !silt::file_discovery::should_skip_dir(&path) && !path.join("silt.toml").is_file()
+                {
+                    walk(&path, out);
+                }
+            } else {
+                let name = path.to_string_lossy().into_owned();
+                if name.ends_with("_test.silt") || name.ends_with(".test.silt") {
+                    out.push(name);
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(root, &mut out);
+    out.sort();
+    out
+}
+
 /// A session for the entry file `path`, with the file opened in it. The
 /// project is found from the file's directory. When the packages are
 /// resolved, a rewritten `silt.lock` is announced; package errors are

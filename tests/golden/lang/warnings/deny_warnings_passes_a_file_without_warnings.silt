@@ -1,0 +1,5 @@
+-- cmd: check --deny-warnings
+-- A file without a warning passes `silt check --deny-warnings`.
+fn main() {
+  println("fine")
+}

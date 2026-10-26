@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- `silt check` in a package checks its test files too, wherever they are
+-- in it, and not those of another package kept inside it.
+-- stderr-contains: src/helper_test.silt:4:53
+-- stderr-contains: tests/app_test.silt:4:15
+-- stderr-not-contains: other_test.silt
+import helper
+
+fn main() {
+  println(helper.double(2))
+}

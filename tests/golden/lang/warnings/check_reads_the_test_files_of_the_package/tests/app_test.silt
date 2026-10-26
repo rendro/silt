@@ -1,0 +1,5 @@
+import test
+
+fn test_one() {
+  test.assert(1)
+}
