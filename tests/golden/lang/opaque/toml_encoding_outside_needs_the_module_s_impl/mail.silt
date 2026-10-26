@@ -1,0 +1,38 @@
+import json
+
+pub opaque type User {
+  name: String,
+  age: Int,
+}
+
+pub opaque type Email {
+  Email(String),
+}
+
+trait json.Encode for Email {
+  fn encode(self) -> json.Value {
+    match self {
+      Email(_) -> json.String("<hidden>")
+    }
+  }
+}
+
+pub fn user(name: String) -> User {
+  User { name: name, age: 1 }
+}
+
+pub fn email() -> Email {
+  Email("a@b")
+}
+
+pub fn inside() -> String {
+  json.stringify(user("in"))
+}
+
+pub fn mload(s: String, type a) -> Result(a, json.JsonError) where a: json.Decode {
+  json.parse(s, a)
+}
+
+pub fn mshow(x: a) -> String where a: json.Encode {
+  json.stringify(x)
+}

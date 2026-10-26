@@ -1,0 +1,21 @@
+-- cmd: check
+-- exit: 1
+-- toml encodes by the structure as json does: outside its module an opaque
+-- value is toml-encoded only through its module's `json.Encode` impl, at
+-- the top or in a field (`mail.Email` has one, `mail.User` has none).
+import mail
+import toml
+
+type Mine {
+  u: mail.User,
+}
+
+type Mail {
+  e: mail.Email,
+}
+
+fn main() {
+  println(toml.stringify(Mine { u: mail.user("secret") }))
+  println(toml.pretty(Mine { u: mail.user("secret") }))
+  println(toml.stringify(Mail { e: mail.email() }))
+}

@@ -112,6 +112,9 @@ pub struct Row {
     /// Whether the row's first argument is a connection: a `PgPool` or
     /// a `PgTx`, whose type is a variable in its signature.
     pub connection: bool,
+    /// Whether the row encodes its first argument by its structure
+    /// without a bound that says so (`toml.stringify`).
+    pub encodes: bool,
     pub id: BuiltinId,
     pub(crate) body: Body,
 }
@@ -225,6 +228,7 @@ pub struct RowSpec {
     decoding: Option<Decoding>,
     statement: bool,
     connection: bool,
+    encodes: bool,
 }
 
 /// A function row with its typed body (see [`super::typed`]).
@@ -246,6 +250,7 @@ fn off(signature: &'static str, summary: &'static str) -> RowSpec {
         decoding: None,
         statement: false,
         connection: false,
+        encodes: false,
     }
 }
 
@@ -284,6 +289,13 @@ impl RowSpec {
     /// transaction.
     fn connection(mut self) -> RowSpec {
         self.connection = true;
+        self
+    }
+
+    /// The row encodes its first argument by its structure, as json's
+    /// encoder does (toml's).
+    fn encodes(mut self) -> RowSpec {
+        self.encodes = true;
         self
     }
 }
@@ -640,6 +652,7 @@ fn rows(name: &'static str, enabled: bool, specs: Vec<RowSpec>) -> Vec<Row> {
                 decoding: spec.decoding,
                 statement: spec.statement,
                 connection: spec.connection,
+                encodes: spec.encodes,
                 // (Its place among all rows: the registry's to say.)
                 id: BuiltinId(0),
                 body: match (spec.constant, spec.typed) {
