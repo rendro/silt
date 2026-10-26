@@ -279,6 +279,9 @@ constants. A function of a cargo feature is in builds with that feature.
 type Result(a, e) { Ok(a), Err(e) }
 type Option(a) { Some(a), None }
 type Bytes  -- opaque
+trait Functor { fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b) }
+trait Applicative: Functor { fn pure(x: a) -> Self(a); fn map2(xs: Self(a), ys: Self(b), f: Fn(a, b) -> c) -> Self(c) }
+trait Monad: Applicative { fn flat_map(xs: Self(a), f: Fn(a) -> Self(b)) -> Self(b) }
 panic(message: a) -> Never where a: Display
 print(value: a) -> () where a: Display
 println(value: a) -> () where a: Display

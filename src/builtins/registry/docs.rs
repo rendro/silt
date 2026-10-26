@@ -413,6 +413,17 @@ pub fn prelude_lines() -> Vec<String> {
             .filter(|(name, _)| *name != crate::defs::TYPE_OF)
             .map(|(name, arity)| opaque_line(name, *arity)),
     );
+    // The traits of type constructors, which a program names in its
+    // bounds and calls (`Functor.map`); the traits found by the value
+    // are the language's, and the card says them in its prose.
+    lines.extend(
+        (crate::typechecker::builtin_trait_decls().iter())
+            .filter(|decl| {
+                crate::defs::builtin_trait_id(&crate::intern::resolve(decl.name))
+                    .is_some_and(crate::defs::has_dictionary)
+            })
+            .map(trait_text),
+    );
     let mut rows: Vec<&Row> = registry().prelude.iter().collect();
     rows.sort_by_key(|row| row.name);
     lines.extend(rows.into_iter().map(prelude_signature));
