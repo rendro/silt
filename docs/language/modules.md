@@ -119,6 +119,12 @@ given refuses an opaque value where it is called; a function of the
 type's own module may read it, wherever it is called from. An impl
 sees what its module sees, and a test file is a module like any other.
 
+Decoding (`json.parse`, `toml.parse`, a postgres row) builds a value as
+a constructor does. Outside its module an opaque type, at the top or in
+a field at any depth, is decoded only by the module's
+`trait json.Decode` impl, which can check the data; without one it is
+an error.
+
 Equality, order and hashing still compare what is inside, and
 printing a value shows it, as for any type; a module that wants to
 hide it writes its own `Display`. `opaque` needs `pub`, and an alias

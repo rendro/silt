@@ -1,0 +1,18 @@
+-- cmd: check
+-- exit: 1
+-- requires-feature: postgres
+-- A postgres row is decoded as json is: a field of an opaque type of
+-- another module needs that module's `json.Decode` impl.
+import mail
+import postgres
+
+type Row {
+  owner: mail.User,
+}
+
+fn main() {
+  match postgres.connect("postgres://nobody@127.0.0.1/none") {
+    Ok(db) -> println(postgres.query(db, "select 1", (), Row))
+    Err(e) -> println(Error.message(e))
+  }
+}

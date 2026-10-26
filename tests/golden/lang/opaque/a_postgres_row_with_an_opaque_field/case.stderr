@@ -1,0 +1,6 @@
+error[type]: type 'mail.User' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+ --> main.silt:15:58
+    |
+ 15 |     Ok(db) -> println(postgres.query(db, "select 1", (), Row))
+    |                                                          ^^^ type 'mail.User' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+  = help: decode it inside module 'mail', or write `trait json.Decode for User` there

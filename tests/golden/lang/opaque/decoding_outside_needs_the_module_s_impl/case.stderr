@@ -1,0 +1,35 @@
+error[type]: type 'mail.User' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+ --> main.silt:20:53
+    |
+ 20 |   println(json.parse("""{"name": "a", "age": 1}""", mail.User))
+    |                                                     ^^^^^^^^^ type 'mail.User' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+  = help: decode it inside module 'mail', or write `trait json.Decode for User` there
+
+error[type]: type 'mail.User' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+ --> main.silt:21:33
+    |
+ 21 |   println(json.parse_list("[]", mail.User))
+    |                                 ^^^^^^^^^ type 'mail.User' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+  = help: decode it inside module 'mail', or write `trait json.Decode for User` there
+
+error[type]: type 'mail.User' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+ --> main.silt:22:46
+    |
+ 22 |   println(json.parse("""{"email": "b@y"}""", Contact))
+    |                                              ^^^^^^^ type 'mail.User' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+  = help: decode it inside module 'mail', or write `trait json.Decode for User` there
+
+error[type]: type 'mail.User' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+ --> main.silt:23:47
+    |
+ 23 |   println(toml.parse("name = \"a\"\nage = 1", mail.User))
+    |                                               ^^^^^^^^^ type 'mail.User' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+  = help: decode it inside module 'mail', or write `trait json.Decode for User` there
+
+error[type]: type 'mail.User' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+ --> main.silt:24:28
+    |
+ 24 |   println(util.load("\{}", mail.User))
+    |                            ^^^^^^^^^ type 'mail.User' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+  = note: `util.load` passes it to `json.parse`
+  = help: decode it inside module 'mail', or write `trait json.Decode for User` there

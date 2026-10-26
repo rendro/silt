@@ -1,0 +1,25 @@
+-- cmd: check
+-- exit: 1
+-- Decoding builds a value as a constructor does: outside its module an
+-- opaque type is decoded only by its module's `json.Decode` impl
+-- (`mail.Email` has one, `mail.User` has none). That holds for json and
+-- toml, at the top and in a field at any depth, and through a function of
+-- another module that decodes its type argument.
+import json
+import mail
+import toml
+import util
+
+type Contact {
+  email: mail.Email,
+  owner: Option(mail.User),
+}
+
+fn main() {
+  println(json.parse("\"A@X.IO\"", mail.Email))
+  println(json.parse("""{"name": "a", "age": 1}""", mail.User))
+  println(json.parse_list("[]", mail.User))
+  println(json.parse("""{"email": "b@y"}""", Contact))
+  println(toml.parse("name = \"a\"\nage = 1", mail.User))
+  println(util.load("\{}", mail.User))
+}
