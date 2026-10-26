@@ -1,0 +1,20 @@
+-- cmd: check
+-- exit: 1
+-- Encoding reads what is in a value: outside its module an opaque value is
+-- json-encoded only through its module's `json.Encode` impl, at the top or
+-- in a part at any depth, and through a function of another module that
+-- encodes its argument.
+import json
+import mail
+import util
+
+type Wrap {
+  u: mail.User,
+}
+
+fn main() {
+  println(json.stringify(mail.user("secret")))
+  println(json.stringify([mail.user("a")]))
+  println(json.stringify(Wrap { u: mail.user("b") }))
+  println(util.show(mail.user("c")))
+}

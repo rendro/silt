@@ -210,6 +210,12 @@ impl TypeChecker {
             },
             other => other,
         };
+        // A bound of another module's definition, at this use: that
+        // module's, for its opaque types.
+        self.owing = match &pred {
+            Pred::Trait { .. } => self.instantiating,
+            _ => None,
+        };
         let decoder = match &pred {
             Pred::Builtin {
                 check: BuiltinCheck::Decodes { .. },
@@ -233,6 +239,9 @@ impl TypeChecker {
     /// Its node in the module's evidence.
     pub(super) fn want_goal(&mut self, goal: Goal, origin: Origin) -> super::evidence::EvId {
         let ev = self.ev_new(super::evidence::EvNode::Pending);
+        if let Some(module) = self.owing.take() {
+            self.owed_for.insert(self.ev_here(ev), module);
+        }
         self.wanted.push(Wanted {
             goal,
             origin,
@@ -1672,8 +1681,26 @@ impl TypeChecker {
             // judgement, which names the decoder.
             self.ev_set(ev, super::evidence::EvNode::Structural(trait_name));
             if Self::is_decode(trait_name) {
-                self.want_decode(&resolved, origin, asker);
+                let owner = ev.and_then(|ev| self.owed_for.get(&ev).copied());
+                self.want_decode(&resolved, origin, asker, owner);
                 return;
+            }
+            // An opaque type of another module is encoded by its module's
+            // impl alone, unless a definition of that module asks it.
+            if trait_name.is_builtin("Encode")
+                && let Some(refusal) = self.opaque_encode_refusal(&resolved, origin.span)
+            {
+                let owner = ev.and_then(|ev| self.owed_for.get(&ev).copied());
+                let found = self.opaque_encoded_module(&resolved);
+                if owner.is_none() || owner != found {
+                    if self
+                        .lacking
+                        .insert((origin.span, format!("json.Encode {}", refusal.message)))
+                    {
+                        self.errors.push(refusal);
+                    }
+                    return;
+                }
             }
             let mut walk = Walk::default();
             match self.structure_gap(trait_name, &resolved, &mut walk, 0) {

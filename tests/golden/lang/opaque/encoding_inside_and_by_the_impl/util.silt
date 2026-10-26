@@ -1,0 +1,5 @@
+import json
+
+pub fn show(x: a) -> String where a: json.Encode {
+  json.stringify(x)
+}

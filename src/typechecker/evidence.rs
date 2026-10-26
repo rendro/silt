@@ -90,7 +90,7 @@ pub(crate) struct Ledger {
 
 /// The evidence node of a predicate a use owes: of the module that owes
 /// it, which for a REPL input may be an earlier input.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct EvRef {
     pub(super) module: crate::session::ModuleId,
     pub(super) id: EvId,
