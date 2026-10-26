@@ -180,6 +180,57 @@ impl TypeChecker {
         self.def(found.id.0).map(|def| def.module)
     }
 
+    /// Owe, for each type variable inside `ty` (at any depth, the whole
+    /// excepted), that the encoder `builtin` may encode what it stands
+    /// for: an annotation variable as a need of its function's uses, any
+    /// other one once it is decided or generalised (`BuiltinCheck::Encodes`).
+    pub(super) fn encode_variables_inside(
+        &mut self,
+        builtin: Symbol,
+        ty: &Type,
+        passer: Option<Symbol>,
+        origin: super::solve::Origin,
+    ) {
+        fn walk(ty: &Type, top: bool, out: &mut Vec<Type>) {
+            match ty {
+                Type::Var(_) | Type::Rigid(_) if !top => out.push(ty.clone()),
+                Type::Generic(_, args) | Type::Tuple(args) => {
+                    args.iter().for_each(|t| walk(t, false, out))
+                }
+                Type::List(t) | Type::Set(t) | Type::Channel(t) => walk(t, false, out),
+                Type::Map(k, v) => {
+                    walk(k, false, out);
+                    walk(v, false, out);
+                }
+                Type::AnonRecord { fields, tail } => {
+                    fields.values().for_each(|t| walk(t, false, out));
+                    match tail {
+                        RowTail::Var(v) => out.push(Type::Var(*v)),
+                        RowTail::Rigid(r) => out.push(Type::Rigid(*r)),
+                        RowTail::Closed => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut inside = Vec::new();
+        walk(ty, true, &mut inside);
+        for var in inside {
+            let check = crate::types::BuiltinCheck::Encodes { builtin };
+            match var {
+                Type::Rigid(_) => self.check_builtin_argument(check, &var, passer, origin),
+                _ => {
+                    let pred = Pred::Builtin {
+                        check,
+                        subject: var,
+                        passer,
+                    };
+                    let _ = self.want(pred, origin);
+                }
+            }
+        }
+    }
+
     /// The error of encoding `ty` at `span` outside the module of an
     /// opaque type it would read by its structure, if it would read one:
     /// encoding reads what is in it.

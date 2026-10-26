@@ -69,6 +69,12 @@ impl TypeChecker {
         if matches!(ty, Type::Var(_) | Type::Error | Type::Never) {
             return;
         }
+        // What an encoder is given is encoded at any depth: a type
+        // variable in it owes what the whole does (each use of its
+        // function, of the type it gives).
+        if let BuiltinCheck::Params { builtin } | BuiltinCheck::Encodes { builtin } = check {
+            self.encode_variables_inside(builtin, &ty, passer, origin);
+        }
         let span = origin.span;
         let refusal = match check {
             BuiltinCheck::Decodes {
