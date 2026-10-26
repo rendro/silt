@@ -739,9 +739,6 @@ pub enum BuiltinCheck {
     Connection { builtin: Symbol },
     /// The parameters of a postgres statement: a tuple, or `()`.
     Params { builtin: Symbol },
-    /// The value an encoder other than json's (`toml.stringify`) reads
-    /// by its structure.
-    Encodes { builtin: Symbol },
 }
 
 impl BuiltinCheck {
@@ -750,8 +747,7 @@ impl BuiltinCheck {
         match self {
             BuiltinCheck::Decodes { builtin, .. }
             | BuiltinCheck::Connection { builtin }
-            | BuiltinCheck::Params { builtin }
-            | BuiltinCheck::Encodes { builtin } => builtin,
+            | BuiltinCheck::Params { builtin } => builtin,
         }
     }
 

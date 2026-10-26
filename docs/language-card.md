@@ -544,8 +544,8 @@ type TomlError { Syntax(String, Int), TypeMismatch(String, String), MissingField
 toml.parse(s: String, type a) -> Result(a, TomlError)
 toml.parse_list(s: String, type a) -> Result(List(a), TomlError)
 toml.parse_map(s: String, type a) -> Result(Map(String, a), TomlError)
-toml.pretty(value: a) -> Result(String, TomlError)
-toml.stringify(value: a) -> Result(String, TomlError)
+toml.pretty(value: a) -> Result(String, TomlError) where a: json.Encode
+toml.stringify(value: a) -> Result(String, TomlError) where a: json.Encode
 ```
 
 ### set
