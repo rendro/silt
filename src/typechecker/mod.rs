@@ -269,6 +269,10 @@ pub struct TypeChecker {
     /// The type variables that stand for a type constructor (`m` of
     /// `m(Int)`), as their annotations wrote them.
     pub(super) constructor_vars: std::collections::HashSet<TyVar>,
+    /// The traits of type constructors among the module's traits, settled
+    /// before they are registered (`settle_trait_kinds`); every trait's
+    /// kind is its `TraitInfo::constructor` after.
+    pub(super) constructor_traits: std::collections::HashSet<TraitKey>,
     /// While the type declaration of this name is resolved, its
     /// parameters: they are types (`type parameter 'm' of 'Wrapped' is
     /// written with a type argument`).
@@ -519,6 +523,7 @@ impl TypeChecker {
             sig_names: HashMap::new(),
             var_as_type: None,
             constructor_vars: Default::default(),
+            constructor_traits: Default::default(),
             declaring_type: None,
             constructor_labels: HashMap::new(),
             bare_labels: HashMap::new(),
@@ -1079,7 +1084,9 @@ impl TypeChecker {
         // share them are done.
         self.enter_level();
 
-        // Second pass: the trait declarations, before any impl of them.
+        // Second pass: the trait declarations, before any impl of them,
+        // each of its kind.
+        self.settle_trait_kinds(&program.decls);
         for decl in &program.decls {
             if let Decl::Trait(t) = decl {
                 self.register_trait_decl_user(t);

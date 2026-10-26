@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- A trait whose methods write `Self` with a type argument is a trait of
+-- type constructors; one that also writes it bare is neither.
+-- stderr-contains: error[type]: 'Self' is written with a type argument in 'map' and without one in 'name': a trait is for types or for type constructors, not both
+-- stderr-contains: --> constructor_trait__self_both_ways.silt:9:14
+trait Functor {
+  fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)
+  fn name(x: Self) -> String
+}
+fn main() { println(1) }

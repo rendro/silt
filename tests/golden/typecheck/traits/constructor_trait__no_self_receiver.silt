@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- A method of a trait of type constructors names its parameters with
+-- their types, `xs: Self(a)`: `self` is an error, also in a trait that
+-- is one by its supertrait.
+-- stderr-contains: --> constructor_trait__no_self_receiver.silt:11:12
+-- stderr-contains: --> constructor_trait__no_self_receiver.silt:14:8
+-- stderr-contains: error[type]: a trait of type constructors names its parameters: write `xs: Self(a)` instead of `self`
+trait Shout {
+  fn wrap(x: a) -> Self(a)
+  fn shout(self) -> Self(Int)
+}
+trait Loud: Shout {
+  fn t(self) -> String
+}
+fn main() { println(1) }

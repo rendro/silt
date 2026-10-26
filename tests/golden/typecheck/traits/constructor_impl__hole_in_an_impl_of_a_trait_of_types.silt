@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- An impl of a trait of types names every type argument of its type.
+-- stderr-contains: error[type]: trait 'Greet' is for types, not type constructors: name every type argument
+-- stderr-contains: = help: write `trait Greet for Option(a)`
+-- stderr-contains: --> constructor_impl__hole_in_an_impl_of_a_trait_of_types.silt:10:1
+trait Greet {
+  fn greet(self) -> String
+}
+trait Greet for Option(_) {
+  fn greet(self) { "hi" }
+}
+fn main() { println(1) }

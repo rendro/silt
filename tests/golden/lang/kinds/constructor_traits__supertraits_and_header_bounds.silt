@@ -1,0 +1,46 @@
+-- A trait is of type constructors by its methods, or by its supertraits
+-- when it writes `Self` in neither form (`Both`). A constructor impl's
+-- fixed arguments are names its `where` may bound (`Tagged(_, t)`), and
+-- a method that only makes a value is called on the type (`Tree.point`).
+trait Functor {
+  fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)
+}
+trait Pointed: Functor {
+  fn point(x: a) -> Self(a)
+}
+trait Both: Pointed {}
+
+type Tree(a) { Leaf, Node(Tree(a), a, Tree(a)) }
+
+trait Functor for Tree(_) {
+  fn map(t, f) {
+    match t {
+      Leaf -> Leaf
+      Node(l, x, r) -> Node(Functor.map(l, f), f(x), Functor.map(r, f))
+    }
+  }
+}
+trait Pointed for Tree(_) {
+  fn point(x) { Node(Leaf, x, Leaf) }
+}
+trait Both for Tree(_) {}
+
+type Tagged(a, t) { value: a, tag: t }
+trait Functor for Tagged(_, t) where t: Display {
+  fn map(x, f) { Tagged { value: f(x.value), tag: x.tag } }
+}
+
+fn show(t: Tree(Int)) -> String {
+  match t {
+    Leaf -> "."
+    Node(l, x, r) -> "({show(l)} {x} {show(r)})"
+  }
+}
+
+fn main() {
+  let t = Node(Node(Leaf, 1, Leaf), 2, Leaf)
+  println(show(Functor.map(t) { x -> x * 10 }))
+  let tagged = Functor.map(Tagged { value: 1, tag: "a" }) { x -> x + 1 }
+  println("{tagged.value} {tagged.tag}")
+  println(show(Tree.point(5)))
+}

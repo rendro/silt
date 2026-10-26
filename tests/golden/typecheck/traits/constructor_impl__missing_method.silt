@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- A message names the type of a constructor impl as its header writes
+-- it.
+-- stderr-contains: error[type]: trait impl 'Functor' for 'Box(_)' is missing method 'tag'
+trait Functor {
+  fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)
+  fn tag(xs: Self(a)) -> String
+}
+type Box(a) { value: a }
+trait Functor for Box(_) {
+  fn map(xs, f) { Box { value: f(xs.value) } }
+}
+fn main() { println(1) }

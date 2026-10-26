@@ -333,6 +333,46 @@ impl TypeChecker {
         Type::App(Box::new(head), Box::new(arg))
     }
 
+    /// The type `Self(args)` of an annotation: `Self` takes one type
+    /// argument, and stands for a type constructor only in a trait of
+    /// type constructors and its impls.
+    fn self_applied(
+        &mut self,
+        te: &TypeExpr,
+        args: &[TypeExpr],
+        param_vars: &mut HashMap<Symbol, Type>,
+    ) -> Type {
+        let resolved: Vec<Type> = args
+            .iter()
+            .map(|a| self.resolve_type_expr(a, param_vars))
+            .collect();
+        if resolved.len() != 1 {
+            let message = format!(
+                "a type constructor variable takes one type argument: 'Self' is given {}",
+                resolved.len()
+            );
+            self.error(Code::KindMismatch, message, te.span);
+            return Type::Error;
+        }
+        let arg = resolved.into_iter().next().expect("one argument");
+        match param_vars.get(&intern("Self")).cloned() {
+            Some(head @ Type::Con(..)) => Type::applied(head, arg),
+            Some(head) if self.is_constructor_var(&head) => Type::applied(head, arg),
+            Some(Type::Error) => Type::Error,
+            Some(head) => {
+                let message = format!(
+                    "'Self' is the type '{}' here, not a type constructor: write it without a \
+                     type argument",
+                    self.show_type(&head)
+                );
+                self.error(Code::KindMismatch, message, te.span);
+                Type::Error
+            }
+            // (Outside a trait, as a bare `Self` there.)
+            None => self.fresh_var(),
+        }
+    }
+
     /// Report a type variable that the signature of `f` writes both with
     /// a type argument and without one: it is a type or a type
     /// constructor, not both.
@@ -602,6 +642,14 @@ impl TypeChecker {
                 {
                     self.error(Code::InvalidTypeAnnotation, NEVER_ELSEWHERE, te.span);
                     return Type::Error;
+                }
+                // `Self(a)`: the type constructor of a trait of type
+                // constructors, or of its impl, applied.
+                if module.is_none()
+                    && name_str == "Self"
+                    && self.named_type(te.res, *name).is_none()
+                {
+                    return self.self_applied(te, args, param_vars);
                 }
                 // A lowercase name applied is a type constructor variable
                 // (`m(Int)`), unless it is a type spelled in lowercase.

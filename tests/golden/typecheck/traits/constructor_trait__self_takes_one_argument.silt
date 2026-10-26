@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- `Self` of a trait of type constructors takes one type argument.
+-- stderr-contains: error[type]: a type constructor variable takes one type argument: 'Self' is given 2
+-- stderr-contains: --> constructor_trait__self_takes_one_argument.silt:7:13
+trait Two {
+  fn two(x: Self(a, b)) -> Int
+}
+fn main() { println(1) }

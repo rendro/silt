@@ -1,0 +1,22 @@
+-- cmd: check
+-- exit: 1
+-- A type constructor stands for its type's first type argument: `_`
+-- written elsewhere is an error, with a help for a Result and for a
+-- program's own type.
+-- stderr-contains: error[type]: '_' must be the first type argument of 'Result': a type constructor stands for its first type argument
+-- stderr-contains: = help: to change the error of a Result, use `result.map_err`
+-- stderr-contains: error[type]: '_' must be the first type argument of 'Pair': a type constructor stands for its first type argument
+-- stderr-contains: = help: to map another argument of 'Pair', declare it first in 'Pair'
+-- stderr-contains: --> constructor_impl__hole_first.silt:16:1
+-- stderr-contains: --> constructor_impl__hole_first.silt:19:1
+trait Functor {
+  fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)
+}
+type Pair(a, b) { P(a, b) }
+trait Functor for Result(e, _) {
+  fn map(xs, f) { xs }
+}
+trait Functor for Pair(a, _) {
+  fn map(xs, f) { xs }
+}
+fn main() { println(1) }

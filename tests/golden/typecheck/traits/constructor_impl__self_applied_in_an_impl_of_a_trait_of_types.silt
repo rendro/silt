@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- In an impl of a trait of types, `Self` is the impl's type, which takes
+-- no type argument.
+-- stderr-contains: error[type]: 'Self' is the type 'Box(a)' here, not a type constructor: write it without a type argument
+-- stderr-contains: --> constructor_impl__self_applied_in_an_impl_of_a_trait_of_types.silt:14:22
+trait Greet {
+  fn greet(self) -> String
+  fn make(x: Int) -> Self
+}
+type Box(a) { value: a }
+trait Greet for Box(a) {
+  fn greet(self) -> String { "hi" }
+  fn make(x: Int) -> Self(Int) { Box { value: x } }
+}
+fn main() { println(1) }

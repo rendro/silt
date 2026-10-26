@@ -70,6 +70,11 @@ pub(super) struct TraitInfo {
     pub(super) method_bounds: HashMap<Symbol, Vec<Pred>>,
     /// The variable `Self` is in the methods' types.
     pub(super) self_var: TyVar,
+    /// Whether the trait is a trait of type constructors: its methods
+    /// write `Self` with a type argument (`xs: Self(a)`), or a
+    /// supertrait is one. `Self` then stands for a constructor
+    /// (`Option(_)`), and its methods' types apply `self_var`.
+    pub(super) constructor: bool,
     /// The name of each variable the trait's declaration writes: `Self`,
     /// the parameters, and the type variables of the methods'
     /// annotations. Where a body is checked against a method's type (a

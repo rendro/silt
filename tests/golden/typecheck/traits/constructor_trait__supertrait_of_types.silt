@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- The supertraits of a trait of type constructors are traits of type
+-- constructors.
+-- stderr-contains: error[type]: trait 'Bad' is a trait of type constructors; its supertrait 'Display' is a trait of types
+-- stderr-contains: --> constructor_trait__supertrait_of_types.silt:7:12
+trait Bad: Display {
+  fn b(xs: Self(Int)) -> Int
+}
+fn main() { println(1) }

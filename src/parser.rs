@@ -2061,10 +2061,20 @@ impl<'src> Parser<'src> {
             // Enforce two rules:
             //   1. Every arg must be a lowercase `Named` ident (impl
             //      target arguments must be type variables — silt has no
-            //      specialization, so `trait X for Box(Int)` is rejected).
+            //      specialization, so `trait X for Box(Int)` is rejected),
+            //      or `_`, the argument a trait of type constructors maps
+            //      over (`trait Functor for Option(_)`), which binds
+            //      nothing; where it may stand the checker says.
             //   2. Binders must be distinct (no `Pair(a, a)` shadowing).
             let mut target_param_names: Vec<Symbol> = Vec::new();
             for arg in &target_type_args {
+                if let TypeExprKind::Named {
+                    module: None, name, ..
+                } = &arg.kind
+                    && intern::resolve(*name) == "_"
+                {
+                    continue;
+                }
                 let TypeExprKind::Named {
                     module: None,
                     name: arg_sym,
@@ -2446,7 +2456,11 @@ impl<'src> Parser<'src> {
                     start,
                 ));
             }
-            return Ok(self.mk_type(TypeExprKind::SelfType, start));
+            // `Self(a)`: `Self` applied, in a trait of type constructors,
+            // is read like `List(a)` below.
+            if !self.at_on_line(&Token::LParen) {
+                return Ok(self.mk_type(TypeExprKind::SelfType, start));
+            }
         }
         if self.at_on_line(&Token::LParen) {
             let open = self.advance().span;
