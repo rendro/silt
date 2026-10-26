@@ -1,17 +1,17 @@
 -- A function without annotations that calls a method of a trait of type
 -- constructors is generic over the constructor, its bound inferred; a
 -- trait's default body calls its methods through the trait on `Self(a)`.
-trait Functor {
+trait Mapping {
   fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)
   fn replace(xs: Self(a), y: b) -> Self(b) {
-    Functor.map(xs) { _ -> y }
+    Mapping.map(xs) { _ -> y }
   }
 }
 type Box(a) { value: a }
-trait Functor for Box(_) {
+trait Mapping for Box(_) {
   fn map(xs, f) { Box { value: f(xs.value) } }
 }
-trait Functor for Option(_) {
+trait Mapping for Option(_) {
   fn map(xs, f) {
     match xs {
       Some(x) -> Some(f(x))
@@ -19,12 +19,12 @@ trait Functor for Option(_) {
     }
   }
 }
-fn twice(xs) { Functor.map(xs) { x -> x * 2 } }
+fn twice(xs) { Mapping.map(xs) { x -> x * 2 } }
 fn four_times(xs) { twice(twice(xs)) }
 fn main() {
   println(twice(Some(3)))
   println(twice(Box { value: 3 }).value)
   println(four_times(Some(1)))
-  println(Functor.replace(Some(1), "x"))
-  println(Functor.replace(Box { value: 1 }, true).value)
+  println(Mapping.replace(Some(1), "x"))
+  println(Mapping.replace(Box { value: 1 }, true).value)
 }

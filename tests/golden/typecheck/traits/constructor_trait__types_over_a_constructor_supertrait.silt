@@ -2,12 +2,12 @@
 -- exit: 1
 -- A trait whose methods write `Self` bare is a trait of types, and its
 -- supertraits are too.
--- stderr-contains: error[type]: trait 'Named' is a trait of types; its supertrait 'Functor' is a trait of type constructors
+-- stderr-contains: error[type]: trait 'Named' is a trait of types; its supertrait 'Mapping' is a trait of type constructors
 -- stderr-contains: --> constructor_trait__types_over_a_constructor_supertrait.silt:10:14
-trait Functor {
+trait Mapping {
   fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)
 }
-trait Named: Functor {
+trait Named: Mapping {
   fn name(x: Self) -> String
 }
 fn main() { println(1) }

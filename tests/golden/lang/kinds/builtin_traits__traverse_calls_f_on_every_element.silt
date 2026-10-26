@@ -1,0 +1,20 @@
+-- `list.traverse` calls `f` on every element, left to right, also after
+-- one has failed, then gives the first failure (HK19).
+import int
+import list
+
+fn main() {
+  let parsed = list.traverse(["1", "x", "2", "y"]) { s ->
+    println("reading {s}")
+    int.parse(s)
+  }
+  println(parsed)
+  let found = list.traverse([1, 2, 3]) { n ->
+    println("looking at {n}")
+    match n == 2 {
+      true -> None
+      false -> Some(n)
+    }
+  }
+  println(found)
+}

@@ -1,17 +1,17 @@
 -- A function without annotations that maps over a constructor keeps what
 -- its closure asks of the element (Number of `x + x`, a program's trait,
 -- Display, Equal) as a bound of the element, beside the constructor's.
-trait Functor {
+trait Mapping {
   fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)
 }
-trait Applicative: Functor {
+trait Combinative: Mapping {
   fn pure(x: a) -> Self(a)
   fn map2(xs: Self(a), ys: Self(b), f: Fn(a, b) -> c) -> Self(c)
 }
-trait Monad: Applicative {
+trait Chain: Combinative {
   fn flat_map(xs: Self(a), f: Fn(a) -> Self(b)) -> Self(b)
 }
-trait Functor for Option(_) {
+trait Mapping for Option(_) {
   fn map(xs, f) {
     match xs {
       Some(x) -> Some(f(x))
@@ -26,10 +26,10 @@ trait Named for Int {
   fn name(self) -> String { "int {self}" }
 }
 type Box(a) { value: a }
-trait Functor for Box(_) {
+trait Mapping for Box(_) {
   fn map(xs, f) { Box { value: f(xs.value) } }
 }
-trait Applicative for Option(_) {
+trait Combinative for Option(_) {
   fn pure(x) { Some(x) }
   fn map2(xs, ys, f) {
     match (xs, ys) {
@@ -38,7 +38,7 @@ trait Applicative for Option(_) {
     }
   }
 }
-trait Monad for Option(_) {
+trait Chain for Option(_) {
   fn flat_map(xs, f) {
     match xs {
       Some(x) -> f(x)
@@ -46,13 +46,13 @@ trait Monad for Option(_) {
     }
   }
 }
-fn add_self(xs) { Functor.map(xs) { x -> x + x } }
+fn add_self(xs) { Mapping.map(xs) { x -> x + x } }
 fn plain_add(x) { x + x }
-fn wrap_add(xs) { Functor.map(xs) { x -> plain_add(x) } }
-fn names(xs) { Functor.map(xs) { x -> Named.name(x) } }
-fn shown(xs) { Functor.map(xs) { x -> "{x}" } }
-fn eqs(xs, y) { Functor.map(xs) { x -> x == y } }
-fn chain(xs) { Monad.flat_map(xs) { x -> Functor.map(xs) { y -> x + y } } }
+fn wrap_add(xs) { Mapping.map(xs) { x -> plain_add(x) } }
+fn names(xs) { Mapping.map(xs) { x -> Named.name(x) } }
+fn shown(xs) { Mapping.map(xs) { x -> "{x}" } }
+fn eqs(xs, y) { Mapping.map(xs) { x -> x == y } }
+fn chain(xs) { Chain.flat_map(xs) { x -> Mapping.map(xs) { y -> x + y } } }
 fn main() {
   println(add_self(Some(1)))
   println(add_self(Some(1.5)))

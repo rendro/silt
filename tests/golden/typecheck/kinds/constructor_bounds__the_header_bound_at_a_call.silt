@@ -4,14 +4,14 @@
 -- where generic code reaches the impl.
 -- stderr-contains: error[type]: type 'Fn' does not implement trait 'Display'
 -- stderr-contains: --> constructor_bounds__the_header_bound_at_a_call.silt:17:22
-trait Functor {
+trait Mapping {
   fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)
 }
 type Tagged(a, t) { value: a, tag: t }
-trait Functor for Tagged(_, t) where t: Display {
+trait Mapping for Tagged(_, t) where t: Display {
   fn map(x, f) { Tagged { value: f(x.value), tag: x.tag } }
 }
-fn double_all(xs: m(Int)) -> m(Int) where m: Functor { Functor.map(xs) { x -> x * 2 } }
+fn double_all(xs: m(Int)) -> m(Int) where m: Mapping { Mapping.map(xs) { x -> x * 2 } }
 fn main() {
   let t = Tagged { value: 1, tag: { x -> x + 1 } }
   println(double_all(t).value)

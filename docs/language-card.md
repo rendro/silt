@@ -403,6 +403,7 @@ list.product_float(xs: List(Float)) -> Float
 list.remove_at(xs: List(a), index: Int) -> Option(List(a))
 list.reverse(xs: List(a)) -> List(a)
 list.scan(xs: List(a), init: b, f: Fn(b, a) -> b) -> List(b)
+list.sequence(xs: List(m(a))) -> m(List(a)) where m: Applicative
 list.set(xs: List(a), index: Int, value: a) -> Option(List(a))
 list.sort(xs: List(a)) -> List(a) where a: Compare
 list.sort_by(xs: List(a), key: Fn(a) -> b) -> List(a) where b: Compare
@@ -411,6 +412,7 @@ list.sum(xs: List(Int)) -> Int
 list.sum_float(xs: List(Float)) -> Float
 list.tail(xs: List(a)) -> List(a)
 list.take(xs: List(a), n: Int) -> List(a)
+list.traverse(xs: List(a), f: Fn(a) -> m(b)) -> m(List(b)) where m: Applicative
 list.unfold(seed: a, f: Fn(a) -> Option((b, a))) -> List(b)
 list.unique(xs: List(a)) -> List(a) where a: Equal
 list.unique_by(xs: List(a), key: Fn(a) -> b) -> List(a) where b: Hash

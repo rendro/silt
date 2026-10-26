@@ -2,12 +2,12 @@
 -- exit: 1
 -- A method of a trait of type constructors that only makes a value is
 -- called on a type constructor or on a bounded variable.
--- stderr-contains: error[type]: method 'pure' of trait 'Applicative' takes no value of the type, so it is called on a type
+-- stderr-contains: error[type]: method 'pure' of trait 'Combinative' takes no value of the type, so it is called on a type
 -- stderr-contains: = help: call it on a type constructor, `Option.pure(x)`, or on a type variable with the bound, `m.pure(x)`
-trait Applicative {
+trait Combinative {
   fn pure(x: a) -> Self(a)
 }
-trait Applicative for Option(_) {
+trait Combinative for Option(_) {
   fn pure(x) { Some(x) }
 }
-fn main() { println(Applicative.pure(1)) }
+fn main() { println(Combinative.pure(1)) }

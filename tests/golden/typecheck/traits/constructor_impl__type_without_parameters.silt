@@ -3,14 +3,14 @@
 -- A type without type parameters is no type constructor.
 -- stderr-contains: error[type]: type 'Shape' takes no type arguments, so it is not a type constructor
 -- stderr-contains: error[type]: type 'Int' takes no type arguments, so it is not a type constructor
-trait Functor {
+trait Mapping {
   fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)
 }
 type Shape { Circle, Square }
-trait Functor for Shape(_) {
+trait Mapping for Shape(_) {
   fn map(xs, f) { xs }
 }
-trait Functor for Int(_) {
+trait Mapping for Int(_) {
   fn map(xs, f) { xs }
 }
 fn main() { println(1) }

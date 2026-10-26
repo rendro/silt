@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- The impls of the builtin traits for the builtin types are silt's: no
+-- module may write one, whether silt has it or not.
+-- stderr-contains: error[type]: the impl of trait 'Functor' for type 'List(_)' is written in module 'builtin_traits__no_module_writes_a_builtin_impl', which declares neither the trait nor the type; both are builtin, so no module may write it
+-- stderr-contains: error[type]: the impl of trait 'Applicative' for type 'Channel(_)' is written in module 'builtin_traits__no_module_writes_a_builtin_impl', which declares neither the trait nor the type; both are builtin, so no module may write it
+-- stderr-not-contains: duplicate implementation
+trait Functor for List(_) {
+  fn map(xs, f) { xs }
+}
+trait Applicative for Channel(_) {
+  fn pure(x) { x }
+  fn map2(xs, ys, f) { xs }
+}
+fn main() { println(1) }

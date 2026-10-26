@@ -7,22 +7,22 @@
 -- stdout-contains: TailCallDict         0     2
 -- stdout-contains: == wrap (arity=2, dictionaries=1, upvalues=0) ==
 -- stdout-contains: TailCallDict         0     1
--- stdout-contains: Constant             1     ; <dict:Functor for Box>
+-- stdout-contains: Constant             1     ; <dict:Mapping for Box>
 -- stdout-contains: Constant             5     ; <dict:Pointed for Box>
-trait Functor {
+trait Mapping {
   fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)
 }
-trait Pointed: Functor {
+trait Pointed: Mapping {
   fn point(x: a) -> Self(a)
 }
 type Box(a) { value: a }
-trait Functor for Box(_) {
+trait Mapping for Box(_) {
   fn map(xs, f) { Box { value: f(xs.value) } }
 }
 trait Pointed for Box(_) {
   fn point(x) { Box { value: x } }
 }
-fn bump(xs: m(Int)) -> m(Int) where m: Functor { Functor.map(xs) { x -> x + 1 } }
+fn bump(xs: m(Int)) -> m(Int) where m: Mapping { Mapping.map(xs) { x -> x + 1 } }
 fn wrap(x: a, type m) -> m(a) where m: Pointed { m.point(x) }
 fn main() {
   println(bump(Box { value: 1 }).value)

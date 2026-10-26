@@ -9,14 +9,14 @@
 -- stderr-contains: = help: to map another argument of 'Pair', declare it first in 'Pair'
 -- stderr-contains: --> constructor_impl__hole_first.silt:16:1
 -- stderr-contains: --> constructor_impl__hole_first.silt:19:1
-trait Functor {
+trait Mapping {
   fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)
 }
 type Pair(a, b) { P(a, b) }
-trait Functor for Result(e, _) {
+trait Mapping for Result(e, _) {
   fn map(xs, f) { xs }
 }
-trait Functor for Pair(a, _) {
+trait Mapping for Pair(a, _) {
   fn map(xs, f) { xs }
 }
 fn main() { println(1) }

@@ -1,3 +1,3 @@
-pub trait Functor {
+pub trait Mapping {
   fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)
 }

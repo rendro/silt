@@ -4,8 +4,8 @@
 -- written by a name in a message, as an annotation's is.
 -- stderr-contains: error[type]: type mismatch: expected m(Int), got Int
 -- stderr-contains: = note: 'm' stands for a type constructor: it matches a type with a type argument, like 'List(Int)' or 'Option(Int)'
-trait Functor {
+trait Mapping {
   fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)
 }
-fn twice(xs) { Functor.map(xs) { x -> x * 2 } }
+fn twice(xs) { Mapping.map(xs) { x -> x * 2 } }
 fn main() { println(twice(1)) }

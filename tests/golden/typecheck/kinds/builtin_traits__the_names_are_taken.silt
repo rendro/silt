@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- Functor, Applicative and Monad are builtin traits: a program declares
+-- none of them (HK13).
+-- stderr-contains: error[type]: trait 'Functor' is a builtin trait and cannot be redefined
+-- stderr-contains: error[type]: trait 'Applicative' is a builtin trait and cannot be redefined
+-- stderr-contains: error[type]: trait 'Monad' is a builtin trait and cannot be redefined
+trait Functor {
+  fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)
+}
+trait Applicative {
+  fn pure(x: a) -> Self(a)
+}
+trait Monad {
+  fn flat_map(xs: Self(a), f: Fn(a) -> Self(b)) -> Self(b)
+}
+fn main() { println(1) }

@@ -2,21 +2,21 @@
 -- exit: 1
 -- The impl of a trait of type constructors writes `_` for its type's
 -- first type argument; the help writes the header so.
--- stderr-contains: error[type]: trait 'Functor' is for type constructors: its impl writes '_' for the first type argument
--- stderr-contains: = help: write `trait Functor for Option(_)`
--- stderr-contains: = help: write `trait Functor for Result(_, e)`
--- stderr-contains: = help: write `trait Functor for Pair(_, b)`
-trait Functor {
+-- stderr-contains: error[type]: trait 'Mapping' is for type constructors: its impl writes '_' for the first type argument
+-- stderr-contains: = help: write `trait Mapping for Option(_)`
+-- stderr-contains: = help: write `trait Mapping for Result(_, e)`
+-- stderr-contains: = help: write `trait Mapping for Pair(_, b)`
+trait Mapping {
   fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)
 }
 type Pair(a, b) { P(a, b) }
-trait Functor for Option {
+trait Mapping for Option {
   fn map(xs, f) { xs }
 }
-trait Functor for Result(a, e) {
+trait Mapping for Result(a, e) {
   fn map(xs, f) { xs }
 }
-trait Functor for Pair {
+trait Mapping for Pair {
   fn map(xs, f) { xs }
 }
 fn main() { println(1) }

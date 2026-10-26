@@ -3,12 +3,12 @@
 -- Two impls of a trait of type constructors for one type are a
 -- duplicate, whatever names their headers give the fixed arguments; the
 -- message writes the second as its header does.
--- stderr-contains: error[type]: duplicate implementation of trait 'Functor' for type 'Result(_, f)'
+-- stderr-contains: error[type]: duplicate implementation of trait 'Mapping' for type 'Result(_, f)'
 -- stderr-contains: --> constructor_impl__duplicate.silt:19:1
-trait Functor {
+trait Mapping {
   fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)
 }
-trait Functor for Result(_, e) {
+trait Mapping for Result(_, e) {
   fn map(xs, f) {
     match xs {
       Ok(x) -> Ok(f(x))
@@ -16,7 +16,7 @@ trait Functor for Result(_, e) {
     }
   }
 }
-trait Functor for Result(_, f) {
+trait Mapping for Result(_, f) {
   fn map(xs, g) { xs }
 }
 fn main() { println(1) }

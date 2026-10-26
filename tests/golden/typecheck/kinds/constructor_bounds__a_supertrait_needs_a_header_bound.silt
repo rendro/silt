@@ -2,19 +2,19 @@
 -- exit: 1
 -- An impl whose supertrait's impl asks a trait of a fixed argument asks
 -- it too, by the name its header gives the argument.
--- stderr-contains: error[type]: type 'Tagged(_, t)' implements 'Pointed' but does not implement supertrait 'Functor': 't' needs 'Named'
+-- stderr-contains: error[type]: type 'Tagged(_, t)' implements 'Pointed' but does not implement supertrait 'Mapping': 't' needs 'Named'
 -- stderr-contains: = help: add `where t: Named` to the impl
 trait Named {
   fn name(self) -> String
 }
-trait Functor {
+trait Mapping {
   fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)
 }
-trait Pointed: Functor {
+trait Pointed: Mapping {
   fn point(x: a) -> Self(a)
 }
 type Tagged(a, t) { value: a, tag: t }
-trait Functor for Tagged(_, t) where t: Named {
+trait Mapping for Tagged(_, t) where t: Named {
   fn map(x, f) { Tagged { value: f(x.value), tag: x.tag } }
 }
 trait Pointed for Tagged(_, t) {

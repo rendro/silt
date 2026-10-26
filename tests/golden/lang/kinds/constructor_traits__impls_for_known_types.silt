@@ -3,19 +3,19 @@
 -- type, Option, and Result with its error fixed. A call through the
 -- trait on a value of a known type reaches that type's impl; an impl's
 -- methods write their types with the type, with `Self`, or not at all.
-trait Functor {
+trait Mapping {
   fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)
 }
 
 type Box(a) { value: a }
 
-trait Functor for Box(_) {
+trait Mapping for Box(_) {
   fn map(xs: Box(a), f: Fn(a) -> b) -> Box(b) {
     Box { value: f(xs.value) }
   }
 }
 
-trait Functor for Option(_) {
+trait Mapping for Option(_) {
   fn map(xs, f) {
     match xs {
       Some(x) -> Some(f(x))
@@ -24,7 +24,7 @@ trait Functor for Option(_) {
   }
 }
 
-trait Functor for Result(_, e) {
+trait Mapping for Result(_, e) {
   fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b) {
     match xs {
       Ok(x) -> Ok(f(x))
@@ -34,13 +34,13 @@ trait Functor for Result(_, e) {
 }
 
 fn main() {
-  let b = Functor.map(Box { value: 1 }) { x -> x + 1 }
+  let b = Mapping.map(Box { value: 1 }) { x -> x + 1 }
   println(b.value)
-  println(Functor.map(Some(2)) { x -> "{x}!" })
+  println(Mapping.map(Some(2)) { x -> "{x}!" })
   let none: Option(Int) = None
-  println(Functor.map(none) { x -> x + 1 })
+  println(Mapping.map(none) { x -> x + 1 })
   let ok: Result(Int, String) = Ok(3)
-  println(Functor.map(ok) { x -> x * 2 })
+  println(Mapping.map(ok) { x -> x * 2 })
   let err: Result(Int, String) = Err("no")
-  println(Functor.map(err) { x -> x * 2 })
+  println(Mapping.map(err) { x -> x * 2 })
 }

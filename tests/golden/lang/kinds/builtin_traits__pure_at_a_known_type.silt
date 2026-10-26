@@ -1,0 +1,21 @@
+-- `pure` is called through a type: at a known type it is the type's
+-- constructor of one value (HK17); in generic code on the variable,
+-- `m.pure(x)`, with `type m` where only the result names it.
+fn wrap(x: a, type m) -> m(a) where m: Applicative { m.pure(x) }
+
+fn pair(xs: m(Int)) -> m((Int, Int)) where m: Applicative {
+  Applicative.map2(m.pure(0), xs) { a, b -> (a, b) }
+}
+
+fn main() {
+  println(Option.pure(1))
+  let r: Result(Int, String) = Result.pure(2)
+  println(r)
+  println(List.pure(3))
+  println(wrap(4, Option))
+  println(wrap("x", List))
+  let w: Result(Int, String) = wrap(5, Result)
+  println(w)
+  println(pair([1, 2]))
+  println(pair(Some(9)))
+}
