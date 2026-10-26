@@ -1633,8 +1633,15 @@ impl TypeChecker {
         if let Type::App(head, _) = &resolved
             && matches!(self.apply(head), Type::Rigid(_))
         {
+            // (What asks it, as of a type variable.)
+            let needs = match (origin.callee, origin.op) {
+                (Some(pinned), Some(PIN)) => format!(", which the pin '^{pinned}' needs"),
+                (Some(callee), _) => format!(", which '{callee}' needs"),
+                (None, Some(op)) => format!(", which {op} needs"),
+                (None, None) => String::new(),
+            };
             let message = format!(
-                "type `{}` is not known to implement trait '{}'",
+                "type `{}` is not known to implement trait '{}'{needs}",
                 self.show_type(&resolved),
                 self.show_bound(trait_name, bound_trait_args)
             );

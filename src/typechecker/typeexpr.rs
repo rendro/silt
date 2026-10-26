@@ -201,6 +201,7 @@ impl TypeChecker {
         }
         let (ty, var) = self.fresh_tv();
         self.var_written.insert(var, span);
+        self.type_param_vars.insert(var);
         names.insert(name, ty.clone());
         ty
     }
@@ -245,6 +246,17 @@ impl TypeChecker {
         }
     }
 
+    /// Whether `ty` is a variable that stands for a type constructor:
+    /// an annotation's, or one a scheme's instantiation made of one.
+    pub(super) fn of_constructors(&self, ty: &Type) -> bool {
+        let var = match ty {
+            Type::Var(v) => *v,
+            Type::Rigid(r) => r.var,
+            _ => return false,
+        };
+        self.constructor_vars.contains(&var) || self.tables.constructor_names.contains_key(&var)
+    }
+
     /// The type `name(args)` of an annotation, where `name` is a type
     /// constructor variable: it takes one type argument, and a type
     /// declaration's parameters are types.
@@ -279,9 +291,35 @@ impl TypeChecker {
         }
         let head = match param_vars.get(&name) {
             Some(tv) if self.is_constructor_var(tv) => tv.clone(),
-            // (Written without a type argument elsewhere: its signature's
-            // check says so, `check_signature_kinds`.)
-            Some(_) => return Type::Error,
+            // A `type m` parameter's: the signature applies it, so it is
+            // a type constructor (`fn wrap(x: a, type m) -> m(a)`).
+            Some(Type::Var(var)) if self.type_param_vars.contains(var) => {
+                let var = *var;
+                self.constructor_vars.insert(var);
+                self.tables.constructor_names.insert(var, name);
+                Type::Var(var)
+            }
+            // Written without a type argument elsewhere: a signature's
+            // own check says so (`check_signature_kinds`), an annotation
+            // in its body here.
+            Some(tv) => {
+                if !self.resolving_signature {
+                    let var = match tv {
+                        Type::Rigid(r) => Some(r.var),
+                        Type::Var(v) => Some(*v),
+                        _ => None,
+                    };
+                    let without = (var.and_then(|v| self.bare_labels.get(&v).cloned()))
+                        .unwrap_or_else(|| name.to_string());
+                    let message = format!(
+                        "'{name}' is written with a type argument in `{}` and without one in \
+                         `{without}`: a type variable is a type or a type constructor, not both",
+                        type_expr_text(te)
+                    );
+                    self.error(Code::KindMismatch, message, te.span);
+                }
+                return Type::Error;
+            }
             None => {
                 let (tv, var) = self.fresh_tv();
                 self.var_written.insert(var, te.span);
@@ -298,7 +336,7 @@ impl TypeChecker {
     /// Report a type variable that the signature of `f` writes both with
     /// a type argument and without one: it is a type or a type
     /// constructor, not both.
-    pub(super) fn check_signature_kinds(&mut self, f: &FnDecl) -> Vec<(Symbol, String)> {
+    pub(super) fn check_signature_kinds(&mut self, f: &FnDecl) -> KindLabels {
         // (Each variable: where it is first written applied and where
         // bare, as the parameter or the result writes it.)
         let mut applied: Vec<(Symbol, String)> = Vec::new();
@@ -334,26 +372,34 @@ impl TypeChecker {
             );
             self.error(Code::KindMismatch, message, *span);
         }
-        applied
+        let bare = (bare.into_iter())
+            .map(|(name, label, _)| (name, label))
+            .collect();
+        (applied, bare)
     }
 
     /// Keep where the signature that resolved `param_map` first wrote
-    /// each of its type constructor variables applied (`applied`, from
-    /// `check_signature_kinds`).
+    /// each of its type variables applied and bare (`labels`, from
+    /// `check_signature_kinds`), for an annotation in its body that
+    /// writes one the other way.
     pub(super) fn remember_constructor_labels(
         &mut self,
-        applied: Vec<(Symbol, String)>,
+        (applied, bare): KindLabels,
         param_map: &HashMap<Symbol, Type>,
     ) {
+        let var_of = |name: &Symbol| match param_map.get(name) {
+            Some(Type::Var(v)) => Some(*v),
+            Some(Type::Rigid(r)) => Some(r.var),
+            _ => None,
+        };
         for (name, label) in applied {
-            match param_map.get(&name) {
-                Some(Type::Var(v)) => {
-                    self.constructor_labels.insert(*v, label);
-                }
-                Some(Type::Rigid(r)) => {
-                    self.constructor_labels.insert(r.var, label);
-                }
-                _ => {}
+            if let Some(v) = var_of(&name) {
+                self.constructor_labels.insert(v, label);
+            }
+        }
+        for (name, label) in bare {
+            if let Some(v) = var_of(&name) {
+                self.bare_labels.insert(v, label);
             }
         }
     }
@@ -822,6 +868,10 @@ fn opaque_arity(name: &str) -> Option<usize> {
 }
 
 /// `te` as a program writes it, for a message that quotes it.
+/// Where a signature writes each type variable with a type argument and
+/// where without one (`check_signature_kinds`): `xs: m(Int)`, `-> m`.
+pub(super) type KindLabels = (Vec<(Symbol, String)>, Vec<(Symbol, String)>);
+
 pub(super) fn type_expr_text(te: &TypeExpr) -> String {
     let all = |types: &[TypeExpr]| {
         types

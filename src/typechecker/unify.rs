@@ -758,6 +758,11 @@ impl TypeChecker {
     ) -> Diagnostic {
         let mut named: Vec<RigidId> = Vec::new();
         for ty in [expected, got] {
+            // (A type constructor variable applied, `m(Int)`, by its own.)
+            let ty = match ty {
+                Type::App(head, _) => &**head,
+                _ => ty,
+            };
             if let Type::Rigid(r) = ty
                 && !named.contains(r)
             {
@@ -782,8 +787,20 @@ impl TypeChecker {
                 r.name
             ));
         }
+        let constructors = (named.iter()).all(|r| self.constructor_vars.contains(&r.var));
         match named.as_slice() {
             [] => d,
+            // (Of type constructor variables, `m(Int)`.)
+            [r] if constructors => d.with_note(format!(
+                "`{}` is a type constructor variable of the annotation: it stands for any type \
+                 constructor, so the code must check whichever one that is",
+                r.name
+            )),
+            [r, s, ..] if constructors => d.with_note(format!(
+                "`{}` and `{}` are type constructor variables of the annotation: each stands for \
+                 any type constructor, so the code must check whichever ones they are",
+                r.name, s.name
+            )),
             [r] => d.with_note(format!(
                 "`{}` is a type variable of the annotation: it stands for any type, so the \
                  code must check whichever type that is",
@@ -834,6 +851,16 @@ impl TypeChecker {
             help: Self::chain_hint(got, expected),
             apart: Some((got.clone(), expected.clone())),
             note: None,
+        }
+    }
+
+    /// The fault of a type constructor variable applied that meets
+    /// another type: no help of the types' own (an `Option`'s `?`) fits
+    /// a variable that stands for any constructor.
+    fn constructor_mismatch(&self, got: &Type, expected: &Type) -> Fault {
+        Fault {
+            help: None,
+            ..self.type_mismatch(got, expected)
         }
     }
 
@@ -912,9 +939,13 @@ impl TypeChecker {
                                 .to_string(),
                         ));
                     } else {
+                        // (A type constructor variable by its name.)
                         out.push(Fault::new(
                             Code::InfiniteType,
-                            Self::infinite_type_message(t),
+                            format!(
+                                "infinite type: the type variable appears inside {}",
+                                self.show_type(t)
+                            ),
                         ));
                     }
                 } else {
@@ -928,7 +959,7 @@ impl TypeChecker {
                 let mut heads = Vec::new();
                 self.unify_into(h1, h2, &mut heads);
                 if !heads.is_empty() {
-                    out.push(self.type_mismatch(&t1, &t2));
+                    out.push(self.constructor_mismatch(&t1, &t2));
                     return;
                 }
                 self.unify_into(a1, a2, out);
@@ -944,7 +975,7 @@ impl TypeChecker {
                     _ => self.show_type(&t2),
                 };
                 let Some((con, rest, first)) = other.split_constructor() else {
-                    let mut fault = self.type_mismatch(&t1, &t2);
+                    let mut fault = self.constructor_mismatch(&t1, &t2);
                     fault.note = Some(format!(
                         "'{}' stands for a type constructor: it matches a type with a type \
                          argument, like 'List(Int)' or 'Option(Int)'",
@@ -953,20 +984,25 @@ impl TypeChecker {
                     out.push(fault);
                     return;
                 };
+                // (Of a type of one type argument, there is no other to
+                // say it is matched against.)
+                let others = !rest.is_empty();
                 let mut heads = Vec::new();
                 self.unify_into(head, &Type::Con(con, rest), &mut heads);
                 if !heads.is_empty() {
-                    out.push(self.type_mismatch(&t1, &t2));
+                    out.push(self.constructor_mismatch(&t1, &t2));
                     return;
                 }
                 let mut args = Vec::new();
                 self.unify_into(arg, &first, &mut args);
                 if !args.is_empty() {
-                    let mut fault = self.type_mismatch(&t1, &t2);
-                    fault.note = Some(format!(
-                        "'{applied}' is matched against the first type argument, '{}' here",
-                        self.show_type(&self.apply(&first))
-                    ));
+                    let mut fault = self.constructor_mismatch(&t1, &t2);
+                    if others {
+                        fault.note = Some(format!(
+                            "'{applied}' is matched against the first type argument, '{}' here",
+                            self.show_type(&self.apply(&first))
+                        ));
+                    }
                     out.push(fault);
                 }
             }

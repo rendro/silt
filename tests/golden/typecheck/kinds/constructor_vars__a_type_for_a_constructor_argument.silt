@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- A `type m` parameter the signature applies is given a type
+-- constructor: a type of no type argument is an error at the argument.
+-- stderr-contains: error[type]: 'Int' is a type, but 'm' is a type constructor
+-- stderr-contains: = help: give a type that takes a type argument, as in `tq(1, Option)`
+-- stderr-contains: --> constructor_vars__a_type_for_a_constructor_argument.silt:10:17
+fn tq(x: Int, type m) -> List(m(Int)) { [] }
+fn main() {
+  let b = tq(1, Int)
+  println(1)
+}

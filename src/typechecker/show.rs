@@ -226,6 +226,10 @@ impl TypeChecker {
     /// `result.flat_map` / `option.flat_map`.
     pub(super) fn chain_hint(got: &Type, expected: &Type) -> Option<std::string::String> {
         let is_wrapper = |t: &Type, name: &str| -> bool { t.is_builtin(name) };
+        // (A type constructor, `Option(_)`, holds no value to chain.)
+        if matches!(got, Type::Con(..)) {
+            return None;
+        }
         if is_wrapper(expected, "Result") || is_wrapper(expected, "Option") {
             return None;
         }

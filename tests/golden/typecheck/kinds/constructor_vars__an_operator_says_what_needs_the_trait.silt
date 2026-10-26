@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- An operator on a type constructor variable applied says which
+-- operator needs the trait, as of a type variable.
+-- stderr-contains: error[type]: type `m(Int)` is not known to implement trait 'Equal', which '==' needs
+-- stderr-contains: error[type]: type `m(Int)` is not known to implement trait 'Compare', which '<' needs
+fn eq(x: m(Int), y: m(Int)) -> Bool { x == y }
+fn lt(x: m(Int), y: m(Int)) -> Bool { x < y }
+fn main() { println(1) }

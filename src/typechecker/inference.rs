@@ -868,6 +868,76 @@ impl TypeChecker {
         }
     }
 
+    /// The type of an argument of the type `arg_ty` for the parameter
+    /// `param`: a type given to a `type m` that the callee's signature
+    /// applies is the type constructor of the type (`Option(_)` for
+    /// `Option`, `Result(_, e)` for `Result`); a type of no type argument
+    /// is an error (`shown`: the call's arguments as the help writes
+    /// them, the type argument's place open).
+    fn constructor_argument(
+        &mut self,
+        param: &Type,
+        arg_ty: Type,
+        callee: &Expr,
+        shown: (&[String], usize),
+        at: Span,
+    ) -> Type {
+        let Type::Generic(name, of) = self.apply(param) else {
+            return arg_ty;
+        };
+        let ([m], Type::Generic(given_name, given)) = (of.as_slice(), self.apply(&arg_ty)) else {
+            return arg_ty;
+        };
+        // (The variable may be decided by an earlier argument already:
+        // `fn tp(x: m(Int), type m)`.)
+        if !name.is_builtin(crate::defs::TYPE_OF)
+            || !given_name.is_builtin(crate::defs::TYPE_OF)
+            || !(self.of_constructors(m) || matches!(m, Type::Con(..)))
+        {
+            return arg_ty;
+        }
+        let [given] = given.as_slice() else {
+            return arg_ty;
+        };
+        let given = self.apply(given);
+        if matches!(given, Type::Var(_) | Type::Error | Type::Con(..))
+            || self.of_constructors(&given)
+        {
+            return arg_ty;
+        }
+        match given.split_constructor() {
+            Some((head, rest, _)) => Type::type_of(Type::Con(head, rest)),
+            None => {
+                // (The parameter's variable, as its signature names it.)
+                let var = match param {
+                    Type::Generic(_, of) => match of.first() {
+                        Some(Type::Var(v)) => Some(*v),
+                        Some(Type::Rigid(r)) => Some(r.var),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                let named = (var.and_then(|var| self.tables.constructor_names.get(&var)))
+                    .map_or_else(|| "m".to_string(), |name| resolve(*name));
+                let message = format!(
+                    "'{}' is a type, but '{named}' is a type constructor",
+                    self.show_type(&given)
+                );
+                let (args, place) = shown;
+                let mut args = args.to_vec();
+                let help = super::names::shown_path(callee).map(|callee| {
+                    args[place] = "Option".to_string();
+                    format!(
+                        "give a type that takes a type argument, as in `{callee}({})`",
+                        args.join(", ")
+                    )
+                });
+                self.error_help(Code::KindMismatch, (message, help), at);
+                Type::Error
+            }
+        }
+    }
+
     /// The type of `Tr.field`, a method of the trait `tr` called through
     /// it: the method's type with a type of its own for `Self`, whose
     /// impl the call reaches (the type of the arguments it is given).
@@ -2147,6 +2217,11 @@ impl TypeChecker {
                 let open_vias = self.open_vias();
                 // (The uses the callee owes are at this call's arguments.)
                 let callee_owes = given_before..self.given_waiting.len();
+                // (The arguments as a help writes them.)
+                let shown_args: Vec<String> = args
+                    .iter()
+                    .map(|arg| super::names::shown_arg(arg))
+                    .collect();
                 for (i, arg) in args.iter_mut().enumerate() {
                     let param = params.get(i + implicit_self);
                     if let (ExprKind::Lambda { .. }, Some(param)) = (&arg.kind, param)
@@ -2177,6 +2252,18 @@ impl TypeChecker {
                         None => self.infer_expr(arg, env),
                     };
                     self.expected_closure = None;
+                    let reported = self.errors.len();
+                    let arg_ty = match param {
+                        Some(param) => self.constructor_argument(
+                            param,
+                            arg_ty,
+                            callee,
+                            (&shown_args, i),
+                            arg.span,
+                        ),
+                        None => arg_ty,
+                    };
+                    mismatched |= self.errors.len() > reported;
                     given.push((arg.span, self.alias_named(arg), arg_ty.clone()));
                     if let Some(param) = param {
                         let at = match form {

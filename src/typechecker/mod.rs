@@ -277,6 +277,13 @@ pub struct TypeChecker {
     /// variables applied (`xs: m(Int)`), for the error of an annotation
     /// in its body that writes one without a type argument.
     pub(super) constructor_labels: HashMap<TyVar, String>,
+    /// Where a signature first writes each of its type variables without
+    /// a type argument (`y: m`), for the error of an annotation in its
+    /// body that applies one.
+    pub(super) bare_labels: HashMap<TyVar, String>,
+    /// The variables of `type a` parameters: one a signature applies
+    /// (`type m` with `-> m(a)`) is a type constructor.
+    pub(super) type_param_vars: std::collections::HashSet<TyVar>,
     /// While a signature's annotations are resolved: its own check
     /// reports a variable written both ways (`check_signature_kinds`).
     pub(super) resolving_signature: bool,
@@ -514,6 +521,8 @@ impl TypeChecker {
             constructor_vars: Default::default(),
             declaring_type: None,
             constructor_labels: HashMap::new(),
+            bare_labels: HashMap::new(),
+            type_param_vars: Default::default(),
             resolving_signature: false,
             descriptor_var: None,
             rigid_of: HashMap::new(),
