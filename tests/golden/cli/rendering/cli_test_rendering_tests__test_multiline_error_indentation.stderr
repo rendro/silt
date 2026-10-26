@@ -1,3 +1,9 @@
+warning[type]: unused import 'test'
+ --> cli_test_rendering_tests__test_multiline_error_indentation.silt:3:1
+   |
+ 3 | import test
+   | ^^^^^^^^^^^ unused import 'test'
+  = help: remove the line `import test`
   FAIL cli_test_rendering_tests__test_multiline_error_indentation.silt::test_division_error
     error[runtime]: division by zero
      --> cli_test_rendering_tests__test_multiline_error_indentation.silt:6:11

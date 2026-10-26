@@ -1,0 +1,28 @@
+-- cmd: check
+-- An import that nothing in the file uses warns: a module by its line, an
+-- item of a direct import by itself. A use in a type, in an impl header or
+-- in a test function counts as a use.
+import http
+import json
+import list
+import map as m
+import string.{ length, trim }
+import test
+
+type Tag {
+  name: String,
+}
+
+trait json.Encode for Tag {
+  fn encode(self) -> json.Value {
+    json.Value.Null
+  }
+}
+
+fn status(_r: http.Request) -> Int {
+  200
+}
+
+fn test_length() {
+  test.assert_eq(length("ab"), 2)
+}

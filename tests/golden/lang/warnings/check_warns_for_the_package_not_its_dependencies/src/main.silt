@@ -1,0 +1,12 @@
+-- cmd: check
+-- stderr-contains: src/helper.silt:1:1
+-- stderr-contains: src/helper_test.silt:2:1
+-- stderr-not-contains: dep/src/lib.silt
+-- `silt check` shows the warnings of every module of the package and of
+-- its test files, and none of a dependency's.
+import dep
+import helper
+
+fn main() {
+  println(helper.double(dep.one()))
+}

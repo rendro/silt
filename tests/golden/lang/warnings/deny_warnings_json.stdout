@@ -1,0 +1,1 @@
+[{"code":"W0202","col":1,"end_col":12,"end_line":5,"file":"deny_warnings_json.silt","help":["remove the line `import list`"],"kind":"type","labels":[],"line":5,"message":"unused import 'list'","notes":[],"severity":"warning"}]

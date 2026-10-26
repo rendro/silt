@@ -7,7 +7,6 @@
 import env
 import list
 import postgres
-import string
 import time
 
 type Pid { pid: Int }

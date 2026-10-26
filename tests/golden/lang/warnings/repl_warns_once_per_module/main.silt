@@ -1,0 +1,5 @@
+-- cmd: repl
+-- stdin: import helper\nhelper.double(2)\nimport helper\nhelper.double(3)\n:quit\n
+-- In the REPL, a module's warning shows under the input that reads the
+-- module, above its value, and not under a later input. An import that an
+-- input does not use is for the inputs after it: it does not warn.

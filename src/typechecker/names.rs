@@ -27,6 +27,7 @@
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::ops::Range;
 use std::sync::Arc;
 
 use crate::ast::*;
@@ -310,13 +311,18 @@ fn build_builtins() -> (BuiltinDefs, BuiltinScopes) {
 
 /// Resolve `program`, the module `module`: enter its definitions in
 /// `defs`, bind its imports (`imports`, by the module name written after
-/// `import`), and write what each name means on the AST.
+/// `import`), and write what each name means on the AST. `text` is the
+/// module's text, which the quick fixes edit; `complete` says whether
+/// its declarations are all of it (a declaration that did not parse
+/// may use any import).
 pub fn resolve_module(
     program: &mut Program,
     module: ModuleId,
     kind: ModuleKind,
     imports: &HashMap<Symbol, Imported<'_>>,
     defs: &mut DefTable,
+    text: &str,
+    complete: bool,
 ) -> Resolution {
     defs.clear_module(module);
     let (_, builtins) = builtins();
@@ -372,10 +378,16 @@ pub fn resolve_module(
         diagnostics,
         hidden_modules: Vec::new(),
         type_vars: Vec::new(),
+        used: RefCell::new(HashSet::new()),
     };
     resolver.alias_heads(program);
     for decl in &mut program.decls {
         resolver.decl(decl);
+    }
+    // A REPL entry's imports are for the entries after it.
+    if kind == ModuleKind::File && complete {
+        let used = resolver.used.take();
+        resolver.unused_imports(program, &used, text);
     }
     let own_aliases = std::mem::take(&mut resolver.own_aliases);
     let mut diagnostics = resolver.diagnostics;
@@ -1079,6 +1091,21 @@ struct Resolver<'a> {
     /// being resolved and of the header of its impl: `a.empty()` calls a
     /// method of a bound of `a` where no value is named `a`.
     type_vars: Vec<Symbol>,
+    /// The top-level names looked up: an import whose name is not among
+    /// them is unused.
+    used: RefCell<HashSet<Symbol>>,
+}
+
+/// The bytes of the line, or the lines, that `span` is on in `text`,
+/// with the line break after them: what removing a declaration of its
+/// own lines removes.
+fn lines_of(text: &str, span: Span) -> Range<u32> {
+    let (start, end) = (span.start as usize, (span.end as usize).min(text.len()));
+    let start = text[..start.min(text.len())]
+        .rfind('\n')
+        .map_or(0, |at| at + 1);
+    let end = text[end..].find('\n').map_or(text.len(), |at| end + at + 1);
+    start as u32..end as u32
 }
 
 /// The type variables `te` writes (lowercase bare names), into `out`.
@@ -1131,6 +1158,95 @@ struct NamedClosure {
 impl Resolver<'_> {
     fn error(&mut self, d: Diagnostic) {
         self.diagnostics.push(d);
+    }
+
+    /// The binding of the module-level value `name`, which is used here:
+    /// a module qualifier.
+    fn top_value(&self, name: Symbol) -> Option<&Binding> {
+        self.used.borrow_mut().insert(name);
+        self.scope.values.get(&name)
+    }
+
+    /// Warn of each import of `program` whose name nothing looked up
+    /// (`used`): an `import m` or `import m as n` by its line, an item
+    /// of `import m.{ a, b }` by itself. An import of a module that
+    /// failed to load is reported as that.
+    fn unused_imports(&mut self, program: &Program, used: &HashSet<Symbol>, text: &str) {
+        let span_of = |range: Range<u32>, like: Span| Span {
+            file: like.file,
+            start: range.start,
+            end: range.end,
+        };
+        for decl in &program.decls {
+            let Decl::Import(target, span) = decl else {
+                continue;
+            };
+            let module = target.module();
+            if matches!(
+                self.imports.get(&module),
+                None | Some(Imported::Poisoned | Imported::Cell(..))
+            ) {
+                continue;
+            }
+            let line = format!("import {}", target.written());
+            let whole_line = |title: String| {
+                (
+                    title,
+                    vec![(span_of(lines_of(text, *span), *span), String::new())],
+                )
+            };
+            match target {
+                ImportTarget::Module(name) | ImportTarget::Alias(_, name, _) => {
+                    if used.contains(name) {
+                        continue;
+                    }
+                    let help = format!("remove the line `{line}`");
+                    let (title, edits) = whole_line(help.clone());
+                    self.diagnostics.push(
+                        Diagnostic::warning(
+                            Code::UnusedImport,
+                            *span,
+                            format!("unused import '{module}'"),
+                        )
+                        .with_help(help)
+                        .with_fix(title, edits),
+                    );
+                }
+                ImportTarget::Items(_, items) => {
+                    for (at, (item, item_span)) in items.iter().enumerate() {
+                        if used.contains(item) {
+                            continue;
+                        }
+                        let help = format!("remove `{item}` from the import");
+                        // The item and the comma beside it; the line when
+                        // it is the only item.
+                        let (title, edits) = match (items.get(at + 1), at.checked_sub(1)) {
+                            (Some((_, next)), _) => (
+                                help.clone(),
+                                vec![(span_of(item_span.start..next.start, *span), String::new())],
+                            ),
+                            (None, Some(before)) => (
+                                help.clone(),
+                                vec![(
+                                    span_of(items[before].1.end..item_span.end, *span),
+                                    String::new(),
+                                )],
+                            ),
+                            (None, None) => whole_line(help.clone()),
+                        };
+                        self.diagnostics.push(
+                            Diagnostic::warning(
+                                Code::UnusedImport,
+                                *item_span,
+                                format!("unused import '{item}' from module '{module}'"),
+                            )
+                            .with_help(help)
+                            .with_fix(title, edits),
+                        );
+                    }
+                }
+            }
+        }
     }
 
     /// The help for a builtin module used without its import.
@@ -1211,6 +1327,7 @@ impl Resolver<'_> {
     /// A top-level value name: the module's own and imported names, the
     /// types used as values, then the prelude.
     fn lookup_global_value(&self, name: Symbol) -> Option<Binding> {
+        self.used.borrow_mut().insert(name);
         self.previous
             .get(&name)
             .or_else(|| self.scope.values.get(&name))
@@ -1239,6 +1356,7 @@ impl Resolver<'_> {
 
     /// A type or trait name.
     fn lookup_type(&self, name: Symbol) -> Option<Binding> {
+        self.used.borrow_mut().insert(name);
         self.scope
             .types
             .get(&name)
@@ -1692,7 +1810,7 @@ impl Resolver<'_> {
             );
             return Some(Res::Error);
         };
-        let target = match self.scope.values.get(&module.name) {
+        let target = match self.top_value(module.name) {
             Some(Binding::Module(id)) => *id,
             Some(Binding::Poisoned) => return Some(Res::Error),
             _ => {
@@ -1926,7 +2044,7 @@ impl Resolver<'_> {
                     }
                 }
             }
-            [m, e, ..] => match self.scope.values.get(&m.name).cloned() {
+            [m, e, ..] => match self.top_value(m.name).cloned() {
                 Some(Binding::Module(id)) => self.module_variant(id, *m, &[*e], name, span),
                 Some(Binding::Poisoned) => Some(Res::Error),
                 _ => {
@@ -2228,7 +2346,7 @@ impl Resolver<'_> {
                         return self.shadowed_qualifier(q, name, span, in_pattern);
                     }
                 }
-                let target = match self.scope.values.get(&q.name) {
+                let target = match self.top_value(q.name) {
                     Some(Binding::Module(id)) => *id,
                     Some(Binding::Poisoned) => return Some(Res::Error),
                     _ => {
@@ -2755,7 +2873,7 @@ impl Resolver<'_> {
         if let ExprKind::FieldAccess(head, enum_name, enum_span) = &mut obj.kind
             && let ExprKind::Ident(m) = &head.kind
             && !self.is_local(*m)
-            && let Some(Binding::Module(id)) = self.scope.values.get(m).cloned()
+            && let Some(Binding::Module(id)) = self.top_value(*m).cloned()
             && resolve(*enum_name).starts_with(char::is_uppercase)
             && resolve(field).starts_with(char::is_uppercase)
         {

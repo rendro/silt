@@ -29,3 +29,31 @@ error[type]: undefined variable 'TooBig'
  19 |   println(TooBig)
     |           ^^^^^^ undefined variable 'TooBig'
   = help: `TooBig` is in module `regex`: write `regex.TooBig` after `import regex`, or add `import regex.{ TooBig }`
+
+warning[type]: unused import 'channel'
+ --> conventions__one_variant_name_imported_bare_from_two_modules.silt:8:1
+   |
+ 8 | import channel
+   | ^^^^^^^^^^^^^^ unused import 'channel'
+  = help: remove the line `import channel`
+
+warning[type]: unused import 'http'
+ --> conventions__one_variant_name_imported_bare_from_two_modules.silt:9:1
+   |
+ 9 | import http
+   | ^^^^^^^^^^^ unused import 'http'
+  = help: remove the line `import http`
+
+warning[type]: unused import 'int'
+ --> conventions__one_variant_name_imported_bare_from_two_modules.silt:10:1
+    |
+ 10 | import int
+    | ^^^^^^^^^^ unused import 'int'
+  = help: remove the line `import int`
+
+warning[type]: unused import 'tcp'
+ --> conventions__one_variant_name_imported_bare_from_two_modules.silt:11:1
+    |
+ 11 | import tcp
+    | ^^^^^^^^^^ unused import 'tcp'
+  = help: remove the line `import tcp`

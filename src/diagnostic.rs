@@ -275,6 +275,9 @@ codes! {
     /// its result failed its own check: a defect of the formatter. The
     /// text is left as it is.
     FormatRefused = "E0801", Format;
+    // ── warnings ──
+    /// An import that nothing in its file uses.
+    UnusedImport = "W0202", Resolve;
 }
 
 // ── The diagnostic ──────────────────────────────────────────────────

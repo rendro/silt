@@ -18,3 +18,24 @@ error[type]: undefined variable 'NotFound'
  16 |   println(NotFound("p"))
     |           ^^^^^^^^ undefined variable 'NotFound'
   = help: did you mean `io.NotFound`? or import the name: `import io.{ NotFound }`
+
+warning[type]: unused import 'http'
+ --> conventions__a_bare_variant_s_help_names_every_module_that_has_it.silt:9:1
+   |
+ 9 | import http
+   | ^^^^^^^^^^^ unused import 'http'
+  = help: remove the line `import http`
+
+warning[type]: unused import 'io'
+ --> conventions__a_bare_variant_s_help_names_every_module_that_has_it.silt:10:1
+    |
+ 10 | import io
+    | ^^^^^^^^^ unused import 'io'
+  = help: remove the line `import io`
+
+warning[type]: unused import 'tcp'
+ --> conventions__a_bare_variant_s_help_names_every_module_that_has_it.silt:11:1
+    |
+ 11 | import tcp
+    | ^^^^^^^^^^ unused import 'tcp'
+  = help: remove the line `import tcp`

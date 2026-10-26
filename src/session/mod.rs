@@ -537,8 +537,17 @@ impl Session {
                 }
             }
         }
-        let resolution =
-            names::resolve_module(&mut ast, id, kind, &imported, Arc::make_mut(&mut self.defs));
+        let text = module.file.and_then(|f| self.sources.get(f));
+        let text = text.map_or("", |file| &file.text);
+        let resolution = names::resolve_module(
+            &mut ast,
+            id,
+            kind,
+            &imported,
+            Arc::make_mut(&mut self.defs),
+            text,
+            !module.incomplete,
+        );
         let cell = kind == ModuleKind::Cell;
         let reach = (!cell).then(|| self.graph.reach(id));
         let cells = match cell {

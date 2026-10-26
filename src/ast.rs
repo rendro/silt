@@ -847,7 +847,7 @@ impl ImportTarget {
 
     /// The import as `silt fmt` writes it behind `import`, on one
     /// line: `m`, `m as a`, `m.{ a, b }`, `m.{}`.
-    fn written(&self) -> String {
+    pub fn written(&self) -> String {
         match self {
             ImportTarget::Module(module) => module.to_string(),
             ImportTarget::Items(module, items) if items.is_empty() => format!("{module}.{{}}"),

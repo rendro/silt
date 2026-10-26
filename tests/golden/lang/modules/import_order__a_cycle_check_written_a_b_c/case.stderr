@@ -11,3 +11,17 @@ error[compile]: circular import detected: a -> b -> c -> a (module 'a' imports i
    |
  1 | import c
    | -------- 'b' imports 'c' here
+
+warning[type]: unused import 'c'
+ --> b.silt:1:1
+   |
+ 1 | import c
+   | ^^^^^^^^ unused import 'c'
+  = help: remove the line `import c`
+
+warning[type]: unused import 'b'
+ --> a.silt:1:1
+   |
+ 1 | import b
+   | ^^^^^^^^ unused import 'b'
+  = help: remove the line `import b`

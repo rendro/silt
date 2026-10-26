@@ -1,0 +1,6 @@
+import helper
+import test
+
+fn test_b() {
+  test.assert_eq(helper.double(2), 4)
+}

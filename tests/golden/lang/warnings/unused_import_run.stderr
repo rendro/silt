@@ -1,0 +1,6 @@
+warning[type]: unused import 'list'
+ --> unused_import_run.silt:2:1
+   |
+ 2 | import list
+   | ^^^^^^^^^^^ unused import 'list'
+  = help: remove the line `import list`

@@ -1,0 +1,10 @@
+-- cmd: check --deny-warnings
+-- exit: 1
+-- `silt check --deny-warnings` prints the warnings, then says it fails
+-- because of them, and exits with 1.
+import list
+import string.{ length, trim }
+
+fn main() {
+  println(length("ab"))
+}

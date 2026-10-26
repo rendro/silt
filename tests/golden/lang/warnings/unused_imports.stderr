@@ -1,0 +1,20 @@
+warning[type]: unused import 'list'
+ --> unused_imports.silt:7:1
+   |
+ 7 | import list
+   | ^^^^^^^^^^^ unused import 'list'
+  = help: remove the line `import list`
+
+warning[type]: unused import 'map'
+ --> unused_imports.silt:8:1
+   |
+ 8 | import map as m
+   | ^^^^^^^^^^^^^^^ unused import 'map'
+  = help: remove the line `import map as m`
+
+warning[type]: unused import 'trim' from module 'string'
+ --> unused_imports.silt:9:25
+   |
+ 9 | import string.{ length, trim }
+   |                         ^^^^ unused import 'trim' from module 'string'
+  = help: remove `trim` from the import

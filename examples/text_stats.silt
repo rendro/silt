@@ -3,7 +3,6 @@ import int
 import io
 import list
 import map
-import option
 import regex
 import result
 import string

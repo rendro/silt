@@ -2,7 +2,7 @@
 title: "Error Codes"
 section: "Language"
 order: 14
-description: "What each diagnostic code of silt means: E0001 to E0801."
+description: "What each diagnostic code of silt means: the errors E0001 to E0801 and the warning W0202."
 ---
 
 # Error Codes
@@ -144,3 +144,13 @@ missing belong to codes that are gone.
 | Code | Meaning |
 |------|---------|
 | `E0801` | `silt fmt` could not follow the tokens of a file that parses, or its result failed its own check: a defect of the formatter. The text is left as it is. |
+
+## Warnings (Wxxx)
+
+A warning never stops `silt run`, `silt test` or the REPL;
+`silt check --deny-warnings` exits with 1 when there is one. Its help
+line names the fix, which is the one way to silence it.
+
+| Code | Meaning |
+|------|---------|
+| `W0202` | An import that nothing in the file uses. |
