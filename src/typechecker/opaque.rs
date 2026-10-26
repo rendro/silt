@@ -29,6 +29,39 @@ impl TypeChecker {
         }
     }
 
+    /// `scheme`, the type of the definition `res`, instantiated for a
+    /// use. The rows of a definition of another module are that
+    /// module's: its opaque types pass into them.
+    pub(super) fn instantiate_def(
+        &mut self,
+        scheme: &Scheme,
+        res: Option<crate::defs::Res>,
+    ) -> Type {
+        let ty = self.instantiate(scheme);
+        if let Some(def) = self.res_def(res)
+            && def.module != self.module
+        {
+            let module = def.module;
+            let mut rows = Vec::new();
+            super::row_tail_vars(&ty, &mut rows);
+            for row in rows {
+                self.row_owners.insert(row, module);
+            }
+        }
+        ty
+    }
+
+    /// Whether a value of the opaque type `ty` of another module may pass
+    /// into the row whose tail is `tail`: a row of a definition of the
+    /// type's own module.
+    pub(super) fn row_of_types_module(&self, ty: TypeRef, tail: &RowTail) -> bool {
+        let RowTail::Var(v) = tail else {
+            return false;
+        };
+        let owner = self.row_owners.get(v);
+        owner.is_some() && owner.copied() == self.def(ty.id.0).map(|def| def.module)
+    }
+
     /// Report `message`, about a value of an opaque type of `module`.
     pub(super) fn opaque_error(
         &mut self,

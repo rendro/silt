@@ -1,0 +1,11 @@
+-- A function of the opaque type's own module may take its value in a row
+-- (an unannotated parameter whose field it reads), wherever it is called
+-- from: the code that reads the row is the module's.
+import mail
+import mail.{ name_any }
+
+fn main() {
+  let u = mail.user("ann")
+  println(mail.name_any(u))
+  println(name_any(u))
+}

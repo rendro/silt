@@ -1104,18 +1104,25 @@ impl TypeChecker {
             // would read what is in it. (The module is the one of the
             // code at hand, wherever the function that asks for the row
             // was written.)
+            // A row of a definition of the type's own module is the
+            // module's code: the value may pass into it.
             (Type::AnonRecord { fields, tail }, Type::Generic(name, _))
             | (Type::Generic(name, _), Type::AnonRecord { fields, tail })
                 if !matches!(tail, RowTail::Closed)
+                    && self.tables.records.contains_key(name)
+                    && !self.row_of_types_module(*name, tail)
                     && let Some(module) = self.opaque_outside(*name) =>
             {
                 let shown = super::opaque::opaque_name(*name, module);
-                let message = match fields.keys().next() {
+                // (A row of no fields names the record's first field: it
+                // could read it, through a spread.)
+                let first = (self.tables.records.get(name))
+                    .and_then(|rec| rec.fields.first().map(|(n, _)| *n));
+                let message = match fields.keys().next().copied().or(first) {
                     Some(field) => format!(
                         "type '{shown}' has no field '{field}' outside module '{module}': \
                          the type is opaque"
                     ),
-                    // A row of no fields could spread it.
                     None => format!(
                         "cannot spread a '{shown}' outside module '{module}': the type is opaque"
                     ),
@@ -1140,7 +1147,11 @@ impl TypeChecker {
                         // (As the module writes the type: an imported
                         // one with its module.)
                         let shown = self.written_type(*name);
+                        // Another module neither builds nor converts an
+                        // opaque type.
+                        let opaque = self.opaque_outside(*name);
                         fault.help = Some(match anon_is_got {
+                            _ if let Some(module) = opaque => super::opaque::opaque_help(module),
                             true => format!(
                                 "an anonymous record is not a `{shown}`: write `{shown} {{ ... }}`"
                             ),

@@ -1,0 +1,12 @@
+pub opaque type User {
+  name: String,
+  age: Int,
+}
+
+pub fn user(name: String) -> User {
+  User { name: name, age: 1 }
+}
+
+pub fn name_any(r) {
+  r.name
+}

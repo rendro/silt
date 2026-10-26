@@ -5,9 +5,9 @@ error[type]: type 'mail.User' has no field 'name' outside module 'mail': the typ
     |                        ^ type 'mail.User' has no field 'name' outside module 'mail': the type is opaque
   = help: use the functions of module 'mail'
 
-error[type]: cannot spread a 'mail.User' outside module 'mail': the type is opaque
+error[type]: type 'mail.User' has no field 'name' outside module 'mail': the type is opaque
  --> main.silt:12:21
     |
  12 |   println(util.copy(u))
-    |                     ^ cannot spread a 'mail.User' outside module 'mail': the type is opaque
+    |                     ^ type 'mail.User' has no field 'name' outside module 'mail': the type is opaque
   = help: use the functions of module 'mail'

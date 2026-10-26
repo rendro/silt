@@ -415,6 +415,10 @@ pub struct TypeChecker {
     pub(super) local_statement_units: HashMap<Symbol, Vec<(usize, Span)>>,
     /// The module checked.
     pub(super) module: crate::session::ModuleId,
+    /// The row variables of the uses of another module's definitions,
+    /// each with that module: an opaque type of it may pass into such a
+    /// row, which the module's own code reads.
+    pub(super) row_owners: HashMap<TyVar, crate::session::ModuleId>,
     /// Its name, for diagnostics.
     pub(super) module_name: Symbol,
     /// The types the module's own declarations declare, by name: what a
@@ -573,6 +577,7 @@ impl TypeChecker {
             local_statement_units: HashMap::new(),
             fixed_statements: Vec::new(),
             module: crate::session::ModuleId(0),
+            row_owners: HashMap::new(),
             module_name: intern("main"),
             own_types: HashMap::new(),
             own_traits: HashMap::new(),

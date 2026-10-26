@@ -1,0 +1,18 @@
+-- cmd: check
+-- exit: 1
+-- A mismatch between an opaque record and an anonymous one outside the
+-- type's module tells to use the module's functions, not to build it,
+-- spread it or take an open row.
+import mail
+
+fn make() -> mail.User {
+  { name: "a", age: 1 }
+}
+
+fn closed(r: { name: String, age: Int }) -> String {
+  r.name
+}
+
+fn main() {
+  println(closed(mail.user("a")))
+}
