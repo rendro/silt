@@ -444,11 +444,16 @@ fn declare(
             }
             Decl::Type(td) => {
                 let placeholder = DefKind::TypeAlias;
+                // (A REPL entry's types are every later entry's.)
+                let type_vis = match td.is_opaque && kind == ModuleKind::File {
+                    true => Vis::Opaque,
+                    false => vis(td.is_pub),
+                };
                 let id = defs.add(Def {
                     module,
                     name: td.name,
                     span: td.name_span,
-                    vis: vis(td.is_pub),
+                    vis: type_vis,
                     kind: placeholder,
                 });
                 let ty = TypeId(id);
@@ -498,7 +503,7 @@ fn declare(
             &mut scope.values
         };
         bind_variant_aware(namespace, name, id, defs);
-        if def.vis == Vis::Pub {
+        if def.vis != Vis::Private {
             let exported = if is_type {
                 &mut scope.exports.types
             } else {

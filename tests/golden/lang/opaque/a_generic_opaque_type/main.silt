@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- A generic opaque type is named with its arguments outside, and built
+-- only by its module.
+import stack
+
+fn main() {
+  let s: stack.Stack(Int) = stack.push(stack.of(1), 2)
+  println(stack.size(s))
+  let t = stack.Stack([1, 2])
+  println(stack.size(t))
+}

@@ -40,7 +40,7 @@ numbers that are missing belong to codes that are gone.
 | `E0110` | A name bound twice at the top level of a file. |
 | `E0111` | A field named twice in an anonymous record type or literal. |
 | `E0112` | Expressions, patterns or types nested deeper than the parser follows. |
-| `E0113` | A declaration whose parts are not allowed together (a supertrait on an impl, an annotated `type` parameter, a lowercase type name, ...). |
+| `E0113` | A declaration whose parts are not allowed together (a supertrait on an impl, an annotated `type` parameter, a lowercase type name, `opaque` on an alias or on a private type, ...). |
 | `E0114` | The count of the lex and parse errors of a file that are not shown, at the first of them. |
 
 ## Names (2xx)
@@ -96,6 +96,7 @@ numbers that are missing belong to codes that are gone.
 | `E0340` | A statement whose value nothing uses. |
 | `E0342` | A type given to a decoder that has no decoder for it (a field of a type no decoder exists for, an enum, a generic type, ...). |
 | `E0343` | A type constructor where a type is needed, or a type where a type constructor is needed. |
+| `E0344` | A value of an opaque type built, taken apart, updated, read, spread or passed into an open row outside its module. |
 
 ## Compiling and the entry point (4xx, 5xx)
 

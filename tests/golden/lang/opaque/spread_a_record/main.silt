@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- Outside its module, an opaque record cannot be spread.
+import mail
+
+fn main() {
+  let u = mail.user("a")
+  println({ ...u })
+}

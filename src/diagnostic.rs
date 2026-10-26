@@ -206,6 +206,10 @@ codes! {
     /// A type constructor where a type is needed, or a type where a type
     /// constructor is needed.
     KindMismatch = "E0343", Type;
+    /// What only an opaque type's own module may do with its values
+    /// (build, take apart, update, read, spread, pass into an open
+    /// row), done in another module.
+    OpaqueType = "E0344", Type;
     // ── compile ──
     /// An import of a module that is not there.
     ModuleNotFound = "E0401", Compile;

@@ -1,0 +1,17 @@
+-- cmd: test
+-- exit: 1
+-- A test file is a module of its own: it uses the module's functions, and
+-- taking an opaque value apart is refused there as anywhere.
+import mail
+import test
+
+fn test_parse_lowercases() {
+  test.assert_eq(mail.parse("A@X.IO"), mail.parse("a@x.io"))
+}
+
+fn test_inside() {
+  match mail.parse("a@x") {
+    Some(mail.Email(s)) -> test.assert_eq(s, "a@x")
+    _ -> ()
+  }
+}

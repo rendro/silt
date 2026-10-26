@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- An unannotated function of a third module takes an open row. Passing
+-- an opaque value into it is refused where the call is, outside the
+-- type's module; the type's own module may (see `mail.via_util`).
+import mail
+import util
+
+fn main() {
+  let u = mail.user("a")
+  println(util.name_of(u))
+  println(util.copy(u))
+  println(mail.via_util(u))
+}

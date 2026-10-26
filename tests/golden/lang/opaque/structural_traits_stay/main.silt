@@ -1,0 +1,14 @@
+
+-- Outside its module an opaque value keeps equality, order, hashing and
+-- printing, which show what is inside; the module may write its own
+-- Display.
+import mail
+import set
+
+fn main() {
+  println(mail.parse("B@Y") == mail.parse("b@y"))
+  println(mail.parse("a@x") < mail.parse("b@x"))
+  println(set.length(set.from_list([mail.parse("a@x"), mail.parse("A@X")])))
+  println(mail.parse("a@x.io"))
+  println(mail.user("ann"))
+}

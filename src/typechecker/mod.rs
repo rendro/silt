@@ -24,6 +24,7 @@ mod inference;
 mod init_order;
 mod json_decode;
 pub mod names;
+mod opaque;
 mod order;
 mod resolve;
 mod scheme;

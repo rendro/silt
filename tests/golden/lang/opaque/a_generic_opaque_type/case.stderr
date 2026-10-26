@@ -1,0 +1,6 @@
+error[type]: cannot build a 'stack.Stack' outside module 'stack': the type is opaque
+ --> main.silt:10:11
+    |
+ 10 |   let t = stack.Stack([1, 2])
+    |           ^^^^^^^^^^^ cannot build a 'stack.Stack' outside module 'stack': the type is opaque
+  = help: use the functions of module 'stack'

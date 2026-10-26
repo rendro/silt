@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- An impl in the module of its trait is outside the opaque type's module:
+-- it uses the type's functions, and taking the value apart is refused.
+import mail
+import pretty
+
+fn main() {
+  match mail.parse("A@X.IO") {
+    Some(e) -> println(pretty.Pretty.pretty(e))
+    None -> ()
+  }
+}

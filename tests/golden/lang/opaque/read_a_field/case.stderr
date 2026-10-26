@@ -1,0 +1,6 @@
+error[type]: cannot read field 'name' of a 'mail.User' outside module 'mail': the type is opaque
+ --> main.silt:8:11
+   |
+ 8 |   println(u.name)
+   |           ^^^^^^ cannot read field 'name' of a 'mail.User' outside module 'mail': the type is opaque
+  = help: use the functions of module 'mail'
