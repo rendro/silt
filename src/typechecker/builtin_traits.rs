@@ -243,11 +243,37 @@ pub fn builtin_trait_decls() -> Vec<TraitDecl> {
     // impls are passed with dictionaries, like a program's traits.
     let constructors = crate::builtins::registry::parse(CONSTRUCTOR_TRAITS);
     decls.extend(constructors.decls.into_iter().map(|decl| match decl {
-        Decl::Trait(td) => td,
+        Decl::Trait(mut td) => {
+            td.doc = CONSTRUCTOR_TRAIT_DOCS
+                .iter()
+                .find(|(name, _)| resolve(td.name) == *name)
+                .map(|(_, doc)| doc.to_string());
+            td
+        }
         _ => unreachable!("the text declares traits"),
     }));
     decls
 }
+
+/// What hover says of each builtin trait of type constructors, as the
+/// built-in traits' table of docs/language/traits.md does.
+const CONSTRUCTOR_TRAIT_DOCS: &[(&str, &str)] = &[
+    (
+        "Functor",
+        "`map` over a type constructor. `List`, `Option`, `Result`, `Channel`;\n\
+         types with an impl.",
+    ),
+    (
+        "Applicative",
+        "`pure` and `map2`; includes `Functor`. `List`, `Option`, `Result`; types\n\
+         with an impl.",
+    ),
+    (
+        "Monad",
+        "`flat_map`; includes `Applicative`. `List`, `Option`, `Result`; types with\n\
+         an impl.",
+    ),
+];
 
 /// The declarations of the builtin traits of type constructors, in the
 /// order of their methods that a dictionary of an impl of one holds
