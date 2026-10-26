@@ -1158,7 +1158,15 @@ fn at_a_panic(rusts: &(dyn Fn(&PanicHookInfo<'_>) + Sync + Send), panic: &PanicH
 /// sets SIGPIPE to its default, so that a program whose reader has
 /// gone dies quietly; this process is to end with the internal-error
 /// line and status 101, and its last words flush stdout.)
+///
+/// The disposition is set under the lock of the command's reports, which
+/// a write to stderr holds while it ignores the signal for itself
+/// (`vm::io::without_sigpipe`): that write puts back what it found,
+/// and must not put back the default over this. The lock is waited for
+/// no longer than the last words: a write held up by a full pipe keeps
+/// it.
 fn no_death_by_a_closed_stdout() {
+    let _lines = PANIC_LINES.try_lock_for(LAST_WORDS);
     #[cfg(unix)]
     unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_IGN);
@@ -1289,6 +1297,17 @@ pub(crate) fn exit_from_the_program(code: u8) -> ! {
 pub(crate) fn with_report_lock<R>(write: impl FnOnce() -> R) -> R {
     let _lines = PANIC_LINES.lock();
     write()
+}
+
+/// [`report`] of `text` on the process's stderr, a write that is
+/// dropped where stderr's reader has gone, as the program's writes to
+/// stderr are: the report of a failed program under `silt run`, which
+/// a closed stderr must not turn into the death of a closed pipe
+/// (status 141).
+pub fn report_on_stderr(text: &str) {
+    report(|| {
+        let _ = crate::vm::write_stderr(text);
+    });
 }
 
 /// Write a report of the `silt` command's own with `write`, while a

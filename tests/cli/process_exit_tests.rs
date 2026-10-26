@@ -109,6 +109,47 @@ fn an_exit_writes_out_what_was_printed_to_a_slow_reader() {
     }
 }
 
+/// The report of a failed program (a panic of `main`, a task that
+/// failed and that nobody joined) to a stderr whose reader has gone is
+/// dropped as the program's own writes there are: the run still ends
+/// with 1.
+#[cfg(unix)]
+#[test]
+fn a_failed_program_whose_stderr_reader_has_gone_still_exits_1() {
+    for (label, src) in [
+        (
+            "panic",
+            "import io\nfn main() {\n  let _ = io.read_line()\n  panic(\"boom\")\n}\n",
+        ),
+        (
+            "unjoined",
+            "import io\nimport task\nfn main() {\n  let _ = io.read_line()\n  let _ = task.join(task.spawn { -> () })\n  let _ = task.spawn { -> 1 / 0 }\n}\n",
+        ),
+    ] {
+        let path = program(&format!("closed_stderr_{label}"), src);
+        let mut child = Command::new(env!("CARGO_BIN_EXE_silt"))
+            .arg("run")
+            .arg(&path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn silt");
+        // The report of the failure goes to a stderr nobody reads: it is
+        // dropped, and the run ends with the failure's 1, not 141.
+        drop(child.stderr.take());
+        child
+            .stdin
+            .take()
+            .expect("stdin")
+            .write_all(b"go\n")
+            .expect("write stdin");
+        let status = child.wait().expect("wait for silt");
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(status.code(), Some(1), "{label}");
+    }
+}
+
 /// A write to a stderr whose reader has gone is dropped: the program
 /// goes on, and ends as it would have. (Unix: there such a write raises
 /// SIGPIPE, which the `silt` command does not ignore.)

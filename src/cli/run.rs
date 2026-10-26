@@ -193,11 +193,12 @@ pub(crate) fn vm_run_file(path: &str) {
     // (Also when there is nothing to say: a process that is ending
     // with the internal error goes no further than here, and nothing of
     // the program's is reported then. See `silt::scheduler::report`.)
-    silt::scheduler::report(|| {
-        for text in task_texts.iter().chain(&main_text) {
-            eprintln!("{text}");
-        }
-    });
+    let mut report = String::new();
+    for text in task_texts.iter().chain(&main_text) {
+        report += text;
+        report.push('\n');
+    }
+    silt::scheduler::report_on_stderr(&report);
     if failed {
         silt::scheduler::exit_with_status(1);
     }

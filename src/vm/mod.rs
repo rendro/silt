@@ -22,7 +22,7 @@ use show::write_plain;
 
 pub use error::VmError;
 pub use io::{Buffer, Clock, HostIo, Output, SystemClock};
-pub(crate) use io::{NO_PANIC_TEXT, panic_message};
+pub(crate) use io::{NO_PANIC_TEXT, panic_message, write_stderr};
 pub use io_op::IoFailure;
 pub(crate) use io_op::{ErrFactory, IoOp, Leave, Limit, Wanted};
 pub(crate) use iter::{Flow, call_then, item_arg, iterate, next, stop};

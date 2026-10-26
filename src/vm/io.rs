@@ -93,9 +93,18 @@ struct ProcessStderr;
 
 impl Output for ProcessStderr {
     fn write(&self, text: &str) -> io::Result<()> {
-        use std::io::Write;
-        without_sigpipe(|| io::stderr().lock().write_all(text.as_bytes()))
+        write_stderr(text)
     }
+}
+
+/// Write `text` to the process's stderr, a pipe whose reader has gone
+/// being an error of the write ([`without_sigpipe`]): what the program
+/// writes there, and what the runtime reports for it, also the report
+/// of a failed program under `silt run`
+/// ([`crate::scheduler::report_on_stderr`]).
+pub(crate) fn write_stderr(text: &str) -> io::Result<()> {
+    use std::io::Write;
+    without_sigpipe(|| io::stderr().lock().write_all(text.as_bytes()))
 }
 
 /// `write`, with SIGPIPE ignored: a write to a pipe whose reader has
@@ -107,14 +116,19 @@ impl Output for ProcessStderr {
 /// does not block it takes it, so a mask of the writing thread alone
 /// would not do. It is ignored for the time of the write and then put
 /// back as it was, under the lock of the command's reports
-/// (`scheduler::report`), so that no report of the command's is written
-/// meanwhile: such a write keeps its SIGPIPE. A write of the program to
-/// stdout in that time fails with `BrokenPipe` instead of dying by the
-/// signal, and [`ProcessStdout`] ends the process with 141 for it all
-/// the same. (In a process that ignores SIGPIPE, as Rust's programs do,
-/// nothing changes.)
+/// (`scheduler::report`), so that no other report of the command's is
+/// written meanwhile: such a write keeps its SIGPIPE. A write of the
+/// program to stdout in that time fails with `BrokenPipe` instead of
+/// dying by the signal, and [`ProcessStdout`] ends the process with 141
+/// for it all the same. (In a process that ignores SIGPIPE, as Rust's
+/// programs do, nothing changes.) Where stderr is no pipe and no socket
+/// (a file, a terminal) no write raises the signal, and none of this is
+/// done.
 #[cfg(unix)]
 fn without_sigpipe(write: impl FnOnce() -> io::Result<()>) -> io::Result<()> {
+    if !stderr_raises_sigpipe() {
+        return write();
+    }
     crate::scheduler::with_report_lock(|| {
         // SAFETY: the `sigaction`s are zeroed, which is a valid value of
         // the C struct, and the handler and mask of the one that is set
@@ -134,6 +148,27 @@ fn without_sigpipe(write: impl FnOnce() -> io::Result<()>) -> io::Result<()> {
             libc::sigaction(libc::SIGPIPE, &old, std::ptr::null_mut());
         }
         result
+    })
+}
+
+/// Whether a write to the process's stderr can raise SIGPIPE: whether
+/// it is a pipe or a socket. Asked once; a stderr that cannot be asked
+/// counts as one.
+#[cfg(unix)]
+fn stderr_raises_sigpipe() -> bool {
+    use std::os::fd::AsFd;
+    use std::os::unix::fs::FileTypeExt;
+    static RAISES: OnceLock<bool> = OnceLock::new();
+    *RAISES.get_or_init(|| {
+        // (A closed stderr cannot be copied: a write to it fails, and
+        // raises nothing.)
+        let Ok(copy) = io::stderr().as_fd().try_clone_to_owned() else {
+            return false;
+        };
+        match std::fs::File::from(copy).metadata() {
+            Ok(meta) => meta.file_type().is_fifo() || meta.file_type().is_socket(),
+            Err(_) => true,
+        }
     })
 }
 
