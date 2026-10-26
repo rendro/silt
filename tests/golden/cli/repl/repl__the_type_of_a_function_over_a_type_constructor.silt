@@ -1,4 +1,4 @@
 -- cmd: repl
--- stdin: trait Functor {\n  fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)\n}\nfn twice(xs) { Functor.map(xs) { x -> x * 2 } }\n:type twice\nfn keep(xs: m(a)) -> m(a) { xs }\n:type keep\n:quit\n
+-- stdin: trait Mapping {\n  fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)\n}\nfn twice(xs) { Mapping.map(xs) { x -> x * 2 } }\n:type twice\nfn keep(xs: m(a)) -> m(a) { xs }\n:type keep\n:quit\n
 -- `:type` writes a type constructor variable `m`, as messages and
 -- hover do, and the bound inferred for it.

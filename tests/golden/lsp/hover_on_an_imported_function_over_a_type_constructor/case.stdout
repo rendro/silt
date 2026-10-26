@@ -1,10 +1,10 @@
 > hover 10:15
 ```silt
-fn double_all(xs: m(Int)) -> m(Int) where m: Functor
+fn double_all(xs: m(Int)) -> m(Int) where m: Mapping
 ```
 > hover 11:12
 ```silt
-fn double_all(xs: m(Int)) -> m(Int) where m: Functor
+fn double_all(xs: m(Int)) -> m(Int) where m: Mapping
 ```
 > hover 12:12
 ```silt

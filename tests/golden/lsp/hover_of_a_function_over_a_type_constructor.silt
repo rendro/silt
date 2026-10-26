@@ -13,13 +13,13 @@
 -- the bounds, inferred for a function without annotations (HK8). At a
 -- call it shows the type the call gives; completion and signature help
 -- write the variables by name too.
-trait Functor {
+trait Mapping {
   fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)
 }
-trait Pointed: Functor {
+trait Pointed: Mapping {
   fn point(x: a) -> Self(a)
 }
-trait Functor for Option(_) {
+trait Mapping for Option(_) {
   fn map(xs, f) {
     match xs {
       Some(x) -> Some(f(x))
@@ -27,11 +27,11 @@ trait Functor for Option(_) {
     }
   }
 }
-fn twice(xs) { Functor.map(xs) { x -> x * 2 } }
-fn double_all(xs: m(Int)) -> m(Int) where m: Functor { Functor.map(xs) { x -> x * 2 } }
+fn twice(xs) { Mapping.map(xs) { x -> x * 2 } }
+fn double_all(xs: m(Int)) -> m(Int) where m: Mapping { Mapping.map(xs) { x -> x * 2 } }
 fn keep(xs: m(a)) -> m(a) { xs }
 fn wrap(x: a, type m) -> m(a) where m: Pointed { m.point(x) }
-fn shown(xs: f(a)) -> f(String) where f: Functor, a: Display { Functor.map(xs) { x -> "{x}" } }
+fn shown(xs: f(a)) -> f(String) where f: Mapping, a: Display { Mapping.map(xs) { x -> "{x}" } }
 fn main() {
   println(twice(Some(1)))
   let k = keep

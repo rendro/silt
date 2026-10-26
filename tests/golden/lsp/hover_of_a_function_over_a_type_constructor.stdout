@@ -1,11 +1,11 @@
 39:3 error undefined variable 'dou'
 > hover 30:5
 ```silt
-fn twice(xs: m(Int)) -> m(Int) where m: Functor
+fn twice(xs: m(Int)) -> m(Int) where m: Mapping
 ```
 > hover 31:5
 ```silt
-fn double_all(xs: m(Int)) -> m(Int) where m: Functor
+fn double_all(xs: m(Int)) -> m(Int) where m: Mapping
 ```
 > hover 32:5
 ```silt
@@ -17,7 +17,7 @@ fn wrap(x: a, type m) -> m(a) where m: Pointed
 ```
 > hover 34:5
 ```silt
-fn shown(xs: f(a)) -> f(String) where f: Functor, a: Display
+fn shown(xs: f(a)) -> f(String) where f: Mapping, a: Display
 ```
 > hover 37:11
 ```silt
