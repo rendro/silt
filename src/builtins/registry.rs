@@ -694,6 +694,11 @@ pub struct Registry {
     /// The functions of the prelude, called by their bare names
     /// (`println`): rows of no module.
     pub prelude: Vec<Row>,
+    /// The methods of the built-in impls that are no module's
+    /// functions, each a row of its type (`List.map2`), which the
+    /// impl's dictionary holds: rows of no module's table, which no
+    /// program names.
+    pub impls: Vec<Row>,
     /// Each module's place in `modules`, by name.
     by_name: HashMap<&'static str, usize>,
     /// Where each row is, by its id.
@@ -709,6 +714,8 @@ enum Place {
     Message(usize),
     /// The function of the prelude of this place.
     Prelude(usize),
+    /// The method of a built-in impl of this place.
+    Impl(usize),
 }
 
 impl Registry {
@@ -718,7 +725,14 @@ impl Registry {
             Place::Row(module, row) => self.modules[module].rows.get(row),
             Place::Message(module) => self.modules[module].message.as_ref(),
             Place::Prelude(row) => self.prelude.get(row),
+            Place::Impl(row) => self.impls.get(row),
         }
+    }
+
+    /// The method `method` of a built-in impl for the type `ty` that is
+    /// no module's function: `List.map2`.
+    pub fn impl_row(&self, ty: &str, method: &str) -> Option<&Row> {
+        (self.impls.iter()).find(|row| row.module == ty && row.name == method)
     }
 
     /// The module whose error enum the type `id` is (`IoError`: `io`),
@@ -797,6 +811,9 @@ pub fn registry() -> &'static Registry {
     REGISTRY.get_or_init(|| {
         let mut modules = modules::modules();
         let mut prelude = rows("", true, modules::prelude());
+        let mut impls: Vec<Row> = (modules::impls().into_iter())
+            .flat_map(|(ty, specs)| rows(ty, true, specs))
+            .collect();
         let by_name = modules
             .iter()
             .enumerate()
@@ -804,7 +821,7 @@ pub fn registry() -> &'static Registry {
             .collect();
         // Every row's id: its place among all rows, the modules' in
         // their order (each one's rows, then its error enum's
-        // `message`), then the prelude's.
+        // `message`), then the prelude's, then the built-in impls'.
         let mut by_id = Vec::new();
         let mut number = |row: &mut Row, place: Place| {
             let id = u16::try_from(by_id.len()).expect("more builtins than an id counts");
@@ -822,10 +839,14 @@ pub fn registry() -> &'static Registry {
         for (k, row) in prelude.iter_mut().enumerate() {
             number(row, Place::Prelude(k));
         }
+        for (k, row) in impls.iter_mut().enumerate() {
+            number(row, Place::Impl(k));
+        }
         Registry {
             modules,
             prelude_types: type_decls(PRELUDE_TYPES, PRELUDE_DERIVES),
             prelude,
+            impls,
             by_name,
             by_id,
         }
@@ -863,6 +884,7 @@ mod tests {
                 "nothing is ever sent on it: it only closes",
             ),
             ("set.new", "the set is empty: what is put in it"),
+            ("Result.pure", "it is no Err: the error type of the use"),
         ];
         fn variables(ty: &TypeExpr, out: &mut Vec<String>) {
             match &ty.kind {
@@ -890,7 +912,8 @@ mod tests {
             .modules
             .iter()
             .flat_map(|m| m.rows.iter().chain(&m.message))
-            .chain(&registry.prelude);
+            .chain(&registry.prelude)
+            .chain(&registry.impls);
         let mut free = Vec::new();
         let mut listed = Vec::new();
         for row in rows.filter(|row| !row.is_constant()) {

@@ -435,6 +435,8 @@ fn natural(name: &str, what: &str, n: i64) -> Result<usize, VmError> {
 /// `list.*`
 pub(crate) mod list {
     use super::*;
+    use crate::builtins::applicative;
+    use crate::bytecode::dict::Dict;
 
     builtins! {
         fn map(xs: List, f: &Value) -> Result<Step, VmError> {
@@ -532,6 +534,18 @@ pub(crate) mod list {
                 flat_map_step,
                 as_list,
             ))
+        }
+
+        // The Applicative's dictionary first, as a function's hidden
+        // parameters are (`super::applicative`).
+        #[cfg_attr(not(test), expect(dead_code, reason = "its row comes with the trait Applicative"))]
+        fn traverse(dict: &Dict, xs: List, f: &Value) -> Result<Step, VmError> {
+            Ok(applicative::traverse("list.traverse", dict, made(xs)?, Some(f.clone())))
+        }
+
+        #[cfg_attr(not(test), expect(dead_code, reason = "its row comes with the trait Applicative"))]
+        fn sequence(dict: &Dict, xs: List) -> Result<Step, VmError> {
+            Ok(applicative::traverse("list.sequence", dict, made(xs)?, None))
         }
 
         fn filter_map(xs: List, f: &Value) -> Result<Step, VmError> {
@@ -947,7 +961,7 @@ pub(crate) mod map {
                 }
             };
             let (m, key) = (m.clone(), key.clone());
-            Ok(call_then("map.update", f.clone(), current, move |new_val| {
+            Ok(call_then("map.update", f.clone(), [current], move |new_val| {
                 Ok(Value::Map(m.insert(key, new_val)))
             }))
         }

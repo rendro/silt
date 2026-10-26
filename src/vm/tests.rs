@@ -7368,3 +7368,383 @@ fn main() {
         );
     }
 }
+
+/// The built-in impls' `pure` and `map2` (`List.map2`), and the
+/// builtins that are passed an Applicative's dictionary
+/// (`list.traverse`, `list.sequence`), which call its methods from
+/// their frames: tested with templates made here, as the compiler makes
+/// them for an impl.
+mod applicative {
+    use std::sync::OnceLock;
+
+    use super::run::Slice;
+    use super::*;
+    use crate::builtins::collections::list;
+    use crate::builtins::typed::TypedCall;
+    use crate::bytecode::dict::{Dict, Template};
+    use crate::bytecode::{Globals, VmClosure};
+    use crate::defs::{DefId, ImplArgs};
+
+    /// A VM whose program has the template of an impl of Applicative
+    /// for the type `ty`, whose `pure` and `map2` are `methods`, in the
+    /// trait's order; and the impl's dictionary.
+    fn with_impl(ty: &str, methods: [Value; 2]) -> (Vm, Dict) {
+        let mut globals = Globals::default();
+        let names = ["pure", "map2"];
+        let slots: Vec<u16> = (0..2)
+            .map(|k| globals.add_def(DefId(1_000_000 + k), format!("{ty}.{}", names[k as usize])))
+            .collect::<Option<_>>()
+            .expect("two slots");
+        assert_eq!(
+            (
+                crate::builtins::applicative::PURE,
+                crate::builtins::applicative::MAP2
+            ),
+            (0, 1)
+        );
+        let template = Arc::new(Template {
+            index: globals.next_template_index(),
+            tr: crate::defs::TraitId(DefId(999_999)),
+            ty: crate::defs::builtin_type_id(ty).unwrap_or(crate::defs::TypeId(DefId(999_998))),
+            args: ImplArgs::none(),
+            name: format!("Applicative for {ty}"),
+            methods: slots.clone().into(),
+            supers: Box::new([]),
+            wheres: Box::new([]),
+        });
+        globals.add_template(template.clone());
+        let globals = Arc::new(globals);
+        let mut vm = Vm::new(crate::HostIo::process());
+        vm.view.table = globals.clone();
+        vm.view.entry = globals;
+        vm.view.slots = (0..slots.len()).map(|_| OnceLock::new()).collect();
+        for (slot, method) in slots.iter().zip(methods) {
+            assert!(vm.set_global(*slot, method));
+        }
+        (vm, Dict::new(&template, std::iter::empty()))
+    }
+
+    /// [`with_impl`] of the built-in impl for `ty`: its rows.
+    fn builtin_impl(ty: &str) -> (Vm, Dict) {
+        let row = |method| {
+            let row = registry().impl_row(ty, method);
+            row.unwrap_or_else(|| panic!("{ty}.{method}")).value()
+        };
+        with_impl(ty, [row("pure"), row("map2")])
+    }
+
+    /// What the builtin body `body` gives for `args`, its frame run to
+    /// its end as the loop runs the frame of a call; an error's message.
+    fn run(vm: &mut Vm, body: TypedCall, args: &[Value]) -> Result<Value, String> {
+        let step = body(vm, args).expect("arguments that fit");
+        let native = match step.map_err(|error| error.message)? {
+            Step::Done(value) => return Ok(value),
+            Step::Run(native) => native,
+            _ => panic!("a builtin calls or waits without a frame"),
+        };
+        let floor = vm.frames.len();
+        vm.push_native_frame(native);
+        match vm.run_frames(floor, usize::MAX) {
+            Ok(Slice::Done(value)) => Ok(value),
+            Ok(_) => panic!("the frame ran to its end"),
+            Err(error) => Err(error.message),
+        }
+    }
+
+    /// The body of the row `qualified` (`int.parse`), or of the
+    /// built-in impl's row (`List.map2`).
+    fn body(qualified: &str) -> TypedCall {
+        let (ty, method) = qualified.split_once('.').expect("a qualified name");
+        let row = (registry().named(qualified)).or_else(|| registry().impl_row(ty, method));
+        match row.map(|row| &row.body) {
+            Some(Body::Typed(body)) => *body,
+            _ => panic!("{qualified}"),
+        }
+    }
+
+    /// A closure of `arity` parameters with the code `build` emits.
+    fn closure(arity: u8, build: impl FnOnce(&mut Emitter)) -> Value {
+        let function = make_function_of(arity, build);
+        Value::VmClosure(Arc::new(VmClosure::new(function, vec![])))
+    }
+
+    /// `{ a, b -> a + b }`
+    fn add() -> Value {
+        closure(2, |e| {
+            e.emit(Asm::GetLocal { slot: 0 }, span()).unwrap();
+            e.emit(Asm::GetLocal { slot: 1 }, span()).unwrap();
+            e.emit(Asm::Add, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        })
+    }
+
+    fn ints(ns: &[i64]) -> Value {
+        Value::list(ns.iter().map(|n| Value::Int(*n)).collect())
+    }
+
+    fn strings(ss: &[&str]) -> Value {
+        Value::list(ss.iter().map(|s| Value::String((*s).into())).collect())
+    }
+
+    fn some(v: Value) -> Value {
+        Value::variant(bv::SOME, [v])
+    }
+
+    fn none() -> Value {
+        Value::variant(bv::NONE, [])
+    }
+
+    fn ok(v: Value) -> Value {
+        Value::variant(bv::OK, [v])
+    }
+
+    fn err(v: Value) -> Value {
+        Value::variant(bv::ERR, [v])
+    }
+
+    /// What `int.parse` gives for `s`.
+    fn parsed(s: &str) -> Value {
+        let mut vm = Vm::new(crate::HostIo::process());
+        run(&mut vm, body("int.parse"), &[Value::String(s.into())]).expect("int.parse")
+    }
+
+    #[test]
+    fn pure_is_the_value_in_the_type() {
+        let mut vm = Vm::new(crate::HostIo::process());
+        let one = [Value::Int(1)];
+        assert_eq!(run(&mut vm, body("List.pure"), &one), Ok(ints(&[1])));
+        assert_eq!(
+            run(&mut vm, body("Option.pure"), &one),
+            Ok(some(Value::Int(1)))
+        );
+        assert_eq!(
+            run(&mut vm, body("Result.pure"), &one),
+            Ok(ok(Value::Int(1)))
+        );
+    }
+
+    /// `List.map2` gives `f` of every pair, each of the first with each
+    /// of the second; a list with no element gives none.
+    #[test]
+    fn list_map2_is_every_pair() {
+        let mut vm = Vm::new(crate::HostIo::process());
+        let map2 = body("List.map2");
+        let pairs = run(&mut vm, map2, &[ints(&[1, 2]), ints(&[10, 20]), add()]);
+        assert_eq!(pairs, Ok(ints(&[11, 21, 12, 22])));
+        for (xs, ys) in [(ints(&[]), ints(&[1])), (ints(&[1]), ints(&[]))] {
+            assert_eq!(run(&mut vm, map2, &[xs, ys, add()]), Ok(ints(&[])));
+        }
+        // More pairs than a list holds: refused before any call.
+        crate::builtins::collections::CAP.with(|cap| cap.set(3));
+        let error = run(&mut vm, map2, &[ints(&[1, 2]), ints(&[1, 2]), Value::Unit]);
+        crate::builtins::collections::CAP.with(|cap| cap.set(crate::value::MAX_COLLECTION_LEN));
+        assert_eq!(
+            error,
+            Err("List.map2: list exceeds maximum size of 3 elements".to_string())
+        );
+    }
+
+    /// `Option.map2` and `Result.map2` give `f` of both values, or the
+    /// first failure, the left one first, and then call nothing.
+    #[test]
+    fn option_and_result_map2_give_the_first_failure() {
+        let mut vm = Vm::new(crate::HostIo::process());
+        let (one, two) = (Value::Int(1), Value::Int(2));
+        let map2 = body("Option.map2");
+        for (xs, ys, given) in [
+            (some(one.clone()), some(two.clone()), some(Value::Int(3))),
+            (none(), some(two.clone()), none()),
+            (some(one.clone()), none(), none()),
+            (none(), none(), none()),
+        ] {
+            // (Unit is no function: a call of it would fail.)
+            let f = match given == none() {
+                true => Value::Unit,
+                false => add(),
+            };
+            assert_eq!(run(&mut vm, map2, &[xs, ys, f]), Ok(given));
+        }
+        let map2 = body("Result.map2");
+        let (a, b) = (
+            err(Value::String("a".into())),
+            err(Value::String("b".into())),
+        );
+        for (xs, ys, given) in [
+            (ok(one.clone()), ok(two.clone()), ok(Value::Int(3))),
+            (a.clone(), ok(two.clone()), a.clone()),
+            (ok(one.clone()), b.clone(), b.clone()),
+            (a.clone(), b.clone(), a.clone()),
+        ] {
+            let f = match given {
+                Value::Variant(ref v) if v.is(bv::ERR) => Value::Unit,
+                _ => add(),
+            };
+            assert_eq!(run(&mut vm, map2, &[xs, ys, f]), Ok(given));
+        }
+    }
+
+    /// `list.traverse` over the built-in impls: HK18's examples, and the
+    /// empty list, which is `pure([])`.
+    #[test]
+    fn traverse_over_the_built_in_impls() {
+        let traverse = list::traverse;
+        let (mut vm, result) = builtin_impl("Result");
+        let parse = Value::BuiltinFn(registry().named("int.parse").expect("int.parse").id);
+        let dict = Value::Dict(result);
+        let all = run(
+            &mut vm,
+            traverse,
+            &[dict.clone(), strings(&["1", "2"]), parse.clone()],
+        );
+        assert_eq!(all, Ok(ok(ints(&[1, 2]))));
+        // The first failure, of the first element that fails.
+        let first = run(
+            &mut vm,
+            traverse,
+            &[dict.clone(), strings(&["1", "2x", "y"]), parse.clone()],
+        );
+        assert_eq!(first, Ok(parsed("2x")));
+        assert_ne!(parsed("2x"), parsed("y"));
+        assert_eq!(
+            run(&mut vm, traverse, &[dict, strings(&[]), parse]),
+            Ok(ok(ints(&[])))
+        );
+
+        // Every combination, in the order of `List.map2`.
+        let (mut vm, list) = builtin_impl("List");
+        let plus_minus = closure(1, |e| {
+            e.emit(Asm::GetLocal { slot: 0 }, span()).unwrap();
+            e.emit(Asm::GetLocal { slot: 0 }, span()).unwrap();
+            e.emit(Asm::Negate, span()).unwrap();
+            e.emit(Asm::MakeList { count: 2 }, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        let dict = Value::Dict(list);
+        let combinations = run(
+            &mut vm,
+            traverse,
+            &[dict.clone(), ints(&[1, 2]), plus_minus.clone()],
+        );
+        let expected = [[1, 2], [1, -2], [-1, 2], [-1, -2]].map(|pair| ints(&pair));
+        assert_eq!(combinations, Ok(Value::list(expected.to_vec())));
+        assert_eq!(
+            run(&mut vm, traverse, &[dict, ints(&[]), plus_minus]),
+            Ok(Value::list(vec![ints(&[])]))
+        );
+    }
+
+    /// `list.sequence` over the built-in impls: the values in the type,
+    /// or the first failure.
+    #[test]
+    fn sequence_over_the_built_in_impls() {
+        let sequence = list::sequence;
+        let (mut vm, option) = builtin_impl("Option");
+        let dict = Value::Dict(option);
+        let one_two = Value::list(vec![some(Value::Int(1)), some(Value::Int(2))]);
+        assert_eq!(
+            run(&mut vm, sequence, &[dict.clone(), one_two]),
+            Ok(some(ints(&[1, 2])))
+        );
+        let a_none = Value::list(vec![some(Value::Int(1)), none()]);
+        assert_eq!(run(&mut vm, sequence, &[dict.clone(), a_none]), Ok(none()));
+        assert_eq!(
+            run(&mut vm, sequence, &[dict.clone(), ints(&[])]),
+            Ok(some(ints(&[])))
+        );
+        // A call of `map2` for each element, from the one frame.
+        let many = Value::list((0..10_000).map(|n| some(Value::Int(n))).collect());
+        let all = Value::list((0..10_000).map(Value::Int).collect());
+        assert_eq!(run(&mut vm, sequence, &[dict, many]), Ok(some(all)));
+
+        let (mut vm, result) = builtin_impl("Result");
+        let errs = Value::list(vec![ok(Value::Int(1)), parsed("2x"), parsed("y")]);
+        assert_eq!(
+            run(&mut vm, sequence, &[Value::Dict(result), errs]),
+            Ok(parsed("2x"))
+        );
+
+        let (mut vm, list) = builtin_impl("List");
+        let lists = Value::list(vec![ints(&[1, 2]), ints(&[3])]);
+        let expected = Value::list(vec![ints(&[1, 3]), ints(&[2, 3])]);
+        assert_eq!(
+            run(&mut vm, sequence, &[Value::Dict(list), lists]),
+            Ok(expected)
+        );
+    }
+
+    /// A builtin calls a method of the dictionary it is given as a call
+    /// through the dictionary does: with the dictionary in the slot of
+    /// the callee, where a method of an impl takes it from
+    /// (`FrameDict`). And `list.traverse` calls `f` on every element,
+    /// left to right, then `pure([])`, then `map2` of the list so far
+    /// and each value in turn, failures too: here `map2` keeps what it
+    /// is given, `(so_far, value, the dictionary)`.
+    #[test]
+    fn a_builtin_calls_a_method_of_its_dictionary_with_the_dictionary() {
+        let keep = closure(3, |e| {
+            e.takes_dict_slot();
+            e.emit(Asm::GetLocal { slot: 0 }, span()).unwrap();
+            e.emit(Asm::GetLocal { slot: 1 }, span()).unwrap();
+            e.emit(Asm::FrameDict, span()).unwrap();
+            e.emit(Asm::MakeTuple { count: 3 }, span()).unwrap();
+            e.emit(Asm::Return, span()).unwrap();
+        });
+        let pure = registry()
+            .impl_row("Result", "pure")
+            .expect("Result.pure")
+            .value();
+        let (mut vm, dict) = with_impl("Kept", [pure, keep]);
+        let parse = Value::BuiltinFn(registry().named("int.parse").expect("int.parse").id);
+        let xs = strings(&["1", "x", "2"]);
+        let kept = run(
+            &mut vm,
+            list::traverse,
+            &[Value::Dict(dict.clone()), xs, parse],
+        );
+        let index = dict.index();
+        let step = |so_far: Value, value: Value| {
+            Value::tuple(vec![so_far, value, Value::Dict(Dict::Of(index))])
+        };
+        let start = ok(ints(&[]));
+        let expected = step(
+            step(step(start, ok(Value::Int(1))), parsed("x")),
+            ok(Value::Int(2)),
+        );
+        assert_eq!(kept.map(|v| v.format_silt()), Ok(expected.format_silt()));
+    }
+
+    /// The rows of the built-in impls are found by their ids and by
+    /// their types, and no program names them: they are in no module's
+    /// table.
+    #[test]
+    fn the_rows_of_the_built_in_impls_are_found_by_their_types() {
+        let registry = registry();
+        let mut names = Vec::new();
+        for row in &registry.impls {
+            let by_id = registry.builtin(row.id).expect("by its id");
+            assert!(std::ptr::eq(by_id, row), "{}", row.qualified());
+            let by_type = registry
+                .impl_row(row.module, row.name)
+                .expect("by its type");
+            assert!(std::ptr::eq(by_type, row), "{}", row.qualified());
+            assert!(registry.named(&row.qualified()).is_none());
+            let module = row.module.to_lowercase();
+            assert!(
+                registry.row(&module, row.name).is_none(),
+                "{module}.{}",
+                row.name
+            );
+            names.push(row.qualified());
+        }
+        let expected = [
+            "List.pure",
+            "List.map2",
+            "Option.pure",
+            "Option.map2",
+            "Result.pure",
+            "Result.map2",
+        ];
+        assert_eq!(names, expected);
+        assert!(registry.impl_row("Channel", "pure").is_none());
+    }
+}

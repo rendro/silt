@@ -206,6 +206,19 @@ impl<'a> Arg<'a> for &'a crate::value::List {
     }
 }
 
+/// A dictionary: the hidden argument of a builtin bounded by a trait
+/// whose impls are passed (`list.traverse`'s Applicative), which no
+/// program writes. The builtin calls its methods with
+/// [`Vm::call_dict_method`].
+impl<'a> Arg<'a> for &'a crate::bytecode::dict::Dict {
+    fn take(value: &'a Value) -> Option<Self> {
+        match value {
+            Value::Dict(dict) => Some(dict),
+            _ => None,
+        }
+    }
+}
+
 /// A `type a` argument: one of the primitive types, as the type of a
 /// field of it, or a type of a name.
 pub(crate) enum Type<'a> {

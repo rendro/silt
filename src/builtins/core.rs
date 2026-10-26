@@ -18,9 +18,9 @@ fn field(value: &Value, tag: BuiltinVariant) -> Option<&Value> {
 
 /// A `Result` argument: the value, and what is in it.
 #[derive(Clone, Copy)]
-struct Res<'a> {
-    whole: &'a Value,
-    inner: Result<&'a Value, &'a Value>,
+pub(crate) struct Res<'a> {
+    pub(crate) whole: &'a Value,
+    pub(crate) inner: Result<&'a Value, &'a Value>,
 }
 
 impl<'a> Arg<'a> for Res<'a> {
@@ -35,9 +35,9 @@ impl<'a> Arg<'a> for Res<'a> {
 
 /// An `Option` argument: the value, and what is in it.
 #[derive(Clone, Copy)]
-struct Opt<'a> {
-    whole: &'a Value,
-    inner: Option<&'a Value>,
+pub(crate) struct Opt<'a> {
+    pub(crate) whole: &'a Value,
+    pub(crate) inner: Option<&'a Value>,
 }
 
 impl<'a> Arg<'a> for Opt<'a> {
@@ -57,7 +57,7 @@ pub(crate) mod result {
     builtins! {
         fn map(r: Res, f: &Value) -> Step {
             match r.inner {
-                Ok(value) => call_then("result.map", f.clone(), value.clone(), |new| {
+                Ok(value) => call_then("result.map", f.clone(), [value.clone()], |new| {
                     Ok(Value::variant(bv::OK, [new]))
                 }),
                 Err(_) => Step::Done(r.whole.clone()),
@@ -67,7 +67,7 @@ pub(crate) mod result {
         fn map_err(r: Res, f: &Value) -> Step {
             match r.inner {
                 Ok(_) => Step::Done(r.whole.clone()),
-                Err(error) => call_then("result.map_err", f.clone(), error.clone(), |new| {
+                Err(error) => call_then("result.map_err", f.clone(), [error.clone()], |new| {
                     Ok(Value::variant(bv::ERR, [new]))
                 }),
             }
@@ -75,7 +75,7 @@ pub(crate) mod result {
 
         fn flat_map(r: Res, f: &Value) -> Step {
             match r.inner {
-                Ok(value) => call_then("result.flat_map", f.clone(), value.clone(), Ok),
+                Ok(value) => call_then("result.flat_map", f.clone(), [value.clone()], Ok),
                 Err(_) => Step::Done(r.whole.clone()),
             }
         }
@@ -111,7 +111,7 @@ pub(crate) mod option {
     builtins! {
         fn map(opt: Opt, f: &Value) -> Step {
             match opt.inner {
-                Some(value) => call_then("option.map", f.clone(), value.clone(), |new| {
+                Some(value) => call_then("option.map", f.clone(), [value.clone()], |new| {
                     Ok(Value::variant(bv::SOME, [new]))
                 }),
                 None => Step::Done(opt.whole.clone()),
@@ -120,7 +120,7 @@ pub(crate) mod option {
 
         fn flat_map(opt: Opt, f: &Value) -> Step {
             match opt.inner {
-                Some(value) => call_then("option.flat_map", f.clone(), value.clone(), Ok),
+                Some(value) => call_then("option.flat_map", f.clone(), [value.clone()], Ok),
                 None => Step::Done(opt.whole.clone()),
             }
         }
