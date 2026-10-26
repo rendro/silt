@@ -115,9 +115,9 @@ apart in a pattern, updated, read, spread, or passed where an open row
 is taken (`{ name: String, ...rest }`): each is an error that says to
 use the functions of module `mail`. The module of the code is what
 counts. A function of a third module that reads a field of what it is
-given refuses an opaque value where it is called, unless the call is
-in the type's own module. An impl sees what its module sees, and a
-test file is a module like any other.
+given refuses an opaque value where it is called; a function of the
+type's own module may read it, wherever it is called from. An impl
+sees what its module sees, and a test file is a module like any other.
 
 Equality, order and hashing still compare what is inside, and
 printing a value shows it, as for any type; a module that wants to

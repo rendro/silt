@@ -2737,7 +2737,7 @@ impl TypeChecker {
                         callee: Some(name),
                         op: None,
                     });
-                    self.instantiate(&scheme)
+                    self.instantiate_def(&scheme, expr.res)
                 } else if name == intern("self") {
                     // `self` is resolved at runtime — allow without error
                     self.fresh_var()
@@ -2785,7 +2785,7 @@ impl TypeChecker {
                 if names_member {
                     let ty = match self.def_scheme(expr.res, env) {
                         Some(scheme) => {
-                            let ty = self.instantiate(&scheme);
+                            let ty = self.instantiate_def(&scheme, expr.res);
                             self.apply(&ty)
                         }
                         None if let Some(ty) = self.alias_value(expr.res, env) => ty,

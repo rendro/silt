@@ -1,0 +1,13 @@
+error[type]: type mismatch: expected mail.User, got {name: String, age: Int}
+ --> main.silt:9:3
+   |
+ 9 |   { name: "a", age: 1 }
+   |   ^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected mail.User, got {name: String, age: Int}
+  = help: use the functions of module 'mail'
+
+error[type]: type mismatch: expected {name: String, age: Int}, got mail.User
+ --> main.silt:17:18
+    |
+ 17 |   println(closed(mail.user("a")))
+    |                  ^^^^^^^^^^^^^^ type mismatch: expected {name: String, age: Int}, got mail.User
+  = help: use the functions of module 'mail'
