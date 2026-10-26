@@ -300,7 +300,7 @@ fn main() {
 ## `toml.pretty`
 
 ```
-toml.pretty(value: a) -> Result(String, TomlError) where a: json.Encode
+toml.pretty(value: a) -> Result(String, TomlError)
 ```
 
 Serialises a silt record or map to a multi-line, human-friendly TOML document.
@@ -345,7 +345,7 @@ fn main() {
 ## `toml.stringify`
 
 ```
-toml.stringify(value: a) -> Result(String, TomlError) where a: json.Encode
+toml.stringify(value: a) -> Result(String, TomlError)
 ```
 
 Serialises a silt record, map or variant with fields to a TOML document. Like `toml.pretty`, the
