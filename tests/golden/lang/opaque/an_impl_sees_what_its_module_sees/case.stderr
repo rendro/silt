@@ -1,0 +1,6 @@
+error[type]: cannot read field 'name' of a 'mail.User' outside module 'mail': the type is opaque
+ --> pretty.silt:19:5
+    |
+ 19 |     self.name
+    |     ^^^^^^^^^ cannot read field 'name' of a 'mail.User' outside module 'mail': the type is opaque
+  = help: use the functions of module 'mail'

@@ -966,6 +966,16 @@ impl TypeChecker {
             base_ty = self.apply(&open);
         }
         let (mut fields, tail): (BTreeMap<Symbol, Type>, RowTail) = match &base_ty {
+            // An opaque record of another module gives nothing.
+            Type::Generic(name, _) if let Some(module) = self.opaque_outside(*name) => {
+                let message = format!(
+                    "cannot spread a '{}' outside module '{module}': the type is opaque",
+                    super::opaque::opaque_name(*name, module)
+                );
+                self.opaque_error(message, module, span);
+                let _ = self.unify_types(result, &Type::Error);
+                return;
+            }
             // A declared record gives its fields.
             Type::Generic(name, args) if self.tables.records.contains_key(name) => (
                 self.instantiate_record_fields_with_args(*name, args)

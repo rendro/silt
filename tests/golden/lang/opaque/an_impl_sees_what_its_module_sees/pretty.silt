@@ -1,0 +1,21 @@
+import mail
+
+pub trait Pretty {
+  fn pretty(self) -> String
+}
+
+trait Pretty for mail.Email {
+  fn pretty(self) -> String {
+    "<{mail.address(self)}>"
+  }
+}
+
+pub trait Peek {
+  fn peek(self) -> String
+}
+
+trait Peek for mail.User {
+  fn peek(self) -> String {
+    self.name
+  }
+}

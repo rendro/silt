@@ -1,0 +1,6 @@
+error[type]: cannot build a 'mail.User' outside module 'mail': the type is opaque
+ --> main.silt:7:11
+   |
+ 7 |   let u = mail.User { name: "a", age: 3 }
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ cannot build a 'mail.User' outside module 'mail': the type is opaque
+  = help: use the functions of module 'mail'

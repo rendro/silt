@@ -1,0 +1,21 @@
+import list
+
+pub opaque type Stack(a) {
+  Stack(List(a)),
+}
+
+pub fn of(x: a) -> Stack(a) {
+  Stack([x])
+}
+
+pub fn push(s: Stack(a), x: a) -> Stack(a) {
+  match s {
+    Stack(xs) -> Stack([x, ..xs])
+  }
+}
+
+pub fn size(s: Stack(a)) -> Int {
+  match s {
+    Stack(xs) -> list.length(xs)
+  }
+}

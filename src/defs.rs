@@ -58,6 +58,9 @@ impl ImplArgs {
 pub enum Vis {
     Pub,
     Private,
+    /// A `pub opaque type`: every module names it, and only its own
+    /// sees what is in it.
+    Opaque,
 }
 
 /// What a definition is.

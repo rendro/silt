@@ -1,0 +1,6 @@
+error[type]: cannot spread a 'mail.User' outside module 'mail': the type is opaque
+ --> main.silt:8:11
+   |
+ 8 |   println({ ...u })
+   |           ^^^^^^^^ cannot spread a 'mail.User' outside module 'mail': the type is opaque
+  = help: use the functions of module 'mail'

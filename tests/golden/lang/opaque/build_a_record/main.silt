@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- Outside its module, an opaque record cannot be built.
+import mail
+
+fn main() {
+  let u = mail.User { name: "a", age: 3 }
+  println(u)
+}

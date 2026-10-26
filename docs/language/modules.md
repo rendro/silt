@@ -88,6 +88,42 @@ Naming a private item from another module is an error at the name:
 `geometry`, and `import geometry.{ nope }` that `geometry` has no member
 `nope`.
 
+### Opaque types
+
+`pub opaque type` exports a record or an enum without what is in it:
+other modules can name the type (in annotations, `List(mail.Email)`,
+`where` bounds) and nothing more. Inside its module it is an ordinary
+type.
+
+```silt
+import string
+
+pub opaque type Email {
+  Email(String),
+}
+
+pub fn parse(text: String) -> Option(Email) {
+  match string.contains(text, "@") {
+    true -> Some(Email(string.to_lower(text)))
+    false -> None
+  }
+}
+```
+
+In another module, a value of `mail.Email` cannot be built, taken
+apart in a pattern, updated, read, spread, or passed where an open row
+is taken (`{ name: String, ...rest }`): each is an error that says to
+use the functions of module `mail`. The module of the code is what
+counts. A function of a third module that reads a field of what it is
+given refuses an opaque value where it is called, unless the call is
+in the type's own module. An impl sees what its module sees, and a
+test file is a module like any other.
+
+Equality, order and hashing still compare what is inside, and
+printing a value shows it, as for any type; a module that wants to
+hide it writes its own `Display`. `opaque` needs `pub`, and an alias
+cannot be opaque.
+
 ## Imports
 
 Three forms:

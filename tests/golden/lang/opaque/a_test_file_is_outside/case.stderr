@@ -1,0 +1,9 @@
+error[type]: cannot take a 'mail.Email' apart outside module 'mail': the type is opaque
+ --> main.silt:14:10
+    |
+ 14 |     Some(mail.Email(s)) -> test.assert_eq(s, "a@x")
+    |          ^^^^^^^^^^^^^ cannot take a 'mail.Email' apart outside module 'mail': the type is opaque
+  = help: use the functions of module 'mail'
+main.silt: failed to compile — type errors (see above)
+
+0 tests: 0 passed, 0 failed, 0 skipped (1 file failed to compile)

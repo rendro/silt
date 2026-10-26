@@ -1,0 +1,20 @@
+error[type]: cannot build a 'mail.Email' outside module 'mail': the type is opaque
+ --> main.silt:9:11
+   |
+ 9 |   let a = mail.Email("A@X.IO")
+   |           ^^^^^^^^^^ cannot build a 'mail.Email' outside module 'mail': the type is opaque
+  = help: use the functions of module 'mail'
+
+error[type]: cannot build a 'mail.Email' outside module 'mail': the type is opaque
+ --> main.silt:10:11
+    |
+ 10 |   let b = Email("b@x.io")
+    |           ^^^^^ cannot build a 'mail.Email' outside module 'mail': the type is opaque
+  = help: use the functions of module 'mail'
+
+error[type]: cannot build a 'mail.Email' outside module 'mail': the type is opaque
+ --> main.silt:11:14
+    |
+ 11 |   let make = mail.Email
+    |              ^^^^^^^^^^ cannot build a 'mail.Email' outside module 'mail': the type is opaque
+  = help: use the functions of module 'mail'

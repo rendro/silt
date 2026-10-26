@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- Outside its module, a match cannot take an opaque value apart, also
+-- inside another pattern.
+import mail
+
+fn main() {
+  match mail.parse("a@x.io") {
+    Some(mail.Email(s)) -> println(s)
+    _ -> println("none")
+  }
+}
