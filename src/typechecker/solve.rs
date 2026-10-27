@@ -1830,7 +1830,7 @@ impl TypeChecker {
     /// `tr`: the type, and the way down to the part that lacks it
     /// (`type 'Box(H)' does not implement trait 'Display': variant 'Box'
     /// payload #1 > field 'f' is of type 'Fn(Int) -> Int', which does
-    /// not`).
+    /// not implement trait 'Display'`).
     pub(super) fn gap_message(&self, tr: TraitKey, ty: &Type, gap: &Gap) -> String {
         let tr = self.show_trait(tr);
         if gap.why == Some(TOO_DEEP) {
@@ -1849,7 +1849,10 @@ impl TypeChecker {
                 self.show_type(&self.apply(ty)),
                 gap.path.join(" > "),
                 gap.full,
-                why.unwrap_or("which does not")
+                why.map_or_else(
+                    || format!("which does not implement trait '{tr}'"),
+                    str::to_string
+                )
             ),
         }
     }

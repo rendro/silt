@@ -17,11 +17,11 @@ error[type]: type mismatch: expected String, got Bool
  13 |   println(add("a", true))
     |                    ^^^^ type mismatch: expected String, got Bool
 
-error[type]: type 'List(Fn(_) -> _)' does not implement trait 'Display': element is of type 'Fn(_) -> _', which does not
+error[type]: type 'List(Fn(_) -> _)' does not implement trait 'Display': element is of type 'Fn(_) -> _', which does not implement trait 'Display'
  --> bound_messages__one_error_at_the_argument.silt:14:11
     |
  14 |   println(list.sort([f]))
-    |           ^^^^^^^^^^^^^^ type 'List(Fn(_) -> _)' does not implement trait 'Display': element is of type 'Fn(_) -> _', which does not
+    |           ^^^^^^^^^^^^^^ type 'List(Fn(_) -> _)' does not implement trait 'Display': element is of type 'Fn(_) -> _', which does not implement trait 'Display'
 
 error[type]: type 'Fn' does not implement trait 'Compare'
  --> bound_messages__one_error_at_the_argument.silt:14:21

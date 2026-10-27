@@ -970,7 +970,7 @@ json.Decode`; only a function with no annotation at all has it inferred.
 type Job { name: String, run: Fn(Int) -> Int }
 println(Job { name: "j", run: { n -> n } })
 -- error: type 'Job' does not implement trait 'Display': field 'run' is
--- of type 'Fn(Int) -> Int', which does not
+-- of type 'Fn(Int) -> Int', which does not implement trait 'Display'
 ```
 
 The `Error` trait has supertrait `Display` and one method,

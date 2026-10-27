@@ -698,7 +698,7 @@ value it is: `Bytes`, a `Set`, a function (the constructor of a variant,
 such as `Some`, is one), a channel, a task handle, a TCP listener or stream.
 
 ```text
-type 'List(Reply)' does not implement trait 'json.Encode': element > field 'body' is of type 'Bytes', which does not
+type 'List(Reply)' does not implement trait 'json.Encode': element > field 'body' is of type 'Bytes', which does not implement trait 'json.Encode'
 ```
 
 To send bytes as JSON, turn them into text first (`bytes.to_string`,
