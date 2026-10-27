@@ -2852,7 +2852,7 @@ impl TypeChecker {
                 }
             }
         };
-        let self_type = match mapped {
+        match mapped {
             None => self_type,
             Some(var) => {
                 impl_param_map.remove(&hole);
@@ -2875,8 +2875,7 @@ impl TypeChecker {
                     }
                 }
             }
-        };
-        self_type
+        }
     }
 
     pub(super) fn register_method_entry(
@@ -2904,7 +2903,7 @@ impl TypeChecker {
         // (A trait whose method shows, encodes or decodes a value at any
         // depth is reached by the value's type alone, whatever its type
         // arguments: of it, a type has one impl.)
-        let by_type = (self.impl_trait(ti)).is_some_and(|tr| Self::reached_at_any_depth(tr));
+        let by_type = (self.impl_trait(ti)).is_some_and(Self::reached_at_any_depth);
         let instance = (written.head.as_ref()).filter(|head| !by_type && self.is_instance(head));
         let key = self.impl_args_key(&written.args, instance);
         self.impl_args_keys.insert(ti.span, key);
@@ -3053,7 +3052,7 @@ impl TypeChecker {
             )
         } else if args == met {
             // (Of an impl for some instantiations of its type, the type.)
-            let target = match (&mine.head).as_ref().filter(|_| instance(self, &mine)) {
+            let target = match mine.head.as_ref().filter(|_| instance(self, &mine)) {
                 Some(head) => self.show_type(&self.with_names(head, &mine.names)),
                 None => target,
             };
