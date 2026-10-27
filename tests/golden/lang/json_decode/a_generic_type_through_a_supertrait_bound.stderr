@@ -1,0 +1,29 @@
+error[type]: `json.parse` cannot decode `Box`: it is a generic record type, and a decoder builds a value of one type
+ --> a_generic_type_through_a_supertrait_bound.silt:36:65
+    |
+ 36 |   let c: Result(Box(Int), json.JsonError) = pass("\{\"v\": 7}", Box)
+    |                                                                 ^^^ `json.parse` cannot decode `Box`: it is a generic record type, and a decoder builds a value of one type
+  = note: `pass` passes it to `json.parse`
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+
+error[type]: `Box.read` cannot decode `Box`: it is a generic record type, and a decoder builds a value of one type
+ --> a_generic_type_through_a_supertrait_bound.silt:38:45
+    |
+ 38 |   let e: Result(Box(Int), json.JsonError) = Box.read("\{\"v\": 7}")
+    |                                             ^^^^^^^^ `Box.read` cannot decode `Box`: it is a generic record type, and a decoder builds a value of one type
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+
+error[type]: `toml.parse` cannot decode `Box(Int)`: it is an instance of the generic record type `Box`, and a decoder reads the fields of a record type without parameters
+ --> a_generic_type_through_a_supertrait_bound.silt:40:60
+    |
+ 40 |   let f: Result(Box(Int), toml.TomlError) = tpass("v = 7", Box)
+    |                                                            ^^^ `toml.parse` cannot decode `Box(Int)`: it is an instance of the generic record type `Box`, and a decoder reads the fields of a record type without parameters
+  = note: `tpass` passes it to `toml.parse`
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+
+error[type]: `tpass` cannot decode `Box`: it is a generic record type, and a decoder builds a value of one type
+ --> a_generic_type_through_a_supertrait_bound.silt:40:60
+    |
+ 40 |   let f: Result(Box(Int), toml.TomlError) = tpass("v = 7", Box)
+    |                                                            ^^^ `tpass` cannot decode `Box`: it is a generic record type, and a decoder builds a value of one type
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these

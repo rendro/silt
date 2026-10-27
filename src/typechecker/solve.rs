@@ -1637,7 +1637,7 @@ impl TypeChecker {
         }
         // An annotation variable implements what its bounds say.
         if let Type::Rigid(r) = resolved {
-            if Self::is_decode(trait_name) {
+            if Self::is_decode(trait_name) || self.implies_decode(trait_name) {
                 self.note_bound_asker(r, asker);
             }
             self.ev_set(
@@ -1676,6 +1676,13 @@ impl TypeChecker {
             // Still unknown: the caller lets it wait (`want`).
             return;
         };
+        // A bound of a trait that has `json.Decode` among its supertraits
+        // asks what `json.Decode` does of a type without a written impl
+        // of it: the decoder's judgement (`want_decode`).
+        if asker.is_some() && self.implies_decode(trait_name) && !self.has_decode_impl(type_name) {
+            let owner = ev.and_then(|ev| self.owed_for.get(&ev).copied());
+            self.want_decode(&resolved, origin, asker, owner);
+        }
         // Equal, Compare and Hash, and Display where no impl is written,
         // are what the type's structure says.
         if self.by_structure(trait_name, type_name) {

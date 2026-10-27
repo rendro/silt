@@ -36,6 +36,21 @@ impl TypeChecker {
         tr.is_builtin("Decode")
     }
 
+    /// Whether `tr` has `json.Decode` among its supertraits, at any
+    /// depth: a bound of it asks what a bound of `json.Decode` does.
+    pub(super) fn implies_decode(&self, tr: TraitKey) -> bool {
+        !Self::is_decode(tr) && self.supertraits_of(tr).into_iter().any(Self::is_decode)
+    }
+
+    /// The asker of a declared bound `var: tr`: the bound itself, for
+    /// `json.Decode` or a trait that has it among its supertraits.
+    pub(super) fn asker_of_bound(&self, tr: TraitKey, var: TyVar) -> Option<Asker> {
+        match self.implies_decode(tr) {
+            true => Asker::of_bound(TraitKey::builtin("Decode"), var),
+            false => Asker::of_bound(tr, var),
+        }
+    }
+
     /// Whether the program wrote a `json.Decode` impl for `head`: every
     /// decoder (json's, toml's, postgres's) decodes it by the impl, and
     /// does not look into its fields.

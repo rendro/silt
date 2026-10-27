@@ -2903,6 +2903,23 @@ impl TypeChecker {
                         }
                         self.method_trait = self.entry_trait(&entry, field);
                         let scheme = self.method_scheme(&entry);
+                        // (The type is given for `Self`: of a trait that has
+                        // `json.Decode` among its supertraits, it asks what a
+                        // type given to a bound of `json.Decode` does.)
+                        if let Some(tr) = self.method_trait
+                            && self.implies_decode(tr)
+                            && !self.has_decode_impl(key.0)
+                        {
+                            let instance = (self.type_instance(ty))
+                                .unwrap_or_else(|| Type::Generic(key.0, Vec::new()));
+                            let callee = intern(&format!("{}.{field}", ty.name));
+                            let origin = Origin {
+                                span,
+                                callee: Some(callee),
+                                op: None,
+                            };
+                            self.want_decode(&instance, origin, None, None);
+                        }
                         let ty = self.instantiate_method(&scheme, field, span);
                         self.type_method_site(key.0, &entry, field, span);
                         let ty = self.apply(&ty);
