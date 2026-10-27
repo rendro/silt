@@ -101,6 +101,16 @@ decoder imported by name (`import toml.{ parse }`) and to one called through
 a module alias, and a type is refused whatever a document would hold (an
 `Option` field whose key is left out, an empty list or map too).
 
+The decoders ask [`json.Decode`](json.md#jsondecode) of their type argument, as `json.parse`
+does. A function with a `type a` parameter (any annotation names the variable) that hands it to
+a decoder writes `where a: json.Decode`; only a function with no annotation at all
+(`fn load(text, t) { toml.parse(text, t) }`) is inferred to need it. Without the `where`
+clause the definition is an error:
+
+```text
+type variable `a` is not known to implement trait 'json.Decode', which 'toml.parse' needs
+```
+
 A record or enum type with a written [`json.Decode`](json.md#jsondecode)
 impl is decoded by the impl, as `json.parse` decodes it: one data layer,
 one override. See [Types with a `json.Decode` impl](#types-with-a-jsondecode-impl).
@@ -320,13 +330,13 @@ Note: the top-level value must be a record, a map or a variant with fields;
 TOML cannot represent a bare scalar or array at top level (nor a variant
 without fields, which is a string).
 
-A value TOML has no form for, wherever in the value it is, is an
-`Err(Other(message))` whose message names its kind: `Bytes`, a `Set`, a function
-(the constructor of a variant, such as `Some`, is one), a channel, a task
-handle, a TCP listener or stream.
+`toml.pretty` and `toml.stringify` ask [`json.Encode`](json.md#jsonencode) of the value, as
+`json.stringify` does: `Bytes`, a set, a function, a channel and a handle have none, so a value
+that holds one, wherever in it, is a compile error. A function that hands a value of a type
+variable to them says so with `where a: json.Encode`; without it the definition is an error:
 
 ```text
-toml.pretty: unsupported value kind Fn
+type variable `a` is not known to implement trait 'json.Encode', which 'toml.pretty' needs
 ```
 
 ```silt
