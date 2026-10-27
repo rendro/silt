@@ -1,0 +1,48 @@
+-- A function of main that only calls a function of the opaque type's
+-- own module may do what that call does (read a row, encode, decode), as
+-- a closure bound with `let` may.
+import list
+import mail
+
+fn name(r) {
+  mail.name_any(r)
+}
+
+fn show(x) {
+  mail.show(x)
+}
+
+fn load(s) {
+  mail.load(s, mail.User)
+}
+
+fn as_toml(x) {
+  mail.as_toml(x)
+}
+
+fn twice(r) {
+  name(r)
+}
+
+let top = mail.name_any
+
+fn main() {
+  let u = mail.user("ann")
+  println(name(u))
+  println(show(u))
+  match load("\{\"name\": \"bo\", \"age\": 7}") {
+    Ok(v) -> println(mail.age(v))
+    Err(e) -> println(e)
+  }
+  match as_toml(u) {
+    Ok(text) -> print(text)
+    Err(e) -> println(e)
+  }
+  println(twice(u))
+  println(top(u))
+  let g = name
+  println(g(u))
+  println([u] |> list.map(name))
+  let closure = { r -> mail.name_any(r) }
+  println(closure(u))
+}

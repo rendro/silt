@@ -432,10 +432,11 @@ pub struct TypeChecker {
     /// The module each predicate of the scheme generalised last owes
     /// for, by its index, if another module's definition owes it.
     pub(super) generalized_owners: Vec<Option<crate::session::ModuleId>>,
-    /// The schemes of a body's `let`s that hold what uses of another
-    /// module's definitions owe (`let g = mail.name_any`), by their first
-    /// variable: the module of each predicate, by its index. A use of
-    /// the `let` is that module's, as a use of the definition is.
+    /// The schemes of the module's `let`s and functions that hold what
+    /// uses of another module's definitions owe (`let g = mail.name_any`,
+    /// `fn wrap(r) { mail.name_any(r) }`), by their first variable: the
+    /// module of each predicate, by its index. A use of the `let` or the
+    /// function is that module's, as a use of the definition is.
     pub(super) let_owners: HashMap<TyVar, Vec<Option<crate::session::ModuleId>>>,
     /// Its name, for diagnostics.
     pub(super) module_name: Symbol,

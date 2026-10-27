@@ -1,0 +1,5 @@
+import mail
+
+pub fn name(r) {
+  mail.name_any(r)
+}

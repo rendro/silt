@@ -1,0 +1,37 @@
+-- cmd: check
+-- exit: 1
+-- A function of main that reads, spreads or encodes the value itself,
+-- next to a call of the type's own module, is refused where it is
+-- called; so is a function of a third module that calls the type's own
+-- module, directly or from a function of main.
+import mail
+import toml
+import util
+
+fn age(r) {
+  let _ = mail.name_any(r)
+  r.age
+}
+
+fn copy(r) {
+  let _ = mail.name_any(r)
+  { ...r }
+}
+
+fn encode(x) {
+  let _ = mail.as_toml(x)
+  toml.stringify(x)
+}
+
+fn through(r) {
+  util.name(r)
+}
+
+fn main() {
+  let u = mail.user("ann")
+  println(age(u))
+  println(copy(u))
+  println(encode(u))
+  println(util.name(u))
+  println(through(u))
+}
