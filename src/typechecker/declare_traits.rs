@@ -1462,6 +1462,21 @@ impl TypeChecker {
             );
             return;
         }
+        // (The same of a trait that has `json.Decode` among its
+        // supertraits: its impl would be a way to decode the type.)
+        if self.tables.is_generic(target_type) && self.implies_decode(trait_key) {
+            self.error(
+                Code::InvalidTraitImpl,
+                format!(
+                    "trait `{}` cannot be implemented for the generic type `{}`: it has \
+                     `json.Decode` as a supertrait, and a decoder builds a value of one type",
+                    self.impl_trait_name(ti),
+                    target_type.name
+                ),
+                ti.span,
+            );
+            return;
+        }
 
         self.tables.add_impl(impl_key);
         // Record the impl block's real span for validate_trait_impls

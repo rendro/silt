@@ -1,0 +1,51 @@
+-- cmd: check
+-- exit: 1
+-- A trait that has `json.Decode` among its supertraits cannot be
+-- implemented for a generic type, as `json.Decode` itself cannot: its
+-- impl would decode the type, through a bound, a method called on the
+-- type or on a value. A type given to a bound of such a trait is judged
+-- as one given to a bound of `json.Decode`: a record with a field of a
+-- generic record type is refused where it is given. A type the decoder
+-- decodes is not.
+import json
+
+trait Dec: json.Decode {
+  fn read(s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+type Box(a) {
+  v: a,
+}
+
+type Pick(a) {
+  One(a),
+  Other,
+}
+
+type W {
+  b: Box(Int),
+}
+
+type Pt {
+  x: Int,
+}
+
+trait Dec for Box(a) where a: json.Decode {}
+
+trait Dec for Pick(a) where a: json.Decode {}
+
+trait Dec for W {}
+
+trait Dec for Pt {}
+
+fn pass(s: String, type a) -> Result(a, json.JsonError) where a: Dec {
+  json.parse(s, a)
+}
+
+fn main() {
+  println(pass("\{\"b\": \{\"v\": 1}}", W))
+  println(pass("\{\"x\": 1}", Pt))
+  println(Pt.read("\{\"x\": 2}"))
+  println(Dec.again(Pt { x: 0 }, "\{\"x\": 3}"))
+}

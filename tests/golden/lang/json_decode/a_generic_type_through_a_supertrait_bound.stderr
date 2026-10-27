@@ -1,0 +1,19 @@
+error[type]: trait `Dec` cannot be implemented for the generic type `Box`: it has `json.Decode` as a supertrait, and a decoder builds a value of one type
+ --> a_generic_type_through_a_supertrait_bound.silt:34:1
+    |
+ 34 | trait Dec for Box(a) where a: json.Decode {}
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ trait `Dec` cannot be implemented for the generic type `Box`: it has `json.Decode` as a supertrait, and a decoder builds a value of one type
+
+error[type]: trait `Dec` cannot be implemented for the generic type `Pick`: it has `json.Decode` as a supertrait, and a decoder builds a value of one type
+ --> a_generic_type_through_a_supertrait_bound.silt:36:1
+    |
+ 36 | trait Dec for Pick(a) where a: json.Decode {}
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ trait `Dec` cannot be implemented for the generic type `Pick`: it has `json.Decode` as a supertrait, and a decoder builds a value of one type
+
+error[type]: `json.parse` cannot decode `W`: field `b` has type `Box(Int)`, which has no decoder
+ --> a_generic_type_through_a_supertrait_bound.silt:47:41
+    |
+ 47 |   println(pass("\{\"b\": \{\"v\": 1}}", W))
+    |                                         ^ `json.parse` cannot decode `W`: field `b` has type `Box(Int)`, which has no decoder
+  = note: `pass` passes it to `json.parse`
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
