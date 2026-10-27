@@ -826,6 +826,12 @@ pub struct TraitImpl {
     /// nothing for a trait of no parameters), which name its dictionary;
     /// written by the typechecker.
     pub shown_args: String,
+    /// Its type in full where it is an instance of a generic type,
+    /// `Box(Int)` of `trait X for Box(Int)` (none for a type without
+    /// parameters, or one over type variables, `Box(a)`): what `Self`
+    /// is given as in a default body of its trait; written by the
+    /// typechecker.
+    pub instance: Option<Type>,
 }
 
 #[derive(Debug, Clone)]

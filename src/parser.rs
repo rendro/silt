@@ -2224,6 +2224,7 @@ impl<'src> Parser<'src> {
                 evidence: Default::default(),
                 args_key: crate::defs::ImplArgs::none(),
                 shown_args: String::new(),
+                instance: None,
                 span: self.close(span),
             }))
         }

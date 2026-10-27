@@ -1,0 +1,9 @@
+pub opaque type Email { addr: String }
+
+pub type Box(a) {
+  v: a,
+}
+
+pub fn make(text: String) -> Email {
+  Email { addr: text }
+}

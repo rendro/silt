@@ -1,0 +1,6 @@
+error[type]: `postgres.query` cannot decode `Gen(Int)`: it is an enum type, and enums have no decoder
+ --> typed_rows__a_generic_enum_instance_is_no_row.silt:17:46
+    |
+ 17 |   let _ = postgres.query(db, "SELECT 1", (), Gen(Int))
+    |                                              ^^^^^^^^ `postgres.query` cannot decode `Gen(Int)`: it is an enum type, and enums have no decoder
+  = help: declare a record type with a field for each column

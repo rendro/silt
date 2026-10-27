@@ -4,7 +4,7 @@ error[type]: `json.parse` cannot decode `Bag`: field `items` has type `Set(Int)`
  20 |   match from_json("\{\"name\": \"b\", \"items\": \"oops\"\}", Bag) {
     |                                                               ^^^ `json.parse` cannot decode `Bag`: field `items` has type `Set(Int)`, which has no decoder
   = note: `from_json` passes it to `json.parse`
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: `toml.parse` cannot decode `Bag`: field `items` has type `Set(Int)`, which has no decoder
  --> wave1_compiler__c4_type_parameter.silt:24:55
@@ -12,4 +12,4 @@ error[type]: `toml.parse` cannot decode `Bag`: field `items` has type `Set(Int)`
  24 |   match from_toml("name = \"b\"\nitems = \"oops\"\n", Bag) {
     |                                                       ^^^ `toml.parse` cannot decode `Bag`: field `items` has type `Set(Int)`, which has no decoder
   = note: `from_toml` passes it to `toml.parse`
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these

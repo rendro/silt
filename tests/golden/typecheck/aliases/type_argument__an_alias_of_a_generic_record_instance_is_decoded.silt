@@ -1,8 +1,6 @@
--- cmd: check
--- exit: 1
 -- An alias that gives a generic record its arguments names one instance
--- of it; the decoders read a record's fields as its declaration writes
--- them, which a generic record's do not say.
+-- of it, which a decoder decodes as it does `Box(Int)`: each field as
+-- the declaration writes it, with `Int` for `a`.
 import json
 
 type Box(a) {
@@ -16,4 +14,5 @@ fn main() {
     Ok(b) -> println(b.v)
     Err(e) -> println(e)
   }
+  println(json.parse("""{"v": "3"}""", IntBox))
 }

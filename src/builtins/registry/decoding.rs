@@ -95,7 +95,8 @@ impl Family {
 
     /// The leaves the family decodes, in the order of [`Leaf::ALL`].
     /// Every family decodes `List(T)`, `Option(T)`, `Map(String, T)`,
-    /// tuples and non-generic record types of what it decodes.
+    /// tuples and record types of what it decodes (a generic one at its
+    /// type arguments).
     pub fn leaves(self) -> &'static [Leaf] {
         use Leaf::*;
         match self {
@@ -113,8 +114,8 @@ impl Family {
         self.leaves().contains(&leaf)
     }
 
-    /// Whether the family decodes a non-generic enum type of the
-    /// program, from what `json.stringify` writes of a variant (the
+    /// Whether the family decodes an enum type of the program (a generic
+    /// one at its type arguments), from what `json.stringify` writes of a variant (the
     /// string of the name of a variant without fields, the table of one
     /// with fields): as the type argument, as an element and as a field,
     /// at any depth. A row has no form for one.
@@ -182,7 +183,8 @@ impl Family {
         };
         format!(
             "decodable field types are {}, List(T), Option(T), Map(String, T), tuples, \
-             non-generic {named}, types with a `json.Decode` impl, and aliases of these",
+             {named} (a generic one with its type arguments), types with a `json.Decode` \
+             impl, and aliases of these",
             leaves.join(", ")
         )
     }
@@ -523,7 +525,7 @@ mod tests {
                     decode::target(&decoder, Type::Named(r)).expect("a record type is taken");
                 let refused = |doc: &serde_json::Value| {
                     let refusal = match family {
-                        Family::Postgres => decode::record_refusal(rt, family, r),
+                        Family::Postgres => decode::record_refusal(rt, family, r, &[]),
                         _ => decode::refusal(rt, family, &target),
                     };
                     if refusal.is_some() {

@@ -526,10 +526,15 @@ impl Compiler<'_> {
                 self.units.defs.get(tr.0).name,
                 self.type_info(ty).name
             ),
-            descriptor: Some(self.type_descriptor(crate::types::TypeRef {
-                id: ty,
-                name: self.units.defs.get(ty.0).name,
-            })),
+            // (An impl for an instance, `Box(Int)`, gives it in full.)
+            descriptor: Some(
+                (ti.instance.as_ref().and_then(|ty| self.type_constant(ty))).unwrap_or_else(|| {
+                    self.type_descriptor(crate::types::TypeRef {
+                        id: ty,
+                        name: self.units.defs.get(ty.0).name,
+                    })
+                }),
+            ),
             methods,
             supers: supers.into(),
             wheres: wheres.into(),

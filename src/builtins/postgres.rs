@@ -2863,7 +2863,7 @@ builtins! {
 
     fn query(vm, conn: &Value, sql: &str, params: &Value, ty: Type) -> Result<Step, VmError> {
         let impls = vm.decoding_table();
-        let row = RowType::of(&QUERY, ty, &impls)?;
+        let row = RowType::of(&vm.runtime, &QUERY, ty, &impls)?;
         let (conn, sql) = (conn.clone(), sql.to_string());
         with_params(vm, QUERY.name, params, move |vm, (params, unsendable)| {
             let target = resolve_executor(&conn)?;
@@ -2948,7 +2948,7 @@ builtins! {
     // between rows).
     fn stream(vm, conn: &Value, sql: &str, params: &Value, ty: Type) -> Result<Step, VmError> {
         let impls = vm.decoding_table();
-        let row = RowType::of(&STREAM, ty, &impls)?;
+        let row = RowType::of(&vm.runtime, &STREAM, ty, &impls)?;
         let (conn, sql) = (conn.clone(), sql.to_string());
         with_params(vm, STREAM.name, params, move |vm, params| {
             let decoding = (row, vm.runtime.clone(), impls);
@@ -2959,7 +2959,7 @@ builtins! {
     // (A cursor lives inside a transaction: `tx` is a `PgTx`.)
     fn cursor(vm, tx: TxHandle, sql: &str, params: &Value, batch_size: i64, ty: Type) -> Result<Step, VmError> {
         let impls = vm.decoding_table();
-        let row = RowType::of(&CURSOR, ty, &impls)?;
+        let row = RowType::of(&vm.runtime, &CURSOR, ty, &impls)?;
         let sql = sql.to_string();
         with_params(vm, CURSOR.name, params, move |vm, (params, unsendable)| {
             let cell = tx.open()?;

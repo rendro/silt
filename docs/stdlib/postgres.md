@@ -132,14 +132,15 @@ type may have these types:
 - `json.Value`, any column as the table's last column says
 - `List(T)`, `Option(T)`, `Map(String, T)`
 - tuples, such as `(Int, String)`
-- non-generic record types, from a `json` or `jsonb` column by `json.parse`'s
-  rules (an enum in them too)
+- record types, a generic one with its type arguments (`Box(Int)`), from a
+  `json` or `jsonb` column by `json.parse`'s rules (an enum in them too)
 - a record or enum type with a written `json.Decode` impl, from a `json` or
   `jsonb` column by the impl
 - type aliases of any of these
 
 where `T` is again one of these types. An enum without such an impl, a
-`Set`, a generic record, a function or a type parameter has no decoder.
+`Set`, a generic record without its type arguments, a function or a type
+parameter has no decoder.
 
 Each field of the record is read from the column of its exact name;
 Postgres folds a name it is not given in quotes to lower case, so a

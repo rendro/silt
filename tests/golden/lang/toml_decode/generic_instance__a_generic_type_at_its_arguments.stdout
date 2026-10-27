@@ -1,0 +1,4 @@
+Ok(C {b: Box {v: 1}, t: Box {v: [a]}, o: None})
+Err(toml type mismatch: expected Int, got string at b.v)
+Ok(Box {v: 3})
+Ok([Box {v: 1}, Box {v: 2}])

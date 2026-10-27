@@ -1,6 +1,0 @@
-error[type]: `json.parse` cannot decode `IntBox`: it names `Box(Int)`, an instance of the generic record type `Box`, and a decoder reads the fields of a record type without parameters
- --> type_argument__an_alias_of_a_generic_record_instance.silt:15:36
-    |
- 15 |   match json.parse("""{"v": 3}""", IntBox) {
-    |                                    ^^^^^^ `json.parse` cannot decode `IntBox`: it names `Box(Int)`, an instance of the generic record type `Box`, and a decoder reads the fields of a record type without parameters
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these

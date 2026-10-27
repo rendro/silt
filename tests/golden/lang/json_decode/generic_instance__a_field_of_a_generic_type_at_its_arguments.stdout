@@ -1,0 +1,8 @@
+Ok(W {b: Box {v: 3}})
+Err(json type mismatch: expected Int, got string at b.v)
+Err(json missing field: b.v)
+Ok(N {xs: [], bb: Box {v: Box {v: 2}}, t: Plain, o: None})
+Err(json type mismatch: expected Int, got boolean at bb.v.v)
+Err(json type mismatch: expected String, got number at xs[0].v)
+{"xs":[{"v":"a"},{"v":null}],"bb":{"v":{"v":1}},"t":{"fields":["q"],"variant":"Named"},"o":{"v":5}}
+true

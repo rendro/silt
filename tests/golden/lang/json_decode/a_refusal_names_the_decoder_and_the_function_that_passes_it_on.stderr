@@ -3,7 +3,7 @@ error[type]: `json.parse` cannot decode `Holder`: field `s` has type `Set(Int)`,
     |
  15 |   let _ = json.parse("\{}", Holder)
     |                             ^^^^^^ `json.parse` cannot decode `Holder`: field `s` has type `Set(Int)`, which has no decoder
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: `json.parse` cannot decode `Holder`: field `s` has type `Set(Int)`, which has no decoder
  --> a_refusal_names_the_decoder_and_the_function_that_passes_it_on.silt:16:23
@@ -11,7 +11,7 @@ error[type]: `json.parse` cannot decode `Holder`: field `s` has type `Set(Int)`,
  16 |   let _ = load("\{}", Holder)
     |                       ^^^^^^ `json.parse` cannot decode `Holder`: field `s` has type `Set(Int)`, which has no decoder
   = note: `load` passes it to `json.parse`
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: `json.parse` cannot decode `Holder`: field `s` has type `Set(Int)`, which has no decoder
  --> a_refusal_names_the_decoder_and_the_function_that_passes_it_on.silt:17:24
@@ -19,7 +19,7 @@ error[type]: `json.parse` cannot decode `Holder`: field `s` has type `Set(Int)`,
  17 |   let _ = outer("\{}", Holder)
     |                        ^^^^^^ `json.parse` cannot decode `Holder`: field `s` has type `Set(Int)`, which has no decoder
   = note: `outer` passes it to `json.parse`
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: `json.parse` cannot decode `Holder`: field `s` has type `Set(Int)`, which has no decoder
  --> a_refusal_names_the_decoder_and_the_function_that_passes_it_on.silt:18:32
@@ -27,14 +27,14 @@ error[type]: `json.parse` cannot decode `Holder`: field `s` has type `Set(Int)`,
  18 |   let _ = load_inferred("\{}", Holder)
     |                                ^^^^^^ `json.parse` cannot decode `Holder`: field `s` has type `Set(Int)`, which has no decoder
   = note: `load_inferred` passes it to `json.parse`
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: `declared_only` cannot decode `Holder`: field `s` has type `Set(Int)`, which has no decoder
  --> a_refusal_names_the_decoder_and_the_function_that_passes_it_on.silt:19:25
     |
  19 |   let _ = declared_only(Holder)
     |                         ^^^^^^ `declared_only` cannot decode `Holder`: field `s` has type `Set(Int)`, which has no decoder
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 warning[type]: unused import 'set'
  --> a_refusal_names_the_decoder_and_the_function_that_passes_it_on.silt:10:1

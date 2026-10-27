@@ -1,0 +1,31 @@
+-- A generic type written in full is a type argument (`Box(Int)`, in a
+-- list, in an option), and so is one a `type a` parameter gives its
+-- argument, with `where a: json.Decode`: the type is built where the
+-- function runs. `Box(Int)` encoded decodes back.
+import json
+
+type Box(a) {
+  v: a,
+}
+
+type Tag(a) {
+  Named(a),
+  Plain,
+}
+
+fn get(text: String, type a) -> Result(Box(a), json.JsonError) where a: json.Decode {
+  json.parse(text, Box(a))
+}
+
+fn main() {
+  println(json.parse("""{"v": 5}""", Box(Int)))
+  println(json.parse("""[{"v": 1}, {"v": 2}]""", List(Box(Int))))
+  println(json.parse("null", Option(Box(Int))))
+  println(json.parse("""{"variant": "Named", "fields": [3]}""", Tag(Int)))
+  println(json.parse_list("""[{"v": "a"}]""", Box(String)))
+  println(json.decode(json.Object(#{"v": json.Int(1)}), Box(Int)))
+  println(get("""{"v": 4}""", Int))
+  println(get("""{"v": [1, 2]}""", List(Int)))
+  println(get("""{"v": 1.5}""", Int))
+  println(json.parse(json.stringify(Box { v: 7 }), Box(Int)))
+}

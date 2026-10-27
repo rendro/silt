@@ -334,7 +334,10 @@ impl TypeChecker {
             // the impl's type, through a bound, a type call or a value
             // call: the type is what the json decoder decodes, as the
             // type's own module sees it.
-            if let Some(refusal) = self.decode_impl_refusal(*trait_name, *type_name, diag_span) {
+            let self_type = self.tables.impl_self_types.get(impl_key).cloned();
+            if let Some(refusal) =
+                self.decode_impl_refusal(*trait_name, *type_name, self_type, diag_span)
+            {
                 self.errors.push(refusal);
                 continue;
             }
@@ -1520,10 +1523,29 @@ impl TypeChecker {
             );
             return;
         }
+
+        // Build the impl-level parameter map. For a parameterized target
+        // like `trait X for Box(a)`, each lowercase binder in
+        // `target_param_names` becomes a fresh type variable that is
+        // shared across every method in the impl — so `fn get(self) -> a`
+        // and `fn put(self, x: a)` in the same impl refer to the SAME
+        // type variable, mirroring the fn-signature convention.
+        let mut impl_param_map: HashMap<Symbol, Type> = HashMap::new();
+        for &param_name in &ti.target_param_names {
+            impl_param_map.insert(param_name, self.fresh_var());
+        }
+        let self_type = self.impl_self_type(ti, written, target_type, &mut impl_param_map);
+
         // (The same of a trait that has `json.Decode` among its
-        // supertraits, and of a builtin container type: its impl would be
-        // a way to decode the type.)
-        if self.generic_for_decode(target_type) && self.implies_decode(trait_key) {
+        // supertraits, for a generic type, of the program or a builtin
+        // container, over type variables (`Box(a)`, `List(a)`): its impl
+        // would be a way to decode the type, of whatever `a` is. An
+        // instance, `Box(Int)`, is the decoder's to judge
+        // (`decode_impl_refusal`).)
+        if self.generic_for_decode(target_type)
+            && self.implies_decode(trait_key)
+            && !free_vars_in(&self.apply(&self_type)).is_empty()
+        {
             self.error(
                 Code::InvalidTraitImpl,
                 format!(
@@ -1541,18 +1563,6 @@ impl TypeChecker {
         // Record the impl block's real span for validate_trait_impls
         // to use when reporting missing-method diagnostics.
         self.tables.trait_impl_spans.insert(impl_key, ti.span);
-
-        // Build the impl-level parameter map. For a parameterized target
-        // like `trait X for Box(a)`, each lowercase binder in
-        // `target_param_names` becomes a fresh type variable that is
-        // shared across every method in the impl — so `fn get(self) -> a`
-        // and `fn put(self, x: a)` in the same impl refer to the SAME
-        // type variable, mirroring the fn-signature convention.
-        let mut impl_param_map: HashMap<Symbol, Type> = HashMap::new();
-        for &param_name in &ti.target_param_names {
-            impl_param_map.insert(param_name, self.fresh_var());
-        }
-        let self_type = self.impl_self_type(ti, written, target_type, &mut impl_param_map);
 
         // Record the impl's full self type under the canonical head key so
         // `verify_trait_obligation` can compare an obligated type's

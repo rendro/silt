@@ -51,8 +51,8 @@ impl TypeChecker {
 
     /// Whether `head` is a generic type, of the program or a builtin
     /// container (`List`, `Map`): an impl of a trait that has
-    /// `json.Decode` among its supertraits is refused for it, as a
-    /// decoder builds a value of one type.
+    /// `json.Decode` among its supertraits is refused for it over type
+    /// variables (`Box(a)`), as a decoder builds a value of one type.
     pub(super) fn generic_for_decode(&self, head: TypeRef) -> bool {
         self.tables.is_generic(head)
             || builtin_type_name(head)
@@ -60,26 +60,34 @@ impl TypeChecker {
     }
 
     /// The refusal of the impl at `span` of `tr`, a trait that has
-    /// `json.Decode` among its supertraits, for `head`, if the json
-    /// decoder has no value of the type (`json.parse(s, T)`'s
-    /// judgement): its impl would decode it. Whether an opaque type may
-    /// be decoded where it is is the use's to say
-    /// (`opaque_decode_refusal`).
+    /// `json.Decode` among its supertraits, for `head` (the type
+    /// `self_type`, `Box(Int)`), if the json decoder has no value of the
+    /// type (`json.parse(s, T)`'s judgement): its impl would decode it.
+    /// Whether an opaque type may be decoded where it is is the use's to
+    /// say (`opaque_decode_refusal`).
     pub(super) fn decode_impl_refusal(
         &mut self,
         tr: TraitKey,
         head: TypeRef,
+        self_type: Option<Type>,
         span: Span,
     ) -> Option<Diagnostic> {
-        // (A generic type is refused where its impl is declared.)
-        if !self.implies_decode(tr) || self.generic_for_decode(head) {
+        if !self.implies_decode(tr) {
             return None;
         }
-        let ty = (self.type_instance(head)).unwrap_or_else(|| Type::Generic(head, Vec::new()));
+        let ty = (self_type.map(|ty| self.apply(&ty)))
+            .or_else(|| self.type_instance(head))
+            .unwrap_or_else(|| Type::Generic(head, Vec::new()));
+        let ty = crate::types::canonical::canonicalize(self.tables.resolver(), &ty);
+        // (A generic type over type variables is refused where its impl
+        // is declared.)
+        if self.generic_for_decode(head) && !free_vars_in(&ty).is_empty() {
+            return None;
+        }
         // (As the type's own module sees it: where an opaque type, or
         // one with an opaque type in it, is decoded is each use's to say.)
         let module = self.def(head.id.0).map(|def| def.module);
-        if self.opaque_decode_refusal(head, span, module).is_some() {
+        if self.opaque_decode_refusal(&ty, span, module).is_some() {
             return None;
         }
         let refusal = self.decode_refusal("json.parse", Decoding::JSON, None, &ty, module, span)?;
@@ -93,7 +101,7 @@ impl TypeChecker {
             }
             _ => (refusal.message.split_once(": ")).map_or("", |(_, reason)| reason),
         };
-        let shown = self.show_type(&Type::Generic(head, Vec::new()));
+        let shown = self.show_type(&ty);
         let message = format!(
             "trait `{}` cannot be implemented for `{shown}`: it has `json.Decode` as a \
              supertrait, and `{shown}` cannot be decoded: {reason}",

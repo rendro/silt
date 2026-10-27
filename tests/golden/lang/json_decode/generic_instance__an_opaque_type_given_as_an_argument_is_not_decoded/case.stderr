@@ -1,0 +1,28 @@
+error[type]: type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+ --> main.silt:18:50
+    |
+ 18 |   let _ = json.parse("""{"v": {"addr": "x"}}""", mail.Box(mail.Email))
+    |                                                  ^^^^^^^^^^^^^^^^^^^^ type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+  = help: decode it inside module 'mail', or write `trait json.Decode for Email` there
+
+error[type]: type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+ --> main.silt:19:57
+    |
+ 19 |   let _ = json.parse("""{"b": {"v": {"addr": "x"}}}""", W)
+    |                                                         ^ type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+  = help: decode it inside module 'mail', or write `trait json.Decode for Email` there
+
+error[type]: type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+ --> main.silt:20:42
+    |
+ 20 |   let _ = go("""{"v": {"addr": "x"}}""", mail.Box(mail.Email))
+    |                                          ^^^^^^^^^^^^^^^^^^^^ type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+  = note: `go` passes it to `json.parse`
+  = help: decode it inside module 'mail', or write `trait json.Decode for Email` there
+
+error[type]: type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+ --> main.silt:21:52
+    |
+ 21 |   let _ = json.parse("""[{"v": {"addr": "x"}}]""", List(mail.Box(mail.Email)))
+    |                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^ type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+  = help: decode it inside module 'mail', or write `trait json.Decode for Email` there

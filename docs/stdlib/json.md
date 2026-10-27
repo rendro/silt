@@ -72,12 +72,12 @@ record and enum type nested in them), may have these types:
 - `json.Value`, which keeps that part of the document as it is
 - `List(T)`, `Option(T)`, `Map(String, T)`
 - tuples, such as `(Int, String)`
-- non-generic record types
-- non-generic enum types (see [Enums](#enums))
+- record types, a generic one with its type arguments (`Box(Int)`)
+- enum types, a generic one with its type arguments (see [Enums](#enums))
 - type aliases of any of these
 
 where `T` is again one of these types. Anything else (a `Set`, a generic
-record or enum, a builtin enum such as `time.Weekday`, a function, a `Map`
+record or enum without its type arguments, a builtin enum such as `time.Weekday`, a function, a `Map`
 whose key is not `String`, a type parameter) has no decoder.
 
 A number of the document goes into an `Int` when it is a whole number in
@@ -93,7 +93,8 @@ json.Decode { json.parse(text, a) }`: each call of `load` is checked, and
 the error notes that `load` passes it to `json.parse`). A record with a
 field no decoder exists for is a compile error that names the field and its
 type, and so is an enum with a variant whose field has none (the error names
-the variant); so is a generic record or enum, or a type the function does
+the variant); so is a generic record or enum without its type arguments
+(`json.parse(text, Box)`), or a type the function does
 not take (such as `json.parse(text, Set(Int))`, or `json.parse(text, List)`,
 whose argument is left open), and so is a list, an option, a map or a tuple
 with a part that has no decoder (`json.parse(text, List(Set(Int)))`). The
@@ -334,9 +335,12 @@ trait Decode {
 What `json.parse` and `json.decode` need of the type they decode into.
 A type has it by its structure: the types of [Decodable
 types](#decodable-types) have it, a record or enum type of the program
-when the types of its fields do. A date and a time are decoded as the
-type of a field or of a part of a list, an option, a map or a tuple, not
-as the type a decoder is given. A
+when the types of its fields do, and a generic one at its type arguments
+when the types of its fields do with the arguments in their places
+(`Box(Int)` of `type Box(a) { v: a }`; `json.parse(text, Box(a))` in a
+function with `where a: json.Decode`). A date and a time are decoded as
+the type of a field or of a part of a list, an option, a map or a tuple,
+not as the type a decoder is given. A
 function with a `type a` parameter (any annotation names the variable)
 that hands it to a decoder writes `where a: json.Decode`; only a function
 with no annotation at all (`fn load(text, t) { json.parse(text, t) }`) is

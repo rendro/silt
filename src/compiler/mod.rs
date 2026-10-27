@@ -45,7 +45,9 @@ mod patterns;
 // variants, carry their types as far as `json.parse(text, T)`,
 // `toml.parse(text, T)` and `postgres.query(db, sql, params, T)` need
 // them to build a value of `T`, as the checker's tables describe them
-// (`Tables::decoded_field_type`). Type aliases are
+// (`Tables::decoded_field_type`); a generic type's are stated over its
+// type parameters, which a field of the type at its arguments
+// (`b: Box(Int)`) gives. Type aliases are
 // replaced by their target. A type no decoder exists for is
 // `FieldType::Unsupported`, which makes the decoders return `Err`; it is
 // never mapped to some other type. The checker refuses a decoder such
@@ -2500,8 +2502,12 @@ impl<'a> Compiler<'a> {
         let ty = TypeRef { id, name: def.name };
         let variants = defs.variants(id.0);
         let mut nested = Vec::new();
+        // (A generic type's fields are stated over its parameters.)
+        let params: Vec<Type> = (self.units.tables.type_params(ty).into_iter())
+            .map(Type::Var)
+            .collect();
         let shape = if !variants.is_empty() {
-            let variant_fields = self.units.tables.decoded_variant_fields(ty);
+            let variant_fields = self.units.tables.decoded_variant_fields(ty, &[]);
             Shape::Enum(
                 variants
                     .iter()
@@ -2519,7 +2525,7 @@ impl<'a> Compiler<'a> {
                             .iter()
                             .map(|ty| {
                                 let field_type = (self.units.tables)
-                                    .decoded_field_type(ty, &mut Vec::new())
+                                    .decoded_field_type(ty, &params, &mut Vec::new())
                                     .unwrap_or_else(|_| FieldType::Unsupported(shown(ty)));
                                 field_type.records(&mut nested);
                                 field_type
@@ -2534,13 +2540,13 @@ impl<'a> Compiler<'a> {
                     .collect(),
             )
         } else {
-            let fields = self.units.tables.decoded_record_fields(ty);
+            let fields = self.units.tables.decoded_record_fields(ty, &[]);
             Shape::Record(
                 fields
                     .iter()
                     .map(|(name, ty)| {
                         let field_type = (self.units.tables)
-                            .decoded_field_type(ty, &mut Vec::new())
+                            .decoded_field_type(ty, &params, &mut Vec::new())
                             .unwrap_or_else(|_| FieldType::Unsupported(shown(ty)));
                         field_type.records(&mut nested);
                         (resolve(*name), field_type)
@@ -2733,7 +2739,7 @@ impl<'a> Compiler<'a> {
     }
 
     /// The value of the type `ty` if no type variable is in it.
-    fn type_constant(&self, ty: &Type) -> Option<Value> {
+    pub(super) fn type_constant(&self, ty: &Type) -> Option<Value> {
         let primitive = |name: &str| Some(self.type_descriptor(TypeRef::builtin(name)));
         match ty {
             Type::Int => primitive("Int"),

@@ -1,0 +1,31 @@
+-- An impl of a trait that has `json.Decode` as a supertrait, for an
+-- instance of a generic type (`Box(Int)`, `List(Int)`) or a record with
+-- a field of one, is judged by the decoder, as `json.parse(s, T)` judges
+-- the type: these decode, and `Self` in the trait's default body is the
+-- instance.
+import json
+
+trait Dec: json.Decode {
+  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+type Box(a) {
+  v: a,
+}
+
+type W {
+  b: Box(Int),
+}
+
+trait Dec for W {}
+
+trait Dec for Box(Int) {}
+
+trait Dec for List(Int) {}
+
+fn main() {
+  println(Dec.again(W { b: Box { v: 1 } }, """{"b": {"v": 9}}"""))
+  println(Dec.again(Box { v: 1 }, """{"v": 8}"""))
+  println(Dec.again(Box { v: 1 }, """{"v": "8"}"""))
+  println(Dec.again([1], "[1, 2]"))
+}

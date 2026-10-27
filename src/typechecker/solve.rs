@@ -1797,7 +1797,7 @@ impl TypeChecker {
         // impl's to say, whether it may be here the use's.)
         if self.implies_decode(trait_name)
             && let Some(refusal) = self.opaque_decode_refusal(
-                type_name,
+                &resolved,
                 origin.span,
                 ev.and_then(|ev| self.owed_for.get(&ev).copied()),
             )

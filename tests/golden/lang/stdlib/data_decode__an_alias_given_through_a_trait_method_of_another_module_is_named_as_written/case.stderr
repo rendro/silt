@@ -46,13 +46,13 @@ error[type]: `toml.parse` cannot decode `NL`: its type argument must be a record
   = note: `lib.via` passes it to `toml.parse`
   = help: use `toml.parse_list` for a list
 
-error[type]: `toml.parse` cannot decode `BL`: it names `lib.Box(List(Int))`, an instance of the generic record type `lib.Box`, and a decoder reads the fields of a record type without parameters
+error[type]: `toml.parse` cannot decode `BL`: field `v` has type `Set(Int)`, which has no decoder
  --> main.silt:34:27
     |
  34 |   lib.via(lib.T { n: 1 }, BL)
-    |                           ^^ `toml.parse` cannot decode `BL`: it names `lib.Box(List(Int))`, an instance of the generic record type `lib.Box`, and a decoder reads the fields of a record type without parameters
+    |                           ^^ `toml.parse` cannot decode `BL`: field `v` has type `Set(Int)`, which has no decoder
   = note: `lib.via` passes it to `toml.parse`
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: `toml.parse` cannot decode `RA`: field `b` has type `Bytes`, which has no decoder
  --> main.silt:35:27
@@ -60,4 +60,4 @@ error[type]: `toml.parse` cannot decode `RA`: field `b` has type `Bytes`, which 
  35 |   lib.via(lib.T { n: 1 }, RA)
     |                           ^^ `toml.parse` cannot decode `RA`: field `b` has type `Bytes`, which has no decoder
   = note: `lib.via` passes it to `toml.parse`
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these

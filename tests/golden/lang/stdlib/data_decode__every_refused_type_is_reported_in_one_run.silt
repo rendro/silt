@@ -9,7 +9,7 @@ import json
 import toml
 
 type Box(t) { v: t }
-type IntBox = Box(Int)
+type SetBox = Box(Set(Int))
 type Blob { data: Set(Int) }
 type Bin { b: Bytes }
 
@@ -17,10 +17,10 @@ fn main() {
   let n: Int = "not a number"
   let _ = json.parse("\{}", Blob)
   let _ = toml.parse("", json.Value)
-  let _ = json.parse("\{}", IntBox)
+  let _ = json.parse("\{}", SetBox)
   let t = Blob
   let _ = json.parse("\{}", t)
-  let b = IntBox
+  let b = SetBox
   let _ = json.parse("\{}", b)
   let _ = toml.parse_list("", Bin)
   println(n)

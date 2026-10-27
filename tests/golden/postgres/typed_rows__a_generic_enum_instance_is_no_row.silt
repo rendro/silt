@@ -1,0 +1,24 @@
+-- cmd: check
+-- requires-feature: postgres
+-- exit: 1
+-- A generic enum's instance given as the row type is refused as an enum
+-- is, named with its arguments; the help is the row's, as no impl can be
+-- written for a generic type. A generic record's instance is a row type,
+-- each field read as the record declares it with the arguments in their
+-- places, and toml decodes the enum's instance.
+import postgres
+import toml
+
+type Gen(a) { G(a) }
+
+type Row(a) { id: a, name: String }
+
+fn rows(db: postgres.PgPool) {
+  let _ = postgres.query(db, "SELECT 1", (), Gen(Int))
+  let _ = postgres.query(db, "SELECT 1 AS id, 'a' AS name", (), Row(Int))
+  let _ = toml.parse("a = 1", Gen(Int))
+}
+
+fn main() {
+  println(1)
+}

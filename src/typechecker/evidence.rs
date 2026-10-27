@@ -613,6 +613,19 @@ impl TypeChecker {
                             }
                             _ => String::new(),
                         };
+                        ti.instance = (self.tables.impl_self_types.get(&key))
+                            .map(|ty| {
+                                crate::types::canonical::canonicalize(
+                                    &self.tables.resolver,
+                                    &self.apply(ty),
+                                )
+                            })
+                            .filter(|ty| match ty {
+                                Type::Generic(_, args) => !args.is_empty(),
+                                Type::List(_) | Type::Map(..) | Type::Tuple(_) => true,
+                                _ => false,
+                            })
+                            .filter(|ty| free_vars_in(ty).is_empty());
                         ti.evidence = self.impl_evidence(key);
                         // A method of a program trait's impl takes the
                         // impl's dictionary, then those of the bounds the

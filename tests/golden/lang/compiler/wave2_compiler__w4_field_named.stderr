@@ -4,7 +4,7 @@ error[type]: `json.parse` cannot decode `Outer`: field `tags` of `Inner`, a reco
  20 |   match from_json("""{"name": "o", "inner": {"tags": [[1]]}}""", Outer) {
     |                                                                  ^^^^^ `json.parse` cannot decode `Outer`: field `tags` of `Inner`, a record type nested in it, has type `List(Set(Int))`, and `Set(Int)` has no decoder
   = note: `from_json` passes it to `json.parse`
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: `toml.parse` cannot decode `Outer`: field `tags` of `Inner`, a record type nested in it, has type `List(Set(Int))`, and `Set(Int)` has no decoder
  --> wave2_compiler__w4_field_named.silt:24:60
@@ -12,4 +12,4 @@ error[type]: `toml.parse` cannot decode `Outer`: field `tags` of `Inner`, a reco
  24 |   match from_toml("name = \"o\"\n[inner]\ntags = [[1]]\n", Outer) {
     |                                                            ^^^^^ `toml.parse` cannot decode `Outer`: field `tags` of `Inner`, a record type nested in it, has type `List(Set(Int))`, and `Set(Int)` has no decoder
   = note: `from_toml` passes it to `toml.parse`
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these

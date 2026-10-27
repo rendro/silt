@@ -1,0 +1,26 @@
+-- cmd: check
+-- exit: 1
+-- A generic type whose arguments are not known stays refused: `Box`
+-- alone, and `Box(a)` in a function without `where a: json.Decode`. One
+-- at an argument that has no decoder is refused with the field that
+-- holds it, at the top and in a field.
+import json
+
+type Box(a) {
+  v: a,
+}
+
+type H {
+  b: Box(Set(Int)),
+}
+
+fn get(text: String, type a) -> Result(Box(a), json.JsonError) {
+  json.parse(text, Box(a))
+}
+
+fn main() {
+  let _ = json.parse("""{"v": 1}""", Box)
+  let _ = json.parse("""{"v": 1}""", Box(Set(Int)))
+  let _ = json.parse("""{"b": {"v": 1}}""", H)
+  let _ = get("""{"v": 1}""", Int)
+}
