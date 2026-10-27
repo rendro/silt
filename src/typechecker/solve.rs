@@ -1611,12 +1611,10 @@ impl TypeChecker {
         }
     }
 
-    /// Report `refusal`, an opaque type's encoding at `span`, once.
-    pub(super) fn refuse_opaque_encode(&mut self, span: Span, refusal: Diagnostic) {
-        if self
-            .lacking
-            .insert((span, format!("json.Encode {}", refusal.message)))
-        {
+    /// Report `refusal`, an opaque type's encoding or decoding at
+    /// `span`, once.
+    pub(super) fn refuse_opaque(&mut self, span: Span, refusal: Diagnostic) {
+        if (self.lacking).insert((span, format!("opaque {}", refusal.message))) {
             self.errors.push(refusal);
         }
     }
@@ -1677,7 +1675,7 @@ impl TypeChecker {
         }
         // An annotation variable implements what its bounds say.
         if let Type::Rigid(r) = resolved {
-            if Self::is_decode(trait_name) || self.implies_decode(trait_name) {
+            if Self::is_decode(trait_name) {
                 self.note_bound_asker(r, asker);
             }
             self.ev_set(
@@ -1704,17 +1702,10 @@ impl TypeChecker {
             // Still unknown: the caller lets it wait (`want`).
             return;
         };
-        // A bound of a trait that has `json.Decode` among its supertraits
-        // asks what `json.Decode` does of a type without a written impl
-        // of it: the decoder's judgement (`want_decode`).
-        if asker.is_some() && self.implies_decode(trait_name) && !self.has_decode_impl(type_name) {
-            let owner = ev.and_then(|ev| self.owed_for.get(&ev).copied());
-            self.want_decode(&resolved, origin, asker, owner);
-        }
-        // (And one that has `json.Encode` among them encodes what a
-        // bound of `json.Encode` does: an opaque type of another module
-        // by its module's impl alone, unless a definition of that module
-        // asks it.)
+        // A bound of a trait that has `json.Encode` among its supertraits
+        // encodes what a bound of `json.Encode` does: an opaque type of
+        // another module by its module's impl alone, unless a definition
+        // of that module asks it.
         if self.implies_encode(trait_name)
             && let Some(refusal) = self.opaque_encode_refusal(
                 &resolved,
@@ -1722,7 +1713,20 @@ impl TypeChecker {
                 ev.and_then(|ev| self.owed_for.get(&ev).copied()),
             )
         {
-            self.refuse_opaque_encode(origin.span, refusal);
+            self.refuse_opaque(origin.span, refusal);
+            return;
+        }
+        // (And one that has `json.Decode` among them decodes it as a
+        // bound of `json.Decode` does: whether the type is decoded is its
+        // impl's to say, whether it may be here the use's.)
+        if self.implies_decode(trait_name)
+            && let Some(refusal) = self.opaque_decode_refusal(
+                type_name,
+                origin.span,
+                ev.and_then(|ev| self.owed_for.get(&ev).copied()),
+            )
+        {
+            self.refuse_opaque(origin.span, refusal);
             return;
         }
         // Equal, Compare and Hash, and Display where no impl is written,
@@ -1741,7 +1745,7 @@ impl TypeChecker {
             if trait_name.is_builtin("Encode")
                 && let Some(refusal) = self.opaque_encode_refusal(&resolved, origin.span, owner)
             {
-                self.refuse_opaque_encode(origin.span, refusal);
+                self.refuse_opaque(origin.span, refusal);
                 return;
             }
             let mut walk = Walk::default();

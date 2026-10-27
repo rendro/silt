@@ -1,0 +1,2 @@
+Ok(W {a: [1], m: #{"k": 2}, t: (3, x), v: Null, i: [4], d: #{"e": 2024-01-02}})
+Ok(Tree {n: 1, kids: [Tree {n: 2, kids: []}]})

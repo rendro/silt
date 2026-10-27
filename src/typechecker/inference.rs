@@ -1045,17 +1045,16 @@ impl TypeChecker {
                     (!entry.structural).then(|| (head, entry.clone()))
                 }),
             };
-            // (Of a trait that has `json.Encode` among its supertraits,
-            // the call encodes the value as a bound of the trait does: an
-            // opaque type of another module, for a definition of that
-            // module alone, as the trait's methods are.)
-            if entry.is_some()
-                && self.implies_encode(tr)
+            // (Of a trait that has `json.Encode` or `json.Decode` among
+            // its supertraits, the call encodes or decodes the value's type
+            // as a bound of the trait does: an opaque type of another
+            // module, for a definition of that module alone, as the
+            // trait's methods are.)
+            if let Some((head, _)) = &entry
                 && let Some((_, at)) = &receiver
-                && let Some(refusal) =
-                    self.opaque_encode_refusal(&recv, *at, self.def(tr.id.0).map(|def| def.module))
+                && let Some(refusal) = self.opaque_through_trait(tr, &recv, *head, *at)
             {
-                self.refuse_opaque_encode(*at, refusal);
+                self.refuse_opaque(*at, refusal);
                 return Type::Error;
             }
             if let Some((head, entry)) = entry {
@@ -2915,24 +2914,21 @@ impl TypeChecker {
                             return ty;
                         }
                         self.method_trait = self.entry_trait(&entry, field);
-                        let scheme = self.method_scheme(&entry);
-                        // (The type is given for `Self`: of a trait that has
-                        // `json.Decode` among its supertraits, it asks what a
-                        // type given to a bound of `json.Decode` does.)
+                        // (The type is given for `Self`, as to a bound of
+                        // the trait.)
                         if let Some(tr) = self.method_trait
-                            && self.implies_decode(tr)
-                            && !self.has_decode_impl(key.0)
-                        {
-                            let instance = (self.type_instance(ty))
-                                .unwrap_or_else(|| Type::Generic(key.0, Vec::new()));
-                            let callee = intern(&format!("{}.{field}", ty.name));
-                            let origin = Origin {
+                            && let Some(refusal) = self.opaque_through_trait(
+                                tr,
+                                &Type::Generic(key.0, Vec::new()),
+                                key.0,
                                 span,
-                                callee: Some(callee),
-                                op: None,
-                            };
-                            self.want_decode(&instance, origin, None, None);
+                            )
+                        {
+                            self.refuse_opaque(span, refusal);
+                            expr.ty = Some(Type::Error);
+                            return Type::Error;
                         }
+                        let scheme = self.method_scheme(&entry);
                         let ty = self.instantiate_method(&scheme, field, span);
                         self.type_method_site(key.0, &entry, field, span);
                         let ty = self.apply(&ty);

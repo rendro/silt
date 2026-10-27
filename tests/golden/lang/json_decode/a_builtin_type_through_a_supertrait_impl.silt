@@ -1,0 +1,24 @@
+-- cmd: check
+-- exit: 1
+-- An impl of a trait that has `json.Decode` among its supertraits is
+-- refused for a type the json decoder does not decode, as
+-- `json.parse(s, T)` judges it: a builtin enum, a date or a time. A
+-- call through the trait on a value of the type would decode it.
+import json
+import time
+
+trait Dec: json.Decode {
+  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+trait Dec for time.Weekday {}
+
+trait Dec for time.Date {}
+
+trait Dec for time.Time {}
+
+trait Dec for time.DateTime {}
+
+fn main() {
+  println(Dec.again(time.Monday, "\"Tuesday\""))
+}

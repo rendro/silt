@@ -108,7 +108,7 @@ impl TypeChecker {
         }
         // (The bound that passes it on refused the same encoding there:
         // this one, which names the encoder, takes its place.)
-        let bound = (span, format!("json.Encode {}", diagnostic.message));
+        let bound = (span, format!("opaque {}", diagnostic.message));
         if self.lacking.contains(&bound)
             && let Some(earlier) = (self.errors.iter_mut())
                 .find(|e| e.span == span && e.message == diagnostic.message && e.notes.is_empty())

@@ -1,0 +1,3 @@
+Ok(Array([Int(1)]))
+Ok(Object(#{"a": Bool(true)}))
+Ok(String(s))

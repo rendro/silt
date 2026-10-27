@@ -1,0 +1,13 @@
+-- exit: 1
+import json
+import mail
+trait Dec: json.Decode {
+  fn read(s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+type T { e: mail.Email }
+trait Dec for T {}
+fn pass(s: String, type a) -> Result(a, json.JsonError) where a: Dec { json.parse(s, a) }
+fn main() {
+  println(pass("\{\"e\": \{\"addr\": \"x\"}}", T))
+  println(T.read("\{\"e\": \{\"addr\": \"x\"}}"))
+}

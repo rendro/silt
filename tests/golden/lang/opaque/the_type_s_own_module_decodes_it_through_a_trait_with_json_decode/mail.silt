@@ -1,0 +1,9 @@
+import json
+pub opaque type Email { addr: String }
+pub fn addr(e: Email) -> String { e.addr }
+pub trait Dec: json.Decode {
+  fn read(s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+trait Dec for Email {}
+pub fn load(s: String, type a) -> Result(a, json.JsonError) where a: Dec { json.parse(s, a) }

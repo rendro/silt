@@ -1,0 +1,39 @@
+-- A type with a written `json.Decode` impl is decoded by it: an impl of
+-- a trait that has `json.Decode` among its supertraits is accepted for
+-- it, although its field's type has no decoder.
+import json
+import result
+
+trait Dec: json.Decode {
+  fn read(s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+type Box(a) {
+  v: a,
+}
+
+type V {
+  b: Box(Int),
+}
+
+trait json.Decode for V {
+  fn decode(v: json.Value) -> Result(Self, json.JsonError) {
+    match v {
+      json.Int(n) -> Ok(V { b: Box { v: n } })
+      _ -> Ok(V { b: Box { v: 0 } })
+    }
+  }
+}
+
+trait Dec for V {}
+
+fn pass(s: String, type a) -> Result(a, json.JsonError) where a: Dec {
+  json.parse(s, a)
+}
+
+fn main() {
+  println(pass("1", V) |> result.map { x -> x.b.v })
+  println(V.read("2") |> result.map { x -> x.b.v })
+  println(Dec.again(V { b: Box { v: 0 } }, "3") |> result.map { x -> x.b.v })
+}

@@ -1,0 +1,35 @@
+-- An impl of a trait that has `json.Decode` among its supertraits is
+-- accepted for every type `json.parse` decodes: a record with a list, a
+-- map, a tuple, a `json.Value` or a map of dates as a field, through an
+-- alias, or one that holds a list of itself.
+import json
+import time
+
+trait Dec: json.Decode {
+  fn read(s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+type Ints = List(Int)
+
+type W {
+  a: List(Int),
+  m: Map(String, Int),
+  t: (Int, String),
+  v: json.Value,
+  i: Ints,
+  d: Map(String, time.Date),
+}
+
+type Tree {
+  n: Int,
+  kids: List(Tree),
+}
+
+trait Dec for W {}
+
+trait Dec for Tree {}
+
+fn main() {
+  println(W.read("\{\"a\": [1], \"m\": \{\"k\": 2}, \"t\": [3, \"x\"], \"v\": null, \"i\": [4], \"d\": \{\"e\": \"2024-01-02\"}}"))
+  println(Tree.read("\{\"n\": 1, \"kids\": [\{\"n\": 2, \"kids\": []}]}"))
+}

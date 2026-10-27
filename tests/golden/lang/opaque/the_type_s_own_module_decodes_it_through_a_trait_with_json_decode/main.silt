@@ -1,0 +1,11 @@
+import mail
+import result
+fn main() {
+  let e = mail.Email.read("\{\"addr\": \"one\"}")
+  println(e |> result.map { x -> mail.addr(x) })
+  println(mail.load("\{\"addr\": \"two\"}", mail.Email) |> result.map { x -> mail.addr(x) })
+  match e {
+    Ok(x) -> println(mail.Dec.again(x, "\{\"addr\": \"three\"}") |> result.map { y -> mail.addr(y) })
+    Err(_) -> println("no")
+  }
+}
