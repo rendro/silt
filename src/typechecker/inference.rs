@@ -2031,13 +2031,7 @@ impl TypeChecker {
             scheme.ty = ty;
             scheme.vars.extend(vars);
         }
-        let owners = std::mem::take(&mut self.generalized_owners);
-        if let Some(&first) = scheme.vars.first()
-            && (owners.iter().any(Option::is_some)
-                || scheme.vars.iter().any(|v| self.use_owners.contains_key(v)))
-        {
-            self.let_owners.insert(first, owners);
-        }
+        self.keep_owners(&scheme);
         scheme
     }
 

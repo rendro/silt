@@ -1,0 +1,34 @@
+error[type]: type 'mail.User' has no field 'name' outside module 'mail': the type is opaque
+ --> main.silt:32:15
+    |
+ 32 |   println(age(u))
+    |               ^ type 'mail.User' has no field 'name' outside module 'mail': the type is opaque
+  = help: use the functions of module 'mail'
+
+error[type]: cannot spread a `mail.User` through 'copy': convert it where its type is known, `{...p}`
+ --> main.silt:33:16
+    |
+ 33 |   println(copy(u))
+    |                ^ cannot spread a `mail.User` through 'copy': convert it where its type is known, `{...p}`
+
+error[type]: type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+ --> main.silt:34:18
+    |
+ 34 |   println(encode(u))
+    |                  ^ type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = note: `encode` passes it to `toml.stringify`
+  = help: encode it inside module 'mail', or write `trait json.Encode for User` there
+
+error[type]: type 'mail.User' has no field 'name' outside module 'mail': the type is opaque
+ --> main.silt:35:21
+    |
+ 35 |   println(util.name(u))
+    |                     ^ type 'mail.User' has no field 'name' outside module 'mail': the type is opaque
+  = help: use the functions of module 'mail'
+
+error[type]: type 'mail.User' has no field 'name' outside module 'mail': the type is opaque
+ --> main.silt:36:19
+    |
+ 36 |   println(through(u))
+    |                   ^ type 'mail.User' has no field 'name' outside module 'mail': the type is opaque
+  = help: use the functions of module 'mail'

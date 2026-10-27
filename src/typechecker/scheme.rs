@@ -360,7 +360,22 @@ impl TypeChecker {
                 scheme.preds.push(bound.clone());
             }
         }
+        self.keep_owners(&scheme);
         scheme
+    }
+
+    /// Keep, for `scheme`, generalised last, the module of each variable
+    /// and predicate that came from a use of another module's definition
+    /// (`let_owners`): each use of the scheme is a use of that
+    /// definition (`let g = mail.name_any`, `fn wrap(r) { mail.name_any(r) }`).
+    pub(super) fn keep_owners(&mut self, scheme: &Scheme) {
+        let owners = std::mem::take(&mut self.generalized_owners);
+        if let Some(&first) = scheme.vars.first()
+            && (owners.iter().any(Option::is_some)
+                || scheme.vars.iter().any(|v| self.use_owners.contains_key(v)))
+        {
+            self.let_owners.insert(first, owners);
+        }
     }
 
     /// Settle what the scope `exit_level` just left still owes or waits
