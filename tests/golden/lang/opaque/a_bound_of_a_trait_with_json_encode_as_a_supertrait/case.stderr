@@ -1,0 +1,6 @@
+error[type]: type 'mail.Email' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+ --> main.silt:10:14
+    |
+ 10 |   println(go(mail.make("sec10")))
+    |              ^^^^^^^^^^^^^^^^^^ type 'mail.Email' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = help: encode it inside module 'mail', or write `trait json.Encode for Email` there

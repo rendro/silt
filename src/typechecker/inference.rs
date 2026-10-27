@@ -1045,6 +1045,19 @@ impl TypeChecker {
                     (!entry.structural).then(|| (head, entry.clone()))
                 }),
             };
+            // (Of a trait that has `json.Encode` among its supertraits,
+            // the call encodes the value as a bound of the trait does: an
+            // opaque type of another module, for a definition of that
+            // module alone, as the trait's methods are.)
+            if entry.is_some()
+                && self.implies_encode(tr)
+                && let Some((_, at)) = &receiver
+                && let Some(refusal) =
+                    self.opaque_encode_refusal(&recv, *at, self.def(tr.id.0).map(|def| def.module))
+            {
+                self.refuse_opaque_encode(*at, refusal);
+                return Type::Error;
+            }
             if let Some((head, entry)) = entry {
                 self.method_trait = Some(tr);
                 self.trait_call_self.insert(span, recv.clone());

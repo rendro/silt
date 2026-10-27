@@ -1,0 +1,23 @@
+-- exit: 1
+import json
+import toml
+import mail
+trait E: json.Encode {
+  fn t(self) -> String {
+    match toml.stringify(self) {
+      Ok(s) -> s
+      Err(_) -> "err"
+    }
+  }
+}
+trait E for mail.Email {}
+fn go(x: a) -> String where a: E {
+  match toml.pretty(x) {
+    Ok(s) -> s
+    Err(_) -> "err"
+  }
+}
+fn main() {
+  println(go(mail.make("a")))
+  println(E.t(mail.make("b")))
+}

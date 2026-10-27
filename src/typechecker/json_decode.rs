@@ -42,6 +42,13 @@ impl TypeChecker {
         !Self::is_decode(tr) && self.supertraits_of(tr).into_iter().any(Self::is_decode)
     }
 
+    /// Whether `tr` has `json.Encode` among its supertraits, at any
+    /// depth: a bound of it encodes what a bound of `json.Encode` does.
+    pub(super) fn implies_encode(&self, tr: TraitKey) -> bool {
+        !tr.is_builtin("Encode")
+            && (self.supertraits_of(tr).into_iter()).any(|tr| tr.is_builtin("Encode"))
+    }
+
     /// The asker of a declared bound `var: tr`: the bound itself, for
     /// `json.Decode` or a trait that has it among its supertraits.
     pub(super) fn asker_of_bound(&self, tr: TraitKey, var: TyVar) -> Option<Asker> {

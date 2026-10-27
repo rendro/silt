@@ -1,0 +1,20 @@
+-- exit: 1
+import json
+import mail
+trait E: json.Encode {
+  fn a(self) -> String { json.pretty(self) }
+  fn b(self) -> json.Value { json.encode(self) }
+  fn d(self) -> String { json.stringify([self]) }
+  fn e(self) -> String { helper(self) }
+  fn tag(self) -> Int { 1 }
+}
+fn helper(x: a) -> String where a: json.Encode { json.stringify(x) }
+trait E for mail.Email {}
+fn main() {
+  let t = mail.make("sec8")
+  println(E.a(t))
+  println(E.b(t))
+  println(E.d(t))
+  println(E.e(t))
+  println(E.tag(t))
+}

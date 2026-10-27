@@ -1,0 +1,11 @@
+-- exit: 1
+import json
+import mail
+trait E: json.Encode {
+  fn tag(self) -> Int { 1 }
+}
+trait E for mail.Email {}
+fn go(x: a) -> String where a: E { json.stringify(x) }
+fn main() {
+  println(go(mail.make("sec10")))
+}

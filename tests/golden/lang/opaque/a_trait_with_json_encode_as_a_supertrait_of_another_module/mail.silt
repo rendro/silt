@@ -1,0 +1,5 @@
+import util
+pub opaque type Email { addr: String }
+pub fn make(text: String) -> Email { Email { addr: text } }
+trait util.E for Email {}
+pub fn show(x: Email) -> String { util.E.a(x) }

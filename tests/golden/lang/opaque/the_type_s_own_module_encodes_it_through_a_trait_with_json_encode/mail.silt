@@ -1,0 +1,9 @@
+import json
+pub opaque type Email { addr: String }
+pub fn make(text: String) -> Email { Email { addr: text } }
+pub trait E: json.Encode {
+  fn a(self) -> String { json.stringify(self) }
+}
+trait E for Email {}
+pub fn go(x: a) -> String where a: E { json.pretty(x) }
+pub fn show(x: Email) -> String { E.a(x) }

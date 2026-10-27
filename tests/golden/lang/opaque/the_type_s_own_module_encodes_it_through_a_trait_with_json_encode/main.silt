@@ -1,0 +1,7 @@
+import mail
+fn main() {
+  let e = mail.make("own")
+  println(mail.E.a(e))
+  println(mail.go(e))
+  println(mail.show(e))
+}

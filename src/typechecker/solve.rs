@@ -1607,6 +1607,16 @@ impl TypeChecker {
         }
     }
 
+    /// Report `refusal`, an opaque type's encoding at `span`, once.
+    pub(super) fn refuse_opaque_encode(&mut self, span: Span, refusal: Diagnostic) {
+        if self
+            .lacking
+            .insert((span, format!("json.Encode {}", refusal.message)))
+        {
+            self.errors.push(refusal);
+        }
+    }
+
     /// Check that `ty`, whose head is known, implements `trait_name` at
     /// `bound_trait_args`, for the use `origin`: the one answer to "does
     /// this type implement this trait". Reports
@@ -1683,6 +1693,20 @@ impl TypeChecker {
             let owner = ev.and_then(|ev| self.owed_for.get(&ev).copied());
             self.want_decode(&resolved, origin, asker, owner);
         }
+        // (And one that has `json.Encode` among them encodes what a
+        // bound of `json.Encode` does: an opaque type of another module
+        // by its module's impl alone, unless a definition of that module
+        // asks it.)
+        if self.implies_encode(trait_name)
+            && let Some(refusal) = self.opaque_encode_refusal(
+                &resolved,
+                origin.span,
+                ev.and_then(|ev| self.owed_for.get(&ev).copied()),
+            )
+        {
+            self.refuse_opaque_encode(origin.span, refusal);
+            return;
+        }
         // Equal, Compare and Hash, and Display where no impl is written,
         // are what the type's structure says.
         if self.by_structure(trait_name, type_name) {
@@ -1699,12 +1723,7 @@ impl TypeChecker {
             if trait_name.is_builtin("Encode")
                 && let Some(refusal) = self.opaque_encode_refusal(&resolved, origin.span, owner)
             {
-                if self
-                    .lacking
-                    .insert((origin.span, format!("json.Encode {}", refusal.message)))
-                {
-                    self.errors.push(refusal);
-                }
+                self.refuse_opaque_encode(origin.span, refusal);
                 return;
             }
             let mut walk = Walk::default();
