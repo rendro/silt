@@ -1,0 +1,6 @@
+import json
+pub trait Dec: json.Decode {
+  fn read(s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+pub fn pass(s: String, type a) -> Result(a, json.JsonError) where a: Dec { json.parse(s, a) }

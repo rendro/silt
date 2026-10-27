@@ -1,0 +1,12 @@
+-- exit: 1
+import json
+import result
+import mail
+import util
+fn mine(s: String, type a) -> Result(a, json.JsonError) where a: util.Dec { json.parse(s, a) }
+fn main() {
+  println(util.pass("\{\"addr\": \"x\"}", mail.Email) |> result.map { e -> mail.addr(e) })
+  println(mine("\{\"addr\": \"y\"}", mail.Email) |> result.map { e -> mail.addr(e) })
+  println(mail.Email.read("\{\"addr\": \"z\"}") |> result.map { e -> mail.addr(e) })
+  println(util.Dec.again(mail.make("q"), "\{\"addr\": \"w\"}") |> result.map { e -> mail.addr(e) })
+}

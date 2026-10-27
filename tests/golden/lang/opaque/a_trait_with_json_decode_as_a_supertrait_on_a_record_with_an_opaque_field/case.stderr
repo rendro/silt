@@ -1,0 +1,13 @@
+error[type]: type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+ --> main.silt:11:48
+    |
+ 11 |   println(pass("\{\"e\": \{\"addr\": \"x\"}}", T))
+    |                                                ^ type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+  = help: decode it inside module 'mail', or write `trait json.Decode for Email` there
+
+error[type]: type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+ --> main.silt:12:11
+    |
+ 12 |   println(T.read("\{\"e\": \{\"addr\": \"x\"}}"))
+    |           ^^^^^^ type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+  = help: decode it inside module 'mail', or write `trait json.Decode for Email` there

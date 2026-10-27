@@ -273,6 +273,30 @@ impl TypeChecker {
         )
     }
 
+    /// The refusal of a call at `span` through `tr`, a trait that has
+    /// `json.Encode` or `json.Decode` among its supertraits, for `ty` (of
+    /// the head `head`), if it would encode or decode an opaque type of
+    /// another module: the trait's methods are a definition of the
+    /// trait's module.
+    pub(super) fn opaque_through_trait(
+        &self,
+        tr: TraitKey,
+        ty: &Type,
+        head: TypeRef,
+        span: Span,
+    ) -> Option<Diagnostic> {
+        let owner = self.def(tr.id.0).map(|def| def.module);
+        if self.implies_encode(tr)
+            && let Some(refusal) = self.opaque_encode_refusal(ty, span, owner)
+        {
+            return Some(refusal);
+        }
+        match self.implies_decode(tr) {
+            true => self.opaque_decode_refusal(head, span, owner),
+            false => None,
+        }
+    }
+
     /// The refusal of decoding `head` at `span` outside the module of an
     /// opaque type it would build by its structure, if it would build
     /// one: a decoder builds what a constructor does. A definition of the

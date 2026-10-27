@@ -285,6 +285,14 @@ impl TypeChecker {
             // `impl Carry(String) for Bag` would silently satisfy the
             // obligation for `impl Holds(Int) for Bag`, causing a
             // runtime method-resolution failure.
+            // A trait that has `json.Decode` among its supertraits decodes
+            // the impl's type, through a bound, a type call or a value
+            // call: the type is what the json decoder decodes, as the
+            // type's own module sees it.
+            if let Some(refusal) = self.decode_impl_refusal(*trait_name, *type_name, diag_span) {
+                self.errors.push(refusal);
+                continue;
+            }
             let enclosing_args: Vec<Type> = self
                 .tables
                 .impl_trait_args

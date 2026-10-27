@@ -49,13 +49,47 @@ impl TypeChecker {
             && (self.supertraits_of(tr).into_iter()).any(|tr| tr.is_builtin("Encode"))
     }
 
-    /// The asker of a declared bound `var: tr`: the bound itself, for
-    /// `json.Decode` or a trait that has it among its supertraits.
-    pub(super) fn asker_of_bound(&self, tr: TraitKey, var: TyVar) -> Option<Asker> {
-        match self.implies_decode(tr) {
-            true => Asker::of_bound(TraitKey::builtin("Decode"), var),
-            false => Asker::of_bound(tr, var),
+    /// The refusal of the impl at `span` of `tr`, a trait that has
+    /// `json.Decode` among its supertraits, for `head`, if the json
+    /// decoder has no value of the type (`json.parse(s, T)`'s
+    /// judgement): its impl would decode it. Whether an opaque type may
+    /// be decoded where it is is the use's to say
+    /// (`opaque_decode_refusal`).
+    pub(super) fn decode_impl_refusal(
+        &mut self,
+        tr: TraitKey,
+        head: TypeRef,
+        span: Span,
+    ) -> Option<Diagnostic> {
+        // (A generic type is refused where its impl is declared; a
+        // builtin container type is judged by the supertrait.)
+        let container = builtin_type_name(head)
+            .is_some_and(|name| crate::module::BUILTIN_GENERIC_CONTAINER_NAMES.contains(&name));
+        if !self.implies_decode(tr) || self.tables.is_generic(head) || container {
+            return None;
         }
+        let ty = (self.type_instance(head)).unwrap_or_else(|| Type::Generic(head, Vec::new()));
+        // (As the type's own module sees it: where an opaque type, or
+        // one with an opaque type in it, is decoded is each use's to say.)
+        let module = self.def(head.id.0).map(|def| def.module);
+        if self.opaque_decode_refusal(head, span, module).is_some() {
+            return None;
+        }
+        let refusal = self.decode_refusal("json.parse", Decoding::JSON, None, &ty, module, span)?;
+        // (The decoder's reason, after what it names: "field `b` has
+        // type `Box(Int)`, which has no decoder".)
+        let reason = (refusal.message.split_once(": ")).map_or("", |(_, reason)| reason);
+        let shown = self.show_type(&Type::Generic(head, Vec::new()));
+        let message = format!(
+            "trait `{}` cannot be implemented for `{shown}`: it has `json.Decode` as a \
+             supertrait, and `{shown}` cannot be decoded: {reason}",
+            self.show_trait(tr)
+        );
+        Some(Diagnostic {
+            code: Code::InvalidTraitImpl,
+            message,
+            ..refusal
+        })
     }
 
     /// Whether the program wrote a `json.Decode` impl for `head`: every
