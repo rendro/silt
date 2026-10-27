@@ -1,0 +1,21 @@
+-- A function or a trait method that hands a type parameter or `Self` to
+-- toml's decoders, with the bound json.Decode written (as a `where` clause
+-- or as the trait's supertrait), decodes into the type each use gives.
+import json
+import toml
+type P { x: Int }
+fn f(s: String, type a) -> Result(a, toml.TomlError) where a: json.Decode { toml.parse(s, a) }
+fn m(s: String, type a) -> Result(Map(String, a), toml.TomlError) where a: json.Decode {
+  toml.parse_map(s, a)
+}
+trait R: json.Decode {
+  fn read(s: String) -> Result(Self, toml.TomlError) { toml.parse(s, Self) }
+}
+trait R for P {}
+fn w(x: a) -> Result(String, toml.TomlError) where a: json.Encode { toml.stringify(x) }
+fn main() {
+  println(f("x = 1", P))
+  println(m("a = 2", Int))
+  println(P.read("x = 3"))
+  println(w(P { x: 4 }))
+}

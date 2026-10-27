@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- toml.stringify asks json.Encode of what it writes, as json.stringify
+-- does: a function that hands it a value of a type variable says so with
+-- `where a: json.Encode`, and a record that holds a function or a set is
+-- refused at check.
+import toml
+import set
+type J { f: Fn(Int) -> Int }
+type S { s: Set(Int) }
+fn f(x: a) -> Result(String, toml.TomlError) { toml.stringify(x) }
+fn main() {
+  println(f(J { f: { x -> x } }))
+  println(toml.stringify(S { s: set.from_list([1]) }))
+}

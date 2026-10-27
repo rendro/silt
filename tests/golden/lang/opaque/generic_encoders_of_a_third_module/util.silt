@@ -1,6 +1,7 @@
+import json
 import toml
 
-pub fn as_is(x: a) -> Result(String, toml.TomlError) {
+pub fn as_is(x: a) -> Result(String, toml.TomlError) where a: json.Encode {
   toml.stringify(x)
 }
 
@@ -8,6 +9,6 @@ pub fn inferred(x) {
   toml.stringify(#{"k": x})
 }
 
-pub fn load(s: String, type a) -> Result(a, toml.TomlError) {
+pub fn load(s: String, type a) -> Result(a, toml.TomlError) where a: json.Decode {
   toml.parse(s, a)
 }

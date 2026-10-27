@@ -2870,7 +2870,6 @@ fn test_builtin_panic_converted_to_vm_error() {
         decoding: None,
         statement: false,
         connection: false,
-        encodes: false,
         id: println.id,
         body: Body::Typed(boom),
     };
@@ -3939,7 +3938,6 @@ mod builtin_args {
             decoding: None,
             statement: false,
             connection: false,
-            encodes: false,
             id: registry().named("println").expect("println").id,
             body: Body::Typed(body),
         }

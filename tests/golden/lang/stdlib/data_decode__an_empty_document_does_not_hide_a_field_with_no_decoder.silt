@@ -18,7 +18,7 @@ fn map_of(text: String, type a) -> Result(Map(String, a), json.JsonError) where 
   json.parse_map(text, a)
 }
 
-fn toml_list(text: String, type a) -> Result(List(a), toml.TomlError) {
+fn toml_list(text: String, type a) -> Result(List(a), toml.TomlError) where a: json.Decode {
   toml.parse_list(text, a)
 }
 

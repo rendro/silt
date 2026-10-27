@@ -1,0 +1,19 @@
+-- cmd: check
+-- exit: 1
+-- toml.stringify and toml.pretty write what json.Encode writes, and ask
+-- it of the value as json.stringify does: a function (the program's, a
+-- builtin module's or the constructor of a variant), a set and a channel
+-- are refused where the program is checked, not as an Err when it runs.
+-- (A `()` has json.Encode; TOML's own rules refuse it when it runs.)
+import channel
+import int
+import toml
+
+fn main() {
+  println(toml.stringify(#{"a": int.abs}))
+  println(toml.stringify(#{"a": { x -> x + 1 }}))
+  println(toml.stringify(#{"a": Some}))
+  println(toml.stringify(#{"a": #[1, 2]}))
+  println(toml.pretty(#{"a": channel.new(1)}))
+  println(toml.stringify(#{"a": ()}))
+}

@@ -12,7 +12,7 @@ fn from_json(text: String, type a) -> Result(a, json.JsonError) where a: json.De
   json.parse(text, a)
 }
 
-fn from_toml(text: String, type a) -> Result(a, toml.TomlError) {
+fn from_toml(text: String, type a) -> Result(a, toml.TomlError) where a: json.Decode {
   toml.parse(text, a)
 }
 

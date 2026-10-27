@@ -3,5 +3,4 @@ error[type]: type 'mail.Email' cannot be encoded outside module 'mail': it is op
     |
  12 |   println(go(mail.make("a")))
     |              ^^^^^^^^^^^^^^ type 'mail.Email' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
-  = note: `go` passes it to `toml.pretty`
   = help: encode it inside module 'mail', or write `trait json.Encode for Email` there

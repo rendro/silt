@@ -281,10 +281,10 @@ impl TypeChecker {
     /// The parameters of the builtin function `def` that it shows or
     /// writes as data, each with the trait whose written impls of its
     /// parts that calls (`Display`, `json.Encode`): the ones whose type
-    /// has a variable its signature asks the trait of; and the value of
-    /// `toml.stringify` and `toml.pretty` and the parameters of a
-    /// postgres statement, which the writer writes as `json.stringify`
-    /// does, though their signatures ask nothing of them; and the type
+    /// has a variable its signature asks the trait of; and the
+    /// parameters of a postgres statement, which the writer writes as
+    /// `json.stringify` does, though its signature asks nothing of them;
+    /// and the type
     /// argument of every decoder (toml's and postgres's too, whose
     /// signatures ask nothing of it), which decodes as json's do.
     fn shown_params(&self, def: &crate::defs::Def) -> Vec<(usize, TraitKey)> {
@@ -317,9 +317,6 @@ impl TypeChecker {
             .and_then(|module| module.row(&resolve(def.name)));
         let written = match row {
             Some(row) if row.statement => Some(2),
-            Some(row) if row.module == "toml" && ["stringify", "pretty"].contains(&row.name) => {
-                Some(0)
-            }
             _ => None,
         };
         if let Some(param) = written.and_then(|i| params.get(i)) {
