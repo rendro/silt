@@ -300,6 +300,10 @@ impl TypeChecker {
                 .cloned()
                 .unwrap_or_default();
             for (i, supertrait) in trait_info.supertraits.iter().enumerate() {
+                // (`json.Decode` is the decoder's judgement, above.)
+                if Self::is_decode(*supertrait) {
+                    continue;
+                }
                 if !self.head_has_trait(*supertrait, *type_name) {
                     let (ty, tr, sup) = (
                         self.impl_type_shown(impl_key),
@@ -1471,8 +1475,9 @@ impl TypeChecker {
             return;
         }
         // (The same of a trait that has `json.Decode` among its
-        // supertraits: its impl would be a way to decode the type.)
-        if self.tables.is_generic(target_type) && self.implies_decode(trait_key) {
+        // supertraits, and of a builtin container type: its impl would be
+        // a way to decode the type.)
+        if self.generic_for_decode(target_type) && self.implies_decode(trait_key) {
             self.error(
                 Code::InvalidTraitImpl,
                 format!(

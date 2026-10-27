@@ -1,0 +1,18 @@
+-- cmd: check
+-- exit: 1
+-- `List` and `Map` are generic types, as `Option` and `Result` are: an
+-- impl of a trait that has `json.Decode` among its supertraits is
+-- refused for them, as a decoder builds a value of one type.
+import json
+
+trait Dec: json.Decode {
+  fn read(s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+trait Dec for List(a) where a: json.Decode {}
+
+trait Dec for Map(k, a) where a: json.Decode {}
+
+trait Dec for Option(a) where a: json.Decode {}
+
+fn main() {}

@@ -49,6 +49,16 @@ impl TypeChecker {
             && (self.supertraits_of(tr).into_iter()).any(|tr| tr.is_builtin("Encode"))
     }
 
+    /// Whether `head` is a generic type, of the program or a builtin
+    /// container (`List`, `Map`): an impl of a trait that has
+    /// `json.Decode` among its supertraits is refused for it, as a
+    /// decoder builds a value of one type.
+    pub(super) fn generic_for_decode(&self, head: TypeRef) -> bool {
+        self.tables.is_generic(head)
+            || builtin_type_name(head)
+                .is_some_and(|name| crate::module::BUILTIN_GENERIC_CONTAINER_NAMES.contains(&name))
+    }
+
     /// The refusal of the impl at `span` of `tr`, a trait that has
     /// `json.Decode` among its supertraits, for `head`, if the json
     /// decoder has no value of the type (`json.parse(s, T)`'s
@@ -61,11 +71,8 @@ impl TypeChecker {
         head: TypeRef,
         span: Span,
     ) -> Option<Diagnostic> {
-        // (A generic type is refused where its impl is declared; a
-        // builtin container type is judged by the supertrait.)
-        let container = builtin_type_name(head)
-            .is_some_and(|name| crate::module::BUILTIN_GENERIC_CONTAINER_NAMES.contains(&name));
-        if !self.implies_decode(tr) || self.tables.is_generic(head) || container {
+        // (A generic type is refused where its impl is declared.)
+        if !self.implies_decode(tr) || self.generic_for_decode(head) {
             return None;
         }
         let ty = (self.type_instance(head)).unwrap_or_else(|| Type::Generic(head, Vec::new()));

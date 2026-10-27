@@ -1,0 +1,21 @@
+-- `json.Value` is what `json.parse` decodes any document into: an impl
+-- of a trait that has `json.Decode` among its supertraits is accepted
+-- for it, and decodes through a bound, a type call and a value call.
+import json
+
+trait Dec: json.Decode {
+  fn read(s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+trait Dec for json.Value {}
+
+fn pass(s: String, type a) -> Result(a, json.JsonError) where a: Dec {
+  json.parse(s, a)
+}
+
+fn main() {
+  println(pass("[1]", json.Value))
+  println(json.Value.read("\{\"a\": true}"))
+  println(Dec.again(json.Int(0), "\"s\""))
+}

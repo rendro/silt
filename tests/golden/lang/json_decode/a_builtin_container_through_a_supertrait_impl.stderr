@@ -1,0 +1,17 @@
+error[type]: trait `Dec` cannot be implemented for the generic type `List`: it has `json.Decode` as a supertrait, and a decoder builds a value of one type
+ --> a_builtin_container_through_a_supertrait_impl.silt:12:1
+    |
+ 12 | trait Dec for List(a) where a: json.Decode {}
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ trait `Dec` cannot be implemented for the generic type `List`: it has `json.Decode` as a supertrait, and a decoder builds a value of one type
+
+error[type]: trait `Dec` cannot be implemented for the generic type `Map`: it has `json.Decode` as a supertrait, and a decoder builds a value of one type
+ --> a_builtin_container_through_a_supertrait_impl.silt:14:1
+    |
+ 14 | trait Dec for Map(k, a) where a: json.Decode {}
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ trait `Dec` cannot be implemented for the generic type `Map`: it has `json.Decode` as a supertrait, and a decoder builds a value of one type
+
+error[type]: trait `Dec` cannot be implemented for the generic type `Option`: it has `json.Decode` as a supertrait, and a decoder builds a value of one type
+ --> a_builtin_container_through_a_supertrait_impl.silt:16:1
+    |
+ 16 | trait Dec for Option(a) where a: json.Decode {}
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ trait `Dec` cannot be implemented for the generic type `Option`: it has `json.Decode` as a supertrait, and a decoder builds a value of one type
