@@ -1,0 +1,10 @@
+-- The module of the trait writes impls for instantiations of another
+-- module's type.
+import shapes
+trait Size { fn size(self) -> Int }
+trait Size for shapes.Box(Int) { fn size(self) -> Int { 1 } }
+trait Size for shapes.Box(String) { fn size(self) -> Int { 2 } }
+fn main() {
+  println(Size.size(shapes.Box(3)))
+  println(Size.size(shapes.Box("x")))
+}

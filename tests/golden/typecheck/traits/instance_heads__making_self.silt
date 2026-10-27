@@ -1,0 +1,12 @@
+-- A method making Self, through the type and through a bound: the
+-- type the use wants chooses the impl.
+type Box(a) { Box(a) }
+trait Zero { fn zero() -> Self }
+trait Zero for Box(Int) { fn zero() -> Self { Box(0) } }
+trait Zero for Box(String) { fn zero() -> Self { Box("e") } }
+fn like(_x: a) -> a where a: Zero { a.zero() }
+fn main() {
+  let a: Box(Int) = Box.zero()
+  let b: Box(String) = Box.zero()
+  println("{a} {b} {like(Box(5))} {like(Box("q"))}")
+}

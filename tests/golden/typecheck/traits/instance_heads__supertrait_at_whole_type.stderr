@@ -1,0 +1,11 @@
+error[type]: type 'Box(String)' implements 'Big' but does not implement supertrait 'Sum'
+ --> instance_heads__supertrait_at_whole_type.silt:9:1
+   |
+ 9 | trait Big for Box(String) { fn big(self) -> Int { 0 } }
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type 'Box(String)' implements 'Big' but does not implement supertrait 'Sum'
+
+error[type]: type 'Box(a)' implements 'Small' but does not implement supertrait 'Sum'
+ --> instance_heads__supertrait_at_whole_type.silt:11:1
+    |
+ 11 | trait Small for Box(a) { fn small(self) -> Int { 0 } }
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type 'Box(a)' implements 'Small' but does not implement supertrait 'Sum'

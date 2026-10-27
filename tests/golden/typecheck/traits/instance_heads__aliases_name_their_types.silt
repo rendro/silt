@@ -1,0 +1,12 @@
+-- An alias in a header is a name for its type: two aliases of two
+-- instantiations are two impls.
+type Box(a) { Box(a) }
+type IB = Box(Int)
+type SB = Box(String)
+trait Sum { fn sum(self) -> Int }
+trait Sum for IB { fn sum(self) -> Int { 1 } }
+trait Sum for SB { fn sum(self) -> Int { 2 } }
+fn main() {
+  println(Sum.sum(Box(1)))
+  println(Sum.sum(Box("a")))
+}

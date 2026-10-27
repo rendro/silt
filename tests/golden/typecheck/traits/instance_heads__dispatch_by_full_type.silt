@@ -1,0 +1,28 @@
+-- Impls for instantiations of one type: each use reaches the impl of
+-- its whole type, directly, through a bound, in a list and in a task.
+import list
+import task
+type Box(a) { Box(a) }
+type Pair(a, b) { Pair(a, b) }
+trait Sum { fn sum(self) -> Int }
+trait Sum for Box(Int) { fn sum(self) -> Int { match self { Box(n) -> n } } }
+trait Sum for Box(String) { fn sum(self) -> Int { match self { Box(_) -> 100 } } }
+trait Sum for Pair(Int, b) { fn sum(self) -> Int { 1 } }
+trait Sum for Pair(String, b) { fn sum(self) -> Int { 2 } }
+fn total(x: a) -> Int where a: Sum { Sum.sum(x) }
+fn inferred(x) { Sum.sum(x) }
+fn main() {
+  println(Sum.sum(Box(5)))
+  println(Sum.sum(Box("s")))
+  println(total(Box(7)))
+  println(total(Box("t")))
+  println(total(Pair(1, true)))
+  println(total(Pair("x", 2.0)))
+  println(inferred(Box(8)))
+  println(inferred(Box("w")))
+  let xs = [Box(1), Box(2)]
+  println(list.map(xs) { b -> Sum.sum(b) })
+  println(list.map(xs, total))
+  let h = task.spawn { -> total(Box("u")) }
+  println(task.join(h))
+}

@@ -1,0 +1,6 @@
+error[type]: duplicate implementation of trait 'Conv' for type 'Box': the impls of 'Conv(a)' for 'Box(Int)' and 'Conv(Int)' for 'Box(b)' overlap: both are of 'Conv(Int)' for 'Box(Int)'
+ --> instance_heads__overlap_with_trait_args.silt:7:1
+   |
+ 7 | trait Conv(Int) for Box(b) { fn conv(self) -> Int { 1 } }
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ duplicate implementation of trait 'Conv' for type 'Box': the impls of 'Conv(a)' for 'Box(Int)' and 'Conv(Int)' for 'Box(b)' overlap: both are of 'Conv(Int)' for 'Box(Int)'
+  = help: give each impl trait arguments or a type of its own, which no other impl's could be

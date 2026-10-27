@@ -1,0 +1,5 @@
+error[type]: duplicate implementation of trait 'Display' for type 'Box': the impls for 'Box(Int)' and 'Box(String)' cannot both be: a value is shown by the impl of its type, whatever its type arguments
+ --> instance_heads__display_two_instantiations.silt:6:1
+   |
+ 6 | trait Display for Box(String) { fn display(self) -> String { "string box" } }
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ duplicate implementation of trait 'Display' for type 'Box': the impls for 'Box(Int)' and 'Box(String)' cannot both be: a value is shown by the impl of its type, whatever its type arguments

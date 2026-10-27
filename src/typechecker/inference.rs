@@ -1033,7 +1033,8 @@ impl TypeChecker {
         // impl's module calls it, owing what the impl's header and the
         // method's body ask (`dispatch_method_entry`).
         // (Of a trait with parameters, the method's type is the trait's:
-        // which impl the call reaches its trait arguments say.)
+        // which impl the call reaches its trait arguments say; of impls
+        // for some instantiations of a type, the receiver's whole type.)
         if let Some((recv, _)) = &receiver
             && info.params.is_empty()
         {
@@ -1041,6 +1042,9 @@ impl TypeChecker {
             let entry = match crate::types::canonical::canonicalize(&self.tables.resolver, &recv) {
                 Type::Var(_) | Type::Rigid(_) | Type::Error | Type::Never => None,
                 canon => (self.type_name_for_impl(&canon)).and_then(|head| {
+                    if self.has_instances(tr, head) {
+                        return None;
+                    }
                     let entry = self.tables.impl_methods.get(head, field, tr)?;
                     (!entry.structural).then(|| (head, entry.clone()))
                 }),

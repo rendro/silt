@@ -1,0 +1,5 @@
+error[type]: duplicate implementation of trait 'Sum' for type 'Box(Int)'
+ --> instance_heads__same_instantiation_twice.silt:6:1
+   |
+ 6 | trait Sum for Box(Int) { fn sum(self) -> Int { 2 } }
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ duplicate implementation of trait 'Sum' for type 'Box(Int)'

@@ -261,22 +261,59 @@ impl TypeChecker {
     /// (`trait Greet for Box(a) where a: Greet`) is owed in turn, by the
     /// same use: checked here if the part is known, waiting like any
     /// predicate if it is not.
-    /// The key of the trait arguments `args` of an impl (`ImplArgs`):
-    /// their canonical text, aliases expanded, each type variable
-    /// numbered as it first appears.
-    pub(super) fn impl_args_key(&self, args: &[Type]) -> ImplArgs {
-        if args.is_empty() {
+    /// The key of the trait arguments `args` of an impl, and of the type
+    /// `instance` it is for where it is for some instantiations of its
+    /// type only (`ImplArgs`): their canonical text, aliases expanded,
+    /// each type variable numbered as it first appears.
+    pub(super) fn impl_args_key(&self, args: &[Type], instance: Option<&Type>) -> ImplArgs {
+        if args.is_empty() && instance.is_none() {
             return ImplArgs::none();
         }
         let mut vars: Vec<TyVar> = Vec::new();
-        let parts: Vec<String> = (args.iter())
-            .map(|arg| {
-                let arg =
-                    crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(arg));
-                key_text(&arg, &mut vars)
-            })
-            .collect();
-        ImplArgs::of(&parts.join(","))
+        let mut text = |ty: &Type| {
+            let ty = crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(ty));
+            key_text(&ty, &mut vars)
+        };
+        let parts: Vec<String> = args.iter().map(&mut text).collect();
+        let mut key = parts.join(",");
+        if let Some(instance) = instance {
+            key = format!("{key} for {}", text(instance));
+        }
+        ImplArgs::of(&key)
+    }
+
+    /// Whether the impl whose self type is `ty` is for some
+    /// instantiations of its type only (`trait Sum for Box(Int)`, or
+    /// `for Pair(a)` of `type Pair(a) = (a, a)`): not each argument of
+    /// the type a variable of its own.
+    pub(super) fn is_instance(&self, ty: &Type) -> bool {
+        if matches!(ty, Type::Con(..)) {
+            return false;
+        }
+        let mut vars: Vec<TyVar> = Vec::new();
+        !(self.type_args_of(ty).iter()).all(|arg| match self.apply(arg) {
+            Type::Var(v) if !vars.contains(&v) => {
+                vars.push(v);
+                true
+            }
+            _ => false,
+        })
+    }
+
+    /// Whether an impl of `tr` for the type `head` is for some
+    /// instantiations of the type only (`impl_instance`): which impl a use
+    /// reaches the subject's whole type says, as trait arguments do.
+    pub(super) fn has_instances(&self, tr: TraitKey, head: TypeRef) -> bool {
+        (self.tables.impl_args_of(tr, head).iter())
+            .any(|at| self.impl_instance(&(tr, head, *at)).is_some())
+    }
+
+    /// The type the impl `key` is for, where it is for some
+    /// instantiations of its type only (`is_instance`).
+    pub(super) fn impl_instance(&self, key: &ImplKey) -> Option<Type> {
+        let ty = self.tables.impl_self_types.get(key)?;
+        let ty = crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(ty));
+        self.is_instance(&ty).then_some(ty)
     }
 
     /// Whether the types `a` and `b` could be one: unified each with a
@@ -296,11 +333,28 @@ impl TypeChecker {
     }
 
     /// The impls of `tr` for the type `head` whose trait arguments could
-    /// be the use's `args`.
-    pub(super) fn impls_fitting(&self, tr: TraitKey, head: TypeRef, args: &[Type]) -> Vec<ImplKey> {
+    /// be the use's `args`, and whose type the use's `subject` could be
+    /// (of an impl for some instantiations of its type: `Box(Int)`).
+    pub(super) fn impls_fitting(
+        &self,
+        tr: TraitKey,
+        head: TypeRef,
+        subject: Option<&Type>,
+        args: &[Type],
+    ) -> Vec<ImplKey> {
         let impls = self.tables.impl_args_of(tr, head);
+        let subject = subject.map(|subject| {
+            crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(subject))
+        });
+        let for_subject = |key: &ImplKey| match (&subject, self.impl_instance(key)) {
+            (Some(subject), Some(instance)) => probe_unify(subject, &instance, &mut HashMap::new()),
+            _ => true,
+        };
         if args.is_empty() {
-            return impls.iter().map(|key| (tr, head, *key)).collect();
+            return (impls.iter())
+                .map(|key| (tr, head, *key))
+                .filter(for_subject)
+                .collect();
         }
         let args: Vec<Type> = (args.iter())
             .map(|arg| {
@@ -334,6 +388,7 @@ impl TypeChecker {
                 }
             })
             .map(|(key, _)| *key)
+            .filter(for_subject)
             .collect()
     }
 
@@ -379,15 +434,17 @@ impl TypeChecker {
     }
 
     /// The impl of `tr` for the type `head` a use at the trait arguments
-    /// `args` reaches: the one impl whose trait arguments could be the
-    /// use's. None where none could, or several still could.
+    /// `args`, of the subject `subject`, reaches: the one impl whose trait
+    /// arguments, and type, could be the use's. None where none could, or
+    /// several still could.
     pub(super) fn impl_reached(
         &self,
         tr: TraitKey,
         head: TypeRef,
+        subject: Option<&Type>,
         args: &[Type],
     ) -> Option<ImplKey> {
-        match self.impls_fitting(tr, head, args).as_slice() {
+        match self.impls_fitting(tr, head, subject, args).as_slice() {
             [key] => Some(*key),
             _ => None,
         }
@@ -408,13 +465,7 @@ impl TypeChecker {
     /// impl, never its being the only one: a second impl never changes
     /// what a use that compiled means.)
     pub(super) fn waits_for_trait_args(&self, tr: TraitKey, subject: &Type, args: &[Type]) -> bool {
-        if args.is_empty() || (args.iter()).any(|arg| matches!(self.apply(arg), Type::Error)) {
-            return false;
-        }
-        // (Trait arguments with no variable left fit one impl at most,
-        // and leave it nothing to decide.)
-        let open = self.trait_args_open(args);
-        if !open && (args.iter()).all(|arg| free_vars_in(&self.apply(arg)).is_empty()) {
+        if (args.iter()).any(|arg| matches!(self.apply(arg), Type::Error)) {
             return false;
         }
         let subject =
@@ -422,17 +473,42 @@ impl TypeChecker {
         let Some(head) = self.type_name_for_impl(&subject) else {
             return false;
         };
-        if self.tables.impl_args_of(tr, head).is_empty() {
+        let impls = self.tables.impl_args_of(tr, head);
+        if impls.is_empty() {
+            return false;
+        }
+        // (Of impls for some instantiations of the subject's type, the
+        // subject's parts choose as trait arguments do: `Box(_)` waits
+        // where there are impls for `Box(Int)` and `Box(String)`.)
+        let by_subject = !free_vars_in(&subject).is_empty() && self.has_instances(tr, head);
+        // (Trait arguments with no variable left fit one impl at most,
+        // and leave it nothing to decide.)
+        let open = self.trait_args_open(args);
+        if !by_subject
+            && (args.is_empty()
+                || !open && (args.iter()).all(|arg| free_vars_in(&self.apply(arg)).is_empty()))
+        {
             return false;
         }
         if open {
             return true;
         }
-        match self.impls_fitting(tr, head, args).as_slice() {
+        match self
+            .impls_fitting(tr, head, Some(&subject), args)
+            .as_slice()
+        {
             [] => false,
             [key] => {
                 let written = (self.tables.impl_trait_args.get(key)).map_or(&[][..], Vec::as_slice);
-                !self.fixes_nothing(written, args)
+                match self.impl_instance(key).filter(|_| by_subject) {
+                    Some(instance) => {
+                        let written: Vec<Type> =
+                            written.iter().chain([&instance]).cloned().collect();
+                        let asked: Vec<Type> = args.iter().chain([&subject]).cloned().collect();
+                        !self.fixes_nothing(&written, &asked)
+                    }
+                    None => !self.fixes_nothing(written, args),
+                }
             }
             _ => true,
         }
@@ -2091,8 +2167,9 @@ impl TypeChecker {
     /// type's head has.
     /// The type `ty`, of the head `head`, that lacks an impl, as a
     /// message names it: a type by its head (`Box`), a type constructor
-    /// as an impl's header writes it (`Result(_, String)`).
-    fn show_subject(&self, ty: &Type, head: TypeRef) -> String {
+    /// as an impl's header writes it (`Result(_, String)`), and a type of
+    /// which `tr` has impls for some instantiations whole (`Box(Bool)`).
+    fn show_subject(&self, ty: &Type, head: TypeRef, tr: TraitKey) -> String {
         match ty {
             // (A fixed argument still unknown by the name an impl's
             // header would give it, `Result(_, e)`: the type's own
@@ -2119,6 +2196,9 @@ impl TypeChecker {
                     .collect();
                 self.show_type(&Type::Con(*con, rest))
             }
+            // (Of impls for some instantiations of the type, the whole
+            // type: `Box(Bool)`, where there are impls for `Box(Int)`.)
+            _ if self.has_instances(tr, head) => self.show_type(&self.apply(ty)),
             _ => self.show_type(&Type::Generic(head, vec![])),
         }
     }
@@ -2178,7 +2258,7 @@ impl TypeChecker {
                     .unwrap_or_else(|| {
                         format!(
                             "type '{}' does not implement trait '{}'",
-                            self.show_subject(&resolved, type_name),
+                            self.show_subject(&resolved, type_name, trait_name),
                             self.show_bound(trait_name, bound_trait_args)
                         )
                     }),
@@ -2199,7 +2279,7 @@ impl TypeChecker {
         }
         // The impl of the trait arguments: the one whose own could be the
         // use's. (A use waits where several could: `waits_for_trait_args`.)
-        let fitting = self.impls_fitting(trait_name, type_name, bound_trait_args);
+        let fitting = self.impls_fitting(trait_name, type_name, Some(&resolved), bound_trait_args);
         // (A trait argument that is a type variable is some type: only an
         // impl for every argument at its place is for it.)
         let rigid = (bound_trait_args.iter()).any(|arg| matches!(self.apply(arg), Type::Rigid(_)));
@@ -2214,7 +2294,7 @@ impl TypeChecker {
         if key.is_none() && !self.tables.impl_args_of(trait_name, type_name).is_empty() {
             let message = format!(
                 "type '{}' does not implement trait '{}'",
-                self.show_subject(&resolved, type_name),
+                self.show_subject(&resolved, type_name, trait_name),
                 self.show_bound(trait_name, bound_trait_args)
             );
             self.error(Code::MissingTraitImpl, message, span);
@@ -2330,7 +2410,7 @@ impl TypeChecker {
                         Code::MissingTraitImpl,
                         format!(
                             "type '{}' does not implement trait '{}': the matched impl is '{}'",
-                            self.show_subject(&resolved, type_name),
+                            self.show_subject(&resolved, type_name, trait_name),
                             self.show_bound(trait_name, bound_trait_args),
                             self.show_bound(trait_name, &impl_trait_args),
                         ),
@@ -2729,15 +2809,19 @@ impl TypeChecker {
     /// rows each time. (For a call that is ambiguous the first
     /// candidate's: `ambiguous_method_call` reports it.)
     /// The trait whose method `method` a use on the type `ty` means,
-    /// when it is a trait with parameters that has impls for the type: the
-    /// use's trait arguments choose the impl (`From` for `AppError`).
+    /// when it is a trait with parameters that has impls for the type, or
+    /// one with impls for some instantiations of the type: the use's
+    /// trait arguments, or its whole type, choose the impl (`From` for
+    /// `AppError`, `Zero` for `Box(Int)`).
     pub(super) fn trait_of_impls_by_args(&self, ty: TypeRef, method: Symbol) -> Option<TraitKey> {
         let providers = self.method_providers(ty, method);
         let Ok(Some(tr)) = self.meant_provider(&providers) else {
             return None;
         };
         let params = (self.tables.traits.get(&tr)).is_some_and(|info| !info.params.is_empty());
-        (params && !self.tables.impl_methods.args_of(ty, method, tr).is_empty()).then_some(tr)
+        ((params || self.has_instances(tr, ty))
+            && !self.tables.impl_methods.args_of(ty, method, tr).is_empty())
+        .then_some(tr)
     }
 
     pub(super) fn method_entry(&self, ty: TypeRef, method: Symbol) -> Option<MethodEntry> {
@@ -2910,7 +2994,7 @@ fn occurs(v: TyVar, ty: &Type, subst: &HashMap<TyVar, Type>) -> bool {
 /// `mapping` as they are matched) stands for `ty` (a use's) as it is:
 /// each variable of the pattern for one type, consistently; a variable of
 /// the use only for a variable of the pattern.
-fn match_one_way(pattern: &Type, ty: &Type, mapping: &mut HashMap<TyVar, Type>) -> bool {
+pub(super) fn match_one_way(pattern: &Type, ty: &Type, mapping: &mut HashMap<TyVar, Type>) -> bool {
     let all = |xs: &[Type], ys: &[Type], mapping: &mut HashMap<TyVar, Type>| {
         xs.len() == ys.len() && (xs.iter().zip(ys)).all(|(x, y)| match_one_way(x, y, mapping))
     };

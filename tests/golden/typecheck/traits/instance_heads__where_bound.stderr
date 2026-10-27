@@ -1,0 +1,5 @@
+error[type]: type 'String' does not implement trait 'Sum'
+ --> instance_heads__where_bound.silt:12:19
+    |
+ 12 |   println(Sum.sum(Box(["s"])))
+    |                   ^^^^^^^^^^ type 'String' does not implement trait 'Sum'
