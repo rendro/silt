@@ -432,7 +432,15 @@ mod tests {
             .flat_map(|module| module.enabled_rows())
             .filter(|row| row.decoding.is_some())
             .collect();
-        assert!(rows.len() >= 7, "the decoding rows: {}", rows.len());
+        // (Every family that is built has its rows here: postgres's only
+        // with its feature.)
+        for family in Family::ALL {
+            let built = family != Family::Postgres || cfg!(feature = "postgres");
+            let has_rows = rows
+                .iter()
+                .any(|row| row.decoding.is_some_and(|d| d.family == family));
+            assert_eq!(has_rows, built, "the decoding rows of {family:?}");
+        }
         // Each field type with the leaf `Inner` and `EB` hold, and, for a
         // type that names an enum, a document of a value of it (see the
         // known cases below).
