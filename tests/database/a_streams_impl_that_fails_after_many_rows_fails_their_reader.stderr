@@ -1,0 +1,5 @@
+error[runtime]: division by zero
+ --> a_streams_impl_that_fails_after_many_rows_fails_their_reader.silt:17:42
+    |
+ 17 |       json.Int(n) -> Ok(Code { digits: "{100 / n}" })
+    |                                          ^^^^^^^ division by zero

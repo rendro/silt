@@ -1,10 +1,11 @@
 -- A stream whose rows hold parts of a type with a written `json.Decode`
 -- impl gives the rows the impls finish, in order. The `Err` an impl
 -- returns is that row's `Err`, and the stream ends there, as at a row
--- the decoder refuses. An impl that fails ends the stream with its
--- failure, as a failing stream stage does: a plain `channel.receive`
--- sees `None` (`channel.each` raises it: the next case). A stream that
--- is closed while it is read stops.
+-- the decoder refuses. (An impl that fails ends the stream with its
+-- failure, which every read of it raises: the cases
+-- `channel_each_raises_the_failure_of_a_streams_impl` and
+-- `channel_receive_raises_the_failure_of_a_streams_impl`.) A stream
+-- that is closed while it is read stops.
 import channel
 import env
 import json
@@ -17,10 +18,7 @@ trait json.Decode for Code {
   fn decode(value: json.Value) -> Result(Self, json.JsonError) {
     match value {
       json.String(text) -> Ok(Code { digits: text })
-      json.Int(n) -> match n {
-        0 -> Ok(Code { digits: "{100 / n}" })
-        _ -> Err(json.Other("no code: {n}"))
-      }
+      json.Int(n) -> Err(json.Other("no code: {n}"))
       _ -> Err(json.Other("no code here"))
     }
   }
@@ -51,11 +49,6 @@ fn main() {
     Ok(db) -> {
       println("an Err:")
       match postgres.stream(db, string.replace(sql, ":k", "7"), (), R) {
-        Ok(rows) -> drain(rows)
-        Err(e) -> println(Error.message(e))
-      }
-      println("a failure:")
-      match postgres.stream(db, string.replace(sql, ":k", "0"), (), R) {
         Ok(rows) -> drain(rows)
         Err(e) -> println(Error.message(e))
       }

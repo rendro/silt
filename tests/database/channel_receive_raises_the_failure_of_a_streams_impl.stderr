@@ -1,0 +1,5 @@
+error[runtime]: division by zero
+ --> channel_receive_raises_the_failure_of_a_streams_impl.silt:16:42
+    |
+ 16 |       json.Int(n) -> Ok(Code { digits: "{100 / n}" })
+    |                                          ^^^^^^^ division by zero

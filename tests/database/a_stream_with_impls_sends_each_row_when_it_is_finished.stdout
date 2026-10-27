@@ -9,6 +9,3 @@ an impl that waits for the reader:
 an impl that sleeps, read under a deadline:
   Err(the function was ended by its deadline)
   the next statement: Ok([One {n: 1}])
-an impl that calls env.set:
-  0 rows
-  F8P_SEEN: None

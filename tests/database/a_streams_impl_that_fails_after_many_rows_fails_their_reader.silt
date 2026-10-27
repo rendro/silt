@@ -1,0 +1,58 @@
+-- exit: 1
+-- The rows of a stream that the program's `json.Decode` impls finish
+-- come a batch at a time; an impl that fails at row 600 ends the
+-- stream after the 599 rows before it, in order, and the
+-- `channel.receive` that comes to its end raises the failure.
+import channel
+import env
+import json
+import postgres
+
+type Code { digits: String }
+
+trait json.Decode for Code {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.String(text) -> Ok(Code { digits: text })
+      json.Int(n) -> Ok(Code { digits: "{100 / n}" })
+      _ -> Err(json.Other("no code here"))
+    }
+  }
+}
+
+type R { n: Int, code: Option(Code) }
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+fn main() {
+  let sql = "SELECT g AS n, CASE WHEN g = 600 THEN to_jsonb(0) WHEN g % 3 = 0 THEN NULL ELSE to_jsonb(g::text) END AS code FROM generate_series(1, 5000) g"
+  match postgres.connect(url()) {
+    Ok(db) -> match postgres.stream(db, sql, (), R) {
+      Ok(rows) -> {
+        let n = loop n = 0 {
+          match channel.receive(rows) {
+            Some(Ok(row)) -> match row.n == n + 1 {
+              true -> {
+                match row.n == 599 {
+                  true -> println("599 rows in order")
+                  false -> ()
+                }
+                loop(n + 1)
+              }
+              false -> n
+            }
+            _ -> n
+          }
+        }
+        println("not reached: {n} rows")
+      }
+      Err(e) -> println(Error.message(e))
+    }
+    Err(e) -> println(Error.message(e))
+  }
+}

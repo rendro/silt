@@ -3,8 +3,9 @@
 -- worker finishes them a batch at a time): every row, in order, rows
 -- with a part an impl decodes and rows without one mixed; the `Err` of
 -- an impl at row 600 after the 599 rows before it, and then the end;
--- the decoder's own error at row 600 the same; an impl that fails at
--- row 600 ends the stream after the 599 rows before it; a stream closed
+-- the decoder's own error at row 600 the same (an impl that fails at
+-- row 600: `a_streams_impl_that_fails_after_many_rows_fails_their_reader`);
+-- a stream closed
 -- after 300 rows stops, and the pool's next statement runs; a stream
 -- in a transaction; and an impl that waits (it sleeps, and joins a task
 -- it spawns) finishes its rows all the same.
@@ -22,10 +23,7 @@ trait json.Decode for Code {
   fn decode(value: json.Value) -> Result(Self, json.JsonError) {
     match value {
       json.String(text) -> Ok(Code { digits: text })
-      json.Int(n) -> match n {
-        0 -> Ok(Code { digits: "{100 / n}" })
-        _ -> Err(json.Other("no code: {n}"))
-      }
+      json.Int(n) -> Err(json.Other("no code: {n}"))
       _ -> Err(json.Other("no code here"))
     }
   }
@@ -106,8 +104,6 @@ fn main() {
       stream(db, "g", "to_jsonb(7)")
       println("the decoder's error at row 600:")
       stream(db, "NULL", "NULL")
-      println("an impl's failure at row 600:")
-      stream(db, "g", "to_jsonb(0)")
       println("closed after 300 rows:")
       match postgres.stream(db, "SELECT g AS n, to_jsonb(g::text) AS code FROM generate_series(1, 300000) g", (), R) {
         Ok(rows) -> {
