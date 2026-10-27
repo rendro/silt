@@ -1,3 +1,4 @@
+import json
 import toml
 
 pub opaque type User {
@@ -17,15 +18,15 @@ pub fn age(u: User) -> Int {
   u.age
 }
 
-pub fn as_is(x: a) -> Result(String, toml.TomlError) {
+pub fn as_is(x: a) -> Result(String, toml.TomlError) where a: json.Encode {
   toml.stringify(x)
 }
 
-pub fn in_list(x: a) -> Result(String, toml.TomlError) {
+pub fn in_list(x: a) -> Result(String, toml.TomlError) where a: json.Encode {
   toml.pretty(#{"k": [x]})
 }
 
-pub fn in_record(x: a) -> Result(String, toml.TomlError) {
+pub fn in_record(x: a) -> Result(String, toml.TomlError) where a: json.Encode {
   toml.stringify(Box { v: x })
 }
 
@@ -33,6 +34,6 @@ pub fn inferred(x) {
   toml.stringify(#{"k": x})
 }
 
-pub fn load(s: String, type a) -> Result(a, toml.TomlError) {
+pub fn load(s: String, type a) -> Result(a, toml.TomlError) where a: json.Decode {
   toml.parse(s, a)
 }

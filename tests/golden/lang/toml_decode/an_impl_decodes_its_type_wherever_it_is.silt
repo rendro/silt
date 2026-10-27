@@ -41,7 +41,7 @@ type Kind { Plain, Tagged(Tags) }
 
 type Doc { kind: Kind }
 
-fn load(text: String, type a) -> Result(a, toml.TomlError) {
+fn load(text: String, type a) -> Result(a, toml.TomlError) where a: json.Decode {
   toml.parse(text, a)
 }
 

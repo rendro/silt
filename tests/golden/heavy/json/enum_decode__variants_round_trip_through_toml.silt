@@ -5,6 +5,7 @@
 -- field, a List, an Option and a Map, by toml.parse, toml.parse_list and
 -- toml.parse_map, at the top of toml.parse (a variant with fields, the
 -- only one that is a table), and through a `type a` parameter.
+import json
 import toml
 
 type Status {
@@ -21,7 +22,7 @@ type Config {
   by_host: Map(String, Status),
 }
 
-fn read(text: String, type a) -> Result(a, toml.TomlError) {
+fn read(text: String, type a) -> Result(a, toml.TomlError) where a: json.Decode {
   toml.parse(text, a)
 }
 

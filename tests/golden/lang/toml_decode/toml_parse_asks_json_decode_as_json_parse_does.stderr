@@ -1,0 +1,27 @@
+error[type]: type variable `a` is not known to implement trait 'json.Decode', which 'toml.parse' needs
+ --> toml_parse_asks_json_decode_as_json_parse_does.silt:9:70
+   |
+ 9 | fn f(s: String, type a) -> Result(a, toml.TomlError) { toml.parse(s, a) }
+   |                                                                      ^ type variable `a` is not known to implement trait 'json.Decode', which 'toml.parse' needs
+  = help: add `where a: json.Decode`
+
+error[type]: type variable `a` is not known to implement trait 'json.Decode', which 'toml.parse_list' needs
+ --> toml_parse_asks_json_decode_as_json_parse_does.silt:10:81
+    |
+ 10 | fn l(s: String, type a) -> Result(List(a), toml.TomlError) { toml.parse_list(s, a) }
+    |                                                                                 ^ type variable `a` is not known to implement trait 'json.Decode', which 'toml.parse_list' needs
+  = help: add `where a: json.Decode`
+
+error[type]: type variable `a` is not known to implement trait 'json.Decode', which 'toml.parse_map' needs
+ --> toml_parse_asks_json_decode_as_json_parse_does.silt:11:87
+    |
+ 11 | fn m(s: String, type a) -> Result(Map(String, a), toml.TomlError) { toml.parse_map(s, a) }
+    |                                                                                       ^ type variable `a` is not known to implement trait 'json.Decode', which 'toml.parse_map' needs
+  = help: add `where a: json.Decode`
+
+error[type]: type variable `Self` is not known to implement trait 'json.Decode', which 'toml.parse' needs
+ --> toml_parse_asks_json_decode_as_json_parse_does.silt:13:70
+    |
+ 13 |   fn read(s: String) -> Result(Self, toml.TomlError) { toml.parse(s, Self) }
+    |                                                                      ^^^^ type variable `Self` is not known to implement trait 'json.Decode', which 'toml.parse' needs
+  = help: add `where Self: json.Decode`, or make `json.Decode` a supertrait: `trait R: json.Decode`

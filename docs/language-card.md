@@ -541,11 +541,11 @@ json.stringify(value: a) -> String where a: Encode
 
 ```
 type TomlError { Syntax(String, Int), TypeMismatch(String, String), MissingField(String), Other(String) }
-toml.parse(s: String, type a) -> Result(a, TomlError)
-toml.parse_list(s: String, type a) -> Result(List(a), TomlError)
-toml.parse_map(s: String, type a) -> Result(Map(String, a), TomlError)
-toml.pretty(value: a) -> Result(String, TomlError)
-toml.stringify(value: a) -> Result(String, TomlError)
+toml.parse(s: String, type a) -> Result(a, TomlError) where a: json.Decode
+toml.parse_list(s: String, type a) -> Result(List(a), TomlError) where a: json.Decode
+toml.parse_map(s: String, type a) -> Result(Map(String, a), TomlError) where a: json.Decode
+toml.pretty(value: a) -> Result(String, TomlError) where a: json.Encode
+toml.stringify(value: a) -> Result(String, TomlError) where a: json.Encode
 ```
 
 ### set

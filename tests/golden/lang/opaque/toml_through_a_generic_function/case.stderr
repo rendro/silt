@@ -1,55 +1,48 @@
 error[type]: type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
- --> main.silt:44:17
+ --> main.silt:45:17
     |
- 44 |   println(as_is(Box { v: u }))
+ 45 |   println(as_is(Box { v: u }))
     |                 ^^^^^^^^^^^^ type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
-  = note: `as_is` passes it to `toml.stringify`
   = help: encode it inside module 'mail', or write `trait json.Encode for User` there
 
 error[type]: type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
- --> main.silt:45:19
+ --> main.silt:46:19
     |
- 45 |   println(in_list(u))
+ 46 |   println(in_list(u))
     |                   ^ type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
-  = note: `in_list` passes it to `toml.stringify`
   = help: encode it inside module 'mail', or write `trait json.Encode for User` there
 
 error[type]: type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
- --> main.silt:46:18
+ --> main.silt:47:18
     |
- 46 |   println(in_map(u))
+ 47 |   println(in_map(u))
     |                  ^ type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
-  = note: `in_map` passes it to `toml.pretty`
   = help: encode it inside module 'mail', or write `trait json.Encode for User` there
 
 error[type]: type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
- --> main.silt:47:21
+ --> main.silt:48:21
     |
- 47 |   println(in_record(u))
+ 48 |   println(in_record(u))
     |                     ^ type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
-  = note: `in_record` passes it to `toml.stringify`
-  = help: encode it inside module 'mail', or write `trait json.Encode for User` there
-
-error[type]: type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
- --> main.silt:48:20
-    |
- 48 |   println(in_tuple(u))
-    |                    ^ type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
-  = note: `in_tuple` passes it to `toml.stringify`
   = help: encode it inside module 'mail', or write `trait json.Encode for User` there
 
 error[type]: type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
  --> main.silt:49:20
     |
- 49 |   println(inferred(u))
+ 49 |   println(in_tuple(u))
     |                    ^ type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
-  = note: `inferred` passes it to `toml.stringify`
   = help: encode it inside module 'mail', or write `trait json.Encode for User` there
 
 error[type]: type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
- --> main.silt:50:25
+ --> main.silt:50:20
     |
- 50 |   println(inferred_list(u))
+ 50 |   println(inferred(u))
+    |                    ^ type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = help: encode it inside module 'mail', or write `trait json.Encode for User` there
+
+error[type]: type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+ --> main.silt:51:25
+    |
+ 51 |   println(inferred_list(u))
     |                         ^ type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
-  = note: `inferred_list` passes it to `toml.stringify`
   = help: encode it inside module 'mail', or write `trait json.Encode for User` there

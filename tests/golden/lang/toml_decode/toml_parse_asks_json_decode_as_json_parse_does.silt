@@ -1,0 +1,21 @@
+-- cmd: check
+-- exit: 1
+-- toml.parse asks json.Decode of its type argument, as json.parse does: a
+-- function with a `type a` parameter that hands it to toml.parse says so
+-- with `where a: json.Decode`, and a trait method that decodes `Self` with
+-- `where Self: json.Decode` or the supertrait.
+import toml
+type P { x: Int }
+fn f(s: String, type a) -> Result(a, toml.TomlError) { toml.parse(s, a) }
+fn l(s: String, type a) -> Result(List(a), toml.TomlError) { toml.parse_list(s, a) }
+fn m(s: String, type a) -> Result(Map(String, a), toml.TomlError) { toml.parse_map(s, a) }
+trait R {
+  fn read(s: String) -> Result(Self, toml.TomlError) { toml.parse(s, Self) }
+}
+trait R for P {}
+fn main() {
+  println(f("x = 1", P))
+  println(l("x = 1", P))
+  println(m("x = 1", P))
+  println(P.read("x = 1"))
+}

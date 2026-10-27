@@ -12,11 +12,11 @@ Parse TOML documents into typed silt values and serialize values to TOML.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `parse` | `(String, type a) -> Result(a, TomlError)` | Parse a TOML document (top-level table) into a record or a variant with fields |
-| `parse_list` | `(String, type a) -> Result(List(a), TomlError)` | Parse the one array of a document (such as a `[[items]]` section) into a list |
-| `parse_map` | `(String, type a) -> Result(Map(String, a), TomlError)` | Parse a top-level table into a map |
-| `pretty` | `(a) -> Result(String, TomlError)` | Pretty-print a value as TOML |
-| `stringify` | `(a) -> Result(String, TomlError)` | Serialize a value as TOML |
+| `parse` | `(String, type a) -> Result(a, TomlError) where a: json.Decode` | Parse a TOML document (top-level table) into a record or a variant with fields |
+| `parse_list` | `(String, type a) -> Result(List(a), TomlError) where a: json.Decode` | Parse the one array of a document (such as a `[[items]]` section) into a list |
+| `parse_map` | `(String, type a) -> Result(Map(String, a), TomlError) where a: json.Decode` | Parse a top-level table into a map |
+| `pretty` | `(a) -> Result(String, TomlError) where a: json.Encode` | Pretty-print a value as TOML |
+| `stringify` | `(a) -> Result(String, TomlError) where a: json.Encode` | Serialize a value as TOML |
 
 ## Errors
 
@@ -190,7 +190,7 @@ that silt itself does not read back.
 ## `toml.parse`
 
 ```
-toml.parse(s: String, type a) -> Result(a, TomlError)
+toml.parse(s: String, type a) -> Result(a, TomlError) where a: json.Decode
 ```
 
 Parses a TOML document into a record, or a variant with fields, of type `a`
@@ -239,7 +239,7 @@ fn main() {
 ## `toml.parse_list`
 
 ```
-toml.parse_list(s: String, type a) -> Result(List(a), TomlError)
+toml.parse_list(s: String, type a) -> Result(List(a), TomlError) where a: json.Decode
 ```
 
 TOML's spec requires the top level of every document to be a table, so there is
@@ -276,7 +276,7 @@ top-level key works, `xs = [1, 2, 3]` for `toml.parse_list(text, Int)` too.
 ## `toml.parse_map`
 
 ```
-toml.parse_map(s: String, type a) -> Result(Map(String, a), TomlError)
+toml.parse_map(s: String, type a) -> Result(Map(String, a), TomlError) where a: json.Decode
 ```
 
 Parses a top-level TOML table into a `Map(String, v)`. The type is passed as
@@ -300,7 +300,7 @@ fn main() {
 ## `toml.pretty`
 
 ```
-toml.pretty(value: a) -> Result(String, TomlError)
+toml.pretty(value: a) -> Result(String, TomlError) where a: json.Encode
 ```
 
 Serialises a silt record or map to a multi-line, human-friendly TOML document.
@@ -345,7 +345,7 @@ fn main() {
 ## `toml.stringify`
 
 ```
-toml.stringify(value: a) -> Result(String, TomlError)
+toml.stringify(value: a) -> Result(String, TomlError) where a: json.Encode
 ```
 
 Serialises a silt record, map or variant with fields to a TOML document. Like `toml.pretty`, the

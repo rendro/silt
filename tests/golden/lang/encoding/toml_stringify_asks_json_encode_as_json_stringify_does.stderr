@@ -1,0 +1,12 @@
+error[type]: type variable `a` is not known to implement trait 'json.Encode', which 'toml.stringify' needs
+ --> toml_stringify_asks_json_encode_as_json_stringify_does.silt:11:63
+    |
+ 11 | fn f(x: a) -> Result(String, toml.TomlError) { toml.stringify(x) }
+    |                                                               ^ type variable `a` is not known to implement trait 'json.Encode', which 'toml.stringify' needs
+  = help: add `where a: json.Encode`
+
+error[type]: type 'S' does not implement trait 'json.Encode': field 's' is of type 'Set(Int)', which does not implement trait 'json.Encode'
+ --> toml_stringify_asks_json_encode_as_json_stringify_does.silt:14:26
+    |
+ 14 |   println(toml.stringify(S { s: set.from_list([1]) }))
+    |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^ type 'S' does not implement trait 'json.Encode': field 's' is of type 'Set(Int)', which does not implement trait 'json.Encode'

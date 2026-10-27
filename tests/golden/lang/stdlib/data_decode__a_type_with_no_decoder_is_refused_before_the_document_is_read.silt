@@ -18,7 +18,7 @@ fn list_of(text: String, type a) -> Result(List(a), json.JsonError) where a: jso
   json.parse_list(text, a)
 }
 
-fn from_toml(text: String, type a) -> Result(a, toml.TomlError) {
+fn from_toml(text: String, type a) -> Result(a, toml.TomlError) where a: json.Decode {
   toml.parse(text, a)
 }
 

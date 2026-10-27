@@ -27,7 +27,7 @@ trait json.Decode for Level {
   }
 }
 
-fn read(text: String, type a) -> Result(a, toml.TomlError) {
+fn read(text: String, type a) -> Result(a, toml.TomlError) where a: json.Decode {
   toml.parse(text, a)
 }
 

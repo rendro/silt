@@ -6,7 +6,7 @@
 import json
 import toml
 
-fn decode_map(text: String, type a) -> Result(Map(String, a), toml.TomlError) {
+fn decode_map(text: String, type a) -> Result(Map(String, a), toml.TomlError) where a: json.Decode {
   toml.parse_map(text, a)
 }
 

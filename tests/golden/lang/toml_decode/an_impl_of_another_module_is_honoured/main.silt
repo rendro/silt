@@ -5,11 +5,12 @@
 -- json: the checker does not look into its fields (a `Set`), through a
 -- function that passes its `type a` on too.
 import tags.{ Tags }
+import json
 import toml
 
 type Post { title: String, tags: Tags }
 
-fn load(text: String, type a) -> Result(a, toml.TomlError) {
+fn load(text: String, type a) -> Result(a, toml.TomlError) where a: json.Decode {
   toml.parse(text, a)
 }
 

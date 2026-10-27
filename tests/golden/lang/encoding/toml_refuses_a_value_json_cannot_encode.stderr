@@ -1,0 +1,29 @@
+error[type]: type 'Map(String, Fn(Int) -> Int)' does not implement trait 'json.Encode': value is of type 'Fn(Int) -> Int', which does not implement trait 'json.Encode'
+ --> toml_refuses_a_value_json_cannot_encode.silt:13:26
+    |
+ 13 |   println(toml.stringify(#{"a": int.abs}))
+    |                          ^^^^^^^^^^^^^^^ type 'Map(String, Fn(Int) -> Int)' does not implement trait 'json.Encode': value is of type 'Fn(Int) -> Int', which does not implement trait 'json.Encode'
+
+error[type]: type 'Map(String, Fn(Int) -> Int)' does not implement trait 'json.Encode': value is of type 'Fn(Int) -> Int', which does not implement trait 'json.Encode'
+ --> toml_refuses_a_value_json_cannot_encode.silt:14:26
+    |
+ 14 |   println(toml.stringify(#{"a": { x -> x + 1 }}))
+    |                          ^^^^^^^^^^^^^^^^^^^^^^ type 'Map(String, Fn(Int) -> Int)' does not implement trait 'json.Encode': value is of type 'Fn(Int) -> Int', which does not implement trait 'json.Encode'
+
+error[type]: type 'Map(String, Fn(_) -> Option(_))' does not implement trait 'json.Encode': value is of type 'Fn(_) -> Option(_)', which does not implement trait 'json.Encode'
+ --> toml_refuses_a_value_json_cannot_encode.silt:15:26
+    |
+ 15 |   println(toml.stringify(#{"a": Some}))
+    |                          ^^^^^^^^^^^^ type 'Map(String, Fn(_) -> Option(_))' does not implement trait 'json.Encode': value is of type 'Fn(_) -> Option(_)', which does not implement trait 'json.Encode'
+
+error[type]: type 'Map(String, Set(Int))' does not implement trait 'json.Encode': value is of type 'Set(Int)', which does not implement trait 'json.Encode'
+ --> toml_refuses_a_value_json_cannot_encode.silt:16:26
+    |
+ 16 |   println(toml.stringify(#{"a": #[1, 2]}))
+    |                          ^^^^^^^^^^^^^^^ type 'Map(String, Set(Int))' does not implement trait 'json.Encode': value is of type 'Set(Int)', which does not implement trait 'json.Encode'
+
+error[type]: type 'Map(String, Channel(_))' does not implement trait 'json.Encode': value is of type 'Channel(_)', which does not implement trait 'json.Encode'
+ --> toml_refuses_a_value_json_cannot_encode.silt:17:23
+    |
+ 17 |   println(toml.pretty(#{"a": channel.new(1)}))
+    |                       ^^^^^^^^^^^^^^^^^^^^^^ type 'Map(String, Channel(_))' does not implement trait 'json.Encode': value is of type 'Channel(_)', which does not implement trait 'json.Encode'

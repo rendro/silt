@@ -347,9 +347,10 @@ mod tests {
             "" => "type t".to_string(),
             _ => format!("{params}, type t"),
         };
-        // (A json decoder says what it asks of its type: `json.Decode`.)
+        // (A json or toml decoder says what it asks of its type:
+        // `json.Decode`.)
         let bound = match row.module {
-            "json" => " where t: json.Decode",
+            "json" | "toml" => " where t: json.Decode",
             _ => "",
         };
         format!(

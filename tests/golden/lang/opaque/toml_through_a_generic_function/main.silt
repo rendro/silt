@@ -5,29 +5,30 @@
 -- encoding on to each of its uses: one that gives it an opaque value of
 -- another module is refused there; one with the module's impl is not.
 import mail
+import json
 import toml
 
 type Box(a) {
   v: a,
 }
 
-fn as_is(x: a) -> Result(String, toml.TomlError) {
+fn as_is(x: a) -> Result(String, toml.TomlError) where a: json.Encode {
   toml.stringify(x)
 }
 
-fn in_list(x: a) -> Result(String, toml.TomlError) {
+fn in_list(x: a) -> Result(String, toml.TomlError) where a: json.Encode {
   toml.stringify(#{"k": [x]})
 }
 
-fn in_map(x: a) -> Result(String, toml.TomlError) {
+fn in_map(x: a) -> Result(String, toml.TomlError) where a: json.Encode {
   toml.pretty(#{"k": x})
 }
 
-fn in_record(x: a) -> Result(String, toml.TomlError) {
+fn in_record(x: a) -> Result(String, toml.TomlError) where a: json.Encode {
   toml.stringify(Box { v: x })
 }
 
-fn in_tuple(x: a) -> Result(String, toml.TomlError) {
+fn in_tuple(x: a) -> Result(String, toml.TomlError) where a: json.Encode {
   toml.stringify(#{"k": (x, 1)})
 }
 
