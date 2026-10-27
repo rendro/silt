@@ -106,6 +106,16 @@ impl TypeChecker {
             diagnostic =
                 diagnostic.with_note(format!("`{passer}` passes it to `{}`", check.builtin()));
         }
+        // (The bound that passes it on refused the same encoding there:
+        // this one, which names the encoder, takes its place.)
+        let bound = (span, format!("json.Encode {}", diagnostic.message));
+        if self.lacking.contains(&bound)
+            && let Some(earlier) = (self.errors.iter_mut())
+                .find(|e| e.span == span && e.message == diagnostic.message && e.notes.is_empty())
+        {
+            *earlier = diagnostic;
+            return;
+        }
         self.errors.push(diagnostic);
     }
 

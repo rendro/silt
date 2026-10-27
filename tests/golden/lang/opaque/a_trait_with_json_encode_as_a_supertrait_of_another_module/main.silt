@@ -1,0 +1,11 @@
+import json
+import mail
+import util
+type Plain { n: Int }
+trait util.E for Plain {}
+fn go(x: a) -> String where a: util.E { json.stringify(x) }
+fn main() {
+  println(mail.show(mail.make("viamail")))
+  println(util.E.a(Plain { n: 1 }))
+  println(go(Plain { n: 2 }))
+}

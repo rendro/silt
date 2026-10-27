@@ -1,0 +1,4 @@
+import json
+pub trait E: json.Encode {
+  fn a(self) -> String { json.stringify(self) }
+}

@@ -1,0 +1,13 @@
+-- exit: 1
+import json
+import toml
+import mail
+fn go(x: a) -> String where a: json.Encode {
+  match toml.pretty(x) {
+    Ok(s) -> s
+    Err(_) -> "err"
+  }
+}
+fn main() {
+  println(go(mail.make("a")))
+}

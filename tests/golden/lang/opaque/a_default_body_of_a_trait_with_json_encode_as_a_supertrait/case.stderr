@@ -1,0 +1,34 @@
+error[type]: type 'mail.Email' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+ --> main.silt:15:15
+    |
+ 15 |   println(E.a(t))
+    |               ^ type 'mail.Email' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = help: encode it inside module 'mail', or write `trait json.Encode for Email` there
+
+error[type]: type 'mail.Email' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+ --> main.silt:16:15
+    |
+ 16 |   println(E.b(t))
+    |               ^ type 'mail.Email' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = help: encode it inside module 'mail', or write `trait json.Encode for Email` there
+
+error[type]: type 'mail.Email' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+ --> main.silt:17:15
+    |
+ 17 |   println(E.d(t))
+    |               ^ type 'mail.Email' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = help: encode it inside module 'mail', or write `trait json.Encode for Email` there
+
+error[type]: type 'mail.Email' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+ --> main.silt:18:15
+    |
+ 18 |   println(E.e(t))
+    |               ^ type 'mail.Email' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = help: encode it inside module 'mail', or write `trait json.Encode for Email` there
+
+error[type]: type 'mail.Email' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+ --> main.silt:19:17
+    |
+ 19 |   println(E.tag(t))
+    |                 ^ type 'mail.Email' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = help: encode it inside module 'mail', or write `trait json.Encode for Email` there
