@@ -127,24 +127,31 @@ pub(crate) mod channel {
             }))
         }
 
-        fn receive(vm, ch: Chan) -> Step {
+        fn receive(vm, ch: Chan) -> Result<Step, VmError> {
             // A task that was cancelled, or whose time is over, takes
             // nothing new: not what is there either.
             if vm.takes_nothing_new() {
-                return vm.end_here("channel.receive");
+                return Ok(vm.end_here("channel.receive"));
             }
             match ch.try_receive(vm.scheduler().wake()) {
-                TryReceive::Value(value) => return Step::Done(received(Some(value))),
-                TryReceive::Closed(_) => return Step::Done(received(None)),
+                TryReceive::Value(value) => return Ok(Step::Done(received(Some(value)))),
+                TryReceive::Closed(close) => {
+                    raise_failure(close)?;
+                    return Ok(Step::Done(received(None)));
+                }
                 TryReceive::Empty => {}
             }
             let wait = Wait::new(vec![Arm::Recv(ch.clone())]);
-            vm.park("channel.receive", wait, |_, fired| {
+            Ok(vm.park("channel.receive", wait, |_, fired| {
                 Ok(Step::Done(match fired {
                     Fired::Arm(_, Outcome::Received(value)) => received(Some(value)),
+                    Fired::Arm(_, Outcome::Closed(close)) => {
+                        raise_failure(close)?;
+                        received(None)
+                    }
                     _ => received(None),
                 }))
-            })
+            }))
         }
 
         fn close(vm, ch: Chan) {
@@ -161,15 +168,18 @@ pub(crate) mod channel {
             }
         }
 
-        fn try_receive(vm, ch: Chan) -> Step {
+        fn try_receive(vm, ch: Chan) -> Result<Step, VmError> {
             if vm.takes_nothing_new() {
-                return vm.end_here("channel.try_receive");
+                return Ok(vm.end_here("channel.try_receive"));
             }
-            Step::Done(match ch.try_receive(vm.scheduler().wake()) {
+            Ok(Step::Done(match ch.try_receive(vm.scheduler().wake()) {
                 TryReceive::Value(value) => message(value),
                 TryReceive::Empty => empty(),
-                TryReceive::Closed(_) => closed(),
-            })
+                TryReceive::Closed(close) => {
+                    raise_failure(close)?;
+                    closed()
+                }
+            }))
         }
 
         fn select(vm, ops: List) -> Result<Step, VmError> {
@@ -217,9 +227,11 @@ pub(crate) mod channel {
                     Outcome::Closed(_) if *sends => {
                         return Err(closed_channel_send_err(channel.id()));
                     }
-                    Outcome::Closed(_) | Outcome::Done => {
+                    Outcome::Closed(close) => {
+                        raise_failure(close)?;
                         Value::variant(bv::RECEIVED, [ch, received(None)])
                     }
+                    Outcome::Done => Value::variant(bv::RECEIVED, [ch, received(None)]),
                 }))
             }))
         }
@@ -238,7 +250,10 @@ pub(crate) mod channel {
             }
             match ch.try_receive(vm.scheduler().wake()) {
                 TryReceive::Value(value) => return Ok(Step::Done(message(value))),
-                TryReceive::Closed(_) => return Ok(Step::Done(closed())),
+                TryReceive::Closed(close) => {
+                    raise_failure(close)?;
+                    return Ok(Step::Done(closed()));
+                }
                 TryReceive::Empty => {}
             }
             if dur.is_zero() {
@@ -253,6 +268,10 @@ pub(crate) mod channel {
             Ok(vm.park("channel.receive_timeout", wait, |_, fired| {
                 Ok(Step::Done(match fired {
                     Fired::Arm(_, Outcome::Received(value)) => message(value),
+                    Fired::Arm(_, Outcome::Closed(close)) => {
+                        raise_failure(close)?;
+                        closed()
+                    }
                     Fired::Arm(..) => closed(),
                     Fired::Deadline => empty(),
                 }))
@@ -310,13 +329,19 @@ impl Each {
     }
 }
 
-/// The end of a `channel.each`: the channel is closed and empty. If a
-/// stream stage fed it and failed, that failure is raised here.
-fn ended(close: Close) -> Result<Step, VmError> {
+/// A receive found the channel closed and empty. If a stream stage
+/// fed it and failed, every read of it raises that failure.
+fn raise_failure(close: Close) -> Result<(), VmError> {
     match close.failure {
         Some(failure) => Err((*failure).clone()),
-        None => Ok(Step::Done(Value::Unit)),
+        None => Ok(()),
     }
+}
+
+/// The end of a `channel.each`: the channel is closed and empty.
+fn ended(close: Close) -> Result<Step, VmError> {
+    raise_failure(close)?;
+    Ok(Step::Done(Value::Unit))
 }
 
 impl Native for Each {

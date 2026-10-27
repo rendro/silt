@@ -1,0 +1,42 @@
+-- exit: 1
+-- The impls of a stream's rows run as task code: an impl that calls
+-- `env.set` fails, as it does in a spawned task. The stream ends with
+-- no row, and the `channel.receive` that comes to its end raises the
+-- failure.
+import channel
+import env
+import json
+import postgres
+
+type Code { digits: String }
+
+trait json.Decode for Code {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.String(text) -> {
+        env.set("F8P_SEEN", text)
+        Ok(Code { digits: text })
+      }
+      _ -> Err(json.Other("no code here"))
+    }
+  }
+}
+
+type R { code: Code }
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+fn main() {
+  match postgres.connect(url()) {
+    Ok(db) -> match postgres.stream(db, "SELECT to_jsonb(g::text) AS code FROM generate_series(1, 3) g", (), R) {
+      Ok(rows) -> println("not reached: {channel.receive(rows)}")
+      Err(e) -> println(Error.message(e))
+    }
+    Err(e) -> println(Error.message(e))
+  }
+}

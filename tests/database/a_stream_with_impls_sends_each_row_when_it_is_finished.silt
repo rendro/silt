@@ -8,8 +8,8 @@
 -- - an impl that sleeps 1 s, read under a `task.deadline` of 100 ms:
 --   the deadline's `Err`, and once the stream is closed the pool's next
 --   statement runs;
--- - an impl that calls `env.set` fails, as it does in a spawned task:
---   the stream ends with no row, and the environment is as it was.
+-- (An impl that calls `env.set` fails, as it does in a spawned task:
+-- `a_streams_impl_that_calls_env_set_fails_its_reader`.)
 import channel
 import env
 import fs
@@ -85,22 +85,6 @@ trait json.Decode for Step {
 
 type T { step: Step }
 
-type Code { digits: String }
-
-trait json.Decode for Code {
-  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
-    match value {
-      json.String(text) -> {
-        env.set("F8P_SEEN", text)
-        Ok(Code { digits: text })
-      }
-      _ -> Err(json.Other("no code here"))
-    }
-  }
-}
-
-type R { code: Code }
-
 type One { n: Int }
 
 fn url() -> String {
@@ -156,24 +140,6 @@ fn main() {
         Err(e) -> println(Error.message(e))
       }
       println("  the next statement: {postgres.query(db, "SELECT 1 AS n", (), One)}")
-      println("an impl that calls env.set:")
-      match postgres.stream(db, "SELECT to_jsonb(g::text) AS code FROM generate_series(1, 3) g", (), R) {
-        Ok(rows) -> {
-          let n = loop n = 0 {
-            match channel.receive(rows) {
-              Some(Ok(_)) -> loop(n + 1)
-              Some(Err(e)) -> {
-                println("  Err {Error.message(e)}")
-                n
-              }
-              None -> n
-            }
-          }
-          println("  {n} rows")
-        }
-        Err(e) -> println(Error.message(e))
-      }
-      println("  F8P_SEEN: {env.get("F8P_SEEN")}")
       postgres.close(db)
     }
     Err(e) -> println(Error.message(e))

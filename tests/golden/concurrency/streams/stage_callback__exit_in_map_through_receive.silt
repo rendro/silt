@@ -1,0 +1,18 @@
+-- exit: 32
+-- `process.exit` in the callback of `stream.map` ends the
+-- program with its code while `channel.receive` waits on the stage.
+import channel
+import process
+import stream
+
+fn read(s) {
+  match channel.receive(s) {
+    Some(v) -> println("got {v}")
+    None -> println("closed")
+  }
+}
+
+fn main() {
+  read(stream.map(stream.from_list([2])) { x -> process.exit(30 + x) })
+  println("not reached")
+}

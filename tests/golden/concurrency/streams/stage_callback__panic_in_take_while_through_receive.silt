@@ -1,0 +1,18 @@
+-- exit: 1
+-- A panic in the callback of `stream.take_while` ends the program
+-- through `channel.receive` on its output, as `channel.each` and the
+-- sinks raise it: the error is the panic, not a close.
+import channel
+import stream
+
+fn read(s) {
+  match channel.receive(s) {
+    Some(v) -> println("got {v}")
+    None -> println("closed")
+  }
+}
+
+fn main() {
+  read(stream.take_while(stream.from_list([7])) { x -> panic("take_while failed on {x}") })
+  println("not reached")
+}

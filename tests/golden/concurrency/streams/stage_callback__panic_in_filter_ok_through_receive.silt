@@ -1,0 +1,18 @@
+-- exit: 1
+-- A panic in the callback of `stream.filter_ok` ends the program
+-- through `channel.receive` on its output, as `channel.each` and the
+-- sinks raise it: the error is the panic, not a close.
+import channel
+import stream
+
+fn read(s) {
+  match channel.receive(s) {
+    Some(v) -> println("got {v}")
+    None -> println("closed")
+  }
+}
+
+fn main() {
+  read(stream.filter_ok(stream.from_list([Ok(5), Err("no")])) { x -> panic("filter_ok failed on {x}") })
+  println("not reached")
+}

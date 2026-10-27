@@ -1,0 +1,5 @@
+error[runtime]: panic: filter failed on 4
+ --> stage_callback__panic_in_filter_through_receive.silt:16:52
+    |
+ 16 |   read(stream.filter(stream.from_list([4])) { x -> panic("filter failed on {x}") })
+    |                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ panic: filter failed on 4

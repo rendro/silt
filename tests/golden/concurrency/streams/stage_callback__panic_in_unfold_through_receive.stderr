@@ -1,0 +1,5 @@
+error[runtime]: panic: unfold failed on 1
+ --> stage_callback__panic_in_unfold_through_receive.silt:16:32
+    |
+ 16 |   read(stream.unfold(1) { x -> panic("unfold failed on {x}") })
+    |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ panic: unfold failed on 1

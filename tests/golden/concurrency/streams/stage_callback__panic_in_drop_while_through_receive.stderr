@@ -1,0 +1,5 @@
+error[runtime]: panic: drop_while failed on 8
+ --> stage_callback__panic_in_drop_while_through_receive.silt:16:56
+    |
+ 16 |   read(stream.drop_while(stream.from_list([8])) { x -> panic("drop_while failed on {x}") })
+    |                                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ panic: drop_while failed on 8

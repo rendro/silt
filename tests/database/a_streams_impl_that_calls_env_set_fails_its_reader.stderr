@@ -1,0 +1,5 @@
+error[runtime]: env.set cannot change the environment once tasks or I/O have started: set it at the start of main
+ --> a_streams_impl_that_calls_env_set_fails_its_reader.silt:17:9
+    |
+ 17 |         env.set("F8P_SEEN", text)
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^ env.set cannot change the environment once tasks or I/O have started: set it at the start of main
