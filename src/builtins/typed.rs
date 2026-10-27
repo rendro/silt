@@ -219,24 +219,28 @@ impl<'a> Arg<'a> for &'a crate::bytecode::dict::Dict {
     }
 }
 
-/// A `type a` argument: one of the primitive types, as the type of a
-/// field of it, or a type of a name.
+/// A `type a` argument: one of the primitive types or a type applied to
+/// types (`List(Int)`, `(Int, String)`), as the type of a field of it,
+/// or a type of a name.
 pub(crate) enum Type<'a> {
-    Primitive(FieldType),
+    Field(FieldType),
     Named(&'a Arc<TypeInfo>),
 }
 
 impl<'a> Arg<'a> for Type<'a> {
     fn take(value: &'a Value) -> Option<Self> {
         match value {
-            Value::PrimitiveDescriptor(name) => Some(Type::Primitive(match *name {
+            Value::PrimitiveDescriptor(name) => Some(Type::Field(match *name {
                 "Int" => FieldType::Int,
                 "Float" => FieldType::Float,
                 "String" => FieldType::String,
                 "Bool" => FieldType::Bool,
                 _ => return None,
             })),
-            Value::TypeDescriptor(ty) => Some(Type::Named(ty)),
+            Value::TypeDescriptor(ty) => match &ty.shape {
+                crate::typeinfo::Shape::Applied(field) => Some(Type::Field(field.clone())),
+                _ => Some(Type::Named(ty)),
+            },
             _ => None,
         }
     }

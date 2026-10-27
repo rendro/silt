@@ -144,6 +144,29 @@ struct Local {
     slot: usize,
 }
 
+// ── Type arguments written in full ──────────────────────────────────
+
+/// The type `expr` is the value of, if the checker found it to be one.
+fn written_type_of(expr: &Expr) -> Option<&Type> {
+    match &expr.ty {
+        Some(Type::Generic(head, args)) if head.is_builtin(crate::defs::TYPE_OF) => args.first(),
+        _ => None,
+    }
+}
+
+/// The types alone in the type argument `expr` written in full (`a` in
+/// `List(a)`), added to `out`.
+fn written_leaves<'e>(expr: &'e Expr, out: &mut Vec<&'e Expr>) {
+    match &expr.kind {
+        ExprKind::Call(callee, args) => {
+            written_leaves(callee, out);
+            args.iter().for_each(|arg| written_leaves(arg, out));
+        }
+        ExprKind::Tuple(elems) => elems.iter().for_each(|elem| written_leaves(elem, out)),
+        _ => out.push(expr),
+    }
+}
+
 // ── Compiler errors ─────────────────────────────────────────────────
 
 /// A defect in silt: the program reached the compiler with an error the
@@ -1349,7 +1372,11 @@ impl<'a> Compiler<'a> {
     fn compile_expr(&mut self, expr: &Expr) -> Result<(), Diagnostic> {
         let tail = self.in_tail_position;
         let before = self.emitter().height();
-        if let Some((row, bounds)) = self.builtin_with_dicts(expr) {
+        if let Some(ty) = self.written_type(expr) {
+            let mut leaves = Vec::new();
+            written_leaves(expr, &mut leaves);
+            self.compile_type_value(ty, &leaves, expr.span)?;
+        } else if let Some((row, bounds)) = self.builtin_with_dicts(expr) {
             // (A builtin is no closure to bind its dictionaries to.)
             self.compile_builtin_value(row, bounds, expr.span)?;
         } else {
@@ -2638,6 +2665,108 @@ impl<'a> Compiler<'a> {
     /// enum or container type.
     fn type_value(&self, res: Option<crate::defs::Res>) -> Option<Value> {
         Some(self.type_descriptor(self.res_type(res)?))
+    }
+
+    /// Push the value of the type `ty`, which a type argument written in
+    /// full writes (`List(Int)`, `(Int, String)`, `List(a)`): a constant,
+    /// or made of the values of the type variables in it, which are
+    /// `leaves`, the types alone in the argument.
+    fn compile_type_value(
+        &mut self,
+        ty: &Type,
+        leaves: &[&Expr],
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        if let Some(value) = self.type_constant(ty) {
+            let k = self.add_constant(value, span)?;
+            return self.emit(Asm::Constant { k }, span);
+        }
+        if let Type::Var(_) | Type::Rigid(_) = ty {
+            let leaf = (leaves.iter())
+                .find(|leaf| written_type_of(leaf) == Some(ty))
+                .ok_or_else(|| checker_missed(span, "a type variable no type argument gives"))?;
+            self.in_tail_position = false;
+            return self.compile_expr(leaf);
+        }
+        let (head, parts) = self
+            .type_parts(ty)
+            .ok_or_else(|| checker_missed(span, &format!("the type `{}` as a value", shown(ty))))?;
+        for part in &parts {
+            self.compile_type_value(part, leaves, span)?;
+        }
+        let ty = self.add_constant(Value::TypeDescriptor(head), span)?;
+        self.emit(
+            Asm::MakeType {
+                ty,
+                count: parts.len(),
+            },
+            span,
+        )
+    }
+
+    /// The type a type argument written in full gives, as the checker
+    /// found it: a type applied to types (`List(Int)`, `List(a)`), a
+    /// tuple of types, an alias (`type Pair = (Int, String)`); `None` for
+    /// any other expression. (A call of a type is no call of a function:
+    /// a type is not callable.)
+    fn written_type<'e>(&self, expr: &'e Expr) -> Option<&'e Type> {
+        let names_type = |e: &Expr| match e.res {
+            Some(crate::defs::Res::Def(id)) => matches!(
+                self.units.defs.get(id).kind,
+                crate::defs::DefKind::Type(_) | crate::defs::DefKind::TypeAlias
+            ),
+            _ => false,
+        };
+        let written = match &expr.kind {
+            ExprKind::Call(callee, _) => names_type(callee),
+            ExprKind::Tuple(_) => true,
+            // (An alias left general, `type AnyBox(a) = Box(a)`, is its
+            // head's value.)
+            ExprKind::Ident(_) | ExprKind::FieldAccess(..) => {
+                matches!(expr.res, Some(crate::defs::Res::Def(id))
+                    if self.units.defs.get(id).kind == crate::defs::DefKind::TypeAlias)
+                    && written_type_of(expr).is_some_and(|ty| self.type_constant(ty).is_some())
+            }
+            _ => false,
+        };
+        written.then(|| written_type_of(expr)).flatten()
+    }
+
+    /// The value of the type `ty` if no type variable is in it.
+    fn type_constant(&self, ty: &Type) -> Option<Value> {
+        let primitive = |name: &str| Some(self.type_descriptor(TypeRef::builtin(name)));
+        match ty {
+            Type::Int => primitive("Int"),
+            Type::Float => primitive("Float"),
+            Type::String => primitive("String"),
+            Type::Bool => primitive("Bool"),
+            Type::Unit => primitive("Unit"),
+            Type::Generic(t, args) if args.is_empty() => Some(self.type_descriptor(*t)),
+            _ => {
+                let (head, parts) = self.type_parts(ty)?;
+                let args: Vec<Value> = (parts.iter())
+                    .map(|part| self.type_constant(part))
+                    .collect::<Option<_>>()?;
+                Some(Value::TypeDescriptor(TypeInfo::applied(&head, &args)))
+            }
+        }
+    }
+
+    /// The type `ty` applied to types, or the tuple of types, as its head
+    /// and the types it is applied to.
+    fn type_parts<'t>(&self, ty: &'t Type) -> Option<(Arc<TypeInfo>, Vec<&'t Type>)> {
+        let builtin = |name: &str| crate::typeinfo::builtin_type_named(name).cloned();
+        match ty {
+            Type::List(t) => Some((builtin("List")?, vec![&**t])),
+            Type::Set(t) => Some((builtin("Set")?, vec![&**t])),
+            Type::Channel(t) => Some((builtin("Channel")?, vec![&**t])),
+            Type::Map(k, v) => Some((builtin("Map")?, vec![&**k, &**v])),
+            Type::Tuple(ts) if !ts.is_empty() => Some((builtin("Tuple")?, ts.iter().collect())),
+            Type::Generic(t, args) if !args.is_empty() => {
+                Some((self.type_info(t.id), args.iter().collect()))
+            }
+            _ => None,
+        }
     }
 
     /// The descriptor of the type `ty`, its value (`type_value`).

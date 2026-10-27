@@ -1,0 +1,34 @@
+-- cmd: check
+-- exit: 1
+-- A type argument written in full (`List(Int)`, `(Int, String)`) is that
+-- type. A decoder refuses one it has no decoder for with its own error:
+-- a part of a list, an option, a map or a tuple that has none, a map
+-- whose keys are not String, a set, a generic record. A type with an
+-- argument left open (`List`) is no type. `toml.parse` reads a table
+-- only, and points a list to `toml.parse_list` and a map to
+-- `toml.parse_map`. A function with a `json.Decode` bound is refused by
+-- the decoder it gives the type to.
+import json
+import toml
+
+type Box(a) { v: a }
+
+fn load(text: String, type a) -> Result(a, json.JsonError) where a: json.Decode {
+  json.parse(text, a)
+}
+
+fn main() {
+  let _ = json.parse("[1]", List)
+  let _ = json.parse("[1]", Set(Int))
+  let _ = json.parse("\{}", Map(Int, String))
+  let _ = json.parse("[1]", Box(Int))
+  let _ = json.parse("[1]", List(Set(Int)))
+  let _ = json.parse("[1]", List(Box(Int)))
+  let _ = json.parse("[1]", (Int, Bytes))
+  let _ = json.parse_list("[[1]]", Option(Set(Int)))
+  let _ = json.decode(json.Null, Map(String, List(Bytes)))
+  let _ = toml.parse("a = 1", List(Int))
+  let _ = toml.parse("a = 1", Map(String, Int))
+  let _ = toml.parse("a = 1", (Int, Int))
+  let _ = load("[1]", List(Set(Int)))
+}

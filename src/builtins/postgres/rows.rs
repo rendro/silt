@@ -723,7 +723,7 @@ pub(super) fn reaches_impl(rt: &Runtime, impls: &Globals, row: &RowType) -> bool
             Shape::Enum(variants) => (variants.iter())
                 .flat_map(|v| v.fields.iter())
                 .for_each(|f| f.records(&mut named)),
-            Shape::Opaque => {}
+            Shape::Opaque | Shape::Applied(_) => {}
         }
     }
     false

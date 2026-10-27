@@ -468,7 +468,7 @@ fn lacking_in(
                 v.fields.iter().map(move |field| (place(), field))
             })
             .collect(),
-        Shape::Opaque => Vec::new(),
+        Shape::Opaque | Shape::Applied(_) => Vec::new(),
     };
     for (here, field) in fields {
         if let Some((place, declared)) = lacking(rt, family, field, seen) {
@@ -757,8 +757,8 @@ pub(crate) fn target<'a>(decoder: &Decoder, ty: Type<'a>) -> Result<Target<'a>, 
         ))
     };
     match ty {
-        Type::Primitive(field_type) if decoding.primitives => Ok(Target::Value(field_type)),
-        Type::Primitive(field_type) => Err(match decoding.family.rows() {
+        Type::Field(field_type) if decoding.primitives => Ok(Target::Value(field_type)),
+        Type::Field(field_type) => Err(match decoding.family.rows() {
             true => not_a_row(&field_type.shown(&|_| std::string::String::new())),
             false => VmError::new(format!("{caller}: type argument must be {}", accepted())),
         }),

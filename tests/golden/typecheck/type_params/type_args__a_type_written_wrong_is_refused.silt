@@ -1,0 +1,30 @@
+-- cmd: check
+-- exit: 1
+-- A type written as a type argument with more or fewer types than it
+-- takes is refused as in an annotation. A `type m` parameter, a type
+-- constructor, takes no type written in full, nor an alias of one. A type
+-- parameter passed on inside a type (`List(a)`) to a decoder needs the
+-- bound the decoder needs.
+import json
+
+type User { name: String }
+type Box(a) { v: a }
+type Ints = List(Int)
+type Pairs(a) = List((a, a))
+
+fn count(n: Int, type a) -> Int { n }
+
+fn wrap(x: a, type m) -> m(a) where m: Applicative { m.pure(x) }
+
+fn load_each(text: String, type a) -> Result(List(a), json.JsonError) {
+  json.parse(text, List(a))
+}
+
+fn main() {
+  let _ = count(1, List(Int, Int))
+  let _ = count(2, Box(Int, String))
+  let _ = count(3, User(Int))
+  let _ = count(4, Pairs(Int, Int))
+  let _ = wrap(1, List(Int))
+  let _ = wrap(1, Ints)
+}

@@ -1,30 +1,30 @@
-error[type]: `json.parse` cannot decode `Bytes`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, or a type with a `json.Decode` impl
+error[type]: `json.parse` cannot decode `Bytes`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, a type with a `json.Decode` impl, or List(T), Option(T), Map(String, T) or a tuple of decodable types
  --> a_type_argument_error_is_the_only_error.silt:15:27
     |
  15 |   let _ = json.parse("1", Bytes)
-    |                           ^^^^^ `json.parse` cannot decode `Bytes`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, or a type with a `json.Decode` impl
+    |                           ^^^^^ `json.parse` cannot decode `Bytes`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, a type with a `json.Decode` impl, or List(T), Option(T), Map(String, T) or a tuple of decodable types
   = help: declare a record type with a field of the type you want, and decode into the record
 
-error[type]: `json.parse` cannot decode `time.Date`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, or a type with a `json.Decode` impl
+error[type]: `json.parse` cannot decode `time.Date`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, a type with a `json.Decode` impl, or List(T), Option(T), Map(String, T) or a tuple of decodable types
  --> a_type_argument_error_is_the_only_error.silt:16:27
     |
  16 |   let _ = json.parse("1", time.Date)
-    |                           ^^^^^^^^^ `json.parse` cannot decode `time.Date`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, or a type with a `json.Decode` impl
+    |                           ^^^^^^^^^ `json.parse` cannot decode `time.Date`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, a type with a `json.Decode` impl, or List(T), Option(T), Map(String, T) or a tuple of decodable types
   = help: a decoder decodes a `time.Date` as the type of a record's field: `type R { at: time.Date }`
 
-error[type]: `json.parse` cannot decode `Option`: it is a builtin enum type, which has no decoder
+error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
  --> a_type_argument_error_is_the_only_error.silt:17:27
     |
- 17 |   let _ = json.parse("1", Option(C))
-    |                           ^^^^^^^^^ `json.parse` cannot decode `Option`: it is a builtin enum type, which has no decoder
-  = help: decode into a record type
+ 17 |   let _ = json.parse("1", Option(Blob))
+    |                           ^^^^^^^^^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
 
-error[type]: `json.parse_list` cannot decode `List(Int)`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, or a type with a `json.Decode` impl
+error[type]: `json.parse_list` cannot decode `List(Set(Int))`: `Set(Int)` has no decoder
  --> a_type_argument_error_is_the_only_error.silt:18:34
     |
- 18 |   let _ = json.parse_list("[1]", List(Int))
-    |                                  ^^^^^^^^^ `json.parse_list` cannot decode `List(Int)`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, or a type with a `json.Decode` impl
-  = help: declare a record type with a field of the type you want, and decode into the record
+ 18 |   let _ = json.parse_list("[1]", List(Set(Int)))
+    |                                  ^^^^^^^^^^^^^^ `json.parse_list` cannot decode `List(Set(Int))`: `Set(Int)` has no decoder
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
 
 error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
  --> a_type_argument_error_is_the_only_error.silt:21:20

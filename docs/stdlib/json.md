@@ -58,13 +58,16 @@ The type argument of `json.parse`, `json.parse_list`, `json.parse_map` and
 
 | Function | Type argument |
 |----------|---------------|
-| `json.parse` | `Int`, `Float`, `String`, `Bool`, `json.Value`, a record type, an enum type, or a type with a `json.Decode` impl |
-| `json.parse_list` | `Int`, `Float`, `String`, `Bool`, `json.Value`, a record type, an enum type, or a type with a `json.Decode` impl |
-| `json.parse_map` | `Int`, `Float`, `String`, `Bool`, `json.Value`, a record type, an enum type, or a type with a `json.Decode` impl |
-| `json.decode` | `Int`, `Float`, `String`, `Bool`, `json.Value`, a record type, an enum type, or a type with a `json.Decode` impl |
+| `json.parse` | `Int`, `Float`, `String`, `Bool`, `json.Value`, a record type, an enum type, a type with a `json.Decode` impl, or `List(T)`, `Option(T)`, `Map(String, T)` or a tuple of decodable types |
+| `json.parse_list` | `Int`, `Float`, `String`, `Bool`, `json.Value`, a record type, an enum type, a type with a `json.Decode` impl, or `List(T)`, `Option(T)`, `Map(String, T)` or a tuple of decodable types |
+| `json.parse_map` | `Int`, `Float`, `String`, `Bool`, `json.Value`, a record type, an enum type, a type with a `json.Decode` impl, or `List(T)`, `Option(T)`, `Map(String, T)` or a tuple of decodable types |
+| `json.decode` | `Int`, `Float`, `String`, `Bool`, `json.Value`, a record type, an enum type, a type with a `json.Decode` impl, or `List(T)`, `Option(T)`, `Map(String, T)` or a tuple of decodable types |
 
-An alias of one of these is the type it names (`type Member = User`, then
-`json.parse(text, Member)`).
+A type argument is written in full, at any depth: `json.parse(text,
+List(User))`, `json.parse(text, (Int, String))`, `json.parse(text,
+Map(String, List(Int)))`. Its parts are decoded as the fields of a record
+are (below). An alias of any of these is the type it names (`type Member =
+User`, then `json.parse(text, Member)`).
 
 The fields of a record type, and of each variant of an enum type (and of every
 record and enum type nested in them), may have these types:
@@ -96,10 +99,10 @@ the error notes that `load` passes it to `json.parse`). A record with a
 field no decoder exists for is a compile error that names the field and its
 type, and so is an enum with a variant whose field has none (the error names
 the variant); so is a generic record or enum, or a type the function does
-not take (such as `json.parse(text, List)`, or `json.parse(text, List(Int))`
-and `json.parse(text, (Int, String))`: a type applied to types, and a tuple of
-types, are the types they write; the error of `json.parse` given a list or a
-map type points to `json.parse_list` or `json.parse_map`). The check applies equally to a
+not take (such as `json.parse(text, Set(Int))`, or `json.parse(text, List)`,
+whose argument is left open), and so is a list, an option, a map or a tuple
+with a part that has no decoder (`json.parse(text, List(Set(Int)))`). The
+check applies equally to a
 decoder imported by name (`import json.{ parse }`) and to one called
 through a module alias, and a type is refused whatever a document would hold
 (an `Option` field whose key is left out, another variant of the enum, an

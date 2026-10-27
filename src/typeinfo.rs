@@ -28,6 +28,7 @@ use std::sync::{Arc, OnceLock};
 use parking_lot::RwLock;
 
 use crate::defs::{DefId, TypeId};
+use crate::value::Value;
 
 /// A type as values see it at run time.
 #[derive(Debug)]
@@ -54,6 +55,12 @@ pub enum Shape {
     Record(Vec<(String, FieldType)>),
     /// A type whose values are not records or variants (`Int`, `List`).
     Opaque,
+    /// A type applied to types, or a tuple of types (`List(Int)`,
+    /// `(Int, String)`, `Box(Int)`), as the value a `type a` parameter
+    /// is given ([`TypeInfo::applied`]), with the type as the decoders
+    /// see it. Its id is its head's (`List`, `Tuple`, `Box`) and its
+    /// name the type as silt writes it; no value has it as its type.
+    Applied(FieldType),
 }
 
 /// One variant of an enum.
@@ -85,6 +92,42 @@ impl TypeInfo {
                     })
                     .collect(),
             ),
+        })
+    }
+
+    /// The type `head` applied to the types `args`, each a type's value
+    /// (a `PrimitiveDescriptor` or a `TypeDescriptor`): `List` and
+    /// `Int`, `List(Int)`; the head of a tuple of types is `Tuple`.
+    pub fn applied(head: &TypeInfo, args: &[Value]) -> Arc<TypeInfo> {
+        let parts: Vec<(&str, FieldType)> = args.iter().map(type_value_parts).collect();
+        let names: Vec<&str> = parts.iter().map(|(name, _)| *name).collect();
+        // (The builtin heads the decoders read: any other is a generic
+        // type of the program.)
+        let builtin = match head.is_builtin() {
+            true => head.name.as_str(),
+            false => "",
+        };
+        let name = match builtin {
+            "Tuple" => format!("({})", names.join(", ")),
+            _ => format!("{}({})", head.name, names.join(", ")),
+        };
+        let mut fields = parts.into_iter().map(|(_, field)| field);
+        let field = match (builtin, args.len()) {
+            ("List", 1) => FieldType::List(Box::new(fields.next().expect("an element type"))),
+            ("Option", 1) => FieldType::Option(Box::new(fields.next().expect("a type"))),
+            ("Map", 2) => match fields.next() {
+                Some(FieldType::String) => {
+                    FieldType::Map(Box::new(fields.next().expect("a value type")))
+                }
+                _ => FieldType::Unsupported(name.clone()),
+            },
+            ("Tuple", _) => FieldType::Tuple(fields.collect()),
+            _ => FieldType::Unsupported(name.clone()),
+        };
+        Arc::new(TypeInfo {
+            id: head.id,
+            name,
+            shape: Shape::Applied(field),
         })
     }
 
@@ -211,6 +254,40 @@ impl FieldType {
             FieldType::Tuple(ts) => ts.iter().for_each(|t| t.records(out)),
             _ => {}
         }
+    }
+}
+
+/// The name of the type whose value `value` is, and the type as the
+/// decoders see it.
+fn type_value_parts(value: &Value) -> (&str, FieldType) {
+    match value {
+        Value::PrimitiveDescriptor(name) => {
+            let field = match *name {
+                "Int" => FieldType::Int,
+                "Float" => FieldType::Float,
+                "String" => FieldType::String,
+                "Bool" => FieldType::Bool,
+                other => FieldType::Unsupported(other.to_string()),
+            };
+            (name, field)
+        }
+        Value::TypeDescriptor(info) => {
+            let field = match (&info.shape, info.id) {
+                (Shape::Applied(field), _) => field.clone(),
+                (_, id) if id == ty::DATE => FieldType::Date,
+                (_, id) if id == ty::TIME => FieldType::Time,
+                (_, id) if id == ty::DATE_TIME => FieldType::DateTime,
+                (_, id) if id == ty::JSON_VALUE => FieldType::JsonValue,
+                _ if info.name == "Bytes" && info.is_builtin() => FieldType::Bytes,
+                // A type of the program: the checker gives a decoder a
+                // record or enum type without parameters only.
+                (Shape::Record(_), id) if !info.is_builtin() => FieldType::Record(id),
+                (Shape::Enum(_), id) if !info.is_builtin() => FieldType::Enum(id),
+                _ => FieldType::Unsupported(info.name.clone()),
+            };
+            (&info.name, field)
+        }
+        other => unreachable!("a type's value, not {other:?}"),
     }
 }
 

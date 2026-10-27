@@ -1813,6 +1813,17 @@ impl TypeChecker {
             self.ev_set(ev, super::evidence::EvNode::Structural(trait_name));
             let owner = ev.and_then(|ev| self.owed_for.get(&ev).copied());
             if Self::is_decode(trait_name) {
+                // What a type variable in a decoded list, option, map or
+                // tuple stands for is decoded too.
+                for part in super::builtin_checks::decoded_variables(&resolved) {
+                    let pred = Pred::Trait {
+                        tr: trait_name,
+                        args: Vec::new(),
+                        subject: part,
+                        asker,
+                    };
+                    self.want(pred, origin);
+                }
                 self.want_decode(&resolved, origin, asker, owner);
                 return;
             }

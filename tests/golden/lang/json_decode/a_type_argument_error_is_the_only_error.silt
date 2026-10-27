@@ -14,8 +14,8 @@ type Pack(f, t) { f: f, t: t }
 fn main() {
   let _ = json.parse("1", Bytes)
   let _ = json.parse("1", time.Date)
-  let _ = json.parse("1", Option(C))
-  let _ = json.parse_list("[1]", List(Int))
+  let _ = json.parse("1", Option(Blob))
+  let _ = json.parse_list("[1]", List(Set(Int)))
   let k = Pack { f: json.parse, t: Blob }
   let g = k.f
   println(g("\{}", k.t))

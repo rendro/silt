@@ -242,9 +242,11 @@ impl Decoding {
 
     /// What the type argument may be, each type as `name` writes it:
     /// `Int, Float, String, Bool, json.Value, a record type, an enum
-    /// type, or a type with a `json.Decode` impl`, `a record type,
+    /// type, a type with a `json.Decode` impl, or List(T), Option(T),
+    /// Map(String, T) or a tuple of decodable types`, `a record type,
     /// json.Value, or a type with a `json.Decode` impl`. Every family
-    /// decodes a type with a written impl by the impl.
+    /// decodes a type with a written impl by the impl; a decoder that
+    /// takes any value takes the containers of the field types.
     pub fn type_arguments(self, name: impl Fn(&str) -> String) -> String {
         let json_value = self.json_value().then(|| name(Leaf::JsonValue.name()));
         let record = "a record type".to_string();
@@ -260,6 +262,14 @@ impl Decoding {
             types.push("an enum type".to_string());
         }
         types.push("a type with a `json.Decode` impl".to_string());
+        if self.primitives {
+            types.push(format!(
+                "{}, {}, {} or a tuple of decodable types",
+                name("List(T)"),
+                name("Option(T)"),
+                name("Map(String, T)")
+            ));
+        }
         if let Some(last) = types.last_mut() {
             *last = format!("or {last}");
         }
@@ -622,8 +632,8 @@ mod tests {
         for row in &rows {
             let name = row.qualified();
             for (written, ty) in [
-                ("Int", Type::Primitive(FieldType::Int)),
-                ("String", Type::Primitive(FieldType::String)),
+                ("Int", Type::Field(FieldType::Int)),
+                ("String", Type::Field(FieldType::String)),
                 (
                     "json.Value",
                     Type::Named(crate::typeinfo::builtin_type(ty::JSON_VALUE)),

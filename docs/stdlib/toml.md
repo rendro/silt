@@ -56,10 +56,12 @@ names the type to decode into:
 | Function | Type argument |
 |----------|---------------|
 | `toml.parse` | a record type, an enum type, or a type with a `json.Decode` impl |
-| `toml.parse_list` | `Int`, `Float`, `String`, `Bool`, a record type, an enum type, or a type with a `json.Decode` impl |
-| `toml.parse_map` | `Int`, `Float`, `String`, `Bool`, a record type, an enum type, or a type with a `json.Decode` impl |
+| `toml.parse_list` | `Int`, `Float`, `String`, `Bool`, a record type, an enum type, a type with a `json.Decode` impl, or `List(T)`, `Option(T)`, `Map(String, T)` or a tuple of decodable types |
+| `toml.parse_map` | `Int`, `Float`, `String`, `Bool`, a record type, an enum type, a type with a `json.Decode` impl, or `List(T)`, `Option(T)`, `Map(String, T)` or a tuple of decodable types |
 
-An alias of one of these is the type it names.
+A type argument is written in full (`toml.parse_list(text, List(Int))`,
+`toml.parse_map(text, (Int, String))`). An alias of one of these is the
+type it names.
 
 The fields of a record type, and of each variant of an enum type (and of every
 record and enum type nested in them), may have these types:

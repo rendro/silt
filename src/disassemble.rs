@@ -290,6 +290,8 @@ fn disassemble_instruction(
             line
         }
 
+        Instr::MakeType { ty, count } => with_constant_and_count(ty, count),
+
         // ── MakeRecord: the type, then the field names ────────
         Instr::MakeRecord { ty, fields } => {
             with_constant_and_count(ty, fields.len())

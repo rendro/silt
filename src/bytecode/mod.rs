@@ -709,6 +709,10 @@ impl Chunk {
             Value::TypeDescriptor(ty) if ty.is_anon() => {
                 Some(ConstantKey::AnonType(Arc::as_ptr(ty) as usize))
             }
+            // (A type applied to types has its head's id.)
+            Value::TypeDescriptor(ty) if matches!(ty.shape, crate::typeinfo::Shape::Applied(_)) => {
+                None
+            }
             Value::TypeDescriptor(ty) => Some(ConstantKey::Type(ty.id)),
             Value::BuiltinFn(id) => Some(ConstantKey::Builtin(*id)),
             Value::PrimitiveDescriptor(name) => Some(ConstantKey::Primitive(name)),

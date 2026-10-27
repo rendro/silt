@@ -990,7 +990,7 @@ mod tests {
         );
         assert!(
             page.contains(
-                "| `toml.parse_map` | `Int`, `Float`, `String`, `Bool`, a record type, an enum type, or a type with a `json.Decode` impl |"
+                "| `toml.parse_map` | `Int`, `Float`, `String`, `Bool`, a record type, an enum type, a type with a `json.Decode` impl, or `List(T)`, `Option(T)`, `Map(String, T)` or a tuple of decodable types |"
             ),
             "{page}"
         );
