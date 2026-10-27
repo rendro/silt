@@ -215,7 +215,9 @@ impl TypeChecker {
             | Type::List(_)
             | Type::Map(..)
             | Type::Set(_)
-            | Type::Channel(_) => self.decode_refusal(builtin, Decoding::JSON, written, ty, span),
+            | Type::Channel(_) => {
+                self.decode_refusal(builtin, Decoding::JSON, written, ty, None, span)
+            }
             // A type no type argument names (a tuple, a function, an
             // anonymous record): what a decoder's type argument may be.
             other => {

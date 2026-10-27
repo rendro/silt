@@ -1,0 +1,24 @@
+-- cmd: check
+-- exit: 1
+-- requires-feature: postgres
+-- A generic function of the opaque type's own module that puts its value
+-- into a statement's parameters may be given the type wherever it is
+-- called from; one of a third module may not.
+import mail
+import postgres
+import util
+
+fn run(db: postgres.PgPool) {
+  let u = mail.user("ann")
+  println(mail.send(db, u))
+  println(mail.send_all(db, (u, 1)))
+  println(util.send(db, u))
+  println(util.send_all(db, (u, 1)))
+}
+
+fn main() {
+  match postgres.connect("postgres://nobody@127.0.0.1/none") {
+    Ok(db) -> run(db)
+    Err(e) -> println(e)
+  }
+}

@@ -1,0 +1,9 @@
+import postgres
+
+pub fn send(db: postgres.PgPool, x: a) -> Result(Int, postgres.PostgresError) {
+  postgres.execute(db, "select $1", (x,))
+}
+
+pub fn send_all(db: postgres.PgPool, p: p) -> Result(Int, postgres.PostgresError) {
+  postgres.execute(db, "select $1", p)
+}

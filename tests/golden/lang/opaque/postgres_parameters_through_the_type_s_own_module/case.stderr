@@ -1,0 +1,15 @@
+error[type]: type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+ --> main.silt:15:25
+    |
+ 15 |   println(util.send(db, u))
+    |                         ^ type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = note: `util.send` passes it to `postgres.execute`
+  = help: encode it inside module 'mail', or write `trait json.Encode for User` there
+
+error[type]: type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+ --> main.silt:16:29
+    |
+ 16 |   println(util.send_all(db, (u, 1)))
+    |                             ^^^^^^ type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = note: `util.send_all` passes it to `postgres.execute`
+  = help: encode it inside module 'mail', or write `trait json.Encode for User` there

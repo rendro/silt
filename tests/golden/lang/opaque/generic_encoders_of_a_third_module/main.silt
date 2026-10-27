@@ -1,0 +1,23 @@
+-- cmd: check
+-- exit: 1
+-- A generic function of a third module that hands an opaque value to
+-- toml's encoder, or its type to toml's decoder, is refused where it is
+-- called, directly or through a `let`; so is the code at hand that
+-- encodes the value itself next to a call of the type's own module.
+import mail
+import toml
+import util
+
+fn main() {
+  let u = mail.user("ann")
+  println(util.as_is(u))
+  println(util.inferred(u))
+  println(util.load("name = \"bo\"\nage = 7", mail.User))
+  let as_is = util.as_is
+  println(as_is(u))
+  let mixed = { x ->
+    let _own = mail.as_is(x)
+    toml.stringify(x)
+  }
+  println(mixed(u))
+}

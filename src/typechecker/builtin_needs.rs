@@ -36,6 +36,9 @@ pub(crate) struct GivenUse {
     /// Whether a definition took it into its scheme: each use of that
     /// owes it, not this.
     pub(super) taken: bool,
+    /// The module of the definition used, when it is another module's:
+    /// what its body asks of its own opaque types holds (`opaque_encode_refusal`).
+    pub(super) owner: Option<crate::session::ModuleId>,
 }
 
 /// What a body asks of the type an annotation variable of its signature
@@ -297,7 +300,7 @@ impl TypeChecker {
             },
             other => other,
         };
-        self.check_builtin_argument(check, ty, placing.passer, origin);
+        self.check_builtin_argument(check, ty, placing.passer, None, origin);
     }
 
     /// The method `method` of the impl of `tr` for the type `receiver`
@@ -630,7 +633,8 @@ impl TypeChecker {
                         passer,
                     }) => {
                         self.wanted[k].solved = true;
-                        self.check_builtin_argument(check, &subject, passer, origin);
+                        let owner = self.owed_for.get(&self.wanted[k].ev).copied();
+                        self.check_builtin_argument(check, &subject, passer, owner, origin);
                     }
                     Goal::Pred(Pred::Trait {
                         tr,
@@ -988,7 +992,8 @@ impl TypeChecker {
                     },
                     other => other,
                 };
-                self.check_builtin_argument(check, &use_.subject, Some(use_.passer), use_.origin);
+                let passer = Some(use_.passer);
+                self.check_builtin_argument(check, &use_.subject, passer, use_.owner, use_.origin);
             }
         }
     }

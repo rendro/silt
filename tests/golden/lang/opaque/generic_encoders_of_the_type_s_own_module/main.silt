@@ -1,0 +1,24 @@
+-- A generic function of the opaque type's own module that hands its value
+-- to toml's encoder (as it is, in a list, a map or a record, annotated or
+-- inferred) or its type to toml's decoder encodes and decodes the type
+-- wherever it is called from.
+import mail
+
+fn show(r: Result(String, e)) {
+  match r {
+    Ok(text) -> print(text)
+    Err(_) -> println("failed")
+  }
+}
+
+fn main() {
+  let u = mail.user("ann")
+  show(mail.as_is(u))
+  show(mail.in_list(u))
+  show(mail.in_record(u))
+  show(mail.inferred(u))
+  match mail.load("name = \"bo\"\nage = 7", mail.User) {
+    Ok(v) -> println(mail.age(v))
+    Err(e) -> println(e)
+  }
+}

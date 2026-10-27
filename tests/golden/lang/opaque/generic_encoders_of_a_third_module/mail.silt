@@ -1,0 +1,38 @@
+import toml
+
+pub opaque type User {
+  name: String,
+  age: Int,
+}
+
+type Box(a) {
+  v: a,
+}
+
+pub fn user(name: String) -> User {
+  User { name: name, age: 1 }
+}
+
+pub fn age(u: User) -> Int {
+  u.age
+}
+
+pub fn as_is(x: a) -> Result(String, toml.TomlError) {
+  toml.stringify(x)
+}
+
+pub fn in_list(x: a) -> Result(String, toml.TomlError) {
+  toml.pretty(#{"k": [x]})
+}
+
+pub fn in_record(x: a) -> Result(String, toml.TomlError) {
+  toml.stringify(Box { v: x })
+}
+
+pub fn inferred(x) {
+  toml.stringify(#{"k": x})
+}
+
+pub fn load(s: String, type a) -> Result(a, toml.TomlError) {
+  toml.parse(s, a)
+}

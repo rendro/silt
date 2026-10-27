@@ -120,6 +120,9 @@ impl TypeChecker {
             .filter(|v| self.tables.vars.is_generalizable(*v))
             .collect();
         let mut preds: Vec<Pred> = Vec::new();
+        // The module of each predicate, if another module's definition
+        // owes it (`let_owners`).
+        let mut owners: Vec<Option<crate::session::ModuleId>> = Vec::new();
         // The evidence of each trait predicate the scheme takes: a bound
         // of the definition.
         let mut taken = Vec::new();
@@ -186,9 +189,7 @@ impl TypeChecker {
                                 passer,
                                 at,
                             };
-                            if !preds.contains(&pred) {
-                                preds.push(pred);
-                            }
+                            take_pred(&mut preds, &mut owners, pred, None);
                         }
                     }
                     continue;
@@ -266,9 +267,8 @@ impl TypeChecker {
                         group: *group,
                     },
                 };
-                if !preds.contains(&pred) {
-                    preds.push(pred);
-                }
+                let owner = self.owed_for.get(&self.wanted[i].ev).copied();
+                take_pred(&mut preds, &mut owners, pred, owner);
             }
             // A type the scope gives a function's annotation variable,
             // if the definition is general in it.
@@ -300,9 +300,8 @@ impl TypeChecker {
                     body: use_.body,
                     group: Some(use_.use_id),
                 };
-                if !preds.contains(&pred) {
-                    preds.push(pred);
-                }
+                let owner = use_.owner;
+                take_pred(&mut preds, &mut owners, pred, owner);
                 // (Each use of the definition owes it now.)
                 self.given_waiting[k].taken = true;
             }
@@ -319,6 +318,7 @@ impl TypeChecker {
         for (ev, node) in taken {
             self.ev_set(Some(ev), node);
         }
+        self.generalized_owners = owners;
         Scheme { vars, preds, ty }
     }
 
@@ -649,8 +649,16 @@ impl TypeChecker {
         self.uses += 1;
         let use_id = self.uses;
         let mut mapping: HashMap<TyVar, Type> = HashMap::new();
+        // A `let` of the body that holds a use of another module's
+        // definition: each use of the `let` is a use of that definition.
+        let owners = (scheme.vars.first()).and_then(|v| self.let_owners.get(v).cloned());
         for &v in &scheme.vars {
             let fresh = self.fresh_var();
+            if owners.is_some()
+                && let (Some(&module), Type::Var(w)) = (self.use_owners.get(&v), &fresh)
+            {
+                self.use_owners.insert(*w, module);
+            }
             // (A type constructor variable keeps its name: `m(Int)`.)
             if let (Some(name), Type::Var(w)) = (self.tables.constructor_names.get(&v), &fresh) {
                 let name = *name;
@@ -665,7 +673,11 @@ impl TypeChecker {
             let mut groups: HashMap<usize, usize> = HashMap::new();
             // The evidence of each trait the use owes, for the use.
             let mut owed = Vec::new();
-            for pred in &scheme.preds {
+            for (k, pred) in scheme.preds.iter().enumerate() {
+                let around = (owners.as_ref()).map(|owners| {
+                    let owner = owners.get(k).copied().flatten();
+                    std::mem::replace(&mut self.instantiating, owner)
+                });
                 // (A predicate decided now may make a use of its own.)
                 self.use_id = match pred {
                     Pred::Given {
@@ -677,6 +689,9 @@ impl TypeChecker {
                     _ => use_id,
                 };
                 let ev = self.want(pred.substitute(&mapping), origin);
+                if let Some(around) = around {
+                    self.instantiating = around;
+                }
                 if let (true, Some(ev)) = (super::evidence::passes_dictionary(pred), ev) {
                     owed.push(ev);
                 }
@@ -826,4 +841,23 @@ fn given_at(method_ty: &Type, at: Span) -> Option<Span> {
     super::inference::type_of_var(method_ty)
         .is_none()
         .then_some(at)
+}
+
+/// Take `pred`, owed for `owner` (`let_owners`), into a scheme's
+/// predicates once. (One owed twice, once for another module's definition
+/// and once for no such definition, is owed for none.)
+fn take_pred(
+    preds: &mut Vec<Pred>,
+    owners: &mut Vec<Option<crate::session::ModuleId>>,
+    pred: Pred,
+    owner: Option<crate::session::ModuleId>,
+) {
+    match preds.iter().position(|taken| *taken == pred) {
+        Some(k) if owners[k] != owner => owners[k] = None,
+        Some(_) => {}
+        None => {
+            preds.push(pred);
+            owners.push(owner);
+        }
+    }
 }
