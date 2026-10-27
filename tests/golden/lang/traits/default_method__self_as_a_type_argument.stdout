@@ -1,0 +1,6 @@
+Ok(P {x: 1})
+Ok(P {x: 2})
+Ok(P {x: 3})
+Ok(P {x: 4})
+Ok(Q {y: own z})
+Ok(Q {y: q})

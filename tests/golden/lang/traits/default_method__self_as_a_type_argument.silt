@@ -1,0 +1,37 @@
+-- In a trait's default body `Self` is a type a call may be given:
+-- `json.parse(s, Self)`, `toml.parse(s, Self)`, a `type a` parameter, also
+-- inside a closure. Each impl decodes its own type; an impl may still
+-- write the method itself.
+import json
+import toml
+
+fn read2(s: String, type a) -> Result(a, json.JsonError) where a: json.Decode {
+  json.parse(s, a)
+}
+
+trait Dec: json.Decode {
+  fn read(s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+  fn read_t(s: String) -> Result(Self, toml.TomlError) { toml.parse(s, Self) }
+  fn read_via(s: String) -> Result(Self, json.JsonError) { read2(s, Self) }
+  fn read_late(s: String) -> Result(Self, json.JsonError) {
+    let f = { t -> json.parse(t, Self) }
+    f(s)
+  }
+}
+
+type P { x: Int }
+type Q { y: String }
+
+trait Dec for P {}
+trait Dec for Q {
+  fn read(s: String) -> Result(Q, json.JsonError) { Ok(Q { y: "own {s}" }) }
+}
+
+fn main() {
+  println(P.read("\{\"x\": 1}"))
+  println(P.read_t("x = 2"))
+  println(P.read_via("\{\"x\": 3}"))
+  println(P.read_late("\{\"x\": 4}"))
+  println(Q.read("z"))
+  println(Q.read_via("\{\"y\": \"q\"}"))
+}

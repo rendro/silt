@@ -140,6 +140,7 @@ fn builtin_template(globals: &mut Globals, tr: TraitId, ty: TypeId) -> Option<Ar
         ty,
         args: ImplArgs::none(),
         name: format!("{trait_name} for {type_name}"),
+        descriptor: None,
         methods,
         supers,
         wheres: Box::new([]),
@@ -232,7 +233,7 @@ impl Compiler<'_> {
     /// Push the dictionary of the impl whose method `owner` the code
     /// being compiled is in: the one a call left below the arguments, or
     /// the local that keeps it for a function in the method.
-    fn load_frame_dict(&mut self, owner: Span, span: Span) -> Result<(), Diagnostic> {
+    pub(super) fn load_frame_dict(&mut self, owner: Span, span: Span) -> Result<(), Diagnostic> {
         // (The dictionary of an impl whose header asks nothing is the
         // same wherever the method runs.)
         if let Some(&index) = self.own_dicts.get(&owner) {
@@ -525,6 +526,10 @@ impl Compiler<'_> {
                 self.units.defs.get(tr.0).name,
                 self.type_info(ty).name
             ),
+            descriptor: Some(self.type_descriptor(crate::types::TypeRef {
+                id: ty,
+                name: self.units.defs.get(ty.0).name,
+            })),
             methods,
             supers: supers.into(),
             wheres: wheres.into(),

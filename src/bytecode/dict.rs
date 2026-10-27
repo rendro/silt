@@ -32,6 +32,10 @@ pub struct Template {
     pub args: crate::defs::ImplArgs,
     /// The impl, as a message names it: `Greet for Box`.
     pub name: String,
+    /// The impl's type as a value, its descriptor: what `Self` gives a
+    /// call in a default method of a program's trait (`DictType`).
+    /// None for an impl of a builtin trait, whose defaults never name it.
+    pub descriptor: Option<Value>,
     /// Each method of the trait, in the order the trait declares them:
     /// the impl's own, or the trait's default.
     pub methods: Box<[Method]>,
@@ -148,6 +152,13 @@ impl Dict {
             Dict::Of(index) => globals.template_at(*index),
             Dict::Built(built) => Some(&built.template),
         }
+    }
+
+    /// The descriptor of the dictionary's impl's type (`DictType`).
+    pub fn descriptor(&self, globals: &Globals) -> Value {
+        (self.template(globals))
+            .and_then(|template| template.descriptor.clone())
+            .unwrap_or(Value::Unit)
     }
 
     /// The dictionary of the `k`th predicate of the impl's header.

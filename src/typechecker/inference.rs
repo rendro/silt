@@ -2742,6 +2742,13 @@ impl TypeChecker {
                 } else if name == intern("self") {
                     // `self` is resolved at runtime — allow without error
                     self.fresh_var()
+                } else if name == intern("Self")
+                    && expr.res == Some(crate::defs::Res::Local)
+                    && let Some(ty) = self.sig_type_var(name)
+                {
+                    // A trait's default body gives `Self` to a call as a
+                    // type (the resolver allows it there alone).
+                    Type::type_of(ty)
                 } else if let Some(ty) = self.alias_value(expr.res, env) {
                     ty
                 } else if self.res_def(expr.res).is_some_and(|def| {
