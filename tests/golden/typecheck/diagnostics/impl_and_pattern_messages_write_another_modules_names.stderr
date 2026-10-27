@@ -47,11 +47,11 @@ error[type]: constructor 'json.Int' expects 1 field, but pattern has 2
  22 |     json.Int(a, b) -> 1
     |     ^^^^^^^^^^^^^^ constructor 'json.Int' expects 1 field, but pattern has 2
 
-error[type]: `json.parse` cannot decode `time.DateTime`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, or a type with a `json.Decode` impl
+error[type]: `json.parse` cannot decode `time.DateTime`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, a type with a `json.Decode` impl, or List(T), Option(T), Map(String, T) or a tuple of decodable types
  --> impl_and_pattern_messages_write_another_modules_names.silt:25:27
     |
  25 |   let _ = json.parse("1", DateTime)
-    |                           ^^^^^^^^ `json.parse` cannot decode `time.DateTime`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, or a type with a `json.Decode` impl
+    |                           ^^^^^^^^ `json.parse` cannot decode `time.DateTime`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, a type with a `json.Decode` impl, or List(T), Option(T), Map(String, T) or a tuple of decodable types
   = help: a decoder decodes a `time.DateTime` as the type of a record's field: `type R { at: time.DateTime }`
 
 warning[type]: 'a' is never used

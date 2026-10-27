@@ -1,0 +1,29 @@
+-- cmd: run
+-- A decoder's type argument may be any type written in full: a list, an
+-- option, a map with String keys or a tuple of decodable types, at any
+-- depth, an alias of one (`type Pair = (Int, String)`, `type Pairs(a) =
+-- List((a, a))`) too. It is decoded as the type of a field is.
+import json
+import toml
+
+type User { name: String }
+type Pair = (Int, String)
+type Pairs(a) = List((a, a))
+
+fn main() {
+  let users = """[{"name": "ada"}, {"name": "bo"}]"""
+  println(json.parse("[1, 2]", List(Int)))
+  println(json.parse("[1, \"a\"]", (Int, String)))
+  println(json.parse("[1, \"a\"]", Pair))
+  println(json.parse("""{"a": 1, "b": 2}""", Map(String, Int)))
+  println(json.parse("""{"name": "ada"}""", Option(User)))
+  println(json.parse("null", Option(User)))
+  println(json.parse(users, List(User)))
+  println(json.parse("[[1, 2], [3, 4]]", Pairs(Int)))
+  println(json.parse("[[1, null]]", List(List(Option(Int)))))
+  println(json.parse("[1, \"a\"]", List(Int)))
+  println(json.parse_list("[[1], []]", List(Int)))
+  println(json.parse_map("""{"a": [1, "x"]}""", (Int, String)))
+  println(json.decode(json.Array([json.Int(1)]), List(Int)))
+  println(toml.parse_map("[a]\nx = 1\n[b]\nx = 2", Map(String, Int)))
+}

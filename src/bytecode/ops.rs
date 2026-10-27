@@ -969,6 +969,11 @@ ops! {
     /// with the top values as the named fields, in the order they are
     /// written in: each goes where the type declares its field.
     MakeRecord { ty: Type, fields: Strs("fields of a record") } => pops fields.len(), pushes 1;
+    /// The value of the type whose descriptor the constant is (`List`,
+    /// `Tuple`, `Box`) applied to the top `count` values of types: a
+    /// type argument written in full with a type variable in it
+    /// (`List(a)`).
+    MakeType { ty: Type, count: U8("arguments of a type") } => pops count, pushes 1;
     /// Functional record update: the record under the top values with
     /// them as the named fields. The result has the base's type.
     RecordUpdate { fields: Strs("fields of a record update") } => pops fields.len() + 1, pushes 1;

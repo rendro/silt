@@ -7,7 +7,7 @@ use crate::builtins::registry::registry;
 use crate::bytecode::dict::Dict;
 use crate::bytecode::{Chunk, Instr, Op, Segment, Segments, VmClosure, decode};
 use crate::scheduler::{Blocks, SliceResult};
-use crate::typeinfo::bv;
+use crate::typeinfo::{TypeInfo, bv};
 use crate::value::{Float, List, MAX_COLLECTION_LEN, Record, Value};
 
 use super::arithmetic::{check_same_type, float_arithmetic, int_arithmetic, ordering};
@@ -1149,6 +1149,12 @@ impl Vm {
                 }
                 Instr::MakeMap { pairs } => make_map(&mut self.stack, pairs),
                 Instr::MakeSet { count } => make_set(&mut self.stack, count),
+                Instr::MakeType { ty, count } => {
+                    let start = self.stack.len() - count;
+                    let made = TypeInfo::applied(chunk.type_info(ty), &self.stack[start..]);
+                    self.stack.truncate(start);
+                    self.stack.push(Value::TypeDescriptor(made));
+                }
                 Instr::MakeRecord { ty, fields } => {
                     let start = self.stack.len() - fields.len();
                     let values: Vec<Value> = self.stack.drain(start..).collect();

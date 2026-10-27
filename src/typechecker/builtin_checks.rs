@@ -76,7 +76,8 @@ impl TypeChecker {
         // variable in it owes what the whole does (each use of its
         // function, of the type it gives).
         if let BuiltinCheck::Params { builtin } | BuiltinCheck::Encodes { builtin } = check {
-            self.encode_variables_inside(builtin, &ty, passer, owner, origin);
+            let check = BuiltinCheck::Encodes { builtin };
+            self.owe_for_variables_inside(check, &ty, passer, owner, origin);
         }
         let span = origin.span;
         let refusal = match check {
@@ -94,6 +95,20 @@ impl TypeChecker {
             BuiltinCheck::Encodes { .. } => self.opaque_encode_refusal(&ty, span, owner),
         };
         let Some(mut diagnostic) = refusal else {
+            // A decoded list, option, map or tuple: what a type variable
+            // in it stands for is decoded too.
+            if let BuiltinCheck::Decodes {
+                builtin, decoding, ..
+            } = check
+                && decoded_parts(&ty).is_some()
+            {
+                let check = BuiltinCheck::Decodes {
+                    builtin,
+                    decoding,
+                    written: None,
+                };
+                self.owe_for_variables_inside(check, &ty, passer, owner, origin);
+            }
             return;
         };
         // One refusal for one type at one place: a definition that gives
@@ -141,6 +156,19 @@ impl TypeChecker {
         owner: Option<crate::session::ModuleId>,
         span: Span,
     ) -> Option<Diagnostic> {
+        // A list, an option, a map with String keys or a tuple
+        // (`List(Int)`, `(Int, String)`): a decoder that takes any value
+        // reads it as the type of a field, each part as one. (A type
+        // with an argument left open, `List`, is not one type.)
+        if decoding.primitives
+            && let Some(parts) = decoded_parts(ty)
+            && !decoded_variables(ty)
+                .iter()
+                .any(|v| matches!(v, Type::Var(_)))
+        {
+            return (parts.into_iter())
+                .find_map(|part| self.part_refusal(builtin_name, decoding, ty, part, owner, span));
+        }
         let head = match ty {
             Type::Generic(t, _) => *t,
             Type::Int => TypeRef::builtin("Int"),
@@ -325,10 +353,12 @@ impl TypeChecker {
                 true => self.show_type(ty),
                 false => type_name,
             };
-            // `json.parse` and `toml.parse` read a list or a map with a
-            // function of their own.
+            // `toml.parse` reads a list or a map with a function of its
+            // own; a decoder that takes any value, the containers of the
+            // field types.
             let module = (builtin_name.strip_suffix(".parse")).filter(|_| !family.rows());
             let help = match (module, ty) {
+                _ if decoding.primitives => family.help(),
                 (Some(module), Type::List(_)) => format!("use `{module}.parse_list` for a list"),
                 (Some(module), Type::Map(..)) => format!("use `{module}.parse_map` for a map"),
                 _ => family.type_argument_help().to_string(),
@@ -363,6 +393,77 @@ impl TypeChecker {
             );
         }
         None
+    }
+
+    /// The error of the decoder `builtin`, which decodes as `decoding`
+    /// says, given `whole` at `span`, if `part` of it, a type its list,
+    /// option, map or tuple holds, has no decoder: a record or enum type
+    /// as the decoder judges it given that type.
+    fn part_refusal(
+        &self,
+        builtin: &str,
+        decoding: Decoding,
+        whole: &Type,
+        part: &Type,
+        owner: Option<crate::session::ModuleId>,
+        span: Span,
+    ) -> Option<Diagnostic> {
+        use crate::builtins::registry::decoding::Leaf;
+        use crate::typeinfo::ty as bt;
+        let family = decoding.family.nested();
+        let leaf = match part {
+            // (What a type variable stands for owes the check: see
+            // `check_builtin_argument`.)
+            Type::Var(_) | Type::Rigid(_) | Type::Error | Type::Never => return None,
+            Type::Int => Some(Leaf::Int),
+            Type::Float => Some(Leaf::Float),
+            Type::String => Some(Leaf::String),
+            Type::Bool => Some(Leaf::Bool),
+            Type::Generic(t, args) if args.is_empty() => match t.id {
+                id if id == bt::DATE => Some(Leaf::Date),
+                id if id == bt::TIME => Some(Leaf::Time),
+                id if id == bt::DATE_TIME => Some(Leaf::DateTime),
+                id if id == bt::JSON_VALUE => Some(Leaf::JsonValue),
+                id if id == TypeRef::builtin("Bytes").id => Some(Leaf::Bytes),
+                _ => None,
+            },
+            _ => None,
+        };
+        match (leaf, decoded_parts(part), part) {
+            (Some(leaf), ..) if family.decodes(leaf) => None,
+            (None, Some(parts), _) => (parts.into_iter())
+                .find_map(|inner| self.part_refusal(builtin, decoding, whole, inner, owner, span)),
+            // A record or enum type of the program.
+            (None, None, Type::Generic(t, _))
+                if crate::defs::builtin_types()
+                    .get(t.id.0.0 as usize)
+                    .is_none() =>
+            {
+                let decoding = Decoding {
+                    family,
+                    primitives: true,
+                };
+                self.decode_refusal(builtin, decoding, None, part, owner, span)
+            }
+            _ => {
+                let help = match leaf {
+                    Some(Leaf::Bytes) => format!("{}{}", family.help(), family.bytes_help()),
+                    _ => family.help(),
+                };
+                Some(
+                    Diagnostic::error(
+                        Code::Undecodable,
+                        span,
+                        format!(
+                            "`{builtin}` cannot decode `{}`: `{}` has no decoder",
+                            self.show_type(whole),
+                            self.show_type(part)
+                        ),
+                    )
+                    .with_help(help),
+                )
+            }
+        }
     }
 
     /// The first field that `family` cannot decode, in the record or
@@ -479,4 +580,32 @@ fn params_refusal(builtin_name: &str, ty: &Type, span: Span) -> Option<Diagnosti
             .with_help("write (id,)"),
         ),
     }
+}
+
+/// The types a list, an option, a map with String keys or a tuple `ty`
+/// holds, which a decoder reads as the types of fields; `None` for any
+/// other type.
+pub(super) fn decoded_parts(ty: &Type) -> Option<Vec<&Type>> {
+    match ty {
+        Type::List(t) => Some(vec![&**t]),
+        Type::Map(k, v) if matches!(**k, Type::String) => Some(vec![&**v]),
+        Type::Tuple(ts) if !ts.is_empty() => Some(ts.iter().collect()),
+        Type::Generic(t, args) if t.id == crate::typeinfo::ty::OPTION && args.len() == 1 => {
+            Some(vec![&args[0]])
+        }
+        _ => None,
+    }
+}
+
+/// The type variables among the types a list, an option, a map with
+/// String keys or a tuple `ty` holds, at any depth through these.
+pub(super) fn decoded_variables(ty: &Type) -> Vec<Type> {
+    let mut out = Vec::new();
+    for part in decoded_parts(ty).unwrap_or_default() {
+        match part {
+            Type::Var(_) | Type::Rigid(_) => out.push(part.clone()),
+            _ => out.extend(decoded_variables(part)),
+        }
+    }
+    out
 }

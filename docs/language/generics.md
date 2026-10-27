@@ -253,10 +253,13 @@ let todo = json.parse(body, Todo)
 let n = try_from("42", Int)
 ```
 
-The type passed is a type name, or an alias of one, which stands for
-the type it names: to pass `List(Int)`, name it with an alias
-(`type Ints = List(Int)`, then `make(Ints)`). Passing a lowercase type
-variable only works when that variable is in scope at the call site.
+The type passed is any type written in full: a type name, a type
+applied to types (`make(List(Int))`, `make(Map(String, Int))`), a tuple
+of types (`make((Int, String))`), or an alias of one, which stands for
+the type it names. A type with an argument left open (`List`) is no
+type to decode into. Passing a lowercase type variable only works when
+that variable is in scope at the call site, and a function passes its
+own on inside a type the same way (`json.parse(body, List(a))`).
 
 ### Why `type` parameters come last
 

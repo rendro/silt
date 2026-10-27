@@ -181,13 +181,14 @@ impl TypeChecker {
     }
 
     /// Owe, for each type variable inside `ty` (at any depth, the whole
-    /// excepted), that the encoder `builtin` may encode what it stands
-    /// for: an annotation variable as a need of its function's uses, any
-    /// other one once it is decided or generalised (`BuiltinCheck::Encodes`).
-    /// A definition of `owner` asks it, if one does.
-    pub(super) fn encode_variables_inside(
+    /// excepted), `check` of what it stands for (the encoder's
+    /// `BuiltinCheck::Encodes`, or the decoder's check of a type its
+    /// list, option, map or tuple holds): an annotation variable as a
+    /// need of its function's uses, any other one once it is decided or
+    /// generalised. A definition of `owner` asks it, if one does.
+    pub(super) fn owe_for_variables_inside(
         &mut self,
-        builtin: Symbol,
+        check: crate::types::BuiltinCheck,
         ty: &Type,
         passer: Option<Symbol>,
         owner: Option<crate::session::ModuleId>,
@@ -218,7 +219,6 @@ impl TypeChecker {
         let mut inside = Vec::new();
         walk(ty, true, &mut inside);
         for var in inside {
-            let check = crate::types::BuiltinCheck::Encodes { builtin };
             match var {
                 Type::Rigid(_) => self.check_builtin_argument(check, &var, passer, None, origin),
                 _ => {

@@ -1,0 +1,60 @@
+-- cmd: run
+-- A `type a` parameter is given any type written in full: a type applied
+-- to types (`List(Int)`, `Box(Int)`, a generic alias given its
+-- arguments), a tuple of types, at any depth. A function passes its own
+-- type parameter on inside one (`List(a)`, `(a, List(a))`), and a
+-- trait's default body passes `Self` so; a method of the type is that of
+-- its head.
+import json
+
+type User { name: String }
+type Box(a) { v: a }
+type Tag(a) { Tag(a), Untagged }
+type Pairs(a) = List((a, a))
+
+trait Named {
+  fn named() -> String
+}
+
+trait Named for List(a) {
+  fn named() -> String { "a list" }
+}
+
+trait Load: json.Decode {
+  fn load_all(text: String) -> Result(List(Self), json.JsonError) {
+    json.parse(text, List(Self))
+  }
+}
+
+trait Load for User {}
+
+fn count(n: Int, type a) -> Int { n }
+
+fn name_of(type a) -> String where a: Named { a.named() }
+
+fn load(text: String, type a) -> Result(a, json.JsonError) where a: json.Decode {
+  json.parse(text, a)
+}
+
+fn load_each(text: String, type a) -> Result(List(a), json.JsonError) where a: json.Decode {
+  load(text, List(a))
+}
+
+fn load_nested(text: String, type a) -> Result((a, List(a)), json.JsonError) where a: json.Decode {
+  load(text, (a, List(a)))
+}
+
+fn main() {
+  println(count(1, List(Int)))
+  println(count(2, Map(String, List(Int))))
+  println(count(3, (Int, String)))
+  println(count(4, Box(Int)))
+  println(count(5, Tag(String)))
+  println(count(6, Pairs(Int)))
+  println(name_of(List(Int)))
+  println(load("[1, 2]", List(Int)))
+  println(load_each("[[1], [2, 3]]", List(Int)))
+  println(load_each("""[{"name": "ada"}]""", User))
+  println(load_nested("[1, [2, 3]]", Int))
+  println(User.load_all("""[{"name": "bo"}]"""))
+}
