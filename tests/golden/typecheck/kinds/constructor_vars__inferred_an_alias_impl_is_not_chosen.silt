@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- The `Display` impl of `Box(Int)` is no answer for an `m(_)`.
+-- stderr-contains: error[type]: type `m(_)` is not known to implement trait 'Display'
+type Box(a) { Bx(a) }
+type IB = Box(Int)
+trait Display for IB { fn display(self) -> String { match self { Bx(n) -> "intbox {n + 1}" } } }
+trait Functor for Box(_) { fn map(b, f) { match b { Bx(x) -> Bx(f(x)) } } }
+fn sh(xs) { "{Functor.map(xs) { v -> v }}" }
+fn main() {
+  println(sh(Bx(1)))
+  println(sh(Bx("s")))
+}

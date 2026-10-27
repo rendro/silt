@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- A program's own trait of an `m(..)` is refused as a builtin one is.
+-- stderr-contains: error[type]: type `m(Int)` is not known to implement trait 'Greet', which 'greet' needs
+-- stderr-not-contains: compiler bug
+trait Greet { fn greet(self) -> String }
+trait Greet for List(a) { fn greet(self) -> String { "list" } }
+fn g(x) { Greet.greet(Functor.map(x) { v -> 1 }) }
+fn main() {
+  println(g([1]))
+  println(g(Some(1)))
+}

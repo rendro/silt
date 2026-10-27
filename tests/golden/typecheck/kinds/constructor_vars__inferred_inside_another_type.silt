@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- An `m(..)` inside a list, an option or what json encodes owes the
+-- trait as well.
+-- stderr-contains: error[type]: type `m(_)` is not known to implement trait 'Display'
+-- stderr-contains: error[type]: type `m(_)` is not known to implement trait 'Equal', which '==' needs
+-- stderr-contains: error[type]: type `m(_)` is not known to implement trait 'json.Encode', which 'json.stringify' needs
+import json
+fn nest(xs) { "{[Functor.map(xs) { v -> v }]}" }
+fn eqo(xs) { Some(Functor.map(xs) { v -> v }) == Some(xs) }
+fn enc(xs) { json.stringify(Functor.map(xs) { v -> v }) }
+fn main() {
+  println(nest([1]))
+  println(eqo([1]))
+  println(enc([1]))
+}

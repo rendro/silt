@@ -1,0 +1,23 @@
+-- cmd: check
+-- exit: 1
+-- A function without annotations over a type constructor variable owes
+-- no trait of an `m(..)`, as its annotated spelling cannot: no bound
+-- says it, so a use is refused when the definition is generalised.
+-- stderr-contains: error[type]: type `m(_)` is not known to implement trait 'Display'
+-- stderr-contains: error[type]: type `m(_)` is not known to implement trait 'Equal', which '==' needs
+-- stderr-contains: error[type]: type `m(_)` is not known to implement trait 'Compare', which '<' needs
+-- stderr-contains: error[type]: type `m(_)` is not known to implement trait 'Hash', which 'set.contains' needs
+import set
+fn show(xs) {
+  let ys = Functor.map(xs) { v -> v }
+  "{ys}"
+}
+fn same(xs) { Functor.map(xs) { v -> v } == xs }
+fn lt(xs) { Functor.map(xs) { v -> v } < xs }
+fn hs(xs) { set.contains(#[Functor.map(xs) { v -> v }], xs) }
+fn main() {
+  println(show([{ n: Int -> n }]))
+  println(same(Some({ n: Int -> n })))
+  println(lt([1]))
+  println(hs([1]))
+}

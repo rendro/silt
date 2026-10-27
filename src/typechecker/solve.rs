@@ -463,8 +463,12 @@ impl TypeChecker {
                 Goal::Pred(Pred::Trait {
                     tr, args, subject, ..
                 }) => {
+                    // (A type constructor variable applied waits for the
+                    // variable, as a variable does.)
                     let subject = self.apply(subject);
-                    matches!(subject, Type::Var(_))
+                    matches!(&subject, Type::Var(_))
+                        || matches!(&subject, Type::App(head, _)
+                            if matches!(self.apply(head), Type::Var(_)))
                         || self.waits_for_trait_args(*tr, &subject, args)
                 }
                 _ => false,
@@ -1617,6 +1621,32 @@ impl TypeChecker {
         }
     }
 
+    /// Report that `ty`, a type constructor variable applied (`m(Int)`),
+    /// is known to implement no trait: a bound is on the variable, never
+    /// on what it is applied to. An annotation's variable is refused at
+    /// the use, an inferred one when its definition is generalised.
+    pub(super) fn applied_constructor_var(
+        &mut self,
+        trait_name: TraitKey,
+        bound_trait_args: &[Type],
+        ty: &Type,
+        origin: Origin,
+    ) {
+        // (What asks it, as of a type variable.)
+        let needs = match (origin.callee, origin.op) {
+            (Some(pinned), Some(PIN)) => format!(", which the pin '^{pinned}' needs"),
+            (Some(callee), _) => format!(", which '{callee}' needs"),
+            (None, Some(op)) => format!(", which {op} needs"),
+            (None, None) => String::new(),
+        };
+        let message = format!(
+            "type `{}` is not known to implement trait '{}'{needs}",
+            self.show_type(ty),
+            self.show_bound(trait_name, bound_trait_args)
+        );
+        self.error(Code::MissingTraitImpl, message, origin.span);
+    }
+
     /// Check that `ty`, whose head is known, implements `trait_name` at
     /// `bound_trait_args`, for the use `origin`: the one answer to "does
     /// this type implement this trait". Reports
@@ -1667,19 +1697,7 @@ impl TypeChecker {
         if let Type::App(head, _) = &resolved
             && matches!(self.apply(head), Type::Rigid(_))
         {
-            // (What asks it, as of a type variable.)
-            let needs = match (origin.callee, origin.op) {
-                (Some(pinned), Some(PIN)) => format!(", which the pin '^{pinned}' needs"),
-                (Some(callee), _) => format!(", which '{callee}' needs"),
-                (None, Some(op)) => format!(", which {op} needs"),
-                (None, None) => String::new(),
-            };
-            let message = format!(
-                "type `{}` is not known to implement trait '{}'{needs}",
-                self.show_type(&resolved),
-                self.show_bound(trait_name, bound_trait_args)
-            );
-            self.error(Code::MissingTraitImpl, message, span);
+            self.applied_constructor_var(trait_name, bound_trait_args, &resolved, origin);
             return;
         }
         let Some(type_name) = self.type_name_for_impl(&resolved) else {

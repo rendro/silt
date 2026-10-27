@@ -1,0 +1,16 @@
+-- A constructor the use decides, in `main` or in a function's body,
+-- owes its traits as any type does; a function over `m` that needs no
+-- trait of an `m(..)` is general in it.
+fn ok(xs) { Functor.map(xs) { v -> v + 1 } }
+fn inner() {
+  let zs = Functor.map([1]) { v -> v }
+  "{zs}"
+}
+fn main() {
+  let ys = Functor.map([1, 2]) { v -> v * 2 }
+  println("{ys}")
+  println(ys == [2, 4])
+  println(ok([1]))
+  println(ok(Some(3)))
+  println(inner())
+}

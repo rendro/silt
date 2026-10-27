@@ -149,6 +149,9 @@ impl TypeChecker {
                 false => owner,
             }
         };
+        // What no bound of the scheme can say, reported once the
+        // scheme's predicates are taken.
+        let mut refused = Vec::new();
         if !vars.is_empty() {
             for i in self.closed_mark..self.wanted.len() {
                 if self.wanted[i].solved {
@@ -192,6 +195,21 @@ impl TypeChecker {
                             take_pred(&mut preds, &mut owners, pred, None);
                         }
                     }
+                    continue;
+                }
+                // A trait owed of a type constructor variable the scheme
+                // quantifies, applied (`m(Int)`): no bound of the scheme
+                // can say it, as no annotation can.
+                if let Pred::Trait {
+                    tr, args, subject, ..
+                } = pred
+                    && let Type::App(head, _) = self.apply(subject)
+                    && matches!(self.apply(&head), Type::Var(m) if vars.contains(&m))
+                {
+                    self.wanted[i].solved = true;
+                    let args: Vec<Type> = args.iter().map(|t| self.apply(t)).collect();
+                    let subject = self.apply(subject);
+                    refused.push((*tr, args, subject, self.wanted[i].origin));
                     continue;
                 }
                 let Type::Var(subject) = self.apply(pred.subject()) else {
@@ -317,6 +335,12 @@ impl TypeChecker {
         }
         for (ev, node) in taken {
             self.ev_set(Some(ev), node);
+        }
+        // (One error for one type at one place, as `solve_wanted` says.)
+        for (tr, args, subject, origin) in refused {
+            if self.lacking.insert((origin.span, self.show_type(&subject))) {
+                self.applied_constructor_var(tr, &args, &subject, origin);
+            }
         }
         self.generalized_owners = owners;
         Scheme { vars, preds, ty }
