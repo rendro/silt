@@ -84,19 +84,23 @@ impl TypeChecker {
         }
         let refusal = self.decode_refusal("json.parse", Decoding::JSON, None, &ty, module, span)?;
         // (The decoder's reason, after what it names: "field `b` has
-        // type `Box(Int)`, which has no decoder".)
-        let reason = (refusal.message.split_once(": ")).map_or("", |(_, reason)| reason);
+        // type `Box(Int)`, which has no decoder". A date or a time has no
+        // type argument to speak of: what the decoders take it as.)
+        use crate::typeinfo::ty;
+        let reason = match head.id {
+            ty::DATE | ty::TIME | ty::DATE_TIME => {
+                "it is decoded only as the type of a record's field"
+            }
+            _ => (refusal.message.split_once(": ")).map_or("", |(_, reason)| reason),
+        };
         let shown = self.show_type(&Type::Generic(head, Vec::new()));
         let message = format!(
             "trait `{}` cannot be implemented for `{shown}`: it has `json.Decode` as a \
              supertrait, and `{shown}` cannot be decoded: {reason}",
             self.show_trait(tr)
         );
-        Some(Diagnostic {
-            code: Code::InvalidTraitImpl,
-            message,
-            ..refusal
-        })
+        // (The decoder's help is for a call, not for an impl.)
+        Some(Diagnostic::error(Code::InvalidTraitImpl, span, message))
     }
 
     /// Whether the program wrote a `json.Decode` impl for `head`: every

@@ -15,4 +15,3 @@ error[type]: trait `Dec` cannot be implemented for `W`: it has `json.Decode` as 
     |
  37 | trait Dec for W {}
     | ^^^^^^^^^^^^^^^^^^ trait `Dec` cannot be implemented for `W`: it has `json.Decode` as a supertrait, and `W` cannot be decoded: field `b` has type `Box(Int)`, which has no decoder
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these

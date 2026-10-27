@@ -3,11 +3,21 @@ error[type]: trait `Dec` cannot be implemented for `time.Weekday`: it has `json.
     |
  14 | trait Dec for time.Weekday {}
     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ trait `Dec` cannot be implemented for `time.Weekday`: it has `json.Decode` as a supertrait, and `time.Weekday` cannot be decoded: it is a builtin enum type, which has no decoder
-  = help: decode into a record type
 
-error[type]: trait `Dec` cannot be implemented for `time.Date`: it has `json.Decode` as a supertrait, and `time.Date` cannot be decoded: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, or a type with a `json.Decode` impl
+error[type]: trait `Dec` cannot be implemented for `time.Date`: it has `json.Decode` as a supertrait, and `time.Date` cannot be decoded: it is decoded only as the type of a record's field
  --> a_builtin_type_through_a_supertrait_impl.silt:16:1
     |
  16 | trait Dec for time.Date {}
-    | ^^^^^^^^^^^^^^^^^^^^^^^^^^ trait `Dec` cannot be implemented for `time.Date`: it has `json.Decode` as a supertrait, and `time.Date` cannot be decoded: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, or a type with a `json.Decode` impl
-  = help: a decoder decodes a `time.Date` as the type of a record's field: `type R { at: time.Date }`
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^ trait `Dec` cannot be implemented for `time.Date`: it has `json.Decode` as a supertrait, and `time.Date` cannot be decoded: it is decoded only as the type of a record's field
+
+error[type]: trait `Dec` cannot be implemented for `time.Time`: it has `json.Decode` as a supertrait, and `time.Time` cannot be decoded: it is decoded only as the type of a record's field
+ --> a_builtin_type_through_a_supertrait_impl.silt:18:1
+    |
+ 18 | trait Dec for time.Time {}
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^ trait `Dec` cannot be implemented for `time.Time`: it has `json.Decode` as a supertrait, and `time.Time` cannot be decoded: it is decoded only as the type of a record's field
+
+error[type]: trait `Dec` cannot be implemented for `time.DateTime`: it has `json.Decode` as a supertrait, and `time.DateTime` cannot be decoded: it is decoded only as the type of a record's field
+ --> a_builtin_type_through_a_supertrait_impl.silt:20:1
+    |
+ 20 | trait Dec for time.DateTime {}
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ trait `Dec` cannot be implemented for `time.DateTime`: it has `json.Decode` as a supertrait, and `time.DateTime` cannot be decoded: it is decoded only as the type of a record's field
