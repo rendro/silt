@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- A top-level `let` lambda and a local one are generalised as a
+-- function is.
+-- stderr-contains: error[type]: type `m(_)` is not known to implement trait 'Display'
+-- stderr-contains: constructor_vars__inferred_a_let_lambda.silt:8:19
+-- stderr-contains: constructor_vars__inferred_a_let_lambda.silt:10:21
+let d = { xs -> "{Functor.map(xs) { v -> v }}" }
+fn main() {
+  let e = { xs -> "{Functor.map(xs) { v -> v }}" }
+  println(d([{ n: Int -> n }]))
+  println(e([1]))
+}
