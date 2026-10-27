@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- Impls whose types could be one type overlap.
+type Box(a) { Box(a) }
+trait Sum { fn sum(self) -> Int }
+trait Sum for Box(a) { fn sum(self) -> Int { 1 } }
+trait Sum for Box(Int) { fn sum(self) -> Int { 2 } }
+fn main() {}

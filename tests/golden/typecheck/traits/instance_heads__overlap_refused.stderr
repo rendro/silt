@@ -1,0 +1,6 @@
+error[type]: duplicate implementation of trait 'Sum' for type 'Box': the impls for 'Box(a)' and 'Box(Int)' overlap: both are for 'Box(Int)'
+ --> instance_heads__overlap_refused.silt:7:1
+   |
+ 7 | trait Sum for Box(Int) { fn sum(self) -> Int { 2 } }
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ duplicate implementation of trait 'Sum' for type 'Box': the impls for 'Box(a)' and 'Box(Int)' overlap: both are for 'Box(Int)'
+  = help: give each impl a type of its own, which no other impl's could be

@@ -494,7 +494,7 @@ impl TypeChecker {
         }
         // (The impl of the trait arguments: they are decided here, the
         // arguments of an impl's header.)
-        let at = self.impl_reached(tr, head, args);
+        let at = self.impl_reached(tr, head, Some(&ty), args);
         let Some(key) = at.or_else(|| self.tables.one_impl(tr, head)) else {
             return Evidence::Missing;
         };

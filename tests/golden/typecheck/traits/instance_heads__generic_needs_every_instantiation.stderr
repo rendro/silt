@@ -1,0 +1,5 @@
+error[type]: type 'Box(a)' does not implement trait 'Sum'
+ --> instance_heads__generic_needs_every_instantiation.silt:8:34
+   |
+ 8 | fn f(b: Box(a)) -> Int { Sum.sum(b) }
+   |                                  ^ type 'Box(a)' does not implement trait 'Sum'

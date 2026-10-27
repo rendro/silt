@@ -463,7 +463,7 @@ pub struct TypeChecker {
     pub(super) duplicated_impls: std::collections::HashSet<(TraitKey, TypeRef)>,
     /// The trait arguments each impl of the module writes, with the
     /// names of their type variables, for a message that names them.
-    pub(super) impl_written: HashMap<ImplKey, (Vec<Type>, Vec<(TyVar, Symbol)>)>,
+    pub(super) impl_written: HashMap<ImplKey, declare_traits::WrittenImpl>,
     /// The impls of each trait for each type a use was matched against,
     /// as the matching reads them (`solve::ImplIndex`), kept for the
     /// module's other uses (`impls_fitting`).

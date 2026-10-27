@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- Through a bound, of an unannotated function, the same.
+type Box(a) { Box(a) }
+trait Sum { fn sum(self) -> Int }
+trait Sum for Box(Int) { fn sum(self) -> Int { 1 } }
+fn f(b) { Sum.sum(b) }
+fn main() {
+  println(f(Box(1)))
+  println(f(Box(true)))
+}

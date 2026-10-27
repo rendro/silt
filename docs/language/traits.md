@@ -363,9 +363,21 @@ Rules:
 - **An impl is for a declared type.** `trait X for a` is an error
   (`trait impl target 'a' is not a declared type`): a function bounded by
   the trait says "every type that has it", `fn x(v: a) where a: Show`.
-- **Only lowercase binders.** `trait X for Box(Int)` is a parse error —
-  silt has no specialization.
+- **An argument may be a type.** `trait Sum for Box(Int)` is an impl for
+  that instantiation alone. A type may have several (`Box(Int)` and
+  `Box(String)`, `Pair(Int, b)` and `Pair(String, b)`): the whole type of
+  a use says which it reaches, and a use whose type has none
+  (`Box(Bool)`) is an error.
+- **Impls never overlap.** Two impls of a trait whose types could be one
+  type are an error: `trait X for Box(a)` with `trait X for Box(Int)` is
+  refused, as two impls one use could mean. So silt has no
+  specialization: no impl is chosen over another for being more
+  specific.
 - **Binders must be distinct.** `trait X for Pair(a, a)` is a parse error.
+- **A value's type alone reaches `Display`, `json.Encode` and
+  `json.Decode`.** A value is shown, encoded or decoded at any depth by
+  the impl of its type, whatever its type arguments: of these traits a
+  type has one impl, for every instantiation or for one.
 - **`_` is for a trait of type constructors.** `trait Functor for
   Option(_)` writes `_` for the type argument the trait maps over; in an
   impl of a trait of types `_` is an error (see [Traits of Type
@@ -380,8 +392,9 @@ In the methods of an impl the header's type variables stand for any
 type, as a function's do (see
 [Generics](generics.md#a-type-variable-is-any-type)): a body cannot take
 the `a` of `Box(a)` for an `Int`. To implement a trait for one
-instantiation only, name it with an alias (`type Ints = List(Int)`,
-`trait Sum for Ints`).
+instantiation only, write it, `trait Sum for Box(Int)`. An alias in a
+header is a name for its type: with `type Ints = List(Int)`, `trait Sum
+for Ints` is `trait Sum for List(Int)`.
 
 ### Impl-level where clauses
 

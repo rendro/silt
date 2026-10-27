@@ -1,0 +1,5 @@
+error[type]: the impl of trait 'shapes.Sum' for type 'shapes.Box' is written in module 'main', which declares neither the trait nor the type; it may be written in module 'shapes', which declares both
+ --> main.silt:4:1
+   |
+ 4 | trait shapes.Sum for shapes.Box(Int) { fn sum(self) -> Int { 1 } }
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the impl of trait 'shapes.Sum' for type 'shapes.Box' is written in module 'main', which declares neither the trait nor the type; it may be written in module 'shapes', which declares both

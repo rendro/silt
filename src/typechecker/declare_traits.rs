@@ -23,7 +23,30 @@ impl TypeChecker {
         };
         let mut needs: Vec<Need> = Vec::new();
         if !self.trait_needs(sup, sup_args, &self_ty, 0, &mut needs) {
-            return false;
+            // (A part that is no variable lacks it: the impl's type has no
+            // impl of the supertrait. Of the form with trait arguments,
+            // the caller says which it has.)
+            if !sup_args.is_empty() {
+                return false;
+            }
+            // (The impl's whole type: `Box(String)` of impls of the
+            // supertrait for other instantiations.)
+            let rigid: Vec<RigidId> = (self.impl_var_names.get(&key))
+                .into_iter()
+                .flatten()
+                .map(|&(var, name)| RigidId { var, name })
+                .collect();
+            let (ty, tr, sup) = (
+                self.show_type(&rigidify(&self_ty, &rigid)),
+                self.show_trait(tr),
+                self.show_trait(sup),
+            );
+            self.error(
+                Code::MissingTraitImpl,
+                format!("type '{ty}' implements '{tr}' but does not implement supertrait '{sup}'"),
+                span,
+            );
+            return true;
         }
         // What the header gives, with the supertraits of each bound (at
         // any trait arguments: those of a bound's supertraits are not
@@ -183,9 +206,31 @@ impl TypeChecker {
         // (The impl a part's type reaches: of a trait with parameters,
         // the one at the trait arguments, or the one impl it has for the
         // type if it has one.)
-        let at = self.impl_reached(tr, head, args);
-        let Some(key) = at.or_else(|| self.tables.one_impl(tr, head)) else {
-            return true;
+        // (Of impls for some instantiations of the type, the one for
+        // every type `ty` stands for: an impl for `Box(Int)` is none for
+        // `Box(a)`.)
+        let key = match self.has_instances(tr, head) {
+            true => {
+                let fitting: Vec<ImplKey> = (self.impls_fitting(tr, head, Some(&ty), args))
+                    .into_iter()
+                    .filter(|key| {
+                        self.impl_instance(key).is_none_or(|instance| {
+                            super::solve::match_one_way(&instance, &ty, &mut HashMap::new())
+                        })
+                    })
+                    .collect();
+                match fitting.as_slice() {
+                    [key] => *key,
+                    _ => return false,
+                }
+            }
+            false => {
+                let at = self.impl_reached(tr, head, Some(&ty), args);
+                let Some(key) = at.or_else(|| self.tables.one_impl(tr, head)) else {
+                    return true;
+                };
+                key
+            }
         };
         let Some(impl_ty) = self.tables.impl_self_types.get(&key) else {
             return true;
@@ -338,8 +383,9 @@ impl TypeChecker {
                     continue;
                 }
                 // (The supertrait's impl for those trait arguments.)
+                let self_type = self.tables.impl_self_types.get(impl_key);
                 let actual_super_args =
-                    (self.impl_reached(*supertrait, *type_name, &expected_super_args))
+                    (self.impl_reached(*supertrait, *type_name, self_type, &expected_super_args))
                         .or_else(|| self.tables.one_impl(*supertrait, *type_name))
                         .and_then(|key| self.tables.impl_trait_args.get(&key))
                         .cloned()
@@ -1391,8 +1437,8 @@ impl TypeChecker {
         // one use could mean.
         // An impl whose trait arguments name an unknown type is that
         // error and no impl.
-        let (written_args, written_names) = self.impl_written_args(ti, false);
-        if written_args.iter().any(Type::holds_error) {
+        let header = self.impl_written_args(ti, false);
+        if header.args.iter().any(Type::holds_error) {
             self.impl_written_args(ti, true);
             self.duplicated_impls.insert((trait_key, target_type));
             return;
@@ -1411,7 +1457,7 @@ impl TypeChecker {
             self.duplicated_impls.insert((trait_key, target_type));
             return;
         }
-        (self.impl_written).insert(impl_key, (written_args, written_names));
+        (self.impl_written).insert(impl_key, header);
         if self
             .tables
             .trait_impl_set
@@ -1493,276 +1539,7 @@ impl TypeChecker {
         for &param_name in &ti.target_param_names {
             impl_param_map.insert(param_name, self.fresh_var());
         }
-        // The impl of a trait of type constructors is for the
-        // constructor its header writes, `_` for the argument it maps
-        // over (`impl_header_fits`): the self type is read with `_` a
-        // variable, and is that type's constructor.
-        let hole = intern("_");
-        let mapped = (ti.target_type_args.iter().any(is_hole))
-            .then(|| self.fresh_tv())
-            .map(|(ty, var)| {
-                impl_param_map.insert(hole, ty);
-                var
-            });
-
-        // Construct the self_type. Three cases:
-        //   1. Bare-target form (`trait X for Int`): target_type_args is
-        //      empty. For primitive types, fall through to type_from_name.
-        //      For parameterized user types, synthesize fresh-var args to
-        //      match the record's / enum's arity — otherwise the receiver-
-        //      unify step in dispatch_method_entry would fail with arity
-        //      mismatch when the caller passes a concrete instantiation
-        //      like `Box { value: 42 }` (Generic("Box", [Int])) against a
-        //      zero-arg self_type (Generic("Box", [])).
-        //   2. Parameterized user type (`trait X for Box(a)`): resolve
-        //      each arg through impl_param_map. Arity enforced against
-        //      the record's param_var_ids or the enum's declared params.
-        //   3. Built-in parameterized form (`trait X for List(a)`):
-        //      resolve_type_expr handles List/Map/Set/Channel/Tuple/Fn
-        //      already; reuse it.
-        //
-        // A builtin type, or a record, enum or alias type: a target the
-        // checker does not know (a builtin type with no impls, `Tuple`
-        // aside) is reported.
-        {
-            let name_str = resolve(written.name);
-            let known = match builtin_type_name(written) {
-                Some(builtin) => {
-                    crate::types::builtins::is_primitive(builtin)
-                        || crate::types::builtins::is_container(builtin)
-                        || self.tables.enums.contains_key(&written)
-                        || self.tables.records.contains_key(&written)
-                }
-                None => {
-                    self.tables.records.contains_key(&written)
-                        || self.tables.enums.contains_key(&written)
-                        || self.tables.type_aliases.contains(&written)
-                }
-            };
-            if !known {
-                self.error(
-                    Code::UnknownType,
-                    format!("trait impl target '{name_str}' is not a declared type"),
-                    ti.span,
-                );
-            }
-        }
-
-        let self_type = if ti.target_type_args.is_empty() {
-            // Phase D: if the bare target is a user alias, synthesize
-            // the self-type from the alias's canonical target rather
-            // than treating the alias name as a nominal head. Without
-            // this, `trait T for Bytes` (where `Bytes = List(Int)`)
-            // would produce a `Generic("Bytes", [])` self-type that
-            // would never unify with any concrete `List(Int)`
-            // receiver. Callers downstream still see the canonical
-            // form (`canonical_head` collapses the impl_key
-            // to `"List"`), so the dispatch lookup arrives at the
-            // right method.
-            if let Some(info) = self.tables.resolver.lookup_alias(written) {
-                // Build a fresh-var instantiation per alias parameter so
-                // the impl methods see polymorphic vars rather than
-                // shared template tyvars. For `Bytes = List(Int)` (no
-                // params), the substitution is identity and the result
-                // is `List(Int)` after canonicalisation. For
-                // `Pair(a) = (a, a)`, params get fresh vars and the
-                // self-type is `(a', a')`.
-                let mut mapping: HashMap<TyVar, Type> = HashMap::new();
-                for &var_id in &info.param_var_ids {
-                    mapping.insert(var_id, self.fresh_var());
-                }
-                let substituted = crate::types::substitute_vars(&info.target, &mapping);
-                crate::types::canonical::canonicalize(&self.tables.resolver, &substituted)
-            } else {
-                let user_arity = self
-                    .tables
-                    .record_param_var_ids
-                    .get(&written)
-                    .map(|v| v.len())
-                    .or_else(|| self.tables.enums.get(&written).map(|e| e.params.len()))
-                    .unwrap_or(0);
-                if user_arity == 0 {
-                    // Bare builtin-container targets (`trait T for List`,
-                    // Map/Set/Channel) mirror
-                    // `resolve_type_expr`'s bare-name annotation
-                    // semantics: synthesize a fresh var per element slot
-                    // so the self_type unifies with any concrete receiver
-                    // (`List(Int)`, `Map(String, Bool)`, ...), not
-                    // `type_from_name`'s `Generic("List", [])`, which
-                    // unify's catch-all would reject against
-                    // `Type::List(Int)` with the self-contradictory "type
-                    // mismatch: expected List, got List(Int)". The
-                    // fresh vars are per-registration, like the alias /
-                    // user-arity branches: `method_scheme`
-                    // quantifies them, new at each use.
-                    //
-                    // `Fn` and `Tuple` have no one shape: the impl is
-                    // for every function, or every tuple, and its self
-                    // type is a variable of the impl (`shape_vars`),
-                    // which a use decides by the receiver's type. In
-                    // the impl's bodies it is rigid like the `a` of
-                    // `List(a)`: `self` is some function, to be handed
-                    // on but not called, and not a function of any
-                    // signature one may wish for.
-                    match builtin_type_name(target_type) {
-                        Some("List") => Type::List(Box::new(self.fresh_var())),
-                        Some("Set") => Type::Set(Box::new(self.fresh_var())),
-                        Some("Channel") => Type::Channel(Box::new(self.fresh_var())),
-                        Some("Map") => {
-                            Type::Map(Box::new(self.fresh_var()), Box::new(self.fresh_var()))
-                        }
-                        Some(shape @ ("Fn" | "Tuple")) => {
-                            let (ty, var) = self.fresh_tv();
-                            let about = match shape {
-                                "Fn" => ("function", "its parameters and its result"),
-                                _ => ("tuple", "its elements"),
-                            };
-                            self.shape_vars.insert(var, about);
-                            ty
-                        }
-                        _ => Self::type_from_name(target_type),
-                    }
-                } else {
-                    let args: Vec<Type> = (0..user_arity).map(|_| self.fresh_var()).collect();
-                    Type::Generic(target_type, args)
-                }
-            }
-        } else {
-            // Arity check. Covers user-declared record/enum targets via
-            // record_param_var_ids / self.tables.enums, AND the builtin
-            // types whose arities are fixed by the language: the
-            // containers (List, Set, Channel, Map) and the primitives,
-            // which take none. Without the builtin arm, `trait X for
-            // List(a, b)` or `trait X for Int(a)` fell through to
-            // `_ => Type::Generic(..)` below, silently producing a phantom
-            // type that no value has. Derive fixed-arity builtin entries
-            // from the authoritative table. Variadic shapes (`Tuple`,
-            // `Fn`, `Fun`, `Handle`) carry `arity: None` and are
-            // intentionally skipped — they do not participate in this
-            // trait-impl arity check.
-            let builtin_arity: Option<(usize, &'static str)> = builtin_type_name(written)
-                .and_then(crate::types::builtins::lookup)
-                .and_then(|b| b.arity.map(|a| (a as usize, "builtin")));
-            // User-declared type aliases are in the arity table too:
-            // `trait Show for Pair(a)` where `type Pair(a) = (a, a)` is
-            // checked for its arity, and does not fall through to the
-            // `_ => Type::Generic("Pair", [tv])` arm at the bottom, an
-            // impl whose self_type would never unify with a concrete
-            // `(Int, Int)` receiver.
-            let alias_arity: Option<(usize, &'static str)> = self
-                .tables
-                .type_alias_arity
-                .get(&written)
-                .copied()
-                .map(|a| (a, "alias"));
-            let expected_arity = self
-                .tables
-                .record_param_var_ids
-                .get(&written)
-                .map(|v| (v.len(), "record"))
-                .or_else(|| {
-                    self.tables
-                        .enums
-                        .get(&written)
-                        .map(|e| (e.params.len(), "enum"))
-                })
-                .or(alias_arity)
-                .or(builtin_arity);
-            if let Some((expected, kind)) = expected_arity
-                && expected != ti.target_type_args.len()
-            {
-                self.error(Code::ArityMismatch,
-                    format!(
-                        "type argument count mismatch for {kind} '{}' in trait impl: expected {expected}, got {}",
-                        resolve(written.name),
-                        ti.target_type_args.len()
-                    ),
-                    ti.span,
-                );
-            }
-            // Resolve through a dedicated Generic form so the head symbol
-            // is preserved alongside the impl-level tyvar args.
-            let resolved_args: Vec<Type> = ti
-                .target_type_args
-                .iter()
-                .map(|arg_te| self.resolve_type_expr(arg_te, &mut impl_param_map))
-                .collect();
-            // A parametric alias as trait-impl target:
-            // expand the alias by substituting `resolved_args` through
-            // the alias's stored target. Mirrors the non-parametric
-            // alias path at line ~5617 (which calls
-            // `self.tables.resolver.lookup_alias(written)` and walks
-            // `info.target` with each `param_var_ids[i]` mapped to a
-            // fresh tyvar). Here we map `param_var_ids[i]` → the
-            // user-supplied type-arg at the same index.
-            //
-            // So `trait Show for Pair(a)` (with `type Pair(a) = (a, a)`)
-            // has the self type `(a, a)`, not a phantom
-            // `Type::Generic("Pair", [tv])`, which a concrete `(1, 2)`
-            // receiver typed as `(Int, Int)` (as `resolve_type_expr`
-            // canonicalises the annotation `Pair(Int)`) would not unify
-            // with.
-            if let Some(info) = self.tables.resolver.lookup_alias(written) {
-                let mut mapping: HashMap<TyVar, Type> = HashMap::new();
-                for (i, &var_id) in info.param_var_ids.iter().enumerate() {
-                    if let Some(arg_ty) = resolved_args.get(i) {
-                        mapping.insert(var_id, arg_ty.clone());
-                    }
-                }
-                let substituted = crate::types::substitute_vars(&info.target, &mapping);
-                crate::types::canonical::canonicalize(&self.tables.resolver, &substituted)
-            } else {
-                match builtin_type_name(written).unwrap_or_default() {
-                    "List" if resolved_args.len() == 1 => {
-                        Type::List(Box::new(resolved_args.into_iter().next().unwrap()))
-                    }
-                    "Set" if resolved_args.len() == 1 => {
-                        Type::Set(Box::new(resolved_args.into_iter().next().unwrap()))
-                    }
-                    "Channel" if resolved_args.len() == 1 => {
-                        Type::Channel(Box::new(resolved_args.into_iter().next().unwrap()))
-                    }
-                    "Map" if resolved_args.len() == 2 => {
-                        let mut iter = resolved_args.into_iter();
-                        Type::Map(
-                            Box::new(iter.next().unwrap()),
-                            Box::new(iter.next().unwrap()),
-                        )
-                    }
-                    // A primitive takes no arguments (the error above
-                    // says so): the impl is for the type itself, not a
-                    // phantom `Int(_)` that no value has.
-                    _ if matches!(expected_arity, Some((0, "builtin"))) => {
-                        Self::type_from_name(target_type)
-                    }
-                    _ => Type::Generic(written, resolved_args),
-                }
-            }
-        };
-        let self_type = match mapped {
-            None => self_type,
-            Some(var) => {
-                impl_param_map.remove(&hole);
-                match self.apply(&self_type).split_constructor() {
-                    Some((head, rest, Type::Var(first)))
-                        if first == var && !rest.iter().any(|t| free_vars_in(t).contains(&var)) =>
-                    {
-                        Type::Con(head, rest)
-                    }
-                    // (An alias whose first parameter is not its type's
-                    // first argument.)
-                    _ => {
-                        let message = format!(
-                            "'_' must be the first type argument of '{}': a type constructor \
-                             stands for its first type argument",
-                            resolve(ti.target_type)
-                        );
-                        self.error(Code::KindMismatch, message, ti.span);
-                        Type::Error
-                    }
-                }
-            }
-        };
+        let self_type = self.impl_self_type(ti, written, target_type, &mut impl_param_map);
 
         // Record the impl's full self type under the canonical head key so
         // `verify_trait_obligation` can compare an obligated type's
@@ -2819,6 +2596,289 @@ impl TypeChecker {
         preds
     }
 
+    /// The type the impl `ti` is for, its type variables those of
+    /// `impl_param_map`: `written` is the type its header names, of the
+    /// head `target_type`.
+    fn impl_self_type(
+        &mut self,
+        ti: &TraitImpl,
+        written: TypeRef,
+        target_type: TypeRef,
+        impl_param_map: &mut HashMap<Symbol, Type>,
+    ) -> Type {
+        // The impl of a trait of type constructors is for the
+        // constructor its header writes, `_` for the argument it maps
+        // over (`impl_header_fits`): the self type is read with `_` a
+        // variable, and is that type's constructor.
+        let hole = intern("_");
+        let mapped = (ti.target_type_args.iter().any(is_hole))
+            .then(|| self.fresh_tv())
+            .map(|(ty, var)| {
+                impl_param_map.insert(hole, ty);
+                var
+            });
+
+        // Construct the self_type. Three cases:
+        //   1. Bare-target form (`trait X for Int`): target_type_args is
+        //      empty. For primitive types, fall through to type_from_name.
+        //      For parameterized user types, synthesize fresh-var args to
+        //      match the record's / enum's arity — otherwise the receiver-
+        //      unify step in dispatch_method_entry would fail with arity
+        //      mismatch when the caller passes a concrete instantiation
+        //      like `Box { value: 42 }` (Generic("Box", [Int])) against a
+        //      zero-arg self_type (Generic("Box", [])).
+        //   2. Parameterized user type (`trait X for Box(a)`): resolve
+        //      each arg through impl_param_map. Arity enforced against
+        //      the record's param_var_ids or the enum's declared params.
+        //   3. Built-in parameterized form (`trait X for List(a)`):
+        //      resolve_type_expr handles List/Map/Set/Channel/Tuple/Fn
+        //      already; reuse it.
+        //
+        // A builtin type, or a record, enum or alias type: a target the
+        // checker does not know (a builtin type with no impls, `Tuple`
+        // aside) is reported.
+        {
+            let name_str = resolve(written.name);
+            let known = match builtin_type_name(written) {
+                Some(builtin) => {
+                    crate::types::builtins::is_primitive(builtin)
+                        || crate::types::builtins::is_container(builtin)
+                        || self.tables.enums.contains_key(&written)
+                        || self.tables.records.contains_key(&written)
+                }
+                None => {
+                    self.tables.records.contains_key(&written)
+                        || self.tables.enums.contains_key(&written)
+                        || self.tables.type_aliases.contains(&written)
+                }
+            };
+            if !known {
+                self.error(
+                    Code::UnknownType,
+                    format!("trait impl target '{name_str}' is not a declared type"),
+                    ti.span,
+                );
+            }
+        }
+
+        let self_type = if ti.target_type_args.is_empty() {
+            // Phase D: if the bare target is a user alias, synthesize
+            // the self-type from the alias's canonical target rather
+            // than treating the alias name as a nominal head. Without
+            // this, `trait T for Bytes` (where `Bytes = List(Int)`)
+            // would produce a `Generic("Bytes", [])` self-type that
+            // would never unify with any concrete `List(Int)`
+            // receiver. Callers downstream still see the canonical
+            // form (`canonical_head` collapses the impl_key
+            // to `"List"`), so the dispatch lookup arrives at the
+            // right method.
+            if let Some(info) = self.tables.resolver.lookup_alias(written) {
+                // Build a fresh-var instantiation per alias parameter so
+                // the impl methods see polymorphic vars rather than
+                // shared template tyvars. For `Bytes = List(Int)` (no
+                // params), the substitution is identity and the result
+                // is `List(Int)` after canonicalisation. For
+                // `Pair(a) = (a, a)`, params get fresh vars and the
+                // self-type is `(a', a')`.
+                let mut mapping: HashMap<TyVar, Type> = HashMap::new();
+                for &var_id in &info.param_var_ids {
+                    mapping.insert(var_id, self.fresh_var());
+                }
+                let substituted = crate::types::substitute_vars(&info.target, &mapping);
+                crate::types::canonical::canonicalize(&self.tables.resolver, &substituted)
+            } else {
+                let user_arity = self
+                    .tables
+                    .record_param_var_ids
+                    .get(&written)
+                    .map(|v| v.len())
+                    .or_else(|| self.tables.enums.get(&written).map(|e| e.params.len()))
+                    .unwrap_or(0);
+                if user_arity == 0 {
+                    // Bare builtin-container targets (`trait T for List`,
+                    // Map/Set/Channel) mirror
+                    // `resolve_type_expr`'s bare-name annotation
+                    // semantics: synthesize a fresh var per element slot
+                    // so the self_type unifies with any concrete receiver
+                    // (`List(Int)`, `Map(String, Bool)`, ...), not
+                    // `type_from_name`'s `Generic("List", [])`, which
+                    // unify's catch-all would reject against
+                    // `Type::List(Int)` with the self-contradictory "type
+                    // mismatch: expected List, got List(Int)". The
+                    // fresh vars are per-registration, like the alias /
+                    // user-arity branches: `method_scheme`
+                    // quantifies them, new at each use.
+                    //
+                    // `Fn` and `Tuple` have no one shape: the impl is
+                    // for every function, or every tuple, and its self
+                    // type is a variable of the impl (`shape_vars`),
+                    // which a use decides by the receiver's type. In
+                    // the impl's bodies it is rigid like the `a` of
+                    // `List(a)`: `self` is some function, to be handed
+                    // on but not called, and not a function of any
+                    // signature one may wish for.
+                    match builtin_type_name(target_type) {
+                        Some("List") => Type::List(Box::new(self.fresh_var())),
+                        Some("Set") => Type::Set(Box::new(self.fresh_var())),
+                        Some("Channel") => Type::Channel(Box::new(self.fresh_var())),
+                        Some("Map") => {
+                            Type::Map(Box::new(self.fresh_var()), Box::new(self.fresh_var()))
+                        }
+                        Some(shape @ ("Fn" | "Tuple")) => {
+                            let (ty, var) = self.fresh_tv();
+                            let about = match shape {
+                                "Fn" => ("function", "its parameters and its result"),
+                                _ => ("tuple", "its elements"),
+                            };
+                            self.shape_vars.insert(var, about);
+                            ty
+                        }
+                        _ => Self::type_from_name(target_type),
+                    }
+                } else {
+                    let args: Vec<Type> = (0..user_arity).map(|_| self.fresh_var()).collect();
+                    Type::Generic(target_type, args)
+                }
+            }
+        } else {
+            // Arity check. Covers user-declared record/enum targets via
+            // record_param_var_ids / self.tables.enums, AND the builtin
+            // types whose arities are fixed by the language: the
+            // containers (List, Set, Channel, Map) and the primitives,
+            // which take none. Without the builtin arm, `trait X for
+            // List(a, b)` or `trait X for Int(a)` fell through to
+            // `_ => Type::Generic(..)` below, silently producing a phantom
+            // type that no value has. Derive fixed-arity builtin entries
+            // from the authoritative table. Variadic shapes (`Tuple`,
+            // `Fn`, `Fun`, `Handle`) carry `arity: None` and are
+            // intentionally skipped — they do not participate in this
+            // trait-impl arity check.
+            let builtin_arity: Option<(usize, &'static str)> = builtin_type_name(written)
+                .and_then(crate::types::builtins::lookup)
+                .and_then(|b| b.arity.map(|a| (a as usize, "builtin")));
+            // User-declared type aliases are in the arity table too:
+            // `trait Show for Pair(a)` where `type Pair(a) = (a, a)` is
+            // checked for its arity, and does not fall through to the
+            // `_ => Type::Generic("Pair", [tv])` arm at the bottom, an
+            // impl whose self_type would never unify with a concrete
+            // `(Int, Int)` receiver.
+            let alias_arity: Option<(usize, &'static str)> = self
+                .tables
+                .type_alias_arity
+                .get(&written)
+                .copied()
+                .map(|a| (a, "alias"));
+            let expected_arity = self
+                .tables
+                .record_param_var_ids
+                .get(&written)
+                .map(|v| (v.len(), "record"))
+                .or_else(|| {
+                    self.tables
+                        .enums
+                        .get(&written)
+                        .map(|e| (e.params.len(), "enum"))
+                })
+                .or(alias_arity)
+                .or(builtin_arity);
+            if let Some((expected, kind)) = expected_arity
+                && expected != ti.target_type_args.len()
+            {
+                self.error(Code::ArityMismatch,
+                    format!(
+                        "type argument count mismatch for {kind} '{}' in trait impl: expected {expected}, got {}",
+                        resolve(written.name),
+                        ti.target_type_args.len()
+                    ),
+                    ti.span,
+                );
+            }
+            // Resolve through a dedicated Generic form so the head symbol
+            // is preserved alongside the impl-level tyvar args.
+            let resolved_args: Vec<Type> = ti
+                .target_type_args
+                .iter()
+                .map(|arg_te| self.resolve_type_expr(arg_te, impl_param_map))
+                .collect();
+            // A parametric alias as trait-impl target:
+            // expand the alias by substituting `resolved_args` through
+            // the alias's stored target. Mirrors the non-parametric
+            // alias path at line ~5617 (which calls
+            // `self.tables.resolver.lookup_alias(written)` and walks
+            // `info.target` with each `param_var_ids[i]` mapped to a
+            // fresh tyvar). Here we map `param_var_ids[i]` → the
+            // user-supplied type-arg at the same index.
+            //
+            // So `trait Show for Pair(a)` (with `type Pair(a) = (a, a)`)
+            // has the self type `(a, a)`, not a phantom
+            // `Type::Generic("Pair", [tv])`, which a concrete `(1, 2)`
+            // receiver typed as `(Int, Int)` (as `resolve_type_expr`
+            // canonicalises the annotation `Pair(Int)`) would not unify
+            // with.
+            if let Some(info) = self.tables.resolver.lookup_alias(written) {
+                let mut mapping: HashMap<TyVar, Type> = HashMap::new();
+                for (i, &var_id) in info.param_var_ids.iter().enumerate() {
+                    if let Some(arg_ty) = resolved_args.get(i) {
+                        mapping.insert(var_id, arg_ty.clone());
+                    }
+                }
+                let substituted = crate::types::substitute_vars(&info.target, &mapping);
+                crate::types::canonical::canonicalize(&self.tables.resolver, &substituted)
+            } else {
+                match builtin_type_name(written).unwrap_or_default() {
+                    "List" if resolved_args.len() == 1 => {
+                        Type::List(Box::new(resolved_args.into_iter().next().unwrap()))
+                    }
+                    "Set" if resolved_args.len() == 1 => {
+                        Type::Set(Box::new(resolved_args.into_iter().next().unwrap()))
+                    }
+                    "Channel" if resolved_args.len() == 1 => {
+                        Type::Channel(Box::new(resolved_args.into_iter().next().unwrap()))
+                    }
+                    "Map" if resolved_args.len() == 2 => {
+                        let mut iter = resolved_args.into_iter();
+                        Type::Map(
+                            Box::new(iter.next().unwrap()),
+                            Box::new(iter.next().unwrap()),
+                        )
+                    }
+                    // A primitive takes no arguments (the error above
+                    // says so): the impl is for the type itself, not a
+                    // phantom `Int(_)` that no value has.
+                    _ if matches!(expected_arity, Some((0, "builtin"))) => {
+                        Self::type_from_name(target_type)
+                    }
+                    _ => Type::Generic(written, resolved_args),
+                }
+            }
+        };
+        let self_type = match mapped {
+            None => self_type,
+            Some(var) => {
+                impl_param_map.remove(&hole);
+                match self.apply(&self_type).split_constructor() {
+                    Some((head, rest, Type::Var(first)))
+                        if first == var && !rest.iter().any(|t| free_vars_in(t).contains(&var)) =>
+                    {
+                        Type::Con(head, rest)
+                    }
+                    // (An alias whose first parameter is not its type's
+                    // first argument.)
+                    _ => {
+                        let message = format!(
+                            "'_' must be the first type argument of '{}': a type constructor \
+                             stands for its first type argument",
+                            resolve(ti.target_type)
+                        );
+                        self.error(Code::KindMismatch, message, ti.span);
+                        Type::Error
+                    }
+                }
+            }
+        };
+        self_type
+    }
+
     pub(super) fn register_method_entry(
         &mut self,
         target_type: TypeRef,
@@ -2832,27 +2892,31 @@ impl TypeChecker {
             .insert(target_type, method, trait_key, args, entry);
     }
 
-    /// The key of the trait arguments `ti` writes (`ImplArgs`). Kept by
-    /// the impl's span for what reads the impl after (`impl_args_keys`).
+    /// The key of the trait arguments `ti` writes, and of the type it is
+    /// for where it is for some instantiations of its type only
+    /// (`ImplArgs`). Kept by the impl's span for what reads the impl
+    /// after (`impl_args_keys`).
     pub(super) fn impl_args_key_of(&mut self, ti: &TraitImpl) -> ImplArgs {
         if let Some(key) = self.impl_args_keys.get(&ti.span) {
             return *key;
         }
-        let (args, _) = self.impl_written_args(ti, false);
-        let key = self.impl_args_key(&args);
+        let written = self.impl_written_args(ti, false);
+        // (A trait whose method shows, encodes or decodes a value at any
+        // depth is reached by the value's type alone, whatever its type
+        // arguments: of it, a type has one impl.)
+        let by_type = (self.impl_trait(ti)).is_some_and(|tr| Self::reached_at_any_depth(tr));
+        let instance = (written.head.as_ref()).filter(|head| !by_type && self.is_instance(head));
+        let key = self.impl_args_key(&written.args, instance);
         self.impl_args_keys.insert(ti.span, key);
         key
     }
 
-    /// The trait arguments `ti` writes, each type variable of its header
-    /// a new one, with the names of the variables. What is wrong with
-    /// them is reported with `report`, else where the impl's trait
-    /// arguments are resolved for good.
-    fn impl_written_args(
-        &mut self,
-        ti: &TraitImpl,
-        report: bool,
-    ) -> (Vec<Type>, Vec<(TyVar, Symbol)>) {
+    /// The trait arguments `ti` writes and the type it is for, each type
+    /// variable of its header a new one, with the names of the
+    /// variables. What is wrong with the trait arguments is reported with
+    /// `report`, else where the impl's trait arguments are resolved for
+    /// good; what is wrong with the type, where the impl's self type is.
+    fn impl_written_args(&mut self, ti: &TraitImpl, report: bool) -> WrittenImpl {
         let mut scratch: HashMap<Symbol, Type> = HashMap::new();
         for &name in &ti.target_param_names {
             scratch.insert(name, self.fresh_var());
@@ -2864,18 +2928,33 @@ impl TypeChecker {
         if !report {
             self.errors.truncate(reported);
         }
+        let reported = self.errors.len();
+        let head = (self.named_type(ti.target_res, ti.target_type)).map(|written| {
+            let target_type = canonical_head(&self.tables.resolver, written);
+            let head = self.impl_self_type(ti, written, target_type, &mut scratch);
+            crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(&head))
+        });
+        self.errors.truncate(reported);
         let names = (scratch.iter())
             .filter_map(|(name, ty)| match self.apply(ty) {
                 Type::Var(v) => Some((v, *name)),
                 _ => None,
             })
             .collect();
-        (args, names)
+        WrittenImpl { args, head, names }
     }
 
-    /// The trait `tr` at the trait arguments `args`, each type variable
-    /// by its name in `names` (`_` for one without).
-    fn show_named(&self, tr: TraitKey, args: &[Type], names: &[(TyVar, Symbol)]) -> String {
+    /// Whether the impls of `tr` are reached by the type of a value
+    /// alone, at any depth of a value shown, encoded or decoded
+    /// (`Display`, `json.Encode`, `json.Decode`): a type has one.
+    fn reached_at_any_depth(tr: TraitKey) -> bool {
+        STRUCTURAL_METHODS
+            .iter()
+            .any(|(name, _)| tr.is_builtin(name))
+    }
+
+    /// `ty`, each type variable by its name in `names`.
+    fn with_names(&self, ty: &Type, names: &[(TyVar, Symbol)]) -> Type {
         let mapping: HashMap<TyVar, Type> = (names.iter())
             .map(|(var, name)| {
                 let rigid = RigidId {
@@ -2885,14 +2964,22 @@ impl TypeChecker {
                 (*var, Type::Rigid(rigid))
             })
             .collect();
+        substitute_vars(&self.apply(ty), &mapping)
+    }
+
+    /// The trait `tr` at the trait arguments `args`, each type variable
+    /// by its name in `names` (`_` for one without).
+    fn show_named(&self, tr: TraitKey, args: &[Type], names: &[(TyVar, Symbol)]) -> String {
         let named: Vec<Type> = (args.iter())
-            .map(|arg| substitute_vars(&self.apply(arg), &mapping))
+            .map(|arg| self.with_names(arg, names))
             .collect();
         self.show_bound(tr, &named)
     }
 
-    /// The impl of `tr` for `ty` written before whose trait arguments
-    /// could be those `ti` writes: one use could mean either.
+    /// The impl of `tr` for `ty` written before that one use could mean
+    /// as well as `ti`: whose trait arguments could be those `ti` writes,
+    /// and whose type could be the one `ti` is for (`Box(a)` and
+    /// `Box(Int)`).
     fn impl_met(
         &mut self,
         ti: &TraitImpl,
@@ -2900,13 +2987,20 @@ impl TypeChecker {
         ty: TypeRef,
         args: ImplArgs,
     ) -> Option<ImplArgs> {
-        let (written, _) = self.impl_written_args(ti, false);
+        let written = self.impl_written_args(ti, false);
         (self.tables.impl_args_of(tr, ty).iter())
             .copied()
             .find(|earlier| {
-                let theirs = (self.tables.impl_trait_args.get(&(tr, ty, *earlier)))
-                    .map_or(&[][..], Vec::as_slice);
-                *earlier == args || self.could_unify(&written, theirs).is_some()
+                let key = (tr, ty, *earlier);
+                let theirs = (self.tables.impl_trait_args.get(&key)).map_or(&[][..], Vec::as_slice);
+                let (mine, theirs) = match (&written.head, self.tables.impl_self_types.get(&key)) {
+                    (Some(_), Some(head)) => (
+                        written.full(),
+                        theirs.iter().chain([head]).cloned().collect(),
+                    ),
+                    _ => (written.args.clone(), theirs.to_vec()),
+                };
+                *earlier == args || self.could_unify(&mine, &theirs).is_some()
             })
     }
 
@@ -2923,33 +3017,77 @@ impl TypeChecker {
     ) {
         let trait_name = self.impl_trait_name(ti);
         let target = self.impl_target_name(ti, ty);
-        let (written_args, names) = self.impl_written_args(ti, false);
-        let written = match written_args.is_empty() {
-            true => trait_name.clone(),
-            false => self.show_named(tr, &written_args, &names),
+        let mine = self.impl_written_args(ti, false);
+        let instance = |checker: &Self, written: &WrittenImpl| {
+            (written.head.as_ref()).is_some_and(|head| checker.is_instance(head))
         };
-        let (message, help) = if args == met {
+        let written = match mine.args.is_empty() {
+            true => trait_name.clone(),
+            false => self.show_named(tr, &mine.args, &mine.names),
+        };
+        let earlier_head = (self.impl_written.get(&(tr, ty, met))).and_then(|earlier| {
+            Some(self.show_type(&self.with_names(earlier.head.as_ref()?, &earlier.names)))
+        });
+        let mine_head =
+            (mine.head.as_ref()).map(|head| self.show_type(&self.with_names(head, &mine.names)));
+        let (message, help) = if args == met
+            && Self::reached_at_any_depth(tr)
+            && let (Some(earlier_head), Some(mine_head)) = (&earlier_head, &mine_head)
+            && earlier_head != mine_head
+        {
+            // (Two impls a value's type alone could not tell apart.)
+            let done = if tr.is_builtin("Encode") {
+                "encoded"
+            } else if tr.is_builtin("Decode") {
+                "decoded"
+            } else {
+                "shown"
+            };
+            (
+                format!(
+                    "duplicate implementation of trait '{trait_name}' for type '{target}': the \
+                     impls for '{earlier_head}' and '{mine_head}' cannot both be: a value is \
+                     {done} by the impl of its type, whatever its type arguments"
+                ),
+                None,
+            )
+        } else if args == met {
+            // (Of an impl for some instantiations of its type, the type.)
+            let target = match (&mine.head).as_ref().filter(|_| instance(self, &mine)) {
+                Some(head) => self.show_type(&self.with_names(head, &mine.names)),
+                None => target,
+            };
             (
                 format!("duplicate implementation of trait '{written}' for type '{target}'"),
                 None,
             )
         } else {
-            // (The trait arguments a use of both would have. The impls'
-            // variables by their names, as written.)
-            let (earlier_args, earlier_names) = match self.impl_written.get(&(tr, ty, met)) {
-                Some((args, names)) => (args.clone(), names.clone()),
-                None => (
-                    (self.tables.impl_trait_args.get(&(tr, ty, met)))
+            // (The trait arguments and the type a use of both would have.
+            // The impls' variables by their names, as written.)
+            let earlier = match self.impl_written.get(&(tr, ty, met)) {
+                Some(earlier) => earlier.clone(),
+                None => WrittenImpl {
+                    args: (self.tables.impl_trait_args.get(&(tr, ty, met)))
                         .cloned()
                         .unwrap_or_default(),
-                    Vec::new(),
-                ),
+                    head: self.tables.impl_self_types.get(&(tr, ty, met)).cloned(),
+                    names: Vec::new(),
+                },
             };
-            let earlier = self.show_named(tr, &earlier_args, &earlier_names);
+            let by_type = instance(self, &mine) || instance(self, &earlier);
+            let (mine_all, earlier_all) = match by_type {
+                true => (mine.full(), earlier.full()),
+                false => (mine.args.clone(), earlier.args.clone()),
+            };
             let subst = self
-                .could_unify(&written_args, &earlier_args)
+                .could_unify(&mine_all, &earlier_all)
                 .unwrap_or_default();
-            let both: Vec<Type> = (written_args.iter())
+            let both = WrittenImpl {
+                args: Vec::new(),
+                head: None,
+                names: (mine.names.iter().chain(&earlier.names)).copied().collect(),
+            };
+            let both_all: Vec<Type> = (mine_all.iter())
                 .map(|arg| {
                     let mut arg = arg.clone();
                     for _ in 0..=subst.len() {
@@ -2958,19 +3096,52 @@ impl TypeChecker {
                     arg
                 })
                 .collect();
-            let all_names: Vec<(TyVar, Symbol)> =
-                names.iter().chain(&earlier_names).copied().collect();
-            let both = self.show_named(tr, &both, &all_names);
-            (
-                format!(
-                    "duplicate implementation of trait '{trait_name}' for type '{target}': the \
-                     impls of '{earlier}' and '{written}' overlap: both are for '{both}'"
+            let n = mine.args.len();
+            let show = |checker: &Self, all: &[Type], names: &[(TyVar, Symbol)]| {
+                let args = checker.show_named(tr, &all[..n.min(all.len())], names);
+                let head =
+                    (all.get(n)).map(|head| checker.show_type(&checker.with_names(head, names)));
+                (args, head.unwrap_or_default())
+            };
+            let (earlier_args, earlier_head) = show(self, &earlier_all, &earlier.names);
+            let (written_args, written_head) = show(self, &mine_all, &mine.names);
+            let (both_args, both_head) = show(self, &both_all, &both.names);
+            match (by_type, n) {
+                (false, _) => (
+                    format!(
+                        "duplicate implementation of trait '{trait_name}' for type '{target}': the \
+                         impls of '{earlier_args}' and '{written_args}' overlap: both are for \
+                         '{both_args}'"
+                    ),
+                    Some(
+                        "give each impl trait arguments of its own, which no other impl's could be"
+                            .to_string(),
+                    ),
                 ),
-                Some(
-                    "give each impl trait arguments of its own, which no other impl's could be"
-                        .to_string(),
+                (true, 0) => (
+                    format!(
+                        "duplicate implementation of trait '{trait_name}' for type '{target}': the \
+                         impls for '{earlier_head}' and '{written_head}' overlap: both are for \
+                         '{both_head}'"
+                    ),
+                    Some(
+                        "give each impl a type of its own, which no other impl's could be"
+                            .to_string(),
+                    ),
                 ),
-            )
+                (true, _) => (
+                    format!(
+                        "duplicate implementation of trait '{trait_name}' for type '{target}': the \
+                         impls of '{earlier_args}' for '{earlier_head}' and '{written_args}' for \
+                         '{written_head}' overlap: both are of '{both_args}' for '{both_head}'"
+                    ),
+                    Some(
+                        "give each impl trait arguments or a type of its own, which no other \
+                         impl's could be"
+                            .to_string(),
+                    ),
+                ),
+            }
         };
         self.error_help(Code::DuplicateDeclaration, (message, help), ti.span);
     }
@@ -3084,4 +3255,23 @@ fn writes_self(method: &FnDecl) -> bool {
     method.params.first().is_some_and(
         |param| matches!(&param.pattern.kind, PatternKind::Ident(n) if resolve(*n) == "self"),
     )
+}
+
+/// What the header of an impl writes, each type variable a new one
+/// (`TypeChecker::impl_written_args`).
+#[derive(Clone)]
+pub(crate) struct WrittenImpl {
+    /// Its trait arguments.
+    pub(crate) args: Vec<Type>,
+    /// The type it is for (`Box(a)`, `Box(Int)`), where its type is known.
+    pub(crate) head: Option<Type>,
+    /// The names of its type variables.
+    pub(crate) names: Vec<(TyVar, Symbol)>,
+}
+
+impl WrittenImpl {
+    /// Its trait arguments, then the type it is for.
+    fn full(&self) -> Vec<Type> {
+        self.args.iter().chain(&self.head).cloned().collect()
+    }
 }

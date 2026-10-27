@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- A value is shown by its type alone: one `Display` impl for a type.
+type Box(a) { Box(a) }
+trait Display for Box(Int) { fn display(self) -> String { "int box" } }
+trait Display for Box(String) { fn display(self) -> String { "string box" } }
+fn main() { println("{Box(1)}") }

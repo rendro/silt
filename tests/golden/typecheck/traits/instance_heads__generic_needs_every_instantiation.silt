@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- No impl is for every `a` of `Box(a)`.
+type Box(a) { Box(a) }
+trait Sum { fn sum(self) -> Int }
+trait Sum for Box(Int) { fn sum(self) -> Int { 1 } }
+trait Sum for Box(String) { fn sum(self) -> Int { 2 } }
+fn f(b: Box(a)) -> Int { Sum.sum(b) }
+fn main() { println(f(Box(1))) }

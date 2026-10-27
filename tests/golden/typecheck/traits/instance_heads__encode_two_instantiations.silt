@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+import json
+type Box(a) { Box(a) }
+trait json.Encode for Box(Int) { fn encode(self) -> json.Value { json.Value.Null } }
+trait json.Encode for Box(String) { fn encode(self) -> json.Value { json.Value.Null } }
+fn main() { println(json.stringify(Box(1))) }

@@ -548,6 +548,31 @@ impl TypeChecker {
             Some(callee) => format!("this use of '{callee}'"),
             None => "this".to_string(),
         };
+        // (Trait arguments decided, of impls for some instantiations of
+        // the subject's type: the subject's type arguments are what is
+        // not decided.)
+        let subject_ty = self.apply(subject);
+        let instances: Vec<Type> = match (self.type_name_for_impl(&subject_ty))
+            .filter(|_| (args.iter()).all(|arg| free_vars_in(&self.apply(arg)).is_empty()))
+        {
+            Some(head) => (self.impls_fitting(tr, head, Some(&subject_ty), args).iter())
+                .filter_map(|key| self.impl_instance(key))
+                .collect(),
+            None => Vec::new(),
+        };
+        if let Some(instance) = instances.first() {
+            let message = format!(
+                "cannot decide which impl of '{}' for '{}' {what} means: the type's arguments \
+                 are not decided here",
+                self.show_bound(tr, args),
+                self.show_type(&subject_ty)
+            );
+            let help = format!(
+                "annotate the value it is given, `let x: {} = ...`",
+                self.show_type(instance)
+            );
+            return Diagnostic::error(Code::AmbiguousType, origin.span, message).with_help(help);
+        }
         let message = format!(
             "cannot decide which impl of '{}' for '{}' {what} means: its trait argument is not \
              decided here",
@@ -558,7 +583,6 @@ impl TypeChecker {
         // The example: the trait arguments of the first impl the type has
         // at written types (a placeholder where it has only one for every
         // argument), and the method's type at them.
-        let subject_ty = self.apply(subject);
         let at_impl: Option<Vec<Type>> = (self.type_name_for_impl(&subject_ty)).and_then(|head| {
             (self.tables.impl_args_of(tr, head).iter())
                 .filter_map(|at| self.tables.impl_trait_args.get(&(tr, head, *at)))

@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- Trait arguments and types are unified together.
+type Box(a) { Box(a) }
+trait Conv(t) { fn conv(self) -> t }
+trait Conv(a) for Box(Int) { fn conv(self) -> a { panic("x") } }
+trait Conv(Int) for Box(b) { fn conv(self) -> Int { 1 } }
+fn main() {}

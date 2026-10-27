@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- A type with impls for other instantiations only does not implement
+-- the trait.
+type Box(a) { Box(a) }
+trait Sum { fn sum(self) -> Int }
+trait Sum for Box(Int) { fn sum(self) -> Int { 1 } }
+trait Sum for Box(String) { fn sum(self) -> Int { 2 } }
+fn main() { println(Sum.sum(Box(true))) }

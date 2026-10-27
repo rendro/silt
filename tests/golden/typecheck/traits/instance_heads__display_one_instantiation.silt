@@ -1,0 +1,7 @@
+-- `Display` for one instantiation shows that instantiation.
+type Box(a) { Box(a) }
+trait Display for Box(Int) { fn display(self) -> String { match self { Box(n) -> "int {n + 1}" } } }
+fn main() {
+  println("{Box(1)}")
+  println("{[Box(2)]}")
+}

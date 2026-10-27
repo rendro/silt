@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- An impl for an instantiation has a where clause of its own.
+type Box(a) { Box(a) }
+trait Sum { fn sum(self) -> Int }
+trait Sum for Int { fn sum(self) -> Int { self } }
+trait Sum for Box(List(a)) where a: Sum { fn sum(self) -> Int { 10 } }
+trait Sum for Box(Int) { fn sum(self) -> Int { match self { Box(n) -> n } } }
+fn main() {
+  println(Sum.sum(Box([1])))
+  println(Sum.sum(Box(4)))
+  println(Sum.sum(Box(["s"])))
+}

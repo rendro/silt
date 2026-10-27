@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- A supertrait must hold at the impl's whole type.
+type Box(a) { Box(a) }
+trait Sum { fn sum(self) -> Int }
+trait Sum for Box(Int) { fn sum(self) -> Int { 1 } }
+trait Big: Sum { fn big(self) -> Int }
+trait Big for Box(Int) { fn big(self) -> Int { 1 } }
+trait Big for Box(String) { fn big(self) -> Int { 0 } }
+trait Small: Sum { fn small(self) -> Int }
+trait Small for Box(a) { fn small(self) -> Int { 0 } }
+fn main() {}

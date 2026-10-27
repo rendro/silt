@@ -1,0 +1,6 @@
+error[type]: cannot decide which impl of 'Sum' for 'Box(List(_))' this use of 'sum' means: the type's arguments are not decided here
+ --> instance_heads__undecided_type_arguments.silt:9:19
+   |
+ 9 |   println(Sum.sum(b))
+   |                   ^ cannot decide which impl of 'Sum' for 'Box(List(_))' this use of 'sum' means: the type's arguments are not decided here
+  = help: annotate the value it is given, `let x: Box(List(Int)) = ...`

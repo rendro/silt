@@ -1,0 +1,2 @@
+pub type Box(a) { Box(a) }
+pub trait Sum { fn sum(self) -> Int }

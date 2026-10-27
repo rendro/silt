@@ -1,0 +1,5 @@
+error[type]: type 'Box(Bool)' does not implement trait 'Sum': the only impl is for 'Box(Int)'
+ --> instance_heads__missing_instantiation_through_bound.silt:10:13
+    |
+ 10 |   println(f(Box(true)))
+    |             ^^^^^^^^^ type 'Box(Bool)' does not implement trait 'Sum': the only impl is for 'Box(Int)'

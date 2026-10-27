@@ -2144,60 +2144,31 @@ impl<'src> Parser<'src> {
                 }
             };
 
-            // Extract lowercase type-var binders from the target args.
-            // Enforce two rules:
-            //   1. Every arg must be a lowercase `Named` ident (impl
-            //      target arguments must be type variables — silt has no
-            //      specialization, so `trait X for Box(Int)` is rejected),
-            //      or `_`, the argument a trait of type constructors maps
-            //      over (`trait Functor for Option(_)`), which binds
-            //      nothing; where it may stand the checker says.
-            //   2. Binders must be distinct (no `Pair(a, a)` shadowing).
+            // The type variables of the target args, each a binder. An
+            // argument may be any type (`trait X for Box(Int)`, one impl
+            // for one instantiation; that no two impls overlap the checker
+            // says), or `_`, the argument a trait of type constructors maps
+            // over (`trait Functor for Option(_)`), which binds nothing;
+            // where it may stand the checker says. Binders must be distinct
+            // (no `Pair(a, a)`).
             let mut target_param_names: Vec<Symbol> = Vec::new();
             for arg in &target_type_args {
-                if let TypeExprKind::Named {
-                    module: None, name, ..
-                } = &arg.kind
-                    && intern::resolve(*name) == "_"
-                {
-                    continue;
+                let mut binders = Vec::new();
+                head_binders(arg, &mut binders);
+                for arg_sym in binders {
+                    if target_param_names.contains(&arg_sym) {
+                        return Err(Diagnostic::error(
+                            Code::InvalidDeclaration,
+                            target_span,
+                            format!(
+                                "duplicate type variable '{}' in impl target; \
+                                 each binder must be distinct",
+                                intern::resolve(arg_sym)
+                            ),
+                        ));
+                    }
+                    target_param_names.push(arg_sym);
                 }
-                let TypeExprKind::Named {
-                    module: None,
-                    name: arg_sym,
-                    ..
-                } = &arg.kind
-                else {
-                    return Err(Diagnostic::error(
-                        Code::UnsupportedSyntax,
-                        target_span,
-                        "impl target arguments must be lowercase type variables; \
-                                  silt has no trait specialization",
-                    ));
-                };
-                let arg_str = intern::resolve(*arg_sym);
-                let first_char = arg_str.chars().next().unwrap_or('A');
-                if !first_char.is_lowercase() {
-                    return Err(Diagnostic::error(
-                        Code::UnsupportedSyntax,
-                        target_span,
-                        format!(
-                            "impl target argument '{arg_str}' must be a lowercase type variable; \
-                             silt has no trait specialization"
-                        ),
-                    ));
-                }
-                if target_param_names.contains(arg_sym) {
-                    return Err(Diagnostic::error(
-                        Code::InvalidDeclaration,
-                        target_span,
-                        format!(
-                            "duplicate type variable '{arg_str}' in impl target; \
-                             each binder must be distinct"
-                        ),
-                    ));
-                }
-                target_param_names.push(*arg_sym);
             }
 
             // Optional impl-level where clauses:
@@ -4603,6 +4574,24 @@ fn capitalized(name: &str) -> String {
     match chars.next() {
         Some(first) => first.to_uppercase().chain(chars).collect(),
         None => String::new(),
+    }
+}
+
+/// The type variables an impl target's argument `te` writes, each where
+/// it stands (`_` binds nothing), into `out`.
+fn head_binders(te: &TypeExpr, out: &mut Vec<Symbol>) {
+    match &te.kind {
+        TypeExprKind::Named {
+            module: None, name, ..
+        } if intern::resolve(*name).starts_with(char::is_lowercase) => out.push(*name),
+        TypeExprKind::Generic { args, .. } | TypeExprKind::Tuple(args) => {
+            args.iter().for_each(|arg| head_binders(arg, out));
+        }
+        TypeExprKind::Function(params, ret) => {
+            params.iter().for_each(|param| head_binders(param, out));
+            head_binders(ret, out);
+        }
+        _ => {}
     }
 }
 
