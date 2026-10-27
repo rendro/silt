@@ -52,11 +52,11 @@ error[type]: `Int` is a type, and a type given as a value cannot be encoded as j
  47 |   println(json.stringify(Int))
     |                          ^^^ `Int` is a type, and a type given as a value cannot be encoded as json
 
-error[type]: type 'List(type Int)' does not implement trait 'Display': element is of type 'type Int', which does not
+error[type]: type 'List(type Int)' does not implement trait 'Display': element is of type 'type Int', which does not implement trait 'Display'
  --> type_value__no_trait_and_no_message_names_its_internal_type.silt:48:11
     |
  48 |   println(list.sort([Int]))
-    |           ^^^^^^^^^^^^^^^^ type 'List(type Int)' does not implement trait 'Display': element is of type 'type Int', which does not
+    |           ^^^^^^^^^^^^^^^^ type 'List(type Int)' does not implement trait 'Display': element is of type 'type Int', which does not implement trait 'Display'
 
 error[type]: `Int` is a type, and a type given as a value cannot be ordered
  --> type_value__no_trait_and_no_message_names_its_internal_type.silt:48:21
