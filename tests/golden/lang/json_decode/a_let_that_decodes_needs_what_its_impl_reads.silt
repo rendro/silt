@@ -1,7 +1,7 @@
 -- A top-level `let` that decodes a document into a type with a written
 -- `json.Decode` impl needs what the impl reads: it is initialised after
--- `later`, whether it decodes with `json.parse`, `json.parse_list`,
--- `json.decode`, `T.decode`, a function with `where a: json.Decode`, or
+-- `later`, whether it decodes with `json.parse` (of the type, a list of
+-- it), `json.decode`, `T.decode`, a function with `where a: json.Decode`, or
 -- into a type that holds the type, as one that shows a value needs what
 -- a `Display` impl reads.
 import json
@@ -24,7 +24,7 @@ fn load(text: String, type a) -> Result(a, json.JsonError) where a: json.Decode 
 }
 
 let p = json.parse("1", T)
-let l = json.parse_list("[2]", T)
+let l = json.parse("[2]", List(T))
 let d = json.decode(json.Int(3), T)
 let m = T.decode(json.Int(4))
 let f = load("5", T)

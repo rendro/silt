@@ -1,5 +1,5 @@
 Ok([Int(1), String(a), Null, Array([Bool(true)])])
-Err(json type mismatch: expected array, got object)
+Err(json type mismatch: expected List, got object)
 Ok(#{"x": Int(1), "y": Array([Bool(true)])})
 Ok(3)
 Err(json type mismatch: expected Int, got a number with a fraction)

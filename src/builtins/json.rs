@@ -450,22 +450,20 @@ pub(crate) fn message(error: &Value) -> std::string::String {
 }
 
 /// What `caller`, a json decoder, gives for its type argument `ty`:
-/// `Ok` of the value of the document `read_doc` gives (as `read` reads
-/// it: one value, a list, a map), or `Err` of the `JsonError` that says
-/// why there is none, the program's `json.Decode` impls honoured. As
-/// every decoder does, it takes the type and refuses one no decoder
-/// fills before the document is read; `read_doc` gives the document, or
-/// the call's result where there is none. (An impl is the program's
-/// code: a step.)
+/// `Ok` of the value of the document `read_doc` gives, or `Err` of the
+/// `JsonError` that says why there is none, the program's `json.Decode`
+/// impls honoured. As every decoder does, it takes the type and refuses
+/// one no decoder fills before the document is read; `read_doc` gives
+/// the document, or the call's result where there is none. (An impl is
+/// the program's code: a step.)
 fn decoded(
     vm: &mut Vm,
     caller: &Decoder,
     ty: Type,
-    read: crate::vm::decode::Read<serde_json::Value>,
     read_doc: impl FnOnce() -> Result<serde_json::Value, Value>,
 ) -> Result<Step, VmError> {
     let expected = decode::target(caller, ty)?.element();
-    vm.decode_document("json.decode", expected, read, read_doc)
+    vm.decode_document("json.decode", expected, one, read_doc)
 }
 
 /// `json.decode(value, ty)`, and `T.decode(value)` of a type with no
@@ -483,7 +481,7 @@ pub(crate) fn decode_value(vm: &mut Vm, value: &Value, ty: Type) -> Result<Step,
         }
         Err(e) => Err(json_unknown_err(e.message)),
     };
-    decoded(vm, &DECODE, ty, one, || document)
+    decoded(vm, &DECODE, ty, || document)
 }
 
 /// A document read as one value.
@@ -493,24 +491,6 @@ fn one(
     expected: &FieldType,
 ) -> Result<Value, decode::Error> {
     decode::value(r, doc, expected, &At::Top)
-}
-
-/// A document read as a list of values.
-fn list_of(
-    r: &decode::Reader,
-    doc: &serde_json::Value,
-    element: &FieldType,
-) -> Result<Value, decode::Error> {
-    decode::list(r, element, doc, &At::Top)
-}
-
-/// A document read as a map of values.
-fn map_of(
-    r: &decode::Reader,
-    doc: &serde_json::Value,
-    element: &FieldType,
-) -> Result<Value, decode::Error> {
-    decode::map(r, element, doc, &At::Top)
 }
 
 // ── The functions ───────────────────────────────────────────────────
@@ -530,8 +510,6 @@ fn written_text(
 
 static DECODE: Decoder = Decoder::new("json.decode");
 static PARSE: Decoder = Decoder::new("json.parse");
-static PARSE_LIST: Decoder = Decoder::new("json.parse_list");
-static PARSE_MAP: Decoder = Decoder::new("json.parse_map");
 
 builtins! {
     fn decode(vm, value: &Value, ty: Type) -> Result<Step, VmError> {
@@ -539,19 +517,7 @@ builtins! {
     }
 
     fn parse(vm, s: &str, ty: Type) -> Result<Step, VmError> {
-        decoded(vm, &PARSE, ty, one, || {
-            parse_document(s.as_bytes()).map_err(|e| json_result_err(&e, s.as_bytes()))
-        })
-    }
-
-    fn parse_list(vm, s: &str, ty: Type) -> Result<Step, VmError> {
-        decoded(vm, &PARSE_LIST, ty, list_of, || {
-            parse_document(s.as_bytes()).map_err(|e| json_result_err(&e, s.as_bytes()))
-        })
-    }
-
-    fn parse_map(vm, s: &str, ty: Type) -> Result<Step, VmError> {
-        decoded(vm, &PARSE_MAP, ty, map_of, || {
+        decoded(vm, &PARSE, ty, || {
             parse_document(s.as_bytes()).map_err(|e| json_result_err(&e, s.as_bytes()))
         })
     }

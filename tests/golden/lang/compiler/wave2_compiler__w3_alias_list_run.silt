@@ -1,10 +1,10 @@
 -- exit: 1
 -- stderr-contains: error[type]
--- stderr-contains: json.parse_list
+-- stderr-contains: json.parse
 -- stderr-contains: `List`
 -- stderr-contains: record type
 import json as j
 
 fn main() {
-  println(j.parse_list("[1]", List))
+  println(j.parse("[1]", List))
 }

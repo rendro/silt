@@ -3,7 +3,7 @@ import json
 import list
 type Employee { name: String }
 fn program() {
-  match json.parse_list("[]", Employee) {
+  match json.parse("[]", List(Employee)) {
     Ok(employees) -> list.length(employees)
     Err(_) -> -1
   }

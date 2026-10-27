@@ -49,7 +49,7 @@ fn main() {
     Err(e) -> println(e)
   }
   println(json.parse("[1,2]", R))
-  println(json.parse_list("[1,2]", Int))
-  println(json.parse_map("\{\"a\":[1]\}", List))
+  println(json.parse("[1,2]", List(Int)))
+  println(json.parse("\{\"a\":[1]\}", Map(String, List)))
   println(json.parse("1", Int))
 }

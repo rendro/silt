@@ -4,9 +4,8 @@
 -- with them.
 -- Each field is decoded as the variant declares it: a record, a list, an
 -- option, another enum, the enum itself. It is decoded at the top, in a
--- record field, in a List, an Option and a Map, by json.parse,
--- json.parse_list, json.parse_map and json.decode, and through a
--- `type a` parameter.
+-- record field, in a List, an Option and a Map, by json.parse and
+-- json.decode, and through a `type a` parameter.
 import json
 import list
 
@@ -65,8 +64,8 @@ fn main() {
   println(json.parse(json.stringify(Dot), Shape))
   let tree = Node(Leaf(1), Node(Leaf(2), Leaf(3)))
   println(json.parse(json.stringify(tree), Tree))
-  println(json.parse_list(json.stringify(values), Status))
-  println(json.parse_map(json.stringify(#{ "a": Active, "b": Paused(5) }), Status))
+  println(json.parse(json.stringify(values), List(Status)))
+  println(json.parse(json.stringify(#{ "a": Active, "b": Paused(5) }), Map(String, Status)))
   match json.parse(json.stringify(Paused(9)), json.Value) {
     Ok(value) -> println(json.decode(value, Status))
     Err(e) -> println("unexpected: {e}")

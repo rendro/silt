@@ -1,6 +1,6 @@
 -- exit: 1
 -- stderr-contains: error[type]
--- stderr-contains: json.parse_list
+-- stderr-contains: json.parse
 -- stderr-contains: Outer
 -- stderr-contains: Inner
 -- stderr-contains: key
@@ -11,7 +11,7 @@ type Inner { key: Map(Int, String) }
 type Outer { inners: List(Inner) }
 
 fn main() {
-  match json.parse_list("[]", Outer) {
+  match json.parse("[]", List(Outer)) {
     Ok(v) -> println(v)
     Err(e) -> println("err: {Error.message(e)}")
   }

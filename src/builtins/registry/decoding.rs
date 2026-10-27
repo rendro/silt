@@ -212,7 +212,7 @@ pub struct Decoding {
 }
 
 impl Decoding {
-    /// `json.parse`, `json.parse_list`, `json.parse_map`, `json.decode`.
+    /// `json.parse`, `json.decode`.
     pub const JSON: Decoding = Decoding {
         family: Family::Json,
         primitives: true,

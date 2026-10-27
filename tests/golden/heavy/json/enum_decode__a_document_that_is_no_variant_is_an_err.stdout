@@ -18,7 +18,7 @@ Err(json type mismatch: expected String, got object at status)
 Err(`Status` has no variant `Gone` at status.variant)
 Err(variant `Paused` of `Status` has 1 field, got 0 at [1])
 Err(json type mismatch: expected Int, got a number with a fraction at [1].fields[0])
-Err(json type mismatch: expected array, got string)
+Err(json type mismatch: expected List, got string)
 Other: `Status` has no variant `Gone`
 TypeMismatch: String, object
 TypeMismatch: String or object, boolean

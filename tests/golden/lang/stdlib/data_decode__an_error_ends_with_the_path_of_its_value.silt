@@ -34,15 +34,15 @@ fn main() {
   println(json.parse("""{"inner": {"a": 1}}""", Outer))
   println(json.parse("[1]", Outer))
   println(json.parse("\"x\"", Int))
-  println(json.parse_list("""[1, 2, "c"]""", Int))
-  println(json.parse_list("""[{"a": 1}, {"a": 2.5}]""", Inner))
-  println(json.parse_map("""{"ok": 1, "x.y": "z"}""", Int))
+  println(json.parse("""[1, 2, "c"]""", List(Int)))
+  println(json.parse("""[{"a": 1}, {"a": 2.5}]""", List(Inner)))
+  println(json.parse("""{"ok": 1, "x.y": "z"}""", Map(String, Int)))
   println(json.decode(json.Array([json.Int(1), json.Null]), Int))
-  match json.parse_list("""[{"a": 1}, {"a": "x"}]""", Inner) {
+  match json.parse("""[{"a": 1}, {"a": "x"}]""", List(Inner)) {
     Err(json.TypeMismatch(expected, actual)) -> println("TypeMismatch: {expected} | {actual}")
     other -> println(other)
   }
-  match json.parse_list("""[{"a": 1}, {}]""", Inner) {
+  match json.parse("""[{"a": 1}, {}]""", List(Inner)) {
     Err(json.MissingField(path)) -> println("MissingField: {path}")
     other -> println(other)
   }

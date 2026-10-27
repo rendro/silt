@@ -251,12 +251,12 @@ trait json.Decode {
 
 ---
 
-What `json.parse`, `json.parse_list`, `json.parse_map` and `json.decode`
-need of the type they decode into. A type has it by its structure: the
-types of [Decodable types](#decodable-types) have it, a record or enum
-type of the program when the types of its fields do. A container, a date
-and a time are decoded as the type of a field, not as the type a decoder
-is given (a type written as a value names no list's element type). A
+What `json.parse` and `json.decode` need of the type they decode into.
+A type has it by its structure: the types of [Decodable
+types](#decodable-types) have it, a record or enum type of the program
+when the types of its fields do. A date and a time are decoded as the
+type of a field or of a part of a list, an option, a map or a tuple, not
+as the type a decoder is given. A
 function with a `type a` parameter (any annotation names the variable)
 that hands it to a decoder writes `where a: json.Decode`; only a function
 with no annotation at all (`fn load(text, t) { json.parse(text, t) }`) is
@@ -297,8 +297,8 @@ the module that declares `T` (as a `json.Encode` impl is written; an impl
 for a builtin type is an error, a builtin type keeps its own form, and an
 impl for a generic type is refused: a decoder builds a value of one type).
 Its `decode` gives the value of `T` that a `json.Value` is, wherever a
-value of the type is in the document: at the top, as an element of
-`json.parse_list`, as a value of `json.parse_map`, in a record's or a
+value of the type is in the document: at the top, as an element of a
+list or a value of a map, in a record's or a
 variant's field, in a list or a map in one. The fields of `T` are then not
 looked into, so `T` may hold a type no decoder has. An `Option` around it
 stays structural (`null` is `None`). The `Err` it returns is the decoder's

@@ -74,7 +74,7 @@ fn all_unique_skills(employees) {
 
 fn main() {
   -- Parse the JSON dataset
-  let employees = match json.parse_list(employee_json, Employee) {
+  let employees = match json.parse(employee_json, List(Employee)) {
     Ok(emps) -> emps
     Err(e) -> panic("Failed to parse employees: {Error.message(e)}")
   }

@@ -2,7 +2,7 @@
 -- exit: 0
 -- A record or enum type with a written `json.Decode` impl is decoded by
 -- the impl wherever it is in the document: at the top, as an element of
--- `json.parse_list`, as a value of `json.parse_map`, in a record's field,
+-- a list, as a value of a map, in a record's field,
 -- in a list in a field, in a variant's field, through `json.decode`. An
 -- `Option` around it stays structural (`null` is `None`).
 import json
@@ -35,8 +35,8 @@ type Kind { Plain, Tagged(Tags) }
 
 fn main() {
   println(json.parse("""["a", "b", "a"]""", Tags))
-  println(json.parse_list("""["a", ["b", "c"]]""", Tags))
-  println(json.parse_map("""{"k": "v"}""", Tags))
+  println(json.parse("""["a", ["b", "c"]]""", List(Tags)))
+  println(json.parse("""{"k": "v"}""", Map(String, Tags)))
   println(json.parse("""{"title": "t", "tags": "x", "more": [["y"], "z"], "opt": null}""", Post))
   println(json.parse("""{"title": "t", "tags": [], "more": [], "opt": "o"}""", Post))
   println(json.parse("""{"title": "t", "tags": [], "more": []}""", Post))

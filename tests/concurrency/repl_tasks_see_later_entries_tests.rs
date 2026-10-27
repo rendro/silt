@@ -263,7 +263,7 @@ fn a_task_writes_a_value_with_the_json_encode_impl_of_a_later_entry() {
 #[test]
 fn a_task_decodes_a_document_with_the_json_decode_impl_of_a_later_entry() {
     assert_tasks_see(
-        "import json\nfn ld(text: String, type a) -> Result(List(a), json.JsonError) where a: json.Decode { json.parse_list(text, a) }",
+        "import json\nfn ld(text: String, type a) -> Result(List(a), json.JsonError) where a: json.Decode { json.parse(text, List(a)) }",
         "type Q { q: Int }\n\
          trait json.Decode for Q { fn decode(value: json.Value) -> Result(Self, json.JsonError) { Ok(Q { q: 9 }) } }",
         "ld(\"[1]\", Q)",

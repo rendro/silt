@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- A type parse_map does not take (json.Value, for toml), given through a
+-- A type toml.parse_map does not take (json.Value), given through a
 -- `type a` parameter, is refused at the call that gives it, as it is
 -- where the call of toml.parse_map names it.
 import json

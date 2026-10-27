@@ -37,7 +37,7 @@ The following names are always available without an import: `print`,
 `println`, `panic`, `Ok`, `Err`, `Some`, `None`, plus the prelude's types
 written as values, their descriptors (`Int`, `Float`, `String`, `Bool`,
 `List`, `Map`, `Set`, `Channel`, `Option`, `Result` and `Bytes`; used
-with type-directed APIs like `json.parse_map`). Everything else is
+with type-directed APIs like `json.parse`). Everything else is
 reached through its module, the stdlib's types and constructors included:
 `list.Stop(acc)`, `channel.Message(v)`, `time.Monday`, `http.GET` (after
 `import list`, `import channel`, ...), or listed in a selective import

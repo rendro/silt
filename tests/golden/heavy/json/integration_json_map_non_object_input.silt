@@ -1,7 +1,7 @@
 import io
 import json
 fn program() {
-  match json.parse_map("\{\"a\": \"hello\", \"b\": \"world\"\}", Int) {
+  match json.parse("[1, 2, 3]", Map(String, String)) {
     Ok(_) -> "unexpected"
     Err(json.TypeMismatch(expected, actual)) -> "{expected}/{actual}"
     Err(e) -> Error.message(e)

@@ -2,7 +2,7 @@ import io
 import json
 import map
 fn program() {
-  match json.parse_map("\{\"x\": 10, \"y\": 20\}", Int) {
+  match json.parse("\{\"x\": 10, \"y\": 20\}", Map(String, Int)) {
     Ok(m) -> map.get(m, "y")
     Err(_) -> None
   }

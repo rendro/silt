@@ -28,7 +28,7 @@ fn load(text: String, type a) -> Result(a, json.JsonError) where a: json.Decode 
 }
 
 fn load_inferred(text, t) {
-  json.parse_map(text, t)
+  json.parse(text, Map(String, t))
 }
 
 fn declared_only(type a) -> Int where a: json.Decode {

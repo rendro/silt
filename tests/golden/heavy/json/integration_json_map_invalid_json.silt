@@ -1,7 +1,7 @@
 import io
 import json
 fn program() {
-  match json.parse_map("not json at all", String) {
+  match json.parse("not json at all", Map(String, String)) {
     Ok(_) -> false
     Err(_) -> true
   }

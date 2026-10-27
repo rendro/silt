@@ -1,8 +1,8 @@
 import io
 import json
-type Employee { name: String, salary: Int }
+type Employee { name: String }
 fn program() {
-  match json.parse_list("[\{\"name\": \"Alice\", \"salary\": \"not_a_number\"\}]", Employee) {
+  match json.parse("\{\"name\": \"Alice\"\}", List(Employee)) {
     Ok(_) -> "unexpected"
     Err(json.TypeMismatch(expected, actual)) -> "{expected}/{actual}"
     Err(e) -> Error.message(e)

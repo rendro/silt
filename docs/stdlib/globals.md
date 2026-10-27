@@ -21,7 +21,7 @@ No import or qualification needed.
 | `None` | `Option(a)` | The absent Option value (not a function) |
 
 A type written as a value is its **type descriptor**, for a `type a`
-parameter (`json.parse_map(text, Int)`, a function of your own) and for
+parameter (`json.parse(text, Int)`, a function of your own) and for
 a trait method that makes a value (`Int.empty()`). The prelude's types
 need no import:
 

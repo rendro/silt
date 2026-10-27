@@ -34,5 +34,5 @@ fn main() {
   println(json.parse("""{"name": 1, "codes": ["other"]}""", Row))
   println(json.parse("""{"name": "a", "codes": ["other", 1.5]}""", Row))
   println(json.parse("""[{"name": "a", "codes": [2]}, {"name": "b"}]""", Row))
-  println(json.parse_list("""[{"name": "a", "codes": [2]}, {"name": "b", "codes": ["other"]}]""", Row))
+  println(json.parse("""[{"name": "a", "codes": [2]}, {"name": "b", "codes": ["other"]}]""", List(Row)))
 }

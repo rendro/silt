@@ -15,7 +15,7 @@ type Repo {
 
 fn fetch_repos(user) {
   -- http.get returns HttpError, bytes.to_string BytesError and
-  -- json.parse_list JsonError. Fold them into a single `String` channel
+  -- json.parse JsonError. Fold them into a single `String` channel
   -- via `Error.message(e)` so fetch_repos surfaces one uniform error type to
   -- its caller.
   let resp = match http.get("https://api.github.com/users/{user}/repos") {
@@ -27,7 +27,7 @@ fn fetch_repos(user) {
     Ok(text) -> text
     Err(e) -> return Err(Error.message(e))
   }
-  match json.parse_list(text, Repo) {
+  match json.parse(text, List(Repo)) {
     Ok(repos) -> Ok(repos)
     Err(e) -> Err(Error.message(e))
   }

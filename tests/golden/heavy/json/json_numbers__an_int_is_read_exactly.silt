@@ -19,7 +19,7 @@ fn main() {
   println(json.parse("[9007199254740993.0, \"9.5\", 2]", json.Value))
   println(json.parse("-9223372036854775809", json.Value))
   println(json.parse("1.0000000000000001", json.Value))
-  println(json.parse_map("""{"a": 9007199254740993.0}""", Int))
+  println(json.parse("""{"a": 9007199254740993.0}""", Map(String, Int)))
   println(json.decode(json.Float(1.0), Int))
   println(json.decode(json.Float(1.5), Int))
   println(json.decode(json.Float(10000000000000000000.0), Int))
