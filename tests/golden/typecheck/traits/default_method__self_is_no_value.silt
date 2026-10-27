@@ -1,0 +1,24 @@
+-- cmd: check
+-- exit: 1
+-- `Self` is a type a call may be given in a trait's default body only: a
+-- `let` of it, an impl's own method and a top-level function name no
+-- value `Self`.
+-- stderr-contains:  --> default_method__self_is_no_value.silt:14:14
+-- stderr-contains:  --> default_method__self_is_no_value.silt:19:67
+-- stderr-contains:  --> default_method__self_is_no_value.silt:21:64
+-- stderr-contains: error[type]: undefined variable 'Self'
+import json
+type P { x: Int }
+trait Dec: json.Decode {
+  fn read(s: String) -> Result(P, json.JsonError) {
+    let _t = Self
+    json.parse(s, P)
+  }
+}
+trait Dec for P {
+  fn read(s: String) -> Result(P, json.JsonError) { json.parse(s, Self) }
+}
+fn top(s: String) -> Result(P, json.JsonError) { json.parse(s, Self) }
+fn main() {
+  println(top("1"))
+}

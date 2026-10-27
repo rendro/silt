@@ -2942,6 +2942,14 @@ impl Resolver<'_> {
                     self.error(d.with_help(help.clone()));
                     a.res = Some(Res::Error);
                 }
+                // `json.parse(s, Self)` in a trait's default body: `Self`
+                // is a type, given as a call's type argument.
+                _ if matches!(a.kind, ExprKind::Ident(name) if name == intern("Self"))
+                    && self.type_vars.contains(&intern("Self"))
+                    && self.lookup_value(intern("Self")).is_none() =>
+                {
+                    a.res = Some(Res::Local);
+                }
                 _ => self.expr(a),
             }
         }

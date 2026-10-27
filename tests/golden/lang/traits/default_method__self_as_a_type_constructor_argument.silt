@@ -1,0 +1,16 @@
+-- In a default body of a trait for type constructors `Self` is given to
+-- a `type m` parameter as the impl's type constructor.
+fn mk(type m) -> m(Int) where m: Applicative { m.pure(1) }
+
+trait Wrap: Applicative {
+  fn one() -> Self(Int) { mk(Self) }
+}
+
+trait Wrap for Option(_) {}
+
+trait Wrap for List(_) {}
+
+fn main() {
+  println(Option.one())
+  println(List.one())
+}

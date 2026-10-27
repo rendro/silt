@@ -7412,6 +7412,7 @@ mod applicative {
             ty: crate::defs::builtin_type_id(ty).unwrap_or(crate::defs::TypeId(DefId(999_998))),
             args: ImplArgs::none(),
             name: format!("Applicative for {ty}"),
+            descriptor: None,
             methods: slots.iter().map(|slot| Method::Global(*slot)).collect(),
             supers: Box::new([]),
             wheres: Box::new([]),

@@ -1051,6 +1051,11 @@ impl Vm {
                     ok!(self.dict_part(|dict, globals| dict.where_dict(index, globals)));
                     load!();
                 }
+                Instr::DictType => {
+                    save!();
+                    ok!(self.dict_part(|dict, globals| dict.descriptor(globals)));
+                    load!();
+                }
                 Instr::Bind { n } => {
                     save!();
                     ok!(self.bind(n));

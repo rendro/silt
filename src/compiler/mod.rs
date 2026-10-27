@@ -335,6 +335,9 @@ pub struct Compiler<'a> {
     /// installs (the first REPL entry, or a program; a later entry finds
     /// them installed), each with its trait: `Error.message`.
     builtin_defaults: Vec<(crate::defs::TraitId, crate::ast::FnDecl)>,
+    /// The body of the trait's default method being compiled, if one is:
+    /// `Self` there is its impl's type (`DictType`).
+    default_body: Option<Span>,
     /// The definitions that take dictionaries, by the span that names
     /// them (`crate::evidence::Evidence::Param`), with what they take.
     owners: HashMap<Span, crate::evidence::Shape>,
@@ -430,6 +433,7 @@ impl<'a> Compiler<'a> {
             own_slots: HashMap::new(),
             closure_name: None,
             builtin_defaults: Vec::new(),
+            default_body: None,
             owners: HashMap::new(),
             own_dicts: HashMap::new(),
             pattern_lets: HashMap::new(),
@@ -837,7 +841,10 @@ impl<'a> Compiler<'a> {
         method: &crate::ast::FnDecl,
     ) -> Result<(), Diagnostic> {
         let span = method.span;
-        self.compile_method(format!("{trait_name}.{}", method.name), method)?;
+        let around = self.default_body.replace(method.body.span);
+        let compiled = self.compile_method(format!("{trait_name}.{}", method.name), method);
+        self.default_body = around;
+        compiled?;
         let slot = self
             .globals
             .default_method(t, &resolve(method.name))
@@ -1511,6 +1518,17 @@ impl<'a> Compiler<'a> {
 
             ExprKind::Ident(_) if let Some(def) = self.value_def(expr.res) => {
                 self.emit_global_value(def, span)?;
+            }
+
+            // `Self` given to a call in a trait's default method: the type
+            // of the impl whose dictionary the method runs with.
+            ExprKind::Ident(name)
+                if *name == intern("Self")
+                    && expr.res == Some(crate::defs::Res::Local)
+                    && let Some(owner) = self.default_body =>
+            {
+                self.load_frame_dict(owner, span)?;
+                self.emit(Asm::DictType, span)?;
             }
 
             ExprKind::Ident(name) => {
@@ -2619,7 +2637,11 @@ impl<'a> Compiler<'a> {
     /// type: a primitive type's descriptor, or the descriptor of a record,
     /// enum or container type.
     fn type_value(&self, res: Option<crate::defs::Res>) -> Option<Value> {
-        let ty = self.res_type(res)?;
+        Some(self.type_descriptor(self.res_type(res)?))
+    }
+
+    /// The descriptor of the type `ty`, its value (`type_value`).
+    pub(super) fn type_descriptor(&self, ty: crate::types::TypeRef) -> Value {
         let name = resolve(ty.name);
         if crate::defs::builtin_types()
             .get(ty.id.0.0 as usize)
@@ -2628,9 +2650,9 @@ impl<'a> Compiler<'a> {
                 .iter()
                 .find(|primitive| **primitive == name)
         {
-            return Some(Value::PrimitiveDescriptor(primitive));
+            return Value::PrimitiveDescriptor(primitive);
         }
-        Some(Value::TypeDescriptor(self.type_info(ty.id)))
+        Value::TypeDescriptor(self.type_info(ty.id))
     }
 
     /// The definition a resolution names, if it names a value with a

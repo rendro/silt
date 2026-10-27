@@ -1119,6 +1119,9 @@ ops! {
     /// Pop a dictionary; push the dictionary of the `index`th `where`
     /// clause its trait declares on its parameters.
     WhereDict { index: U8("where clauses of a trait's parameters") } => pops 1, pushes 1;
+    /// Pop a dictionary; push the descriptor of its impl's type: `Self`
+    /// given to a call in a trait's default method (`json.parse(s, Self)`).
+    DictType => pops 1, pushes 1;
     /// Pop `n` values and the closure below them; push the closure that,
     /// called, is called with those values before its arguments: a
     /// definition with bounds as a value, with its dictionaries.
