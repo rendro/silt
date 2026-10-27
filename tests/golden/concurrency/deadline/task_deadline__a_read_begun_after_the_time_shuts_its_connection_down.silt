@@ -1,0 +1,29 @@
+-- requires-feature: tcp
+-- A read that the function begins when its time is already over (here
+-- from the start, at a duration of zero; on a busy machine also a
+-- function whose first slice comes late) is never started, and its
+-- connection is shut down all the same, as for a read in flight: what
+-- the deadline leaves of the connection does not depend on whether the
+-- read had begun. The peer's byte is not read.
+import bytes
+import task
+import tcp
+import time
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  when let Ok(conn) = tcp.connect("127.0.0.1:{tcp.local_port(listener)}") else {
+    panic("cannot connect")
+  }
+  when let Ok(peer) = tcp.accept(listener) else { panic("cannot accept") }
+  match task.deadline(time.ms(0), { -> tcp.read(conn, 16) }) {
+    Err(task.Timeout) -> println("the deadline passed")
+    _ -> println("something else")
+  }
+  when let Ok(_) = tcp.write(peer, bytes.from_string("x")) else { panic("the peer cannot write") }
+  match tcp.read(conn, 16) {
+    Err(tcp.Closed) -> println("then the connection is closed")
+    Ok(read) -> println("then still open (read {bytes.length(read)})")
+    Err(e) -> println("then {Error.message(e)}")
+  }
+}

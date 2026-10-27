@@ -70,7 +70,8 @@ impl Vm {
     /// A task that takes nothing new ([`Vm::takes_nothing_new`]) starts
     /// none: nothing is handed to the pool, and the operation that
     /// comes back never runs ([`IoPool::withheld`]). The wait for it,
-    /// which the caller begins, ends the task.
+    /// which the caller begins, ends the task, and ends a connection the
+    /// operation was on ([`Leave::Closes`]), as for one that had begun.
     pub(crate) fn io_op(
         &self,
         failure: ErrFactory,
@@ -78,7 +79,7 @@ impl Vm {
         f: impl FnOnce(&Wanted) -> Value + Send + 'static,
     ) -> IoOp {
         if self.takes_nothing_new() {
-            return self.runtime.io_pool.withheld(failure);
+            return self.runtime.io_pool.withheld(failure, leave);
         }
         let task = self.cancelled.iter().chain(&self.over).cloned().collect();
         self.runtime.io_pool.submit(failure, task, leave, f)
@@ -457,10 +458,18 @@ impl IoPool {
     }
 
     /// An operation that is not handed to the pool: it never runs,
-    /// its cell is never completed, and nothing is done when its
-    /// waiter goes (it is not told to stop: there is nothing to stop).
-    /// See [`Vm::io_op`].
-    pub(crate) fn withheld(&self, failure: ErrFactory) -> IoOp {
+    /// and its cell is never completed. When its waiter goes it is not
+    /// told to stop (there is nothing to stop), but a connection it
+    /// would have worked on is ended all the same ([`Leave::Closes`]):
+    /// what a task that stopped waiting leaves of a connection does not
+    /// depend on whether its operation had started. (A task whose time
+    /// passed before its first slice, which a busy machine makes
+    /// happen, begins its read withheld.) See [`Vm::io_op`].
+    pub(crate) fn withheld(&self, failure: ErrFactory, leave: Leave) -> IoOp {
+        let close = match leave {
+            Leave::Closes(close) => Some(close),
+            Leave::RunsOut | Leave::Returns { .. } => None,
+        };
         let state = OpState::new(Phase::Left);
         IoOp {
             cell: state.cell.clone(),
@@ -469,7 +478,7 @@ impl IoPool {
             pool: self.shared.clone(),
             state,
             interrupt: None,
-            close: None,
+            close,
             withheld: true,
         }
     }
@@ -889,8 +898,12 @@ impl IoOp {
 /// is its [`Leave`].
 impl Drop for IoOp {
     fn drop(&mut self) {
-        // Nothing was started, so nothing is left to stop or to count.
+        // Nothing was started, so nothing is left to stop or to count;
+        // a connection is ended as for an operation that had started.
         if self.withheld {
+            if let Some(close) = self.close.take() {
+                close();
+            }
             return;
         }
         let gone = self.in_flight.lock().take();
