@@ -1,0 +1,33 @@
+-- In a default body of a trait for type constructors `Self` is the type
+-- constructor: `Self.pure(..)` (a supertrait's, the built-in
+-- Applicative) and `Self.make(..)` (the trait's own) make values of it.
+trait Pointed: Applicative {
+  fn twice(x: a) -> Self(List(a)) { Self.pure([x, x]) }
+}
+
+trait Pointed for Option(_) {}
+
+trait Pointed for List(_) {}
+
+trait Make {
+  fn make(x: a) -> Self(a)
+  fn make_two(x: a, y: a) -> (Self(a), Self(a)) { (Self.make(x), Self.make(y)) }
+}
+
+trait Make for List(_) {
+  fn make(x: a) -> List(a) { [x] }
+}
+
+trait Make for Option(_) {
+  fn make(x: a) -> Option(a) { Some(x) }
+  fn make_two(x: a, y: a) -> (Option(a), Option(a)) { (Some(y), Some(x)) }
+}
+
+fn main() {
+  println(Option.twice(3))
+  println(List.twice("x"))
+  let (a, b) = List.make_two(1, 2)
+  println("{a} {b}")
+  let (c, d) = Option.make_two(1, 2)
+  println("{c} {d}")
+}

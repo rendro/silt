@@ -692,6 +692,20 @@ a value: it is called on a type constructor, `Option.pure(1)` (which is
 `m.pure(x)` where `m: Applicative`. Calling it through the trait,
 `Applicative.pure(1)`, is the error above.
 
+In a trait's default body `Self` is a type, so a default calls the
+methods that make a value on it: `Self.empty()`, or `Self.pure(x)` in a
+trait of type constructors. Each impl's own method is the one called.
+
+```silt
+trait Monoid {
+  fn empty() -> Self
+  fn combine(a: Self, b: Self) -> Self
+  fn with_empty(a: Self) -> Self {
+    Monoid.combine(a, Self.empty())
+  }
+}
+```
+
 A type with a variant of its own name (`type Box(a) { Box(a), Empty }`)
 is the type where a type is meant: `Box.default()` calls the method of
 its impl, and `make(Box)` gives the type to a `type t` parameter;

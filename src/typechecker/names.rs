@@ -1854,9 +1854,12 @@ impl Resolver<'_> {
                 for wc in &mut t.param_where_clauses {
                     self.where_clause(wc);
                 }
+                // (`Self` is a type in a default body: `Self.empty()`.)
+                let around = std::mem::replace(&mut self.type_vars, vec![intern("Self")]);
                 for m in &mut t.methods {
                     self.fn_decl(m);
                 }
+                self.type_vars = around;
             }
             Decl::TraitImpl(ti) => {
                 ti.trait_res = self.trait_name(ti.trait_module, ti.trait_name, ti.trait_name_span);

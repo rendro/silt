@@ -1,0 +1,27 @@
+-- In a trait's default body `Self` is a type: `Self.empty()` calls the
+-- method that makes a value, through the impl's own. An impl may still
+-- write the method itself.
+trait Mon {
+  fn comb(a: Self, b: Self) -> Self
+  fn empty() -> Self
+  fn with_empty(a: Self) -> Self { Mon.comb(a, Self.empty()) }
+  fn twice_empty() -> Self { Mon.comb(Self.empty(), Self.empty()) }
+}
+
+trait Mon for Int {
+  fn comb(a: Int, b: Int) -> Int { a + b }
+  fn empty() -> Int { 0 }
+}
+
+trait Mon for String {
+  fn comb(a: String, b: String) -> String { "{a}{b}" }
+  fn empty() -> String { "-" }
+  fn with_empty(a: String) -> String { "over {a}" }
+}
+
+fn main() {
+  println(Mon.with_empty(5))
+  println(Mon.with_empty("s"))
+  println(Int.twice_empty())
+  println(String.twice_empty())
+}

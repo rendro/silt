@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- `Self` in a default body has the methods of the trait and its supertraits only.
+-- stderr-contains: error[type]: no method 'nope' on type variable `Self`: its bounds (Mon) give none
+trait Mon {
+  fn empty() -> Self
+  fn bad() -> Self { Self.nope() }
+}
+trait Mon for Int { fn empty() -> Int { 0 } }
+fn main() { println(1) }
