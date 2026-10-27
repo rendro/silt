@@ -1,5 +1,5 @@
 error[type]: type 'Result(tcp.TcpStream, tcp.TcpError)' does not implement trait 'Display': variant 'Ok' payload #1 is of type 'tcp.TcpStream', which does not implement trait 'Display'
- --> a_part_that_cannot_be_shown_is_named_in_a_whole_sentence.silt:10:13
+ --> a_part_that_cannot_be_shown_is_named_in_a_whole_sentence.silt:11:13
     |
- 10 |   println("{r}")
+ 11 |   println("{r}")
     |             ^ type 'Result(tcp.TcpStream, tcp.TcpError)' does not implement trait 'Display': variant 'Ok' payload #1 is of type 'tcp.TcpStream', which does not implement trait 'Display'

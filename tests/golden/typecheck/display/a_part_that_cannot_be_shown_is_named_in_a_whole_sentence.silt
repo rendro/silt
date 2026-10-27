@@ -1,5 +1,6 @@
 -- cmd: check
 -- exit: 1
+-- requires-feature: tcp
 -- A value whose part cannot be shown is refused, and the message says
 -- of the part what it says of the whole: which trait it does not
 -- implement.
