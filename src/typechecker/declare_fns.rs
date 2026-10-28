@@ -85,14 +85,11 @@ impl TypeChecker {
             return;
         }
         let letters = scheme.letters();
-        for var in free_vars_in(ret) {
+        for var in return_only(params, ret) {
             let bounded = scheme.preds.iter().any(|pred| {
                 matches!(pred, Pred::Trait { .. } | Pred::Via { .. }) && pred.mentions(var)
             });
-            if bounded
-                && !given.contains(&var)
-                && let Some(&name) = letters.get(&var)
-            {
+            if bounded && let Some(&name) = letters.get(&var) {
                 self.return_only_variable(name, span);
             }
         }
@@ -269,15 +266,19 @@ impl TypeChecker {
             }
         }
 
-        let return_only: Vec<(Symbol, TyVar)> = (param_map.iter())
+        let written_return_only: Vec<(Symbol, TyVar)> = (param_map.iter())
             .filter(|(name, _)| !pre_return_keys.contains(*name))
             .filter_map(|(name, ty)| match ty {
                 Type::Var(v) => Some((*name, *v)),
                 _ => None,
             })
             .collect();
-        for (name, var) in return_only {
-            if !self.registry_rows && bounds.iter().any(|pred| pred.mentions(var)) {
+        let result_only = return_only(&param_types, &ret_type);
+        for (name, var) in written_return_only {
+            if !self.registry_rows
+                && result_only.contains(&var)
+                && bounds.iter().any(|pred| pred.mentions(var))
+            {
                 self.return_only_variable(name, f.span);
             }
         }
@@ -364,4 +365,39 @@ impl TypeChecker {
             complete,
         }
     }
+}
+
+/// The type variables of the return type `ret` of a function of the
+/// parameters `params` that only its results hold: none of `params` has
+/// it, and no parameter of a function type inside `ret` has it either
+/// (`a` of `Fn(String) -> Fn(List(a)) -> List(String)` is the returned
+/// closure's caller's to give).
+fn return_only(params: &[Type], ret: &Type) -> Vec<TyVar> {
+    fn results(ty: &Type, given: &mut Vec<TyVar>, out: &mut Vec<TyVar>) {
+        match ty {
+            Type::Fun(params, ret) => {
+                given.extend(params.iter().flat_map(free_vars_in));
+                results(ret, given, out);
+            }
+            Type::List(t) | Type::Set(t) | Type::Channel(t) => results(t, given, out),
+            Type::Map(k, v) => {
+                results(k, given, out);
+                results(v, given, out);
+            }
+            Type::Generic(_, args) | Type::Tuple(args) => {
+                args.iter().for_each(|t| results(t, given, out))
+            }
+            other => out.extend(free_vars_in(other)),
+        }
+    }
+    let mut given: Vec<TyVar> = params.iter().flat_map(free_vars_in).collect();
+    let mut out = Vec::new();
+    results(ret, &mut given, &mut out);
+    let mut only: Vec<TyVar> = Vec::new();
+    for var in out {
+        if !given.contains(&var) && !only.contains(&var) {
+            only.push(var);
+        }
+    }
+    only
 }

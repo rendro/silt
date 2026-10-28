@@ -86,7 +86,7 @@ fn make_reject(pattern) {
 
 -- make_prefix: returns a closure that adds a prefix to every line
 fn make_prefix(prefix) {
-  { lines: List(String) -> lines |> list.map { line -> "{prefix}{line}" } }
+  { lines -> lines |> list.map { line -> "{prefix}{line}" } }
 }
 
 -- make_contains_any: returns a closure that keeps lines matching any of the given patterns

@@ -1,15 +1,3 @@
-error[type]: type variable 'b' in return type is not introduced by any parameter; add a `type b` parameter or anchor it on an existing parameter's type
- --> data_decode__closures_and_receivers_of_one_shape_pass_their_type_on.silt:53:1
-    |
- 53 | fn returned(l) {
-    | ^^^^^^^^^^^^^^^^ type variable 'b' in return type is not introduced by any parameter; add a `type b` parameter or anchor it on an existing parameter's type
-
-error[type]: type variable 'b' in return type is not introduced by any parameter; add a `type b` parameter or anchor it on an existing parameter's type
- --> data_decode__closures_and_receivers_of_one_shape_pass_their_type_on.silt:57:1
-    |
- 57 | fn kept(l) {
-    | ^^^^^^^^^^^^ type variable 'b' in return type is not introduced by any parameter; add a `type b` parameter or anchor it on an existing parameter's type
-
 error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
  --> data_decode__closures_and_receivers_of_one_shape_pass_their_type_on.silt:68:28
     |
