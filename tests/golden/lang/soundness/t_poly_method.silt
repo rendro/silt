@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: error[type]: type 'Fn' does not implement trait 'Display'
+-- stderr-contains: error[type]: type 'Fn(_) -> _' does not implement trait 'Display'
 -- Port of repros/typechecker_arch/t_poly_method.silt, in brace closures.
 fn show(x) { "{x}" }
 fn main() {

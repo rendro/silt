@@ -245,7 +245,9 @@ impl TypeChecker {
     /// a trait of another module with its module (`json.Encode`,
     /// `a.Show`); a prelude trait and the module's own bare (`Display`),
     /// unless another trait the session knows has its name
-    /// (`prelude.Display` beside a program's `Display`).
+    /// (`prelude.Display` beside a program's `Display`), or in a REPL
+    /// cell, of an earlier cell's, unless the cell names it by its name
+    /// (`<repl:1>.Greet` is the `Greet` a later cell declared again).
     pub(super) fn show_trait(&self, t: TraitKey) -> String {
         let of_another_module = match crate::defs::builtin_trait_of_id(t.id.0) {
             Some((_, module)) => module.is_some(),
@@ -260,7 +262,10 @@ impl TypeChecker {
             .traits
             .keys()
             .any(|o| o.name == t.name && o.id != t.id);
-        match of_another_module || clashes {
+        let named_by_cell = self.is_cell
+            && self.named_types.contains(&t.id.0)
+            && (self.def(t.id.0)).is_some_and(|def| self.cells.contains(&def.module));
+        match of_another_module || (clashes && !named_by_cell) {
             true => self.show_trait_in_module(t),
             false => t.name.to_string(),
         }

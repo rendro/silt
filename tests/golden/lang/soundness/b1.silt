@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: error[type]: type 'Fn' does not implement trait 'Compare'
+-- stderr-contains: error[type]: type 'Fn(Int) -> Int' does not implement trait 'Compare'
 -- Port of repros/type_soundness/b1.silt, in brace closures.
 fn lt(a, b) { a < b }
 fn eq(a, b) { a == b }

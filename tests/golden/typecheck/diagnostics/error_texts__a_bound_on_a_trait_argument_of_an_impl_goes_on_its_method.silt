@@ -1,0 +1,13 @@
+-- exit: 1
+-- An impl-level bound on a variable of the impl's trait arguments is
+-- refused with the place it goes, and what the body asks of the variable
+-- is not reported again.
+trait Def { fn def() -> Self }
+trait Def for Int { fn def() -> Self { 42 } }
+trait Conv(b) { fn conv(self) -> b }
+type W { W }
+trait Conv(a) for W where a: Def { fn conv(self) -> a { a.def() } }
+fn main() {
+  let i: Int = Conv.conv(W)
+  println(i)
+}

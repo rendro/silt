@@ -1,7 +1,7 @@
 -- Interpolating a channel through a function bounded by Display is rejected.
 -- exit: 1
 -- stderr-contains: does not implement trait 'Display'
--- stderr-contains: 'Channel'
+-- stderr-contains: 'Channel(_)'
 import channel
 fn show(x: a) -> String where a: Display { "val={x}" }
 fn main() {

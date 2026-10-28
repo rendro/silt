@@ -5,11 +5,11 @@ error[type]: type variable `a` is not known to implement trait 'Display'
    |                             ^ type variable `a` is not known to implement trait 'Display'
   = help: add `where a: Display`
 
-error[type]: type 'Fn' does not implement trait 'Equal'
+error[type]: type 'Fn(_) -> _' does not implement trait 'Equal'
  --> bound_messages__one_error_at_the_argument.silt:12:18
     |
  12 |   test.assert_eq(f, f)
-    |                  ^ type 'Fn' does not implement trait 'Equal'
+    |                  ^ type 'Fn(_) -> _' does not implement trait 'Equal'
 
 error[type]: type mismatch: expected String, got Bool
  --> bound_messages__one_error_at_the_argument.silt:13:20
@@ -23,11 +23,11 @@ error[type]: type 'List(Fn(_) -> _)' does not implement trait 'Display': element
  14 |   println(list.sort([f]))
     |           ^^^^^^^^^^^^^^ type 'List(Fn(_) -> _)' does not implement trait 'Display': element is of type 'Fn(_) -> _', which does not implement trait 'Display'
 
-error[type]: type 'Fn' does not implement trait 'Compare'
+error[type]: type 'Fn(_) -> _' does not implement trait 'Compare'
  --> bound_messages__one_error_at_the_argument.silt:14:21
     |
  14 |   println(list.sort([f]))
-    |                     ^^^ type 'Fn' does not implement trait 'Compare'
+    |                     ^^^ type 'Fn(_) -> _' does not implement trait 'Compare'
 
 error[type]: unary '-' requires Int or Float, got 'String'
  --> bound_messages__one_error_at_the_argument.silt:15:12

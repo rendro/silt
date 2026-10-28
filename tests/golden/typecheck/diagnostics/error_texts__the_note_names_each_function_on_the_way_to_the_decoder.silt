@@ -1,0 +1,23 @@
+-- exit: 1
+-- The note names each function and method that passes the type on, in
+-- turn, to the decoder that refuses it.
+import json
+import set
+import toml
+type H { s: Set(Int) }
+fn load(s: String, type a) -> Result(a, toml.TomlError) where a: json.Decode { toml.parse(s, a) }
+fn mid(s: String, type a) -> Result(a, toml.TomlError) where a: json.Decode { load(s, a) }
+fn top(s: String, type a) -> Result(a, toml.TomlError) where a: json.Decode { mid(s, a) }
+fn jload(s: String, type a) -> Result(a, json.JsonError) where a: json.Decode { json.parse(s, a) }
+fn jmid(s: String, type a) -> Result(a, json.JsonError) where a: json.Decode { jload(s, a) }
+fn jtop(s: String, type a) -> Result(a, json.JsonError) where a: json.Decode { jmid(s, a) }
+trait R {
+  fn again(self, s: String) -> Result(Self, toml.TomlError) where Self: json.Decode { toml.parse(s, Self) }
+}
+trait R for H {}
+fn pass(x: a, s: String) -> Result(a, toml.TomlError) where a: R + json.Decode { R.again(x, s) }
+fn main() {
+  println(top("s = [3]", H))
+  println(jtop("x", H))
+  println(pass(H { s: set.from_list([1]) }, "s = [3]"))
+}

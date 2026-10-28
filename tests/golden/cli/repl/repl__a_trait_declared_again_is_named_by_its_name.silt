@@ -1,0 +1,4 @@
+-- cmd: repl
+-- stdin: trait Greet { fn greet(self) -> String }\ntype K { K }\ntrait Greet for K { fn greet(self) -> String { "k" } }\nfn hi(x: a) -> String where a: Greet { Greet.greet(x) }\ntrait Greet { fn greet(self) -> Int }\nGreet.greet(K)\nhi(K)\n:quit\n
+-- A trait declared again in a later entry is named by its name, as the
+-- entry names it.

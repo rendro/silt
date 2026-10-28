@@ -460,7 +460,7 @@ trait HashTable(k) where k: Hash + Equal {
 
 trait HashTable(String) for MyStore { ... }   -- OK, String has Hash + Equal
 trait HashTable(Fn(Int) -> Int) for OtherStore { ... }
--- error: type 'Fn' does not implement trait 'Hash'
+-- error: type 'Fn(Int) -> Int' does not implement trait 'Hash'
 ```
 
 Supertraits can also reference the enclosing trait's params. The args

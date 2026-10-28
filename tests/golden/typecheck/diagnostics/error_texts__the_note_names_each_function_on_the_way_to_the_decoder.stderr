@@ -1,0 +1,23 @@
+error[type]: `toml.parse` cannot decode `H`: field `s` has type `Set(Int)`, which has no decoder
+ --> error_texts__the_note_names_each_function_on_the_way_to_the_decoder.silt:20:26
+    |
+ 20 |   println(top("s = [3]", H))
+    |                          ^ `toml.parse` cannot decode `H`: field `s` has type `Set(Int)`, which has no decoder
+  = note: `top` passes it to `mid`, which passes it to `load`, which passes it to `toml.parse`
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `json.parse` cannot decode `H`: field `s` has type `Set(Int)`, which has no decoder
+ --> error_texts__the_note_names_each_function_on_the_way_to_the_decoder.silt:21:21
+    |
+ 21 |   println(jtop("x", H))
+    |                     ^ `json.parse` cannot decode `H`: field `s` has type `Set(Int)`, which has no decoder
+  = note: `jtop` passes it to `jmid`, which passes it to `jload`, which passes it to `json.parse`
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `toml.parse` cannot decode `H`: field `s` has type `Set(Int)`, which has no decoder
+ --> error_texts__the_note_names_each_function_on_the_way_to_the_decoder.silt:22:16
+    |
+ 22 |   println(pass(H { s: set.from_list([1]) }, "s = [3]"))
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^ `toml.parse` cannot decode `H`: field `s` has type `Set(Int)`, which has no decoder
+  = note: `pass` passes it to `H.again`, which passes it to `toml.parse`
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these

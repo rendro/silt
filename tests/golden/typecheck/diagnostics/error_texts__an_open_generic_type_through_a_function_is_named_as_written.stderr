@@ -1,0 +1,14 @@
+error[type]: `toml.parse` cannot decode `Box`: it is a generic record type, and a decoder builds a value of one type
+ --> error_texts__an_open_generic_type_through_a_function_is_named_as_written.silt:9:22
+   |
+ 9 |   println(f("v = 1", Box))
+   |                      ^^^ `toml.parse` cannot decode `Box`: it is a generic record type, and a decoder builds a value of one type
+  = note: `f` passes it to `toml.parse`
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `toml.parse` cannot decode `Box`: it is a generic record type, and a decoder builds a value of one type
+ --> error_texts__an_open_generic_type_through_a_function_is_named_as_written.silt:10:31
+    |
+ 10 |   println(toml.parse("v = 1", Box))
+    |                               ^^^ `toml.parse` cannot decode `Box`: it is a generic record type, and a decoder builds a value of one type
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these

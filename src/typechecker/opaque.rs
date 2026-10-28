@@ -225,7 +225,9 @@ impl TypeChecker {
         walk(ty, true, &mut inside);
         for var in inside {
             match var {
-                Type::Rigid(_) => self.check_builtin_argument(check, &var, passer, None, origin),
+                Type::Rigid(_) => {
+                    self.check_builtin_argument(check, &var, (passer, &[]), None, origin)
+                }
                 _ => {
                     let pred = Pred::Builtin {
                         check,

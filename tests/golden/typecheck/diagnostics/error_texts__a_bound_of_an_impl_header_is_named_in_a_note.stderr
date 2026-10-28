@@ -1,0 +1,27 @@
+error[type]: type 'Fn(Int) -> Int' does not implement trait 'Display'
+ --> error_texts__a_bound_of_an_impl_header_is_named_in_a_note.silt:16:11
+    |
+ 16 |   println(Show.show(B({ q: Int -> q })))
+    |           ^^^^^^^^^ type 'Fn(Int) -> Int' does not implement trait 'Display'
+  = note: the impl of 'Show' for 'Box(a)' asks `a: Display`
+
+error[type]: type 'Fn(Int) -> Int' does not implement trait 'Display'
+ --> error_texts__a_bound_of_an_impl_header_is_named_in_a_note.silt:17:14
+    |
+ 17 |   println(sh(B({ q: Int -> q })))
+    |              ^^^^^^^^^^^^^^^^^^ type 'Fn(Int) -> Int' does not implement trait 'Display'
+  = note: the impl of 'Show' for 'Box(a)' asks `a: Display`
+
+error[type]: type 'Fn(Int) -> Int' does not implement trait 'Display'
+ --> error_texts__a_bound_of_an_impl_header_is_named_in_a_note.silt:18:15
+    |
+ 18 |   println(gen(B({ q: Int -> q })))
+    |               ^^^^^^^^^^^^^^^^^^ type 'Fn(Int) -> Int' does not implement trait 'Display'
+  = note: the impl of 'Show' for 'Box(a)' asks `a: Display`
+
+error[type]: type 'Fn(Int) -> Int' does not implement trait 'Display'
+ --> error_texts__a_bound_of_an_impl_header_is_named_in_a_note.silt:19:15
+    |
+ 19 |   let _ = dbl(Tg(1, { x: Int -> x + 1 }))
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^ type 'Fn(Int) -> Int' does not implement trait 'Display'
+  = note: the impl of 'Functor' for 'Tagged(_, t)' asks `t: Display`

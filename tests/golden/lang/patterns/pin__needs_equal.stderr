@@ -11,8 +11,8 @@ error[type]: the pin '^f' requires a comparable type, got 'Fn(Int) -> Int'
  23 |     ^f -> true
     |     ^^ the pin '^f' requires a comparable type, got 'Fn(Int) -> Int'
 
-error[type]: type 'Fn' does not implement trait 'Equal'
+error[type]: type 'Fn(Int) -> Int' does not implement trait 'Equal'
  --> pin__needs_equal.silt:27:17
     |
  27 |   println(is_it(f, f))
-    |                 ^ type 'Fn' does not implement trait 'Equal'
+    |                 ^ type 'Fn(Int) -> Int' does not implement trait 'Equal'

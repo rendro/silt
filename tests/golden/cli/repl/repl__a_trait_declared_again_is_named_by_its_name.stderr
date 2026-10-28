@@ -1,0 +1,5 @@
+error[type]: type 'K' does not implement trait 'Greet'
+ --> <repl:6>:1:13
+   |
+ 1 | Greet.greet(K)
+   |             ^ type 'K' does not implement trait 'Greet'

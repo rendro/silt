@@ -137,7 +137,7 @@ pub struct TypeChecker {
     pub(super) open_vars: std::collections::HashSet<TyVar>,
     /// What each body asks `json.Decode` of its annotation variable for
     /// (`Asked`), by the variable's representative.
-    pub(super) bound_askers: HashMap<TyVar, Asked>,
+    pub(super) bound_askers: HashMap<TyVar, Asker>,
     /// The variable of each `json.Decode` bound a trait declares for a
     /// method, with the variables it is in the module's impls of the
     /// method: what the trait's bound asks for is what they all ask for.
@@ -163,6 +163,10 @@ pub struct TypeChecker {
     /// signatures for the builtins they give them to (`Pred::Builtin`),
     /// each by the variable's representative (`rigid_rep_var`).
     pub(super) builtin_needs: HashMap<(TyVar, Option<Symbol>), Vec<BuiltinCheck>>,
+    /// Of each of `builtin_needs`, at its place: the functions and
+    /// methods the body passes the variable through to the builtin, the
+    /// first first (none where it gives it to the builtin itself).
+    pub(super) need_paths: HashMap<(TyVar, Option<Symbol>), Vec<Vec<Symbol>>>,
     /// The types given to an annotation variable of a signature, with
     /// the alias a use names one by (`Pred::Given`): checked when the
     /// module's bodies are (`settle_builtin_needs`). They are not
@@ -268,6 +272,10 @@ pub struct TypeChecker {
     /// call (its span, the callee as written), a name used as a value.
     /// `instantiate` takes it.
     pub(super) named_use: Option<Origin>,
+    /// The impl whose method's scheme is instantiated next: the
+    /// predicates its header gives the scheme name it in their origin.
+    /// `instantiate` takes it.
+    pub(super) instance_header: Option<ImplKey>,
     /// In a REPL cell: the files (cells) of the checks taken up from the
     /// earlier cells (`take_up_waiting`).
     pub(super) taken_up: std::collections::HashSet<crate::source::FileId>,
@@ -531,6 +539,7 @@ impl TypeChecker {
             anon_waiting: Vec::new(),
             row_adds: HashMap::new(),
             builtin_needs: HashMap::new(),
+            need_paths: HashMap::new(),
             given_waiting: Vec::new(),
             via_needs: HashMap::new(),
             body_owner: None,
@@ -561,6 +570,7 @@ impl TypeChecker {
             wanted_marks: Vec::new(),
             closed_mark: 0,
             named_use: None,
+            instance_header: None,
             taken_up: std::collections::HashSet::new(),
             at: Span::BUILTIN,
             expected_closure: None,

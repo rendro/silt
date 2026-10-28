@@ -132,6 +132,15 @@ impl TypeChecker {
             .unwrap_or_default()
     }
 
+    /// The functions and methods the body passes `var` through to the
+    /// builtin of its need `index` (`builtin_needs_of`).
+    fn need_path(&self, var: TyVar, body: Option<Symbol>, index: usize) -> Vec<Symbol> {
+        (self.need_paths.get(&(self.rigid_rep_var(var), body)))
+            .and_then(|paths| paths.get(index))
+            .cloned()
+            .unwrap_or_default()
+    }
+
     /// The trait methods the body of its function calls on a value of
     /// the type of the annotation variable `var`, over the variables of
     /// the signature (each as the variable of its representative).
@@ -211,12 +220,14 @@ impl TypeChecker {
     }
 
     /// The body `in_body` gives its annotation variable `r` to a builtin
-    /// that asks `check` of it. Whether that is news.
+    /// that asks `check` of it, through the functions and methods `path`.
+    /// Whether that is news.
     fn add_builtin_need(
         &mut self,
         r: RigidId,
         check: BuiltinCheck,
         in_body: Option<Symbol>,
+        path: Vec<Symbol>,
     ) -> bool {
         let key = (self.rigid_rep_var(r.var), in_body);
         let needs = self.builtin_needs.entry(key).or_default();
@@ -224,6 +235,7 @@ impl TypeChecker {
             return false;
         }
         needs.push(check.unwritten());
+        self.need_paths.entry(key).or_default().push(path);
         self.grown_needs.push(key);
         true
     }
@@ -246,15 +258,20 @@ impl TypeChecker {
             Type::Rigid(r) => self.add_via_need(r, need.clone(), in_body),
             receiver => {
                 let leaves = self.leaves(need.tr, need.method, &receiver, &need.method_ty);
+                // (The method of the type's impl a note names, `H.again`.)
+                let link = (self.type_name_for_impl(&receiver))
+                    .map(|head| intern(&format!("{head}.{}", need.method)));
                 let mut grown = false;
                 for leaf in leaves.iter() {
                     match leaf {
                         Leaf::Check(check, ty, param) => match self.apply(ty) {
-                            Type::Rigid(r) => grown |= self.add_builtin_need(r, *check, in_body),
+                            Type::Rigid(r) => {
+                                grown |= self.add_builtin_need(r, *check, in_body, Vec::new())
+                            }
                             Type::Var(_) | Type::Error | Type::Never => {}
                             ty => {
                                 if let Some(placing) = placing {
-                                    self.check_placed(*check, &ty, *param, placing);
+                                    self.check_placed(*check, &ty, *param, placing, link);
                                 }
                             }
                         },
@@ -271,13 +288,15 @@ impl TypeChecker {
     }
 
     /// Check `check` of the type `ty`, where the use `placing` gave it,
-    /// naming the function the caller called.
+    /// naming the function the caller called and `link`, the method of the
+    /// impl the call reaches.
     fn check_placed(
         &mut self,
         check: BuiltinCheck,
         ty: &Type,
         param: Option<usize>,
         placing: &Placing,
+        link: Option<Symbol>,
     ) {
         // (At the argument of the method's parameter whose type it is,
         // if the call is the method's own; else where a type argument
@@ -300,7 +319,12 @@ impl TypeChecker {
             },
             other => other,
         };
-        self.check_builtin_argument(check, ty, placing.passer, None, origin);
+        // (The call of the method itself names it already.)
+        let through: Vec<Symbol> = link
+            .filter(|link| placing.passer != Some(*link))
+            .into_iter()
+            .collect();
+        self.check_builtin_argument(check, ty, (placing.passer, &through), None, origin);
     }
 
     /// The method `method` of the impl of `tr` for the type `receiver`
@@ -634,7 +658,7 @@ impl TypeChecker {
                     }) => {
                         self.wanted[k].solved = true;
                         let owner = self.owed_for.get(&self.wanted[k].ev).copied();
-                        self.check_builtin_argument(check, &subject, passer, owner, origin);
+                        self.check_builtin_argument(check, &subject, (passer, &[]), owner, origin);
                     }
                     Goal::Pred(Pred::Trait {
                         tr,
@@ -812,8 +836,11 @@ impl TypeChecker {
                     continue;
                 }
                 if let Type::Rigid(r) = self.apply(&use_.subject) {
-                    for check in self.builtin_needs_of(use_.given, use_.body) {
-                        self.add_builtin_need(r, check, use_.in_body);
+                    let needs = self.builtin_needs_of(use_.given, use_.body);
+                    for (index, check) in needs.into_iter().enumerate() {
+                        let mut path = vec![use_.passer];
+                        path.extend(self.need_path(use_.given, use_.body, index));
+                        self.add_builtin_need(r, check, use_.in_body, path);
                     }
                 }
                 // (A call on types that name no annotation variable owes
@@ -981,7 +1008,8 @@ impl TypeChecker {
             if use_.taken || matches!(self.apply(&use_.subject), Type::Rigid(_)) {
                 continue;
             }
-            for check in self.builtin_needs_of(use_.given, use_.body) {
+            let needs = self.builtin_needs_of(use_.given, use_.body);
+            for (index, check) in needs.into_iter().enumerate() {
                 let check = match check {
                     BuiltinCheck::Decodes {
                         builtin, decoding, ..
@@ -992,7 +1020,8 @@ impl TypeChecker {
                     },
                     other => other,
                 };
-                let passer = Some(use_.passer);
+                let through = self.need_path(use_.given, use_.body, index);
+                let passer = (Some(use_.passer), through.as_slice());
                 self.check_builtin_argument(check, &use_.subject, passer, use_.owner, use_.origin);
             }
         }

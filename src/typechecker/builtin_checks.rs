@@ -49,25 +49,45 @@ struct UndecodableField {
     grows: bool,
 }
 
-/// The key in `lacking` of a builtin's refusal of the type `ty` at
-/// `span`: a type given to a function whose body hands it to a decoder
-/// that refused it owes no `json.Decode` refusal of its bound there
-/// (`settle_decode_gaps`).
-pub(super) fn refused_argument(span: Span, ty: &Type) -> (Span, String) {
-    (span, format!("builtin argument {}", shown(ty)))
+/// The note that names the way a type takes to the builtin `builtin`
+/// that refuses it: from `passer`, the function or method the use calls,
+/// through `links`, the ones each passes it to in turn.
+pub(super) fn passes_note(passer: Symbol, links: &[Symbol], builtin: Symbol) -> String {
+    let mut note = format!("`{passer}` passes it to ");
+    for link in links {
+        note.push_str(&format!("`{link}`, which passes it to "));
+    }
+    note.push_str(&format!("`{builtin}`"));
+    note
 }
 
 impl TypeChecker {
+    /// The key in `lacking` of a builtin's refusal of the type `ty` at
+    /// `span`: a type given to a function whose body hands it to a decoder
+    /// that refused it owes no `json.Decode` refusal of its bound there
+    /// (`settle_decode_gaps`). (A generic type written with its arguments
+    /// open is the generic type, `Box`.)
+    pub(super) fn refused_argument(&self, span: Span, ty: &Type) -> (Span, String) {
+        let ty = match ty {
+            Type::Generic(head, _) if self.open_type_arguments.contains(&span) => {
+                Type::Generic(*head, Vec::new())
+            }
+            ty => ty.clone(),
+        };
+        (span, format!("builtin argument {}", shown(&ty)))
+    }
+
     /// Check `subject`, the type of an argument of a builtin, as `check`
     /// says, for a use at `origin`. The function or method that passes
-    /// the type on to the builtin, `passer`, is named in a note; the
+    /// the type on to the builtin, `passer`, is named in a note, with
+    /// the ones it passes it `through`; the
     /// module of the definition that asks it, `owner`, encodes and
     /// decodes its own opaque types (`opaque_encode_refusal`).
     pub(super) fn check_builtin_argument(
         &mut self,
         check: BuiltinCheck,
         subject: &Type,
-        passer: Option<Symbol>,
+        (passer, through): (Option<Symbol>, &[Symbol]),
         owner: Option<crate::session::ModuleId>,
         origin: Origin,
     ) {
@@ -80,6 +100,7 @@ impl TypeChecker {
             let needs = needs.or_default();
             if !needs.contains(&check.unwritten()) {
                 needs.push(check.unwritten());
+                self.need_paths.entry(key).or_default().push(Vec::new());
             }
             return;
         }
@@ -129,12 +150,11 @@ impl TypeChecker {
         // One refusal for one type at one place: a definition that gives
         // its type parameter to two decoders that both refuse the type
         // says the first.
-        if !self.lacking.insert(refused_argument(span, &ty)) {
+        if !self.lacking.insert(self.refused_argument(span, &ty)) {
             return;
         }
         if let Some(passer) = passer {
-            diagnostic =
-                diagnostic.with_note(format!("`{passer}` passes it to `{}`", check.builtin()));
+            diagnostic = diagnostic.with_note(passes_note(passer, through, check.builtin()));
         }
         // (The bound that passes it on refused the same encoding there:
         // this one, which names the encoder, takes its place.)
@@ -228,9 +248,10 @@ impl TypeChecker {
             true => ROW_TYPE_HELP,
             false => decodable_types_help.as_str(),
         };
-        // A generic type's arguments (`Box(Int)`; none for `Box`).
+        // A generic type's arguments (`Box(Int)`; none for `Box`, also
+        // where what it was given for them was fixed later).
         let args: &[Type] = match ty {
-            Type::Generic(_, args) => args,
+            Type::Generic(_, args) if !self.open_type_arguments.contains(&span) => args,
             _ => &[],
         };
         // (A type of another module with its module, `time.Date`; an

@@ -119,8 +119,7 @@ pub(super) struct Walk {
 pub(super) struct Gap {
     /// The way to the part from the type: `field 'f'`, `element`.
     path: Vec<String>,
-    /// The head of the part's type (`Fn`), and the type.
-    head: String,
+    /// The part's type.
     full: String,
     /// Why, when it is not simply that the part's type has no such
     /// trait.
@@ -149,6 +148,9 @@ pub(crate) struct Origin {
     /// The operator that owes it, as a message names it (`'+'`), when
     /// the use is an operator's operand.
     pub(super) op: Option<&'static str>,
+    /// The impl whose header asks it, and which of the header's bounds
+    /// it is: a note names the bound.
+    pub(super) header: Option<(ImplKey, usize)>,
 }
 
 impl TypeChecker {
@@ -659,7 +661,13 @@ impl TypeChecker {
                         if !matches!(subject, Type::Var(_)) {
                             self.wanted[i].solved = true;
                             let owner = self.owed_for.get(&self.wanted[i].ev).copied();
-                            self.check_builtin_argument(check, &subject, passer, owner, origin);
+                            self.check_builtin_argument(
+                                check,
+                                &subject,
+                                (passer, &[]),
+                                owner,
+                                origin,
+                            );
                         }
                     }
                     // A trait method's call waits for its scope's end: a
@@ -1609,6 +1617,7 @@ impl TypeChecker {
             span: self.at,
             callee: None,
             op: None,
+            header: None,
         })
     }
 
@@ -1735,7 +1744,55 @@ impl TypeChecker {
     /// a `String`). What the impl's header asks of its variables is owed
     /// by the same use (`want`): a part of the subject still unknown
     /// waits, and is generalised with the definition or decided later.
+    /// What an impl's header asks, an error of a type that lacks it says
+    /// in a note.
     pub(super) fn verify_trait_obligation(
+        &mut self,
+        trait_name: TraitKey,
+        bound_trait_args: &[Type],
+        ty: &Type,
+        origin: Origin,
+        asker: Option<Asker>,
+        ev: Option<super::evidence::EvRef>,
+    ) {
+        let before = self.errors.len();
+        self.check_trait_obligation(trait_name, bound_trait_args, ty, origin, asker, ev);
+        if let Some(header) = origin.header
+            && self.errors.len() > before
+            && let Some(note) = self.header_note(header)
+        {
+            for error in &mut self.errors[before..] {
+                if error.code == Code::MissingTraitImpl {
+                    error.notes.push(note.clone());
+                }
+            }
+        }
+    }
+
+    /// The note of the bound `index` of the header of the impl `key`:
+    /// `the impl of 'Functor' for 'Tagged(_, t)' asks `t: Display``.
+    fn header_note(&self, (key, index): (ImplKey, usize)) -> Option<String> {
+        let Pred::Trait {
+            tr, args, subject, ..
+        } = self.tables.impl_preds.get(&key)?.get(index)?
+        else {
+            return None;
+        };
+        let self_ty = self.tables.impl_self_types.get(&key)?;
+        let rigid: Vec<RigidId> = (self.impl_var_names.get(&key).into_iter().flatten())
+            .map(|&(var, name)| RigidId { var, name })
+            .collect();
+        let args: Vec<Type> = args.iter().map(|arg| rigidify(arg, &rigid)).collect();
+        Some(format!(
+            "the impl of '{}' for '{}' asks `{}: {}`",
+            self.show_trait(key.0),
+            self.show_type(&rigidify(self_ty, &rigid)),
+            self.show_type(&rigidify(subject, &rigid)),
+            self.show_bound(*tr, &args)
+        ))
+    }
+
+    fn check_trait_obligation(
         &mut self,
         trait_name: TraitKey,
         bound_trait_args: &[Type],
@@ -1975,7 +2032,7 @@ impl TypeChecker {
             );
         }
         match (gap.path.is_empty(), gap.why) {
-            (true, None) => format!("type '{}' does not implement trait '{tr}'", gap.head),
+            (true, None) => format!("type '{}' does not implement trait '{tr}'", gap.full),
             (true, Some(why)) => {
                 format!("type '{}' does not implement trait '{tr}': {why}", gap.full)
             }
@@ -2011,16 +2068,15 @@ impl TypeChecker {
         depth: usize,
     ) -> Option<Gap> {
         let ty = crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(ty));
-        let leaf = |this: &Self, head: &str, why: Option<&'static str>| {
+        let leaf = |this: &Self, why: Option<&'static str>| {
             Some(Gap {
                 path: Vec::new(),
-                head: head.to_string(),
                 full: this.show_type(&ty),
                 why,
             })
         };
         if depth > STRUCTURE_DEPTH {
-            return leaf(self, "", Some(TOO_DEEP));
+            return leaf(self, Some(TOO_DEEP));
         }
         let stamped = |this: &Self, head: TypeRef| {
             let canon = canonical_head(&this.tables.resolver, head);
@@ -2047,7 +2103,7 @@ impl TypeChecker {
                 }
                 None
             }
-            Type::Fun(..) => leaf(self, "Fn", None),
+            Type::Fun(..) => leaf(self, None),
             Type::Channel(_) if tr.is_builtin("Equal") => None,
             Type::List(_)
             | Type::Set(_)
@@ -2061,7 +2117,7 @@ impl TypeChecker {
             | Type::Unit => {
                 let head = self.type_name_for_impl(&ty).expect("the type has a head");
                 if !stamped(self, head) {
-                    return leaf(self, &resolve(head.name), None);
+                    return leaf(self, None);
                 }
                 let parts: Vec<(String, Type)> = match &ty {
                     Type::List(t) | Type::Set(t) => {
@@ -2087,7 +2143,7 @@ impl TypeChecker {
             }
             Type::AnonRecord { fields, tail } => {
                 if tr.is_builtin("Compare") {
-                    return leaf(self, &self.show_type(&ty), None);
+                    return leaf(self, None);
                 }
                 // The fields behind an open row have the trait when the
                 // row does: a row variable owes it like a type variable
@@ -2124,7 +2180,7 @@ impl TypeChecker {
                 if opaque {
                     return match stamped(self, head) {
                         true => None,
-                        false => leaf(self, &self.show_type(&Type::Generic(*name, vec![])), None),
+                        false => leaf(self, None),
                     };
                 }
                 let args = self.type_args_of(&ty);
@@ -2438,8 +2494,12 @@ impl TypeChecker {
         // subject's parts now, is owed by the same use. (The impl for
         // every tuple or function says nothing of the parts.)
         let mut subs = Vec::with_capacity(header.len());
-        for pred in header {
+        for (index, pred) in header.into_iter().enumerate() {
             let dictionary = super::evidence::passes_dictionary(&pred);
+            let origin = Origin {
+                header: Some((lookup, index)),
+                ..origin
+            };
             let ev = match linked {
                 true => self.want(pred.substitute(&fresh), origin),
                 false => None,
@@ -2482,6 +2542,7 @@ impl TypeChecker {
                 span,
                 callee: None,
                 op: None,
+                header: None,
             },
             None,
             None,
