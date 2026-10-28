@@ -1,5 +1,5 @@
-//! Decoding a document: `json.parse`, `json.parse_list`,
-//! `json.parse_map`, `json.decode`, `T.decode(value)` of a type with no
+//! Decoding a document: `json.parse`, `json.decode`, `T.decode(value)`
+//! of a type with no
 //! written impl, and `toml.parse`, `toml.parse_list`, `toml.parse_map`.
 //!
 //! A document is decoded by the one decoder (`builtins::decode`), but a

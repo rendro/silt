@@ -126,6 +126,10 @@ pub struct TypeChecker {
     /// module's bodies are checked (`settle_decode_gaps`): what asks it
     /// of a declared bound is known then.
     pub(super) decode_gaps: Vec<json_decode::DecodeGap>,
+    /// The places of type arguments that name a generic type alone
+    /// (`List`): a type with its arguments left open, which no decoder
+    /// decodes.
+    pub(super) open_type_arguments: std::collections::HashSet<Span>,
     /// What each body asks `json.Decode` of its annotation variable for
     /// (`Asked`), by the variable's representative.
     pub(super) bound_askers: HashMap<TyVar, Asked>,
@@ -512,6 +516,7 @@ impl TypeChecker {
             written: std::collections::HashSet::new(),
             lacking: std::collections::HashSet::new(),
             decode_gaps: Vec::new(),
+            open_type_arguments: std::collections::HashSet::new(),
             bound_askers: HashMap::new(),
             bound_impls: HashMap::new(),
             decode_aliases: HashMap::new(),

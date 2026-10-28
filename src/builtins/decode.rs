@@ -698,8 +698,8 @@ pub(crate) enum Target<'a> {
 }
 
 impl Target<'_> {
-    /// The type of the elements a `parse_list` decodes, and of the
-    /// values a `parse_map` decodes.
+    /// The type a decoder decodes the document as: of the elements a
+    /// `toml.parse_list` decodes, of the values a `toml.parse_map` decodes.
     pub(crate) fn element(&self) -> FieldType {
         match self {
             Target::Value(field_type) => field_type.clone(),

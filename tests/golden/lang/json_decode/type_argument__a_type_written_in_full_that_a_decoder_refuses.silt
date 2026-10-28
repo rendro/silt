@@ -25,7 +25,7 @@ fn main() {
   let _ = json.parse("[1]", List(Set(Int)))
   let _ = json.parse("[1]", List(Box(Int)))
   let _ = json.parse("[1]", (Int, Bytes))
-  let _ = json.parse_list("[[1]]", Option(Set(Int)))
+  let _ = json.parse("[[1]]", List(Option(Set(Int))))
   let _ = json.decode(json.Null, Map(String, List(Bytes)))
   let _ = toml.parse("a = 1", List(Int))
   let _ = toml.parse("a = 1", Map(String, Int))

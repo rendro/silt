@@ -2,7 +2,7 @@
 -- exit: 1
 -- Every decoder refuses a type with a field no decoder exists for
 -- before any document is read: a text that is no JSON or TOML does not
--- hide it, in json.parse as in json.parse_list and toml.parse.
+-- hide it, in json.parse (of the type, a list of it) as in toml.parse.
 -- (Through a `type a` parameter: the checker asks of each type a call
 -- gives it what the decoder the function gives it to asks.)
 import json
@@ -15,7 +15,7 @@ fn from_json(text: String, type a) -> Result(a, json.JsonError) where a: json.De
 }
 
 fn list_of(text: String, type a) -> Result(List(a), json.JsonError) where a: json.Decode {
-  json.parse_list(text, a)
+  json.parse(text, List(a))
 }
 
 fn from_toml(text: String, type a) -> Result(a, toml.TomlError) where a: json.Decode {

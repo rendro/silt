@@ -1,5 +1,6 @@
--- json.parse_list, json.parse_map and json.decode take json.Value too, and
--- json.decode takes the primitive types json.parse takes.
+-- json.parse of a list or a map of json.Value, and json.decode, take
+-- json.Value too, and json.decode takes the primitive types json.parse
+-- takes.
 import json
 
 fn as_type(v: json.Value, type a) -> Result(a, json.JsonError) where a: json.Decode {
@@ -7,9 +8,9 @@ fn as_type(v: json.Value, type a) -> Result(a, json.JsonError) where a: json.Dec
 }
 
 fn main() {
-  println(json.parse_list("""[1, "a", null, [true]]""", json.Value))
-  println(json.parse_list("""{"a": 1}""", json.Value))
-  println(json.parse_map("""{"x": 1, "y": [true]}""", json.Value))
+  println(json.parse("""[1, "a", null, [true]]""", List(json.Value)))
+  println(json.parse("""{"a": 1}""", List(json.Value)))
+  println(json.parse("""{"x": 1, "y": [true]}""", Map(String, json.Value)))
   println(json.decode(json.Int(3), Int))
   println(json.decode(json.Float(3.5), Int))
   println(json.decode(json.String("s"), Bool))

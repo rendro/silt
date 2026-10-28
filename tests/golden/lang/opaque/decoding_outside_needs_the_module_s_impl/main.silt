@@ -18,7 +18,7 @@ type Contact {
 fn main() {
   println(json.parse("\"A@X.IO\"", mail.Email))
   println(json.parse("""{"name": "a", "age": 1}""", mail.User))
-  println(json.parse_list("[]", mail.User))
+  println(json.parse("[]", List(mail.User)))
   println(json.parse("""{"email": "b@y"}""", Contact))
   println(toml.parse("name = \"a\"\nage = 1", mail.User))
   println(util.load("\{}", mail.User))

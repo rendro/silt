@@ -47,13 +47,13 @@ fn main() {
   }
   println("schedule: {sched.event} on {sched.date} at {sched.time}")
   -- Parse a list of events
-  let events = match json.parse_list("""
+  let events = match json.parse("""
     [
         {"name": "alpha", "date": "2024-01-15"},
         {"name": "beta", "date": "2024-06-01"},
         {"name": "gamma", "date": "2024-12-25"}
       ]
-    """, Event) {
+    """, List(Event)) {
     Ok(e) -> e
     Err(e) -> panic("parse error: {Error.message(e)}")
   }

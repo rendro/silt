@@ -159,12 +159,10 @@ impl TypeChecker {
         // A list, an option, a map with String keys or a tuple
         // (`List(Int)`, `(Int, String)`): a decoder that takes any value
         // reads it as the type of a field, each part as one. (A type
-        // with an argument left open, `List`, is not one type.)
+        // with its arguments left open, `List`, is not one type.)
         if decoding.primitives
             && let Some(parts) = decoded_parts(ty)
-            && !decoded_variables(ty)
-                .iter()
-                .any(|v| matches!(v, Type::Var(_)))
+            && !self.open_type_arguments.contains(&span)
         {
             return (parts.into_iter())
                 .find_map(|part| self.part_refusal(builtin_name, decoding, ty, part, owner, span));

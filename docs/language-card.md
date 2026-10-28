@@ -531,8 +531,6 @@ trait Decode { fn decode(value: Value) -> Result(Self, JsonError) }
 json.decode(value: Value, type a) -> Result(a, JsonError) where a: Decode
 json.encode(value: a) -> Value where a: Encode
 json.parse(s: String, type a) -> Result(a, JsonError) where a: Decode
-json.parse_list(s: String, type a) -> Result(List(a), JsonError) where a: Decode
-json.parse_map(s: String, type a) -> Result(Map(String, a), JsonError) where a: Decode
 json.pretty(value: a) -> String where a: Encode
 json.stringify(value: a) -> String where a: Encode
 ```

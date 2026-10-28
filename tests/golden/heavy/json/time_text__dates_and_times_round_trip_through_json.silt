@@ -51,8 +51,8 @@ fn main() {
   let text = json.pretty(n)
   println(text)
   println(json.parse(text, Nested) == Ok(n))
-  println(json.parse_list(json.stringify([m, f]), Moment) == Ok([m, f]))
-  println(json.parse_map(json.stringify(#{ "a": m }), Moment) == Ok(#{ "a": m }))
+  println(json.parse(json.stringify([m, f]), List(Moment)) == Ok([m, f]))
+  println(json.parse(json.stringify(#{ "a": m }), Map(String, Moment)) == Ok(#{ "a": m }))
 
   println(json.stringify(d))
   println(json.stringify(frac))

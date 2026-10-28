@@ -52,8 +52,10 @@ Fn(String, type a) -> Result(a, JsonError)
 json.parse(s: String, type a) -> Result(a, JsonError) where a: Decode
 ```
 
-Parses a JSON string into a record of type `a`. The type is passed as a `type`
-parameter (see [Generics](../language/generics.md) — not a string). Fields are
+Parses a JSON string into a value of type `a`. The type is passed as a `type`
+parameter (see [Generics](../language/generics.md) — not a string), written in
+full: `json.parse(text, User)`, `json.parse(text, List(Point))` for an array,
+`json.parse(text, Map(String, Int))` for an object read as a map. Fields are
 matched by name; `Option` fields default to `None` if missing from the JSON.
 
 Fields of type `Date`, `Time`, and `DateTime` (from the `time` module) are

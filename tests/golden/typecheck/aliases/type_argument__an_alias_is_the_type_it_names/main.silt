@@ -21,7 +21,7 @@ fn kind(type a) -> String {
 fn main() {
   println(json.parse("""{"x": 4}""", PA))
   println(json.parse("4", IA))
-  println(json.parse_list("""[{"x": 1}]""", PA))
+  println(json.parse("""[{"x": 1}]""", List(PA)))
   println(kind(Ints))
   println(json.parse("""{"side": 2}""", shapes.Sq))
 }

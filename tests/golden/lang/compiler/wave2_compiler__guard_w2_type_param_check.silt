@@ -3,7 +3,7 @@
 import json
 
 fn decode_list(text: String, type a) -> Result(List(a), json.JsonError) where a: json.Decode {
-  json.parse_list(text, a)
+  json.parse(text, List(a))
 }
 
 fn main() {

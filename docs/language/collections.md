@@ -144,5 +144,5 @@ value hold at most 10,000,000 bytes where they are joined or built
 10,000,000 values (`channel.new`). A program that keeps
 adding to a collection in a loop ends with this error instead of
 taking the machine's memory. A function that turns text it was given
-into a list (`string.split`, `json.parse_list`) makes as many
+into a list (`string.split`, `json.parse`) makes as many
 elements as the text holds.

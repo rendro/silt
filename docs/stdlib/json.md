@@ -16,9 +16,7 @@ A document whose shape is not known in advance is read into a
 |----------|-----------|-------------|
 | `decode` | `(Value, type a) -> Result(a, JsonError) where a: Decode` | Decode a json.Value into a typed value |
 | `encode` | `(a) -> Value where a: Encode` | Encode a value as a json.Value |
-| `parse` | `(String, type a) -> Result(a, JsonError) where a: Decode` | Parse JSON object into record |
-| `parse_list` | `(String, type a) -> Result(List(a), JsonError) where a: Decode` | Parse a JSON array into a list |
-| `parse_map` | `(String, type a) -> Result(Map(String, a), JsonError) where a: Decode` | Parse JSON object into map |
+| `parse` | `(String, type a) -> Result(a, JsonError) where a: Decode` | Parse a JSON document into a value of the type |
 | `pretty` | `(a) -> String where a: Encode` | Pretty-print value as JSON |
 | `stringify` | `(a) -> String where a: Encode` | Serialize value as compact JSON |
 
@@ -40,8 +38,7 @@ An error about a value of the document ends with the path of that value:
 the fields of a record and the keys of a map by name (`inner.a`), a key
 that is not made of ASCII letters, digits, `_` and `-` as a JSON string in
 brackets (`tags["a b"]`), and the elements of a list or a tuple by index
-(`xs[1]`; `[2]` for an element of the list that `json.parse_list`
-reads).
+(`xs[1]`; `[2]` for an element of a list the document is).
 `TypeMismatch("Int", "string at inner.a")` reads `json type mismatch: expected
 Int, got string at inner.a`; a missing field is `MissingField("inner.a")`;
 an `Other` about a value (a tuple of the wrong length, a date that is none)
@@ -53,14 +50,12 @@ See [stdlib errors](errors.md) for the shared `Error` trait.
 
 ## Decodable types
 
-The type argument of `json.parse`, `json.parse_list`, `json.parse_map` and
-`json.decode` names the type to decode into:
+The type argument of `json.parse` and `json.decode` names the type to
+decode into:
 
 | Function | Type argument |
 |----------|---------------|
 | `json.parse` | `Int`, `Float`, `String`, `Bool`, `json.Value`, a record type, an enum type, a type with a `json.Decode` impl, or `List(T)`, `Option(T)`, `Map(String, T)` or a tuple of decodable types |
-| `json.parse_list` | `Int`, `Float`, `String`, `Bool`, `json.Value`, a record type, an enum type, a type with a `json.Decode` impl, or `List(T)`, `Option(T)`, `Map(String, T)` or a tuple of decodable types |
-| `json.parse_map` | `Int`, `Float`, `String`, `Bool`, `json.Value`, a record type, an enum type, a type with a `json.Decode` impl, or `List(T)`, `Option(T)`, `Map(String, T)` or a tuple of decodable types |
 | `json.decode` | `Int`, `Float`, `String`, `Bool`, `json.Value`, a record type, an enum type, a type with a `json.Decode` impl, or `List(T)`, `Option(T)`, `Map(String, T)` or a tuple of decodable types |
 
 A type argument is written in full, at any depth: `json.parse(text,
@@ -128,7 +123,7 @@ order the variant declares them, each decoded as a record field of its type is
 ignored.
 
 An enum type may be decoded at the top (`json.parse(text, Status)`), as the
-elements of `json.parse_list` and the values of `json.parse_map`, and as the
+elements of a list and the values of a map, and as the
 type of a field anywhere in a record or in another enum's variant. A document
 that is no variant of the enum is an `Err`, which ends with the path, as
 the error of a record does (here of an enum at the top):
@@ -186,8 +181,7 @@ place). A value nested deeper is a runtime error:
 json.stringify: the value is nested more than 1000 levels deep
 ```
 
-The parsers stop sooner: `json.parse`, `json.parse_list` and
-`json.parse_map` read a document whose arrays and objects are nested up to
+The parser stops sooner: `json.parse` reads a document whose arrays and objects are nested up to
 127 levels deep, and give a `Syntax` error (`recursion limit exceeded`) for
 one nested deeper. A value written at more levels than that is valid JSON
 that silt itself does not read back.
@@ -337,12 +331,12 @@ trait Decode {
 }
 ```
 
-What `json.parse`, `json.parse_list`, `json.parse_map` and `json.decode`
-need of the type they decode into. A type has it by its structure: the
-types of [Decodable types](#decodable-types) have it, a record or enum
-type of the program when the types of its fields do. A container, a date
-and a time are decoded as the type of a field, not as the type a decoder
-is given (a type written as a value names no list's element type). A
+What `json.parse` and `json.decode` need of the type they decode into.
+A type has it by its structure: the types of [Decodable
+types](#decodable-types) have it, a record or enum type of the program
+when the types of its fields do. A date and a time are decoded as the
+type of a field or of a part of a list, an option, a map or a tuple, not
+as the type a decoder is given. A
 function with a `type a` parameter (any annotation names the variable)
 that hands it to a decoder writes `where a: json.Decode`; only a function
 with no annotation at all (`fn load(text, t) { json.parse(text, t) }`) is
@@ -383,8 +377,8 @@ the module that declares `T` (as a `json.Encode` impl is written; an impl
 for a builtin type is an error, a builtin type keeps its own form, and an
 impl for a generic type is refused: a decoder builds a value of one type).
 Its `decode` gives the value of `T` that a `json.Value` is, wherever a
-value of the type is in the document: at the top, as an element of
-`json.parse_list`, as a value of `json.parse_map`, in a record's or a
+value of the type is in the document: at the top, as an element of a
+list or a value of a map, in a record's or a
 variant's field, in a list or a map in one. The fields of `T` are then not
 looked into, so `T` may hold a type no decoder has. An `Option` around it
 stays structural (`null` is `None`). The `Err` it returns is the decoder's
@@ -533,8 +527,10 @@ fn main() {
 json.parse(s: String, type a) -> Result(a, JsonError) where a: Decode
 ```
 
-Parses a JSON string into a record of type `a`. The type is passed as a `type`
-parameter (see [Generics](../language/generics.md) — not a string). Fields are
+Parses a JSON string into a value of type `a`. The type is passed as a `type`
+parameter (see [Generics](../language/generics.md) — not a string), written in
+full: `json.parse(text, User)`, `json.parse(text, List(Point))` for an array,
+`json.parse(text, Map(String, Int))` for an object read as a map. Fields are
 matched by name; `Option` fields default to `None` if missing from the JSON.
 
 Fields of type `Date`, `Time`, and `DateTime` (from the `time` module) are
@@ -589,60 +585,6 @@ fn main() -> Result(Unit, json.JsonError) {
   let e = json.parse("""{"name": "launch", "date": "2024-03-15"}""", Event)?
   println(e.date |> time.weekday) -- Friday
   Ok(())
-}
-```
-
-
-## `json.parse_list`
-
-```
-json.parse_list(s: String, type a) -> Result(List(a), JsonError) where a: Decode
-```
-
-Parses a JSON array into a list of `a`, each element decoded as
-`json.parse` decodes a document into `a`. The type is passed as a `type`
-parameter (`Int`, `Float`, `String`, `Bool`, `json.Value`, a record type, or
-an enum type, see [Enums](#enums)), as for `json.parse_map`.
-
-```silt
-import json
-import list
-
-type Point {
-  x: Int,
-  y: Int,
-}
-
-fn main() {
-  let input = """[{"x": 1, "y": 2}, {"x": 3, "y": 4}]"""
-  match json.parse_list(input, Point) {
-    Ok(points) -> list.each(points) { p -> println("{p.x}, {p.y}") }
-    Err(e) -> println("Error: {Error.message(e)}")
-  }
-}
-```
-
-
-## `json.parse_map`
-
-```
-json.parse_map(s: String, type a) -> Result(Map(String, a), JsonError) where a: Decode
-```
-
-Parses a JSON object into a `Map(String, v)`. The type is passed as a `type`
-parameter (`Int`, `Float`, `String`, `Bool`, `json.Value`, a record type, or
-an enum type).
-
-```silt
-import json
-import map
-
-fn main() {
-  let input = """{"x": 10, "y": 20}"""
-  match json.parse_map(input, Int) {
-    Ok(m) -> println(map.get(m, "x")) -- Some(10)
-    Err(e) -> println("Error: {Error.message(e)}")
-  }
 }
 ```
 

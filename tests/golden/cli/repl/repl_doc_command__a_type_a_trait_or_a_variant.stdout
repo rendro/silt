@@ -34,7 +34,7 @@ A JSON document as it is, for input whose shape is not known in advance: any doc
 trait Encode { fn encode(self) -> Value }
 What `json.stringify` and `json.pretty` need of the value they write.
 trait Decode { fn decode(value: Value) -> Result(Self, JsonError) }
-What `json.parse`, `json.parse_list`, `json.parse_map` and `json.decode` need of the type they decode into.
+What `json.parse` and `json.decode` need of the type they decode into.
 type ChannelOp(a) { Recv(Channel(a)), Send(Channel(a), a) }
 Builds a receive arm for `channel.select`.
 type ChannelOp(a) { Recv(Channel(a)), Send(Channel(a), a) }

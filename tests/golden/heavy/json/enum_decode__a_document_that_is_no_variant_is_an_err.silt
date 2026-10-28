@@ -35,9 +35,9 @@ fn main() {
   println(json.parse("""{"status": "Gone"}""", Job))
   println(json.parse("""{"status": {"variant": "Active"}}""", Job))
   println(json.parse("""{"status": {"variant": "Gone"}}""", Job))
-  println(json.parse_list("""["Active", "Paused"]""", Status))
-  println(json.parse_list("""["Active", {"variant": "Paused", "fields": [1.5]}]""", Status))
-  println(json.parse_list("\"Active\"", Status))
+  println(json.parse("""["Active", "Paused"]""", List(Status)))
+  println(json.parse("""["Active", {"variant": "Paused", "fields": [1.5]}]""", List(Status)))
+  println(json.parse("\"Active\"", List(Status)))
   match json.parse("\"Gone\"", Status) {
     Err(json.Other(why)) -> println("Other: {why}")
     other -> println("unexpected: {other}")

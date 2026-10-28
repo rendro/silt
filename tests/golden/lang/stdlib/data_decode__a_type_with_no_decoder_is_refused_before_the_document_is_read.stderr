@@ -6,12 +6,12 @@ error[type]: `json.parse` cannot decode `Blob`: field `b` has type `Bytes`, whic
   = note: `from_json` passes it to `json.parse`
   = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
 
-error[type]: `json.parse_list` cannot decode `Blob`: field `b` has type `Bytes`, which has no decoder
+error[type]: `json.parse` cannot decode `Blob`: field `b` has type `Bytes`, which has no decoder
  --> data_decode__a_type_with_no_decoder_is_refused_before_the_document_is_read.silt:34:25
     |
  34 |   show(list_of("[1, 2", Blob))
-    |                         ^^^^ `json.parse_list` cannot decode `Blob`: field `b` has type `Bytes`, which has no decoder
-  = note: `list_of` passes it to `json.parse_list`
+    |                         ^^^^ `json.parse` cannot decode `Blob`: field `b` has type `Bytes`, which has no decoder
+  = note: `list_of` passes it to `json.parse`
   = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
 
 error[type]: `toml.parse` cannot decode `Blob`: field `b` has type `Bytes`, which has no decoder

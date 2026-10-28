@@ -1929,6 +1929,19 @@ impl TypeChecker {
         Type::Error
     }
 
+    /// Whether `e` names a generic type alone (`List`, `Box`).
+    fn names_generic_type(&mut self, e: &Expr) -> bool {
+        if !matches!(e.kind, ExprKind::Ident(_) | ExprKind::FieldAccess(..)) {
+            return false;
+        }
+        let is_type = (self.res_def(e.res))
+            .is_some_and(|def| matches!(def.kind, crate::defs::DefKind::Type(_)));
+        is_type
+            && (self.res_type(e.res))
+                .and_then(|ty| self.type_instance(ty))
+                .is_some_and(|ty| !free_vars_in(&ty).is_empty())
+    }
+
     /// The alias without type parameters `e` names, if it names one.
     fn plain_alias(&self, e: &Expr) -> Option<TypeRef> {
         if !matches!(e.kind, ExprKind::Ident(_) | ExprKind::FieldAccess(..)) {
@@ -2063,6 +2076,15 @@ impl TypeChecker {
                     Type::Error => Some(Type::Error),
                     Type::Generic(head, args) if head.is_builtin(crate::defs::TYPE_OF) => {
                         let ty = args.first().map(|t| self.apply(t))?;
+                        e.ty = Some(Type::type_of(ty.clone()));
+                        Some(ty)
+                    }
+                    // A parameter of a type still unknown, written among
+                    // types: a type (`fn load(text, t) { json.parse(text,
+                    // List(t)) }`).
+                    unknown @ Type::Var(_) => {
+                        let ty = self.fresh_var();
+                        self.unify(&unknown, &Type::type_of(ty.clone()), span);
                         e.ty = Some(Type::type_of(ty.clone()));
                         Some(ty)
                     }
@@ -2389,6 +2411,9 @@ impl TypeChecker {
                         _ => None,
                     };
                     let full = spelled.is_some();
+                    if spelled.is_none() && self.names_generic_type(arg) {
+                        self.open_type_arguments.insert(arg.span);
+                    }
                     let arg_ty = match spelled {
                         Some(ty) => Type::type_of(ty),
                         None => self.infer_expr(arg, env),

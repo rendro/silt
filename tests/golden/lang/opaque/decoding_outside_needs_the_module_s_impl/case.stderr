@@ -6,10 +6,10 @@ error[type]: type 'mail.User' cannot be decoded outside module 'mail': it is opa
   = help: decode it inside module 'mail', or write `trait json.Decode for User` there
 
 error[type]: type 'mail.User' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
- --> main.silt:21:33
+ --> main.silt:21:28
     |
- 21 |   println(json.parse_list("[]", mail.User))
-    |                                 ^^^^^^^^^ type 'mail.User' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+ 21 |   println(json.parse("[]", List(mail.User)))
+    |                            ^^^^^^^^^^^^^^^ type 'mail.User' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
   = help: decode it inside module 'mail', or write `trait json.Decode for User` there
 
 error[type]: type 'mail.User' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it

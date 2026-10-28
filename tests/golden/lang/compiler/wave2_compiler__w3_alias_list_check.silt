@@ -1,11 +1,11 @@
 -- cmd: check
 -- exit: 1
 -- stderr-contains: error[type]
--- stderr-contains: json.parse_list
+-- stderr-contains: json.parse
 -- stderr-contains: `List`
 -- stderr-contains: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, a type with a `json.Decode` impl, or List(T), Option(T), Map(String, T) or a tuple of decodable types
 import json as j
 
 fn main() {
-  println(j.parse_list("[1]", List))
+  println(j.parse("[1]", List))
 }
