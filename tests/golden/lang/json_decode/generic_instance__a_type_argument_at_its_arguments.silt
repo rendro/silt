@@ -22,7 +22,7 @@ fn main() {
   println(json.parse("""[{"v": 1}, {"v": 2}]""", List(Box(Int))))
   println(json.parse("null", Option(Box(Int))))
   println(json.parse("""{"variant": "Named", "fields": [3]}""", Tag(Int)))
-  println(json.parse_list("""[{"v": "a"}]""", Box(String)))
+  println(json.parse("""[{"v": "a"}]""", List(Box(String))))
   println(json.decode(json.Object(#{"v": json.Int(1)}), Box(Int)))
   println(get("""{"v": 4}""", Int))
   println(get("""{"v": [1, 2]}""", List(Int)))
