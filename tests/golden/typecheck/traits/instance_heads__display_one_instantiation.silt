@@ -1,4 +1,7 @@
--- `Display` for one instantiation shows that instantiation.
+-- cmd: check
+-- exit: 1
+-- A value is shown by the impl of its type, whatever its type arguments:
+-- a `Display` impl for one instantiation is refused.
 type Box(a) { Box(a) }
 trait Display for Box(Int) { fn display(self) -> String { match self { Box(n) -> "int {n + 1}" } } }
 fn main() {

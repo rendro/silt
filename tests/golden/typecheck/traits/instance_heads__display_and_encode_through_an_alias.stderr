@@ -1,0 +1,13 @@
+error[type]: an impl of trait 'Display' for 'Box(Int)' alone cannot be: a value is shown by the impl of its type, whatever its type arguments
+ --> instance_heads__display_and_encode_through_an_alias.silt:10:1
+    |
+ 10 | trait Display for IB { fn display(self) -> String { "intbox" } }
+    | ^^^^^^^^^^^^^^^^^^^^ an impl of trait 'Display' for 'Box(Int)' alone cannot be: a value is shown by the impl of its type, whatever its type arguments
+  = help: write it for every instantiation: `trait Display for Box(a)`
+
+error[type]: an impl of trait 'json.Encode' for 'Pair(Int, b)' alone cannot be: a value is encoded by the impl of its type, whatever its type arguments
+ --> instance_heads__display_and_encode_through_an_alias.silt:11:1
+    |
+ 11 | trait json.Encode for Pair(Int, b) { fn encode(self) -> json.Value { json.Null } }
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ an impl of trait 'json.Encode' for 'Pair(Int, b)' alone cannot be: a value is encoded by the impl of its type, whatever its type arguments
+  = help: write it for every instantiation: `trait json.Encode for Pair(a, b)`

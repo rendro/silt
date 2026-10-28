@@ -130,6 +130,11 @@ pub struct TypeChecker {
     /// (`List`): a type with its arguments left open, which no decoder
     /// decodes.
     pub(super) open_type_arguments: std::collections::HashSet<Span>,
+    /// The type variables of a generic type's name used as a value
+    /// (`let t = List`), and of each use of what holds it: its value
+    /// names the type alone, which no decoder decodes, whatever the
+    /// checker learns of the variables.
+    pub(super) open_vars: std::collections::HashSet<TyVar>,
     /// What each body asks `json.Decode` of its annotation variable for
     /// (`Asked`), by the variable's representative.
     pub(super) bound_askers: HashMap<TyVar, Asked>,
@@ -517,6 +522,7 @@ impl TypeChecker {
             lacking: std::collections::HashSet::new(),
             decode_gaps: Vec::new(),
             open_type_arguments: std::collections::HashSet::new(),
+            open_vars: std::collections::HashSet::new(),
             bound_askers: HashMap::new(),
             bound_impls: HashMap::new(),
             decode_aliases: HashMap::new(),

@@ -1,0 +1,24 @@
+-- cmd: check
+-- exit: 1
+-- A decoded map's keys are String, as a JSON object's are: a map of
+-- other keys is refused, as the type argument, as a part of it and as
+-- the type of a field, with why; in a generic type at its type
+-- arguments too.
+import json
+
+type R { m: Map(Int, String) }
+
+type Q { m: List(Map(Bool, Int)) }
+
+type Box(a) { v: a }
+
+type W { b: Box(Map(Int, String)) }
+
+fn main() {
+  let _ = json.parse("\{}", Map(Int, String))
+  let _ = json.parse("[]", List(Map(Int, String)))
+  let _ = json.parse("\{}", R)
+  let _ = json.parse("\{}", Q)
+  let _ = json.parse("\{}", Box(Map(Int, String)))
+  let _ = json.parse("\{}", W)
+}

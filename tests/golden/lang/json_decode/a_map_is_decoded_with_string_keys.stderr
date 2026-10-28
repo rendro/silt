@@ -1,0 +1,41 @@
+error[type]: `json.parse` cannot decode `Map(Int, String)`: a decoded map's key type must be String
+ --> a_map_is_decoded_with_string_keys.silt:18:29
+    |
+ 18 |   let _ = json.parse("\{}", Map(Int, String))
+    |                             ^^^^^^^^^^^^^^^^ `json.parse` cannot decode `Map(Int, String)`: a decoded map's key type must be String
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `json.parse` cannot decode `List(Map(Int, String))`: `Map(Int, String)` has no decoder, as a decoded map's key type must be String
+ --> a_map_is_decoded_with_string_keys.silt:19:28
+    |
+ 19 |   let _ = json.parse("[]", List(Map(Int, String)))
+    |                            ^^^^^^^^^^^^^^^^^^^^^^ `json.parse` cannot decode `List(Map(Int, String))`: `Map(Int, String)` has no decoder, as a decoded map's key type must be String
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `json.parse` cannot decode `R`: field `m` has type `Map(Int, String)`, which has no decoder, as a decoded map's key type must be String
+ --> a_map_is_decoded_with_string_keys.silt:20:29
+    |
+ 20 |   let _ = json.parse("\{}", R)
+    |                             ^ `json.parse` cannot decode `R`: field `m` has type `Map(Int, String)`, which has no decoder, as a decoded map's key type must be String
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `json.parse` cannot decode `Q`: field `m` has type `List(Map(Bool, Int))`, and `Map(Bool, Int)` has no decoder, as a decoded map's key type must be String
+ --> a_map_is_decoded_with_string_keys.silt:21:29
+    |
+ 21 |   let _ = json.parse("\{}", Q)
+    |                             ^ `json.parse` cannot decode `Q`: field `m` has type `List(Map(Bool, Int))`, and `Map(Bool, Int)` has no decoder, as a decoded map's key type must be String
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `json.parse` cannot decode `Box(Map(Int, String))`: field `v` has type `Map(Int, String)`, which has no decoder, as a decoded map's key type must be String
+ --> a_map_is_decoded_with_string_keys.silt:22:29
+    |
+ 22 |   let _ = json.parse("\{}", Box(Map(Int, String)))
+    |                             ^^^^^^^^^^^^^^^^^^^^^ `json.parse` cannot decode `Box(Map(Int, String))`: field `v` has type `Map(Int, String)`, which has no decoder, as a decoded map's key type must be String
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `json.parse` cannot decode `W`: field `b` has type `Box(Map(Int, String))`, and `Map(Int, String)` has no decoder, as a decoded map's key type must be String
+ --> a_map_is_decoded_with_string_keys.silt:23:29
+    |
+ 23 |   let _ = json.parse("\{}", W)
+    |                             ^ `json.parse` cannot decode `W`: field `b` has type `Box(Map(Int, String))`, and `Map(Int, String)` has no decoder, as a decoded map's key type must be String
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these

@@ -377,7 +377,8 @@ Rules:
 - **A value's type alone reaches `Display`, `json.Encode` and
   `json.Decode`.** A value is shown, encoded or decoded at any depth by
   the impl of its type, whatever its type arguments: of these traits a
-  type has one impl, for every instantiation or for one.
+  type has one impl, for every instantiation: `trait Display for
+  Box(Int)` is an error, `trait Display for Box(a)` is the impl.
 - **`_` is for a trait of type constructors.** `trait Functor for
   Option(_)` writes `_` for the type argument the trait maps over; in an
   impl of a trait of types `_` is an error (see [Traits of Type

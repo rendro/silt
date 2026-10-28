@@ -727,6 +727,11 @@ impl TypeChecker {
                 let name = *name;
                 self.tables.constructor_names.insert(*w, name);
             }
+            if let Type::Var(w) = fresh
+                && self.open_vars.contains(&v)
+            {
+                self.open_vars.insert(w);
+            }
             mapping.insert(v, fresh);
         }
         self.ev.use_ev = None;

@@ -1,0 +1,33 @@
+-- cmd: check
+-- exit: 1
+-- A type with its arguments left open (`List`) is no type, also held in
+-- a `let`, a top-level one too, passed through a function or a closure,
+-- or with what the program says of its result: refused as when given
+-- directly, not left to fail when the program runs; a generic type of
+-- the program too.
+import json
+
+let top = List
+
+fn dec(s, t) { json.parse(s, t) }
+
+type Box(a) { v: a }
+
+fn main() {
+  let t = List
+  let _ = json.parse("[1]", t)
+  let _ = json.parse("[1]", top)
+  let _ = dec("[1]", t)
+  let f = { s -> json.parse(s, t) }
+  let _ = f("[1]")
+  let _ = "[1]" |> json.parse(t)
+  let _ = json.decode(json.Null, t)
+  let u = Map
+  let _ = json.parse("\{}", u)
+  let r: Result(List(Int), json.JsonError) = json.parse("[1]", t)
+  let _ = r
+  let b = Box
+  let _ = json.parse("\{}", b)
+  let q: Result(Box(Int), json.JsonError) = json.parse("\{}", b)
+  let _ = q
+}

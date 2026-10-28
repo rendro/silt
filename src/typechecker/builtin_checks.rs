@@ -15,6 +15,15 @@ use crate::builtins::registry::decoding::{Decoding, Family, JSON_VALUE_ELSEWHERE
 use crate::defs::TypeId;
 use crate::types::canonical::canonicalize;
 
+/// Why a map whose keys are no `String`s has no decoder: the keys of a
+/// JSON object or a TOML table are strings.
+const MAP_KEY: &str = "a decoded map's key type must be String";
+
+/// Whether `ty` is a map whose key type is known and no `String`.
+fn map_with_other_keys(ty: &Type) -> bool {
+    matches!(ty, Type::Map(key, _) if !matches!(**key, Type::String | Type::Var(_)))
+}
+
 /// A record field, or a field of an enum's variant, that a decoder
 /// cannot decode.
 struct UndecodableField {
@@ -29,6 +38,8 @@ struct UndecodableField {
     field_type: String,
     /// The part of the field's type that has no decoder.
     part: String,
+    /// The part is a map whose keys are no `String`s.
+    map_key: bool,
     /// The record type is nested in the one given to the decoder (it
     /// may be that one itself, in a field of its own).
     nested: bool,
@@ -136,6 +147,16 @@ impl TypeChecker {
             return;
         }
         self.errors.push(diagnostic);
+    }
+
+    /// Whether `ty` mentions a variable of `open_vars`, also through what
+    /// the checker has learnt of its variables.
+    pub(super) fn holds_open_vars(&self, ty: &Type) -> bool {
+        free_vars_in(ty).into_iter().any(|v| {
+            self.open_vars.contains(&v)
+                || matches!(self.tables.vars.subst.get(v), Some(Some(resolved))
+                    if self.holds_open_vars(resolved))
+        })
     }
 
     /// The error of the decoder `builtin`, which decodes as `decoding`
@@ -302,6 +323,10 @@ impl TypeChecker {
             } else {
                 format!("and `{}` has no decoder", found.part)
             };
+            let part = match found.map_key {
+                true => format!("{part}, as {MAP_KEY}"),
+                false => part,
+            };
             let help = match found.part.as_str() {
                 "Bytes" => format!("{decodable_types_help}{}", family.bytes_help()),
                 _ => decodable_types_help.clone(),
@@ -347,7 +372,10 @@ impl TypeChecker {
             let accepted = decoding.type_arguments(str::to_string);
             // A container type the call gives its arguments by its
             // arguments (`List(Int)`).
-            let type_name = match written.is_none() && free_vars_in(ty).is_empty() {
+            let type_name = match written.is_none()
+                && free_vars_in(ty).is_empty()
+                && !self.open_type_arguments.contains(&span)
+            {
                 true => self.show_type(ty),
                 false => type_name,
             };
@@ -361,11 +389,13 @@ impl TypeChecker {
                 (Some(module), Type::Map(..)) => format!("use `{module}.parse_map` for a map"),
                 _ => family.type_argument_help().to_string(),
             };
+            let why = match decoding.primitives && map_with_other_keys(ty) {
+                true => MAP_KEY.to_string(),
+                false => format!("its type argument must be {accepted}"),
+            };
             return refusal(
                 Code::Undecodable,
-                format!(
-                    "`{builtin_name}` cannot decode `{type_name}`: its type argument must be {accepted}"
-                ),
+                format!("`{builtin_name}` cannot decode `{type_name}`: {why}"),
                 &help,
             );
         }
@@ -453,9 +483,13 @@ impl TypeChecker {
                         Code::Undecodable,
                         span,
                         format!(
-                            "`{builtin}` cannot decode `{}`: `{}` has no decoder",
+                            "`{builtin}` cannot decode `{}`: `{}` has no decoder{}",
                             self.show_type(whole),
-                            self.show_type(part)
+                            self.show_type(part),
+                            match map_with_other_keys(part) {
+                                true => format!(", as {MAP_KEY}"),
+                                false => String::new(),
+                            }
                         ),
                     )
                     .with_help(help),
@@ -514,9 +548,13 @@ impl TypeChecker {
                 continue;
             }
             let mut nested = Vec::new();
+            let mut map_key = false;
             let variables = type_variables(&ty);
             let lacking = match self.tables.decoded_field_type(&ty, &variables, &mut nested) {
-                Err(part) => Some(part),
+                Err(part) => {
+                    map_key = map_with_other_keys(&part);
+                    Some(self.show_type(&part))
+                }
                 Ok(field_type) => family.lacks(&field_type).map(str::to_string).or_else(|| {
                     let (enum_type, _) = (nested.iter())
                         .find(|(t, _)| self.tables.is_enum(*t) && !self.has_decode_impl(*t))?;
@@ -533,6 +571,7 @@ impl TypeChecker {
                     in_variant,
                     field_type: self.show_type(&ty),
                     part,
+                    map_key,
                     nested: false,
                     grows: false,
                 });
@@ -553,6 +592,7 @@ impl TypeChecker {
                             &self.with_names(&declared, &self.tables.named_type_params(record)),
                         ),
                         part: String::new(),
+                        map_key: false,
                         nested: false,
                         grows: true,
                     });

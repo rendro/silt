@@ -1,0 +1,11 @@
+error[type]: the impl of trait 'traits.Area' for type 'shapes.Box(String)' is written in module 'main', which declares neither the trait nor the type; it may be written in module 'traits', which declares the trait, or in module 'shapes', which declares the type
+ --> main.silt:12:1
+    |
+ 12 | trait traits.Area for BS {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^ the impl of trait 'traits.Area' for type 'shapes.Box(String)' is written in module 'main', which declares neither the trait nor the type; it may be written in module 'traits', which declares the trait, or in module 'shapes', which declares the type
+
+error[type]: the impl of trait 'traits.Area' for type 'shapes.Square' is written in module 'main', which declares neither the trait nor the type; it may be written in module 'traits', which declares the trait, or in module 'shapes', which declares the type
+ --> main.silt:16:1
+    |
+ 16 | trait traits.Area for Sq {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^ the impl of trait 'traits.Area' for type 'shapes.Square' is written in module 'main', which declares neither the trait nor the type; it may be written in module 'traits', which declares the trait, or in module 'shapes', which declares the type

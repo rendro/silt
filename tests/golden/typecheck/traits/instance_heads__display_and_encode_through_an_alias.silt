@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- An impl of `Display` or `json.Encode` for some instantiations of a
+-- type, through an alias or with one argument a type, is refused; the
+-- help writes the impl for every instantiation.
+import json
+type Box(a) { Bx(a) }
+type Pair(a, b) { P(a, b) }
+type IB = Box(Int)
+trait Display for IB { fn display(self) -> String { "intbox" } }
+trait json.Encode for Pair(Int, b) { fn encode(self) -> json.Value { json.Null } }
+fn main() {
+  println(Bx(1))
+  println(json.stringify(P(1, 2)))
+}
