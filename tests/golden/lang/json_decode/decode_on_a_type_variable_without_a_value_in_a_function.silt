@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- `a.decode(v)` needs what `a` is where the code runs: a `type a`
+-- parameter gives it; a type variable only a value's type names (`x: a`)
+-- does not, and is refused (it was a compiler bug).
+import json
+
+fn f(x: a, v: json.Value) -> Result(a, json.JsonError) where a: json.Decode {
+  a.decode(v)
+}
+
+fn main() {
+  println(f(1, json.Int(2)))
+}

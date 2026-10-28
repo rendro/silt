@@ -321,6 +321,13 @@ pub struct TypeChecker {
     /// While a type variable's method is looked up as a descriptor's:
     /// its name, for the messages (`on \`a\``, not `on \`type a\``).
     pub(super) descriptor_var: Option<Symbol>,
+    /// While the `decode` of a written `json.Decode` impl for a generic
+    /// type is checked: the impl's type parameters, which the call
+    /// gives as types (`a.decode(v)`: the compiler's `TypeArg`).
+    pub(super) decode_params: Vec<Symbol>,
+    /// While a method of an impl is checked: the type parameters of the
+    /// impl's header, which no `type a` parameter can give.
+    pub(super) header_params: Vec<Symbol>,
     /// Each annotation variable of a declaration whose body was or is
     /// being checked, as its body sees it: rigid.
     pub(super) rigid_of: HashMap<TyVar, Type>,
@@ -584,6 +591,8 @@ impl TypeChecker {
             bare_labels: HashMap::new(),
             resolving_signature: false,
             descriptor_var: None,
+            decode_params: Vec::new(),
+            header_params: Vec::new(),
             rigid_of: HashMap::new(),
             let_vars: std::collections::HashSet::new(),
             var_written: HashMap::new(),
@@ -1547,7 +1556,13 @@ impl TypeChecker {
                                 &sig.bounds,
                             );
                             self.ev.methods.insert(method.body.span, bounds);
+                            self.header_params = ti.target_param_names.clone();
+                            if Self::is_decode(trait_key) {
+                                self.decode_params = ti.target_param_names.clone();
+                            }
                             self.check_method_body(method, &sig, env);
+                            self.decode_params.clear();
+                            self.header_params.clear();
                             self.body_owner = None;
                         }
                     }

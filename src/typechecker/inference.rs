@@ -692,6 +692,38 @@ impl TypeChecker {
                     );
                     return None;
                 }
+                // A method of a trait found by the value (`json.Decode`'s
+                // `decode`) has nothing to find it by on a type variable
+                // no value is named: where the code runs, only a `type a`
+                // parameter, or the type a generic type's `decode` is
+                // called at, says what `a` is.
+                if let Type::Rigid(r) = &inner
+                    && let Some((tr, _)) = (self.bound_methods(*r, field).into_iter())
+                        .find(|(tr, _)| !crate::defs::has_dictionary(tr.id))
+                    && !self.decode_params.contains(&name)
+                {
+                    // (A variable of an impl's header has no `type a`
+                    // parameter to be given by.)
+                    let help = (!self.header_params.contains(&name)).then(|| {
+                        format!(
+                            "take the type as a parameter, `type {name}`, and call \
+                             `{name}.{field}(..)` on it"
+                        )
+                    });
+                    self.error_help(
+                        Code::InvalidMethodCall,
+                        (
+                            format!(
+                                "method '{field}' of trait '{}' is called on a type variable that \
+                                 has no value here: `{name}` is known only by its type",
+                                self.show_trait(tr)
+                            ),
+                            help,
+                        ),
+                        span,
+                    );
+                    return None;
+                }
                 let inner = inner.clone();
                 self.var_as_type = None;
                 self.descriptor_var = Some(name);

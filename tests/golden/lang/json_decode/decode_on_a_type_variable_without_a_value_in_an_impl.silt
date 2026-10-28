@@ -1,0 +1,28 @@
+-- cmd: check
+-- exit: 1
+-- `a.decode(v)` in an impl of a program's trait for a generic type is
+-- refused: its `where a: json.Decode` gives no value of `a`'s type where
+-- the code runs (only the `decode` of a `json.Decode` impl is called at
+-- its type's arguments). It was a compiler bug.
+import json
+
+fn g(type t) -> t where t: Mk { t.mk(json.Int(3)) }
+
+type Box(a) { v: a }
+
+trait Mk {
+  fn mk(v: json.Value) -> Self
+}
+
+trait Mk for Box(a) where a: json.Decode {
+  fn mk(v: json.Value) -> Self {
+    match a.decode(v) {
+      Ok(x) -> Box { v: x }
+      Err(_) -> panic("no")
+    }
+  }
+}
+
+fn main() {
+  println(g(Box(Int)).v)
+}
