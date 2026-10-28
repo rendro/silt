@@ -829,7 +829,8 @@ impl Partial {
             }
         };
         let ty = std::mem::replace(&mut hole.ty, Value::Unit);
-        Some((hole.slot, ty, std::mem::replace(&mut hole.json, Value::Unit)))
+        let json = std::mem::replace(&mut hole.json, Value::Unit);
+        Some((hole.slot, ty, json))
     }
 
     /// The row, now that the impls have given `given` (`Ok` of a value,

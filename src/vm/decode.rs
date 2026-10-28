@@ -201,9 +201,7 @@ impl Vm {
         let top = self.stack.len() - 1;
         let arg = match &self.stack[top] {
             Value::TypeDescriptor(info) => match &info.shape {
-                crate::typeinfo::Shape::Applied(FieldType::Applied(_, args)) => {
-                    args.get(k)
-                }
+                crate::typeinfo::Shape::Applied(FieldType::Applied(_, args)) => args.get(k),
                 _ => None,
             },
             _ => None,
