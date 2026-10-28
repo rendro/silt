@@ -2976,7 +2976,7 @@ impl TypeChecker {
     }
 
     /// `ty`, each type variable by its name in `names`.
-    fn with_names(&self, ty: &Type, names: &[(TyVar, Symbol)]) -> Type {
+    pub(super) fn with_names(&self, ty: &Type, names: &[(TyVar, Symbol)]) -> Type {
         let mapping: HashMap<TyVar, Type> = (names.iter())
             .map(|(var, name)| {
                 let rigid = RigidId {

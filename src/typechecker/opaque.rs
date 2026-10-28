@@ -98,8 +98,10 @@ impl TypeChecker {
         viewer: crate::session::ModuleId,
     ) -> Option<(TypeRef, Symbol)> {
         let instance = (head.id, args.to_vec());
+        // (A type that grows with every level is refused as one no
+        // decoder has: `undecodable_field`.)
         if seen.contains(&instance)
-            || seen.len() >= super::decodable::INSTANCE_LIMIT
+            || super::decodable::too_deep(args)
             || self.has_decode_impl(head)
         {
             return None;

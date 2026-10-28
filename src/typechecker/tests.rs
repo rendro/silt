@@ -2264,6 +2264,7 @@ fn record_fields_at_a_wrong_number_of_arguments_take_fresh_variables() {
         rec,
         RecordInfo {
             fields: vec![(intern("v"), Type::Var(param))],
+            params: vec![intern("a")],
         },
     );
     let at_int = tc.instantiate_record_fields_with_args(rec, &[Type::Int]);

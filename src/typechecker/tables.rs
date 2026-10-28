@@ -22,6 +22,9 @@ pub(super) struct VariantInfo {
 #[derive(Debug, Clone, Default)]
 pub(super) struct RecordInfo {
     pub(super) fields: Vec<(Symbol, Type)>,
+    /// The names of its type parameters, in the order of
+    /// `record_param_var_ids`.
+    pub(super) params: Vec<Symbol>,
 }
 
 /// Information about a declared trait.

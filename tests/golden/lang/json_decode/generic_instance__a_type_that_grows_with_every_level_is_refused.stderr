@@ -1,0 +1,20 @@
+error[type]: `json.parse` cannot decode `T(a)`: variant `Node` of `T`, an enum type nested in it, has a field of type `T(List(a))`, which grows with every level
+ --> generic_instance__a_type_that_grows_with_every_level_is_refused.silt:26:17
+    |
+ 26 |   json.parse(s, T(a))
+    |                 ^^^^ `json.parse` cannot decode `T(a)`: variant `Node` of `T`, an enum type nested in it, has a field of type `T(List(a))`, which grows with every level
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `json.parse` cannot decode `T(Int)`: variant `Node` of `T`, an enum type nested in it, has a field of type `T(List(a))`, which grows with every level
+ --> generic_instance__a_type_that_grows_with_every_level_is_refused.silt:30:27
+    |
+ 30 |   let _ = json.parse("1", T(Int))
+    |                           ^^^^^^ `json.parse` cannot decode `T(Int)`: variant `Node` of `T`, an enum type nested in it, has a field of type `T(List(a))`, which grows with every level
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `json.parse` cannot decode `U`: variant `Node` of `T`, an enum type nested in it, has a field of type `T(List(a))`, which grows with every level
+ --> generic_instance__a_type_that_grows_with_every_level_is_refused.silt:31:27
+    |
+ 31 |   let _ = json.parse("1", U)
+    |                           ^ `json.parse` cannot decode `U`: variant `Node` of `T`, an enum type nested in it, has a field of type `T(List(a))`, which grows with every level
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these

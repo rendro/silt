@@ -9,11 +9,25 @@ use super::*;
 use crate::typeinfo::FieldType;
 use crate::types::canonical::canonicalize;
 
-/// How many instances of generic types (`Box(Int)`, `Box(List(Int))`)
-/// a walk through the fields of a decoded type looks into: a type
-/// whose field gives it other arguments (`n: Option(T(List(a)))` in
-/// `type T(a)`) has no end of them.
-pub(crate) const INSTANCE_LIMIT: usize = 64;
+/// How deep the type arguments of an instance of a generic type that a
+/// walk through the fields of a decoded type meets may be: past it, the
+/// type grows with every level (`n: Option(T(List(a)))` in `type T(a)`
+/// gives `T` ever deeper arguments), and has no end of instances.
+pub(crate) const ARGUMENT_DEPTH_LIMIT: usize = 32;
+
+/// Whether the type arguments `args` are deeper than
+/// [`ARGUMENT_DEPTH_LIMIT`].
+pub(crate) fn too_deep(args: &[Type]) -> bool {
+    fn depth(ty: &Type) -> usize {
+        1 + match ty {
+            Type::Generic(_, ts) | Type::Tuple(ts) => ts.iter().map(depth).max().unwrap_or(0),
+            Type::List(t) | Type::Set(t) | Type::Channel(t) => depth(t),
+            Type::Map(k, v) => depth(k).max(depth(v)),
+            _ => 0,
+        }
+    }
+    args.iter().any(|arg| depth(arg) > ARGUMENT_DEPTH_LIMIT)
+}
 
 /// A type as messages write it, a record type by its name.
 pub(crate) fn shown(ty: &Type) -> String {
@@ -28,6 +42,19 @@ impl Tables {
             Some(info) => info.param_var_ids.clone(),
             None => (self.record_param_var_ids.get(&t).cloned()).unwrap_or_default(),
         }
+    }
+
+    /// The type parameters of the record or enum type `t`, each with its
+    /// name.
+    pub(crate) fn named_type_params(&self, t: TypeRef) -> Vec<(TyVar, Symbol)> {
+        let names = match self.enums.get(&t) {
+            Some(info) => info.params.clone(),
+            None => self
+                .records
+                .get(&t)
+                .map_or_else(Vec::new, |info| info.params.clone()),
+        };
+        self.type_params(t).into_iter().zip(names).collect()
     }
 
     /// The type `ty`, a field's as its type declares it, with each of

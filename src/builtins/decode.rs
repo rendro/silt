@@ -423,11 +423,26 @@ fn lacks_here(rt: &Reader, family: Family, field_type: &FieldType) -> bool {
 /// at its type arguments, for a family.
 type Seen = Vec<(TypeId, Vec<FieldType>, Family)>;
 
-/// How many instances of types a walk for a field no decoder fills
-/// looks into: a generic type whose field gives it other arguments
-/// (`n: Option(T(List(a)))` in `type T(a)`) has no end of them. (Past
-/// it, the decoding itself meets such a field: its error there.)
-const INSTANCE_LIMIT: usize = 64;
+/// How deep the type arguments of an instance a walk for a field no
+/// decoder fills meets may be: past it, the type grows with every level
+/// (`n: Option(T(List(a)))` in `type T(a)`), which the checker refuses.
+/// (The decoding itself meets a field no decoder fills there: its error.)
+const ARGUMENT_DEPTH_LIMIT: usize = 32;
+
+/// Whether the type arguments `args` are deeper than
+/// [`ARGUMENT_DEPTH_LIMIT`].
+fn too_deep(args: &[FieldType]) -> bool {
+    fn depth(ty: &FieldType) -> usize {
+        1 + match ty {
+            FieldType::List(t) | FieldType::Option(t) | FieldType::Map(t) => depth(t),
+            FieldType::Tuple(ts) | FieldType::Applied(_, ts) => {
+                ts.iter().map(depth).max().unwrap_or(0)
+            }
+            _ => 0,
+        }
+    }
+    args.iter().any(|arg| depth(arg) > ARGUMENT_DEPTH_LIMIT)
+}
 
 /// The first field of a field of type `field_type` that `family` has no
 /// decoder for: the field itself (`None`), or the place of a field of a
@@ -467,7 +482,7 @@ fn lacking_in(
     seen: &mut Seen,
 ) -> Option<(Place, std::string::String)> {
     let instance = (ty.id, args.to_vec(), family);
-    if seen.contains(&instance) || seen.len() >= INSTANCE_LIMIT || rt.written(ty.id) {
+    if seen.contains(&instance) || too_deep(args) || rt.written(ty.id) {
         return None;
     }
     seen.push(instance);

@@ -32,6 +32,10 @@ struct UndecodableField {
     /// The record type is nested in the one given to the decoder (it
     /// may be that one itself, in a field of its own).
     nested: bool,
+    /// The field's type grows with every level: it gives the generic
+    /// type that declares it ever deeper arguments (`n:
+    /// Option(T(List(a)))` in `type T(a)`); `field_type` is as declared.
+    grows: bool,
 }
 
 /// The key in `lacking` of a builtin's refusal of the type `ty` at
@@ -291,7 +295,9 @@ impl TypeChecker {
             } else {
                 String::new()
             };
-            let part = if found.part == found.field_type {
+            let part = if found.grows {
+                "which grows with every level".to_string()
+            } else if found.part == found.field_type {
                 "which has no decoder".to_string()
             } else {
                 format!("and `{}` has no decoder", found.part)
@@ -475,7 +481,7 @@ impl TypeChecker {
         seen: &mut Vec<(TypeId, Vec<Type>, Family)>,
     ) -> Option<UndecodableField> {
         let instance = (record.id, args.to_vec(), family);
-        if seen.contains(&instance) || seen.len() >= super::decodable::INSTANCE_LIMIT {
+        if seen.contains(&instance) {
             return None;
         }
         seen.push(instance);
@@ -487,12 +493,21 @@ impl TypeChecker {
                 .collect(),
             false => self.tables.decoded_record_fields(record, args),
         };
+        // (And as the type declares them, over its parameters.)
+        let declared: Vec<Type> = match in_variant {
+            true => (self.tables.decoded_variant_fields(record, &[]).into_iter())
+                .flat_map(|(_, types)| types)
+                .collect(),
+            false => (self.tables.decoded_record_fields(record, &[]).into_iter())
+                .map(|(_, ty)| ty)
+                .collect(),
+        };
         // (A generic type by its arguments: `Box(Set(Int))`.)
         let record_shown = match args.is_empty() {
             true => resolve(record.name),
             false => self.show_type(&Type::Generic(record, args.to_vec())),
         };
-        for (field, ty) in fields {
+        for ((field, ty), declared) in fields.into_iter().zip(declared) {
             // A type that is unknown where the field writes it is that
             // error alone.
             if ty.holds_error() {
@@ -519,12 +534,28 @@ impl TypeChecker {
                     field_type: self.show_type(&ty),
                     part,
                     nested: false,
+                    grows: false,
                 });
             }
             for (nested_record, nested_args) in nested {
                 let family = family.nested();
                 if self.has_decode_impl(nested_record) {
                     continue;
+                }
+                // This field gives a type ever deeper arguments: the type
+                // that declares it, the field as it declares it.
+                if super::decodable::too_deep(&nested_args) {
+                    return Some(UndecodableField {
+                        record: resolve(record.name),
+                        field: resolve(field),
+                        in_variant,
+                        field_type: self.show_type(
+                            &self.with_names(&declared, &self.tables.named_type_params(record)),
+                        ),
+                        part: String::new(),
+                        nested: false,
+                        grows: true,
+                    });
                 }
                 if let Some(found) =
                     self.undecodable_field(nested_record, &nested_args, family, seen)

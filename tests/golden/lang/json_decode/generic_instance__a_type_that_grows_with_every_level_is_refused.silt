@@ -1,0 +1,34 @@
+-- cmd: check
+-- exit: 1
+-- A generic type whose field gives it ever deeper type arguments (`Node`
+-- of `T(a)` holds a `T(List(a))`) has no end of instances: no decoder
+-- has a value of it, at the top, in a field, or through a `type a`
+-- parameter; the error names the field that grows, as its type
+-- declares it. One whose field gives it other arguments that do not grow
+-- (`P(Int)` in `P(a)`) is decoded.
+import json
+
+type T(a) {
+  Leaf(a),
+  Node(T(List(a))),
+}
+
+type U {
+  t: T(Int),
+}
+
+type P(a) {
+  Here(a),
+  There(P(Int)),
+}
+
+fn get(s: String, type a) -> Result(T(a), json.JsonError) where a: json.Decode {
+  json.parse(s, T(a))
+}
+
+fn main() {
+  let _ = json.parse("1", T(Int))
+  let _ = json.parse("1", U)
+  let _ = get("1", Int)
+  let _ = json.parse(""""Here"""", P(String))
+}
