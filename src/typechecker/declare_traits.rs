@@ -1458,6 +1458,16 @@ impl TypeChecker {
             self.duplicated_impls.insert((trait_key, target_type));
             return;
         }
+        // (A `json.Decode` impl for a generic type is refused as such:
+        // `decode_impl_refused`.)
+        if Self::reached_at_any_depth(trait_key)
+            && !trait_key.is_builtin("Decode")
+            && let Some(head) = (header.head.as_ref()).filter(|head| self.is_instance(head))
+        {
+            self.instance_impl_reached_by_type(ti, trait_key, target_type, head, &header);
+            self.duplicated_impls.insert((trait_key, target_type));
+            return;
+        }
         // A builtin trait's impl for a builtin type is no module's to
         // write, though silt has one (`trait Functor for List(_)`): that
         // is the error, not a duplicate of silt's.
@@ -2975,6 +2985,57 @@ impl TypeChecker {
             .any(|(name, _)| tr.is_builtin(name))
     }
 
+    /// Whether the impl `ti` is for some instantiations of its type only
+    /// (`trait Display for Box(Int)`, or through `type IB = Box(Int)`).
+    pub(super) fn impl_for_instance(&mut self, ti: &TraitImpl) -> bool {
+        self.enter_level();
+        let written = self.impl_written_args(ti, false);
+        let instance = (written.head.as_ref()).is_some_and(|head| self.is_instance(head));
+        self.exit_level();
+        instance
+    }
+
+    /// Report the impl `ti` of `tr` for `head`, some instantiations of
+    /// the type `ty` (`trait Display for Box(Int)`), of `Display` or
+    /// `json.Encode`, whose impls a value's type alone reaches: of these
+    /// a type has one impl, for every instantiation.
+    fn instance_impl_reached_by_type(
+        &mut self,
+        ti: &TraitImpl,
+        tr: TraitKey,
+        ty: TypeRef,
+        head: &Type,
+        written: &WrittenImpl,
+    ) {
+        let trait_name = self.impl_trait_name(ti);
+        let instance = self.show_type(&self.with_names(head, &written.names));
+        let done = match tr.is_builtin("Encode") {
+            true => "encoded",
+            false => "shown",
+        };
+        let params: Vec<String> = (('a'..='z').map(|c| c.to_string()))
+            .take(self.type_arity(ty).unwrap_or(1))
+            .collect();
+        let every = format!(
+            "{}({})",
+            self.show_type(&Type::Generic(ty, Vec::new())),
+            params.join(", ")
+        );
+        self.error_help(
+            Code::InvalidTraitImpl,
+            (
+                format!(
+                    "an impl of trait '{trait_name}' for '{instance}' alone cannot be: a value \
+                     is {done} by the impl of its type, whatever its type arguments"
+                ),
+                Some(format!(
+                    "write it for every instantiation: `trait {trait_name} for {every}`"
+                )),
+            ),
+            ti.header_span,
+        );
+    }
+
     /// `ty`, each type variable by its name in `names`.
     pub(super) fn with_names(&self, ty: &Type, names: &[(TyVar, Symbol)]) -> Type {
         let mapping: HashMap<TyVar, Type> = (names.iter())
@@ -3047,33 +3108,7 @@ impl TypeChecker {
             true => trait_name.clone(),
             false => self.show_named(tr, &mine.args, &mine.names),
         };
-        let earlier_head = (self.impl_written.get(&(tr, ty, met))).and_then(|earlier| {
-            Some(self.show_type(&self.with_names(earlier.head.as_ref()?, &earlier.names)))
-        });
-        let mine_head =
-            (mine.head.as_ref()).map(|head| self.show_type(&self.with_names(head, &mine.names)));
-        let (message, help) = if args == met
-            && Self::reached_at_any_depth(tr)
-            && let (Some(earlier_head), Some(mine_head)) = (&earlier_head, &mine_head)
-            && earlier_head != mine_head
-        {
-            // (Two impls a value's type alone could not tell apart.)
-            let done = if tr.is_builtin("Encode") {
-                "encoded"
-            } else if tr.is_builtin("Decode") {
-                "decoded"
-            } else {
-                "shown"
-            };
-            (
-                format!(
-                    "duplicate implementation of trait '{trait_name}' for type '{target}': the \
-                     impls for '{earlier_head}' and '{mine_head}' cannot both be: a value is \
-                     {done} by the impl of its type, whatever its type arguments"
-                ),
-                None,
-            )
-        } else if args == met {
+        let (message, help) = if args == met {
             // (Of an impl for some instantiations of its type, the type.)
             let target = match mine.head.as_ref().filter(|_| instance(self, &mine)) {
                 Some(head) => self.show_type(&self.with_names(head, &mine.names)),

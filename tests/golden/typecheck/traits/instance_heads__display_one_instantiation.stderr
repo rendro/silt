@@ -1,0 +1,6 @@
+error[type]: an impl of trait 'Display' for 'Box(Int)' alone cannot be: a value is shown by the impl of its type, whatever its type arguments
+ --> instance_heads__display_one_instantiation.silt:6:1
+   |
+ 6 | trait Display for Box(Int) { fn display(self) -> String { match self { Box(n) -> "int {n + 1}" } } }
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^ an impl of trait 'Display' for 'Box(Int)' alone cannot be: a value is shown by the impl of its type, whatever its type arguments
+  = help: write it for every instantiation: `trait Display for Box(a)`

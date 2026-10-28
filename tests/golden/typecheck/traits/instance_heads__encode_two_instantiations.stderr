@@ -1,5 +1,13 @@
-error[type]: duplicate implementation of trait 'json.Encode' for type 'Box': the impls for 'Box(Int)' and 'Box(String)' cannot both be: a value is encoded by the impl of its type, whatever its type arguments
+error[type]: an impl of trait 'json.Encode' for 'Box(Int)' alone cannot be: a value is encoded by the impl of its type, whatever its type arguments
+ --> instance_heads__encode_two_instantiations.silt:5:1
+   |
+ 5 | trait json.Encode for Box(Int) { fn encode(self) -> json.Value { json.Value.Null } }
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ an impl of trait 'json.Encode' for 'Box(Int)' alone cannot be: a value is encoded by the impl of its type, whatever its type arguments
+  = help: write it for every instantiation: `trait json.Encode for Box(a)`
+
+error[type]: an impl of trait 'json.Encode' for 'Box(String)' alone cannot be: a value is encoded by the impl of its type, whatever its type arguments
  --> instance_heads__encode_two_instantiations.silt:6:1
    |
  6 | trait json.Encode for Box(String) { fn encode(self) -> json.Value { json.Value.Null } }
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ duplicate implementation of trait 'json.Encode' for type 'Box': the impls for 'Box(Int)' and 'Box(String)' cannot both be: a value is encoded by the impl of its type, whatever its type arguments
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ an impl of trait 'json.Encode' for 'Box(String)' alone cannot be: a value is encoded by the impl of its type, whatever its type arguments
+  = help: write it for every instantiation: `trait json.Encode for Box(a)`
