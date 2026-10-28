@@ -2,7 +2,7 @@
 -- The captured value must survive after the enclosing function returns.
 import io
 fn make_greeter(name) {
-  { greeting -> "{greeting}, {name}!" }
+  { greeting: String -> "{greeting}, {name}!" }
 }
 
 fn program() {

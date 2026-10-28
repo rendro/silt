@@ -1372,8 +1372,18 @@ impl TypeChecker {
                 && !sig.complete
             {
                 self.passing_on = Some(f.name);
-                let scheme = self.generalize_fn(&sig.ty(), &bounds);
+                let mut scheme = self.generalize_fn(&sig.ty(), &bounds);
                 self.passing_on = None;
+                // A return type written is held to its parameters as it
+                // is read (`register_fn_decl`); one inferred, here. (The
+                // function of a REPL entry's statements is no function a
+                // program calls: its value is shown.)
+                if f.return_type.is_none()
+                    && !f.is_recovery_stub
+                    && !crate::session::is_cell_name(&resolve(f.name))
+                {
+                    self.return_only_variables(&mut scheme, f.span);
+                }
                 env.define(f.name, scheme);
             }
         }

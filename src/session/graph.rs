@@ -824,6 +824,13 @@ pub(super) fn cell_name(n: usize) -> String {
     format!("<repl:{n}>")
 }
 
+/// Whether `name` is that of a REPL entry (see [`cell_name`]): of the
+/// function that holds the statements of an entry, whose value the REPL
+/// shows.
+pub(crate) fn is_cell_name(name: &str) -> bool {
+    name.starts_with("<repl:")
+}
+
 /// The `import` declarations of `program` in their one order
 /// (`ast::import_order`, the order `silt fmt` writes them in, whatever
 /// order they are written in): the module name written and the

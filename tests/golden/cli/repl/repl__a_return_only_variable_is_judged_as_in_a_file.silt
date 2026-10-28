@@ -1,0 +1,6 @@
+-- cmd: repl
+-- stderr-contains: type variable 'b' in return type is not introduced by any parameter
+-- stdin: fn e() { [] }\n:type e\nfn fail() { panic("x") }\n:type fail\ntrait Conv(b) { fn conv(self) -> b }\nfn cx(w) { Conv.conv(w) }\nlet xs: List(Int) = e()\nxs\n:quit\n
+-- In the REPL a function's inferred type is held to the rule a file's is:
+-- a return-only variable no bound names is general, a body that never
+-- returns gives `Never`, and one a bound names is refused.

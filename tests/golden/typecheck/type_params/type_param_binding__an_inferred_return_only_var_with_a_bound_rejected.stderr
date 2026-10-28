@@ -1,0 +1,23 @@
+error[type]: type variable 'b' in return type is not introduced by any parameter; add a `type b` parameter or anchor it on an existing parameter's type
+ --> type_param_binding__an_inferred_return_only_var_with_a_bound_rejected.silt:13:1
+    |
+ 13 | fn cx(w) { Conv.conv(w) }
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^ type variable 'b' in return type is not introduced by any parameter; add a `type b` parameter or anchor it on an existing parameter's type
+
+error[type]: type variable 'b' in return type is not introduced by any parameter; add a `type b` parameter or anchor it on an existing parameter's type
+ --> type_param_binding__an_inferred_return_only_var_with_a_bound_rejected.silt:14:1
+    |
+ 14 | fn cx_written(w: t) -> b where t: Conv(b) { Conv.conv(w) }
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type variable 'b' in return type is not introduced by any parameter; add a `type b` parameter or anchor it on an existing parameter's type
+
+error[type]: type variable 'a' in return type is not introduced by any parameter; add a `type a` parameter or anchor it on an existing parameter's type
+ --> type_param_binding__an_inferred_return_only_var_with_a_bound_rejected.silt:15:1
+    |
+ 15 | fn sorted() { list.sort([]) }
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type variable 'a' in return type is not introduced by any parameter; add a `type a` parameter or anchor it on an existing parameter's type
+
+error[type]: infinite type: the type variable appears inside Fn(_) -> _
+ --> type_param_binding__an_inferred_return_only_var_with_a_bound_rejected.silt:16:22
+    |
+ 16 | fn self_applied(x) { x(x) }
+    |                      ^^^^ infinite type: the type variable appears inside Fn(_) -> _

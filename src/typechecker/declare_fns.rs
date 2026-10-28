@@ -32,6 +32,72 @@ impl FnSig {
 impl TypeChecker {
     // ── Register function declarations ──────────────────────────────
 
+    /// The error of a function whose return type has the type variable
+    /// `name` that no parameter's type has and a bound names: written so
+    /// (`fn zero() -> a where a: Monoid`), or inferred so (`fn cx(w) {
+    /// Conv.conv(w) }`, whose `b` the bound `a: Conv(b)` names). Which
+    /// impl the bound means would be what each caller asks of it.
+    pub(super) fn return_only_variable(&mut self, name: Symbol, span: Span) {
+        let n = resolve(name);
+        self.error(
+            Code::InvalidTypeAnnotation,
+            format!(
+                "type variable '{n}' in return type is not introduced by any parameter; \
+                 add a `type {n}` parameter or anchor it on an existing parameter's type"
+            ),
+            span,
+        );
+    }
+
+    /// Hold `scheme`, the inferred type of the function at `span`, to
+    /// the rule its written return type is held to: the error of each
+    /// type variable that its return type has, no parameter's type has
+    /// and a bound names, named as `:type` writes it. One that no bound
+    /// names is general, as `fn e() { [] }` gives every caller the list
+    /// it wants; and a return type that is a variable nothing else names
+    /// is that of a body that never returns (`panic`, `process.exit`, a
+    /// call of itself): `Never`, as the program would write it. A body
+    /// that has an error of its own is not judged: its type is not
+    /// known.
+    pub(super) fn return_only_variables(&mut self, scheme: &mut Scheme, span: Span) {
+        let Type::Fun(params, ret) = &scheme.ty else {
+            return;
+        };
+        let erred = self.errors.iter().any(|d| {
+            d.severity == crate::diagnostic::Severity::Error
+                && d.span.file == span.file
+                && d.span.start >= span.start
+                && d.span.end <= span.end
+        });
+        if erred || scheme.ty.holds_error() {
+            return;
+        }
+        let given: Vec<TyVar> = params.iter().flat_map(free_vars_in).collect();
+        // (A variable the scheme does not quantify is an outer
+        // definition's, which a later one may decide.)
+        if let Type::Var(v) = **ret
+            && scheme.vars.contains(&v)
+            && !given.contains(&v)
+            && !scheme.preds.iter().any(|pred| pred.mentions(v))
+        {
+            scheme.ty = Type::Fun(params.clone(), Box::new(Type::Never));
+            scheme.vars.retain(|var| *var != v);
+            return;
+        }
+        let letters = scheme.letters();
+        for var in free_vars_in(ret) {
+            let bounded = scheme.preds.iter().any(|pred| {
+                matches!(pred, Pred::Trait { .. } | Pred::Via { .. }) && pred.mentions(var)
+            });
+            if bounded
+                && !given.contains(&var)
+                && let Some(&name) = letters.get(&var)
+            {
+                self.return_only_variable(name, span);
+            }
+        }
+    }
+
     /// Read the signature of `f`. A function with a complete signature
     /// (see [`FnSig::complete`]) is bound in `env` with its scheme; any
     /// other is bound when its body is checked, in the order the
@@ -78,12 +144,12 @@ impl TypeChecker {
             param_types.push(ty);
         }
 
-        // Binding rule: every lowercase type variable that appears in the
-        // user-written return annotation must also be introduced by some
-        // parameter (regular annotation or `type a`). Detected by
-        // snapshotting `param_map` before resolving the return annotation —
-        // any new key added afterwards is a variable that only appears in
-        // the return, with no anchor.
+        // Binding rule: a lowercase type variable of the written return
+        // annotation that no parameter introduces (regular annotation or
+        // `type a`) and a where clause names is an error, once the where
+        // clauses are read. Detected by snapshotting `param_map` before
+        // resolving the return annotation: any new key added afterwards
+        // is a variable that only appears in the return.
         let pre_return_keys: std::collections::HashSet<Symbol> =
             param_map.keys().copied().collect();
         let ret_type = if let Some(te) = &f.return_type {
@@ -94,19 +160,6 @@ impl TypeChecker {
             let prev_never = std::mem::replace(&mut self.never_return, never);
             let resolved = self.resolve_type_expr(te, &mut param_map);
             self.never_return = prev_never;
-            for name in param_map.keys() {
-                if !pre_return_keys.contains(name) && !self.registry_rows {
-                    let n = resolve(*name);
-                    self.error(Code::InvalidTypeAnnotation,
-                        format!(
-                            "type variable '{}' in return type is not introduced by any parameter; \
-                             add a `type {}` parameter or anchor it on an existing parameter's type",
-                            n, n
-                        ),
-                        f.span,
-                    );
-                }
-            }
             resolved
         } else {
             self.fresh_var()
@@ -213,6 +266,19 @@ impl TypeChecker {
                     ),
                     f.span,
                 );
+            }
+        }
+
+        let return_only: Vec<(Symbol, TyVar)> = (param_map.iter())
+            .filter(|(name, _)| !pre_return_keys.contains(*name))
+            .filter_map(|(name, ty)| match ty {
+                Type::Var(v) => Some((*name, *v)),
+                _ => None,
+            })
+            .collect();
+        for (name, var) in return_only {
+            if !self.registry_rows && bounds.iter().any(|pred| pred.mentions(var)) {
+                self.return_only_variable(name, f.span);
             }
         }
 

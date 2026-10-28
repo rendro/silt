@@ -1,0 +1,21 @@
+-- cmd: check
+-- exit: 1
+-- A return type variable that a bound names and no parameter introduces is
+-- refused when the checker infers it as when it is written: `cx` is
+-- `Fn(a) -> b where a: Conv(b)`, `sorted` is `Fn() -> List(a) where a:
+-- Compare`; each has the written form's error. A function whose body has
+-- an error of its own is not judged again.
+import list
+trait Conv(b) { fn conv(self) -> b }
+type W { W }
+trait Conv(Int) for W { fn conv(self) -> Int { 1 } }
+trait Conv(String) for W { fn conv(self) -> String { "s" } }
+fn cx(w) { Conv.conv(w) }
+fn cx_written(w: t) -> b where t: Conv(b) { Conv.conv(w) }
+fn sorted() { list.sort([]) }
+fn self_applied(x) { x(x) }
+fn main() {
+  let i: Int = cx(W)
+  let s: String = cx(W)
+  println("{i} {s}")
+}

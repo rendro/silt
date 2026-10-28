@@ -39,6 +39,7 @@ use crate::value::{HostFn, HostShape};
 pub use entry::{ENTRY_POINT, TestFn, TestKind, selected_tests, test_functions, test_kind};
 use entry::{looks_like_library_module, looks_like_test_file};
 pub use graph::{Import, ImportResolution, Module, ModuleGraph, ModuleId, Ordering, parse_text};
+pub(crate) use graph::is_cell_name;
 pub use host::{HostFunction, HostModule};
 pub use packages::{LockPolicy, Package, Packages, ProjectSetup};
 

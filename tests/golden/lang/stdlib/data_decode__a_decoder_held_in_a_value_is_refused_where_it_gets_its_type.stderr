@@ -1,3 +1,15 @@
+error[type]: type variable 'a' in return type is not introduced by any parameter; add a `type a` parameter or anchor it on an existing parameter's type
+ --> data_decode__a_decoder_held_in_a_value_is_refused_where_it_gets_its_type.silt:13:1
+    |
+ 13 | fn dec() {
+    | ^^^^^^^^^^ type variable 'a' in return type is not introduced by any parameter; add a `type a` parameter or anchor it on an existing parameter's type
+
+error[type]: type variable 'a' in return type is not introduced by any parameter; add a `type a` parameter or anchor it on an existing parameter's type
+ --> data_decode__a_decoder_held_in_a_value_is_refused_where_it_gets_its_type.silt:17:1
+    |
+ 17 | fn mk() {
+    | ^^^^^^^^^ type variable 'a' in return type is not introduced by any parameter; add a `type a` parameter or anchor it on an existing parameter's type
+
 error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
  --> data_decode__a_decoder_held_in_a_value_is_refused_where_it_gets_its_type.silt:32:20
     |
