@@ -134,6 +134,11 @@ impl TypeChecker {
         asker: Option<Asker>,
         owner: Option<crate::session::ModuleId>,
     ) {
+        // (A type held with its arguments left open, `let t = List`, is
+        // refused as one given so.)
+        if self.holds_open_vars(ty) {
+            self.open_type_arguments.insert(origin.span);
+        }
         // (As it is now: what a variable in it is bound to later, a
         // type a scope's end picks, is no part of what it was given.)
         self.decode_gaps.push(DecodeGap {

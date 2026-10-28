@@ -2865,7 +2865,13 @@ impl TypeChecker {
                         callee: Some(name),
                         op: None,
                     });
-                    self.instantiate_def(&scheme, expr.res)
+                    let ty = self.instantiate_def(&scheme, expr.res);
+                    // (A generic type's name, `List`: its value names the
+                    // type alone.)
+                    if self.names_generic_type(expr) {
+                        self.open_vars.extend(free_vars_in(&ty));
+                    }
+                    ty
                 } else if name == intern("self") {
                     // `self` is resolved at runtime — allow without error
                     self.fresh_var()

@@ -149,6 +149,16 @@ impl TypeChecker {
         self.errors.push(diagnostic);
     }
 
+    /// Whether `ty` mentions a variable of `open_vars`, also through what
+    /// the checker has learnt of its variables.
+    pub(super) fn holds_open_vars(&self, ty: &Type) -> bool {
+        free_vars_in(ty).into_iter().any(|v| {
+            self.open_vars.contains(&v)
+                || matches!(self.tables.vars.subst.get(v), Some(Some(resolved))
+                    if self.holds_open_vars(resolved))
+        })
+    }
+
     /// The error of the decoder `builtin`, which decodes as `decoding`
     /// says, given the type `ty` (a call names it by the alias
     /// `written`, if by one) at `span`, if it has no decoder for it. A
@@ -362,7 +372,10 @@ impl TypeChecker {
             let accepted = decoding.type_arguments(str::to_string);
             // A container type the call gives its arguments by its
             // arguments (`List(Int)`).
-            let type_name = match written.is_none() && free_vars_in(ty).is_empty() {
+            let type_name = match written.is_none()
+                && free_vars_in(ty).is_empty()
+                && !self.open_type_arguments.contains(&span)
+            {
                 true => self.show_type(ty),
                 false => type_name,
             };
