@@ -1056,6 +1056,11 @@ impl Vm {
                     ok!(self.dict_part(|dict, globals| dict.descriptor(globals)));
                     load!();
                 }
+                Instr::TypeArg { k } => {
+                    save!();
+                    ok!(self.type_arg(k));
+                    load!();
+                }
                 Instr::Bind { n } => {
                     save!();
                     ok!(self.bind(n));

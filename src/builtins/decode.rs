@@ -200,6 +200,41 @@ pub(crate) fn shown(rt: &Runtime, field_type: &FieldType) -> std::string::String
     })
 }
 
+/// The value of the type `field_type`, its descriptor, as a `type a`
+/// parameter is given it: what a written `decode` of a generic type
+/// decodes a type argument by (`a.decode(v)`), and is called with.
+pub(crate) fn descriptor(rt: &Runtime, field_type: &FieldType) -> Value {
+    let info = |id| rt.type_info(id).map_or(Value::Unit, Value::TypeDescriptor);
+    let head = |name| crate::defs::builtin_type_id(name);
+    let id = match field_type {
+        FieldType::Int => return Value::PrimitiveDescriptor("Int"),
+        FieldType::Float => return Value::PrimitiveDescriptor("Float"),
+        FieldType::String => return Value::PrimitiveDescriptor("String"),
+        FieldType::Bool => return Value::PrimitiveDescriptor("Bool"),
+        FieldType::Record(id) | FieldType::Enum(id) => return info(*id),
+        FieldType::Date => return info(ty::DATE),
+        FieldType::Time => return info(ty::TIME),
+        FieldType::DateTime => return info(ty::DATE_TIME),
+        FieldType::JsonValue => return info(ty::JSON_VALUE),
+        FieldType::Bytes => head("Bytes"),
+        FieldType::List(_) => head("List"),
+        FieldType::Option(_) => head("Option"),
+        FieldType::Map(_) => head("Map"),
+        FieldType::Tuple(_) => head("Tuple"),
+        FieldType::Applied(id, _) => Some(*id),
+        FieldType::Param(_) | FieldType::Unsupported(_) => None,
+    };
+    match (id, field_type) {
+        (Some(id), FieldType::Bytes) => info(id),
+        (Some(id), _) => Value::TypeDescriptor(Arc::new(TypeInfo {
+            id,
+            name: shown(rt, field_type),
+            shape: Shape::Applied(field_type.clone()),
+        })),
+        (None, _) => Value::Unit,
+    }
+}
+
 // ── Parts a written impl decodes ────────────────────────────────────
 //
 // A record or enum type the program wrote a `json.Decode` impl for is
@@ -243,6 +278,9 @@ pub(crate) struct Hole {
     pub(crate) json: Value,
     /// The slot of the type's `decode`.
     pub(crate) slot: u16,
+    /// The type's descriptor, for a generic type (`Box(Int)`): what
+    /// its `decode` takes its type arguments from. Unit for any other.
+    pub(crate) ty: Value,
 }
 
 impl std::ops::Deref for Reader<'_> {
@@ -283,16 +321,30 @@ impl<'a> Reader<'a> {
             .is_some_and(|impls| (impls.written)(id).is_some())
     }
 
-    /// The value of the part `doc`, `at` a path, of the type `id`, if a
-    /// written impl decodes it: a stand-in while the parts are
+    /// The value of the part `doc`, `at` a path, of the type `expected`
+    /// (a record or enum type, a generic one at its type arguments), if
+    /// a written impl decodes it: a stand-in while the parts are
     /// collected, then what the impl gave. A part with no `json.Value`
     /// (a TOML float that is no number) is the decoder's error.
-    fn hole<D: Document>(&self, id: TypeId, doc: &D, at: &At) -> Option<Result<Value, Error>> {
+    fn hole<D: Document>(
+        &self,
+        expected: &FieldType,
+        doc: &D,
+        at: &At,
+    ) -> Option<Result<Value, Error>> {
+        let (FieldType::Record(id) | FieldType::Enum(id) | FieldType::Applied(id, _)) = expected
+        else {
+            return None;
+        };
         let impls = self.impls.as_ref()?;
-        let slot = (impls.written)(id)?;
+        let slot = (impls.written)(*id)?;
         Some(match &mut *impls.holes.borrow_mut() {
             Holes::Collect(holes) => json_part(doc, at).map(|json| {
-                holes.push(Hole { json, slot });
+                let ty = match expected {
+                    FieldType::Applied(..) => descriptor(self.rt, expected),
+                    _ => Value::Unit,
+                };
+                holes.push(Hole { json, slot, ty });
                 Value::Unit
             }),
             Holes::Supply(values) => match values.next() {
@@ -401,7 +453,9 @@ fn variant_field_message(ty: &str, variant: &str, declared: &str) -> std::string
 fn names_enum(rt: &Reader, field_type: &FieldType) -> bool {
     match field_type {
         FieldType::Enum(id) => !rt.written(*id),
-        FieldType::Applied(id, _) => rt.type_info(*id).is_some_and(|ty| decodable_enum(&ty)),
+        FieldType::Applied(id, _) => {
+            !rt.written(*id) && rt.type_info(*id).is_some_and(|ty| decodable_enum(&ty))
+        }
         FieldType::List(t) | FieldType::Option(t) | FieldType::Map(t) => names_enum(rt, t),
         FieldType::Tuple(ts) => ts.iter().any(|t| names_enum(rt, t)),
         _ => false,
@@ -894,9 +948,7 @@ pub(crate) fn value<D: Document>(
     at: &At,
 ) -> Result<Value, Error> {
     // A record or enum type with a written impl: the impl's.
-    if let FieldType::Record(id) | FieldType::Enum(id) = expected
-        && let Some(decoded) = rt.hole(*id, doc, at)
-    {
+    if let Some(decoded) = rt.hole(expected, doc, at) {
         return decoded;
     }
     let rules = D::RULES;

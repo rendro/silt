@@ -1474,8 +1474,6 @@ impl TypeChecker {
             self.duplicated_impls.insert((trait_key, target_type));
             return;
         }
-        // (A `json.Decode` impl for a generic type is refused as such:
-        // `decode_impl_refused`.)
         if Self::reached_at_any_depth(trait_key)
             && !trait_key.is_builtin("Decode")
             && let Some(head) = (header.head.as_ref()).filter(|head| self.is_instance(head))
@@ -1537,19 +1535,6 @@ impl TypeChecker {
         if !self.impl_in_its_module(ti, target_type) {
             return;
         }
-        if self.decode_impl_refused(trait_key, target_type) {
-            self.error(
-                Code::InvalidTraitImpl,
-                format!(
-                    "trait `json.Decode` cannot be implemented for the generic type `{}`: \
-                     a decoder builds a value of one type",
-                    target_type.name
-                ),
-                ti.span,
-            );
-            return;
-        }
-
         // Build the impl-level parameter map. For a parameterized target
         // like `trait X for Box(a)`, each lowercase binder in
         // `target_param_names` becomes a fresh type variable that is

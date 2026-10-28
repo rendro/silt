@@ -71,7 +71,8 @@ impl<D: Document + Send> Native for Decoding<D> {
         if let Some(hole) = self.holes.get_mut(next) {
             self.calling = true;
             let json = std::mem::replace(&mut hole.json, Value::Unit);
-            return vm.call_written_decode(hole.slot, json);
+            let ty = std::mem::replace(&mut hole.ty, Value::Unit);
+            return vm.call_written_decode(hole.slot, ty, json);
         }
         // Every part decoded: the decoder's own error after them, or
         // the value with them.
@@ -149,11 +150,25 @@ impl Vm {
 
     /// The call of the `decode` the program wrote in the global slot
     /// `slot` with `json`: the VM's own copy of the impl's closure, as
-    /// a call of the impl's method would take.
-    pub(crate) fn call_written_decode(&mut self, slot: u16, json: Value) -> Result<Step, VmError> {
+    /// a call of the impl's method would take. The descriptor `ty` of a
+    /// generic type (`Box(Int)`) is left in the slot of the callee, as
+    /// `Box(Int).decode(v)` leaves it: the impl takes its type
+    /// arguments from it (`TypeArg`).
+    pub(crate) fn call_written_decode(
+        &mut self,
+        slot: u16,
+        ty: Value,
+        json: Value,
+    ) -> Result<Step, VmError> {
         let impl_ = self.global(slot).cloned().ok_or_else(unset_decode)?;
         let impl_ = self.own.value(slot, impl_);
-        Ok(self.call(impl_, [json]))
+        let func_slot = self.stack.len();
+        self.stack.push(ty);
+        self.stack.push(json);
+        Ok(Step::Call {
+            callee: impl_,
+            argc: self.stack.len() - func_slot - 1,
+        })
     }
 }
 
@@ -176,5 +191,29 @@ impl Vm {
                 self.user_facing_type_name(other)
             ))),
         }
+    }
+}
+
+impl Vm {
+    /// `TypeArg`: the descriptor of the `k`th type argument of the type
+    /// whose descriptor is on top (`Int` of `Box(Int)`).
+    pub(super) fn type_arg(&mut self, k: usize) -> Result<(), VmError> {
+        let top = self.stack.len() - 1;
+        let arg = match &self.stack[top] {
+            Value::TypeDescriptor(info) => match &info.shape {
+                crate::typeinfo::Shape::Applied(FieldType::Applied(_, args)) => {
+                    args.get(k)
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some(arg) = arg else {
+            return Err(VmError::type_confusion(
+                "a written `decode` of a generic type is called without its type arguments",
+            ));
+        };
+        self.stack[top] = decode::descriptor(&self.runtime, arg);
+        Ok(())
     }
 }

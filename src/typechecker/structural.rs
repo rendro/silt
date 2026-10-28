@@ -13,9 +13,8 @@ impl TypeChecker {
     /// `json.Decode` impl for: their trait is that impl and not the
     /// structural one, also before the impl is entered. Only an impl the
     /// checker accepts counts: one written where it may not be
-    /// (`impl_is_here`), or a `json.Decode` impl for a generic type, is
-    /// no impl, as is one for some instantiations of its type
-    /// (`Box(Int)`), and the type keeps the trait it had. (An impl of
+    /// (`impl_is_here`) is no impl, as is one for some instantiations of
+    /// its type (`Box(Int)`), and the type keeps the trait it had. (An impl of
     /// another module or of an earlier REPL cell is in the session's
     /// tables: `by_structure` reads it there.)
     pub(super) fn settle_structural_traits(&mut self, decls: &[Decl]) {
@@ -29,7 +28,6 @@ impl TypeChecker {
                 && let Some(target) = self.impl_target(ti)
                 && self.impl_is_here(ti, target)
                 && !self.impl_for_instance(ti)
-                && !self.decode_impl_refused(tr, canonical_head(&self.tables.resolver, target))
             {
                 written.insert((tr, canonical_head(&self.tables.resolver, target)));
             }

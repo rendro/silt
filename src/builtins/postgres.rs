@@ -1931,9 +1931,9 @@ impl Native for Filler {
             false => None,
         };
         match self.filling.next(given) {
-            Fill::Call(slot, json) => {
+            Fill::Call(slot, ty, json) => {
                 self.calling = true;
-                vm.call_written_decode(slot, json)
+                vm.call_written_decode(slot, ty, json)
             }
             Fill::Done(Ok(rows)) => Ok(Step::Done(ok(Value::list(rows)))),
             Fill::Done(Err(error)) => {
@@ -2134,12 +2134,12 @@ impl Native for Finisher {
                 continue;
             }
             match next {
-                Fill::Call(slot, json) => {
+                Fill::Call(slot, ty, json) => {
                     if self.filling.starts_row() && self.ch.is_closed() {
                         return Ok(Step::Done(ok(Value::Unit)));
                     }
                     self.state = Finishing::Calling;
-                    return vm.call_written_decode(slot, json);
+                    return vm.call_written_decode(slot, ty, json);
                 }
                 Fill::Done(Ok(rows)) if rows.is_empty() => return Ok(Step::Done(ok(Value::Unit))),
                 Fill::Done(Ok(rows)) => {

@@ -138,6 +138,7 @@ fn disassemble_instruction(
         | Instr::MakeMap { pairs: n }
         | Instr::MakeSet { count: n }
         | Instr::DictSub { k: n }
+        | Instr::TypeArg { k: n }
         | Instr::SuperDict { index: n }
         | Instr::WhereDict { index: n }
         | Instr::Bind { n } => with_number(n),
