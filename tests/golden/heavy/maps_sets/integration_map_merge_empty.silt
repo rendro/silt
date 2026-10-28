@@ -1,6 +1,6 @@
 import io
 import map
-fn program() { map.merge(#{}, #{}) }
+fn program() -> Map(String, Int) { map.merge(#{}, #{}) }
 
 fn main() {
   println(io.inspect(program()))

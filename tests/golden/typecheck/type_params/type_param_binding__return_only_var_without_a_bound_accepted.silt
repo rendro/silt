@@ -1,0 +1,18 @@
+-- A return type variable that no parameter introduces and no bound names
+-- is accepted, written or inferred: each caller gets the type it asks for.
+-- A body that never returns is inferred to return `Never`.
+fn make() -> List(a) { [] }
+fn inferred() { [] }
+fn nothing() { None }
+fn fail() { panic("unreachable") }
+fn main() {
+  let a: List(Int) = make()
+  let b: List(String) = make()
+  let c: List(Bool) = inferred()
+  let d: Option(Int) = nothing()
+  let e: Int = match a {
+    [] -> 0
+    _ -> fail()
+  }
+  println("{a} {b} {c} {d} {e}")
+}

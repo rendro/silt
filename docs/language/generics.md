@@ -117,27 +117,36 @@ Type variables may appear:
 - Inside a function type: `f: Fn(a) -> b`
 - Applied, as a type constructor variable: `xs: m(Int)` (see
   [Functors](functors.md))
-- In the return type, **only if already bound** by a parameter
+- In the return type; one a `where` clause names, only if a parameter binds
+  it, or a parameter of a function the function returns
 
 ### The binding rule
 
-Every type variable used in a signature must appear in at least one
-**input position** — either a regular parameter's type, or as a `type a`
-parameter (see below). A type variable that appears only in the return
-type or only in a `where` clause is a compile-time error:
+Every type variable that a `where` clause names must appear in at least one
+**input position**: a regular parameter's type, a `type a` parameter (see
+below), or a parameter of a function type the function returns. A type
+variable that appears only in the results of the return type and that a
+bound names, or only in a `where` clause, is a compile-time error:
 
 ```silt
--- ERROR: 'a' only appears in the return type
-fn make() -> a { ... }
+-- ERROR: 'a' only appears in the return type, and a bound names it
+fn zero() -> a where a: Monoid { ... }
 
 -- ERROR: 'a' only appears in a where clause
 fn parse(s: String) -> Int where a: Parse { ... }
 ```
 
-This rule eliminates the "where did `a` come from?" confusion that
-plagues ML-family languages with implicit `forall`. When the reader
-encounters a type variable, its origin is always a parameter they can
-point to.
+The rule is the same for a signature the checker infers: `fn cx(w) {
+Conv.conv(w) }` has the type `Fn(a) -> b where a: Conv(b)` and is refused
+as its written form is. Which impl a bound picks is always decided by what
+a caller passes, never by what the caller expects back. So
+`fn shown() -> Fn(a) -> String where a: Display` is accepted: whoever calls
+the returned function passes the `a`.
+
+A return-only type variable that no bound names is allowed, written or
+inferred: `fn empty() -> List(a) { [] }` gives each caller the list it asks
+for. A function whose body never returns (`fn fail() { panic("failed") }`)
+is inferred to return `Never`, as `fn fail() -> Never` writes it.
 
 A type constructor variable follows the same rule: `m` in `xs: m(Int)`
 appears in a parameter's type, or is a `type m` parameter.
@@ -309,7 +318,7 @@ work.
 | Function shape | Use |
 |---|---|
 | `map(xs: List(a), f: Fn(a) -> b) -> List(b)` | No `type` params; both vars from args |
-| `parse(body: String) -> Result(a, ParseError)` | Error — `a` unbound |
+| `parse(body: String) -> Result(a, ParseError) where a: Parse` | Error — a bound names `a`, no parameter binds it |
 | `parse(body: String, type a) -> Result(a, ParseError)` | Correct form |
 | `default(type a) -> a` | `a` is the only parameter |
 

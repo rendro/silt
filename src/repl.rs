@@ -19,7 +19,7 @@ use crate::lexer::Lexer;
 use crate::session::{Config, Entry, LockPolicy, ModuleId, ProjectSetup, Session};
 use crate::source::{FileId, SourceMap, SourceName, Span};
 use crate::typechecker::names::{Binding, Exports, ModuleScope};
-use crate::types::{Pred, RigidId, Scheme, TyVar, Type, free_vars_in, substitute_vars};
+use crate::types::{Pred, RigidId, Scheme, TyVar, Type, substitute_vars};
 use crate::value::Value;
 use crate::vm::Vm;
 
@@ -392,21 +392,8 @@ pub struct NotAnExpression;
 /// (`Fn(m(Int)) -> m(Int) where m: Functor`). A variable the scheme does
 /// not quantify is `_`, as in a diagnostic.
 pub fn written_scheme(scheme: &Scheme) -> String {
-    let heads = crate::types::constructor_heads(&scheme.ty);
-    let mut constructors = ["m", "n", "o", "p", "q", "r"].into_iter();
-    let mut others = (b'a'..=b'z').map(|letter| char::from(letter).to_string());
-    let letters: HashMap<TyVar, Type> = free_vars_in(&scheme.ty)
-        .into_iter()
-        .filter(|var| scheme.vars.contains(var))
-        .map(|var| {
-            let name = match heads.contains(&var) {
-                true => constructors.next().map(String::from),
-                false => others.next(),
-            }
-            .unwrap_or_else(|| "_".to_string());
-            let name = intern::intern(&name);
-            (var, Type::Rigid(RigidId { var, name }))
-        })
+    let letters: HashMap<TyVar, Type> = (scheme.letters().into_iter())
+        .map(|(var, name)| (var, Type::Rigid(RigidId { var, name })))
         .collect();
     let mut text = substitute_vars(&scheme.ty, &letters).to_string();
     // Each lettered variable's bounds, in the order of the letters.

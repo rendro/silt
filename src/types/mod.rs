@@ -856,6 +856,14 @@ impl Pred {
         }
     }
 
+    /// Whether the predicate names the type variable `var`, in its
+    /// subject or in the other types it names.
+    pub fn mentions(&self, var: TyVar) -> bool {
+        std::iter::once(self.subject())
+            .chain(self.args())
+            .any(|ty| free_vars_in(ty).contains(&var))
+    }
+
     /// The types the predicate names besides its subject.
     pub fn args(&self) -> &[Type] {
         match self {
@@ -886,6 +894,28 @@ impl Scheme {
             preds: Vec::new(),
             ty,
         }
+    }
+
+    /// The name of each type variable the scheme quantifies, as `:type`
+    /// and the errors write it: a letter, in the order the variables
+    /// first appear in its type (`Fn(a, Fn(a) -> b) -> b`); a type
+    /// constructor variable `m`, `n`, ... (`Fn(m(Int)) -> m(Int)`).
+    pub fn letters(&self) -> HashMap<TyVar, Symbol> {
+        let heads = constructor_heads(&self.ty);
+        let mut constructors = ["m", "n", "o", "p", "q", "r"].into_iter();
+        let mut others = (b'a'..=b'z').map(|letter| char::from(letter).to_string());
+        free_vars_in(&self.ty)
+            .into_iter()
+            .filter(|var| self.vars.contains(var))
+            .map(|var| {
+                let name = match heads.contains(&var) {
+                    true => constructors.next().map(String::from),
+                    false => others.next(),
+                }
+                .unwrap_or_else(|| "_".to_string());
+                (var, intern(&name))
+            })
+            .collect()
     }
 }
 

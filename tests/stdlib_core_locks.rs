@@ -139,7 +139,7 @@ fn test_result_flat_map_err_propagates() {
     // and the callback is never invoked.
     let result = run(r#"
 import result
-fn main() { result.flat_map(Err("fail"), { n -> Ok(n * n) }) }
+fn main() -> Result(Int, String) { result.flat_map(Err("fail"), { n -> Ok(n * n) }) }
     "#);
     assert_eq!(
         result,

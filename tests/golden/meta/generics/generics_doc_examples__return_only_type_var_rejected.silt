@@ -2,6 +2,7 @@
 -- exit: 1
 -- stderr-contains: error[type]
 -- stderr-contains: type variable 'a' in return type is not introduced
-fn make() -> a { panic("unreachable") }
+trait Monoid { fn empty() -> Self }
+fn zero() -> a where a: Monoid { panic("unreachable") }
 
 fn main() { () }

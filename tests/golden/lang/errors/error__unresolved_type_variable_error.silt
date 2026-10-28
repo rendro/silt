@@ -1,5 +1,5 @@
 -- cmd: check
 -- exit: 1
 -- stderr-contains: type variable 'a' in return type is not introduced
-fn default() -> a { panic("no value") }
+fn default() -> a where a: Display { panic("no value") }
 fn main() { let x = default() }
