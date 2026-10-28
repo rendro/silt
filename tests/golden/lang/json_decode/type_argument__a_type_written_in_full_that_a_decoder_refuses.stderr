@@ -12,11 +12,11 @@ error[type]: `json.parse` cannot decode `Set(Int)`: its type argument must be In
     |                             ^^^^^^^^ `json.parse` cannot decode `Set(Int)`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, a type with a `json.Decode` impl, or List(T), Option(T), Map(String, T) or a tuple of decodable types
   = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
-error[type]: `json.parse` cannot decode `Map(Int, String)`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, a type with a `json.Decode` impl, or List(T), Option(T), Map(String, T) or a tuple of decodable types
+error[type]: `json.parse` cannot decode `Map(Int, String)`: a decoded map's key type must be String
  --> type_argument__a_type_written_in_full_that_a_decoder_refuses.silt:24:29
     |
  24 |   let _ = json.parse("\{}", Map(Int, String))
-    |                             ^^^^^^^^^^^^^^^^ `json.parse` cannot decode `Map(Int, String)`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, a type with a `json.Decode` impl, or List(T), Option(T), Map(String, T) or a tuple of decodable types
+    |                             ^^^^^^^^^^^^^^^^ `json.parse` cannot decode `Map(Int, String)`: a decoded map's key type must be String
   = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: `json.parse` cannot decode `Box(Set(Int))`: field `v` has type `Set(Int)`, which has no decoder

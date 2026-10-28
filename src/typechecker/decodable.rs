@@ -106,7 +106,7 @@ impl Tables {
         ty: &Type,
         params: &[Type],
         records: &mut Vec<(TypeRef, Vec<Type>)>,
-    ) -> Result<FieldType, String> {
+    ) -> Result<FieldType, Type> {
         use crate::typeinfo::ty as bt;
         let mut part = |ty: &Type| self.decoded_field_type(ty, params, records);
         match ty {
@@ -116,7 +116,7 @@ impl Tables {
             Type::Bool => Ok(FieldType::Bool),
             Type::Var(_) | Type::Rigid(_) => match params.iter().position(|p| p == ty) {
                 Some(at) => Ok(FieldType::Param(at as u16)),
-                None => Err(shown(ty)),
+                None => Err(ty.clone()),
             },
             Type::List(elem) => Ok(FieldType::List(Box::new(part(elem)?))),
             // The keys of a JSON object or a TOML table are strings.
@@ -145,7 +145,7 @@ impl Tables {
                 Ok(FieldType::Applied(t.id, parts))
             }
             // Set, Channel, functions, ...
-            _ => Err(shown(ty)),
+            _ => Err(ty.clone()),
         }
     }
 
@@ -157,7 +157,7 @@ impl Tables {
         t: TypeRef,
         ty: &Type,
         records: &mut Vec<(TypeRef, Vec<Type>)>,
-    ) -> Result<FieldType, String> {
+    ) -> Result<FieldType, Type> {
         use crate::typeinfo::ty as bt;
         match t.id {
             id if id == bt::DATE => Ok(FieldType::Date),
@@ -176,7 +176,7 @@ impl Tables {
                 }
             }
             // Builtin enums, the other builtin types.
-            _ => Err(shown(ty)),
+            _ => Err(ty.clone()),
         }
     }
 
