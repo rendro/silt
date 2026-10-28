@@ -38,7 +38,7 @@ repros/type_soundness/cv2.silt	holds	reject E0301	TS-6: an anonymous record lite
 repros/type_soundness/cv3.silt	holds	reject E0301	TS-6: nominal records through a closed anonymous type; `==` is not transitive
 repros/type_soundness/cv4.silt	holds	accept	control: the unit pattern matches (was a compiler defect)
 repros/type_soundness/d1.silt	holds	reject E0301	TS-2.1: a method call on a type variable is a cast (String to Int)
-repros/type_soundness/d2.silt	holds	reject E0335	the annotated form of d1: `-> b` is introduced by no parameter
+repros/type_soundness/d2.silt	holds	reject E0305	the annotated form of d1: `-> b`, which no bound names, is general; the body, a field call on a value of `a`, is refused
 repros/type_soundness/d3.silt	holds	reject E0301	TS-2.1: as d1, to a record, a function and a list (today only the Display errors of the prints)
 repros/type_soundness/d4.silt	holds	reject E0301	control: a field access on a variable is a row constraint
 repros/type_soundness/d5.silt	-	obsolete	fn lambda; ported: lang/soundness/d5.silt
