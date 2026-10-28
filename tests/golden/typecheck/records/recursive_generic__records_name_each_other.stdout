@@ -1,0 +1,4 @@
+A {b: Some(B {a: A {b: None, v: 2}}), v: 1}
+true
+2
+Holder {g: Some(G {v: 1, h: Some(Holder {g: None})})}

@@ -1,0 +1,19 @@
+-- Two generic records may name each other, and a record without
+-- parameters may name a generic one that names it back.
+type A(x) { b: Option(B(x)), v: x }
+type B(x) { a: A(x) }
+
+type Holder { g: Option(G(Int)) }
+type G(a) { v: a, h: Option(Holder) }
+
+fn main() {
+  let a = A { b: Some(B { a: A { b: None, v: 2 } }), v: 1 }
+  println(a)
+  println(a == a)
+  match a.b {
+    Some(B { a: A { v, .. } }) -> println(v)
+    None -> println("none")
+  }
+  let h = Holder { g: Some(G { v: 1, h: Some(Holder { g: None }) }) }
+  println(h)
+}

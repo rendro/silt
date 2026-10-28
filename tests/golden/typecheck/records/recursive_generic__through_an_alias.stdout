@@ -1,0 +1,1 @@
+Tree {val: root, kids: [Tree {val: leaf, kids: []}]}

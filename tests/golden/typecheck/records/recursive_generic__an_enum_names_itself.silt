@@ -1,0 +1,15 @@
+-- A generic enum names itself in a variant, as a generic record does.
+type L(a) { Cons(a, L(a)), Nil }
+
+fn len(l: L(a)) -> Int {
+  match l {
+    Cons(_, rest) -> 1 + len(rest)
+    Nil -> 0
+  }
+}
+
+fn main() {
+  let l = Cons(1, Cons(2, Nil))
+  println(len(l))
+  println(l)
+}

@@ -1,0 +1,15 @@
+-- A generic record that names itself at a larger argument is refused
+-- by a decoder: its field's type grows with every level.
+-- cmd: check
+-- exit: 1
+-- stderr-contains: `json.parse` cannot decode `T(Int)`: field `n` of `T`, a record type nested in it, has type `Option(T(List(a)))`, which grows with every level
+import json
+
+type T(a) { v: a, n: Option(T(List(a))) }
+
+fn main() {
+  match json.parse("""{"v": 1, "n": null}""", T(Int)) {
+    Ok(t) -> println(t.v)
+    Err(_) -> println("error")
+  }
+}
