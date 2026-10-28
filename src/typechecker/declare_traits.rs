@@ -1184,6 +1184,22 @@ impl TypeChecker {
         let Some(tr) = self.impl_trait(ti) else {
             return true;
         };
+        // (An alias by the type it names, `shapes.Box(String)`: the
+        // module declares the alias, not the type.)
+        let ty = match ti.target_type == target_type.name {
+            true => self.impl_target_name(ti, target_type),
+            false => {
+                self.enter_level();
+                let written = self.impl_written_args(ti, false);
+                let head = (written.head.as_ref()).filter(|head| self.is_instance(head));
+                let ty = match head {
+                    Some(head) => self.show_type(&self.with_names(head, &written.names)),
+                    None => self.show_type(&Type::Generic(target_type, Vec::new())),
+                };
+                self.exit_level();
+                ty
+            }
+        };
         let of_trait = defs.get(tr.id.0).module;
         let of_type = defs.get(target_type.id.0).module;
         let named = |module: crate::session::ModuleId| {
@@ -1194,7 +1210,7 @@ impl TypeChecker {
                     .map_or_else(|| "?".to_string(), |name| resolve(*name))
             })
         };
-        let (tr, ty) = (self.show_trait(tr), self.impl_target_name(ti, target_type));
+        let tr = self.show_trait(tr);
         let place = match (named(of_trait), named(of_type)) {
             (Some(t), Some(y)) if t == y => {
                 format!("it may be written in module '{t}', which declares both")

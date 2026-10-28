@@ -1,0 +1,3 @@
+pub type Box(a) { Bx(a) }
+
+pub type Square { side: Int }

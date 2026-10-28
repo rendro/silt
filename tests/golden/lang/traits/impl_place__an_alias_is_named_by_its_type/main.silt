@@ -1,0 +1,20 @@
+-- cmd: check
+-- exit: 1
+-- An impl for an alias is for the type the alias names, which another
+-- module declares: the error names that type, not the alias the module
+-- declares.
+import shapes
+import traits
+
+type BS = shapes.Box(String)
+type Sq = shapes.Square
+
+trait traits.Area for BS {
+  fn area(self) -> Int { 1 }
+}
+
+trait traits.Area for Sq {
+  fn area(self) -> Int { 1 }
+}
+
+fn main() {}
