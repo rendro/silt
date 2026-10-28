@@ -269,18 +269,20 @@ impl TypeChecker {
             .get(head.id.0.0 as usize)
             .is_none()
         {
-            if self.has_decode_impl(head) {
+            // A generic type whose arguments are not all known (`Box`, of
+            // whatever `a` is): a decoder builds a value of one type, by
+            // its structure or by its impl. (Before the enum's help below,
+            // which names an impl.)
+            let open =
+                self.tables.is_generic(head) && (args.is_empty() || !free_vars_in(ty).is_empty());
+            if self.has_decode_impl(head) && !open {
                 return None;
             }
             if let Some(refusal) = self.opaque_decode_refusal(ty, span, owner) {
                 return Some(refusal);
             }
             let enum_type = self.tables.is_enum(head);
-            // A generic type whose arguments are not all known (`Box`, of
-            // whatever `a` is): a decoder builds a value of one type. (First:
-            // no impl can be written for one, so the enum's help below
-            // could not be followed.)
-            if self.tables.is_generic(head) && (args.is_empty() || !free_vars_in(ty).is_empty()) {
+            if open {
                 let kind = match enum_type {
                     true => "enum",
                     false => "record",

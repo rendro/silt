@@ -1,0 +1,62 @@
+-- A generic type with a written `json.Decode` impl (`Box(a) where a:
+-- json.Decode`) is decoded by the impl at the type arguments the row
+-- type gives: a field from a json column, in a list, and the row type
+-- itself; an `Err` of the decoder of a type argument is the column's
+-- type mismatch.
+import env
+import json
+import list
+import map
+import postgres
+
+type Box(a) { v: a }
+
+trait json.Decode for Box(a) where a: json.Decode {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.Array([inner]) -> match a.decode(inner) {
+        Ok(v) -> Ok(Box { v: v })
+        Err(e) -> Err(e)
+      }
+      json.Object(columns) -> match map.get(columns, "v") {
+        Some(inner) -> match a.decode(inner) {
+          Ok(v) -> Ok(Box { v: v })
+          Err(e) -> Err(e)
+        }
+        None -> Err(json.Other("no column v"))
+      }
+      _ -> Err(json.Other("not a box"))
+    }
+  }
+}
+
+type Row { id: Int, b: Box(Int), bs: List(Box(String)) }
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+fn main() {
+  match postgres.connect(url()) {
+    Ok(db) -> {
+      let sql = """SELECT g AS id, ('[' || g || ']')::jsonb AS b, '[["x"], ["y"]]'::jsonb AS bs FROM generate_series(1, 2) g"""
+      match postgres.query(db, sql, (), Row) {
+        Ok(rows) -> list.each(rows) { r -> println(r) }
+        Err(e) -> println("query: {Error.message(e)}")
+      }
+      match postgres.query(db, "SELECT 7 AS v", (), Box(Int)) {
+        Ok(rows) -> println(rows)
+        Err(e) -> println("query: {Error.message(e)}")
+      }
+      match postgres.query(db, "SELECT '[true]'::jsonb AS b, 1 AS id, '[]'::jsonb AS bs", (), Row) {
+        Ok(rows) -> println(rows)
+        Err(e) -> println("query: {Error.message(e)}")
+      }
+      postgres.close(db)
+    }
+    Err(e) -> println(Error.message(e))
+  }
+}

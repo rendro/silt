@@ -378,8 +378,10 @@ refuses it, with the function that passes it on in a note:
 
 Write `trait json.Decode for T` to replace the structural form of `T`, in
 the module that declares `T` (as a `json.Encode` impl is written; an impl
-for a builtin type is an error, a builtin type keeps its own form, and an
-impl for a generic type is refused: a decoder builds a value of one type).
+for a builtin type is an error, a builtin type keeps its own form). An
+impl for a generic type is allowed; it decodes a part of a type argument
+`a` with `a.decode(v)`, which its `where` clause allows:
+`trait json.Decode for Box(a) where a: json.Decode`.
 Its `decode` gives the value of `T` that a `json.Value` is, wherever a
 value of the type is in the document: at the top, as an element of a
 list or a value of a map, in a record's or a

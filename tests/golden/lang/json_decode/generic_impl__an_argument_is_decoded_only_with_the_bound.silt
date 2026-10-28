@@ -1,0 +1,40 @@
+-- cmd: check
+-- exit: 1
+-- A written `json.Decode` impl for a generic type decodes a type
+-- argument only where its `where` allows it: without `where a:
+-- json.Decode`, `a` has no `decode`. And the type without its arguments
+-- is decoded neither by its structure nor by its impl: a decoder builds
+-- a value of one type.
+import json
+
+type Box(a) { v: a }
+
+trait json.Decode for Box(a) {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.Array([inner]) -> match a.decode(inner) {
+        Ok(v) -> Ok(Box { v: v })
+        Err(e) -> Err(e)
+      }
+      _ -> Err(json.Other("not a box"))
+    }
+  }
+}
+
+type Pair(a) { l: a }
+
+trait json.Decode for Pair(a) where a: json.Decode {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.Array([inner]) -> match a.decode(inner) {
+        Ok(v) -> Ok(Pair { l: v })
+        Err(e) -> Err(e)
+      }
+      _ -> Err(json.Other("not a pair"))
+    }
+  }
+}
+
+fn main() {
+  println(json.parse("[1]", Pair))
+}

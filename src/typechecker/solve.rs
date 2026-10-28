@@ -1862,6 +1862,17 @@ impl TypeChecker {
             self.refuse_opaque(origin.span, refusal);
             return;
         }
+        // A generic type whose arguments stay unknown (`Box`) is decoded
+        // by neither its structure nor its written impl: the decoder's
+        // refusal, once the module's bodies are checked.
+        if Self::is_decode(trait_name)
+            && self.tables.is_generic(type_name)
+            && !self.by_structure(trait_name, type_name)
+            && !free_vars_in(&resolved).is_empty()
+        {
+            let owner = ev.and_then(|ev| self.owed_for.get(&ev).copied());
+            self.want_decode(&resolved, origin, asker, owner);
+        }
         // Equal, Compare and Hash, and Display where no impl is written,
         // are what the type's structure says.
         if self.by_structure(trait_name, type_name) {

@@ -1,0 +1,21 @@
+import json
+
+pub opaque type Email { addr: String }
+
+pub type Box(a) { v: a }
+
+trait json.Decode for Box(a) where a: json.Decode {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.Array([inner]) -> match a.decode(inner) {
+        Ok(v) -> Ok(Box { v: v })
+        Err(e) -> Err(e)
+      }
+      _ -> Err(json.Other("not a box"))
+    }
+  }
+}
+
+pub fn ok() -> Result(Box(Email), json.JsonError) {
+  json.parse("""[{"addr": "in"}]""", Box(Email))
+}
