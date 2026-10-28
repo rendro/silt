@@ -1,0 +1,8 @@
+10
+Tree {val: 1, kids: [Tree {val: 2, kids: []}, Tree {val: 3, kids: [Tree {val: 4, kids: []}]}]}
+true
+false
+{"val":1,"kids":[{"val":2,"kids":[]},{"val":3,"kids":[{"val":4,"kids":[]}]}]}
+true
+Err(json type mismatch: expected Int, got string at kids[0].kids[0].val)
+Tree {val: x, kids: []}

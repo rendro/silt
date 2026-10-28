@@ -1,0 +1,8 @@
+-- A generic record may name itself through an alias declared before it.
+type Kids(a) = List(Tree(a))
+type Tree(a) { val: a, kids: Kids(a) }
+
+fn main() {
+  let t = Tree { val: "root", kids: [Tree { val: "leaf", kids: [] }] }
+  println(t)
+}

@@ -1,0 +1,12 @@
+-- A generic record that names itself at a larger argument declares,
+-- and its values build and are read.
+type T(a) { v: a, n: Option(T(List(a))) }
+
+fn main() {
+  let t: T(Int) = T { v: 1, n: Some(T { v: [2], n: None }) }
+  println(t.v)
+  match t.n {
+    Some(inner) -> println(inner.v)
+    None -> println("none")
+  }
+}

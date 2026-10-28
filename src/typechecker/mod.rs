@@ -1073,6 +1073,14 @@ impl TypeChecker {
                     }
                     TypeBody::Record(_) => {
                         self.tables.records.entry(ty).or_default();
+                        // A generic record's arity is the length of its
+                        // parameter vars: placeholders, so a field naming
+                        // the record (`kids: List(Tree(a))`) or another
+                        // generic record of the module resolves.
+                        if !td.params.is_empty() {
+                            let vars = td.params.iter().map(|_| self.fresh_tyvar_id()).collect();
+                            self.tables.record_param_var_ids.insert(ty, vars);
+                        }
                     }
                     TypeBody::Alias(_) => {
                         // Phase D: alias names are pre-registered into

@@ -1,0 +1,29 @@
+-- A generic record may name itself in a field, at its own parameters:
+-- values build, match, show, compare, encode and decode;
+-- a wrong value deep in it names its path.
+import json
+import list
+
+type Tree(a) { val: a, kids: List(Tree(a)) }
+
+fn sum(t: Tree(Int)) -> Int {
+  match t {
+    Tree { val, kids } -> val + list.fold(kids, 0) { acc, k -> acc + sum(k) }
+  }
+}
+
+fn leaf(v: a) -> Tree(a) {
+  Tree { val: v, kids: [] }
+}
+
+fn main() {
+  let t = Tree { val: 1, kids: [leaf(2), Tree { val: 3, kids: [leaf(4)] }] }
+  println(sum(t))
+  println(t)
+  println(t == Tree { val: 1, kids: [leaf(2), Tree { val: 3, kids: [leaf(4)] }] })
+  println(t == leaf(1))
+  println(json.stringify(t))
+  println(json.parse(json.stringify(t), Tree(Int)) == Ok(t))
+  println(json.parse("""{"val": 1, "kids": [{"val": 2, "kids": [{"val": "x", "kids": []}]}]}""", Tree(Int)))
+  println(leaf("x"))
+}

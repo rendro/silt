@@ -1,0 +1,14 @@
+-- A generic record named in a field before its own declaration ends,
+-- by itself or by a record declared later, takes exactly its
+-- parameters.
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type argument count mismatch for record 'Tree': expected 1, got 2
+-- stderr-contains: type argument count mismatch for record 'Box': expected 2, got 1
+type Tree(a) { val: a, kids: List(Tree(a, a)) }
+type Leaf(a) { kids: List(Box(a)) }
+type Box(a, b) { v: a, w: b }
+
+fn main() {
+  println(1)
+}

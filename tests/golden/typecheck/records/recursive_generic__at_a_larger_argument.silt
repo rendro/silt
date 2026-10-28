@@ -1,0 +1,11 @@
+-- A generic record may name itself at a larger argument. It declares
+-- and its values build; showing one is refused, since its Display
+-- recurs at ever larger types.
+-- exit: 1
+-- stderr-contains: type 'T(Int)' cannot be shown to implement trait 'Display': it is nested too deeply, or its definition recurs at ever larger types
+type T(a) { v: a, n: Option(T(List(a))) }
+
+fn main() {
+  let t: T(Int) = T { v: 1, n: Some(T { v: [2], n: None }) }
+  println(t)
+}
