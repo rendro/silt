@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: error[type]: type 'Fn' does not implement trait 'Hash'
+-- stderr-contains: error[type]: type 'Fn(Int) -> Int' does not implement trait 'Hash'
 -- Port of repros/type_soundness/i12.silt, in brace closures.
 -- (only `map.length`'s bound, which a reader of a map does not owe,
 -- rejected the program before).

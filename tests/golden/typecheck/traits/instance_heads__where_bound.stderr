@@ -3,3 +3,4 @@ error[type]: type 'String' does not implement trait 'Sum'
     |
  12 |   println(Sum.sum(Box(["s"])))
     |                   ^^^^^^^^^^ type 'String' does not implement trait 'Sum'
+  = note: the impl of 'Sum' for 'Box(List(a))' asks `a: Sum`

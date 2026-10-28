@@ -1265,7 +1265,7 @@ fn lines_of(text: &str, span: Span) -> Range<u32> {
 }
 
 /// The type variables `te` writes (lowercase bare names), into `out`.
-fn type_vars_of(te: &TypeExpr, out: &mut Vec<Symbol>) {
+pub(super) fn type_vars_of(te: &TypeExpr, out: &mut Vec<Symbol>) {
     match &te.kind {
         TypeExprKind::Named {
             module: None, name, ..

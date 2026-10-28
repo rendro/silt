@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: error[type]: type 'Fn' does not implement trait 'Hash'
+-- stderr-contains: error[type]: type 'Fn(Int) -> Int' does not implement trait 'Hash'
 -- Port of repros/type_soundness/i11.silt, in brace closures.
 import set
 fn main() {

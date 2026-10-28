@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: error[type]: type 'Fn' does not implement trait 'Compare'
+-- stderr-contains: error[type]: type 'Fn(Int) -> Int' does not implement trait 'Compare'
 -- Port of repros/type_soundness/i4.silt, in brace closures.
 import list
 type W(a) { W(a) }

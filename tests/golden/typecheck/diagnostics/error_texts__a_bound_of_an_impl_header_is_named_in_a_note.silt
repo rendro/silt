@@ -1,0 +1,20 @@
+-- exit: 1
+-- A type that lacks what an impl's header asks of its part: a note names
+-- the impl and the bound, at a direct call, through an inferred function,
+-- through a generic one and through a type constructor variable.
+type Box(a) { B(a) }
+trait Show { fn show(self) -> String }
+trait Show for Box(a) where a: Display { fn show(self) -> String { "box" } }
+fn sh(x) { Show.show(x) }
+fn gen(x: b) -> String where b: Show { Show.show(x) }
+type Tagged(a, t) { Tg(a, t) }
+trait Functor for Tagged(_, t) where t: Display {
+  fn map(x, f) { match x { Tg(v, t) -> Tg(f(v), t) } }
+}
+fn dbl(xs: m(Int)) -> m(Int) where m: Functor { Functor.map(xs) { x -> x * 2 } }
+fn main() {
+  println(Show.show(B({ q: Int -> q })))
+  println(sh(B({ q: Int -> q })))
+  println(gen(B({ q: Int -> q })))
+  let _ = dbl(Tg(1, { x: Int -> x + 1 }))
+}

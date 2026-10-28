@@ -262,6 +262,7 @@ impl TypeChecker {
                 span,
                 callee: Some(callee),
                 op: None,
+                header: None,
             },
         );
         if let Some(ev) = ev {
@@ -285,6 +286,7 @@ impl TypeChecker {
                 span,
                 callee: None,
                 op: None,
+                header: None,
             },
         );
     }
@@ -307,6 +309,7 @@ impl TypeChecker {
                 span,
                 callee: None,
                 op: Some(op),
+                header: None,
             },
         );
     }
@@ -558,11 +561,16 @@ impl TypeChecker {
     /// the impl's method passes it on (`method_site`).
     fn type_method_site(&mut self, head: TypeRef, entry: &MethodEntry, method: Symbol, span: Span) {
         let owed = self.ev.use_ev.take().unwrap_or_default();
-        if let Some(tr) = self.entry_trait(entry, method) {
-            let key = (self.tables.one_impl(tr, head)).unwrap_or((tr, head, ImplArgs::none()));
+        if let Some(key) = self.entry_impl(head, entry, method) {
             let site = self.method_site(key, method, owed);
             self.ev.calls.insert(span, site);
         }
+    }
+
+    /// The impl of the type `head` whose method `method` is `entry`.
+    fn entry_impl(&self, head: TypeRef, entry: &MethodEntry, method: Symbol) -> Option<ImplKey> {
+        let tr = self.entry_trait(entry, method)?;
+        Some((self.tables.one_impl(tr, head)).unwrap_or((tr, head, ImplArgs::none())))
     }
 
     /// The type of a use of the method `method` at `span`, from its
@@ -577,6 +585,7 @@ impl TypeChecker {
             span,
             callee: Some(method),
             op: None,
+            header: None,
         });
         self.instantiate(scheme)
     }
@@ -647,6 +656,11 @@ impl TypeChecker {
                         .collect(),
                     _ => Vec::new(),
                 };
+                // (A bound refused where it was written is not reported
+                // again.)
+                if matches!(&inner, Type::Rigid(r) if self.unknown_bounds.contains(&r.var)) {
+                    return None;
+                }
                 if bounds.is_empty() {
                     self.error_help(
                         Code::UnknownMethod,
@@ -823,6 +837,7 @@ impl TypeChecker {
                 }
                 self.method_trait = self.entry_trait(&entry, field);
                 let scheme = self.method_scheme(&entry);
+                self.instance_header = self.entry_impl(name, &entry, field);
                 let instantiated = self.instantiate_method(&scheme, field, span);
                 self.type_method_site(name, &entry, field, span);
                 Some(self.apply(&instantiated))
@@ -1068,11 +1083,12 @@ impl TypeChecker {
                 self.receiver_taken = true;
                 let owed_before = self.wanted.len();
                 let scheme = self.method_scheme(&entry);
+                let key = (self.tables.one_impl(tr, head)).unwrap_or((tr, head, ImplArgs::none()));
+                self.instance_header = Some(key);
                 let ty = self.instantiate_method(&scheme, field, span);
                 // The impl's header's predicates come first among the
                 // method's.
                 let owed = self.ev.use_ev.take().unwrap_or_default();
-                let key = (self.tables.one_impl(tr, head)).unwrap_or((tr, head, ImplArgs::none()));
                 let site = self.method_site(key, field, owed);
                 self.ev.calls.insert(span, site);
                 if let Type::Fun(params, _) = &ty
@@ -1182,6 +1198,7 @@ impl TypeChecker {
                 span: receiver.unwrap_or(span),
                 callee: Some(field),
                 op: None,
+                header: None,
             },
         );
         self.method_trait = Some(tr);
@@ -2195,6 +2212,7 @@ impl TypeChecker {
             span,
             callee: Some(label),
             op: None,
+            header: None,
         });
         self.callee_position = true;
         self.unknown_receiver = None;
@@ -2236,6 +2254,7 @@ impl TypeChecker {
                     span: callee.span,
                     callee: Some(name),
                     op: None,
+                    header: None,
                 },
             );
             return result;
@@ -2693,6 +2712,7 @@ impl TypeChecker {
                                 span: expr_span,
                                 callee: None,
                                 op: None,
+                                header: None,
                             },
                         );
                     }
@@ -2864,6 +2884,7 @@ impl TypeChecker {
                         span,
                         callee: Some(name),
                         op: None,
+                        header: None,
                     });
                     self.instantiate_def(&scheme, expr.res)
                 } else if name == intern("self") {
@@ -3043,6 +3064,7 @@ impl TypeChecker {
                             return Type::Error;
                         }
                         let scheme = self.method_scheme(&entry);
+                        self.instance_header = self.entry_impl(key.0, &entry, field);
                         let ty = self.instantiate_method(&scheme, field, span);
                         self.type_method_site(key.0, &entry, field, span);
                         let ty = self.apply(&ty);
@@ -3375,6 +3397,7 @@ impl TypeChecker {
                                 span,
                                 callee: None,
                                 op: None,
+                                header: None,
                             },
                         );
                         result_ty
@@ -3739,6 +3762,7 @@ impl TypeChecker {
                                     span,
                                     callee: None,
                                     op: None,
+                                    header: None,
                                 },
                             );
                         }
@@ -3801,6 +3825,7 @@ impl TypeChecker {
                             span,
                             callee: None,
                             op: None,
+                            header: None,
                         },
                     );
                     self.apply(&result)

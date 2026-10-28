@@ -1,5 +1,5 @@
 -- exit: 1
--- stderr-contains: error[type]: type 'Fn' does not implement trait 'Hash'
+-- stderr-contains: error[type]: type 'Fn(_) -> _' does not implement trait 'Hash'
 import set
 fn main() {
   let s = set.remove(set.new(), { y -> y })

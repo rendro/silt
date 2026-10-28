@@ -1,0 +1,17 @@
+error[type]: type 'Fn(Int) -> Int' does not implement trait 'json.Encode'
+ --> error_texts__a_type_that_lacks_a_structural_trait_is_named_in_full.silt:7:26
+   |
+ 7 |   println(json.stringify({ x: Int -> x + 1 }))
+   |                          ^^^^^^^^^^^^^^^^^^^ type 'Fn(Int) -> Int' does not implement trait 'json.Encode'
+
+error[type]: type 'Set(Int)' does not implement trait 'json.Encode'
+ --> error_texts__a_type_that_lacks_a_structural_trait_is_named_in_full.silt:8:26
+   |
+ 8 |   println(json.stringify(set.from_list([1])))
+   |                          ^^^^^^^^^^^^^^^^^^ type 'Set(Int)' does not implement trait 'json.Encode'
+
+error[type]: operator '==' requires a comparable type, got 'Fn(Int) -> Int'
+ --> error_texts__a_type_that_lacks_a_structural_trait_is_named_in_full.silt:9:11
+   |
+ 9 |   println({ x: Int -> x } == { x: Int -> x })
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ operator '==' requires a comparable type, got 'Fn(Int) -> Int'

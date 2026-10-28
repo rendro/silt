@@ -1598,6 +1598,9 @@ impl TypeChecker {
         // sharing a type_var, so the resolution loop handles both forms
         // with a single path.
         let mut impl_level_constraints: Vec<Pred> = Vec::new();
+        // (The trait arguments' variables an impl-level bound was refused
+        // on: `trait Conv(a) for W where a: Def`.)
+        let mut refused_trait_arg_bounds = Vec::new();
         let impl_trait = trait_key;
         for wc in &ti.where_clauses {
             let unknown = wc.trait_res == Some(crate::defs::Res::Error)
@@ -1688,6 +1691,11 @@ impl TypeChecker {
                 .iter()
                 .map(|te| self.resolve_type_expr(te, &mut impl_param_map))
                 .collect();
+            let names_it = |te: &TypeExpr| {
+                let mut vars = Vec::new();
+                super::names::type_vars_of(te, &mut vars);
+                vars.contains(type_param)
+            };
             match impl_param_map.get(type_param) {
                 Some(ty) => {
                     let resolved = self.apply(ty);
@@ -1712,6 +1720,34 @@ impl TypeChecker {
                     // If resolved is concrete (shouldn't happen — impl_param_map
                     // only inserts fresh Var entries) treat it as a tautology
                     // and register no positional obligation.
+                }
+                // A trait argument of the impl (`trait Conv(a) for W`): its
+                // bound goes on the method that needs it. (What the body
+                // asks of the variable is not reported again.)
+                None if ti.trait_args.iter().any(names_it) => {
+                    let method = ti.methods.iter().find(|m| {
+                        (m.params.iter().filter_map(|p| p.ty.as_ref())).any(names_it)
+                            || m.return_type.as_ref().is_some_and(names_it)
+                    });
+                    let example = match method {
+                        Some(m) => format!(
+                            ": `fn {}(...) where {}: {}`",
+                            m.name,
+                            resolve(*type_param),
+                            self.show_bound(*trait_name, &resolved_bound_args)
+                        ),
+                        None => String::new(),
+                    };
+                    self.error(
+                        Code::InvalidTypeAnnotation,
+                        format!(
+                            "type variable '{}' in impl-level where clause is a trait argument, \
+                             not a target type argument; write the bound on the method that needs it{example}",
+                            resolve(*type_param),
+                        ),
+                        ti.span,
+                    );
+                    refused_trait_arg_bounds.push(*type_param);
                 }
                 None => {
                     self.error(Code::InvalidTypeAnnotation,
@@ -1776,6 +1812,11 @@ impl TypeChecker {
                 self.tables
                     .impl_trait_args
                     .insert(impl_key, resolved_trait_args.clone());
+                for name in &refused_trait_arg_bounds {
+                    if let Some(Type::Var(tv)) = impl_param_map.get(name) {
+                        self.unknown_bounds.insert(*tv);
+                    }
+                }
                 if !trait_info.param_where_clauses.is_empty() {
                     for (param_name, bound_trait) in &trait_info.param_where_clauses {
                         let Some(idx) = trait_info.params.iter().position(|p| p == param_name)

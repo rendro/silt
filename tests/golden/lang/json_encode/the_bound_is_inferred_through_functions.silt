@@ -1,8 +1,8 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: type 'Fn' does not implement trait 'json.Encode'
+-- stderr-contains: type 'Fn(_) -> _' does not implement trait 'json.Encode'
 -- stderr-contains: --> the_bound_is_inferred_through_functions.silt:24:15
--- stderr-contains: type 'Set' does not implement trait 'json.Encode'
+-- stderr-contains: type 'Set(Int)' does not implement trait 'json.Encode'
 -- stderr-contains: --> the_bound_is_inferred_through_functions.silt:26:17
 -- stderr-not-contains: :23:
 -- A function without annotations that hands its argument to

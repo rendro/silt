@@ -1,7 +1,7 @@
 -- A Fn map value does not satisfy `where a: Display` on the alias's value
 -- slot; rejected at check time naming 'Fn', not the key type 'String'.
 -- exit: 1
--- stderr-contains: type 'Fn' does not implement trait 'Display'
+-- stderr-contains: type 'Fn(Int) -> Int' does not implement trait 'Display'
 -- stderr-not-contains: 'String' does not implement
 -- stderr-not-contains: error[runtime]
 import map

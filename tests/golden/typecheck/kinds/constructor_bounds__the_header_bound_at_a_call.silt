@@ -2,7 +2,7 @@
 -- exit: 1
 -- What a constructor impl's header asks of its fixed arguments is owed
 -- where generic code reaches the impl.
--- stderr-contains: error[type]: type 'Fn' does not implement trait 'Display'
+-- stderr-contains: error[type]: type 'Fn(Int) -> Int' does not implement trait 'Display'
 -- stderr-contains: --> constructor_bounds__the_header_bound_at_a_call.silt:17:22
 trait Mapping {
   fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)

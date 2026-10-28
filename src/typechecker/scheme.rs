@@ -730,8 +730,11 @@ impl TypeChecker {
             mapping.insert(v, fresh);
         }
         self.ev.use_ev = None;
+        // (An impl's method's scheme: its header's predicates come first.)
+        let header = (self.instance_header.take())
+            .map(|key| (key, self.tables.impl_preds.get(&key).map_or(0, Vec::len)));
         if !scheme.preds.is_empty() {
-            let origin = self.use_origin();
+            let use_origin = self.use_origin();
             // (The uses a definition took from its body stay apart.)
             let mut groups: HashMap<usize, usize> = HashMap::new();
             // The evidence of each trait the use owes, for the use.
@@ -750,6 +753,13 @@ impl TypeChecker {
                         self.uses
                     }),
                     _ => use_id,
+                };
+                let origin = match header {
+                    Some((key, count)) if k < count => Origin {
+                        header: Some((key, k)),
+                        ..use_origin
+                    },
+                    _ => use_origin,
                 };
                 let ev = self.want(pred.substitute(&mapping), origin);
                 if let Some(around) = around {

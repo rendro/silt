@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: type 'Fn' does not implement trait 'Compare'
+-- stderr-contains: type 'Fn(Int) -> Int' does not implement trait 'Compare'
 -- Port of repros/type_soundness/w3d.silt, in brace closures, without its last line.
 import list
 fn smallest(xs: List(a)) -> List(a) where a: Compare { list.sort(xs) }

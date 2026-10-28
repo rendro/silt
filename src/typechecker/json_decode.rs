@@ -6,14 +6,13 @@
 //! the type of a field.
 //!
 //! A refusal names the decoder the need comes from (`Asker`) and, in a
-//! note, the function the use calls that passes the type on to it. What
-//! a declared bound asks for is what its body gives the variable to,
-//! known once the module's bodies are checked: the refusals are
-//! reported then (`settle_decode_gaps`).
+//! note, the function the use calls and each one that passes the type on
+//! to it in turn. What a declared bound asks for is what its body gives
+//! the variable to, known once the module's bodies are checked: the
+//! refusals are reported then (`settle_decode_gaps`).
 //!
 //! [`Decoding`]: crate::builtins::registry::decoding::Decoding
 
-use super::builtin_checks::refused_argument;
 use super::solve::Origin;
 use super::*;
 use crate::builtins::registry::decoding::Decoding;
@@ -152,7 +151,7 @@ impl TypeChecker {
             && asker.by != Asked::Bound(var)
             && asker.by != Asked::Unknown
         {
-            self.bound_askers.entry(var).or_insert(asker.by);
+            self.bound_askers.entry(var).or_insert(asker);
         }
     }
 
@@ -176,8 +175,8 @@ impl TypeChecker {
             return None;
         }
         seen.push(var);
-        if let Some(asked) = self.bound_askers.get(&var) {
-            return self.asked_decoder(*asked, seen);
+        if let Some(asker) = self.bound_askers.get(&var) {
+            return self.asked_decoder(asker.by, seen);
         }
         let mut found = None;
         for var in self.bound_impls.get(&var).into_iter().flatten() {
@@ -189,6 +188,29 @@ impl TypeChecker {
             }
         }
         found
+    }
+
+    /// The functions and methods a declared bound's body passes its type
+    /// through on the way to the decoder, the first first (`mid`, `load`
+    /// for `top` calling `mid` calling `load` calling `json.parse`): as
+    /// far as each is known.
+    fn passed_through(&self, asker: Option<Asker>) -> Vec<Symbol> {
+        let mut links = Vec::new();
+        let mut seen = Vec::new();
+        let mut asked = asker.map(|asker| asker.by);
+        while let Some(Asked::Bound(var)) = asked {
+            let var = self.rigid_rep_var(var);
+            if seen.contains(&var) {
+                break;
+            }
+            seen.push(var);
+            let Some(next) = self.bound_askers.get(&var) else {
+                break;
+            };
+            links.extend(next.passer);
+            asked = Some(next.by);
+        }
+        links
     }
 
     /// `asker` as another module or a later REPL entry reads it: the
@@ -237,7 +259,7 @@ impl TypeChecker {
             // `postgres.query`) refused it here: that refusal, with the
             // note naming the function that passes it on, is the one
             // error.
-            if (self.lacking).contains(&refused_argument(gap.origin.span, &ty)) {
+            if (self.lacking).contains(&self.refused_argument(gap.origin.span, &ty)) {
                 continue;
             }
             let decoder = self.asking_decoder(gap.asker);
@@ -263,7 +285,9 @@ impl TypeChecker {
                 continue;
             }
             if let (Some(decoder), Some(passer)) = (decoder, passer) {
-                diagnostic = diagnostic.with_note(format!("`{passer}` passes it to `{decoder}`"));
+                let links = self.passed_through(gap.asker);
+                diagnostic = (diagnostic)
+                    .with_note(super::builtin_checks::passes_note(passer, &links, decoder));
             }
             self.errors.push(diagnostic);
         }

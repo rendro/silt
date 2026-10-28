@@ -11,7 +11,7 @@ error[type]: `toml.parse` cannot decode `L`: its type argument must be a record 
     |
  56 |   let _ = deep("n = 1", L)
     |                         ^ `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
-  = note: `deep` passes it to `toml.parse`
+  = note: `deep` passes it to `tl`, which passes it to `toml.parse`
   = help: use `toml.parse_list` for a list
 
 error[type]: `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
@@ -43,5 +43,5 @@ error[type]: `toml.parse` cannot decode `L`: its type argument must be a record 
     |
  60 |   let _ = via(S { n: 1 }, L)
     |                           ^ `toml.parse` cannot decode `L`: its type argument must be a record type, an enum type, or a type with a `json.Decode` impl
-  = note: `via` passes it to `toml.parse`
+  = note: `via` passes it to `S.get`, which passes it to `toml.parse`
   = help: use `toml.parse_list` for a list

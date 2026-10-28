@@ -1,0 +1,11 @@
+-- exit: 1
+-- A generic type written with its arguments open and given through a
+-- function to a decoder is the generic type, as given to the decoder itself.
+import json
+import toml
+type Box(a) { v: a }
+fn f(s: String, type a) -> Result(a, toml.TomlError) where a: json.Decode { toml.parse(s, a) }
+fn main() {
+  println(f("v = 1", Box))
+  println(toml.parse("v = 1", Box))
+}

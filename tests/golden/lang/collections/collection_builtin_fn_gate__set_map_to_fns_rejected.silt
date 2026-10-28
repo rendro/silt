@@ -1,5 +1,5 @@
 -- exit: 1
--- stderr-contains: error[type]: type 'Fn' does not implement trait 'Hash'
+-- stderr-contains: error[type]: type 'Fn(Int) -> Int' does not implement trait 'Hash'
 -- set.map to a set of functions is rejected: a set hashes its elements.
 -- (No program can build a set of functions any more, so the set
 -- operations never see one.)

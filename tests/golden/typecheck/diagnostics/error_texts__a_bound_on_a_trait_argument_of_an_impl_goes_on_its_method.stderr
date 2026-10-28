@@ -1,0 +1,5 @@
+error[type]: type variable 'a' in impl-level where clause is a trait argument, not a target type argument; write the bound on the method that needs it: `fn conv(...) where a: Def`
+ --> error_texts__a_bound_on_a_trait_argument_of_an_impl_goes_on_its_method.silt:9:1
+   |
+ 9 | trait Conv(a) for W where a: Def { fn conv(self) -> a { a.def() } }
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type variable 'a' in impl-level where clause is a trait argument, not a target type argument; write the bound on the method that needs it: `fn conv(...) where a: Def`

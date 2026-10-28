@@ -873,6 +873,7 @@ impl TypeChecker {
                             span: pattern_span,
                             callee: Some(*name),
                             op: Some(super::super::solve::PIN),
+                            header: None,
                         },
                     );
                 } else {
@@ -940,6 +941,7 @@ impl TypeChecker {
                             span,
                             callee: None,
                             op: None,
+                            header: None,
                         },
                     );
                     env.define(*rest_name, Scheme::mono(self.apply(&rest_ty)));

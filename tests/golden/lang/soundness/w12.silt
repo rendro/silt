@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: type 'Fn' does not implement trait 'Hash'
+-- stderr-contains: type 'Fn(_) -> _' does not implement trait 'Hash'
 -- Port of repros/type_soundness/w12.silt, in brace closures.
 import list
 import map
