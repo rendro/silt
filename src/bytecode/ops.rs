@@ -1127,6 +1127,11 @@ ops! {
     /// Pop a dictionary; push the descriptor of its impl's type: `Self`
     /// given to a call in a trait's default method (`json.parse(s, Self)`).
     DictType => pops 1, pushes 1;
+    /// Pop the descriptor of a type applied to types (`Box(Int)`); push
+    /// the descriptor of its `k`th type argument (`Int`): a type
+    /// parameter of a written `json.Decode` impl for a generic type, as
+    /// the descriptor its `decode` is called with gives it.
+    TypeArg { k: U8("type parameters of a type") } => pops 1, pushes 1;
     /// Pop `n` values and the closure below them; push the closure that,
     /// called, is called with those values before its arguments: a
     /// definition with bounds as a value, with its dictionaries.

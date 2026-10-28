@@ -1,0 +1,24 @@
+-- cmd: check
+-- exit: 1
+-- A generic type with a written `json.Decode` impl does not decode an
+-- opaque type of another module given as its argument outside that
+-- module (its module may: `mail.ok`), nor a type no decoder has.
+import json
+import mail
+
+type W { b: mail.Box(mail.Email) }
+
+type S { s: Set(Int) }
+
+fn go(s: String, type a) -> Result(a, json.JsonError) where a: json.Decode {
+  json.parse(s, a)
+}
+
+fn main() {
+  println(mail.ok())
+  println(json.parse("""[{"addr": "x"}]""", mail.Box(mail.Email)))
+  println(json.parse("""{"b": [{"addr": "x"}]}""", W))
+  println(go("""[{"addr": "x"}]""", mail.Box(mail.Email)))
+  println(json.parse("""[[1]]""", mail.Box(Set(Int))))
+  println(json.parse("""[{"s": [1]}]""", mail.Box(S)))
+}

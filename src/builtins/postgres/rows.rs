@@ -264,8 +264,9 @@ pub(super) enum RowType {
     Value,
     /// A record or enum type with a written `json.Decode` impl, whose
     /// `decode` (in the global slot) makes a row of the `json.Object`
-    /// of its columns.
-    Decoded(u16),
+    /// of its columns; with the type's descriptor for a generic type
+    /// (`call_written_decode`), else unit.
+    Decoded(u16, Value),
 }
 
 impl RowType {
@@ -280,7 +281,12 @@ impl RowType {
         if let Type::Named(info) = &ty
             && let Some(slot) = impls.decoded(info.id)
         {
-            return Ok(RowType::Decoded(slot));
+            return Ok(RowType::Decoded(slot, Value::Unit));
+        }
+        if let Type::Field(field @ FieldType::Applied(id, _)) = &ty
+            && let Some(slot) = impls.decoded(*id)
+        {
+            return Ok(RowType::Decoded(slot, decode::descriptor(rt, field)));
         }
         Ok(match decode::target(caller, ty)? {
             decode::Target::Record(ty) => RowType::Record(ty.clone(), Vec::new()),
@@ -466,7 +472,7 @@ enum PlanKind {
     /// written `decode`, what that makes of it.
     Value {
         columns: Vec<ColumnPlan>,
-        decoded: Option<u16>,
+        decoded: Option<(u16, Value)>,
     },
 }
 
@@ -497,7 +503,7 @@ impl Plan {
         let written = |id| impls.decoded(id);
         let r = &Reader::with_impls(rt, &written, Holes::Collect(Vec::new()));
         let kind = match row {
-            RowType::Value | RowType::Decoded(_) => {
+            RowType::Value | RowType::Decoded(..) => {
                 let mut seen = std::collections::HashSet::new();
                 let mut plan = Vec::with_capacity(columns.len());
                 for (at, column) in columns.iter().enumerate() {
@@ -521,7 +527,7 @@ impl Plan {
                 PlanKind::Value {
                     columns: plan,
                     decoded: match row {
-                        RowType::Decoded(slot) => Some(*slot),
+                        RowType::Decoded(slot, ty) => Some((*slot, ty.clone())),
                         _ => None,
                     },
                 }
@@ -661,7 +667,11 @@ impl Plan {
                 }
                 let json = Value::variant(bv::JSON_OBJECT, [Value::map(entries)]);
                 Ok(match decoded {
-                    Some(slot) => Row::Partial(Partial::Decoded { slot: *slot, json }),
+                    Some((slot, ty)) => Row::Partial(Partial::Decoded {
+                        slot: *slot,
+                        ty: ty.clone(),
+                        json,
+                    }),
                     None => Row::Done(json),
                 })
             }
@@ -716,7 +726,7 @@ impl Plan {
 /// record type a field of which names one, at any depth.
 pub(super) fn reaches_impl(rt: &Runtime, impls: &Globals, row: &RowType) -> bool {
     let mut named = match row {
-        RowType::Decoded(_) => return true,
+        RowType::Decoded(..) => return true,
         RowType::Value => return false,
         RowType::Record(ty, args) => {
             let mut named = vec![ty.id];
@@ -777,8 +787,9 @@ pub(super) enum Partial {
         error: Option<Value>,
     },
     /// A row of a type with a written impl: the `json.Object` of its
-    /// columns, which the `decode` in the global slot makes the row.
-    Decoded { slot: u16, json: Value },
+    /// columns, which the `decode` in the global slot makes the row
+    /// (called with the type's descriptor `ty`, `call_written_decode`).
+    Decoded { slot: u16, ty: Value, json: Value },
 }
 
 /// A cell of a `json` or `jsonb` column (or an array of them) whose
@@ -803,18 +814,23 @@ enum Read {
 
 impl Partial {
     /// The `call`th call of a written `decode` the row waits for, in
-    /// order: the slot, and the `json.Value` it is given (which the row
-    /// keeps no more); `None` past the last.
-    fn call(&mut self, call: usize) -> Option<(u16, Value)> {
+    /// order: the slot, the type's descriptor, and the `json.Value` it
+    /// is given (which the row keeps no more); `None` past the last.
+    fn call(&mut self, call: usize) -> Option<(u16, Value, Value)> {
         let hole = match self {
             Partial::Record { cells, .. } => (cells.iter_mut())
                 .flat_map(|cell| cell.holes.iter_mut())
                 .nth(call)?,
-            Partial::Decoded { slot, json } => {
-                return (call == 0).then(|| (*slot, std::mem::replace(json, Value::Unit)));
+            Partial::Decoded { slot, ty, json } => {
+                return (call == 0).then(|| {
+                    let ty = std::mem::replace(ty, Value::Unit);
+                    (*slot, ty, std::mem::replace(json, Value::Unit))
+                });
             }
         };
-        Some((hole.slot, std::mem::replace(&mut hole.json, Value::Unit)))
+        let ty = std::mem::replace(&mut hole.ty, Value::Unit);
+        let json = std::mem::replace(&mut hole.json, Value::Unit);
+        Some((hole.slot, ty, json))
     }
 
     /// The row, now that the impls have given `given` (`Ok` of a value,
@@ -887,9 +903,10 @@ pub(super) struct Filling {
 
 /// What the task does next for rows that wait for impls.
 pub(super) enum Fill {
-    /// Call the `decode` in the global slot with the `json.Value`, and
-    /// hand what it returns to [`Filling::next`].
-    Call(u16, Value),
+    /// Call the `decode` in the global slot, with the type's descriptor
+    /// and the `json.Value` (`call_written_decode`), and hand what it
+    /// returns to [`Filling::next`].
+    Call(u16, Value, Value),
     /// The rows, or the error of the first that has none.
     Done(Result<Vec<Value>, Value>),
 }
@@ -931,9 +948,9 @@ impl Filling {
         loop {
             if let Some((mut partial, gave)) = self.at_hand.take() {
                 let failed = matches!(gave.last(), Some(Err(_)));
-                if let (false, Some((slot, json))) = (failed, partial.call(gave.len())) {
+                if let (false, Some((slot, ty, json))) = (failed, partial.call(gave.len())) {
                     self.at_hand = Some((partial, gave));
-                    return Fill::Call(slot, json);
+                    return Fill::Call(slot, ty, json);
                 }
                 match partial.finish(&self.rt, &self.impls, gave) {
                     Ok(value) => self.done.push(value),

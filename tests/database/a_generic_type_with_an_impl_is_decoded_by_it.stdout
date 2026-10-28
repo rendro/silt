@@ -1,0 +1,4 @@
+Row {id: 1, b: Box {v: 1}, bs: [Box {v: x}, Box {v: y}]}
+Row {id: 2, b: Box {v: 2}, bs: [Box {v: x}, Box {v: y}]}
+[Box {v: 7}]
+query: postgres type mismatch on column `b`: expected Box(Int), got jsonb: json type mismatch: expected Int, got boolean

@@ -363,6 +363,12 @@ pub struct Compiler<'a> {
     /// The body of the trait's default method being compiled, if one is:
     /// `Self` there is its impl's type (`DictType`).
     default_body: Option<Span>,
+    /// The body of the `decode` of a written `json.Decode` impl for a
+    /// generic type being compiled, if one is, and the impl's type
+    /// parameters: a call leaves the descriptor of the type
+    /// (`Box(Int)`) in the slot of the callee, and `a.decode(v)` takes
+    /// `a` from it (`TypeArg`).
+    decode_params: Option<(Span, Vec<Symbol>)>,
     /// The definitions that take dictionaries, by the span that names
     /// them (`crate::evidence::Evidence::Param`), with what they take.
     owners: HashMap<Span, crate::evidence::Shape>,
@@ -459,6 +465,7 @@ impl<'a> Compiler<'a> {
             closure_name: None,
             builtin_defaults: Vec::new(),
             default_body: None,
+            decode_params: None,
             owners: HashMap::new(),
             own_dicts: HashMap::new(),
             pattern_lets: HashMap::new(),
@@ -839,6 +846,12 @@ impl<'a> Compiler<'a> {
         let hidden = self.shape(method.body.span).map_or(0, Self::hidden_count);
         self.begin_function_after(name, method.params.len(), hidden, span)?;
         self.hidden_params(method.body.span);
+        // (The `decode` of a generic type takes the type's descriptor
+        // from the slot of its callee, as a method its dictionary.)
+        if matches!(&self.decode_params, Some((owner, _)) if *owner == method.body.span) {
+            self.ctx_mut().frame_dict = Some(method.body.span);
+            self.emitter().takes_dict_slot();
+        }
 
         self.compile_params(&method.params, span)?;
         self.keep_frame_dict(method)?;
@@ -1002,10 +1015,20 @@ impl<'a> Compiler<'a> {
                     return Ok(());
                 };
                 let type_name = self.type_info(ty).name.clone();
+                let generic_decode = crate::defs::builtin_trait_id("Decode") == Some(t)
+                    && !trait_impl.target_param_names.is_empty();
 
                 for method in &trait_impl.methods {
                     let span = method.span;
-                    self.compile_method(format!("{type_name}.{}", method.name), method)?;
+                    let around = (self.decode_params).take();
+                    if generic_decode {
+                        let params = trait_impl.target_param_names.clone();
+                        self.decode_params = Some((method.body.span, params));
+                    }
+                    let compiled =
+                        self.compile_method(format!("{type_name}.{}", method.name), method);
+                    self.decode_params = around;
+                    compiled?;
                     let slot = self
                         .globals
                         .method_at(t, ty, trait_impl.args_key, &resolve(method.name))
@@ -1558,6 +1581,14 @@ impl<'a> Compiler<'a> {
             {
                 self.load_frame_dict(owner, span)?;
                 self.emit(Asm::DictType, span)?;
+            }
+
+            // A type parameter of a written `json.Decode` impl for a
+            // generic type, as a type (`a.decode(v)`): the type
+            // argument at its place, of the type the impl decodes.
+            ExprKind::Ident(_) if let Some((owner, k)) = self.decode_param(expr) => {
+                self.load_frame_dict(owner, span)?;
+                self.emit(Asm::TypeArg { k: usize::from(k) }, span)?;
             }
 
             ExprKind::Ident(name) => {
@@ -2382,6 +2413,14 @@ impl<'a> Compiler<'a> {
                 self.compile_operands(with_receiver)?;
                 self.emit_call_method(method, args.len() + 1, tr, 0, tail, span)
             }
+            // `a.decode(v)` in the `decode` of a generic type: by the
+            // descriptor of `a`'s type argument.
+            None if let Some(tr) = crate::defs::builtin_trait_id("Decode")
+                && self.decode_param(receiver).is_some() =>
+            {
+                self.compile_operands(with_receiver)?;
+                self.emit_call_method(method, args.len() + 1, tr, 0, tail, span)
+            }
             Some(Selection::Impl { .. } | Selection::Native { .. } | Selection::Field) | None => {
                 Err(checker_missed(
                     span,
@@ -2756,6 +2795,22 @@ impl<'a> Compiler<'a> {
                 Some(Value::TypeDescriptor(TypeInfo::applied(&head, &args)))
             }
         }
+    }
+
+    /// The body and the place of the type parameter `expr` names, if it
+    /// is one of the written `json.Decode` impl for a generic type whose
+    /// `decode` is being compiled, used as a type (no local has its
+    /// name).
+    fn decode_param(&self, expr: &Expr) -> Option<(Span, u8)> {
+        let ExprKind::Ident(name) = expr.kind else {
+            return None;
+        };
+        let (owner, params) = self.decode_params.as_ref()?;
+        if expr.res != Some(crate::defs::Res::Local) || self.resolve_local(name).is_some() {
+            return None;
+        }
+        let k = params.iter().position(|param| *param == name)?;
+        Some((*owner, u8::try_from(k).ok()?))
     }
 
     /// The type `ty` applied to types, or the tuple of types, as its head

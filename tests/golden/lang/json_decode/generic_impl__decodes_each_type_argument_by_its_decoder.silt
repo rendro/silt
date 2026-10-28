@@ -1,0 +1,91 @@
+-- cmd: run
+-- exit: 0
+-- A written `json.Decode` impl for a generic type, `Box(a)`, decodes a
+-- part of a type argument with `a.decode(v)`, which its `where` allows:
+-- by the decoder of the type argument the use gives (`Int`, `String`,
+-- `Pt` by its own impl, `Box(Int)` by this impl again), at the top, as
+-- a field, in a list, in a closure, through a `type a` parameter (also
+-- as `Box(a)`), and in
+-- toml. An `Err` of the impl gets the path of its part.
+import json
+import list
+import toml
+
+-- A box is written as a one-element array.
+type Box(a) { v: a }
+
+trait json.Decode for Box(a) where a: json.Decode {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.Array([inner]) -> match a.decode(inner) {
+        Ok(v) -> Ok(Box { v: v })
+        Err(e) -> Err(e)
+      }
+      _ -> Err(json.Other("not a box"))
+    }
+  }
+}
+
+-- A point is written as a number, times 100.
+type Pt { x: Int }
+
+trait json.Decode for Pt {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.Int(n) -> Ok(Pt { x: n * 100 })
+      _ -> Err(json.Other("not a point"))
+    }
+  }
+}
+
+type Holder { b: Box(Int), name: String }
+
+-- Many is a list written element by element, each through `a`.
+type Many(a) { items: List(a) }
+
+trait json.Decode for Many(a) where a: json.Decode {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.Array(items) -> {
+        let decoded = list.traverse(items) { item -> a.decode(item) }
+        match decoded {
+          Ok(items) -> Ok(Many { items: items })
+          Err(e) -> Err(e)
+        }
+      }
+      _ -> Err(json.Other("not many"))
+    }
+  }
+}
+
+fn read(value: json.Value, type a) -> Result(a, json.JsonError) where a: json.Decode {
+  a.decode(value)
+}
+
+fn wrapped(value: String, type a) -> Result(Box(a), json.JsonError) where a: json.Decode {
+  json.parse(value, Box(a))
+}
+
+fn main() {
+  println(json.parse("[3]", Box(Int)))
+  println(json.parse("""["s"]""", Box(String)))
+  println(json.parse("[[4]]", Box(Box(Int))))
+  println(json.parse("[[1], [2]]", List(Box(Int))))
+  println(json.parse("""{"b": [5], "name": "n"}""", Holder))
+  println(json.parse("[2]", Box(Pt)))
+  println(json.parse("[[2]]", Box(Box(Pt))))
+  println(json.parse("[1, 2, 3]", Many(Pt)))
+  println(json.parse("[1, true]", Many(Pt)))
+  println(json.parse("""{"b": 5, "name": "n"}""", Holder))
+  println(json.parse("[[1], [true]]", List(Box(Int))))
+  println(json.parse("[[[1, 2]]]", Box(Box(Pt))))
+  println(read(json.Array([json.Int(8)]), Box(Int)))
+  println(read(json.Array([json.Int(8)]), Box(Pt)))
+  println(wrapped("[[3]]", Box(Int)))
+  println(toml.parse("""b = [5]
+name = "t"
+""", Holder))
+  println(toml.parse("""b = [true]
+name = "t"
+""", Holder))
+}
