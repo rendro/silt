@@ -1055,9 +1055,9 @@ impl TypeChecker {
             // as a bound of the trait does: an opaque type of another
             // module, for a definition of that module alone, as the
             // trait's methods are.)
-            if let Some((head, _)) = &entry
+            if entry.is_some()
                 && let Some((_, at)) = &receiver
-                && let Some(refusal) = self.opaque_through_trait(tr, &recv, *head, *at)
+                && let Some(refusal) = self.opaque_through_trait(tr, &recv, *at)
             {
                 self.refuse_opaque(*at, refusal);
                 return Type::Error;
@@ -3035,7 +3035,6 @@ impl TypeChecker {
                             && let Some(refusal) = self.opaque_through_trait(
                                 tr,
                                 &Type::Generic(key.0, Vec::new()),
-                                key.0,
                                 span,
                             )
                         {

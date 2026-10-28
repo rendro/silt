@@ -257,8 +257,9 @@ fn hex(bytes: &[u8]) -> String {
 /// The type a row is decoded into.
 #[derive(Clone)]
 pub(super) enum RowType {
-    /// A record type of the program.
-    Record(Arc<TypeInfo>),
+    /// A record type of the program, at its type arguments (none for a
+    /// type without parameters).
+    Record(Arc<TypeInfo>, Vec<FieldType>),
     /// `json.Value`: a row is a `json.Object` of its columns.
     Value,
     /// A record or enum type with a written `json.Decode` impl, whose
@@ -269,8 +270,9 @@ pub(super) enum RowType {
 
 impl RowType {
     /// The row type that the type argument `ty` of `caller` names, by
-    /// the impls of the table `impls`.
+    /// the impls of the table `impls` and the types of `rt`.
     pub(super) fn of(
+        rt: &Runtime,
         caller: &decode::Decoder,
         ty: Type,
         impls: &Globals,
@@ -281,7 +283,14 @@ impl RowType {
             return Ok(RowType::Decoded(slot));
         }
         Ok(match decode::target(caller, ty)? {
-            decode::Target::Record(ty) => RowType::Record(ty.clone()),
+            decode::Target::Record(ty) => RowType::Record(ty.clone(), Vec::new()),
+            // A generic record type at its arguments (`Row(Int)`).
+            decode::Target::Value(FieldType::Applied(id, args)) => {
+                let ty = (rt.type_info(id))
+                    .ok_or_else(|| VmError::new(format!("{}: unknown record type", caller.name)))?;
+                decode::decodable_record(caller.name, &ty)?;
+                RowType::Record(ty, args)
+            }
             // (`json.Value`: a postgres function takes no primitive type.)
             decode::Target::Value(_) => RowType::Value,
         })
@@ -517,20 +526,25 @@ impl Plan {
                     },
                 }
             }
-            RowType::Record(ty) => {
+            RowType::Record(ty, args) => {
                 let Shape::Record(declared) = &ty.shape else {
                     return Err(super::other_error(format!("{}: no record type", ty.name)));
                 };
+                // (A generic type's fields, each type parameter its
+                // argument.)
+                let declared: Vec<(String, FieldType)> = (declared.iter())
+                    .map(|(name, field)| (name.clone(), field.instantiated(args).into_owned()))
+                    .collect();
                 // A field no decoder fills (in a record or enum type it
                 // names too) is refused whatever the result holds, before
                 // any column is matched. (The checker refuses such a
                 // type wherever a program gives one: the decoders'
                 // guard.)
-                if let Some(message) = decode::record_refusal(r, Family::Postgres, ty) {
+                if let Some(message) = decode::record_refusal(r, Family::Postgres, ty, args) {
                     return Err(super::other_error(message));
                 }
                 let mut fields = Vec::with_capacity(declared.len());
-                for (name, field) in declared {
+                for (name, field) in &declared {
                     let mut named = columns.iter().enumerate().filter(|(_, c)| c.name() == name);
                     let Some((column, found)) = named.next() else {
                         return Err(no_such_column(name));
@@ -704,7 +718,11 @@ pub(super) fn reaches_impl(rt: &Runtime, impls: &Globals, row: &RowType) -> bool
     let mut named = match row {
         RowType::Decoded(_) => return true,
         RowType::Value => return false,
-        RowType::Record(ty) => vec![ty.id],
+        RowType::Record(ty, args) => {
+            let mut named = vec![ty.id];
+            args.iter().for_each(|arg| arg.records(&mut named));
+            named
+        }
     };
     let mut seen = Vec::new();
     while let Some(id) = named.pop() {

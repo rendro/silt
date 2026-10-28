@@ -1,0 +1,22 @@
+-- cmd: check
+-- exit: 1
+-- An opaque type of another module given as a generic type's argument
+-- is not decoded outside its module, as it is not alone: at the top, in
+-- a field, through a `type a` parameter and in a list.
+import json
+import mail
+
+type W {
+  b: mail.Box(mail.Email),
+}
+
+fn go(s: String, type a) -> Result(a, json.JsonError) where a: json.Decode {
+  json.parse(s, a)
+}
+
+fn main() {
+  let _ = json.parse("""{"v": {"addr": "x"}}""", mail.Box(mail.Email))
+  let _ = json.parse("""{"b": {"v": {"addr": "x"}}}""", W)
+  let _ = go("""{"v": {"addr": "x"}}""", mail.Box(mail.Email))
+  let _ = json.parse("""[{"v": {"addr": "x"}}]""", List(mail.Box(mail.Email)))
+}

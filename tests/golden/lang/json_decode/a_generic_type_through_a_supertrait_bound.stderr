@@ -1,17 +1,17 @@
 error[type]: trait `Dec` cannot be implemented for the generic type `Box`: it has `json.Decode` as a supertrait, and a decoder builds a value of one type
- --> a_generic_type_through_a_supertrait_bound.silt:33:1
+ --> a_generic_type_through_a_supertrait_bound.silt:39:1
     |
- 33 | trait Dec for Box(a) where a: json.Decode {}
+ 39 | trait Dec for Box(a) where a: json.Decode {}
     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ trait `Dec` cannot be implemented for the generic type `Box`: it has `json.Decode` as a supertrait, and a decoder builds a value of one type
 
 error[type]: trait `Dec` cannot be implemented for the generic type `Pick`: it has `json.Decode` as a supertrait, and a decoder builds a value of one type
- --> a_generic_type_through_a_supertrait_bound.silt:35:1
+ --> a_generic_type_through_a_supertrait_bound.silt:41:1
     |
- 35 | trait Dec for Pick(a) where a: json.Decode {}
+ 41 | trait Dec for Pick(a) where a: json.Decode {}
     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ trait `Dec` cannot be implemented for the generic type `Pick`: it has `json.Decode` as a supertrait, and a decoder builds a value of one type
 
-error[type]: trait `Dec` cannot be implemented for `W`: it has `json.Decode` as a supertrait, and `W` cannot be decoded: field `b` has type `Box(Int)`, which has no decoder
- --> a_generic_type_through_a_supertrait_bound.silt:37:1
+error[type]: trait `Dec` cannot be implemented for `V`: it has `json.Decode` as a supertrait, and `V` cannot be decoded: field `b` has type `Box(Set(Int))`, and `Set(Int)` has no decoder
+ --> a_generic_type_through_a_supertrait_bound.silt:45:1
     |
- 37 | trait Dec for W {}
-    | ^^^^^^^^^^^^^^^^^^ trait `Dec` cannot be implemented for `W`: it has `json.Decode` as a supertrait, and `W` cannot be decoded: field `b` has type `Box(Int)`, which has no decoder
+ 45 | trait Dec for V {}
+    | ^^^^^^^^^^^^^^^^^^ trait `Dec` cannot be implemented for `V`: it has `json.Decode` as a supertrait, and `V` cannot be decoded: field `b` has type `Box(Set(Int))`, and `Set(Int)` has no decoder

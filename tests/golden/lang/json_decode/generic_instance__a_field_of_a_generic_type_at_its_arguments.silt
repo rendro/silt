@@ -1,0 +1,46 @@
+-- A generic record or enum type decodes where its type arguments are
+-- known: a field `b: Box(Int)` of a record without parameters, nested
+-- (`List(Box(Option(String)))`, `Box(Box(Int))`), a generic enum
+-- (`Tag(String)`), and in an `Option`, where `null` is `None`. Each field
+-- is read as the type declares it, with the arguments in their places:
+-- a value of another type is an error at its path. What
+-- `json.stringify` writes of a value decodes back to it.
+import json
+
+type Box(a) {
+  v: a,
+}
+
+type Tag(a) {
+  Named(a),
+  Plain,
+}
+
+type W {
+  b: Box(Int),
+}
+
+type N {
+  xs: List(Box(Option(String))),
+  bb: Box(Box(Int)),
+  t: Tag(String),
+  o: Option(Box(Int)),
+}
+
+fn main() {
+  println(json.parse("""{"b": {"v": 3}}""", W))
+  println(json.parse("""{"b": {"v": "x"}}""", W))
+  println(json.parse("""{"b": {}}""", W))
+  println(json.parse("""{"xs": [], "bb": {"v": {"v": 2}}, "t": "Plain", "o": null}""", N))
+  println(json.parse("""{"xs": [], "bb": {"v": {"v": true}}, "t": "Plain"}""", N))
+  println(json.parse("""{"xs": [{"v": 1}], "bb": {"v": {"v": 2}}, "t": "Plain"}""", N))
+  let n = N {
+    xs: [Box { v: Some("a") }, Box { v: None }],
+    bb: Box { v: Box { v: 1 } },
+    t: Named("q"),
+    o: Some(Box { v: 5 }),
+  }
+  let text = json.stringify(n)
+  println(text)
+  println(json.parse(text, N) == Ok(n))
+}

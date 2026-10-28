@@ -254,9 +254,12 @@ trait json.Decode {
 What `json.parse` and `json.decode` need of the type they decode into.
 A type has it by its structure: the types of [Decodable
 types](#decodable-types) have it, a record or enum type of the program
-when the types of its fields do. A date and a time are decoded as the
-type of a field or of a part of a list, an option, a map or a tuple, not
-as the type a decoder is given. A
+when the types of its fields do, and a generic one at its type arguments
+when the types of its fields do with the arguments in their places
+(`Box(Int)` of `type Box(a) { v: a }`; `json.parse(text, Box(a))` in a
+function with `where a: json.Decode`). A date and a time are decoded as
+the type of a field or of a part of a list, an option, a map or a tuple,
+not as the type a decoder is given. A
 function with a `type a` parameter (any annotation names the variable)
 that hands it to a decoder writes `where a: json.Decode`; only a function
 with no annotation at all (`fn load(text, t) { json.parse(text, t) }`) is

@@ -1,0 +1,17 @@
+error[type]: trait `Dec` cannot be implemented for `Box(Set(Int))`: it has `json.Decode` as a supertrait, and `Box(Set(Int))` cannot be decoded: field `v` has type `Set(Int)`, which has no decoder
+ --> generic_instance__an_impl_for_an_instance_without_a_decoder_is_refused.silt:19:1
+    |
+ 19 | trait Dec for Box(Set(Int)) {}
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ trait `Dec` cannot be implemented for `Box(Set(Int))`: it has `json.Decode` as a supertrait, and `Box(Set(Int))` cannot be decoded: field `v` has type `Set(Int)`, which has no decoder
+
+error[type]: trait `Dec` cannot be implemented for `List(Set(Int))`: it has `json.Decode` as a supertrait, and `List(Set(Int))` cannot be decoded: `Set(Int)` has no decoder
+ --> generic_instance__an_impl_for_an_instance_without_a_decoder_is_refused.silt:21:1
+    |
+ 21 | trait Dec for List(Set(Int)) {}
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ trait `Dec` cannot be implemented for `List(Set(Int))`: it has `json.Decode` as a supertrait, and `List(Set(Int))` cannot be decoded: `Set(Int)` has no decoder
+
+error[type]: trait `Dec` cannot be implemented for the generic type `Pair`: it has `json.Decode` as a supertrait, and a decoder builds a value of one type
+ --> generic_instance__an_impl_for_an_instance_without_a_decoder_is_refused.silt:23:1
+    |
+ 23 | trait Dec for Pair(a) {}
+    | ^^^^^^^^^^^^^^^^^^^^^^^^ trait `Dec` cannot be implemented for the generic type `Pair`: it has `json.Decode` as a supertrait, and a decoder builds a value of one type

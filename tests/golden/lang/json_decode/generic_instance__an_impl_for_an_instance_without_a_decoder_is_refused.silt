@@ -1,0 +1,25 @@
+-- cmd: check
+-- exit: 1
+-- An impl of a trait that has `json.Decode` as a supertrait, for an
+-- instance the decoder does not decode, is refused with the decoder's
+-- reason, the instance named in full; one for a generic type over its
+-- type variables keeps the generic type's refusal.
+import json
+
+trait Dec: json.Decode {}
+
+type Box(a) {
+  v: a,
+}
+
+type Pair(a) {
+  x: a,
+}
+
+trait Dec for Box(Set(Int)) {}
+
+trait Dec for List(Set(Int)) {}
+
+trait Dec for Pair(a) {}
+
+fn main() {}

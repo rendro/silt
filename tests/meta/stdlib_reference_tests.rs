@@ -240,9 +240,7 @@ fn the_decodable_field_types_of_a_page_are_the_registry_s() {
         }
         // Enum types, where the family decodes them: an item of the list
         // and a section of the page.
-        let enums = list
-            .iter()
-            .any(|line| line.contains("non-generic enum types"));
+        let enums = list.iter().any(|line| line.starts_with("- enum types"));
         assert_eq!(
             enums,
             family.decodes_enums(),

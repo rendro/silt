@@ -4,14 +4,14 @@ error[type]: `toml.parse` cannot decode `R1`: field `b` has type `Bytes`, which 
  26 |   lib.rev(lib.T { n: 1 }, R1, R2, R3)
     |                           ^^ `toml.parse` cannot decode `R1`: field `b` has type `Bytes`, which has no decoder
   = note: `lib.rev` passes it to `toml.parse`
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: `lib.rev` cannot decode `R2`: field `b` has type `Bytes`, which has no decoder
  --> main.silt:26:31
     |
  26 |   lib.rev(lib.T { n: 1 }, R1, R2, R3)
     |                               ^^ `lib.rev` cannot decode `R2`: field `b` has type `Bytes`, which has no decoder
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: `toml.parse` cannot decode `R1`: field `b` has type `Bytes`, which has no decoder
  --> main.silt:27:12
@@ -19,14 +19,14 @@ error[type]: `toml.parse` cannot decode `R1`: field `b` has type `Bytes`, which 
  27 |   lib.drev(R1, R2, R3)
     |            ^^ `toml.parse` cannot decode `R1`: field `b` has type `Bytes`, which has no decoder
   = note: `lib.drev` passes it to `toml.parse`
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: `lib.drev` cannot decode `R2`: field `b` has type `Bytes`, which has no decoder
  --> main.silt:27:16
     |
  27 |   lib.drev(R1, R2, R3)
     |                ^^ `lib.drev` cannot decode `R2`: field `b` has type `Bytes`, which has no decoder
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: `toml.parse` cannot decode `R1`: field `b` has type `Bytes`, which has no decoder
  --> main.silt:28:27
@@ -34,7 +34,7 @@ error[type]: `toml.parse` cannot decode `R1`: field `b` has type `Bytes`, which 
  28 |   lib.rev(lib.T { n: 1 }, R1, R1, R1)
     |                           ^^ `toml.parse` cannot decode `R1`: field `b` has type `Bytes`, which has no decoder
   = note: `lib.rev` passes it to `toml.parse`
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: `toml.parse` cannot decode `R1`: field `b` has type `Bytes`, which has no decoder
  --> main.silt:29:12
@@ -42,7 +42,7 @@ error[type]: `toml.parse` cannot decode `R1`: field `b` has type `Bytes`, which 
  29 |   lib.drev(R1, R1, R1)
     |            ^^ `toml.parse` cannot decode `R1`: field `b` has type `Bytes`, which has no decoder
   = note: `lib.drev` passes it to `toml.parse`
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: `toml.parse` cannot decode `X1`: field `b` has type `Bytes`, which has no decoder
  --> main.silt:30:27
@@ -50,14 +50,14 @@ error[type]: `toml.parse` cannot decode `X1`: field `b` has type `Bytes`, which 
  30 |   lib.rev(lib.T { n: 1 }, X1, X2, R3)
     |                           ^^ `toml.parse` cannot decode `X1`: field `b` has type `Bytes`, which has no decoder
   = note: `lib.rev` passes it to `toml.parse`
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: `lib.rev` cannot decode `X2`: field `b` has type `Bytes`, which has no decoder
  --> main.silt:30:31
     |
  30 |   lib.rev(lib.T { n: 1 }, X1, X2, R3)
     |                               ^^ `lib.rev` cannot decode `X2`: field `b` has type `Bytes`, which has no decoder
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: `toml.parse` cannot decode `X1`: field `b` has type `Bytes`, which has no decoder
  --> main.silt:31:12
@@ -65,21 +65,21 @@ error[type]: `toml.parse` cannot decode `X1`: field `b` has type `Bytes`, which 
  31 |   lib.drev(X1, X2, R3)
     |            ^^ `toml.parse` cannot decode `X1`: field `b` has type `Bytes`, which has no decoder
   = note: `lib.drev` passes it to `toml.parse`
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: `lib.drev` cannot decode `X2`: field `b` has type `Bytes`, which has no decoder
  --> main.silt:31:16
     |
  31 |   lib.drev(X1, X2, R3)
     |                ^^ `lib.drev` cannot decode `X2`: field `b` has type `Bytes`, which has no decoder
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: `lib.swap` cannot decode `R2`: field `b` has type `Bytes`, which has no decoder
  --> main.silt:32:28
     |
  32 |   lib.swap(lib.T { n: 1 }, R2, R1, R3)
     |                            ^^ `lib.swap` cannot decode `R2`: field `b` has type `Bytes`, which has no decoder
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: `toml.parse` cannot decode `R1`: field `b` has type `Bytes`, which has no decoder
  --> main.silt:32:32
@@ -87,14 +87,14 @@ error[type]: `toml.parse` cannot decode `R1`: field `b` has type `Bytes`, which 
  32 |   lib.swap(lib.T { n: 1 }, R2, R1, R3)
     |                                ^^ `toml.parse` cannot decode `R1`: field `b` has type `Bytes`, which has no decoder
   = note: `lib.swap` passes it to `toml.parse`
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: `lib.dswap` cannot decode `R2`: field `b` has type `Bytes`, which has no decoder
  --> main.silt:33:13
     |
  33 |   lib.dswap(R2, R1, R3)
     |             ^^ `lib.dswap` cannot decode `R2`: field `b` has type `Bytes`, which has no decoder
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: `toml.parse` cannot decode `R1`: field `b` has type `Bytes`, which has no decoder
  --> main.silt:33:17
@@ -102,7 +102,7 @@ error[type]: `toml.parse` cannot decode `R1`: field `b` has type `Bytes`, which 
  33 |   lib.dswap(R2, R1, R3)
     |                 ^^ `toml.parse` cannot decode `R1`: field `b` has type `Bytes`, which has no decoder
   = note: `lib.dswap` passes it to `toml.parse`
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: `toml.parse` cannot decode `R1`: field `b` has type `Bytes`, which has no decoder
  --> main.silt:34:29
@@ -110,7 +110,7 @@ error[type]: `toml.parse` cannot decode `R1`: field `b` has type `Bytes`, which 
  34 |   lib.twice(lib.T { n: 1 }, R1, R3)
     |                             ^^ `toml.parse` cannot decode `R1`: field `b` has type `Bytes`, which has no decoder
   = note: `lib.twice` passes it to `toml.parse`
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: `toml.parse` cannot decode `R1`: field `b` has type `Bytes`, which has no decoder
  --> main.silt:35:14
@@ -118,4 +118,4 @@ error[type]: `toml.parse` cannot decode `R1`: field `b` has type `Bytes`, which 
  35 |   lib.dtwice(R1, R3)
     |              ^^ `toml.parse` cannot decode `R1`: field `b` has type `Bytes`, which has no decoder
   = note: `lib.dtwice` passes it to `toml.parse`
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these

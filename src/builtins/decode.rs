@@ -401,6 +401,7 @@ fn variant_field_message(ty: &str, variant: &str, declared: &str) -> std::string
 fn names_enum(rt: &Reader, field_type: &FieldType) -> bool {
     match field_type {
         FieldType::Enum(id) => !rt.written(*id),
+        FieldType::Applied(id, _) => rt.type_info(*id).is_some_and(|ty| decodable_enum(&ty)),
         FieldType::List(t) | FieldType::Option(t) | FieldType::Map(t) => names_enum(rt, t),
         FieldType::Tuple(ts) => ts.iter().any(|t| names_enum(rt, t)),
         _ => false,
@@ -413,9 +414,34 @@ fn names_enum(rt: &Reader, field_type: &FieldType) -> bool {
 /// or an enum type where the family decodes none (one with a written
 /// impl is the impl's).
 fn lacks_here(rt: &Reader, family: Family, field_type: &FieldType) -> bool {
-    matches!(field_type, FieldType::Unsupported(_))
+    matches!(field_type, FieldType::Unsupported(_) | FieldType::Param(_))
         || family.lacks(field_type).is_some()
         || (!family.decodes_enums() && names_enum(rt, field_type))
+}
+
+/// The types looked into by a walk for a field no decoder fills: each
+/// at its type arguments, for a family.
+type Seen = Vec<(TypeId, Vec<FieldType>, Family)>;
+
+/// How deep the type arguments of an instance a walk for a field no
+/// decoder fills meets may be: past it, the type grows with every level
+/// (`n: Option(T(List(a)))` in `type T(a)`), which the checker refuses.
+/// (The decoding itself meets a field no decoder fills there: its error.)
+const ARGUMENT_DEPTH_LIMIT: usize = 32;
+
+/// Whether the type arguments `args` are deeper than
+/// [`ARGUMENT_DEPTH_LIMIT`].
+fn too_deep(args: &[FieldType]) -> bool {
+    fn depth(ty: &FieldType) -> usize {
+        1 + match ty {
+            FieldType::List(t) | FieldType::Option(t) | FieldType::Map(t) => depth(t),
+            FieldType::Tuple(ts) | FieldType::Applied(_, ts) => {
+                ts.iter().map(depth).max().unwrap_or(0)
+            }
+            _ => 0,
+        }
+    }
+    args.iter().any(|arg| depth(arg) > ARGUMENT_DEPTH_LIMIT)
 }
 
 /// The first field of a field of type `field_type` that `family` has no
@@ -426,38 +452,40 @@ fn lacking(
     rt: &Reader,
     family: Family,
     field_type: &FieldType,
-    seen: &mut Vec<(TypeId, Family)>,
+    seen: &mut Seen,
 ) -> Option<(Option<Place>, std::string::String)> {
     if lacks_here(rt, family, field_type) {
         return Some((None, shown(rt, field_type)));
     }
     let mut named = Vec::new();
-    field_type.records(&mut named);
-    for id in named {
+    field_type.instances(&mut named);
+    for (id, args) in named {
         let Some(info) = rt.type_info(id) else {
             continue;
         };
-        if let Some((place, declared)) = lacking_in(rt, family.nested(), &info, seen) {
+        if let Some((place, declared)) = lacking_in(rt, family.nested(), &info, args, seen) {
             return Some((Some(place), declared));
         }
     }
     None
 }
 
-/// The first field of the record or enum type `ty` (in the order it
-/// declares them, each variant's in turn), or of a type a field names,
-/// that `family` has no decoder for: its place and its type as silt
-/// writes it.
+/// The first field of the record or enum type `ty` at its type
+/// arguments `args` (in the order it declares them, each variant's in
+/// turn), or of a type a field names, that `family` has no decoder for:
+/// its place and its type as silt writes it.
 fn lacking_in(
     rt: &Reader,
     family: Family,
     ty: &TypeInfo,
-    seen: &mut Vec<(TypeId, Family)>,
+    args: &[FieldType],
+    seen: &mut Seen,
 ) -> Option<(Place, std::string::String)> {
-    if seen.contains(&(ty.id, family)) || rt.written(ty.id) {
+    let instance = (ty.id, args.to_vec(), family);
+    if seen.contains(&instance) || too_deep(args) || rt.written(ty.id) {
         return None;
     }
-    seen.push((ty.id, family));
+    seen.push(instance);
     let fields: Vec<(Place, &FieldType)> = match &ty.shape {
         Shape::Record(fields) => (fields.iter())
             .map(|(name, field)| (Place::Field(ty.name.clone(), name.clone()), field))
@@ -471,7 +499,8 @@ fn lacking_in(
         Shape::Opaque | Shape::Applied(_) => Vec::new(),
     };
     for (here, field) in fields {
-        if let Some((place, declared)) = lacking(rt, family, field, seen) {
+        let field = field.instantiated(args);
+        if let Some((place, declared)) = lacking(rt, family, &field, seen) {
             return Some((place.unwrap_or(here), declared));
         }
     }
@@ -479,25 +508,28 @@ fn lacking_in(
 }
 
 /// The message of the error of a decoder of `family` given the record or
-/// enum type `ty` to decode into, if a field no decoder fills is in it
-/// (or in a record or enum type it names): whatever the document holds.
+/// enum type `ty` at its type arguments `args` (none for a type without
+/// parameters) to decode into, if a field no decoder fills is in it (or
+/// in a record or enum type it names): whatever the document holds.
 pub(crate) fn record_refusal(
     rt: &Reader,
     family: Family,
     ty: &TypeInfo,
+    args: &[FieldType],
 ) -> Option<std::string::String> {
     // (Walked once per type and family: see `Runtime::refusals`. With
     // the impls a program wrote, a type with one is not looked into,
-    // which the cache does not say.)
-    if rt.impls.is_some() {
-        return lacking_in(rt, family, ty, &mut Vec::new())
+    // which the cache does not say; nor does it say a generic type's
+    // arguments.)
+    if rt.impls.is_some() || !args.is_empty() {
+        return lacking_in(rt, family, ty, args, &mut Vec::new())
             .map(|(place, declared)| place.message(&declared));
     }
     let (at, of) = (ty.id.0.0 as usize, family as usize);
     if let Some(Some(found)) = rt.refusals.read().get(at).map(|known| &known[of]) {
         return found.clone();
     }
-    let found = lacking_in(rt, family, ty, &mut Vec::new())
+    let found = lacking_in(rt, family, ty, &[], &mut Vec::new())
         .map(|(place, declared)| place.message(&declared));
     let mut refusals = rt.refusals.write();
     if refusals.len() <= at {
@@ -512,8 +544,8 @@ pub(crate) fn record_refusal(
 /// an empty one too.
 pub(crate) fn refusal(rt: &Reader, family: Family, target: &Target) -> Option<std::string::String> {
     match target {
-        Target::Record(ty) => record_refusal(rt, family, ty),
-        Target::Value(FieldType::Enum(id)) => record_refusal(rt, family, &*rt.type_info(*id)?),
+        Target::Record(ty) => record_refusal(rt, family, ty, &[]),
+        Target::Value(FieldType::Enum(id)) => record_refusal(rt, family, &*rt.type_info(*id)?, &[]),
         Target::Value(field_type) => {
             let (place, declared) = lacking(rt, family, field_type, &mut Vec::new())?;
             // (A type argument that is no record or enum is one the
@@ -758,6 +790,9 @@ pub(crate) fn target<'a>(decoder: &Decoder, ty: Type<'a>) -> Result<Target<'a>, 
     };
     match ty {
         Type::Field(field_type) if decoding.primitives => Ok(Target::Value(field_type)),
+        // A generic record or enum type at its arguments (`Box(Int)`),
+        // which a decoder of records decodes as it does a record type.
+        Type::Field(field_type @ FieldType::Applied(..)) => Ok(Target::Value(field_type)),
         Type::Field(field_type) => Err(match decoding.family.rows() {
             true => not_a_row(&field_type.shown(&|_| std::string::String::new())),
             false => VmError::new(format!("{caller}: type argument must be {}", accepted())),
@@ -988,14 +1023,33 @@ pub(crate) fn value<D: Document>(
         }
         FieldType::Enum(id) if rules.family.decodes_enums() => {
             let ty = field_record_type(rt, rules.caller, *id)?;
-            variant(rt, &ty, doc, at)
+            variant(rt, &ty, &[], doc, at)
         }
         FieldType::Enum(_) => Err(Error::Unsupported(shown(rt, expected))),
+        // A generic type's fields, each type parameter its argument.
+        FieldType::Applied(id, args) => {
+            let ty = field_record_type(rt, rules.caller, *id)?;
+            match &ty.shape {
+                Shape::Enum(_) if rules.family.decodes_enums() && decodable_enum(&ty) => {
+                    variant(rt, &ty, args, doc, at)
+                }
+                Shape::Enum(_) => Err(Error::Unsupported(shown(rt, expected))),
+                _ => {
+                    let fields: Vec<_> = (decodable_record(rules.caller, &ty)?.iter())
+                        .map(|(name, field)| (name.clone(), field.instantiated(args).into_owned()))
+                        .collect();
+                    record(rt, &ty, &fields, doc, at)
+                }
+            }
+        }
+        // (A type parameter no type argument gave: refused before.)
+        FieldType::Param(_) => Err(Error::Unsupported(shown(rt, expected))),
     }
 }
 
-/// The variant of the enum type `ty` that `doc`, which is `at` a path,
-/// is, as `json.stringify` writes a variant: the string of its name
+/// The variant of the enum type `ty` at its type arguments `args` (none
+/// for a type without parameters) that `doc`, which is `at` a path, is,
+/// as `json.stringify` writes a variant: the string of its name
 /// (`"Active"`) for one without fields, and the object
 /// `{"fields":[...],"variant":"Name"}` for one with them, each field
 /// decoded as the variant declares it (other keys of the object are
@@ -1003,6 +1057,7 @@ pub(crate) fn value<D: Document>(
 pub(crate) fn variant<D: Document>(
     rt: &Reader,
     ty: &Arc<TypeInfo>,
+    args: &[FieldType],
     doc: &D,
     at: &At,
 ) -> Result<Value, Error> {
@@ -1063,7 +1118,7 @@ pub(crate) fn variant<D: Document>(
     // read; this is the fallback.)
     let refused = |declared: &str| Error::Other(variant_field_message(&ty.name, name, declared));
     for (index, (item, field)) in items.iter().zip(declared).enumerate() {
-        let decoded = value(rt, item, field, &at_fields.index(index));
+        let decoded = value(rt, item, &field.instantiated(args), &at_fields.index(index));
         fields.push(decoded.map_err(|e| match e {
             Error::Unsupported(declared) => refused(&declared),
             e => e,

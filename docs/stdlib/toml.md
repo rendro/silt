@@ -70,12 +70,12 @@ record and enum type nested in them), may have these types:
 - `time.Date`, `time.Time`, `time.DateTime`
 - `List(T)`, `Option(T)`, `Map(String, T)`
 - tuples, such as `(Int, String)`
-- non-generic record types
-- non-generic enum types (see [Enums](#enums))
+- record types, a generic one with its type arguments (`Box(Int)`)
+- enum types, a generic one with its type arguments (see [Enums](#enums))
 - type aliases of any of these
 
 where `T` is again one of these types. Anything else (a `Set`, a generic
-record or enum, a builtin enum such as `time.Weekday`, a function, a `Map`
+record or enum without its type arguments, a builtin enum such as `time.Weekday`, a function, a `Map`
 whose key is not `String`, a type parameter) has no decoder.
 
 A TOML integer goes into an `Int`, and into a `Float` where one is

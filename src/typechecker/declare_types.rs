@@ -296,6 +296,7 @@ impl TypeChecker {
                     ty,
                     RecordInfo {
                         fields: field_types.clone(),
+                        params: td.params.clone(),
                     },
                 );
 

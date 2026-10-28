@@ -85,39 +85,44 @@ impl TypeChecker {
 }
 
 impl TypeChecker {
-    /// The opaque type of another module that decoding `head` would
-    /// build by its structure: `head` itself, or a record or enum type
-    /// in its fields, at any depth. A type with a written `json.Decode`
-    /// impl is the impl's to decode, and is not looked into.
+    /// The opaque type of another module that decoding `head` at its
+    /// type arguments `args` would build by its structure: `head`
+    /// itself, or a record or enum type in its fields, at any depth. A
+    /// type with a written `json.Decode` impl is the impl's to decode,
+    /// and is not looked into.
     fn opaque_decoded(
         &self,
         head: TypeRef,
-        seen: &mut HashSet<crate::defs::TypeId>,
+        args: &[Type],
+        seen: &mut Vec<(crate::defs::TypeId, Vec<Type>)>,
         viewer: crate::session::ModuleId,
     ) -> Option<(TypeRef, Symbol)> {
-        if !seen.insert(head.id) || self.has_decode_impl(head) {
+        let instance = (head.id, args.to_vec());
+        // (A type that grows with every level is refused as one no
+        // decoder has: `undecodable_field`.)
+        if seen.contains(&instance)
+            || super::decodable::too_deep(args)
+            || self.has_decode_impl(head)
+        {
             return None;
         }
+        seen.push(instance);
         if let Some(module) = self.opaque_outside_of(head, viewer) {
             return Some((head, module));
         }
         let fields: Vec<Type> = match self.tables.is_enum(head) {
-            true => (self.tables.decoded_variant_fields(head).into_iter())
+            true => (self.tables.decoded_variant_fields(head, args).into_iter())
                 .flat_map(|(_, types)| types)
                 .collect(),
-            false => (self.tables.decoded_record_fields(head).into_iter())
+            false => (self.tables.decoded_record_fields(head, args).into_iter())
                 .map(|(_, ty)| ty)
                 .collect(),
         };
         for ty in fields {
             let mut nested = Vec::new();
-            let _ = self.tables.decoded_field_type(&ty, &mut nested);
-            for id in nested {
-                let Some(def) = self.def(id.0) else {
-                    continue;
-                };
-                let nested = TypeRef { id, name: def.name };
-                if let Some(found) = self.opaque_decoded(nested, seen, viewer) {
+            let _ = self.tables.decoded_field_type(&ty, &[], &mut nested);
+            for (nested, args) in nested {
+                if let Some(found) = self.opaque_decoded(nested, &args, seen, viewer) {
                     return Some(found);
                 }
             }
@@ -128,10 +133,10 @@ impl TypeChecker {
     /// The module of the opaque type of another module that decoding
     /// `ty` would build by its structure, if there is one.
     pub(super) fn opaque_decoded_module(&self, ty: &Type) -> Option<crate::session::ModuleId> {
-        let Type::Generic(head, _) = ty else {
+        let Type::Generic(head, args) = ty else {
             return None;
         };
-        let (found, _) = self.opaque_decoded(*head, &mut HashSet::new(), self.module)?;
+        let (found, _) = self.opaque_decoded(*head, args, &mut Vec::new(), self.module)?;
         self.def(found.id.0).map(|def| def.module)
     }
 
@@ -274,15 +279,14 @@ impl TypeChecker {
     }
 
     /// The refusal of a call at `span` through `tr`, a trait that has
-    /// `json.Encode` or `json.Decode` among its supertraits, for `ty` (of
-    /// the head `head`), if it would encode or decode an opaque type of
+    /// `json.Encode` or `json.Decode` among its supertraits, for `ty`, if
+    /// it would encode or decode an opaque type of
     /// another module: the trait's methods are a definition of the
     /// trait's module.
     pub(super) fn opaque_through_trait(
         &self,
         tr: TraitKey,
         ty: &Type,
-        head: TypeRef,
         span: Span,
     ) -> Option<Diagnostic> {
         let owner = self.def(tr.id.0).map(|def| def.module);
@@ -292,29 +296,34 @@ impl TypeChecker {
             return Some(refusal);
         }
         match self.implies_decode(tr) {
-            true => self.opaque_decode_refusal(head, span, owner),
+            true => self.opaque_decode_refusal(ty, span, owner),
             false => None,
         }
     }
 
-    /// The refusal of decoding `head` at `span` outside the module of an
-    /// opaque type it would build by its structure, if it would build
-    /// one: a decoder builds what a constructor does. A definition of the
-    /// type's own module (`owner`) decodes it wherever it is used, as
+    /// The refusal of decoding `ty` (a record or enum type, at its type
+    /// arguments) at `span` outside the module of an opaque type it
+    /// would build by its structure, if it would build one: a decoder
+    /// builds what a constructor does. A definition of the type's own
+    /// module (`owner`) decodes it wherever it is used, as
     /// `opaque_encode_refusal` encodes.
     pub(super) fn opaque_decode_refusal(
         &self,
-        head: TypeRef,
+        ty: &Type,
         span: Span,
         owner: Option<crate::session::ModuleId>,
     ) -> Option<Diagnostic> {
-        let mut found = self.opaque_decoded(head, &mut HashSet::new(), self.module)?;
+        let ty = crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(ty));
+        let Type::Generic(head, args) = &ty else {
+            return None;
+        };
+        let mut found = self.opaque_decoded(*head, args, &mut Vec::new(), self.module)?;
         if let Some(owner) = owner
             && self
                 .def(found.0.id.0)
                 .is_some_and(|def| def.module == owner)
         {
-            found = self.opaque_decoded(head, &mut HashSet::new(), owner)?;
+            found = self.opaque_decoded(*head, args, &mut Vec::new(), owner)?;
         }
         let (ty, module) = found;
         Some(

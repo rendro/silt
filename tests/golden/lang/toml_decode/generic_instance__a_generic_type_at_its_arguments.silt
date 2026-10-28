@@ -1,0 +1,32 @@
+-- toml decodes a generic record type where its type arguments are known,
+-- as json does: a field `b: Box(Int)`, a type argument `Box(Int)`, the
+-- elements of `toml.parse_list`; a value of another type inside is an
+-- error at its path.
+import toml
+
+type Box(a) {
+  v: a,
+}
+
+type C {
+  b: Box(Int),
+  t: Box(List(String)),
+  o: Option(Box(Int)),
+}
+
+fn main() {
+  println(toml.parse("""
+[b]
+v = 1
+[t]
+v = ["a"]
+""", C))
+  println(toml.parse("""
+[b]
+v = "no"
+[t]
+v = []
+""", C))
+  println(toml.parse("v = 3", Box(Int)))
+  println(toml.parse_list("""xs = [{v = 1}, {v = 2}]""", Box(Int)))
+}

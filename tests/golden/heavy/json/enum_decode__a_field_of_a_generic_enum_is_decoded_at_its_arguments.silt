@@ -1,0 +1,18 @@
+-- A field whose type is a generic enum at its arguments is decoded: each
+-- variant's fields as the enum declares them, with `Int` for `a`; a
+-- value of another type inside is an error at its path.
+import json
+
+type Box(a) {
+  Empty,
+  Full(a),
+}
+
+type Holder { b: Box(Int) }
+
+fn main() {
+  println(json.parse("""{"b": "Empty"}""", Holder))
+  println(json.parse("""{"b": {"variant": "Full", "fields": [4]}}""", Holder))
+  println(json.parse("""{"b": {"variant": "Full", "fields": ["4"]}}""", Holder))
+  println(json.parse(json.stringify(Holder { b: Full(7) }), Holder))
+}

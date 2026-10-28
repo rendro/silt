@@ -22,9 +22,11 @@ fn enum_info_size_locked() {
 
 #[test]
 fn record_info_size_locked() {
+    // D1 added `params`, the names of a generic record's parameters,
+    // which a decoder's refusal of a type that grows writes.
     assert_eq!(
         std::mem::size_of::<RecordInfo>(),
-        24,
+        48,
         "RecordInfo size changed — see module doc"
     );
 }

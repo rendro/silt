@@ -3,7 +3,8 @@
 -- A type argument written in full (`List(Int)`, `(Int, String)`) is that
 -- type. A decoder refuses one it has no decoder for with its own error:
 -- a part of a list, an option, a map or a tuple that has none, a map
--- whose keys are not String, a set, a generic record. A type with an
+-- whose keys are not String, a set, a generic record at an argument
+-- that has none (`Box(Set(Int))`). A type with an
 -- argument left open (`List`) is no type. `toml.parse` reads a table
 -- only, and points a list to `toml.parse_list` and a map to
 -- `toml.parse_map`. A function with a `json.Decode` bound is refused by
@@ -21,9 +22,9 @@ fn main() {
   let _ = json.parse("[1]", List)
   let _ = json.parse("[1]", Set(Int))
   let _ = json.parse("\{}", Map(Int, String))
-  let _ = json.parse("[1]", Box(Int))
+  let _ = json.parse("[1]", Box(Set(Int)))
   let _ = json.parse("[1]", List(Set(Int)))
-  let _ = json.parse("[1]", List(Box(Int)))
+  let _ = json.parse("[1]", List(Box(Set(Int))))
   let _ = json.parse("[1]", (Int, Bytes))
   let _ = json.parse("[[1]]", List(Option(Set(Int))))
   let _ = json.decode(json.Null, Map(String, List(Bytes)))

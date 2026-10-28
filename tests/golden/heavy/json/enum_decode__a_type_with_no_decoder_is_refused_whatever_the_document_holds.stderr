@@ -4,7 +4,7 @@ error[type]: `json.parse` cannot decode `File`: variant `Raw` of `Blob`, an enum
  42 |   show(from_json("""{"name": "x", "blob": "Empty"}""", File))
     |                                                        ^^^^ `json.parse` cannot decode `File`: variant `Raw` of `Blob`, an enum type nested in it, has a field of type `Bytes`, which has no decoder
   = note: `from_json` passes it to `json.parse`
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: `json.parse` cannot decode `File`: variant `Raw` of `Blob`, an enum type nested in it, has a field of type `Bytes`, which has no decoder
  --> enum_decode__a_type_with_no_decoder_is_refused_whatever_the_document_holds.silt:43:39
@@ -12,7 +12,7 @@ error[type]: `json.parse` cannot decode `File`: variant `Raw` of `Blob`, an enum
  43 |   show(from_json("""{"name": "x"}""", File))
     |                                       ^^^^ `json.parse` cannot decode `File`: variant `Raw` of `Blob`, an enum type nested in it, has a field of type `Bytes`, which has no decoder
   = note: `from_json` passes it to `json.parse`
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: `json.parse` cannot decode `Blob`: variant `Raw` has a field of type `Bytes`, which has no decoder
  --> enum_decode__a_type_with_no_decoder_is_refused_whatever_the_document_holds.silt:44:22
@@ -20,7 +20,7 @@ error[type]: `json.parse` cannot decode `Blob`: variant `Raw` has a field of typ
  44 |   show(list_of("[]", Blob))
     |                      ^^^^ `json.parse` cannot decode `Blob`: variant `Raw` has a field of type `Bytes`, which has no decoder
   = note: `list_of` passes it to `json.parse`
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: `json.parse` cannot decode `Blob`: variant `Raw` has a field of type `Bytes`, which has no decoder
  --> enum_decode__a_type_with_no_decoder_is_refused_whatever_the_document_holds.silt:45:33
@@ -28,7 +28,7 @@ error[type]: `json.parse` cannot decode `Blob`: variant `Raw` has a field of typ
  45 |   show(list_of("""["Empty"]""", Blob))
     |                                 ^^^^ `json.parse` cannot decode `Blob`: variant `Raw` has a field of type `Bytes`, which has no decoder
   = note: `list_of` passes it to `json.parse`
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: `toml.parse` cannot decode `Config`: variant `Raw` of `Blob`, an enum type nested in it, has a field of type `Bytes`, which has no decoder
  --> enum_decode__a_type_with_no_decoder_is_refused_whatever_the_document_holds.silt:46:22
@@ -36,4 +36,4 @@ error[type]: `toml.parse` cannot decode `Config`: variant `Raw` of `Blob`, an en
  46 |   show(from_toml("", Config))
     |                      ^^^^^^ `toml.parse` cannot decode `Config`: variant `Raw` of `Blob`, an enum type nested in it, has a field of type `Bytes`, which has no decoder
   = note: `from_toml` passes it to `toml.parse`
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these

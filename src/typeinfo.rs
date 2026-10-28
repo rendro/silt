@@ -49,8 +49,9 @@ pub enum Shape {
     /// A record: its fields in declaration order (an anonymous record's
     /// in name order), which is the order a record value holds them in,
     /// with the type of each as far as the decoders of `json.parse` and
-    /// `toml.parse` are concerned. The fields of a builtin record and of
-    /// an anonymous one have none (`FieldType::undecoded`): the
+    /// `toml.parse` are concerned (a generic type's over its type
+    /// parameters, `FieldType::Param`). The fields of a builtin record
+    /// and of an anonymous one have none (`FieldType::undecoded`): the
     /// decoders refuse such a type before they read a field.
     Record(Vec<(String, FieldType)>),
     /// A type whose values are not records or variants (`Int`, `List`).
@@ -122,6 +123,10 @@ impl TypeInfo {
                 _ => FieldType::Unsupported(name.clone()),
             },
             ("Tuple", _) => FieldType::Tuple(fields.collect()),
+            // A generic record or enum type of the program.
+            ("", _) if matches!(head.shape, Shape::Record(_) | Shape::Enum(_)) => {
+                FieldType::Applied(head.id, fields.collect())
+            }
             _ => FieldType::Unsupported(name.clone()),
         };
         Arc::new(TypeInfo {
@@ -180,7 +185,7 @@ impl TypeInfo {
 /// Both decoders must produce, for every variant, a value of exactly the
 /// described type or an error. `Unsupported` is a type no decoder exists
 /// for: decoding such a field is an error.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum FieldType {
     Int,
     Float,
@@ -197,6 +202,14 @@ pub enum FieldType {
     /// json decoders have it; to the toml decoders it is a type without
     /// a decoder.
     Enum(TypeId),
+    /// A generic record or enum type of the program at its type
+    /// arguments (`Box(Int)`): its fields are decoded as the type
+    /// declares them, each type parameter the argument at its place.
+    Applied(TypeId, Vec<FieldType>),
+    /// The `i`th type parameter of the generic type whose field this
+    /// is (`v: a` of `type Box(a)`), which an `Applied` type gives. Left
+    /// alone it is a type without a decoder.
+    Param(u16),
     Date,
     Time,
     DateTime,
@@ -241,17 +254,81 @@ impl FieldType {
                 format!("({})", parts.join(", "))
             }
             FieldType::Record(id) | FieldType::Enum(id) => record_name(*id),
+            FieldType::Applied(id, args) => {
+                let parts: Vec<String> = args.iter().map(shown).collect();
+                format!("{}({})", record_name(*id), parts.join(", "))
+            }
+            // (A type parameter no type argument gave.)
+            FieldType::Param(_) => "_".into(),
             FieldType::Unsupported(declared) => declared.clone(),
         }
     }
 
-    /// The record and enum types the type names (not those named by the
-    /// fields of those types), added to `out`.
-    pub fn records(&self, out: &mut Vec<TypeId>) {
+    /// The type with each type parameter in it the type argument at its
+    /// place in `args`: a field of a generic type at those arguments.
+    /// (A type without parameters is itself.)
+    pub fn instantiated<'t>(&'t self, args: &[FieldType]) -> std::borrow::Cow<'t, FieldType> {
+        use std::borrow::Cow;
+        if args.is_empty() || !self.has_param() {
+            return Cow::Borrowed(self);
+        }
+        let at = |t: &FieldType| Box::new(t.instantiated(args).into_owned());
+        Cow::Owned(match self {
+            FieldType::Param(i) => match args.get(*i as usize) {
+                Some(arg) => arg.clone(),
+                None => self.clone(),
+            },
+            FieldType::List(t) => FieldType::List(at(t)),
+            FieldType::Option(t) => FieldType::Option(at(t)),
+            FieldType::Map(t) => FieldType::Map(at(t)),
+            FieldType::Tuple(ts) => FieldType::Tuple(
+                ts.iter()
+                    .map(|t| t.instantiated(args).into_owned())
+                    .collect(),
+            ),
+            FieldType::Applied(id, ts) => FieldType::Applied(
+                *id,
+                ts.iter()
+                    .map(|t| t.instantiated(args).into_owned())
+                    .collect(),
+            ),
+            other => other.clone(),
+        })
+    }
+
+    /// Whether a type parameter is in the type.
+    fn has_param(&self) -> bool {
         match self {
-            FieldType::Record(id) | FieldType::Enum(id) => out.push(*id),
-            FieldType::List(t) | FieldType::Option(t) | FieldType::Map(t) => t.records(out),
-            FieldType::Tuple(ts) => ts.iter().for_each(|t| t.records(out)),
+            FieldType::Param(_) => true,
+            FieldType::List(t) | FieldType::Option(t) | FieldType::Map(t) => t.has_param(),
+            FieldType::Tuple(ts) | FieldType::Applied(_, ts) => ts.iter().any(Self::has_param),
+            _ => false,
+        }
+    }
+
+    /// The record and enum types the type names, a generic type's type
+    /// arguments too (not those named by the fields of those types),
+    /// added to `out`.
+    pub fn records(&self, out: &mut Vec<TypeId>) {
+        let mut instances = Vec::new();
+        self.instances(&mut instances);
+        for (id, args) in instances {
+            out.push(id);
+            args.iter().for_each(|t| t.records(out));
+        }
+    }
+
+    /// The record and enum types the type names, each with the type
+    /// arguments it is given (none for a type without parameters), added
+    /// to `out`: not those named by the fields of those types, nor those
+    /// a generic type is given (which its fields name, if they decode
+    /// them).
+    pub fn instances<'t>(&'t self, out: &mut Vec<(TypeId, &'t [FieldType])>) {
+        match self {
+            FieldType::Record(id) | FieldType::Enum(id) => out.push((*id, &[])),
+            FieldType::Applied(id, args) => out.push((*id, args)),
+            FieldType::List(t) | FieldType::Option(t) | FieldType::Map(t) => t.instances(out),
+            FieldType::Tuple(ts) => ts.iter().for_each(|t| t.instances(out)),
             _ => {}
         }
     }
@@ -279,8 +356,9 @@ fn type_value_parts(value: &Value) -> (&str, FieldType) {
                 (_, id) if id == ty::DATE_TIME => FieldType::DateTime,
                 (_, id) if id == ty::JSON_VALUE => FieldType::JsonValue,
                 _ if info.name == "Bytes" && info.is_builtin() => FieldType::Bytes,
-                // A type of the program: the checker gives a decoder a
-                // record or enum type without parameters only.
+                // A type of the program without its arguments: the
+                // checker gives a decoder a generic one only at its
+                // arguments (`Applied`, above).
                 (Shape::Record(_), id) if !info.is_builtin() => FieldType::Record(id),
                 (Shape::Enum(_), id) if !info.is_builtin() => FieldType::Enum(id),
                 _ => FieldType::Unsupported(info.name.clone()),

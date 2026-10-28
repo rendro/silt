@@ -17,4 +17,4 @@ error[type]: `json.parse` cannot decode `Mixed`: field `tags` has type `Set(Stri
     |
  20 |   println(json.parse("\{}", Mixed))
     |                             ^^^^^ `json.parse` cannot decode `Mixed`: field `tags` has type `Set(String)`, which has no decoder
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, non-generic record and enum types, types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
