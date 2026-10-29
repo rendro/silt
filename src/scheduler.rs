@@ -1107,8 +1107,31 @@ static PANIC_LINES: ReentrantMutex<()> = ReentrantMutex::new(());
 /// it. They go to stderr, which can be held up without end (a pipe
 /// that is full and that nobody reads), and with a backtrace they
 /// take a while. When it runs out the last words are said without the
-/// rest of them, by another thread ([`InternalError::end`]).
+/// rest of them, by another thread ([`InternalError::end`]). A stderr
+/// that is a file is not held up for ever, only slow at times: it is
+/// waited for without a bound ([`stderr_is_a_file`]).
 const RUSTS_LINES: Duration = Duration::from_secs(10);
+
+/// Whether the process's stderr is a file. A write to a file can be
+/// slow (a disk that is busy, a backtrace that takes a while to make)
+/// but always ends, unlike a write to a pipe or a terminal that nobody
+/// reads: the process waits for Rust's lines and the internal-error
+/// line on it without a bound, and they are not lost to a slow
+/// moment. (They were: the bounds ran out on a busy machine, and the
+/// process ended with 101 and without the line.)
+fn stderr_is_a_file() -> bool {
+    #[cfg(unix)]
+    let stderr = std::os::fd::AsFd::as_fd(&std::io::stderr()).try_clone_to_owned();
+    #[cfg(windows)]
+    let stderr = std::os::windows::io::AsHandle::as_handle(&std::io::stderr()).try_clone_to_owned();
+    #[cfg(any(unix, windows))]
+    return stderr
+        .map(std::fs::File::from)
+        .and_then(|file| file.metadata())
+        .is_ok_and(|metadata| metadata.is_file());
+    #[cfg(not(any(unix, windows)))]
+    false
+}
 
 /// The panic hook of silt's own process ([`exit_on_panic`]); `rusts`
 /// is the hook that was there before, which writes Rust's lines.
@@ -1139,13 +1162,15 @@ fn at_a_panic(rusts: &(dyn Fn(&PanicHookInfo<'_>) + Sync + Send), panic: &PanicH
     no_death_by_a_closed_stdout();
     let text = panic.payload_as_str().unwrap_or(crate::vm::NO_PANIC_TEXT);
     // (If no thread can be started, nothing bounds the wait.)
-    let _ = thread::Builder::new().name("silt-exit".into()).spawn({
-        let text = text.to_string();
-        move || {
-            thread::sleep(RUSTS_LINES);
-            InternalError(()).end(&text)
-        }
-    });
+    if !stderr_is_a_file() {
+        let _ = thread::Builder::new().name("silt-exit".into()).spawn({
+            let text = text.to_string();
+            move || {
+                thread::sleep(RUSTS_LINES);
+                InternalError(()).end(&text)
+            }
+        });
+    }
     let lines = PANIC_LINES.lock();
     rusts(panic);
     drop(lines);
@@ -1360,7 +1385,10 @@ pub fn exit_with_internal_error(payload: &Box<dyn Any + Send>) -> ! {
     no_death_by_a_closed_stdout();
     // A panic that is writing Rust's lines ends them first, if it does
     // so in time: nothing follows the internal-error line.
-    drop(PANIC_LINES.try_lock_for(LAST_WORDS));
+    match stderr_is_a_file() {
+        true => drop(PANIC_LINES.lock()),
+        false => drop(PANIC_LINES.try_lock_for(LAST_WORDS)),
+    }
     InternalError(()).end(crate::vm::panic_message(payload))
 }
 
@@ -1369,7 +1397,8 @@ pub fn exit_with_internal_error(payload: &Box<dyn Any + Send>) -> ! {
 /// without end by the program (a thread of it blocked in a write to a
 /// pipe that nobody reads holds stdout's lock). When it runs out, what
 /// is lost is the last text the program printed without a line end,
-/// or, where stderr is what is blocked, the line itself.
+/// or, where stderr is what is blocked, the line itself. (A stderr that
+/// is a file is waited for without a bound: [`stderr_is_a_file`].)
 const LAST_WORDS: Duration = Duration::from_secs(1);
 
 /// Set by the thread that says the last words: there is one
@@ -1423,11 +1452,17 @@ impl InternalError {
         };
         let exit_thread = || thread::Builder::new().name("silt-exit".into());
         let mut awaited = 0;
-        match exit_thread().spawn(says) {
-            Ok(_) => awaited += 1,
-            // No thread: the line from here.
-            Err(_) => {
-                let _ = std::io::stderr().write_all(line.as_bytes());
+        if stderr_is_a_file() {
+            // Waited for without a bound: the line from here.
+            says();
+            awaited += 1;
+        } else {
+            match exit_thread().spawn(says) {
+                Ok(_) => awaited += 1,
+                // No thread: the line from here.
+                Err(_) => {
+                    let _ = std::io::stderr().write_all(line.as_bytes());
+                }
             }
         }
         // (No thread: nothing is flushed.)
