@@ -1550,12 +1550,23 @@ impl TypeChecker {
         // (The same of a trait that has `json.Decode` among its
         // supertraits, for a generic type, of the program or a builtin
         // container, over type variables (`Box(a)`, `List(a)`): its impl
-        // would be a way to decode the type, of whatever `a` is. An
-        // instance, `Box(Int)`, is the decoder's to judge
+        // would be a way to decode the type, of whatever `a` is, unless
+        // its header asks `json.Decode` of each of them: its dictionary
+        // then carries the type in full, `Box(Int)`, which the decoder
+        // builds. An instance, `Box(Int)`, is the decoder's to judge
         // (`decode_impl_refusal`).)
+        let each_decoded = (ti.target_param_names.iter()).all(|param| {
+            (ti.where_clauses.iter()).any(|wc| {
+                wc.type_param == *param
+                    && self
+                        .named_trait(wc.trait_res, wc.trait_name)
+                        .is_some_and(Self::is_decode)
+            })
+        });
         if self.generic_for_decode(target_type)
             && self.implies_decode(trait_key)
             && !free_vars_in(&self.apply(&self_type)).is_empty()
+            && !(each_decoded && self.tables.is_generic(target_type))
         {
             self.error(
                 Code::InvalidTraitImpl,

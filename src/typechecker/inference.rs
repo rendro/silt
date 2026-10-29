@@ -559,10 +559,17 @@ impl TypeChecker {
     /// The evidence of `Type.method` at `span`, the method of an impl
     /// reached through its type `head`, just instantiated: as a call of
     /// the impl's method passes it on (`method_site`).
-    fn type_method_site(&mut self, head: TypeRef, entry: &MethodEntry, method: Symbol, span: Span) {
+    fn type_method_site(
+        &mut self,
+        head: TypeRef,
+        entry: &MethodEntry,
+        method: Symbol,
+        full: Option<Type>,
+        span: Span,
+    ) {
         let owed = self.ev.use_ev.take().unwrap_or_default();
         if let Some(key) = self.entry_impl(head, entry, method) {
-            let site = self.method_site(key, method, owed);
+            let site = self.method_site(key, method, owed, full);
             self.ev.calls.insert(span, site);
         }
     }
@@ -871,7 +878,7 @@ impl TypeChecker {
                 let scheme = self.method_scheme(&entry);
                 self.instance_header = self.entry_impl(name, &entry, field);
                 let instantiated = self.instantiate_method(&scheme, field, span);
-                self.type_method_site(name, &entry, field, span);
+                self.type_method_site(name, &entry, field, Some(inner.clone()), span);
                 Some(self.apply(&instantiated))
             }
         }
@@ -1121,7 +1128,7 @@ impl TypeChecker {
                 // The impl's header's predicates come first among the
                 // method's.
                 let owed = self.ev.use_ev.take().unwrap_or_default();
-                let site = self.method_site(key, field, owed);
+                let site = self.method_site(key, field, owed, Some(recv.clone()));
                 self.ev.calls.insert(span, site);
                 if let Type::Fun(params, _) = &ty
                     && let Some(first) = params.first()
@@ -3104,7 +3111,7 @@ impl TypeChecker {
                         let scheme = self.method_scheme(&entry);
                         self.instance_header = self.entry_impl(key.0, &entry, field);
                         let ty = self.instantiate_method(&scheme, field, span);
-                        self.type_method_site(key.0, &entry, field, span);
+                        self.type_method_site(key.0, &entry, field, None, span);
                         let ty = self.apply(&ty);
                         expr.ty = Some(ty.clone());
                         return ty;

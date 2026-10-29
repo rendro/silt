@@ -2529,6 +2529,7 @@ impl TypeChecker {
                 ty: type_name,
                 args: impl_args,
                 subs,
+                full: (!obligated_args.is_empty()).then(|| resolved.clone()),
             },
         );
     }

@@ -7411,6 +7411,7 @@ mod applicative {
             args: ImplArgs::none(),
             name: format!("Applicative for {ty}"),
             descriptor: None,
+            full: false,
             methods: slots.iter().map(|slot| Method::Global(*slot)).collect(),
             supers: Box::new([]),
             wheres: Box::new([]),
