@@ -592,8 +592,9 @@ impl TypeChecker {
         }
         let recv = self.apply(recv);
         let Some(r) = (rigid_vars(&recv).into_iter()).find(|r| {
-            !self.valued_vars.contains(&r.var)
-                && !(self.decode_params.contains(&r.name) && self.header_params.contains(&r.name))
+            let header =
+                self.decode_params.contains(&r.name) && self.header_params.contains(&r.name);
+            !(self.valued_vars.contains(&r.var) || header)
         }) else {
             return;
         };
