@@ -878,6 +878,9 @@ impl TypeChecker {
                             }
                         };
                         let var = self.type_param_var(&mut param_map, name, param.pattern.span);
+                        if let Type::Var(v) = var {
+                            self.valued_vars.insert(v);
+                        }
                         Type::type_of(var)
                     }
                     ParamKind::Data => {
@@ -2177,6 +2180,9 @@ impl TypeChecker {
                             }
                         };
                         let var = self.type_param_var(&mut param_map, name, param.pattern.span);
+                        if let Type::Var(v) = var {
+                            self.valued_vars.insert(v);
+                        }
                         Type::type_of(var)
                     }
                     ParamKind::Data => {

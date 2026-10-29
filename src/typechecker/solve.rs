@@ -2532,6 +2532,14 @@ impl TypeChecker {
         let subs = (subs.into_iter())
             .map(|sub| sub.unwrap_or_else(|| self.ev_new(super::evidence::EvNode::Pending)))
             .collect();
+        // (A use of a definition with the bound: a method call is
+        // refused as one, where the body is checked.)
+        if !self.trait_call_self.contains_key(&origin.span)
+            && !(self.full_type_uses.iter()).any(|(_, _, _, at)| *at == origin.span)
+        {
+            let key = (trait_name, type_name, impl_args);
+            self.refuse_type_without_value(key, &resolved, None, origin.callee, origin.span);
+        }
         self.ev_set(
             ev,
             super::evidence::EvNode::Impl {

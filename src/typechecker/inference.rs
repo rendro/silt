@@ -574,6 +574,65 @@ impl TypeChecker {
         }
     }
 
+    /// Refuse the call at `span` of the method `field` of `tr` on a value
+    /// of the type `recv` by the impl `key`, if the impl's dictionary
+    /// carries its type in full (`Box(Int)`) and a type variable in
+    /// `recv` has no value where the code runs: no `type a` parameter
+    /// gives it, nor the impl whose method the code is in.
+    pub(super) fn refuse_type_without_value(
+        &mut self,
+        key: ImplKey,
+        recv: &Type,
+        method: Option<(TraitKey, Symbol)>,
+        callee: Option<Symbol>,
+        span: Span,
+    ) {
+        if !self.carries_full_type(key) || self.full_type_refused.contains(&span) {
+            return;
+        }
+        let recv = self.apply(recv);
+        let Some(r) = (rigid_vars(&recv).into_iter()).find(|r| {
+            !self.valued_vars.contains(&r.var)
+                && !(self.decode_params.contains(&r.name) && self.header_params.contains(&r.name))
+        }) else {
+            return;
+        };
+        let name = r.name;
+        self.full_type_refused.insert(span);
+        let help = (!self.header_params.contains(&name))
+            .then(|| format!("take the type as a parameter, `type {name}`"));
+        let what = match method {
+            Some((tr, field)) => format!("method '{field}' of trait '{}'", self.show_trait(tr)),
+            None => match callee {
+                Some(callee) => format!("`{callee}`"),
+                None => format!("trait '{}'", self.show_trait(key.0)),
+            },
+        };
+        self.error_help(
+            Code::InvalidMethodCall,
+            (
+                format!(
+                    "{what} needs the type `{}` in full here: `{name}` is known only by its type",
+                    self.show_type(&recv)
+                ),
+                help,
+            ),
+            span,
+        );
+    }
+
+    /// Whether the dictionaries of the impl `key` carry its type in full
+    /// (the compiler's `Template::full`): an impl of a trait passed as a
+    /// dictionary for a generic type over its parameters, whose header
+    /// asks `json.Decode` of one.
+    pub(super) fn carries_full_type(&self, key: ImplKey) -> bool {
+        crate::defs::has_dictionary(key.0.id)
+            && (self.tables.impl_self_types.get(&key))
+                .is_some_and(|ty| !free_vars_in(ty).is_empty())
+            && (self.tables.impl_preds.get(&key).into_iter().flatten())
+                .any(|pred| matches!(pred, Pred::Trait { tr, .. } if Self::is_decode(*tr)))
+    }
+
     /// The impl of the type `head` whose method `method` is `entry`.
     fn entry_impl(&self, head: TypeRef, entry: &MethodEntry, method: Symbol) -> Option<ImplKey> {
         let tr = self.entry_trait(entry, method)?;
@@ -1135,6 +1194,9 @@ impl TypeChecker {
                 {
                     self.unify(&recv, first, span);
                 }
+                if self.carries_full_type(key) {
+                    (self.full_type_uses).push((recv.clone(), tr, field, span));
+                }
                 self.solve_wanted(owed_before);
                 return self.apply(&ty);
             }
@@ -1155,6 +1217,10 @@ impl TypeChecker {
             self.unify(recv, &receiver_ty, span);
         }
         let at = receiver.as_ref().map(|(_, at)| *at);
+        // (Its impl is known once the body is: `refuse_type_without_value`.)
+        if receiver.is_some() {
+            (self.full_type_uses).push((self_ty.clone(), tr, field, span));
+        }
         let ty = self.through_trait(tr, field, self_ty, at, span);
         // The receiver is the method's `Self(a)` parameter, its element
         // the method's `a` (`String` of `m(String)`): the call does not
@@ -1583,6 +1649,21 @@ impl TypeChecker {
     /// annotation variables are rigid and bounded as the `where` clauses
     /// say, and the body's type is the signature's result.
     pub(super) fn check_body(&mut self, f: &mut FnDecl, sig: &FnSig, env: &mut TypeEnv) {
+        let uses = std::mem::take(&mut self.full_type_uses);
+        self.check_body_in(f, sig, env);
+        // (As the body left the receivers' types.)
+        for (recv, tr, field, span) in std::mem::replace(&mut self.full_type_uses, uses) {
+            let recv = self.apply(&recv);
+            if let Some(head) = self.type_name_for_impl(&recv)
+                && let Some(key) = self.tables.one_impl(tr, head)
+            {
+                self.refuse_type_without_value(key, &recv, Some((tr, field)), None, span);
+            }
+        }
+    }
+
+    /// `check_body`, with the body's `type a` parameters known.
+    fn check_body_in(&mut self, f: &mut FnDecl, sig: &FnSig, env: &mut TypeEnv) {
         // Validate where clauses
         for wc in &f.where_clauses {
             // A bound the resolver resolved to nothing: it reported why.
@@ -4895,4 +4976,33 @@ pub(super) fn distinct(traits: &mut Vec<TraitKey>) {
         }
         first
     });
+}
+
+/// The rigid type variables in `ty`, in order.
+fn rigid_vars(ty: &Type) -> Vec<RigidId> {
+    fn walk(ty: &Type, out: &mut Vec<RigidId>) {
+        match ty {
+            Type::Rigid(r) if !out.contains(r) => out.push(*r),
+            Type::App(head, arg) => {
+                walk(head, out);
+                walk(arg, out);
+            }
+            Type::Fun(params, ret) => {
+                params.iter().for_each(|t| walk(t, out));
+                walk(ret, out);
+            }
+            Type::List(t) | Type::Set(t) | Type::Channel(t) => walk(t, out),
+            Type::Map(k, v) => {
+                walk(k, out);
+                walk(v, out);
+            }
+            Type::Tuple(ts) | Type::Generic(_, ts) | Type::Con(_, ts) => {
+                ts.iter().for_each(|t| walk(t, out))
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    walk(ty, &mut out);
+    out
 }
