@@ -142,6 +142,9 @@ pub struct TypeChecker {
     /// method, with the variables it is in the module's impls of the
     /// method: what the trait's bound asks for is what they all ask for.
     pub(super) bound_impls: HashMap<TyVar, Vec<TyVar>>,
+    /// The method each such bound is declared for, as a note names it
+    /// (`Loader.load`).
+    pub(super) bound_methods: HashMap<TyVar, Symbol>,
     /// The alias a use names the type a decoder is given by, at the
     /// place of the type argument.
     pub(super) decode_aliases: HashMap<Span, Symbol>,
@@ -549,6 +552,7 @@ impl TypeChecker {
             open_vars: std::collections::HashSet::new(),
             bound_askers: HashMap::new(),
             bound_impls: HashMap::new(),
+            bound_methods: HashMap::new(),
             decode_aliases: HashMap::new(),
             sig_rows: std::collections::HashSet::new(),
             anon_rows: std::collections::HashSet::new(),
