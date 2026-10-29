@@ -1,0 +1,6 @@
+error[type]: `via` cannot decode `M(Int)`: field `m` has type `Map(Int, Int)`, which has no decoder, as a decoded map's key type must be String
+ --> full_type__a_use_the_decoder_cannot_build_is_refused.silt:21:40
+    |
+ 21 |   println(via("\{\"m\": \{\"x\": 1}}", M(Int)))
+    |                                        ^^^^^^ `via` cannot decode `M(Int)`: field `m` has type `Map(Int, Int)`, which has no decoder, as a decoded map's key type must be String
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these

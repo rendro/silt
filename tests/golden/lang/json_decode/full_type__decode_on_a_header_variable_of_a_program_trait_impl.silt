@@ -1,9 +1,8 @@
--- cmd: check
--- exit: 1
--- `a.decode(v)` in an impl of a program's trait for a generic type is
--- refused: its `where a: json.Decode` gives no value of `a`'s type where
--- the code runs (only the `decode` of a `json.Decode` impl is called at
--- its type's arguments). It was a compiler bug.
+-- cmd: run
+-- exit: 0
+-- `a.decode(v)` in an impl of a program's trait for a generic type whose
+-- header asks `json.Decode` of `a` decodes at the type argument the use
+-- gives (`Box(Int)`): the impl's dictionary carries the type in full.
 import json
 
 fn g(type t) -> t where t: Mk { t.mk(json.Int(3)) }

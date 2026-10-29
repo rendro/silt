@@ -36,6 +36,11 @@ pub struct Template {
     /// call in a default method of a program's trait (`DictType`).
     /// None for an impl of a builtin trait, whose defaults never name it.
     pub descriptor: Option<Value>,
+    /// Whether its dictionaries carry their type in full (`Box(Int)`),
+    /// after the header's: an impl for a generic type whose header asks
+    /// `json.Decode` of its parameters, whose methods and defaults
+    /// decode at them (`Self`, `a.decode(v)`: `TypeArg`).
+    pub full: bool,
     /// Each method of the trait, in the order the trait declares them:
     /// the impl's own, or the trait's default.
     pub methods: Box<[Method]>,
@@ -154,8 +159,15 @@ impl Dict {
         }
     }
 
-    /// The descriptor of the dictionary's impl's type (`DictType`).
+    /// The descriptor of the dictionary's impl's type (`DictType`): in
+    /// full, if the dictionary carries it.
     pub fn descriptor(&self, globals: &Globals) -> Value {
+        if let Dict::Built(built) = self
+            && built.template.full
+            && let Some(ty @ Value::TypeDescriptor(_)) = built.subs.as_slice().last()
+        {
+            return ty.clone();
+        }
         (self.template(globals))
             .and_then(|template| template.descriptor.clone())
             .unwrap_or(Value::Unit)

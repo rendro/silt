@@ -1,0 +1,69 @@
+-- cmd: check
+-- exit: 1
+-- A dictionary that carries its type in full needs a value of each type
+-- variable in it where the code runs: a `type a` parameter, or a
+-- parameter of the header of the impl whose method the code is in. A
+-- variable known only by a value's type is refused, at a method call
+-- (also in a closure) and at the use of a definition that takes the bound
+-- (also of a closure kept in a `let`). `by_type` and `Peek` are not.
+import json
+import list
+
+trait Dec: json.Decode {
+  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+type Box(a) {
+  v: a,
+}
+
+trait Dec for Box(a) where a: json.Decode {}
+
+trait Peek {
+  fn peek(self, s: String) -> String
+}
+
+type Two(a, b) {
+  l: a,
+  r: b,
+}
+
+trait Peek for Two(a, b) where a: json.Decode, b: json.Decode {
+  fn peek(self, s: String) -> String {
+    match Dec.again(Box { v: self.l }, s) {
+      Ok(_) -> "ok"
+      Err(_) -> "err"
+    }
+  }
+}
+
+fn twice(b: Box(a), s: String) -> Result(Box(a), json.JsonError) where a: json.Decode {
+  Dec.again(b, s)
+}
+
+fn mapped(b: Box(a), s: String) -> List(Result(Box(a), json.JsonError)) where a: json.Decode {
+  list.map([b]) { x -> Dec.again(x, s) }
+}
+
+fn kept(b: Box(a), s: String) -> Result(Box(a), json.JsonError) where a: json.Decode {
+  let f = { x -> Dec.again(x, s) }
+  f(b)
+}
+
+fn gen(x: t, s: String) -> Result(t, json.JsonError) where t: Dec {
+  Dec.again(x, s)
+}
+
+fn use_gen(b: Box(a), s: String) -> Result(Box(a), json.JsonError) where a: json.Decode {
+  gen(b, s)
+}
+
+fn by_type(b: Box(a), s: String, type a) -> Result(Box(a), json.JsonError) where a: json.Decode {
+  let f = { x -> Dec.again(x, s) }
+  gen(f(b)?, s)
+}
+
+fn main() {
+  println(by_type(Box { v: 1 }, "\{\"v\": 9}", Int))
+  println(Peek.peek(Two { l: 1, r: 2 }, "\{\"v\": 9}"))
+}

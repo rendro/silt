@@ -436,6 +436,7 @@ pub fn resolve_module(
         diagnostics,
         hidden_modules: Vec::new(),
         type_vars: Vec::new(),
+        header_vars: Vec::new(),
         used: RefCell::new(HashSet::new()),
     };
     resolver.alias_heads(program);
@@ -1157,6 +1158,9 @@ struct Resolver<'a> {
     /// being resolved and of the header of its impl: `a.empty()` calls a
     /// method of a bound of `a` where no value is named `a`.
     type_vars: Vec<Symbol>,
+    /// The type parameters of the header of the impl whose methods are
+    /// resolved: a call may give one as a type (`json.decode(v, Tree(a))`).
+    header_vars: Vec<Symbol>,
     /// The top-level names looked up: an import whose name is not among
     /// them is unused.
     used: RefCell<HashSet<Symbol>>,
@@ -1884,10 +1888,13 @@ impl Resolver<'_> {
                 }
                 header.extend(ti.where_clauses.iter().map(|wc| wc.type_param));
                 let around = std::mem::replace(&mut self.type_vars, header);
+                let around_header =
+                    std::mem::replace(&mut self.header_vars, ti.target_param_names.clone());
                 for m in &mut ti.methods {
                     self.fn_decl(m);
                 }
                 self.type_vars = around;
+                self.header_vars = around_header;
             }
             Decl::Let {
                 pattern, ty, value, ..
@@ -2947,6 +2954,12 @@ impl Resolver<'_> {
                 _ if matches!(a.kind, ExprKind::Ident(name) if name == intern("Self"))
                     && self.type_vars.contains(&intern("Self"))
                     && self.lookup_value(intern("Self")).is_none() =>
+                {
+                    a.res = Some(Res::Local);
+                }
+                _ if let ExprKind::Ident(name) = a.kind
+                    && self.header_vars.contains(&name)
+                    && self.lookup_value(name).is_none() =>
                 {
                     a.res = Some(Res::Local);
                 }

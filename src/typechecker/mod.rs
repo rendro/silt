@@ -328,6 +328,15 @@ pub struct TypeChecker {
     /// While a method of an impl is checked: the type parameters of the
     /// impl's header, which no `type a` parameter can give.
     pub(super) header_params: Vec<Symbol>,
+    /// The type variables of `type a` parameters: they have a value
+    /// where the code runs.
+    pub(super) valued_vars: std::collections::HashSet<TyVar>,
+    /// The places refused by `refuse_type_without_value`, once each.
+    pub(super) full_type_refused: std::collections::HashSet<Span>,
+    /// The calls of a trait's method with a receiver in the body being
+    /// checked, with the receiver's type: checked once the body is, if
+    /// the impl's dictionary carries its type (`refuse_type_without_value`).
+    pub(super) full_type_uses: Vec<(Type, TraitKey, Symbol, Span)>,
     /// Each annotation variable of a declaration whose body was or is
     /// being checked, as its body sees it: rigid.
     pub(super) rigid_of: HashMap<TyVar, Type>,
@@ -593,6 +602,9 @@ impl TypeChecker {
             descriptor_var: None,
             decode_params: Vec::new(),
             header_params: Vec::new(),
+            valued_vars: Default::default(),
+            full_type_refused: Default::default(),
+            full_type_uses: Vec::new(),
             rigid_of: HashMap::new(),
             let_vars: std::collections::HashSet::new(),
             var_written: HashMap::new(),
@@ -1559,6 +1571,20 @@ impl TypeChecker {
                             self.header_params = ti.target_param_names.clone();
                             if Self::is_decode(trait_key) {
                                 self.decode_params = ti.target_param_names.clone();
+                            } else if crate::defs::has_dictionary(trait_key.id)
+                                && ti.instance.is_none()
+                            {
+                                // (The dictionary of an impl of a program's
+                                // trait whose header asks `json.Decode` of a
+                                // parameter carries its type in full: it
+                                // gives the parameters so bound.)
+                                self.decode_params = (ti.where_clauses.iter())
+                                    .filter(|wc| {
+                                        self.named_trait(wc.trait_res, wc.trait_name)
+                                            .is_some_and(Self::is_decode)
+                                    })
+                                    .map(|wc| wc.type_param)
+                                    .collect();
                             }
                             self.check_method_body(method, &sig, env);
                             self.decode_params.clear();

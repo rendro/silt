@@ -1,13 +1,12 @@
 -- cmd: check
 -- exit: 1
--- A trait that has `json.Decode` among its supertraits cannot be
--- implemented for a generic type over its type variables, as
--- `json.Decode` itself cannot: its impl would decode the type, through a
--- bound, a method called on the type or on a value. Its impl for a type
--- the json decoder does not decode is refused too, with the decoder's
--- reason: a record with a field of a generic record type at an argument
--- that has no decoder. A type the decoder decodes is not, a record with
--- a field of a generic record type at its arguments among them.
+-- A trait that has `json.Decode` among its supertraits may be
+-- implemented for a generic type over its type variables when the header
+-- asks `json.Decode` of each (`Box`, `Pick`). Its impl for a type the
+-- json decoder does not decode is refused, with the decoder's reason: a
+-- record with a field of a generic record type at an argument that has
+-- no decoder. A type the decoder decodes is not, a record with a field
+-- of a generic record type at its arguments among them.
 import json
 
 trait Dec: json.Decode {

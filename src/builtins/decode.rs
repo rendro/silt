@@ -222,7 +222,7 @@ pub(crate) fn descriptor(rt: &Runtime, field_type: &FieldType) -> Value {
         FieldType::Map(_) => head("Map"),
         FieldType::Tuple(_) => head("Tuple"),
         FieldType::Applied(id, _) => Some(*id),
-        FieldType::Param(_) | FieldType::Unsupported(_) => None,
+        FieldType::Param(_) | FieldType::KeyedMap(..) | FieldType::Unsupported(_) => None,
     };
     match (id, field_type) {
         (Some(id), FieldType::Bytes) => info(id),
@@ -468,8 +468,10 @@ fn names_enum(rt: &Reader, field_type: &FieldType) -> bool {
 /// or an enum type where the family decodes none (one with a written
 /// impl is the impl's).
 fn lacks_here(rt: &Reader, family: Family, field_type: &FieldType) -> bool {
-    matches!(field_type, FieldType::Unsupported(_) | FieldType::Param(_))
-        || family.lacks(field_type).is_some()
+    matches!(
+        field_type,
+        FieldType::Unsupported(_) | FieldType::Param(_) | FieldType::KeyedMap(..)
+    ) || family.lacks(field_type).is_some()
         || (!family.decodes_enums() && names_enum(rt, field_type))
 }
 
@@ -1095,7 +1097,9 @@ pub(crate) fn value<D: Document>(
             }
         }
         // (A type parameter no type argument gave: refused before.)
-        FieldType::Param(_) => Err(Error::Unsupported(shown(rt, expected))),
+        FieldType::Param(_) | FieldType::KeyedMap(..) => {
+            Err(Error::Unsupported(shown(rt, expected)))
+        }
     }
 }
 

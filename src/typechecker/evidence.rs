@@ -23,6 +23,8 @@ pub(super) enum EvNode {
         ty: TypeRef,
         args: ImplArgs,
         subs: Vec<EvId>,
+        /// The subject, of an impl for a generic type (`Box(Int)`).
+        full: Option<Type>,
     },
     /// A bound of the variable `var` of an enclosing definition, by a
     /// `where` clause or taken into its scheme: which bound (and through
@@ -204,6 +206,7 @@ impl TypeChecker {
         key: ImplKey,
         method: Symbol,
         mut owed: Vec<EvId>,
+        full: Option<Type>,
     ) -> (EvId, Vec<EvId>) {
         let (header, declared) = self.method_parts(key, method, true);
         let mut own = owed.split_off(header.min(owed.len()));
@@ -214,6 +217,7 @@ impl TypeChecker {
             ty: head,
             args,
             subs: owed,
+            full,
         });
         (recv, own)
     }
@@ -310,7 +314,13 @@ impl TypeChecker {
                 tr: tr.id,
                 ty: ty.id,
             },
-            Some(EvNode::Impl { tr, ty, args, subs }) => Evidence::Impl {
+            Some(EvNode::Impl {
+                tr,
+                ty,
+                args,
+                subs,
+                full,
+            }) => Evidence::Impl {
                 tr: tr.id,
                 ty: ty.id,
                 args: *args,
@@ -318,6 +328,10 @@ impl TypeChecker {
                     .iter()
                     .map(|sub| self.ev_final(*sub, owners, depth + 1))
                     .collect(),
+                full: (full.as_ref())
+                    .map(|full| self.full_type(full))
+                    .filter(|full| !self.type_args_of(full).is_empty())
+                    .map(Box::new),
             },
             Some(EvNode::Bound { var, tr, args }) => self.bound_evidence(*var, *tr, args, owners),
         }
@@ -521,7 +535,14 @@ impl TypeChecker {
             ty: head.id,
             args: key.2,
             subs,
+            full: (!self.type_args_of(&ty).is_empty()).then(|| Box::new(self.full_type(&ty))),
         }
+    }
+
+    /// The type `ty` as the evidence of an impl for it gives it in full:
+    /// as the module's bodies leave it.
+    fn full_type(&self, ty: &Type) -> Type {
+        crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(ty))
     }
 
     /// Write the evidence of every place in `program` that passes some

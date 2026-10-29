@@ -1,0 +1,46 @@
+-- cmd: run
+-- exit: 0
+-- The full type of a dictionary reaches a supertrait's default (`Shout`
+-- calls `Dec.again`), alternates between `Box(Int)` and `Box(String)` in
+-- a loop, and crosses into a task, and through a `type a` parameter.
+import json
+import list
+import task
+
+trait Dec: json.Decode {
+  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+trait Shout: Dec {
+  fn shout(self, s: String) -> String {
+    match Dec.again(self, s) {
+      Ok(_) -> "ok"
+      Err(e) -> "err {e}"
+    }
+  }
+}
+
+type Box(a) {
+  v: a,
+}
+
+trait Dec for Box(a) where a: json.Decode {}
+
+trait Shout for Box(a) where a: json.Decode {}
+
+fn by_type(b: Box(a), s: String, type a) -> Result(Box(a), json.JsonError) where a: json.Decode {
+  Dec.again(b, s)
+}
+
+fn main() {
+  list.each([1, 2]) { i ->
+    println(Dec.again(Box { v: 0 }, "\{\"v\": {i}}"))
+    println(Dec.again(Box { v: "" }, "\{\"v\": \"{i}\"}"))
+  }
+  println(Dec.again(Box { v: 1 }, "\{\"v\": 6}"))
+  println(Shout.shout(Box { v: 1 }, "\{\"v\": 7}"))
+  println(Shout.shout(Box { v: "a" }, "\{\"v\": 7}"))
+  let t = task.spawn({ -> Dec.again(Box { v: 1.5 }, "\{\"v\": 2.5}") })
+  println(task.join(t))
+  println(by_type(Box { v: 1 }, "\{\"v\": 8}", Int))
+}

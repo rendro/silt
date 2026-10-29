@@ -1,0 +1,68 @@
+-- cmd: run
+-- exit: 0
+-- An impl body may name its own type at its parameters as a type:
+-- `json.decode(kid, Tree(a))` in a `json.Decode` impl recurses into the
+-- tree, and `json.decode(v, Node(a))` in a program trait's impl decodes
+-- at the receiver's type argument.
+import json
+import list
+
+-- A tree written as [value, [kids...]].
+type Tree(a) {
+  n: a,
+  kids: List(Tree(a)),
+}
+
+trait json.Decode for Tree(a) where a: json.Decode {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.Array([v, json.Array(kids)]) -> match a.decode(v) {
+        Ok(n) -> {
+          let decoded = list.traverse(kids) { kid -> json.decode(kid, Tree(a)) }
+          match decoded {
+            Ok(kids) -> Ok(Tree { n: n, kids: kids })
+            Err(e) -> Err(e)
+          }
+        }
+        Err(e) -> Err(e)
+      }
+      _ -> Err(json.Other("not a tree"))
+    }
+  }
+}
+
+trait Dec: json.Decode {
+  fn read(s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+type Node(a) {
+  v: a,
+  next: Option(Node(a)),
+}
+
+trait Size {
+  fn size(self, v: json.Value) -> Int
+}
+
+trait Size for Node(a) where a: json.Decode {
+  fn size(self, v: json.Value) -> Int {
+    match json.decode(v, Node(a)) {
+      Ok(_) -> 1
+      Err(_) -> 0
+    }
+  }
+}
+
+fn main() {
+  println(json.parse("[1, [[2, []], [3, []]]]", Tree(Int)))
+  println(json.parse("[1, [[\"x\", []]]]", Tree(Int)))
+  println(json.parse("[\"r\", [[\"x\", []]]]", Tree(String)))
+  let parsed = json.parse("\{\"v\": 1, \"next\": null}", json.Value)
+  match parsed {
+    Ok(v) -> {
+      println(Size.size(Node { v: 1, next: None }, v))
+      println(Size.size(Node { v: "s", next: None }, v))
+    }
+    Err(_) -> println("bad")
+  }
+}

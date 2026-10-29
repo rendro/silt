@@ -195,6 +195,10 @@ pub enum FieldType {
     Option(Box<FieldType>),
     /// `Map(String, T)`.
     Map(Box<FieldType>),
+    /// `Map(k, T)` of a generic type whose `i`th type parameter is `k`:
+    /// at its arguments, `Map(String, T)` if `k` is `String`, else a
+    /// type without a decoder.
+    KeyedMap(u16, Box<FieldType>),
     Tuple(Vec<FieldType>),
     /// A record type of the program without type parameters.
     Record(TypeId),
@@ -249,6 +253,7 @@ impl FieldType {
             FieldType::List(t) => format!("List({})", shown(t)),
             FieldType::Option(t) => format!("Option({})", shown(t)),
             FieldType::Map(t) => format!("Map(String, {})", shown(t)),
+            FieldType::KeyedMap(_, t) => format!("Map(_, {})", shown(t)),
             FieldType::Tuple(ts) => {
                 let parts: Vec<String> = ts.iter().map(shown).collect();
                 format!("({})", parts.join(", "))
@@ -281,6 +286,10 @@ impl FieldType {
             FieldType::List(t) => FieldType::List(at(t)),
             FieldType::Option(t) => FieldType::Option(at(t)),
             FieldType::Map(t) => FieldType::Map(at(t)),
+            FieldType::KeyedMap(i, t) => match args.get(*i as usize) {
+                Some(FieldType::String) => FieldType::Map(at(t)),
+                _ => FieldType::Unsupported(String::new()),
+            },
             FieldType::Tuple(ts) => FieldType::Tuple(
                 ts.iter()
                     .map(|t| t.instantiated(args).into_owned())
@@ -299,7 +308,7 @@ impl FieldType {
     /// Whether a type parameter is in the type.
     fn has_param(&self) -> bool {
         match self {
-            FieldType::Param(_) => true,
+            FieldType::Param(_) | FieldType::KeyedMap(..) => true,
             FieldType::List(t) | FieldType::Option(t) | FieldType::Map(t) => t.has_param(),
             FieldType::Tuple(ts) | FieldType::Applied(_, ts) => ts.iter().any(Self::has_param),
             _ => false,
@@ -327,7 +336,10 @@ impl FieldType {
         match self {
             FieldType::Record(id) | FieldType::Enum(id) => out.push((*id, &[])),
             FieldType::Applied(id, args) => out.push((*id, args)),
-            FieldType::List(t) | FieldType::Option(t) | FieldType::Map(t) => t.instances(out),
+            FieldType::List(t)
+            | FieldType::Option(t)
+            | FieldType::Map(t)
+            | FieldType::KeyedMap(_, t) => t.instances(out),
             FieldType::Tuple(ts) => ts.iter().for_each(|t| t.instances(out)),
             _ => {}
         }

@@ -1,0 +1,53 @@
+-- cmd: run
+-- exit: 0
+-- A trait that has `json.Decode` among its supertraits may be implemented
+-- for a generic type whose header asks `json.Decode` of each parameter:
+-- its dictionary carries the type in full, so `Self` in the default is
+-- `Box(Int)` or `Box(String)` as the use gives it, through a `type a`
+-- parameter (also as `Box(a)`), a value, a closure, an enum, a nested box.
+import json
+
+trait Dec: json.Decode {
+  fn read(s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+type Box(a) {
+  v: a,
+}
+
+type Pick(a) {
+  One(a),
+  Other,
+}
+
+trait Dec for Box(a) where a: json.Decode {}
+
+trait Dec for Pick(a) where a: json.Decode {}
+
+fn pass(s: String, type a) -> Result(a, json.JsonError) where a: Dec {
+  json.parse(s, a)
+}
+
+fn boxed(s: String, type a) -> Result(Box(a), json.JsonError) where a: json.Decode {
+  via(s, Box(a))
+}
+
+fn via(s: String, type a) -> Result(a, json.JsonError) where a: Dec {
+  a.read(s)
+}
+
+fn main() {
+  println(via("\{\"v\": 1}", Box(Int)))
+  println(via("\{\"v\": \"s\"}", Box(String)))
+  println(via("\{\"v\": \"s\"}", Box(Int)))
+  println(Dec.again(Box { v: "x" }, "\{\"v\": \"y\"}"))
+  println(Dec.again(Box { v: 0 }, "\{\"v\": 5}"))
+  println(pass("\{\"v\": 3}", Box(Int)))
+  println(boxed("\{\"v\": 4}", Int))
+  println(boxed("\{\"v\": \"t\"}", String))
+  println(via("\{\"variant\": \"One\", \"fields\": [7]}", Pick(Int)))
+  let f = { s -> via(s, Box(Int)) }
+  println(f("\{\"v\": 8}"))
+  println(via("\{\"v\": \{\"v\": 9}}", Box(Box(Int))))
+}

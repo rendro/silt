@@ -1873,6 +1873,16 @@ impl TypeChecker {
             let owner = ev.and_then(|ev| self.owed_for.get(&ev).copied());
             self.want_decode(&resolved, origin, asker, owner);
         }
+        // (So is a generic type, at its arguments, by the impl of a trait
+        // that has `json.Decode` among its supertraits: `Dec for Box(a)`
+        // is a way to decode `Box(Int)`, which the decoder must build.)
+        if self.implies_decode(trait_name)
+            && self.generic_for_decode(type_name)
+            && !self.type_args_of(&resolved).is_empty()
+        {
+            let owner = ev.and_then(|ev| self.owed_for.get(&ev).copied());
+            self.want_decode(&resolved, origin, asker, owner);
+        }
         // Equal, Compare and Hash, and Display where no impl is written,
         // are what the type's structure says.
         if self.by_structure(trait_name, type_name) {
@@ -2522,6 +2532,14 @@ impl TypeChecker {
         let subs = (subs.into_iter())
             .map(|sub| sub.unwrap_or_else(|| self.ev_new(super::evidence::EvNode::Pending)))
             .collect();
+        // (A use of a definition with the bound: a method call is
+        // refused as one, where the body is checked.)
+        if !self.trait_call_self.contains_key(&origin.span)
+            && !(self.full_type_uses.iter()).any(|(_, _, _, at)| *at == origin.span)
+        {
+            let key = (trait_name, type_name, impl_args);
+            self.refuse_type_without_value(key, &resolved, None, origin.callee, origin.span);
+        }
         self.ev_set(
             ev,
             super::evidence::EvNode::Impl {
@@ -2529,6 +2547,7 @@ impl TypeChecker {
                 ty: type_name,
                 args: impl_args,
                 subs,
+                full: (!obligated_args.is_empty()).then(|| resolved.clone()),
             },
         );
     }

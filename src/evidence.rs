@@ -20,7 +20,7 @@ use crate::source::Span;
 pub const IMPL_HEADER: Span = Span::BUILTIN;
 
 /// What proves that a type implements a trait.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Evidence {
     /// The impl of `tr` for the head `ty` at the trait arguments `args`,
     /// with the evidence of each predicate its header asks
@@ -30,6 +30,11 @@ pub enum Evidence {
         ty: TypeId,
         args: crate::defs::ImplArgs,
         subs: Vec<Evidence>,
+        /// The type in full, of an impl for a generic type (`Box(Int)`,
+        /// or `Box(a)` in a definition over `a`): what its dictionary
+        /// gives `Self` and its type parameters, if it carries it
+        /// (`crate::bytecode::dict::Template::full`).
+        full: Option<Box<crate::types::Type>>,
     },
     /// The bound `k` of the enclosing definition `owner`.
     Param { owner: Span, k: u16 },
@@ -66,7 +71,7 @@ pub struct Late {
 
 /// What an impl's declaration proves of its type, from the predicates
 /// of its header (`IMPL_HEADER`).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ImplEvidence {
     /// That the type has each supertrait of the trait.
     pub supers: Vec<(TraitId, Evidence)>,
@@ -77,7 +82,7 @@ pub struct ImplEvidence {
 }
 
 /// The evidence a place in the code passes on.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Site {
     /// A use of a definition with bounds: the evidence of each.
     Ref(Vec<Evidence>),

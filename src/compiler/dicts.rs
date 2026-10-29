@@ -141,6 +141,7 @@ fn builtin_template(globals: &mut Globals, tr: TraitId, ty: TypeId) -> Option<Ar
         args: ImplArgs::none(),
         name: format!("{trait_name} for {type_name}"),
         descriptor: None,
+        full: false,
         methods,
         supers,
         wheres: Box::new([]),
@@ -284,14 +285,25 @@ impl Compiler<'_> {
             return self.emit(Asm::Constant { k }, span);
         }
         match ev {
-            Evidence::Impl { tr, ty, args, subs } => {
+            Evidence::Impl {
+                tr,
+                ty,
+                args,
+                subs,
+                full,
+            } => {
                 let template = self.template_of((*tr, *ty, *args), span)?;
                 for sub in subs {
                     self.compile_evidence(sub, span)?;
                 }
+                let mut n = subs.len();
+                if template.full {
+                    self.compile_full_type(full.as_deref(), span)?;
+                    n += 1;
+                }
                 let proto = Value::Dict(Dict::Of(template.index));
                 let k = self.add_constant(proto, span)?;
-                self.emit(Asm::MakeDict { k, n: subs.len() }, span)
+                self.emit(Asm::MakeDict { k, n }, span)
             }
             Evidence::Param { owner, k } => {
                 let k = usize::from(*k);
@@ -345,14 +357,104 @@ impl Compiler<'_> {
     /// The dictionary `ev` names when it is the same wherever the code
     /// runs: an impl whose header's dictionaries are too.
     fn constant_dict(&self, ev: &Evidence) -> Option<Value> {
-        let Evidence::Impl { tr, ty, args, subs } = ev else {
+        let Evidence::Impl {
+            tr,
+            ty,
+            args,
+            subs,
+            full,
+        } = ev
+        else {
             return None;
         };
         let template = self.globals.template(*tr, *ty, *args)?.clone();
-        let subs = (subs.iter())
+        let mut subs = (subs.iter())
             .map(|sub| self.constant_dict(sub))
-            .collect::<Option<Box<[Value]>>>()?;
+            .collect::<Option<Vec<Value>>>()?;
+        if template.full {
+            subs.push(self.type_constant(full.as_deref()?)?);
+        }
         Some(Value::Dict(Dict::new(&template, subs.into_iter())))
+    }
+
+    /// Whether each type variable in `ty` has a value where the code runs
+    /// (`compile_type_var`).
+    fn has_value(&mut self, ty: &crate::types::Type) -> bool {
+        use crate::types::Type;
+        match ty {
+            Type::Rigid(r) => {
+                let local = super::type_var_name(r.name);
+                self.resolve_local(local).is_some()
+                    || self.resolve_upvalue(local).is_some()
+                    || (self.decode_params.as_ref())
+                        .is_some_and(|(_, params)| params.contains(&r.name))
+            }
+            Type::Var(_) => false,
+            _ if self.type_constant(ty).is_some() => true,
+            _ => match self.type_parts(ty) {
+                Some((_, parts)) => parts.into_iter().all(|part| self.has_value(part)),
+                None => false,
+            },
+        }
+    }
+
+    /// Push the value of the type variable `name` where the code runs: of
+    /// a `type name` parameter, or a type parameter of the header of the
+    /// impl whose method the code is in, if its dictionary carries its
+    /// type (or it is the `decode` of a `json.Decode` impl).
+    fn compile_type_var(&mut self, name: Symbol, span: Span) -> Result<(), Diagnostic> {
+        let local = super::type_var_name(name);
+        if let Some(slot) = self.resolve_local(local) {
+            return self.emit(Asm::GetLocal { slot }, span);
+        }
+        if let Some(index) = self.resolve_upvalue(local) {
+            return self.emit(Asm::GetUpvalue { index }, span);
+        }
+        if let Some((owner, params)) = &self.decode_params
+            && let Some(k) = params.iter().position(|param| *param == name)
+            && let Ok(k) = u8::try_from(k)
+        {
+            let owner = *owner;
+            return self.compile_type_param(owner, k, span);
+        }
+        Err(super::checker_missed(span, "a type variable with no value"))
+    }
+
+    /// Push the value of the type `full` of a dictionary that carries it:
+    /// a constant, or made of the values its type variables have where
+    /// the code runs (a `type a` parameter, a parameter of the header of
+    /// an impl whose dictionary carries its type). Unit if it has none:
+    /// the dictionary's type is then its impl's head.
+    fn compile_full_type(
+        &mut self,
+        full: Option<&crate::types::Type>,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        use crate::types::Type;
+        let Some(ty) = full.filter(|ty| self.has_value(ty)) else {
+            return self.emit(Asm::Unit, span);
+        };
+        if let Some(value) = self.type_constant(ty) {
+            let k = self.add_constant(value, span)?;
+            return self.emit(Asm::Constant { k }, span);
+        }
+        if let Type::Rigid(r) = ty {
+            return self.compile_type_var(r.name, span);
+        }
+        let Some((head, parts)) = self.type_parts(ty) else {
+            return self.emit(Asm::Unit, span);
+        };
+        for part in &parts {
+            self.compile_full_type(Some(part), span)?;
+        }
+        let ty = self.add_constant(Value::TypeDescriptor(head), span)?;
+        self.emit(
+            Asm::MakeType {
+                ty,
+                count: parts.len(),
+            },
+            span,
+        )
     }
 
     /// The template of the impl `key`.
@@ -433,19 +535,43 @@ impl Compiler<'_> {
     /// is used.
     fn header_limit(&self, ti: &TraitImpl) -> Result<(), Diagnostic> {
         let max = usize::from(u8::MAX);
-        let asked = (ti.where_clauses.iter())
-            .filter(|wc| match wc.trait_res {
-                Some(crate::defs::Res::Def(id)) => matches!(
-                    self.units.defs.get(id).kind,
-                    crate::defs::DefKind::Trait(t) if crate::defs::has_dictionary(t)
-                ),
-                _ => false,
-            })
-            .count();
+        let asked = self.header_dicts(ti);
         match asked > max {
             true => Err(limit(HEADER_PREDICATES, asked, max, ti.span)),
             false => Ok(()),
         }
+    }
+
+    /// The trait the `where` clause `wc` names.
+    fn where_trait(&self, wc: &crate::ast::WhereClause) -> Option<TraitId> {
+        match wc.trait_res {
+            Some(crate::defs::Res::Def(id)) => match self.units.defs.get(id).kind {
+                crate::defs::DefKind::Trait(t) => Some(t),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// The number of dictionaries the header of the impl `ti` asks.
+    fn header_dicts(&self, ti: &TraitImpl) -> usize {
+        (ti.where_clauses.iter())
+            .filter(|wc| {
+                self.where_trait(wc)
+                    .is_some_and(crate::defs::has_dictionary)
+            })
+            .count()
+    }
+
+    /// Whether the dictionaries of the impl `ti` carry their type in full
+    /// (`Template::full`): an impl for a generic type, over its
+    /// parameters, whose header asks `json.Decode` of one.
+    fn carries_full_type(&self, ti: &TraitImpl) -> bool {
+        let decode = crate::defs::builtin_trait_id("Decode");
+        ti.instance.is_none()
+            && !ti.target_param_names.is_empty()
+            && (ti.where_clauses.iter())
+                .any(|wc| decode.is_some() && self.where_trait(wc) == decode)
     }
 
     /// The dictionary of the impl of each method of an impl whose header
@@ -465,6 +591,10 @@ impl Compiler<'_> {
                 let Some(template) = globals.template(t, ty, ti.args_key) else {
                     continue;
                 };
+                // (One that carries its type differs by the type.)
+                if template.full {
+                    continue;
+                }
                 for method in &ti.methods {
                     let owner = method.body.span;
                     if self.shape(owner).is_some_and(|shape| shape.header == 0) {
@@ -507,13 +637,17 @@ impl Compiler<'_> {
             .map(|(name, _)| globals.method_at(tr, ty, args, &name).unwrap_or(u16::MAX))
             .map(Method::Global)
             .collect();
+        // (A supertrait's impl is for the same type: one that carries
+        // it is given this dictionary's, after the header's.)
+        let full = self.carries_full_type(ti);
+        let own = full.then(|| u16::try_from(self.header_dicts(ti)).unwrap_or(u16::MAX));
         let mut supers = Vec::new();
         for (_, ev) in &ti.evidence.supers {
-            supers.push(self.recipe(ev, impls, globals, depth)?);
+            supers.push(self.recipe(ev, own, impls, globals, depth)?);
         }
         let mut wheres = Vec::new();
         for ev in &ti.evidence.wheres {
-            wheres.push(self.recipe(ev, impls, globals, depth)?);
+            wheres.push(self.recipe(ev, None, impls, globals, depth)?);
         }
         let shown_args = &ti.shown_args;
         let template = Arc::new(Template {
@@ -535,6 +669,7 @@ impl Compiler<'_> {
                     })
                 }),
             ),
+            full,
             methods,
             supers: supers.into(),
             wheres: wheres.into(),
@@ -544,34 +679,41 @@ impl Compiler<'_> {
     }
 
     /// How the dictionary `ev` names is made from the dictionaries of an
-    /// impl's header.
+    /// impl's header, and `own`, the place among them of the impl's type
+    /// in full if the dictionary made is of the same type and the impl's
+    /// carries it.
     fn recipe(
         &self,
         ev: &Evidence,
+        own: Option<u16>,
         impls: &HashMap<ImplKey, &TraitImpl>,
         globals: &mut Globals,
         depth: usize,
     ) -> Result<Recipe, Diagnostic> {
         Ok(match ev {
-            Evidence::Impl { tr, ty, args, subs } => {
-                match self.enter_template((*tr, *ty, *args), impls, globals, depth + 1)? {
-                    Some(template) => {
-                        let mut parts = Vec::new();
-                        for sub in subs {
-                            parts.push(self.recipe(sub, impls, globals, depth + 1)?);
-                        }
-                        Recipe::Dict {
-                            template,
-                            subs: parts.into(),
-                        }
+            Evidence::Impl {
+                tr, ty, args, subs, ..
+            } => match self.enter_template((*tr, *ty, *args), impls, globals, depth + 1)? {
+                Some(template) => {
+                    let mut parts = Vec::new();
+                    for sub in subs {
+                        parts.push(self.recipe(sub, None, impls, globals, depth + 1)?);
                     }
-                    None => Recipe::ByValue,
+                    if template.full {
+                        parts.push(own.map_or(Recipe::ByValue, Recipe::Header));
+                    }
+                    Recipe::Dict {
+                        template,
+                        subs: parts.into(),
+                    }
                 }
-            }
+                None => Recipe::ByValue,
+            },
             Evidence::Param { owner, k } if *owner == IMPL_HEADER => Recipe::Header(*k),
-            Evidence::Super { of, index, .. } => {
-                Recipe::Super(Box::new(self.recipe(of, impls, globals, depth)?), *index)
-            }
+            Evidence::Super { of, index, .. } => Recipe::Super(
+                Box::new(self.recipe(of, own, impls, globals, depth)?),
+                *index,
+            ),
             _ => Recipe::ByValue,
         })
     }

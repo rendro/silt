@@ -1,0 +1,27 @@
+error[type]: method 'again' of trait 'Dec' needs the type `Box(a)` in full here: `a` is known only by its type
+ --> full_type__a_type_variable_without_a_value_is_refused.silt:41:3
+    |
+ 41 |   Dec.again(b, s)
+    |   ^^^^^^^^^ method 'again' of trait 'Dec' needs the type `Box(a)` in full here: `a` is known only by its type
+  = help: take the type as a parameter, `type a`
+
+error[type]: method 'again' of trait 'Dec' needs the type `Box(a)` in full here: `a` is known only by its type
+ --> full_type__a_type_variable_without_a_value_is_refused.silt:45:24
+    |
+ 45 |   list.map([b]) { x -> Dec.again(x, s) }
+    |                        ^^^^^^^^^ method 'again' of trait 'Dec' needs the type `Box(a)` in full here: `a` is known only by its type
+  = help: take the type as a parameter, `type a`
+
+error[type]: `f` needs the type `Box(a)` in full here: `a` is known only by its type
+ --> full_type__a_type_variable_without_a_value_is_refused.silt:50:5
+    |
+ 50 |   f(b)
+    |     ^ `f` needs the type `Box(a)` in full here: `a` is known only by its type
+  = help: take the type as a parameter, `type a`
+
+error[type]: `gen` needs the type `Box(a)` in full here: `a` is known only by its type
+ --> full_type__a_type_variable_without_a_value_is_refused.silt:58:7
+    |
+ 58 |   gen(b, s)
+    |       ^ `gen` needs the type `Box(a)` in full here: `a` is known only by its type
+  = help: take the type as a parameter, `type a`

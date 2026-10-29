@@ -1,5 +1,0 @@
-error[type]: method 'decode' of trait 'json.Decode' is called on a type variable that has no value here: `a` is known only by its type
- --> decode_on_a_type_variable_without_a_value_in_an_impl.silt:19:11
-    |
- 19 |     match a.decode(v) {
-    |           ^^^^^^^^ method 'decode' of trait 'json.Decode' is called on a type variable that has no value here: `a` is known only by its type

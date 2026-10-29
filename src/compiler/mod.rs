@@ -367,8 +367,11 @@ pub struct Compiler<'a> {
     /// generic type being compiled, if one is, and the impl's type
     /// parameters: a call leaves the descriptor of the type
     /// (`Box(Int)`) in the slot of the callee, and `a.decode(v)` takes
-    /// `a` from it (`TypeArg`).
+    /// `a` from it (`TypeArg`). The same of a method of an impl whose dictionary
+    /// carries its type in full (`by_dict`): from the type of the
+    /// dictionary in the slot of the callee (`DictType`).
     decode_params: Option<(Span, Vec<Symbol>)>,
+    by_dict: bool,
     /// The definitions that take dictionaries, by the span that names
     /// them (`crate::evidence::Evidence::Param`), with what they take.
     owners: HashMap<Span, crate::evidence::Shape>,
@@ -466,6 +469,7 @@ impl<'a> Compiler<'a> {
             builtin_defaults: Vec::new(),
             default_body: None,
             decode_params: None,
+            by_dict: false,
             owners: HashMap::new(),
             own_dicts: HashMap::new(),
             pattern_lets: HashMap::new(),
@@ -848,7 +852,9 @@ impl<'a> Compiler<'a> {
         self.hidden_params(method.body.span);
         // (The `decode` of a generic type takes the type's descriptor
         // from the slot of its callee, as a method its dictionary.)
-        if matches!(&self.decode_params, Some((owner, _)) if *owner == method.body.span) {
+        if !self.by_dict
+            && matches!(&self.decode_params, Some((owner, _)) if *owner == method.body.span)
+        {
             self.ctx_mut().frame_dict = Some(method.body.span);
             self.emitter().takes_dict_slot();
         }
@@ -1017,17 +1023,22 @@ impl<'a> Compiler<'a> {
                 let type_name = self.type_info(ty).name.clone();
                 let generic_decode = crate::defs::builtin_trait_id("Decode") == Some(t)
                     && !trait_impl.target_param_names.is_empty();
+                // (The dictionary of an impl that carries its type gives
+                // its type parameters.)
+                let by_dict = (self.globals.template(t, ty, trait_impl.args_key))
+                    .is_some_and(|template| template.full);
 
                 for method in &trait_impl.methods {
                     let span = method.span;
-                    let around = (self.decode_params).take();
-                    if generic_decode {
+                    let around = (self.decode_params.take(), self.by_dict);
+                    if generic_decode || by_dict {
                         let params = trait_impl.target_param_names.clone();
                         self.decode_params = Some((method.body.span, params));
+                        self.by_dict = by_dict;
                     }
                     let compiled =
                         self.compile_method(format!("{type_name}.{}", method.name), method);
-                    self.decode_params = around;
+                    (self.decode_params, self.by_dict) = around;
                     compiled?;
                     let slot = self
                         .globals
@@ -1587,8 +1598,7 @@ impl<'a> Compiler<'a> {
             // generic type, as a type (`a.decode(v)`): the type
             // argument at its place, of the type the impl decodes.
             ExprKind::Ident(_) if let Some((owner, k)) = self.decode_param(expr) => {
-                self.load_frame_dict(owner, span)?;
-                self.emit(Asm::TypeArg { k: usize::from(k) }, span)?;
+                self.compile_type_param(owner, k, span)?;
             }
 
             ExprKind::Ident(name) => {
@@ -2813,6 +2823,21 @@ impl<'a> Compiler<'a> {
         Some((*owner, u8::try_from(k).ok()?))
     }
 
+    /// Push the value of the type parameter `k` of the impl whose method
+    /// `owner` the code is in (`decode_params`).
+    pub(super) fn compile_type_param(
+        &mut self,
+        owner: Span,
+        k: u8,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        self.load_frame_dict(owner, span)?;
+        if self.by_dict {
+            self.emit(Asm::DictType, span)?;
+        }
+        self.emit(Asm::TypeArg { k: usize::from(k) }, span)
+    }
+
     /// The type `ty` applied to types, or the tuple of types, as its head
     /// and the types it is applied to.
     fn type_parts<'t>(&self, ty: &'t Type) -> Option<(Arc<TypeInfo>, Vec<&'t Type>)> {
@@ -3345,6 +3370,12 @@ impl<'a> Compiler<'a> {
             let ctx = self.ctx_mut();
             let depth = ctx.scope_depth;
             ctx.locals.push(Local { name, depth, slot });
+            // (A `type a` parameter is also the value of the type
+            // variable `a`: `compile_type_var`.)
+            if param.kind == crate::ast::ParamKind::Type {
+                let name = type_var_name(name);
+                ctx.locals.push(Local { name, depth, slot });
+            }
         }
         for (slot, pattern) in destructured {
             // Bind the pattern's names from a copy of the argument above
@@ -3429,6 +3460,12 @@ impl<'a> Compiler<'a> {
 }
 
 // ── Tests ────────────────────────────────────────────────────────────
+
+/// The name of the local that holds the value of the type variable
+/// `name`, a `type name` parameter's.
+pub(super) fn type_var_name(name: Symbol) -> Symbol {
+    intern(&format!("__type_{}__", resolve(name)))
+}
 
 #[cfg(test)]
 mod tests {
