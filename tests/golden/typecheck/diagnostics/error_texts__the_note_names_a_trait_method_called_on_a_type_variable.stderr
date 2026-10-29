@@ -1,0 +1,7 @@
+error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
+ --> error_texts__the_note_names_a_trait_method_called_on_a_type_variable.silt:16:31
+    |
+ 16 |   println(go2(Src { s: "x" }, Blob))
+    |                               ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
+  = note: `go2` passes it to `go`, which passes it to `Loader.load`, which passes it to `json.parse`
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these

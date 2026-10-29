@@ -964,6 +964,9 @@ impl TypeChecker {
                     .iter()
                     .map(|te| self.resolve_type_expr(te, &mut param_map))
                     .collect();
+                if bound.is_builtin("Decode") {
+                    (self.bound_methods).insert(tv, intern(&format!("{}.{}", t.name, m.name)));
+                }
                 bounds.push(Pred::bound(tv, bound, args));
             }
             if !bounds.is_empty() {

@@ -191,7 +191,8 @@ impl TypeChecker {
 
     /// The functions and methods a declared bound's body passes its type
     /// through on the way to the decoder, the first first (`mid`, `load`
-    /// for `top` calling `mid` calling `load` calling `json.parse`): as
+    /// for `top` calling `mid` calling `load` calling `json.parse`, and
+    /// a trait's method its bound is declared for, `Loader.load`): as
     /// far as each is known.
     fn passed_through(&self, asker: Option<Asker>) -> Vec<Symbol> {
         let mut links = Vec::new();
@@ -201,6 +202,9 @@ impl TypeChecker {
             let var = self.rigid_rep_var(var);
             if seen.contains(&var) {
                 break;
+            }
+            if !seen.is_empty() {
+                links.extend(self.bound_methods.get(&var));
             }
             seen.push(var);
             let Some(next) = self.bound_askers.get(&var) else {

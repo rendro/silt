@@ -1,0 +1,17 @@
+-- exit: 1
+-- A `json.Decode` bound that goes through a trait method called on a
+-- value whose type is a type variable: the note names the method too.
+import json
+type Blob { data: Bytes }
+type Src { s: String }
+trait Loader {
+  fn load(self, type a) -> Result(a, json.JsonError) where a: json.Decode
+}
+trait Loader for Src {
+  fn load(self, type a) -> Result(a, json.JsonError) { json.parse(self.s, a) }
+}
+fn go(l: l, type b) -> Result(b, json.JsonError) where l: Loader, b: json.Decode { Loader.load(l, b) }
+fn go2(l: l, type b) -> Result(b, json.JsonError) where l: Loader, b: json.Decode { go(l, b) }
+fn main() {
+  println(go2(Src { s: "x" }, Blob))
+}
