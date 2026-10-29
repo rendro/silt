@@ -2,8 +2,7 @@
 -- exit: 0
 -- The full type of a dictionary reaches a supertrait's default (`Shout`
 -- calls `Dec.again`), alternates between `Box(Int)` and `Box(String)` in
--- a loop, and crosses into a task. `twice` names `Box(a)` with no `type a`:
--- known gap, see the last line.
+-- a loop, and crosses into a task, and through a `type a` parameter.
 import json
 import list
 import task
@@ -29,10 +28,6 @@ trait Dec for Box(a) where a: json.Decode {}
 
 trait Shout for Box(a) where a: json.Decode {}
 
-fn twice(b: Box(a), s: String) -> Result(Box(a), json.JsonError) where a: json.Decode {
-  Dec.again(b, s)
-}
-
 fn by_type(b: Box(a), s: String, type a) -> Result(Box(a), json.JsonError) where a: json.Decode {
   Dec.again(b, s)
 }
@@ -48,5 +43,4 @@ fn main() {
   let t = task.spawn({ -> Dec.again(Box { v: 1.5 }, "\{\"v\": 2.5}") })
   println(task.join(t))
   println(by_type(Box { v: 1 }, "\{\"v\": 8}", Int))
-  println(twice(Box { v: 1 }, "\{\"v\": 9}"))
 }

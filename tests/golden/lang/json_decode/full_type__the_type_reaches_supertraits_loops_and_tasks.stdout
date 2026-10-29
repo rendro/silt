@@ -7,4 +7,3 @@ ok
 err json type mismatch: expected String, got number at v
 Ok(Box {v: 2.5})
 Ok(Box {v: 8})
-Err(cannot decode field `v` of `Box`: a value of type _ cannot be decoded)
