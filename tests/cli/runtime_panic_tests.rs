@@ -209,16 +209,25 @@ fn a_panic_of_a_worker_ends_the_program() {
 }
 
 /// The timer's thread panics when the first deadline is due, while a
-/// task sleeps and `main` joins it.
+/// task sleeps and `main` joins it. The task is let through a gate when
+/// `main` has printed its line, which the process could otherwise end
+/// before (as it did on a busy machine with the sleep below, which is
+/// over at once): see `LOST_WHILE_ALL_WAIT`. The same for the I/O pool.
 #[test]
 #[cfg(feature = "test-hooks")]
 fn a_panic_of_the_timer_thread_ends_the_program() {
-    let source = r#"import task
+    let source = r#"import channel
+import task
 import time
 
 fn main() {
-  let sleeper = task.spawn { -> time.sleep(time.ms(5)) }
+  let gate = channel.new(0)
+  let sleeper = task.spawn { ->
+    let _ = channel.receive(gate)
+    time.sleep(time.ms(5))
+  }
   println("main waits")
+  channel.send(gate, 1)
   task.join(sleeper)
   println("main went on")
 }
@@ -235,12 +244,18 @@ fn main() {
 #[test]
 #[cfg(feature = "test-hooks")]
 fn a_panic_of_the_timer_thread_ends_the_program_after_a_sleep_over_at_once() {
-    let source = r#"import task
+    let source = r#"import channel
+import task
 import time
 
 fn main() {
-  let sleeper = task.spawn { -> time.sleep(time.nanos(1)) }
+  let gate = channel.new(0)
+  let sleeper = task.spawn { ->
+    let _ = channel.receive(gate)
+    time.sleep(time.nanos(1))
+  }
   println("main waits")
+  channel.send(gate, 1)
   task.join(sleeper)
   println("main went on")
 }
@@ -255,12 +270,18 @@ fn main() {
 #[test]
 #[cfg(feature = "test-hooks")]
 fn a_panic_of_an_io_thread_ends_the_program() {
-    let source = r#"import io
+    let source = r#"import channel
+import io
 import task
 
 fn main() {
-  let reader = task.spawn { -> io.read_file("main.silt") }
+  let gate = channel.new(0)
+  let reader = task.spawn { ->
+    let _ = channel.receive(gate)
+    io.read_file("main.silt")
+  }
   println("main waits")
+  channel.send(gate, 1)
   let _ = task.join(reader)
   println("main went on")
 }
