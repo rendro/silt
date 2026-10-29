@@ -1,0 +1,22 @@
+-- cmd: check
+-- exit: 1
+-- A use of a supertrait impl for a generic type is refused where the
+-- decoder cannot build the type at the use's arguments: `M(Int)` has a
+-- map with `Int` keys.
+import json
+
+trait Dec: json.Decode {
+  fn read(s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+type M(k) { m: Map(k, Int) }
+
+trait Dec for M(k) where k: json.Decode {}
+
+fn via(s: String, type a) -> Result(a, json.JsonError) where a: Dec {
+  a.read(s)
+}
+
+fn main() {
+  println(via("\{\"m\": \{\"x\": 1}}", M(Int)))
+}

@@ -1,0 +1,50 @@
+-- cmd: run
+-- exit: 0
+-- In a method of an impl of a program's trait for a generic type whose
+-- header asks `json.Decode` of a parameter, `a.decode(v)` decodes at the
+-- type argument of the receiver's type, also of two parameters and in a
+-- closure.
+import json
+
+trait Peek {
+  fn peek(self, v: json.Value) -> String
+}
+
+type Box(a) {
+  v: a,
+}
+
+type Pair(a, b) {
+  l: a,
+  r: b,
+}
+
+trait Peek for Box(a) where a: json.Decode {
+  fn peek(self, v: json.Value) -> String {
+    match a.decode(v) {
+      Ok(_) -> "ok"
+      Err(e) -> "err {e}"
+    }
+  }
+}
+
+trait Peek for Pair(a, b) where a: json.Decode, b: json.Decode {
+  fn peek(self, v: json.Value) -> String {
+    let f = { w -> b.decode(w) }
+    match (a.decode(v), f(v)) {
+      (Ok(_), Ok(_)) -> "both"
+      (Ok(_), Err(_)) -> "left"
+      (Err(_), Ok(_)) -> "right"
+      _ -> "none"
+    }
+  }
+}
+
+fn main() {
+  println(Peek.peek(Box { v: 1 }, json.Int(3)))
+  println(Peek.peek(Box { v: 1 }, json.String("s")))
+  println(Peek.peek(Box { v: "s" }, json.String("s")))
+  println(Peek.peek(Pair { l: 1, r: "s" }, json.Int(3)))
+  println(Peek.peek(Pair { l: 1, r: "s" }, json.String("s")))
+  println(Peek.peek(Pair { l: 1, r: 2 }, json.Int(3)))
+}

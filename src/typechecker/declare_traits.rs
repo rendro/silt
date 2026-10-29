@@ -1566,7 +1566,7 @@ impl TypeChecker {
         if self.generic_for_decode(target_type)
             && self.implies_decode(trait_key)
             && !free_vars_in(&self.apply(&self_type)).is_empty()
-            && !(each_decoded && self.tables.is_generic(target_type))
+            && !each_decoded
         {
             self.error(
                 Code::InvalidTraitImpl,

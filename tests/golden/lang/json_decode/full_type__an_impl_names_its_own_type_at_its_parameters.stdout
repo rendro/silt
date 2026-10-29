@@ -1,0 +1,5 @@
+Ok(Tree {n: 1, kids: [Tree {n: 2, kids: []}, Tree {n: 3, kids: []}]})
+Err(json type mismatch: expected Int, got string)
+Ok(Tree {n: r, kids: [Tree {n: x, kids: []}]})
+1
+0

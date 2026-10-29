@@ -1873,6 +1873,16 @@ impl TypeChecker {
             let owner = ev.and_then(|ev| self.owed_for.get(&ev).copied());
             self.want_decode(&resolved, origin, asker, owner);
         }
+        // (So is a generic type, at its arguments, by the impl of a trait
+        // that has `json.Decode` among its supertraits: `Dec for Box(a)`
+        // is a way to decode `Box(Int)`, which the decoder must build.)
+        if self.implies_decode(trait_name)
+            && self.generic_for_decode(type_name)
+            && !self.type_args_of(&resolved).is_empty()
+        {
+            let owner = ev.and_then(|ev| self.owed_for.get(&ev).copied());
+            self.want_decode(&resolved, origin, asker, owner);
+        }
         // Equal, Compare and Hash, and Display where no impl is written,
         // are what the type's structure says.
         if self.by_structure(trait_name, type_name) {

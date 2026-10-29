@@ -1,0 +1,6 @@
+Ok([1, 2])
+Ok([a])
+Err(json type mismatch: expected Int, got string at [0])
+Ok(Some(3))
+Ok(None)
+Ok(#{"x": [1]})

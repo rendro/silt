@@ -1,0 +1,28 @@
+-- cmd: run
+-- exit: 0
+-- A supertrait impl for `List(a)`, `Option(a)` or `Map(k, a)` decodes at
+-- the arguments the use gives.
+import json
+
+trait Dec: json.Decode {
+  fn read(s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+trait Dec for List(a) where a: json.Decode {}
+
+trait Dec for Option(a) where a: json.Decode {}
+
+trait Dec for Map(k, a) where k: json.Decode, a: json.Decode {}
+
+fn via(s: String, type a) -> Result(a, json.JsonError) where a: Dec {
+  a.read(s)
+}
+
+fn main() {
+  println(via("[1, 2]", List(Int)))
+  println(via("[\"a\"]", List(String)))
+  println(via("[\"a\"]", List(Int)))
+  println(via("3", Option(Int)))
+  println(via("null", Option(Int)))
+  println(via("\{\"x\": [1]}", Map(String, List(Int))))
+}
