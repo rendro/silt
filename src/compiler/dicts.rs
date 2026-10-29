@@ -556,7 +556,10 @@ impl Compiler<'_> {
     /// The number of dictionaries the header of the impl `ti` asks.
     fn header_dicts(&self, ti: &TraitImpl) -> usize {
         (ti.where_clauses.iter())
-            .filter(|wc| self.where_trait(wc).is_some_and(crate::defs::has_dictionary))
+            .filter(|wc| {
+                self.where_trait(wc)
+                    .is_some_and(crate::defs::has_dictionary)
+            })
             .count()
     }
 
@@ -567,7 +570,8 @@ impl Compiler<'_> {
         let decode = crate::defs::builtin_trait_id("Decode");
         ti.instance.is_none()
             && !ti.target_param_names.is_empty()
-            && (ti.where_clauses.iter()).any(|wc| decode.is_some() && self.where_trait(wc) == decode)
+            && (ti.where_clauses.iter())
+                .any(|wc| decode.is_some() && self.where_trait(wc) == decode)
     }
 
     /// The dictionary of the impl of each method of an impl whose header
@@ -689,28 +693,27 @@ impl Compiler<'_> {
         Ok(match ev {
             Evidence::Impl {
                 tr, ty, args, subs, ..
-            } => {
-                match self.enter_template((*tr, *ty, *args), impls, globals, depth + 1)? {
-                    Some(template) => {
-                        let mut parts = Vec::new();
-                        for sub in subs {
-                            parts.push(self.recipe(sub, None, impls, globals, depth + 1)?);
-                        }
-                        if template.full {
-                            parts.push(own.map_or(Recipe::ByValue, Recipe::Header));
-                        }
-                        Recipe::Dict {
-                            template,
-                            subs: parts.into(),
-                        }
+            } => match self.enter_template((*tr, *ty, *args), impls, globals, depth + 1)? {
+                Some(template) => {
+                    let mut parts = Vec::new();
+                    for sub in subs {
+                        parts.push(self.recipe(sub, None, impls, globals, depth + 1)?);
                     }
-                    None => Recipe::ByValue,
+                    if template.full {
+                        parts.push(own.map_or(Recipe::ByValue, Recipe::Header));
+                    }
+                    Recipe::Dict {
+                        template,
+                        subs: parts.into(),
+                    }
                 }
-            }
+                None => Recipe::ByValue,
+            },
             Evidence::Param { owner, k } if *owner == IMPL_HEADER => Recipe::Header(*k),
-            Evidence::Super { of, index, .. } => {
-                Recipe::Super(Box::new(self.recipe(of, own, impls, globals, depth)?), *index)
-            }
+            Evidence::Super { of, index, .. } => Recipe::Super(
+                Box::new(self.recipe(of, own, impls, globals, depth)?),
+                *index,
+            ),
             _ => Recipe::ByValue,
         })
     }

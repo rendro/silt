@@ -3461,6 +3461,12 @@ impl<'a> Compiler<'a> {
 
 // ── Tests ────────────────────────────────────────────────────────────
 
+/// The name of the local that holds the value of the type variable
+/// `name`, a `type name` parameter's.
+pub(super) fn type_var_name(name: Symbol) -> Symbol {
+    intern(&format!("__type_{}__", resolve(name)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4627,10 +4633,4 @@ fn f(expected, actual) {
         let param = closure_in_f("fn f() -> Int {\n  let g = { g -> g + 1 }\n  g(3)\n}\n");
         assert!(!has_op(param.chunk(), Op::GetClosure));
     }
-}
-
-/// The name of the local that holds the value of the type variable
-/// `name`, a `type name` parameter's.
-pub(super) fn type_var_name(name: Symbol) -> Symbol {
-    intern(&format!("__type_{}__", resolve(name)))
 }
