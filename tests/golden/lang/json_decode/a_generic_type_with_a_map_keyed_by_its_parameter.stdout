@@ -1,0 +1,4 @@
+Ok(M {m: #{"x": 1}})
+Err(json type mismatch: expected Int, got string at m.x)
+Ok(M {m: #{"x": 2}})
+Ok(M {m: #{"y": 3}})

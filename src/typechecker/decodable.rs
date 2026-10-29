@@ -123,6 +123,13 @@ impl Tables {
             Type::Map(key, value) if matches!(**key, Type::String) => {
                 Ok(FieldType::Map(Box::new(part(value)?)))
             }
+            // (A key of a type parameter is one at the type's arguments.)
+            Type::Map(key, value)
+                if let Some(at) = params.iter().position(|p| p == &**key)
+                    && let Ok(at) = u16::try_from(at) =>
+            {
+                Ok(FieldType::KeyedMap(at, Box::new(part(value)?)))
+            }
             Type::Tuple(elems) if !elems.is_empty() => {
                 let parts: Result<Vec<_>, _> = elems.iter().map(part).collect();
                 Ok(FieldType::Tuple(parts?))
