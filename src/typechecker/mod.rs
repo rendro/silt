@@ -1559,6 +1559,20 @@ impl TypeChecker {
                             self.header_params = ti.target_param_names.clone();
                             if Self::is_decode(trait_key) {
                                 self.decode_params = ti.target_param_names.clone();
+                            } else if crate::defs::has_dictionary(trait_key.id)
+                                && ti.instance.is_none()
+                            {
+                                // (The dictionary of an impl of a program's
+                                // trait whose header asks `json.Decode` of a
+                                // parameter carries its type in full: it
+                                // gives the parameters so bound.)
+                                self.decode_params = (ti.where_clauses.iter())
+                                    .filter(|wc| {
+                                        self.named_trait(wc.trait_res, wc.trait_name)
+                                            .is_some_and(Self::is_decode)
+                                    })
+                                    .map(|wc| wc.type_param)
+                                    .collect();
                             }
                             self.check_method_body(method, &sig, env);
                             self.decode_params.clear();

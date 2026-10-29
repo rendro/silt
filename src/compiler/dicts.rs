@@ -377,10 +377,31 @@ impl Compiler<'_> {
         Some(Value::Dict(Dict::new(&template, subs.into_iter())))
     }
 
+    /// Whether each type variable in `ty` has a value where the code runs
+    /// (`compile_type_var`).
+    fn has_value(&mut self, ty: &crate::types::Type) -> bool {
+        use crate::types::Type;
+        match ty {
+            Type::Rigid(r) => {
+                let local = super::type_var_name(r.name);
+                self.resolve_local(local).is_some()
+                    || self.resolve_upvalue(local).is_some()
+                    || (self.decode_params.as_ref())
+                        .is_some_and(|(_, params)| params.contains(&r.name))
+            }
+            Type::Var(_) => false,
+            _ if self.type_constant(ty).is_some() => true,
+            _ => match self.type_parts(ty) {
+                Some((_, parts)) => parts.into_iter().all(|part| self.has_value(part)),
+                None => false,
+            },
+        }
+    }
+
     /// Push the value of the type variable `name` where the code runs: of
     /// a `type name` parameter, or a type parameter of the header of the
     /// impl whose method the code is in, if its dictionary carries its
-    /// type. Unit if it has none.
+    /// type (or it is the `decode` of a `json.Decode` impl).
     fn compile_type_var(&mut self, name: Symbol, span: Span) -> Result<(), Diagnostic> {
         let local = super::type_var_name(name);
         if let Some(slot) = self.resolve_local(local) {
@@ -389,15 +410,14 @@ impl Compiler<'_> {
         if let Some(index) = self.resolve_upvalue(local) {
             return self.emit(Asm::GetUpvalue { index }, span);
         }
-        if self.by_dict
-            && let Some((owner, params)) = &self.decode_params
+        if let Some((owner, params)) = &self.decode_params
             && let Some(k) = params.iter().position(|param| *param == name)
             && let Ok(k) = u8::try_from(k)
         {
             let owner = *owner;
             return self.compile_type_param(owner, k, span);
         }
-        self.emit(Asm::Unit, span)
+        Err(super::checker_missed(span, "a type variable with no value"))
     }
 
     /// Push the value of the type `full` of a dictionary that carries it:
@@ -411,7 +431,7 @@ impl Compiler<'_> {
         span: Span,
     ) -> Result<(), Diagnostic> {
         use crate::types::Type;
-        let Some(ty) = full else {
+        let Some(ty) = full.filter(|ty| self.has_value(ty)) else {
             return self.emit(Asm::Unit, span);
         };
         if let Some(value) = self.type_constant(ty) {
