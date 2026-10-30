@@ -172,7 +172,7 @@ impl Server {
                     Some(Type::Fun(..)) => CompletionItemKind::FUNCTION,
                     _ => CompletionItemKind::VARIABLE,
                 };
-                // (A function over type constructors by its signature.)
+                // (A generic function by its signature.)
                 let detail = match &def.signature {
                     Some(signature) => Some(signature.text.clone()),
                     None => def.ty.as_ref().map(|t| format!("{t}")),

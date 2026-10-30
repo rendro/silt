@@ -203,8 +203,8 @@ impl Server {
             None
         });
 
-        // A function over type constructors, not at a type a use gives
-        // it: its signature, the bounds with it (HK8).
+        // A generic function, not at a type a use gives it: its
+        // signature, the bounds with it (HK8).
         // (Its declaration's name too.)
         let declared = program.decls.iter().find_map(|decl| match decl {
             crate::ast::Decl::Fn(f)

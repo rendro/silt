@@ -1723,8 +1723,8 @@ fn written_defs(te: &TypeExpr, out: &mut std::collections::HashSet<crate::defs::
 
 pub(crate) use crate::types::canonical::{canonical_head, head_of_canon as head_of};
 
-/// A function's signature as an editor writes it, for a function over
-/// type constructors.
+/// A function's signature as an editor writes it, for a generic
+/// function.
 #[derive(Debug, Clone)]
 pub struct Signature {
     /// `fn twice(xs: m(Int)) -> m(Int) where m: Functor`.
@@ -1741,9 +1741,9 @@ pub struct ModuleCheck {
     /// The inferred type of each top-level value the module binds by a
     /// declaration: its functions, its `let`s and the items it imports.
     pub top_level: HashMap<Symbol, Type>,
-    /// The signature an editor writes for each of the module's functions
-    /// over type constructors (`fn twice(xs: m(Int)) -> m(Int) where m:
-    /// Functor`), by name.
+    /// The signature an editor writes for each of the module's generic
+    /// functions (`fn ident(x: a) -> a`, `fn twice(xs: m(Int)) -> m(Int)
+    /// where m: Functor`), by name.
     pub signatures: HashMap<Symbol, Signature>,
     /// The module's top-level `let`s, by the span of each, in the order
     /// they are initialised in: each after the `let`s its initialiser

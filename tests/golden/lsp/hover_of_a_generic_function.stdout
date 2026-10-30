@@ -1,0 +1,26 @@
+21:3 error undefined variable 'ide'\nhelp: did you mean `id2`?
+> hover 14:5
+```silt
+fn ident(x: a) -> a
+```
+> hover 15:5
+```silt
+fn id2(x: a) -> a
+```
+> hover 16:5
+```silt
+fn shown(x: a) -> String where a: Display
+```
+> hover 17:5
+```silt
+fn pair(x: a, y: b) -> (a, b)
+```
+> hover 19:12
+```silt
+fn ident(x: a) -> a
+```
+> completion 21:6
+ident
+> signature 22:17
+fn ident(x: a) -> a
+argument 1: x: a

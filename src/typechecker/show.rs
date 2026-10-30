@@ -1,24 +1,25 @@
 use super::*;
 
 impl TypeChecker {
-    /// The signature of the function `f`, of the scheme `scheme`, as an
-    /// editor's hover writes one over type constructors (HK8): `fn
-    /// twice(xs: m(Int)) -> m(Int) where m: Functor`, a type constructor
-    /// variable by the name its annotation gives it (else `m`, `n`, ...),
-    /// a type variable by a letter; and the function's type with its
-    /// variables so named. `None` for a function whose type holds no type
-    /// constructor variable.
+    /// The signature of the generic function `f`, of the scheme
+    /// `scheme`, as an editor's hover writes it (HK8): `fn ident(x: a) ->
+    /// a`, `fn twice(xs: m(Int)) -> m(Int) where m: Functor`, a type
+    /// constructor variable by the name its annotation gives it (else
+    /// `m`, `n`, ...), a type variable by a letter; and the function's
+    /// type with its variables so named. `None` for a function whose type
+    /// holds no type variable of its own.
     pub(super) fn written_signature(&self, f: &FnDecl, scheme: &Scheme) -> Option<Signature> {
         let ty = self.apply(&scheme.ty);
         let Type::Fun(params, ret) = &ty else {
             return None;
         };
+        let generic = free_vars_in(&ty).iter().any(|v| scheme.vars.contains(v));
+        if !generic || params.len() != f.params.len() {
+            return None;
+        }
         let heads: Vec<TyVar> = (crate::types::constructor_heads(&ty).into_iter())
             .filter(|v| scheme.vars.contains(v))
             .collect();
-        if heads.is_empty() || params.len() != f.params.len() {
-            return None;
-        }
         let mut taken: Vec<String> = Vec::new();
         let mut mapping: HashMap<TyVar, Type> = HashMap::new();
         let mut constructors = ["m", "n", "o", "p", "q", "r"].into_iter().map(String::from);

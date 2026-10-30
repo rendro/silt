@@ -150,8 +150,7 @@ pub(super) fn build_signature_from_def(
     let mut label = format!("fn {name}(");
     let mut params_info = Vec::new();
 
-    // (A function over type constructors with its variables named,
-    // `xs: m(Int)`.)
+    // (A generic function with its variables named, `xs: m(Int)`.)
     let ty = def.signature.as_ref().map(|s| &s.ty).or(def.ty.as_ref());
     if let Some(Type::Fun(param_types, ret)) = ty {
         for (i, pty) in param_types.iter().enumerate() {
