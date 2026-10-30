@@ -122,6 +122,13 @@ pub struct TypeChecker {
     pub(super) written: std::collections::HashSet<(TraitKey, TypeRef)>,
     /// The (place, type) pairs a missing trait is reported for.
     pub(super) lacking: std::collections::HashSet<(Span, String)>,
+    /// Each type a decoder refused, by its place: a missing trait of
+    /// what that use returns is no error of its own
+    /// (`drop_errors_of_refused_calls`).
+    pub(super) refused_calls: Vec<(Span, Type)>,
+    /// Each missing trait reported, by its place and message, with the
+    /// type that lacks it.
+    pub(super) trait_reports: Vec<(Span, String, Type)>,
     /// The types found to lack `json.Decode`, reported once the
     /// module's bodies are checked (`settle_decode_gaps`): what asks it
     /// of a declared bound is known then.
@@ -547,6 +554,8 @@ impl TypeChecker {
             never_fn: None,
             written: std::collections::HashSet::new(),
             lacking: std::collections::HashSet::new(),
+            refused_calls: Vec::new(),
+            trait_reports: Vec::new(),
             decode_gaps: Vec::new(),
             open_type_arguments: std::collections::HashSet::new(),
             open_vars: std::collections::HashSet::new(),
@@ -1847,6 +1856,7 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
     checker.settle_rows();
     checker.settle_builtin_needs();
     checker.settle_decode_gaps();
+    checker.drop_errors_of_refused_calls();
     checker.report_private_in_schemes(program, &env);
     checker.report_unknown_let_types(program, &env);
     checker.enter_schemes(&env);

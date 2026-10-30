@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- requires-feature: postgres
+-- A postgres function that refuses its row type is the one error: what
+-- the call returns owes no `Display` error of its own.
+import postgres
+
+type R { f: Fn(Int) -> Int }
+
+fn main() {
+  match postgres.connect("postgres://nobody@127.0.0.1/none") {
+    Ok(db) -> println(postgres.query(db, "select 1", (), R))
+    Err(e) -> println(Error.message(e))
+  }
+}

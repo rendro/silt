@@ -1,0 +1,26 @@
+-- cmd: check
+-- exit: 1
+-- A use of a decoder that refuses its type is the one error: what the
+-- use returns owes no `Display`, `Equal` or `json.Encode` error of its
+-- own, whichever decoder refuses (`json.parse`, `toml.parse`, a
+-- type's `decode`, a function bounded by `json.Decode`). The same type
+-- shown elsewhere is still refused.
+import json
+import toml
+
+type T(a) { n: Option(T(List(a))), x: a }
+type R { f: Fn(Int) -> Int }
+
+fn load(type a) -> Result(a, json.JsonError) where a: json.Decode {
+  json.parse("x", a)
+}
+
+fn main() {
+  println(json.parse("x", T(Int)))
+  println(toml.parse("x", R))
+  println(R.decode(json.Null))
+  println(load(R))
+  println(json.parse("x", R) == json.parse("y", R))
+  println(json.stringify(json.parse("x", R)))
+  println(R { f: { x -> x } })
+}

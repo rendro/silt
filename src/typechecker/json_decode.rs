@@ -263,6 +263,7 @@ impl TypeChecker {
             // note naming the function that passes it on, is the one
             // error.
             if (self.lacking).contains(&self.refused_argument(gap.origin.span, &ty)) {
+                self.refused_calls.push((gap.origin.span, ty.clone()));
                 continue;
             }
             let decoder = self.asking_decoder(gap.asker);
@@ -281,6 +282,7 @@ impl TypeChecker {
             else {
                 continue;
             };
+            self.refused_calls.push((gap.origin.span, ty.clone()));
             if !self.lacking.insert((
                 gap.origin.span,
                 format!("json.Decode {}", self.show_type(&ty)),

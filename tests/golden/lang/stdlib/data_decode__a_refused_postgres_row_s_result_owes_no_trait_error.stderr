@@ -1,0 +1,6 @@
+error[type]: `postgres.query` cannot decode `R`: field `f` has type `Fn(Int) -> Int`, which has no decoder
+ --> data_decode__a_refused_postgres_row_s_result_owes_no_trait_error.silt:12:58
+    |
+ 12 |     Ok(db) -> println(postgres.query(db, "select 1", (), R))
+    |                                                          ^ `postgres.query` cannot decode `R`: field `f` has type `Fn(Int) -> Int`, which has no decoder
+  = help: decodable field types are Int, Float, String, Bool, Bytes, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these

@@ -238,6 +238,59 @@ impl TypeChecker {
         Some(ev)
     }
 
+    /// The trait obligation `tr` of `subject` is decided, the errors
+    /// since `reported` its own: a missing trait is kept for
+    /// `drop_errors_of_refused_calls`.
+    pub(super) fn note_trait_outcome(&mut self, tr: TraitKey, subject: &Type, reported: usize) {
+        if Self::is_decode(tr) {
+            return;
+        }
+        let subject = self.apply(subject);
+        let reports: Vec<(Span, String, Type)> = (self.errors[reported..].iter())
+            .map(|error| (error.span, error.message.clone(), subject.clone()))
+            .collect();
+        self.trait_reports.extend(reports);
+    }
+
+    /// The builtin's check `check` of `subject` at `span` is done: a
+    /// decoder that refused it is kept for `drop_errors_of_refused_calls`.
+    pub(super) fn note_builtin_outcome(&mut self, check: BuiltinCheck, subject: &Type, span: Span) {
+        if !matches!(check, BuiltinCheck::Decodes { .. }) {
+            return;
+        }
+        let ty = crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(subject));
+        if self.lacking.contains(&self.refused_argument(span, &ty)) {
+            self.refused_calls.push((span, ty));
+        }
+    }
+
+    /// One error for one call: a missing trait of what a use of a decoder
+    /// that refused its type returns (`println(json.parse(text, T))`, its
+    /// `T` refused) is no error of its own. (The error is reported where
+    /// the use is, and the type it lacks the trait of names the refused
+    /// one.)
+    pub(super) fn drop_errors_of_refused_calls(&mut self) {
+        if self.refused_calls.is_empty() {
+            return;
+        }
+        for (span, message, subject) in std::mem::take(&mut self.trait_reports) {
+            let mut named = Vec::new();
+            subject.collect_refs(&mut named);
+            let of_refused = self.refused_calls.iter().any(|(at, refused)| {
+                at.file == span.file
+                    && span.start <= at.start
+                    && at.end <= span.end
+                    && refused.type_ref().is_none_or(|head| named.contains(&head))
+            });
+            if of_refused
+                && let Some(at) = (self.errors.iter())
+                    .position(|error| error.span == span && error.message == message)
+            {
+                self.errors.remove(at);
+            }
+        }
+    }
+
     /// `goal` waits for its type, or is decided now if the type is known.
     /// Its node in the module's evidence.
     pub(super) fn want_goal(&mut self, goal: Goal, origin: Origin) -> super::evidence::EvId {
@@ -576,6 +629,7 @@ impl TypeChecker {
                                 self.errors.truncate(reported);
                             }
                         }
+                        self.note_trait_outcome(tr, &subject, reported);
                     }
                     Goal::Pred(Pred::Anon { row, given }) => match self.apply(&row) {
                         Type::Var(_) => {}
@@ -668,6 +722,7 @@ impl TypeChecker {
                                 owner,
                                 origin,
                             );
+                            self.note_builtin_outcome(check, &subject, origin.span);
                         }
                     }
                     // A trait method's call waits for its scope's end: a
