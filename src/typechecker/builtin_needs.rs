@@ -659,6 +659,7 @@ impl TypeChecker {
                         self.wanted[k].solved = true;
                         let owner = self.owed_for.get(&self.wanted[k].ev).copied();
                         self.check_builtin_argument(check, &subject, (passer, &[]), owner, origin);
+                        self.note_builtin_outcome(check, &subject, origin.span);
                     }
                     Goal::Pred(Pred::Trait {
                         tr,
@@ -668,7 +669,9 @@ impl TypeChecker {
                     }) => {
                         self.wanted[k].solved = true;
                         let ev = Some(self.wanted[k].ev);
+                        let reported = self.errors.len();
                         self.verify_trait_obligation(tr, &args, &subject, origin, asker, ev);
+                        self.note_trait_outcome(tr, &subject, reported);
                     }
                     _ => {}
                 }

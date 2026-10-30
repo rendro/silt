@@ -1,0 +1,114 @@
+error[type]: `json.parse` cannot decode `T(Int)`: field `n` of `T`, a record type nested in it, has type `Option(T(List(a)))`, which grows with every level
+ --> data_decode__a_refused_call_s_result_owes_no_trait_error.silt:26:27
+    |
+ 26 |   println(json.parse("x", T(Int)))
+    |                           ^^^^^^ `json.parse` cannot decode `T(Int)`: field `n` of `T`, a record type nested in it, has type `Option(T(List(a)))`, which grows with every level
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `toml.parse` cannot decode `R`: field `f` has type `Fn(Int) -> Int`, which has no decoder
+ --> data_decode__a_refused_call_s_result_owes_no_trait_error.silt:27:27
+    |
+ 27 |   println(toml.parse("x", R))
+    |                           ^ `toml.parse` cannot decode `R`: field `f` has type `Fn(Int) -> Int`, which has no decoder
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `R.decode` cannot decode `R`: field `f` has type `Fn(Int) -> Int`, which has no decoder
+ --> data_decode__a_refused_call_s_result_owes_no_trait_error.silt:28:11
+    |
+ 28 |   println(R.decode(json.Null))
+    |           ^^^^^^^^ `R.decode` cannot decode `R`: field `f` has type `Fn(Int) -> Int`, which has no decoder
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `json.parse` cannot decode `R`: field `f` has type `Fn(Int) -> Int`, which has no decoder
+ --> data_decode__a_refused_call_s_result_owes_no_trait_error.silt:29:16
+    |
+ 29 |   println(load(R))
+    |                ^ `json.parse` cannot decode `R`: field `f` has type `Fn(Int) -> Int`, which has no decoder
+  = note: `load` passes it to `json.parse`
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `json.parse` cannot decode `R`: field `f` has type `Fn(Int) -> Int`, which has no decoder
+ --> data_decode__a_refused_call_s_result_owes_no_trait_error.silt:30:27
+    |
+ 30 |   println(json.parse("x", R) == json.parse("y", R))
+    |                           ^ `json.parse` cannot decode `R`: field `f` has type `Fn(Int) -> Int`, which has no decoder
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `json.parse` cannot decode `R`: field `f` has type `Fn(Int) -> Int`, which has no decoder
+ --> data_decode__a_refused_call_s_result_owes_no_trait_error.silt:30:49
+    |
+ 30 |   println(json.parse("x", R) == json.parse("y", R))
+    |                                                 ^ `json.parse` cannot decode `R`: field `f` has type `Fn(Int) -> Int`, which has no decoder
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `json.parse` cannot decode `R`: field `f` has type `Fn(Int) -> Int`, which has no decoder
+ --> data_decode__a_refused_call_s_result_owes_no_trait_error.silt:31:42
+    |
+ 31 |   println(json.stringify(json.parse("x", R)))
+    |                                          ^ `json.parse` cannot decode `R`: field `f` has type `Fn(Int) -> Int`, which has no decoder
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `json.parse` cannot decode `U(R)`: field `f` of `R`, a record type nested in it, has type `Fn(Int) -> Int`, which has no decoder
+ --> data_decode__a_refused_call_s_result_owes_no_trait_error.silt:32:28
+    |
+ 32 |   println((json.parse("x", U(R)), 1))
+    |                            ^^^^ `json.parse` cannot decode `U(R)`: field `f` of `R`, a record type nested in it, has type `Fn(Int) -> Int`, which has no decoder
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: type 'R' does not implement trait 'Display': field 'f' is of type 'Fn(Int) -> Int', which does not implement trait 'Display'
+ --> data_decode__a_refused_call_s_result_owes_no_trait_error.silt:33:11
+    |
+ 33 |   println(R { f: { x -> x } })
+    |           ^^^^^^^^^^^^^^^^^^^ type 'R' does not implement trait 'Display': field 'f' is of type 'Fn(Int) -> Int', which does not implement trait 'Display'
+
+error[type]: type '(Result(S, json.JsonError), Fn(Int) -> Int)' does not implement trait 'Display': part #2 is of type 'Fn(Int) -> Int', which does not implement trait 'Display'
+ --> data_decode__a_refused_call_s_result_owes_no_trait_error.silt:34:11
+    |
+ 34 |   println((json.parse("x", S), { x -> x + 1 }))
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type '(Result(S, json.JsonError), Fn(Int) -> Int)' does not implement trait 'Display': part #2 is of type 'Fn(Int) -> Int', which does not implement trait 'Display'
+
+error[type]: `json.parse` cannot decode `S`: field `f` has type `Fn(Int) -> Int`, which has no decoder
+ --> data_decode__a_refused_call_s_result_owes_no_trait_error.silt:34:28
+    |
+ 34 |   println((json.parse("x", S), { x -> x + 1 }))
+    |                            ^ `json.parse` cannot decode `S`: field `f` has type `Fn(Int) -> Int`, which has no decoder
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: type '(Result((Int, S), json.JsonError), Fn(Int) -> Int)' does not implement trait 'Display': part #2 is of type 'Fn(Int) -> Int', which does not implement trait 'Display'
+ --> data_decode__a_refused_call_s_result_owes_no_trait_error.silt:35:11
+    |
+ 35 |   println((json.parse("x", (Int, S)), { x -> x + 1 }))
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type '(Result((Int, S), json.JsonError), Fn(Int) -> Int)' does not implement trait 'Display': part #2 is of type 'Fn(Int) -> Int', which does not implement trait 'Display'
+
+error[type]: `json.parse` cannot decode `S`: field `f` has type `Fn(Int) -> Int`, which has no decoder
+ --> data_decode__a_refused_call_s_result_owes_no_trait_error.silt:35:28
+    |
+ 35 |   println((json.parse("x", (Int, S)), { x -> x + 1 }))
+    |                            ^^^^^^^^ `json.parse` cannot decode `S`: field `f` has type `Fn(Int) -> Int`, which has no decoder
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: type 'List(Fn(Int) -> Int)' does not implement trait 'Display': element is of type 'Fn(Int) -> Int', which does not implement trait 'Display'
+ --> data_decode__a_refused_call_s_result_owes_no_trait_error.silt:36:11
+    |
+ 36 |   println({
+    |           ^ type 'List(Fn(Int) -> Int)' does not implement trait 'Display': element is of type 'Fn(Int) -> Int', which does not implement trait 'Display'
+
+error[type]: `json.parse` cannot decode `S`: field `f` has type `Fn(Int) -> Int`, which has no decoder
+ --> data_decode__a_refused_call_s_result_owes_no_trait_error.silt:37:29
+    |
+ 37 |     let _ = json.parse("x", List(S))
+    |                             ^^^^^^^ `json.parse` cannot decode `S`: field `f` has type `Fn(Int) -> Int`, which has no decoder
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: type 'R' does not implement trait 'Display': field 'f' is of type 'Fn(Int) -> Int', which does not implement trait 'Display'
+ --> data_decode__a_refused_call_s_result_owes_no_trait_error.silt:40:11
+    |
+ 40 |   println({
+    |           ^ type 'R' does not implement trait 'Display': field 'f' is of type 'Fn(Int) -> Int', which does not implement trait 'Display'
+
+error[type]: `json.parse` cannot decode `R`: field `f` has type `Fn(Int) -> Int`, which has no decoder
+ --> data_decode__a_refused_call_s_result_owes_no_trait_error.silt:41:29
+    |
+ 41 |     let _ = json.parse("x", R)
+    |                             ^ `json.parse` cannot decode `R`: field `f` has type `Fn(Int) -> Int`, which has no decoder
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
