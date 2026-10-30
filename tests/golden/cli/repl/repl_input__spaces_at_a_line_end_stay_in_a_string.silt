@@ -1,0 +1,4 @@
+-- cmd: repl
+-- stdin: import string\nlet s = """\n  a   \n  b\n  """\nstring.length(s)\nlet t = "x  \ny"\nstring.length(t)\n:quit\n
+-- A string that goes on over lines keeps the spaces at the end of each
+-- line, as it does in a file: `s` is "a   \nb" (6), `t` is "x  \ny" (5).

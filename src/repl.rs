@@ -198,7 +198,9 @@ pub fn run_repl() {
             // the line does not run.
             Ok(_) if repl.borrow().exited().is_some() => break,
             Ok(line) => {
-                let mut line = line.trim_end();
+                // (A line goes into the entry as it was typed: the
+                // spaces at its end can be in a string that goes on.)
+                let mut line = line.as_str();
 
                 if buffer.is_empty() {
                     match line.trim() {
