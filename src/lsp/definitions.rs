@@ -46,6 +46,7 @@ pub(super) fn build_definitions(
                     f.name,
                     DefInfo {
                         signature: None,
+                        fields: None,
                         ty: fn_ty,
                         params,
                         doc: f.doc.clone(),
@@ -57,6 +58,7 @@ pub(super) fn build_definitions(
                     t.name,
                     DefInfo {
                         signature: None,
+                        fields: None,
                         ty: None,
                         params: vec![],
                         doc: t.doc.clone(),
@@ -68,6 +70,12 @@ pub(super) fn build_definitions(
                             v.name,
                             DefInfo {
                                 signature: None,
+                                fields: Some(
+                                    v.fields
+                                        .iter()
+                                        .map(crate::typechecker::type_expr_text)
+                                        .collect(),
+                                ),
                                 ty: None,
                                 params: vec![],
                                 // Variants inherit the enum's doc
@@ -87,6 +95,7 @@ pub(super) fn build_definitions(
                     t.name,
                     DefInfo {
                         signature: None,
+                        fields: None,
                         ty: None,
                         params: vec![],
                         doc: t.doc.clone(),
@@ -145,6 +154,7 @@ fn collect_let_pattern_defs(
                 *name,
                 DefInfo {
                     signature: None,
+                    fields: None,
                     ty: value_ty.cloned(),
                     params: vec![],
                     // Only the bare binding inherits the let's doc; a
@@ -203,6 +213,7 @@ fn collect_let_pattern_defs(
                         *name,
                         DefInfo {
                             signature: None,
+                            fields: None,
                             ty: lookup_field_ty(*name),
                             params: vec![],
                             doc: None,
@@ -230,6 +241,7 @@ fn collect_let_pattern_defs(
                         *name,
                         DefInfo {
                             signature: None,
+                            fields: None,
                             ty: lookup_field_ty(*name),
                             params: vec![],
                             doc: None,
@@ -246,6 +258,7 @@ fn collect_let_pattern_defs(
                     *r,
                     DefInfo {
                         signature: None,
+                        fields: None,
                         ty: None,
                         params: vec![],
                         doc: None,
