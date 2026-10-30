@@ -50,3 +50,34 @@ fn a_dropped_trait_checked_first_leaves_no_row() {
 fn a_dropped_trait_not_yet_checked_leaves_no_row() {
     assert_eq!(c_after_b_drops_its_trait(false), Vec::<String>::new());
 }
+
+/// An id whose module was entered again and no longer declares it (one
+/// an editor still holds from an earlier check) names nothing anyone can
+/// use: no panic. (Panicked on main 76dc9f3e: "a definition of a module
+/// that is entered".)
+#[test]
+fn a_cleared_definition_is_found_as_nothing() {
+    use silt::defs::{BuiltinDefs, Def, DefKind, DefTable, Vis};
+    use silt::intern::intern;
+    use silt::session::ModuleId;
+    use silt::source::Span;
+    use std::sync::Arc;
+
+    let mut table = DefTable::new(Arc::new(BuiltinDefs::default()));
+    let module = ModuleId(0);
+    let def = |name: &str| Def {
+        module,
+        name: intern(name),
+        span: Span::BUILTIN,
+        vis: Vis::Pub,
+        kind: DefKind::Fn,
+    };
+    let _kept = table.add(def("kept"));
+    let dropped = table.add(def("dropped"));
+    table.clear_module(module);
+    table.add(def("kept"));
+    let found = table.get(dropped);
+    assert!(matches!(found.kind, DefKind::Let));
+    assert_ne!(found.module, module);
+    assert_eq!(silt::intern::resolve(found.name), "_");
+}

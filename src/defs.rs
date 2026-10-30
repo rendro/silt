@@ -355,6 +355,9 @@ pub struct DefTable {
     /// for `type C = Color`, `Box` for `type IntBox = Box(Int)`), when
     /// that is a type with a definition.
     alias_types: HashMap<DefId, DefId>,
+    /// What [`DefTable::get`] answers for an empty slot: a private `let`
+    /// named `_` of no module, which no name reaches.
+    vacant: Def,
 }
 
 impl DefTable {
@@ -366,6 +369,13 @@ impl DefTable {
             variants: HashMap::new(),
             free: HashMap::new(),
             alias_types: HashMap::new(),
+            vacant: Def {
+                module: ModuleId(u32::MAX),
+                name: crate::intern::intern("_"),
+                span: Span::BUILTIN,
+                vis: Vis::Private,
+                kind: DefKind::Let,
+            },
         }
     }
 
@@ -389,16 +399,17 @@ impl DefTable {
         at
     }
 
-    /// The definition `id`. Panics on an id of another table.
+    /// The definition `id`. Panics on an id of another table. An id
+    /// whose module was entered again and no longer declares it (one an
+    /// editor still holds from an earlier check) names a `let` that no
+    /// name reaches: what asks for it finds nothing to use.
     pub fn get(&self, id: DefId) -> &Def {
         let index = id.0 as usize;
         let builtin = self.builtins.defs.len();
         if index < builtin {
             return &self.builtins.defs[index];
         }
-        self.defs[index - builtin]
-            .as_ref()
-            .expect("a definition of a module that is entered")
+        self.defs[index - builtin].as_ref().unwrap_or(&self.vacant)
     }
 
     /// The variants of the enum `ty`, in declaration order.
