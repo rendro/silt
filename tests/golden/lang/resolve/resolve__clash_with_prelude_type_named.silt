@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: error[type]: type mismatch: expected Option(_), got prelude.Option(Int)
+-- stderr-contains: error[type]: type mismatch: expected prelude.Option(Int), got Option(_)
 -- stderr-contains: error[type]: type mismatch: expected Bigger, got Smaller
 -- A module's own Option beside the prelude's: the prelude's is written
 -- prelude.Option. A record type in a mismatch is written by its name.

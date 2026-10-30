@@ -10,11 +10,11 @@ error[type]: non-exhaustive match: missing variants shapes.Circle, shapes.Square
  21 |   match s {
     |         ^ non-exhaustive match: missing variants shapes.Circle, shapes.Square
 
-error[type]: type mismatch: expected Mine, got json.Value
- --> main.silt:28:9
+error[type]: type mismatch: expected json.Value, got Mine
+ --> main.silt:29:5
     |
- 28 |   match v {
-    |         ^ type mismatch: expected Mine, got json.Value
+ 29 |     Null -> println("null?")
+    |     ^^^^ type mismatch: expected json.Value, got Mine
 
 error[type]: type mismatch: expected Int, got time.Date
  --> main.silt:32:16

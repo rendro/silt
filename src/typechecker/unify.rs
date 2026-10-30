@@ -731,20 +731,52 @@ impl TypeChecker {
         }
     }
 
+    /// Unify the type of a pattern (`got`) with the type of what it
+    /// matches (`expected`) and report at the pattern (`span`) why they
+    /// do not unify. A pattern's mismatch has no help and no fix: those
+    /// say what to do with an expression (`?`, `Ok(...)`, a spread). In
+    /// an arm of a `match`, a mismatch an earlier arm's pattern reported
+    /// with the same text is not reported again (`arm_mismatches`).
+    pub(super) fn unify_pattern(&mut self, got: &Type, expected: &Type, span: Span) {
+        let Err(Mismatch(faults)) = self.unify_types(got, expected) else {
+            return;
+        };
+        for fault in faults {
+            if let Some(seen) = &mut self.arm_mismatches
+                && !seen.insert(fault.message.clone())
+            {
+                continue;
+            }
+            let d = self.mismatch_diagnostic(fault, span, false);
+            self.errors.push(d);
+        }
+    }
+
     /// Report a failed unification at `span`.
     pub(super) fn report_mismatch(&mut self, mismatch: Mismatch, span: Span) {
         for fault in mismatch.0 {
-            let mut d = Diagnostic::error(fault.code, span, fault.message);
-            d.help.extend(fault.help);
-            if let Some(note) = fault.note {
-                d = d.with_note(note);
-            }
-            if let Some((got, expected)) = &fault.apart {
-                Self::add_ok_wrap_fix(&mut d, got, expected);
-                d = self.name_annotation_variables(d, expected, got);
-            }
+            let d = self.mismatch_diagnostic(fault, span, true);
             self.errors.push(d);
         }
+    }
+
+    /// The diagnostic of `fault` at `span`; with its help and its fix
+    /// (`advice`), or only with its notes.
+    fn mismatch_diagnostic(&self, fault: Fault, span: Span, advice: bool) -> Diagnostic {
+        let mut d = Diagnostic::error(fault.code, span, fault.message);
+        if advice {
+            d.help.extend(fault.help);
+        }
+        if let Some(note) = fault.note {
+            d = d.with_note(note);
+        }
+        if let Some((got, expected)) = &fault.apart {
+            if advice {
+                Self::add_ok_wrap_fix(&mut d, got, expected);
+            }
+            d = self.name_annotation_variables(d, expected, got);
+        }
+        d
     }
 
     /// A mismatch of which one side (or each) is an annotation variable

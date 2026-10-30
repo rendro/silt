@@ -1,0 +1,97 @@
+-- cmd: check
+-- exit: 1
+-- A pattern of another type than what it matches is reported at the
+-- pattern, with the type of what is matched as the expected one, for
+-- every kind of pattern, nested ones and the patterns of `let` and
+-- `when let` too. The report has no help: the helps of an expression
+-- (`?`, a record's name) do not apply to a pattern. In one match, a
+-- mismatch an earlier arm reported is not reported again; another
+-- one is. A field the record does not have is reported at the field.
+type Shape { Circle(Int), Square(Int) }
+type P { x: Int }
+
+fn literals(n: Int, s: String) -> Int {
+  let a = match n {
+    "a" -> 1
+    _ -> 0
+  }
+  let b = match s {
+    1 -> 1
+    1.5 -> 2
+    true -> 3
+    1..3 -> 4
+    _ -> 0
+  }
+  a + b
+}
+
+fn shapes(n: Int, t: (Int, Int), r: Result(Int, String)) -> Int {
+  let a = match n {
+    (_, _) -> 1
+    [_] -> 2
+    Circle(_) -> 3
+    P { x: _ } -> 4
+    _ -> 0
+  }
+  let b = match t {
+    (_, _, _) -> 1
+    (1, "a") -> 2
+    _ -> 0
+  }
+  let c = match r {
+    5 -> 1
+    _ -> 0
+  }
+  a + b + c
+}
+
+fn nested(xs: List(Int), o: Option(Int), shape: Shape, p: P) -> Int {
+  let a = match xs {
+    ["a", ..] -> 1
+    _ -> 0
+  }
+  let b = match o {
+    Some("a") | None -> 1
+    _ -> 0
+  }
+  let c = match shape {
+    Circle("r") -> 1
+    _ -> 0
+  }
+  let d = match p {
+    P { x: "a" } -> 1
+    P { y: _ } -> 2
+    _ -> 0
+  }
+  a + b + c + d
+}
+
+fn once(n: Int) -> Int {
+  match n {
+    Ok(_) -> 1
+    Err(_) -> 2
+    "a" -> 3
+    _ -> 0
+  }
+}
+
+fn pin(n: Int, s: String) -> Int {
+  match n {
+    ^s -> 1
+    _ -> 0
+  }
+}
+
+fn bindings(n: Int) -> Int {
+  let "a" = n
+  when let "b" = n else {
+    return 0
+  }
+  n
+}
+
+fn main() {
+  let a = literals(1, "s") + shapes(1, (1, 2), Ok(1))
+  let b = nested([1], None, Circle(1), P { x: 1 }) + once(1)
+  println(a + b + pin(1, "s") + bindings(1))
+}

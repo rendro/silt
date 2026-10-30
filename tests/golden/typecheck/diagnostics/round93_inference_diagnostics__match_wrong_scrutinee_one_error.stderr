@@ -1,8 +1,8 @@
-error[type]: type mismatch: expected Result(_, _), got Int
- --> round93_inference_diagnostics__match_wrong_scrutinee_one_error.silt:5:17
+error[type]: type mismatch: expected Int, got Result(_, _)
+ --> round93_inference_diagnostics__match_wrong_scrutinee_one_error.silt:6:5
    |
- 5 |   let r = match 42 {
-   |                 ^^ type mismatch: expected Result(_, _), got Int
+ 6 |     Ok(v) -> v
+   |     ^^^^^ type mismatch: expected Int, got Result(_, _)
 
 warning[type]: 'e' is never used
  --> round93_inference_diagnostics__match_wrong_scrutinee_one_error.silt:7:9

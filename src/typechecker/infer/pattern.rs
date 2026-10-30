@@ -602,23 +602,23 @@ impl TypeChecker {
                 Pat::Wild
             }
             PatternKind::Int(n) => {
-                self.unify(&Type::Int, expected, pattern_span);
+                self.unify_pattern(&Type::Int, expected, pattern_span);
                 Pat::IntRange(*n, *n)
             }
             PatternKind::Float(_) => {
-                self.unify(&Type::Float, expected, pattern_span);
+                self.unify_pattern(&Type::Float, expected, pattern_span);
                 Pat::Lit
             }
             PatternKind::Bool(b) => {
-                self.unify(&Type::Bool, expected, pattern_span);
+                self.unify_pattern(&Type::Bool, expected, pattern_span);
                 Pat::Ctor(CtorId::Bool(*b), Vec::new())
             }
             PatternKind::StringLit(..) => {
-                self.unify(&Type::String, expected, pattern_span);
+                self.unify_pattern(&Type::String, expected, pattern_span);
                 Pat::Lit
             }
             PatternKind::Range(lo, hi) => {
-                self.unify(&Type::Int, expected, pattern_span);
+                self.unify_pattern(&Type::Int, expected, pattern_span);
                 if (*lo, *hi) == (i64::MIN, i64::MAX) {
                     Pat::Wild
                 } else {
@@ -626,14 +626,14 @@ impl TypeChecker {
                 }
             }
             PatternKind::FloatRange(_, _) => {
-                self.unify(&Type::Float, expected, pattern_span);
+                self.unify_pattern(&Type::Float, expected, pattern_span);
                 Pat::Lit
             }
             PatternKind::Tuple(pats) => {
                 // `()` is the unit pattern: the type of the empty tuple
                 // is `Type::Unit`.
                 if pats.is_empty() {
-                    self.unify(&Type::Unit, expected, pattern_span);
+                    self.unify_pattern(&Type::Unit, expected, pattern_span);
                     return Pat::Wild;
                 }
                 // A value known to be a tuple of that many elements gives
@@ -644,7 +644,7 @@ impl TypeChecker {
                     Type::Tuple(elems) if elems.len() == pats.len() => elems.clone(),
                     _ => {
                         let fresh: Vec<Type> = pats.iter().map(|_| self.fresh_var()).collect();
-                        self.unify(&Type::Tuple(fresh.clone()), expected, pattern_span);
+                        self.unify_pattern(&Type::Tuple(fresh.clone()), expected, pattern_span);
                         fresh
                     }
                 };
@@ -664,7 +664,7 @@ impl TypeChecker {
                     _ => {
                         let elem_ty = self.fresh_var();
                         let list_ty = Type::List(Box::new(elem_ty.clone()));
-                        self.unify(&list_ty, expected, pattern_span);
+                        self.unify_pattern(&list_ty, expected, pattern_span);
                         elem_ty
                     }
                 };
@@ -701,7 +701,7 @@ impl TypeChecker {
                         for (arg, fixed) in args.iter().zip(fixed.iter().flatten()) {
                             self.unify(arg, fixed, span);
                         }
-                        self.unify(&Type::Generic(rec_ref, args), expected, pattern_span);
+                        self.unify_pattern(&Type::Generic(rec_ref, args), expected, pattern_span);
                         (rec_ref, fields)
                     });
                 if let Some((rec_ref, _)) = &declared
@@ -716,7 +716,7 @@ impl TypeChecker {
                     return Pat::Wild;
                 }
                 let mut subs: Vec<(Symbol, Pat)> = Vec::with_capacity(fields.len());
-                for (field_name, _, sub_pat) in fields.iter_mut() {
+                for (field_name, field_span, sub_pat) in fields.iter_mut() {
                     let field_ty = match &declared {
                         Some((rec_ref, declared_fields)) => {
                             match declared_fields.iter().find(|(n, _)| n == field_name) {
@@ -731,7 +731,7 @@ impl TypeChecker {
                                             *field_name,
                                             declared_fields,
                                         ),
-                                        span,
+                                        *field_span,
                                     );
                                     self.fresh_var()
                                 }
@@ -847,7 +847,7 @@ impl TypeChecker {
                     }
                 }
                 let map_ty = Type::Map(Box::new(Type::String), Box::new(val_ty.clone()));
-                self.unify(&map_ty, expected, pattern_span);
+                self.unify_pattern(&map_ty, expected, pattern_span);
                 let val_ty = self.apply(&val_ty);
                 for (_key, pat) in entries.iter_mut() {
                     self.type_pattern(pat, &val_ty, env, cx);
@@ -860,7 +860,7 @@ impl TypeChecker {
                 // has outside the pattern. A name the pattern binds
                 // itself (`(x, ^x)`) is not that name.
                 if let Some(pinned_ty) = cx.pins.get(name).cloned().flatten() {
-                    self.unify(&pinned_ty, expected, pattern_span);
+                    self.unify_pattern(&pinned_ty, expected, pattern_span);
                     // A pin compares as `==` does: the type has `Equal`.
                     self.want(
                         Pred::Trait {
@@ -910,7 +910,7 @@ impl TypeChecker {
                     fields: field_tys.clone(),
                     tail: RowTail::Var(row_var),
                 };
-                self.unify(&anon_ty, expected, pattern_span);
+                self.unify_pattern(&anon_ty, expected, pattern_span);
                 let mut subs: BTreeMap<Symbol, Pat> = BTreeMap::new();
                 for (fname, _, sub) in fields.iter_mut() {
                     let ft = self.apply(&field_tys[fname]);
@@ -1032,7 +1032,11 @@ impl TypeChecker {
             }
             _ => {
                 let fresh: Vec<Type> = enum_info.params.iter().map(|_| self.fresh_var()).collect();
-                self.unify(&Type::Generic(enum_ref, fresh.clone()), expected, pattern_span);
+                self.unify_pattern(
+                    &Type::Generic(enum_ref, fresh.clone()),
+                    expected,
+                    pattern_span,
+                );
                 fresh
             }
         };

@@ -1,7 +1,7 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: expected Result(_, _), got Int
--- stderr-contains: expected String, got Int
+-- stderr-contains: expected Int, got Result(_, _)
+-- stderr-contains: expected Int, got String
 -- Distinct per-arm errors each still report.
 fn main() {
   let r = match 42 {

@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: expected Int, got String
+-- stderr-contains: expected String, got Int
 -- `let 5 = "hello"` is a type error naming Int and String.
 fn main() {
   let 5 = "hello"

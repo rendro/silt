@@ -100,6 +100,10 @@ pub struct TypeChecker {
     /// Tracks the types of bindings in the enclosing `loop` (if any),
     /// so that `recur` arity and types can be validated.
     pub(super) loop_binding_types: Option<Vec<Type>>,
+    /// While the pattern of an arm of a `match` is checked: the texts of
+    /// the mismatches the patterns of its earlier arms reported, which
+    /// `unify_pattern` does not report again.
+    pub(super) arm_mismatches: Option<std::collections::HashSet<String>>,
     /// The bounds in scope: for each annotation variable of a declaration
     /// whose body was or is being checked (by the variable it is in the
     /// declaration's scheme), the traits its `where` clauses declare and
@@ -540,6 +544,7 @@ impl TypeChecker {
     pub fn new() -> Self {
         TypeChecker {
             errors: Vec::new(),
+            arm_mismatches: None,
             loop_binding_types: None,
             bounds: HashMap::new(),
             written_bounds: HashMap::new(),
