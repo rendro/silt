@@ -24,7 +24,7 @@ type R(a) {}
 pub type F = Fn() -> Fn(Int) -> { x: Int, ...r }
 
 fn g(
-  { x, y: P { z, .. }, ...rest }: R,
+  { x, y: P { z, .. }, ...rest }: R(a),
   [],
   [a, ..b],
   (),

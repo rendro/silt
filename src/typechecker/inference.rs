@@ -196,13 +196,8 @@ impl TypeChecker {
         for (i, super_name) in info.supertraits.iter().enumerate() {
             let super_args: Vec<Type> = match info.supertrait_args.get(i) {
                 Some(exprs) if !exprs.is_empty() => {
-                    // A bare parametric type name
-                    // (`Box` where `type Box(a) { ... }`) among the
-                    // supertrait's arguments would silently produce a
-                    // 0-arity type that matches no impl: it is an error.
-                    for te in exprs.iter() {
-                        self.check_supertrait_arg_parametric_arity(te, &info);
-                    }
+                    // (A generic type written bare among them is reported
+                    // where the trait is declared.)
                     exprs
                         .iter()
                         .map(|te| resolve_supertrait_arg(te, &info, &args))
@@ -4597,31 +4592,27 @@ impl TypeChecker {
         }
     }
 
-    /// Walk a supertrait-arg `TypeExpr` and emit a
-    /// diagnostic at every `Named(sym)` that refers to a *parametric*
-    /// user-defined type (enum, record, or alias with arity > 0) used
-    /// without its arguments — e.g. `trait Sub: Super(Box)` where
-    /// `type Box(a) { ... }`. `resolve_supertrait_arg` falls through
-    /// such names to `Type::Generic(sym, [])`, which then never matches
-    /// any downstream impl's actual args, so the obligation would
-    /// silently go unsatisfied. With this check the user sees a clean arity
-    /// diagnostic at the supertrait declaration's span instead.
+    /// Walk a supertrait-arg `TypeExpr` and report every generic type
+    /// written there without its arguments (`trait Sub: Super(Box)`),
+    /// as a type anywhere else is (`bare_generic`): these arguments are
+    /// read by `resolve_supertrait_arg`, not `resolve_type_expr`.
     ///
-    /// Names that map to a trait param (`info.params`), builtin
-    /// primitives, or any name we don't recognise are left to the
-    /// existing handling — the latter are diagnosed elsewhere as
-    /// "unknown type" at the type-expr resolve site.
+    /// Names that map to a trait param (`info.params`), or that name no
+    /// type, are left to the existing handling — the latter are
+    /// diagnosed elsewhere as "unknown type" at the type-expr resolve
+    /// site.
     ///
     /// Skips emission when the same message+span is already in
-    /// `self.errors` so multiple constrained fn-body passes (one per
-    /// fn whose param is bound on the trait) don't pile on duplicates.
+    /// `self.errors`.
     pub(super) fn check_supertrait_arg_parametric_arity(
         &mut self,
         te: &TypeExpr,
         trait_info: &TraitInfo,
     ) {
         match &te.kind {
-            TypeExprKind::Named { name: sym, .. } => {
+            TypeExprKind::Named {
+                module, name: sym, ..
+            } => {
                 // Trait params are substituted, not type references.
                 if trait_info.params.iter().any(|p| p == sym) {
                     return;
@@ -4630,25 +4621,10 @@ impl TypeChecker {
                 let Some(ty) = self.named_type(te.res, *sym) else {
                     return;
                 };
-                let arity = if let Some(info) = self.tables.enums.get(&ty) {
-                    info.params.len()
-                } else if let Some(ids) = self.tables.record_param_var_ids.get(&ty) {
-                    ids.len()
-                } else if let Some(info) = self.tables.resolver.lookup_alias(ty) {
-                    info.params.len()
-                } else {
-                    // Builtins like Int/Float/String are 0-arity by design.
+                let shown = Qualifier::written(*module, *sym);
+                let Some(msg) = self.bare_generic_message(&shown, ty) else {
                     return;
                 };
-                if arity == 0 {
-                    return;
-                }
-                let msg = format!(
-                    "type '{}' expects {} {}, got 0 in supertrait bound",
-                    resolve(*sym),
-                    arity,
-                    plural(arity, "type argument", "type arguments"),
-                );
                 let already = self
                     .errors
                     .iter()

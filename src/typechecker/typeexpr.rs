@@ -108,12 +108,11 @@ impl TypeChecker {
             .is_some_and(|ty| self.rejected_types.contains(&ty))
     }
 
-    /// The type `ty` written bare, with a fresh type variable for each
-    /// of its parameters, so that distinct uses do not share the
-    /// template variables: `List` is `List(a)`, `Box`
-    /// `Box(a)`. An alias is a `Type::Generic(alias, args)` head the
-    /// canonicaliser expands. `None` for a type with no such instance
-    /// (`Tuple`, `Fn`).
+    /// The type `ty` with a fresh type variable for each of its
+    /// parameters, so that distinct uses do not share the template
+    /// variables: `List(a)`, `Box(a)`. An alias is a
+    /// `Type::Generic(alias, args)` head the canonicaliser expands. `None` for a
+    /// type with no such instance (`Tuple`, `Fn`).
     pub(super) fn type_instance(&mut self, ty: TypeRef) -> Option<Type> {
         if let Some(builtin) = builtin_type_name(ty) {
             match builtin {
@@ -151,6 +150,52 @@ impl TypeChecker {
             ty,
             (0..arity).map(|_| self.fresh_var()).collect(),
         ))
+    }
+
+    /// The names of the type parameters of `ty` (`Map` has `k, v`):
+    /// empty for a type that takes none, and for `Fn` and `Tuple`,
+    /// which take any number.
+    pub(super) fn type_param_names(&self, ty: TypeRef) -> Vec<String> {
+        let declared = (self.tables.records.get(&ty).map(|r| r.params.clone()))
+            .or_else(|| self.tables.enums.get(&ty).map(|e| e.params.clone()))
+            .or_else(|| {
+                (self.tables.resolver.lookup_alias(ty)).map(|info| info.params.clone())
+            });
+        if let Some(params) = declared {
+            return params.iter().map(|p| resolve(*p)).collect();
+        }
+        let arity = match builtin_type_name(ty) {
+            Some("Map") => return vec!["k".to_string(), "v".to_string()],
+            Some("List" | "Set" | "Channel") => 1,
+            Some(b) => opaque_arity(b).unwrap_or(0),
+            None => 0,
+        };
+        ('a'..='z').take(arity).map(String::from).collect()
+    }
+
+    /// What is wrong with `shown`, a use of the type `ty` with no type
+    /// arguments in a type, when `ty` takes some: a generic type is
+    /// written with its arguments (`Box(a)`, not `Box`).
+    pub(super) fn bare_generic_message(&self, shown: &str, ty: TypeRef) -> Option<String> {
+        let params = self.type_param_names(ty);
+        if params.is_empty() {
+            return None;
+        }
+        Some(format!(
+            "`{shown}` takes {} {} here: write `{shown}({})`",
+            params.len(),
+            super::inference::plural(params.len(), "type argument", "type arguments"),
+            params.join(", ")
+        ))
+    }
+
+    /// Report `shown` as `bare_generic_message` says; whether it was.
+    pub(super) fn bare_generic(&mut self, shown: &str, ty: TypeRef, span: Span) -> bool {
+        let Some(message) = self.bare_generic_message(shown, ty) else {
+            return false;
+        };
+        self.error(Code::ArityMismatch, message, span);
+        true
     }
 
     /// The number of type parameters of a record, enum or alias type;
@@ -641,6 +686,9 @@ impl TypeChecker {
                     );
                     return Type::Error;
                 };
+                if self.bare_generic(&type_expr_text(te), ty, te.span) {
+                    return Type::Error;
+                }
                 match self.type_instance(ty) {
                     Some(t) => t,
                     None => {
@@ -704,15 +752,20 @@ impl TypeChecker {
                     let n = resolved_args.len();
                     let mut it = resolved_args.clone().into_iter();
                     let mut arg = |this: &mut Self| it.next().unwrap_or_else(|| this.fresh_var());
+                    if n == 0 && matches!(builtin, "List" | "Map" | "Set" | "Channel") {
+                        let shown = Qualifier::written(*module, *name);
+                        self.bare_generic(&shown, ty.expect("a builtin type"), te.span);
+                        return Type::Error;
+                    }
                     match (builtin, n) {
-                        ("List", 0 | 1) => return Type::List(Box::new(arg(self))),
-                        ("Map", 0 | 2) => {
+                        ("List", 1) => return Type::List(Box::new(arg(self))),
+                        ("Map", 2) => {
                             let k = arg(self);
                             let v = arg(self);
                             return Type::Map(Box::new(k), Box::new(v));
                         }
-                        ("Set", 0 | 1) => return Type::Set(Box::new(arg(self))),
-                        ("Channel", 0 | 1) => return Type::Channel(Box::new(arg(self))),
+                        ("Set", 1) => return Type::Set(Box::new(arg(self))),
+                        ("Channel", 1) => return Type::Channel(Box::new(arg(self))),
                         // Opaque arity-0 builtin types accept the
                         // empty-paren surface form `Bytes()` (mirrors
                         // `List()`/`Map()` etc.) and report `Bytes(Int)`.

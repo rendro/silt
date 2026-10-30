@@ -1,7 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: 'Box'
--- stderr-contains: supertrait bound
+-- stderr-contains: `Box` takes 1 type argument here
 type Box(a) { Boxed(a) }
 trait Carry(t) { fn carry(self, x: t) -> t }
 trait Holds: Carry(List(Box)) { fn hold(self) -> Int }

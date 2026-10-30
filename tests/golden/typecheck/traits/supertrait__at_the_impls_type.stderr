@@ -36,6 +36,6 @@ error[type]: type 'Box(a)' implements 'Sub' but does not implement supertrait 'S
 error[type]: type 'Pair(a, b)' implements 'Same' but does not implement supertrait 'Equal': 'a' needs 'Equal'
  --> supertrait__at_the_impls_type.silt:39:1
     |
- 39 | trait Same for Pair {}
-    | ^^^^^^^^^^^^^^^^^^^^^^ type 'Pair(a, b)' implements 'Same' but does not implement supertrait 'Equal': 'a' needs 'Equal'
-  = help: write the impl for `Pair(a, b)`, with `where a: Equal, b: Equal`
+ 39 | trait Same for Pair(a, b) {}
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type 'Pair(a, b)' implements 'Same' but does not implement supertrait 'Equal': 'a' needs 'Equal'
+  = help: add `where a: Equal, b: Equal` to the impl

@@ -4,7 +4,7 @@
 -- its type variables having what the header gives them: a structural
 -- supertrait (Equal, Display, Compare, Hash) needs it of the variables
 -- the type's parts are of, a supertrait with a written impl what that
--- impl's header asks. A bare target names its variables by letters.
+-- impl's header asks.
 -- (Each used to check and fail, or show and order wrongly, when run.)
 trait Same: Equal {
   fn same(self, o: Self) -> Bool { self == o }
@@ -36,7 +36,7 @@ trait Super for Box(a) where a: Super {
   fn sup(self) -> String { match self { Bx(x) -> "box({Super.sup(x)})" } }
 }
 trait Sub for Box(a) {}
-trait Same for Pair {}
+trait Same for Pair(a, b) {}
 fn main() {
   println("x")
 }

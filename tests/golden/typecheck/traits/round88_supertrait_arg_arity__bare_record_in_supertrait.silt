@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: type 'Wrapper' expects 1 type argument, got 0 in supertrait bound
+-- stderr-contains: `Wrapper` takes 1 type argument here: write `Wrapper(a)`
 type Wrapper(a) { v: a }
 trait Carry(t) { fn carry(self, x: t) -> t }
 trait Holds: Carry(Wrapper) { fn hold(self) -> Int }
