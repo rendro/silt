@@ -1,5 +1,0 @@
-error[runtime]: panic: map_ok failed on 3
- --> stage_callback__panic_in_map_ok_through_receive.silt:16:67
-    |
- 16 |   read(stream.map_ok(stream.from_list([Ok(3), Err("no")])) { x -> panic("map_ok failed on {x}") })
-    |                                                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ panic: map_ok failed on 3

@@ -13,8 +13,4 @@ fn main() {
   println(f)
   let bu = stream.from_list([1, 2, 3]) |> stream.buffered(2) |> stream.collect
   println(bu)
-  let ok = stream.from_list([Ok(1), Err("e"), Ok(3)]) |> stream.map_ok({x -> x + 1}) |> stream.collect
-  println(ok)
-  let fo = stream.from_list([Ok(1), Err("e"), Ok(3)]) |> stream.filter_ok({x -> x > 1}) |> stream.collect
-  println(fo)
 }

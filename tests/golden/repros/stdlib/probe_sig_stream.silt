@@ -12,7 +12,6 @@ fn main() {
   let v_stream_file_chunks: Int = stream.file_chunks
   let v_stream_file_lines: Int = stream.file_lines
   let v_stream_filter: Int = stream.filter
-  let v_stream_filter_ok: Int = stream.filter_ok
   let v_stream_first: Int = stream.first
   let v_stream_flat_map: Int = stream.flat_map
   let v_stream_fold: Int = stream.fold
@@ -20,7 +19,6 @@ fn main() {
   let v_stream_from_range: Int = stream.from_range
   let v_stream_last: Int = stream.last
   let v_stream_map: Int = stream.map
-  let v_stream_map_ok: Int = stream.map_ok
   let v_stream_merge: Int = stream.merge
   let v_stream_repeat: Int = stream.repeat
   let v_stream_scan: Int = stream.scan

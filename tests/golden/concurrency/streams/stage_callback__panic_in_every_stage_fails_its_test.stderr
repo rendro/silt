@@ -28,47 +28,35 @@
         |
      60 |   select_of(stream.map(stream.from_list([2])) { x -> panic("map failed on {x}") })
         |                                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^ panic: map failed on 2
-  FAIL stage_callback__panic_in_every_stage_fails_its_test.silt::test_map_ok_through_receive
-    error[runtime]: panic: map_ok failed on 3
-     --> stage_callback__panic_in_every_stage_fails_its_test.silt:64:73
-        |
-     64 |   receive_of(stream.map_ok(stream.from_list([Ok(3), Err("no")])) { x -> panic("map_ok failed on {x}") })
-        |                                                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ panic: map_ok failed on 3
   FAIL stage_callback__panic_in_every_stage_fails_its_test.silt::test_filter_through_receive
     error[runtime]: panic: filter failed on 4
-     --> stage_callback__panic_in_every_stage_fails_its_test.silt:68:58
+     --> stage_callback__panic_in_every_stage_fails_its_test.silt:64:58
         |
-     68 |   receive_of(stream.filter(stream.from_list([4])) { x -> panic("filter failed on {x}") })
+     64 |   receive_of(stream.filter(stream.from_list([4])) { x -> panic("filter failed on {x}") })
         |                                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ panic: filter failed on 4
-  FAIL stage_callback__panic_in_every_stage_fails_its_test.silt::test_filter_ok_through_receive
-    error[runtime]: panic: filter_ok failed on 5
-     --> stage_callback__panic_in_every_stage_fails_its_test.silt:72:76
-        |
-     72 |   receive_of(stream.filter_ok(stream.from_list([Ok(5), Err("no")])) { x -> panic("filter_ok failed on {x}") })
-        |                                                                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ panic: filter_ok failed on 5
   FAIL stage_callback__panic_in_every_stage_fails_its_test.silt::test_flat_map_through_receive
     error[runtime]: panic: flat_map failed on 6
-     --> stage_callback__panic_in_every_stage_fails_its_test.silt:76:60
+     --> stage_callback__panic_in_every_stage_fails_its_test.silt:68:60
         |
-     76 |   receive_of(stream.flat_map(stream.from_list([6])) { x -> panic("flat_map failed on {x}") })
+     68 |   receive_of(stream.flat_map(stream.from_list([6])) { x -> panic("flat_map failed on {x}") })
         |                                                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ panic: flat_map failed on 6
   FAIL stage_callback__panic_in_every_stage_fails_its_test.silt::test_take_while_through_receive
     error[runtime]: panic: take_while failed on 7
-     --> stage_callback__panic_in_every_stage_fails_its_test.silt:80:62
+     --> stage_callback__panic_in_every_stage_fails_its_test.silt:72:62
         |
-     80 |   receive_of(stream.take_while(stream.from_list([7])) { x -> panic("take_while failed on {x}") })
+     72 |   receive_of(stream.take_while(stream.from_list([7])) { x -> panic("take_while failed on {x}") })
         |                                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ panic: take_while failed on 7
   FAIL stage_callback__panic_in_every_stage_fails_its_test.silt::test_drop_while_through_receive
     error[runtime]: panic: drop_while failed on 8
-     --> stage_callback__panic_in_every_stage_fails_its_test.silt:84:62
+     --> stage_callback__panic_in_every_stage_fails_its_test.silt:76:62
         |
-     84 |   receive_of(stream.drop_while(stream.from_list([8])) { x -> panic("drop_while failed on {x}") })
+     76 |   receive_of(stream.drop_while(stream.from_list([8])) { x -> panic("drop_while failed on {x}") })
         |                                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ panic: drop_while failed on 8
   FAIL stage_callback__panic_in_every_stage_fails_its_test.silt::test_scan_through_receive
     error[runtime]: panic: scan failed on 9
-     --> stage_callback__panic_in_every_stage_fails_its_test.silt:88:64
+     --> stage_callback__panic_in_every_stage_fails_its_test.silt:80:64
         |
-     88 |   receive_of(stream.scan(stream.from_list([9]), 0) { acc, x -> panic("scan failed on {x}") })
+     80 |   receive_of(stream.scan(stream.from_list([9]), 0) { acc, x -> panic("scan failed on {x}") })
         |                                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^ panic: scan failed on 9
 
-12 tests: 0 passed, 12 failed, 0 skipped
+10 tests: 0 passed, 10 failed, 0 skipped

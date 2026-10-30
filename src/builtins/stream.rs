@@ -845,28 +845,6 @@ builtins! {
         )
     }
 
-    fn map_ok(vm, ch: Chan, f: &Value) -> Result<Step, VmError> {
-        let (in_ch, fn_val) = (ch.clone(), f.clone());
-        stage(
-            vm,
-            "stream.map_ok",
-            vec![in_ch],
-            DEFAULT_CAPACITY,
-            move |got| {
-                Ok(match got {
-                    Got::Start | Got::Emitted => Next::Take(0),
-                    Got::Value(_, v) => match ok_inner(&v) {
-                        Some(inner) => Next::Call(fn_val.clone(), vec![inner]),
-                        None => Next::Emit(v),
-                    },
-                    Got::Returned(result) => Next::Emit(ok(result)),
-                    Got::End => Next::Done(Value::Unit),
-                    Got::Io(_) => return unexpected(),
-                })
-            },
-        )
-    }
-
     fn filter(vm, ch: Chan, pred: &Value) -> Result<Step, VmError> {
         let (in_ch, fn_val) = (ch.clone(), pred.clone());
         let mut held = None;
@@ -882,36 +860,6 @@ builtins! {
                         held = Some(v.clone());
                         Next::Call(fn_val.clone(), vec![v])
                     }
-                    Got::Returned(Value::Bool(true)) => match held.take() {
-                        Some(v) => Next::Emit(v),
-                        None => return unexpected(),
-                    },
-                    Got::Returned(_) => Next::Take(0),
-                    Got::End => Next::Done(Value::Unit),
-                    Got::Io(_) => return unexpected(),
-                })
-            },
-        )
-    }
-
-    fn filter_ok(vm, ch: Chan, pred: &Value) -> Result<Step, VmError> {
-        let (in_ch, fn_val) = (ch.clone(), pred.clone());
-        let mut held = None;
-        stage(
-            vm,
-            "stream.filter_ok",
-            vec![in_ch],
-            DEFAULT_CAPACITY,
-            move |got| {
-                Ok(match got {
-                    Got::Start | Got::Emitted => Next::Take(0),
-                    Got::Value(_, v) => match ok_inner(&v) {
-                        Some(inner) => {
-                            held = Some(v);
-                            Next::Call(fn_val.clone(), vec![inner])
-                        }
-                        None => Next::Emit(v),
-                    },
                     Got::Returned(Value::Bool(true)) => match held.take() {
                         Some(v) => Next::Emit(v),
                         None => return unexpected(),

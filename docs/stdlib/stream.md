@@ -48,9 +48,7 @@ once per line.
 | Function | Signature |
 |----------|-----------|
 | `map` | `(Channel(a), Fn(a) -> b) -> Channel(b)` |
-| `map_ok` | `(Channel(Result(a, b)), Fn(a) -> c) -> Channel(Result(c, b))` |
 | `filter` | `(Channel(a), Fn(a) -> Bool) -> Channel(a)` |
-| `filter_ok` | `(Channel(Result(a, b)), Fn(a) -> Bool) -> Channel(Result(a, b))` |
 | `flat_map` | `(Channel(a), Fn(a) -> List(b)) -> Channel(b)` |
 | `take` | `(Channel(a), Int) -> Channel(a)` |
 | `drop` | `(Channel(a), Int) -> Channel(a)` |
@@ -167,8 +165,9 @@ fn main() {
 - **Errors flow through the stream.** File sources emit
   `Channel(Result(_, IoError))`; TCP sources emit
   `Channel(Result(_, TcpError))`. Each chunk can fail independently;
-  consumers pattern-match. Use `map_ok` / `filter_ok` to apply
-  transformations only to `Ok` values, passing `Err(_)` through unchanged.
+  consumers pattern-match. To change only the `Ok` values and pass each
+  `Err(_)` through, map with `result.map`:
+  `ch |> stream.map { r -> result.map(r, f) }`.
 - **No async/await.** Stages are tasks of the silt scheduler; file and
   socket reads run on the I/O pool while the stage waits.
 - **`stream.repeat` is infinite.** Always pair it with `take`,
