@@ -1,7 +1,7 @@
 -- cmd: check
 -- exit: 1
 -- stderr-contains: error[type]
--- stderr-contains: got Int
+-- stderr-contains: expected Int, got
 fn main() {
   let (a, b) = 42
   let y: Int = a

@@ -2,7 +2,7 @@
 -- exit: 1
 -- stderr-contains: `Fn` is not callable
 -- stderr-contains: in an impl for `Fn`, `self` is some function: it is not known to implement trait 'Display'
--- stderr-contains: type mismatch: expected (_, _), got Tuple
+-- stderr-contains: type mismatch: expected Tuple, got (_, _)
 -- stderr-contains: in an impl for `Tuple`, `self` is some tuple: it is not known to implement trait 'Display'
 -- What an impl for every function or tuple cannot do with `self`: call
 -- it, take it apart, show it.

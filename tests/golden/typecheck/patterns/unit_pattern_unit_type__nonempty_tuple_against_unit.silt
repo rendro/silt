@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: expected (_, _), got ()
+-- stderr-contains: expected (), got (_, _)
 -- `let (a, b) = ()` is still a type error.
 fn main() {
   let (a, b) = ()

@@ -1,0 +1,126 @@
+error[type]: type mismatch: expected Int, got String
+ --> pattern_mismatch__reported_at_the_pattern.silt:15:5
+    |
+ 15 |     "a" -> 1
+    |     ^^^ type mismatch: expected Int, got String
+
+error[type]: type mismatch: expected String, got Int
+ --> pattern_mismatch__reported_at_the_pattern.silt:19:5
+    |
+ 19 |     1 -> 1
+    |     ^ type mismatch: expected String, got Int
+
+error[type]: type mismatch: expected String, got Float
+ --> pattern_mismatch__reported_at_the_pattern.silt:20:5
+    |
+ 20 |     1.5 -> 2
+    |     ^^^ type mismatch: expected String, got Float
+
+error[type]: type mismatch: expected String, got Bool
+ --> pattern_mismatch__reported_at_the_pattern.silt:21:5
+    |
+ 21 |     true -> 3
+    |     ^^^^ type mismatch: expected String, got Bool
+
+error[type]: type mismatch: expected Int, got (_, _)
+ --> pattern_mismatch__reported_at_the_pattern.silt:30:5
+    |
+ 30 |     (_, _) -> 1
+    |     ^^^^^^ type mismatch: expected Int, got (_, _)
+
+error[type]: type mismatch: expected Int, got List(_)
+ --> pattern_mismatch__reported_at_the_pattern.silt:31:5
+    |
+ 31 |     [_] -> 2
+    |     ^^^ type mismatch: expected Int, got List(_)
+
+error[type]: type mismatch: expected Int, got Shape
+ --> pattern_mismatch__reported_at_the_pattern.silt:32:5
+    |
+ 32 |     Circle(_) -> 3
+    |     ^^^^^^^^^ type mismatch: expected Int, got Shape
+
+error[type]: type mismatch: expected Int, got P
+ --> pattern_mismatch__reported_at_the_pattern.silt:33:5
+    |
+ 33 |     P { x: _ } -> 4
+    |     ^^^^^^^^^^ type mismatch: expected Int, got P
+
+error[type]: tuple length mismatch: expected 2, got 3
+ --> pattern_mismatch__reported_at_the_pattern.silt:37:5
+    |
+ 37 |     (_, _, _) -> 1
+    |     ^^^^^^^^^ tuple length mismatch: expected 2, got 3
+
+error[type]: type mismatch: expected Int, got String
+ --> pattern_mismatch__reported_at_the_pattern.silt:38:9
+    |
+ 38 |     (1, "a") -> 2
+    |         ^^^ type mismatch: expected Int, got String
+
+error[type]: type mismatch: expected Result(Int, String), got Int
+ --> pattern_mismatch__reported_at_the_pattern.silt:42:5
+    |
+ 42 |     5 -> 1
+    |     ^ type mismatch: expected Result(Int, String), got Int
+
+error[type]: type mismatch: expected Int, got String
+ --> pattern_mismatch__reported_at_the_pattern.silt:50:6
+    |
+ 50 |     ["a", ..] -> 1
+    |      ^^^ type mismatch: expected Int, got String
+
+error[type]: type mismatch: expected Int, got String
+ --> pattern_mismatch__reported_at_the_pattern.silt:54:10
+    |
+ 54 |     Some("a") | None -> 1
+    |          ^^^ type mismatch: expected Int, got String
+
+error[type]: type mismatch: expected Int, got String
+ --> pattern_mismatch__reported_at_the_pattern.silt:58:12
+    |
+ 58 |     Circle("r") -> 1
+    |            ^^^ type mismatch: expected Int, got String
+
+error[type]: type mismatch: expected Int, got String
+ --> pattern_mismatch__reported_at_the_pattern.silt:62:12
+    |
+ 62 |     P { x: "a" } -> 1
+    |            ^^^ type mismatch: expected Int, got String
+
+error[type]: record 'P' has no field 'y'
+ --> pattern_mismatch__reported_at_the_pattern.silt:63:9
+    |
+ 63 |     P { y: _ } -> 2
+    |         ^ record 'P' has no field 'y'
+  = help: did you mean `x`?
+
+error[type]: type mismatch: expected Int, got Result(_, _)
+ --> pattern_mismatch__reported_at_the_pattern.silt:71:5
+    |
+ 71 |     Ok(_) -> 1
+    |     ^^^^^ type mismatch: expected Int, got Result(_, _)
+
+error[type]: type mismatch: expected Int, got String
+ --> pattern_mismatch__reported_at_the_pattern.silt:73:5
+    |
+ 73 |     "a" -> 3
+    |     ^^^ type mismatch: expected Int, got String
+
+error[type]: type mismatch: expected Int, got String
+ --> pattern_mismatch__reported_at_the_pattern.silt:80:5
+    |
+ 80 |     ^s -> 1
+    |     ^^ type mismatch: expected Int, got String
+
+error[type]: type mismatch: expected Int, got String
+ --> pattern_mismatch__reported_at_the_pattern.silt:86:7
+    |
+ 86 |   let "a" = n
+    |       ^^^ type mismatch: expected Int, got String
+
+error[type]: type mismatch: expected Int, got String
+ --> pattern_mismatch__reported_at_the_pattern.silt:87:12
+    |
+ 87 |   when let "b" = n else {
+    |            ^^^ type mismatch: expected Int, got String

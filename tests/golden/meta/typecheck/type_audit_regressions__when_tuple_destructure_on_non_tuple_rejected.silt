@@ -1,7 +1,7 @@
 -- cmd: check
 -- exit: 1
 -- stderr-contains: error[type]
--- stderr-contains: got Int
+-- stderr-contains: expected Int, got
 fn main() {
   when let (a, b) = 42 else { return }
   println("{a} {b}")

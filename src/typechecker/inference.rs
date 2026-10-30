@@ -4002,6 +4002,9 @@ impl TypeChecker {
                             bool,
                         )> = std::collections::HashSet::new();
                         let mut any_pattern_mismatch = false;
+                        // The texts of the mismatches the arms' patterns
+                        // reported (see `unify_pattern`).
+                        let mut arm_mismatches = std::collections::HashSet::new();
                         // What each arm's pattern tests, for the
                         // exhaustiveness check.
                         let mut arm_pats = Vec::with_capacity(arms.len());
@@ -4024,6 +4027,7 @@ impl TypeChecker {
                                 any_pattern_mismatch = true;
                             }
                             let pat_err_count = self.errors.len();
+                            self.arm_mismatches = Some(std::mem::take(&mut arm_mismatches));
                             arm_pats.push(self.check_pattern(
                                 &mut arm.pattern,
                                 &scrutinee_ty,
@@ -4031,6 +4035,7 @@ impl TypeChecker {
                                 scrutinee_span,
                                 PatternMode::Arm,
                             ));
+                            arm_mismatches = self.arm_mismatches.take().unwrap_or_default();
                             if self.errors.len() > pat_err_count {
                                 let new_diags: Vec<Diagnostic> =
                                     self.errors.drain(pat_err_count..).collect();
