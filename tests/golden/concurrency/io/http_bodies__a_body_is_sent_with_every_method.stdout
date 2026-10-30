@@ -1,0 +1,42 @@
+GET [abc]
+  the handler: GET [abc], content-length 3
+  the client:  200 [abc]
+GET []
+  the handler: GET [], content-length none
+  the client:  200 []
+DELETE [abc]
+  the handler: DELETE [abc], content-length 3
+  the client:  200 [abc]
+DELETE []
+  the handler: DELETE [], content-length none
+  the client:  200 []
+HEAD [abc]
+  the handler: HEAD [abc], content-length 3
+  the client:  200 []
+HEAD []
+  the handler: HEAD [], content-length none
+  the client:  200 []
+OPTIONS [abc]
+  the handler: OPTIONS [abc], content-length 3
+  the client:  200 [abc]
+OPTIONS []
+  the handler: OPTIONS [], content-length none
+  the client:  200 []
+POST [abc]
+  the handler: POST [abc], content-length 3
+  the client:  200 [abc]
+POST []
+  the handler: POST [], content-length 0
+  the client:  200 []
+PUT [abc]
+  the handler: PUT [abc], content-length 3
+  the client:  200 [abc]
+PUT []
+  the handler: PUT [], content-length 0
+  the client:  200 []
+PATCH [abc]
+  the handler: PATCH [abc], content-length 3
+  the client:  200 [abc]
+PATCH []
+  the handler: PATCH [], content-length 0
+  the client:  200 []

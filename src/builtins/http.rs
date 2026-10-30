@@ -436,46 +436,44 @@ fn do_http_request(
     }
     let agent = client();
 
-    // Unified dispatch — each ureq verb-fn returns a differently-typed
-    // `RequestBuilder<WithBody>` vs `RequestBuilder<WithoutBody>` (phantom
-    // type carries whether a body is expected), so we can't bind a
-    // single variable to the builder. Two small local macros collapse
-    // the prior 7 near-identical arms into one header-apply + send line
-    // per family. Semantics preserved: same header-setting order, same
-    // send_empty()/send(body) split for body verbs, same call() for
-    // no-body verbs (GET with a body is still a no-op, matching the
-    // prior silt API surprise).
-    macro_rules! with_body {
-        ($verb:ident) => {{
-            let mut req = agent.$verb(url);
-            for (key, val) in headers {
-                req = req.header(key.as_str(), val.as_str());
-            }
-            if body.is_empty() {
-                req.send_empty()
-            } else {
-                req.send(body)
-            }
-        }};
+    // Every method sends the body, with its length; an empty body sends
+    // nothing, not even a length for the methods that take none by
+    // default (GET, DELETE, HEAD, OPTIONS: ureq makes them take one
+    // with `force_send_body`).
+    fn headed<B>(
+        mut req: ureq::RequestBuilder<B>,
+        headers: &[(String, String)],
+    ) -> ureq::RequestBuilder<B> {
+        for (key, val) in headers {
+            req = req.header(key.as_str(), val.as_str());
+        }
+        req
     }
-    macro_rules! no_body {
-        ($verb:ident) => {{
-            let mut req = agent.$verb(url);
-            for (key, val) in headers {
-                req = req.header(key.as_str(), val.as_str());
-            }
+    let with_body = |req: ureq::RequestBuilder<ureq::typestate::WithBody>| {
+        let req = headed(req, headers);
+        if body.is_empty() {
+            req.send_empty()
+        } else {
+            req.send(body)
+        }
+    };
+    let without_body = |req: ureq::RequestBuilder<ureq::typestate::WithoutBody>| {
+        let req = headed(req, headers);
+        if body.is_empty() {
             req.call()
-        }};
-    }
+        } else {
+            req.force_send_body().send(body)
+        }
+    };
 
     let result = match method_tag {
-        "POST" => with_body!(post),
-        "PUT" => with_body!(put),
-        "PATCH" => with_body!(patch),
-        "GET" => no_body!(get),
-        "DELETE" => no_body!(delete),
-        "HEAD" => no_body!(head),
-        "OPTIONS" => no_body!(options),
+        "POST" => with_body(agent.post(url)),
+        "PUT" => with_body(agent.put(url)),
+        "PATCH" => with_body(agent.patch(url)),
+        "GET" => without_body(agent.get(url)),
+        "DELETE" => without_body(agent.delete(url)),
+        "HEAD" => without_body(agent.head(url)),
+        "OPTIONS" => without_body(agent.options(url)),
         other => {
             return Value::variant(
                 bv::ERR,
