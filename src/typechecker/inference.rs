@@ -1213,10 +1213,6 @@ impl TypeChecker {
             self.unify(recv, &receiver_ty, span);
         }
         let at = receiver.as_ref().map(|(_, at)| *at);
-        // (Its impl is known once the body is: `refuse_type_without_value`.)
-        if receiver.is_some() {
-            (self.full_type_uses).push((self_ty.clone(), tr, field, span));
-        }
         let ty = self.through_trait(tr, field, self_ty, at, span);
         // The receiver is the method's `Self(a)` parameter, its element
         // the method's `a` (`String` of `m(String)`): the call does not
@@ -1303,6 +1299,10 @@ impl TypeChecker {
             },
         );
         self.method_trait = Some(tr);
+        // (Its impl is known once the body is: `refuse_type_without_value`.
+        // A use without a receiver, `Tr.m` passed as a value, is refused
+        // as a call is.)
+        (self.full_type_uses).push((self_ty.clone(), tr, field, span));
         self.trait_call_self.insert(span, self_ty);
         self.receiver_taken = receiver.is_some();
         let method_ty = self.instantiate_method(&scheme, field, span);

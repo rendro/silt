@@ -1,0 +1,41 @@
+-- cmd: check
+-- exit: 1
+-- A trait method used as a value, `Dec.again` passed to a function or
+-- returned, is refused as its call is when its dictionary needs a type
+-- variable known only by a value's type. With `type a`, or at a type
+-- known in full, it is not.
+import json
+
+trait Dec: json.Decode {
+  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+type Box(a) {
+  v: a,
+}
+
+trait Dec for Box(a) where a: json.Decode {}
+
+fn apply2(f: Fn(x, String) -> r, x: x, s: String) -> r {
+  f(x, s)
+}
+
+fn passed(b: Box(a), s: String) -> Result(Box(a), json.JsonError) where a: json.Decode {
+  apply2(Dec.again, b, s)
+}
+
+fn returned(b: Box(a)) -> Fn(Box(a), String) -> Result(Box(a), json.JsonError) where a: json.Decode {
+  Dec.again
+}
+
+fn with_type(b: Box(a), s: String, type a) -> Result(Box(a), json.JsonError) where a: json.Decode {
+  apply2(Dec.again, b, s)
+}
+
+fn main() {
+  println(passed(Box { v: 1 }, "\{\"v\": 9}"))
+  println(with_type(Box { v: 1 }, "\{\"v\": 9}", Int))
+  println(apply2(Dec.again, Box { v: 1 }, "\{\"v\": 9}"))
+  let f = returned(Box { v: 1 })
+  println(f(Box { v: 1 }, "\{\"v\": 9}"))
+}
