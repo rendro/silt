@@ -3987,14 +3987,14 @@ impl TypeChecker {
                         let scrutinee_ty = self.infer_expr(scrutinee, env);
                         let result_ty = self.fresh_var();
 
-                        // Every arm checks its pattern
-                        // against the SAME scrutinee, so a wrong-scrutinee
-                        // match (`match 42` with an `Ok(v)` and an `Err(e)` arm)
-                        // would print the identical "expected Result(_, _),
-                        // got Int" once per arm, plus a non-exhaustive
-                        // cascade. Dedup identical (message, span, severity)
-                        // diagnostics across the arm loop — genuinely
-                        // distinct per-arm errors still each report.
+                        // Every arm checks its pattern against the SAME
+                        // scrutinee. A mismatch at a pattern that repeats
+                        // an earlier arm's is left out by `unify_pattern`
+                        // (`arm_mismatches`); what an arm's pattern reports
+                        // at the scrutinee itself (the key type of a map
+                        // pattern) would repeat at the same place: identical
+                        // (message, span, severity) diagnostics are reported
+                        // once across the arm loop.
                         let mut seen_arm_diags: std::collections::HashSet<(
                             std::string::String,
                             crate::source::FileId,

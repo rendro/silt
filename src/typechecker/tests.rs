@@ -2209,6 +2209,22 @@ fn an_arm_that_is_no_result_after_a_result_arm_gets_the_ok_wrap_fix() {
     assert_eq!(titles, ["Wrap expression in `Ok(...)`"]);
 }
 
+#[test]
+fn a_pattern_of_another_type_than_a_result_gets_no_fix_and_no_help() {
+    // The `Ok(...)` fix and the chain help are about an expression: a
+    // pattern's mismatch has neither.
+    let errors = check_errors(
+        "fn f(r: Result(Int, String)) -> Int {\n  match r {\n    5 -> 1\n    _ -> 0\n  }\n}\n",
+    );
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert_eq!(
+        errors[0].message,
+        "type mismatch: expected Result(Int, String), got Int"
+    );
+    assert!(errors[0].fixes.is_empty(), "{:?}", errors[0].fixes);
+    assert!(errors[0].help.is_empty(), "{:?}", errors[0].help);
+}
+
 // ── A decoder's type argument ──────────────────────────────────
 
 /// The checker refuses a type a decoder has no decoder for, naming the
