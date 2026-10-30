@@ -128,6 +128,11 @@ fn main() {
   values that came before the failure. Every read of a stream raises it
   too: `channel.each`, `channel.receive`, `channel.try_receive`,
   `channel.receive_timeout` and a `Recv` arm of `channel.select`.
+  A stage that fails where nobody reads its output is an error when the
+  program ends, as a task that failed and was never joined is: "a
+  `stream.map` stage failed and its output was never read". A failure
+  that a read has raised is not reported again, and a pipeline that is
+  cut short stays quiet.
 - **A pipeline that is cut short stops.** When a stage or a sink reads no
   further (`take`, `take_while`, `first`, a failure downstream), the stage
   that feeds it is stopped, and so on up to the source. So

@@ -332,10 +332,7 @@ impl Each {
 /// A receive found the channel closed and empty. If a stream stage
 /// fed it and failed, every read of it raises that failure.
 fn raise_failure(close: Close) -> Result<(), VmError> {
-    match close.failure {
-        Some(failure) => Err((*failure).clone()),
-        None => Ok(()),
-    }
+    close.raise()
 }
 
 /// The end of a `channel.each`: the channel is closed and empty.

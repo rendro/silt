@@ -1165,6 +1165,9 @@ pub struct TaskHandle {
     /// inside it that has the same time (they share the count: of them
     /// only one runs at a time, the innermost).
     late: Arc<std::sync::atomic::AtomicUsize>,
+    /// The name of the stream stage the task runs (`stream.map`), for
+    /// the report of a failure that nobody read.
+    stage: Option<&'static str>,
 }
 
 impl TaskHandle {
@@ -1184,7 +1187,21 @@ impl TaskHandle {
             expired: AtomicBool::new(false),
             over: Arc::default(),
             late: Arc::default(),
+            stage: None,
         }
+    }
+
+    /// The handle, for the task of the stream stage `name`.
+    pub fn of_stage(self, name: &'static str) -> Self {
+        Self {
+            stage: Some(name),
+            ..self
+        }
+    }
+
+    /// The name of the stream stage the task runs, if it runs one.
+    pub fn stage(&self) -> Option<&'static str> {
+        self.stage
     }
 
     /// The handle, for a task that is over at `deadline`. `late` is the

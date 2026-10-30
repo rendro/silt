@@ -1,0 +1,11 @@
+-- exit: 1
+-- repeat: 3
+-- stderr-contains: a `stream.filter` stage failed and its output was never read: division by zero
+-- The report names the stage that failed.
+import stream
+
+fn main() {
+  let src = stream.from_list([1, 2, 3])
+  let _out = stream.filter(src) { x -> 10 / (x - 2) > 0 }
+  println("done")
+}

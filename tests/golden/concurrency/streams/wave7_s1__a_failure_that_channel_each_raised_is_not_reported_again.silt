@@ -1,0 +1,13 @@
+-- exit: 1
+-- repeat: 3
+-- stderr-not-contains: never read
+-- A read of the channel raises the failure of the stage that feeds it:
+-- it is read, and reported once, as the error of the program.
+import channel
+import stream
+
+fn main() {
+  let src = stream.from_list([1, 2, 3])
+  let out = stream.map(src) { x -> 10 / (x - 2) }
+  channel.each(out) { x -> println(x) }
+}

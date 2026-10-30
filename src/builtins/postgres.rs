@@ -2239,7 +2239,13 @@ fn do_stream_worker(
                         // program ended meanwhile.)
                         Some(Err(failure)) => {
                             let failure = failure.map(Arc::new);
-                            ch.close(Close { failure }, scheduler.wake());
+                            ch.close(
+                                Close {
+                                    failure,
+                                    stage: None,
+                                },
+                                scheduler.wake(),
+                            );
                             false
                         }
                     }
@@ -2276,7 +2282,13 @@ fn do_stream_worker(
                         }
                         Err(failure) => {
                             let failure = Some(Arc::new(failure));
-                            ch.close(Close { failure }, scheduler.wake());
+                            ch.close(
+                                Close {
+                                    failure,
+                                    stage: None,
+                                },
+                                scheduler.wake(),
+                            );
                             false
                         }
                     }
