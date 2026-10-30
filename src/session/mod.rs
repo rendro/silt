@@ -100,8 +100,8 @@ pub struct ModuleAnalysis {
     pub scope: ModuleScope,
     /// The inferred type of each top-level value the module binds.
     pub top_level: HashMap<crate::intern::Symbol, Type>,
-    /// The signature an editor writes for each function over type
-    /// constructors (`fn twice(xs: m(Int)) -> m(Int) where m: Functor`).
+    /// The signature an editor writes for each generic function (`fn
+    /// twice(xs: m(Int)) -> m(Int) where m: Functor`).
     pub signatures: HashMap<crate::intern::Symbol, crate::typechecker::Signature>,
     /// The module's top-level `let`s, by the span of each, in the order
     /// they are initialised in.

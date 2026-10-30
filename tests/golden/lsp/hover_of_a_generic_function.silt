@@ -1,0 +1,23 @@
+-- cmd: lsp
+-- lsp: hover 14:5
+-- lsp: hover 15:5
+-- lsp: hover 16:5
+-- lsp: hover 17:5
+-- lsp: hover 19:12
+-- lsp: completion 21:6
+-- lsp: signature 22:17
+-- Hover writes a generic function as its signature, on its declaration's
+-- name too: its type variables by letters, the parameters by name, and
+-- the bounds, inferred for a function without annotations. Completion
+-- and signature help write the variables by letter too.
+
+fn ident(x) { x }
+fn id2(x: a) -> a { x }
+fn shown(x) { "{x}" }
+fn pair(x, y) { (x, y) }
+fn main() {
+  let _f = ident
+  println(shown(pair(1, "s")))
+  ide
+  println(ident(1))
+}

@@ -14,8 +14,8 @@ use super::state::DefInfo;
 
 // ── Build definitions map from declarations ────────────────────────
 
-/// `defs` with the signature the checker writes for each function over
-/// type constructors (`signatures`, by name), for hover.
+/// `defs` with the signature the checker writes for each generic
+/// function (`signatures`, by name), for hover.
 pub(super) fn with_signatures(
     mut defs: HashMap<Symbol, DefInfo>,
     signatures: &HashMap<Symbol, crate::typechecker::Signature>,
