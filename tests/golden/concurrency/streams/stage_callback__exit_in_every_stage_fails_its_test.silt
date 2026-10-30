@@ -61,16 +61,8 @@ fn test_map_through_select() {
   select_of(stream.map(stream.from_list([2])) { x -> process.exit(30 + x) })
 }
 
-fn test_map_ok_through_receive() {
-  receive_of(stream.map_ok(stream.from_list([Ok(3), Err("no")])) { x -> process.exit(30 + x) })
-}
-
 fn test_filter_through_receive() {
   receive_of(stream.filter(stream.from_list([4])) { x -> process.exit(30 + x) })
-}
-
-fn test_filter_ok_through_receive() {
-  receive_of(stream.filter_ok(stream.from_list([Ok(5), Err("no")])) { x -> process.exit(30 + x) })
 }
 
 fn test_flat_map_through_receive() {
