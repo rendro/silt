@@ -436,18 +436,12 @@ fn do_http_request(
     }
     let agent = client();
 
-    // Unified dispatch — each ureq verb-fn returns a differently-typed
-    // `RequestBuilder<WithBody>` vs `RequestBuilder<WithoutBody>` (phantom
-    // type carries whether a body is expected), so we can't bind a
-    // single variable to the builder. Two small local macros collapse
-    // the prior 7 near-identical arms into one header-apply + send line
-    // per family. Semantics preserved: same header-setting order, same
-    // send_empty()/send(body) split for body verbs, same call() for
-    // no-body verbs (GET with a body is still a no-op, matching the
-    // prior silt API surprise).
-    macro_rules! with_body {
-        ($verb:ident) => {{
-            let mut req = agent.$verb(url);
+    // Every method sends the body, with its length; an empty body sends
+    // nothing. ureq's verbs that take no body by default (GET, DELETE,
+    // HEAD, OPTIONS) are made to take one with `force_send_body`.
+    macro_rules! send {
+        ($req:expr) => {{
+            let mut req = $req;
             for (key, val) in headers {
                 req = req.header(key.as_str(), val.as_str());
             }
@@ -458,24 +452,15 @@ fn do_http_request(
             }
         }};
     }
-    macro_rules! no_body {
-        ($verb:ident) => {{
-            let mut req = agent.$verb(url);
-            for (key, val) in headers {
-                req = req.header(key.as_str(), val.as_str());
-            }
-            req.call()
-        }};
-    }
 
     let result = match method_tag {
-        "POST" => with_body!(post),
-        "PUT" => with_body!(put),
-        "PATCH" => with_body!(patch),
-        "GET" => no_body!(get),
-        "DELETE" => no_body!(delete),
-        "HEAD" => no_body!(head),
-        "OPTIONS" => no_body!(options),
+        "POST" => send!(agent.post(url)),
+        "PUT" => send!(agent.put(url)),
+        "PATCH" => send!(agent.patch(url)),
+        "GET" => send!(agent.get(url).force_send_body()),
+        "DELETE" => send!(agent.delete(url).force_send_body()),
+        "HEAD" => send!(agent.head(url).force_send_body()),
+        "OPTIONS" => send!(agent.options(url).force_send_body()),
         other => {
             return Value::variant(
                 bv::ERR,

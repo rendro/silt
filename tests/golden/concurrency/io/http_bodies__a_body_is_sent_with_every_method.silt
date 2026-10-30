@@ -1,0 +1,35 @@
+-- timeout: 30
+-- requires-feature: http
+-- `http.request` sends the body with every method, with its length:
+-- GET, DELETE, HEAD and OPTIONS as well as POST, PUT and PATCH. The
+-- handler answers with the body it got (a HEAD answer has none).
+import bytes
+import http
+import list
+import result
+import task
+import tcp
+
+fn text(body: Bytes) -> String {
+  bytes.to_string(body) |> result.unwrap_or("not text")
+}
+
+fn answer(req: http.Request) -> http.Response {
+  println("  the handler: {req.method} [{text(req.body)}]")
+  http.Response { status: 200, body: req.body, headers: #{} }
+}
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let url = "http://127.0.0.1:{tcp.local_port(listener)}/"
+  let server = task.spawn { -> http.serve(listener, answer) }
+  let methods = [http.GET, http.DELETE, http.HEAD, http.OPTIONS, http.POST, http.PUT, http.PATCH]
+  list.each(methods) { method ->
+    println("{method}")
+    match http.request(method, url, bytes.from_string("abc"), #{}) {
+      Ok(resp) -> println("  the client:  {resp.status} [{text(resp.body)}]")
+      Err(e) -> println("  the client: {Error.message(e)}")
+    }
+  }
+  task.cancel(server)
+}

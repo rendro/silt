@@ -1,0 +1,21 @@
+GET
+  the handler: GET [abc]
+  the client:  200 [abc]
+DELETE
+  the handler: DELETE [abc]
+  the client:  200 [abc]
+HEAD
+  the handler: HEAD [abc]
+  the client:  200 []
+OPTIONS
+  the handler: OPTIONS [abc]
+  the client:  200 [abc]
+POST
+  the handler: POST [abc]
+  the client:  200 [abc]
+PUT
+  the handler: PUT [abc]
+  the client:  200 [abc]
+PATCH
+  the handler: PATCH [abc]
+  the client:  200 [abc]
