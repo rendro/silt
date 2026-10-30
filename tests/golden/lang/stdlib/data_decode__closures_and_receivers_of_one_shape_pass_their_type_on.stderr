@@ -3,7 +3,7 @@ error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, w
     |
  68 |   let _ = both(src, other, Blob)
     |                            ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
-  = note: `both` passes it to `Loader.load`, which passes it to `json.parse`
+  = note: `both` passes it to `Box.load`, which passes it to `Loader.load`, which passes it to `json.parse`
   = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
@@ -11,7 +11,7 @@ error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, w
     |
  69 |   let _ = both(other, src, Blob)
     |                            ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
-  = note: `both` passes it to `Loader.load`, which passes it to `json.parse`
+  = note: `both` passes it to `Box.load`, which passes it to `Loader.load`, which passes it to `json.parse`
   = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
@@ -19,7 +19,7 @@ error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, w
     |
  72 |   let _ = p(Blob)
     |             ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
-  = note: `p` passes it to `json.parse`
+  = note: `p` passes it to `go`, which passes it to `Loader.load`, which passes it to `json.parse`
   = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
@@ -27,7 +27,7 @@ error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, w
     |
  74 |   let _ = q(Blob)
     |             ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
-  = note: `q` passes it to `Loader.load`, which passes it to `json.parse`
+  = note: `q` passes it to `go_annotated`, which passes it to `Loader.load`, which passes it to `json.parse`
   = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder

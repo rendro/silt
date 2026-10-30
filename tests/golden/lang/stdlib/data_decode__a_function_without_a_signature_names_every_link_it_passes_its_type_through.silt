@@ -1,0 +1,52 @@
+-- cmd: check
+-- exit: 1
+-- A function without a signature that passes its type on to a decoder
+-- is named with every link of the way, as one with a signature is: the
+-- functions and the trait method it passes the type through.
+import json
+
+type Blob { data: Bytes }
+type Src { s: String }
+
+trait Loader {
+  fn load(self, type a) -> Result(a, json.JsonError) where a: json.Decode
+}
+
+trait Loader for Src {
+  fn load(self, type a) -> Result(a, json.JsonError) {
+    json.parse(self.s, a)
+  }
+}
+
+fn go(l: l, type b) -> Result(b, json.JsonError) where l: Loader, b: json.Decode {
+  Loader.load(l, b)
+}
+
+fn go3(l, b) {
+  Loader.load(l, b)
+}
+
+fn go4(l, b) {
+  go3(l, b)
+}
+
+fn go5(l, b) {
+  go(l, b)
+}
+
+fn direct(s, b) {
+  json.parse(s, b)
+}
+
+fn direct2(s, b) {
+  direct(s, b)
+}
+
+fn main() {
+  let src = Src { s: "x" }
+  let _ = go3(src, Blob)
+  let _ = go4(src, Blob)
+  let _ = go5(src, Blob)
+  let _ = direct("x", Blob)
+  let _ = direct2("x", Blob)
+}
