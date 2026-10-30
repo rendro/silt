@@ -1,0 +1,67 @@
+-- timeout: 30
+-- requires-feature: http
+-- `http.request` follows a redirect. 307 and 308 send the same method
+-- and body again, DELETE too; 301, 302 and 303 go on as a GET without
+-- a body, and a HEAD stays a HEAD. A location that is no full URL is
+-- resolved against the URL that answered. A redirect drops the
+-- `authorization` header. After ten redirects the request gives up.
+import bytes
+import http
+import list
+import map
+import result
+import task
+import tcp
+
+fn text(body: Bytes) -> String {
+  bytes.to_string(body) |> result.unwrap_or("not text")
+}
+
+fn moved(status: Int, location: String) -> http.Response {
+  http.Response { status: status, body: bytes.empty(), headers: #{"location": location} }
+}
+
+fn answer(req: http.Request) -> http.Response {
+  match req.path {
+    "/301" -> moved(301, "/echo")
+    "/302" -> moved(302, "/echo")
+    "/303" -> moved(303, "/echo")
+    "/307" -> moved(307, "/echo")
+    "/308" -> moved(308, "/echo")
+    "/a/relative" -> moved(307, "../echo")
+    "/loop" -> moved(307, "/loop")
+    _ -> {
+      let auth = match map.get(req.headers, "authorization") {
+        Some(_) -> "with"
+        None -> "without"
+      }
+      println("  the handler: {req.method} {req.path} [{text(req.body)}], {auth} authorization")
+      http.Response { status: 200, body: req.body, headers: #{} }
+    }
+  }
+}
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let url = "http://127.0.0.1:{tcp.local_port(listener)}"
+  let server = task.spawn { -> http.serve(listener, answer) }
+  let asks = [
+    (http.POST, "/307"),
+    (http.PUT, "/308"),
+    (http.DELETE, "/307"),
+    (http.PATCH, "/a/relative"),
+    (http.POST, "/301"),
+    (http.PUT, "/302"),
+    (http.POST, "/303"),
+    (http.HEAD, "/302"),
+    (http.POST, "/loop"),
+  ]
+  list.each(asks) { (method, path) ->
+    println("{method} {path}")
+    match http.request(method, "{url}{path}", bytes.from_string("abc"), #{"authorization": "secret"}) {
+      Ok(resp) -> println("  the client:  {resp.status} [{text(resp.body)}]")
+      Err(e) -> println("  the client: {Error.message(e)}")
+    }
+  }
+  task.cancel(server)
+}

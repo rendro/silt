@@ -1,0 +1,12 @@
+GET [] with content-length 5
+  the handler: GET [], content-length none
+  the client:  200
+POST [abc] with content-length 1
+  the handler: POST [abc], content-length 3
+  the client:  200
+PUT [abc] with content-length 99
+  the handler: PUT [abc], content-length 3
+  the client:  200
+DELETE [] with content-length 0
+  the handler: DELETE [], content-length none
+  the client:  200
