@@ -227,19 +227,35 @@ impl TypeChecker {
                     };
                     taken.push((self.wanted[i].ev, node));
                 }
+                // A `json.Decode` the body owes for a function or method
+                // it gives a parameter's type to, which the definition
+                // passes on: the scheme's variable asks what that one
+                // asks, as a declared bound does, so a note names every
+                // link (`passed_through`).
+                let asker = match pred {
+                    Pred::Trait {
+                        asker: Some(asker), ..
+                    } if passed.contains(&subject) && self.passing_on.is_some() => {
+                        self.bound_askers.insert(subject, *asker);
+                        Some(Asker {
+                            by: Asked::Bound(subject),
+                            passer: self.passing_on,
+                        })
+                    }
+                    Pred::Trait { asker, .. } => asker.map(|asker| Asker {
+                        passer: passer_of(asker.passer, subject),
+                        ..asker
+                    }),
+                    _ => None,
+                };
                 let pred = match pred {
                     // (The definition passes a `json.Decode` it owes of
                     // a parameter's type on.)
-                    Pred::Trait {
-                        tr, args, asker, ..
-                    } => Pred::Trait {
+                    Pred::Trait { tr, args, .. } => Pred::Trait {
                         tr: *tr,
                         args: args.iter().map(|t| self.apply(t)).collect(),
                         subject: Type::Var(subject),
-                        asker: asker.map(|asker| Asker {
-                            passer: passer_of(asker.passer, subject),
-                            ..asker
-                        }),
+                        asker,
                     },
                     Pred::Anon { given, .. } => Pred::Anon {
                         row: Type::Var(subject),
