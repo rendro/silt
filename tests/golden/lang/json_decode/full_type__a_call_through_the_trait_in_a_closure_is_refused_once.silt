@@ -1,0 +1,28 @@
+-- cmd: check
+-- exit: 1
+-- A call through the trait in a closure whose parameter's type is known
+-- only after the closure is checked is refused once, at the method, as
+-- the same call outside a closure is.
+import json
+
+trait Dec: json.Decode {
+  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+type Box(a) {
+  v: a,
+}
+
+trait Dec for Box(a) where a: json.Decode {}
+
+fn apply2(f: Fn(x, String) -> r, x: x, s: String) -> r {
+  f(x, s)
+}
+
+fn m(b: Box(a), s: String) -> Result(Box(a), json.JsonError) where a: json.Decode {
+  apply2({ x, t -> Dec.again(x, t) }, b, s)
+}
+
+fn main() {
+  println(m(Box { v: 1 }, "\{\"v\": 9}"))
+}

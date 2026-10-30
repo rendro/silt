@@ -1,0 +1,6 @@
+error[type]: method 'again' of trait 'Dec' needs the type `Box(a)` in full here: `a` is known only by its type
+ --> full_type__a_call_through_the_trait_in_a_closure_is_refused_once.silt:23:20
+    |
+ 23 |   apply2({ x, t -> Dec.again(x, t) }, b, s)
+    |                    ^^^^^^^^^ method 'again' of trait 'Dec' needs the type `Box(a)` in full here: `a` is known only by its type
+  = help: take the type as a parameter, `type a`

@@ -1333,6 +1333,9 @@ impl TypeChecker {
         // A use without a receiver, `Tr.m` passed as a value, is refused
         // as a call is.)
         (self.full_type_uses).push((self_ty.clone(), tr, field, span));
+        if let Some(at) = receiver {
+            (self.full_type_receivers).insert(at, (span, tr, field));
+        }
         self.trait_call_self.insert(span, self_ty);
         self.receiver_taken = receiver.is_some();
         let method_ty = self.instantiate_method(&scheme, field, span);
