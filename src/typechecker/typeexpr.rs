@@ -158,9 +158,7 @@ impl TypeChecker {
     pub(super) fn type_param_names(&self, ty: TypeRef) -> Vec<String> {
         let declared = (self.tables.records.get(&ty).map(|r| r.params.clone()))
             .or_else(|| self.tables.enums.get(&ty).map(|e| e.params.clone()))
-            .or_else(|| {
-                (self.tables.resolver.lookup_alias(ty)).map(|info| info.params.clone())
-            });
+            .or_else(|| (self.tables.resolver.lookup_alias(ty)).map(|info| info.params.clone()));
         if let Some(params) = declared {
             return params.iter().map(|p| resolve(*p)).collect();
         }
