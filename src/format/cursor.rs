@@ -588,6 +588,15 @@ impl<'a> Cursor<'a> {
             .map_or(&Token::Eof, |tok| &tok.kind)
     }
 
+    /// The token behind the expression that ends at byte `end` and the
+    /// `count` closing parentheses directly behind it.
+    pub fn behind_parens(&self, end: u32, count: usize) -> &'a Token {
+        let last = self.tokens.partition_point(|tok| tok.span.end < end);
+        self.tokens
+            .get(last + 1 + count)
+            .map_or(&Token::Eof, |tok| &tok.kind)
+    }
+
     /// The comments at the closing brace of the block that ends at byte
     /// `end` and has `wrappers` parentheses around it.
     pub fn closer_comments(&self, end: u32, wrappers: usize) -> CloserComments {

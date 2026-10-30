@@ -1160,6 +1160,15 @@ impl Printer<'_> {
         // keep it from being taken for the block of the header.
         let shields_brace = (ctx.header.is_some() && opens_brace_in_header(expr))
             || (ctx.line_start && starts_with_brace(expr));
+        // A `{` behind the parentheses, on whatever line, would make the
+        // body of a match on a pipeline at the end of `expr` a closure
+        // (see `ends_in_piped_match`): the parentheses stay.
+        let shields_match = wrappers > 0
+            && ends_in_piped_match(expr)
+            && matches!(
+                self.cur.behind_parens(expr.span.end, wrappers),
+                Token::LBrace
+            );
         if wrappers > 0 && self.cur.comments_inside_parens(wrappers) {
             // A comment at the inside of a parenthesis may stand at a
             // line break that only the parenthesis allows: all stay,
@@ -1176,7 +1185,9 @@ impl Printer<'_> {
                 doc = parenthesized(open, Doc::concat(vec![doc, tail]), close);
             }
             doc
-        } else if wrappers > 0 && (shields_brace || ctx.keep_parens || needs_parens(expr, ctx)) {
+        } else if wrappers > 0
+            && (shields_brace || shields_match || ctx.keep_parens || needs_parens(expr, ctx))
+        {
             let open = self.tok(Token::LParen);
             self.cur.skip_n(&Token::LParen, wrappers - 1);
             let inner = self.bare_expr(expr, Ctx::top());

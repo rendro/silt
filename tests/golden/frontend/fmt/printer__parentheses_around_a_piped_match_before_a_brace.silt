@@ -1,0 +1,47 @@
+-- cmd: fmt
+-- A match on a pipeline whose body could be a closure IS a closure for
+-- the pipeline's last stage when a `{` follows it, on whatever line.
+-- Parentheses that end such an expression in front of a `{` stay (one
+-- pair); in front of anything else they go, as do those around a part
+-- of the expression that something else ends.
+import list
+
+fn first(xs: List(Int), f: Fn(Int) -> Int) -> Int {
+  0
+}
+
+fn stays(xs) {
+  let a = (match xs |> first { y -> 1 })
+  { -> 1 }
+  (match xs |> first { y -> 2 })
+  { -> 2 }
+  let b = 1 + (match xs |> first { y -> 3 })
+  { -> 3 }
+  let c = (1 + match xs |> first { y -> 4 })
+  { -> 4 }
+  let d = (1 + (match xs |> first { y -> 5 }))
+  { -> 5 }
+  let e = -((match xs |> first { y -> 6 }))
+  { a: 6 }
+  match (match xs |> first { y -> 7 }) {
+    _ -> 7
+  }
+}
+
+fn goes(xs) {
+  let a = (match xs |> first { y -> 1 })
+  (a, 1)
+  let b = (match xs |> first { y -> 2 })
+  b
+  let c = ((match xs |> first { y -> 3 }), { -> 3 })
+  let e = (match first(xs) { y -> 5 })
+  { -> 5 }
+  let f = (match xs |> list.length { 0 -> 6
+    _ -> 6 })
+  { -> 6 }
+  [a, b]
+}
+
+fn main() {
+  println((stays([1]), goes([1])))
+}
