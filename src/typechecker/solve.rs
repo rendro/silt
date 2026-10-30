@@ -97,6 +97,33 @@ impl Goal {
     }
 }
 
+/// `ty` with each part that is `part` taken to be an error type, which
+/// has every trait.
+fn replace_part(ty: &Type, part: &Type) -> Type {
+    if ty == part {
+        return Type::Error;
+    }
+    let each = |types: &[Type]| types.iter().map(|t| replace_part(t, part)).collect();
+    let one = |t: &Type| Box::new(replace_part(t, part));
+    match ty {
+        Type::Fun(params, ret) => Type::Fun(each(params), one(ret)),
+        Type::List(t) => Type::List(one(t)),
+        Type::Set(t) => Type::Set(one(t)),
+        Type::Channel(t) => Type::Channel(one(t)),
+        Type::Tuple(ts) => Type::Tuple(each(ts)),
+        Type::Generic(name, args) => Type::Generic(*name, each(args)),
+        Type::Map(k, v) => Type::Map(one(k), one(v)),
+        Type::AnonRecord { fields, tail } => Type::AnonRecord {
+            fields: fields
+                .iter()
+                .map(|(n, t)| (*n, replace_part(t, part)))
+                .collect(),
+            tail: tail.clone(),
+        },
+        _ => ty.clone(),
+    }
+}
+
 /// How many types deep the structural judgement looks (see
 /// `structure_gap`).
 const STRUCTURE_DEPTH: usize = 100;
@@ -246,8 +273,8 @@ impl TypeChecker {
             return;
         }
         let subject = self.apply(subject);
-        let reports: Vec<(Span, String, Type)> = (self.errors[reported..].iter())
-            .map(|error| (error.span, error.message.clone(), subject.clone()))
+        let reports: Vec<(Span, String, TraitKey, Type)> = (self.errors[reported..].iter())
+            .map(|error| (error.span, error.message.clone(), tr, subject.clone()))
             .collect();
         self.trait_reports.extend(reports);
     }
@@ -260,27 +287,54 @@ impl TypeChecker {
         }
         let ty = crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(subject));
         if self.lacking.contains(&self.refused_argument(span, &ty)) {
-            self.refused_calls.push((span, ty));
+            self.refused_calls.push(span);
         }
     }
 
-    /// One error for one call: a missing trait of what a use of a decoder
-    /// that refused its type returns (`println(json.parse(text, T))`, its
-    /// `T` refused) is no error of its own. (The error is reported where
-    /// the use is, and the type it lacks the trait of names the refused
-    /// one.)
+    /// One error for one call: a missing trait of what a call whose
+    /// decoder refused its type returns (`println(json.parse(text, T))`,
+    /// its `T` refused) is no error of its own. Dropped is a structural
+    /// trait's error at a use that holds the call, of a type that holds
+    /// what the call returns, where the type has the trait once that
+    /// part is taken to have it: a part beside it that lacks the trait
+    /// (`(json.parse(text, T), f)`) keeps the error.
     pub(super) fn drop_errors_of_refused_calls(&mut self) {
         if self.refused_calls.is_empty() {
             return;
         }
-        for (span, message, subject) in std::mem::take(&mut self.trait_reports) {
-            let mut named = Vec::new();
-            subject.collect_refs(&mut named);
-            let of_refused = self.refused_calls.iter().any(|(at, refused)| {
-                at.file == span.file
-                    && span.start <= at.start
-                    && at.end <= span.end
-                    && refused.type_ref().is_none_or(|head| named.contains(&head))
+        let within = |inner: Span, outer: Span| {
+            inner.file == outer.file && outer.start <= inner.start && inner.end <= outer.end
+        };
+        // The type each refusing call returns: the innermost call that
+        // holds the refusal.
+        let mut refused: Vec<(Span, Type)> = Vec::new();
+        for &at in &self.refused_calls {
+            let call = (self.call_results.iter())
+                .filter(|(call, _)| within(at, *call))
+                .min_by_key(|(call, _)| call.end - call.start);
+            if let Some((call, result)) = call {
+                let result = crate::types::canonical::canonicalize(
+                    &self.tables.resolver,
+                    &self.apply(result),
+                );
+                refused.push((*call, result));
+            }
+        }
+        for (span, message, tr, subject) in std::mem::take(&mut self.trait_reports) {
+            let subject =
+                crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(&subject));
+            let of_refused = refused.iter().any(|(call, result)| {
+                if !within(*call, span) {
+                    return false;
+                }
+                let taken = replace_part(&subject, result);
+                if taken == subject {
+                    return false;
+                }
+                let mut walk = Walk::default();
+                self.structure_gap(tr, &taken, &mut walk, 0).is_none()
+                    && walk.open.is_empty()
+                    && walk.written.is_empty()
             });
             if of_refused
                 && let Some(at) = (self.errors.iter())

@@ -3461,7 +3461,9 @@ impl TypeChecker {
                 ExprKind::Call(callee, call_args) => {
                     let mut args: Vec<&mut Expr> = vec![&mut **lhs];
                     args.extend(call_args.iter_mut());
-                    self.check_call(callee, args, span, CallForm::Call, env)
+                    let result = self.check_call(callee, args, span, CallForm::Call, env);
+                    self.call_results.push((span, result.clone()));
+                    result
                 }
                 _ => self.check_call(rhs, vec![&mut **lhs], span, CallForm::BarePipe, env),
             },
@@ -3562,7 +3564,10 @@ impl TypeChecker {
             }
 
             ExprKind::Call(callee, args) => {
-                self.check_call(callee, args.iter_mut().collect(), span, CallForm::Call, env)
+                let args = args.iter_mut().collect();
+                let result = self.check_call(callee, args, span, CallForm::Call, env);
+                self.call_results.push((span, result.clone()));
+                result
             }
 
             ExprKind::Lambda { params, body } => {
