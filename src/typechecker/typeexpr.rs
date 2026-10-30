@@ -1003,7 +1003,7 @@ fn opaque_arity(name: &str) -> Option<usize> {
 /// where without one (`check_signature_kinds`): `xs: m(Int)`, `-> m`.
 pub(super) type KindLabels = (Vec<(Symbol, String)>, Vec<(Symbol, String)>);
 
-pub(super) fn type_expr_text(te: &TypeExpr) -> String {
+pub(crate) fn type_expr_text(te: &TypeExpr) -> String {
     let all = |types: &[TypeExpr]| {
         types
             .iter()

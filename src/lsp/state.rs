@@ -22,6 +22,10 @@ pub(super) struct DefInfo {
     /// function (`fn twice(xs: m(Int)) -> m(Int) where m: Functor`).
     pub(super) signature: Option<crate::typechecker::Signature>,
     pub(super) params: Vec<String>,
+    /// The fields of a variant, as its enum writes them (`Float` and
+    /// `Float` of `Rect(Float, Float)`); `None` for any other
+    /// definition.
+    pub(super) fields: Option<Vec<String>>,
     /// Markdown documentation from a doc comment preceding the decl,
     /// if any. Populated by `build_definitions` from `FnDecl.doc`,
     /// `TypeDecl.doc`, `TraitDecl.doc`, and `Decl::Let { doc, .. }`.

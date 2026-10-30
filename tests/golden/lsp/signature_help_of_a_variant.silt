@@ -1,0 +1,15 @@
+-- cmd: lsp
+-- lsp: signature 12:22
+-- lsp: signature 13:23
+-- lsp: signature 14:27
+-- Signature help on a variant writes it as its enum declares it, each
+-- field a parameter.
+
+type Shape { Circle(Float), Rect(Float, Float) }
+type Pair(a) { Pair(a, List(a)) }
+fn main() {
+  let _c = Circle(1.0)
+  let _r = Rect(1.0, 2.0)
+  let _p = Pair(1, [2])
+  let _s = Some(Rect(1.0, 2.0))
+}

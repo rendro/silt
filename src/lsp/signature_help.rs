@@ -147,6 +147,25 @@ pub(super) fn build_signature_from_def(
     name: &str,
     def: &DefInfo,
 ) -> (String, Vec<ParameterInformation>) {
+    // A variant: as its enum declares it, `Rect(Float, Float)`.
+    if let Some(fields) = &def.fields {
+        let mut label = format!("{name}(");
+        let mut params_info = Vec::new();
+        for (i, field) in fields.iter().enumerate() {
+            if i > 0 {
+                label.push_str(", ");
+            }
+            let start = label.len() as u32;
+            label.push_str(field);
+            params_info.push(ParameterInformation {
+                label: ParameterLabel::LabelOffsets([start, label.len() as u32]),
+                documentation: None,
+            });
+        }
+        label.push(')');
+        return (label, params_info);
+    }
+
     let mut label = format!("fn {name}(");
     let mut params_info = Vec::new();
 
@@ -288,6 +307,7 @@ mod tests {
     fn test_build_signature_simple() {
         let def = DefInfo {
             signature: None,
+            fields: None,
             ty: Some(Type::Fun(vec![Type::Int, Type::Int], Box::new(Type::Int))),
             params: vec!["a".into(), "b".into()],
             doc: None,
@@ -302,6 +322,7 @@ mod tests {
     fn test_build_signature_no_type() {
         let def = DefInfo {
             signature: None,
+            fields: None,
             ty: None,
             params: vec!["x".into(), "y".into()],
             doc: None,
