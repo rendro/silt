@@ -1,0 +1,178 @@
+-- cmd: fmt
+-- A match on a pipeline whose body could be a closure IS a closure for
+-- the pipeline's last stage when something follows it that goes on with
+-- the expression: a `{` on whatever line, an operator, or a call, `?` or
+-- `+`/`-` on the same line. Parentheses that end such an expression in
+-- front of such a token stay (one pair); in front of anything else they
+-- go, as do those around a part that something else ends. Parentheses
+-- that keep a pipeline from ending the scrutinee of such a match stay,
+-- whatever follows the match.
+-- A body whose first arm cannot be a closure's parameters (a number, a
+-- text, a guard, alternatives that are numbers) needs none of them.
+import list
+
+fn first(xs: List(Int), f: Fn(Int) -> Int) -> Int {
+  0
+}
+
+fn g(x: Int) -> Int {
+  x
+}
+
+fn stays_before_a_brace(xs) {
+  let a = (match xs |> first {
+    y -> 1
+  })
+  { -> 1 }
+  (match xs |> first {
+    y -> 2
+  })
+  { -> 2 }
+  let b = 1 +
+    (match xs |> first {
+      y -> 3
+    })
+  { -> 3 }
+  let c = (1 +
+    match xs |> first {
+      y -> 4
+    })
+  { -> 4 }
+  let d = (1 +
+    match xs |> first {
+      y -> 5
+    })
+  { -> 5 }
+  let e = -(match xs |> first {
+    y -> 6
+  })
+  { a: 6 }
+  match (match xs |> first {
+    y -> 7
+  }) {
+    _ -> 7
+  }
+}
+
+fn stays_before_an_operator(xs) {
+  let a = (1 +
+    match xs |> first {
+      y -> 1
+    }) == 2
+  let b = (1 +
+    match xs |> first {
+      y -> 2
+    }) < 2
+  let c = (1 +
+    match xs |> first {
+      y -> 3
+    })..2
+  let d = (1 +
+    match xs |> first {
+      y -> 4
+    }) |> g
+  let e = (1
+    * match xs |> first {
+      y -> 5
+    }) + 2
+  let f = -(match xs |> first {
+    y -> 6
+  }) == 2
+  let h = (-match xs |> first {
+    y -> 7
+  })?
+  let i = (match xs |> first {
+    y -> 8
+  }) == 2
+  [a, b, d, e]
+}
+
+fn stays_in_a_scrutinee(xs) {
+  let a = match 1 == (xs |> first) {
+    y -> true
+  }
+  { -> 1 }
+  let b = match (xs |> first) {
+    y -> 2
+  }
+  { -> 2 }
+  let c = match (1 == xs |> first) {
+    y -> true
+  }
+  { -> 3 }
+  let d = match 1 == (xs |> first) {
+    y -> true
+  }
+  [b]
+}
+
+fn goes(xs) {
+  let a = match xs |> first {
+    y -> 1
+  }
+  (a, 1)
+  let b = match xs |> first {
+    y -> 2
+  }
+  b
+  let c = (
+    match xs |> first {
+      y -> 3
+    },
+    { -> 3 },
+  )
+  let e = match first(xs) {
+    y -> 5
+  }
+  { -> 5 }
+  let f = match xs |> list.length {
+    0 -> 6
+    _ -> 6
+  }
+  { -> 6 }
+  let h = match xs |> first {
+    y -> 7
+  }
+  #{ "a": 7 }
+  [a, b]
+}
+
+fn goes_when_no_closure(xs) {
+  let a = match xs |> first {
+    "s" -> 1
+    _ -> 1
+  }
+  { -> 1 }
+  let b = match xs |> first {
+    y when y > 0 -> 2
+    _ -> 2
+  }
+  { -> 2 }
+  let c = match xs |> first {
+    0 | 1 -> 3
+    _ -> 3
+  }
+  { -> 3 }
+  let d = match xs |> first {
+    -1 -> 4
+    _ -> 4
+  } == 4
+  let e = match 1 == xs |> first {
+    "s" -> true
+    _ -> false
+  }
+  { -> 5 }
+  [a, b, c]
+}
+
+fn main() {
+  println(
+    (
+      stays_before_a_brace([1]),
+      stays_before_an_operator([1]),
+      stays_in_a_scrutinee([1]),
+      goes([1]),
+      goes_when_no_closure([1]),
+    ),
+  )
+}
