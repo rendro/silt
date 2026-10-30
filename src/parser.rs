@@ -3640,91 +3640,25 @@ impl<'src> Parser<'src> {
         }
         let next = close + 1;
         let crossed_newline = self.starts_line.get(next).copied().unwrap_or(false);
-        match self.tokens.get(next).map(|t| &t.kind) {
-            // A further block: the match body, or another closure.
-            Some(Token::LBrace) => true,
-            // Infix operators continue an expression across a line break.
-            Some(
-                Token::Dot
-                | Token::Pipe
-                | Token::DotDot
-                | Token::OrOr
-                | Token::AndAnd
-                | Token::EqEq
-                | Token::NotEq
-                | Token::Lt
-                | Token::Gt
-                | Token::LtEq
-                | Token::GtEq
-                | Token::Star
-                | Token::Slash
-                | Token::Percent
-                | Token::As,
-            ) => true,
-            // `+`, `-` and the postfix forms continue it on the same
-            // line only.
-            Some(
-                Token::Plus | Token::Minus | Token::Question | Token::LParen | Token::LBracket,
-            ) => !crossed_newline,
-            _ => false,
-        }
+        self.tokens
+            .get(next)
+            .is_some_and(|t| continues_after_braces(&t.kind, crossed_newline))
     }
 
     /// True when the current token is a `{` whose contents start like a
-    /// closure: `params ->`. A parameter is a pattern with an optional
-    /// `: Type` annotation, so the scan accepts, at the brace's own
-    /// depth, identifiers, `,`, `|`, `:`, `::`, `.`, `type` and the openers
-    /// of nested groups (whose contents it skips), and answers true at
-    /// the first `->`. Anything else at that depth, including the
-    /// closing `}`, means a block or a record literal: neither can put
-    /// a `->` at its own depth after only those tokens. `{ a: Int -> a }`
-    /// is a closure; `{ a: Int }` and `{ a: 1 }` are record literals.
-    /// A function type in an annotation (`{ f: Fn(Int) -> Int -> ... }`)
-    /// answers true at its own arrow, which is the right answer too.
+    /// closure: `params ->` (see `closure_head`).
     fn lbrace_starts_closure(&self) -> bool {
         if self.peek() != &Token::LBrace {
             return false;
         }
+        // The contents at the brace's own depth: of a nested group, only
+        // its opener (its contents and its closer sit deeper).
         let inside = self.delim_depth_at(self.pos) + 1;
-        let mut i = self.pos + 1; // skip `{`
-        // If the first real token is a literal, this is a match body
-        // (patterns like `0 ->`, `true ->`), not a trailing closure.
-        // Note: `_` is NOT excluded here because it is a valid closure
-        // parameter name (meaning "ignore this argument"). Match bodies
-        // are consumed directly by parse_match_expr via expect(LBrace),
-        // so they never reach this heuristic.
-        if i < self.tokens.len() {
-            match &self.tokens[i].kind {
-                Token::Int(_) | Token::Float(_) | Token::Bool(_) => return false,
-                _ => {}
-            }
-        }
-        while i < self.tokens.len() {
-            if self.delim_depth_at(i) > inside {
-                i += 1;
-                continue;
-            }
-            match &self.tokens[i].kind {
-                Token::Arrow => return true,
-                Token::Ident(_)
-                | Token::Comma
-                | Token::Bar
-                | Token::Colon
-                | Token::ColonColon
-                | Token::Dot
-                | Token::Type
-                | Token::LParen
-                | Token::LBracket
-                | Token::LBrace
-                | Token::HashBrace => {}
-                // The closer of a nested group sits one level deeper
-                // than the brace's own contents and was skipped above;
-                // a closer at this depth ends the braces.
-                _ => return false,
-            }
-            i += 1;
-        }
-        false
+        closure_head(
+            (self.pos + 1..self.tokens.len())
+                .filter(|&i| self.delim_depth_at(i) <= inside)
+                .map(|i| &self.tokens[i].kind),
+        )
     }
 
     /// In match-scrutinee position, the `{` after a bare constructor is
@@ -4560,6 +4494,75 @@ impl<'src> Parser<'src> {
     }
 
     // ── Utility ──────────────────────────────────────────────────────
+}
+
+/// Whether braces whose contents start with `tokens` are a closure,
+/// `{ params -> body }`, and not a block, a record literal or the body of
+/// a `match`. `tokens` are the contents at the braces' own depth: of a
+/// nested group only its opener. A parameter is a pattern with an
+/// optional `: Type` annotation, so the scan accepts identifiers, `,`,
+/// `|`, `:`, `::`, `.`, `type` and the openers of nested groups, and
+/// answers true at the first `->`. Anything else at that depth (a
+/// literal, `when`, the closing `}`) means braces of another kind:
+/// neither a block nor a record literal can put a `->` at its own depth
+/// after only those tokens. `{ a: Int -> a }` is a closure; `{ a: Int }`,
+/// `{ a: 1 }` and `{ 0 -> a }` are not. A function type in an annotation
+/// (`{ f: Fn(Int) -> Int -> ... }`) answers true at its own arrow, which
+/// is the right answer too. The formatter asks the same of the body of a
+/// `match` it prints.
+pub(crate) fn closure_head<'t>(tokens: impl IntoIterator<Item = &'t Token>) -> bool {
+    for token in tokens {
+        match token {
+            Token::Arrow => return true,
+            Token::Ident(_)
+            | Token::Comma
+            | Token::Bar
+            | Token::Colon
+            | Token::ColonColon
+            | Token::Dot
+            | Token::Type
+            | Token::LParen
+            | Token::LBracket
+            | Token::LBrace
+            | Token::HashBrace => {}
+            _ => return false,
+        }
+    }
+    false
+}
+
+/// Whether `token`, behind the `}` of closure-shaped braces at the end
+/// of a `match` scrutinee, makes them a closure: it continues the
+/// expression they belong to, or opens a further block (the match
+/// body). Infix operators continue an expression across a line break;
+/// `+`, `-` and the postfix forms on the same line only
+/// (`crossed_newline`: a line break stands in front of `token`). The
+/// formatter keeps the parentheses that stand between such braces and
+/// such a token.
+pub(crate) fn continues_after_braces(token: &Token, crossed_newline: bool) -> bool {
+    match token {
+        // A further block: the match body, or another closure.
+        Token::LBrace => true,
+        Token::Dot
+        | Token::Pipe
+        | Token::DotDot
+        | Token::OrOr
+        | Token::AndAnd
+        | Token::EqEq
+        | Token::NotEq
+        | Token::Lt
+        | Token::Gt
+        | Token::LtEq
+        | Token::GtEq
+        | Token::Star
+        | Token::Slash
+        | Token::Percent
+        | Token::As => true,
+        Token::Plus | Token::Minus | Token::Question | Token::LParen | Token::LBracket => {
+            !crossed_newline
+        }
+        _ => false,
+    }
 }
 
 fn is_constructor(name: Symbol) -> bool {

@@ -589,12 +589,15 @@ impl<'a> Cursor<'a> {
     }
 
     /// The token behind the expression that ends at byte `end` and the
-    /// `count` closing parentheses directly behind it.
-    pub fn behind_parens(&self, end: u32, count: usize) -> &'a Token {
+    /// `count` closing parentheses directly behind it, and whether a
+    /// line break stands in front of it.
+    pub fn behind_parens(&self, end: u32, count: usize) -> (&'a Token, bool) {
         let last = self.tokens.partition_point(|tok| tok.span.end < end);
         self.tokens
             .get(last + 1 + count)
-            .map_or(&Token::Eof, |tok| &tok.kind)
+            .map_or((&Token::Eof, false), |tok| {
+                (&tok.kind, tok.newlines_before > 0)
+            })
     }
 
     /// The comments at the closing brace of the block that ends at byte

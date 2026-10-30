@@ -17,6 +17,7 @@
 use crate::ast::*;
 use crate::intern;
 use crate::lexer::{Lexed, Lexer, Token};
+use crate::parser::{closure_head, continues_after_braces};
 
 use super::cursor::{Cursor, Mismatch};
 use super::doc::{Doc, render};
@@ -97,15 +98,16 @@ struct Ctx {
     /// The expression is a pipeline with a `?` behind it: its last
     /// stage stands in front of the `?`.
     question_follows: bool,
-    /// The source's parentheses around the expression stay, whatever
-    /// the operators say (see `closure_shaped`).
-    keep_parens: bool,
     /// The expression starts a line that follows another statement or
     /// arm. Behind a `match` whose scrutinee is a pipeline, a `{` there
     /// would be read as the body of that match (and its body as a
     /// closure): where the source has parentheses in front of such a
     /// `{`, they stay.
     line_start: bool,
+    /// The expression ends the scrutinee of a `match` whose body looks
+    /// like a closure: parentheses around it that keep a stage of a
+    /// pipeline from standing in front of the body stay.
+    ends_scrutinee: bool,
 }
 
 impl Ctx {
@@ -117,8 +119,8 @@ impl Ctx {
             stage: false,
             header: None,
             question_follows: false,
-            keep_parens: false,
             line_start: false,
+            ends_scrutinee: false,
         }
     }
 
@@ -138,8 +140,8 @@ impl Ctx {
             stage: self.stage,
             header: self.header,
             question_follows: false,
-            keep_parens: false,
             line_start: self.line_start,
+            ends_scrutinee: false,
         }
     }
 
@@ -151,8 +153,8 @@ impl Ctx {
             stage: false,
             header: self.header,
             question_follows: false,
-            keep_parens: false,
             line_start: false,
+            ends_scrutinee: self.ends_scrutinee,
         }
     }
 
@@ -227,8 +229,8 @@ fn needs_parens(expr: &Expr, ctx: Ctx) -> bool {
             stage: false,
             header: None,
             question_follows: false,
-            keep_parens: false,
             line_start: false,
+            ends_scrutinee: false,
         };
         if top < follows || takes_from_unwrapped(expr, open_ctx) <= follows {
             return true;
@@ -237,17 +239,11 @@ fn needs_parens(expr: &Expr, ctx: Ctx) -> bool {
     if ctx.stage && question_on_left_spine(expr, ctx) {
         return true;
     }
-    // `(match a |> f { x -> x }).g`: without the parentheses, the body
-    // would be a closure for `f`, since the expression goes on behind
-    // it (see where a `match` is printed).
-    if ctx.left_of.is_some()
-        && let ExprKind::Match {
-            expr: Some(scrutinee),
-            arms,
-        } = &expr.kind
-        && matches!(scrutinee.kind, ExprKind::Pipe(..))
-        && arms.first().is_some_and(closure_shaped)
-    {
+    // `(match a |> f { x -> x }).g`, `(1 + match a |> f { x -> x }) == 2`:
+    // without the parentheses, the body would be a closure for `f`,
+    // since the expression goes on behind it (see where a `match` is
+    // printed).
+    if ctx.left_of.is_some() && ends_in_piped_match(expr) {
         return true;
     }
     false
@@ -296,17 +292,68 @@ fn int_then_field(literal: &str, field: &str) -> bool {
 }
 
 /// Whether the body of a `match` that starts with `arm` could be read
-/// as a closure, `{ x -> ... }`: the parser takes braces for a closure
-/// only if they do not start with a number or a boolean.
+/// as a closure, `{ x -> ... }`: the parser's own test (`closure_head`)
+/// on the tokens the arm is printed with, up to its `->`.
 fn closure_shaped(arm: &MatchArm) -> bool {
-    !matches!(
-        arm.pattern.kind,
-        PatternKind::Int(_)
-            | PatternKind::Float(_)
-            | PatternKind::Bool(_)
-            | PatternKind::Range(..)
-            | PatternKind::FloatRange(..)
-    )
+    let mut head = Vec::new();
+    pattern_head(&arm.pattern, &mut head);
+    if arm.guard.is_some() {
+        head.push(Token::When);
+    }
+    head.push(Token::Arrow);
+    closure_head(&head)
+}
+
+/// The tokens `pattern` is printed with, as far as `closure_head` looks
+/// at them: of a group in brackets only its opener, and of a form the
+/// test refuses only its first token.
+fn pattern_head(pattern: &Pattern, out: &mut Vec<Token>) {
+    match &pattern.kind {
+        PatternKind::Wildcard => out.push(Token::Ident(intern::intern("_"))),
+        PatternKind::Ident(name) => out.push(Token::Ident(*name)),
+        PatternKind::Int(n) | PatternKind::Range(n, _) if *n < 0 => out.push(Token::Minus),
+        PatternKind::Int(n) | PatternKind::Range(n, _) => out.push(Token::Int(*n)),
+        PatternKind::Float(f) | PatternKind::FloatRange(f, _) if *f < 0.0 => out.push(Token::Minus),
+        PatternKind::Float(f) | PatternKind::FloatRange(f, _) => out.push(Token::Float(*f)),
+        PatternKind::Bool(b) => out.push(Token::Bool(*b)),
+        PatternKind::StringLit(text, ..) => out.push(Token::StringLit(text.clone())),
+        PatternKind::Pin(_) => out.push(Token::Caret),
+        PatternKind::Tuple(_) => out.push(Token::LParen),
+        PatternKind::List(..) => out.push(Token::LBracket),
+        PatternKind::Map(_) => out.push(Token::HashBrace),
+        PatternKind::AnonRecord { .. } => out.push(Token::LBrace),
+        PatternKind::Constructor {
+            qualifier,
+            name,
+            args,
+            ..
+        } => {
+            for q in qualifier {
+                out.extend([Token::Ident(q.name), Token::Dot]);
+            }
+            out.push(Token::Ident(*name));
+            if !args.is_empty() {
+                out.push(Token::LParen);
+            }
+        }
+        PatternKind::Record { module, name, .. } => {
+            if let Some(module) = module {
+                out.extend([Token::Ident(module.name), Token::Dot]);
+            }
+            if let Some(name) = name {
+                out.push(Token::Ident(*name));
+            }
+            out.push(Token::LBrace);
+        }
+        PatternKind::Or(alts) => {
+            for (i, alt) in alts.iter().enumerate() {
+                if i > 0 {
+                    out.push(Token::Bar);
+                }
+                pattern_head(alt, out);
+            }
+        }
+    }
 }
 
 /// Whether `expr`, printed without parentheses around it, ends with the
@@ -1160,15 +1207,15 @@ impl Printer<'_> {
         // keep it from being taken for the block of the header.
         let shields_brace = (ctx.header.is_some() && opens_brace_in_header(expr))
             || (ctx.line_start && starts_with_brace(expr));
-        // A `{` behind the parentheses, on whatever line, would make the
-        // body of a match on a pipeline at the end of `expr` a closure
-        // (see `ends_in_piped_match`): the parentheses stay.
+        // A token behind the parentheses that would make the body of a
+        // match on a pipeline at the end of `expr` a closure (a `{`, an
+        // operator), or a pipeline that would stand in front of such a
+        // body: the parentheses stay.
         let shields_match = wrappers > 0
-            && ends_in_piped_match(expr)
-            && matches!(
-                self.cur.behind_parens(expr.span.end, wrappers),
-                Token::LBrace
-            );
+            && ((ends_in_piped_match(expr) && {
+                let (token, crossed_newline) = self.cur.behind_parens(expr.span.end, wrappers);
+                continues_after_braces(token, crossed_newline)
+            }) || (ctx.ends_scrutinee && ends_in_stage(expr)));
         if wrappers > 0 && self.cur.comments_inside_parens(wrappers) {
             // A comment at the inside of a parenthesis may stand at a
             // line break that only the parenthesis allows: all stay,
@@ -1185,9 +1232,7 @@ impl Printer<'_> {
                 doc = parenthesized(open, Doc::concat(vec![doc, tail]), close);
             }
             doc
-        } else if wrappers > 0
-            && (shields_brace || shields_match || ctx.keep_parens || needs_parens(expr, ctx))
-        {
+        } else if wrappers > 0 && (shields_brace || shields_match || needs_parens(expr, ctx)) {
             let open = self.tok(Token::LParen);
             self.cur.skip_n(&Token::LParen, wrappers - 1);
             let inner = self.bare_expr(expr, Ctx::top());
@@ -1378,11 +1423,11 @@ impl Printer<'_> {
                     // that looks like a closure from being read as one
                     // is kept: the parentheses around the pipeline, or
                     // the line break in front of the body.
-                    let piped = matches!(scrutinee.kind, ExprKind::Pipe(..))
-                        && arms.first().is_some_and(closure_shaped);
+                    let closure = arms.first().is_some_and(closure_shaped);
+                    let piped = closure && ends_in_stage(scrutinee);
                     let in_parens = self.cur.wrappers(scrutinee.span.end) > 0;
                     let ctx = Ctx {
-                        keep_parens: piped,
+                        ends_scrutinee: closure,
                         ..Ctx::in_header(Header::Match)
                     };
                     docs.push(self.expr(scrutinee, ctx));

@@ -1,9 +1,8 @@
 -- cmd: fmt
--- The formatter takes every inner body for a possible closure unless
--- its first pattern is a number, a boolean or a range. A text, a pin,
--- alternatives that are numbers, or a guard are no closure's parameters
--- either, so the arm would parse without its braces, and they stay all
--- the same. So this arm has two spellings, each kept as written.
+-- An inner body whose first arm is no closure's parameters and arrow
+-- (a text, a pin, alternatives that are numbers, a guard) is the body of
+-- its match whatever follows it, as the parser reads it: the braces
+-- around such a match go, as for any other expression.
 fn up(x) {
   x
 }
