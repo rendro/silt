@@ -28,7 +28,7 @@ fn main() {
   match postgres.connect(url()) {
     Ok(pool) -> {
       let out: Channel(postgres.PgTx) = channel.new(1)
-      let opened: Channel(postgres.PgCursor) = channel.new(2)
+      let opened: Channel(postgres.PgCursor(json.Value)) = channel.new(2)
       let done = postgres.transact(pool) { tx ->
         channel.send(out, tx)
         let left = postgres.cursor(tx, "SELECT g FROM generate_series(1, 5) AS g", (), 2, json.Value)?

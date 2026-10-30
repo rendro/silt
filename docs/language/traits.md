@@ -384,10 +384,8 @@ Rules:
   impl of a trait of types `_` is an error (see [Traits of Type
   Constructors](#traits-of-type-constructors)).
 - **Arity must match the target.** `trait X for Box(a, b)` on the 1-param
-  `Box(a)` is a type error.
-- **The bare form still works.** `trait X for Box { ... }` is an impl for
-  every `Box(a)`, like `trait X for Box(a)` without a name for `a` —
-  useful when the method bodies never observe the element type.
+  `Box(a)` is a type error, and so is `trait X for Box`: a generic type is
+  written with its type arguments.
 
 In the methods of an impl the header's type variables stand for any
 type, as a function's do (see

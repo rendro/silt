@@ -88,7 +88,7 @@ impl TypeChecker {
             return false;
         };
         // The impl's type variables by the names its header writes
-        // (letters for those of a bare target, which names none).
+        // (letters for those it does not name: a `Tuple` impl's).
         let mut names: Vec<(TyVar, Symbol)> =
             self.impl_var_names.get(&key).cloned().unwrap_or_default();
         let named = !names.is_empty();
@@ -1041,6 +1041,13 @@ impl TypeChecker {
                 via_needs: HashMap::new(),
             },
         );
+        // A generic type among a supertrait's arguments is written with
+        // its own (`trait Sub: Super(Box(Int))`).
+        if let Some(info) = self.tables.traits.get(&key).cloned() {
+            for te in info.supertrait_args.iter().flatten() {
+                self.check_supertrait_arg_parametric_arity(te, &info);
+            }
+        }
     }
 
     /// The signature a default method's body is checked against, once,
@@ -1309,6 +1316,10 @@ impl TypeChecker {
             return false;
         }
         if !constructor {
+            if ti.target_type_args.is_empty() {
+                let shown = Qualifier::written(ti.target_module, ti.target_type);
+                return !self.bare_generic(&shown, written, ti.target_type_span);
+            }
             if holes.is_empty() {
                 return true;
             }
@@ -2716,12 +2727,9 @@ impl TypeChecker {
         // Construct the self_type. Three cases:
         //   1. Bare-target form (`trait X for Int`): target_type_args is
         //      empty. For primitive types, fall through to type_from_name.
-        //      For parameterized user types, synthesize fresh-var args to
-        //      match the record's / enum's arity — otherwise the receiver-
-        //      unify step in dispatch_method_entry would fail with arity
-        //      mismatch when the caller passes a concrete instantiation
-        //      like `Box { value: 42 }` (Generic("Box", [Int])) against a
-        //      zero-arg self_type (Generic("Box", [])).
+        //      A generic type written bare (`trait X for Box`) is refused
+        //      (`impl_header_fits`); what reads such an impl's header
+        //      after sees its type with a fresh variable per parameter.
         //   2. Parameterized user type (`trait X for Box(a)`): resolve
         //      each arg through impl_param_map. Arity enforced against
         //      the record's param_var_ids or the enum's declared params.
@@ -2790,19 +2798,9 @@ impl TypeChecker {
                     .or_else(|| self.tables.enums.get(&written).map(|e| e.params.len()))
                     .unwrap_or(0);
                 if user_arity == 0 {
-                    // Bare builtin-container targets (`trait T for List`,
-                    // Map/Set/Channel) mirror
-                    // `resolve_type_expr`'s bare-name annotation
-                    // semantics: synthesize a fresh var per element slot
-                    // so the self_type unifies with any concrete receiver
-                    // (`List(Int)`, `Map(String, Bool)`, ...), not
-                    // `type_from_name`'s `Generic("List", [])`, which
-                    // unify's catch-all would reject against
-                    // `Type::List(Int)` with the self-contradictory "type
-                    // mismatch: expected List, got List(Int)". The
-                    // fresh vars are per-registration, like the alias /
-                    // user-arity branches: `method_scheme`
-                    // quantifies them, new at each use.
+                    // A refused bare container target (`trait T for
+                    // List`, Map/Set/Channel): a fresh var per element
+                    // slot, as for a generic user type.
                     //
                     // `Fn` and `Tuple` have no one shape: the impl is
                     // for every function, or every tuple, and its self

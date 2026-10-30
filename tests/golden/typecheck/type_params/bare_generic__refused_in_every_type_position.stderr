@@ -1,0 +1,92 @@
+error[type]: `Set` takes 1 type argument here: write `Set(a)`
+ --> bare_generic__refused_in_every_type_position.silt:12:19
+    |
+ 12 | trait Holds: Conv(Set) { fn hold(self) -> Int }
+    |                   ^^^ `Set` takes 1 type argument here: write `Set(a)`
+
+error[type]: `List` takes 1 type argument here: write `List(a)`
+ --> bare_generic__refused_in_every_type_position.silt:13:14
+    |
+ 13 | type R { xs: List }
+    |              ^^^^ `List` takes 1 type argument here: write `List(a)`
+
+error[type]: `Map` takes 2 type arguments here: write `Map(k, v)`
+ --> bare_generic__refused_in_every_type_position.silt:14:12
+    |
+ 14 | type E { A(Map), B(Pair) }
+    |            ^^^ `Map` takes 2 type arguments here: write `Map(k, v)`
+
+error[type]: `Pair` takes 2 type arguments here: write `Pair(k, v)`
+ --> bare_generic__refused_in_every_type_position.silt:14:20
+    |
+ 14 | type E { A(Map), B(Pair) }
+    |                    ^^^^ `Pair` takes 2 type arguments here: write `Pair(k, v)`
+
+error[type]: `Al` takes 1 type argument here: write `Al(a)`
+ --> bare_generic__refused_in_every_type_position.silt:15:10
+    |
+ 15 | type L = Al
+    |          ^^ `Al` takes 1 type argument here: write `Al(a)`
+
+error[type]: `Box` takes 1 type argument here: write `Box(a)`
+ --> bare_generic__refused_in_every_type_position.silt:16:10
+    |
+ 16 | fn f1(b: Box) -> Int { 0 }
+    |          ^^^ `Box` takes 1 type argument here: write `Box(a)`
+
+error[type]: `List` takes 1 type argument here: write `List(a)`
+ --> bare_generic__refused_in_every_type_position.silt:17:19
+    |
+ 17 | fn f2() -> Option(List) { None }
+    |                   ^^^^ `List` takes 1 type argument here: write `List(a)`
+
+error[type]: `Map` takes 2 type arguments here: write `Map(k, v)`
+ --> bare_generic__refused_in_every_type_position.silt:18:10
+    |
+ 18 | fn f3(m: Map()) -> Int { 0 }
+    |          ^^^^^ `Map` takes 2 type arguments here: write `Map(k, v)`
+
+error[type]: `Box` takes 1 type argument here: write `Box(a)`
+ --> bare_generic__refused_in_every_type_position.silt:19:34
+    |
+ 19 | fn f4(x: a) -> Int where a: Conv(Box) { 0 }
+    |                                  ^^^ `Box` takes 1 type argument here: write `Box(a)`
+
+error[type]: `Channel` takes 1 type argument here: write `Channel(a)`
+ --> bare_generic__refused_in_every_type_position.silt:21:10
+    |
+ 21 |   let c: Channel = channel.new(1)
+    |          ^^^^^^^ `Channel` takes 1 type argument here: write `Channel(a)`
+
+error[type]: `Pair` takes 2 type arguments here: write `Pair(k, v)`
+ --> bare_generic__refused_in_every_type_position.silt:22:16
+    |
+ 22 |   let g = { z: Pair -> z }
+    |                ^^^^ `Pair` takes 2 type arguments here: write `Pair(k, v)`
+
+error[type]: `List` takes 1 type argument here: write `List(a)`
+ --> bare_generic__refused_in_every_type_position.silt:23:17
+    |
+ 23 |   let n = [] as List
+    |                 ^^^^ `List` takes 1 type argument here: write `List(a)`
+
+warning[type]: 'c' is never used
+ --> bare_generic__refused_in_every_type_position.silt:21:7
+    |
+ 21 |   let c: Channel = channel.new(1)
+    |       ^ 'c' is never used
+  = help: remove it, or name it `_c`
+
+warning[type]: 'g' is never used
+ --> bare_generic__refused_in_every_type_position.silt:22:7
+    |
+ 22 |   let g = { z: Pair -> z }
+    |       ^ 'g' is never used
+  = help: remove it, or name it `_g`
+
+warning[type]: 'n' is never used
+ --> bare_generic__refused_in_every_type_position.silt:23:7
+    |
+ 23 |   let n = [] as List
+    |       ^ 'n' is never used
+  = help: remove it, or name it `_n`

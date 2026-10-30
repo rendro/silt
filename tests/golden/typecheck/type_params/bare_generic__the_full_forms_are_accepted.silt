@@ -1,0 +1,35 @@
+-- The full forms of every position where a bare generic type is
+-- refused: each type written with its type arguments.
+import channel
+type Box(a) { v: a }
+type Pair(k, v) { k: k, v: v }
+type Al(a) = List(a)
+trait Conv(t) { fn conv(self) -> t }
+trait Holds: Conv(Set(Int)) { fn hold(self) -> Int }
+type R { xs: List(Int) }
+type E { A(Map(String, Int)), B(Pair(Int, Bool)) }
+type L(a) = Al(a)
+trait X { fn x(self) -> Int }
+trait X for Box(a) { fn x(self) -> Int { 1 } }
+trait X for Pair(k, v) { fn x(self) -> Int { 2 } }
+trait X for List(a) { fn x(self) -> Int { 3 } }
+trait X for Map(k, v) { fn x(self) -> Int { 4 } }
+fn f1(b: Box(a)) -> Int { X.x(b) }
+fn f2() -> Option(List(Int)) { Some([1]) }
+fn f3(m: Map(k, v)) -> Int { X.x(m) }
+fn f4(x: a) -> Int where a: Conv(Box(Int)) { 0 }
+fn main() {
+  let c: Channel(Int) = channel.new(1)
+  let g = { z: Pair(Int, Bool) -> X.x(z) }
+  let n = [] as List(Int)
+  let l: L(Int) = [7]
+  println(f1(Box { v: 1 }))
+  println(f2())
+  println(f3(#{"a": 1}))
+  println(g(Pair { k: 1, v: true }))
+  println(X.x(n) + X.x(l))
+  println(channel.try_receive(c))
+  let r = R { xs: [] }
+  println(r.xs)
+  println(E.A(#{}) == E.A(#{}))
+}

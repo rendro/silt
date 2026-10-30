@@ -1,0 +1,18 @@
+-- cmd: check
+-- exit: 1
+-- An impl's header writes its type with its type arguments: a type of
+-- the program, a builtin container, a module's type and an alias.
+import task
+type Box(a) { v: a }
+type Pair(k, v) { k: k, v: v }
+type Al(a) = List(a)
+trait X { fn x(self) -> Int }
+trait X for Box { fn x(self) -> Int { 1 } }
+trait X for Pair { fn x(self) -> Int { 2 } }
+trait X for List { fn x(self) -> Int { 3 } }
+trait X for Map { fn x(self) -> Int { 4 } }
+trait X for task.Handle { fn x(self) -> Int { 5 } }
+trait X for Al { fn x(self) -> Int { 6 } }
+fn main() {
+  println(1)
+}

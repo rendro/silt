@@ -979,7 +979,7 @@ fn test_record_with_list_field() {
     assert_no_errors(
         r#"
 type Bag {
-  items: List,
+  items: List(Int),
   name: String,
 }
 
@@ -996,7 +996,7 @@ fn test_record_with_map_field() {
     assert_no_errors(
         r#"
 type Config {
-  data: Map,
+  data: Map(String, String),
 }
 
 fn main() {
@@ -1012,8 +1012,8 @@ fn test_record_with_list_and_map_fields() {
     assert_no_errors(
         r#"
 type Config {
-  values: Map,
-  errors: List,
+  values: Map(String, Int),
+  errors: List(String),
 }
 
 fn main() {
@@ -1029,7 +1029,7 @@ fn test_record_with_list_field_access() {
     assert_no_errors(
         r#"
 type Bag {
-  items: List,
+  items: List(Int),
 }
 
 fn main() {

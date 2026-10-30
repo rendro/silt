@@ -1,0 +1,35 @@
+error[type]: `Box` takes 1 type argument here: write `Box(a)`
+ --> bare_generic__refused_as_an_impl_target.silt:10:13
+    |
+ 10 | trait X for Box { fn x(self) -> Int { 1 } }
+    |             ^^^ `Box` takes 1 type argument here: write `Box(a)`
+
+error[type]: `Pair` takes 2 type arguments here: write `Pair(k, v)`
+ --> bare_generic__refused_as_an_impl_target.silt:11:13
+    |
+ 11 | trait X for Pair { fn x(self) -> Int { 2 } }
+    |             ^^^^ `Pair` takes 2 type arguments here: write `Pair(k, v)`
+
+error[type]: `List` takes 1 type argument here: write `List(a)`
+ --> bare_generic__refused_as_an_impl_target.silt:12:13
+    |
+ 12 | trait X for List { fn x(self) -> Int { 3 } }
+    |             ^^^^ `List` takes 1 type argument here: write `List(a)`
+
+error[type]: `Map` takes 2 type arguments here: write `Map(k, v)`
+ --> bare_generic__refused_as_an_impl_target.silt:13:13
+    |
+ 13 | trait X for Map { fn x(self) -> Int { 4 } }
+    |             ^^^ `Map` takes 2 type arguments here: write `Map(k, v)`
+
+error[type]: `task.Handle` takes 1 type argument here: write `task.Handle(a)`
+ --> bare_generic__refused_as_an_impl_target.silt:14:18
+    |
+ 14 | trait X for task.Handle { fn x(self) -> Int { 5 } }
+    |                  ^^^^^^ `task.Handle` takes 1 type argument here: write `task.Handle(a)`
+
+error[type]: `Al` takes 1 type argument here: write `Al(a)`
+ --> bare_generic__refused_as_an_impl_target.silt:15:13
+    |
+ 15 | trait X for Al { fn x(self) -> Int { 6 } }
+    |             ^^ `Al` takes 1 type argument here: write `Al(a)`
