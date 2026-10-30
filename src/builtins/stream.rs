@@ -172,10 +172,8 @@ impl Pipe {
     /// failed, this one fails with the same error.
     fn ended(&mut self, index: usize, close: Close) -> Result<Got, VmError> {
         self.open[index] = false;
-        match close.failure {
-            Some(failure) => Err((*failure).clone()),
-            None => Ok(Got::End),
-        }
+        close.raise()?;
+        Ok(Got::End)
     }
 
     /// The pipe is over: its output closes, with the failure if it
@@ -187,7 +185,8 @@ impl Pipe {
         }
         let wake = vm.scheduler().wake();
         if let Some(out) = &self.out {
-            out.close(Close { failure }, wake);
+            let stage = failure.as_ref().and(self.handle.clone());
+            out.close(Close { failure, stage }, wake);
         }
         for (input, open) in self.inputs.iter().zip(&self.open) {
             if *open {
@@ -337,16 +336,16 @@ impl Native for Pipe {
             stop();
         }
         // A stage that failed hands its failure to whoever reads its
-        // output: that reader raises it, so it is not reported as a
-        // failure that nobody joined. A stage that was stopped closes
-        // its output plainly.
+        // output: the first read that raises it handles it. One that no
+        // read raises is reported when the program ends, unless the
+        // reader stopped reading (that cancels the stage, which
+        // dismisses it). A stage that was stopped closes its output
+        // plainly.
         let failure = self.handle.as_ref().and_then(|handle| {
             if handle.is_cancelled() {
                 return None;
             }
-            let error = handle.try_get()?.err()?;
-            handle.mark_joined();
-            Some(Arc::new(error))
+            Some(Arc::new(handle.try_get()?.err()?))
         });
         self.finish(vm, failure);
     }
@@ -372,7 +371,8 @@ fn stage(
     }
     let out = Channel::new(vm.next_channel_id(), capacity);
     let id = vm.next_task_id();
-    let handle = Arc::new(TaskHandle::with_owner(id, vm.scheduler().current_owner()));
+    let handle =
+        Arc::new(TaskHandle::with_owner(id, vm.scheduler().current_owner()).of_stage(name));
     // Whoever reads the output and stops reading stops the stage.
     let scheduler = Arc::downgrade(vm.scheduler());
     let stopped = handle.clone();

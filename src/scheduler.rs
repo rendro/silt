@@ -2556,6 +2556,7 @@ fn report_unjoined_failures(inner: &Inner) -> usize {
         let failure = UnjoinedFailure {
             task_id: handle.id,
             owner: 0,
+            stage: handle.stage(),
             error,
         };
         let d = failure.report_error().to_diagnostic();
@@ -2640,6 +2641,16 @@ fn unjoined_failure_headline(task_id: usize, message: &str) -> String {
     format!("task <handle:{task_id}> failed and was never joined: {message}")
 }
 
+/// What the report of a stream stage's failure that nobody read advises.
+const UNREAD_STAGE_FAILURE_HELP: &str =
+    "read its output, where the failure is raised, or drop the stage if you don't need it";
+
+/// The first line of the report of a stream stage's failure that
+/// nobody read.
+fn unread_stage_failure_headline(stage: &str, message: &str) -> String {
+    format!("a `{stage}` stage failed and its output was never read: {message}")
+}
+
 /// Set once a front end collects the failures that nobody joined. See
 /// `collect_unjoined_failures`.
 static COLLECTING: AtomicBool = AtomicBool::new(false);
@@ -2659,6 +2670,9 @@ pub struct UnjoinedFailure {
     pub task_id: usize,
     /// The owner tag the task was spawned under. See `Vm::set_task_owner`.
     pub owner: u64,
+    /// The name of the stream stage the task ran (`stream.map`): its
+    /// failure was in its output, which nobody read.
+    pub stage: Option<&'static str>,
     /// The error the task ended with, as the task raised it.
     pub error: VmError,
 }
@@ -2669,8 +2683,16 @@ impl UnjoinedFailure {
     /// stack are the task's.
     pub fn report_error(&self) -> VmError {
         let mut error = self.error.clone();
-        error.message = unjoined_failure_headline(self.task_id, &self.error.message);
-        error.with_help(UNJOINED_FAILURE_HELP)
+        match self.stage {
+            Some(stage) => {
+                error.message = unread_stage_failure_headline(stage, &self.error.message);
+                error.with_help(UNREAD_STAGE_FAILURE_HELP)
+            }
+            None => {
+                error.message = unjoined_failure_headline(self.task_id, &self.error.message);
+                error.with_help(UNJOINED_FAILURE_HELP)
+            }
+        }
     }
 }
 
@@ -2730,6 +2752,7 @@ pub fn take_unjoined_failures() -> UnjoinedFailures {
             handle.take_unjoined_failure().map(|error| UnjoinedFailure {
                 task_id: handle.id,
                 owner: handle.owner(),
+                stage: handle.stage(),
                 error,
             })
         })

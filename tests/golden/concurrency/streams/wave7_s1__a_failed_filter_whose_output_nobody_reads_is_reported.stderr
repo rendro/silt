@@ -1,0 +1,6 @@
+error[runtime]: a `stream.filter` stage failed and its output was never read: division by zero
+ --> wave7_s1__a_failed_filter_whose_output_nobody_reads_is_reported.silt:9:40
+   |
+ 9 |   let _out = stream.filter(src) { x -> 10 / (x - 2) > 0 }
+   |                                        ^^^^^^^^^^^^ a `stream.filter` stage failed and its output was never read: division by zero
+  = help: read its output, where the failure is raised, or drop the stage if you don't need it

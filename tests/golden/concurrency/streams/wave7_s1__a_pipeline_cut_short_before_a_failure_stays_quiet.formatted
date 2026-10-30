@@ -1,0 +1,12 @@
+-- exit: 0
+-- repeat: 3
+-- stderr-not-contains: never read
+-- `take` stops reading before the failing value: the stage is stopped,
+-- and its failure, if it had one by then, is not reported.
+import stream
+
+fn main() {
+  let src = stream.from_list([1, 2, 3])
+  let out = stream.map(src) { x -> 10 / (x - 2) }
+  println(out |> stream.take(1) |> stream.collect)
+}

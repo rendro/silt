@@ -1,0 +1,5 @@
+error[runtime]: division by zero
+ --> wave7_s1__a_failure_that_collect_raised_is_not_reported_again.silt:10:36
+    |
+ 10 |   let out = stream.map(src) { x -> 10 / (x - 2) }
+    |                                    ^^^^^^^^^^^^ division by zero

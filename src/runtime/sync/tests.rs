@@ -329,7 +329,13 @@ fn a_close_carries_its_failure_to_every_receiver_and_the_first_close_stands() {
     assert!(d.block(1, recv(&ch)).is_none());
 
     let failure = Some(Arc::new(VmError::new("division by zero".into())));
-    assert!(ch.close(Close { failure }, &d));
+    assert!(ch.close(
+        Close {
+            failure,
+            stage: None
+        },
+        &d
+    ));
     assert!(!ch.close(Close::default(), &d));
 
     let message = |close: Close| close.failure.expect("a failure").message.clone();

@@ -14,15 +14,43 @@ use std::sync::{Arc, OnceLock};
 
 use super::queue::{Waiter, Wakes};
 use super::token::{Fired, Outcome, Token, Wake};
+use crate::runtime::handle::TaskHandle;
 use crate::value::Value;
 use crate::vm::VmError;
 
 /// How a channel was closed.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct Close {
     /// Why, when the producer failed: every receiver that finds the
     /// channel closed and empty gets it.
     pub failure: Option<Arc<VmError>>,
+    /// The task of the stream stage whose failure it is. A read that
+    /// raises the failure handles it ([`Close::raise`]); a failure that
+    /// no read raised is reported when the program ends.
+    pub stage: Option<Arc<TaskHandle>>,
+}
+
+impl std::fmt::Debug for Close {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Close")
+            .field("failure", &self.failure)
+            .field("stage", &self.stage.as_ref().map(|stage| stage.id))
+            .finish()
+    }
+}
+
+impl Close {
+    /// A receive found the channel closed and empty: the failure of the
+    /// stage that fed it, if it failed, which counts as read from now on.
+    pub fn raise(self) -> Result<(), VmError> {
+        if let Some(stage) = &self.stage {
+            stage.mark_joined();
+        }
+        match self.failure {
+            Some(failure) => Err((*failure).clone()),
+            None => Ok(()),
+        }
+    }
 }
 
 /// The result of a send that does not wait.

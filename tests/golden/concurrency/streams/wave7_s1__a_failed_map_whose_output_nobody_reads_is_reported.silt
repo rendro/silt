@@ -1,0 +1,13 @@
+-- exit: 1
+-- repeat: 3
+-- stderr-contains: a `stream.map` stage failed and its output was never read: division by zero
+-- A stage whose function fails, with nobody reading its output, is
+-- reported when the program ends, as a task that failed and was never
+-- joined is, and the run exits with status 1.
+import stream
+
+fn main() {
+  let src = stream.from_list([1, 2, 3])
+  let _out = stream.map(src) { x -> 10 / (x - 2) }
+  println("done")
+}
