@@ -437,30 +437,43 @@ fn do_http_request(
     let agent = client();
 
     // Every method sends the body, with its length; an empty body sends
-    // nothing. ureq's verbs that take no body by default (GET, DELETE,
-    // HEAD, OPTIONS) are made to take one with `force_send_body`.
-    macro_rules! send {
-        ($req:expr) => {{
-            let mut req = $req;
-            for (key, val) in headers {
-                req = req.header(key.as_str(), val.as_str());
-            }
-            if body.is_empty() {
-                req.send_empty()
-            } else {
-                req.send(body)
-            }
-        }};
+    // nothing, not even a length for the methods that take none by
+    // default (GET, DELETE, HEAD, OPTIONS: ureq makes them take one
+    // with `force_send_body`).
+    fn headed<B>(
+        mut req: ureq::RequestBuilder<B>,
+        headers: &[(String, String)],
+    ) -> ureq::RequestBuilder<B> {
+        for (key, val) in headers {
+            req = req.header(key.as_str(), val.as_str());
+        }
+        req
     }
+    let with_body = |req: ureq::RequestBuilder<ureq::typestate::WithBody>| {
+        let req = headed(req, headers);
+        if body.is_empty() {
+            req.send_empty()
+        } else {
+            req.send(body)
+        }
+    };
+    let without_body = |req: ureq::RequestBuilder<ureq::typestate::WithoutBody>| {
+        let req = headed(req, headers);
+        if body.is_empty() {
+            req.call()
+        } else {
+            req.force_send_body().send(body)
+        }
+    };
 
     let result = match method_tag {
-        "POST" => send!(agent.post(url)),
-        "PUT" => send!(agent.put(url)),
-        "PATCH" => send!(agent.patch(url)),
-        "GET" => send!(agent.get(url).force_send_body()),
-        "DELETE" => send!(agent.delete(url).force_send_body()),
-        "HEAD" => send!(agent.head(url).force_send_body()),
-        "OPTIONS" => send!(agent.options(url).force_send_body()),
+        "POST" => with_body(agent.post(url)),
+        "PUT" => with_body(agent.put(url)),
+        "PATCH" => with_body(agent.patch(url)),
+        "GET" => without_body(agent.get(url)),
+        "DELETE" => without_body(agent.delete(url)),
+        "HEAD" => without_body(agent.head(url)),
+        "OPTIONS" => without_body(agent.options(url)),
         other => {
             return Value::variant(
                 bv::ERR,
