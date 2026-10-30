@@ -602,23 +602,23 @@ impl TypeChecker {
                 Pat::Wild
             }
             PatternKind::Int(n) => {
-                self.unify(expected, &Type::Int, span);
+                self.unify(&Type::Int, expected, pattern_span);
                 Pat::IntRange(*n, *n)
             }
             PatternKind::Float(_) => {
-                self.unify(expected, &Type::Float, span);
+                self.unify(&Type::Float, expected, pattern_span);
                 Pat::Lit
             }
             PatternKind::Bool(b) => {
-                self.unify(expected, &Type::Bool, span);
+                self.unify(&Type::Bool, expected, pattern_span);
                 Pat::Ctor(CtorId::Bool(*b), Vec::new())
             }
             PatternKind::StringLit(..) => {
-                self.unify(expected, &Type::String, span);
+                self.unify(&Type::String, expected, pattern_span);
                 Pat::Lit
             }
             PatternKind::Range(lo, hi) => {
-                self.unify(expected, &Type::Int, span);
+                self.unify(&Type::Int, expected, pattern_span);
                 if (*lo, *hi) == (i64::MIN, i64::MAX) {
                     Pat::Wild
                 } else {
@@ -626,14 +626,14 @@ impl TypeChecker {
                 }
             }
             PatternKind::FloatRange(_, _) => {
-                self.unify(expected, &Type::Float, span);
+                self.unify(&Type::Float, expected, pattern_span);
                 Pat::Lit
             }
             PatternKind::Tuple(pats) => {
                 // `()` is the unit pattern: the type of the empty tuple
                 // is `Type::Unit`.
                 if pats.is_empty() {
-                    self.unify(expected, &Type::Unit, span);
+                    self.unify(&Type::Unit, expected, pattern_span);
                     return Pat::Wild;
                 }
                 // A value known to be a tuple of that many elements gives
@@ -644,7 +644,7 @@ impl TypeChecker {
                     Type::Tuple(elems) if elems.len() == pats.len() => elems.clone(),
                     _ => {
                         let fresh: Vec<Type> = pats.iter().map(|_| self.fresh_var()).collect();
-                        self.unify(expected, &Type::Tuple(fresh.clone()), span);
+                        self.unify(&Type::Tuple(fresh.clone()), expected, pattern_span);
                         fresh
                     }
                 };
@@ -664,7 +664,7 @@ impl TypeChecker {
                     _ => {
                         let elem_ty = self.fresh_var();
                         let list_ty = Type::List(Box::new(elem_ty.clone()));
-                        self.unify(expected, &list_ty, span);
+                        self.unify(&list_ty, expected, pattern_span);
                         elem_ty
                     }
                 };
@@ -701,7 +701,7 @@ impl TypeChecker {
                         for (arg, fixed) in args.iter().zip(fixed.iter().flatten()) {
                             self.unify(arg, fixed, span);
                         }
-                        self.unify(expected, &Type::Generic(rec_ref, args), span);
+                        self.unify(&Type::Generic(rec_ref, args), expected, pattern_span);
                         (rec_ref, fields)
                     });
                 if let Some((rec_ref, _)) = &declared
@@ -847,7 +847,7 @@ impl TypeChecker {
                     }
                 }
                 let map_ty = Type::Map(Box::new(Type::String), Box::new(val_ty.clone()));
-                self.unify(expected, &map_ty, span);
+                self.unify(&map_ty, expected, pattern_span);
                 let val_ty = self.apply(&val_ty);
                 for (_key, pat) in entries.iter_mut() {
                     self.type_pattern(pat, &val_ty, env, cx);
@@ -860,7 +860,7 @@ impl TypeChecker {
                 // has outside the pattern. A name the pattern binds
                 // itself (`(x, ^x)`) is not that name.
                 if let Some(pinned_ty) = cx.pins.get(name).cloned().flatten() {
-                    self.unify(expected, &pinned_ty, span);
+                    self.unify(&pinned_ty, expected, pattern_span);
                     // A pin compares as `==` does: the type has `Equal`.
                     self.want(
                         Pred::Trait {
@@ -910,7 +910,7 @@ impl TypeChecker {
                     fields: field_tys.clone(),
                     tail: RowTail::Var(row_var),
                 };
-                self.unify(expected, &anon_ty, span);
+                self.unify(&anon_ty, expected, pattern_span);
                 let mut subs: BTreeMap<Symbol, Pat> = BTreeMap::new();
                 for (fname, _, sub) in fields.iter_mut() {
                     let ft = self.apply(&field_tys[fname]);
@@ -960,7 +960,6 @@ impl TypeChecker {
         env: &mut TypeEnv,
         cx: &mut PatternCx,
     ) -> Pat {
-        let span = cx.span;
         let target = self.ctor_target(pattern);
         if matches!(target, CtorTarget::Silent) {
             self.bind_unresolved(pattern, env);
@@ -1033,7 +1032,7 @@ impl TypeChecker {
             }
             _ => {
                 let fresh: Vec<Type> = enum_info.params.iter().map(|_| self.fresh_var()).collect();
-                self.unify(expected, &Type::Generic(enum_ref, fresh.clone()), span);
+                self.unify(&Type::Generic(enum_ref, fresh.clone()), expected, pattern_span);
                 fresh
             }
         };
