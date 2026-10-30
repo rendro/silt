@@ -1,0 +1,35 @@
+-- cmd: check
+-- exit: 1
+-- A method that makes `Self`, called through a generic type (`Box.mk`) or
+-- passed as a value, is refused where a type variable of the type it
+-- makes is known only by a value's type: the decoder needs it in full.
+import json
+
+trait Mk: json.Decode {
+  fn mk(s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+type Box(a) {
+  v: a,
+}
+
+trait Mk for Box(a) where a: json.Decode {}
+
+fn apply1(f: Fn(x) -> r, x: x) -> r {
+  f(x)
+}
+
+fn called(b: Box(a), s: String) -> Result(Box(a), json.JsonError) where a: json.Decode {
+  let r: Result(Box(a), json.JsonError) = Box.mk(s)
+  r
+}
+
+fn passed(b: Box(a), s: String) -> Result(Box(a), json.JsonError) where a: json.Decode {
+  let r: Result(Box(a), json.JsonError) = apply1(Box.mk, s)
+  r
+}
+
+fn main() {
+  println(called(Box { v: 1 }, "\{\"v\": 9}"))
+  println(passed(Box { v: 1 }, "\{\"v\": 9}"))
+}

@@ -569,6 +569,36 @@ impl TypeChecker {
         }
     }
 
+    /// The type `Self` stands for in `ty`, the type of the use at `span`
+    /// of the method `method` of an impl reached through its type `head`
+    /// (`Box.mk`), if the impl's dictionary carries its type in full: the
+    /// trait's declaration of the method matched against `ty`. The use is
+    /// refused where the body is checked, as a call through the trait is,
+    /// if a type variable in it has no value there.
+    fn full_self(
+        &mut self,
+        head: TypeRef,
+        entry: &MethodEntry,
+        method: Symbol,
+        ty: &Type,
+        span: Span,
+    ) -> Option<Type> {
+        let key = self.entry_impl(head, entry, method)?;
+        if !self.carries_full_type(key) {
+            return None;
+        }
+        let info = self.tables.traits.get(&key.0)?;
+        let self_var = info.self_var;
+        let (_, declared) = info.methods.iter().find(|(n, _)| *n == method)?.clone();
+        let mapping: HashMap<TyVar, Type> = (free_vars_in(&declared).into_iter())
+            .map(|v| (v, self.fresh_var()))
+            .collect();
+        let self_ty = mapping.get(&self_var)?.clone();
+        let _ = self.unify_types(&substitute_vars(&declared, &mapping), ty);
+        (self.full_type_uses).push((self_ty.clone(), key.0, method, span));
+        Some(self_ty)
+    }
+
     /// Refuse the call at `span` of the method `field` of `tr` on a value
     /// of the type `recv` by the impl `key`, if the impl's dictionary
     /// carries its type in full (`Box(Int)`) and a type variable in
@@ -3195,7 +3225,8 @@ impl TypeChecker {
                         let scheme = self.method_scheme(&entry);
                         self.instance_header = self.entry_impl(key.0, &entry, field);
                         let ty = self.instantiate_method(&scheme, field, span);
-                        self.type_method_site(key.0, &entry, field, None, span);
+                        let full = self.full_self(key.0, &entry, field, &ty, span);
+                        self.type_method_site(key.0, &entry, field, full, span);
                         let ty = self.apply(&ty);
                         expr.ty = Some(ty.clone());
                         return ty;
