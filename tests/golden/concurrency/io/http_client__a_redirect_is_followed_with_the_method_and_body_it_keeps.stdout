@@ -1,0 +1,26 @@
+POST /307
+  the handler: POST /echo [abc], without authorization
+  the client:  200 [abc]
+PUT /308
+  the handler: PUT /echo [abc], without authorization
+  the client:  200 [abc]
+DELETE /307
+  the handler: DELETE /echo [abc], without authorization
+  the client:  200 [abc]
+PATCH /a/relative
+  the handler: PATCH /echo [abc], without authorization
+  the client:  200 [abc]
+POST /301
+  the handler: GET /echo [], without authorization
+  the client:  200 []
+PUT /302
+  the handler: GET /echo [], without authorization
+  the client:  200 []
+POST /303
+  the handler: GET /echo [], without authorization
+  the client:  200 []
+HEAD /302
+  the handler: HEAD /echo [], without authorization
+  the client:  200 []
+POST /loop
+  the client: too many redirects

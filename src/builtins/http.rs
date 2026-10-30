@@ -267,8 +267,8 @@ fn http_timeout_err(failure: crate::vm::IoFailure<'_>) -> Value {
 ///   the socket with invalid data, around an error of the TLS library;
 ///   on an `https` URL that is `Tls`.
 /// - Anything else is `Other(why)`: a header name or value of the
-///   program's that is none, a redirect that cannot be followed, too
-///   many redirects, any failure of the socket not named above.
+///   program's that is none, too many redirects, any failure of the
+///   socket not named above.
 #[cfg(feature = "http")]
 fn http_error(error: &ureq::Error, url: &str) -> Value {
     use std::io::ErrorKind;
@@ -423,7 +423,20 @@ fn do_http_get(url: &str) -> Value {
     finish_http_response(client().get(url).call(), url, false)
 }
 
+/// How many redirects `http.request` follows, as ureq does for
+/// `http.get`.
+#[cfg(feature = "http")]
+const REDIRECTS_MAX: usize = 10;
+
 /// Perform a synchronous HTTP request and return a `Value`.
+///
+/// The request follows redirects itself, because ureq does not send a
+/// body again: 301, 302 and 303 go on without a body, as a GET (a
+/// HEAD stays a HEAD), 307 and 308 go on with the same method and body. As
+/// ureq does, a redirect drops the `authorization` and `cookie`
+/// headers. A `content-length` header of the program's is not sent:
+/// the body's own length is (an empty body of a method that takes
+/// none by default has none).
 #[cfg(feature = "http")]
 fn do_http_request(
     method_tag: &str,
@@ -431,23 +444,72 @@ fn do_http_request(
     body: &[u8],
     headers: &[(String, String)],
 ) -> Value {
-    if let Some(refused) = refuse_port(url) {
-        return refused;
+    if !matches!(
+        method_tag,
+        "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS"
+    ) {
+        return Value::variant(
+            bv::ERR,
+            [Value::variant(
+                bv::HTTP_INVALID_URL,
+                [Value::String(
+                    format!("unknown method: {method_tag}").into(),
+                )],
+            )],
+        );
     }
     let agent = client();
+    let mut method = method_tag;
+    let mut url = url.to_string();
+    let mut body = body;
+    let mut headers: Vec<(&str, &str)> = headers
+        .iter()
+        .filter(|(key, _)| !key.eq_ignore_ascii_case("content-length"))
+        .map(|(key, val)| (key.as_str(), val.as_str()))
+        .collect();
+    for _ in 0..=REDIRECTS_MAX {
+        if let Some(refused) = refuse_port(&url) {
+            return refused;
+        }
+        let result = send_request(&agent, method, &url, body, &headers);
+        let Some((status, next)) = result.as_ref().ok().and_then(|r| redirect(r, &url)) else {
+            return finish_http_response(result, &url, method == "HEAD");
+        };
+        if !matches!(status, 307 | 308) {
+            if method != "HEAD" {
+                method = "GET";
+            }
+            body = &[];
+        }
+        headers.retain(|(key, _)| {
+            !key.eq_ignore_ascii_case("authorization") && !key.eq_ignore_ascii_case("cookie")
+        });
+        url = next;
+    }
+    finish_http_response(Err(ureq::Error::TooManyRedirects), &url, false)
+}
 
-    // Every method sends the body, with its length; an empty body sends
-    // nothing, not even a length for the methods that take none by
-    // default (GET, DELETE, HEAD, OPTIONS: ureq makes them take one
-    // with `force_send_body`).
+/// Send one request of `http.request`, following no redirect. Every
+/// method sends the body, with its length; an empty body sends
+/// nothing, not even a length for the methods that take none by
+/// default (GET, DELETE, HEAD, OPTIONS: ureq makes them take one with
+/// `force_send_body`).
+#[cfg(feature = "http")]
+fn send_request(
+    agent: &ureq::Agent,
+    method: &str,
+    url: &str,
+    body: &[u8],
+    headers: &[(&str, &str)],
+) -> Result<ureq::http::Response<ureq::Body>, ureq::Error> {
     fn headed<B>(
         mut req: ureq::RequestBuilder<B>,
-        headers: &[(String, String)],
+        headers: &[(&str, &str)],
     ) -> ureq::RequestBuilder<B> {
         for (key, val) in headers {
-            req = req.header(key.as_str(), val.as_str());
+            req = req.header(*key, *val);
         }
-        req
+        req.config().max_redirects(0).build()
     }
     let with_body = |req: ureq::RequestBuilder<ureq::typestate::WithBody>| {
         let req = headed(req, headers);
@@ -465,27 +527,66 @@ fn do_http_request(
             req.force_send_body().send(body)
         }
     };
-
-    let result = match method_tag {
+    match method {
         "POST" => with_body(agent.post(url)),
         "PUT" => with_body(agent.put(url)),
         "PATCH" => with_body(agent.patch(url)),
         "GET" => without_body(agent.get(url)),
         "DELETE" => without_body(agent.delete(url)),
         "HEAD" => without_body(agent.head(url)),
-        "OPTIONS" => without_body(agent.options(url)),
-        other => {
-            return Value::variant(
-                bv::ERR,
-                [Value::variant(
-                    bv::HTTP_INVALID_URL,
-                    [Value::String(format!("unknown method: {other}").into())],
-                )],
-            );
-        }
-    };
+        _ => without_body(agent.options(url)),
+    }
+}
 
-    finish_http_response(result, url, method_tag == "HEAD")
+/// The status of a redirect and where it goes, `url` being where the
+/// response came from; `None` for any other response, and for a
+/// redirect without a location that is text.
+#[cfg(feature = "http")]
+fn redirect(response: &ureq::http::Response<ureq::Body>, url: &str) -> Option<(u16, String)> {
+    let status = response.status().as_u16();
+    if !matches!(status, 301 | 302 | 303 | 307 | 308) {
+        return None;
+    }
+    let location = response.headers().get("location")?.to_str().ok()?;
+    Some((status, resolve_location(url, location)))
+}
+
+/// `location` resolved against `base`, as ureq resolves the location of
+/// a redirect it follows: a URL with a scheme as it is, a path from the
+/// root on the base's scheme and host, any other path next to the
+/// base's, with its `.` and `..` segments taken away.
+#[cfg(feature = "http")]
+fn resolve_location(base: &str, location: &str) -> String {
+    let has_scheme = location
+        .parse::<ureq::http::Uri>()
+        .is_ok_and(|uri| uri.scheme().is_some());
+    if has_scheme {
+        return location.to_string();
+    }
+    let Ok(uri) = base.parse::<ureq::http::Uri>() else {
+        return location.to_string();
+    };
+    let origin = match (uri.scheme_str(), uri.authority()) {
+        (Some(scheme), Some(authority)) => format!("{scheme}://{authority}"),
+        _ => String::new(),
+    };
+    if location.starts_with('/') {
+        return format!("{origin}{location}");
+    }
+    let mut segments: Vec<&str> = uri.path().split('/').collect();
+    segments.pop();
+    for segment in location.split('/') {
+        match segment {
+            "." => {}
+            ".." => {
+                if segments.len() > 1 {
+                    segments.pop();
+                }
+            }
+            _ => segments.push(segment),
+        }
+    }
+    format!("{origin}{}", segments.join("/"))
 }
 
 // ── The server ──────────────────────────────────────────────────────

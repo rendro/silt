@@ -1,0 +1,37 @@
+-- timeout: 30
+-- requires-feature: http
+-- A `content-length` header of the program's is not sent: the body's
+-- own length is. A GET with an empty body and such a header does not
+-- wait for a body that never comes.
+import bytes
+import http
+import list
+import map
+import result
+import task
+import tcp
+
+fn answer(req: http.Request) -> http.Response {
+  let length = match map.get(req.headers, "content-length") {
+    Some(n) -> n
+    None -> "none"
+  }
+  let body = bytes.to_string(req.body) |> result.unwrap_or("not text")
+  println("  the handler: {req.method} [{body}], content-length {length}")
+  http.Response { status: 200, body: req.body, headers: #{} }
+}
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let url = "http://127.0.0.1:{tcp.local_port(listener)}/"
+  let server = task.spawn { -> http.serve(listener, answer) }
+  let asks = [(http.GET, "", "5"), (http.POST, "abc", "1"), (http.PUT, "abc", "99"), (http.DELETE, "", "0")]
+  list.each(asks) { (method, body, length) ->
+    println("{method} [{body}] with content-length {length}")
+    match http.request(method, url, bytes.from_string(body), #{"Content-Length": length}) {
+      Ok(resp) -> println("  the client:  {resp.status}")
+      Err(e) -> println("  the client: {Error.message(e)}")
+    }
+  }
+  task.cancel(server)
+}
