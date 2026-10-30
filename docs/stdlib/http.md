@@ -95,7 +95,7 @@ always yields a rendered string.
 | `InvalidUrl(url)` | `String` | the URL, as it was written, cannot be read as one, has no host, has a scheme other than `http` and `https`, or names a port that is none (not a number in 1..65535); no connection is made |
 | `InvalidResponse(msg)` | `String` | what the server sent is no HTTP (a status line that is none, a chunk length that is no number, a head that is too large, a body that says it is packed and, though all of it arrived, does not unpack: no bytes at all among them), or its body is larger than 10,000,000 bytes |
 | `ClosedEarly` | — | the server went away before the response was complete, head or body, packed or not |
-| `Other(msg)` | `String` | any other failure: a header name or value of the request that is none, a redirect that cannot be followed, too many redirects |
+| `Other(msg)` | `String` | any other failure: a header name or value of the request that is none, too many redirects |
 
 Which variant a failure is, is decided by the kind of failure the
 transport reports, never by the wording of its message: the message is
@@ -190,7 +190,13 @@ Makes an HTTP request with full control over method, body, and headers. Use this
 The body is sent as it is, with its length: `bytes.from_string("...")` for
 a text, `bytes.empty()` for none. What the bytes are is the request's to
 say, in a `Content-Type` header among `headers`: none is added. A
-`user-agent` among `headers` is sent instead of `silt/<version>`.
+`user-agent` among `headers` is sent instead of `silt/<version>`. A
+`Content-Length` among `headers` is not sent: the body's own length is.
+
+A redirect is followed, up to ten of them: after a 307 or 308 with the
+same method and body, after a 301, 302 or 303 as a `GET` without a body
+(a `HEAD` stays a `HEAD`). The `authorization` and `cookie` headers are
+not sent to where a redirect leads.
 
 Like `http.get`, this transparently yields to the scheduler when called from
 a spawned task.
