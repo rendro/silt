@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: no method 'decode' on type variable `Self`: its bounds (Plain) give none
+-- `Self.decode(v)` in a default method is a method of `json.Decode`:
+-- a trait without it among its supertraits has none.
+import json
+
+trait Plain {
+  fn bad(v: json.Value) -> Result(Self, json.JsonError) {
+    Self.decode(v)
+  }
+}
+
+fn main() {}

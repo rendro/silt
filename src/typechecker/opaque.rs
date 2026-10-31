@@ -130,16 +130,6 @@ impl TypeChecker {
         None
     }
 
-    /// The module of the opaque type of another module that decoding
-    /// `ty` would build by its structure, if there is one.
-    pub(super) fn opaque_decoded_module(&self, ty: &Type) -> Option<crate::session::ModuleId> {
-        let Type::Generic(head, args) = ty else {
-            return None;
-        };
-        let (found, _) = self.opaque_decoded(*head, args, &mut Vec::new(), self.module)?;
-        self.def(found.id.0).map(|def| def.module)
-    }
-
     /// The opaque type of a module other than `viewer`, without a
     /// `json.Encode` impl of it, that encoding `ty` would read by its
     /// structure: `ty` itself, or a type in its parts at any depth.
@@ -226,7 +216,12 @@ impl TypeChecker {
         for var in inside {
             match var {
                 Type::Rigid(_) => {
-                    self.check_builtin_argument(check, &var, (passer, &[]), None, origin)
+                    // (A use judges the decoded type whole: `Box(Set(Int))`.)
+                    let within = matches!(check, crate::types::BuiltinCheck::Decodes { .. })
+                        .then(|| self.apply(ty));
+                    let around = std::mem::replace(&mut self.owing_within, within);
+                    self.check_builtin_argument(check, &var, (passer, &[]), None, origin);
+                    self.owing_within = around;
                 }
                 _ => {
                     let pred = Pred::Builtin {

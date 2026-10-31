@@ -1,0 +1,17 @@
+import json
+
+pub type Box(a) {
+  v: a,
+}
+
+pub trait Mk: json.Decode {
+  fn mk(s: String) -> Result(Self, json.JsonError) {
+    json.parse(s, Self)
+  }
+
+  fn again(self, s: String) -> Result(Self, json.JsonError) {
+    json.parse(s, Self)
+  }
+}
+
+trait Mk for Box(a) where a: json.Decode {}

@@ -382,6 +382,14 @@ impl Native for Each {
             }
         }
     }
+
+    /// It reads no further (its task is cancelled, its time is over,
+    /// or an error passes through it): as a sink of `stream.*` does,
+    /// it stops the stage that feeds the channel, if one does. A
+    /// channel the program made is left to its other readers.
+    fn abandon(&mut self, vm: &mut Vm) {
+        self.ch.abandon(vm.scheduler().wake());
+    }
 }
 
 /// Start `f` as a task of whoever spawns it: the owner of the task

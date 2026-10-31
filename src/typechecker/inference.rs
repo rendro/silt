@@ -789,11 +789,14 @@ impl TypeChecker {
                 // `decode`) has nothing to find it by on a type variable
                 // no value is named: where the code runs, only a `type a`
                 // parameter, or the type a generic type's `decode` is
-                // called at, says what `a` is.
+                // called at, says what `a` is. (`Self` in a trait's
+                // default method is the type of the impl whose
+                // dictionary it runs with.)
                 if let Type::Rigid(r) = &inner
                     && let Some((tr, _)) = (self.bound_methods(*r, field).into_iter())
                         .find(|(tr, _)| !crate::defs::has_dictionary(tr.id))
                     && !self.decode_params.contains(&name)
+                    && !(name == intern("Self") && self.default_body_of.is_some())
                 {
                     // (A variable of an impl's header has no `type a`
                     // parameter to be given by.)
@@ -3505,6 +3508,12 @@ impl TypeChecker {
                     self.var_as_type = Some(name);
                     let resolved = self.resolve_type_descriptor_method(&ty, field, span);
                     self.var_as_type = None;
+                    // (`Self` in a trait's default method is a type held
+                    // where the code runs, as a `type a` is: the method is
+                    // found by it, `Self.decode(v)`.)
+                    if name == intern("Self") && self.default_body_of.is_some() {
+                        obj.ty = Some(Type::type_of(ty));
+                    }
                     let ty = resolved.unwrap_or(Type::Error);
                     expr.ty = Some(ty.clone());
                     return ty;

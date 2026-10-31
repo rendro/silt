@@ -1,0 +1,6 @@
+Ok(Box {v: W {n: 99}})
+Ok(W {n: 99})
+Ok(W {n: 99})
+Ok(Box {v: W {n: 99}})
+Ok(Box {v: 5})
+Err(json type mismatch: expected object, got number)

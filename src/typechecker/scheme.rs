@@ -770,6 +770,21 @@ impl TypeChecker {
                     let owner = owners.get(k).copied().flatten();
                     std::mem::replace(&mut self.instantiating, owner)
                 });
+                // (A `json.Encode` bound whose body hands the value to
+                // another module's definition is that module's to encode.)
+                let around = around.or_else(|| match pred {
+                    Pred::Trait {
+                        tr,
+                        subject: Type::Var(v),
+                        ..
+                    } if tr.is_builtin("Encode") && self.instantiating.is_none() => {
+                        let owner = (self.encode_owner.get(&self.rigid_rep_var(*v)))
+                            .copied()
+                            .flatten();
+                        owner.map(|owner| self.instantiating.replace(owner))
+                    }
+                    _ => None,
+                });
                 // (A predicate decided now may make a use of its own.)
                 self.use_id = match pred {
                     Pred::Given {

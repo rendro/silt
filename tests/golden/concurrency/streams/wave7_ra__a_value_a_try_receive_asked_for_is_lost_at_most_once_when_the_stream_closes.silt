@@ -1,0 +1,30 @@
+-- repeat: 5
+-- `channel.try_receive` finds nothing yet and asks the stage for a
+-- value for a later read. If the stream is closed before that read,
+-- the value the stage took for it is gone: at most one from the
+-- channel the stage reads.
+import channel
+import stream
+
+fn fill(ch, i, n) {
+  match i > n {
+    true -> channel.close(ch)
+    false -> {
+      channel.send(ch, i)
+      fill(ch, i + 1, n)
+    }
+  }
+}
+
+fn main() {
+  let ch = channel.new(100)
+  fill(ch, 1, 100)
+  let s = ch |> stream.map { x -> x }
+  match channel.try_receive(s) {
+    channel.Empty -> println("nothing yet")
+    _ -> println("a value already")
+  }
+  channel.close(s)
+  let left = stream.count(ch)
+  println("at most one gone: {left >= 99}")
+}

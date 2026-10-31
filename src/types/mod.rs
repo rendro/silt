@@ -710,6 +710,27 @@ pub enum Asked {
     /// A declared bound whose body gives its variable to no decoder, as
     /// another module reads it.
     Unknown,
+    /// A declared bound whose body passes its variable on to the decoder
+    /// (the first) through the functions and methods of the second, as
+    /// another module reads it: their names, one after the other, in one
+    /// symbol (`Asked::links`).
+    Through(Symbol, Symbol),
+}
+
+impl Asked {
+    /// The functions and methods of `Through`, each by its name.
+    pub fn links(links: Symbol) -> Vec<Symbol> {
+        (crate::intern::resolve(links).split(' '))
+            .filter(|name| !name.is_empty())
+            .map(crate::intern::intern)
+            .collect()
+    }
+
+    /// `links` as `Through` holds them.
+    pub fn joined(links: &[Symbol]) -> Symbol {
+        let names: Vec<String> = links.iter().map(|l| crate::intern::resolve(*l)).collect();
+        crate::intern::intern(&names.join(" "))
+    }
 }
 
 impl Asker {

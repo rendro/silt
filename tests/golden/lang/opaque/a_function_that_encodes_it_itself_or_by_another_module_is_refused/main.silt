@@ -1,0 +1,26 @@
+-- cmd: check
+-- exit: 1
+-- A function that hands a value of its type variable to the opaque
+-- type's own module and to an encoder of its own, or to a function of a
+-- third module, does not encode the opaque type outside its module.
+import helper
+import json
+import mail
+
+type Box(a) {
+  v: a,
+}
+
+fn both(x: a) -> String where a: json.Encode {
+  let _ = mail.show(Box { v: x })
+  json.stringify(x)
+}
+
+fn third(x: a) -> String where a: json.Encode {
+  helper.show(Box { v: x })
+}
+
+fn main() {
+  println(both(mail.mk("a")))
+  println(third(mail.mk("b")))
+}

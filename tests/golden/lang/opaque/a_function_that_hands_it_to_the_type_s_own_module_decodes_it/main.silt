@@ -1,0 +1,24 @@
+-- A function that hands its `type a` on to a function of the opaque
+-- type's own module, which decodes it (inside a type of the caller's,
+-- `Box(a)`), decodes the opaque type wherever it is called from: the
+-- decoding is the module's. So does a function that passes it on to
+-- such a function.
+import json
+import mail
+
+type Box(a) {
+  v: a,
+}
+
+fn boxed(s: String, type a) -> Result(Box(a), json.JsonError) where a: json.Decode {
+  mail.load(s, Box(a))
+}
+
+fn again(s: String, type a) -> Result(Box(a), json.JsonError) where a: json.Decode {
+  boxed(s, a)
+}
+
+fn main() {
+  println(boxed("\{\"v\": \{\"addr\": \"x\"}}", mail.Email))
+  println(again("\{\"v\": \{\"addr\": \"y\"}}", mail.Email))
+}
