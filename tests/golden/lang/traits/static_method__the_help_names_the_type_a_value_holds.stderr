@@ -1,0 +1,6 @@
+error[type]: type 'type W' has no field 'mk'
+ --> static_method__the_help_names_the_type_a_value_holds.silt:24:15
+    |
+ 24 |   let f = get(W)
+    |               ^ type 'type W' has no field 'mk'
+  = help: `mk` is a method of trait `A` that makes a value: call it on the type, `W.mk()`

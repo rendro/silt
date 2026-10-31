@@ -1,0 +1,25 @@
+-- cmd: check
+-- exit: 1
+-- A map literal whose first value is a function that never returns
+-- types its values by every entry: beside `{ s -> 42 }` they are
+-- `Fn(String) -> Int`, also inside a tuple, so a use of the result as a
+-- String is refused.
+import map
+import string
+
+fn fail(m: String) -> Never {
+  panic(m)
+}
+
+fn main() {
+  let m = #{"a": fail, "b": { s -> 42 }}
+  match map.get(m, "b") {
+    Some(g) -> println(string.length(g("x")))
+    None -> ()
+  }
+  let pairs = #{"a": (fail, 1), "b": ({ s -> 42 }, 2)}
+  match map.get(pairs, "b") {
+    Some((g, _)) -> println(string.length(g("x")))
+    None -> ()
+  }
+}

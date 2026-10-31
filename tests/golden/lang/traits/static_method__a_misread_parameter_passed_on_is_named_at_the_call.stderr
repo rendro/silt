@@ -1,0 +1,41 @@
+error[type]: 'again' takes a type as `y`, not a value of type `Int`: `x.total()` in 'go' reads as the method of trait 'Vals' that makes a value
+ --> static_method__a_misread_parameter_passed_on_is_named_at_the_call.silt:59:17
+    |
+ 59 |   println(again(7))
+    |                 ^ 'again' takes a type as `y`, not a value of type `Int`: `x.total()` in 'go' reads as the method of trait 'Vals' that makes a value
+  = help: pass the type itself: `Int`
+
+error[type]: 'pick_again' takes a record with a field `mk` as `u`, not the type `W`: `t.mk()` in 'pick' can be the method of trait 'A' or of trait 'B', so it is read as a field
+ --> static_method__a_misread_parameter_passed_on_is_named_at_the_call.silt:60:22
+    |
+ 60 |   println(pick_again(W))
+    |                      ^ 'pick_again' takes a record with a field `mk` as `u`, not the type `W`: `t.mk()` in 'pick' can be the method of trait 'A' or of trait 'B', so it is read as a field
+  = help: say which: give 'pick_again' a type parameter with its bound, `fn pick_again(type u) where u: A`
+
+error[type]: 'h' takes a type as `x`, not a value of type `Int`: `x.total()` in 'go' reads as the method of trait 'Vals' that makes a value
+ --> static_method__a_misread_parameter_passed_on_is_named_at_the_call.silt:62:13
+    |
+ 62 |   println(h(7))
+    |             ^ 'h' takes a type as `x`, not a value of type `Int`: `x.total()` in 'go' reads as the method of trait 'Vals' that makes a value
+  = help: pass the type itself: `Int`
+
+error[type]: 'top' takes a type as `x`, not a value of type `Int`: `x.total()` in 'go' reads as the method of trait 'Vals' that makes a value
+ --> static_method__a_misread_parameter_passed_on_is_named_at_the_call.silt:63:15
+    |
+ 63 |   println(top(7))
+    |               ^ 'top' takes a type as `x`, not a value of type `Int`: `x.total()` in 'go' reads as the method of trait 'Vals' that makes a value
+  = help: pass the type itself: `Int`
+
+error[type]: 'go' takes a type as `x`, not a value of type `Int`: `x.total()` in it reads as the method of trait 'Vals' that makes a value
+ --> static_method__a_misread_parameter_passed_on_is_named_at_the_call.silt:64:11
+    |
+ 64 |   println(7 |> go)
+    |           ^^^^^^^ 'go' takes a type as `x`, not a value of type `Int`: `x.total()` in it reads as the method of trait 'Vals' that makes a value
+  = help: pass the type itself: `Int`
+
+error[type]: 'go' takes a type as `x`, not a value of type `Int`: `x.total()` in it reads as the method of trait 'Vals' that makes a value
+ --> static_method__a_misread_parameter_passed_on_is_named_at_the_call.silt:65:25
+    |
+ 65 |   println(list.map([1], go))
+    |                         ^^ 'go' takes a type as `x`, not a value of type `Int`: `x.total()` in it reads as the method of trait 'Vals' that makes a value
+  = help: pass the type itself: `Int`

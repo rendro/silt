@@ -33,10 +33,10 @@ impl TypeChecker {
     // ── Register function declarations ──────────────────────────────
 
     /// The error of a function whose return type has the type variable
-    /// `name` that no parameter's type has and a bound names: written so
-    /// (`fn zero() -> a where a: Monoid`), or inferred so (`fn cx(w) {
-    /// Conv.conv(w) }`, whose `b` the bound `a: Conv(b)` names). Which
-    /// impl the bound means would be what each caller asks of it.
+    /// `name` that no parameter's type has and a bound names, as it is
+    /// written (`fn zero() -> a where a: Monoid`, a trait's method of
+    /// that form). Which impl the bound means would be what each caller
+    /// asks of it. (An inferred one: `return_only_variables`.)
     pub(super) fn return_only_variable(&mut self, name: Symbol, span: Span) {
         let n = resolve(name);
         self.error(
@@ -50,16 +50,17 @@ impl TypeChecker {
     }
 
     /// Hold `scheme`, the inferred type of the function at `span`, to
-    /// the rule its written return type is held to: the error of each
-    /// type variable that its return type has, no parameter's type has
-    /// and a bound names, named as `:type` writes it. One that no bound
+    /// the rule its written return type is held to: an error when its
+    /// return type has a type variable that no parameter's type has and
+    /// a bound names, the function `name` having written no name for it
+    /// (`'mk' returns `H(_)`, ...`). One that no bound
     /// names is general, as `fn e() { [] }` gives every caller the list
     /// it wants; and a return type that is a variable nothing else names
     /// is that of a body that never returns (`panic`, `process.exit`, a
     /// call of itself): `Never`, as the program would write it. A body
     /// that has an error of its own is not judged: its type is not
     /// known.
-    pub(super) fn return_only_variables(&mut self, scheme: &mut Scheme, span: Span) {
+    pub(super) fn return_only_variables(&mut self, scheme: &mut Scheme, name: Symbol, span: Span) {
         let Type::Fun(params, ret) = &scheme.ty else {
             return;
         };
@@ -84,15 +85,38 @@ impl TypeChecker {
             scheme.vars.retain(|var| *var != v);
             return;
         }
-        let letters = scheme.letters();
-        for var in return_only(params, ret) {
-            let bounded = scheme.preds.iter().any(|pred| {
-                matches!(pred, Pred::Trait { .. } | Pred::Via { .. }) && pred.mentions(var)
-            });
-            if bounded && let Some(&name) = letters.get(&var) {
-                self.return_only_variable(name, span);
-            }
-        }
+        // The first such variable, by the first bound that names it:
+        // the function wrote no name for it, so the message shows its
+        // result with `_` for what is not known.
+        let bound = return_only(params, ret).into_iter().find_map(|var| {
+            scheme.preds.iter().find_map(|pred| match pred {
+                Pred::Trait { tr, .. } | Pred::Via { tr, .. } if pred.mentions(var) => Some(*tr),
+                _ => None,
+            })
+        });
+        let Some(tr) = bound else {
+            return;
+        };
+        let shown = self.show_type(ret);
+        let undecided = match **ret {
+            Type::Var(_) => "it".to_string(),
+            _ => "its `_`".to_string(),
+        };
+        let trait_name = self.show_trait(tr);
+        self.error_help(
+            Code::InvalidTypeAnnotation,
+            (
+                format!(
+                    "'{name}' returns `{shown}`, and no parameter decides {undecided}: trait \
+                     '{trait_name}' needs it, and each caller could mean another impl"
+                ),
+                Some(format!(
+                    "annotate '{name}': add a `type` parameter for that type, or take a value \
+                     of it as a parameter"
+                )),
+            ),
+            span,
+        );
     }
 
     /// Read the signature of `f`. A function with a complete signature
@@ -375,7 +399,7 @@ impl TypeChecker {
 /// it, and no parameter of a function type inside `ret` has it either
 /// (`a` of `Fn(String) -> Fn(List(a)) -> List(String)` is the returned
 /// closure's caller's to give).
-fn return_only(params: &[Type], ret: &Type) -> Vec<TyVar> {
+pub(super) fn return_only(params: &[Type], ret: &Type) -> Vec<TyVar> {
     fn results(ty: &Type, given: &mut Vec<TyVar>, out: &mut Vec<TyVar>) {
         match ty {
             Type::Fun(params, ret) => {

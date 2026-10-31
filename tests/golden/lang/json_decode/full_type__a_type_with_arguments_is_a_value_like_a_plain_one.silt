@@ -1,0 +1,50 @@
+-- A type applied to types is the value of that type wherever it stands,
+-- as a type alone is: held by a `let`, in a list, before a dot
+-- (`Box(Int).decode(v)`, `Box(Int).mk(s)`), as an argument; an alias
+-- with arguments too.
+import json
+
+type Box(a) {
+  v: a,
+}
+
+type IntBox = Box(Int)
+
+type Pair(a) = (a, a)
+
+trait Dec: json.Decode {
+  fn mk(s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+trait Dec for Box(a) where a: json.Decode {}
+
+fn go(s: String, type t) -> Result(t, json.JsonError) where t: Dec {
+  t.mk(s)
+}
+
+fn count(xs: List(a)) -> Int {
+  match xs {
+    [] -> 0
+    [_, ..rest] -> 1 + count(rest)
+  }
+}
+
+fn main() {
+  let t = Box(String)
+  println(json.parse("\{\"v\": \"a\"}", t))
+  let u = List(Int)
+  println(json.parse("[1, 2]", u))
+  let v = json.parse("\{\"v\": 3}", json.Value)
+  match v {
+    Ok(value) -> println(Box(Int).decode(value))
+    Err(e) -> println(e)
+  }
+  println(Box(Int).mk("\{\"v\": 4}"))
+  let b = Box(Int)
+  println(go("\{\"v\": 5}", b))
+  let p = Pair(Int)
+  println(json.parse("[1, 2]", p))
+  let m = Map(String, Box(Int))
+  println(json.parse("\{\"k\": \{\"v\": 6}}", m))
+  println(count([Box(Int), IntBox]))
+}

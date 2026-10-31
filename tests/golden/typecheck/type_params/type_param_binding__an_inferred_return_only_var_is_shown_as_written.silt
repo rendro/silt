@@ -1,0 +1,23 @@
+-- cmd: check
+-- exit: 1
+-- An unannotated function whose result holds a type no parameter
+-- decides, which a bound needs, is refused without a type variable the
+-- program never wrote: its result is shown with `_` for that type.
+import json
+
+type H(a) {
+  f: Fn(a) -> String,
+}
+
+fn infer(x) {
+  json.stringify(x)
+}
+
+fn mk() {
+  H { f: infer }
+}
+
+fn main() {
+  let k = mk()
+  println(k.f(1))
+}

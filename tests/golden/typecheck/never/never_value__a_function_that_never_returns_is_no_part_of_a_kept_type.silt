@@ -1,0 +1,56 @@
+-- cmd: check
+-- exit: 1
+-- A function that never returns, taken as a value, gives what its caller
+-- asks, as a closure that calls it does: beside `{ s -> 42 }` it is a
+-- `Fn(String) -> Int`, in either order, in a list, through a generic
+-- function, in the arms of a match, so its result is no `String`.
+import string
+
+fn fail(m: String) -> Never {
+  panic(m)
+}
+
+fn same(a: t, b: t) -> t {
+  b
+}
+
+fn pick(b: Bool) {
+  match b {
+    true -> fail
+    false -> { s -> 42 }
+  }
+}
+
+fn listed() -> Int {
+  let gs = [panic, { s -> 42 }]
+  match gs {
+    [_, g] -> string.length(g("x"))
+    _ -> 0
+  }
+}
+
+fn listed_after() -> Int {
+  let gs = [{ s -> 42 }, fail]
+  match gs {
+    [g, _] -> string.length(g("x"))
+    _ -> 0
+  }
+}
+
+fn through_generic() -> Int {
+  let g = same(fail, { s -> 42 })
+  string.length(g("x"))
+}
+
+fn bad(m: String) -> Never {
+  let g = pick(false)
+  g(m)
+}
+
+fn main() {
+  println(listed())
+  println(listed_after())
+  println(through_generic())
+  let s: String = bad("x")
+  println(s)
+}

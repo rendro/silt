@@ -1,0 +1,13 @@
+error[type]: 'f' takes a type as `x`, not a value of type `Int`: `first(x).total()` in it reads as the method of trait 'Vals' that makes a value
+ --> static_method__a_misread_closure_parameter_is_named_at_the_call.silt:26:13
+    |
+ 26 |   println(f(7))
+    |             ^ 'f' takes a type as `x`, not a value of type `Int`: `first(x).total()` in it reads as the method of trait 'Vals' that makes a value
+  = help: pass the type itself: `Int`
+
+error[type]: 'g' takes a type as `x`, not a value of type `Rec`: `x.total()` in it reads as the method of trait 'Vals' that makes a value
+ --> static_method__a_misread_closure_parameter_is_named_at_the_call.silt:28:13
+    |
+ 28 |   println(g(Rec { total: { -> 1 } }))
+    |             ^^^^^^^^^^^^^^^^^^^^^^^ 'g' takes a type as `x`, not a value of type `Rec`: `x.total()` in it reads as the method of trait 'Vals' that makes a value
+  = help: to call the field `total` of the `Rec`, annotate the parameter: `x: Rec`

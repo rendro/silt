@@ -1,0 +1,20 @@
+-- cmd: check
+-- exit: 1
+-- A loop binding that starts as a function that never returns takes
+-- the type of what `loop(..)` gives it: beside `{ s -> 42 }` it is a
+-- `Fn(String) -> Int`, so a use of its result as a String is refused.
+import string
+
+fn fail(m: String) -> Never {
+  panic(m)
+}
+
+fn main() {
+  let n = loop g = fail, i = 0 {
+    match i {
+      0 -> loop({ s -> 42 }, 1)
+      _ -> string.length(g("x"))
+    }
+  }
+  println(n)
+}

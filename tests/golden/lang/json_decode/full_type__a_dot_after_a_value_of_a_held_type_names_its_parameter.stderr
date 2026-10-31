@@ -1,0 +1,20 @@
+error[type]: type 't' has no field 'show2'
+ --> full_type__a_dot_after_a_value_of_a_held_type_names_its_parameter.silt:30:3
+    |
+ 30 |   t.zero().show2()
+    |   ^^^^^^^^^^^^^^ type 't' has no field 'show2'
+  = help: `show2` is a method of trait `Show2`: call it as `Show2.show2(x)`
+
+error[type]: type 't' has no field 'show2'
+ --> full_type__a_dot_after_a_value_of_a_held_type_names_its_parameter.silt:35:3
+    |
+ 35 |   z.show2()
+    |   ^^^^^^^ type 't' has no field 'show2'
+  = help: `show2` is a method of trait `Show2`: call it as `Show2.show2(z)`
+
+error[type]: type 't' has no field 'show2'
+ --> full_type__a_dot_after_a_value_of_a_held_type_names_its_parameter.silt:39:3
+    |
+ 39 |   t.zero().show2()
+    |   ^^^^^^^^^^^^^^ type 't' has no field 'show2'
+  = help: `show2` is a method of trait `Show2`: call it as `Show2.show2(x)`

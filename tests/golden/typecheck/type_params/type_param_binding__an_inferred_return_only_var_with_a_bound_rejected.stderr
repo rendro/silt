@@ -1,8 +1,9 @@
-error[type]: type variable 'b' in return type is not introduced by any parameter; add a `type b` parameter or anchor it on an existing parameter's type
+error[type]: 'cx' returns `_`, and no parameter decides it: trait 'Conv' needs it, and each caller could mean another impl
  --> type_param_binding__an_inferred_return_only_var_with_a_bound_rejected.silt:13:1
     |
  13 | fn cx(w) { Conv.conv(w) }
-    | ^^^^^^^^^^^^^^^^^^^^^^^^^ type variable 'b' in return type is not introduced by any parameter; add a `type b` parameter or anchor it on an existing parameter's type
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^ 'cx' returns `_`, and no parameter decides it: trait 'Conv' needs it, and each caller could mean another impl
+  = help: annotate 'cx': add a `type` parameter for that type, or take a value of it as a parameter
 
 error[type]: type variable 'b' in return type is not introduced by any parameter; add a `type b` parameter or anchor it on an existing parameter's type
  --> type_param_binding__an_inferred_return_only_var_with_a_bound_rejected.silt:14:1
@@ -10,11 +11,12 @@ error[type]: type variable 'b' in return type is not introduced by any parameter
  14 | fn cx_written(w: t) -> b where t: Conv(b) { Conv.conv(w) }
     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type variable 'b' in return type is not introduced by any parameter; add a `type b` parameter or anchor it on an existing parameter's type
 
-error[type]: type variable 'a' in return type is not introduced by any parameter; add a `type a` parameter or anchor it on an existing parameter's type
+error[type]: 'sorted' returns `List(_)`, and no parameter decides its `_`: trait 'Compare' needs it, and each caller could mean another impl
  --> type_param_binding__an_inferred_return_only_var_with_a_bound_rejected.silt:15:1
     |
  15 | fn sorted() { list.sort([]) }
-    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type variable 'a' in return type is not introduced by any parameter; add a `type a` parameter or anchor it on an existing parameter's type
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ 'sorted' returns `List(_)`, and no parameter decides its `_`: trait 'Compare' needs it, and each caller could mean another impl
+  = help: annotate 'sorted': add a `type` parameter for that type, or take a value of it as a parameter
 
 error[type]: infinite type: the type variable appears inside Fn(_) -> _
  --> type_param_binding__an_inferred_return_only_var_with_a_bound_rejected.silt:16:22

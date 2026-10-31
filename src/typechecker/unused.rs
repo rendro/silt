@@ -57,6 +57,8 @@ pub(crate) struct FnFrame {
     pub(super) owner: Option<FrameOwner>,
     /// Its parameters' types.
     pub(super) params: Vec<Type>,
+    /// Its parameters' names, where a parameter is a name.
+    pub(super) names: Vec<Option<Symbol>>,
 }
 
 /// What names a function or closure where it is defined.
@@ -227,8 +229,53 @@ impl TypeChecker {
         found
     }
 
+    /// The parameters of the enclosing functions and closures whose
+    /// types share a variable with `ty`, with their names.
+    pub(super) fn named_params_sharing(&self, ty: &Type) -> Vec<(Callee, usize, Option<Symbol>)> {
+        let vars = free_vars_in(&self.apply(ty));
+        let mut found = Vec::new();
+        for frame in &self.fn_frames {
+            let Some(callee) = frame.owner.and_then(|owner| self.callee_of(owner)) else {
+                continue;
+            };
+            for (i, param) in frame.params.iter().enumerate() {
+                if free_vars_in(&self.apply(param))
+                    .iter()
+                    .any(|v| vars.contains(v))
+                {
+                    found.push((callee, i, frame.names.get(i).copied().flatten()));
+                }
+            }
+        }
+        found
+    }
+
+    /// What a call's callee names, as `statement_unit` reads it.
+    pub(super) fn callee_named(callee: &Expr) -> Option<Callee> {
+        match (callee.res, &callee.kind) {
+            (Some(crate::defs::Res::Def(id)), _) => Some(Callee::Def(id)),
+            (Some(crate::defs::Res::Local), ExprKind::Ident(name)) => Some(Callee::Local(*name)),
+            _ => None,
+        }
+    }
+
+    /// Let a call of `to` read its parameters as one of `of` does
+    /// (`readings`): `to` is a `let` of `of` (`let h = go`), which `of_name`
+    /// writes, the function the call `x.m(..)` is in.
+    pub(super) fn copy_readings(&mut self, (of, of_name): (Callee, Option<Symbol>), to: Callee) {
+        let copied: Vec<(usize, (Option<Symbol>, super::Reading, Option<Symbol>))> = (self
+            .readings
+            .iter())
+        .filter(|((callee, _), _)| *callee == of)
+        .map(|((_, at), (param, reading, site))| (*at, (*param, reading.clone(), site.or(of_name))))
+        .collect();
+        for (at, reading) in copied {
+            self.readings.insert((to, at), reading);
+        }
+    }
+
     /// What a call names when it calls the function of `owner`.
-    fn callee_of(&self, owner: FrameOwner) -> Option<Callee> {
+    pub(super) fn callee_of(&self, owner: FrameOwner) -> Option<Callee> {
         match owner {
             FrameOwner::Local(name) => Some(Callee::Local(name)),
             FrameOwner::TopLevel(name) => {

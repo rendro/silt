@@ -1,0 +1,46 @@
+-- cmd: check
+-- exit: 1
+-- stderr-not-contains: -> _
+-- stderr-not-contains: anonymous record
+-- A dot after a value of the type a parameter holds (`t.zero().show2()`,
+-- after `t.zero()` made `t` a type) names a field, which the value has
+-- none of: the error names the parameter's type as a `type t` parameter
+-- does, with the help to call the method through its trait.
+trait Zero {
+  fn zero() -> Self
+}
+
+trait Show2 {
+  fn show2(self) -> String
+}
+
+trait Zero for Int {
+  fn zero() -> Self {
+    0
+  }
+}
+
+trait Show2 for Int {
+  fn show2(self) -> String {
+    "I{self}"
+  }
+}
+
+fn chained(t) {
+  t.zero().show2()
+}
+
+fn bound(t) {
+  let z = t.zero()
+  z.show2()
+}
+
+fn written(type t) -> String where t: Zero + Show2 {
+  t.zero().show2()
+}
+
+fn main() {
+  println(chained(Int))
+  println(bound(Int))
+  println(written(Int))
+}
