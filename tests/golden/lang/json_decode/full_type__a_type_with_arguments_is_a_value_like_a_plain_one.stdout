@@ -1,0 +1,8 @@
+Ok(Box {v: a})
+Ok([1, 2])
+Ok(Box {v: 3})
+Ok(Box {v: 4})
+Ok(Box {v: 5})
+Ok((1, 2))
+Ok(#{"k": Box {v: 6}})
+2

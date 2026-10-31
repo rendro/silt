@@ -2853,6 +2853,27 @@ impl TypeChecker {
             expr.ty = Some(Type::Error);
             return Type::Error;
         }
+        // A type applied to types (`Box(Int)`, `List(Int)`) is the value
+        // of that type wherever it stands, as a type alone (`W`) is: in
+        // a `let`, before a dot (`Box(Int).decode(v)`), as an argument.
+        // (A variant named like its type stays the variant here: a type
+        // is meant only where a `type` parameter asks one.)
+        if let ExprKind::Call(callee, _) = &expr.kind
+            && (self.res_def(callee.res)).is_some_and(|def| {
+                matches!(
+                    def.kind,
+                    crate::defs::DefKind::Type(_) | crate::defs::DefKind::TypeAlias
+                )
+            })
+            && let Some(ty) = self.spelled_type(expr, env)
+        {
+            let ty = match ty {
+                Type::Error => Type::Error,
+                ty => Type::type_of(ty),
+            };
+            expr.ty = Some(ty.clone());
+            return ty;
+        }
         let ty = match &mut expr.kind {
             ExprKind::Int(_) => Type::Int,
             ExprKind::Float(_) => Type::Float,
