@@ -1,0 +1,61 @@
+-- An unannotated function that calls a method making a value on what it
+-- is given (`t.mk(s)`) takes a type that owes the method's trait, as one
+-- that hands it to `json.parse` takes a type that owes `json.Decode`:
+-- `go(s, W)` and `go(s, Box(Int))` reach their impls, through a
+-- function that passes the type on and as a value too.
+import json
+import list
+
+type Box(a) {
+  v: a,
+}
+
+type W {
+  n: Int,
+}
+
+trait Dec: json.Decode {
+  fn mk(s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+trait Dec for Box(a) where a: json.Decode {}
+
+trait Dec for W {}
+
+trait Zero {
+  fn zero() -> Self
+}
+
+trait Zero for Int {
+  fn zero() -> Self {
+    0
+  }
+}
+
+trait Zero for String {
+  fn zero() -> Self {
+    "none"
+  }
+}
+
+fn go(s, t) {
+  t.mk(s)
+}
+
+fn again(s, t) {
+  go(s, t)
+}
+
+fn zeros(t, xs) {
+  list.map(xs) { _ -> t.zero() }
+}
+
+fn main() {
+  println(go("\{\"n\": 1}", W))
+  println(go("\{\"v\": 2}", Box(Int)))
+  println(again("\{\"v\": \"b\"}", Box(String)))
+  println(zeros(Int, [1, 2]))
+  println(zeros(String, [1, 2, 3]))
+  let f = go
+  println(f("\{\"n\": 3}", W))
+}

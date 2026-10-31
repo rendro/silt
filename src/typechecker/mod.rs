@@ -94,6 +94,27 @@ pub(super) const WRITABLE_STRUCTURAL_TRAITS: &[&str] = &["Display", "Encode", "D
 
 // ── The type checker ────────────────────────────────────────────────
 
+/// How a call `x.m(..)` on a parameter `x` of an unannotated function
+/// read `x`, for the message of a call that gives it the other kind of
+/// argument.
+#[derive(Debug, Clone)]
+pub(crate) enum Reading {
+    /// A type that has `tr`, the one trait in sight whose method `method`
+    /// makes a value.
+    Type {
+        param: Symbol,
+        tr: TraitKey,
+        method: Symbol,
+    },
+    /// A record with a field `method`: each of `traits` has a method of
+    /// that name that makes a value, and the call does not say which.
+    Field {
+        param: Symbol,
+        traits: Vec<TraitKey>,
+        method: Symbol,
+    },
+}
+
 #[derive(Clone)]
 pub struct TypeChecker {
     /// Accumulated type errors.
@@ -248,6 +269,14 @@ pub struct TypeChecker {
     /// `x.m` and the type of `x` is unknown: `check_call` lets the call
     /// wait (`Goal::Select`).
     pub(super) unknown_receiver: Option<(Type, Symbol)>,
+    /// The function whose body is checked, by its name, and the types of
+    /// its parameters: where `x.m(..)` on a parameter decides how the
+    /// parameter is read (`readings`).
+    pub(super) checking_fn: Option<(Symbol, Vec<Type>)>,
+    /// How `x.m(..)` on a parameter of a function made the parameter be
+    /// read, by the function's name and the parameter's place: what a
+    /// call that gives the parameter the other kind of argument is told.
+    pub(super) readings: HashMap<(Symbol, usize), Reading>,
     /// Spans of `?` uses in the current fn/lambda body. When the
     /// body/return-type unify fails on a Result/Option return that `?`
     /// itself demanded, the diagnostic points back at the `?` site instead
@@ -609,6 +638,8 @@ impl TypeChecker {
             method_values: HashMap::new(),
             method_value_lets: HashMap::new(),
             unknown_receiver: None,
+            checking_fn: None,
+            readings: HashMap::new(),
             current_qmark_spans: Vec::new(),
             qmark_decided: HashMap::new(),
             open_bound_uses: Vec::new(),
@@ -1472,7 +1503,7 @@ impl TypeChecker {
                     && !f.is_recovery_stub
                     && !crate::session::is_cell_name(&resolve(f.name))
                 {
-                    self.return_only_variables(&mut scheme, f.span);
+                    self.return_only_variables(&mut scheme, f.name, f.span);
                 }
                 env.define(f.name, scheme);
             }

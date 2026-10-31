@@ -1,11 +1,12 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: error[type]: type 'Int' has no field 'make'
+-- stderr-contains: error[type]: 'all' takes a type as `x`, not a value of type `Int`: `x.make(..)` in it reads as the method of trait 'Mk' that makes a value
 -- stderr-contains: error[type]: type 'Int' has no field 'join'
--- stderr-contains: :37:15
 -- stderr-contains: :38:15
+-- stderr-contains: :39:15
 -- The same for a receiver whose type is not known where the call is
--- written: it takes a record with the field (it used to check, and fail
+-- written: of a method that makes a value it is a type, of one that
+-- takes a value a record with the field (it used to check, and fail
 -- when run: "function 'Int.make' expects 1 arguments, got 2").
 trait Mk {
   fn make(n: Int) -> Self

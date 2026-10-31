@@ -1391,6 +1391,149 @@ impl TypeChecker {
         self.error_help(Code::UnknownField, (base, help), span);
     }
 
+    /// The traits in sight with a method `field` that makes a value
+    /// (takes none of the type), of a type, not of a type constructor,
+    /// and how many have one of that name that takes a value: `t.field(..)`
+    /// on a `t` still unknown calls the method of the one such trait, if
+    /// it is the only trait with the name.
+    fn value_makers(&self, field: Symbol) -> (Vec<TraitKey>, usize) {
+        let mut traits: Vec<TraitKey> = (self.tables.traits.iter())
+            .filter(|(_, info)| !info.constructor)
+            .filter(|(_, info)| info.methods.iter().any(|(n, _)| *n == field))
+            .map(|(t, _)| *t)
+            .filter(|t| self.sees_trait(*t) && self.private_owner(*t).is_none())
+            .collect();
+        traits.sort_by_key(|t| self.show_trait(*t));
+        let taking = traits.len();
+        traits.retain(|t| self.self_param(*t, field).is_none());
+        let taking = taking - traits.len();
+        (traits, taking)
+    }
+
+    /// Replace the mismatch just reported (the errors from `reported`)
+    /// of the argument at `at`, the `i`th of a call of the function
+    /// `callee`, when a call `x.m(..)` in the function read the parameter
+    /// as the other kind of argument (`readings`): a value given where it
+    /// takes a type, a type given where it takes a record.
+    fn misread_argument(
+        &mut self,
+        callee: &Expr,
+        i: usize,
+        arg_ty: &Type,
+        reported: usize,
+        at: Span,
+    ) {
+        let ExprKind::Ident(function) = callee.kind else {
+            return;
+        };
+        if !(self.res_def(callee.res)).is_some_and(|def| def.kind == crate::defs::DefKind::Fn) {
+            return;
+        }
+        let Some(reading) = self.readings.get(&(function, i)).cloned() else {
+            return;
+        };
+        let given = self.apply(arg_ty);
+        let held = match &given {
+            Type::Generic(name, args) if name.is_builtin(crate::defs::TYPE_OF) => {
+                args.first().cloned()
+            }
+            _ => None,
+        };
+        let has_trait = |this: &Self, tr: TraitKey, ty: &Type| {
+            (this.type_name_for_impl(ty))
+                .is_some_and(|head| !this.impls_fitting(tr, head, Some(ty), &[]).is_empty())
+        };
+        let written_call = |this: &Self, param: Symbol, tr: TraitKey, method: Symbol| {
+            let args = if this.method_arity(tr, method) > 0 {
+                ".."
+            } else {
+                ""
+            };
+            format!("{param}.{method}({args})")
+        };
+        let (message, help) = match (reading, held) {
+            (Reading::Type { param, tr, method }, None) => {
+                let shown = self.show_type(&given);
+                let call = written_call(self, param, tr, method);
+                let trait_name = self.show_trait(tr);
+                let has_field = match &given {
+                    Type::Generic(name, _) => (self.tables.records.get(name))
+                        .is_some_and(|record| record.fields.iter().any(|(n, _)| *n == method)),
+                    _ => false,
+                };
+                let help = if has_trait(self, tr, &given) {
+                    format!("pass the type itself: `{shown}`")
+                } else if has_field {
+                    format!(
+                        "to call the field `{method}` of the `{shown}`, annotate the parameter: \
+                         `fn {function}({param}: {shown})`"
+                    )
+                } else {
+                    format!("pass a type that has trait '{trait_name}'")
+                };
+                (
+                    format!(
+                        "'{function}' takes a type as `{param}`, not a value of type `{shown}`: \
+                         `{call}` in it reads as the method of trait '{trait_name}' that makes a \
+                         value"
+                    ),
+                    help,
+                )
+            }
+            (
+                Reading::Field {
+                    param,
+                    traits,
+                    method,
+                },
+                Some(held),
+            ) => {
+                let shown = self.show_type(&held);
+                let call = written_call(self, param, traits[0], method);
+                let of: Vec<String> = (traits.iter())
+                    .map(|t| format!("trait '{}'", self.show_trait(*t)))
+                    .collect();
+                let bound = (traits.iter().copied())
+                    .find(|t| has_trait(self, *t, &held))
+                    .unwrap_or(traits[0]);
+                (
+                    format!(
+                        "'{function}' takes a record with a field `{method}` as `{param}`, not the \
+                         type `{shown}`: `{call}` in it can be the method of {}, so it is read as a \
+                         field",
+                        of.join(" or of ")
+                    ),
+                    format!(
+                        "say which: give '{function}' a type parameter with its bound, \
+                         `fn {function}(type {param}) where {param}: {}`",
+                        self.show_trait(bound)
+                    ),
+                )
+            }
+            _ => return,
+        };
+        self.errors.truncate(reported);
+        self.error_help(Code::TypeMismatch, (message, Some(help)), at);
+    }
+
+    /// Note how `x.m(..)` read `x`, where `x` is a parameter of the
+    /// function being checked (of its type, not a closure's of the same
+    /// name), for a call of the function that gives it the other kind of
+    /// argument (`check_call`).
+    fn note_reading(&mut self, obj: &Expr, obj_ty: &Type, reading: impl FnOnce(Symbol) -> Reading) {
+        let ExprKind::Ident(name) = obj.kind else {
+            return;
+        };
+        let Some((function, params)) = &self.checking_fn else {
+            return;
+        };
+        let function = *function;
+        let at = (params.iter()).position(|param| self.apply(param) == self.apply(obj_ty));
+        if let Some(at) = at {
+            self.readings.insert((function, at), reading(name));
+        }
+    }
+
     /// How to call the method or function `field` that a dot after a
     /// value of the type `ty`, written `written`, names, if a trait in
     /// sight or a builtin module of the type has one of that name: the
@@ -1431,6 +1574,13 @@ impl TypeChecker {
             }
             let shown = self.spell_trait(tr);
             // (A type variable with the bound is called on as a type.)
+            // A type held as a value (`type W`) is called on as itself.
+            let ty = match ty {
+                Type::Generic(name, args) if name.is_builtin(crate::defs::TYPE_OF) => {
+                    args.first().unwrap_or(ty)
+                }
+                _ => ty,
+            };
             let on = match ty {
                 Type::Rigid(r) => r.name.to_string(),
                 _ => (self.type_name_for_impl(ty))
@@ -1790,12 +1940,14 @@ impl TypeChecker {
 
         // Infer the body and unify with declared return type
         let owner = self.frame_owner.take();
+        let prev_checking = (self.checking_fn).replace((f.name, param_types.clone()));
         self.fn_frames.push(unused::FnFrame {
             owner,
             params: param_types,
         });
         let body_type = self.infer_expr(&mut f.body, env);
         self.fn_frames.pop();
+        self.checking_fn = prev_checking;
         env.pop();
         // A function that returns `Never` never returns: its body does
         // not end (`Never` would unify with what it ends with).
@@ -2617,6 +2769,9 @@ impl TypeChecker {
                         let reported = self.errors.len();
                         self.unify(&arg_ty, param, at);
                         mismatched |= self.errors.len() > reported;
+                        if self.errors.len() > reported {
+                            self.misread_argument(callee, i, &arg_ty, reported, at);
+                        }
                         if let (Some(statement), Some(passed_on)) = (statement, passed_on) {
                             self.name_statement_unit(statement, reported, passed_on);
                         }
@@ -2838,6 +2993,27 @@ impl TypeChecker {
             self.opaque_error(message, module, span);
             expr.ty = Some(Type::Error);
             return Type::Error;
+        }
+        // A type applied to types (`Box(Int)`, `List(Int)`) is the value
+        // of that type wherever it stands, as a type alone (`W`) is: in
+        // a `let`, before a dot (`Box(Int).decode(v)`), as an argument.
+        // (A variant named like its type stays the variant here: a type
+        // is meant only where a `type` parameter asks one.)
+        if let ExprKind::Call(callee, _) = &expr.kind
+            && (self.res_def(callee.res)).is_some_and(|def| {
+                matches!(
+                    def.kind,
+                    crate::defs::DefKind::Type(_) | crate::defs::DefKind::TypeAlias
+                )
+            })
+            && let Some(ty) = self.spelled_type(expr, env)
+        {
+            let ty = match ty {
+                Type::Error => Type::Error,
+                ty => Type::type_of(ty),
+            };
+            expr.ty = Some(ty.clone());
+            return ty;
         }
         let ty = match &mut expr.kind {
             ExprKind::Int(_) => Type::Int,
@@ -3377,7 +3553,35 @@ impl TypeChecker {
                         Type::Error
                     }
                     Type::Var(_) => {
-                        if called {
+                        let (makers, taking) = match called {
+                            true => self.value_makers(field),
+                            false => (Vec::new(), 0),
+                        };
+                        if let ([tr], 0) = (makers.as_slice(), taking) {
+                            // `t.mk(s)` where one trait in sight has a
+                            // method `mk`, which makes a value: `t` is a
+                            // type, which owes the trait, as `json.parse(s,
+                            // t)` makes `t` a type that owes `json.Decode`.
+                            let tr = *tr;
+                            self.note_reading(obj, &obj_ty, |param| Reading::Type {
+                                param,
+                                tr,
+                                method: field,
+                            });
+                            let inner = self.fresh_var();
+                            self.unify(&obj_ty, &Type::type_of(inner.clone()), span);
+                            self.method_trait = Some(tr);
+                            self.through_trait(tr, field, inner, None, span)
+                        } else if called {
+                            // (Of several traits' methods that make a value
+                            // the call does not say which: a field.)
+                            if makers.len() > 1 {
+                                self.note_reading(obj, &obj_ty, |param| Reading::Field {
+                                    param,
+                                    traits: makers,
+                                    method: field,
+                                });
+                            }
                             // `x.f(..)`: what it calls is decided with
                             // the type of `x` (`check_call`).
                             self.unknown_receiver = Some((obj_ty.clone(), field));

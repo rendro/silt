@@ -1,4 +1,4 @@
 Silt REPL (type :quit to exit, :help for commands)
 Fn() -> List(a)
-Fn() -> Never
+Fn() -> a
 []

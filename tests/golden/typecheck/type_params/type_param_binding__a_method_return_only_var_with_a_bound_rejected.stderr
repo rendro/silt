@@ -1,0 +1,11 @@
+error[type]: type variable 'a' in return type is not introduced by any parameter; add a `type a` parameter or anchor it on an existing parameter's type
+ --> type_param_binding__a_method_return_only_var_with_a_bound_rejected.silt:23:3
+    |
+ 23 |   fn make(self) -> Box(a) where a: Zero
+    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type variable 'a' in return type is not introduced by any parameter; add a `type a` parameter or anchor it on an existing parameter's type
+
+error[type]: type variable 'a' in return type is not introduced by any parameter; add a `type a` parameter or anchor it on an existing parameter's type
+ --> type_param_binding__a_method_return_only_var_with_a_bound_rejected.silt:24:3
+    |
+ 24 |   fn shown(self, x: Int) -> a where a: Display
+    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type variable 'a' in return type is not introduced by any parameter; add a `type a` parameter or anchor it on an existing parameter's type

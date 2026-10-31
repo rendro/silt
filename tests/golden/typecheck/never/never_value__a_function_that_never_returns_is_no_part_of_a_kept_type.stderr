@@ -1,0 +1,23 @@
+error[type]: type mismatch: expected String, got Int
+ --> never_value__a_function_that_never_returns_is_no_part_of_a_kept_type.silt:27:29
+    |
+ 27 |     [_, g] -> string.length(g("x"))
+    |                             ^^^^^^ type mismatch: expected String, got Int
+
+error[type]: type mismatch: expected String, got Int
+ --> never_value__a_function_that_never_returns_is_no_part_of_a_kept_type.silt:35:29
+    |
+ 35 |     [g, _] -> string.length(g("x"))
+    |                             ^^^^^^ type mismatch: expected String, got Int
+
+error[type]: type mismatch: expected String, got Int
+ --> never_value__a_function_that_never_returns_is_no_part_of_a_kept_type.silt:42:17
+    |
+ 42 |   string.length(g("x"))
+    |                 ^^^^^^ type mismatch: expected String, got Int
+
+error[type]: 'bad' is declared to return `Never`, but its body can return — end it with 'panic', a call of a function that returns `Never` or a `loop` that never ends
+ --> never_value__a_function_that_never_returns_is_no_part_of_a_kept_type.silt:45:28
+    |
+ 45 | fn bad(m: String) -> Never {
+    |                            ^ 'bad' is declared to return `Never`, but its body can return — end it with 'panic', a call of a function that returns `Never` or a `loop` that never ends

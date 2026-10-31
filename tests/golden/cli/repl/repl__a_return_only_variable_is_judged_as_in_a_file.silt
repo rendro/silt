@@ -1,6 +1,7 @@
 -- cmd: repl
--- stderr-contains: type variable 'b' in return type is not introduced by any parameter
+-- stderr-contains: 'cx' returns `_`, and no parameter decides it: trait 'Conv' needs it
 -- stdin: fn e() { [] }\n:type e\nfn fail() { panic("x") }\n:type fail\ntrait Conv(b) { fn conv(self) -> b }\nfn cx(w) { Conv.conv(w) }\nlet xs: List(Int) = e()\nxs\n:quit\n
 -- In the REPL a function's inferred type is held to the rule a file's is:
--- a return-only variable no bound names is general, a body that never
--- returns gives `Never`, and one a bound names is refused.
+-- a return-only variable no bound names is general, and one a bound
+-- names is refused. (A function that never returns, as the value of an
+-- entry, gives what its user asks: `Fn() -> a`.)

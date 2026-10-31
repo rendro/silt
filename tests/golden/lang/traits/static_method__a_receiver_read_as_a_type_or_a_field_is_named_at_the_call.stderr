@@ -1,0 +1,27 @@
+error[type]: 'r' takes a type as `x`, not a value of type `Rec`: `x.empty()` in it reads as the method of trait 'Monoid' that makes a value
+ --> static_method__a_receiver_read_as_a_type_or_a_field_is_named_at_the_call.silt:48:13
+    |
+ 48 |   println(r(Rec { empty: { -> 5 } }))
+    |             ^^^^^^^^^^^^^^^^^^^^^^^ 'r' takes a type as `x`, not a value of type `Rec`: `x.empty()` in it reads as the method of trait 'Monoid' that makes a value
+  = help: to call the field `empty` of the `Rec`, annotate the parameter: `fn r(x: Rec)`
+
+error[type]: 'r' takes a type as `x`, not a value of type `Int`: `x.empty()` in it reads as the method of trait 'Monoid' that makes a value
+ --> static_method__a_receiver_read_as_a_type_or_a_field_is_named_at_the_call.silt:49:13
+    |
+ 49 |   println(r(7))
+    |             ^ 'r' takes a type as `x`, not a value of type `Int`: `x.empty()` in it reads as the method of trait 'Monoid' that makes a value
+  = help: pass the type itself: `Int`
+
+error[type]: 'r' takes a type as `x`, not a value of type `String`: `x.empty()` in it reads as the method of trait 'Monoid' that makes a value
+ --> static_method__a_receiver_read_as_a_type_or_a_field_is_named_at_the_call.silt:50:13
+    |
+ 50 |   println(r("s"))
+    |             ^^^ 'r' takes a type as `x`, not a value of type `String`: `x.empty()` in it reads as the method of trait 'Monoid' that makes a value
+  = help: pass a type that has trait 'Monoid'
+
+error[type]: 'go' takes a record with a field `mk` as `t`, not the type `W`: `t.mk()` in it can be the method of trait 'A' or of trait 'B', so it is read as a field
+ --> static_method__a_receiver_read_as_a_type_or_a_field_is_named_at_the_call.silt:51:14
+    |
+ 51 |   println(go(W))
+    |              ^ 'go' takes a record with a field `mk` as `t`, not the type `W`: `t.mk()` in it can be the method of trait 'A' or of trait 'B', so it is read as a field
+  = help: say which: give 'go' a type parameter with its bound, `fn go(type t) where t: A`

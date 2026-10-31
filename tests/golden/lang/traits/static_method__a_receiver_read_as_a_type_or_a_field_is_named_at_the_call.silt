@@ -1,0 +1,52 @@
+-- cmd: check
+-- exit: 1
+-- A function whose `x.m()` reads its parameter as a type (one trait in
+-- sight has a method `m` that makes a value) or as a record (several
+-- have one) says so at a call that gives the other kind of argument,
+-- and what to write instead.
+trait Monoid {
+  fn empty() -> Self
+}
+
+trait Monoid for Int {
+  fn empty() -> Self {
+    0
+  }
+}
+
+trait A {
+  fn mk() -> Self
+}
+
+trait B {
+  fn mk() -> Self
+}
+
+type W {
+  n: Int,
+}
+
+trait A for W {
+  fn mk() -> Self {
+    W { n: 1 }
+  }
+}
+
+type Rec {
+  empty: Fn() -> Int,
+}
+
+fn r(x) {
+  x.empty()
+}
+
+fn go(t) {
+  t.mk()
+}
+
+fn main() {
+  println(r(Rec { empty: { -> 5 } }))
+  println(r(7))
+  println(r("s"))
+  println(go(W))
+}
