@@ -1,0 +1,8 @@
+Ok(Email {addr: x})
+Ok(None)
+Ok(Box {v: Email {addr: x}})
+Ok([Email {addr: x}])
+Ok(#{"k": Email {addr: x}})
+Ok((Email {addr: x}, 1))
+Ok([[Email {addr: x}]])
+Ok(Holder {e: [Email {addr: x}]})

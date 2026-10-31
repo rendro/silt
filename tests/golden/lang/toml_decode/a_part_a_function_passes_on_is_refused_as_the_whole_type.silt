@@ -1,0 +1,19 @@
+-- cmd: check
+-- exit: 1
+-- A function that gives its `type a` to `toml.parse` inside a type,
+-- given a type with no decoder, is refused once, with the decoder's error
+-- of the whole type, as `toml.parse(s, Box(Set(Int)))` is.
+import json
+import toml
+
+type Box(a) {
+  v: a,
+}
+
+fn load(s: String, type a) -> Result(Box(a), toml.TomlError) where a: json.Decode {
+  toml.parse(s, Box(a))
+}
+
+fn main() {
+  println(load("v = 1", Set(Int)))
+}

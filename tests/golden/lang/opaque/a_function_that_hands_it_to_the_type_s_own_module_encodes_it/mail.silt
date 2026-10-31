@@ -1,0 +1,18 @@
+import json
+import toml
+
+pub opaque type Email {
+  addr: String,
+}
+
+pub fn mk(addr: String) -> Email {
+  Email { addr: addr }
+}
+
+pub fn show(x: a) -> String where a: json.Encode {
+  json.stringify(x)
+}
+
+pub fn show_toml(x: a) -> Result(String, toml.TomlError) where a: json.Encode {
+  toml.stringify(x)
+}

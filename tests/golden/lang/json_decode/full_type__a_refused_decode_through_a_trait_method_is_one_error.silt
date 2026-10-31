@@ -1,0 +1,47 @@
+-- cmd: check
+-- exit: 1
+-- A decode through a method of a trait that has `json.Decode` among its
+-- supertraits, at a type the decoder refuses (`Box(Set(Int))`), is one
+-- error, the decoder's error of the whole type, as
+-- `json.parse(s, Box(Set(Int)))` gives: through the trait, through a
+-- method value, a list of them, a closure, a function with the bound and
+-- a method that makes `Self`.
+import json
+import set
+
+type Box(a) {
+  v: a,
+}
+
+trait Dec: json.Decode {
+  fn again(self, s: String) -> Result(Self, json.JsonError) {
+    json.parse(s, Self)
+  }
+
+  fn mk(s: String) -> Result(Self, json.JsonError) {
+    json.parse(s, Self)
+  }
+}
+
+trait Dec for Box(a) where a: json.Decode {}
+
+fn go(x: a, s: String) -> Result(a, json.JsonError) where a: Dec {
+  Dec.again(x, s)
+}
+
+fn main() {
+  let b = Box { v: set.from_list([1]) }
+  println(Dec.again(b, "1"))
+  let f = Dec.again
+  println(f(b, "1"))
+  let fs = [Dec.again]
+  match fs {
+    [g] -> println(g(b, "1"))
+    _ -> ()
+  }
+  let h = { x, s -> Dec.again(x, s) }
+  println(h(b, "1"))
+  println(go(b, "1"))
+  let r: Result(Box(Set(Int)), json.JsonError) = Box.mk("1")
+  println(r)
+}

@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- A decode through a method of an impl another module declares, at a
+-- type the decoder refuses, is one error, the decoder's error of the
+-- whole type, as for an impl of the module itself.
+import json
+import set
+import shapes
+
+fn main() {
+  let bad: Fn(String) -> Result(shapes.Box(Set(Int)), json.JsonError) = shapes.Box.mk
+  println(bad("1"))
+  println(shapes.Mk.again(shapes.Box { v: set.from_list([1]) }, "1"))
+}

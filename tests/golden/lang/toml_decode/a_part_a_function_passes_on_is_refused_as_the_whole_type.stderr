@@ -1,0 +1,7 @@
+error[type]: `toml.parse` cannot decode `Box(Set(Int))`: field `v` has type `Set(Int)`, which has no decoder
+ --> a_part_a_function_passes_on_is_refused_as_the_whole_type.silt:18:25
+    |
+ 18 |   println(load("v = 1", Set(Int)))
+    |                         ^^^^^^^^ `toml.parse` cannot decode `Box(Set(Int))`: field `v` has type `Set(Int)`, which has no decoder
+  = note: `load` passes it to `toml.parse`
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these

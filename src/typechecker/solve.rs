@@ -1915,10 +1915,35 @@ impl TypeChecker {
         if matches!(resolved, Type::Error | Type::Never) {
             return;
         }
+        // (What a decoder, or a bound that passes it on, is given, at the
+        // place that gives it.)
+        if Self::is_decode(trait_name) && asker.is_some() {
+            (self.decoded_at.entry(span)).or_insert_with(|| resolved.clone());
+            // (And the module of the definition that decodes it, whose
+            // parts are owed by the same place.)
+            let owner = ev.and_then(|ev| self.owed_for.get(&ev).copied());
+            (self.decoded_owner.entry(span)).or_insert(owner);
+        }
+        // (What is encoded, at the place that gives it, by whose
+        // definition.)
+        let encodes = trait_name.is_builtin("Encode");
+        if encodes {
+            let owner = ev.and_then(|ev| self.owed_for.get(&ev).copied());
+            (self.encoded_owner.entry(span)).or_insert(owner);
+        }
         // An annotation variable implements what its bounds say.
         if let Type::Rigid(r) = resolved {
+            if encodes {
+                let owner = (ev.and_then(|ev| self.owed_for.get(&ev).copied()))
+                    .or_else(|| self.encoded_owner.get(&span).copied().flatten());
+                self.note_encode_owner(r, owner);
+            }
             if Self::is_decode(trait_name) {
                 self.note_bound_asker(r, asker);
+                self.note_bound_within(r, asker, span);
+                let owner = (ev.and_then(|ev| self.owed_for.get(&ev).copied()))
+                    .or_else(|| self.decoded_owner.get(&span).copied().flatten());
+                self.note_bound_owner(r, asker, owner);
             }
             self.ev_set(
                 ev,

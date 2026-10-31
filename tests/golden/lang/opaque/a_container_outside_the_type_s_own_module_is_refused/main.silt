@@ -1,0 +1,20 @@
+-- cmd: check
+-- exit: 1
+-- A list, a map or a tuple of an opaque type is refused outside its
+-- module as the type is: by the decoder, and by a function of another
+-- module that passes it on. A function of the type's own module decodes
+-- the opaque type, not a part beside it that no decoder has.
+import json
+import mail
+
+fn load(s: String, type a) -> Result(a, json.JsonError) where a: json.Decode {
+  json.parse(s, a)
+}
+
+fn main() {
+  println(json.parse("[]", List(mail.Email)))
+  println(load("\{}", Map(String, mail.Email)))
+  println(load("[]", (mail.Email, Int)))
+  println(mail.load("[]", List(Set(Int))))
+  println(mail.load("[]", (mail.Email, Set(Int))))
+}
