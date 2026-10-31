@@ -159,6 +159,14 @@ pub struct TypeChecker {
     /// type (`Box(a)`), which a use that refuses what it gives the
     /// variable names whole.
     pub(super) bound_within: HashMap<TyVar, Type>,
+    /// Of an annotation variable the body hands to a decoder: the module
+    /// of the definition that decodes it, if that is another module's
+    /// on every route (`mail.load(s, Box(a))`: `mail`), whose opaque
+    /// types it decodes wherever it is called from.
+    pub(super) bound_owner: HashMap<TyVar, Option<crate::session::ModuleId>>,
+    /// Of each place of `decoded_at`: the module of the definition the
+    /// type is given to, if another module's.
+    pub(super) decoded_owner: HashMap<Span, Option<crate::session::ModuleId>>,
     /// The variable of each `json.Decode` bound a trait declares for a
     /// method, with the variables it is in the module's impls of the
     /// method: what the trait's bound asks for is what they all ask for.
@@ -599,6 +607,8 @@ impl TypeChecker {
             bound_askers: HashMap::new(),
             decoded_at: HashMap::new(),
             bound_within: HashMap::new(),
+            bound_owner: HashMap::new(),
+            decoded_owner: HashMap::new(),
             bound_impls: HashMap::new(),
             bound_methods: HashMap::new(),
             decode_aliases: HashMap::new(),

@@ -1,0 +1,26 @@
+-- cmd: check
+-- exit: 1
+-- A function that hands its `type a` to the opaque type's own module
+-- and to a decoder of its own, or to a function of a third module, does
+-- not decode the opaque type outside its module.
+import helper
+import json
+import mail
+
+type Box(a) {
+  v: a,
+}
+
+fn both(s: String, type a) -> Result(a, json.JsonError) where a: json.Decode {
+  let _ = mail.load(s, Box(a))
+  json.parse(s, a)
+}
+
+fn third(s: String, type a) -> Result(Box(a), json.JsonError) where a: json.Decode {
+  helper.load(s, Box(a))
+}
+
+fn main() {
+  println(both("\{\"addr\": \"x\"}", mail.Email))
+  println(third("\{\"v\": \{\"addr\": \"x\"}}", mail.Email))
+}

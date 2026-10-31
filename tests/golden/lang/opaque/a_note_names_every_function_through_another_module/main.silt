@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- The note of a refusal names every function that passes the type on,
+-- in another module too: `mail.via` gives it to `helper.load`, which
+-- gives it to `json.parse`.
+import mail
+import secret
+
+fn main() {
+  println(mail.via("[\{\"k\": \"x\"}]", secret.Secret))
+}
