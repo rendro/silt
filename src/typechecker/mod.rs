@@ -1505,7 +1505,7 @@ impl TypeChecker {
         span: Span,
         env: &mut TypeEnv,
     ) -> bool {
-        let is_value = self.is_syntactic_value(value);
+        let mut is_value = self.is_syntactic_value(value);
         if let (PatternKind::Ident(name), ExprKind::Lambda { .. }) = (&pattern.kind, &value.kind) {
             self.frame_owner = Some(unused::FrameOwner::TopLevel(*name));
         }
@@ -1513,7 +1513,13 @@ impl TypeChecker {
         {
             self.method_value_lets.insert(value.span, *name);
         }
+        let selves = self.type_method_selves.len();
         let mut val_ty = self.infer_expr(value, env);
+        // (A dictionary made at a use in the value carries a type in full,
+        // `let top = Box.mk`: the `let` has one type, as in a body.)
+        if self.type_method_selves.len() > selves {
+            is_value = false;
+        }
         if let Some(te) = ty {
             // (A type variable the annotation introduces is rigid; a
             // `let` that generalises is general in it, like a function
