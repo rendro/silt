@@ -1,0 +1,13 @@
+error[type]: `mk` cannot decode `shapes.Box(Set(Int))`: field `v` has type `Set(Int)`, which has no decoder
+ --> main.silt:11:73
+    |
+ 11 |   let bad: Fn(String) -> Result(shapes.Box(Set(Int)), json.JsonError) = shapes.Box.mk
+    |                                                                         ^^^^^^^^^^^^^ `mk` cannot decode `shapes.Box(Set(Int))`: field `v` has type `Set(Int)`, which has no decoder
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `again` cannot decode `shapes.Box(Set(Int))`: field `v` has type `Set(Int)`, which has no decoder
+ --> main.silt:13:11
+    |
+ 13 |   println(shapes.Mk.again(shapes.Box { v: set.from_list([1]) }, "1"))
+    |           ^^^^^^^^^^^^^^^ `again` cannot decode `shapes.Box(Set(Int))`: field `v` has type `Set(Int)`, which has no decoder
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
