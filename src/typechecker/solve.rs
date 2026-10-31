@@ -211,6 +211,7 @@ impl TypeChecker {
                     use_id: self.use_id,
                     taken: false,
                     owner: self.instantiating,
+                    also: self.instantiating_also.clone(),
                 });
                 return None;
             }
@@ -245,6 +246,10 @@ impl TypeChecker {
         self.owing = match &pred {
             Pred::Trait { .. } | Pred::Builtin { .. } => self.instantiating,
             _ => None,
+        };
+        self.owing_also = match &pred {
+            Pred::Trait { .. } | Pred::Builtin { .. } => self.instantiating_also.clone(),
+            _ => Vec::new(),
         };
         let decoder = match &pred {
             Pred::Builtin {
@@ -351,6 +356,10 @@ impl TypeChecker {
         let ev = self.ev_new(super::evidence::EvNode::Pending);
         if let Some(module) = self.owing.take() {
             self.owed_for.insert(self.ev_here(ev), module);
+        }
+        let also = std::mem::take(&mut self.owing_also);
+        if !also.is_empty() {
+            self.owed_also.insert(self.ev_here(ev), also);
         }
         self.wanted.push(Wanted {
             goal,
@@ -768,12 +777,12 @@ impl TypeChecker {
                         let subject = self.apply(&subject);
                         if !matches!(subject, Type::Var(_)) {
                             self.wanted[i].solved = true;
-                            let owner = self.owed_for.get(&self.wanted[i].ev).copied();
+                            let owners = self.owners_at(Some(self.wanted[i].ev));
                             self.check_builtin_argument(
                                 check,
                                 &subject,
                                 (passer, &[]),
-                                owner,
+                                &owners,
                                 origin,
                             );
                             self.note_builtin_outcome(check, &subject, origin.span);
@@ -1921,29 +1930,45 @@ impl TypeChecker {
             (self.decoded_at.entry(span)).or_insert_with(|| resolved.clone());
             // (And the module of the definition that decodes it, whose
             // parts are owed by the same place.)
-            let owner = ev.and_then(|ev| self.owed_for.get(&ev).copied());
-            (self.decoded_owner.entry(span)).or_insert(owner);
+            let owners = self.owners_at(ev);
+            (self.decoded_owner.entry(span)).or_insert(owners);
         }
         // (What is encoded, at the place that gives it, by whose
         // definition.)
         let encodes = trait_name.is_builtin("Encode");
         if encodes {
-            let owner = ev.and_then(|ev| self.owed_for.get(&ev).copied());
-            (self.encoded_owner.entry(span)).or_insert(owner);
+            let owners = self.owners_at(ev);
+            (self.encoded_owner.entry(span)).or_insert(owners);
         }
         // An annotation variable implements what its bounds say.
         if let Type::Rigid(r) = resolved {
             if encodes {
-                let owner = (ev.and_then(|ev| self.owed_for.get(&ev).copied()))
-                    .or_else(|| self.encoded_owner.get(&span).copied().flatten());
-                self.note_encode_owner(r, owner);
+                let mut owner = self.owners_at(ev);
+                if owner.is_empty() {
+                    owner = self.encoded_owner.get(&span).cloned().unwrap_or_default();
+                }
+                let passing = (self.encode_passing)
+                    .or_else(|| ev.and_then(|ev| self.encode_passed.get(&ev).copied()));
+                self.note_owner_route(r, true, (owner, passing), None);
             }
             if Self::is_decode(trait_name) {
+                // (A note names the function the body passes it to as the
+                // call writes it: `helper.load`.)
+                let asker = asker.map(|asker| Asker {
+                    passer: asker.passer.map(|passer| self.passer_at(passer, &origin)),
+                    ..asker
+                });
                 self.note_bound_asker(r, asker);
                 self.note_bound_within(r, asker, span);
-                let owner = (ev.and_then(|ev| self.owed_for.get(&ev).copied()))
-                    .or_else(|| self.decoded_owner.get(&span).copied().flatten());
-                self.note_bound_owner(r, asker, owner);
+                let mut owner = self.owners_at(ev);
+                if owner.is_empty() {
+                    owner = self.decoded_owner.get(&span).cloned().unwrap_or_default();
+                }
+                let passed = match asker.map(|asker| asker.by) {
+                    Some(Asked::Bound(passed)) => Some(passed),
+                    _ => None,
+                };
+                self.note_owner_route(r, false, (owner, passed), asker);
             }
             self.ev_set(
                 ev,
@@ -1974,11 +1999,8 @@ impl TypeChecker {
         // another module by its module's impl alone, unless a definition
         // of that module asks it.
         if self.implies_encode(trait_name)
-            && let Some(refusal) = self.opaque_encode_refusal(
-                &resolved,
-                origin.span,
-                ev.and_then(|ev| self.owed_for.get(&ev).copied()),
-            )
+            && let Some(refusal) =
+                self.opaque_encode_refusal(&resolved, origin.span, &self.owners_at(ev))
         {
             self.refuse_opaque(origin.span, refusal);
             return;
@@ -1987,11 +2009,8 @@ impl TypeChecker {
         // bound of `json.Decode` does: whether the type is decoded is its
         // impl's to say, whether it may be here the use's.)
         if self.implies_decode(trait_name)
-            && let Some(refusal) = self.opaque_decode_refusal(
-                &resolved,
-                origin.span,
-                ev.and_then(|ev| self.owed_for.get(&ev).copied()),
-            )
+            && let Some(refusal) =
+                self.opaque_decode_refusal(&resolved, origin.span, &self.owners_at(ev))
         {
             self.refuse_opaque(origin.span, refusal);
             return;
@@ -2004,8 +2023,8 @@ impl TypeChecker {
             && !self.by_structure(trait_name, type_name)
             && !free_vars_in(&resolved).is_empty()
         {
-            let owner = ev.and_then(|ev| self.owed_for.get(&ev).copied());
-            self.want_decode(&resolved, origin, asker, owner);
+            let owners = self.owners_at(ev);
+            self.want_decode(&resolved, origin, asker, owners);
         }
         // (So is a generic type, at its arguments, by the impl of a trait
         // that has `json.Decode` among its supertraits: `Dec for Box(a)`
@@ -2014,8 +2033,8 @@ impl TypeChecker {
             && self.generic_for_decode(type_name)
             && !self.type_args_of(&resolved).is_empty()
         {
-            let owner = ev.and_then(|ev| self.owed_for.get(&ev).copied());
-            self.want_decode(&resolved, origin, asker, owner);
+            let owners = self.owners_at(ev);
+            self.want_decode(&resolved, origin, asker, owners);
         }
         // Equal, Compare and Hash, and Display where no impl is written,
         // are what the type's structure says.
@@ -2023,7 +2042,7 @@ impl TypeChecker {
             // `json.Decode` is what the json decoder decodes: its own
             // judgement, which names the decoder.
             self.ev_set(ev, super::evidence::EvNode::Structural(trait_name));
-            let owner = ev.and_then(|ev| self.owed_for.get(&ev).copied());
+            let owners = self.owners_at(ev);
             if Self::is_decode(trait_name) {
                 // What a type variable in a decoded list, option, map or
                 // tuple stands for is decoded too.
@@ -2036,15 +2055,24 @@ impl TypeChecker {
                     };
                     self.want(pred, origin);
                 }
-                self.want_decode(&resolved, origin, asker, owner);
+                self.want_decode(&resolved, origin, asker, owners);
                 return;
             }
             // An opaque type of another module is encoded by its module's
             // impl alone, unless a definition of that module asks it.
             if trait_name.is_builtin("Encode")
-                && let Some(refusal) = self.opaque_encode_refusal(&resolved, origin.span, owner)
+                && let Some(refusal) = self.opaque_encode_refusal(&resolved, origin.span, &owners)
             {
-                self.refuse_opaque(origin.span, refusal);
+                // (Handed to a bound of a definition of the module: its
+                // owner, known once the module's bodies are, decides.)
+                let passing = (self.encode_passing)
+                    .or_else(|| ev.and_then(|ev| self.encode_passed.get(&ev).copied()));
+                match passing {
+                    Some(var) if owners.is_empty() => {
+                        (self.encode_deferred).push((resolved.clone(), origin.span, var));
+                    }
+                    _ => self.refuse_opaque(origin.span, refusal),
+                }
                 return;
             }
             let mut walk = Walk::default();

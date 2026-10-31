@@ -13,13 +13,17 @@ impl TypeChecker {
     /// The module of the opaque type `ty` when the module being checked
     /// is another one: it sees the type, not what is in it.
     pub(super) fn opaque_outside(&self, ty: TypeRef) -> Option<Symbol> {
-        self.opaque_outside_of(ty, self.module)
+        self.opaque_outside_of(ty, &[self.module])
     }
 
-    /// The module of the opaque type `ty` when `viewer` is another one.
-    fn opaque_outside_of(&self, ty: TypeRef, viewer: crate::session::ModuleId) -> Option<Symbol> {
+    /// The module of the opaque type `ty` when it is none of `viewers`.
+    fn opaque_outside_of(
+        &self,
+        ty: TypeRef,
+        viewers: &[crate::session::ModuleId],
+    ) -> Option<Symbol> {
         let def = self.def(ty.id.0)?;
-        if def.vis != crate::defs::Vis::Opaque || def.module == viewer {
+        if def.vis != crate::defs::Vis::Opaque || viewers.contains(&def.module) {
             return None;
         }
         self.tables.module_names.get(&def.module).copied()
@@ -45,7 +49,15 @@ impl TypeChecker {
     ) -> Type {
         let module = (self.res_def(res).map(|def| def.module)).filter(|m| *m != self.module);
         let around = std::mem::replace(&mut self.instantiating, module);
+        // (Of another module's definition, or an earlier REPL input's: the
+        // owners of its json bounds.)
+        let owners = match (module, res) {
+            (Some(_), Some(crate::defs::Res::Def(id))) => self.tables.def_owners.get(&id).cloned(),
+            _ => None,
+        };
+        let owners_around = std::mem::replace(&mut self.def_owners_now, owners);
         let ty = self.instantiate(scheme);
+        self.def_owners_now = owners_around;
         self.instantiating = around;
         if let Some(def) = self.res_def(res)
             && def.module != self.module
@@ -95,7 +107,7 @@ impl TypeChecker {
         head: TypeRef,
         args: &[Type],
         seen: &mut Vec<(crate::defs::TypeId, Vec<Type>)>,
-        viewer: crate::session::ModuleId,
+        viewer: &[crate::session::ModuleId],
     ) -> Option<(TypeRef, Symbol)> {
         let instance = (head.id, args.to_vec());
         // (A type that grows with every level is refused as one no
@@ -137,7 +149,7 @@ impl TypeChecker {
         &self,
         ty: &Type,
         seen: &mut HashSet<crate::defs::TypeId>,
-        viewer: crate::session::ModuleId,
+        viewer: &[crate::session::ModuleId],
     ) -> Option<(TypeRef, Symbol)> {
         let encode = TraitKey::builtin("Encode");
         let ty = crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(ty));
@@ -186,7 +198,7 @@ impl TypeChecker {
         check: crate::types::BuiltinCheck,
         ty: &Type,
         passer: Option<Symbol>,
-        owner: Option<crate::session::ModuleId>,
+        owner: &[crate::session::ModuleId],
         origin: super::solve::Origin,
     ) {
         fn walk(ty: &Type, top: bool, out: &mut Vec<Type>) {
@@ -220,7 +232,7 @@ impl TypeChecker {
                     let within = matches!(check, crate::types::BuiltinCheck::Decodes { .. })
                         .then(|| self.apply(ty));
                     let around = std::mem::replace(&mut self.owing_within, within);
-                    self.check_builtin_argument(check, &var, (passer, &[]), None, origin);
+                    self.check_builtin_argument(check, &var, (passer, &[]), owner, origin);
                     self.owing_within = around;
                 }
                 _ => {
@@ -229,9 +241,12 @@ impl TypeChecker {
                         subject: var,
                         passer,
                     };
-                    let around = std::mem::replace(&mut self.instantiating, owner);
+                    let around = std::mem::replace(&mut self.instantiating, owner.first().copied());
+                    let also = owner.get(1..).unwrap_or_default().to_vec();
+                    let also_around = std::mem::replace(&mut self.instantiating_also, also);
                     let _ = self.want(pred, origin);
                     self.instantiating = around;
+                    self.instantiating_also = also_around;
                 }
             }
         }
@@ -247,14 +262,10 @@ impl TypeChecker {
         &self,
         ty: &Type,
         span: Span,
-        owner: Option<crate::session::ModuleId>,
+        owner: &[crate::session::ModuleId],
     ) -> Option<Diagnostic> {
-        let mut found = self.opaque_encoded(ty, &mut HashSet::new(), self.module)?;
-        if let Some(owner) = owner
-            && self
-                .def(found.0.id.0)
-                .is_some_and(|def| def.module == owner)
-        {
+        let mut found = self.opaque_encoded(ty, &mut HashSet::new(), &[self.module])?;
+        if (self.def(found.0.id.0)).is_some_and(|def| owner.contains(&def.module)) {
             found = self.opaque_encoded(ty, &mut HashSet::new(), owner)?;
         }
         let (found, module) = found;
@@ -288,12 +299,12 @@ impl TypeChecker {
     ) -> Option<Diagnostic> {
         let owner = self.def(tr.id.0).map(|def| def.module);
         if self.implies_encode(tr)
-            && let Some(refusal) = self.opaque_encode_refusal(ty, span, owner)
+            && let Some(refusal) = self.opaque_encode_refusal(ty, span, owner.as_slice())
         {
             return Some(refusal);
         }
         match self.implies_decode(tr) {
-            true => self.opaque_decode_refusal(ty, span, owner),
+            true => self.opaque_decode_refusal(ty, span, owner.as_slice()),
             false => None,
         }
     }
@@ -308,18 +319,14 @@ impl TypeChecker {
         &self,
         ty: &Type,
         span: Span,
-        owner: Option<crate::session::ModuleId>,
+        owner: &[crate::session::ModuleId],
     ) -> Option<Diagnostic> {
         let ty = crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(ty));
         let Type::Generic(head, args) = &ty else {
             return None;
         };
-        let mut found = self.opaque_decoded(*head, args, &mut Vec::new(), self.module)?;
-        if let Some(owner) = owner
-            && self
-                .def(found.0.id.0)
-                .is_some_and(|def| def.module == owner)
-        {
+        let mut found = self.opaque_decoded(*head, args, &mut Vec::new(), &[self.module])?;
+        if (self.def(found.0.id.0)).is_some_and(|def| owner.contains(&def.module)) {
             found = self.opaque_decoded(*head, args, &mut Vec::new(), owner)?;
         }
         let (ty, module) = found;

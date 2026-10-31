@@ -1,0 +1,11 @@
+import json
+import mail
+import toml
+
+pub type Box(a) {
+  v: a,
+}
+
+pub fn boxed(s: String, type a) -> Result(Box(a), toml.TomlError) where a: json.Decode {
+  mail.load_toml(s, Box(a))
+}

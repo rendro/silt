@@ -1,0 +1,17 @@
+import helper
+import json
+import mail
+
+pub fn mix(s: String, type a) -> (Result(a, json.JsonError), Result(a, json.JsonError))
+  where
+    a: json.Decode {
+  (mail.load(s, a), helper.read(s, a))
+}
+
+pub fn again(n: Int, s: String, type a) -> Result(a, json.JsonError) where a: json.Decode {
+  match n {
+    0 -> mail.load(s, a)
+    1 -> helper.read(s, a)
+    _ -> again(n - 1, s, a)
+  }
+}

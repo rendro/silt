@@ -1,0 +1,43 @@
+-- A function of the opaque type's own module decodes and encodes it
+-- wherever it is called from: also through two functions of the caller,
+-- whichever is written first, through a function that calls itself, and
+-- from a function written before them.
+import json
+import mail
+
+fn main() {
+  println(outer("\{\"addr\": \"a\"}", mail.Email))
+  println(outer_show(mail.mk("b")))
+  println(again(2, "\{\"addr\": \"c\"}", mail.Email))
+  println(again_show(2, mail.mk("d")))
+}
+
+fn outer(s: String, type a) -> Result(a, json.JsonError) where a: json.Decode {
+  inner(s, a)
+}
+
+fn inner(s: String, type a) -> Result(a, json.JsonError) where a: json.Decode {
+  mail.load(s, a)
+}
+
+fn outer_show(x: a) -> String where a: json.Encode {
+  inner_show(x)
+}
+
+fn inner_show(x: a) -> String where a: json.Encode {
+  mail.show(x)
+}
+
+fn again(n: Int, s: String, type a) -> Result(a, json.JsonError) where a: json.Decode {
+  match n {
+    0 -> mail.load(s, a)
+    _ -> again(n - 1, s, a)
+  }
+}
+
+fn again_show(n: Int, x: a) -> String where a: json.Encode {
+  match n {
+    0 -> mail.show(x)
+    _ -> again_show(n - 1, x)
+  }
+}

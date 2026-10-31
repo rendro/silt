@@ -180,20 +180,34 @@ pub struct TypeChecker {
     /// type (`Box(a)`), which a use that refuses what it gives the
     /// variable names whole.
     pub(super) bound_within: HashMap<TyVar, Type>,
-    /// Of an annotation variable the body hands to a decoder: the module
-    /// of the definition that decodes it, if that is another module's
-    /// on every route (`mail.load(s, Box(a))`: `mail`), whose opaque
-    /// types it decodes wherever it is called from.
-    pub(super) bound_owner: HashMap<TyVar, Option<crate::session::ModuleId>>,
+    /// Of an annotation variable a body hands to a decoder (`false`) or
+    /// an encoder (`true`): each route it takes there (`OwnerRoute`).
+    /// The module of the definition that decodes or encodes it, if that
+    /// is another module's on every route (`mail.load(s, Box(a))`:
+    /// `mail`), decodes or encodes its opaque types wherever it is called
+    /// from (`route_owner`).
+    pub(super) owner_routes: HashMap<(TyVar, bool), Vec<(json_decode::OwnerRoute, Option<Asker>)>>,
+    /// While a use owes the `json.Encode` bound of a definition of the
+    /// module on its variable: that variable, which the use hands the
+    /// type it gives to; and so, by the evidence of what the use owes.
+    pub(super) encode_passing: Option<TyVar>,
+    pub(super) encode_passed: HashMap<evidence::EvRef, TyVar>,
+    /// The opaque encodings refused at a use of such a bound, with the
+    /// variable: decided once the module's bodies are, by its owner.
+    pub(super) encode_deferred: Vec<(Type, Span, TyVar)>,
+    /// While a definition of another module (or an earlier REPL input)
+    /// is instantiated: the owners of each of its `json.Decode` and
+    /// `json.Encode` bounds that has some (`TypeTables::def_owners`).
+    pub(super) def_owners_now: Option<HashMap<(TyVar, bool), Vec<crate::session::ModuleId>>>,
+    /// Of each json bound a scheme takes from its value's uses, by its
+    /// variable: the modules on every route it was owed by (a top-level
+    /// `let`'s `TypeTables::def_owners`).
+    pub(super) scheme_owners: HashMap<(TyVar, bool), Vec<crate::session::ModuleId>>,
     /// Of each place of `decoded_at`: the module of the definition the
     /// type is given to, if another module's.
-    pub(super) decoded_owner: HashMap<Span, Option<crate::session::ModuleId>>,
-    /// As `bound_owner` and `decoded_owner`, of `json.Encode`: the
-    /// module of the definition that encodes an annotation variable's
-    /// type, if another module's on every route, by the variable; and of
-    /// what is encoded at a place, by the place.
-    pub(super) encode_owner: HashMap<TyVar, Option<crate::session::ModuleId>>,
-    pub(super) encoded_owner: HashMap<Span, Option<crate::session::ModuleId>>,
+    pub(super) decoded_owner: HashMap<Span, Vec<crate::session::ModuleId>>,
+    /// As `decoded_owner`, of what is encoded at a place.
+    pub(super) encoded_owner: HashMap<Span, Vec<crate::session::ModuleId>>,
     /// The variable of each `json.Decode` bound a trait declares for a
     /// method, with the variables it is in the module's impls of the
     /// method: what the trait's bound asks for is what they all ask for.
@@ -226,6 +240,10 @@ pub struct TypeChecker {
     /// methods the body passes the variable through to the builtin, the
     /// first first (none where it gives it to the builtin itself).
     pub(super) need_paths: HashMap<(TyVar, Option<Symbol>), Vec<Vec<Symbol>>>,
+    /// Of each of `builtin_needs`, at its place: the modules of the
+    /// definitions of other modules the body gives the variable to, on
+    /// the way to the builtin (`toml.parse` through `mail.load_toml`).
+    pub(super) need_owners: HashMap<(TyVar, Option<Symbol>), Vec<Vec<crate::session::ModuleId>>>,
     /// Of each of `builtin_needs`, at its place: the type the body gives
     /// the decoder with the variable inside it (`Box(a)` of
     /// `json.parse(s, Box(a))`), which a use judges whole.
@@ -551,6 +569,16 @@ pub struct TypeChecker {
     pub(super) owed_for: HashMap<evidence::EvRef, crate::session::ModuleId>,
     /// The module of the predicate being entered, for `owed_for`.
     pub(super) owing: Option<crate::session::ModuleId>,
+    /// With `owing`: the modules of the definitions further down the
+    /// route of the predicate being entered (`owed_also`).
+    pub(super) owing_also: Vec<crate::session::ModuleId>,
+    /// With `instantiating`: the modules whose definitions the bound
+    /// being instantiated hands its type on to, on every route
+    /// (`TypeTables::def_owners`).
+    pub(super) instantiating_also: Vec<crate::session::ModuleId>,
+    /// With `owed_for`: the further modules on the route of a predicate,
+    /// any of which decodes or encodes its own opaque types there.
+    pub(super) owed_also: HashMap<evidence::EvRef, Vec<crate::session::ModuleId>>,
     /// The module of the definition whose type is being instantiated
     /// for a use, while it is: its bounds are that module's.
     pub(super) instantiating: Option<crate::session::ModuleId>,
@@ -646,9 +674,13 @@ impl TypeChecker {
             bound_askers: HashMap::new(),
             decoded_at: HashMap::new(),
             bound_within: HashMap::new(),
-            bound_owner: HashMap::new(),
+            owner_routes: HashMap::new(),
+            encode_passing: None,
+            encode_passed: HashMap::new(),
+            encode_deferred: Vec::new(),
+            def_owners_now: None,
+            scheme_owners: HashMap::new(),
             decoded_owner: HashMap::new(),
-            encode_owner: HashMap::new(),
             encoded_owner: HashMap::new(),
             bound_impls: HashMap::new(),
             bound_methods: HashMap::new(),
@@ -659,6 +691,7 @@ impl TypeChecker {
             row_adds: HashMap::new(),
             builtin_needs: HashMap::new(),
             need_paths: HashMap::new(),
+            need_owners: HashMap::new(),
             need_within: HashMap::new(),
             owing_within: None,
             given_waiting: Vec::new(),
@@ -749,6 +782,9 @@ impl TypeChecker {
             fixed_statements: Vec::new(),
             module: crate::session::ModuleId(0),
             use_owners: HashMap::new(),
+            owing_also: Vec::new(),
+            instantiating_also: Vec::new(),
+            owed_also: HashMap::new(),
             owed_for: HashMap::new(),
             owing: None,
             instantiating: None,
@@ -1979,6 +2015,8 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
     checker.settle_rows();
     checker.settle_builtin_needs();
     checker.settle_decode_gaps();
+    checker.settle_encode_owners();
+    checker.record_def_owners(program, &env);
     checker.drop_errors_of_refused_calls();
     checker.report_private_in_schemes(program, &env);
     checker.report_unknown_let_types(program, &env);

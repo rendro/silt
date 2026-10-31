@@ -88,7 +88,7 @@ impl TypeChecker {
         check: BuiltinCheck,
         subject: &Type,
         (passer, through): (Option<Symbol>, &[Symbol]),
-        owner: Option<crate::session::ModuleId>,
+        owner: &[crate::session::ModuleId],
         origin: Origin,
     ) {
         let ty = canonicalize(self.tables.resolver(), &self.apply(subject));
@@ -100,7 +100,18 @@ impl TypeChecker {
             let needs = needs.or_default();
             if !needs.contains(&check.unwritten()) {
                 needs.push(check.unwritten());
-                self.need_paths.entry(key).or_default().push(Vec::new());
+                // (Given to another module's definition, which gives it to
+                // the builtin: that definition is a link, and its module
+                // decodes its own opaque types there.)
+                let owners: Vec<crate::session::ModuleId> = (owner.iter().copied())
+                    .filter(|module| module.builtin_name().is_none())
+                    .collect();
+                let path = match owners.is_empty() {
+                    true => Vec::new(),
+                    false => passer.into_iter().collect(),
+                };
+                self.need_paths.entry(key).or_default().push(path);
+                self.need_owners.entry(key).or_default().push(owners);
                 let within = self.owing_within.clone();
                 self.need_within.entry(key).or_default().push(within);
             }
@@ -204,7 +215,7 @@ impl TypeChecker {
         decoding: Decoding,
         written: Option<Symbol>,
         ty: &Type,
-        owner: Option<crate::session::ModuleId>,
+        owner: &[crate::session::ModuleId],
         span: Span,
     ) -> Option<Diagnostic> {
         // A list, an option, a map with String keys or a tuple
@@ -462,7 +473,7 @@ impl TypeChecker {
         decoding: Decoding,
         whole: &Type,
         part: &Type,
-        owner: Option<crate::session::ModuleId>,
+        owner: &[crate::session::ModuleId],
         span: Span,
     ) -> Option<Diagnostic> {
         use crate::builtins::registry::decoding::Leaf;

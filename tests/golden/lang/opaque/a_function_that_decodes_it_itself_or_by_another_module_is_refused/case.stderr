@@ -3,7 +3,7 @@ error[type]: type 'mail.Email' cannot be decoded outside module 'mail': it is op
     |
  24 |   println(both("\{\"addr\": \"x\"}", mail.Email))
     |                                      ^^^^^^^^^^ type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
-  = note: `both` passes it to `load`, which passes it to `json.parse`
+  = note: `both` passes it to `json.parse`
   = help: decode it inside module 'mail', or write `trait json.Decode for Email` there
 
 error[type]: type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
@@ -11,5 +11,5 @@ error[type]: type 'mail.Email' cannot be decoded outside module 'mail': it is op
     |
  25 |   println(third("\{\"v\": \{\"addr\": \"x\"}}", mail.Email))
     |                                                 ^^^^^^^^^^ type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
-  = note: `third` passes it to `load`, which passes it to `json.parse`
+  = note: `third` passes it to `helper.load`, which passes it to `json.parse`
   = help: decode it inside module 'mail', or write `trait json.Decode for Email` there

@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- A function of another module that hands its type to the opaque type's
+-- own module and, on another route, to a third module is refused for
+-- that route: the note names it, not the module's route; at the third
+-- module's opaque type, the route through the type's module is the
+-- refused one.
+import mail
+import secret
+import util
+
+fn main() {
+  println(util.mix("\{\"addr\": \"x\"}", mail.Email))
+  println(util.again(1, "\{\"addr\": \"x\"}", mail.Email))
+  println(util.mix("\{\"k\": \"x\"}", secret.Secret))
+}

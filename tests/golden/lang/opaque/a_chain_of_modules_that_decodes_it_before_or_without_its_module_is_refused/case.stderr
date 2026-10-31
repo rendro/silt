@@ -1,0 +1,38 @@
+error[type]: type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+ --> main.silt:13:45
+    |
+ 13 |   println(util.itself("\{\"addr\": \"a\"}", mail.Email))
+    |                                             ^^^^^^^^^^ type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+  = note: `util.itself` passes it to `json.parse`
+  = help: decode it inside module 'mail', or write `trait json.Decode for Email` there
+
+error[type]: type 'mail.Email' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+ --> main.silt:14:29
+    |
+ 14 |   println(util.shown_itself(mail.mk("b")))
+    |                             ^^^^^^^^^^^^ type 'mail.Email' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = help: encode it inside module 'mail', or write `trait json.Encode for Email` there
+
+error[type]: type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+ --> main.silt:15:46
+    |
+ 15 |   println(util.without("\{\"addr\": \"c\"}", mail.Email))
+    |                                              ^^^^^^^^^^ type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+  = note: `util.without` passes it to `helper.read`, which passes it to `json.parse`
+  = help: decode it inside module 'mail', or write `trait json.Decode for Email` there
+
+error[type]: type 'secret.Secret' cannot be decoded outside module 'secret': it is opaque, and 'secret' writes no 'json.Decode' impl for it
+ --> main.silt:16:51
+    |
+ 16 |   println(util.boxed("\{\"v\": \{\"k\": \"d\"}}", secret.Secret))
+    |                                                   ^^^^^^^^^^^^^ type 'secret.Secret' cannot be decoded outside module 'secret': it is opaque, and 'secret' writes no 'json.Decode' impl for it
+  = note: `util.boxed` passes it to `mail.load`, which passes it to `json.parse`
+  = help: decode it inside module 'secret', or write `trait json.Decode for Secret` there
+
+error[type]: type 'secret.Secret' cannot be decoded outside module 'secret': it is opaque, and 'secret' writes no 'json.Decode' impl for it
+ --> main.silt:17:44
+    |
+ 17 |   println(util.listed("[\{\"k\": \"e\"}]", secret.Secret))
+    |                                            ^^^^^^^^^^^^^ type 'secret.Secret' cannot be decoded outside module 'secret': it is opaque, and 'secret' writes no 'json.Decode' impl for it
+  = note: `util.listed` passes it to `mail.via`, which passes it to `helper.read`, which passes it to `json.parse`
+  = help: decode it inside module 'secret', or write `trait json.Decode for Secret` there

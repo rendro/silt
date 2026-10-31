@@ -1,0 +1,10 @@
+import json
+import toml
+
+pub opaque type Email {
+  addr: String,
+}
+
+pub fn load_toml(s: String, type a) -> Result(a, toml.TomlError) where a: json.Decode {
+  toml.parse(s, a)
+}

@@ -1,0 +1,18 @@
+-- cmd: check
+-- exit: 1
+-- A chain of modules decodes or encodes an opaque type outside its module
+-- only through a function of that module on every route: a function of
+-- another module that also decodes or encodes it itself, a chain with no
+-- function of the type's module, and a chain through another opaque
+-- type's module are refused.
+import mail
+import secret
+import util
+
+fn main() {
+  println(util.itself("\{\"addr\": \"a\"}", mail.Email))
+  println(util.shown_itself(mail.mk("b")))
+  println(util.without("\{\"addr\": \"c\"}", mail.Email))
+  println(util.boxed("\{\"v\": \{\"k\": \"d\"}}", secret.Secret))
+  println(util.listed("[\{\"k\": \"e\"}]", secret.Secret))
+}

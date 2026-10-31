@@ -1,0 +1,2 @@
+Ok(main.Box {v: Email {addr: x}})
+Ok(util.Box {v: Email {addr: y}})

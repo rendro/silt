@@ -307,6 +307,32 @@ impl TypeChecker {
                     },
                 };
                 let owner = self.owed_for.get(&self.wanted[i].ev).copied();
+                // (The modules a json bound taken into the scheme reaches,
+                // for a use in another module: `let k = mail.load`.)
+                let json_key = match &pred {
+                    Pred::Trait {
+                        tr,
+                        subject: Type::Var(v),
+                        ..
+                    } if Self::is_decode(*tr) || tr.is_builtin("Encode") => {
+                        Some((*v, tr.is_builtin("Encode")))
+                    }
+                    Pred::Builtin {
+                        check: BuiltinCheck::Decodes { .. },
+                        subject: Type::Var(v),
+                        ..
+                    } => Some((*v, false)),
+                    _ => None,
+                };
+                if let Some(key) = json_key {
+                    let mut found = self.owners_at(Some(self.wanted[i].ev));
+                    found.retain(|module| module.builtin_name().is_none());
+                    let known = self
+                        .scheme_owners
+                        .entry(key)
+                        .or_insert_with(|| found.clone());
+                    known.retain(|module| found.contains(module));
+                }
                 take_pred(&mut preds, &mut owners, pred, owner);
             }
             // A type the scope gives a function's annotation variable,
@@ -770,21 +796,42 @@ impl TypeChecker {
                     let owner = owners.get(k).copied().flatten();
                     std::mem::replace(&mut self.instantiating, owner)
                 });
-                // (A `json.Encode` bound whose body hands the value to
-                // another module's definition is that module's to encode.)
-                let around = around.or_else(|| match pred {
+                // (A `json.Decode` or `json.Encode` bound of another
+                // module's definition whose body hands the type to a third
+                // module's definition is that module's to decode or
+                // encode; one of this module's is decided by its routes.)
+                let json_bound = match pred {
                     Pred::Trait {
                         tr,
                         subject: Type::Var(v),
                         ..
-                    } if tr.is_builtin("Encode") && self.instantiating.is_none() => {
-                        let owner = (self.encode_owner.get(&self.rigid_rep_var(*v)))
-                            .copied()
-                            .flatten();
-                        owner.map(|owner| self.instantiating.replace(owner))
+                    } if Self::is_decode(*tr) || tr.is_builtin("Encode") => {
+                        Some((*v, tr.is_builtin("Encode")))
+                    }
+                    // (What toml's or postgres's decoder asks, of the same
+                    // variable as its `json.Decode` bound.)
+                    Pred::Builtin {
+                        check: crate::types::BuiltinCheck::Decodes { .. },
+                        subject: Type::Var(v),
+                        ..
+                    } => Some((*v, false)),
+                    _ => None,
+                };
+                // (The modules the bound hands its type on to, beside the
+                // definition's own.)
+                let also = json_bound
+                    .and_then(|key| {
+                        (self.def_owners_now.as_ref()).and_then(|owners| owners.get(&key).cloned())
+                    })
+                    .unwrap_or_default();
+                let also_around = std::mem::replace(&mut self.instantiating_also, also);
+                let passing = match json_bound {
+                    Some((v, true)) if owners.is_none() && self.instantiating.is_none() => {
+                        Some(self.rigid_rep_var(v))
                     }
                     _ => None,
-                });
+                };
+                let passing_around = std::mem::replace(&mut self.encode_passing, passing);
                 // (A predicate decided now may make a use of its own.)
                 self.use_id = match pred {
                     Pred::Given {
@@ -803,6 +850,12 @@ impl TypeChecker {
                     _ => use_origin,
                 };
                 let ev = self.want(pred.substitute(&mapping), origin);
+                self.encode_passing = passing_around;
+                self.instantiating_also = also_around;
+                if let (Some(var), Some(ev)) = (passing, ev) {
+                    let ev = self.ev_here(ev);
+                    self.encode_passed.insert(ev, var);
+                }
                 if let Some(around) = around {
                     self.instantiating = around;
                 }

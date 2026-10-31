@@ -1,0 +1,18 @@
+import json
+import mail
+
+pub type Box(a) {
+  v: a,
+}
+
+pub fn boxed(s: String, type a) -> Result(Box(a), json.JsonError) where a: json.Decode {
+  mail.load(s, Box(a))
+}
+
+pub fn shown(x: a) -> String where a: json.Encode {
+  mail.show(Box { v: x })
+}
+
+pub fn listed(s: String, type a) -> Result(List(a), json.JsonError) where a: json.Decode {
+  mail.via(s, a)
+}

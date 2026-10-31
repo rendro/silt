@@ -1,0 +1,22 @@
+import helper
+import json
+
+pub opaque type Email {
+  addr: String,
+}
+
+pub fn mk(addr: String) -> Email {
+  Email { addr: addr }
+}
+
+pub fn load(s: String, type a) -> Result(a, json.JsonError) where a: json.Decode {
+  json.parse(s, a)
+}
+
+pub fn show(x: a) -> String where a: json.Encode {
+  json.stringify(x)
+}
+
+pub fn via(s: String, type a) -> Result(List(a), json.JsonError) where a: json.Decode {
+  helper.read(s, List(a))
+}

@@ -1,0 +1,40 @@
+-- cmd: check
+-- exit: 1
+-- A function that reaches the opaque type's own module on one route and
+-- a decoder or encoder of its own on another, through a second function
+-- or in a call of itself, does not decode or encode it outside its
+-- module.
+import json
+import mail
+
+fn main() {
+  println(outer("\{\"addr\": \"a\"}", mail.Email))
+  println(outer_show(mail.mk("b")))
+  println(again(2, "\{\"addr\": \"c\"}", mail.Email))
+}
+
+fn outer(s: String, type a) -> Result(a, json.JsonError) where a: json.Decode {
+  let _ = mail.load(s, a)
+  inner(s, a)
+}
+
+fn inner(s: String, type a) -> Result(a, json.JsonError) where a: json.Decode {
+  json.parse(s, a)
+}
+
+fn outer_show(x: a) -> String where a: json.Encode {
+  let _ = mail.show(x)
+  inner_show(x)
+}
+
+fn inner_show(x: a) -> String where a: json.Encode {
+  json.stringify(x)
+}
+
+fn again(n: Int, s: String, type a) -> Result(a, json.JsonError) where a: json.Decode {
+  match n {
+    0 -> mail.load(s, a)
+    1 -> json.parse(s, a)
+    _ -> again(n - 1, s, a)
+  }
+}

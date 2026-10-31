@@ -1,0 +1,5 @@
+Ok(Box {v: Email {addr: a}})
+{"v":{"addr":"b"}}
+Ok(Box {v: Email {addr: c}})
+{"v":{"addr":"d"}}
+Ok([Email {addr: e}])

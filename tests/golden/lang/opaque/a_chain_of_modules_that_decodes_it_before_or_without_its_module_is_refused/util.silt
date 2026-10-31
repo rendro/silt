@@ -1,0 +1,29 @@
+import helper
+import json
+import mail
+
+pub type Box(a) {
+  v: a,
+}
+
+pub fn boxed(s: String, type a) -> Result(Box(a), json.JsonError) where a: json.Decode {
+  mail.load(s, Box(a))
+}
+
+pub fn itself(s: String, type a) -> Result(a, json.JsonError) where a: json.Decode {
+  let _ = mail.load(s, a)
+  json.parse(s, a)
+}
+
+pub fn shown_itself(x: a) -> String where a: json.Encode {
+  let _ = mail.show(x)
+  json.stringify(x)
+}
+
+pub fn without(s: String, type a) -> Result(a, json.JsonError) where a: json.Decode {
+  helper.read(s, a)
+}
+
+pub fn listed(s: String, type a) -> Result(List(a), json.JsonError) where a: json.Decode {
+  mail.via(s, a)
+}
