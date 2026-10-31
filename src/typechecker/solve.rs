@@ -1951,6 +1951,12 @@ impl TypeChecker {
                 self.note_owner_route(r, true, (owner, passing), None);
             }
             if Self::is_decode(trait_name) {
+                // (A note names the function the body passes it to as the
+                // call writes it: `helper.load`.)
+                let asker = asker.map(|asker| Asker {
+                    passer: asker.passer.map(|passer| self.passer_at(passer, &origin)),
+                    ..asker
+                });
                 self.note_bound_asker(r, asker);
                 self.note_bound_within(r, asker, span);
                 let mut owner = self.owners_at(ev);
