@@ -1572,6 +1572,21 @@ impl TypeChecker {
         self.error_help(Code::TypeMismatch, (message, Some(help)), at);
     }
 
+    /// Note that the parameter `obj` (a name) holds the type `inner`.
+    fn note_type_holder(&mut self, obj: &Expr, inner: &Type) {
+        if let (ExprKind::Ident(name), Type::Var(v)) = (&obj.kind, self.apply(inner)) {
+            self.type_holders.insert(v, *name);
+        }
+    }
+
+    /// The name of the parameter that holds the type variable `r` as a
+    /// type (`note_type_holder`), if one does.
+    fn type_holder(&self, r: TyVar) -> Option<Symbol> {
+        (self.type_holders.iter())
+            .find(|(held, _)| self.apply(&Type::Var(**held)) == Type::Var(r))
+            .map(|(_, name)| *name)
+    }
+
     /// `ty` as the type of a place that later values join (a map's keys
     /// and values, a loop's binding): a variable resolved to it, so that a
     /// function that never returns, taken first, does not keep `Never` in
@@ -3556,6 +3571,7 @@ impl TypeChecker {
                             method: field,
                         });
                         self.method_trait = Some(tr);
+                        self.note_type_holder(obj, &inner);
                         let ty = self.through_trait(tr, field, inner, None, span);
                         expr.ty = Some(ty.clone());
                         return ty;
@@ -3668,6 +3684,15 @@ impl TypeChecker {
                         );
                         Type::Error
                     }
+                    // A value of the type a parameter holds (`t.zero().show2()`):
+                    // its dot names a field, which it has none of, as for a
+                    // `type t` parameter.
+                    Type::Var(r) if self.type_holder(*r).is_some() => {
+                        let name = self.type_holder(*r).unwrap_or_else(|| intern("_"));
+                        let held = Type::Rigid(RigidId { var: *r, name });
+                        self.no_field(&held, field, Some(obj), &[], span);
+                        Type::Error
+                    }
                     Type::Var(_) => {
                         let (makers, taking) = match called {
                             true => self.value_makers(field),
@@ -3685,6 +3710,7 @@ impl TypeChecker {
                                 method: field,
                             });
                             let inner = self.fresh_var();
+                            self.note_type_holder(obj, &inner);
                             self.unify(&obj_ty, &Type::type_of(inner.clone()), span);
                             self.method_trait = Some(tr);
                             self.through_trait(tr, field, inner, None, span)

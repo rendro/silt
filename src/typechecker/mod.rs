@@ -303,6 +303,10 @@ pub struct TypeChecker {
     /// parameter's name and the function the call `x.m(..)` is in when it
     /// is another one (`go` for `fn again(y) { go(y) }`): what a call that
     /// gives the parameter the other kind of argument is told.
+    /// The type variables a parameter holds as a type, which a call
+    /// `t.zero()` made it (its `Self`), by the parameter's name: a dot
+    /// after a value of such a type is no record's field.
+    pub(super) type_holders: HashMap<TyVar, Symbol>,
     pub(super) readings:
         HashMap<(unused::Callee, usize), (Option<Symbol>, Reading, Option<Symbol>)>,
     /// Spans of `?` uses in the current fn/lambda body. When the
@@ -679,6 +683,7 @@ impl TypeChecker {
             method_value_lets: HashMap::new(),
             unknown_receiver: None,
             readings: HashMap::new(),
+            type_holders: HashMap::new(),
             current_qmark_spans: Vec::new(),
             qmark_decided: HashMap::new(),
             open_bound_uses: Vec::new(),
