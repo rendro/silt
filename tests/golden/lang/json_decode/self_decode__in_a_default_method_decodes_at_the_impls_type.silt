@@ -1,0 +1,60 @@
+-- `Self.decode(v)` in a default method of a trait that has `json.Decode`
+-- among its supertraits decodes at the type of the impl the method runs
+-- with, as `json.decode(v, Self)` does: a written impl (`W`), a generic
+-- type at its arguments (`Box(W)`, `Box(Int)`), inside a closure, through
+-- a supertrait of a supertrait and through a `type a` with the bound.
+import json
+
+type Box(a) {
+  v: a,
+}
+
+type W {
+  n: Int,
+}
+
+trait json.Decode for W {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    Ok(W { n: 99 })
+  }
+}
+
+trait Dec: json.Decode {
+  fn by_self(v: json.Value) -> Result(Self, json.JsonError) {
+    Self.decode(v)
+  }
+
+  fn in_closure(v: json.Value) -> Result(Self, json.JsonError) {
+    let f = { x -> Self.decode(x) }
+    f(v)
+  }
+}
+
+trait Deeper: Dec {
+  fn deeper(v: json.Value) -> Result(Self, json.JsonError) {
+    Self.decode(v)
+  }
+}
+
+trait Dec for Box(a) where a: json.Decode {}
+
+trait Dec for W {}
+
+trait Deeper for Box(a) where a: json.Decode {}
+
+fn through(v: json.Value, type a) -> Result(a, json.JsonError) where a: Dec {
+  a.by_self(v)
+}
+
+fn main() {
+  let v = json.Object(#{ "v": json.Object(#{ "n": json.Int(1) }) })
+  let b: Result(Box(W), json.JsonError) = Box.by_self(v)
+  println(b)
+  println(W.by_self(json.Int(0)))
+  println(W.in_closure(json.Int(0)))
+  println(through(v, Box(W)))
+  let c: Result(Box(Int), json.JsonError) = Box.deeper(json.Object(#{ "v": json.Int(5) }))
+  println(c)
+  let d: Result(Box(Int), json.JsonError) = Box.by_self(json.Int(5))
+  println(d)
+}
