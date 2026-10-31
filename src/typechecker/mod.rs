@@ -1300,6 +1300,7 @@ impl TypeChecker {
             }
         }
         let mut awaited: Vec<(Symbol, Type)> = Vec::new();
+        let selves = self.type_method_selves.len();
         for &i in &component.members {
             match (&decls[i], &sigs[i]) {
                 (Decl::Fn(f), Some(sig)) if !sig.complete => {
@@ -1364,6 +1365,11 @@ impl TypeChecker {
         // Generalise. What a `let` that is not a value leaves unknown
         // stays unknown for everything that mentions it.
         self.exit_level();
+        // (Nor is a `let` general in the type a dictionary made at a use
+        // in its value carries in full, `let top = Box.mk`, as in a body.)
+        for ty in self.type_method_selves.split_off(selves) {
+            self.keep_monomorphic(&ty);
+        }
         for (names, is_value, span, _) in &lets {
             for name in names {
                 let Some(bound) = env.lookup(*name).cloned() else {

@@ -1,0 +1,25 @@
+-- cmd: check
+-- exit: 1
+-- A top-level `let` of a method that makes `Self` through a generic type
+-- has one type: a generic function cannot give it its own type variable.
+import json
+
+trait Mk: json.Decode {
+  fn mk(s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+type Box(a) {
+  v: a,
+}
+
+trait Mk for Box(a) where a: json.Decode {}
+
+let top = Box.mk
+
+fn gen(b: Box(a), s: String) -> Result(Box(a), json.JsonError) where a: json.Decode {
+  top(s)
+}
+
+fn main() {
+  println(gen(Box { v: 1 }, "\{\"v\": 2}"))
+}

@@ -1,0 +1,25 @@
+-- A top-level `let` of a method that makes `Self` through a generic type
+-- (`Box.mk`) has one type, which its uses fix: it decodes at it.
+import json
+
+trait Mk: json.Decode {
+  fn mk(s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+type Box(a) {
+  v: a,
+}
+
+trait Mk for Box(a) where a: json.Decode {}
+
+let top = Box.mk
+
+fn known(s: String) -> Result(Box(Int), json.JsonError) {
+  top(s)
+}
+
+fn main() {
+  println(known("\{\"v\": 2}"))
+  let r: Result(Box(Int), json.JsonError) = top("\{\"v\": 3}")
+  println(r)
+}
