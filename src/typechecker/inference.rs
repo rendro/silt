@@ -1570,6 +1570,16 @@ impl TypeChecker {
         self.error_help(Code::TypeMismatch, (message, Some(help)), at);
     }
 
+    /// `ty` as the type of a place that later values join (a map's keys
+    /// and values, a loop's binding): a variable resolved to it, so that a
+    /// function that never returns, taken first, does not keep `Never` in
+    /// the place's type (see `TyVarSupply::bind`).
+    fn kept(&mut self, ty: Type) -> Type {
+        let place = self.fresh_var();
+        self.unify(&ty, &place, self.at);
+        place
+    }
+
     /// Note how `x.m(..)` read `x`, for every parameter of the enclosing
     /// functions and closures whose type is `x`'s, for a call of one of
     /// them that gives it the other kind of argument (`misread_argument`).
@@ -3178,7 +3188,9 @@ impl TypeChecker {
                     let mut iter = entries.iter_mut();
                     let first_entry = iter.next().unwrap();
                     let first_k = self.infer_expr(&mut first_entry.0, env);
+                    let first_k = self.kept(first_k);
                     let first_v = self.infer_expr(&mut first_entry.1, env);
+                    let first_v = self.kept(first_v);
                     // The unify calls here pass the deviant entry as t1 and
                     // the established type as t2, the documented
                     // t1=got/t2=expected convention (`#{ "a": 1, 2: 3 }`
@@ -4510,7 +4522,8 @@ impl TypeChecker {
                 // does not see the bindings.
                 let mut binding_types = Vec::new();
                 for (_, _, value) in bindings.iter_mut() {
-                    binding_types.push(self.infer_expr(value, env));
+                    let ty = self.infer_expr(value, env);
+                    binding_types.push(self.kept(ty));
                 }
                 env.push();
                 for ((name, _, _), ty) in bindings.iter().zip(&binding_types) {
