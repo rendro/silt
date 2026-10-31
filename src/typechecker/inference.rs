@@ -2791,23 +2791,9 @@ impl TypeChecker {
         }
         // A use of a definition with bounds: the evidence of each.
         self.ev.use_ev = None;
-        let called = self.callee_position;
         let ty = self.infer_name(expr, env);
         if let Some(owed) = self.ev.use_ev.take() {
             self.ev.refs.insert(expr.span, owed);
-        }
-        // A function that never returns, taken as a value (`panic`,
-        // `fail`), gives what its caller asks, as `{ s -> fail(s) }`
-        // does: `Never` is the type of a call that diverges, not a part
-        // of a type a value keeps (`[panic, { s -> 42 }]` is a list of
-        // `Fn(String) -> Int`).
-        if !called
-            && let Type::Fun(params, ret) = &ty
-            && **ret == Type::Never
-        {
-            let ty = Type::Fun(params.clone(), Box::new(self.fresh_var()));
-            expr.ty = Some(ty.clone());
-            return ty;
         }
         ty
     }
