@@ -350,10 +350,20 @@ pub struct TypeChecker {
     pub(super) valued_vars: std::collections::HashSet<TyVar>,
     /// The places refused by `refuse_type_without_value`, once each.
     pub(super) full_type_refused: std::collections::HashSet<Span>,
-    /// The calls of a trait's method with a receiver in the body being
-    /// checked, with the receiver's type: checked once the body is, if
-    /// the impl's dictionary carries its type (`refuse_type_without_value`).
+    /// The uses of a trait's method in the body being checked (calls,
+    /// values, through the trait or a type), with the type `Self` stands
+    /// for: checked once the body is, if the impl's dictionary carries its
+    /// type (`refuse_type_without_value`).
     pub(super) full_type_uses: Vec<(Type, TraitKey, Symbol, Span)>,
+    /// The receiver of each call through a trait, with the call's place,
+    /// trait and method: a refusal the solver makes at the receiver is
+    /// the call's (one error for the call).
+    pub(super) full_type_receivers: HashMap<Span, (Span, TraitKey, Symbol)>,
+    /// The type `Self` stands for at each use in the body being checked
+    /// of a method reached through its type whose impl's dictionary
+    /// carries its type in full (`Box.mk`): the dictionary is made where
+    /// the use is, so a `let` of the use is not general in that type.
+    pub(super) type_method_selves: Vec<Type>,
     /// Each annotation variable of a declaration whose body was or is
     /// being checked, as its body sees it: rigid.
     pub(super) rigid_of: HashMap<TyVar, Type>,
@@ -627,6 +637,8 @@ impl TypeChecker {
             valued_vars: Default::default(),
             full_type_refused: Default::default(),
             full_type_uses: Vec::new(),
+            full_type_receivers: HashMap::new(),
+            type_method_selves: Vec::new(),
             rigid_of: HashMap::new(),
             let_vars: std::collections::HashSet::new(),
             var_written: HashMap::new(),

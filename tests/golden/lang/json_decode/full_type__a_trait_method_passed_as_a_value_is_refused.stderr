@@ -1,0 +1,13 @@
+error[type]: method 'again' of trait 'Dec' needs the type `Box(a)` in full here: `a` is known only by its type
+ --> full_type__a_trait_method_passed_as_a_value_is_refused.silt:24:10
+    |
+ 24 |   apply2(Dec.again, b, s)
+    |          ^^^^^^^^^ method 'again' of trait 'Dec' needs the type `Box(a)` in full here: `a` is known only by its type
+  = help: take the type as a parameter, `type a`
+
+error[type]: method 'again' of trait 'Dec' needs the type `Box(a)` in full here: `a` is known only by its type
+ --> full_type__a_trait_method_passed_as_a_value_is_refused.silt:28:3
+    |
+ 28 |   Dec.again
+    |   ^^^^^^^^^ method 'again' of trait 'Dec' needs the type `Box(a)` in full here: `a` is known only by its type
+  = help: take the type as a parameter, `type a`

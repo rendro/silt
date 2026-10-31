@@ -569,6 +569,37 @@ impl TypeChecker {
         }
     }
 
+    /// The type `Self` stands for in `ty`, the type of the use at `span`
+    /// of the method `method` of an impl reached through its type `head`
+    /// (`Box.mk`), if the impl's dictionary carries its type in full: the
+    /// trait's declaration of the method matched against `ty`. The use is
+    /// refused where the body is checked, as a call through the trait is,
+    /// if a type variable in it has no value there.
+    fn full_self(
+        &mut self,
+        head: TypeRef,
+        entry: &MethodEntry,
+        method: Symbol,
+        ty: &Type,
+        span: Span,
+    ) -> Option<Type> {
+        let key = self.entry_impl(head, entry, method)?;
+        if !self.carries_full_type(key) {
+            return None;
+        }
+        let info = self.tables.traits.get(&key.0)?;
+        let self_var = info.self_var;
+        let (_, declared) = info.methods.iter().find(|(n, _)| *n == method)?.clone();
+        let mapping: HashMap<TyVar, Type> = (free_vars_in(&declared).into_iter())
+            .map(|v| (v, self.fresh_var()))
+            .collect();
+        let self_ty = mapping.get(&self_var)?.clone();
+        let _ = self.unify_types(&substitute_vars(&declared, &mapping), ty);
+        (self.full_type_uses).push((self_ty.clone(), key.0, method, span));
+        self.type_method_selves.push(self_ty.clone());
+        Some(self_ty)
+    }
+
     /// Refuse the call at `span` of the method `field` of `tr` on a value
     /// of the type `recv` by the impl `key`, if the impl's dictionary
     /// carries its type in full (`Box(Int)`) and a type variable in
@@ -1213,10 +1244,6 @@ impl TypeChecker {
             self.unify(recv, &receiver_ty, span);
         }
         let at = receiver.as_ref().map(|(_, at)| *at);
-        // (Its impl is known once the body is: `refuse_type_without_value`.)
-        if receiver.is_some() {
-            (self.full_type_uses).push((self_ty.clone(), tr, field, span));
-        }
         let ty = self.through_trait(tr, field, self_ty, at, span);
         // The receiver is the method's `Self(a)` parameter, its element
         // the method's `a` (`String` of `m(String)`): the call does not
@@ -1303,6 +1330,13 @@ impl TypeChecker {
             },
         );
         self.method_trait = Some(tr);
+        // (Its impl is known once the body is: `refuse_type_without_value`.
+        // A use without a receiver, `Tr.m` passed as a value, is refused
+        // as a call is.)
+        (self.full_type_uses).push((self_ty.clone(), tr, field, span));
+        if let Some(at) = receiver {
+            (self.full_type_receivers).insert(at, (span, tr, field));
+        }
         self.trait_call_self.insert(span, self_ty);
         self.receiver_taken = receiver.is_some();
         let method_ty = self.instantiate_method(&scheme, field, span);
@@ -1646,7 +1680,9 @@ impl TypeChecker {
     /// say, and the body's type is the signature's result.
     pub(super) fn check_body(&mut self, f: &mut FnDecl, sig: &FnSig, env: &mut TypeEnv) {
         let uses = std::mem::take(&mut self.full_type_uses);
+        let selves = std::mem::take(&mut self.type_method_selves);
         self.check_body_in(f, sig, env);
+        self.type_method_selves = selves;
         // (As the body left the receivers' types.)
         for (recv, tr, field, span) in std::mem::replace(&mut self.full_type_uses, uses) {
             let recv = self.apply(&recv);
@@ -3195,7 +3231,8 @@ impl TypeChecker {
                         let scheme = self.method_scheme(&entry);
                         self.instance_header = self.entry_impl(key.0, &entry, field);
                         let ty = self.instantiate_method(&scheme, field, span);
-                        self.type_method_site(key.0, &entry, field, None, span);
+                        let full = self.full_self(key.0, &entry, field, &ty, span);
+                        self.type_method_site(key.0, &entry, field, full, span);
                         let ty = self.apply(&ty);
                         expr.ty = Some(ty.clone());
                         return ty;

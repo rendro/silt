@@ -1,0 +1,20 @@
+error[type]: method 'mk' of trait 'Mk' needs the type `Box(a)` in full here: `a` is known only by its type
+ --> full_type__a_method_making_self_through_its_type_is_refused.silt:23:43
+    |
+ 23 |   let r: Result(Box(a), json.JsonError) = Box.mk(s)
+    |                                           ^^^^^^ method 'mk' of trait 'Mk' needs the type `Box(a)` in full here: `a` is known only by its type
+  = help: take the type as a parameter, `type a`
+
+error[type]: method 'mk' of trait 'Mk' needs the type `Box(a)` in full here: `a` is known only by its type
+ --> full_type__a_method_making_self_through_its_type_is_refused.silt:28:50
+    |
+ 28 |   let r: Result(Box(a), json.JsonError) = apply1(Box.mk, s)
+    |                                                  ^^^^^^ method 'mk' of trait 'Mk' needs the type `Box(a)` in full here: `a` is known only by its type
+  = help: take the type as a parameter, `type a`
+
+error[type]: method 'mk' of trait 'Mk' needs the type `Box(a)` in full here: `a` is known only by its type
+ --> full_type__a_method_making_self_through_its_type_is_refused.silt:33:11
+    |
+ 33 |   let f = Box.mk
+    |           ^^^^^^ method 'mk' of trait 'Mk' needs the type `Box(a)` in full here: `a` is known only by its type
+  = help: take the type as a parameter, `type a`

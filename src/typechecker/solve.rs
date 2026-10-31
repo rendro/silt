@@ -2647,7 +2647,16 @@ impl TypeChecker {
             && !(self.full_type_uses.iter()).any(|(_, _, _, at)| *at == origin.span)
         {
             let key = (trait_name, type_name, impl_args);
-            self.refuse_type_without_value(key, &resolved, None, origin.callee, origin.span);
+            // (At the receiver of a call through the trait: the call's.)
+            match self.full_type_receivers.get(&origin.span).copied() {
+                Some((at, tr, field)) if tr == trait_name && origin.callee == Some(field) => {
+                    self.refuse_type_without_value(key, &resolved, Some((tr, field)), None, at);
+                }
+                _ => {
+                    let callee = origin.callee;
+                    self.refuse_type_without_value(key, &resolved, None, callee, origin.span);
+                }
+            }
         }
         self.ev_set(
             ev,

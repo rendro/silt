@@ -1,0 +1,42 @@
+-- A method that makes `Self`, of a trait that has `json.Decode` among its
+-- supertraits, called through a generic type (`Box.mk`), passed as a
+-- value or kept in a `let`, decodes the type the use gives `Self`, at its
+-- arguments: from an annotation, or a `type a` parameter.
+import json
+
+trait Mk: json.Decode {
+  fn mk(s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+type Box(a) {
+  v: a,
+}
+
+trait Mk for Box(a) where a: json.Decode {}
+
+fn apply1(f: Fn(x) -> r, x: x) -> r {
+  f(x)
+}
+
+fn with_type(s: String, type a) -> Result(Box(a), json.JsonError) where a: json.Decode {
+  Box.mk(s)
+}
+
+fn kept(s: String) -> Result(Box(Int), json.JsonError) {
+  let f = Box.mk
+  f(s)
+}
+
+fn main() {
+  let r: Result(Box(Int), json.JsonError) = Box.mk("\{\"v\": 9}")
+  println(r)
+  let r: Result(Box(Int), json.JsonError) = apply1(Box.mk, "\{\"v\": 8}")
+  println(r)
+  println(with_type("\{\"v\": \"seven\"}", String))
+  let r: Result(Box(String), json.JsonError) = Box.mk("\{\"v\": 6}")
+  println(r)
+  println(kept("\{\"v\": 5}"))
+  let g = Box.mk
+  let r: Result(Box(Int), json.JsonError) = g("\{\"v\": 4}")
+  println(r)
+}

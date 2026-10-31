@@ -1,0 +1,13 @@
+error[type]: trait 'dmod.Dec' needs the type `dmod.Box(a)` in full here: `a` is known only by its type
+ --> main.silt:14:10
+    |
+ 14 |   apply2(dmod.gen, b, s)
+    |          ^^^^^^^^ trait 'dmod.Dec' needs the type `dmod.Box(a)` in full here: `a` is known only by its type
+  = help: take the type as a parameter, `type a`
+
+error[type]: method 'again' of trait 'dmod.Dec' needs the type `dmod.Box(a)` in full here: `a` is known only by its type
+ --> main.silt:18:10
+    |
+ 18 |   apply2(dmod.Dec.again, b, s)
+    |          ^^^^^^^^^^^^^^ method 'again' of trait 'dmod.Dec' needs the type `dmod.Box(a)` in full here: `a` is known only by its type
+  = help: take the type as a parameter, `type a`

@@ -1,0 +1,24 @@
+-- cmd: check
+-- exit: 1
+-- A function of another module whose bound needs a type in full, or a
+-- trait method of that module, used as a value: refused as their calls
+-- are when a type variable in the type is known only by a value's type.
+import json
+import dmod
+
+fn apply2(f: Fn(x, String) -> r, x: x, s: String) -> r {
+  f(x, s)
+}
+
+fn function(b: dmod.Box(a), s: String) -> Result(dmod.Box(a), json.JsonError) where a: json.Decode {
+  apply2(dmod.gen, b, s)
+}
+
+fn method(b: dmod.Box(a), s: String) -> Result(dmod.Box(a), json.JsonError) where a: json.Decode {
+  apply2(dmod.Dec.again, b, s)
+}
+
+fn main() {
+  println(function(dmod.Box { v: 1 }, "\{\"v\": 9}"))
+  println(method(dmod.Box { v: 1 }, "\{\"v\": 9}"))
+}

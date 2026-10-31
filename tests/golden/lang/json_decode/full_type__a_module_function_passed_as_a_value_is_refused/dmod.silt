@@ -1,0 +1,15 @@
+import json
+
+pub trait Dec: json.Decode {
+  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+pub type Box(a) {
+  v: a,
+}
+
+trait Dec for Box(a) where a: json.Decode {}
+
+pub fn gen(x: t, s: String) -> Result(t, json.JsonError) where t: Dec {
+  Dec.again(x, s)
+}
