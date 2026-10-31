@@ -1391,6 +1391,19 @@ impl TypeChecker {
         self.error_help(Code::UnknownField, (base, help), span);
     }
 
+    /// The one trait in sight with a method `field` that makes a value
+    /// (takes none of the type), of a type, not of a type constructor:
+    /// what `t.field(..)` on a `t` still unknown calls.
+    fn sole_value_maker(&self, field: Symbol) -> Option<TraitKey> {
+        let mut traits = (self.tables.traits.iter())
+            .filter(|(_, info)| !info.constructor)
+            .filter(|(_, info)| info.methods.iter().any(|(n, _)| *n == field))
+            .map(|(t, _)| *t)
+            .filter(|t| self.sees_trait(*t) && self.private_owner(*t).is_none());
+        let tr = traits.next()?;
+        (traits.next().is_none() && self.self_param(tr, field).is_none()).then_some(tr)
+    }
+
     /// How to call the method or function `field` that a dot after a
     /// value of the type `ty`, written `written`, names, if a trait in
     /// sight or a builtin module of the type has one of that name: the
@@ -3398,7 +3411,16 @@ impl TypeChecker {
                         Type::Error
                     }
                     Type::Var(_) => {
-                        if called {
+                        if called && let Some(tr) = self.sole_value_maker(field) {
+                            // `t.mk(s)` where one trait in sight has a
+                            // method `mk` that makes a value: `t` is a
+                            // type, which owes the trait, as `json.parse(s,
+                            // t)` makes `t` a type that owes `json.Decode`.
+                            let inner = self.fresh_var();
+                            self.unify(&obj_ty, &Type::type_of(inner.clone()), span);
+                            self.method_trait = Some(tr);
+                            self.through_trait(tr, field, inner, None, span)
+                        } else if called {
                             // `x.f(..)`: what it calls is decided with
                             // the type of `x` (`check_call`).
                             self.unknown_receiver = Some((obj_ty.clone(), field));
