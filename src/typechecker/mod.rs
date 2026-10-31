@@ -272,9 +272,11 @@ pub struct TypeChecker {
     /// How `x.m(..)` made a parameter of a function or closure be read
     /// (`x`'s, or one whose type it shares, also through a call that
     /// passes it on), by the callee and the parameter's place, with the
-    /// parameter's name: what a call that gives the parameter the other
-    /// kind of argument is told.
-    pub(super) readings: HashMap<(unused::Callee, usize), (Option<Symbol>, Reading)>,
+    /// parameter's name and the function the call `x.m(..)` is in when it
+    /// is another one (`go` for `fn again(y) { go(y) }`): what a call that
+    /// gives the parameter the other kind of argument is told.
+    pub(super) readings:
+        HashMap<(unused::Callee, usize), (Option<Symbol>, Reading, Option<Symbol>)>,
     /// Spans of `?` uses in the current fn/lambda body. When the
     /// body/return-type unify fails on a Result/Option return that `?`
     /// itself demanded, the diagnostic points back at the `?` site instead
@@ -1379,7 +1381,7 @@ impl TypeChecker {
                         && let Some(of) = Self::callee_named(value)
                         && let Some(to) = self.callee_of(unused::FrameOwner::TopLevel(name))
                     {
-                        self.copy_readings(of, to);
+                        self.copy_readings((of, inference::written_name(value)), to);
                     }
                     for (name, awaited_ty) in &awaited {
                         if names.contains(name)

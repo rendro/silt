@@ -260,12 +260,15 @@ impl TypeChecker {
     }
 
     /// Let a call of `to` read its parameters as one of `of` does
-    /// (`readings`): `to` is a `let` of `of` (`let h = go`).
-    pub(super) fn copy_readings(&mut self, of: Callee, to: Callee) {
-        let copied: Vec<(usize, (Option<Symbol>, super::Reading))> = (self.readings.iter())
-            .filter(|((callee, _), _)| *callee == of)
-            .map(|((_, at), reading)| (*at, reading.clone()))
-            .collect();
+    /// (`readings`): `to` is a `let` of `of` (`let h = go`), which `of_name`
+    /// writes, the function the call `x.m(..)` is in.
+    pub(super) fn copy_readings(&mut self, (of, of_name): (Callee, Option<Symbol>), to: Callee) {
+        let copied: Vec<(usize, (Option<Symbol>, super::Reading, Option<Symbol>))> = (self
+            .readings
+            .iter())
+        .filter(|((callee, _), _)| *callee == of)
+        .map(|((_, at), (param, reading, site))| (*at, (*param, reading.clone(), site.or(of_name))))
+        .collect();
         for (at, reading) in copied {
             self.readings.insert((to, at), reading);
         }

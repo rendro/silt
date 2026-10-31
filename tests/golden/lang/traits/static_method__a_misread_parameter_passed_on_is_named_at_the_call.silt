@@ -4,8 +4,9 @@
 -- A function that passes its parameter on to one whose `x.total()`
 -- reads it as a type (or whose `t.mk()` reads it as a record) reads it
 -- the same way, and a call that gives it the other kind of argument is
--- told so; so are a `let` of such a function, a pipe into it and the
--- function given where a function of a value is asked.
+-- told so, naming the function the call is in (`x.total()` in 'go');
+-- so are a `let` of such a function, a pipe into it and the function
+-- given where a function of a value is asked.
 import list
 
 trait Vals {

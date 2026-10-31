@@ -1415,16 +1415,18 @@ impl TypeChecker {
     /// types the argument `arg_ty` shares (`fn again(s, t) { go(s, t) }`
     /// reads `t` as `go` reads its own).
     fn pass_on_reading(&mut self, callee: &Expr, i: usize, arg_ty: &Type) {
-        let Some(reading) = (Self::callee_named(callee))
+        let Some((reading, site)) = (Self::callee_named(callee))
             .and_then(|callee| self.readings.get(&(callee, i)))
-            .map(|(_, reading)| reading.clone())
+            .map(|(_, reading, site)| (reading.clone(), *site))
         else {
             return;
         };
+        // (The call is in `callee`, or in the function it is in.)
+        let site = site.or_else(|| written_name(callee));
         for (outer, at, name) in self.named_params_sharing(arg_ty) {
             (self.readings)
                 .entry((outer, at))
-                .or_insert((name, reading.clone()));
+                .or_insert((name, reading.clone(), site));
         }
     }
 
@@ -1447,13 +1449,13 @@ impl TypeChecker {
             let ExprKind::Ident(function) = e.kind else {
                 return None;
             };
-            let (param, reading) = (Self::callee_named(e))
+            let (param, reading, site) = (Self::callee_named(e))
                 .and_then(|named| this.readings.get(&(named, at)))
                 .cloned()?;
             // (A closure's parameter is annotated without `fn`.)
             let declared =
                 (this.res_def(e.res)).is_some_and(|def| def.kind == crate::defs::DefKind::Fn);
-            Some((function, declared, param, reading))
+            Some((function, declared, param, reading, site))
         };
         let found = match reading_of(self, callee, i) {
             Some(found) => Some((found, self.apply(arg_ty))),
@@ -1464,9 +1466,12 @@ impl TypeChecker {
                 _ => None,
             },
         };
-        let Some(((function, declared, param, reading), given)) = found else {
+        let Some(((function, declared, param, reading, site), given)) = found else {
             return;
         };
+        // (Where the call `x.m(..)` is: the function called, or the one
+        // it passes the parameter on to.)
+        let place = site.map_or_else(|| "it".to_string(), |site| format!("'{site}'"));
         let held = match &given {
             Type::Generic(name, args) if name.is_builtin(crate::defs::TYPE_OF) => {
                 args.first().cloned()
@@ -1522,7 +1527,7 @@ impl TypeChecker {
                 (
                     format!(
                         "'{function}' takes a type as `{param}`, not a value of type `{shown}`: \
-                         `{call}` in it reads as the method of trait '{trait_name}' that makes a \
+                         `{call}` in {place} reads as the method of trait '{trait_name}' that makes a \
                          value"
                     ),
                     help,
@@ -1548,7 +1553,7 @@ impl TypeChecker {
                 (
                     format!(
                         "'{function}' takes a record with a field `{method}` as `{param}`, not the \
-                         type `{shown}`: `{call}` in it can be the method of {}, so it is read as a \
+                         type `{shown}`: `{call}` in {place} can be the method of {}, so it is read as a \
                          field",
                         of.join(" or of ")
                     ),
@@ -1576,7 +1581,7 @@ impl TypeChecker {
                 .or_else(|| name.map(|name| name.to_string()))
                 .unwrap_or_else(|| "_".to_string());
             self.readings
-                .insert((callee, at), (name, reading(receiver)));
+                .insert((callee, at), (name, reading(receiver), None));
         }
     }
 
@@ -4732,7 +4737,7 @@ impl TypeChecker {
                 if let PatternKind::Ident(name) = pattern.kind
                     && let Some(of) = Self::callee_named(value)
                 {
-                    self.copy_readings(of, unused::Callee::Local(name));
+                    self.copy_readings((of, written_name(value)), unused::Callee::Local(name));
                 }
                 if let (PatternKind::Ident(name), ExprKind::FieldAccess(..)) =
                     (&pattern.kind, &value.kind)
@@ -5241,6 +5246,14 @@ impl TypeChecker {
             }
             _ => false,
         }
+    }
+}
+
+/// The name a callee is written by (`go`, `m.go`'s `go`).
+pub(super) fn written_name(e: &Expr) -> Option<Symbol> {
+    match e.kind {
+        ExprKind::Ident(name) | ExprKind::FieldAccess(_, name, _) => Some(name),
+        _ => None,
     }
 }
 
