@@ -184,24 +184,44 @@ impl TypeChecker {
     /// The type a use gives a decoder through the declared bound of
     /// `asker` (the bound's body gives its variable inside `Box(a)`),
     /// `ty` being what the use gives the variable: `Box(Set(Int))`, if
-    /// nothing else in it is left open.
+    /// nothing else in it is left open. The header of an impl of a trait
+    /// that has `json.Decode` among its supertraits gives its variable
+    /// inside the impl's type (`Dec for Box(a) where a: json.Decode`).
     fn decoded_whole(&self, asker: Option<Asker>, ty: &Type) -> Option<Type> {
         let Asked::Bound(var) = asker?.by else {
             return None;
         };
         let var = self.rigid_rep_var(var);
-        let within = self.bound_within.get(&var)?;
+        let within = match self.bound_within.get(&var) {
+            Some(within) => within.clone(),
+            None => self.header_decoded_within(var)?,
+        };
         let mut open = false;
-        let whole = map_rigid(within, &mut |r| match self.rigid_rep_var(r.var) == var {
+        let whole = map_rigid(&within, &mut |r| match self.rigid_rep_var(r.var) == var {
             true => ty.clone(),
             false => {
                 open = true;
                 Type::Rigid(r)
             }
         });
+        let whole = substitute_vars(&whole, &HashMap::from([(var, ty.clone())]));
         let whole =
             crate::types::canonical::canonicalize(self.tables.resolver(), &self.apply(&whole));
         (!open && free_vars_in(&whole).is_empty()).then_some(whole)
+    }
+
+    /// The type of the impl whose header asks `json.Decode` of its
+    /// variable `var`, if the impl's trait has `json.Decode` among its
+    /// supertraits: the type its dictionary decodes, with `var` inside.
+    fn header_decoded_within(&self, var: TyVar) -> Option<Type> {
+        let (key, _) = self.tables.impl_preds.iter().find(|(key, preds)| {
+            self.implies_decode(key.0)
+                && preds.iter().any(|pred| {
+                    matches!(pred, Pred::Trait { tr, subject: Type::Var(v), .. }
+                        if Self::is_decode(*tr) && *v == var)
+                })
+        })?;
+        self.tables.impl_self_types.get(key).cloned()
     }
 
     /// The decoder `asker` comes from: a declared bound asks for what
@@ -338,16 +358,20 @@ impl TypeChecker {
                 continue;
             };
             // (Said of the type the bound's body gives the decoder, whole,
-            // as the decoder refuses it: `Box(Set(Int))`, field `v`.)
-            if let Some(whole) = (whole.as_ref()).and_then(|whole| {
-                self.json_decode_refusal(&resolve(named), None, whole, gap.origin.span)
-            }) {
-                diagnostic = whole;
+            // as the decoder refuses it: `Box(Set(Int))`, field `v`. One
+            // error for that type at one place.)
+            let mut reported = &ty;
+            if let Some(whole) = whole.as_ref()
+                && let Some(refusal) =
+                    self.json_decode_refusal(&resolve(named), None, whole, gap.origin.span)
+            {
+                diagnostic = refusal;
+                reported = whole;
             }
             self.refused_calls.push(gap.origin.span);
             if !self.lacking.insert((
                 gap.origin.span,
-                format!("json.Decode {}", self.show_type(&ty)),
+                format!("json.Decode {}", self.show_type(reported)),
             )) {
                 continue;
             }
