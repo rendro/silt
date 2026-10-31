@@ -1494,6 +1494,56 @@ fn a_feeder_that_is_cancelled_or_dropped_leaves_no_waiter() {
 }
 
 #[test]
+fn a_drained_channel_lets_its_feeder_fill_the_buffer_and_no_more() {
+    let d = Double::new();
+    let ch = Channel::fed(0, 2, 0);
+    assert!(d.block(1, demand(&ch)).is_none());
+    // Its reader reads it to the end: the feeder goes on unasked.
+    ch.drain(&d);
+    assert_eq!(d.woken(), [1]);
+    assert!(asked(resumed(&d, 1)));
+    for value in 1..=2 {
+        assert!(matches!(ch.try_send(Value::Int(value), &d), TrySend::Sent));
+    }
+    // The buffer is full: the feeder waits for room.
+    assert!(d.block(1, demand(&ch)).is_none());
+    assert_eq!(try_value(&ch, &d), Some(1));
+    assert_eq!(d.woken(), [1]);
+    assert!(asked(resumed(&d, 1)));
+}
+
+#[test]
+fn room_in_a_channel_that_is_not_drained_wakes_no_feeder() {
+    let d = Double::new();
+    let ch = Channel::fed(0, 2, 0);
+    // A value in the buffer that a reader once asked for.
+    assert_eq!(try_value(&ch, &d), None);
+    assert!(matches!(ch.try_send(Value::Int(1), &d), TrySend::Sent));
+    assert!(d.block(1, demand(&ch)).is_none());
+    // Taking it makes room, but nobody asked for another.
+    assert_eq!(try_value(&ch, &d), Some(1));
+    assert!(d.woken().is_empty());
+}
+
+#[test]
+fn the_first_drain_drains_what_feeds_the_channel() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let d = Double::new();
+    let (ch, input) = (Channel::fed(0, 2, 0), Channel::fed(1, 2, 0));
+    let drains = Arc::new(AtomicUsize::new(0));
+    let (counted, fed) = (drains.clone(), input.clone());
+    ch.drain_feeder_with(move |wake| {
+        counted.fetch_add(1, Ordering::SeqCst);
+        fed.drain(wake);
+    });
+    ch.drain(&d);
+    ch.drain(&d);
+    assert_eq!(drains.load(Ordering::SeqCst), 1);
+    assert!(input.is_draining());
+}
+
+#[test]
 fn a_select_asks_each_channel_it_finds_empty() {
     let d = Double::new();
     let (a, b) = (Channel::new(0, 0), Channel::new(1, 0));

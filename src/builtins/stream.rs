@@ -1487,7 +1487,7 @@ mod tests {
     #[test]
     fn a_source_whose_output_closes_while_it_waits_for_room_stops_its_connection() {
         let (vm, out, items, stopped) = source();
-        for item in 0..=SOURCE_CAPACITY {
+        for item in 0..=AHEAD {
             items
                 .send(Value::Int(item as i64))
                 .expect("the source reads");
