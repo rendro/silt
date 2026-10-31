@@ -1,7 +1,8 @@
 -- repeat: 3
 -- A stage takes a value from its input only when its reader asks for
 -- one: `ch |> stream.map(f) |> stream.take(2)` takes two values from
--- `ch` and runs `f` twice. The rest stays in `ch`.
+-- `ch` and runs `f` twice. The rest stays in `ch`. (`collect` reads to
+-- the end, but `take` asks its input for one value at a time.)
 import channel
 import stream
 

@@ -1,0 +1,27 @@
+-- repeat: 5
+-- `collect` reads to the end and asks for every value, but `zip` asks
+-- each input for one value at a time: it ends at its short input, and
+-- the long one has given at most one value more than was zipped.
+import channel
+import stream
+
+fn fill(ch, i, n) {
+  match i > n {
+    true -> channel.close(ch)
+    false -> {
+      channel.send(ch, i)
+      fill(ch, i + 1, n)
+    }
+  }
+}
+
+fn main() {
+  let long = channel.new(100)
+  fill(long, 1, 100)
+  let short = channel.new(3)
+  fill(short, 1, 3)
+  let pairs = stream.zip(long |> stream.map { x -> x }, short |> stream.map { x -> x })
+    |> stream.collect
+  let taken = 100 - stream.count(long)
+  println("zipped {pairs}, at most one more taken from the long input: {taken <= 4}")
+}
