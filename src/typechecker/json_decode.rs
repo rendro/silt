@@ -344,6 +344,10 @@ impl TypeChecker {
         let Some(defs) = &self.defs else {
             return;
         };
+        // (The module's definitions by name, once.)
+        let ids: HashMap<Symbol, crate::defs::DefId> = (defs.of_module(self.module).iter())
+            .map(|id| (defs.get(*id).name, *id))
+            .collect();
         let mut found = Vec::new();
         for decl in &program.decls {
             // (A function's bounds by their routes; a `let`'s by the uses
@@ -362,10 +366,7 @@ impl TypeChecker {
                 let Some(scheme) = env.lookup(name) else {
                     continue;
                 };
-                let Some(id) = (defs.of_module(self.module).iter())
-                    .copied()
-                    .find(|id| defs.get(*id).name == name)
-                else {
+                let Some(&id) = ids.get(&name) else {
                     continue;
                 };
                 let mut owners = HashMap::new();
