@@ -1,8 +1,10 @@
 -- cmd: check
 -- exit: 1
+-- stderr-contains: error[type]: 'go' takes a type as `x`, not a value of type `Int`: `x.total()` in it reads as the method of trait 'Vals' that makes a value
+-- stderr-contains: help: pass the type itself: `Int`
 -- stderr-contains: error[type]: type mismatch: expected type _, got Int
--- stderr-contains: :30:14
--- stderr-contains: :31:13
+-- stderr-contains: :32:14
+-- stderr-contains: :33:13
 -- A receiver whose type is not known where the call is written, of a
 -- method that makes a value of the one trait in sight that has it, is a
 -- type that owes the trait (as one handed to `json.parse` is): an Int
