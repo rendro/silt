@@ -71,13 +71,12 @@ impl Server {
                 let (label, params_info) = build_signature_from_def(&fn_name, def);
                 (label, params_info, def.doc.clone())
             } else {
-                // A builtin: the signature of its row in the builtin
-                // registry, with each parameter where the signature
-                // writes it, and the stdlib markdown alongside.
-                let (module, function) = fn_name.split_once('.')?;
-                let (label, ranges) = crate::builtins::registry::registry()
-                    .row(module, function)?
-                    .qualified_signature(module)?;
+                // A builtin (`list.map`, or `println` of the prelude):
+                // the signature of its row in the builtin registry, with
+                // each parameter where the signature writes it, and the
+                // stdlib markdown alongside.
+                let row = crate::builtins::registry::registry().named(&fn_name)?;
+                let (label, ranges) = row.qualified_signature(row.module)?;
                 let doc_text = self.builtin_docs.get(&fn_name).cloned();
                 let params_info = ranges
                     .into_iter()

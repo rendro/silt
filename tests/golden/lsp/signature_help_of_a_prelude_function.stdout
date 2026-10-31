@@ -1,0 +1,6 @@
+> signature 10:11
+fn println(value: a) -> () where a: Display
+argument 1: value: a
+> signature 11:21
+fn int_text(n: Int) -> String
+argument 1: n: Int
