@@ -1,0 +1,65 @@
+-- An unannotated function that calls methods that make a value on a
+-- type it is given more than once (the same method twice, after a
+-- function that takes the type, or methods of two traits) owes each
+-- trait, and runs at the type it is given.
+trait Zero {
+  fn zero() -> Self
+}
+
+trait Two {
+  fn two() -> List(Self)
+}
+
+trait Zero for Int {
+  fn zero() -> Self {
+    0
+  }
+}
+
+trait Two for Int {
+  fn two() -> List(Self) {
+    [2, 2]
+  }
+}
+
+trait Zero for String {
+  fn zero() -> Self {
+    "none"
+  }
+}
+
+trait Two for String {
+  fn two() -> List(Self) {
+    ["b", "b"]
+  }
+}
+
+fn inner(t) {
+  t.zero()
+}
+
+fn same(t) {
+  (t.zero(), t.zero())
+}
+
+fn lets(t) {
+  let x = t.zero()
+  let y = t.zero()
+  [x, y]
+}
+
+fn after(t) {
+  (inner(t), t.zero())
+}
+
+fn both(t) {
+  (t.zero(), t.two())
+}
+
+fn main() {
+  println(same(Int))
+  println(lets(String))
+  println(after(Int))
+  println(both(Int))
+  println(both(String))
+}

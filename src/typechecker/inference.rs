@@ -1393,10 +1393,10 @@ impl TypeChecker {
 
     /// The traits in sight with a method `field` that makes a value
     /// (takes none of the type), of a type, not of a type constructor,
-    /// and how many have one of that name that takes a value: `t.field(..)`
+    /// and those with one of that name that takes a value: `t.field(..)`
     /// on a `t` still unknown calls the method of the one such trait, if
     /// it is the only trait with the name.
-    fn value_makers(&self, field: Symbol) -> (Vec<TraitKey>, usize) {
+    fn value_makers(&self, field: Symbol) -> (Vec<TraitKey>, Vec<TraitKey>) {
         let mut traits: Vec<TraitKey> = (self.tables.traits.iter())
             .filter(|(_, info)| !info.constructor)
             .filter(|(_, info)| info.methods.iter().any(|(n, _)| *n == field))
@@ -1404,10 +1404,9 @@ impl TypeChecker {
             .filter(|t| self.sees_trait(*t) && self.private_owner(*t).is_none())
             .collect();
         traits.sort_by_key(|t| self.show_trait(*t));
-        let taking = traits.len();
-        traits.retain(|t| self.self_param(*t, field).is_none());
-        let taking = taking - traits.len();
-        (traits, taking)
+        let (makers, taking) =
+            (traits.into_iter()).partition(|t| self.self_param(*t, field).is_none());
+        (makers, taking)
     }
 
     /// Pass on how the parameter `i` of `callee` is read (`readings`) to
@@ -3531,6 +3530,44 @@ impl TypeChecker {
                     && gname.is_builtin(crate::defs::TYPE_OF)
                     && gargs.len() == 1
                 {
+                    // A type not known yet (a parameter an earlier
+                    // `t.zero()`, or a call that takes a type, made a type):
+                    // its call of a method that makes a value of the one
+                    // trait in sight with the name owes that trait too.
+                    let inner = self.apply(&gargs[0]);
+                    let (makers, taking) = match (called, &inner) {
+                        (true, Type::Var(_)) => self.value_makers(field),
+                        _ => (Vec::new(), Vec::new()),
+                    };
+                    if let ([tr], []) = (makers.as_slice(), taking.as_slice()) {
+                        let tr = *tr;
+                        self.note_reading(obj, &obj_ty, |receiver| Reading::Type {
+                            receiver,
+                            tr,
+                            method: field,
+                        });
+                        self.method_trait = Some(tr);
+                        let ty = self.through_trait(tr, field, inner, None, span);
+                        expr.ty = Some(ty.clone());
+                        return ty;
+                    }
+                    // (Of a type not known yet: what the call names, by the
+                    // receiver as written, for none of the method's traits
+                    // is decided by it.)
+                    if let (true, Type::Var(_)) = (called, &inner) {
+                        let receiver = written_receiver(obj).unwrap_or_else(|| "_".to_string());
+                        match (makers.len(), taking.is_empty()) {
+                            (0, true) => self.no_type_method(&receiver, field, span, None),
+                            (0, false) => self.through_its_trait(&receiver, &taking, field, span),
+                            _ => self.ambiguous_method(
+                                field,
+                                &format!("`{receiver}`"),
+                                &makers,
+                                span,
+                            ),
+                        }
+                        return Type::Error;
+                    }
                     let resolved = self.resolve_type_descriptor_method(&gargs[0], field, span);
                     if let Some(ty) = resolved {
                         expr.ty = Some(ty.clone());
@@ -3625,9 +3662,9 @@ impl TypeChecker {
                     Type::Var(_) => {
                         let (makers, taking) = match called {
                             true => self.value_makers(field),
-                            false => (Vec::new(), 0),
+                            false => (Vec::new(), Vec::new()),
                         };
-                        if let ([tr], 0) = (makers.as_slice(), taking) {
+                        if let ([tr], []) = (makers.as_slice(), taking.as_slice()) {
                             // `t.mk(s)` where one trait in sight has a
                             // method `mk`, which makes a value: `t` is a
                             // type, which owes the trait, as `json.parse(s,

@@ -1,0 +1,52 @@
+-- cmd: check
+-- exit: 1
+-- stderr-not-contains: type _
+-- A method call on a parameter an earlier call made a type is named by
+-- the parameter as written: of two traits with the method it is
+-- ambiguous, of none it is missing, of one that takes a value it is
+-- called through the trait.
+trait A {
+  fn mk() -> Self
+}
+
+trait B {
+  fn mk() -> Self
+}
+
+trait Zero {
+  fn zero() -> Self
+}
+
+trait Greet {
+  fn greet(self) -> String
+}
+
+trait Zero for Int {
+  fn zero() -> Self {
+    0
+  }
+}
+
+trait Greet for Int {
+  fn greet(self) -> String {
+    "hi"
+  }
+}
+
+fn two(t) {
+  (t.zero(), t.mk())
+}
+
+fn missing(t) {
+  (t.zero(), t.nope())
+}
+
+fn taking(t) {
+  (t.zero(), t.greet())
+}
+
+fn main() {
+  println(two(Int))
+  println(missing(Int))
+  println(taking(Int))
+}
