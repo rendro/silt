@@ -1,7 +1,7 @@
--- exit: 1
 -- repeat: 3
--- stderr-contains: a `stream.filter` stage failed and its output was never read: division by zero
--- The report names the stage that failed.
+-- stderr-not-contains: never read
+-- The same for a filter: nobody asks it for a value, so its predicate
+-- never runs, and nothing fails.
 import stream
 
 fn main() {

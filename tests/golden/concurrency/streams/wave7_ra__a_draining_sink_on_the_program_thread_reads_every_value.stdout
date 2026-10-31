@@ -1,0 +1,3 @@
+collect: 1000 values, first Some(2), last Some(2000)
+count: 250, left in ch: None
+fold: 5050

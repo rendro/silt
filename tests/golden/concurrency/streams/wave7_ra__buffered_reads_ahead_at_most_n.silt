@@ -1,0 +1,33 @@
+-- repeat: 5
+-- `stream.buffered(n)` is the one stage that takes values before they
+-- are asked for, at most `n` of them: cut after two values, at most
+-- 2 + 3 have left `ch` through `map |> buffered(3)`, and exactly two
+-- through `buffered(0)`, which reads nothing ahead.
+import channel
+import stream
+
+fn filled(n) {
+  let ch = channel.new(n)
+  fill(ch, 1, n)
+  ch
+}
+
+fn fill(ch, i, n) {
+  match i > n {
+    true -> channel.close(ch)
+    false -> {
+      channel.send(ch, i)
+      fill(ch, i + 1, n)
+    }
+  }
+}
+
+fn main() {
+  let a = filled(100)
+  let two = a |> stream.map { x -> x } |> stream.buffered(3) |> stream.take(2) |> stream.collect
+  let taken = 100 - stream.count(a)
+  println("buffered(3): got {two}, at most 5 taken: {taken >= 2 && taken <= 5}")
+  let b = filled(100)
+  let more = b |> stream.buffered(0) |> stream.take(2) |> stream.collect
+  println("buffered(0): got {more}, next in b: {channel.receive(b)}")
+}

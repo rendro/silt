@@ -34,6 +34,9 @@ pub enum Outcome {
     Closed(Close),
     /// A cell arm's cell is complete.
     Done,
+    /// A demand arm's channel asks for a value: a reader waits for
+    /// one or looked for one, or the buffer has room.
+    Asked,
 }
 
 /// How a wait ended.

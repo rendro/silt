@@ -1,0 +1,2 @@
+buffered(3): got [1, 2], at most 5 taken: true
+buffered(0): got [1, 2], next in b: Some(3)

@@ -11,8 +11,12 @@ simply [`Channel`](channel-task.md) values used as data flows — the
 underlying primitive is unchanged. Each source and each transform is a
 *stage*: a task that reads its input channel, calls the user closure, and
 writes to the output channel. A stage waits like any task, so a pipeline
-of many stages holds no thread while it waits. Backpressure is provided by
-channel capacity (default 16; configurable via `stream.buffered`).
+of many stages holds no thread while it waits. A transform takes a value
+from its input only when its reader asks for one. A sink that reads to the
+end asks for every value, so the stages before it work up to 16 values
+ahead while it reads. A source works ahead of its reader, up to 16 values,
+and `stream.buffered(n)` lets the stages before it work up to `n` values
+ahead.
 
 Sinks (`collect`, `fold`, `count`, etc.) drain a channel in the calling
 task, which waits for each value.
@@ -58,6 +62,11 @@ once per line.
 | `scan` | `(Channel(a), b, Fn(b, a) -> b) -> Channel(b)` |
 | `dedup` | `(Channel(a)) -> Channel(a) where a: Equal` |
 | `buffered` | `(Channel(a), Int) -> Channel(a)` |
+
+`buffered(ch, n)` passes every value on. It is the one transform that
+takes values before they are asked for, whoever reads it, up to `n` of
+them, so the stages before it can run while its reader is still busy with
+an earlier value. `buffered(ch, 0)` reads nothing ahead.
 
 ### Combinators
 
@@ -119,31 +128,55 @@ fn main() {
 
 - **Streams are channels.** No new value type. `stream.collect(ch)` works
   on any `Channel`, not just streams produced by this module.
-- **Backpressure is automatic.** When the output channel of a stage is
-  full, the stage waits for room, and so consumes no further input.
+- **A stage takes what its reader asks for.** A transform takes a value
+  from its input only when its reader (a sink, the stage after it, or a
+  read such as `channel.receive`) asks for one, and calls its function
+  only on that value: `ch |> stream.map(f) |> stream.take(2)` takes two
+  values from `ch` and runs `f` twice, and a stage whose output nobody
+  reads takes nothing and computes nothing. A sink that reads to the end
+  (`collect`, `fold`, `count`, `last`, `write_to_file`, `write_to_tcp`,
+  `channel.each`) asks for every value: the stage before it works up to 16
+  values ahead while it reads, and so does each stage before that, up to a
+  `take`, a `take_while` or a `zip`, which ask for one value at a time, as
+  `first` and a read by hand do. A read that does not wait
+  (`channel.try_receive`, a `channel.receive_timeout` that runs out) asks
+  too: the value it asked for comes to a later read. A source does not
+  wait to be asked: it works ahead of its reader until 16 values wait in
+  its output (`file_lines` reads up to 64 KiB of lines at a time).
+  `stream.buffered(n)` is the only transform that reads ahead for any
+  reader, up to `n` values.
 - **A failing stage fails the pipeline.** If the function of a stage
   raises a runtime error (a division by zero, a `panic`), the stage closes
   its output *with that failure*. The next stage fails with it in turn,
   and the sink at the end raises it: `stream.collect` does not return the
   values that came before the failure. Every read of a stream raises it
   too: `channel.each`, `channel.receive`, `channel.try_receive`,
-  `channel.receive_timeout` and a `Recv` arm of `channel.select`.
-  A stage that fails where nobody reads its output is an error when the
-  program ends, as a task that failed and was never joined is: "a
-  `stream.map` stage failed and its output was never read". A failure
-  that a read has raised is not reported again, and a pipeline that is
-  cut short stays quiet.
+  `channel.receive_timeout` and a `Recv` arm of `channel.select`. A stage
+  that took a value and failed on it, where nobody reads its output any
+  more, is an error when the program ends, as a task that failed and was
+  never joined is: "a `stream.map` stage failed and its output was never
+  read". That is a stage that read ahead for `stream.buffered`, or one
+  that a read which did not wait asked for a value. A failure that a read
+  has raised is not reported again, a stage that nobody asked for a value
+  computes nothing and so does not fail, and a pipeline that is cut short
+  stays quiet.
 - **A pipeline that is cut short stops.** When a stage or a sink reads no
   further (`take`, `take_while`, `first`, a failure downstream), the stage
   that feeds it is stopped, and so on up to the source. So
   `stream.repeat(x) |> stream.take(3)` leaves nothing running. The output
   of a stage is closed by this: read it with one consumer. A channel that
-  no stage feeds (one you made with `channel.new`) is left open. What is
-  left *in* it is another matter: a stage reads ahead of what its reader
-  asks for (a `map` stage until its output is full, a `filter` stage as
-  far as it finds nothing to pass on), and what a stage took is gone
-  when the pipeline is cut short. `stream.take` directly on a channel
-  takes exactly what it gives.
+  no stage feeds (one you made with `channel.new`) is left open, and what
+  is left in it stays there: a stage took only what was asked for, so
+  `ch |> stream.map(f) |> stream.take(2)` takes exactly two values from
+  `ch`, and a `filter` stops where its reader stops. Three things take
+  more.
+  `stream.buffered(n)` took up to `n` values ahead, which are gone when
+  the pipeline is cut short. A sink that reads to the end but is stopped
+  first (its task is cancelled, or its time under `task.deadline` runs
+  out) loses up to 16 values for each stage before it. And a `merge`, a
+  `zip` or a `channel.select` over several streams asks each of them, so
+  each stage that feeds it may hold one value for a later read; when
+  nothing reads it any more, that value is gone: at most one per input.
 - **A TCP source or sink that is stopped closes its connection.** When
   `stream.tcp_lines` or `stream.tcp_chunks` is stopped before the peer has
   closed (`stream.tcp_lines(conn) |> stream.first`), or the task in
@@ -161,12 +194,14 @@ fn main() {
   (`Err(Timeout)` of a connection, which is shut down then), a sink
   returns it. So does a read or a write that the I/O pool could not run:
   the source ends with that error, not as if its input had ended.
-- **A stream that you stop reading goes on.** A stream that is read by
-  hand (`channel.receive`, `channel.select`) and then left is still at
-  work: its stages run until their outputs are full or the source is at
-  its end, and the program does not end before they have stopped (see
-  [When a program ends](../concurrency.md#when-a-program-ends)).
-  `channel.close(s)` on the stream stops them at once.
+- **A stream that you stop reading stops taking.** A stream that is read
+  by hand (`channel.receive`, `channel.select`) and then left takes
+  nothing more from what feeds it: its transforms wait for a reader. Its
+  source and a `stream.buffered` work on until their outputs are full or
+  the source is at its end, and the program does not end before they have
+  stopped (see [When a program
+  ends](../concurrency.md#when-a-program-ends)). `channel.close(s)` on the
+  stream stops them at once.
 - **Errors flow through the stream.** File sources emit
   `Channel(Result(_, IoError))`; TCP sources emit
   `Channel(Result(_, TcpError))`. Each chunk can fail independently;

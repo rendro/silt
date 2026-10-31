@@ -1,0 +1,55 @@
+-- repeat: 5
+-- A stage or a select that waits on several streams asks each of
+-- them, so each may have taken one value when the reader stops: at
+-- most one value per input is lost, not what a stage would read ahead.
+import channel
+import list
+import stream
+
+fn filled(n) {
+  let ch = channel.new(n)
+  fill(ch, 1, n)
+  ch
+}
+
+fn fill(ch, i, n) {
+  match i > n {
+    true -> channel.close(ch)
+    false -> {
+      channel.send(ch, i)
+      fill(ch, i + 1, n)
+    }
+  }
+}
+
+-- How many values left `ch` beyond `used`.
+fn lost(ch, used) {
+  100 - stream.count(ch) - used
+}
+
+fn main() {
+  let a = filled(100)
+  let b = filled(100)
+  let merged = [a |> stream.map { x -> x }, b |> stream.map { x -> x }]
+    |> stream.merge
+    |> stream.take(3)
+    |> stream.collect
+  println("merge: {list.length(merged)} values, at most one lost per input: {lost(a, 0) + lost(b, 0) - 3 <= 2}")
+  let c = filled(100)
+  let d = filled(100)
+  let zipped = stream.zip(c |> stream.map { x -> x }, d |> stream.map { x -> x })
+    |> stream.take(3)
+    |> stream.collect
+  println("zip: {zipped}, at most one lost per input: {lost(c, 3) <= 1 && lost(d, 3) <= 1}")
+  let e = filled(100)
+  let f = filled(100)
+  let se = e |> stream.map { x -> x }
+  let sf = f |> stream.map { x -> x }
+  let picked = match channel.select([channel.Recv(se), channel.Recv(sf)]) {
+    channel.Received(_, Some(_)) -> 1
+    _ -> 0
+  }
+  channel.close(se)
+  channel.close(sf)
+  println("select: {picked} value, at most one lost per input: {lost(e, 0) + lost(f, 0) - picked <= 2}")
+}

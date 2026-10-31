@@ -203,7 +203,7 @@ pub(crate) mod channel {
                 .map(|arm| match arm {
                     Arm::Recv(ch) => (ch.clone(), false),
                     Arm::Send(ch, _) => (ch.clone(), true),
-                    Arm::Cell(_) => unreachable!("a select has channel arms"),
+                    Arm::Cell(_) | Arm::Demand(_) => unreachable!("a select has channel arms"),
                 })
                 .collect();
             // The wait completes the first arm that is possible, from
@@ -231,7 +231,7 @@ pub(crate) mod channel {
                         raise_failure(close)?;
                         Value::variant(bv::RECEIVED, [ch, received(None)])
                     }
-                    Outcome::Done => Value::variant(bv::RECEIVED, [ch, received(None)]),
+                    Outcome::Done | Outcome::Asked => Value::variant(bv::RECEIVED, [ch, received(None)]),
                 }))
             }))
         }
@@ -298,7 +298,7 @@ pub(crate) mod channel {
             Step::Run(Box::new(Each {
                 ch: ch.clone(),
                 callback: f.clone(),
-                state: EachState::Take,
+                state: EachState::Start,
             }))
         }
     }
@@ -314,6 +314,8 @@ struct Each {
 
 /// What the input of an `Each` frame is.
 enum EachState {
+    /// Nothing: the first message is to be taken.
+    Start,
     /// Nothing: the next message is to be taken.
     Take,
     /// The value of a call of the callback.
@@ -347,6 +349,7 @@ impl Native for Each {
     }
 
     fn resume(&mut self, vm: &mut Vm, _input: Value) -> Result<Step, VmError> {
+        let first = matches!(self.state, EachState::Start);
         match std::mem::replace(&mut self.state, EachState::Take) {
             // After each message, give way to the other tasks.
             EachState::Called => return Ok(Step::Yield),
@@ -357,7 +360,7 @@ impl Native for Each {
                     _ => Ok(Step::Done(Value::Unit)),
                 };
             }
-            EachState::Take => {}
+            EachState::Start | EachState::Take => {}
         }
         // The first take and every later one. A task that was
         // cancelled, or whose time is over, takes nothing new: the
@@ -365,6 +368,10 @@ impl Native for Each {
         if vm.takes_nothing_new() {
             self.state = EachState::Waited;
             return Ok(Step::Park(Vm::no_wait()));
+        }
+        // It reads the channel to the end: what feeds it works ahead.
+        if first {
+            self.ch.drain(vm.scheduler().wake());
         }
         match self.ch.try_receive(vm.scheduler().wake()) {
             TryReceive::Value(message) => Ok(self.call(vm, message)),

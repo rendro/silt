@@ -1,0 +1,37 @@
+-- repeat: 3
+-- Each stage of `ch |> stream.map(f) |> stream.map(g) |> stream.take(2)`
+-- takes only what the stage after it asks for: two values leave `ch`,
+-- and `f` and `g` run twice each.
+import channel
+import stream
+
+fn fill(ch, i, n) {
+  match i > n {
+    true -> channel.close(ch)
+    false -> {
+      channel.send(ch, i)
+      fill(ch, i + 1, n)
+    }
+  }
+}
+
+fn main() {
+  let ch = channel.new(100)
+  fill(ch, 1, 100)
+  let calls = channel.new(100)
+  let two = ch
+    |> stream.map { x ->
+      channel.send(calls, "f({x})")
+      x * 10
+    }
+    |> stream.map { x ->
+      channel.send(calls, "g({x})")
+      x + 1
+    }
+    |> stream.take(2)
+    |> stream.collect
+  channel.close(calls)
+  println("got {two}")
+  println("calls: {stream.collect(calls)}")
+  println("next in ch: {channel.receive(ch)}")
+}

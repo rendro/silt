@@ -2276,7 +2276,11 @@ fn waits_of_the_others(own: &[&Waiting<'_, Sleeper>], main: TaskId) -> Vec<Strin
                 .iter()
                 .map(|source| match source {
                     Source::Recv(channel) => format!("to receive from <channel:{}>", channel.id()),
-                    Source::Send(channel) => format!("to send to <channel:{}>", channel.id()),
+                    // A stream stage that waits for its reader to ask
+                    // for the value it would send.
+                    Source::Send(channel) | Source::Demand(channel) => {
+                        format!("to send to <channel:{}>", channel.id())
+                    }
                     Source::Cell(cell) => match cell.label() {
                         Some(label) => format!("for {label} to end"),
                         None => "for a task to end".to_string(),

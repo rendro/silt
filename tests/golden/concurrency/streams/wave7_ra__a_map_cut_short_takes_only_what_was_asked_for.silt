@@ -1,0 +1,34 @@
+-- repeat: 3
+-- A stage takes a value from its input only when its reader asks for
+-- one: `ch |> stream.map(f) |> stream.take(2)` takes two values from
+-- `ch` and runs `f` twice. The rest stays in `ch`. (`collect` reads to
+-- the end, but `take` asks its input for one value at a time.)
+import channel
+import stream
+
+fn fill(ch, i, n) {
+  match i > n {
+    true -> channel.close(ch)
+    false -> {
+      channel.send(ch, i)
+      fill(ch, i + 1, n)
+    }
+  }
+}
+
+fn main() {
+  let ch = channel.new(100)
+  fill(ch, 1, 100)
+  let calls = channel.new(100)
+  let two = ch
+    |> stream.map { x ->
+      channel.send(calls, x)
+      x * 10
+    }
+    |> stream.take(2)
+    |> stream.collect
+  channel.close(calls)
+  println("got {two}")
+  println("f ran for {stream.collect(calls)}")
+  println("next in ch: {channel.receive(ch)}")
+}

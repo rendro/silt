@@ -21,6 +21,10 @@ fn send(channel: &Arc<Channel>, value: i64) -> Wait {
     Wait::new(vec![Arm::Send(channel.clone(), Value::Int(value))])
 }
 
+fn demand(channel: &Arc<Channel>) -> Wait {
+    Wait::new(vec![Arm::Demand(channel.clone())])
+}
+
 /// The arm and the value of a completed receive.
 fn received(fired: Fired) -> (usize, i64) {
     match fired {
@@ -954,6 +958,11 @@ fn a_wait_of_a_task_that_takes_nothing_new(
     let closed = Channel::new(4, 1);
     assert!(closed.close(Close::default(), d));
     assert!(refused(begin(1, recv(&closed))));
+    // A wait to be asked takes nothing new either: refused though the
+    // buffer has room, and left on no queue.
+    let room = Channel::new(5, 1);
+    assert!(refused(begin(1, demand(&room))));
+    assert_eq!(room.feeders(), 0);
     // A send: into a full channel refused, into room done.
     assert!(refused(begin(1, send(&ch, 2))));
     assert_eq!(try_value(&ch, d), Some(1));
@@ -1360,6 +1369,7 @@ fn the_waiting_tasks_are_shown_with_what_they_wait_on() {
                         .map(|source| match source {
                             Source::Recv(channel) => format!("receive {}", channel.id()),
                             Source::Send(channel) => format!("send {}", channel.id()),
+                            Source::Demand(channel) => format!("demand {}", channel.id()),
                             Source::Cell(_) => "cell".to_string(),
                         })
                         .collect();
@@ -1391,6 +1401,162 @@ fn the_waiting_tasks_are_shown_with_what_they_wait_on() {
         (1, Resumed::Fired(Fired::Deadline))
     ));
     assert_eq!(shown(), [(2, "send 5".to_string(), false)]);
+}
+
+// ── Demand ──────────────────────────────────────────────────────────
+
+/// What a feeder that was asked finds.
+fn asked(fired: Fired) -> bool {
+    matches!(fired, Fired::Arm(0, Outcome::Asked))
+}
+
+#[test]
+fn a_feeder_waits_until_a_receiver_parks() {
+    let d = Double::new();
+    let ch = Channel::new(0, 0);
+    assert!(d.block(1, demand(&ch)).is_none());
+    assert_eq!(ch.feeders(), 1);
+
+    // The receive finds nothing, asks, and parks.
+    assert!(d.block(2, recv(&ch)).is_none());
+    assert_eq!(d.woken(), [1]);
+    assert!(asked(resumed(&d, 1)));
+    assert_eq!(ch.feeders(), 0);
+    // The feeder's value goes to the receiver, and nobody asks again.
+    assert!(matches!(ch.try_send(Value::Int(7), &d), TrySend::Sent));
+    assert_eq!(d.woken(), [2]);
+    assert_eq!(received(resumed(&d, 2)), (0, 7));
+    assert!(d.block(1, demand(&ch)).is_none());
+    assert!(d.woken().is_empty());
+}
+
+#[test]
+fn a_receive_that_does_not_wait_asks_for_a_later_one() {
+    let d = Double::new();
+    let ch = Channel::new(0, 0);
+    // `try_receive` finds nothing: it asks all the same.
+    assert_eq!(try_value(&ch, &d), None);
+    assert!(asked(d.block(1, demand(&ch)).expect("a reader asked")));
+    // The value has no receiver now: it waits as a parked send, which
+    // answers the ask, and the next read gets it.
+    assert!(d.block(1, send(&ch, 7)).is_none());
+    assert!(d.block(3, demand(&ch)).is_none());
+    assert_eq!(try_value(&ch, &d), Some(7));
+    assert_eq!(d.woken(), [1]);
+    assert!(matches!(resumed(&d, 1), Fired::Arm(0, Outcome::Sent)));
+    // That read took a value and asked for none.
+    assert!(d.is_parked(3));
+}
+
+#[test]
+fn a_feeder_of_a_buffer_goes_on_while_the_buffer_has_room() {
+    let d = Double::new();
+    let ch = Channel::new(0, 2);
+    assert!(asked(d.block(1, demand(&ch)).expect("room")));
+    assert!(matches!(ch.try_send(Value::Int(1), &d), TrySend::Sent));
+    assert!(asked(d.block(1, demand(&ch)).expect("room")));
+    assert!(matches!(ch.try_send(Value::Int(2), &d), TrySend::Sent));
+    assert!(d.block(1, demand(&ch)).is_none());
+    // A receive makes room.
+    assert_eq!(try_value(&ch, &d), Some(1));
+    assert_eq!(d.woken(), [1]);
+    assert!(asked(resumed(&d, 1)));
+}
+
+#[test]
+fn a_close_tells_a_feeder_that_nobody_will_ask() {
+    let d = Double::new();
+    let ch = Channel::new(0, 0);
+    assert!(d.block(1, demand(&ch)).is_none());
+    assert!(ch.close(Close::default(), &d));
+    assert_eq!(d.woken(), [1]);
+    assert!(matches!(resumed(&d, 1), Fired::Arm(0, Outcome::Closed(_))));
+    // A feeder that begins to wait on a closed channel learns it at once.
+    assert!(matches!(
+        d.block(2, demand(&ch)),
+        Some(Fired::Arm(0, Outcome::Closed(_)))
+    ));
+}
+
+#[test]
+fn a_feeder_that_is_cancelled_or_dropped_leaves_no_waiter() {
+    let d = Double::new();
+    let ch = Channel::new(0, 0);
+    assert!(d.block(1, demand(&ch)).is_none());
+    assert!(d.cancel(1));
+    assert!(matches!(d.resume(1), Resumed::Cancelled));
+    assert!(d.block(2, demand(&ch)).is_none());
+    d.drop_task(2);
+    assert_eq!(ch.feeders(), 0);
+    // An ask now wakes nobody.
+    assert_eq!(try_value(&ch, &d), None);
+    assert_eq!(d.woken(), [1]);
+}
+
+#[test]
+fn a_drained_channel_lets_its_feeder_fill_the_buffer_and_no_more() {
+    let d = Double::new();
+    let ch = Channel::fed(0, 2, 0);
+    assert!(d.block(1, demand(&ch)).is_none());
+    // Its reader reads it to the end: the feeder goes on unasked.
+    ch.drain(&d);
+    assert_eq!(d.woken(), [1]);
+    assert!(asked(resumed(&d, 1)));
+    for value in 1..=2 {
+        assert!(matches!(ch.try_send(Value::Int(value), &d), TrySend::Sent));
+    }
+    // The buffer is full: the feeder waits for room.
+    assert!(d.block(1, demand(&ch)).is_none());
+    assert_eq!(try_value(&ch, &d), Some(1));
+    assert_eq!(d.woken(), [1]);
+    assert!(asked(resumed(&d, 1)));
+}
+
+#[test]
+fn room_in_a_channel_that_is_not_drained_wakes_no_feeder() {
+    let d = Double::new();
+    let ch = Channel::fed(0, 2, 0);
+    // A value in the buffer that a reader once asked for.
+    assert_eq!(try_value(&ch, &d), None);
+    assert!(matches!(ch.try_send(Value::Int(1), &d), TrySend::Sent));
+    assert!(d.block(1, demand(&ch)).is_none());
+    // Taking it makes room, but nobody asked for another.
+    assert_eq!(try_value(&ch, &d), Some(1));
+    assert!(d.woken().is_empty());
+}
+
+#[test]
+fn the_first_drain_drains_what_feeds_the_channel() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let d = Double::new();
+    let (ch, input) = (Channel::fed(0, 2, 0), Channel::fed(1, 2, 0));
+    let drains = Arc::new(AtomicUsize::new(0));
+    let (counted, fed) = (drains.clone(), input.clone());
+    ch.drain_feeder_with(move |wake| {
+        counted.fetch_add(1, Ordering::SeqCst);
+        fed.drain(wake);
+    });
+    ch.drain(&d);
+    ch.drain(&d);
+    assert_eq!(drains.load(Ordering::SeqCst), 1);
+    assert!(input.is_draining());
+}
+
+#[test]
+fn a_select_asks_each_channel_it_finds_empty() {
+    let d = Double::new();
+    let (a, b) = (Channel::new(0, 0), Channel::new(1, 0));
+    assert!(d.block(1, demand(&a)).is_none());
+    assert!(d.block(2, demand(&b)).is_none());
+    assert!(d.block(3, select_recv(&a, &b)).is_none());
+    assert_eq!(d.woken(), [1, 2]);
+    assert!(asked(resumed(&d, 1)));
+    assert!(asked(resumed(&d, 2)));
+    // The first value ends the select; the other waits for a later read.
+    assert!(matches!(a.try_send(Value::Int(1), &d), TrySend::Sent));
+    assert!(matches!(b.try_send(Value::Int(2), &d), TrySend::Full(_)));
+    assert_eq!(received(resumed(&d, 3)), (0, 1));
 }
 
 // ── Threads ─────────────────────────────────────────────────────────

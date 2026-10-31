@@ -1,0 +1,3 @@
+merge: 3 values, at most one lost per input: true
+zip: [(1, 1), (2, 2), (3, 3)], at most one lost per input: true
+select: 1 value, at most one lost per input: true

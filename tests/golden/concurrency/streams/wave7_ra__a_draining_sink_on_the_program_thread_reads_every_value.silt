@@ -1,0 +1,37 @@
+-- repeat: 3
+-- A sink that reads to the end (`collect`, `count`, `fold`) asks for
+-- every value at once, so the stages before it work ahead while it
+-- reads: it gets every value, in order, on the program's own thread,
+-- and leaves the channel it read empty.
+import channel
+import list
+import stream
+
+fn fill(ch, i, n) {
+  match i > n {
+    true -> channel.close(ch)
+    false -> {
+      channel.send(ch, i)
+      fill(ch, i + 1, n)
+    }
+  }
+}
+
+fn main() {
+  let xs = stream.from_range(1, 1000)
+    |> stream.map { x -> x + 1 }
+    |> stream.map { x -> x * 2 }
+    |> stream.map { x -> x - 2 }
+    |> stream.collect
+  println("collect: {list.length(xs)} values, first {list.head(xs)}, last {list.last(xs)}")
+  let ch = channel.new(500)
+  fill(ch, 1, 500)
+  let n = ch
+    |> stream.map { x -> x }
+    |> stream.filter { x -> x % 2 == 0 }
+    |> stream.map { x -> x }
+    |> stream.count
+  println("count: {n}, left in ch: {channel.receive(ch)}")
+  let sum = stream.from_range(1, 100) |> stream.map { x -> x } |> stream.fold(0) { acc, x -> acc + x }
+  println("fold: {sum}")
+}

@@ -19,6 +19,24 @@ pub enum Arm {
     Send(Arc<Channel>, Value),
     /// The cell is complete.
     Cell(Arc<dyn Completion>),
+    /// The channel asks for a value: a reader waits for one or looked
+    /// for one, or its buffer has room; or it is closed. What feeds
+    /// the channel waits so before it takes anything to feed it with.
+    /// It takes nothing from the channel: the wait of a task that
+    /// takes nothing new is refused it, as a receive.
+    Demand(Arc<Channel>),
+}
+
+impl Arm {
+    /// What the task is queued on, and the value of a send.
+    fn split(self) -> (Source, Option<Value>) {
+        match self {
+            Arm::Recv(channel) => (Source::Recv(channel), None),
+            Arm::Send(channel, value) => (Source::Send(channel), Some(value)),
+            Arm::Cell(cell) => (Source::Cell(cell), None),
+            Arm::Demand(channel) => (Source::Demand(channel), None),
+        }
+    }
 }
 
 /// What a task waits for: the first arm that can be completed, or the
@@ -114,6 +132,7 @@ pub enum Source {
     Recv(Arc<Channel>),
     Send(Arc<Channel>),
     Cell(Arc<dyn Completion>),
+    Demand(Arc<Channel>),
 }
 
 impl Source {
@@ -125,7 +144,9 @@ impl Source {
 
     fn channel(&self) -> Option<&Arc<Channel>> {
         match self {
-            Source::Recv(channel) | Source::Send(channel) => Some(channel),
+            Source::Recv(channel) | Source::Send(channel) | Source::Demand(channel) => {
+                Some(channel)
+            }
             Source::Cell(_) => None,
         }
     }
@@ -160,7 +181,8 @@ pub enum Park {
 ///
 /// When the task's cancel flag is set ([`Wait::cancel`]), or the time
 /// of the task is over ([`Wait::task_deadline`]), the task takes
-/// nothing new and waits for nothing: its receive arms are not tried
+/// nothing new and waits for nothing: its receive and demand arms are
+/// not tried
 /// (`takes_nothing_new`, below), a send that can be done at once is
 /// done and a cell that is complete is found so, and if none of those
 /// ends the wait the task is not queued: [`Park::Cancelled`],
@@ -194,11 +216,7 @@ pub fn park(task: TaskId, wait: Wait, timer: &Arc<Timer>, wake: &dyn Wake) -> Pa
     let mut payloads = Vec::with_capacity(arms.len());
     let mut sources = Vec::with_capacity(arms.len());
     for arm in arms {
-        let (source, payload) = match arm {
-            Arm::Recv(channel) => (Source::Recv(channel), None),
-            Arm::Send(channel, value) => (Source::Send(channel), Some(value)),
-            Arm::Cell(cell) => (Source::Cell(cell), None),
-        };
+        let (source, payload) = arm.split();
         sources.push(source);
         payloads.push(payload);
     }
@@ -229,7 +247,8 @@ pub fn park(task: TaskId, wait: Wait, timer: &Arc<Timer>, wake: &dyn Wake) -> Pa
     for arm in (0..count).map(|i| (first + i) % count) {
         let source = &sources[arm];
         let outcome = match source {
-            Source::Recv(_) if no_takes => None,
+            Source::Recv(_) | Source::Demand(_) if no_takes => None,
+            Source::Demand(channel) => states[lock_of(channel)].demand(),
             Source::Recv(channel) => match states[lock_of(channel)].receive(&mut wakes) {
                 TryReceive::Value(value) => Some(Outcome::Received(value)),
                 TryReceive::Closed(close) => Some(Outcome::Closed(close)),
@@ -278,13 +297,14 @@ pub fn park(task: TaskId, wait: Wait, timer: &Arc<Timer>, wake: &dyn Wake) -> Pa
         match source {
             Source::Recv(channel) => states[lock_of(channel)].recvq.push_back(waiter),
             Source::Send(channel) => states[lock_of(channel)].sendq.push_back(waiter),
+            Source::Demand(channel) => states[lock_of(channel)].demandq.push_back(waiter),
             Source::Cell(_) => {}
         }
     }
     drop(states);
     // From here a peer may end the wait at any moment. A cell that was
     // completed since the look above ends it here; the token is not
-    // parked yet, so nothing of this reaches `wakes`.
+    // parked yet, so this task does not reach `wakes`.
     for (arm, source) in sources.iter().enumerate() {
         if let Source::Cell(cell) = source {
             let waiter = Waiter {
@@ -295,6 +315,9 @@ pub fn park(task: TaskId, wait: Wait, timer: &Arc<Timer>, wake: &dyn Wake) -> Pa
             cell.enqueue(waiter, &mut wakes);
         }
     }
+    // A receive that found its channel empty asked for a value: the
+    // feeder that waited to be asked goes on.
+    wakes.send(wake);
     let timer = times.arm(timer, &token);
     Park::Parked(Parked {
         token,
@@ -354,12 +377,16 @@ fn park_one(
         ..
     } = times;
     let mut wakes = Wakes::default();
-    let (source, token) = match arm {
-        Arm::Recv(channel) => {
+    let (source, token) = match arm.split() {
+        // A receive, or a wait to be asked: the two take nothing that
+        // is sent, so a task that takes nothing new is refused both.
+        (source @ (Source::Recv(_) | Source::Demand(_)), _) => {
+            let channel = source.channel().expect("the arm is on a channel");
             let mut state = channel.state.lock();
             let cancelled = is_set(&cancel);
             let outcome = match takes_nothing_new(cancelled, task_expired) {
                 true => None,
+                false if matches!(source, Source::Demand(_)) => state.demand(),
                 false => match state.receive(&mut wakes) {
                     TryReceive::Value(value) => Some(Outcome::Received(value)),
                     TryReceive::Closed(close) => Some(Outcome::Closed(close)),
@@ -378,15 +405,19 @@ fn park_one(
                 return Park::Ready(fired);
             }
             let token = Token::new(task, cancel);
-            state.recvq.push_back(Waiter {
+            let queue = match source {
+                Source::Demand(_) => &mut state.demandq,
+                _ => &mut state.recvq,
+            };
+            queue.push_back(Waiter {
                 token: token.clone(),
                 arm: 0,
                 payload: None,
             });
             drop(state);
-            (Source::Recv(channel), token)
+            (source, token)
         }
-        Arm::Send(channel, value) => {
+        (Source::Send(channel), Some(value)) => {
             let mut state = channel.state.lock();
             let cancelled = is_set(&cancel);
             let (outcome, value) = match state.send(value, &mut wakes) {
@@ -414,8 +445,11 @@ fn park_one(
             drop(state);
             (Source::Send(channel), token)
         }
-        Arm::Cell(_) => unreachable!("the one arm is on a channel"),
+        _ => unreachable!("the one arm is on a channel"),
     };
+    // A receive that found its channel empty asked for a value: the
+    // feeder that waited to be asked goes on.
+    wakes.send(wake);
     let timer = times.arm(timer, &token);
     Park::Parked(Parked {
         token,
@@ -484,7 +518,9 @@ impl Drop for Parked {
                 continue;
             }
             match source {
-                Source::Recv(channel) | Source::Send(channel) => channel.forget(&self.token),
+                Source::Recv(channel) | Source::Send(channel) | Source::Demand(channel) => {
+                    channel.forget(&self.token)
+                }
                 Source::Cell(cell) => cell.forget(&self.token),
             }
         }
