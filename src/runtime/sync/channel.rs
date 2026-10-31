@@ -84,6 +84,9 @@ pub struct Channel {
     /// What its only reader does when it gives the channel up
     /// ([`Channel::abandon`]): tell whoever feeds it to stop.
     on_abandon: OnceLock<Box<dyn Fn() + Send + Sync>>,
+    /// What its reader does when it drains the channel
+    /// ([`Channel::drain`]): drain what feeds it.
+    on_drain: OnceLock<Box<dyn Fn(&dyn Wake) + Send + Sync>>,
     /// Set when a timer was told to close it (`channel.timeout`).
     closes_by_timer: AtomicBool,
     pub(super) state: Mutex<State>,
@@ -107,6 +110,13 @@ pub(super) struct State {
     /// receive found the channel empty, and the value it asked for has
     /// not been sent since.
     asked: bool,
+    /// Whether its reader reads it to the end ([`Channel::drain`]): a
+    /// feeder may fill the buffer without being asked.
+    draining: bool,
+    /// How many values a feeder may hold in the buffer without being
+    /// asked, when the reader does not drain the channel: the capacity
+    /// for `stream.buffered`, none for any other stream stage.
+    ahead: usize,
     /// How many waiters whose wait has ended were left on the queues
     /// since they were last swept ([`Channel::forget`]).
     stale: usize,
@@ -152,8 +162,9 @@ impl State {
             // The place that came free goes to the oldest parked sender.
             match self.take_from_sender(wakes) {
                 Some(value) => self.buf.push_back(value),
-                // Otherwise there is room now.
-                None => self.wake_feeders(wakes),
+                // Otherwise there is room now, which a feeder may use.
+                None if self.demand().is_some() => self.wake_feeders(wakes),
+                None => {}
             }
             return TryReceive::Value(value);
         }
@@ -173,14 +184,19 @@ impl State {
     }
 
     /// What a feeder that waits to be asked for a value finds:
-    /// [`Outcome::Asked`] when a reader asks or a send would not wait
-    /// (the buffer has room), [`Outcome::Closed`] when nobody will
-    /// ask any more.
+    /// [`Outcome::Asked`] when a reader asks, or the buffer has room
+    /// that the feeder may fill unasked (its reader drains the channel,
+    /// or it may hold values ahead), [`Outcome::Closed`] when nobody
+    /// will ask any more.
     pub(super) fn demand(&self) -> Option<Outcome> {
         if let Some(close) = &self.closed {
             return Some(Outcome::Closed(close.clone()));
         }
-        (self.asked || self.buf.len() < self.capacity).then_some(Outcome::Asked)
+        let room = match self.draining {
+            true => self.capacity,
+            false => self.ahead,
+        };
+        (self.asked || self.buf.len() < room).then_some(Outcome::Asked)
     }
 
     /// A reader asks, or room came free: every feeder that waits for
@@ -243,10 +259,18 @@ impl Channel {
     }
 
     pub fn new(id: usize, capacity: usize) -> Arc<Channel> {
+        Channel::fed(id, capacity, capacity)
+    }
+
+    /// A channel that buffers up to `capacity` values, of which its
+    /// feeder may hold `ahead` without being asked for them (see
+    /// [`Arm::Demand`](super::Arm)) unless its reader drains it.
+    pub fn fed(id: usize, capacity: usize, ahead: usize) -> Arc<Channel> {
         Arc::new(Channel {
             id,
             capacity,
             on_abandon: OnceLock::new(),
+            on_drain: OnceLock::new(),
             closes_by_timer: AtomicBool::new(false),
             state: Mutex::new(State {
                 capacity,
@@ -256,6 +280,8 @@ impl Channel {
                 sendq: VecDeque::new(),
                 demandq: VecDeque::new(),
                 asked: false,
+                draining: false,
+                ahead,
                 stale: 0,
             }),
         })
@@ -316,6 +342,39 @@ impl Channel {
 
     pub fn is_closed(&self) -> bool {
         self.state.lock().closed.is_some()
+    }
+
+    /// The reader of the channel reads it to the end: its feeder may
+    /// fill the buffer without waiting to be asked for each value.
+    /// The first drain of a channel that a feeder set up with
+    /// [`Channel::drain_feeder_with`] drains what feeds it.
+    pub fn drain(&self, wake: &dyn Wake) {
+        let mut wakes = Wakes::default();
+        {
+            let mut state = self.state.lock();
+            if std::mem::replace(&mut state.draining, true) {
+                return;
+            }
+            if state.demand().is_some() {
+                state.wake_feeders(&mut wakes);
+            }
+        }
+        wakes.send(wake);
+        if let Some(drain) = self.on_drain.get() {
+            drain(wake);
+        }
+    }
+
+    /// The channel is the output of something that reads its own
+    /// inputs to the end when its reader reads the channel to the
+    /// end: `drain` drains them. Set once, when the channel is made.
+    pub fn drain_feeder_with(&self, drain: impl Fn(&dyn Wake) + Send + Sync + 'static) {
+        let _ = self.on_drain.set(Box::new(drain));
+    }
+
+    /// Whether the reader of the channel reads it to the end.
+    pub fn is_draining(&self) -> bool {
+        self.state.lock().draining
     }
 
     /// Whether a feeder may take a value for the channel's reader now:

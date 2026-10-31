@@ -42,13 +42,47 @@ use crate::typeinfo::bv;
 use crate::value::Value;
 use crate::vm::{IoOp, Leave, Limit, Native, Step, Vm, VmError};
 
-/// How many values a source holds ahead of its reader: it takes
-/// nothing that the program holds, so it does not wait to be asked.
-const SOURCE_CAPACITY: usize = 16;
+/// The output of a stage: how many values it buffers, how many of
+/// them the stage may hold without being asked for them, and whether a
+/// reader that drains it (reads it to the end) drains the stage's
+/// inputs as well.
+#[derive(Clone, Copy)]
+struct Output {
+    capacity: usize,
+    ahead: usize,
+    drains: bool,
+}
 
-/// The output of a transform holds nothing: the transform takes a
-/// value from its input only when its reader asks for one.
-const ON_DEMAND: usize = 0;
+/// How many values a stage holds ahead of a reader that drains its
+/// output, and a source ahead of any reader.
+const AHEAD: usize = 16;
+
+/// A source works ahead of its reader: it takes nothing that the
+/// program holds, so it does not wait to be asked.
+const SOURCE: Output = Output {
+    capacity: AHEAD,
+    ahead: AHEAD,
+    drains: false,
+};
+
+/// A transform takes a value from its input only when its reader asks
+/// for one, or fills its output while its reader drains it. This one
+/// reads its whole input when its whole output is read, so a reader
+/// that drains it drains its inputs.
+const DRAINS: Output = Output {
+    capacity: AHEAD,
+    ahead: 0,
+    drains: true,
+};
+
+/// A transform that may stop before its input ends (`take`,
+/// `take_while`, `zip`): it asks its input for one value at a time,
+/// whoever reads it, so its input loses nothing when it stops.
+const STOPS: Output = Output {
+    capacity: AHEAD,
+    ahead: 0,
+    drains: false,
+};
 
 // ── The pipe ───────────────────────────────────────────────────────────
 
@@ -142,6 +176,8 @@ struct Pipe {
     /// Which input a wait for any of them tries first: each in turn.
     turn: usize,
     finished: bool,
+    /// A sink that reads its input to the end, and has not yet said so.
+    drains: bool,
     /// What ends its blocking operations, for a pipe on a connection:
     /// called when the pipe is stopped before its end, whether an
     /// operation is in flight then or not.
@@ -176,6 +212,7 @@ impl Pipe {
             logic: Box::new(logic),
             state: State::Go(Got::Start),
             turn: 0,
+            drains: false,
             finished: false,
             stop: None,
         }
@@ -240,9 +277,17 @@ impl Pipe {
                         None => Step::Park(Vm::no_wait()),
                     });
                 }
+                // A sink that reads its input to the end says so before
+                // its first take.
+                Next::Take(index) if std::mem::take(&mut self.drains) => {
+                    self.inputs[index].drain(vm.scheduler().wake());
+                    next = Next::Take(index);
+                    continue;
+                }
                 // A stage takes a value only when its reader asks for
-                // one (or, for `stream.buffered`, while its output has
-                // room): until then it waits, with nothing taken.
+                // one, or while it may fill its output (its reader
+                // drains it; `stream.buffered` holds values ahead):
+                // until then it waits, with nothing taken.
                 take @ (Next::Take(_) | Next::TakeAny)
                     if self.out.as_ref().is_some_and(|out| !out.is_asked()) =>
                 {
@@ -395,8 +440,8 @@ impl Native for Pipe {
 }
 
 /// Start a stage: a task that runs `logic` over `inputs` and feeds the
-/// channel that is returned, of capacity `capacity`. Every source and
-/// every transform starts its task here.
+/// channel that is returned, as `output` says. Every source and every
+/// transform starts its task here.
 ///
 /// A task that takes nothing new (`Vm::takes_nothing_new`: it was
 /// cancelled, or its time is over) starts no stage: the stage's task would take from its
@@ -406,13 +451,18 @@ fn stage(
     vm: &mut Vm,
     name: &'static str,
     inputs: Vec<Arc<Channel>>,
-    capacity: usize,
+    output: Output,
     logic: impl FnMut(Got) -> Result<Next, VmError> + Send + 'static,
 ) -> Result<Step, VmError> {
     if vm.takes_nothing_new() {
         return Ok(vm.end_here(name));
     }
-    let out = Channel::new(vm.next_channel_id(), capacity);
+    let Output {
+        capacity,
+        ahead,
+        drains,
+    } = output;
+    let out = Channel::fed(vm.next_channel_id(), capacity, ahead);
     let id = vm.next_task_id();
     let handle =
         Arc::new(TaskHandle::with_owner(id, vm.scheduler().current_owner()).of_stage(name));
@@ -427,6 +477,16 @@ fn stage(
     let mut pipe = Pipe::new(name, inputs, logic);
     pipe.out = Some(out.clone());
     pipe.handle = Some(handle.clone());
+    if drains {
+        // A reader that drains the output drains every input: the
+        // stage reads them to the end for it.
+        let inputs = pipe.inputs.clone();
+        out.drain_feeder_with(move |wake| {
+            for input in &inputs {
+                input.drain(wake);
+            }
+        });
+    }
     let mut child = vm.spawn_child();
     child.spawned = true;
     child.push_native_frame(Box::new(pipe));
@@ -444,13 +504,18 @@ fn closed_channel(vm: &mut Vm) -> Step {
     Step::Done(Value::Channel(out))
 }
 
-/// Run a sink in the caller's task: its value is the call's.
+/// Run a sink in the caller's task: its value is the call's. A sink
+/// that `drains` reads its input to the end, and says so: the stages
+/// before it work ahead while it reads.
 fn sink(
     name: &'static str,
     input: Arc<Channel>,
+    drains: bool,
     logic: impl FnMut(Got) -> Result<Next, VmError> + Send + 'static,
 ) -> Result<Step, VmError> {
-    Ok(Step::Run(Box::new(Pipe::new(name, vec![input], logic))))
+    let mut pipe = Pipe::new(name, vec![input], logic);
+    pipe.drains = drains;
+    Ok(Step::Run(Box::new(pipe)))
 }
 
 /// What a logic says to an event it never asked for.
@@ -520,7 +585,7 @@ fn reading(
     let read = Arc::new(Mutex::new(read));
     let mut failed = false;
     let mut items = std::collections::VecDeque::new();
-    stage(vm, name, vec![], SOURCE_CAPACITY, move |got| {
+    stage(vm, name, vec![], SOURCE, move |got| {
         // The next item read, which ends the source if it is an error.
         fn emit(item: Value, failed: &mut bool) -> Next {
             *failed = matches!(&item, Value::Variant(item) if item.is(bv::ERR));
@@ -615,7 +680,7 @@ fn writing(
 ) -> Result<Step, VmError> {
     let write = Arc::new(Mutex::new(write));
     let mut ended = false;
-    sink(name, ch, move |got| {
+    sink(name, ch, true, move |got| {
         let run = |bytes: Option<Arc<Vec<u8>>>| {
             let write = write.clone();
             Next::Io(
@@ -653,7 +718,7 @@ builtins! {
 
     fn from_list(vm, xs: List) -> Result<Step, VmError> {
         let mut items = xs.clone().into_iter();
-        stage(vm, "stream.from_list", vec![], SOURCE_CAPACITY, move |_| {
+        stage(vm, "stream.from_list", vec![], SOURCE, move |_| {
             Ok(match items.next() {
                 Some(value) => Next::Emit(value),
                 None => Next::Done(Value::Unit),
@@ -667,7 +732,7 @@ builtins! {
             vm,
             "stream.from_range",
             vec![],
-            SOURCE_CAPACITY,
+            SOURCE,
             move |_| {
                 Ok(match next.filter(|i| *i <= hi) {
                     Some(i) => {
@@ -682,7 +747,7 @@ builtins! {
 
     fn repeat(vm, x: &Value) -> Result<Step, VmError> {
         let v = x.clone();
-        stage(vm, "stream.repeat", vec![], SOURCE_CAPACITY, move |_| {
+        stage(vm, "stream.repeat", vec![], SOURCE, move |_| {
             Ok(Next::Emit(v.clone()))
         })
     }
@@ -690,7 +755,7 @@ builtins! {
     fn unfold(vm, seed: &Value, f: &Value) -> Result<Step, VmError> {
         let mut state = seed.clone();
         let fn_val = f.clone();
-        stage(vm, "stream.unfold", vec![], SOURCE_CAPACITY, move |got| {
+        stage(vm, "stream.unfold", vec![], SOURCE, move |got| {
             Ok(match got {
                 Got::Start | Got::Emitted => Next::Call(fn_val.clone(), vec![state.clone()]),
                 // Fn(state) -> Option((value, next_state))
@@ -875,7 +940,7 @@ builtins! {
             vm,
             "stream.map",
             vec![in_ch],
-            ON_DEMAND,
+            DRAINS,
             move |got| {
                 Ok(match got {
                     Got::Start | Got::Emitted => Next::Take(0),
@@ -895,7 +960,7 @@ builtins! {
             vm,
             "stream.filter",
             vec![in_ch],
-            ON_DEMAND,
+            DRAINS,
             move |got| {
                 Ok(match got {
                     Got::Start | Got::Emitted => Next::Take(0),
@@ -923,7 +988,7 @@ builtins! {
             vm,
             "stream.flat_map",
             vec![in_ch],
-            ON_DEMAND,
+            DRAINS,
             move |got| {
                 match got {
                     Got::Value(_, v) => return Ok(Next::Call(fn_val.clone(), vec![v])),
@@ -953,7 +1018,7 @@ builtins! {
             vm,
             "stream.take",
             vec![in_ch],
-            ON_DEMAND,
+            STOPS,
             move |got| {
                 Ok(match got {
                     Got::Start => Next::Take(0),
@@ -976,7 +1041,7 @@ builtins! {
             vm,
             "stream.drop",
             vec![in_ch],
-            ON_DEMAND,
+            DRAINS,
             move |got| {
                 Ok(match got {
                     Got::Start | Got::Emitted => Next::Take(0),
@@ -999,7 +1064,7 @@ builtins! {
             vm,
             "stream.take_while",
             vec![in_ch],
-            ON_DEMAND,
+            STOPS,
             move |got| {
                 Ok(match got {
                     Got::Start | Got::Emitted => Next::Take(0),
@@ -1026,7 +1091,7 @@ builtins! {
             vm,
             "stream.drop_while",
             vec![in_ch],
-            ON_DEMAND,
+            DRAINS,
             move |got| {
                 Ok(match got {
                     Got::Start | Got::Emitted => Next::Take(0),
@@ -1064,7 +1129,7 @@ builtins! {
             vm,
             "stream.chunks",
             vec![in_ch],
-            ON_DEMAND,
+            DRAINS,
             move |got| {
                 Ok(match got {
                     Got::Start => Next::Take(0),
@@ -1099,7 +1164,7 @@ builtins! {
             vm,
             "stream.scan",
             vec![in_ch],
-            ON_DEMAND,
+            DRAINS,
             move |got| {
                 Ok(match got {
                     Got::Start | Got::Emitted => Next::Take(0),
@@ -1122,7 +1187,7 @@ builtins! {
             vm,
             "stream.dedup",
             vec![in_ch],
-            ON_DEMAND,
+            DRAINS,
             move |got| {
                 Ok(match got {
                     Got::Start | Got::Emitted => Next::Take(0),
@@ -1147,8 +1212,13 @@ builtins! {
 
     fn buffered(vm, ch: Chan, n: i64) -> Result<Step, VmError> {
         let in_ch = ch.clone();
-        let cap = usize::try_from(n).unwrap_or(0);
-        stage(vm, "stream.buffered", vec![in_ch], cap, forward)
+        let n = usize::try_from(n).unwrap_or(0);
+        let output = Output {
+            capacity: n,
+            ahead: n,
+            drains: true,
+        };
+        stage(vm, "stream.buffered", vec![in_ch], output, forward)
     }
 
     // ── Combinators ───────────────────────────────────────────────────────
@@ -1156,7 +1226,7 @@ builtins! {
     fn merge(vm, chs: List) -> Result<Step, VmError> {
         let channels = channel_list("stream.merge", chs)?;
         let mut open = channels.len();
-        stage(vm, "stream.merge", channels, ON_DEMAND, move |got| {
+        stage(vm, "stream.merge", channels, DRAINS, move |got| {
             match got {
                 Got::Value(_, v) => return Ok(Next::Emit(v)),
                 Got::End => open -= 1,
@@ -1173,7 +1243,7 @@ builtins! {
     fn zip(vm, a: Chan, b: Chan) -> Result<Step, VmError> {
         let (a, b) = (a.clone(), b.clone());
         let mut left = None;
-        stage(vm, "stream.zip", vec![a, b], ON_DEMAND, move |got| {
+        stage(vm, "stream.zip", vec![a, b], STOPS, move |got| {
             Ok(match got {
                 Got::Start | Got::Emitted => Next::Take(0),
                 Got::Value(0, va) => {
@@ -1198,7 +1268,7 @@ builtins! {
             vm,
             "stream.concat",
             channels,
-            ON_DEMAND,
+            DRAINS,
             move |got| {
                 match got {
                     Got::Value(_, v) => return Ok(Next::Emit(v)),
@@ -1220,7 +1290,7 @@ builtins! {
     fn collect(ch: Chan) -> Result<Step, VmError> {
         let ch = ch.clone();
         let mut out = Vec::new();
-        sink("stream.collect", ch, move |got| {
+        sink("stream.collect", ch, true, move |got| {
             Ok(match got {
                 Got::Start => Next::Take(0),
                 Got::Value(_, v) => {
@@ -1238,7 +1308,7 @@ builtins! {
         let ch = ch.clone();
         let mut acc = init.clone();
         let callback = f.clone();
-        sink("stream.fold", ch, move |got| {
+        sink("stream.fold", ch, true, move |got| {
             Ok(match got {
                 Got::Start => Next::Take(0),
                 Got::Value(_, v) => Next::Call(callback.clone(), vec![acc.clone(), v]),
@@ -1255,7 +1325,7 @@ builtins! {
     fn count(ch: Chan) -> Result<Step, VmError> {
         let ch = ch.clone();
         let mut n: i64 = 0;
-        sink("stream.count", ch, move |got| {
+        sink("stream.count", ch, true, move |got| {
             Ok(match got {
                 Got::Start => Next::Take(0),
                 Got::Value(..) => {
@@ -1270,7 +1340,7 @@ builtins! {
 
     fn first(ch: Chan) -> Result<Step, VmError> {
         let ch = ch.clone();
-        sink("stream.first", ch, move |got| {
+        sink("stream.first", ch, false, move |got| {
             Ok(match got {
                 Got::Start => Next::Take(0),
                 Got::Value(_, v) => Next::Done(Value::variant(bv::SOME, [v])),
@@ -1283,7 +1353,7 @@ builtins! {
     fn last(ch: Chan) -> Result<Step, VmError> {
         let ch = ch.clone();
         let mut last: Option<Value> = None;
-        sink("stream.last", ch, move |got| {
+        sink("stream.last", ch, true, move |got| {
             Ok(match got {
                 Got::Start => Next::Take(0),
                 Got::Value(_, v) => {

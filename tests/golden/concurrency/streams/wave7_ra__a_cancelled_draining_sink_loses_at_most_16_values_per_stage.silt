@@ -1,0 +1,39 @@
+-- repeat: 5
+-- A sink that reads to the end lets each stage before it hold up to
+-- 16 values ahead. When the task of the sink is cancelled, those are
+-- gone from the channel the program holds: at most 16 per stage, plus
+-- the values read and the one in the stage that waits on the gate.
+import channel
+import stream
+import task
+
+fn fill(ch, i, n) {
+  match i > n {
+    true -> channel.close(ch)
+    false -> {
+      channel.send(ch, i)
+      fill(ch, i + 1, n)
+    }
+  }
+}
+
+fn main() {
+  let ch = channel.new(1000)
+  fill(ch, 1, 1000)
+  let gate = channel.new(0)
+  let h = task.spawn { ->
+    ch
+      |> stream.map { x -> x }
+      |> stream.map { x ->
+        let _ = channel.receive(gate)
+        x
+      }
+      |> stream.collect
+  }
+  channel.send(gate, 1)
+  channel.send(gate, 2)
+  channel.send(gate, 3)
+  task.cancel(h)
+  let taken = 1000 - stream.count(ch)
+  println("taken from ch at most 3 + 1 + 2 * 16: {taken <= 36}")
+}
