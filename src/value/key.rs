@@ -889,6 +889,7 @@ impl<H: Hasher> Visit<1> for Hashed<'_, H> {
 }
 
 impl PartialEq for Value {
+    #[inline]
     fn eq(&self, other: &Value) -> bool {
         walk([self, other], &mut Equal).is_continue()
     }
@@ -897,12 +898,14 @@ impl PartialEq for Value {
 impl Eq for Value {}
 
 impl PartialOrd for Value {
+    #[inline]
     fn partial_cmp(&self, other: &Value) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
 impl Ord for Value {
+    #[inline]
     fn cmp(&self, other: &Value) -> Ordering {
         match walk([self, other], &mut Order) {
             Break(unequal) => unequal,
