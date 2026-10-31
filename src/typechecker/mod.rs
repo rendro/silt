@@ -378,6 +378,10 @@ pub struct TypeChecker {
     /// carries its type in full (`Box.mk`): the dictionary is made where
     /// the use is, so a `let` of the use is not general in that type.
     pub(super) type_method_selves: Vec<Type>,
+    /// The types of `type_method_selves` a top-level `let` was kept from
+    /// being general in: a REPL input that leaves one open refuses the
+    /// `let` (its dictionary is made where the input runs).
+    pub(super) kept_selves: Vec<Type>,
     /// Each annotation variable of a declaration whose body was or is
     /// being checked, as its body sees it: rigid.
     pub(super) rigid_of: HashMap<TyVar, Type>,
@@ -657,6 +661,7 @@ impl TypeChecker {
             full_type_uses: Vec::new(),
             full_type_receivers: HashMap::new(),
             type_method_selves: Vec::new(),
+            kept_selves: Vec::new(),
             rigid_of: HashMap::new(),
             let_vars: std::collections::HashSet::new(),
             var_written: HashMap::new(),
@@ -1077,7 +1082,13 @@ impl TypeChecker {
     /// where it is reported. A REPL cell is exempt: the next cell may
     /// decide it.
     fn report_unknown_let_types(&mut self, program: &Program, env: &TypeEnv) {
-        if self.is_cell {
+        // (In a REPL cell, only a `let` whose value makes a dictionary
+        // that carries its type in full, `let top = Box.mk`: the cell
+        // makes it when it runs, so a later input cannot.)
+        let kept: Vec<TyVar> = (self.kept_selves.iter())
+            .flat_map(|ty| free_vars_in(&self.apply(ty)))
+            .collect();
+        if self.is_cell && kept.is_empty() {
             return;
         }
         for decl in &program.decls {
@@ -1090,6 +1101,8 @@ impl TypeChecker {
                 continue;
             }
             let (what, keyword, why) = match is_pub {
+                // (A REPL input's `let` is public to the inputs after it.)
+                _ if self.is_cell => ("top-level let", "let", "a later input does not decide it"),
                 true => (
                     "public let",
                     "pub let",
@@ -1103,6 +1116,9 @@ impl TypeChecker {
                 };
                 let ty = self.apply(&scheme.ty);
                 if free_vars_in(&ty).iter().all(|v| scheme.vars.contains(v)) {
+                    continue;
+                }
+                if self.is_cell && !free_vars_in(&ty).iter().any(|v| kept.contains(v)) {
                     continue;
                 }
                 // (A trait argument nothing decides: that error says it.)
@@ -1387,6 +1403,7 @@ impl TypeChecker {
         // in its value carries in full, `let top = Box.mk`, as in a body.)
         for ty in self.type_method_selves.split_off(selves) {
             self.keep_monomorphic(&ty);
+            self.kept_selves.push(ty);
         }
         for (names, is_value, span, _) in &lets {
             for name in names {
