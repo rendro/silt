@@ -128,11 +128,15 @@ impl Row {
     }
 
     /// The signature as a call site shows it, `fn string.trim(s: String)
-    /// -> String`, and where each parameter is in it (byte offsets).
-    /// `None` for a constant.
+    /// -> String`; with the module `""`, as the prelude's, `fn
+    /// println(value: a) -> () where a: Display`; and where each
+    /// parameter is in it (byte offsets). `None` for a constant.
     pub fn qualified_signature(&self, module: &str) -> Option<(String, Vec<[u32; 2]>)> {
         let rest = self.signature.strip_prefix("fn ")?;
-        let label = format!("fn {module}.{rest}");
+        let label = match module {
+            "" => format!("fn {rest}"),
+            module => format!("fn {module}.{rest}"),
+        };
         let open = label.find('(')?;
         let mut ranges = Vec::new();
         let (mut depth, mut start) = (0usize, open + 1);

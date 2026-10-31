@@ -1,0 +1,13 @@
+-- cmd: lsp
+-- lsp: signature 10:11
+-- lsp: signature 11:21
+-- Signature help on a function of the prelude (`println`, `panic`)
+-- writes its signature as for a function of a module, from its row of
+-- the builtin registry.
+
+fn main() {
+  let n = 1
+  println(n)
+  println(int_text(n))
+}
+fn int_text(n: Int) -> String { "{n}" }
