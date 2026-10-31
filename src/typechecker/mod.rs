@@ -1472,7 +1472,7 @@ impl TypeChecker {
                     && !f.is_recovery_stub
                     && !crate::session::is_cell_name(&resolve(f.name))
                 {
-                    self.return_only_variables(&mut scheme, f.span);
+                    self.return_only_variables(&mut scheme, f.name, f.span);
                 }
                 env.define(f.name, scheme);
             }
