@@ -346,36 +346,52 @@ impl TypeChecker {
         };
         let mut found = Vec::new();
         for decl in &program.decls {
-            let Decl::Fn(f) = decl else {
-                continue;
+            // (A function's bounds by their routes; a `let`'s by the uses
+            // its value owes them for.)
+            let (names, is_fn): (Vec<Symbol>, bool) = match decl {
+                Decl::Fn(f) => (vec![f.name], true),
+                Decl::Let { .. } => (
+                    (crate::parser::top_level_binders(decl).into_iter())
+                        .map(|(name, _, _)| name)
+                        .collect(),
+                    false,
+                ),
+                _ => continue,
             };
-            let Some(scheme) = env.lookup(f.name) else {
-                continue;
-            };
-            let Some(id) = (defs.of_module(self.module).iter())
-                .copied()
-                .find(|id| defs.get(*id).name == f.name)
-            else {
-                continue;
-            };
-            let mut owners = HashMap::new();
-            for pred in &scheme.preds {
-                if let Pred::Trait {
-                    tr,
-                    subject: Type::Var(v),
-                    ..
-                } = pred
-                    && (Self::is_decode(*tr) || tr.is_builtin("Encode"))
-                {
-                    let encode = tr.is_builtin("Encode");
-                    let found = self.route_owner(*v, encode);
-                    if !found.is_empty() {
-                        owners.insert((*v, encode), found);
+            for name in names {
+                let Some(scheme) = env.lookup(name) else {
+                    continue;
+                };
+                let Some(id) = (defs.of_module(self.module).iter())
+                    .copied()
+                    .find(|id| defs.get(*id).name == name)
+                else {
+                    continue;
+                };
+                let mut owners = HashMap::new();
+                for pred in &scheme.preds {
+                    if let Pred::Trait {
+                        tr,
+                        subject: Type::Var(v),
+                        ..
+                    } = pred
+                        && (Self::is_decode(*tr) || tr.is_builtin("Encode"))
+                    {
+                        let encode = tr.is_builtin("Encode");
+                        let found = match is_fn {
+                            true => self.route_owner(*v, encode),
+                            false => {
+                                (self.scheme_owners.get(&(*v, encode)).cloned()).unwrap_or_default()
+                            }
+                        };
+                        if !found.is_empty() {
+                            owners.insert((*v, encode), found);
+                        }
                     }
                 }
-            }
-            if !owners.is_empty() {
-                found.push((id, owners));
+                if !owners.is_empty() {
+                    found.push((id, owners));
+                }
             }
         }
         self.tables.def_owners.extend(found);
@@ -504,8 +520,19 @@ impl TypeChecker {
             let var = match asked {
                 Some(Asked::Bound(var)) => self.rigid_rep_var(var),
                 // (Another module's links, as it read them.)
+                // (Of another module's routes, the one that refuses the
+                // type, where there is one.)
                 Some(Asked::Through(_, through)) => {
-                    links.extend(Asked::links(through));
+                    let routes = Asked::routes(through);
+                    let route = (refused.and_then(|module| {
+                        routes.iter().find(|(owners, _)| !owners.contains(&module))
+                    }))
+                    .or(routes.first());
+                    links.extend(
+                        route
+                            .into_iter()
+                            .flat_map(|(_, links)| links.iter().copied()),
+                    );
                     break;
                 }
                 _ => break,
@@ -531,13 +558,49 @@ impl TypeChecker {
     /// `asker` as another module or a later REPL entry reads it: the
     /// decoder, where it is known.
     pub(super) fn settled_asker(&self, asker: Option<Asker>) -> Option<Asker> {
-        let links = self.passed_through(asker);
+        let routes = self.settled_routes(asker);
         let by = match self.asking_decoder(asker) {
-            Some(decoder) if links.is_empty() => Asked::Builtin(decoder),
-            Some(decoder) => Asked::Through(decoder, Asked::joined(&links)),
+            Some(decoder) if routes.iter().all(|(_, links)| links.is_empty()) => {
+                Asked::Builtin(decoder)
+            }
+            Some(decoder) => Asked::Through(decoder, Asked::joined(&routes)),
             None => Asked::Unknown,
         };
         asker.map(|asker| Asker { by, ..asker })
+    }
+
+    /// The routes of `asker`'s bound as another module reads them: of a
+    /// variable whose body takes several, each with its owners and links
+    /// (a note names the one that refuses a type); else the one.
+    fn settled_routes(&self, asker: Option<Asker>) -> Vec<crate::types::ThroughRoute> {
+        let single = || vec![(Vec::new(), self.passed_through(asker))];
+        let Some(Asked::Bound(var)) = asker.map(|asker| asker.by) else {
+            return single();
+        };
+        let var = self.rigid_rep_var(var);
+        let Some(routes) = self.owner_routes.get(&(var, false)).filter(|r| r.len() > 1) else {
+            return single();
+        };
+        let mut settled = Vec::new();
+        for (route, route_asker) in routes {
+            let Some(route_asker) = route_asker else {
+                continue;
+            };
+            let owners = match route {
+                OwnerRoute::Direct(owners) => owners.clone(),
+                OwnerRoute::Passed(passed) => self.route_owner(*passed, false),
+            };
+            let mut links: Vec<Symbol> = route_asker.passer.into_iter().collect();
+            links.extend(self.passed_through(Some(Asker {
+                by: route_asker.by,
+                passer: None,
+            })));
+            settled.push((owners, links));
+        }
+        if settled.is_empty() {
+            return single();
+        }
+        settled
     }
 
     /// Report each type found to lack `json.Decode`, naming the decoder

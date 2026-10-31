@@ -3,7 +3,7 @@ error[type]: type 'mail.Email' cannot be decoded outside module 'mail': it is op
     |
  13 |   println(util.itself("\{\"addr\": \"a\"}", mail.Email))
     |                                             ^^^^^^^^^^ type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
-  = note: `util.itself` passes it to `mail.load`, which passes it to `json.parse`
+  = note: `util.itself` passes it to `json.parse`
   = help: decode it inside module 'mail', or write `trait json.Decode for Email` there
 
 error[type]: type 'mail.Email' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it

@@ -211,6 +211,7 @@ impl TypeChecker {
                     use_id: self.use_id,
                     taken: false,
                     owner: self.instantiating,
+                    also: self.instantiating_also.clone(),
                 });
                 return None;
             }
@@ -776,12 +777,12 @@ impl TypeChecker {
                         let subject = self.apply(&subject);
                         if !matches!(subject, Type::Var(_)) {
                             self.wanted[i].solved = true;
-                            let owner = self.owed_for.get(&self.wanted[i].ev).copied();
+                            let owners = self.owners_at(Some(self.wanted[i].ev));
                             self.check_builtin_argument(
                                 check,
                                 &subject,
                                 (passer, &[]),
-                                owner,
+                                &owners,
                                 origin,
                             );
                             self.note_builtin_outcome(check, &subject, origin.span);

@@ -88,7 +88,7 @@ impl TypeChecker {
         check: BuiltinCheck,
         subject: &Type,
         (passer, through): (Option<Symbol>, &[Symbol]),
-        owner: Option<crate::session::ModuleId>,
+        owner: &[crate::session::ModuleId],
         origin: Origin,
     ) {
         let ty = canonicalize(self.tables.resolver(), &self.apply(subject));
@@ -100,7 +100,18 @@ impl TypeChecker {
             let needs = needs.or_default();
             if !needs.contains(&check.unwritten()) {
                 needs.push(check.unwritten());
-                self.need_paths.entry(key).or_default().push(Vec::new());
+                // (Given to another module's definition, which gives it to
+                // the builtin: that definition is a link, and its module
+                // decodes its own opaque types there.)
+                let owners: Vec<crate::session::ModuleId> = (owner.iter().copied())
+                    .filter(|module| module.builtin_name().is_none())
+                    .collect();
+                let path = match owners.is_empty() {
+                    true => Vec::new(),
+                    false => passer.into_iter().collect(),
+                };
+                self.need_paths.entry(key).or_default().push(path);
+                self.need_owners.entry(key).or_default().push(owners);
                 let within = self.owing_within.clone();
                 self.need_within.entry(key).or_default().push(within);
             }
@@ -122,17 +133,14 @@ impl TypeChecker {
                 builtin,
                 decoding,
                 written,
-            } => {
-                let owner = owner.as_slice();
-                self.decode_refusal(&resolve(builtin), decoding, written, &ty, owner, span)
-            }
+            } => self.decode_refusal(&resolve(builtin), decoding, written, &ty, owner, span),
             BuiltinCheck::Connection { builtin } => {
                 connection_refusal(&resolve(builtin), &ty, span)
             }
             // (A statement's parameters are sent encoded as json.)
             BuiltinCheck::Params { builtin } => params_refusal(&resolve(builtin), &ty, span)
-                .or_else(|| self.opaque_encode_refusal(&ty, span, owner.as_slice())),
-            BuiltinCheck::Encodes { .. } => self.opaque_encode_refusal(&ty, span, owner.as_slice()),
+                .or_else(|| self.opaque_encode_refusal(&ty, span, owner)),
+            BuiltinCheck::Encodes { .. } => self.opaque_encode_refusal(&ty, span, owner),
         };
         let Some(mut diagnostic) = refusal else {
             // A decoded list, option, map or tuple, or a generic type at

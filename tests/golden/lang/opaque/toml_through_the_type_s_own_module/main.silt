@@ -1,0 +1,21 @@
+-- toml's decoder, as json's: a function that hands its type to a
+-- function of the opaque type's own module, which gives it to
+-- `toml.parse`, decodes the opaque type wherever it is called from, in
+-- this module and through another.
+import json
+import mail
+import toml
+import util
+
+type Box(a) {
+  v: a,
+}
+
+fn boxed(s: String, type a) -> Result(Box(a), toml.TomlError) where a: json.Decode {
+  mail.load_toml(s, Box(a))
+}
+
+fn main() {
+  println(boxed("[v]\naddr = \"x\"", mail.Email))
+  println(util.boxed("[v]\naddr = \"y\"", mail.Email))
+}

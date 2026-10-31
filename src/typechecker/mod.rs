@@ -199,6 +199,10 @@ pub struct TypeChecker {
     /// is instantiated: the owners of each of its `json.Decode` and
     /// `json.Encode` bounds that has some (`TypeTables::def_owners`).
     pub(super) def_owners_now: Option<HashMap<(TyVar, bool), Vec<crate::session::ModuleId>>>,
+    /// Of each json bound a scheme takes from its value's uses, by its
+    /// variable: the modules on every route it was owed by (a top-level
+    /// `let`'s `TypeTables::def_owners`).
+    pub(super) scheme_owners: HashMap<(TyVar, bool), Vec<crate::session::ModuleId>>,
     /// Of each place of `decoded_at`: the module of the definition the
     /// type is given to, if another module's.
     pub(super) decoded_owner: HashMap<Span, Vec<crate::session::ModuleId>>,
@@ -236,6 +240,10 @@ pub struct TypeChecker {
     /// methods the body passes the variable through to the builtin, the
     /// first first (none where it gives it to the builtin itself).
     pub(super) need_paths: HashMap<(TyVar, Option<Symbol>), Vec<Vec<Symbol>>>,
+    /// Of each of `builtin_needs`, at its place: the modules of the
+    /// definitions of other modules the body gives the variable to, on
+    /// the way to the builtin (`toml.parse` through `mail.load_toml`).
+    pub(super) need_owners: HashMap<(TyVar, Option<Symbol>), Vec<Vec<crate::session::ModuleId>>>,
     /// Of each of `builtin_needs`, at its place: the type the body gives
     /// the decoder with the variable inside it (`Box(a)` of
     /// `json.parse(s, Box(a))`), which a use judges whole.
@@ -671,6 +679,7 @@ impl TypeChecker {
             encode_passed: HashMap::new(),
             encode_deferred: Vec::new(),
             def_owners_now: None,
+            scheme_owners: HashMap::new(),
             decoded_owner: HashMap::new(),
             encoded_owner: HashMap::new(),
             bound_impls: HashMap::new(),
@@ -682,6 +691,7 @@ impl TypeChecker {
             row_adds: HashMap::new(),
             builtin_needs: HashMap::new(),
             need_paths: HashMap::new(),
+            need_owners: HashMap::new(),
             need_within: HashMap::new(),
             owing_within: None,
             given_waiting: Vec::new(),

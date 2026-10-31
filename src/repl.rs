@@ -1426,6 +1426,64 @@ mod tests {
         }
     }
 
+    /// A `let` of an earlier entry's function that hands its type to the
+    /// opaque type's own module (`let k = f`, of `f` -> `mail.load`) takes
+    /// the opaque type in a later entry, as calling the function does; a
+    /// `let` of one that decodes it itself, or of the decoder, does not.
+    #[test]
+    fn a_let_of_an_earlier_entry_hands_an_opaque_type_to_its_module() {
+        let dir = std::path::PathBuf::from("/silt-repl-opaque-let");
+        let mut repl = Repl::new(ProjectSetup::Script(dir.clone()));
+        repl.session.set_overlay(
+            &dir.join("mail.silt"),
+            [
+                "import json",
+                "pub opaque type Email { addr: String }",
+                "pub fn load(s: String, type a) -> Result(a, json.JsonError) where a: json.Decode { json.parse(s, a) }",
+            ]
+            .join("\n"),
+        );
+        let setup = [
+            "import json",
+            "import mail",
+            "fn f(s: String, type a) -> Result(a, json.JsonError) where a: json.Decode { mail.load(s, a) }",
+            "fn g(s: String, type a) -> Result(a, json.JsonError) where a: json.Decode { f(s, a) }",
+            "fn bad(s: String, type a) -> Result(a, json.JsonError) where a: json.Decode { json.parse(s, a) }",
+            "let k1 = f",
+            "let k = g",
+            "let kb = bad",
+            "let kp = json.parse",
+        ];
+        for entry in setup {
+            let evaluation = repl.eval(entry);
+            assert!(
+                evaluation.committed,
+                "`{entry}` must run: {:?}",
+                evaluation.diagnostics
+            );
+        }
+        let text = "\"\\{\\\"addr\\\": \\\"x\\\"}\"";
+        assert_eq!(
+            value(&mut repl, &format!("k1({text}, mail.Email)")),
+            "Ok(Email {addr: x})"
+        );
+        assert_eq!(
+            value(&mut repl, &format!("k({text}, mail.Email)")),
+            "Ok(Email {addr: x})"
+        );
+        for refused in ["kb", "kp"] {
+            let entry = format!("{refused}({text}, mail.Email)");
+            let evaluation = repl.eval(&entry);
+            assert!(!evaluation.committed, "`{entry}` must be refused");
+            assert!(
+                (evaluation.diagnostics.iter())
+                    .any(|d| d.message.contains("outside module 'mail': it is opaque")),
+                "`{entry}`: {:?}",
+                evaluation.diagnostics
+            );
+        }
+    }
+
     #[test]
     fn an_inferred_return_type_is_seen_by_later_cells() {
         let mut repl = repl();

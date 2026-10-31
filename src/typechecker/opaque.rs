@@ -198,7 +198,7 @@ impl TypeChecker {
         check: crate::types::BuiltinCheck,
         ty: &Type,
         passer: Option<Symbol>,
-        owner: Option<crate::session::ModuleId>,
+        owner: &[crate::session::ModuleId],
         origin: super::solve::Origin,
     ) {
         fn walk(ty: &Type, top: bool, out: &mut Vec<Type>) {
@@ -232,7 +232,7 @@ impl TypeChecker {
                     let within = matches!(check, crate::types::BuiltinCheck::Decodes { .. })
                         .then(|| self.apply(ty));
                     let around = std::mem::replace(&mut self.owing_within, within);
-                    self.check_builtin_argument(check, &var, (passer, &[]), None, origin);
+                    self.check_builtin_argument(check, &var, (passer, &[]), owner, origin);
                     self.owing_within = around;
                 }
                 _ => {
@@ -241,9 +241,12 @@ impl TypeChecker {
                         subject: var,
                         passer,
                     };
-                    let around = std::mem::replace(&mut self.instantiating, owner);
+                    let around = std::mem::replace(&mut self.instantiating, owner.first().copied());
+                    let also = owner.get(1..).unwrap_or_default().to_vec();
+                    let also_around = std::mem::replace(&mut self.instantiating_also, also);
                     let _ = self.want(pred, origin);
                     self.instantiating = around;
+                    self.instantiating_also = also_around;
                 }
             }
         }

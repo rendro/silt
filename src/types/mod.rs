@@ -712,24 +712,46 @@ pub enum Asked {
     Unknown,
     /// A declared bound whose body passes its variable on to the decoder
     /// (the first) through the functions and methods of the second, as
-    /// another module reads it: their names, one after the other, in one
-    /// symbol (`Asked::links`).
+    /// another module reads it: of each route, the modules of other
+    /// modules' definitions on it and the names of its links, one after
+    /// the other, in one symbol (`Asked::routes`).
     Through(Symbol, Symbol),
 }
 
+/// A route of `Asked::Through`: the modules of the definitions of other
+/// modules on it, and the functions and methods it passes the type
+/// through.
+pub type ThroughRoute = (Vec<crate::session::ModuleId>, Vec<Symbol>);
+
 impl Asked {
-    /// The functions and methods of `Through`, each by its name.
-    pub fn links(links: Symbol) -> Vec<Symbol> {
-        (crate::intern::resolve(links).split(' '))
-            .filter(|name| !name.is_empty())
-            .map(crate::intern::intern)
+    /// The routes of `Through`.
+    pub fn routes(routes: Symbol) -> Vec<ThroughRoute> {
+        (crate::intern::resolve(routes).split('|'))
+            .map(|route| {
+                let (owners, links) = route.split_once(';').unwrap_or(("", route));
+                let owners = (owners.split(','))
+                    .filter_map(|n| n.parse().ok())
+                    .map(crate::session::ModuleId)
+                    .collect();
+                let links = (links.split(' '))
+                    .filter(|name| !name.is_empty())
+                    .map(crate::intern::intern)
+                    .collect();
+                (owners, links)
+            })
             .collect()
     }
 
-    /// `links` as `Through` holds them.
-    pub fn joined(links: &[Symbol]) -> Symbol {
-        let names: Vec<String> = links.iter().map(|l| crate::intern::resolve(*l)).collect();
-        crate::intern::intern(&names.join(" "))
+    /// `routes` as `Through` holds them.
+    pub fn joined(routes: &[ThroughRoute]) -> Symbol {
+        let routes: Vec<String> = (routes.iter())
+            .map(|(owners, links)| {
+                let owners: Vec<String> = owners.iter().map(|m| m.0.to_string()).collect();
+                let links: Vec<String> = links.iter().map(|l| crate::intern::resolve(*l)).collect();
+                format!("{};{}", owners.join(","), links.join(" "))
+            })
+            .collect();
+        crate::intern::intern(&routes.join("|"))
     }
 }
 

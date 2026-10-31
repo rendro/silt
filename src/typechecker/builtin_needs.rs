@@ -39,6 +39,9 @@ pub(crate) struct GivenUse {
     /// The module of the definition used, when it is another module's:
     /// what its body asks of its own opaque types holds (`opaque_encode_refusal`).
     pub(super) owner: Option<crate::session::ModuleId>,
+    /// With `owner`: the modules the definition's bound hands the type on
+    /// to (`TypeTables::def_owners`).
+    pub(super) also: Vec<crate::session::ModuleId>,
 }
 
 /// What a body asks of the type an annotation variable of its signature
@@ -128,6 +131,20 @@ impl TypeChecker {
     /// the annotation variable `var` for the builtins it gives it to.
     pub(super) fn builtin_needs_of(&self, var: TyVar, body: Option<Symbol>) -> Vec<BuiltinCheck> {
         (self.builtin_needs.get(&(self.rigid_rep_var(var), body)))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// The modules of the definitions of other modules on the way to the
+    /// builtin of the need `index` of `var` (`need_owners`).
+    fn need_owners_of(
+        &self,
+        var: TyVar,
+        body: Option<Symbol>,
+        index: usize,
+    ) -> Vec<crate::session::ModuleId> {
+        (self.need_owners.get(&(self.rigid_rep_var(var), body)))
+            .and_then(|owners| owners.get(index))
             .cloned()
             .unwrap_or_default()
     }
@@ -271,7 +288,7 @@ impl TypeChecker {
         r: RigidId,
         check: BuiltinCheck,
         in_body: Option<Symbol>,
-        path: Vec<Symbol>,
+        (path, owners): (Vec<Symbol>, Vec<crate::session::ModuleId>),
     ) -> bool {
         let key = (self.rigid_rep_var(r.var), in_body);
         let needs = self.builtin_needs.entry(key).or_default();
@@ -280,6 +297,7 @@ impl TypeChecker {
         }
         needs.push(check.unwritten());
         self.need_paths.entry(key).or_default().push(path);
+        self.need_owners.entry(key).or_default().push(owners);
         self.need_within.entry(key).or_default().push(None);
         self.grown_needs.push(key);
         true
@@ -311,7 +329,12 @@ impl TypeChecker {
                     match leaf {
                         Leaf::Check(check, ty, param) => match self.apply(ty) {
                             Type::Rigid(r) => {
-                                grown |= self.add_builtin_need(r, *check, in_body, Vec::new())
+                                grown |= self.add_builtin_need(
+                                    r,
+                                    *check,
+                                    in_body,
+                                    (Vec::new(), Vec::new()),
+                                )
                             }
                             Type::Var(_) | Type::Error | Type::Never => {}
                             ty => {
@@ -369,7 +392,7 @@ impl TypeChecker {
             .filter(|link| placing.passer != Some(*link))
             .into_iter()
             .collect();
-        self.check_builtin_argument(check, ty, (placing.passer, &through), None, origin);
+        self.check_builtin_argument(check, ty, (placing.passer, &through), &[], origin);
     }
 
     /// The method `method` of the impl of `tr` for the type `receiver`
@@ -702,8 +725,14 @@ impl TypeChecker {
                         passer,
                     }) => {
                         self.wanted[k].solved = true;
-                        let owner = self.owed_for.get(&self.wanted[k].ev).copied();
-                        self.check_builtin_argument(check, &subject, (passer, &[]), owner, origin);
+                        let owners = self.owners_at(Some(self.wanted[k].ev));
+                        self.check_builtin_argument(
+                            check,
+                            &subject,
+                            (passer, &[]),
+                            &owners,
+                            origin,
+                        );
                         self.note_builtin_outcome(check, &subject, origin.span);
                     }
                     Goal::Pred(Pred::Trait {
@@ -888,7 +917,11 @@ impl TypeChecker {
                     for (index, check) in needs.into_iter().enumerate() {
                         let mut path = vec![use_.passer];
                         path.extend(self.need_path(use_.given, use_.body, index));
-                        self.add_builtin_need(r, check, use_.in_body, path);
+                        let mut owners: Vec<crate::session::ModuleId> =
+                            use_.owner.into_iter().collect();
+                        owners.extend(use_.also.iter().copied());
+                        owners.extend(self.need_owners_of(use_.given, use_.body, index));
+                        self.add_builtin_need(r, check, use_.in_body, (path, owners));
                     }
                 }
                 // (A call on types that name no annotation variable owes
@@ -1070,26 +1103,24 @@ impl TypeChecker {
                 };
                 let through = self.need_path(use_.given, use_.body, index);
                 let passer = (Some(use_.passer), through.as_slice());
+                // (The modules on the way: the definition's, those its
+                // bound hands the type to, those the body's need passes.)
+                let mut owners: Vec<crate::session::ModuleId> = use_.owner.into_iter().collect();
+                owners.extend(use_.also.iter().copied());
+                owners.extend(self.need_owners_of(use_.given, use_.body, index));
                 // (The type the body gives the decoder, judged whole where
                 // it refuses the type: the decoder's own refusal of it.)
                 let (check, subject) =
                     match self.within_at(use_.given, use_.body, index, &use_.subject) {
                         Some(whole)
-                            if self.decodes_whole_refused(
-                                check,
-                                &use_.subject,
-                                use_.owner.as_slice(),
-                            ) && self.decodes_whole_refused(
-                                check,
-                                &whole,
-                                use_.owner.as_slice(),
-                            ) =>
+                            if self.decodes_whole_refused(check, &use_.subject, &owners)
+                                && self.decodes_whole_refused(check, &whole, &owners) =>
                         {
                             (check.unwritten(), whole)
                         }
                         _ => (check, use_.subject.clone()),
                     };
-                self.check_builtin_argument(check, &subject, passer, use_.owner, use_.origin);
+                self.check_builtin_argument(check, &subject, passer, &owners, use_.origin);
             }
         }
     }

@@ -1,0 +1,27 @@
+-- cmd: check
+-- exit: 1
+-- toml's decoder outside the opaque type's module: a function that gives
+-- the type to `toml.parse` itself, and one that hands another module's
+-- opaque type to the type's module (the note names the function of that
+-- module it passes through).
+import json
+import mail
+import secret
+import toml
+
+type Box(a) {
+  v: a,
+}
+
+fn itself(s: String, type a) -> Result(Box(a), toml.TomlError) where a: json.Decode {
+  toml.parse(s, Box(a))
+}
+
+fn boxed(s: String, type a) -> Result(Box(a), toml.TomlError) where a: json.Decode {
+  mail.load_toml(s, Box(a))
+}
+
+fn main() {
+  println(itself("[v]\naddr = \"x\"", mail.Email))
+  println(boxed("[v]\nk = \"x\"", secret.Secret))
+}

@@ -307,6 +307,32 @@ impl TypeChecker {
                     },
                 };
                 let owner = self.owed_for.get(&self.wanted[i].ev).copied();
+                // (The modules a json bound taken into the scheme reaches,
+                // for a use in another module: `let k = mail.load`.)
+                let json_key = match &pred {
+                    Pred::Trait {
+                        tr,
+                        subject: Type::Var(v),
+                        ..
+                    } if Self::is_decode(*tr) || tr.is_builtin("Encode") => {
+                        Some((*v, tr.is_builtin("Encode")))
+                    }
+                    Pred::Builtin {
+                        check: BuiltinCheck::Decodes { .. },
+                        subject: Type::Var(v),
+                        ..
+                    } => Some((*v, false)),
+                    _ => None,
+                };
+                if let Some(key) = json_key {
+                    let mut found = self.owners_at(Some(self.wanted[i].ev));
+                    found.retain(|module| module.builtin_name().is_none());
+                    let known = self
+                        .scheme_owners
+                        .entry(key)
+                        .or_insert_with(|| found.clone());
+                    known.retain(|module| found.contains(module));
+                }
                 take_pred(&mut preds, &mut owners, pred, owner);
             }
             // A type the scope gives a function's annotation variable,
@@ -782,6 +808,13 @@ impl TypeChecker {
                     } if Self::is_decode(*tr) || tr.is_builtin("Encode") => {
                         Some((*v, tr.is_builtin("Encode")))
                     }
+                    // (What toml's or postgres's decoder asks, of the same
+                    // variable as its `json.Decode` bound.)
+                    Pred::Builtin {
+                        check: crate::types::BuiltinCheck::Decodes { .. },
+                        subject: Type::Var(v),
+                        ..
+                    } => Some((*v, false)),
                     _ => None,
                 };
                 // (The modules the bound hands its type on to, beside the

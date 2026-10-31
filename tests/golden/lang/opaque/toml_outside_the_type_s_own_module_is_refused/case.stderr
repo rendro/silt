@@ -1,0 +1,15 @@
+error[type]: type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+ --> main.silt:25:39
+    |
+ 25 |   println(itself("[v]\naddr = \"x\"", mail.Email))
+    |                                       ^^^^^^^^^^ type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+  = note: `itself` passes it to `toml.parse`
+  = help: decode it inside module 'mail', or write `trait json.Decode for Email` there
+
+error[type]: type 'secret.Secret' cannot be decoded outside module 'secret': it is opaque, and 'secret' writes no 'json.Decode' impl for it
+ --> main.silt:26:35
+    |
+ 26 |   println(boxed("[v]\nk = \"x\"", secret.Secret))
+    |                                   ^^^^^^^^^^^^^ type 'secret.Secret' cannot be decoded outside module 'secret': it is opaque, and 'secret' writes no 'json.Decode' impl for it
+  = note: `boxed` passes it to `mail.load_toml`, which passes it to `toml.parse`
+  = help: decode it inside module 'secret', or write `trait json.Decode for Secret` there
