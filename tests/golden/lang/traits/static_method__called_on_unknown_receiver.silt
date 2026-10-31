@@ -1,12 +1,12 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: error[type]: type 'Int' has no field 'total'
--- stderr-contains: help: `total` is a method of trait `Vals` that makes a value: call it on the type, `Int.total()`
+-- stderr-contains: error[type]: type mismatch: expected type _, got Int
 -- stderr-contains: :30:14
 -- stderr-contains: :31:13
--- A receiver whose type is not known where the call is written takes a
--- record with a field `total`: an Int has none (it used to check, and
--- fail when run).
+-- A receiver whose type is not known where the call is written, of a
+-- method that makes a value of the one trait in sight that has it, is a
+-- type that owes the trait (as one handed to `json.parse` is): an Int
+-- given there is refused (it used to check, and fail when run).
 trait Vals {
   fn total() -> Int
 }
