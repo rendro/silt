@@ -323,11 +323,6 @@ impl TypeChecker {
         }
         for gap in std::mem::take(&mut self.decode_gaps) {
             let ty = crate::types::canonical::canonicalize(self.tables.resolver(), &gap.subject);
-            // A definition of an opaque type's module decodes it, wherever
-            // it is called from.
-            if gap.owner.is_some() && gap.owner == self.opaque_decoded_module(&ty) {
-                continue;
-            }
             // A decoder the bound's body hands the type to (`toml.parse`,
             // `postgres.query`) refused it here: that refusal, with the
             // note naming the function that passes it on, is the one
@@ -352,9 +347,12 @@ impl TypeChecker {
             let named =
                 (decoder.or(passer).or(gap.origin.callee)).unwrap_or_else(|| intern("json.decode"));
             let written = self.decode_aliases.get(&gap.origin.span).copied();
-            let Some(mut diagnostic) =
-                self.json_decode_refusal(&resolve(named), written, &ty, gap.origin.span)
-            else {
+            let Some(mut diagnostic) = self.json_decode_refusal(
+                &resolve(named),
+                written,
+                &ty,
+                (gap.owner, gap.origin.span),
+            ) else {
                 continue;
             };
             // (Said of the type the bound's body gives the decoder, whole,
@@ -362,8 +360,12 @@ impl TypeChecker {
             // error for that type at one place.)
             let mut reported = &ty;
             if let Some(whole) = whole.as_ref()
-                && let Some(refusal) =
-                    self.json_decode_refusal(&resolve(named), None, whole, gap.origin.span)
+                && let Some(refusal) = self.json_decode_refusal(
+                    &resolve(named),
+                    None,
+                    whole,
+                    (gap.owner, gap.origin.span),
+                )
             {
                 diagnostic = refusal;
                 reported = whole;
@@ -388,12 +390,14 @@ impl TypeChecker {
     /// it by the alias `written`, if by one) at `span`, if it has no
     /// value of the type: json's decoders' judgement, a type with a
     /// written `json.Decode` impl not looked into.
+    /// A definition of `owner` decodes that module's opaque types,
+    /// wherever it is called from, in any part of the type.
     pub(super) fn json_decode_refusal(
         &self,
         builtin: &str,
         written: Option<Symbol>,
         ty: &Type,
-        span: Span,
+        (owner, span): (Option<crate::session::ModuleId>, Span),
     ) -> Option<Diagnostic> {
         match ty {
             Type::Var(_) | Type::Rigid(_) | Type::Error | Type::Never => None,
@@ -407,7 +411,7 @@ impl TypeChecker {
             | Type::Tuple(_)
             | Type::Set(_)
             | Type::Channel(_) => {
-                self.decode_refusal(builtin, Decoding::JSON, written, ty, None, span)
+                self.decode_refusal(builtin, Decoding::JSON, written, ty, owner, span)
             }
             // A type no type argument names (a function, an
             // anonymous record): what a decoder's type argument may be.
