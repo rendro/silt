@@ -634,7 +634,7 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn chunks(ch: Channel(a), n: Int) -> Channel(List(a))", "Group elements into lists of `n`", stream::chunks),
                 f("fn scan(ch: Channel(a), init: b, f: Fn(b, a) -> b) -> Channel(b)", "Running fold: emit each accumulator", stream::scan),
                 f("fn dedup(ch: Channel(a)) -> Channel(a) where a: Equal", "Drop consecutive duplicates", stream::dedup),
-                f("fn buffered(ch: Channel(a), n: Int) -> Channel(a)", "Decouple producer and consumer with a buffer of `n`", stream::buffered),
+                f("fn buffered(ch: Channel(a), n: Int) -> Channel(a)", "Read up to `n` values ahead of the reader", stream::buffered),
                 f("fn merge(chs: List(Channel(a))) -> Channel(a)", "Interleave several streams as elements arrive", stream::merge),
                 f("fn concat(chs: List(Channel(a))) -> Channel(a)", "One stream after another", stream::concat),
                 f("fn zip(a: Channel(a), b: Channel(b)) -> Channel((a, b))", "Pair elements of two streams", stream::zip),
