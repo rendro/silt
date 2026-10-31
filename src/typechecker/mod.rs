@@ -1300,6 +1300,7 @@ impl TypeChecker {
             }
         }
         let mut awaited: Vec<(Symbol, Type)> = Vec::new();
+        let selves = self.type_method_selves.len();
         for &i in &component.members {
             match (&decls[i], &sigs[i]) {
                 (Decl::Fn(f), Some(sig)) if !sig.complete => {
@@ -1364,6 +1365,11 @@ impl TypeChecker {
         // Generalise. What a `let` that is not a value leaves unknown
         // stays unknown for everything that mentions it.
         self.exit_level();
+        // (Nor is a `let` general in the type a dictionary made at a use
+        // in its value carries in full, `let top = Box.mk`, as in a body.)
+        for ty in self.type_method_selves.split_off(selves) {
+            self.keep_monomorphic(&ty);
+        }
         for (names, is_value, span, _) in &lets {
             for name in names {
                 let Some(bound) = env.lookup(*name).cloned() else {
@@ -1505,7 +1511,7 @@ impl TypeChecker {
         span: Span,
         env: &mut TypeEnv,
     ) -> bool {
-        let mut is_value = self.is_syntactic_value(value);
+        let is_value = self.is_syntactic_value(value);
         if let (PatternKind::Ident(name), ExprKind::Lambda { .. }) = (&pattern.kind, &value.kind) {
             self.frame_owner = Some(unused::FrameOwner::TopLevel(*name));
         }
@@ -1513,13 +1519,7 @@ impl TypeChecker {
         {
             self.method_value_lets.insert(value.span, *name);
         }
-        let selves = self.type_method_selves.len();
         let mut val_ty = self.infer_expr(value, env);
-        // (A dictionary made at a use in the value carries a type in full,
-        // `let top = Box.mk`: the `let` has one type, as in a body.)
-        if self.type_method_selves.len() > selves {
-            is_value = false;
-        }
         if let Some(te) = ty {
             // (A type variable the annotation introduces is rigid; a
             // `let` that generalises is general in it, like a function
