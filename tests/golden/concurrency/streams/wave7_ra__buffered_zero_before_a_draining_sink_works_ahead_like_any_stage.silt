@@ -1,0 +1,54 @@
+-- repeat: 3
+-- `stream.buffered(0)` reads nothing ahead for a reader that asks for
+-- one value at a time, but before a sink that reads to the end it
+-- works ahead like any stage. Here the sink's last stage holds its
+-- first value at a gate; meanwhile the stages before it run ahead, so
+-- the map's function sees 25 values before the gate opens.
+import channel
+import list
+import stream
+import task
+
+fn fill(ch, i, n) {
+  match i > n {
+    true -> channel.close(ch)
+    false -> {
+      channel.send(ch, i)
+      fill(ch, i + 1, n)
+    }
+  }
+}
+
+fn wait_for(seen, n) {
+  match n == 0 {
+    true -> ()
+    false -> {
+      let _ = channel.receive(seen)
+      wait_for(seen, n - 1)
+    }
+  }
+}
+
+fn main() {
+  let ch = channel.new(100)
+  fill(ch, 1, 100)
+  let seen = channel.new(100)
+  let gate = channel.new(0)
+  let h = task.spawn { ->
+    ch
+      |> stream.map { x ->
+        channel.send(seen, x)
+        x
+      }
+      |> stream.buffered(0)
+      |> stream.map { x ->
+        let _ = channel.receive(gate)
+        x
+      }
+      |> stream.collect
+  }
+  wait_for(seen, 25)
+  println("the map ran 25 values ahead of the gate")
+  channel.close(gate)
+  println("collected {list.length(task.join(h))} values")
+}

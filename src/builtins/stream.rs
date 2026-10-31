@@ -1213,8 +1213,10 @@ builtins! {
     fn buffered(vm, ch: Chan, n: i64) -> Result<Step, VmError> {
         let in_ch = ch.clone();
         let n = usize::try_from(n).unwrap_or(0);
+        // It holds `n` values that nobody asked for; for a reader that
+        // drains it, as many as any stage, or `n` if that is more.
         let output = Output {
-            capacity: n,
+            capacity: n.max(AHEAD),
             ahead: n,
             drains: true,
         };
