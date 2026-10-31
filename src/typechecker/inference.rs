@@ -596,6 +596,7 @@ impl TypeChecker {
         let self_ty = mapping.get(&self_var)?.clone();
         let _ = self.unify_types(&substitute_vars(&declared, &mapping), ty);
         (self.full_type_uses).push((self_ty.clone(), key.0, method, span));
+        self.type_method_selves.push(self_ty.clone());
         Some(self_ty)
     }
 
@@ -1679,7 +1680,9 @@ impl TypeChecker {
     /// say, and the body's type is the signature's result.
     pub(super) fn check_body(&mut self, f: &mut FnDecl, sig: &FnSig, env: &mut TypeEnv) {
         let uses = std::mem::take(&mut self.full_type_uses);
+        let selves = std::mem::take(&mut self.type_method_selves);
         self.check_body_in(f, sig, env);
+        self.type_method_selves = selves;
         // (As the body left the receivers' types.)
         for (recv, tr, field, span) in std::mem::replace(&mut self.full_type_uses, uses) {
             let recv = self.apply(&recv);

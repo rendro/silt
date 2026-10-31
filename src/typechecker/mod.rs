@@ -358,6 +358,11 @@ pub struct TypeChecker {
     /// trait and method: a refusal the solver makes at the receiver is
     /// the call's (one error for the call).
     pub(super) full_type_receivers: HashMap<Span, (Span, TraitKey, Symbol)>,
+    /// The type `Self` stands for at each use in the body being checked
+    /// of a method reached through its type whose impl's dictionary
+    /// carries its type in full (`Box.mk`): the dictionary is made where
+    /// the use is, so a `let` of the use is not general in that type.
+    pub(super) type_method_selves: Vec<Type>,
     /// Each annotation variable of a declaration whose body was or is
     /// being checked, as its body sees it: rigid.
     pub(super) rigid_of: HashMap<TyVar, Type>,
@@ -632,6 +637,7 @@ impl TypeChecker {
             full_type_refused: Default::default(),
             full_type_uses: Vec::new(),
             full_type_receivers: HashMap::new(),
+            type_method_selves: Vec::new(),
             rigid_of: HashMap::new(),
             let_vars: std::collections::HashSet::new(),
             var_written: HashMap::new(),
