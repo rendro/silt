@@ -144,7 +144,9 @@ impl Source {
 
     fn channel(&self) -> Option<&Arc<Channel>> {
         match self {
-            Source::Recv(channel) | Source::Send(channel) | Source::Demand(channel) => Some(channel),
+            Source::Recv(channel) | Source::Send(channel) | Source::Demand(channel) => {
+                Some(channel)
+            }
             Source::Cell(_) => None,
         }
     }
@@ -302,7 +304,7 @@ pub fn park(task: TaskId, wait: Wait, timer: &Arc<Timer>, wake: &dyn Wake) -> Pa
     drop(states);
     // From here a peer may end the wait at any moment. A cell that was
     // completed since the look above ends it here; the token is not
-    // parked yet, so nothing of this reaches `wakes`.
+    // parked yet, so this task does not reach `wakes`.
     for (arm, source) in sources.iter().enumerate() {
         if let Source::Cell(cell) = source {
             let waiter = Waiter {
@@ -313,6 +315,9 @@ pub fn park(task: TaskId, wait: Wait, timer: &Arc<Timer>, wake: &dyn Wake) -> Pa
             cell.enqueue(waiter, &mut wakes);
         }
     }
+    // A receive that found its channel empty asked for a value: the
+    // feeder that waited to be asked goes on.
+    wakes.send(wake);
     let timer = times.arm(timer, &token);
     Park::Parked(Parked {
         token,
@@ -442,6 +447,9 @@ fn park_one(
         }
         _ => unreachable!("the one arm is on a channel"),
     };
+    // A receive that found its channel empty asked for a value: the
+    // feeder that waited to be asked goes on.
+    wakes.send(wake);
     let timer = times.arm(timer, &token);
     Park::Parked(Parked {
         token,

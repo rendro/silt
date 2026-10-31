@@ -1,12 +1,13 @@
 -- exit: 1
 -- repeat: 3
--- The second stage reads the failure of the first and fails with it;
--- nobody reads the second: one report, for the second stage.
+-- `stream.buffered` reads ahead without being asked: it asks the map,
+-- which fails on its second value; buffered reads the failure and
+-- fails with it. Nobody reads buffered: one report, for buffered.
 import stream
 
 fn main() {
   let src = stream.from_list([1, 2, 3])
   let a = stream.map(src) { x -> 10 / (x - 2) }
-  let _b = stream.filter(a) { x -> x > 0 }
+  let _b = stream.buffered(a, 4)
   println("done")
 }

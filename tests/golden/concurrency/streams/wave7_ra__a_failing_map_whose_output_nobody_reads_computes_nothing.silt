@@ -1,0 +1,13 @@
+-- repeat: 3
+-- stderr-not-contains: never read
+-- A stage takes a value only when its reader asks for one: a stage
+-- whose output nobody reads takes nothing and calls its function on
+-- nothing, so the value it would fail on is never computed. The run
+-- is quiet and exits with status 0.
+import stream
+
+fn main() {
+  let src = stream.from_list([1, 2, 3])
+  let _out = stream.map(src) { x -> 10 / (x - 2) }
+  println("done")
+}

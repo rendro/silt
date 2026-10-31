@@ -1,0 +1,6 @@
+error[runtime]: a `stream.map` stage failed and its output was never read: division by zero
+ --> wave7_ra__a_stage_that_failed_on_a_value_a_try_receive_asked_for_is_reported.silt:12:59
+    |
+ 12 |   let out = stream.from_list([2, 3]) |> stream.map { x -> 10 / (x - 2) }
+    |                                                           ^^^^^^^^^^^^ a `stream.map` stage failed and its output was never read: division by zero
+  = help: read its output, where the failure is raised, or drop the stage if you don't need it

@@ -1,0 +1,25 @@
+-- repeat: 3
+-- A filter that passes one value in fifty takes from its input only
+-- while its reader waits for a value: `take(2)` gets 50 and 100, and
+-- the next value in `ch` is 101.
+import channel
+import stream
+
+fn fill(ch, i, n) {
+  match i > n {
+    true -> channel.close(ch)
+    false -> {
+      channel.send(ch, i)
+      fill(ch, i + 1, n)
+    }
+  }
+}
+
+fn main() {
+  let ch = channel.new(1000)
+  fill(ch, 1, 1000)
+  let two = ch |> stream.filter { x -> x % 50 == 0 } |> stream.take(2) |> stream.collect
+  println("got {two}")
+  println("next in ch: {channel.receive(ch)}")
+  println("left after it: {stream.count(ch)}")
+}
