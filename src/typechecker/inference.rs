@@ -1444,6 +1444,13 @@ impl TypeChecker {
             }
             let shown = self.spell_trait(tr);
             // (A type variable with the bound is called on as a type.)
+            // A type held as a value (`type W`) is called on as itself.
+            let ty = match ty {
+                Type::Generic(name, args) if name.is_builtin(crate::defs::TYPE_OF) => {
+                    args.first().unwrap_or(ty)
+                }
+                _ => ty,
+            };
             let on = match ty {
                 Type::Rigid(r) => r.name.to_string(),
                 _ => (self.type_name_for_impl(ty))
