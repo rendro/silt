@@ -1,0 +1,36 @@
+-- repeat: 5
+-- stderr-not-contains: never read
+-- `channel.each` reads to the end; when its task is cut (here by
+-- `task.cancel`) it stops the stages that feed it, as `collect` does.
+-- The map records each call on a channel the program reads three
+-- times; after the cut the program closes that channel. A stage that
+-- ran on would fail there and be reported; a stopped one stays quiet.
+import channel
+import stream
+import task
+
+fn fill(ch, i, n) {
+  match i > n {
+    true -> channel.close(ch)
+    false -> {
+      channel.send(ch, i)
+      fill(ch, i + 1, n)
+    }
+  }
+}
+
+fn main() {
+  let ch = channel.new(100)
+  fill(ch, 1, 100)
+  let calls = channel.new(0)
+  let s = ch
+    |> stream.map { x ->
+      channel.send(calls, x)
+      x
+    }
+  let h = task.spawn { -> channel.each(s) { _ -> () } }
+  let seen = [channel.receive(calls), channel.receive(calls), channel.receive(calls)]
+  task.cancel(h)
+  channel.close(calls)
+  println("f ran for {seen} before the cut")
+}
