@@ -1,0 +1,10 @@
+import json
+import util
+
+pub fn twice(s: String, type a) -> Result(util.Box(a), json.JsonError) where a: json.Decode {
+  util.boxed(s, a)
+}
+
+pub fn twice_shown(x: a) -> String where a: json.Encode {
+  util.shown(x)
+}

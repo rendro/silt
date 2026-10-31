@@ -784,10 +784,14 @@ impl TypeChecker {
                     }
                     _ => None,
                 };
-                let def_owner = json_bound.and_then(|key| {
-                    (self.def_owners_now.as_ref()).and_then(|owners| owners.get(&key).copied())
-                });
-                let around = around.or_else(|| def_owner.map(|o| self.instantiating.replace(o)));
+                // (The modules the bound hands its type on to, beside the
+                // definition's own.)
+                let also = json_bound
+                    .and_then(|key| {
+                        (self.def_owners_now.as_ref()).and_then(|owners| owners.get(&key).cloned())
+                    })
+                    .unwrap_or_default();
+                let also_around = std::mem::replace(&mut self.instantiating_also, also);
                 let passing = match json_bound {
                     Some((v, true)) if owners.is_none() && self.instantiating.is_none() => {
                         Some(self.rigid_rep_var(v))
@@ -814,6 +818,7 @@ impl TypeChecker {
                 };
                 let ev = self.want(pred.substitute(&mapping), origin);
                 self.encode_passing = passing_around;
+                self.instantiating_also = also_around;
                 if let (Some(var), Some(ev)) = (passing, ev) {
                     let ev = self.ev_here(ev);
                     self.encode_passed.insert(ev, var);

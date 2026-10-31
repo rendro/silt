@@ -172,7 +172,7 @@ impl TypeChecker {
         &self,
         check: BuiltinCheck,
         ty: &Type,
-        owner: Option<crate::session::ModuleId>,
+        owner: &[crate::session::ModuleId],
     ) -> bool {
         let BuiltinCheck::Decodes {
             builtin, decoding, ..
@@ -1075,8 +1075,15 @@ impl TypeChecker {
                 let (check, subject) =
                     match self.within_at(use_.given, use_.body, index, &use_.subject) {
                         Some(whole)
-                            if self.decodes_whole_refused(check, &use_.subject, use_.owner)
-                                && self.decodes_whole_refused(check, &whole, use_.owner) =>
+                            if self.decodes_whole_refused(
+                                check,
+                                &use_.subject,
+                                use_.owner.as_slice(),
+                            ) && self.decodes_whole_refused(
+                                check,
+                                &whole,
+                                use_.owner.as_slice(),
+                            ) =>
                         {
                             (check.unwritten(), whole)
                         }

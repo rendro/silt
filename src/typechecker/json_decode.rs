@@ -24,17 +24,18 @@ pub(crate) struct DecodeGap {
     subject: Type,
     origin: Origin,
     asker: Option<Asker>,
-    /// The module whose definition, at this use, asks for the type: it
+    /// The modules whose definitions, at this use, ask for the type: each
     /// may decode an opaque type of its own.
-    owner: Option<crate::session::ModuleId>,
+    owners: Vec<crate::session::ModuleId>,
 }
 
 /// A route by which a body hands the type of an annotation variable to a
 /// decoder or an encoder (`TypeChecker::owner_routes`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OwnerRoute {
-    /// To a definition of this module (none) or of another module.
-    Direct(Option<crate::session::ModuleId>),
+    /// To a definition of this module (none), or through definitions of
+    /// other modules (each of them).
+    Direct(Vec<crate::session::ModuleId>),
     /// On to the bound of a variable of a definition of this module.
     Passed(TyVar),
 }
@@ -96,10 +97,20 @@ impl TypeChecker {
         // (As the type's own module sees it: where an opaque type, or
         // one with an opaque type in it, is decoded is each use's to say.)
         let module = self.def(head.id.0).map(|def| def.module);
-        if self.opaque_decode_refusal(&ty, span, module).is_some() {
+        if self
+            .opaque_decode_refusal(&ty, span, module.as_slice())
+            .is_some()
+        {
             return None;
         }
-        let refusal = self.decode_refusal("json.parse", Decoding::JSON, None, &ty, module, span)?;
+        let refusal = self.decode_refusal(
+            "json.parse",
+            Decoding::JSON,
+            None,
+            &ty,
+            module.as_slice(),
+            span,
+        )?;
         // (The decoder's reason, after what it names: "field `b` has
         // type `Box(Int)`, which has no decoder". A date or a time has no
         // type argument to speak of: what the decoders take it as.)
@@ -135,7 +146,7 @@ impl TypeChecker {
         ty: &Type,
         origin: Origin,
         asker: Option<Asker>,
-        owner: Option<crate::session::ModuleId>,
+        owners: Vec<crate::session::ModuleId>,
     ) {
         // (A type held with its arguments left open, `let t = List`, is
         // refused as one given so.)
@@ -148,7 +159,7 @@ impl TypeChecker {
             subject: self.apply(ty),
             origin,
             asker,
-            owner,
+            owners,
         });
     }
 
@@ -200,22 +211,40 @@ impl TypeChecker {
         &mut self,
         r: RigidId,
         encode: bool,
-        (owner, passed): (Option<crate::session::ModuleId>, Option<TyVar>),
+        (mut owners, passed): (Vec<crate::session::ModuleId>, Option<TyVar>),
         asker: Option<Asker>,
     ) {
         let var = self.rigid_rep_var(r.var);
         // (A builtin decoder or encoder, `json.parse`, is this module's
         // route.)
-        let owner = owner.filter(|module| module.builtin_name().is_none());
-        let route = match (owner, passed.map(|p| self.rigid_rep_var(p))) {
-            (None, Some(passed)) if passed == var => return,
-            (None, Some(passed)) => OwnerRoute::Passed(passed),
-            (owner, _) => OwnerRoute::Direct(owner),
+        owners.retain(|module| module.builtin_name().is_none());
+        owners.sort();
+        owners.dedup();
+        let route = match (owners.is_empty(), passed.map(|p| self.rigid_rep_var(p))) {
+            (true, Some(passed)) if passed == var => return,
+            (true, Some(passed)) => OwnerRoute::Passed(passed),
+            _ => OwnerRoute::Direct(owners),
         };
+        let route = (route, asker);
         let routes = self.owner_routes.entry((var, encode)).or_default();
-        if !routes.contains(&(route, asker)) {
-            routes.push((route, asker));
+        if !routes.contains(&route) {
+            routes.push(route);
         }
+    }
+
+    /// The modules on the route of the predicate of `ev`: the one whose
+    /// definition owes it and those its bound hands the type on to.
+    pub(super) fn owners_at(
+        &self,
+        ev: Option<super::evidence::EvRef>,
+    ) -> Vec<crate::session::ModuleId> {
+        let Some(ev) = ev else {
+            return Vec::new();
+        };
+        let mut owners: Vec<crate::session::ModuleId> =
+            self.owed_for.get(&ev).copied().into_iter().collect();
+        owners.extend(self.owed_also.get(&ev).into_iter().flatten());
+        owners
     }
 
     /// The asker of a route by which the decoder's bound on `var` refuses
@@ -223,11 +252,11 @@ impl TypeChecker {
     fn refused_route(&self, var: TyVar, module: crate::session::ModuleId) -> Option<Asker> {
         let routes = self.owner_routes.get(&(var, false))?;
         (routes.iter()).find_map(|(route, asker)| {
-            let owner = match route {
-                OwnerRoute::Direct(owner) => *owner,
+            let owners = match route {
+                OwnerRoute::Direct(owners) => owners.clone(),
                 OwnerRoute::Passed(passed) => self.route_owner(*passed, false),
             };
-            (owner != Some(module)).then_some(*asker).flatten()
+            (!owners.contains(&module)).then_some(*asker).flatten()
         })
     }
 
@@ -251,41 +280,44 @@ impl TypeChecker {
         }
     }
 
-    /// The module whose definitions decode (or `encode`) the type of the
-    /// annotation variable `var` on every route, if another module's.
-    pub(super) fn route_owner(&self, var: TyVar, encode: bool) -> Option<crate::session::ModuleId> {
+    /// The modules whose definitions are on every route by which the body
+    /// decodes (or `encodes`) the type of the annotation variable `var`:
+    /// any of them decodes or encodes its own opaque types there. None
+    /// where a route is this module's own.
+    pub(super) fn route_owner(&self, var: TyVar, encode: bool) -> Vec<crate::session::ModuleId> {
         let var = self.rigid_rep_var(var);
-        self.route_owner_in(var, encode, &mut Vec::new()).flatten()
+        self.route_owner_in(var, encode, &mut Vec::new())
+            .unwrap_or_default()
     }
 
     /// `route_owner`, not following the variables `seen` again: none if
-    /// every route leads back to one (it says nothing), `Some(None)` if
-    /// a route is this module's or two disagree.
+    /// every route leads back to one (it says nothing).
     fn route_owner_in(
         &self,
         var: TyVar,
         encode: bool,
         seen: &mut Vec<TyVar>,
-    ) -> Option<Option<crate::session::ModuleId>> {
+    ) -> Option<Vec<crate::session::ModuleId>> {
         if seen.contains(&var) {
             return None;
         }
         let Some(routes) = self.owner_routes.get(&(var, encode)) else {
-            return Some(None);
+            return Some(Vec::new());
         };
         seen.push(var);
-        let mut found: Option<Option<crate::session::ModuleId>> = None;
+        let mut found: Option<Vec<crate::session::ModuleId>> = None;
         for (route, _) in routes {
-            let owner = match route {
-                OwnerRoute::Direct(owner) => Some(*owner),
+            let owners = match route {
+                OwnerRoute::Direct(owners) => Some(owners.clone()),
                 OwnerRoute::Passed(passed) => self.route_owner_in(*passed, encode, seen),
             };
-            match (found, owner) {
-                (_, None) => {}
-                (None, owner) => found = owner,
-                (Some(known), Some(owner)) if known != owner => found = Some(None),
-                _ => {}
-            }
+            found = match (found, owners) {
+                (found, None) => found,
+                (None, owners) => owners,
+                (Some(known), Some(owners)) => {
+                    Some(known.into_iter().filter(|m| owners.contains(m)).collect())
+                }
+            };
         }
         seen.pop();
         found
@@ -297,18 +329,19 @@ impl TypeChecker {
     pub(super) fn settle_encode_owners(&mut self) {
         for (ty, span, var) in std::mem::take(&mut self.encode_deferred) {
             let ty = self.apply(&ty);
-            let owner = self.route_owner(var, true);
-            if let Some(refusal) = self.opaque_encode_refusal(&ty, span, owner) {
+            let owners = self.route_owner(var, true);
+            if let Some(refusal) = self.opaque_encode_refusal(&ty, span, &owners) {
                 self.refuse_opaque(span, refusal);
             }
         }
     }
 
-    /// Keep, of each top-level function of a REPL input, the owner of
-    /// each `json.Decode` and `json.Encode` bound that has one, for a use
-    /// in a later input (`TypeTables::def_owners`).
+    /// Keep, of each top-level function of the module, the owners of
+    /// each `json.Decode` and `json.Encode` bound that has some, for a
+    /// use in another module or a later REPL input
+    /// (`TypeTables::def_owners`).
     pub(super) fn record_def_owners(&mut self, program: &Program, env: &TypeEnv) {
-        let Some(defs) = (self.defs.as_ref()).filter(|_| self.is_cell) else {
+        let Some(defs) = &self.defs else {
             return;
         };
         let mut found = Vec::new();
@@ -335,8 +368,9 @@ impl TypeChecker {
                     && (Self::is_decode(*tr) || tr.is_builtin("Encode"))
                 {
                     let encode = tr.is_builtin("Encode");
-                    if let Some(owner) = self.route_owner(*v, encode) {
-                        owners.insert((*v, encode), owner);
+                    let found = self.route_owner(*v, encode);
+                    if !found.is_empty() {
+                        owners.insert((*v, encode), found);
                     }
                 }
             }
@@ -535,10 +569,10 @@ impl TypeChecker {
             let ty = crate::types::canonical::canonicalize(self.tables.resolver(), &gap.subject);
             // (A bound whose body hands the type to another module's
             // definition is judged as that module sees it.)
-            let owner = gap.owner.or_else(|| match gap.asker.map(|asker| asker.by) {
-                Some(Asked::Bound(var)) => self.route_owner(var, false),
-                _ => None,
-            });
+            let mut owners = gap.owners.clone();
+            if let Some(Asked::Bound(var)) = gap.asker.map(|asker| asker.by) {
+                owners.extend(self.route_owner(var, false));
+            }
             // A decoder the bound's body hands the type to (`toml.parse`,
             // `postgres.query`) refused it here: that refusal, with the
             // note naming the function that passes it on, is the one
@@ -564,7 +598,7 @@ impl TypeChecker {
                 (decoder.or(passer).or(gap.origin.callee)).unwrap_or_else(|| intern("json.decode"));
             let written = self.decode_aliases.get(&gap.origin.span).copied();
             let Some(mut diagnostic) =
-                self.json_decode_refusal(&resolve(named), written, &ty, (owner, gap.origin.span))
+                self.json_decode_refusal(&resolve(named), written, &ty, (&owners, gap.origin.span))
             else {
                 continue;
             };
@@ -573,8 +607,12 @@ impl TypeChecker {
             // error for that type at one place.)
             let mut reported = &ty;
             if let Some(whole) = whole.as_ref()
-                && let Some(refusal) =
-                    self.json_decode_refusal(&resolve(named), None, whole, (owner, gap.origin.span))
+                && let Some(refusal) = self.json_decode_refusal(
+                    &resolve(named),
+                    None,
+                    whole,
+                    (&owners, gap.origin.span),
+                )
             {
                 diagnostic = refusal;
                 reported = whole;
@@ -588,9 +626,8 @@ impl TypeChecker {
             }
             if let (Some(decoder), Some(passer)) = (decoder, passer) {
                 // (Of an opaque type, the route that refuses it.)
-                let refused = (owner.is_none())
-                    .then(|| self.opaque_module_in(&ty))
-                    .flatten();
+                let refused =
+                    (self.opaque_module_in(&ty)).filter(|module| !owners.contains(module));
                 let links = self.passed_through_refused(gap.asker, refused);
                 diagnostic = (diagnostic)
                     .with_note(super::builtin_checks::passes_note(passer, &links, decoder));
@@ -610,7 +647,7 @@ impl TypeChecker {
         builtin: &str,
         written: Option<Symbol>,
         ty: &Type,
-        (owner, span): (Option<crate::session::ModuleId>, Span),
+        (owner, span): (&[crate::session::ModuleId], Span),
     ) -> Option<Diagnostic> {
         match ty {
             Type::Var(_) | Type::Rigid(_) | Type::Error | Type::Never => None,

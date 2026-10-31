@@ -1,0 +1,16 @@
+-- A function of the opaque type's own module decodes and encodes it
+-- wherever it is called from: also when the call reaches it through the
+-- functions of other modules (`util.boxed` hands its type to `mail.load`),
+-- one or two modules deep, and when a function of the module hands it on
+-- to a third module (`mail.via` to `helper.read`).
+import mail
+import outer
+import util
+
+fn main() {
+  println(util.boxed("\{\"v\": \{\"addr\": \"a\"}}", mail.Email))
+  println(util.shown(mail.mk("b")))
+  println(outer.twice("\{\"v\": \{\"addr\": \"c\"}}", mail.Email))
+  println(outer.twice_shown(mail.mk("d")))
+  println(util.listed("[\{\"addr\": \"e\"}]", mail.Email))
+}

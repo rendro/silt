@@ -174,15 +174,15 @@ pub struct TypeChecker {
     /// The opaque encodings refused at a use of such a bound, with the
     /// variable: decided once the module's bodies are, by its owner.
     pub(super) encode_deferred: Vec<(Type, Span, TyVar)>,
-    /// While a definition of an earlier REPL input is instantiated: the
-    /// owner of each of its `json.Decode` and `json.Encode` bounds that
-    /// has one (`TypeTables::def_owners`).
-    pub(super) def_owners_now: Option<HashMap<(TyVar, bool), crate::session::ModuleId>>,
+    /// While a definition of another module (or an earlier REPL input)
+    /// is instantiated: the owners of each of its `json.Decode` and
+    /// `json.Encode` bounds that has some (`TypeTables::def_owners`).
+    pub(super) def_owners_now: Option<HashMap<(TyVar, bool), Vec<crate::session::ModuleId>>>,
     /// Of each place of `decoded_at`: the module of the definition the
     /// type is given to, if another module's.
-    pub(super) decoded_owner: HashMap<Span, Option<crate::session::ModuleId>>,
+    pub(super) decoded_owner: HashMap<Span, Vec<crate::session::ModuleId>>,
     /// As `decoded_owner`, of what is encoded at a place.
-    pub(super) encoded_owner: HashMap<Span, Option<crate::session::ModuleId>>,
+    pub(super) encoded_owner: HashMap<Span, Vec<crate::session::ModuleId>>,
     /// The variable of each `json.Decode` bound a trait declares for a
     /// method, with the variables it is in the module's impls of the
     /// method: what the trait's bound asks for is what they all ask for.
@@ -528,6 +528,16 @@ pub struct TypeChecker {
     pub(super) owed_for: HashMap<evidence::EvRef, crate::session::ModuleId>,
     /// The module of the predicate being entered, for `owed_for`.
     pub(super) owing: Option<crate::session::ModuleId>,
+    /// With `owing`: the modules of the definitions further down the
+    /// route of the predicate being entered (`owed_also`).
+    pub(super) owing_also: Vec<crate::session::ModuleId>,
+    /// With `instantiating`: the modules whose definitions the bound
+    /// being instantiated hands its type on to, on every route
+    /// (`TypeTables::def_owners`).
+    pub(super) instantiating_also: Vec<crate::session::ModuleId>,
+    /// With `owed_for`: the further modules on the route of a predicate,
+    /// any of which decodes or encodes its own opaque types there.
+    pub(super) owed_also: HashMap<evidence::EvRef, Vec<crate::session::ModuleId>>,
     /// The module of the definition whose type is being instantiated
     /// for a use, while it is: its bounds are that module's.
     pub(super) instantiating: Option<crate::session::ModuleId>,
@@ -727,6 +737,9 @@ impl TypeChecker {
             fixed_statements: Vec::new(),
             module: crate::session::ModuleId(0),
             use_owners: HashMap::new(),
+            owing_also: Vec::new(),
+            instantiating_also: Vec::new(),
+            owed_also: HashMap::new(),
             owed_for: HashMap::new(),
             owing: None,
             instantiating: None,

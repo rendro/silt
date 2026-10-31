@@ -122,14 +122,17 @@ impl TypeChecker {
                 builtin,
                 decoding,
                 written,
-            } => self.decode_refusal(&resolve(builtin), decoding, written, &ty, owner, span),
+            } => {
+                let owner = owner.as_slice();
+                self.decode_refusal(&resolve(builtin), decoding, written, &ty, owner, span)
+            }
             BuiltinCheck::Connection { builtin } => {
                 connection_refusal(&resolve(builtin), &ty, span)
             }
             // (A statement's parameters are sent encoded as json.)
             BuiltinCheck::Params { builtin } => params_refusal(&resolve(builtin), &ty, span)
-                .or_else(|| self.opaque_encode_refusal(&ty, span, owner)),
-            BuiltinCheck::Encodes { .. } => self.opaque_encode_refusal(&ty, span, owner),
+                .or_else(|| self.opaque_encode_refusal(&ty, span, owner.as_slice())),
+            BuiltinCheck::Encodes { .. } => self.opaque_encode_refusal(&ty, span, owner.as_slice()),
         };
         let Some(mut diagnostic) = refusal else {
             // A decoded list, option, map or tuple, or a generic type at
@@ -204,7 +207,7 @@ impl TypeChecker {
         decoding: Decoding,
         written: Option<Symbol>,
         ty: &Type,
-        owner: Option<crate::session::ModuleId>,
+        owner: &[crate::session::ModuleId],
         span: Span,
     ) -> Option<Diagnostic> {
         // A list, an option, a map with String keys or a tuple
@@ -462,7 +465,7 @@ impl TypeChecker {
         decoding: Decoding,
         whole: &Type,
         part: &Type,
-        owner: Option<crate::session::ModuleId>,
+        owner: &[crate::session::ModuleId],
         span: Span,
     ) -> Option<Diagnostic> {
         use crate::builtins::registry::decoding::Leaf;
