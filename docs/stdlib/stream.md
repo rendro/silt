@@ -140,11 +140,12 @@ fn main() {
   `take`, a `take_while` or a `zip`, which ask for one value at a time, as
   `first` and a read by hand do. A read that does not wait
   (`channel.try_receive`, a `channel.receive_timeout` that runs out) asks
-  too: the value it asked for comes to a later read. A source does not
-  wait to be asked: it works ahead of its reader until 16 values wait in
-  its output (`file_lines` reads up to 64 KiB of lines at a time).
-  `stream.buffered(n)` is the only transform that reads ahead for any
-  reader, up to `n` values.
+  too: the value it asked for comes to a later read, and is gone if the
+  stream is closed or cut short before then (at most one value for each
+  stage). A source does not wait to be asked: it works ahead of its
+  reader until 16 values wait in its output (`file_lines` reads up to 64
+  KiB of lines at a time). `stream.buffered(n)` is the only transform
+  that reads ahead for any reader, up to `n` values.
 - **A failing stage fails the pipeline.** If the function of a stage
   raises a runtime error (a division by zero, a `panic`), the stage closes
   its output *with that failure*. The next stage fails with it in turn,
