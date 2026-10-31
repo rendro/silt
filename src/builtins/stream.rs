@@ -5,8 +5,11 @@
 //! A source or a transform is a stage: a task of the scheduler that
 //! reads its input channels, calls the user's function, and writes to
 //! its output channel. It waits where any task waits (for a value, for
-//! room in its output, for an I/O operation), so a thousand stages
-//! cost no thread. Backpressure is the capacity of the output.
+//! its reader to ask for one, for an I/O operation), so a thousand
+//! stages cost no thread. A transform takes a value from its input
+//! only when its reader asks for one; a source works ahead, up to the
+//! capacity of its output; `stream.buffered(n)` takes up to `n` values
+//! before they are asked for.
 //!
 //! A sink (collect, fold, count, ...) runs in the caller's task and
 //! waits there for each value.
@@ -39,7 +42,13 @@ use crate::typeinfo::bv;
 use crate::value::Value;
 use crate::vm::{IoOp, Leave, Limit, Native, Step, Vm, VmError};
 
-const DEFAULT_CAPACITY: usize = 16;
+/// How many values a source holds ahead of its reader: it takes
+/// nothing that the program holds, so it does not wait to be asked.
+const SOURCE_CAPACITY: usize = 16;
+
+/// The output of a transform holds nothing: the transform takes a
+/// value from its input only when its reader asks for one.
+const ON_DEMAND: usize = 0;
 
 // ── The pipe ───────────────────────────────────────────────────────────
 
@@ -110,6 +119,10 @@ enum State {
     Emitting,
     Calling,
     Io(IoOp),
+    /// It waits to be asked for a value, and then does this take.
+    Asking(Next),
+    /// It gave way to the other tasks; it goes on with this.
+    Then(Next),
 }
 
 /// A stage or a sink: the frame that waits for what its [`Logic`]
@@ -208,35 +221,12 @@ impl Pipe {
         }
         self.finish(vm, None);
     }
-}
 
-impl Native for Pipe {
-    fn name(&self) -> &str {
-        self.name
-    }
-
-    fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError> {
-        let mut got = match std::mem::replace(&mut self.state, State::Calling) {
-            State::Go(got) => got,
-            State::Calling => Got::Returned(input),
-            State::Taking(arms) => match vm.woken()? {
-                Fired::Arm(arm, Outcome::Received(value)) => Got::Value(arms[arm], value),
-                Fired::Arm(arm, Outcome::Closed(close)) => self.ended(arms[arm], close)?,
-                _ => return Err(internal("was woken without a value")),
-            },
-            State::Emitting => match vm.woken()? {
-                Fired::Arm(_, Outcome::Sent) => Got::Emitted,
-                // Nobody reads the output.
-                _ => {
-                    self.cut_short(vm);
-                    return Ok(Step::Done(Value::Unit));
-                }
-            },
-            // The value, or the module's error at `SILT_IO_TIMEOUT`.
-            State::Io(op) => Got::Io(op.value(&vm.woken()?)),
-        };
+    /// Do `next`, and what the logic says after each step, until the
+    /// pipe waits or ends, or for [`BURST`] steps.
+    fn run(&mut self, vm: &mut Vm, mut next: Next) -> Result<Step, VmError> {
         for _ in 0..BURST {
-            match (self.logic)(got)? {
+            let got = match next {
                 // A task that was cancelled, or whose time is over,
                 // takes nothing new, though it still runs for some
                 // steps: a stage that was
@@ -250,11 +240,24 @@ impl Native for Pipe {
                         None => Step::Park(Vm::no_wait()),
                     });
                 }
+                // A stage takes a value only when its reader asks for
+                // one (or, for `stream.buffered`, while its output has
+                // room): until then it waits, with nothing taken.
+                take @ (Next::Take(_) | Next::TakeAny)
+                    if self.out.as_ref().is_some_and(|out| !out.is_asked()) =>
+                {
+                    let Some(out) = &self.out else {
+                        return Err(internal("has no output"));
+                    };
+                    let wait = Wait::new(vec![Arm::Demand(out.clone())]);
+                    self.state = State::Asking(take);
+                    return Ok(Step::Park(wait));
+                }
                 Next::Take(index) => {
                     let input = &self.inputs[index];
                     match input.try_receive(vm.scheduler().wake()) {
-                        TryReceive::Value(value) => got = Got::Value(index, value),
-                        TryReceive::Closed(close) => got = self.ended(index, close)?,
+                        TryReceive::Value(value) => Got::Value(index, value),
+                        TryReceive::Closed(close) => self.ended(index, close)?,
                         TryReceive::Empty => {
                             let wait = Wait::new(vec![Arm::Recv(input.clone())]);
                             self.state = State::Taking(vec![index]);
@@ -280,7 +283,7 @@ impl Native for Pipe {
                         return Err(internal("has no output"));
                     };
                     match out.try_send(value, vm.scheduler().wake()) {
-                        TrySend::Sent => got = Got::Emitted,
+                        TrySend::Sent => Got::Emitted,
                         // Nobody reads the output.
                         TrySend::Closed(_) => {
                             self.cut_short(vm);
@@ -320,10 +323,50 @@ impl Native for Pipe {
                     self.finish(vm, None);
                     return Ok(Step::Done(value));
                 }
-            }
+            };
+            next = (self.logic)(got)?;
         }
-        self.state = State::Go(got);
+        self.state = State::Then(next);
         Ok(Step::Yield)
+    }
+}
+
+impl Native for Pipe {
+    fn name(&self) -> &str {
+        self.name
+    }
+
+    fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError> {
+        let got = match std::mem::replace(&mut self.state, State::Calling) {
+            State::Go(got) => got,
+            State::Then(next) => return self.run(vm, next),
+            State::Calling => Got::Returned(input),
+            State::Taking(arms) => match vm.woken()? {
+                Fired::Arm(arm, Outcome::Received(value)) => Got::Value(arms[arm], value),
+                Fired::Arm(arm, Outcome::Closed(close)) => self.ended(arms[arm], close)?,
+                _ => return Err(internal("was woken without a value")),
+            },
+            State::Emitting => match vm.woken()? {
+                Fired::Arm(_, Outcome::Sent) => Got::Emitted,
+                // Nobody reads the output.
+                _ => {
+                    self.cut_short(vm);
+                    return Ok(Step::Done(Value::Unit));
+                }
+            },
+            // The value, or the module's error at `SILT_IO_TIMEOUT`.
+            State::Io(op) => Got::Io(op.value(&vm.woken()?)),
+            State::Asking(take) => match vm.woken()? {
+                Fired::Arm(_, Outcome::Asked) => return self.run(vm, take),
+                // Nobody reads the output.
+                _ => {
+                    self.cut_short(vm);
+                    return Ok(Step::Done(Value::Unit));
+                }
+            },
+        };
+        let next = (self.logic)(got)?;
+        self.run(vm, next)
     }
 
     fn abandon(&mut self, vm: &mut Vm) {
@@ -477,7 +520,7 @@ fn reading(
     let read = Arc::new(Mutex::new(read));
     let mut failed = false;
     let mut items = std::collections::VecDeque::new();
-    stage(vm, name, vec![], DEFAULT_CAPACITY, move |got| {
+    stage(vm, name, vec![], SOURCE_CAPACITY, move |got| {
         // The next item read, which ends the source if it is an error.
         fn emit(item: Value, failed: &mut bool) -> Next {
             *failed = matches!(&item, Value::Variant(item) if item.is(bv::ERR));
@@ -610,7 +653,7 @@ builtins! {
 
     fn from_list(vm, xs: List) -> Result<Step, VmError> {
         let mut items = xs.clone().into_iter();
-        stage(vm, "stream.from_list", vec![], DEFAULT_CAPACITY, move |_| {
+        stage(vm, "stream.from_list", vec![], SOURCE_CAPACITY, move |_| {
             Ok(match items.next() {
                 Some(value) => Next::Emit(value),
                 None => Next::Done(Value::Unit),
@@ -624,7 +667,7 @@ builtins! {
             vm,
             "stream.from_range",
             vec![],
-            DEFAULT_CAPACITY,
+            SOURCE_CAPACITY,
             move |_| {
                 Ok(match next.filter(|i| *i <= hi) {
                     Some(i) => {
@@ -639,7 +682,7 @@ builtins! {
 
     fn repeat(vm, x: &Value) -> Result<Step, VmError> {
         let v = x.clone();
-        stage(vm, "stream.repeat", vec![], DEFAULT_CAPACITY, move |_| {
+        stage(vm, "stream.repeat", vec![], SOURCE_CAPACITY, move |_| {
             Ok(Next::Emit(v.clone()))
         })
     }
@@ -647,7 +690,7 @@ builtins! {
     fn unfold(vm, seed: &Value, f: &Value) -> Result<Step, VmError> {
         let mut state = seed.clone();
         let fn_val = f.clone();
-        stage(vm, "stream.unfold", vec![], DEFAULT_CAPACITY, move |got| {
+        stage(vm, "stream.unfold", vec![], SOURCE_CAPACITY, move |got| {
             Ok(match got {
                 Got::Start | Got::Emitted => Next::Call(fn_val.clone(), vec![state.clone()]),
                 // Fn(state) -> Option((value, next_state))
@@ -832,7 +875,7 @@ builtins! {
             vm,
             "stream.map",
             vec![in_ch],
-            DEFAULT_CAPACITY,
+            ON_DEMAND,
             move |got| {
                 Ok(match got {
                     Got::Start | Got::Emitted => Next::Take(0),
@@ -852,7 +895,7 @@ builtins! {
             vm,
             "stream.filter",
             vec![in_ch],
-            DEFAULT_CAPACITY,
+            ON_DEMAND,
             move |got| {
                 Ok(match got {
                     Got::Start | Got::Emitted => Next::Take(0),
@@ -880,7 +923,7 @@ builtins! {
             vm,
             "stream.flat_map",
             vec![in_ch],
-            DEFAULT_CAPACITY,
+            ON_DEMAND,
             move |got| {
                 match got {
                     Got::Value(_, v) => return Ok(Next::Call(fn_val.clone(), vec![v])),
@@ -910,7 +953,7 @@ builtins! {
             vm,
             "stream.take",
             vec![in_ch],
-            DEFAULT_CAPACITY,
+            ON_DEMAND,
             move |got| {
                 Ok(match got {
                     Got::Start => Next::Take(0),
@@ -933,7 +976,7 @@ builtins! {
             vm,
             "stream.drop",
             vec![in_ch],
-            DEFAULT_CAPACITY,
+            ON_DEMAND,
             move |got| {
                 Ok(match got {
                     Got::Start | Got::Emitted => Next::Take(0),
@@ -956,7 +999,7 @@ builtins! {
             vm,
             "stream.take_while",
             vec![in_ch],
-            DEFAULT_CAPACITY,
+            ON_DEMAND,
             move |got| {
                 Ok(match got {
                     Got::Start | Got::Emitted => Next::Take(0),
@@ -983,7 +1026,7 @@ builtins! {
             vm,
             "stream.drop_while",
             vec![in_ch],
-            DEFAULT_CAPACITY,
+            ON_DEMAND,
             move |got| {
                 Ok(match got {
                     Got::Start | Got::Emitted => Next::Take(0),
@@ -1021,7 +1064,7 @@ builtins! {
             vm,
             "stream.chunks",
             vec![in_ch],
-            DEFAULT_CAPACITY,
+            ON_DEMAND,
             move |got| {
                 Ok(match got {
                     Got::Start => Next::Take(0),
@@ -1056,7 +1099,7 @@ builtins! {
             vm,
             "stream.scan",
             vec![in_ch],
-            DEFAULT_CAPACITY,
+            ON_DEMAND,
             move |got| {
                 Ok(match got {
                     Got::Start | Got::Emitted => Next::Take(0),
@@ -1079,7 +1122,7 @@ builtins! {
             vm,
             "stream.dedup",
             vec![in_ch],
-            DEFAULT_CAPACITY,
+            ON_DEMAND,
             move |got| {
                 Ok(match got {
                     Got::Start | Got::Emitted => Next::Take(0),
@@ -1113,7 +1156,7 @@ builtins! {
     fn merge(vm, chs: List) -> Result<Step, VmError> {
         let channels = channel_list("stream.merge", chs)?;
         let mut open = channels.len();
-        stage(vm, "stream.merge", channels, DEFAULT_CAPACITY, move |got| {
+        stage(vm, "stream.merge", channels, ON_DEMAND, move |got| {
             match got {
                 Got::Value(_, v) => return Ok(Next::Emit(v)),
                 Got::End => open -= 1,
@@ -1130,7 +1173,7 @@ builtins! {
     fn zip(vm, a: Chan, b: Chan) -> Result<Step, VmError> {
         let (a, b) = (a.clone(), b.clone());
         let mut left = None;
-        stage(vm, "stream.zip", vec![a, b], DEFAULT_CAPACITY, move |got| {
+        stage(vm, "stream.zip", vec![a, b], ON_DEMAND, move |got| {
             Ok(match got {
                 Got::Start | Got::Emitted => Next::Take(0),
                 Got::Value(0, va) => {
@@ -1155,7 +1198,7 @@ builtins! {
             vm,
             "stream.concat",
             channels,
-            DEFAULT_CAPACITY,
+            ON_DEMAND,
             move |got| {
                 match got {
                     Got::Value(_, v) => return Ok(Next::Emit(v)),
@@ -1374,7 +1417,7 @@ mod tests {
     #[test]
     fn a_source_whose_output_closes_while_it_waits_for_room_stops_its_connection() {
         let (vm, out, items, stopped) = source();
-        for item in 0..=DEFAULT_CAPACITY {
+        for item in 0..=SOURCE_CAPACITY {
             items
                 .send(Value::Int(item as i64))
                 .expect("the source reads");
@@ -1403,7 +1446,8 @@ mod tests {
             assert!(matches!(sent, TrySend::Sent));
         }
         let stage = |vm: &mut Vm, stopped: bool| {
-            let out = Channel::new(vm.next_channel_id(), DEFAULT_CAPACITY);
+            // (Room in its output: it may take without being asked.)
+            let out = Channel::new(vm.next_channel_id(), 1);
             let handle = Arc::new(TaskHandle::new(vm.next_task_id()));
             if stopped {
                 handle.cancel(wake.wake());

@@ -6,6 +6,10 @@
 //! out of its waiter; a sender that finds a parked receiver puts the
 //! value into the receiver's token. The peer is woken with the
 //! operation done: it never looks at the channel again.
+//!
+//! A third queue holds the feeders that wait to be asked for a value
+//! ([`Arm::Demand`](super::Arm)): a stream stage takes from its input
+//! only when its reader asks for a value.
 
 use parking_lot::Mutex;
 use std::collections::VecDeque;
@@ -96,6 +100,13 @@ pub(super) struct State {
     /// is open is here only while the buffer is full (always, for
     /// capacity 0).
     pub(super) sendq: VecDeque<Waiter>,
+    /// Parked feeders that wait to be asked for a value, oldest first.
+    /// One whose wait is open is here only while nobody asks.
+    pub(super) demandq: VecDeque<Waiter>,
+    /// Whether a reader asks for a value that no send has given yet: a
+    /// receive found the channel empty, and the value it asked for has
+    /// not been sent since.
+    asked: bool,
     /// How many waiters whose wait has ended were left on the queues
     /// since they were last swept ([`Channel::forget`]).
     stale: usize,
@@ -119,11 +130,15 @@ impl State {
         while let Some(receiver) = self.recvq.pop_front() {
             if let Some(claim) = receiver.token.claim() {
                 claim.fire(Fired::Arm(receiver.arm, Outcome::Received(value)), wakes);
+                // Another receiver that is parked still asks.
+                self.asked = !self.recvq.is_empty();
                 return TrySend::Sent;
             }
             // That wait ended on another arm, by its deadline or by a
             // cancel: the value goes to the next receiver.
         }
+        // The value is for whoever asked last: it waits for them here.
+        self.asked = false;
         if self.buf.len() < self.capacity {
             self.buf.push_back(value);
             TrySend::Sent
@@ -135,8 +150,10 @@ impl State {
     pub(super) fn receive(&mut self, wakes: &mut Wakes) -> TryReceive {
         if let Some(value) = self.buf.pop_front() {
             // The place that came free goes to the oldest parked sender.
-            if let Some(value) = self.take_from_sender(wakes) {
-                self.buf.push_back(value);
+            match self.take_from_sender(wakes) {
+                Some(value) => self.buf.push_back(value),
+                // Otherwise there is room now.
+                None => self.wake_feeders(wakes),
             }
             return TryReceive::Value(value);
         }
@@ -145,7 +162,34 @@ impl State {
         }
         match &self.closed {
             Some(close) => TryReceive::Closed(close.clone()),
-            None => TryReceive::Empty,
+            None => {
+                // A receive that finds nothing asks for a value, whether
+                // it waits for one or not: a later read gets it.
+                self.asked = true;
+                self.wake_feeders(wakes);
+                TryReceive::Empty
+            }
+        }
+    }
+
+    /// What a feeder that waits to be asked for a value finds:
+    /// [`Outcome::Asked`] when a reader asks or a send would not wait
+    /// (the buffer has room), [`Outcome::Closed`] when nobody will
+    /// ask any more.
+    pub(super) fn demand(&self) -> Option<Outcome> {
+        if let Some(close) = &self.closed {
+            return Some(Outcome::Closed(close.clone()));
+        }
+        (self.asked || self.buf.len() < self.capacity).then_some(Outcome::Asked)
+    }
+
+    /// A reader asks, or room came free: every feeder that waits for
+    /// that goes on.
+    fn wake_feeders(&mut self, wakes: &mut Wakes) {
+        while let Some(feeder) = self.demandq.pop_front() {
+            if let Some(claim) = feeder.token.claim() {
+                claim.fire(Fired::Arm(feeder.arm, Outcome::Asked), wakes);
+            }
         }
     }
 
@@ -167,8 +211,10 @@ impl State {
         }
         // The values of parked senders were never sent and are dropped;
         // the buffer stays for later receives. A receiver is parked
-        // only when the buffer is empty.
-        for waiter in self.sendq.drain(..).chain(self.recvq.drain(..)) {
+        // only when the buffer is empty. A feeder that waits to be
+        // asked learns that nobody will.
+        let queues = self.sendq.drain(..).chain(self.recvq.drain(..));
+        for waiter in queues.chain(self.demandq.drain(..)) {
             if let Some(claim) = waiter.token.claim() {
                 claim.fire(
                     Fired::Arm(waiter.arm, Outcome::Closed(close.clone())),
@@ -208,6 +254,8 @@ impl Channel {
                 closed: None,
                 recvq: VecDeque::new(),
                 sendq: VecDeque::new(),
+                demandq: VecDeque::new(),
+                asked: false,
                 stale: 0,
             }),
         })
@@ -270,6 +318,13 @@ impl Channel {
         self.state.lock().closed.is_some()
     }
 
+    /// Whether a feeder may take a value for the channel's reader now:
+    /// a reader asks, or the buffer has room, and the channel is open.
+    /// (A wait on [`Arm::Demand`](super::Arm) waits for it.)
+    pub fn is_asked(&self) -> bool {
+        matches!(self.state.lock().demand(), Some(Outcome::Asked))
+    }
+
     /// The number of buffered values.
     pub fn len(&self) -> usize {
         self.state.lock().buf.len()
@@ -284,6 +339,12 @@ impl Channel {
         let state = self.state.lock();
         let open = |queue: &VecDeque<Waiter>| queue.iter().filter(|w| w.token.is_waiting()).count();
         (open(&state.recvq), open(&state.sendq))
+    }
+
+    /// How many feeders wait here to be asked for a value.
+    #[cfg(test)]
+    pub(super) fn feeders(&self) -> usize {
+        self.state.lock().demandq.len()
     }
 
     /// The length of the two queues, with waiters whose wait has ended
@@ -308,16 +369,18 @@ impl Channel {
         /// Up to this many waiters, a queue is searched.
         const SHORT: usize = 32;
         let mut state = self.state.lock();
-        let queued = state.recvq.len() + state.sendq.len();
+        let queued = state.recvq.len() + state.sendq.len() + state.demandq.len();
         if queued <= SHORT {
             state.recvq.retain(|waiter| !waiter.is(token));
             state.sendq.retain(|waiter| !waiter.is(token));
+            state.demandq.retain(|waiter| !waiter.is(token));
             return;
         }
         state.stale += 1;
         if state.stale * 2 >= queued {
             state.recvq.retain(|waiter| waiter.token.is_waiting());
             state.sendq.retain(|waiter| waiter.token.is_waiting());
+            state.demandq.retain(|waiter| waiter.token.is_waiting());
             state.stale = 0;
         }
     }

@@ -203,7 +203,7 @@ pub(crate) mod channel {
                 .map(|arm| match arm {
                     Arm::Recv(ch) => (ch.clone(), false),
                     Arm::Send(ch, _) => (ch.clone(), true),
-                    Arm::Cell(_) => unreachable!("a select has channel arms"),
+                    Arm::Cell(_) | Arm::Demand(_) => unreachable!("a select has channel arms"),
                 })
                 .collect();
             // The wait completes the first arm that is possible, from
@@ -231,7 +231,7 @@ pub(crate) mod channel {
                         raise_failure(close)?;
                         Value::variant(bv::RECEIVED, [ch, received(None)])
                     }
-                    Outcome::Done => Value::variant(bv::RECEIVED, [ch, received(None)]),
+                    Outcome::Done | Outcome::Asked => Value::variant(bv::RECEIVED, [ch, received(None)]),
                 }))
             }))
         }
