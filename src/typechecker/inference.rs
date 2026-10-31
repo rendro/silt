@@ -1410,29 +1410,63 @@ impl TypeChecker {
         (traits, taking)
     }
 
+    /// Pass on how the parameter `i` of `callee` is read (`readings`) to
+    /// the parameters of the enclosing functions and closures whose
+    /// types the argument `arg_ty` shares (`fn again(s, t) { go(s, t) }`
+    /// reads `t` as `go` reads its own).
+    fn pass_on_reading(&mut self, callee: &Expr, i: usize, arg_ty: &Type) {
+        let Some(reading) = (Self::callee_named(callee))
+            .and_then(|callee| self.readings.get(&(callee, i)))
+            .map(|(_, reading)| reading.clone())
+        else {
+            return;
+        };
+        for (outer, at, name) in self.named_params_sharing(arg_ty) {
+            (self.readings)
+                .entry((outer, at))
+                .or_insert((name, reading.clone()));
+        }
+    }
+
     /// Replace the mismatch just reported (the errors from `reported`)
-    /// of the argument at `at`, the `i`th of a call of the function
-    /// `callee`, when a call `x.m(..)` in the function read the parameter
-    /// as the other kind of argument (`readings`): a value given where it
-    /// takes a type, a type given where it takes a record.
+    /// of the argument at `at`, the `i`th of a call of `callee`, when a
+    /// call `x.m(..)` read the parameter as the other kind of argument
+    /// (`readings`): a value given where it takes a type, a type given
+    /// where it takes a record.
+    /// The argument may also be such a function, given where a function
+    /// is asked whose parameter has the other kind (`list.map([1], go)`).
     fn misread_argument(
         &mut self,
-        callee: &Expr,
-        i: usize,
-        arg_ty: &Type,
+        (callee, i): (&Expr, usize),
+        (arg, arg_ty): (&Expr, &Type),
+        param_ty: &Type,
         reported: usize,
         at: Span,
     ) {
-        let ExprKind::Ident(function) = callee.kind else {
+        let reading_of = |this: &Self, e: &Expr, at: usize| {
+            let ExprKind::Ident(function) = e.kind else {
+                return None;
+            };
+            let (param, reading) = (Self::callee_named(e))
+                .and_then(|named| this.readings.get(&(named, at)))
+                .cloned()?;
+            // (A closure's parameter is annotated without `fn`.)
+            let declared =
+                (this.res_def(e.res)).is_some_and(|def| def.kind == crate::defs::DefKind::Fn);
+            Some((function, declared, param, reading))
+        };
+        let found = match reading_of(self, callee, i) {
+            Some(found) => Some((found, self.apply(arg_ty))),
+            None => match (self.apply(arg_ty), self.apply(param_ty)) {
+                (Type::Fun(takes, _), Type::Fun(asked, _)) => (0..takes.len().min(asked.len()))
+                    .filter(|j| self.apply(&takes[*j]) != self.apply(&asked[*j]))
+                    .find_map(|j| Some((reading_of(self, arg, j)?, self.apply(&asked[j])))),
+                _ => None,
+            },
+        };
+        let Some(((function, declared, param, reading), given)) = found else {
             return;
         };
-        if !(self.res_def(callee.res)).is_some_and(|def| def.kind == crate::defs::DefKind::Fn) {
-            return;
-        }
-        let Some(reading) = self.readings.get(&(function, i)).cloned() else {
-            return;
-        };
-        let given = self.apply(arg_ty);
         let held = match &given {
             Type::Generic(name, args) if name.is_builtin(crate::defs::TYPE_OF) => {
                 args.first().cloned()
@@ -1443,18 +1477,28 @@ impl TypeChecker {
             (this.type_name_for_impl(ty))
                 .is_some_and(|head| !this.impls_fitting(tr, head, Some(ty), &[]).is_empty())
         };
-        let written_call = |this: &Self, param: Symbol, tr: TraitKey, method: Symbol| {
+        let written_call = |this: &Self, receiver: &str, tr: TraitKey, method: Symbol| {
             let args = if this.method_arity(tr, method) > 0 {
                 ".."
             } else {
                 ""
             };
-            format!("{param}.{method}({args})")
+            format!("{receiver}.{method}({args})")
         };
+        // (A parameter that is a pattern is named by the receiver.)
+        let named = |receiver: &str| param.map_or_else(|| receiver.to_string(), |p| p.to_string());
         let (message, help) = match (reading, held) {
-            (Reading::Type { param, tr, method }, None) => {
+            (
+                Reading::Type {
+                    receiver,
+                    tr,
+                    method,
+                },
+                None,
+            ) => {
+                let param = named(&receiver);
                 let shown = self.show_type(&given);
-                let call = written_call(self, param, tr, method);
+                let call = written_call(self, &receiver, tr, method);
                 let trait_name = self.show_trait(tr);
                 let has_field = match &given {
                     Type::Generic(name, _) => (self.tables.records.get(name))
@@ -1464,9 +1508,13 @@ impl TypeChecker {
                 let help = if has_trait(self, tr, &given) {
                     format!("pass the type itself: `{shown}`")
                 } else if has_field {
+                    let annotated = match declared {
+                        true => format!("fn {function}({param}: {shown})"),
+                        false => format!("{param}: {shown}"),
+                    };
                     format!(
                         "to call the field `{method}` of the `{shown}`, annotate the parameter: \
-                         `fn {function}({param}: {shown})`"
+                         `{annotated}`"
                     )
                 } else {
                     format!("pass a type that has trait '{trait_name}'")
@@ -1482,14 +1530,15 @@ impl TypeChecker {
             }
             (
                 Reading::Field {
-                    param,
+                    receiver,
                     traits,
                     method,
                 },
                 Some(held),
             ) => {
+                let param = named(&receiver);
                 let shown = self.show_type(&held);
-                let call = written_call(self, param, traits[0], method);
+                let call = written_call(self, &receiver, traits[0], method);
                 let of: Vec<String> = (traits.iter())
                     .map(|t| format!("trait '{}'", self.show_trait(*t)))
                     .collect();
@@ -1516,21 +1565,18 @@ impl TypeChecker {
         self.error_help(Code::TypeMismatch, (message, Some(help)), at);
     }
 
-    /// Note how `x.m(..)` read `x`, where `x` is a parameter of the
-    /// function being checked (of its type, not a closure's of the same
-    /// name), for a call of the function that gives it the other kind of
-    /// argument (`check_call`).
-    fn note_reading(&mut self, obj: &Expr, obj_ty: &Type, reading: impl FnOnce(Symbol) -> Reading) {
-        let ExprKind::Ident(name) = obj.kind else {
-            return;
-        };
-        let Some((function, params)) = &self.checking_fn else {
-            return;
-        };
-        let function = *function;
-        let at = (params.iter()).position(|param| self.apply(param) == self.apply(obj_ty));
-        if let Some(at) = at {
-            self.readings.insert((function, at), reading(name));
+    /// Note how `x.m(..)` read `x`, for every parameter of the enclosing
+    /// functions and closures whose type is `x`'s, for a call of one of
+    /// them that gives it the other kind of argument (`misread_argument`).
+    fn note_reading(&mut self, obj: &Expr, obj_ty: &Type, reading: impl Fn(String) -> Reading) {
+        let receiver = written_receiver(obj);
+        for (callee, at, name) in self.named_params_sharing(obj_ty) {
+            // (A receiver too long to write is named by the parameter.)
+            let receiver = (receiver.clone())
+                .or_else(|| name.map(|name| name.to_string()))
+                .unwrap_or_else(|| "_".to_string());
+            self.readings
+                .insert((callee, at), (name, reading(receiver)));
         }
     }
 
@@ -1940,14 +1986,19 @@ impl TypeChecker {
 
         // Infer the body and unify with declared return type
         let owner = self.frame_owner.take();
-        let prev_checking = (self.checking_fn).replace((f.name, param_types.clone()));
+        let names = (f.params.iter())
+            .map(|p| match p.pattern.kind {
+                PatternKind::Ident(name) => Some(name),
+                _ => None,
+            })
+            .collect();
         self.fn_frames.push(unused::FnFrame {
             owner,
             params: param_types,
+            names,
         });
         let body_type = self.infer_expr(&mut f.body, env);
         self.fn_frames.pop();
-        self.checking_fn = prev_checking;
         env.pop();
         // A function that returns `Never` never returns: its body does
         // not end (`Never` would unify with what it ends with).
@@ -2770,7 +2821,9 @@ impl TypeChecker {
                         self.unify(&arg_ty, param, at);
                         mismatched |= self.errors.len() > reported;
                         if self.errors.len() > reported {
-                            self.misread_argument(callee, i, &arg_ty, reported, at);
+                            self.misread_argument((callee, i), (arg, &arg_ty), param, reported, at);
+                        } else {
+                            self.pass_on_reading(callee, i, &arg_ty);
                         }
                         if let (Some(statement), Some(passed_on)) = (statement, passed_on) {
                             self.name_statement_unit(statement, reported, passed_on);
@@ -3563,8 +3616,8 @@ impl TypeChecker {
                             // type, which owes the trait, as `json.parse(s,
                             // t)` makes `t` a type that owes `json.Decode`.
                             let tr = *tr;
-                            self.note_reading(obj, &obj_ty, |param| Reading::Type {
-                                param,
+                            self.note_reading(obj, &obj_ty, |receiver| Reading::Type {
+                                receiver,
                                 tr,
                                 method: field,
                             });
@@ -3576,9 +3629,9 @@ impl TypeChecker {
                             // (Of several traits' methods that make a value
                             // the call does not say which: a field.)
                             if makers.len() > 1 {
-                                self.note_reading(obj, &obj_ty, |param| Reading::Field {
-                                    param,
-                                    traits: makers,
+                                self.note_reading(obj, &obj_ty, |receiver| Reading::Field {
+                                    receiver,
+                                    traits: makers.clone(),
                                     method: field,
                                 });
                             }
@@ -3860,9 +3913,16 @@ impl TypeChecker {
                 let prev_return_type = self.current_return_type.replace(lambda_ret.clone());
                 let prev_qmark_spans = std::mem::take(&mut self.current_qmark_spans);
 
+                let names = (params.iter())
+                    .map(|p| match p.pattern.kind {
+                        PatternKind::Ident(name) => Some(name),
+                        _ => None,
+                    })
+                    .collect();
                 self.fn_frames.push(unused::FnFrame {
                     owner,
                     params: param_types.clone(),
+                    names,
                 });
                 let body_type = self.infer_expr(body, env);
                 self.fn_frames.pop();
@@ -4667,6 +4727,13 @@ impl TypeChecker {
         match stmt {
             Stmt::Let { pattern, ty, value } => {
                 let value_span = value.span;
+                // (`let h = go`: a call of `h` reads its parameters as
+                // `go` does.)
+                if let PatternKind::Ident(name) = pattern.kind
+                    && let Some(of) = Self::callee_named(value)
+                {
+                    self.copy_readings(of, unused::Callee::Local(name));
+                }
                 if let (PatternKind::Ident(name), ExprKind::FieldAccess(..)) =
                     (&pattern.kind, &value.kind)
                 {
@@ -5174,6 +5241,23 @@ impl TypeChecker {
             }
             _ => false,
         }
+    }
+}
+
+/// The receiver `e` of a call `e.m(..)` as a message writes it: a name,
+/// a field of one, a short literal, or a call of such ones
+/// (`first(x)`); `None` for anything longer.
+fn written_receiver(e: &Expr) -> Option<String> {
+    match &e.kind {
+        ExprKind::Call(callee, args) => {
+            let args: Vec<String> = args.iter().map(written_receiver).collect::<Option<_>>()?;
+            Some(format!(
+                "{}({})",
+                written_receiver(callee)?,
+                args.join(", ")
+            ))
+        }
+        _ => Some(super::names::shown_arg(e)).filter(|shown| !shown.contains("...")),
     }
 }
 

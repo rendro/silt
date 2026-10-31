@@ -94,22 +94,22 @@ pub(super) const WRITABLE_STRUCTURAL_TRAITS: &[&str] = &["Display", "Encode", "D
 
 // ── The type checker ────────────────────────────────────────────────
 
-/// How a call `x.m(..)` on a parameter `x` of an unannotated function
-/// read `x`, for the message of a call that gives it the other kind of
-/// argument.
+/// How a call `x.m(..)` (`receiver` is `x` as written) read `x`, for the
+/// message of a call that gives a parameter whose type is `x`'s the
+/// other kind of argument.
 #[derive(Debug, Clone)]
 pub(crate) enum Reading {
     /// A type that has `tr`, the one trait in sight whose method `method`
     /// makes a value.
     Type {
-        param: Symbol,
+        receiver: String,
         tr: TraitKey,
         method: Symbol,
     },
     /// A record with a field `method`: each of `traits` has a method of
     /// that name that makes a value, and the call does not say which.
     Field {
-        param: Symbol,
+        receiver: String,
         traits: Vec<TraitKey>,
         method: Symbol,
     },
@@ -269,14 +269,12 @@ pub struct TypeChecker {
     /// `x.m` and the type of `x` is unknown: `check_call` lets the call
     /// wait (`Goal::Select`).
     pub(super) unknown_receiver: Option<(Type, Symbol)>,
-    /// The function whose body is checked, by its name, and the types of
-    /// its parameters: where `x.m(..)` on a parameter decides how the
-    /// parameter is read (`readings`).
-    pub(super) checking_fn: Option<(Symbol, Vec<Type>)>,
-    /// How `x.m(..)` on a parameter of a function made the parameter be
-    /// read, by the function's name and the parameter's place: what a
-    /// call that gives the parameter the other kind of argument is told.
-    pub(super) readings: HashMap<(Symbol, usize), Reading>,
+    /// How `x.m(..)` made a parameter of a function or closure be read
+    /// (`x`'s, or one whose type it shares, also through a call that
+    /// passes it on), by the callee and the parameter's place, with the
+    /// parameter's name: what a call that gives the parameter the other
+    /// kind of argument is told.
+    pub(super) readings: HashMap<(unused::Callee, usize), (Option<Symbol>, Reading)>,
     /// Spans of `?` uses in the current fn/lambda body. When the
     /// body/return-type unify fails on a Result/Option return that `?`
     /// itself demanded, the diagnostic points back at the `?` site instead
@@ -638,7 +636,6 @@ impl TypeChecker {
             method_values: HashMap::new(),
             method_value_lets: HashMap::new(),
             unknown_receiver: None,
-            checking_fn: None,
             readings: HashMap::new(),
             current_qmark_spans: Vec::new(),
             qmark_decided: HashMap::new(),
@@ -1376,6 +1373,14 @@ impl TypeChecker {
                     let names = collect_pattern_vars(pattern);
                     let is_value =
                         self.check_top_level_let(pattern, ty.as_ref(), value, *span, env);
+                    // (`let top = go`: a call of `top` reads its parameters
+                    // as `go` does.)
+                    if let PatternKind::Ident(name) = pattern.kind
+                        && let Some(of) = Self::callee_named(value)
+                        && let Some(to) = self.callee_of(unused::FrameOwner::TopLevel(name))
+                    {
+                        self.copy_readings(of, to);
+                    }
                     for (name, awaited_ty) in &awaited {
                         if names.contains(name)
                             && let Some(bound) = env.lookup(*name).cloned()

@@ -1,0 +1,29 @@
+-- cmd: check
+-- exit: 1
+-- stderr-not-contains: expected type _
+-- A closure whose `first(x).total()` reads its parameter as a type says
+-- so at a call that gives it a value, as a function does.
+trait Vals {
+  fn total() -> Int
+}
+
+trait Vals for Int {
+  fn total() -> Int {
+    3
+  }
+}
+
+type Rec {
+  total: Fn() -> Int,
+}
+
+fn first(x: a) -> a {
+  x
+}
+
+fn main() {
+  let f = { x -> first(x).total() }
+  println(f(7))
+  let g = { x -> x.total() }
+  println(g(Rec { total: { -> 1 } }))
+}
