@@ -1,0 +1,18 @@
+-- A function that gives its `type a` to `toml.parse` inside a type
+-- (`toml.parse(s, Box(a))`) takes for `a` what a field of `Box` may be:
+-- `Int` and `List(Int)` too, which `toml.parse` does not take whole.
+import json
+import toml
+
+type Box(a) {
+  v: a,
+}
+
+fn load(s: String, type a) -> Result(Box(a), toml.TomlError) where a: json.Decode {
+  toml.parse(s, Box(a))
+}
+
+fn main() {
+  println(load("v = 1", Int))
+  println(load("v = [1, 2]", List(Int)))
+}

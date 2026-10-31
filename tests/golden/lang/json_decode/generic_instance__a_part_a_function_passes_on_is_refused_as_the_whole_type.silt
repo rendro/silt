@@ -1,0 +1,32 @@
+-- cmd: check
+-- exit: 1
+-- A function that gives its `type a` to the decoder inside a type
+-- (`json.parse(s, Box(a))`), given a type with no decoder, is refused with
+-- the decoder's error of the whole type, as `json.parse(s, Box(Set(Int)))`
+-- is: the field that has no decoder, and the function in a note. So is a
+-- function that passes its own `type a` on to such a function.
+import json
+
+type Box(a) {
+  v: a,
+}
+
+fn load(s: String, type a) -> Result(Box(a), json.JsonError) where a: json.Decode {
+  json.parse(s, Box(a))
+}
+
+fn load_list(s: String, type a) -> Result(List(a), json.JsonError) where a: json.Decode {
+  json.parse(s, List(a))
+}
+
+fn again(s: String, type a) -> Result(Box(a), json.JsonError) where a: json.Decode {
+  load(s, a)
+}
+
+fn main() {
+  println(load("1", Set(Int)))
+  println(load_list("1", Set(Int)))
+  println(load("1", Map(Int, Int)))
+  println(again("1", Set(Int)))
+  println(load("\{\"v\": 1}", Int))
+}

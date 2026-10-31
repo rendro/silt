@@ -152,6 +152,13 @@ pub struct TypeChecker {
     /// What each body asks `json.Decode` of its annotation variable for
     /// (`Asked`), by the variable's representative.
     pub(super) bound_askers: HashMap<TyVar, Asker>,
+    /// The type each decoder of the module is given, by the place that
+    /// gives it (`json.parse(s, Box(a))`: `Box(a)`).
+    pub(super) decoded_at: HashMap<Span, Type>,
+    /// Of an annotation variable a decoder is given inside a type: that
+    /// type (`Box(a)`), which a use that refuses what it gives the
+    /// variable names whole.
+    pub(super) bound_within: HashMap<TyVar, Type>,
     /// The variable of each `json.Decode` bound a trait declares for a
     /// method, with the variables it is in the module's impls of the
     /// method: what the trait's bound asks for is what they all ask for.
@@ -184,6 +191,13 @@ pub struct TypeChecker {
     /// methods the body passes the variable through to the builtin, the
     /// first first (none where it gives it to the builtin itself).
     pub(super) need_paths: HashMap<(TyVar, Option<Symbol>), Vec<Vec<Symbol>>>,
+    /// Of each of `builtin_needs`, at its place: the type the body gives
+    /// the decoder with the variable inside it (`Box(a)` of
+    /// `json.parse(s, Box(a))`), which a use judges whole.
+    pub(super) need_within: HashMap<(TyVar, Option<Symbol>), Vec<Option<Type>>>,
+    /// While the variables inside a type a decoder is given are owed
+    /// (`owe_for_variables_inside`): that type.
+    pub(super) owing_within: Option<Type>,
     /// The types given to an annotation variable of a signature, with
     /// the alias a use names one by (`Pred::Given`): checked when the
     /// module's bodies are (`settle_builtin_needs`). They are not
@@ -579,6 +593,8 @@ impl TypeChecker {
             open_type_arguments: std::collections::HashSet::new(),
             open_vars: std::collections::HashSet::new(),
             bound_askers: HashMap::new(),
+            decoded_at: HashMap::new(),
+            bound_within: HashMap::new(),
             bound_impls: HashMap::new(),
             bound_methods: HashMap::new(),
             decode_aliases: HashMap::new(),
@@ -588,6 +604,8 @@ impl TypeChecker {
             row_adds: HashMap::new(),
             builtin_needs: HashMap::new(),
             need_paths: HashMap::new(),
+            need_within: HashMap::new(),
+            owing_within: None,
             given_waiting: Vec::new(),
             via_needs: HashMap::new(),
             body_owner: None,

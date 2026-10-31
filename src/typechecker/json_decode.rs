@@ -154,6 +154,56 @@ impl TypeChecker {
         }
     }
 
+    /// A body gives a decoder its annotation variable `r` inside the type
+    /// given at `span` (`Box(a)`), for `asker`: that type. Given to a
+    /// function whose bound's body gives its variable inside a type, it
+    /// is inside that type, at the variable's place (`load(s, a)`, then
+    /// `json.parse(s, Box(b))`: `Box(a)`).
+    pub(super) fn note_bound_within(&mut self, r: RigidId, asker: Option<Asker>, span: Span) {
+        let var = self.rigid_rep_var(r.var);
+        let Some(given) = self.decoded_at.get(&span).cloned() else {
+            return;
+        };
+        let within = match asker.map(|asker| asker.by) {
+            Some(Asked::Builtin(_)) if !matches!(given, Type::Rigid(_)) => given,
+            Some(Asked::Bound(passed)) => {
+                let passed = self.rigid_rep_var(passed);
+                let Some(inner) = self.bound_within.get(&passed) else {
+                    return;
+                };
+                map_rigid(inner, &mut |p| match self.rigid_rep_var(p.var) == passed {
+                    true => given.clone(),
+                    false => Type::Rigid(p),
+                })
+            }
+            _ => return,
+        };
+        self.bound_within.entry(var).or_insert(within);
+    }
+
+    /// The type a use gives a decoder through the declared bound of
+    /// `asker` (the bound's body gives its variable inside `Box(a)`),
+    /// `ty` being what the use gives the variable: `Box(Set(Int))`, if
+    /// nothing else in it is left open.
+    fn decoded_whole(&self, asker: Option<Asker>, ty: &Type) -> Option<Type> {
+        let Asked::Bound(var) = asker?.by else {
+            return None;
+        };
+        let var = self.rigid_rep_var(var);
+        let within = self.bound_within.get(&var)?;
+        let mut open = false;
+        let whole = map_rigid(within, &mut |r| match self.rigid_rep_var(r.var) == var {
+            true => ty.clone(),
+            false => {
+                open = true;
+                Type::Rigid(r)
+            }
+        });
+        let whole =
+            crate::types::canonical::canonicalize(self.tables.resolver(), &self.apply(&whole));
+        (!open && free_vars_in(&whole).is_empty()).then_some(whole)
+    }
+
     /// The decoder `asker` comes from: a declared bound asks for what
     /// its body gives the variable to, if that is known.
     pub(super) fn asking_decoder(&self, asker: Option<Asker>) -> Option<Symbol> {
@@ -262,7 +312,12 @@ impl TypeChecker {
             // `postgres.query`) refused it here: that refusal, with the
             // note naming the function that passes it on, is the one
             // error.
-            if (self.lacking).contains(&self.refused_argument(gap.origin.span, &ty)) {
+            let whole = self.decoded_whole(gap.asker, &ty);
+            if (self.lacking).contains(&self.refused_argument(gap.origin.span, &ty))
+                || (whole.as_ref()).is_some_and(|whole| {
+                    (self.lacking).contains(&self.refused_argument(gap.origin.span, whole))
+                })
+            {
                 self.refused_calls.push(gap.origin.span);
                 continue;
             }
@@ -282,6 +337,13 @@ impl TypeChecker {
             else {
                 continue;
             };
+            // (Said of the type the bound's body gives the decoder, whole,
+            // as the decoder refuses it: `Box(Set(Int))`, field `v`.)
+            if let Some(whole) = (whole.as_ref()).and_then(|whole| {
+                self.json_decode_refusal(&resolve(named), None, whole, gap.origin.span)
+            }) {
+                diagnostic = whole;
+            }
             self.refused_calls.push(gap.origin.span);
             if !self.lacking.insert((
                 gap.origin.span,

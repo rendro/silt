@@ -226,7 +226,12 @@ impl TypeChecker {
         for var in inside {
             match var {
                 Type::Rigid(_) => {
-                    self.check_builtin_argument(check, &var, (passer, &[]), None, origin)
+                    // (A use judges the decoded type whole: `Box(Set(Int))`.)
+                    let within = matches!(check, crate::types::BuiltinCheck::Decodes { .. })
+                        .then(|| self.apply(ty));
+                    let around = std::mem::replace(&mut self.owing_within, within);
+                    self.check_builtin_argument(check, &var, (passer, &[]), None, origin);
+                    self.owing_within = around;
                 }
                 _ => {
                     let pred = Pred::Builtin {
