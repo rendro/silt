@@ -181,6 +181,28 @@ impl TypeChecker {
         self.bound_within.entry(var).or_insert(within);
     }
 
+    /// A body hands a value of its annotation variable `r` to an encoder
+    /// in a definition of `owner` (none: of this module): the variable's
+    /// owner for `json.Encode`, if every route gives it one
+    /// (`encode_owner`). A use of the bound encodes the type as that
+    /// module sees it.
+    pub(super) fn note_encode_owner(
+        &mut self,
+        r: RigidId,
+        owner: Option<crate::session::ModuleId>,
+    ) {
+        let var = self.rigid_rep_var(r.var);
+        match self.encode_owner.get(&var) {
+            None => {
+                self.encode_owner.insert(var, owner);
+            }
+            Some(known) if *known != owner => {
+                self.encode_owner.insert(var, None);
+            }
+            Some(_) => {}
+        }
+    }
+
     /// A body hands its annotation variable `r` to a decoder for `asker`,
     /// in a definition of `owner` (none: of this module): the variable's
     /// owner, if every route gives it one, through a function of this

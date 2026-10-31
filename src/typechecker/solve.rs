@@ -1924,8 +1924,20 @@ impl TypeChecker {
             let owner = ev.and_then(|ev| self.owed_for.get(&ev).copied());
             (self.decoded_owner.entry(span)).or_insert(owner);
         }
+        // (What is encoded, at the place that gives it, by whose
+        // definition.)
+        let encodes = trait_name.is_builtin("Encode");
+        if encodes {
+            let owner = ev.and_then(|ev| self.owed_for.get(&ev).copied());
+            (self.encoded_owner.entry(span)).or_insert(owner);
+        }
         // An annotation variable implements what its bounds say.
         if let Type::Rigid(r) = resolved {
+            if encodes {
+                let owner = (ev.and_then(|ev| self.owed_for.get(&ev).copied()))
+                    .or_else(|| self.encoded_owner.get(&span).copied().flatten());
+                self.note_encode_owner(r, owner);
+            }
             if Self::is_decode(trait_name) {
                 self.note_bound_asker(r, asker);
                 self.note_bound_within(r, asker, span);

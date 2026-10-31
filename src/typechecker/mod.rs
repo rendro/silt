@@ -167,6 +167,12 @@ pub struct TypeChecker {
     /// Of each place of `decoded_at`: the module of the definition the
     /// type is given to, if another module's.
     pub(super) decoded_owner: HashMap<Span, Option<crate::session::ModuleId>>,
+    /// As `bound_owner` and `decoded_owner`, of `json.Encode`: the
+    /// module of the definition that encodes an annotation variable's
+    /// type, if another module's on every route, by the variable; and of
+    /// what is encoded at a place, by the place.
+    pub(super) encode_owner: HashMap<TyVar, Option<crate::session::ModuleId>>,
+    pub(super) encoded_owner: HashMap<Span, Option<crate::session::ModuleId>>,
     /// The variable of each `json.Decode` bound a trait declares for a
     /// method, with the variables it is in the module's impls of the
     /// method: what the trait's bound asks for is what they all ask for.
@@ -609,6 +615,8 @@ impl TypeChecker {
             bound_within: HashMap::new(),
             bound_owner: HashMap::new(),
             decoded_owner: HashMap::new(),
+            encode_owner: HashMap::new(),
+            encoded_owner: HashMap::new(),
             bound_impls: HashMap::new(),
             bound_methods: HashMap::new(),
             decode_aliases: HashMap::new(),

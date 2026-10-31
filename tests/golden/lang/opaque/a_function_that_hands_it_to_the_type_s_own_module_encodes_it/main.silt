@@ -1,0 +1,38 @@
+-- A function that hands a value of its type variable on to a function
+-- of the opaque type's own module, which encodes it (inside a type of
+-- the caller's, `Box(a)`, or a list), encodes the opaque type wherever
+-- it is called from: the encoding is the module's. So does a function
+-- that passes it on to such a function; by json and by toml.
+import json
+import mail
+import toml
+
+type Box(a) {
+  v: a,
+}
+
+fn boxed(x: a) -> String where a: json.Encode {
+  mail.show(Box { v: x })
+}
+
+fn again(x: a) -> String where a: json.Encode {
+  boxed(x)
+}
+
+fn listed(xs: List(a)) -> String where a: json.Encode {
+  mail.show(xs)
+}
+
+fn boxed_toml(x: a) -> Result(String, toml.TomlError) where a: json.Encode {
+  mail.show_toml(Box { v: x })
+}
+
+fn main() {
+  println(boxed(mail.mk("a")))
+  println(again(mail.mk("b")))
+  println(listed([mail.mk("c")]))
+  match boxed_toml(mail.mk("d")) {
+    Ok(text) -> print(text)
+    Err(e) -> println(e)
+  }
+}
