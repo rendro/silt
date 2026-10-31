@@ -1,0 +1,27 @@
+-- exit: 1
+-- A function that never returns is a value of any result type: an
+-- argument where a function to Int is asked, a list's element beside a
+-- closure, a pipe's callee; a call of it still ends an arm of any type.
+import list
+
+fn fail(m: String) -> Never {
+  panic("failed: {m}")
+}
+
+fn apply(f: Fn(String) -> a, x: String) -> a {
+  f(x)
+}
+
+fn main() {
+  let fs = [fail, { s -> 42 }]
+  println(list.length(fs))
+  let none: List(Int) = list.map([], fail)
+  println(none)
+  let n = match list.length(fs) {
+    2 -> 7
+    _ -> fail("two")
+  }
+  println(n)
+  let r: Int = apply(fail, "boom")
+  println(r)
+}
