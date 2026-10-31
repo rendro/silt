@@ -1354,6 +1354,78 @@ mod tests {
         }
     }
 
+    /// A function of an earlier entry that hands its type to a function
+    /// of the opaque type's own module, which decodes or encodes it,
+    /// takes the opaque type in a later entry, as in a file; one that
+    /// decodes or encodes it itself, or also does, does not.
+    #[test]
+    fn an_earlier_entry_hands_an_opaque_type_to_its_module() {
+        let dir = std::path::PathBuf::from("/silt-repl-opaque");
+        let mut repl = Repl::new(ProjectSetup::Script(dir.clone()));
+        repl.session.set_overlay(
+            &dir.join("mail.silt"),
+            [
+                "import json",
+                "pub opaque type Email { addr: String }",
+                "pub fn mk(addr: String) -> Email { Email { addr: addr } }",
+                "pub fn load(s: String, type a) -> Result(a, json.JsonError) where a: json.Decode { json.parse(s, a) }",
+                "pub fn show(x: a) -> String where a: json.Encode { json.stringify(x) }",
+            ]
+            .join("\n"),
+        );
+        let setup = [
+            "import json",
+            "import mail",
+            "type Box(a) { v: a }",
+            "fn boxed(s: String, type a) -> Result(Box(a), json.JsonError) where a: json.Decode { mail.load(s, Box(a)) }",
+            "fn sh(x: a) -> String where a: json.Encode { mail.show(Box { v: x }) }",
+            "fn outer(s: String, type a) -> Result(Box(a), json.JsonError) where a: json.Decode { boxed(s, a) }",
+            "fn bad(s: String, type a) -> Result(a, json.JsonError) where a: json.Decode { json.parse(s, a) }",
+            "fn sh2(x: a) -> String where a: json.Encode { json.stringify(x) }",
+            "fn mixed(s: String, type a) -> Result(a, json.JsonError) where a: json.Decode {\n  let _ = mail.load(s, a)\n  json.parse(s, a)\n}",
+        ];
+        for entry in setup {
+            let evaluation = repl.eval(entry);
+            assert!(
+                evaluation.committed,
+                "`{entry}` must run: {:?}",
+                evaluation.diagnostics
+            );
+        }
+        assert_eq!(
+            value(
+                &mut repl,
+                "boxed(\"\\{\\\"v\\\": \\{\\\"addr\\\": \\\"x\\\"}}\", mail.Email)"
+            ),
+            "Ok(Box {v: Email {addr: x}})"
+        );
+        assert_eq!(
+            value(
+                &mut repl,
+                "outer(\"\\{\\\"v\\\": \\{\\\"addr\\\": \\\"y\\\"}}\", mail.Email)"
+            ),
+            "Ok(Box {v: Email {addr: y}})"
+        );
+        assert_eq!(
+            value(&mut repl, "sh(mail.mk(\"q\"))"),
+            "{\"v\":{\"addr\":\"q\"}}"
+        );
+        for refused in [
+            "bad(\"\\{\\\"addr\\\": \\\"x\\\"}\", mail.Email)",
+            "sh2(mail.mk(\"q\"))",
+            "mixed(\"\\{\\\"addr\\\": \\\"x\\\"}\", mail.Email)",
+        ] {
+            let evaluation = repl.eval(refused);
+            assert!(!evaluation.committed, "`{refused}` must be refused");
+            assert!(
+                (evaluation.diagnostics.iter())
+                    .any(|d| d.message.contains("outside module 'mail': it is opaque")),
+                "`{refused}`: {:?}",
+                evaluation.diagnostics
+            );
+        }
+    }
+
     #[test]
     fn an_inferred_return_type_is_seen_by_later_cells() {
         let mut repl = repl();

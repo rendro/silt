@@ -159,19 +159,29 @@ pub struct TypeChecker {
     /// type (`Box(a)`), which a use that refuses what it gives the
     /// variable names whole.
     pub(super) bound_within: HashMap<TyVar, Type>,
-    /// Of an annotation variable the body hands to a decoder: the module
-    /// of the definition that decodes it, if that is another module's
-    /// on every route (`mail.load(s, Box(a))`: `mail`), whose opaque
-    /// types it decodes wherever it is called from.
-    pub(super) bound_owner: HashMap<TyVar, Option<crate::session::ModuleId>>,
+    /// Of an annotation variable a body hands to a decoder (`false`) or
+    /// an encoder (`true`): each route it takes there (`OwnerRoute`).
+    /// The module of the definition that decodes or encodes it, if that
+    /// is another module's on every route (`mail.load(s, Box(a))`:
+    /// `mail`), decodes or encodes its opaque types wherever it is called
+    /// from (`route_owner`).
+    pub(super) owner_routes: HashMap<(TyVar, bool), Vec<json_decode::OwnerRoute>>,
+    /// While a use owes the `json.Encode` bound of a definition of the
+    /// module on its variable: that variable, which the use hands the
+    /// type it gives to; and so, by the evidence of what the use owes.
+    pub(super) encode_passing: Option<TyVar>,
+    pub(super) encode_passed: HashMap<evidence::EvRef, TyVar>,
+    /// The opaque encodings refused at a use of such a bound, with the
+    /// variable: decided once the module's bodies are, by its owner.
+    pub(super) encode_deferred: Vec<(Type, Span, TyVar)>,
+    /// While a definition of an earlier REPL input is instantiated: the
+    /// owner of each of its `json.Decode` and `json.Encode` bounds that
+    /// has one (`TypeTables::def_owners`).
+    pub(super) def_owners_now: Option<HashMap<(TyVar, bool), crate::session::ModuleId>>,
     /// Of each place of `decoded_at`: the module of the definition the
     /// type is given to, if another module's.
     pub(super) decoded_owner: HashMap<Span, Option<crate::session::ModuleId>>,
-    /// As `bound_owner` and `decoded_owner`, of `json.Encode`: the
-    /// module of the definition that encodes an annotation variable's
-    /// type, if another module's on every route, by the variable; and of
-    /// what is encoded at a place, by the place.
-    pub(super) encode_owner: HashMap<TyVar, Option<crate::session::ModuleId>>,
+    /// As `decoded_owner`, of what is encoded at a place.
     pub(super) encoded_owner: HashMap<Span, Option<crate::session::ModuleId>>,
     /// The variable of each `json.Decode` bound a trait declares for a
     /// method, with the variables it is in the module's impls of the
@@ -613,9 +623,12 @@ impl TypeChecker {
             bound_askers: HashMap::new(),
             decoded_at: HashMap::new(),
             bound_within: HashMap::new(),
-            bound_owner: HashMap::new(),
+            owner_routes: HashMap::new(),
+            encode_passing: None,
+            encode_passed: HashMap::new(),
+            encode_deferred: Vec::new(),
+            def_owners_now: None,
             decoded_owner: HashMap::new(),
-            encode_owner: HashMap::new(),
             encoded_owner: HashMap::new(),
             bound_impls: HashMap::new(),
             bound_methods: HashMap::new(),
@@ -1936,6 +1949,8 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
     checker.settle_rows();
     checker.settle_builtin_needs();
     checker.settle_decode_gaps();
+    checker.settle_encode_owners();
+    checker.record_def_owners(program, &env);
     checker.drop_errors_of_refused_calls();
     checker.report_private_in_schemes(program, &env);
     checker.report_unknown_let_types(program, &env);

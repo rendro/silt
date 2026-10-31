@@ -770,21 +770,31 @@ impl TypeChecker {
                     let owner = owners.get(k).copied().flatten();
                     std::mem::replace(&mut self.instantiating, owner)
                 });
-                // (A `json.Encode` bound whose body hands the value to
-                // another module's definition is that module's to encode.)
-                let around = around.or_else(|| match pred {
+                // (A `json.Decode` or `json.Encode` bound of another
+                // module's definition whose body hands the type to a third
+                // module's definition is that module's to decode or
+                // encode; one of this module's is decided by its routes.)
+                let json_bound = match pred {
                     Pred::Trait {
                         tr,
                         subject: Type::Var(v),
                         ..
-                    } if tr.is_builtin("Encode") && self.instantiating.is_none() => {
-                        let owner = (self.encode_owner.get(&self.rigid_rep_var(*v)))
-                            .copied()
-                            .flatten();
-                        owner.map(|owner| self.instantiating.replace(owner))
+                    } if Self::is_decode(*tr) || tr.is_builtin("Encode") => {
+                        Some((*v, tr.is_builtin("Encode")))
                     }
                     _ => None,
+                };
+                let def_owner = json_bound.and_then(|key| {
+                    (self.def_owners_now.as_ref()).and_then(|owners| owners.get(&key).copied())
                 });
+                let around = around.or_else(|| def_owner.map(|o| self.instantiating.replace(o)));
+                let passing = match json_bound {
+                    Some((v, true)) if owners.is_none() && self.instantiating.is_none() => {
+                        Some(self.rigid_rep_var(v))
+                    }
+                    _ => None,
+                };
+                let passing_around = std::mem::replace(&mut self.encode_passing, passing);
                 // (A predicate decided now may make a use of its own.)
                 self.use_id = match pred {
                     Pred::Given {
@@ -803,6 +813,11 @@ impl TypeChecker {
                     _ => use_origin,
                 };
                 let ev = self.want(pred.substitute(&mapping), origin);
+                self.encode_passing = passing_around;
+                if let (Some(var), Some(ev)) = (passing, ev) {
+                    let ev = self.ev_here(ev);
+                    self.encode_passed.insert(ev, var);
+                }
                 if let Some(around) = around {
                     self.instantiating = around;
                 }

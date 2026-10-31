@@ -1936,14 +1936,20 @@ impl TypeChecker {
             if encodes {
                 let owner = (ev.and_then(|ev| self.owed_for.get(&ev).copied()))
                     .or_else(|| self.encoded_owner.get(&span).copied().flatten());
-                self.note_encode_owner(r, owner);
+                let passing = (self.encode_passing)
+                    .or_else(|| ev.and_then(|ev| self.encode_passed.get(&ev).copied()));
+                self.note_owner_route(r, true, owner, passing);
             }
             if Self::is_decode(trait_name) {
                 self.note_bound_asker(r, asker);
                 self.note_bound_within(r, asker, span);
                 let owner = (ev.and_then(|ev| self.owed_for.get(&ev).copied()))
                     .or_else(|| self.decoded_owner.get(&span).copied().flatten());
-                self.note_bound_owner(r, asker, owner);
+                let passed = match asker.map(|asker| asker.by) {
+                    Some(Asked::Bound(passed)) => Some(passed),
+                    _ => None,
+                };
+                self.note_owner_route(r, false, owner, passed);
             }
             self.ev_set(
                 ev,
@@ -2044,7 +2050,16 @@ impl TypeChecker {
             if trait_name.is_builtin("Encode")
                 && let Some(refusal) = self.opaque_encode_refusal(&resolved, origin.span, owner)
             {
-                self.refuse_opaque(origin.span, refusal);
+                // (Handed to a bound of a definition of the module: its
+                // owner, known once the module's bodies are, decides.)
+                let passing = (self.encode_passing)
+                    .or_else(|| ev.and_then(|ev| self.encode_passed.get(&ev).copied()));
+                match passing {
+                    Some(var) if owner.is_none() => {
+                        (self.encode_deferred).push((resolved.clone(), origin.span, var));
+                    }
+                    _ => self.refuse_opaque(origin.span, refusal),
+                }
                 return;
             }
             let mut walk = Walk::default();

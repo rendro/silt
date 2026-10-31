@@ -29,6 +29,16 @@ pub(crate) struct DecodeGap {
     owner: Option<crate::session::ModuleId>,
 }
 
+/// A route by which a body hands the type of an annotation variable to a
+/// decoder or an encoder (`TypeChecker::owner_routes`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OwnerRoute {
+    /// To a definition of this module (none) or of another module.
+    Direct(Option<crate::session::ModuleId>),
+    /// On to the bound of a variable of a definition of this module.
+    Passed(TyVar),
+}
+
 impl TypeChecker {
     /// The trait `json.Decode`.
     pub(super) fn is_decode(tr: TraitKey) -> bool {
@@ -181,57 +191,127 @@ impl TypeChecker {
         self.bound_within.entry(var).or_insert(within);
     }
 
-    /// A body hands a value of its annotation variable `r` to an encoder
-    /// in a definition of `owner` (none: of this module): the variable's
-    /// owner for `json.Encode`, if every route gives it one
-    /// (`encode_owner`). A use of the bound encodes the type as that
-    /// module sees it.
-    pub(super) fn note_encode_owner(
+    /// A body hands its annotation variable `r` to a decoder or an
+    /// encoder (`encode`) in a definition of `owner` (none: of this
+    /// module), or on to the bound of the variable `passed` of a
+    /// definition of this module: a route of `r` (`owner_routes`). Its
+    /// own bound (a call of itself) is none.
+    pub(super) fn note_owner_route(
         &mut self,
         r: RigidId,
+        encode: bool,
         owner: Option<crate::session::ModuleId>,
+        passed: Option<TyVar>,
     ) {
         let var = self.rigid_rep_var(r.var);
-        match self.encode_owner.get(&var) {
-            None => {
-                self.encode_owner.insert(var, owner);
-            }
-            Some(known) if *known != owner => {
-                self.encode_owner.insert(var, None);
-            }
-            Some(_) => {}
+        // (A builtin decoder or encoder, `json.parse`, is this module's
+        // route.)
+        let owner = owner.filter(|module| module.builtin_name().is_none());
+        let route = match (owner, passed.map(|p| self.rigid_rep_var(p))) {
+            (None, Some(passed)) if passed == var => return,
+            (None, Some(passed)) => OwnerRoute::Passed(passed),
+            (owner, _) => OwnerRoute::Direct(owner),
+        };
+        let routes = self.owner_routes.entry((var, encode)).or_default();
+        if !routes.contains(&route) {
+            routes.push(route);
         }
     }
 
-    /// A body hands its annotation variable `r` to a decoder for `asker`,
-    /// in a definition of `owner` (none: of this module): the variable's
-    /// owner, if every route gives it one, through a function of this
-    /// module that passes it on too.
-    pub(super) fn note_bound_owner(
-        &mut self,
-        r: RigidId,
-        asker: Option<Asker>,
-        owner: Option<crate::session::ModuleId>,
-    ) {
-        let var = self.rigid_rep_var(r.var);
-        let owner = owner.or_else(|| match asker.map(|asker| asker.by) {
-            Some(Asked::Bound(passed)) => {
-                let passed = self.rigid_rep_var(passed);
-                (passed != var)
-                    .then(|| self.bound_owner.get(&passed).copied().flatten())
-                    .flatten()
-            }
-            _ => None,
-        });
-        match self.bound_owner.get(&var) {
-            None => {
-                self.bound_owner.insert(var, owner);
-            }
-            Some(known) if *known != owner => {
-                self.bound_owner.insert(var, None);
-            }
-            Some(_) => {}
+    /// The module whose definitions decode (or `encode`) the type of the
+    /// annotation variable `var` on every route, if another module's.
+    pub(super) fn route_owner(&self, var: TyVar, encode: bool) -> Option<crate::session::ModuleId> {
+        let var = self.rigid_rep_var(var);
+        self.route_owner_in(var, encode, &mut Vec::new()).flatten()
+    }
+
+    /// `route_owner`, not following the variables `seen` again: none if
+    /// every route leads back to one (it says nothing), `Some(None)` if
+    /// a route is this module's or two disagree.
+    fn route_owner_in(
+        &self,
+        var: TyVar,
+        encode: bool,
+        seen: &mut Vec<TyVar>,
+    ) -> Option<Option<crate::session::ModuleId>> {
+        if seen.contains(&var) {
+            return None;
         }
+        let Some(routes) = self.owner_routes.get(&(var, encode)) else {
+            return Some(None);
+        };
+        seen.push(var);
+        let mut found: Option<Option<crate::session::ModuleId>> = None;
+        for route in routes {
+            let owner = match route {
+                OwnerRoute::Direct(owner) => Some(*owner),
+                OwnerRoute::Passed(passed) => self.route_owner_in(*passed, encode, seen),
+            };
+            match (found, owner) {
+                (_, None) => {}
+                (None, owner) => found = owner,
+                (Some(known), Some(owner)) if known != owner => found = Some(None),
+                _ => {}
+            }
+        }
+        seen.pop();
+        found
+    }
+
+    /// The opaque encodings a use of a bound of the module owes
+    /// (`encode_deferred`): refused unless the bound's owner encodes the
+    /// type.
+    pub(super) fn settle_encode_owners(&mut self) {
+        for (ty, span, var) in std::mem::take(&mut self.encode_deferred) {
+            let ty = self.apply(&ty);
+            let owner = self.route_owner(var, true);
+            if let Some(refusal) = self.opaque_encode_refusal(&ty, span, owner) {
+                self.refuse_opaque(span, refusal);
+            }
+        }
+    }
+
+    /// Keep, of each top-level function of a REPL input, the owner of
+    /// each `json.Decode` and `json.Encode` bound that has one, for a use
+    /// in a later input (`TypeTables::def_owners`).
+    pub(super) fn record_def_owners(&mut self, program: &Program, env: &TypeEnv) {
+        let Some(defs) = (self.defs.as_ref()).filter(|_| self.is_cell) else {
+            return;
+        };
+        let mut found = Vec::new();
+        for decl in &program.decls {
+            let Decl::Fn(f) = decl else {
+                continue;
+            };
+            let Some(scheme) = env.lookup(f.name) else {
+                continue;
+            };
+            let Some(id) = (defs.of_module(self.module).iter())
+                .copied()
+                .find(|id| defs.get(*id).name == f.name)
+            else {
+                continue;
+            };
+            let mut owners = HashMap::new();
+            for pred in &scheme.preds {
+                if let Pred::Trait {
+                    tr,
+                    subject: Type::Var(v),
+                    ..
+                } = pred
+                    && (Self::is_decode(*tr) || tr.is_builtin("Encode"))
+                {
+                    let encode = tr.is_builtin("Encode");
+                    if let Some(owner) = self.route_owner(*v, encode) {
+                        owners.insert((*v, encode), owner);
+                    }
+                }
+            }
+            if !owners.is_empty() {
+                found.push((id, owners));
+            }
+        }
+        self.tables.def_owners.extend(found);
     }
 
     /// The type a use gives a decoder through the declared bound of
@@ -410,9 +490,7 @@ impl TypeChecker {
             // (A bound whose body hands the type to another module's
             // definition is judged as that module sees it.)
             let owner = gap.owner.or_else(|| match gap.asker.map(|asker| asker.by) {
-                Some(Asked::Bound(var)) => (self.bound_owner.get(&self.rigid_rep_var(var)))
-                    .copied()
-                    .flatten(),
+                Some(Asked::Bound(var)) => self.route_owner(var, false),
                 _ => None,
             });
             // A decoder the bound's body hands the type to (`toml.parse`,

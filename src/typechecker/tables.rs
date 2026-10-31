@@ -432,6 +432,12 @@ pub struct Tables {
     /// impl's self type (`impl_self_types`): a use that the impl answers
     /// owes them at the subject's parts (`verify_trait_obligation`).
     pub(super) impl_preds: HashMap<ImplKey, Vec<Pred>>,
+    /// Of each top-level function whose `json.Decode` or `json.Encode`
+    /// bound (`true`: encode) on a variable of its scheme is handed to
+    /// another module's definition on every route: that module, which
+    /// decodes or encodes the type a later REPL input gives it.
+    pub(super) def_owners:
+        HashMap<crate::defs::DefId, HashMap<(TyVar, bool), crate::session::ModuleId>>,
     /// Maps `(trait_name, target_head)` → the resolved trait args supplied
     /// at impl site. For `trait TryInto(Float) for String { ... }` this
     /// stores `(TryInto, String) -> [Float]`. `verify_trait_obligation`

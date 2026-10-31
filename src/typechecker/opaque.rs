@@ -45,7 +45,19 @@ impl TypeChecker {
     ) -> Type {
         let module = (self.res_def(res).map(|def| def.module)).filter(|m| *m != self.module);
         let around = std::mem::replace(&mut self.instantiating, module);
+        // (Of an earlier REPL input's definition, the session's program
+        // as this input's own is: the owners of its json bounds.)
+        let owners = match (module, res) {
+            (Some(module), Some(crate::defs::Res::Def(id)))
+                if self.is_cell && self.cells.contains(&module) =>
+            {
+                self.tables.def_owners.get(&id).cloned()
+            }
+            _ => None,
+        };
+        let owners_around = std::mem::replace(&mut self.def_owners_now, owners);
         let ty = self.instantiate(scheme);
+        self.def_owners_now = owners_around;
         self.instantiating = around;
         if let Some(def) = self.res_def(res)
             && def.module != self.module
