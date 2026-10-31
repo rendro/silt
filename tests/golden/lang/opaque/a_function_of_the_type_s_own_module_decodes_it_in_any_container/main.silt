@@ -1,0 +1,24 @@
+-- A function of the opaque type's own module decodes it wherever it is
+-- called from, in any part of the type it is given: a list, a map, a
+-- tuple, as an option and a generic type of the caller do; by json and
+-- by toml.
+import mail
+
+type Box(a) {
+  v: a,
+}
+
+type Holder {
+  e: List(mail.Email),
+}
+
+fn main() {
+  println(mail.load("\{\"addr\": \"x\"}", mail.Email))
+  println(mail.load("null", Option(mail.Email)))
+  println(mail.load("\{\"v\": \{\"addr\": \"x\"}}", Box(mail.Email)))
+  println(mail.load("[\{\"addr\": \"x\"}]", List(mail.Email)))
+  println(mail.load("\{\"k\": \{\"addr\": \"x\"}}", Map(String, mail.Email)))
+  println(mail.load("[\{\"addr\": \"x\"}, 1]", (mail.Email, Int)))
+  println(mail.load("[[\{\"addr\": \"x\"}]]", List(List(mail.Email))))
+  println(mail.load_toml("e = [\{ addr = \"x\" }]", Holder))
+}

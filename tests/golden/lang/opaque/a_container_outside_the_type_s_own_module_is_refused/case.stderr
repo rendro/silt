@@ -1,0 +1,38 @@
+error[type]: type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+ --> main.silt:15:28
+    |
+ 15 |   println(json.parse("[]", List(mail.Email)))
+    |                            ^^^^^^^^^^^^^^^^ type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+  = help: decode it inside module 'mail', or write `trait json.Decode for Email` there
+
+error[type]: type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+ --> main.silt:16:23
+    |
+ 16 |   println(load("\{}", Map(String, mail.Email)))
+    |                       ^^^^^^^^^^^^^^^^^^^^^^^ type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+  = note: `load` passes it to `json.parse`
+  = help: decode it inside module 'mail', or write `trait json.Decode for Email` there
+
+error[type]: type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+ --> main.silt:17:22
+    |
+ 17 |   println(load("[]", (mail.Email, Int)))
+    |                      ^^^^^^^^^^^^^^^^^ type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+  = note: `load` passes it to `json.parse`
+  = help: decode it inside module 'mail', or write `trait json.Decode for Email` there
+
+error[type]: `json.parse` cannot decode `List(Set(Int))`: `Set(Int)` has no decoder
+ --> main.silt:18:27
+    |
+ 18 |   println(mail.load("[]", List(Set(Int))))
+    |                           ^^^^^^^^^^^^^^ `json.parse` cannot decode `List(Set(Int))`: `Set(Int)` has no decoder
+  = note: `mail.load` passes it to `json.parse`
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `json.parse` cannot decode `(mail.Email, Set(Int))`: `Set(Int)` has no decoder
+ --> main.silt:19:27
+    |
+ 19 |   println(mail.load("[]", (mail.Email, Set(Int))))
+    |                           ^^^^^^^^^^^^^^^^^^^^^^ `json.parse` cannot decode `(mail.Email, Set(Int))`: `Set(Int)` has no decoder
+  = note: `mail.load` passes it to `json.parse`
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these

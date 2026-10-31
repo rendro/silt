@@ -101,6 +101,8 @@ impl TypeChecker {
             if !needs.contains(&check.unwritten()) {
                 needs.push(check.unwritten());
                 self.need_paths.entry(key).or_default().push(Vec::new());
+                let within = self.owing_within.clone();
+                self.need_within.entry(key).or_default().push(within);
             }
             return;
         }
@@ -132,7 +134,8 @@ impl TypeChecker {
         let Some(mut diagnostic) = refusal else {
             // A decoded list, option, map or tuple, or a generic type at
             // its arguments: what a type variable in it stands for is
-            // decoded too.
+            // decoded too, as a part of it is (`Box(a)` of toml's
+            // decoder takes `Int` for `a`).
             if let BuiltinCheck::Decodes {
                 builtin, decoding, ..
             } = check
@@ -140,7 +143,10 @@ impl TypeChecker {
             {
                 let check = BuiltinCheck::Decodes {
                     builtin,
-                    decoding,
+                    decoding: crate::builtins::registry::decoding::Decoding {
+                        family: decoding.family.nested(),
+                        primitives: true,
+                    },
                     written: None,
                 };
                 self.owe_for_variables_inside(check, &ty, passer, owner, origin);

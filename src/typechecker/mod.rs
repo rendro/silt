@@ -152,6 +152,13 @@ pub struct TypeChecker {
     /// What each body asks `json.Decode` of its annotation variable for
     /// (`Asked`), by the variable's representative.
     pub(super) bound_askers: HashMap<TyVar, Asker>,
+    /// The type each decoder of the module is given, by the place that
+    /// gives it (`json.parse(s, Box(a))`: `Box(a)`).
+    pub(super) decoded_at: HashMap<Span, Type>,
+    /// Of an annotation variable a decoder is given inside a type: that
+    /// type (`Box(a)`), which a use that refuses what it gives the
+    /// variable names whole.
+    pub(super) bound_within: HashMap<TyVar, Type>,
     /// The variable of each `json.Decode` bound a trait declares for a
     /// method, with the variables it is in the module's impls of the
     /// method: what the trait's bound asks for is what they all ask for.
@@ -184,6 +191,13 @@ pub struct TypeChecker {
     /// methods the body passes the variable through to the builtin, the
     /// first first (none where it gives it to the builtin itself).
     pub(super) need_paths: HashMap<(TyVar, Option<Symbol>), Vec<Vec<Symbol>>>,
+    /// Of each of `builtin_needs`, at its place: the type the body gives
+    /// the decoder with the variable inside it (`Box(a)` of
+    /// `json.parse(s, Box(a))`), which a use judges whole.
+    pub(super) need_within: HashMap<(TyVar, Option<Symbol>), Vec<Option<Type>>>,
+    /// While the variables inside a type a decoder is given are owed
+    /// (`owe_for_variables_inside`): that type.
+    pub(super) owing_within: Option<Type>,
     /// The types given to an annotation variable of a signature, with
     /// the alias a use names one by (`Pred::Given`): checked when the
     /// module's bodies are (`settle_builtin_needs`). They are not
@@ -364,6 +378,10 @@ pub struct TypeChecker {
     /// carries its type in full (`Box.mk`): the dictionary is made where
     /// the use is, so a `let` of the use is not general in that type.
     pub(super) type_method_selves: Vec<Type>,
+    /// The types of `type_method_selves` a top-level `let` was kept from
+    /// being general in: a REPL input that leaves one open refuses the
+    /// `let` (its dictionary is made where the input runs).
+    pub(super) kept_selves: Vec<Type>,
     /// Each annotation variable of a declaration whose body was or is
     /// being checked, as its body sees it: rigid.
     pub(super) rigid_of: HashMap<TyVar, Type>,
@@ -579,6 +597,8 @@ impl TypeChecker {
             open_type_arguments: std::collections::HashSet::new(),
             open_vars: std::collections::HashSet::new(),
             bound_askers: HashMap::new(),
+            decoded_at: HashMap::new(),
+            bound_within: HashMap::new(),
             bound_impls: HashMap::new(),
             bound_methods: HashMap::new(),
             decode_aliases: HashMap::new(),
@@ -588,6 +608,8 @@ impl TypeChecker {
             row_adds: HashMap::new(),
             builtin_needs: HashMap::new(),
             need_paths: HashMap::new(),
+            need_within: HashMap::new(),
+            owing_within: None,
             given_waiting: Vec::new(),
             via_needs: HashMap::new(),
             body_owner: None,
@@ -639,6 +661,7 @@ impl TypeChecker {
             full_type_uses: Vec::new(),
             full_type_receivers: HashMap::new(),
             type_method_selves: Vec::new(),
+            kept_selves: Vec::new(),
             rigid_of: HashMap::new(),
             let_vars: std::collections::HashSet::new(),
             var_written: HashMap::new(),
@@ -1059,7 +1082,13 @@ impl TypeChecker {
     /// where it is reported. A REPL cell is exempt: the next cell may
     /// decide it.
     fn report_unknown_let_types(&mut self, program: &Program, env: &TypeEnv) {
-        if self.is_cell {
+        // (In a REPL cell, only a `let` whose value makes a dictionary
+        // that carries its type in full, `let top = Box.mk`: the cell
+        // makes it when it runs, so a later input cannot.)
+        let kept: Vec<TyVar> = (self.kept_selves.iter())
+            .flat_map(|ty| free_vars_in(&self.apply(ty)))
+            .collect();
+        if self.is_cell && kept.is_empty() {
             return;
         }
         for decl in &program.decls {
@@ -1072,6 +1101,8 @@ impl TypeChecker {
                 continue;
             }
             let (what, keyword, why) = match is_pub {
+                // (A REPL input's `let` is public to the inputs after it.)
+                _ if self.is_cell => ("top-level let", "let", "a later input does not decide it"),
                 true => (
                     "public let",
                     "pub let",
@@ -1085,6 +1116,9 @@ impl TypeChecker {
                 };
                 let ty = self.apply(&scheme.ty);
                 if free_vars_in(&ty).iter().all(|v| scheme.vars.contains(v)) {
+                    continue;
+                }
+                if self.is_cell && !free_vars_in(&ty).iter().any(|v| kept.contains(v)) {
                     continue;
                 }
                 // (A trait argument nothing decides: that error says it.)
@@ -1369,6 +1403,7 @@ impl TypeChecker {
         // in its value carries in full, `let top = Box.mk`, as in a body.)
         for ty in self.type_method_selves.split_off(selves) {
             self.keep_monomorphic(&ty);
+            self.kept_selves.push(ty);
         }
         for (names, is_value, span, _) in &lets {
             for name in names {

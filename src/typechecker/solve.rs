@@ -1915,10 +1915,16 @@ impl TypeChecker {
         if matches!(resolved, Type::Error | Type::Never) {
             return;
         }
+        // (What a decoder, or a bound that passes it on, is given, at the
+        // place that gives it.)
+        if Self::is_decode(trait_name) && asker.is_some() {
+            (self.decoded_at.entry(span)).or_insert_with(|| resolved.clone());
+        }
         // An annotation variable implements what its bounds say.
         if let Type::Rigid(r) = resolved {
             if Self::is_decode(trait_name) {
                 self.note_bound_asker(r, asker);
+                self.note_bound_within(r, asker, span);
             }
             self.ev_set(
                 ev,

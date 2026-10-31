@@ -1012,6 +1012,70 @@ mod tests {
         assert_eq!(value(&mut repl, "shout(n)"), "i!");
     }
 
+    /// A top-level `let` of a method that makes `Self` through a generic
+    /// type (`Box.mk`) has one type, which the entry must decide: its
+    /// dictionary is made when the entry runs, so a later entry cannot.
+    /// Unannotated it is refused at the `let`; annotated it decodes at
+    /// that type, and at a type the decoder refuses it is refused there.
+    #[test]
+    fn a_let_of_a_method_making_self_needs_its_type_in_the_entry() {
+        let mut repl = repl();
+        let setup = [
+            "import json",
+            "type Box(a) { v: a }",
+            "trait Mk: json.Decode {\n  fn mk(s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }\n}",
+            "trait Mk for Box(a) where a: json.Decode {}",
+        ];
+        for entry in setup {
+            let evaluation = repl.eval(entry);
+            assert!(
+                evaluation.committed,
+                "`{entry}` must run: {:?}",
+                evaluation.diagnostics
+            );
+        }
+        let messages = |repl: &mut Repl, entry: &str| -> Vec<String> {
+            let evaluation = repl.eval(entry);
+            assert!(!evaluation.committed, "`{entry}` must be refused");
+            (evaluation.diagnostics.iter())
+                .map(|d| format!("{} / {}", d.message, d.help.join(" ")))
+                .collect()
+        };
+        assert_eq!(
+            messages(&mut repl, "let top = Box.mk"),
+            ["the type of top-level let 'top' is not fully known here: \
+              Fn(String) -> Result(Box(_), json.JsonError) / annotate it, e.g. \
+              `let top: <type> = ...`: a later input does not decide it"]
+        );
+        assert_eq!(
+            messages(&mut repl, "let wrapped = { s -> Box.mk(s) }"),
+            [
+                "the type of top-level let 'wrapped' is not fully known here: \
+              Fn(String) -> Result(Box(_), json.JsonError) / annotate it, e.g. \
+              `let wrapped: <type> = ...`: a later input does not decide it"
+            ]
+        );
+        assert_eq!(
+            messages(
+                &mut repl,
+                "let bad: Fn(String) -> Result(Box(Set(Int)), json.JsonError) = Box.mk"
+            )
+            .len(),
+            1
+        );
+        let evaluation =
+            repl.eval("let top: Fn(String) -> Result(Box(Int), json.JsonError) = Box.mk");
+        assert!(evaluation.committed, "{:?}", evaluation.diagnostics);
+        assert_eq!(
+            value(&mut repl, "top(\"\\{\\\"v\\\": 3}\")"),
+            "Ok(Box {v: 3})"
+        );
+        // (A `let` of no such method stays general, unannotated.)
+        let evaluation = repl.eval("let same = { x -> x }");
+        assert!(evaluation.committed, "{:?}", evaluation.diagnostics);
+        assert_eq!(value(&mut repl, "same(1)"), "1");
+    }
+
     /// A later entry adds an impl of a trait for a type at another trait
     /// argument; one that fails takes its impl back, and the impl is
     /// added again by a later entry.

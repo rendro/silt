@@ -1,0 +1,31 @@
+error[type]: `json.parse` cannot decode `Box(Set(Int))`: field `v` has type `Set(Int)`, which has no decoder
+ --> generic_instance__a_part_a_function_passes_on_is_refused_as_the_whole_type.silt:27:21
+    |
+ 27 |   println(load("1", Set(Int)))
+    |                     ^^^^^^^^ `json.parse` cannot decode `Box(Set(Int))`: field `v` has type `Set(Int)`, which has no decoder
+  = note: `load` passes it to `json.parse`
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `json.parse` cannot decode `List(Set(Int))`: `Set(Int)` has no decoder
+ --> generic_instance__a_part_a_function_passes_on_is_refused_as_the_whole_type.silt:28:26
+    |
+ 28 |   println(load_list("1", Set(Int)))
+    |                          ^^^^^^^^ `json.parse` cannot decode `List(Set(Int))`: `Set(Int)` has no decoder
+  = note: `load_list` passes it to `json.parse`
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `json.parse` cannot decode `Box(Map(Int, Int))`: field `v` has type `Map(Int, Int)`, which has no decoder, as a decoded map's key type must be String
+ --> generic_instance__a_part_a_function_passes_on_is_refused_as_the_whole_type.silt:29:21
+    |
+ 29 |   println(load("1", Map(Int, Int)))
+    |                     ^^^^^^^^^^^^^ `json.parse` cannot decode `Box(Map(Int, Int))`: field `v` has type `Map(Int, Int)`, which has no decoder, as a decoded map's key type must be String
+  = note: `load` passes it to `json.parse`
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `json.parse` cannot decode `Box(Set(Int))`: field `v` has type `Set(Int)`, which has no decoder
+ --> generic_instance__a_part_a_function_passes_on_is_refused_as_the_whole_type.silt:30:22
+    |
+ 30 |   println(again("1", Set(Int)))
+    |                      ^^^^^^^^ `json.parse` cannot decode `Box(Set(Int))`: field `v` has type `Set(Int)`, which has no decoder
+  = note: `again` passes it to `load`, which passes it to `json.parse`
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these

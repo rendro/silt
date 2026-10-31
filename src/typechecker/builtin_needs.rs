@@ -141,6 +141,50 @@ impl TypeChecker {
             .unwrap_or_default()
     }
 
+    /// The type the body gives a decoder with `var` inside it, of its
+    /// need `index` (`need_within`), with `subject` for `var`: if nothing
+    /// else in it is left open.
+    fn within_at(
+        &self,
+        var: TyVar,
+        body: Option<Symbol>,
+        index: usize,
+        subject: &Type,
+    ) -> Option<Type> {
+        let rep = self.rigid_rep_var(var);
+        let within = (self.need_within.get(&(rep, body)))
+            .and_then(|within| within.get(index).cloned().flatten())?;
+        let whole = map_rigid(&within, &mut |r| match self.rigid_rep_var(r.var) == rep {
+            true => subject.clone(),
+            false => Type::Rigid(r),
+        });
+        let whole = self.apply(&whole);
+        let mut rigid = false;
+        map_rigid(&whole, &mut |r| {
+            rigid = true;
+            Type::Rigid(r)
+        });
+        (free_vars_in(&whole).is_empty() && !rigid).then_some(whole)
+    }
+
+    /// Whether the decoder of `check` refuses `ty`, given whole.
+    fn decodes_whole_refused(
+        &self,
+        check: BuiltinCheck,
+        ty: &Type,
+        owner: Option<crate::session::ModuleId>,
+    ) -> bool {
+        let BuiltinCheck::Decodes {
+            builtin, decoding, ..
+        } = check
+        else {
+            return false;
+        };
+        let ty = crate::types::canonical::canonicalize(self.tables.resolver(), &self.apply(ty));
+        (self.decode_refusal(&resolve(builtin), decoding, None, &ty, owner, Span::BUILTIN))
+            .is_some()
+    }
+
     /// The trait methods the body of its function calls on a value of
     /// the type of the annotation variable `var`, over the variables of
     /// the signature (each as the variable of its representative).
@@ -236,6 +280,7 @@ impl TypeChecker {
         }
         needs.push(check.unwritten());
         self.need_paths.entry(key).or_default().push(path);
+        self.need_within.entry(key).or_default().push(None);
         self.grown_needs.push(key);
         true
     }
@@ -1025,7 +1070,19 @@ impl TypeChecker {
                 };
                 let through = self.need_path(use_.given, use_.body, index);
                 let passer = (Some(use_.passer), through.as_slice());
-                self.check_builtin_argument(check, &use_.subject, passer, use_.owner, use_.origin);
+                // (The type the body gives the decoder, judged whole where
+                // it refuses the type: the decoder's own refusal of it.)
+                let (check, subject) =
+                    match self.within_at(use_.given, use_.body, index, &use_.subject) {
+                        Some(whole)
+                            if self.decodes_whole_refused(check, &use_.subject, use_.owner)
+                                && self.decodes_whole_refused(check, &whole, use_.owner) =>
+                        {
+                            (check.unwritten(), whole)
+                        }
+                        _ => (check, use_.subject.clone()),
+                    };
+                self.check_builtin_argument(check, &subject, passer, use_.owner, use_.origin);
             }
         }
     }
