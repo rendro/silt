@@ -1,0 +1,11 @@
+error[type]: type mismatch: expected String, got Int
+ --> never_value__a_map_literal_keeps_no_never.silt:17:38
+    |
+ 17 |     Some(g) -> println(string.length(g("x")))
+    |                                      ^^^^^^ type mismatch: expected String, got Int
+
+error[type]: type mismatch: expected String, got Int
+ --> never_value__a_map_literal_keeps_no_never.silt:22:43
+    |
+ 22 |     Some((g, _)) -> println(string.length(g("x")))
+    |                                           ^^^^^^ type mismatch: expected String, got Int

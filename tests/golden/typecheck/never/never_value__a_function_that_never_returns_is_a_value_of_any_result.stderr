@@ -1,0 +1,10 @@
+error[runtime]: panic: failed: boom
+ --> never_value__a_function_that_never_returns_is_a_value_of_any_result.silt:8:3
+   |
+ 8 |   panic("failed: {m}")
+   |   ^^^^^^^^^^^^^^^^^^^^ panic: failed: boom
+
+call stack:
+  -> fail  at never_value__a_function_that_never_returns_is_a_value_of_any_result.silt:8:3
+  -> apply  at never_value__a_function_that_never_returns_is_a_value_of_any_result.silt:12:3
+  -> main  at never_value__a_function_that_never_returns_is_a_value_of_any_result.silt:25:16

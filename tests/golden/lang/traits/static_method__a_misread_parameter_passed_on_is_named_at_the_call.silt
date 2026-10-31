@@ -1,0 +1,66 @@
+-- cmd: check
+-- exit: 1
+-- stderr-not-contains: expected type _
+-- A function that passes its parameter on to one whose `x.total()`
+-- reads it as a type (or whose `t.mk()` reads it as a record) reads it
+-- the same way, and a call that gives it the other kind of argument is
+-- told so, naming the function the call is in (`x.total()` in 'go');
+-- so are a `let` of such a function, a pipe into it and the function
+-- given where a function of a value is asked.
+import list
+
+trait Vals {
+  fn total() -> Int
+}
+
+trait Vals for Int {
+  fn total() -> Int {
+    3
+  }
+}
+
+trait A {
+  fn mk() -> Self
+}
+
+trait B {
+  fn mk() -> Self
+}
+
+type W {
+  n: Int,
+}
+
+trait A for W {
+  fn mk() -> Self {
+    W { n: 1 }
+  }
+}
+
+fn go(x) {
+  x.total()
+}
+
+fn again(y) {
+  go(y)
+}
+
+fn pick(t) {
+  t.mk()
+}
+
+fn pick_again(u) {
+  pick(u)
+}
+
+let top = go
+
+fn main() {
+  println(again(7))
+  println(pick_again(W))
+  let h = go
+  println(h(7))
+  println(top(7))
+  println(7 |> go)
+  println(list.map([1], go))
+}

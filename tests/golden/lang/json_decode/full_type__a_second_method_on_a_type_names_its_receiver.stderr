@@ -1,0 +1,19 @@
+error[type]: ambiguous method 'mk' on `t`: provided by traits A, B
+ --> full_type__a_second_method_on_a_type_names_its_receiver.silt:37:14
+    |
+ 37 |   (t.zero(), t.mk())
+    |              ^^^^ ambiguous method 'mk' on `t`: provided by traits A, B
+  = help: say which is meant: annotate the receiver's type, or bound it with a `where` clause
+
+error[type]: type 't' has no method 'nope'
+ --> full_type__a_second_method_on_a_type_names_its_receiver.silt:41:14
+    |
+ 41 |   (t.zero(), t.nope())
+    |              ^^^^^^ type 't' has no method 'nope'
+
+error[type]: type 't' has no method 'greet'
+ --> full_type__a_second_method_on_a_type_names_its_receiver.silt:45:14
+    |
+ 45 |   (t.zero(), t.greet())
+    |              ^^^^^^^ type 't' has no method 'greet'
+  = help: `greet` is a method of trait `Greet`: call it as `Greet.greet(x)`

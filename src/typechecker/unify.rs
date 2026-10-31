@@ -37,8 +37,76 @@ impl TyVarSupply {
         if v < self.base {
             self.trail.push(v);
         }
+        let t = self.without_never(t);
         self.lower(&t, self.levels[v]);
         self.subst[v] = Some(t);
+    }
+
+    /// `t` with a new variable for each `Never` in it. `Never` is the
+    /// type of an expression that diverges and meets every type without
+    /// deciding it; inside a type a variable keeps (the result of a
+    /// function that never returns, `Fn(String) -> Never` of `panic`
+    /// taken as a value) it would meet every later type of that place
+    /// without deciding it: `[panic, { s -> 42 }]` is a list of
+    /// `Fn(String) -> Int`, as with the closure `{ s -> panic(s) }`.
+    fn without_never(&mut self, t: Type) -> Type {
+        fn holds_never(t: &Type) -> bool {
+            match t {
+                Type::Never => true,
+                Type::Fun(params, ret) => params.iter().any(holds_never) || holds_never(ret),
+                Type::List(inner) | Type::Set(inner) | Type::Channel(inner) => holds_never(inner),
+                Type::Map(k, v) | Type::App(k, v) => holds_never(k) || holds_never(v),
+                Type::Tuple(parts) | Type::Generic(_, parts) | Type::Con(_, parts) => {
+                    parts.iter().any(holds_never)
+                }
+                Type::AnonRecord { fields, .. } => fields.values().any(holds_never),
+                Type::AssocProj { receiver, .. } => holds_never(receiver),
+                _ => false,
+            }
+        }
+        if !holds_never(&t) {
+            return t;
+        }
+        let each = |ts: &[Type], this: &mut Self| -> Vec<Type> {
+            ts.iter().map(|t| this.without_never(t.clone())).collect()
+        };
+        match t {
+            Type::Never => Type::Var(self.fresh()),
+            Type::Fun(params, ret) => {
+                let params = each(&params, self);
+                Type::Fun(params, Box::new(self.without_never(*ret)))
+            }
+            Type::List(inner) => Type::List(Box::new(self.without_never(*inner))),
+            Type::Set(inner) => Type::Set(Box::new(self.without_never(*inner))),
+            Type::Channel(inner) => Type::Channel(Box::new(self.without_never(*inner))),
+            Type::Map(k, v) => {
+                let k = self.without_never(*k);
+                Type::Map(Box::new(k), Box::new(self.without_never(*v)))
+            }
+            Type::App(head, arg) => {
+                let head = self.without_never(*head);
+                Type::applied(head, self.without_never(*arg))
+            }
+            Type::Tuple(parts) => Type::Tuple(each(&parts, self)),
+            Type::Generic(name, args) => Type::Generic(name, each(&args, self)),
+            Type::Con(head, rest) => Type::Con(head, each(&rest, self)),
+            Type::AnonRecord { fields, tail } => Type::AnonRecord {
+                fields: (fields.into_iter())
+                    .map(|(name, t)| (name, self.without_never(t)))
+                    .collect(),
+                tail,
+            },
+            Type::AssocProj {
+                receiver,
+                trait_name,
+                assoc_name,
+            } => Type::AssocProj {
+                receiver: Box::new(self.without_never(*receiver)),
+                trait_name,
+                assoc_name,
+            },
+            other => other,
+        }
     }
 
     /// A new variable, at the current level.

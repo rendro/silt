@@ -1,0 +1,5 @@
+error[type]: type mismatch: expected String, got Int
+ --> never_value__a_loop_binding_keeps_no_never.silt:16:26
+    |
+ 16 |       _ -> string.length(g("x"))
+    |                          ^^^^^^ type mismatch: expected String, got Int

@@ -1,0 +1,26 @@
+-- cmd: check
+-- exit: 1
+-- A type held as a value (`type W`) whose record field is asked for has
+-- none; the help calls the method on the type itself, `W.mk()`.
+trait A {
+  fn mk() -> Self
+}
+
+type W {
+  n: Int,
+}
+
+trait A for W {
+  fn mk() -> Self {
+    W { n: 1 }
+  }
+}
+
+fn get(x) {
+  x.mk
+}
+
+fn main() {
+  let f = get(W)
+  println(f)
+}

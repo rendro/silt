@@ -969,6 +969,25 @@ impl TypeChecker {
                 }
                 bounds.push(Pred::bound(tv, bound, args));
             }
+            // A type variable of the method's result that no parameter
+            // has and a bound names: as of a function's
+            // (`register_fn_decl`), which impl the bound means would be
+            // each caller's to choose.
+            let result_only = super::declare_fns::return_only(&param_types, &ret_type);
+            let mut written: Vec<(TyVar, Symbol)> = (param_map.iter())
+                .filter_map(|(name, ty)| match ty {
+                    Type::Var(v) if *v != self_var_id && !param_var_ids.contains(v) => {
+                        Some((*v, *name))
+                    }
+                    _ => None,
+                })
+                .filter(|(v, _)| result_only.contains(v))
+                .filter(|(v, _)| bounds.iter().any(|pred| pred.mentions(*v)))
+                .collect();
+            written.sort_by_key(|(v, _)| *v);
+            for (_, name) in written {
+                self.return_only_variable(name, m.span);
+            }
             if !bounds.is_empty() {
                 method_bounds.insert(m.name, bounds);
             }

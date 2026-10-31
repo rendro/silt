@@ -1,0 +1,6 @@
+error[type]: 'mk' returns `H(_)`, and no parameter decides its `_`: trait 'json.Encode' needs it, and each caller could mean another impl
+ --> type_param_binding__an_inferred_return_only_var_is_shown_as_written.silt:16:1
+    |
+ 16 | fn mk() {
+    | ^^^^^^^^^ 'mk' returns `H(_)`, and no parameter decides its `_`: trait 'json.Encode' needs it, and each caller could mean another impl
+  = help: annotate 'mk': add a `type` parameter for that type, or take a value of it as a parameter

@@ -1,0 +1,29 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type 'Int' does not implement trait 'Dec'
+-- stderr-contains: `go` cannot decode `Box(Set(Int))`: field `v` has type `Set(Int)`, which has no decoder
+-- stderr-not-contains: has no field
+-- An unannotated function that calls `t.mk(s)` owes the trait for the
+-- type it is given: at a type with no impl, or a `Box(Set(Int))` that
+-- has no decoder, it is refused as a direct call is. (The text of the
+-- second error is another step's: only its first line is held here.)
+import json
+
+type Box(a) {
+  v: a,
+}
+
+trait Dec: json.Decode {
+  fn mk(s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+trait Dec for Box(a) where a: json.Decode {}
+
+fn go(s, t) {
+  t.mk(s)
+}
+
+fn main() {
+  println(go("1", Int))
+  println(go("\{\"v\": [1]}", Box(Set(Int))))
+}
