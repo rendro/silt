@@ -375,7 +375,7 @@ impl TypeChecker {
 /// it, and no parameter of a function type inside `ret` has it either
 /// (`a` of `Fn(String) -> Fn(List(a)) -> List(String)` is the returned
 /// closure's caller's to give).
-fn return_only(params: &[Type], ret: &Type) -> Vec<TyVar> {
+pub(super) fn return_only(params: &[Type], ret: &Type) -> Vec<TyVar> {
     fn results(ty: &Type, given: &mut Vec<TyVar>, out: &mut Vec<TyVar>) {
         match ty {
             Type::Fun(params, ret) => {

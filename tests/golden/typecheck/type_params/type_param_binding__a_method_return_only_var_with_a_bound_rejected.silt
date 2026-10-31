@@ -1,0 +1,53 @@
+-- cmd: check
+-- exit: 1
+-- A trait method's signature is held to a function's rule: a type
+-- variable of its result that no parameter has and a bound names is
+-- refused, at the method (each caller would choose the impl). The
+-- trait's own parameters and `Self` are the impl's, not the method's;
+-- a result variable no bound names stays general.
+type Box(a) {
+  v: a,
+}
+
+trait Zero {
+  fn zero() -> Self
+}
+
+trait Zero for Int {
+  fn zero() -> Self {
+    0
+  }
+}
+
+trait Mk {
+  fn make(self) -> Box(a) where a: Zero
+  fn shown(self, x: Int) -> a where a: Display
+  fn nothing(self) -> List(a)
+}
+
+trait Mk for Int {
+  fn make(self) -> Box(a) where a: Zero {
+    Box { v: a.zero() }
+  }
+  fn shown(self, x: Int) -> a where a: Display {
+    panic("no")
+  }
+  fn nothing(self) -> List(a) {
+    []
+  }
+}
+
+trait Conv(b) {
+  fn conv(self) -> Box(b)
+}
+
+trait Conv(Int) for String {
+  fn conv(self) -> Box(Int) {
+    Box { v: 1 }
+  }
+}
+
+fn main() {
+  let b: Box(Int) = Mk.make(1)
+  println(b)
+}
