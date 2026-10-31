@@ -1938,7 +1938,7 @@ impl TypeChecker {
                     .or_else(|| self.encoded_owner.get(&span).copied().flatten());
                 let passing = (self.encode_passing)
                     .or_else(|| ev.and_then(|ev| self.encode_passed.get(&ev).copied()));
-                self.note_owner_route(r, true, owner, passing);
+                self.note_owner_route(r, true, (owner, passing), None);
             }
             if Self::is_decode(trait_name) {
                 self.note_bound_asker(r, asker);
@@ -1949,7 +1949,7 @@ impl TypeChecker {
                     Some(Asked::Bound(passed)) => Some(passed),
                     _ => None,
                 };
-                self.note_owner_route(r, false, owner, passed);
+                self.note_owner_route(r, false, (owner, passed), asker);
             }
             self.ev_set(
                 ev,

@@ -200,8 +200,8 @@ impl TypeChecker {
         &mut self,
         r: RigidId,
         encode: bool,
-        owner: Option<crate::session::ModuleId>,
-        passed: Option<TyVar>,
+        (owner, passed): (Option<crate::session::ModuleId>, Option<TyVar>),
+        asker: Option<Asker>,
     ) {
         let var = self.rigid_rep_var(r.var);
         // (A builtin decoder or encoder, `json.parse`, is this module's
@@ -213,8 +213,41 @@ impl TypeChecker {
             (owner, _) => OwnerRoute::Direct(owner),
         };
         let routes = self.owner_routes.entry((var, encode)).or_default();
-        if !routes.contains(&route) {
-            routes.push(route);
+        if !routes.contains(&(route, asker)) {
+            routes.push((route, asker));
+        }
+    }
+
+    /// The asker of a route by which the decoder's bound on `var` refuses
+    /// an opaque type of `module`: one whose owner is not that module.
+    fn refused_route(&self, var: TyVar, module: crate::session::ModuleId) -> Option<Asker> {
+        let routes = self.owner_routes.get(&(var, false))?;
+        (routes.iter()).find_map(|(route, asker)| {
+            let owner = match route {
+                OwnerRoute::Direct(owner) => *owner,
+                OwnerRoute::Passed(passed) => self.route_owner(*passed, false),
+            };
+            (owner != Some(module)).then_some(*asker).flatten()
+        })
+    }
+
+    /// The module of an opaque type of another module that decoding `ty`
+    /// builds, at the top or in a type argument at any depth.
+    fn opaque_module_in(&self, ty: &Type) -> Option<crate::session::ModuleId> {
+        match ty {
+            Type::Generic(head, args) => {
+                let opaque = self
+                    .def(head.id.0)
+                    .filter(|def| def.vis == crate::defs::Vis::Opaque && def.module != self.module);
+                (opaque.map(|def| def.module))
+                    .or_else(|| args.iter().find_map(|arg| self.opaque_module_in(arg)))
+            }
+            Type::List(t) | Type::Set(t) | Type::Channel(t) => self.opaque_module_in(t),
+            Type::Map(k, v) => self
+                .opaque_module_in(k)
+                .or_else(|| self.opaque_module_in(v)),
+            Type::Tuple(parts) => parts.iter().find_map(|part| self.opaque_module_in(part)),
+            _ => None,
         }
     }
 
@@ -242,7 +275,7 @@ impl TypeChecker {
         };
         seen.push(var);
         let mut found: Option<Option<crate::session::ModuleId>> = None;
-        for route in routes {
+        for (route, _) in routes {
             let owner = match route {
                 OwnerRoute::Direct(owner) => Some(*owner),
                 OwnerRoute::Passed(passed) => self.route_owner_in(*passed, encode, seen),
@@ -419,6 +452,17 @@ impl TypeChecker {
     /// a trait's method its bound is declared for, `Loader.load`): as
     /// far as each is known.
     fn passed_through(&self, asker: Option<Asker>) -> Vec<Symbol> {
+        self.passed_through_refused(asker, None)
+    }
+
+    /// `passed_through`, following on each variable a route by which the
+    /// opaque type of the module `refused` is refused, where there is one:
+    /// the route the error is about.
+    fn passed_through_refused(
+        &self,
+        asker: Option<Asker>,
+        refused: Option<crate::session::ModuleId>,
+    ) -> Vec<Symbol> {
         let mut links = Vec::new();
         let mut seen = Vec::new();
         let mut asked = asker.map(|asker| asker.by);
@@ -439,7 +483,9 @@ impl TypeChecker {
                 links.extend(self.bound_methods.get(&var));
             }
             seen.push(var);
-            let Some(next) = self.bound_askers.get(&var) else {
+            let next = (refused.and_then(|module| self.refused_route(var, module)))
+                .or_else(|| self.bound_askers.get(&var).copied());
+            let Some(next) = next else {
                 break;
             };
             links.extend(next.passer);
@@ -541,7 +587,11 @@ impl TypeChecker {
                 continue;
             }
             if let (Some(decoder), Some(passer)) = (decoder, passer) {
-                let links = self.passed_through(gap.asker);
+                // (Of an opaque type, the route that refuses it.)
+                let refused = (owner.is_none())
+                    .then(|| self.opaque_module_in(&ty))
+                    .flatten();
+                let links = self.passed_through_refused(gap.asker, refused);
                 diagnostic = (diagnostic)
                     .with_note(super::builtin_checks::passes_note(passer, &links, decoder));
             }

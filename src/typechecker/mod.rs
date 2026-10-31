@@ -165,7 +165,7 @@ pub struct TypeChecker {
     /// is another module's on every route (`mail.load(s, Box(a))`:
     /// `mail`), decodes or encodes its opaque types wherever it is called
     /// from (`route_owner`).
-    pub(super) owner_routes: HashMap<(TyVar, bool), Vec<json_decode::OwnerRoute>>,
+    pub(super) owner_routes: HashMap<(TyVar, bool), Vec<(json_decode::OwnerRoute, Option<Asker>)>>,
     /// While a use owes the `json.Encode` bound of a definition of the
     /// module on its variable: that variable, which the use hands the
     /// type it gives to; and so, by the evidence of what the use owes.
