@@ -1,0 +1,17 @@
+error[type]: type 'Box(String)' does not implement trait 'json.Decode': the only impl is for 'Box(Int)'
+ --> full_type__an_impl_for_another_instance_is_refused.silt:17:11
+    |
+ 17 |   println(Box(String).decode(json.Null))
+    |           ^^^^^^^^^^^^^^^^^^ type 'Box(String)' does not implement trait 'json.Decode': the only impl is for 'Box(Int)'
+
+error[type]: type 'Box(String)' does not implement trait 'json.Decode': the only impl is for 'Box(Int)'
+ --> full_type__an_impl_for_another_instance_is_refused.silt:19:11
+    |
+ 19 |   println(t.decode(json.Null))
+    |           ^^^^^^^^ type 'Box(String)' does not implement trait 'json.Decode': the only impl is for 'Box(Int)'
+
+error[type]: type 'Box(String)' does not implement trait 'json.Decode': the only impl is for 'Box(Int)'
+ --> full_type__an_impl_for_another_instance_is_refused.silt:20:11
+    |
+ 20 |   let f = Box(String).decode
+    |           ^^^^^^^^^^^^^^^^^^ type 'Box(String)' does not implement trait 'json.Decode': the only impl is for 'Box(Int)'

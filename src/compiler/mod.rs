@@ -1754,6 +1754,62 @@ impl<'a> Compiler<'a> {
                 self.emit(Asm::GetGlobal { slot }, span)?;
             }
 
+            // `Box(Int).decode` as a value, a method of a type held as a
+            // value (`let t = Box(Int); t.decode`): the function that calls
+            // it, `{ v -> Box(Int).decode(v) }`, named as the method.
+            ExprKind::FieldAccess(of, method, _)
+                if written_type_of(of).is_some()
+                    && matches!(
+                        expr.sel,
+                        Some(
+                            crate::ast::Selection::Dynamic { .. }
+                                | crate::ast::Selection::Impl { .. }
+                                | crate::ast::Selection::Native { .. }
+                        )
+                    ) =>
+            {
+                let arity = match &expr.ty {
+                    Some(Type::Fun(params, _)) => params.len(),
+                    _ => return Err(checker_missed(span, "a method of no type")),
+                };
+                let names: Vec<Symbol> =
+                    (0..arity).map(|k| intern(&format!("__arg{k}__"))).collect();
+                let ident = |name: Symbol| Expr::new(ExprKind::Ident(name), span);
+                let call = Expr::new(
+                    ExprKind::Call(
+                        Box::new(expr.clone()),
+                        names.iter().map(|n| ident(*n)).collect(),
+                    ),
+                    span,
+                );
+                let lambda = Expr::new(
+                    ExprKind::Lambda {
+                        params: names
+                            .iter()
+                            .map(|n| crate::ast::Param {
+                                kind: crate::ast::ParamKind::Data,
+                                pattern: crate::ast::Pattern::new(
+                                    crate::ast::PatternKind::Ident(*n),
+                                    span,
+                                ),
+                                ty: None,
+                            })
+                            .collect(),
+                        body: Box::new(call),
+                    },
+                    span,
+                );
+                let shown = written_type_of(of).map_or_else(String::new, shown);
+                let around = (self.contexts.last_mut()).map(|context| {
+                    std::mem::replace(&mut context.closures, format!("{shown}.{method}"))
+                });
+                let compiled = self.compile_expr(&lambda);
+                if let (Some(context), Some(around)) = (self.contexts.last_mut(), around) {
+                    context.closures = around;
+                }
+                compiled?;
+            }
+
             // `m.f`, `m.limit`, `list.map` used as a value.
             ExprKind::FieldAccess(..) if let Some(def) = self.value_def(expr.res) => {
                 self.emit_global_value(def, span)?;
@@ -2435,8 +2491,17 @@ impl<'a> Compiler<'a> {
                 self.emit_call(args.len(), tail, span)
             }
             // The method is found where the code runs, by the type the
-            // descriptor carries.
+            // descriptor carries; so is the impl's method, or the VM's own,
+            // on a type with arguments held as a value (`Box(Int).decode(v)`
+            // with `trait json.Decode for Box(Int)`): the descriptor is that
+            // type in full.
             Some(Selection::Dynamic { tr, .. }) => {
+                self.compile_operands(with_receiver)?;
+                self.emit_call_method(method, args.len() + 1, tr, 0, tail, span)
+            }
+            Some(Selection::Impl { tr, .. } | Selection::Native { tr })
+                if written_type_of(receiver).is_some() =>
+            {
                 self.compile_operands(with_receiver)?;
                 self.emit_call_method(method, args.len() + 1, tr, 0, tail, span)
             }

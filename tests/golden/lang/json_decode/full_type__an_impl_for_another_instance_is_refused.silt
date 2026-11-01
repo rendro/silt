@@ -1,0 +1,22 @@
+-- cmd: check
+-- exit: 1
+-- With an impl written only for `Box(Int)`, `decode` of `Box(String)`
+-- is refused where it is written: called, through a `let` of the type,
+-- and as a value.
+import json
+
+type Box(a) {
+  v: a,
+}
+
+trait json.Decode for Box(Int) {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) { Ok(Box { v: 99 }) }
+}
+
+fn main() {
+  println(Box(String).decode(json.Null))
+  let t = Box(String)
+  println(t.decode(json.Null))
+  let f = Box(String).decode
+  println(f(json.Null))
+}

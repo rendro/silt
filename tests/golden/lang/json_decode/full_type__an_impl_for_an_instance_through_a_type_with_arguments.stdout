@@ -1,0 +1,5 @@
+Box {v: 7}
+Ok(Cell {c: 99})
+Ok(Box {v: w})
+Ok(Box {v: w})
+Ok(Box {v: w})
