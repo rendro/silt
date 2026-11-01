@@ -1,0 +1,25 @@
+-- A method of a trait of type constructors called on the constructor
+-- alone: the constructor's name, a `let` of it, a generic alias without
+-- its arguments.
+trait Pointed {
+  fn point(x: a) -> Self(a)
+}
+
+type Pair(a, e) {
+  a: a,
+  e: e,
+}
+
+trait Pointed for Pair(_, Int) {
+  fn point(x: a) -> Self(a) { Pair { a: x, e: 0 } }
+}
+
+type Opt(a) = Option(a)
+
+fn main() {
+  println(Option.pure(1))
+  let t = Option
+  println(t.pure(2))
+  println(Opt.pure(3))
+  println(Pair.point(4))
+}

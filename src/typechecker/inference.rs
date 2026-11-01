@@ -616,10 +616,40 @@ impl TypeChecker {
 
     /// Make `Self` of `ty`, the type of a use at `span` of the method
     /// `method` of `tr`, the type the receiver names (`Box(Int)` of
-    /// `Box(Int).mk(s)`, the type an alias stands for). (A trait of type
-    /// constructors is called on the constructor alone.)
-    fn self_is(&mut self, tr: TraitKey, method: Symbol, ty: &Type, named: &Type, span: Span) {
+    /// `Box(Int).mk(s)`, the type an alias stands for). A trait of type
+    /// constructors is called on the constructor alone: a type with
+    /// arguments the receiver writes (`Option(String)`, an alias of one:
+    /// `written`) is refused there.
+    fn self_is(
+        &mut self,
+        tr: TraitKey,
+        method: Symbol,
+        (ty, named, written): (&Type, &Type, bool),
+        span: Span,
+    ) {
         if self.is_constructor_trait(tr) {
+            if written
+                && !self.type_args_of(named).is_empty()
+                && let Some(head) = self.type_name_for_impl(named)
+            {
+                let args = self.method_call_args.clone().unwrap_or_else(|| "..".to_string());
+                self.error_help(
+                    Code::TypeMismatch,
+                    (
+                        format!(
+                            "'{}' is a type, but `{method}` is a method of trait '{}' of type \
+                             constructors",
+                            self.show_type(named),
+                            self.show_trait(tr)
+                        ),
+                        Some(format!(
+                            "call it on the type constructor: `{}.{method}({args})`",
+                            self.spell_type(head)
+                        )),
+                    ),
+                    span,
+                );
+            }
             return;
         }
         if let Some(self_ty) = self.self_of(tr, method, ty) {
@@ -995,7 +1025,10 @@ impl TypeChecker {
                 self.instance_header = self.entry_impl(name, &entry, field);
                 let instantiated = self.instantiate_method(&scheme, field, span);
                 if let Some(tr) = self.method_trait {
-                    self.self_is(tr, field, &instantiated, &inner, span);
+                    // (A generic type's name alone, `Option`, holds open
+                    // arguments.)
+                    let written = !self.holds_open_vars(&inner);
+                    self.self_is(tr, field, (&instantiated, &inner, written), span);
                 }
                 self.type_method_site(name, &entry, field, Some(inner.clone()), span);
                 Some(self.apply(&instantiated))
@@ -1660,12 +1693,20 @@ impl TypeChecker {
                         // argument where it is used.)
                         true => {
                             let a = if param == "a" { "b" } else { "a" };
-                            format!(
-                                "say which: give '{function}' a type parameter with its bound, and \
-                                 write it with its type argument, as in `fn wrap(x: {a}, type \
-                                 {param}) -> {param}({a}) where {param}: {}`",
+                            let example = format!(
+                                "`fn wrap(x: {a}, type {param}) -> {param}({a}) where {param}: {}`",
                                 self.show_trait(bound)
-                            )
+                            );
+                            match declared {
+                                true => format!(
+                                    "say which: give '{function}' a type parameter with its \
+                                     bound, and write it with its type argument, as in {example}"
+                                ),
+                                false => format!(
+                                    "a closure cannot take a type parameter: declare a named \
+                                     function with one and its bound, as in {example}"
+                                ),
+                            }
                         }
                         false => format!(
                             "say which: give '{function}' a type parameter with its bound, \
@@ -1815,8 +1856,11 @@ impl TypeChecker {
             // `Box(a)` where they are not known.)
             let on = match ty {
                 Type::Rigid(r) => r.name.to_string(),
+                // (A type held as a value among them is that type: the
+                // variant `Cell(Int)` of `type Cell(a) { Cell(a), .. }`
+                // is a `Cell(type Int)`, called on as `Cell(Int)`.)
                 _ if !self.type_args_of(ty).is_empty() && free_vars_in(ty).is_empty() => {
-                    self.show_type(ty)
+                    self.show_type(&without_held(ty))
                 }
                 _ => match self.type_name_for_impl(ty) {
                     Some(t) => {
@@ -2784,7 +2828,15 @@ impl TypeChecker {
             self.callee_position = true;
             self.trait_receiver = Some((recv_ty, receiver.span));
         }
+        // (The arguments as written, for a help that writes the call.)
+        self.method_call_args = matches!(callee.kind, ExprKind::FieldAccess(..)).then(|| {
+            (args.iter())
+                .map(|arg| super::names::shown_arg(arg))
+                .collect::<Vec<_>>()
+                .join(", ")
+        });
         let callee_ty = self.infer_expr(callee, env);
+        self.method_call_args = None;
         self.trait_receiver = None;
         self.callee_position = false;
         self.named_use = None;
@@ -3688,7 +3740,11 @@ impl TypeChecker {
                         self.instance_header = self.entry_impl(key.0, &entry, field);
                         let ty = self.instantiate_method(&scheme, field, span);
                         if let (Some(tr), Some(named)) = (self.method_trait, &instance) {
-                            self.self_is(tr, field, &ty, named, span);
+                            // (An alias of a type with its arguments.)
+                            let written = (self.res_def(obj.res))
+                                .is_some_and(|def| def.kind == crate::defs::DefKind::TypeAlias)
+                                && free_vars_in(named).is_empty();
+                            self.self_is(tr, field, (&ty, named, written), span);
                         }
                         let full = self.full_self(key.0, &entry, field, &ty);
                         self.type_method_site(key.0, &entry, field, full, span);
@@ -5651,6 +5707,18 @@ fn rigid_vars(ty: &Type) -> Vec<RigidId> {
     let mut out = Vec::new();
     walk(ty, &mut out);
     out
+}
+
+/// `ty` with each type held as a value in its arguments (`type Int`)
+/// the type it holds (`Int`).
+fn without_held(ty: &Type) -> Type {
+    match ty {
+        Type::Generic(name, args) if name.is_builtin(crate::defs::TYPE_OF) => {
+            args.first().map_or_else(|| ty.clone(), without_held)
+        }
+        Type::Generic(name, args) => Type::Generic(*name, args.iter().map(without_held).collect()),
+        _ => ty.clone(),
+    }
 }
 
 /// For each parameter `names` names, whether `body` reads a field of it

@@ -1,0 +1,36 @@
+-- cmd: check
+-- exit: 1
+-- A method of a trait of type constructors is called on the constructor
+-- alone (`Option.pure(1)`). A type with its arguments before the dot is
+-- refused, written or through an alias or a `let` of it, as it is where
+-- a type constructor is given to a `type m` parameter; the help writes
+-- the call on the constructor. A program's own trait the same.
+trait Pointed {
+  fn point(x: a) -> Self(a)
+}
+
+type Pair(a, e) {
+  a: a,
+  e: e,
+}
+
+trait Pointed for Pair(_, Int) {
+  fn point(x: a) -> Self(a) { Pair { a: x, e: 0 } }
+}
+
+type IntOpt = Option(Int)
+
+type Opt(a) = Option(a)
+
+type PS = Pair(Bool, String)
+
+fn main() {
+  println(Option(String).pure(1))
+  let z: Option(String) = IntOpt.pure("s")
+  println(z)
+  println(Opt(Int).pure(2))
+  let t = Option(Int)
+  println(t.pure(3))
+  println(Pair(Bool, String).point(1))
+  println(PS.point(1))
+}

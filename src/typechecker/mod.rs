@@ -349,6 +349,9 @@ pub struct TypeChecker {
     /// checked, by the span of their names, with their types: those that
     /// hold a type are the program's `held_types`.
     pub(super) held_params: Vec<(Span, Type)>,
+    /// The arguments of the call whose callee, a method after a dot, is
+    /// checked, as written (`1` of `Option(String).pure(1)`).
+    pub(super) method_call_args: Option<String>,
     /// Spans of `?` uses in the current fn/lambda body. When the
     /// body/return-type unify fails on a Result/Option return that `?`
     /// itself demanded, the diagnostic points back at the `?` site instead
@@ -735,6 +738,7 @@ impl TypeChecker {
             readings: HashMap::new(),
             closure_readings: Vec::new(),
             held_params: Vec::new(),
+            method_call_args: None,
             type_holders: HashMap::new(),
             current_qmark_spans: Vec::new(),
             qmark_decided: HashMap::new(),
