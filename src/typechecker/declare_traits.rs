@@ -135,6 +135,17 @@ impl TypeChecker {
             .map(|(v, t, args)| format!("{}: {}", name_of(*v), self.show_bound(*t, args)))
             .collect();
         let bounds = bounds.join(", ");
+        // (An impl for every tuple names no part, and no bound can
+        // help: the supertrait holds for a tuple by its parts.)
+        if !named && key.1.is_builtin("Tuple") {
+            let message = format!(
+                "trait '{tr_shown}' cannot be implemented for every tuple: its supertrait \
+                 '{sup_shown}' holds for a tuple only when it holds for the tuple's parts, and \
+                 an impl for every tuple has no bounds on its parts"
+            );
+            self.error(Code::MissingTraitImpl, message, span);
+            return true;
+        }
         let help = match named {
             true => format!("add `where {bounds}` to the impl"),
             false => format!("write the impl for `{shown_ty}`, with `where {bounds}`"),
