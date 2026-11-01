@@ -1,0 +1,22 @@
+-- cmd: check
+-- exit: 1
+-- A range pattern whose start is greater than its end matches no value
+-- and is refused, Int and Float alike; equal ends are one value (owner Q4).
+fn f(n: Int, x: Float) -> Int {
+  let a = match n {
+    5..1 -> 1
+    -1..-5 -> 2
+    3..3 -> 3
+    _ -> 0
+  }
+  let b = match x {
+    1.5..-0.5 -> 1
+    0.0..0.0 -> 2
+    _ -> 0
+  }
+  a + b
+}
+
+fn main() {
+  println(f(1, 1.0))
+}
