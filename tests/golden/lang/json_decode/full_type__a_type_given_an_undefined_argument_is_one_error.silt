@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- stderr-not-contains: not callable
+-- A type applied to an argument that is reported already (`List(t)`, `t`
+-- undefined) is that one error, not a second one that the type is not
+-- callable.
+fn main() {
+  let lt = List(t)
+  println(lt)
+}

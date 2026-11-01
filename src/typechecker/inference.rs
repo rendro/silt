@@ -2999,6 +2999,14 @@ impl TypeChecker {
                         Type::Error
                     }
                     (Type::Never, _) => Type::Never,
+                    // A type given an argument already reported (`List(t)`,
+                    // `t` undefined) was meant as a type of types.
+                    (Type::Generic(name, _), _)
+                        if name.is_builtin(crate::defs::TYPE_OF)
+                            && (arg_types.iter()).any(|ty| self.apply(ty) == Type::Error) =>
+                    {
+                        Type::Error
+                    }
                     (_, CallForm::Call) => {
                         let mut d = Diagnostic::error(
                             Code::TypeMismatch,
@@ -3604,6 +3612,16 @@ impl TypeChecker {
                                 span,
                             ),
                         }
+                        return Type::Error;
+                    }
+                    // (A field of a type not known yet, which has none:
+                    // named by the parameter that holds it, or as written.)
+                    if let (false, Type::Var(v)) = (called, &inner) {
+                        let name = (self.type_holder(*v))
+                            .or_else(|| written_receiver(obj).map(|shown| intern(&shown)))
+                            .unwrap_or_else(|| intern("_"));
+                        let held = Type::Rigid(RigidId { var: *v, name });
+                        self.no_field(&held, field, Some(obj), &[], span);
                         return Type::Error;
                     }
                     let resolved = self.resolve_type_descriptor_method(&gargs[0], field, span);
