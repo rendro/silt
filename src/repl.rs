@@ -392,12 +392,22 @@ pub struct NotAnExpression;
 /// variable joined by `+` as the reference pages write them (`where a:
 /// Equal + Display`). A type constructor variable is `m`, `n`, ...
 /// (`Fn(m(Int)) -> m(Int) where m: Functor`). A variable the scheme does
-/// not quantify is `_`, as in a diagnostic.
-pub fn written_scheme(scheme: &Scheme) -> String {
+/// not quantify is `_`, as in a diagnostic. A type or trait is written
+/// as `named` says, given its definition and name (`<repl:1>.T` for one
+/// a later entry declared again), else by its name.
+pub fn written_scheme(
+    scheme: &Scheme,
+    named: impl Fn(crate::defs::DefId, intern::Symbol) -> Option<String>,
+) -> String {
     let letters: HashMap<TyVar, Type> = (scheme.letters().into_iter())
         .map(|(var, name)| (var, Type::Rigid(RigidId { var, name })))
         .collect();
-    let mut text = substitute_vars(&scheme.ty, &letters).to_string();
+    let show = |ty: &Type| -> String {
+        Type::show_all(&[ty], |r, _| named(r.id.0, r.name))
+            .pop()
+            .unwrap_or_default()
+    };
+    let mut text = show(&substitute_vars(&scheme.ty, &letters));
     // Each lettered variable's bounds, in the order of the letters.
     let mut bounds: Vec<(String, Vec<String>)> = Vec::new();
     for pred in &scheme.preds {
@@ -411,10 +421,10 @@ pub fn written_scheme(scheme: &Scheme) -> String {
         if !matches!(subject, Type::Rigid(_)) {
             continue;
         }
-        let mut bound = tr.to_string();
+        let mut bound = named(tr.id.0, tr.name).unwrap_or_else(|| tr.to_string());
         if !args.is_empty() {
             let args: Vec<String> = (args.iter())
-                .map(|arg| substitute_vars(arg, &letters).to_string())
+                .map(|arg| show(&substitute_vars(arg, &letters)))
                 .collect();
             bound.push_str(&format!("({})", args.join(", ")));
         }
@@ -652,7 +662,9 @@ impl Repl {
             .ok_or(NotAnExpression)?;
         Ok(Typed {
             diagnostics: self.not_shown_yet(&diagnostics),
-            ty: Some(written_scheme(&scheme)),
+            ty: Some(written_scheme(&scheme, |def, name| {
+                self.session.shadowed_cell_name(file, def, name)
+            })),
         })
     }
 

@@ -1,0 +1,5 @@
+-- cmd: repl
+-- stdin: type T { a: Int }\nfn mk() -> T { T { a: 1 } }\n:type mk\ntype T { b: String }\nfn take(t: T) -> String { t.b }\n:type mk\n:type take\n:type { t: T -> [(t, mk())] }\ntrait Sh { fn sh(self) -> String }\nfn gen(x: a) -> String where a: Sh { Sh.sh(x) }\n:type gen\ntrait Sh { fn sh(self) -> Int }\n:type gen\nfn gen2(x: a) -> Int where a: Sh { Sh.sh(x) }\n:type gen2\n:quit\n
+-- `:type` writes a type or a trait of an earlier entry that a later
+-- entry declared again with its entry, `<repl:1>.T`, as the errors do;
+-- the one the entry names by its name keeps its bare name.
