@@ -632,7 +632,10 @@ impl TypeChecker {
                 && !self.type_args_of(named).is_empty()
                 && let Some(head) = self.type_name_for_impl(named)
             {
-                let args = self.method_call_args.clone().unwrap_or_else(|| "..".to_string());
+                let args = self
+                    .method_call_args
+                    .clone()
+                    .unwrap_or_else(|| "..".to_string());
                 self.error_help(
                     Code::TypeMismatch,
                     (
@@ -1588,13 +1591,15 @@ impl TypeChecker {
         // parameter's type the parameter `i` has: `apply(g, rec)`.)
         let of_named = |this: &Self| {
             let asked = this.apply(param_ty);
-            named_args.iter().find_map(|(named, ty)| match this.apply(ty) {
-                Type::Fun(takes, _) => (takes.iter().enumerate())
-                    .filter(|(_, take)| this.apply(take) == asked)
-                    .find_map(|(j, _)| reading_of(this, named, j))
-                    .filter(|(.., reading, _)| matches!(reading, Reading::Type { .. })),
-                _ => None,
-            })
+            named_args
+                .iter()
+                .find_map(|(named, ty)| match this.apply(ty) {
+                    Type::Fun(takes, _) => (takes.iter().enumerate())
+                        .filter(|(_, take)| this.apply(take) == asked)
+                        .find_map(|(j, _)| reading_of(this, named, j))
+                        .filter(|(.., reading, _)| matches!(reading, Reading::Type { .. })),
+                    _ => None,
+                })
         };
         let mut anonymous = false;
         let found = match reading_of(self, callee, i) {
@@ -1611,12 +1616,14 @@ impl TypeChecker {
                         })?;
                         Some((found, self.apply(&asked[j])))
                     }),
-                _ => of_named(self).map(|found| (found, self.apply(arg_ty))).or_else(|| {
-                    of_closure(self).map(|found| {
-                        anonymous = true;
-                        (found, self.apply(arg_ty))
-                    })
-                }),
+                _ => of_named(self)
+                    .map(|found| (found, self.apply(arg_ty)))
+                    .or_else(|| {
+                        of_closure(self).map(|found| {
+                            anonymous = true;
+                            (found, self.apply(arg_ty))
+                        })
+                    }),
             },
         };
         let Some(((function, declared, param, reading, site), given)) = found else {
@@ -1800,7 +1807,11 @@ impl TypeChecker {
         };
         let param = param.map_or_else(|| receiver.clone(), |p| p.to_string());
         let shown = self.show_type(given);
-        let args = if self.method_arity(tr, method) > 0 { ".." } else { "" };
+        let args = if self.method_arity(tr, method) > 0 {
+            ".."
+        } else {
+            ""
+        };
         let place = site.map_or_else(|| "it".to_string(), |site| format!("'{site}'"));
         let message = format!(
             "'{function}' takes a type as `{param}`, not a value of type `{shown}`: \
@@ -2262,8 +2273,8 @@ impl TypeChecker {
             if unheld.is_empty() {
                 continue;
             }
-            let Some(key) = (self.type_name_for_impl(&recv))
-                .and_then(|head| self.tables.one_impl(tr, head))
+            let Some(key) =
+                (self.type_name_for_impl(&recv)).and_then(|head| self.tables.one_impl(tr, head))
             else {
                 continue;
             };

@@ -3555,7 +3555,8 @@ impl<'a> Compiler<'a> {
             if param.kind == crate::ast::ParamKind::Type {
                 let name = type_var_name(name);
                 ctx.locals.push(Local { name, depth, slot });
-            } else if let Some(name) = (self.held_types.get(&param.pattern.span)).and_then(held_name)
+            } else if let Some(name) =
+                (self.held_types.get(&param.pattern.span)).and_then(held_name)
             {
                 let ctx = self.ctx_mut();
                 ctx.locals.push(Local { name, depth, slot });
