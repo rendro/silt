@@ -28,6 +28,7 @@
 //! waiting, around a function (`Logic`) that says what comes next.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use parking_lot::Mutex;
 
@@ -182,6 +183,37 @@ struct Pipe {
     /// called when the pipe is stopped before its end, whether an
     /// operation is in flight then or not.
     stop: Option<Stop>,
+    /// For a source on a connection: the shut-down that its output's
+    /// reader runs when it stops reading, also before the source has
+    /// run. It is disarmed when the source ends by itself.
+    armed: Option<Arc<Armed>>,
+}
+
+/// The shut-down of a connection that a stage is stopped with: run
+/// once, by whoever stops the stage first, and not after the stage
+/// ended by itself.
+struct Armed {
+    stop: Stop,
+    armed: AtomicBool,
+}
+
+impl Armed {
+    fn new(stop: Stop) -> Armed {
+        Armed {
+            stop,
+            armed: AtomicBool::new(true),
+        }
+    }
+
+    fn fire(&self) {
+        if self.armed.swap(false, Ordering::SeqCst) {
+            (self.stop)();
+        }
+    }
+
+    fn disarm(&self) {
+        self.armed.store(false, Ordering::SeqCst);
+    }
 }
 
 /// How many steps a pipe takes without waiting before it gives way to
@@ -215,6 +247,7 @@ impl Pipe {
             drains: false,
             finished: false,
             stop: None,
+            armed: None,
         }
     }
 
@@ -232,6 +265,9 @@ impl Pipe {
     fn finish(&mut self, vm: &Vm, failure: Option<Arc<VmError>>) {
         if std::mem::replace(&mut self.finished, true) {
             return;
+        }
+        if let Some(armed) = &self.armed {
+            armed.disarm();
         }
         let wake = vm.scheduler().wake();
         if let Some(out) = &self.out {
@@ -454,6 +490,20 @@ fn stage(
     output: Output,
     logic: impl FnMut(Got) -> Result<Next, VmError> + Send + 'static,
 ) -> Result<Step, VmError> {
+    stage_on(vm, name, inputs, output, None, logic)
+}
+
+/// Start a stage, as [`stage`] does, that works on a connection: `stop`
+/// shuts the connection down when the stage is stopped, whenever that
+/// is: in a read, between two, or before the stage has run at all.
+fn stage_on(
+    vm: &mut Vm,
+    name: &'static str,
+    inputs: Vec<Arc<Channel>>,
+    output: Output,
+    stop: Option<Stop>,
+    logic: impl FnMut(Got) -> Result<Next, VmError> + Send + 'static,
+) -> Result<Step, VmError> {
     if vm.takes_nothing_new() {
         return Ok(vm.end_here(name));
     }
@@ -469,12 +519,18 @@ fn stage(
     // Whoever reads the output and stops reading stops the stage.
     let scheduler = Arc::downgrade(vm.scheduler());
     let stopped = handle.clone();
+    let armed = stop.map(|stop| Arc::new(Armed::new(stop)));
+    let shut = armed.clone();
     out.stop_feeder_with(move || {
         if let Some(scheduler) = scheduler.upgrade() {
             scheduler.cancel(&stopped);
         }
+        if let Some(shut) = &shut {
+            shut.fire();
+        }
     });
     let mut pipe = Pipe::new(name, inputs, logic);
+    pipe.armed = armed;
     pipe.out = Some(out.clone());
     pipe.handle = Some(handle.clone());
     if drains {
@@ -585,7 +641,8 @@ fn reading(
     let read = Arc::new(Mutex::new(read));
     let mut failed = false;
     let mut items = std::collections::VecDeque::new();
-    stage(vm, name, vec![], SOURCE, move |got| {
+    let stop = on.stop.clone();
+    stage_on(vm, name, vec![], SOURCE, stop, move |got| {
         // The next item read, which ends the source if it is an error.
         fn emit(item: Value, failed: &mut bool) -> Next {
             *failed = matches!(&item, Value::Variant(item) if item.is(bv::ERR));

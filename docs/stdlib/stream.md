@@ -184,10 +184,9 @@ fn main() {
   `stream.write_to_tcp` is cancelled, the connection is shut down, as by
   `tcp.close`: a read that may be in flight has to end, and what the
   source had read ahead is gone anyway. That holds at whatever moment
-  the source is stopped once it has begun to read: in a read, or with
-  an item that nobody takes any more. (A source that is stopped before
-  it has read anything leaves the connection as it is.) Read with
-  `tcp.read` if the connection is to be used afterwards.
+  the source is stopped: in a read, with an item that nobody takes any
+  more, or before it has read anything. Read with `tcp.read` if the
+  connection is to be used afterwards.
 - **A read or a write of a source or a sink waits for I/O**, and
   `SILT_IO_TIMEOUT` ends it as it ends any wait for I/O (see
   [I/O timeouts](../concurrency.md#io-timeouts-silt_io_timeout)): a

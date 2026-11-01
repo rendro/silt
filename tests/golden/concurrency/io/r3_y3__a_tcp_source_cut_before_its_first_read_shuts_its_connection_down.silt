@@ -1,0 +1,52 @@
+-- timeout: 10
+-- repeat: 5
+-- requires-feature: tcp
+-- A take of nothing cuts the source on the connection before it has
+-- read anything: the source shuts its connection down all the same, as
+-- a source does whenever it is stopped. The peer sends its lines, waits
+-- for more, and sees the connection end; a write on the connection then
+-- says closed.
+import bytes
+import channel
+import stream
+import task
+import tcp
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
+  let gone = channel.new(0)
+  let seen = channel.new(1)
+  let _peer = task.spawn { ->
+    when let Ok(conn) = tcp.accept(listener) else {
+      panic("cannot accept")
+    }
+    let _ = channel.receive(gone)
+    let _ = tcp.write(conn, bytes.from_string("one\ntwo\n"))
+    -- The end of the connection is a read of no bytes, or an error
+    -- where the system resets a connection that is shut down with
+    -- bytes of the peer unread (Windows).
+    match tcp.read(conn, 16) {
+      Ok(read) -> match bytes.length(read) {
+        0 -> channel.send(seen, "the peer saw the connection end")
+        n -> channel.send(seen, "the peer read {n} bytes")
+      }
+      Err(_) -> channel.send(seen, "the peer saw the connection end")
+    }
+  }
+  when let Ok(conn) = tcp.connect("127.0.0.1:{tcp.local_port(listener)}") else {
+    panic("cannot connect")
+  }
+  let none = stream.tcp_lines(conn) |> stream.take(0) |> stream.collect
+  println("took {none}")
+  channel.send(gone, ())
+  when let Some(said) = channel.receive(seen) else {
+    panic("the peer said nothing")
+  }
+  println(said)
+  match tcp.write(conn, bytes.from_string("x")) {
+    Err(tcp.Closed) -> println("closed")
+    _ -> println("something else")
+  }
+}
