@@ -301,6 +301,9 @@ for a builtin type is an error, a builtin type keeps its own form). An
 impl for a generic type is allowed; it decodes a part of a type argument
 `a` with `a.decode(v)`, which its `where` clause allows:
 `trait json.Decode for Box(a) where a: json.Decode`.
+An impl may be for an instantiation, `trait json.Decode for Box(Int)`,
+beside impls for others; a type with no impl among them (`Box(Bool)`) is
+refused, at the top or in a field.
 The same holds of an impl of a program's trait for a generic type whose
 `where` clause asks `json.Decode` of each type parameter: of
 `trait Dec: json.Decode`, `trait Dec for Box(a) where a: json.Decode`

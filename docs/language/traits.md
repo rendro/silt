@@ -375,11 +375,14 @@ Rules:
   specialization: no impl is chosen over another for being more
   specific.
 - **Binders must be distinct.** `trait X for Pair(a, a)` is a parse error.
-- **A value's type alone reaches `Display`, `json.Encode` and
-  `json.Decode`.** A value is shown, encoded or decoded at any depth by
-  the impl of its type, whatever its type arguments: of these traits a
-  type has one impl, for every instantiation: `trait Display for
-  Box(Int)` is an error, `trait Display for Box(a)` is the impl.
+- **A value's type alone reaches `Display` and `json.Encode`.** A value
+  is shown or encoded at any depth by the impl of its type, whatever its
+  type arguments: of these traits a type has one impl, for every
+  instantiation: `trait Display for Box(Int)` is an error, `trait
+  Display for Box(a)` is the impl. A decoder is given the type in full,
+  so `json.Decode` has impls as other traits do: `trait json.Decode for
+  Box(Int)` and `for Box(String)` are two, and each part of a document
+  is decoded by the impl of its whole type.
 - **`_` is for a trait of type constructors.** `trait Functor for
   Option(_)` writes `_` for the type argument the trait maps over; in an
   impl of a trait of types `_` is an error (see [Traits of Type
