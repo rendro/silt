@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- stderr-not-contains: type 'type
+-- stderr-not-contains: call it on the type
+-- `m.pure(1)` on an unannotated parameter is not read as a type's method
+-- (the trait is of type constructors), so `m` is a record with a field
+-- `pure`. A call that gives it a type constructor says so, and how to
+-- write the type parameter.
+fn go(m) {
+  m.pure(1)
+}
+
+fn main() {
+  println(go(Option))
+  println(go(List))
+}

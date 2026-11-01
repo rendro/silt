@@ -1412,6 +1412,26 @@ impl TypeChecker {
         (makers, taking)
     }
 
+    /// The traits of type constructors in sight with a method `field`
+    /// that makes a value (`Applicative`'s `pure`): `m.pure(x)` on an `m`
+    /// still unknown is not taken for one (`value_makers`).
+    fn constructor_makers(&self, field: Symbol) -> Vec<TraitKey> {
+        let mut traits: Vec<TraitKey> = (self.tables.traits.iter())
+            .filter(|(_, info)| info.constructor)
+            .filter(|(_, info)| info.methods.iter().any(|(n, _)| *n == field))
+            .map(|(t, _)| *t)
+            .filter(|t| self.sees_trait(*t) && self.private_owner(*t).is_none())
+            .filter(|t| self.self_param(*t, field).is_none())
+            .collect();
+        traits.sort_by_key(|t| self.show_trait(*t));
+        traits
+    }
+
+    /// Whether `tr` is a trait of type constructors.
+    fn of_constructors_trait(&self, tr: TraitKey) -> bool {
+        (self.tables.traits.get(&tr)).is_some_and(|info| info.constructor)
+    }
+
     /// Whether `ty` is the type of a parameter of an enclosing function
     /// or closure whose body reads a field of it (`FnFrame::read_fields`):
     /// a record, whose `t.zero()` calls its field.
@@ -1555,7 +1575,11 @@ impl TypeChecker {
                 Some(held),
             ) => {
                 let param = named(&receiver);
-                let shown = self.show_type(&held);
+                // (A generic type alone as the program writes it: `Option`.)
+                let shown = match self.names_generic_type(arg) {
+                    true => super::names::shown_arg(arg),
+                    false => self.show_type(&held),
+                };
                 let call = written_call(self, &receiver, traits[0], method);
                 let of: Vec<String> = (traits.iter())
                     .map(|t| format!("trait '{}'", self.show_trait(*t)))
@@ -1570,11 +1594,24 @@ impl TypeChecker {
                          field",
                         of.join(" or of ")
                     ),
-                    format!(
-                        "say which: give '{function}' a type parameter with its bound, \
-                         `fn {function}(type {param}) where {param}: {}`",
-                        self.show_trait(bound)
-                    ),
+                    match self.of_constructors_trait(bound) {
+                        // (A type constructor is written with its type
+                        // argument where it is used.)
+                        true => {
+                            let a = if param == "a" { "b" } else { "a" };
+                            format!(
+                                "say which: give '{function}' a type parameter with its bound, and \
+                                 write it with its type argument, as in `fn wrap(x: {a}, type \
+                                 {param}) -> {param}({a}) where {param}: {}`",
+                                self.show_trait(bound)
+                            )
+                        }
+                        false => format!(
+                            "say which: give '{function}' a type parameter with its bound, \
+                             `fn {function}(type {param}) where {param}: {}`",
+                            self.show_trait(bound)
+                        ),
+                    },
                 )
             }
             _ => return,
@@ -3749,8 +3786,16 @@ impl TypeChecker {
                             self.through_trait(tr, field, inner, None, span)
                         } else if called {
                             // (Of several traits' methods that make a value
-                            // the call does not say which: a field.)
-                            if makers.len() > 1 {
+                            // the call does not say which, and one of a trait
+                            // of type constructors is not taken for one: a
+                            // field.)
+                            let makers = match (makers.len(), taking.is_empty()) {
+                                (0, true) => self.constructor_makers(field),
+                                _ => makers,
+                            };
+                            if makers.len() > 1
+                                || (!makers.is_empty() && self.of_constructors_trait(makers[0]))
+                            {
                                 self.note_reading(obj, &obj_ty, |receiver| Reading::Field {
                                     receiver,
                                     traits: makers.clone(),
