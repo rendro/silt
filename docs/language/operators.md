@@ -44,6 +44,26 @@ Higher precedence wins. Given `a + b * c`, `*` (80) binds tighter than `+` (70),
 
 Unary `-` and `!` have precedence 90 — tighter than `*`, looser than `as`. So `-x * y` is `(-x) * y`, and `-x as Float` parses as `-(x as Float)`.
 
+## Division and Modulo (`/`, `%`)
+
+On Ints, `/` rounds down, toward negative infinity, and `%` is the
+modulo that goes with it: its result has the sign of the divisor, so
+`a == a / b * b + a % b` always holds.
+
+```silt
+println(-7 / 2) -- -4
+println(-7 % 2) -- 1
+println(7 / -2) -- -4
+println(7 % -2) -- -1
+println(-6 % 3) -- 0
+```
+
+Dividing by zero is a runtime error (`division by zero`, `modulo by
+zero`), and so is the one quotient that is no Int,
+`-9223372036854775808 / -1` (`integer overflow`);
+`-9223372036854775808 % -1` is `0`. On Floats, `/` is exact division
+and `%` takes the sign of the divisor too: `-7.5 % 2.0` is `0.5`.
+
 ## Error Propagation (`?`)
 
 `?` is a postfix operator: `expr?`. It unwraps `Result` or `Option`, propagating `Err` / `None` out of the surrounding function.
