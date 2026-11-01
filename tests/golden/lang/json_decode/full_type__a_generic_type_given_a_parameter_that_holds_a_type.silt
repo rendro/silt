@@ -1,0 +1,20 @@
+-- `json.parse(s, Box(t))`, where `t` is a parameter with no annotation
+-- that holds a type, decodes at the type the call gives `t`, as
+-- `json.parse(s, List(t))` does and as a `type t` parameter does: in a
+-- function and in a closure.
+import json
+
+type Box(a) {
+  v: a,
+}
+
+fn boxed(t) {
+  json.parse("\{\"v\": 1}", Box(t))
+}
+
+fn main() {
+  println(boxed(Int))
+  println(boxed(String))
+  let k = { t -> json.parse("\{\"v\": \"k\"}", Box(t)) }
+  println(k(String))
+}

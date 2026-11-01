@@ -1,0 +1,22 @@
+-- cmd: check
+-- exit: 1
+-- `json.parse(s, Box(t))` with a parameter `t` that holds a type: the
+-- type a call gives `t` is checked where it is given, as for a `type t`
+-- parameter with the bound.
+import json
+
+type Box(a) {
+  v: a,
+}
+
+type NoDec {
+  g: Fn(Int) -> Int,
+}
+
+fn boxed(t) {
+  json.parse("\{\"v\": 1}", Box(t))
+}
+
+fn main() {
+  println(boxed(NoDec))
+}
