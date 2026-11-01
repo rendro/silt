@@ -1169,9 +1169,7 @@ impl Compiler<'_> {
         // The names of the arm, in one slot each. (A pin means a name
         // from before them.)
         let floor = self.ctx().locals.len();
-        let names: Vec<Symbol> = Self::pattern_binding_names(&arm.pattern)
-            .into_iter()
-            .collect();
+        let names = Self::binding_names_in_order(&arm.pattern);
         let mut slots = Vec::with_capacity(names.len());
         for name in &names {
             self.emit(Asm::Unit, span)?;
@@ -1278,17 +1276,32 @@ impl Compiler<'_> {
         }
     }
 
-    /// Collect the set of variable names bound by a pattern.
-    pub(super) fn pattern_binding_names(pattern: &Pattern) -> std::collections::BTreeSet<Symbol> {
-        let mut names = std::collections::BTreeSet::new();
-        Self::collect_binding_names(pattern, &mut names);
+    /// The names `pattern` binds, in the order they are written (an
+    /// or-pattern's as its first alternative has them): an order a
+    /// renaming keeps.
+    fn binding_names_in_order(pattern: &Pattern) -> Vec<Symbol> {
+        let mut names = Vec::new();
+        Self::collect_binding_names(pattern, &mut |name| {
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        });
         names
     }
 
-    fn collect_binding_names(pattern: &Pattern, names: &mut std::collections::BTreeSet<Symbol>) {
+    /// Collect the set of variable names bound by a pattern.
+    pub(super) fn pattern_binding_names(pattern: &Pattern) -> std::collections::BTreeSet<Symbol> {
+        let mut names = std::collections::BTreeSet::new();
+        Self::collect_binding_names(pattern, &mut |name| {
+            names.insert(name);
+        });
+        names
+    }
+
+    fn collect_binding_names(pattern: &Pattern, names: &mut impl FnMut(Symbol)) {
         match &pattern.kind {
             PatternKind::Ident(name) => {
-                names.insert(*name);
+                names(*name);
             }
             PatternKind::Constructor { args: fields, .. } => {
                 for p in fields {
@@ -1313,7 +1326,7 @@ impl Compiler<'_> {
                     match sub_pat {
                         Some(pat) => Self::collect_binding_names(pat, names),
                         None => {
-                            names.insert(*field_name);
+                            names(*field_name);
                         }
                     }
                 }
@@ -1323,12 +1336,12 @@ impl Compiler<'_> {
                     match sub_pat {
                         Some(pat) => Self::collect_binding_names(pat, names),
                         None => {
-                            names.insert(*field_name);
+                            names(*field_name);
                         }
                     }
                 }
                 if let Some((r, _)) = rest {
-                    names.insert(*r);
+                    names(*r);
                 }
             }
             PatternKind::Or(alts) => {
