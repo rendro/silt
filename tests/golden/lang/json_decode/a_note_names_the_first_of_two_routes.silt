@@ -1,0 +1,42 @@
+-- cmd: check
+-- exit: 1
+-- A function that hands its type to two functions that both decode it
+-- is refused with a note that names the first of them in its body,
+-- whichever order they are in.
+import json
+
+type Blob {
+  data: Set(Int),
+}
+
+type Src {
+  s: String,
+}
+
+trait Loader {
+  fn load(self, type a) -> Result(a, json.JsonError) where a: json.Decode
+}
+
+trait Loader for Src {
+  fn load(self, type a) -> Result(a, json.JsonError) {
+    json.parse(self.s, a)
+  }
+}
+
+fn jonly(s, t) {
+  json.parse(s, t)
+}
+
+fn mix3(l, s, t) {
+  (Loader.load(l, t), jonly(s, t))
+}
+
+fn mix4(l, s, t) {
+  (jonly(s, t), Loader.load(l, t))
+}
+
+fn main() {
+  let src = Src { s: "x" }
+  let _ = mix3(src, "x", Blob)
+  let _ = mix4(src, "x", Blob)
+}

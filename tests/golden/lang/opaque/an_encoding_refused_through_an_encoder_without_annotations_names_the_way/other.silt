@@ -1,0 +1,9 @@
+import json
+
+pub fn enc(x: a) -> String where a: json.Encode {
+  json.stringify([x])
+}
+
+pub fn dec(s: String, type a) -> Result(List(a), json.JsonError) where a: json.Decode {
+  json.parse(s, List(a))
+}
