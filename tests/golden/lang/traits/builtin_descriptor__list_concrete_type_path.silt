@@ -7,6 +7,6 @@ trait Empty for List(a) {
 }
 
 fn main() {
-    let xs: List(Int) = List.empty()
+    let xs: List(Int) = List(Int).empty()
     println(xs)
 }

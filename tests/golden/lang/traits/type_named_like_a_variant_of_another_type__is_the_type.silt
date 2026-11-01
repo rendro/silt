@@ -6,7 +6,7 @@ type Other { Box, Nah }
 trait Default for Box(a) { fn default() -> Self { Empty } }
 fn mk(type t) -> t where t: Default { t.default() }
 fn main() {
-  let b: Box(Int) = Box.default()
+  let b: Box(Int) = Box(Int).default()
   println(b)
   let c: Box(Int) = mk(Box)
   println(c)

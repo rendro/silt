@@ -42,6 +42,6 @@ fn main() {
   let h = { x, s -> Dec.again(x, s) }
   println(h(b, "1"))
   println(go(b, "1"))
-  let r: Result(Box(Set(Int)), json.JsonError) = Box.mk("1")
+  let r: Result(Box(Set(Int)), json.JsonError) = Box(Set(Int)).mk("1")
   println(r)
 }

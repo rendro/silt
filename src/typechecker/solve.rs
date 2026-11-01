@@ -1939,6 +1939,9 @@ impl TypeChecker {
         if encodes {
             let owners = self.owners_at(ev);
             (self.encoded_owner.entry(span)).or_insert(owners);
+            if let Some(asked) = self.encode_asked_of(ev) {
+                (self.encoded_asked.entry(span)).or_insert(asked);
+            }
         }
         // An annotation variable implements what its bounds say.
         if let Type::Rigid(r) = resolved {
@@ -1949,7 +1952,24 @@ impl TypeChecker {
                 }
                 let passing = (self.encode_passing)
                     .or_else(|| ev.and_then(|ev| self.encode_passed.get(&ev).copied()));
-                self.note_owner_route(r, true, (owner, passing), None);
+                // (What the route hands the type to, as the call writes
+                // it: a bound of the module, another module's definition,
+                // or the encoder.)
+                let asked = match passing {
+                    Some(var) => Some(Asked::Bound(var)),
+                    None => (self.encode_asked_of(ev))
+                        .or_else(|| self.encoded_asked.get(&span).copied())
+                        .or_else(|| {
+                            (owner.iter().all(|module| module.builtin_name().is_some()))
+                                .then_some(origin.callee.map(Asked::Builtin))
+                                .flatten()
+                        }),
+                };
+                let asker = asked.map(|by| Asker {
+                    by,
+                    passer: origin.callee,
+                });
+                self.note_owner_route(r, true, (owner, passing), asker);
             }
             if Self::is_decode(trait_name) {
                 // (A note names the function the body passes it to as the
@@ -2069,9 +2089,20 @@ impl TypeChecker {
                     .or_else(|| ev.and_then(|ev| self.encode_passed.get(&ev).copied()));
                 match passing {
                     Some(var) if owners.is_empty() => {
-                        (self.encode_deferred).push((resolved.clone(), origin.span, var));
+                        let at = (resolved.clone(), origin.span, var, origin.callee);
+                        self.encode_deferred.push(at);
                     }
-                    _ => self.refuse_opaque(origin.span, refusal),
+                    // (Through another module's definition: the way its
+                    // bound takes, in a note.)
+                    _ => {
+                        let note = (self.encode_asked_of(ev).zip(origin.callee))
+                            .and_then(|(asked, passer)| self.encode_note(passer, asked, &resolved));
+                        let refusal = match note {
+                            Some(note) => refusal.with_note(note),
+                            None => refusal,
+                        };
+                        self.refuse_opaque(origin.span, refusal);
+                    }
                 }
                 return;
             }

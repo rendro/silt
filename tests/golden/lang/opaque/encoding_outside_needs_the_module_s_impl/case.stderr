@@ -24,4 +24,5 @@ error[type]: type 'mail.User' cannot be encoded outside module 'mail': it is opa
     |
  19 |   println(util.show(mail.user("c")))
     |                     ^^^^^^^^^^^^^^ type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = note: `util.show` passes it to `json.stringify`
   = help: encode it inside module 'mail', or write `trait json.Encode for User` there

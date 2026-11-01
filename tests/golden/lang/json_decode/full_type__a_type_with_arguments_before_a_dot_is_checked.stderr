@@ -1,0 +1,30 @@
+error[type]: type mismatch: expected String, got Int
+ --> full_type__a_type_with_arguments_before_a_dot_is_checked.silt:38:24
+    |
+ 38 |   let a: Box(String) = Box(Int).zero()
+    |                        ^^^^^^^^^^^^^^^ type mismatch: expected String, got Int
+
+error[type]: type mismatch: expected String, got Int
+ --> full_type__a_type_with_arguments_before_a_dot_is_checked.silt:40:48
+    |
+ 40 |   let r: Result(Box(String), json.JsonError) = Box(Int).mk("\{\"v\": 5}")
+    |                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected String, got Int
+
+error[type]: type mismatch: expected String, got Int
+ --> full_type__a_type_with_arguments_before_a_dot_is_checked.silt:43:48
+    |
+ 43 |   let q: Result(Box(String), json.JsonError) = t.mk("\{\"v\": 5}")
+    |                                                ^^^^^^^^^^^^^^^^^^^ type mismatch: expected String, got Int
+
+error[type]: type mismatch: expected String, got Int
+ --> full_type__a_type_with_arguments_before_a_dot_is_checked.silt:45:48
+    |
+ 45 |   let i: Result(Box(String), json.JsonError) = IntBox.mk("\{\"v\": 5}")
+    |                                                ^^^^^^^^^^^^^^^^^^^^^^^^ type mismatch: expected String, got Int
+
+error[type]: `mk` cannot decode `Box(Set(Int))`: field `v` has type `Set(Int)`, which has no decoder
+ --> full_type__a_type_with_arguments_before_a_dot_is_checked.silt:47:11
+    |
+ 47 |   println(Box(Set(Int)).mk("\{\"v\": [1]}"))
+    |           ^^^^^^^^^^^^^^^^ `mk` cannot decode `Box(Set(Int))`: field `v` has type `Set(Int)`, which has no decoder
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these

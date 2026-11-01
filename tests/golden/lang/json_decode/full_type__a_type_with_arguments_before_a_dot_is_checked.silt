@@ -1,0 +1,48 @@
+-- cmd: check
+-- exit: 1
+-- The `Self` a type with arguments before a dot gives is checked as any
+-- type is: a use that wants another type is a mismatch (through a `let`
+-- of the type and an alias too), and a type the decoder refuses is
+-- refused where it is written.
+import json
+
+trait Zero {
+  fn zero() -> Self
+}
+
+trait Zero for Int {
+  fn zero() -> Self { 7 }
+}
+
+trait Zero for String {
+  fn zero() -> Self { "z" }
+}
+
+type Box(a) {
+  v: a,
+}
+
+trait Zero for Box(a) where a: Zero {
+  fn zero() -> Self { Box { v: a.zero() } }
+}
+
+trait Mk: json.Decode {
+  fn mk(s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+trait Mk for Box(a) where a: json.Decode {}
+
+type IntBox = Box(Int)
+
+fn main() {
+  let a: Box(String) = Box(Int).zero()
+  println(a)
+  let r: Result(Box(String), json.JsonError) = Box(Int).mk("\{\"v\": 5}")
+  println(r)
+  let t = Box(Int)
+  let q: Result(Box(String), json.JsonError) = t.mk("\{\"v\": 5}")
+  println(q)
+  let i: Result(Box(String), json.JsonError) = IntBox.mk("\{\"v\": 5}")
+  println(i)
+  println(Box(Set(Int)).mk("\{\"v\": [1]}"))
+}

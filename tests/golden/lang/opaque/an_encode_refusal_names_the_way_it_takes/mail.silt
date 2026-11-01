@@ -1,0 +1,7 @@
+pub opaque type Email {
+  addr: String,
+}
+
+pub fn mk(addr: String) -> Email {
+  Email { addr: addr }
+}

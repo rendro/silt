@@ -104,11 +104,6 @@ impl TypeChecker {
                 self.keep_monomorphic(&ty);
             }
         }
-        // (Nor in the type a dictionary made at a use carries in full,
-        // `let f = Box.mk`: each use of the `let` is a use of that one.)
-        for ty in self.type_method_selves.clone() {
-            self.keep_monomorphic(&ty);
-        }
         self.generalize_decided(ty)
     }
 
@@ -832,6 +827,12 @@ impl TypeChecker {
                     _ => None,
                 };
                 let passing_around = std::mem::replace(&mut self.encode_passing, passing);
+                let asked = match json_bound {
+                    Some((v, true)) => (self.def_encoders_now.as_ref())
+                        .and_then(|encoders| encoders.get(&v).copied()),
+                    _ => None,
+                };
+                let asked_around = std::mem::replace(&mut self.encode_asked, asked);
                 // (A predicate decided now may make a use of its own.)
                 self.use_id = match pred {
                     Pred::Given {
@@ -851,10 +852,15 @@ impl TypeChecker {
                 };
                 let ev = self.want(pred.substitute(&mapping), origin);
                 self.encode_passing = passing_around;
+                self.encode_asked = asked_around;
                 self.instantiating_also = also_around;
                 if let (Some(var), Some(ev)) = (passing, ev) {
                     let ev = self.ev_here(ev);
                     self.encode_passed.insert(ev, var);
+                }
+                if let (Some(asked), Some(ev)) = (asked, ev) {
+                    let ev = self.ev_here(ev);
+                    self.encode_asked_at.insert(ev, asked);
                 }
                 if let Some(around) = around {
                     self.instantiating = around;
