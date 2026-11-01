@@ -2730,23 +2730,11 @@ impl TypeChecker {
         Some(ty)
     }
 
-    /// Report the type `name`, a `kind` (`record`, `builtin type`), given
-    /// `got` types where it takes `expected`, at `span`: the type is
-    /// unknown.
-    fn type_arguments_mismatch(
-        &mut self,
-        kind: &str,
-        name: &str,
-        (expected, got): (usize, usize),
-        span: Span,
-    ) -> Type {
-        self.error(
-            Code::ArityMismatch,
-            format!(
-                "type argument count mismatch for {kind} '{name}': expected {expected}, got {got}"
-            ),
-            span,
-        );
+    /// Report the type `ty`, given types where it takes another number
+    /// of them, at `span`: the type is unknown.
+    fn type_arguments_mismatch(&mut self, ty: TypeRef, span: Span) -> Type {
+        let message = self.type_arguments_message(&resolve(ty.name), ty);
+        self.error(Code::ArityMismatch, message, span);
         Type::Error
     }
 
@@ -2824,12 +2812,7 @@ impl TypeChecker {
                 if let Some(alias) = alias {
                     let expected = self.type_arity(alias).unwrap_or(0);
                     if expected != args.len() {
-                        return Some(self.type_arguments_mismatch(
-                            "alias",
-                            &resolve(alias.name),
-                            (expected, args.len()),
-                            span,
-                        ));
+                        return Some(self.type_arguments_mismatch(alias, span));
                     }
                     let ty = Type::Generic(alias, args);
                     return Some(crate::types::canonical::canonicalize(
@@ -2857,33 +2840,20 @@ impl TypeChecker {
                     }
                     // A type given more or fewer types than it takes.
                     (head, _) => {
-                        let (kind, name, expected) = match &head {
-                            Type::List(_) => ("builtin type", "List".to_string(), 1),
-                            Type::Set(_) => ("builtin type", "Set".to_string(), 1),
-                            Type::Channel(_) => ("builtin type", "Channel".to_string(), 1),
-                            Type::Map(..) => ("builtin type", "Map".to_string(), 2),
+                        let (ty, expected) = match &head {
+                            Type::List(_) => (TypeRef::builtin("List"), 1),
+                            Type::Set(_) => (TypeRef::builtin("Set"), 1),
+                            Type::Channel(_) => (TypeRef::builtin("Channel"), 1),
+                            Type::Map(..) => (TypeRef::builtin("Map"), 2),
                             Type::Generic(r, params) if !r.is_builtin(crate::defs::TYPE_OF) => {
-                                let builtin = crate::defs::builtin_types().get(r.id.0.0 as usize);
-                                let kind = if builtin.is_some() {
-                                    "builtin type"
-                                } else if self.tables.records.contains_key(r) {
-                                    "record"
-                                } else {
-                                    "enum"
-                                };
-                                (kind, resolve(r.name), params.len())
+                                (*r, params.len())
                             }
                             _ => return None,
                         };
                         if expected == args.len() {
                             return None;
                         }
-                        Some(self.type_arguments_mismatch(
-                            kind,
-                            &name,
-                            (expected, args.len()),
-                            span,
-                        ))
+                        Some(self.type_arguments_mismatch(ty, span))
                     }
                 }
             }

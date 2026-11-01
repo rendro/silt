@@ -1,0 +1,41 @@
+error[type]: `Bytes` takes no type arguments: write `Bytes`
+ --> type_args__empty_parentheses_and_a_wrong_count_have_one_form.silt:15:9
+    |
+ 15 | fn a(x: Bytes()) -> Int { 0 }
+    |         ^^^^^^^ `Bytes` takes no type arguments: write `Bytes`
+
+error[type]: `Int` takes no type arguments: write `Int`
+ --> type_args__empty_parentheses_and_a_wrong_count_have_one_form.silt:17:9
+    |
+ 17 | fn b(x: Int()) -> Int { 0 }
+    |         ^^^^^ `Int` takes no type arguments: write `Int`
+
+error[type]: `Flat` takes no type arguments: write `Flat`
+ --> type_args__empty_parentheses_and_a_wrong_count_have_one_form.silt:19:9
+    |
+ 19 | fn c(x: Flat()) -> Int { 0 }
+    |         ^^^^^^ `Flat` takes no type arguments: write `Flat`
+
+error[type]: `Box` takes 1 type argument here: write `Box(a)`
+ --> type_args__empty_parentheses_and_a_wrong_count_have_one_form.silt:21:9
+    |
+ 21 | fn d(x: Box()) -> Int { 0 }
+    |         ^^^^^ `Box` takes 1 type argument here: write `Box(a)`
+
+error[type]: `Flat` takes no type arguments: write `Flat`
+ --> type_args__empty_parentheses_and_a_wrong_count_have_one_form.silt:23:9
+    |
+ 23 | fn e(x: Flat(Int)) -> Int { 0 }
+    |         ^^^^^^^^^ `Flat` takes no type arguments: write `Flat`
+
+error[type]: `Bytes` takes no type arguments: write `Bytes`
+ --> type_args__empty_parentheses_and_a_wrong_count_have_one_form.silt:25:9
+    |
+ 25 | fn f(x: Bytes(Int)) -> Int { 0 }
+    |         ^^^^^^^^^^ `Bytes` takes no type arguments: write `Bytes`
+
+error[type]: `Box` takes 1 type argument here: write `Box(a)`
+ --> type_args__empty_parentheses_and_a_wrong_count_have_one_form.silt:27:9
+    |
+ 27 | fn g(x: Box(Int, Int)) -> Int { 0 }
+    |         ^^^^^^^^^^^^^ `Box` takes 1 type argument here: write `Box(a)`

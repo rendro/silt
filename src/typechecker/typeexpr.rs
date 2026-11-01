@@ -159,14 +159,15 @@ impl TypeChecker {
         let declared = (self.tables.records.get(&ty).map(|r| r.params.clone()))
             .or_else(|| self.tables.enums.get(&ty).map(|e| e.params.clone()))
             .or_else(|| (self.tables.resolver.lookup_alias(ty)).map(|info| info.params.clone()));
-        if let Some(params) = declared {
+        if let Some(params) = declared.filter(|params| !params.is_empty()) {
             return params.iter().map(|p| resolve(*p)).collect();
         }
         let arity = match builtin_type_name(ty) {
             Some("Map") => return vec!["k".to_string(), "v".to_string()],
             Some("List" | "Set" | "Channel") => 1,
             Some(b) => opaque_arity(b).unwrap_or(0),
-            None => 0,
+            // (A record named in a field before the declarations are in.)
+            None => self.type_arity(ty).unwrap_or(0),
         };
         ('a'..='z').take(arity).map(String::from).collect()
     }
@@ -185,6 +186,15 @@ impl TypeChecker {
             super::inference::plural(params.len(), "type argument", "type arguments"),
             params.join(", ")
         ))
+    }
+
+    /// What is wrong with `shown`, a use of the type `ty` with type
+    /// arguments it does not take: none, or the number it takes (`Box()`
+    /// of a generic `Box`, `Bytes()`, `Bytes(Int)`). A type is written
+    /// one way: without parentheses when it takes no arguments.
+    pub(super) fn type_arguments_message(&self, shown: &str, ty: TypeRef) -> String {
+        (self.bare_generic_message(shown, ty))
+            .unwrap_or_else(|| format!("`{shown}` takes no type arguments: write `{shown}`"))
     }
 
     /// Report `shown` as `bare_generic_message` says; whether it was.
@@ -746,15 +756,20 @@ impl TypeChecker {
                     return Type::Error;
                 }
                 let ty = self.named_type(te.res, *name);
+                let shown = Qualifier::written(*module, *name);
+                // (`Bytes()`, `Box()`: empty parentheses are no spelling
+                // of a type.)
+                if let Some(ty) = ty
+                    && args.is_empty()
+                {
+                    let message = self.type_arguments_message(&shown, ty);
+                    self.error(Code::ArityMismatch, message, te.span);
+                    return Type::Error;
+                }
                 if let Some(builtin) = ty.and_then(builtin_type_name) {
                     let n = resolved_args.len();
                     let mut it = resolved_args.clone().into_iter();
                     let mut arg = |this: &mut Self| it.next().unwrap_or_else(|| this.fresh_var());
-                    if n == 0 && matches!(builtin, "List" | "Map" | "Set" | "Channel") {
-                        let shown = Qualifier::written(*module, *name);
-                        self.bare_generic(&shown, ty.expect("a builtin type"), te.span);
-                        return Type::Error;
-                    }
                     match (builtin, n) {
                         ("List", 1) => return Type::List(Box::new(arg(self))),
                         ("Map", 2) => {
@@ -764,21 +779,13 @@ impl TypeChecker {
                         }
                         ("Set", 1) => return Type::Set(Box::new(arg(self))),
                         ("Channel", 1) => return Type::Channel(Box::new(arg(self))),
-                        // Opaque arity-0 builtin types accept the
-                        // empty-paren surface form `Bytes()` (mirrors
-                        // `List()`/`Map()` etc.) and report `Bytes(Int)`.
                         (b, n) if let Some(arity) = opaque_arity(b) => {
+                            let ty = ty.expect("a builtin type");
                             if n == arity {
-                                return Type::Generic(ty.expect("a builtin type"), resolved_args);
+                                return Type::Generic(ty, resolved_args);
                             }
-                            let err_span = self.current_type_anno_span.unwrap_or(te.span);
-                            self.error(
-                                Code::ArityMismatch,
-                                format!(
-                                    "type argument count mismatch for builtin type '{b}': expected {arity}, got {n}"
-                                ),
-                                err_span,
-                            );
+                            let message = self.type_arguments_message(&shown, ty);
+                            self.error(Code::ArityMismatch, message, te.span);
                             return Type::Error;
                         }
                         _ => {}
@@ -803,21 +810,8 @@ impl TypeChecker {
                     return Type::Error;
                 };
                 if expected != resolved_args.len() {
-                    let kind = if self.tables.records.contains_key(&ty) {
-                        "record"
-                    } else if self.tables.type_aliases.contains(&ty) {
-                        "alias"
-                    } else {
-                        "enum"
-                    };
-                    let err_span = self.current_type_anno_span.unwrap_or(te.span);
-                    self.error(Code::ArityMismatch,
-                        format!(
-                            "type argument count mismatch for {kind} '{name}': expected {expected}, got {}",
-                            resolved_args.len()
-                        ),
-                        err_span,
-                    );
+                    let message = self.type_arguments_message(&shown, ty);
+                    self.error(Code::ArityMismatch, message, te.span);
                     // Return Error so the subsequent unify doesn't
                     // cascade a second "arity mismatch" diagnostic
                     // (the Generic/Generic arm would re-detect the
