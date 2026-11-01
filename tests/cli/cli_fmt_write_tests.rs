@@ -44,7 +44,7 @@ fn a_read_only_file_is_not_replaced() {
 
     let output = silt_cmd().arg("fmt").arg(&path).output().unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_eq!(output.status.code(), Some(1), "stderr:\n{stderr}");
+    assert_eq!(output.status.code(), Some(2), "stderr:\n{stderr}");
     assert_eq!(
         stderr.trim_end(),
         format!("error writing {}: permission denied", path.display())
@@ -106,5 +106,73 @@ fn a_link_stays_a_link_and_the_file_keeps_its_mode() {
         0o640
     );
     assert_eq!(names_in(&dir), ["link.silt", "real.silt"]);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A `.` beside another positional is a directory like any other: the
+/// files under it are formatted too, and a file it holds that is named
+/// on its own as well is formatted once.
+#[test]
+fn a_dot_beside_a_file_formats_the_directory_too() {
+    let dir = temp_dir("dot_beside_a_file");
+    fs::create_dir_all(dir.join("sub")).unwrap();
+    fs::write(dir.join("main.silt"), FORMATTED).unwrap();
+    fs::write(dir.join("sub").join("other.silt"), UNFORMATTED).unwrap();
+
+    let check = (silt_cmd().args(["fmt", "--check", ".", "main.silt"]))
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&check.stderr);
+    assert_eq!(check.status.code(), Some(1), "stderr:\n{stderr}");
+    assert!(stderr.contains("other.silt: not formatted"), "{stderr}");
+
+    let output = (silt_cmd().args(["fmt", "main.silt", "."]))
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(0), "stderr:\n{stderr}");
+    assert_eq!(
+        fs::read_to_string(dir.join("sub").join("other.silt")).unwrap(),
+        FORMATTED
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// An explicit `.` alone asks for the recursion, so the line that
+/// announces it does not say that no file was named; a bare `silt fmt`
+/// keeps saying so.
+#[test]
+fn an_explicit_dot_announces_the_recursion_as_asked_for() {
+    let dir = temp_dir("explicit_dot");
+    fs::write(dir.join("main.silt"), FORMATTED).unwrap();
+    for (flag, doing) in [("--check", "checking"), ("", "formatting")] {
+        let args: Vec<&str> = ["fmt", flag, "."]
+            .into_iter()
+            .filter(|a| !a.is_empty())
+            .collect();
+        let output = silt_cmd().args(&args).current_dir(&dir).output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(0), "stderr:\n{stderr}");
+        let line = format!("silt fmt: recursively {doing} all .silt files under ");
+        assert!(stderr.starts_with(&line), "{stderr}");
+    }
+    fs::write(
+        dir.join("silt.toml"),
+        "[package]\nname = \"dot\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    let output = (silt_cmd().args(["fmt", "--check"]))
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.starts_with(
+            "silt fmt: no files specified; recursively checking all .silt files under "
+        ),
+        "{stderr}"
+    );
     let _ = fs::remove_dir_all(&dir);
 }

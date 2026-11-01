@@ -1,0 +1,11 @@
+-- cmd: fmt --check .
+-- exit: 1
+-- stderr-contains: ./sub/ugly.silt: not formatted
+-- stderr-not-contains: main.silt: not formatted
+-- A `.` beside a file (the harness passes main.silt) is a directory
+-- like any other: the file in sub/ is checked too. main.silt, found
+-- twice, is checked once.
+
+fn main() {
+  println("hello")
+}

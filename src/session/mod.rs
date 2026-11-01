@@ -433,6 +433,25 @@ impl Session {
         Some(crate::types::Scheme { ty: *ret, ..scheme })
     }
 
+    /// How a message about the REPL cell `file` writes the type or
+    /// trait `def`, named `name`, when it is one of an earlier cell that
+    /// a later cell declared again: with its cell (`<repl:1>.T`), as the
+    /// cell's diagnostics write it. `None` for any other, which keeps
+    /// its name.
+    pub fn shadowed_cell_name(
+        &self,
+        file: FileId,
+        def: crate::defs::DefId,
+        name: Symbol,
+    ) -> Option<String> {
+        let cell = self.cells.info.get(&self.defs.get(def).module)?;
+        let scope = &self.analyses.get(&self.module_of(file))?.scope;
+        match scope.types.get(&name) {
+            Some(names::Binding::Def(id)) if *id == def => None,
+            _ => Some(format!("{}.{name}", cell.wrapper())),
+        }
+    }
+
     /// The analysis of the entry file `entry`: its module graph is
     /// completed, and each module that is not checked yet is checked,
     /// in the order of the graph. Asked again with nothing changed, it is

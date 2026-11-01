@@ -96,9 +96,10 @@ fn test_fmt_recursive_only_inside_package() {
         .current_dir(&outside)
         .output()
         .expect("failed to invoke silt fmt");
-    assert!(
-        !out_outside.status.success(),
-        "fmt should refuse recursion outside a package; got success"
+    assert_eq!(
+        out_outside.status.code(),
+        Some(2),
+        "fmt should refuse recursion outside a package with exit 2 (it could not do its job)"
     );
     let stderr = String::from_utf8_lossy(&out_outside.stderr);
     assert!(
