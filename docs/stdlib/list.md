@@ -861,7 +861,10 @@ list.sum_float(xs: List(Float)) -> Float
 ```
 
 Like `sum`, but for lists of floats. Returns `0.0` on an empty list.
-Raises a runtime error when the sum is too large for a `Float`.
+Raises a runtime error when the sum is too large for a `Float`, counted
+from the first element on: a sum on the way that is too large is one too,
+even where the elements after it would bring the sum back
+(`[1.0e308, 1.0e308, -1.0e308]`).
 
 ```silt
 import list

@@ -24,10 +24,10 @@ Every other byte of the UTF-8 representation is emitted as `%HH` with
 upper-case hex digits (per §6.2.2.1's case normalization note). Decoding
 is case-insensitive: `%2F` and `%2f` both decode to `/`.
 
-`+` is a **literal `+`** in both directions. The `+ ↔ space` convention
-belongs to `application/x-www-form-urlencoded` (WHATWG URL §form-urlencoded),
-not RFC 3986, and is out of scope here. Build form-encoding on top of
-`encoding.url_encode` in a dedicated module if you need it.
+In `url_encode` and `url_decode`, `+` is a **literal `+`** in both
+directions. The `+ ↔ space` convention belongs to
+`application/x-www-form-urlencoded` (WHATWG URL §form-urlencoded), not
+RFC 3986: `encoding.form_encode` and `encoding.form_decode` follow it.
 
 ## Summary
 

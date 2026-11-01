@@ -58,7 +58,10 @@ regex.captures(text: String, pattern: String) -> Result(Option(List(String)), Re
 ```
 
 Returns capture groups from the first match, or `None` if no match. The full
-match is at index 0, followed by numbered groups.
+match is at index 0, followed by numbered groups. A group that took no part
+in the match (`(a)?` where there is no `a`) is the empty string, as one that
+matched nothing is: `regex.captures("b", "(a)?(b)")` is `Ok(Some(["b", "",
+"b"]))`. `regex.captures_named` leaves such a group out.
 
 ```silt
 import list
@@ -188,7 +191,14 @@ fn main() {
 regex.replace(text: String, pattern: String, replacement: String) -> Result(String, RegexError)
 ```
 
-Replaces the first match with the replacement string.
+Replaces the first match with the replacement string. In the replacement,
+`$1` stands for the text of group 1, `$name` for the text of a named group,
+`$0` for the whole match, and `$$` for a `$`. A name runs as far as
+letters, digits and `_` go, so `$1x` is the group named `1x`, which is no
+group and stands for nothing: write `${1}x`, which a string literal writes
+`"$\{1}x"` (a `{` in it starts an interpolation). A group that took no
+part in the match stands for nothing:
+`regex.replace("ab", "(a)(b)", "$2$1")` is `Ok(ba)`.
 
 ```silt
 import regex
@@ -205,7 +215,8 @@ fn main() {
 regex.replace_all(text: String, pattern: String, replacement: String) -> Result(String, RegexError)
 ```
 
-Replaces all matches with the replacement string.
+Replaces all matches with the replacement string, which reads `$1`,
+`$name` and `$$` as in `regex.replace`.
 
 ```silt
 import regex

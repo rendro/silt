@@ -221,6 +221,10 @@ that `json.parse` accepts for each of those field types:
 | `Time` | `HH:MM:SS`, `HH:MM`, `HH:MM:SS.fffffffff` | `07:32:00` or `"07:32:00.5"` |
 | `DateTime` | RFC 3339 / ISO 8601 (`YYYY-MM-DDTHH:MM:SS`, `YYYY-MM-DDTHH:MM`, a fractional second), with optional `Z` or `±HH:MM` offset; the year as for `Date` | `1979-05-27T07:32:00Z` |
 
+A time without seconds (`HH:MM`, and a `DateTime` written so) is read only
+from a string: as a literal (`t = 07:32`) it is no TOML, a `Syntax` error.
+A `DateTime` with an offset is turned into the time in UTC, and the offset
+is not kept: `1979-05-27T07:32:00+05:30` reads as `1979-05-27T02:02:00`.
 A fractional second is read to the nanosecond; further digits are cut. A
 second 60, a leap second, is no time silt holds: it is refused with an `Other`
 that names the text, from a string and from a literal alike:
@@ -368,7 +372,7 @@ follows:
 |-------|------------|
 | `Int`, `Float`, `String`, `Bool` | an integer, a float, a string, `true` or `false` |
 | `List(a)`, a tuple | an array: `(1, "a")` is `[1, "a"]` |
-| `Map(k, v)` | a table; a key that is no `String` is written as its shown text (the `Float` key `1.0` reads `"1.0"`); a key whose value is `None` is left out (TOML has no null), so a round trip loses the key: the map read back has no such key |
+| `Map(k, v)` | a table; a key that is no `String` is written as its shown text (the `Float` key `1.0` reads `"1.0"`); two keys shown as one text (`["a, b"]` and `["a", "b"]` both read `"[a, b]"`) are `Err(Other("toml.stringify: two keys of a map show as the same text: [a, b]"))`; a key whose value is `None` is left out (TOML has no null), so a round trip loses the key: the map read back has no such key |
 | a record | a table of its fields, in the order the type declares them; a field that is `None` is left out (TOML has no null), and reads back as `None` |
 | `Some(x)` | `x`, as `x` is written |
 | `None` in an array (a list, a tuple, the fields of a variant) | nothing: `Err(Other("toml.stringify: TOML has no null: a None in an array"))` |
