@@ -298,7 +298,19 @@ impl TypeChecker {
                     || self.holds_open_vars(ty)
                     || free_vars_in(ty).into_iter().any(|v| !self.held_by_param(v)));
             if self.has_decode_impl(head) && !open {
-                return None;
+                // (Of impls for some instantiations, none for this one,
+                // known in full: a parameter holding a type gave it,
+                // `boxed(Bool)` of `json.parse(s, Box(t))`.)
+                let lacks = free_vars_in(ty).is_empty()
+                    && super::inference::rigid_vars(ty).is_empty()
+                    && !self.has_decode_impl_at(head, args);
+                return lacks.then(|| {
+                    let message = format!(
+                        "type '{}' does not implement trait 'json.Decode'",
+                        self.show_type(ty)
+                    );
+                    Diagnostic::error(Code::MissingTraitImpl, span, message)
+                });
             }
             if let Some(refusal) = self.opaque_decode_refusal(ty, span, owner) {
                 return Some(refusal);

@@ -5918,7 +5918,7 @@ pub(super) fn distinct(traits: &mut Vec<TraitKey>) {
 }
 
 /// The rigid type variables in `ty`, in order.
-fn rigid_vars(ty: &Type) -> Vec<RigidId> {
+pub(super) fn rigid_vars(ty: &Type) -> Vec<RigidId> {
     fn walk(ty: &Type, out: &mut Vec<RigidId>) {
         match ty {
             Type::Rigid(r) if !out.contains(r) => out.push(*r),
