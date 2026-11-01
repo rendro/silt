@@ -2227,6 +2227,60 @@ impl TypeChecker {
             {
                 self.refuse_type_without_value(key, &recv, Some((tr, field)), None, span);
             }
+            // (A variable of a body with no annotations is known once
+            // every body is: `refuse_unheld_full_types`.)
+            if !free_vars_in(&recv).is_empty() {
+                (self.unheld_full_uses).push((recv, tr, field, span, f.name));
+            }
+        }
+    }
+
+    /// Refuse each use of a method whose impl's dictionary carries its
+    /// type in full, kept by `check_body`, whose `Self` still has a type
+    /// variable of a definition with no annotations that no parameter
+    /// holding a type gives a value where the code runs (`Dec.again(Box {
+    /// v: x }, s)` in `fn wrap(x, s)`), as `refuse_type_without_value`
+    /// refuses an annotated one: the variable named as the definition's
+    /// type names it (`Box(a)`).
+    pub(super) fn refuse_unheld_full_types(&mut self, env: &TypeEnv) {
+        let held: std::collections::HashSet<TyVar> = (self.held_params.iter())
+            .filter_map(|(_, ty)| match self.apply(ty) {
+                Type::Generic(name, args) if name.is_builtin(crate::defs::TYPE_OF) => {
+                    match args.first() {
+                        Some(Type::Var(v)) => Some(*v),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            })
+            .collect();
+        for (recv, tr, field, span, owner) in std::mem::take(&mut self.unheld_full_uses) {
+            let recv = self.apply(&recv);
+            let unheld: Vec<TyVar> = (free_vars_in(&recv).into_iter())
+                .filter(|v| !held.contains(v))
+                .collect();
+            if unheld.is_empty() {
+                continue;
+            }
+            let Some(key) = (self.type_name_for_impl(&recv))
+                .and_then(|head| self.tables.one_impl(tr, head))
+            else {
+                continue;
+            };
+            let letters = env.lookup(owner).map(Scheme::letters).unwrap_or_default();
+            let mut spare = (b'a'..=b'z')
+                .map(|letter| intern(&char::from(letter).to_string()))
+                .filter(|letter| !letters.values().any(|used| used == letter));
+            let mapping: HashMap<TyVar, Type> = (unheld.into_iter())
+                .map(|var| {
+                    let name = (letters.get(&var).copied())
+                        .or_else(|| spare.next())
+                        .unwrap_or_else(|| intern("_"));
+                    (var, Type::Rigid(crate::types::RigidId { var, name }))
+                })
+                .collect();
+            let named = substitute_vars(&recv, &mapping);
+            self.refuse_type_without_value(key, &named, Some((tr, field)), None, span);
         }
     }
 

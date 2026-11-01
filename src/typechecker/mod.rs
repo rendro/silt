@@ -463,6 +463,10 @@ pub struct TypeChecker {
     /// for: checked once the body is, if the impl's dictionary carries its
     /// type (`refuse_type_without_value`).
     pub(super) full_type_uses: Vec<(Type, TraitKey, Symbol, Span)>,
+    /// The uses of `full_type_uses` whose `Self` had a type variable of
+    /// a body with no annotations, with the definition they are in:
+    /// judged once every body is (`refuse_unheld_full_types`).
+    pub(super) unheld_full_uses: Vec<(Type, TraitKey, Symbol, Span, Symbol)>,
     /// The receiver of each call through a trait, with the call's place,
     /// trait and method: a refusal the solver makes at the receiver is
     /// the call's (one error for the call).
@@ -773,6 +777,7 @@ impl TypeChecker {
             valued_vars: Default::default(),
             full_type_refused: Default::default(),
             full_type_uses: Vec::new(),
+            unheld_full_uses: Vec::new(),
             full_type_receivers: HashMap::new(),
             rigid_of: HashMap::new(),
             let_vars: std::collections::HashSet::new(),
@@ -1405,6 +1410,7 @@ impl TypeChecker {
         self.check_unresolved_let_types(program);
 
         // After all passes, resolve any remaining type variables in annotations
+        self.refuse_unheld_full_types(&env);
         self.resolve_all_types(program);
         self.write_held_types(program);
         self.write_evidence(program, &env);
