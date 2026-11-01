@@ -413,6 +413,29 @@ impl TypeChecker {
         (self.encode_asked).or_else(|| ev.and_then(|ev| self.encode_asked_at.get(&ev).copied()))
     }
 
+    /// What the body hands the type of the predicate `wanted[i]`, a
+    /// `json.Encode` it owes, to: the bound of a definition of the module
+    /// the use calls, another module's definition, or the encoder; and
+    /// the function the use calls.
+    pub(super) fn encode_asker(&self, i: usize) -> Option<Asker> {
+        let wanted = &self.wanted[i];
+        let ev = Some(wanted.ev);
+        let callee = wanted.origin.callee;
+        let passing = ev.and_then(|ev| self.encode_passed.get(&ev).copied());
+        let by = match passing {
+            Some(var) => Asked::Bound(var),
+            None => (self.encode_asked_of(ev)).or_else(|| {
+                (self
+                    .owners_at(ev)
+                    .iter()
+                    .all(|module| module.builtin_name().is_some()))
+                .then_some(callee.map(Asked::Builtin))
+                .flatten()
+            })?,
+        };
+        Some(Asker { by, passer: callee })
+    }
+
     /// The note of a refusal to encode `ty`, which `passer`, the function
     /// the use calls, hands on as `asked` says: the functions on the way
     /// and the encoder, following on each variable a route by which the
@@ -454,7 +477,21 @@ impl TypeChecker {
                 return None;
             }
             seen.push(var);
-            let routes = self.owner_routes.get(&(var, true))?;
+            // (A variable of a definition with no annotation: what its
+            // body hands it to.)
+            // (Of those that refuse the type, the first.)
+            let Some(routes) = self.owner_routes.get(&(var, true)) else {
+                let askers = self.encode_askers.get(&var)?;
+                let (_, asker) = (refused.and_then(|module| {
+                    (askers.iter()).find(|(owners, _)| !owners.contains(&module))
+                }))
+                .or(askers.first())?;
+                if !matches!(asker.by, Asked::Builtin(_)) {
+                    links.extend(asker.passer);
+                }
+                asked = asker.by;
+                continue;
+            };
             let route_owners = |route: &OwnerRoute| match route {
                 OwnerRoute::Direct(owners) => owners.clone(),
                 OwnerRoute::Passed(passed) => self.route_owner(*passed, true),
@@ -682,19 +719,29 @@ impl TypeChecker {
     /// through on the way to the decoder, the first first (`mid`, `load`
     /// for `top` calling `mid` calling `load` calling `json.parse`, and
     /// a trait's method its bound is declared for, `Loader.load`): as
-    /// far as each is known.
-    fn passed_through(&self, asker: Option<Asker>) -> Vec<Symbol> {
-        self.passed_through_refused(asker, None)
-    }
-
-    /// `passed_through`, following on each variable a route by which the
-    /// opaque type of the module `refused` is refused, where there is one:
-    /// the route the error is about.
+    /// far as each is known. On each variable, a route by which the
+    /// opaque type of the module `refused` is refused, where there is
+    /// one: the route the error is about.
     fn passed_through_refused(
         &self,
         asker: Option<Asker>,
         refused: Option<crate::session::ModuleId>,
     ) -> Vec<Symbol> {
+        let routes = self.passed_through_routes(asker, Some(refused));
+        (routes.into_iter().next()).map_or_else(Vec::new, |(_, links)| links)
+    }
+
+    /// The routes of `passed_through_refused`: with `Some(refused)`, the
+    /// one it follows; with `None`, one for each route of another
+    /// module's definition the way leads to (`bridge.hmixed`, which
+    /// hands the type to `mail.load` and to `json.parse`), each with
+    /// the modules that decode the type on it, so that a module that
+    /// passes the type on to that definition keeps them apart.
+    fn passed_through_routes(
+        &self,
+        asker: Option<Asker>,
+        refused: Option<Option<crate::session::ModuleId>>,
+    ) -> Vec<crate::types::ThroughRoute> {
         let mut links = Vec::new();
         let mut seen = Vec::new();
         let mut asked = asker.map(|asker| asker.by);
@@ -706,6 +753,13 @@ impl TypeChecker {
                 // type, where there is one.)
                 Some(Asked::Through(_, through)) => {
                     let routes = Asked::routes(through);
+                    let Some(refused) = refused else {
+                        return (routes.into_iter())
+                            .map(|(owners, route)| {
+                                (owners, links.iter().copied().chain(route).collect())
+                            })
+                            .collect();
+                    };
                     let route = (refused.and_then(|module| {
                         routes.iter().find(|(owners, _)| !owners.contains(&module))
                     }))
@@ -726,15 +780,17 @@ impl TypeChecker {
                 links.extend(self.bound_methods.get(&var));
             }
             seen.push(var);
-            let next = (refused.and_then(|module| self.refused_route(var, module)))
-                .or_else(|| self.bound_askers.get(&var).copied());
+            let next = (refused
+                .flatten()
+                .and_then(|module| self.refused_route(var, module)))
+            .or_else(|| self.bound_askers.get(&var).copied());
             let Some(next) = next else {
                 break;
             };
             links.extend(next.passer);
             asked = Some(next.by);
         }
-        links
+        vec![(Vec::new(), links)]
     }
 
     /// `asker` as another module or a later REPL entry reads it: the
@@ -755,7 +811,7 @@ impl TypeChecker {
     /// variable whose body takes several, each with its owners and links
     /// (a note names the one that refuses a type); else the one.
     fn settled_routes(&self, asker: Option<Asker>) -> Vec<crate::types::ThroughRoute> {
-        let single = || vec![(Vec::new(), self.passed_through(asker))];
+        let single = || self.passed_through_routes(asker, None);
         let Some(Asked::Bound(var)) = asker.map(|asker| asker.by) else {
             return single();
         };
@@ -772,12 +828,20 @@ impl TypeChecker {
                 OwnerRoute::Direct(owners) => owners.clone(),
                 OwnerRoute::Passed(passed) => self.route_owner(*passed, false),
             };
-            let mut links: Vec<Symbol> = route_asker.passer.into_iter().collect();
-            links.extend(self.passed_through(Some(Asker {
+            let inner = Some(Asker {
                 by: route_asker.by,
                 passer: None,
-            })));
-            settled.push((owners, links));
+            });
+            for (more, inner) in self.passed_through_routes(inner, None) {
+                let mut owners = owners.clone();
+                for module in more {
+                    if !owners.contains(&module) {
+                        owners.push(module);
+                    }
+                }
+                let links = (route_asker.passer.into_iter()).chain(inner).collect();
+                settled.push((owners, links));
+            }
         }
         if settled.is_empty() {
             return single();
@@ -810,7 +874,12 @@ impl TypeChecker {
                 info.method_bounds = bounds;
             }
         }
-        for gap in std::mem::take(&mut self.decode_gaps) {
+        // (A value that is one of two decoders, `mail.load` or
+        // `json.parse`, owes each one's: the decoder's own, which no
+        // function passes the type to, is the one reported of the two.)
+        let mut gaps = std::mem::take(&mut self.decode_gaps);
+        gaps.sort_by_key(|gap| gap.asker.is_some_and(|asker| asker.passer.is_some()));
+        for gap in gaps {
             let ty = crate::types::canonical::canonicalize(self.tables.resolver(), &gap.subject);
             // (A bound whose body hands the type to another module's
             // definition is judged as that module sees it.)

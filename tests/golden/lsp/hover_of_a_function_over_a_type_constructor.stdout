@@ -30,5 +30,5 @@ Fn(Option(Int)) -> Option(Int)
 > completion 39:6
 double_all
 > signature 40:22
-fn double_all(xs: m(Int)) -> m(Int)
+fn double_all(xs: m(Int)) -> m(Int) where m: Mapping
 argument 1: xs: m(Int)

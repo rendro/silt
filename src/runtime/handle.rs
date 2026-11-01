@@ -1183,6 +1183,9 @@ pub struct TaskHandle {
     late: Arc<std::sync::atomic::AtomicUsize>,
     /// The stream stage the task runs, if it runs one.
     stage: Option<StageOf>,
+    /// Set when the stage failed with the failure of an earlier stage,
+    /// read from its input ([`TaskHandle::fails_with_its_input`]).
+    failed_with_input: AtomicBool,
 }
 
 impl TaskHandle {
@@ -1203,6 +1206,7 @@ impl TaskHandle {
             over: Arc::default(),
             late: Arc::default(),
             stage: None,
+            failed_with_input: AtomicBool::new(false),
         }
     }
 
@@ -1223,6 +1227,22 @@ impl TaskHandle {
     /// The stream stage the task runs, if it runs one.
     pub fn stage_of(&self) -> Option<&StageOf> {
         self.stage.as_ref()
+    }
+
+    /// The stage fails with the failure it read from its input, which
+    /// an earlier stage raised.
+    pub fn fails_with_its_input(&self) {
+        self.failed_with_input.store(true, AtomicOrdering::SeqCst);
+    }
+
+    /// The place of the call that started the stage, if it failed with
+    /// the failure of an earlier stage: its report shows that call, the
+    /// stage it names, not where the earlier stage failed.
+    pub fn stage_call_of_a_failed_input(&self) -> Option<Span> {
+        let stage = self.stage.as_ref()?;
+        self.failed_with_input
+            .load(AtomicOrdering::SeqCst)
+            .then_some(stage.at?)
     }
 
     /// The handle, for a task that is over at `deadline`. `late` is the

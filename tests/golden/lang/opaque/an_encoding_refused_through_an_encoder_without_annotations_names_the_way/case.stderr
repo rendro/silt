@@ -1,0 +1,47 @@
+error[type]: type 'mail.Email' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+ --> main.silt:24:16
+    |
+ 24 |   println(jinf(e))
+    |                ^ type 'mail.Email' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = note: `jinf` passes it to `json.stringify`
+  = help: encode it inside module 'mail', or write `trait json.Encode for Email` there
+
+error[type]: type 'mail.Email' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+ --> main.silt:25:16
+    |
+ 25 |   println(oenc(e))
+    |                ^ type 'mail.Email' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = note: `oenc` passes it to `json.stringify`
+  = help: encode it inside module 'mail', or write `trait json.Encode for Email` there
+
+error[type]: type 'mail.Email' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+ --> main.silt:27:13
+    |
+ 27 |   println(c(e))
+    |             ^ type 'mail.Email' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = note: `c` passes it to `json.stringify`
+  = help: encode it inside module 'mail', or write `trait json.Encode for Email` there
+
+error[type]: type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+ --> main.silt:28:23
+    |
+ 28 |   println(jdec("\{}", mail.Email))
+    |                       ^^^^^^^^^^ type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+  = note: `jdec` passes it to `json.parse`
+  = help: decode it inside module 'mail', or write `trait json.Decode for Email` there
+
+error[type]: type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+ --> main.silt:29:22
+    |
+ 29 |   println(odec("[]", mail.Email))
+    |                      ^^^^^^^^^^ type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+  = note: `dec` passes it to `json.parse`
+  = help: decode it inside module 'mail', or write `trait json.Decode for Email` there
+
+error[type]: type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+ --> main.silt:31:20
+    |
+ 31 |   println(d("\{}", mail.Email))
+    |                    ^^^^^^^^^^ type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+  = note: `d` passes it to `json.parse`
+  = help: decode it inside module 'mail', or write `trait json.Decode for Email` there

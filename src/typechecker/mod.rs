@@ -33,6 +33,7 @@ mod solve;
 mod structural;
 mod tables;
 mod typeexpr;
+#[cfg(feature = "lsp")]
 pub(crate) use typeexpr::type_expr_text;
 mod unify;
 mod unused;
@@ -202,6 +203,11 @@ pub struct TypeChecker {
     /// of what the use owes. A note of a refusal names the way.
     pub(super) encode_asked: Option<Asked>,
     pub(super) encode_asked_at: HashMap<evidence::EvRef, Asked>,
+    /// A scheme variable with no annotation whose `json.Encode` its
+    /// definition's body owes: what the body hands the type to, each
+    /// with the modules of the definitions on that way, in the order of
+    /// the body, for the note of a refusal at a use (`encoded_through`).
+    pub(super) encode_askers: HashMap<TyVar, Vec<(Vec<crate::session::ModuleId>, Asker)>>,
     /// While such a definition is instantiated: its
     /// `TypeTables::def_encoders`.
     pub(super) def_encoders_now: Option<HashMap<TyVar, Asked>>,
@@ -710,6 +716,7 @@ impl TypeChecker {
             encode_deferred: Vec::new(),
             encode_asked: None,
             encode_asked_at: HashMap::new(),
+            encode_askers: HashMap::new(),
             def_encoders_now: None,
             def_owners_now: None,
             scheme_owners: HashMap::new(),

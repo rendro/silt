@@ -432,9 +432,9 @@ const REDIRECTS_MAX: usize = 10;
 ///
 /// The request follows redirects itself, because ureq does not send a
 /// body again: 301, 302 and 303 go on without a body, as a GET (a
-/// HEAD stays a HEAD), 307 and 308 go on with the same method and body. As
-/// ureq does, a redirect drops the `authorization` and `cookie`
-/// headers. A `content-length` header of the program's is not sent:
+/// HEAD stays a HEAD) and without the program's `content-type` header,
+/// 307 and 308 go on with the same method and body. As ureq does, a
+/// redirect drops the `authorization` and `cookie` headers. A `content-length` header of the program's is not sent:
 /// the body's own length is (an empty body of a method that takes
 /// none by default has none).
 #[cfg(feature = "http")]
@@ -480,6 +480,8 @@ fn do_http_request(
                 method = "GET";
             }
             body = &[];
+            // (What the body was is no part of a request without one.)
+            headers.retain(|(key, _)| !key.eq_ignore_ascii_case("content-type"));
         }
         headers.retain(|(key, _)| {
             !key.eq_ignore_ascii_case("authorization") && !key.eq_ignore_ascii_case("cookie")
@@ -551,10 +553,11 @@ fn redirect(response: &ureq::http::Response<ureq::Body>, url: &str) -> Option<(u
     Some((status, resolve_location(url, location)))
 }
 
-/// `location` resolved against `base`, as ureq resolves the location of
-/// a redirect it follows: a URL with a scheme as it is, a path from the
-/// root on the base's scheme and host, any other path next to the
-/// base's, with its `.` and `..` segments taken away.
+/// `location` resolved against `base` (RFC 3986): a URL with a scheme
+/// as it is, one without (`//host/x`) on the base's scheme, a path from
+/// the root on the base's scheme and host, a query alone (`?y=2`) on
+/// the base's path, any other path next to the base's, with its `.` and
+/// `..` segments taken away.
 #[cfg(feature = "http")]
 fn resolve_location(base: &str, location: &str) -> String {
     let has_scheme = location
@@ -570,8 +573,17 @@ fn resolve_location(base: &str, location: &str) -> String {
         (Some(scheme), Some(authority)) => format!("{scheme}://{authority}"),
         _ => String::new(),
     };
+    if location.starts_with("//") {
+        return match uri.scheme_str() {
+            Some(scheme) => format!("{scheme}:{location}"),
+            None => location.to_string(),
+        };
+    }
     if location.starts_with('/') {
         return format!("{origin}{location}");
+    }
+    if location.starts_with('?') {
+        return format!("{origin}{}{location}", uri.path());
     }
     let mut segments: Vec<&str> = uri.path().split('/').collect();
     segments.pop();
@@ -2164,6 +2176,23 @@ mod http_body_tests {
     fn no_bytes_that_say_packed_are_invalid_response() {
         let got = failure(&do_http_get(&says_packed(Vec::new())));
         assert!(got.starts_with("InvalidResponse("), "{got}");
+    }
+
+    /// A redirect's location is resolved against the URL that answered
+    /// as RFC 3986 says.
+    #[test]
+    fn a_location_is_resolved_against_the_url_that_answered() {
+        let base = "http://a.test:8/p/q?x=1";
+        for (location, resolved) in [
+            ("https://b.test/y", "https://b.test/y"),
+            ("//b.test:9/y?z", "http://b.test:9/y?z"),
+            ("/y", "http://a.test:8/y"),
+            ("?y=2", "http://a.test:8/p/q?y=2"),
+            ("r", "http://a.test:8/p/r"),
+            ("../r", "http://a.test:8/r"),
+        ] {
+            assert_eq!(resolve_location(base, location), resolved, "{location}");
+        }
     }
 }
 

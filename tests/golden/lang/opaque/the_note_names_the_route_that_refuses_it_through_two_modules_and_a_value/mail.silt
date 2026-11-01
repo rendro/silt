@@ -1,0 +1,9 @@
+import json
+
+pub opaque type Email {
+  addr: String,
+}
+
+pub fn load(s: String, type a) -> Result(a, json.JsonError) where a: json.Decode {
+  json.parse(s, a)
+}

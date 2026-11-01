@@ -1,0 +1,55 @@
+-- timeout: 30
+-- requires-feature: http
+-- `http.request` resolves a redirect's location against the URL that
+-- answered, as RFC 3986 says: a query alone (`?y=2`) on that URL's
+-- path, a location without a scheme (`//host:port/x`) on that host.
+-- After a 301, 302 or 303 the request goes on as a GET without a
+-- body, and without the `content-type` header that said what the
+-- body was; after a 307 the header goes with the body.
+import bytes
+import http
+import list
+import map
+import option
+import task
+import tcp
+
+fn moved(status: Int, location: String) -> http.Response {
+  http.Response { status: status, body: bytes.empty(), headers: #{"location": location} }
+}
+
+fn echo(server: String, req: http.Request) -> http.Response {
+  let typed = map.get(req.headers, "content-type") |> option.unwrap_or("no content-type")
+  println("  {server}: {req.method} {req.path} ?{req.query}, {typed}")
+  http.Response { status: 200, body: bytes.empty(), headers: #{} }
+}
+
+fn main() {
+  when let Ok(first) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  when let Ok(second) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let other = "//127.0.0.1:{tcp.local_port(second)}"
+  let one = task.spawn { ->
+    http.serve(first) { req ->
+      match req.path {
+        "/q" when req.query == "x=1" -> moved(302, "?y=2")
+        "/far" -> moved(307, "{other}/there")
+        "/303" -> moved(303, "/echo")
+        "/307" -> moved(307, "/echo")
+        _ -> echo("first", req)
+      }
+    }
+  }
+  let two = task.spawn { -> http.serve(second) { req -> echo("second", req) } }
+  let url = "http://127.0.0.1:{tcp.local_port(first)}"
+  let typed = #{"content-type": "text/plain"}
+  let asks = [(http.GET, "/q?x=1"), (http.GET, "/far"), (http.POST, "/303"), (http.POST, "/307")]
+  list.each(asks) { (method, path) ->
+    println("{method} {path}")
+    match http.request(method, "{url}{path}", bytes.from_string("abc"), typed) {
+      Ok(resp) -> println("  the client: {resp.status}")
+      Err(e) -> println("  the client: {Error.message(e)}")
+    }
+  }
+  task.cancel(one)
+  task.cancel(two)
+}

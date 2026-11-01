@@ -145,6 +145,15 @@ pub fn builtin_docs() -> &'static HashMap<String, String> {
     })
 }
 
+/// The section of the globals page on the prelude's function `name`
+/// (`println`): what signature help shows of it, where hover shows the
+/// whole page.
+pub fn prelude_section(name: &str) -> Option<String> {
+    (iter_sections(strip_frontmatter(GLOBALS_PAGE)).into_iter())
+        .find(|(keys, _)| keys.iter().any(|key| key == name))
+        .map(|(_, body)| body)
+}
+
 /// What an editor shows for the function `name` of a cargo feature that
 /// this build lacks: its signature and summary, and what it needs.
 pub(crate) fn unbuilt_text(name: &str, signature: &str, summary: &str, feature: &str) -> String {

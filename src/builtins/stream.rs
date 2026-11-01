@@ -255,7 +255,12 @@ impl Pipe {
     /// failed, this one fails with the same error.
     fn ended(&mut self, index: usize, close: Close) -> Result<Got, VmError> {
         self.open[index] = false;
-        close.raise()?;
+        if let Err(failure) = close.raise() {
+            if let Some(handle) = &self.handle {
+                handle.fails_with_its_input();
+            }
+            return Err(failure);
+        }
         Ok(Got::End)
     }
 

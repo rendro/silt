@@ -74,10 +74,12 @@ impl Server {
                 // A builtin (`list.map`, or `println` of the prelude):
                 // the signature of its row in the builtin registry, with
                 // each parameter where the signature writes it, and the
-                // stdlib markdown alongside.
+                // stdlib markdown alongside: the function's own section
+                // (of the globals page, for one of the prelude).
                 let row = crate::builtins::registry::registry().named(&fn_name)?;
                 let (label, ranges) = row.qualified_signature(row.module)?;
-                let doc_text = self.builtin_docs.get(&fn_name).cloned();
+                let doc_text = crate::builtins::registry::docs::prelude_section(&fn_name)
+                    .or_else(|| self.builtin_docs.get(&fn_name).cloned());
                 let params_info = ranges
                     .into_iter()
                     .map(|range| ParameterInformation {
@@ -196,6 +198,12 @@ pub(super) fn build_signature_from_def(
             });
         }
         label.push_str(&format!(") -> {ret}"));
+        // The bounds, as hover writes them (`where a: Display`).
+        if let Some((_, bounds)) =
+            (def.signature.as_ref()).and_then(|s| s.text.split_once(" where "))
+        {
+            label.push_str(&format!(" where {bounds}"));
+        }
     } else {
         for (i, pname) in def.params.iter().enumerate() {
             let start = label.len() as u32;
