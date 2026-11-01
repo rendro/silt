@@ -1490,17 +1490,37 @@ impl TypeChecker {
                 (this.res_def(e.res)).is_some_and(|def| def.kind == crate::defs::DefKind::Fn);
             Some((function, declared, param, reading, site))
         };
+        // (A closure given straight to the call, whose parameter's type
+        // the parameter `i` has: no name calls it.)
+        let of_closure = |this: &Self| {
+            let asked = this.apply(param_ty);
+            (this.closure_readings.iter())
+                .find(|(ty, _, reading)| {
+                    this.apply(ty) == asked && matches!(reading, Reading::Type { .. })
+                })
+                .map(|(_, name, reading)| {
+                    (intern("closure"), false, Some(*name), reading.clone(), None)
+                })
+        };
+        let mut anonymous = false;
         let found = match reading_of(self, callee, i) {
             Some(found) => Some((found, self.apply(arg_ty))),
             None => match (self.apply(arg_ty), self.apply(param_ty)) {
                 (Type::Fun(takes, _), Type::Fun(asked, _)) => (0..takes.len().min(asked.len()))
                     .filter(|j| self.apply(&takes[*j]) != self.apply(&asked[*j]))
                     .find_map(|j| Some((reading_of(self, arg, j)?, self.apply(&asked[j])))),
-                _ => None,
+                _ => of_closure(self).map(|found| {
+                    anonymous = true;
+                    (found, self.apply(arg_ty))
+                }),
             },
         };
         let Some(((function, declared, param, reading, site), given)) = found else {
             return;
+        };
+        let who = match anonymous {
+            true => "the closure".to_string(),
+            false => format!("'{function}'"),
         };
         // (Where the call `x.m(..)` is: the function called, or the one
         // it passes the parameter on to.)
@@ -1559,7 +1579,7 @@ impl TypeChecker {
                 };
                 (
                     format!(
-                        "'{function}' takes a type as `{param}`, not a value of type `{shown}`: \
+                        "{who} takes a type as `{param}`, not a value of type `{shown}`: \
                          `{call}` in {place} reads as the method of trait '{trait_name}' that makes a \
                          value"
                     ),
@@ -1657,6 +1677,19 @@ impl TypeChecker {
                 .unwrap_or_else(|| "_".to_string());
             self.readings
                 .insert((callee, at), (name, reading(receiver), None));
+        }
+        // (A parameter of a closure no `let` names.)
+        let obj_ty = self.apply(obj_ty);
+        let closure_param = (self.fn_frames.last())
+            .filter(|frame| frame.owner.is_none())
+            .and_then(|frame| {
+                (frame.params.iter().zip(&frame.names))
+                    .find(|(param, _)| self.apply(param) == obj_ty)
+                    .and_then(|(_, name)| *name)
+            });
+        if let Some(name) = closure_param {
+            let receiver = (written_receiver(obj)).unwrap_or_else(|| name.to_string());
+            (self.closure_readings).push((obj_ty, name, reading(receiver)));
         }
     }
 
