@@ -61,6 +61,17 @@ fn floored_mod(a: i64, b: i64) -> i64 {
     }
 }
 
+/// `x % y` with the sign of `y`, as for Ints, for a `y` that is not 0.
+/// (A tiny `x` of the other sign can round to `y` itself.)
+fn floored_float_mod(x: f64, y: f64) -> f64 {
+    let r = x % y;
+    if r != 0.0 && (r < 0.0) != (y < 0.0) {
+        r + y
+    } else {
+        r
+    }
+}
+
 /// How the arithmetic instruction `op` is written.
 fn symbol(op: Op) -> &'static str {
     match op {
@@ -99,7 +110,7 @@ pub(super) fn float_arithmetic(op: Op, a: &Value, b: &Value) -> Result<Float, Vm
                 }
                 Op::Div => x / y,
                 Op::Mod if y == 0.0 => return Err(VmError::new("modulo by zero".to_string())),
-                Op::Mod => x % y,
+                Op::Mod => floored_float_mod(x, y),
                 _ => unreachable!(),
             };
             // (The text of the error is made where there is one.)
@@ -239,6 +250,23 @@ mod tests {
             assert_eq!(int(Op::Mod, a, b), modulo, "{a} % {b}");
             let whole = i128::from(quotient) * i128::from(b) + i128::from(modulo);
             assert_eq!(whole, i128::from(a), "{a} = {a} / {b} * {b} + {a} % {b}");
+        }
+    }
+
+    #[test]
+    fn float_modulo_takes_the_divisors_sign() {
+        let float = |n: f64| Value::Float(Float::new(n).expect("finite"));
+        let cases = [
+            (-7.5, 2.0, 0.5),
+            (7.5, -2.0, -0.5),
+            (-7.5, -2.0, -1.5),
+            (7.5, 2.0, 1.5),
+            (-6.0, 3.0, 0.0),
+            (6.0, -3.0, 0.0),
+        ];
+        for (x, y, modulo) in cases {
+            let got = float_arithmetic(Op::Mod, &float(x), &float(y)).expect("a Float");
+            assert_eq!(got.get(), modulo, "{x} % {y}");
         }
     }
 
