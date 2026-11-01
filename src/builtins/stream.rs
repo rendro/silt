@@ -1002,8 +1002,21 @@ builtins! {
                     Err(e) => return Some(super::tcp::tcp_io_err(super::tcp::Doing::Using, &e)),
                 }
             }
-            let line = String::from_utf8_lossy(&current).to_string();
-            Some(ok(Value::String(line.into())))
+            // A line that is no UTF-8 ends the source with an error, as
+            // `file_lines` ends; the connection is shut down, as for any
+            // source on it that stops.
+            match String::from_utf8(current) {
+                Ok(line) => Some(ok(Value::String(line.into()))),
+                Err(_) => {
+                    at_end = true;
+                    stream_handle.shut_down();
+                    let not_utf8 = std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "stream did not contain valid UTF-8",
+                    );
+                    Some(super::tcp::tcp_io_err(super::tcp::Doing::Using, &not_utf8))
+                }
+            }
         }))
     }
 
