@@ -1,41 +1,34 @@
-error[type]: `json.parse` cannot decode `List(Box(t))`: `Box(t)` has no decoder
- --> instance_impl__an_instantiation_with_no_impl_in_a_container_is_refused.silt:20:17
-    |
- 20 |   json.parse(s, List(Box(t)))
-    |                 ^^^^^^^^^^^^ `json.parse` cannot decode `List(Box(t))`: `Box(t)` has no decoder
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
-
 error[type]: `json.parse` cannot decode `List(Box(Bool))`: `Box(Bool)` has no decoder
- --> instance_impl__an_instantiation_with_no_impl_in_a_container_is_refused.silt:24:28
+ --> instance_impl__an_instantiation_with_no_impl_in_a_container_is_refused.silt:19:28
     |
- 24 |   println(json.parse("[]", List(Box(Bool))))
+ 19 |   println(json.parse("[]", List(Box(Bool))))
     |                            ^^^^^^^^^^^^^^^ `json.parse` cannot decode `List(Box(Bool))`: `Box(Bool)` has no decoder
   = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: `json.parse` cannot decode `Option(Box(Bool))`: `Box(Bool)` has no decoder
- --> instance_impl__an_instantiation_with_no_impl_in_a_container_is_refused.silt:25:30
+ --> instance_impl__an_instantiation_with_no_impl_in_a_container_is_refused.silt:20:30
     |
- 25 |   println(json.parse("null", Option(Box(Bool))))
+ 20 |   println(json.parse("null", Option(Box(Bool))))
     |                              ^^^^^^^^^^^^^^^^^ `json.parse` cannot decode `Option(Box(Bool))`: `Box(Bool)` has no decoder
   = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: `json.parse` cannot decode `Map(String, Box(Bool))`: `Box(Bool)` has no decoder
- --> instance_impl__an_instantiation_with_no_impl_in_a_container_is_refused.silt:26:29
+ --> instance_impl__an_instantiation_with_no_impl_in_a_container_is_refused.silt:21:29
     |
- 26 |   println(json.parse("\{}", Map(String, Box(Bool))))
+ 21 |   println(json.parse("\{}", Map(String, Box(Bool))))
     |                             ^^^^^^^^^^^^^^^^^^^^^^ `json.parse` cannot decode `Map(String, Box(Bool))`: `Box(Bool)` has no decoder
   = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: `json.parse` cannot decode `(Int, Box(Bool))`: `Box(Bool)` has no decoder
- --> instance_impl__an_instantiation_with_no_impl_in_a_container_is_refused.silt:27:34
+ --> instance_impl__an_instantiation_with_no_impl_in_a_container_is_refused.silt:22:34
     |
- 27 |   println(json.parse("[1, \{}]", (Int, Box(Bool))))
+ 22 |   println(json.parse("[1, \{}]", (Int, Box(Bool))))
     |                                  ^^^^^^^^^^^^^^^^ `json.parse` cannot decode `(Int, Box(Bool))`: `Box(Bool)` has no decoder
   = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: `json.decode` cannot decode `Option(Box(Bool))`: `Box(Bool)` has no decoder
- --> instance_impl__an_instantiation_with_no_impl_in_a_container_is_refused.silt:28:34
+ --> instance_impl__an_instantiation_with_no_impl_in_a_container_is_refused.silt:23:34
     |
- 28 |   println(json.decode(json.Null, Option(Box(Bool))))
+ 23 |   println(json.decode(json.Null, Option(Box(Bool))))
     |                                  ^^^^^^^^^^^^^^^^^ `json.decode` cannot decode `Option(Box(Bool))`: `Box(Bool)` has no decoder
   = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these

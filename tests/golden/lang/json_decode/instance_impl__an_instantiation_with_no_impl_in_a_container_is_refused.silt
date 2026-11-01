@@ -3,9 +3,8 @@
 -- With an impl for one instantiation of a generic type only, another
 -- instantiation (`Box(Bool)`) has no decoder inside a list, an option, a
 -- map or a tuple given to a decoder as well, as in a field of a record:
--- refused, by json.parse and json.decode; and for a `type t` parameter
--- (`List(Box(t))`), as the bare `Box(t)` is: no bound can say `Box(t)`
--- has an impl. (`List(Box(Int))` reaches the impl.)
+-- refused, by json.parse and json.decode. (`List(Box(Int))` reaches the
+-- impl.)
 import json
 
 type Box(a) {
@@ -14,10 +13,6 @@ type Box(a) {
 
 trait json.Decode for Box(Int) {
   fn decode(v: json.Value) -> Result(Self, json.JsonError) { Ok(Box { v: 1 }) }
-}
-
-fn load(s: String, type t) -> Result(List(Box(t)), json.JsonError) where t: json.Decode {
-  json.parse(s, List(Box(t)))
 }
 
 fn main() {

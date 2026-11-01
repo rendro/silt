@@ -515,12 +515,12 @@ impl TypeChecker {
             _ => None,
         };
         // A type with impls for some instantiations only, none of them
-        // this one: no decoder has it. (Nor of an annotation's type
-        // variable, `Box(t)`: no bound can say it has one. A variable of
-        // a body with no annotations is the use's to decide.)
+        // this one: no decoder has it. (A type with a variable in it is
+        // the use's to judge.)
         let no_instance = match part {
             Type::Generic(t, args) => {
                 free_vars_in(part).is_empty()
+                    && super::inference::rigid_vars(part).is_empty()
                     && self.has_decode_impl(*t)
                     && !self.has_decode_impl_at(*t, args)
             }
