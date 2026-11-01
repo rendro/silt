@@ -340,7 +340,7 @@ fn fmt_formats_the_other_files_when_one_is_refused() {
 
     let fmt = ws.silt(&["fmt", "--test-tamper=0x10=>16", "refused.silt", "fine.silt"]);
     assert_ended_cleanly("two_files", "silt fmt", &fmt);
-    assert_eq!(fmt.code, Some(1), "{fmt:?}");
+    assert_eq!(fmt.code, Some(2), "{fmt:?}");
     assert_eq!(ws.read_bytes("refused.silt"), refused.as_bytes(), "{fmt:?}");
     assert_eq!(
         ws.read("fine.silt"),
@@ -697,7 +697,9 @@ fn assert_too_deep(label: &str, src: &str) {
         let what = format!("silt {subcommand}");
         let out = ws.silt(&[subcommand, MAIN]);
         assert_ended_cleanly(label, &what, &out);
-        assert_eq!(out.code, Some(1), "{label}: `{what}` must fail\n{out:?}");
+        // (fmt says 2 when it cannot do its job, 1 only "not formatted".)
+        let code = if subcommand == "fmt" { 2 } else { 1 };
+        assert_eq!(out.code, Some(code), "{label}: `{what}` must fail\n{out:?}");
         assert!(
             out.stderr.contains("error[parse]") && out.stderr.contains("expression is too deep"),
             "{label}: `{what}` must report the expression as too deep\n{out:?}"
