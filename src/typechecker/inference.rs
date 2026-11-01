@@ -1607,12 +1607,23 @@ impl TypeChecker {
                 let bound = (traits.iter().copied())
                     .find(|t| has_trait(self, *t, &held))
                     .unwrap_or(traits[0]);
+                let why = match self.of_constructors_trait(bound) {
+                    // (The one trait is of type constructors, which a call
+                    // never makes a parameter owe.)
+                    true => format!(
+                        "is read as a field, since a trait of type constructors ('{}') is not \
+                         inferred",
+                        self.show_trait(bound)
+                    ),
+                    false => format!(
+                        "can be the method of {}, so it is read as a field",
+                        of.join(" or of ")
+                    ),
+                };
                 (
                     format!(
                         "'{function}' takes a record with a field `{method}` as `{param}`, not the \
-                         type `{shown}`: `{call}` in {place} can be the method of {}, so it is read as a \
-                         field",
-                        of.join(" or of ")
+                         type `{shown}`: `{call}` in {place} {why}"
                     ),
                     match self.of_constructors_trait(bound) {
                         // (A type constructor is written with its type
