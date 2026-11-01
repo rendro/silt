@@ -72,6 +72,27 @@ fn system_time_to_option_datetime(t: Result<SystemTime, std::io::Error>) -> Valu
     Value::variant(bv::SOME, [make_datetime(dt.naive_utc())])
 }
 
+/// Whether the paths `a` and `b` name one file: on Unix the same device
+/// and inode (a hard link too), elsewhere the same canonical path. A
+/// path that does not exist names no file.
+fn same_file(a: &str, b: &str) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        match (std::fs::metadata(a), std::fs::metadata(b)) {
+            (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+            _ => false,
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+            (Ok(a), Ok(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
 /// Maximum number of entries that may be materialized into a single
 /// `fs.walk` / `fs.glob` result list. Mirrors the philosophy of
 /// `MAX_COLLECTION_LEN` in `src/value/list.rs`: keep recursive traversal
@@ -278,7 +299,17 @@ pub(crate) mod fs {
             result(std::fs::rename(from, to), from, unit)
         }
 
+        // A copy of a file onto itself would empty it (the destination
+        // is truncated before the source is read): it is refused, and
+        // nothing is written.
         fn copy(from: &str, to: &str) -> Value {
+            if same_file(from, to) {
+                let same = std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "source and destination are the same file",
+                );
+                return result(Err::<u64, _>(same), from, unit);
+            }
             result(std::fs::copy(from, to), from, unit)
         }
 
