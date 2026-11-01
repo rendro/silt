@@ -1012,6 +1012,55 @@ mod tests {
         assert_eq!(value(&mut repl, "shout(n)"), "i!");
     }
 
+    /// `json.Decode` impls for two instantiations of one generic type,
+    /// written in two entries: each decodes its own, the first before and
+    /// after the second is written, and another instantiation has none.
+    #[test]
+    fn decode_impls_for_two_instantiations_in_two_entries() {
+        let mut repl = repl();
+        let setup = [
+            "import json",
+            "type Box(a) { v: a }",
+            "trait json.Decode for Box(Int) {\n  fn decode(v: json.Value) -> Result(Self, json.JsonError) { Ok(Box { v: 1 }) }\n}",
+        ];
+        for entry in setup {
+            let evaluation = repl.eval(entry);
+            assert!(
+                evaluation.committed,
+                "`{entry}` must run: {:?}",
+                evaluation.diagnostics
+            );
+        }
+        assert_eq!(
+            value(&mut repl, "json.parse(\"1\", Box(Int))"),
+            "Ok(Box {v: 1})"
+        );
+        let evaluation = repl.eval(
+            "trait json.Decode for Box(String) {\n  fn decode(v: json.Value) -> Result(Self, json.JsonError) { Ok(Box { v: \"s\" }) }\n}",
+        );
+        assert!(evaluation.committed, "{:?}", evaluation.diagnostics);
+        assert_eq!(
+            value(&mut repl, "json.parse(\"1\", Box(String))"),
+            "Ok(Box {v: s})"
+        );
+        assert_eq!(
+            value(&mut repl, "json.parse(\"1\", Box(Int))"),
+            "Ok(Box {v: 1})"
+        );
+        assert_eq!(
+            value(&mut repl, "Box(String).decode(json.Null)"),
+            "Ok(Box {v: s})"
+        );
+        let evaluation = repl.eval("json.parse(\"1\", Box(Bool))");
+        assert!(!evaluation.committed);
+        assert_eq!(
+            (evaluation.diagnostics.iter())
+                .map(|d| d.message.clone())
+                .collect::<Vec<_>>(),
+            ["type 'Box(Bool)' does not implement trait 'json.Decode'"]
+        );
+    }
+
     /// A top-level `let` of a method that makes `Self` through a generic
     /// type names the type with its arguments (`Box(Int).mk`), so its
     /// type is the entry's own: through the bare type (`Box.mk`) it is

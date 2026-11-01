@@ -3012,10 +3012,12 @@ impl TypeChecker {
             return *key;
         }
         let written = self.impl_written_args(ti, false);
-        // (A trait whose method shows, encodes or decodes a value at any
-        // depth is reached by the value's type alone, whatever its type
-        // arguments: of it, a type has one impl.)
-        let by_type = (self.impl_trait(ti)).is_some_and(Self::reached_at_any_depth);
+        // (A trait whose method shows or encodes a value at any depth is
+        // reached by the value's type alone, whatever its type arguments:
+        // of it, a type has one impl. A decoder is given the type in
+        // full: each instantiation may have its own `json.Decode` impl.)
+        let by_type = (self.impl_trait(ti))
+            .is_some_and(|tr| Self::reached_at_any_depth(tr) && !tr.is_builtin("Decode"));
         let instance = (written.head.as_ref()).filter(|head| !by_type && self.is_instance(head));
         let key = self.impl_args_key(&written.args, instance);
         self.impl_args_keys.insert(ti.span, key);

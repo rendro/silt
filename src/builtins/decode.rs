@@ -258,7 +258,7 @@ pub(crate) struct Reader<'a> {
 /// a type with one.
 struct Impls<'a> {
     /// The slot of the `decode` the program wrote for a type.
-    written: &'a dyn Fn(TypeId) -> Option<u16>,
+    written: &'a dyn Fn(TypeId, &[FieldType]) -> Option<u16>,
     holes: RefCell<Holes>,
 }
 
@@ -302,7 +302,7 @@ impl<'a> Reader<'a> {
     /// a part of a type with one.
     pub(crate) fn with_impls(
         rt: &'a Runtime,
-        written: &'a dyn Fn(TypeId) -> Option<u16>,
+        written: &'a dyn Fn(TypeId, &[FieldType]) -> Option<u16>,
         holes: Holes,
     ) -> Reader<'a> {
         Reader {
@@ -314,11 +314,12 @@ impl<'a> Reader<'a> {
         }
     }
 
-    /// Whether a written impl decodes values of the type `id`.
-    fn written(&self, id: TypeId) -> bool {
+    /// Whether a written impl decodes values of the type `id` at the type
+    /// arguments `args`.
+    fn written(&self, id: TypeId, args: &[FieldType]) -> bool {
         self.impls
             .as_ref()
-            .is_some_and(|impls| (impls.written)(id).is_some())
+            .is_some_and(|impls| (impls.written)(id, args).is_some())
     }
 
     /// The value of the part `doc`, `at` a path, of the type `expected`
@@ -332,12 +333,13 @@ impl<'a> Reader<'a> {
         doc: &D,
         at: &At,
     ) -> Option<Result<Value, Error>> {
-        let (FieldType::Record(id) | FieldType::Enum(id) | FieldType::Applied(id, _)) = expected
-        else {
-            return None;
+        let (id, args) = match expected {
+            FieldType::Record(id) | FieldType::Enum(id) => (id, &[][..]),
+            FieldType::Applied(id, args) => (id, args.as_slice()),
+            _ => return None,
         };
         let impls = self.impls.as_ref()?;
-        let slot = (impls.written)(*id)?;
+        let slot = (impls.written)(*id, args)?;
         Some(match &mut *impls.holes.borrow_mut() {
             Holes::Collect(holes) => json_part(doc, at).map(|json| {
                 let ty = match expected {
@@ -452,9 +454,9 @@ fn variant_field_message(ty: &str, variant: &str, declared: &str) -> std::string
 /// (not counting the fields of the record types it names).
 fn names_enum(rt: &Reader, field_type: &FieldType) -> bool {
     match field_type {
-        FieldType::Enum(id) => !rt.written(*id),
-        FieldType::Applied(id, _) => {
-            !rt.written(*id) && rt.type_info(*id).is_some_and(|ty| decodable_enum(&ty))
+        FieldType::Enum(id) => !rt.written(*id, &[]),
+        FieldType::Applied(id, args) => {
+            !rt.written(*id, args) && rt.type_info(*id).is_some_and(|ty| decodable_enum(&ty))
         }
         FieldType::List(t) | FieldType::Option(t) | FieldType::Map(t) => names_enum(rt, t),
         FieldType::Tuple(ts) => ts.iter().any(|t| names_enum(rt, t)),
@@ -538,7 +540,7 @@ fn lacking_in(
     seen: &mut Seen,
 ) -> Option<(Place, std::string::String)> {
     let instance = (ty.id, args.to_vec(), family);
-    if seen.contains(&instance) || too_deep(args) || rt.written(ty.id) {
+    if seen.contains(&instance) || too_deep(args) || rt.written(ty.id, args) {
         return None;
     }
     seen.push(instance);
