@@ -257,11 +257,12 @@ builtins! {
         b.ends_with(suffix)
     }
 
-    fn split(b: Bytes, sep: Bytes) -> Result<Vec<Value>, VmError> {
+    fn split(b: Bytes, sep: Bytes) -> Vec<Value> {
+        // An empty separator splits into the single bytes, with no
+        // empty piece at either end, as `string.split` splits a string
+        // into its characters.
         if sep.is_empty() {
-            return Err(VmError::new(
-                "bytes.split: separator must be non-empty".into(),
-            ));
+            return b.as_slice().iter().map(|byte| bytes(vec![*byte])).collect();
         }
         // Mirror Rust's `str::split` / silt's `string.split` on empty input:
         // splitting an empty `b` yields a list with a single empty-bytes element.
@@ -272,6 +273,6 @@ builtins! {
             rest = &rest[at + sep.len()..];
         }
         parts.push(bytes(rest.to_vec()));
-        Ok(parts)
+        parts
     }
 }
