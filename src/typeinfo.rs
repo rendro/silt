@@ -269,6 +269,26 @@ impl FieldType {
         }
     }
 
+    /// Whether the type `actual` is one the impl written for the type
+    /// `self` stands for, `self` being a type argument of its type
+    /// (`Int` of `trait json.Decode for Box(Int)`): each type parameter
+    /// of the impl (`Param`) stands for any type.
+    pub fn fits(&self, actual: &FieldType) -> bool {
+        match (self, actual) {
+            (FieldType::Param(_), _) => true,
+            (FieldType::List(p), FieldType::List(a))
+            | (FieldType::Option(p), FieldType::Option(a))
+            | (FieldType::Map(p), FieldType::Map(a)) => p.fits(a),
+            (FieldType::Tuple(ps), FieldType::Tuple(as_)) => {
+                ps.len() == as_.len() && ps.iter().zip(as_).all(|(p, a)| p.fits(a))
+            }
+            (FieldType::Applied(p, ps), FieldType::Applied(a, as_)) => {
+                p == a && ps.len() == as_.len() && ps.iter().zip(as_).all(|(p, a)| p.fits(a))
+            }
+            (pattern, actual) => pattern == actual,
+        }
+    }
+
     /// The type with each type parameter in it the type argument at its
     /// place in `args`: a field of a generic type at those arguments.
     /// (A type without parameters is itself.)

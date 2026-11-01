@@ -1,0 +1,20 @@
+-- cmd: check
+-- exit: 1
+-- With impls for some instantiations of a generic type only, another
+-- instantiation (`Box(Bool)`) has none: refused directly, in a field, by
+-- `Box(Bool).decode`, and for a `Box(t)` a generic function decodes.
+import json
+type Box(a) { v: a }
+trait json.Decode for Box(Int) {
+  fn decode(v: json.Value) -> Result(Self, json.JsonError) { Ok(Box { v: 1 }) }
+}
+trait json.Decode for Box(String) {
+  fn decode(v: json.Value) -> Result(Self, json.JsonError) { Ok(Box { v: "s" }) }
+}
+type R2 { b: Box(Bool) }
+fn gen(s: String, type t) -> Result(Box(t), json.JsonError) where t: json.Decode { json.parse(s, Box(t)) }
+fn main() {
+  println(json.parse("\{}", Box(Bool)))
+  println(json.parse("\{\"b\": 5}", R2))
+  println(Box(Bool).decode(json.Null))
+}

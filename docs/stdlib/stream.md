@@ -205,8 +205,11 @@ fn main() {
 - **Errors flow through the stream.** File sources emit
   `Channel(Result(_, IoError))`; TCP sources emit
   `Channel(Result(_, TcpError))`. Each chunk can fail independently;
-  consumers pattern-match. To change only the `Ok` values and pass each
-  `Err(_)` through, map with `result.map`:
+  consumers pattern-match. A line that is not UTF-8 is an error of
+  `file_lines` and `tcp_lines` alike, and their last item: the source
+  ends there, and `tcp_lines` shuts its connection down. No byte is
+  replaced. To change only the `Ok` values and pass each `Err(_)`
+  through, map with `result.map`:
   `ch |> stream.map { r -> result.map(r, f) }`.
 - **No async/await.** Stages are tasks of the silt scheduler; file and
   socket reads run on the I/O pool while the stage waits.

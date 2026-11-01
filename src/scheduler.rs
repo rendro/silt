@@ -2285,13 +2285,20 @@ fn waits_of_the_others(own: &[&Waiting<'_, Sleeper>], main: TaskId) -> Vec<(Stri
                 .on
                 .iter()
                 .map(|source| match source {
-                    // A stream stage receives only from its inputs.
-                    Source::Recv(_) if stage.is_some() => "for its input".to_string(),
+                    // A stream stage receives from its inputs; a channel
+                    // that its function receives from is named.
+                    Source::Recv(channel)
+                        if stage.is_some_and(|stage| stage.inputs.contains(&channel.id())) =>
+                    {
+                        "for its input".to_string()
+                    }
                     Source::Recv(channel) => format!("to receive from <channel:{}>", channel.id()),
-                    // A stream stage sends only on its output, and waits
-                    // there for its reader to ask for a value or to
-                    // make room.
-                    Source::Send(_) | Source::Demand(_) if stage.is_some() => {
+                    // A stream stage sends on its output, and waits there
+                    // for its reader to ask for a value or to make room;
+                    // a channel that its function sends to is named.
+                    Source::Send(channel) | Source::Demand(channel)
+                        if stage.is_some_and(|stage| stage.output == channel.id()) =>
+                    {
                         "for its output to be read".to_string()
                     }
                     Source::Send(channel) | Source::Demand(channel) => {
@@ -2306,7 +2313,10 @@ fn waits_of_the_others(own: &[&Waiting<'_, Sleeper>], main: TaskId) -> Vec<(Stri
             // (A stage that waits on several inputs waits for its input.)
             on.dedup();
             let on = on.join(", or ");
-            if let Some(StageOf { name, source, at }) = stage {
+            if let Some(&StageOf {
+                name, source, at, ..
+            }) = stage
+            {
                 // A source is told apart from the stages after it, as
                 // the docs of `stream` tell them apart.
                 let what = match source {

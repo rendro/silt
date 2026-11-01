@@ -1,0 +1,18 @@
+-- exit: 1
+-- repeat: 5
+-- stderr-contains: deadlock on main thread: channel receive with no counterparty
+-- stderr-contains: the `stream.unfold` source at r4_f2__a_source_whose_function_receives_names_the_channel.silt:14:11 waits to receive from <channel:0>
+-- stderr-not-contains: waits for its input
+-- A source has no input: the deadlock report names the channel that its
+-- function waits on.
+import channel
+import option
+import stream
+
+fn main() {
+  let never = channel.new(0)
+  let s = stream.unfold(0) { n ->
+    channel.receive(never) |> option.map { v -> (v, n) }
+  }
+  println(stream.collect(s))
+}

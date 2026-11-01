@@ -94,6 +94,39 @@ impl Tables {
             .collect()
     }
 
+    /// The type arguments of the instantiation of `ty` the `json.Decode`
+    /// impl at `args` is written for (`[Int]` of `trait json.Decode for
+    /// Box(Int)`) as the decoders see them, each type parameter of the
+    /// impl a `Param` (any type); `None` for an impl for every
+    /// instantiation.
+    pub(crate) fn decoded_instance(
+        &self,
+        ty: crate::defs::TypeId,
+        args: crate::defs::ImplArgs,
+    ) -> Option<Vec<FieldType>> {
+        if args == crate::defs::ImplArgs::none() {
+            return None;
+        }
+        let (_, self_ty) = (self.impl_self_types.iter())
+            .find(|((tr, head, at), _)| tr.is_builtin("Decode") && head.id == ty && *at == args)?;
+        let Type::Generic(_, type_args) = self_ty else {
+            return None;
+        };
+        let mut params: Vec<Type> = Vec::new();
+        for var in type_args.iter().flat_map(crate::types::free_vars_in) {
+            if !params.contains(&Type::Var(var)) {
+                params.push(Type::Var(var));
+            }
+        }
+        let pattern = (type_args.iter())
+            .map(|arg| {
+                (self.decoded_field_type(arg, &params, &mut Vec::new()))
+                    .unwrap_or_else(|part| FieldType::Unsupported(part.to_string()))
+            })
+            .collect();
+        Some(pattern)
+    }
+
     /// The type `ty` of a record field as the decoders see it, each type
     /// variable among `params` the parameter at its place (a generic
     /// type's field, `v: a` of `type Box(a)`).

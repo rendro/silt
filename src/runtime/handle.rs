@@ -1127,13 +1127,17 @@ impl Drop for Ended {
 
 /// The stream stage a task runs: its name (`stream.map`), for the
 /// report of a failure that nobody read, whether it is a source (a stage
-/// with no input), and the place of the call that started it, if it has
-/// one in the program.
-#[derive(Clone, Copy, Debug)]
+/// with no input), the place of the call that started it, if it has
+/// one in the program, and the ids of its own channels, its inputs and
+/// its output, which the deadlock report tells apart from a channel
+/// that the stage's function waits on.
+#[derive(Clone, Debug)]
 pub struct StageOf {
     pub name: &'static str,
     pub source: bool,
     pub at: Option<Span>,
+    pub inputs: Arc<[usize]>,
+    pub output: usize,
 }
 
 /// Handle to a spawned task. Thread-safe — shared between spawner and worker.
@@ -1213,12 +1217,12 @@ impl TaskHandle {
 
     /// The name of the stream stage the task runs, if it runs one.
     pub fn stage(&self) -> Option<&'static str> {
-        self.stage.map(|stage| stage.name)
+        self.stage.as_ref().map(|stage| stage.name)
     }
 
     /// The stream stage the task runs, if it runs one.
-    pub fn stage_of(&self) -> Option<StageOf> {
-        self.stage
+    pub fn stage_of(&self) -> Option<&StageOf> {
+        self.stage.as_ref()
     }
 
     /// The handle, for a task that is over at `deadline`. `late` is the

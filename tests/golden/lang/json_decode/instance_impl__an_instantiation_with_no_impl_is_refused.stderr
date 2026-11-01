@@ -1,0 +1,24 @@
+error[type]: type 'Box(t)' does not implement trait 'json.Decode'
+ --> instance_impl__an_instantiation_with_no_impl_is_refused.silt:15:98
+    |
+ 15 | fn gen(s: String, type t) -> Result(Box(t), json.JsonError) where t: json.Decode { json.parse(s, Box(t)) }
+    |                                                                                                  ^^^^^^ type 'Box(t)' does not implement trait 'json.Decode'
+
+error[type]: type 'Box(Bool)' does not implement trait 'json.Decode'
+ --> instance_impl__an_instantiation_with_no_impl_is_refused.silt:17:29
+    |
+ 17 |   println(json.parse("\{}", Box(Bool)))
+    |                             ^^^^^^^^^ type 'Box(Bool)' does not implement trait 'json.Decode'
+
+error[type]: `json.parse` cannot decode `R2`: field `b` has type `Box(Bool)`, which has no decoder
+ --> instance_impl__an_instantiation_with_no_impl_is_refused.silt:18:37
+    |
+ 18 |   println(json.parse("\{\"b\": 5}", R2))
+    |                                     ^^ `json.parse` cannot decode `R2`: field `b` has type `Box(Bool)`, which has no decoder
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: type 'Box(Bool)' does not implement trait 'json.Decode'
+ --> instance_impl__an_instantiation_with_no_impl_is_refused.silt:19:11
+    |
+ 19 |   println(Box(Bool).decode(json.Null))
+    |           ^^^^^^^^^^^^^^^^ type 'Box(Bool)' does not implement trait 'json.Decode'
