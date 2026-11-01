@@ -2742,6 +2742,12 @@ impl TypeChecker {
                 _ => {
                     let callee = origin.callee;
                     self.refuse_type_without_value(key, &resolved, None, callee, origin.span);
+                    // (A variable of a body with no annotations is known
+                    // once every body is: `refuse_unheld_full_types`.)
+                    if !free_vars_in(&resolved).is_empty() && self.carries_full_type(key) {
+                        let at = (resolved.clone(), key, callee, origin.span, self.passing_on);
+                        self.unheld_full_calls.push(at);
+                    }
                 }
             }
         }
