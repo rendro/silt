@@ -1,0 +1,35 @@
+-- An alias of an instantiation with an impl of its own (`type BI =
+-- Box(Int)`) reaches that impl: `BI.decode(v)` called, as a value, and
+-- through a `let` of the type, as `Box(Int).decode(v)` does.
+import json
+
+type Box(a) {
+  v: a,
+}
+
+trait json.Decode for Box(Int) {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) { Ok(Box { v: 1000 }) }
+}
+
+trait json.Decode for Box(String) {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) { Ok(Box { v: "s" }) }
+}
+
+type BI = Box(Int)
+
+type BS = Box(String)
+
+fn main() {
+  let b = json.Object(#{ "v": json.Int(1) })
+  println(BI.decode(b))
+  let g = BI.decode
+  println(g(b))
+  println(BS.decode(b))
+  let h = BS.decode
+  println(h(b))
+  let f = Box(Int).decode
+  println(f(b))
+  let t = BS
+  println(t.decode(b))
+  println(json.decode(b, BI))
+}

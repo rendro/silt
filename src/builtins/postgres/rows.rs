@@ -279,12 +279,12 @@ impl RowType {
         impls: &Globals,
     ) -> Result<RowType, VmError> {
         if let Type::Named(info) = &ty
-            && let Some(slot) = impls.decoded(info.id)
+            && let Some(slot) = impls.decoded(info.id, &[])
         {
             return Ok(RowType::Decoded(slot, Value::Unit));
         }
-        if let Type::Field(field @ FieldType::Applied(id, _)) = &ty
-            && let Some(slot) = impls.decoded(*id)
+        if let Type::Field(field @ FieldType::Applied(id, args)) = &ty
+            && let Some(slot) = impls.decoded(*id, args)
         {
             return Ok(RowType::Decoded(slot, decode::descriptor(rt, field)));
         }
@@ -500,7 +500,7 @@ impl Plan {
         row: &RowType,
         columns: &[tokio_postgres::Column],
     ) -> Result<Plan, Value> {
-        let written = |id| impls.decoded(id);
+        let written = |id, args: &[FieldType]| impls.decoded(id, args);
         let r = &Reader::with_impls(rt, &written, Holes::Collect(Vec::new()));
         let kind = match row {
             RowType::Value | RowType::Decoded(..) => {
@@ -596,7 +596,7 @@ impl Plan {
             Ok(Raw(raw)) => Ok(raw),
             Err(e) => Err(super::other_error(format!("postgres: {e}"))),
         };
-        let written = |id| self.impls.decoded(id);
+        let written = |id, args: &[FieldType]| self.impls.decoded(id, args);
         match &self.kind {
             PlanKind::Record { ty, fields } => {
                 let mut values = Vec::with_capacity(fields.len());
@@ -740,7 +740,7 @@ pub(super) fn reaches_impl(rt: &Runtime, impls: &Globals, row: &RowType) -> bool
             continue;
         }
         seen.push(id);
-        if impls.decoded(id).is_some() {
+        if impls.decoded_any(id) {
             return true;
         }
         let Some(info) = rt.type_info(id) else {
@@ -862,7 +862,7 @@ impl Partial {
                 error,
             } => (ty, values, cells, error),
         };
-        let written = |id| impls.decoded(id);
+        let written = |id, args: &[FieldType]| impls.decoded(id, args);
         let mut given = given.into_iter();
         for cell in cells {
             let parts: Vec<_> = given.by_ref().take(cell.holes.len()).collect();

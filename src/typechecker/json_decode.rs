@@ -138,6 +138,18 @@ impl TypeChecker {
         !self.by_structure(TraitKey::builtin("Decode"), head)
     }
 
+    /// Whether a `json.Decode` impl the program wrote decodes `head` at
+    /// the type arguments `args`: its impl for every instantiation, or
+    /// one for an instantiation `args` could be (`Box(Int)`).
+    pub(super) fn has_decode_impl_at(&self, head: TypeRef, args: &[Type]) -> bool {
+        let tr = TraitKey::builtin("Decode");
+        self.has_decode_impl(head)
+            && (!self.has_instances(tr, head) || {
+                let ty = Type::Generic(head, args.to_vec());
+                !self.impls_fitting(tr, head, Some(&ty), &[]).is_empty()
+            })
+    }
+
     /// The use `origin` owes `json.Decode` of `ty`, a type with no
     /// written impl of it, for `asker`: refused, if the decoder has no
     /// value of the type, once the module's bodies are checked.

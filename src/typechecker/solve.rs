@@ -2179,12 +2179,15 @@ impl TypeChecker {
         }) else {
             return false;
         };
+        // (Of impls for some instantiations, `json.Decode for Box(Int)`,
+        // each has a row of its own.)
         !self.written.contains(&(trait_name, head))
-            && self
-                .tables
-                .impl_methods
+            && (self.tables.impl_methods)
                 .get(head, intern(method), trait_name)
                 .is_none()
+            && (self.tables.impl_methods)
+                .args_of(head, intern(method), trait_name)
+                .is_empty()
     }
 
     /// What a message says of `ty` that lacks the trait `tr` (at

@@ -122,7 +122,7 @@ impl TypeChecker {
         // decoder has: `undecodable_field`.)
         if seen.contains(&instance)
             || super::decodable::too_deep(args)
-            || self.has_decode_impl(head)
+            || self.has_decode_impl_at(head, args)
         {
             return None;
         }
