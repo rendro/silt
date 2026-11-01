@@ -1,0 +1,25 @@
+import float
+import int
+import list
+
+-- InvalidDigit(offset) is the first byte of the text as written that
+-- cannot continue the number, or the end of the number where it stops
+-- short; a lone sign is the same error for both parsers.
+fn main() {
+  ["1_000", "  12x", "--5", "+", "-", "12 ", " -", "", "  "]
+  |> list.each { s ->
+    match int.parse(s) {
+      Ok(n) -> println("int '{s}': Ok({n})")
+      Err(int.InvalidDigit(at)) -> println("int '{s}': InvalidDigit({at})")
+      Err(e) -> println("int '{s}': {Error.message(e)}")
+    }
+  }
+  ["1_000.5", "  1_000.5 ", "1.5.5", "1e5e5", "1e", "1e+", ".", ".e5", "0x10", "+", "-", " 2.5x", "", " "]
+  |> list.each { s ->
+    match float.parse(s) {
+      Ok(f) -> println("float '{s}': Ok({f})")
+      Err(float.InvalidDigit(at)) -> println("float '{s}': InvalidDigit({at})")
+      Err(e) -> println("float '{s}': {Error.message(e)}")
+    }
+  }
+}

@@ -5,36 +5,36 @@ use crate::typeinfo::bv;
 use crate::value::{Float, Value};
 use crate::vm::VmError;
 
-/// Locate the byte offset of the first character in `s` that could not
-/// plausibly be part of a numeric literal (base-10 int or decimal float).
-/// Used to build `InvalidDigit(offset)` variants when Rust's
-/// `ParseIntError` / `ParseFloatError` don't expose a native offset.
-///
-/// `allow_decimal` toggles float-only characters (`.`, `e`, `E`). The
-/// scan tolerates a leading sign and underscore separators since Rust's
-/// float parser allows neither — the float path re-validates — but the
-/// helper is purposefully permissive so the returned offset is the
-/// first byte the parser itself would have rejected, not a pre-filter
-/// stricter than `parse::<f64>`. Falls through to `0` for strings that
-/// look fully numeric; the caller is expected to treat `0` as a
-/// "couldn't localize" sentinel.
-fn find_first_invalid_digit(s: &str, allow_decimal: bool) -> usize {
-    let bytes = s.as_bytes();
-    let mut i = 0;
-    if i < bytes.len() && (bytes[i] == b'+' || bytes[i] == b'-') {
-        i += 1;
+/// Where the number in `s` goes wrong, for `InvalidDigit(offset)`: the
+/// byte offset, in `s` as written (before the whitespace around it is
+/// trimmed), of the first byte that cannot continue the number, or the
+/// length of the trimmed number where it stops short (`"1e"` is 2, a
+/// lone sign 1). `decimal` reads the grammar of `float.parse` (a
+/// fraction and an exponent), else the one of `int.parse` (a sign and
+/// digits).
+fn invalid_digit_offset(s: &str, decimal: bool) -> i64 {
+    let lead = s.len() - s.trim_start().len();
+    let bytes = s.trim().as_bytes();
+    let digits = |from: usize| {
+        bytes[from..]
+            .iter()
+            .take_while(|b| b.is_ascii_digit())
+            .count()
+    };
+    let mut at = usize::from(matches!(bytes.first(), Some(b'+' | b'-')));
+    let whole = digits(at);
+    at += whole;
+    let mut fraction = 0;
+    if decimal && bytes.get(at) == Some(&b'.') {
+        fraction = digits(at + 1);
+        at += 1 + fraction;
     }
-    while i < bytes.len() {
-        let b = bytes[i];
-        let ok = b.is_ascii_digit()
-            || b == b'_'
-            || (allow_decimal && (b == b'.' || b == b'e' || b == b'E' || b == b'+' || b == b'-'));
-        if !ok {
-            return i;
-        }
-        i += 1;
+    if whole + fraction > 0 && decimal && matches!(bytes.get(at), Some(b'e' | b'E')) {
+        at += 1;
+        at += usize::from(matches!(bytes.get(at), Some(b'+' | b'-')));
+        at += digits(at);
     }
-    0
+    (lead + at) as i64
 }
 
 /// Classify a `ParseIntError` into the matching `IntError` variant.
@@ -50,24 +50,22 @@ fn classify_int_parse_error(err: &std::num::ParseIntError, s: &str) -> Value {
         // to `InvalidDigit(offset)`: std doesn't promise IntErrorKind
         // stays exhaustive, so the `_` arm is not dead code even today.
         _ => {
-            let offset = find_first_invalid_digit(s.trim(), false) as i64;
+            let offset = invalid_digit_offset(s, false);
             Value::variant(bv::INT_INVALID_DIGIT, [Value::Int(offset)])
         }
     }
 }
 
-/// Classify a `ParseFloatError` into the matching `FloatError` variant.
-/// `ParseFloatError` doesn't expose a stable discriminant, so we
-/// fall back to rescanning the input: empty → `Empty`, otherwise
-/// `InvalidDigit(offset)`. (An out-of-range literal parses, to an
-/// infinity: `float.parse` tells it apart itself.)
-fn classify_float_parse_error(_err: &std::num::ParseFloatError, s: &str) -> Value {
-    let trimmed = s.trim();
-    // A string that's only a sign has no digits → treat as empty.
-    if trimmed.is_empty() || trimmed == "+" || trimmed == "-" {
+/// Classify a `ParseFloatError` into the matching `FloatError` variant:
+/// a text of nothing but whitespace is `Empty`, any other one
+/// `InvalidDigit(offset)` (a lone sign too, as for `int.parse`).
+/// (An out-of-range literal parses, to an infinity: `float.parse` tells
+/// it apart itself.)
+fn classify_float_parse_error(s: &str) -> Value {
+    if s.trim().is_empty() {
         return Value::variant(bv::FLOAT_EMPTY, []);
     }
-    let offset = find_first_invalid_digit(trimmed, true) as i64;
+    let offset = invalid_digit_offset(s, true);
     Value::variant(bv::FLOAT_INVALID_DIGIT, [Value::Int(offset)])
 }
 
@@ -223,7 +221,7 @@ pub(crate) mod float {
                         Value::variant(bv::ERR, [err])
                     }
                 },
-                Err(e) => Value::variant(bv::ERR, [classify_float_parse_error(&e, s)]),
+                Err(_) => Value::variant(bv::ERR, [classify_float_parse_error(s)]),
             }
         }
 
