@@ -3,6 +3,7 @@ error[type]: type 'mail.Email' cannot be encoded outside module 'mail': it is op
     |
  24 |   println(both(mail.mk("a")))
     |                ^^^^^^^^^^^^ type 'mail.Email' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = note: `both` passes it to `json.stringify`
   = help: encode it inside module 'mail', or write `trait json.Encode for Email` there
 
 error[type]: type 'mail.Email' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
@@ -10,4 +11,5 @@ error[type]: type 'mail.Email' cannot be encoded outside module 'mail': it is op
     |
  25 |   println(third(mail.mk("b")))
     |                 ^^^^^^^^^^^^ type 'mail.Email' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = note: `third` passes it to `helper.show`, which passes it to `json.stringify`
   = help: encode it inside module 'mail', or write `trait json.Encode for Email` there

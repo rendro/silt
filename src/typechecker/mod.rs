@@ -193,8 +193,18 @@ pub struct TypeChecker {
     pub(super) encode_passing: Option<TyVar>,
     pub(super) encode_passed: HashMap<evidence::EvRef, TyVar>,
     /// The opaque encodings refused at a use of such a bound, with the
-    /// variable: decided once the module's bodies are, by its owner.
-    pub(super) encode_deferred: Vec<(Type, Span, TyVar)>,
+    /// variable and what the use calls: decided once the module's bodies
+    /// are, by its owner.
+    pub(super) encode_deferred: Vec<(Type, Span, TyVar, Option<Symbol>)>,
+    /// While a use owes the `json.Encode` bound of another module's
+    /// definition (or an earlier REPL input's): what that bound hands
+    /// its type to (`TypeTables::def_encoders`); and so, by the evidence
+    /// of what the use owes. A note of a refusal names the way.
+    pub(super) encode_asked: Option<Asked>,
+    pub(super) encode_asked_at: HashMap<evidence::EvRef, Asked>,
+    /// While such a definition is instantiated: its
+    /// `TypeTables::def_encoders`.
+    pub(super) def_encoders_now: Option<HashMap<TyVar, Asked>>,
     /// While a definition of another module (or an earlier REPL input)
     /// is instantiated: the owners of each of its `json.Decode` and
     /// `json.Encode` bounds that has some (`TypeTables::def_owners`).
@@ -208,6 +218,9 @@ pub struct TypeChecker {
     pub(super) decoded_owner: HashMap<Span, Vec<crate::session::ModuleId>>,
     /// As `decoded_owner`, of what is encoded at a place.
     pub(super) encoded_owner: HashMap<Span, Vec<crate::session::ModuleId>>,
+    /// And what another module's bound there hands it to (`encode_asked`),
+    /// for a type variable inside what is encoded.
+    pub(super) encoded_asked: HashMap<Span, Asked>,
     /// The variable of each `json.Decode` bound a trait declares for a
     /// method, with the variables it is in the module's impls of the
     /// method: what the trait's bound asks for is what they all ask for.
@@ -669,10 +682,14 @@ impl TypeChecker {
             encode_passing: None,
             encode_passed: HashMap::new(),
             encode_deferred: Vec::new(),
+            encode_asked: None,
+            encode_asked_at: HashMap::new(),
+            def_encoders_now: None,
             def_owners_now: None,
             scheme_owners: HashMap::new(),
             decoded_owner: HashMap::new(),
             encoded_owner: HashMap::new(),
+            encoded_asked: HashMap::new(),
             bound_impls: HashMap::new(),
             bound_methods: HashMap::new(),
             decode_aliases: HashMap::new(),

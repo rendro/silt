@@ -439,6 +439,11 @@ pub struct Tables {
     /// in another module (or a later REPL input) gives it.
     pub(super) def_owners:
         HashMap<crate::defs::DefId, HashMap<(TyVar, bool), Vec<crate::session::ModuleId>>>,
+    /// Of each function of a module (or a REPL input) whose `json.Encode`
+    /// bound on a variable of its scheme hands the type to an encoder:
+    /// the encoder and the functions on the way (`Asked::Through`), which
+    /// the note of a refusal in another module names.
+    pub(super) def_encoders: HashMap<crate::defs::DefId, HashMap<TyVar, crate::types::Asked>>,
     /// Maps `(trait_name, target_head)` → the resolved trait args supplied
     /// at impl site. For `trait TryInto(Float) for String { ... }` this
     /// stores `(TryInto, String) -> [Float]`. `verify_trait_obligation`
