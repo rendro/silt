@@ -15,6 +15,10 @@ use super::{
 };
 use crate::diagnostic::Diagnostic;
 
+/// The most ways an or-pattern under a guard is taken apart into (see
+/// [`Compiler::guarded_or_ways`]): each is compiled.
+const MAX_GUARDED_OR_WAYS: usize = 1024;
+
 impl Compiler<'_> {
     /// The declared record type the record pattern `pattern` names, if
     /// it names one (`Pt { x }`).
@@ -974,6 +978,264 @@ impl Compiler<'_> {
         }
 
         Ok(())
+    }
+
+    // ── A guard on an or-pattern ─────────────────────────────────
+
+    /// The ways the pattern of `arm` can match, when the arm has a guard
+    /// and an or-pattern in it binds names: one pattern for each choice
+    /// of alternatives, in order (`(x, _) | (_, x)` is `(x, _)`, then
+    /// `(_, x)`). The guard is tried with each way that matches, so it
+    /// sees each of the values the names can stand for. `None` when
+    /// there is one way.
+    pub(super) fn guarded_or_ways(
+        &self,
+        arm: &MatchArm,
+    ) -> Result<Option<Vec<Pattern>>, Diagnostic> {
+        if arm.guard.is_none() {
+            return Ok(None);
+        }
+        let count = Self::or_way_count(&arm.pattern);
+        if count <= 1 {
+            return Ok(None);
+        }
+        if count > MAX_GUARDED_OR_WAYS {
+            let limit = crate::bytecode::ops::Limit {
+                what: "alternatives of an or-pattern under a guard",
+                count,
+                max: MAX_GUARDED_OR_WAYS,
+            };
+            return Err(crate::bytecode::emit::limit_diagnostic(
+                limit,
+                arm.pattern.span,
+            ));
+        }
+        Ok(Some(Self::or_ways(&arm.pattern)))
+    }
+
+    /// How many ways [`Compiler::or_ways`] gives for `pattern`.
+    fn or_way_count(pattern: &Pattern) -> usize {
+        let product = |parts: &mut dyn Iterator<Item = &Pattern>| {
+            parts.fold(1usize, |ways, part| {
+                ways.saturating_mul(Self::or_way_count(part))
+            })
+        };
+        match &pattern.kind {
+            PatternKind::Or(alternatives) if !Self::pattern_binding_names(pattern).is_empty() => {
+                (alternatives.iter()).fold(0usize, |ways, alt| {
+                    ways.saturating_add(Self::or_way_count(alt))
+                })
+            }
+            PatternKind::Constructor { args, .. } => product(&mut args.iter()),
+            PatternKind::Tuple(parts) => product(&mut parts.iter()),
+            PatternKind::List(elems, _) => product(&mut elems.iter()),
+            PatternKind::Record { fields, .. } | PatternKind::AnonRecord { fields, .. } => {
+                product(&mut fields.iter().filter_map(|(_, _, part)| part.as_ref()))
+            }
+            PatternKind::Map(entries) => product(&mut entries.iter().map(|(_, part)| part)),
+            _ => 1,
+        }
+    }
+
+    /// The ways `pattern` can match: its or-patterns that bind names
+    /// taken apart, each alternative in its place, in order. A pattern
+    /// that is taken apart is tested in full (it is irrefutable only as
+    /// a whole).
+    fn or_ways(pattern: &Pattern) -> Vec<Pattern> {
+        if Self::or_way_count(pattern) <= 1 {
+            return vec![pattern.clone()];
+        }
+        // Every choice of a way for each part, the first part's slowest.
+        fn choices<T: Clone>(parts: Vec<Vec<T>>) -> Vec<Vec<T>> {
+            parts.into_iter().fold(vec![Vec::new()], |made, ways| {
+                made.iter()
+                    .flat_map(|chosen| {
+                        ways.iter().map(move |way| {
+                            let mut next = chosen.clone();
+                            next.push(way.clone());
+                            next
+                        })
+                    })
+                    .collect()
+            })
+        }
+        let rebuilt = |kind: PatternKind| Pattern {
+            kind,
+            irrefutable: false,
+            ..pattern.clone()
+        };
+        let ways = |parts: &[Pattern]| choices(parts.iter().map(Self::or_ways).collect());
+        // The ways of the fields of a record pattern, a shorthand field
+        // standing for itself.
+        let field_ways = |fields: &[(Symbol, Span, Option<Pattern>)]| {
+            let parts = (fields.iter())
+                .map(|(_, _, part)| match part {
+                    Some(part) => Self::or_ways(part).into_iter().map(Some).collect(),
+                    None => vec![None],
+                })
+                .collect();
+            (choices(parts).into_iter())
+                .map(|chosen| {
+                    (fields.iter().zip(chosen))
+                        .map(|((name, name_span, _), part)| (*name, *name_span, part))
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        };
+        match &pattern.kind {
+            PatternKind::Or(alternatives) => alternatives.iter().flat_map(Self::or_ways).collect(),
+            PatternKind::Tuple(parts) => (ways(parts).into_iter())
+                .map(|parts| rebuilt(PatternKind::Tuple(parts)))
+                .collect(),
+            PatternKind::List(elems, rest) => (ways(elems).into_iter())
+                .map(|elems| rebuilt(PatternKind::List(elems, rest.clone())))
+                .collect(),
+            PatternKind::Constructor {
+                qualifier,
+                name,
+                name_span,
+                args,
+            } => (ways(args).into_iter())
+                .map(|args| {
+                    rebuilt(PatternKind::Constructor {
+                        qualifier: qualifier.clone(),
+                        name: *name,
+                        name_span: *name_span,
+                        args,
+                    })
+                })
+                .collect(),
+            PatternKind::Record {
+                module,
+                name,
+                name_span,
+                fields,
+                has_rest,
+            } => (field_ways(fields).into_iter())
+                .map(|fields| {
+                    rebuilt(PatternKind::Record {
+                        module: module.clone(),
+                        name: *name,
+                        name_span: *name_span,
+                        fields,
+                        has_rest: *has_rest,
+                    })
+                })
+                .collect(),
+            PatternKind::AnonRecord { fields, rest } => (field_ways(fields).into_iter())
+                .map(|fields| {
+                    rebuilt(PatternKind::AnonRecord {
+                        fields,
+                        rest: *rest,
+                    })
+                })
+                .collect(),
+            PatternKind::Map(entries) => {
+                let parts: Vec<Pattern> = entries.iter().map(|(_, part)| part.clone()).collect();
+                (ways(&parts).into_iter())
+                    .map(|parts| {
+                        let entries = (entries.iter().zip(parts))
+                            .map(|((key, _), part)| (key.clone(), part))
+                            .collect();
+                        rebuilt(PatternKind::Map(entries))
+                    })
+                    .collect()
+            }
+            _ => vec![pattern.clone()],
+        }
+    }
+
+    /// Compile the match arm `arm`, whose guard is tried with each of
+    /// `ways` that matches, in order (see [`Compiler::guarded_or_ways`]),
+    /// for the scrutinee in `scrutinee_slot`; a copy of it is on top.
+    /// Each way binds the arm's names into one slot each; the first
+    /// whose guard holds runs the body, which is there once. Returns
+    /// the jump to the end of the match and the jumps to the next arm.
+    pub(super) fn compile_guarded_or_arm(
+        &mut self,
+        arm: &MatchArm,
+        ways: &[Pattern],
+        scrutinee_slot: usize,
+        tail: bool,
+        span: Span,
+    ) -> Result<(Label, Vec<Label>), Diagnostic> {
+        let guard = arm
+            .guard
+            .as_deref()
+            .ok_or_else(|| checker_missed(span, "an or-pattern split for a guard it has not"))?;
+        // Each way tests a copy of its own.
+        self.emit(Asm::Pop, span)?;
+        self.begin_scope();
+        // The names of the arm, in one slot each. (A pin means a name
+        // from before them.)
+        let floor = self.ctx().locals.len();
+        let names: Vec<Symbol> = Self::pattern_binding_names(&arm.pattern)
+            .into_iter()
+            .collect();
+        let mut slots = Vec::with_capacity(names.len());
+        for name in &names {
+            self.emit(Asm::Unit, span)?;
+            slots.push(self.add_local(*name, span)?);
+        }
+        let baseline_locals = self.ctx().locals.len();
+        let baseline_height = self.emitter().height();
+
+        let mut body_jumps = Vec::new();
+        for way in ways {
+            self.emit(
+                Asm::GetLocal {
+                    slot: scrutinee_slot,
+                },
+                span,
+            )?;
+            self.ctx_mut().pattern_floor = Some(floor);
+            let fails = self.compile_pattern_test_tracked(way, span, 0)?;
+            self.compile_pattern_bind(way, span)?;
+            for (name, slot) in names.iter().zip(&slots) {
+                let bound = self.resolve_local(*name).ok_or_else(|| {
+                    checker_missed(
+                        way.span,
+                        "an or-pattern alternative without a name of the others",
+                    )
+                })?;
+                self.emit(Asm::GetLocal { slot: bound }, span)?;
+                self.emit(Asm::SetLocal { slot: *slot }, span)?;
+                self.emit(Asm::Pop, span)?;
+            }
+            self.ctx_mut().pattern_floor = None;
+            // The copy and what the binding went through go; the names
+            // are the arm's slots again.
+            let temps = self.emitter().height().saturating_sub(baseline_height);
+            for _ in 0..temps {
+                self.emit(Asm::Pop, span)?;
+            }
+            self.ctx_mut().locals.truncate(baseline_locals);
+
+            self.compile_expr(guard)?;
+            let guard_failed = self.jump_if_false(span)?;
+            body_jumps.push(self.jump(span)?);
+
+            // The way did not match: what its test left goes, its copy
+            // too.
+            if !fails.is_empty() {
+                self.emit_trampolines(&fails, 0, span)?;
+                self.emit(Asm::Pop, span)?;
+            }
+            self.bind_over(guard_failed, MATCH_ARM, span)?;
+        }
+        // No way matched with its guard: the next arm.
+        let next_arm = self.jump(span)?;
+
+        for jump in body_jumps {
+            self.bind_over(jump, MATCH_ARM, span)?;
+        }
+        self.in_tail_position = tail;
+        self.compile_expr(&arm.body)?;
+        // (The arm's slots stay under its result until the end of the
+        // match, as other arms' bindings do.)
+        self.end_scope();
+        let end = self.jump(span)?;
+        Ok((end, vec![next_arm]))
     }
 
     // ── Pattern analysis helpers ─────────────────────────────────
