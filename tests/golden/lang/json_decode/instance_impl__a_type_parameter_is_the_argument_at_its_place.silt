@@ -1,0 +1,37 @@
+-- A type parameter of an impl for some instantiations (`b` of `for
+-- Pair(String, b)`, `for Box(List(b))`, `for M(Map(String, b))`) is the
+-- type argument at its place in the type the use decodes.
+import json
+type Pair(a, b) { x: a, y: b }
+trait json.Decode for Pair(String, b) where b: json.Decode {
+  fn decode(v: json.Value) -> Result(Self, json.JsonError) {
+    match b.decode(v) {
+      Ok(y) -> Ok(Pair { x: "s", y: y })
+      Err(e) -> Err(e)
+    }
+  }
+}
+type Box(a) { v: a }
+trait json.Decode for Box(List(b)) where b: json.Decode {
+  fn decode(v: json.Value) -> Result(Self, json.JsonError) {
+    match json.decode(v, b) {
+      Ok(y) -> Ok(Box { v: [y] })
+      Err(e) -> Err(e)
+    }
+  }
+}
+type M(a) { m: a }
+trait json.Decode for M(Map(String, b)) where b: json.Decode {
+  fn decode(v: json.Value) -> Result(Self, json.JsonError) {
+    match b.decode(v) {
+      Ok(y) -> Ok(M { m: #{"k": y} })
+      Err(e) -> Err(e)
+    }
+  }
+}
+fn main() {
+  println(json.parse("3", Pair(String, Int)))
+  println(json.parse("\"x\"", Pair(String, Int)))
+  println(json.parse("3", Box(List(Int))))
+  println(json.parse("true", M(Map(String, Bool))))
+}

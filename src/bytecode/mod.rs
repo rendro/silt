@@ -135,6 +135,12 @@ pub struct Globals {
     /// The slot of `decode` of each type a program wrote a
     /// `json.Decode` impl for: what decoding a value of the type calls.
     decoded: Written,
+    /// Of each type a program wrote `json.Decode` impls for some of its
+    /// instantiations of (`for Box(Int)`, `for Box(String)`): the type
+    /// arguments of each impl (its own type parameters standing for
+    /// any type) with the slot of its `decode`, the impls of a type
+    /// numbered from 0 in the order they are noted.
+    decoded_at: Layers<(TypeId, u16), (Arc<[crate::typeinfo::FieldType]>, u16)>,
     /// The traits a `CallMethod` names, by the index its operand holds,
     /// each with its name.
     traits: Rows<(TraitId, String)>,
@@ -181,6 +187,7 @@ impl Globals {
             shown: before.shown.clone(),
             encoded: before.encoded.clone(),
             decoded: before.decoded.clone(),
+            decoded_at: before.decoded_at.clone(),
             trait_methods: before.trait_methods.clone(),
             templates: before.templates.clone(),
             // (Code of the entry may still name one.)
@@ -347,14 +354,59 @@ impl Globals {
         self.encoded.any()
     }
 
-    /// The slot of the `decode` a program wrote for the type `ty`.
-    pub fn decoded(&self, ty: TypeId) -> Option<u16> {
-        self.decoded.get(ty)
+    /// The slot of the `decode` a program wrote for the type `ty` at the
+    /// type arguments `args`: of its impl for every instantiation, or of
+    /// the one for an instantiation that `args` are.
+    pub fn decoded(&self, ty: TypeId, args: &[crate::typeinfo::FieldType]) -> Option<u16> {
+        if let Some(slot) = self.decoded.get(ty) {
+            return Some(slot);
+        }
+        self.decoded_instances(ty)
+            .find(|(pattern, _)| {
+                pattern.len() == args.len()
+                    && pattern
+                        .iter()
+                        .zip(args)
+                        .all(|(pattern, arg)| pattern.fits(arg))
+            })
+            .map(|(_, slot)| *slot)
+    }
+
+    /// The impls of `json.Decode` for instantiations of `ty`, each with
+    /// the slot of its `decode`.
+    fn decoded_instances(
+        &self,
+        ty: TypeId,
+    ) -> impl Iterator<Item = &(Arc<[crate::typeinfo::FieldType]>, u16)> {
+        (0u16..).map_while(move |n| self.decoded_at.get(&(ty, n)))
+    }
+
+    /// Whether the program wrote a `json.Decode` impl for the type `ty`,
+    /// for every instantiation or for some.
+    pub fn decoded_any(&self, ty: TypeId) -> bool {
+        self.decoded.get(ty).is_some() || self.decoded_at.get(&(ty, 0)).is_some()
     }
 
     /// Whether the program wrote a `json.Decode` impl for any type.
     pub fn any_decoded(&self) -> bool {
-        self.decoded.any()
+        self.decoded.any() || !self.decoded_at.is_empty()
+    }
+
+    /// Note the `decode` at `slot` of the impl written for the
+    /// instantiation of `ty` at `pattern` (`Box(Int)`: `[Int]`).
+    pub fn add_decoded_instance(
+        &mut self,
+        ty: TypeId,
+        pattern: Vec<crate::typeinfo::FieldType>,
+        slot: u16,
+    ) {
+        if self.decoded_instances(ty).any(|(_, at)| *at == slot) {
+            return;
+        }
+        let Ok(n) = u16::try_from(self.decoded_instances(ty).count()) else {
+            return;
+        };
+        self.decoded_at.insert((ty, n), (pattern.into(), slot));
     }
 
     /// The name of the trait a `CallMethod` operand names.

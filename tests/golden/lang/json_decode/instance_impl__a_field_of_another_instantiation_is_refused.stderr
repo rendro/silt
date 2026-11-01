@@ -1,0 +1,6 @@
+error[type]: `json.parse` cannot decode `R2`: field `b` has type `Box(String)`, which has no decoder
+ --> instance_impl__a_field_of_another_instantiation_is_refused.silt:14:37
+    |
+ 14 |   println(json.parse("\{\"b\": 5}", R2))
+    |                                     ^^ `json.parse` cannot decode `R2`: field `b` has type `Box(String)`, which has no decoder
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these

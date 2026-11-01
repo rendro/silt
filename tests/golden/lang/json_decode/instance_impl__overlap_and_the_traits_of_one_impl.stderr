@@ -1,0 +1,20 @@
+error[type]: duplicate implementation of trait 'json.Decode' for type 'Box': the impls for 'Box(Int)' and 'Box(a)' overlap: both are for 'Box(Int)'
+ --> instance_impl__overlap_and_the_traits_of_one_impl.silt:11:1
+    |
+ 11 | trait json.Decode for Box(a) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ duplicate implementation of trait 'json.Decode' for type 'Box': the impls for 'Box(Int)' and 'Box(a)' overlap: both are for 'Box(Int)'
+  = help: give each impl a type of its own, which no other impl's could be
+
+error[type]: an impl of trait 'json.Encode' for 'Box(Int)' alone cannot be: a value is encoded by the impl of its type, whatever its type arguments
+ --> instance_impl__overlap_and_the_traits_of_one_impl.silt:14:1
+    |
+ 14 | trait json.Encode for Box(Int) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ an impl of trait 'json.Encode' for 'Box(Int)' alone cannot be: a value is encoded by the impl of its type, whatever its type arguments
+  = help: write it for every instantiation: `trait json.Encode for Box(a)`
+
+error[type]: an impl of trait 'Display' for 'Box(String)' alone cannot be: a value is shown by the impl of its type, whatever its type arguments
+ --> instance_impl__overlap_and_the_traits_of_one_impl.silt:17:1
+    |
+ 17 | trait Display for Box(String) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ an impl of trait 'Display' for 'Box(String)' alone cannot be: a value is shown by the impl of its type, whatever its type arguments
+  = help: write it for every instantiation: `trait Display for Box(a)`

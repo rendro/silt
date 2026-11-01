@@ -88,7 +88,7 @@ impl<D: Document> Decoding<D> {
     /// in the places of its parts.
     fn supplied(&mut self, vm: &Vm) -> Value {
         let table = self.table.clone();
-        let written = move |id| table.decoded(id);
+        let written = move |id, args: &[FieldType]| table.decoded(id, args);
         let given = std::mem::take(&mut self.decoded);
         let reader = Reader::with_impls(&vm.runtime, &written, Holes::Supply(given.into_iter()));
         decode::result(D::RULES, (self.read)(&reader, &self.doc, &self.expected))
@@ -110,7 +110,7 @@ impl Vm {
         read_doc: impl FnOnce() -> Result<D, Value>,
     ) -> Result<Step, VmError> {
         let table = self.decoding_table();
-        let written = |id| table.decoded(id);
+        let written = |id, args: &[FieldType]| table.decoded(id, args);
         let reader = Reader::with_impls(&self.runtime, &written, Holes::Collect(Vec::new()));
         let target = decode::Target::Value(expected.clone());
         if let Some(refused) = decode::refused(&reader, D::RULES, &target) {
@@ -199,9 +199,21 @@ impl Vm {
     /// whose descriptor is on top (`Int` of `Box(Int)`).
     pub(super) fn type_arg(&mut self, k: usize) -> Result<(), VmError> {
         let top = self.stack.len() - 1;
+        // (A type of the program, a tuple, or a builtin container:
+        // `List(Int)`, `Map(String, Int)`.)
         let arg = match &self.stack[top] {
-            Value::TypeDescriptor(info) => match &info.shape {
-                crate::typeinfo::Shape::Applied(FieldType::Applied(_, args)) => args.get(k),
+            Value::TypeDescriptor(info) => match (&info.shape, k) {
+                (
+                    crate::typeinfo::Shape::Applied(
+                        FieldType::Applied(_, args) | FieldType::Tuple(args),
+                    ),
+                    k,
+                ) => args.get(k).cloned(),
+                (crate::typeinfo::Shape::Applied(FieldType::List(t) | FieldType::Option(t)), 0) => {
+                    Some((**t).clone())
+                }
+                (crate::typeinfo::Shape::Applied(FieldType::Map(_)), 0) => Some(FieldType::String),
+                (crate::typeinfo::Shape::Applied(FieldType::Map(t)), 1) => Some((**t).clone()),
                 _ => None,
             },
             _ => None,
@@ -211,7 +223,7 @@ impl Vm {
                 "a written `decode` of a generic type is called without its type arguments",
             ));
         };
-        self.stack[top] = decode::descriptor(&self.runtime, arg);
+        self.stack[top] = decode::descriptor(&self.runtime, &arg);
         Ok(())
     }
 }

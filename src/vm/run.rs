@@ -2111,7 +2111,25 @@ impl Vm {
         );
         // The method of an impl is found by three numbers: the trait,
         // the receiver's type, and the name's id. No text is compared.
-        let found = match self.method_of(trait_index, receiver_type, method) {
+        // (`decode` of a type held as a value at its type arguments,
+        // `Box(Int)`: the impl written for that instantiation, where the
+        // program wrote impls for some of them.)
+        let instance = match receiver {
+            Value::TypeDescriptor(info)
+                if self.view.entry.trait_at(trait_index)
+                    == crate::defs::builtin_trait_id("Decode") =>
+            {
+                match &info.shape {
+                    crate::typeinfo::Shape::Applied(crate::typeinfo::FieldType::Applied(
+                        id,
+                        args,
+                    )) => self.view.entry.decoded(*id, args),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        let found = match instance.or_else(|| self.method_of(trait_index, receiver_type, method)) {
             None => self.method_of_newest(trait_index, receiver_type, method),
             found => found,
         };
