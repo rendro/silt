@@ -8,7 +8,7 @@ use std::process;
 
 use silt::source::{SourceMap, SourceName};
 
-use crate::cli::package::{die_on_manifest_error, find_project_root};
+use crate::cli::package::{die_on_manifest_error_with, find_project_root};
 use crate::cli::paths::find_silt_files;
 
 /// Dispatch `silt fmt [--check] [files...]`.
@@ -27,7 +27,7 @@ pub(crate) fn dispatch(args: &[String]) {
             let swap = &arg["--test-tamper=".len()..];
             let Some((from, to)) = swap.split_once("=>") else {
                 eprintln!("silt fmt: --test-tamper takes FROM=>TO");
-                process::exit(1);
+                process::exit(2);
             };
             tamper = Some((from.to_string(), to.to_string()));
         } else if arg == "--help" || arg == "-h" {
@@ -51,29 +51,25 @@ pub(crate) fn dispatch(args: &[String]) {
             };
             eprintln!("silt fmt: unknown flag '{arg}'{suggestion}");
             eprintln!("Run 'silt fmt --help' for usage.");
-            process::exit(1);
+            process::exit(2);
         } else {
             files.push(arg.clone());
         }
     }
-    // If no files given (or just an explicit `.`), find all .silt files
-    // in the current directory recursively. This is risky if the user
-    // happens to run `silt fmt` outside a project, so we require a
-    // project anchor (silt.toml, .git) OR an explicit `.` argument,
-    // and always emit a loud warning + file preview when the recursion
-    // is triggered implicitly.
-    let explicit_dot = files.iter().any(|f| f == "." || f == "./");
-    if explicit_dot {
-        // Strip the `.` marker; we'll treat it as the recursive sentinel.
-        files.retain(|f| f != "." && f != "./");
+    // With no files, or only an explicit `.`, every .silt file under
+    // the current directory is formatted. This is risky if the user
+    // happens to run `silt fmt` outside a project, so a bare `silt fmt`
+    // needs a project anchor (silt.toml), and the recursion is always
+    // announced with a preview of the files. A `.` beside other
+    // positionals is a directory like any other.
+    let is_dot = |f: &String| f == "." || f == "./";
+    let explicit_dot = files.iter().any(is_dot);
+    if files.iter().all(is_dot) {
+        files.clear();
     }
-    // Expand any explicit directory positionals into their `.silt`
-    // descendants. Pre-fix `silt fmt src/` ran straight to
-    // `format_file`, which `read_to_string`'d the directory and
-    // surfaced the raw `Is a directory (os error 21)` message. After
-    // fix, fmt mirrors `silt test <dir>` and recurses with
-    // `find_silt_files`. We do this *after* the explicit-dot strip so
-    // `.` keeps its existing implicit-recursive sentinel meaning.
+    // Each directory positional stands for its `.silt` descendants (as
+    // for `silt test <dir>`); a file named twice, by two positionals or
+    // two spellings of its path, is handled once.
     {
         let mut expanded: Vec<String> = Vec::with_capacity(files.len());
         for f in files.drain(..) {
@@ -82,13 +78,15 @@ pub(crate) fn dispatch(args: &[String]) {
                 let found = find_silt_files(p);
                 if found.is_empty() {
                     eprintln!("silt fmt: no .silt files found in {f}");
-                    process::exit(1);
+                    process::exit(2);
                 }
                 expanded.extend(found);
             } else {
                 expanded.push(f);
             }
         }
+        let mut seen = std::collections::HashSet::new();
+        expanded.retain(|f| seen.insert(fs::canonicalize(f).unwrap_or_else(|_| PathBuf::from(f))));
         files = expanded;
     }
     let implicit_recursive = files.is_empty();
@@ -101,12 +99,12 @@ pub(crate) fn dispatch(args: &[String]) {
         let has_anchor = match find_project_root(&cwd) {
             Ok(Some(_)) => true,
             Ok(None) => false,
-            Err(e) => die_on_manifest_error(e),
+            Err(e) => die_on_manifest_error_with(e, 2),
         };
         files = find_silt_files(Path::new("."));
         if files.is_empty() {
             eprintln!("no .silt files found in current directory");
-            process::exit(1);
+            process::exit(2);
         }
         if !has_anchor && !explicit_dot {
             eprintln!(
@@ -114,19 +112,18 @@ pub(crate) fn dispatch(args: &[String]) {
                 cwd.display()
             );
             eprintln!("         pass an explicit `.` or file paths to format anyway.");
-            process::exit(1);
+            process::exit(2);
         }
-        if check_mode {
-            eprintln!(
-                "silt fmt: no files specified; recursively checking all .silt files under {}",
-                cwd.display()
-            );
+        let doing = if check_mode { "checking" } else { "formatting" };
+        let unasked = if explicit_dot {
+            ""
         } else {
-            eprintln!(
-                "silt fmt: no files specified; recursively formatting all .silt files under {}",
-                cwd.display()
-            );
-        }
+            "no files specified; "
+        };
+        eprintln!(
+            "silt fmt: {unasked}recursively {doing} all .silt files under {}",
+            cwd.display()
+        );
         let preview = files.iter().take(5).collect::<Vec<_>>();
         for f in &preview {
             eprintln!("  {f}");
@@ -143,6 +140,9 @@ pub(crate) fn dispatch(args: &[String]) {
         //   2 — at least one file failed to read or parse, or the
         //       formatter refused its own result for it (infra failure);
         //       CI should distinguish this from "diff would be produced".
+        //       So does every other case in which fmt cannot do its job
+        //       (an unknown flag, nothing to format, the refusal to
+        //       recurse outside a package), with `--check` or without.
         // An infra failure on any file is the dominant outcome — if we
         // hit a parse error we can't *know* whether the file is
         // formatted, so we must not collapse that into exit 1.
@@ -170,7 +170,7 @@ pub(crate) fn dispatch(args: &[String]) {
             }
         }
         if any_failed {
-            process::exit(1);
+            process::exit(2);
         }
     }
 }

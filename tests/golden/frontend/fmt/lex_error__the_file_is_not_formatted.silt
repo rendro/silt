@@ -1,5 +1,5 @@
 -- cmd: fmt
--- exit: 1
+-- exit: 2
 -- stderr-contains: error[lex]: unexpected character: '@'
 -- A file with a lex error is never formatted: it is left as it is,
 -- badly spaced lines and all.

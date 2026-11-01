@@ -1,0 +1,8 @@
+-- cmd: fmt --chek
+-- exit: 2
+-- stderr-contains: silt fmt: unknown flag '--chek'
+-- A mistyped flag is not "not formatted": exit 2, never 1.
+
+fn main() {
+  println("hello")
+}
