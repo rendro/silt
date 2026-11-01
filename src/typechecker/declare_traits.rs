@@ -2965,6 +2965,9 @@ impl TypeChecker {
                             Box::new(iter.next().unwrap()),
                         )
                     }
+                    // A tuple of the impl's arity: `(a, b)` of
+                    // `Tuple(a, b)`, which a pair's type is.
+                    "Tuple" if resolved_args.len() >= 2 => Type::Tuple(resolved_args),
                     // A primitive takes no arguments (the error above
                     // says so): the impl is for the type itself, not a
                     // phantom `Int(_)` that no value has.
