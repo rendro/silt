@@ -527,6 +527,8 @@ fn stage_on(
         name,
         source: inputs.is_empty(),
         at: vm.place_here(),
+        inputs: inputs.iter().map(|input| input.id()).collect(),
+        output: out.id(),
     };
     let handle = Arc::new(TaskHandle::with_owner(id, owner).of_stage(stage));
     // Whoever reads the output and stops reading stops the stage.
