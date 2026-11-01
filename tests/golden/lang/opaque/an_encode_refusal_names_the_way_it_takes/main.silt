@@ -1,0 +1,41 @@
+-- cmd: check
+-- exit: 1
+-- A refused encoding of an opaque type through a function names the
+-- way the function hands it on, as a refused decoding does: through a
+-- second function, a call of itself, and two functions that call each
+-- other.
+import json
+import mail
+
+fn f(x: a) -> String where a: json.Encode {
+  json.pretty(x)
+}
+
+fn g(x: a) -> String where a: json.Encode {
+  f(x)
+}
+
+fn h(x: a, n: Int) -> String where a: json.Encode {
+  match n {
+    0 -> json.pretty(x)
+    _ -> h(x, n - 1)
+  }
+}
+
+fn ping(x: a, n: Int) -> String where a: json.Encode {
+  match n {
+    0 -> json.stringify([x])
+    _ -> pong(x, n - 1)
+  }
+}
+
+fn pong(x: a, n: Int) -> String where a: json.Encode {
+  ping(x, n)
+}
+
+fn main() {
+  println(f(mail.mk("a")))
+  println(g(mail.mk("b")))
+  println(h(mail.mk("c"), 1))
+  println(pong(mail.mk("d"), 1))
+}

@@ -56,7 +56,15 @@ impl TypeChecker {
             _ => None,
         };
         let owners_around = std::mem::replace(&mut self.def_owners_now, owners);
+        let encoders = match (module, res) {
+            (Some(_), Some(crate::defs::Res::Def(id))) => {
+                self.tables.def_encoders.get(&id).cloned()
+            }
+            _ => None,
+        };
+        let encoders_around = std::mem::replace(&mut self.def_encoders_now, encoders);
         let ty = self.instantiate(scheme);
+        self.def_encoders_now = encoders_around;
         self.def_owners_now = owners_around;
         self.instantiating = around;
         if let Some(def) = self.res_def(res)

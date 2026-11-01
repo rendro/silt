@@ -1748,6 +1748,54 @@ impl<'a> Compiler<'a> {
                 self.compile_dict_method_value(tr, &recv, &own, *method, span)?;
             }
 
+            // `Box(Int).decode` as a value, a method of a type held as a
+            // value (`let t = Box(Int); t.decode`) or of an alias whose
+            // written `decode` takes its type arguments from it (`IB.decode`
+            // for `type IB = Box(Int)`): the function that calls it, `{ v ->
+            // Box(Int).decode(v) }`, named as the method.
+            ExprKind::FieldAccess(of, method, _) if self.method_of_a_full_type(expr)? => {
+                let arity = match &expr.ty {
+                    Some(Type::Fun(params, _)) => params.len(),
+                    _ => return Err(checker_missed(span, "a method of no type")),
+                };
+                let names: Vec<Symbol> =
+                    (0..arity).map(|k| intern(&format!("__arg{k}__"))).collect();
+                let ident = |name: Symbol| Expr::new(ExprKind::Ident(name), span);
+                let call = Expr::new(
+                    ExprKind::Call(
+                        Box::new(expr.clone()),
+                        names.iter().map(|n| ident(*n)).collect(),
+                    ),
+                    span,
+                );
+                let lambda = Expr::new(
+                    ExprKind::Lambda {
+                        params: names
+                            .iter()
+                            .map(|n| crate::ast::Param {
+                                kind: crate::ast::ParamKind::Data,
+                                pattern: crate::ast::Pattern::new(
+                                    crate::ast::PatternKind::Ident(*n),
+                                    span,
+                                ),
+                                ty: None,
+                            })
+                            .collect(),
+                        body: Box::new(call),
+                    },
+                    span,
+                );
+                let shown = written_type_of(of).map_or_else(String::new, shown);
+                let around = (self.contexts.last_mut()).map(|context| {
+                    std::mem::replace(&mut context.closures, format!("{shown}.{method}"))
+                });
+                let compiled = self.compile_expr(&lambda);
+                if let (Some(context), Some(around)) = (self.contexts.last_mut(), around) {
+                    context.closures = around;
+                }
+                compiled?;
+            }
+
             ExprKind::FieldAccess(..)
                 if let Some(TypeMember::Slot(slot)) = self.type_member(expr)? =>
             {
@@ -2284,8 +2332,10 @@ impl<'a> Compiler<'a> {
                 self.compile_trait_call(callee, *method, args, span, tail)?;
             } else if let Some(TypeMember::Native(t)) = member {
                 // `T.decode(v)`: the VM's method of the type, which takes
-                // no value of it; the type's descriptor chooses it.
-                let Some(descriptor) = self.type_value(receiver.res) else {
+                // no value of it; the type's descriptor chooses it. (An
+                // alias gives the type it stands for in full, `Box(Int)`.)
+                let full = written_type_of(receiver).and_then(|ty| self.type_constant(ty));
+                let Some(descriptor) = full.or_else(|| self.type_value(receiver.res)) else {
                     return Err(checker_missed(span, "a method of no named type"));
                 };
                 let idx = self.add_constant(descriptor, span)?;
@@ -2299,6 +2349,20 @@ impl<'a> Compiler<'a> {
                 // trait reached through its type, through the dictionary.
                 let (recv, own) = (recv.clone(), own.to_vec());
                 self.compile_dict_call(tr, &recv, &own, *method, args, span, tail)?;
+            } else if let Some(TypeMember::Slot(_)) = member
+                && let Some(t) = crate::defs::builtin_trait_id("Decode")
+                && self.written_decode_of_a_full_type(callee)
+                && let Some(descriptor) =
+                    written_type_of(receiver).and_then(|ty| self.type_constant(ty))
+            {
+                // `IntBox.decode(v)`, an alias of a generic type with a
+                // written `decode`: by the descriptor of the type in full,
+                // which gives the impl its type arguments, as
+                // `Box(Int).decode(v)` does.
+                let idx = self.add_constant(descriptor, span)?;
+                self.emit(Asm::Constant { k: idx }, span)?;
+                self.compile_operands(args.iter().copied())?;
+                self.emit_call_method(*method, args.len() + 1, t, 0, tail, span)?;
             } else if let Some(TypeMember::Slot(slot)) = member {
                 // `Pt.make(1)`, `m.Pt.make(1)`: a method reached
                 // through its type.
@@ -2418,8 +2482,17 @@ impl<'a> Compiler<'a> {
                 self.emit_call(args.len(), tail, span)
             }
             // The method is found where the code runs, by the type the
-            // descriptor carries.
+            // descriptor carries; so is the impl's method, or the VM's own,
+            // on a type with arguments held as a value (`Box(Int).decode(v)`
+            // with `trait json.Decode for Box(Int)`): the descriptor is that
+            // type in full.
             Some(Selection::Dynamic { tr, .. }) => {
+                self.compile_operands(with_receiver)?;
+                self.emit_call_method(method, args.len() + 1, tr, 0, tail, span)
+            }
+            Some(Selection::Impl { tr, .. } | Selection::Native { tr })
+                if written_type_of(receiver).is_some() =>
+            {
                 self.compile_operands(with_receiver)?;
                 self.emit_call_method(method, args.len() + 1, tr, 0, tail, span)
             }
@@ -3059,6 +3132,43 @@ impl<'a> Compiler<'a> {
     /// head, or, where the impl has none, the VM's own method of the
     /// trait (a structural trait's, a builtin error enum's `message`).
     /// `None` when `expr` is not such an access.
+    /// Whether `expr`, a method of a type before a dot taken as a value,
+    /// is called through the type in full (`Box(Int).decode`, `t.decode`
+    /// of a `let t = Box(Int)`; `IB.decode` of an alias whose written
+    /// `decode` takes its type arguments from it): a function that calls
+    /// it is made for it.
+    fn method_of_a_full_type(&self, expr: &Expr) -> Result<bool, Diagnostic> {
+        use crate::ast::Selection;
+        let ExprKind::FieldAccess(of, ..) = &expr.kind else {
+            return Ok(false);
+        };
+        if written_type_of(of).is_none() {
+            return Ok(false);
+        }
+        Ok(match self.type_member(expr)? {
+            None => matches!(
+                expr.sel,
+                Some(Selection::Dynamic { .. } | Selection::Impl { .. } | Selection::Native { .. })
+            ),
+            Some(TypeMember::Slot(_)) => self.written_decode_of_a_full_type(expr),
+            Some(_) => false,
+        })
+    }
+
+    /// Whether `callee`, `decode` through a type name, is the written
+    /// `decode` of a generic type at the arguments the name gives it in
+    /// full (`IB.decode` for `type IB = Box(Int)`): it takes them from
+    /// the type's descriptor.
+    fn written_decode_of_a_full_type(&self, callee: &Expr) -> bool {
+        let ExprKind::FieldAccess(of, ..) = &callee.kind else {
+            return false;
+        };
+        crate::defs::builtin_trait_id("Decode")
+            .is_some_and(|t| self.res_trait(callee.res) == Some(t))
+            && written_type_of(of)
+                .is_some_and(|ty| matches!(ty, Type::Generic(_, args) if !args.is_empty()))
+    }
+
     fn type_member(&self, expr: &Expr) -> Result<Option<TypeMember>, Diagnostic> {
         let ExprKind::FieldAccess(obj, field, _) = &expr.kind else {
             return Ok(None);

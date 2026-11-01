@@ -1013,12 +1013,12 @@ mod tests {
     }
 
     /// A top-level `let` of a method that makes `Self` through a generic
-    /// type (`Box.mk`) has one type, which the entry must decide: its
-    /// dictionary is made when the entry runs, so a later entry cannot.
-    /// Unannotated it is refused at the `let`; annotated it decodes at
-    /// that type, and at a type the decoder refuses it is refused there.
+    /// type names the type with its arguments (`Box(Int).mk`), so its
+    /// type is the entry's own: through the bare type (`Box.mk`) it is
+    /// refused, with them it decodes at that type, and at a type the
+    /// decoder refuses it is refused there.
     #[test]
-    fn a_let_of_a_method_making_self_needs_its_type_in_the_entry() {
+    fn a_let_of_a_method_making_self_names_its_type_with_its_arguments() {
         let mut repl = repl();
         let setup = [
             "import json",
@@ -1038,42 +1038,26 @@ mod tests {
             let evaluation = repl.eval(entry);
             assert!(!evaluation.committed, "`{entry}` must be refused");
             (evaluation.diagnostics.iter())
-                .map(|d| format!("{} / {}", d.message, d.help.join(" ")))
+                .map(|d| d.message.clone())
                 .collect()
         };
         assert_eq!(
             messages(&mut repl, "let top = Box.mk"),
-            ["the type of top-level let 'top' is not fully known here: \
-              Fn(String) -> Result(Box(_), json.JsonError) / annotate it, e.g. \
-              `let top: <type> = ...`: a later input does not decide it"]
+            ["`Box` takes 1 type argument here: write `Box(a)`"]
         );
-        assert_eq!(
-            messages(&mut repl, "let wrapped = { s -> Box.mk(s) }"),
-            [
-                "the type of top-level let 'wrapped' is not fully known here: \
-              Fn(String) -> Result(Box(_), json.JsonError) / annotate it, e.g. \
-              `let wrapped: <type> = ...`: a later input does not decide it"
-            ]
-        );
-        assert_eq!(
-            messages(
-                &mut repl,
-                "let bad: Fn(String) -> Result(Box(Set(Int)), json.JsonError) = Box.mk"
-            )
-            .len(),
-            1
-        );
-        let evaluation =
-            repl.eval("let top: Fn(String) -> Result(Box(Int), json.JsonError) = Box.mk");
+        assert_eq!(messages(&mut repl, "let bad = Box(Set(Int)).mk").len(), 1);
+        let evaluation = repl.eval("let top = Box(Int).mk");
         assert!(evaluation.committed, "{:?}", evaluation.diagnostics);
         assert_eq!(
             value(&mut repl, "top(\"\\{\\\"v\\\": 3}\")"),
             "Ok(Box {v: 3})"
         );
-        // (A `let` of no such method stays general, unannotated.)
-        let evaluation = repl.eval("let same = { x -> x }");
+        let evaluation = repl.eval("let wrapped = { s -> Box(Int).mk(s) }");
         assert!(evaluation.committed, "{:?}", evaluation.diagnostics);
-        assert_eq!(value(&mut repl, "same(1)"), "1");
+        assert_eq!(
+            value(&mut repl, "wrapped(\"\\{\\\"v\\\": 4}\")"),
+            "Ok(Box {v: 4})"
+        );
     }
 
     /// A later entry adds an impl of a trait for a type at another trait

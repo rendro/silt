@@ -48,13 +48,13 @@ fn through(v: json.Value, type a) -> Result(a, json.JsonError) where a: Dec {
 
 fn main() {
   let v = json.Object(#{ "v": json.Object(#{ "n": json.Int(1) }) })
-  let b: Result(Box(W), json.JsonError) = Box.by_self(v)
+  let b: Result(Box(W), json.JsonError) = Box(W).by_self(v)
   println(b)
   println(W.by_self(json.Int(0)))
   println(W.in_closure(json.Int(0)))
   println(through(v, Box(W)))
-  let c: Result(Box(Int), json.JsonError) = Box.deeper(json.Object(#{ "v": json.Int(5) }))
+  let c: Result(Box(Int), json.JsonError) = Box(Int).deeper(json.Object(#{ "v": json.Int(5) }))
   println(c)
-  let d: Result(Box(Int), json.JsonError) = Box.by_self(json.Int(5))
+  let d: Result(Box(Int), json.JsonError) = Box(Int).by_self(json.Int(5))
   println(d)
 }

@@ -1,5 +1,5 @@
 -- A top-level `let` of a method that makes `Self` through a generic type
--- (`Box.mk`) has one type, which its uses fix: it decodes at it.
+-- (`Box(Int).mk`) has that one type: it decodes at it.
 import json
 
 trait Mk: json.Decode {
@@ -12,7 +12,7 @@ type Box(a) {
 
 trait Mk for Box(a) where a: json.Decode {}
 
-let top = Box.mk
+let top = Box(Int).mk
 
 fn known(s: String) -> Result(Box(Int), json.JsonError) {
   top(s)

@@ -1,0 +1,13 @@
+error[type]: type 'Box(a)' has no field 'zero'
+ --> static_method__the_help_names_a_generic_type_with_its_arguments.silt:24:3
+    |
+ 24 |   b.zero()
+    |   ^^^^^^ type 'Box(a)' has no field 'zero'
+  = help: `zero` is a method of trait `Zero` that makes a value: call it on the type, `Box(a).zero()`
+
+error[type]: type 'Box(Int)' has no field 'zero'
+ --> static_method__the_help_names_a_generic_type_with_its_arguments.silt:29:11
+    |
+ 29 |   println(b.zero())
+    |           ^^^^^^ type 'Box(Int)' has no field 'zero'
+  = help: `zero` is a method of trait `Zero` that makes a value: call it on the type, `Box(Int).zero()`
