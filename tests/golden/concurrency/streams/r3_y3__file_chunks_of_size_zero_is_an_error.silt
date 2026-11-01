@@ -1,0 +1,10 @@
+-- exit: 1
+-- stderr-contains: stream.file_chunks: size must be positive
+-- A chunk size of zero or less is an error, as for `stream.chunks`; it
+-- does not read as an empty file.
+import stream
+
+fn main() {
+  let chunks = stream.file_chunks("r3_y3__file_chunks_of_size_zero_is_an_error.silt", 0)
+  println(stream.collect(chunks))
+}

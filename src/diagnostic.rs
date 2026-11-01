@@ -313,6 +313,11 @@ pub struct Diagnostic {
     pub labels: Vec<(Span, String)>,
     pub notes: Vec<String>,
     pub help: Vec<String>,
+    /// The help lines that name a place: the line at the index has
+    /// `{at}` where the place of the span is shown, as a frame of a
+    /// call stack is (`file:line:col`). The place is known only where
+    /// the diagnostic is shown, to the [`SourceView`].
+    pub help_at: Box<[(usize, Span)]>,
     pub fixes: Vec<Fix>,
 }
 
@@ -337,6 +342,7 @@ impl Diagnostic {
             labels: Vec::new(),
             notes: Vec::new(),
             help: Vec::new(),
+            help_at: Box::default(),
             fixes: Vec::new(),
         }
     }
@@ -362,6 +368,18 @@ impl Diagnostic {
     pub fn with_help(mut self, help: impl Into<String>) -> Self {
         self.help.push(help.into());
         self
+    }
+
+    /// The help lines as `view` shows them: each that names a place
+    /// ([`Diagnostic::help_at`]) with the place in it.
+    pub fn help_lines(&self, view: &dyn SourceView) -> Vec<String> {
+        let mut lines = self.help.clone();
+        for (index, span) in &self.help_at {
+            if let Some(line) = lines.get_mut(*index) {
+                *line = line.replace("{at}", &view.frame(*span));
+            }
+        }
+        lines
     }
 
     pub fn with_fix(mut self, title: impl Into<String>, edits: Vec<(Span, String)>) -> Self {
@@ -616,7 +634,7 @@ pub fn render_human(view: &dyn SourceView, d: &Diagnostic) -> String {
     for note in &d.notes {
         write_body(&mut out, c, "= note:", note);
     }
-    for help in &d.help {
+    for help in &d.help_lines(view) {
         write_body(&mut out, c, "= help:", help);
     }
     if runtime {
@@ -883,7 +901,7 @@ pub fn render_json(view: &dyn SourceView, d: &Diagnostic) -> serde_json::Value {
         .collect();
     out.insert("labels".into(), labels.into());
     out.insert("notes".into(), d.notes.clone().into());
-    out.insert("help".into(), d.help.clone().into());
+    out.insert("help".into(), d.help_lines(view).into());
     serde_json::Value::Object(out)
 }
 
@@ -954,7 +972,7 @@ pub fn to_lsp(
         message.push_str("\nnote: ");
         message.push_str(note);
     }
-    for help in &d.help {
+    for help in &d.help_lines(sources) {
         message.push_str("\nhelp: ");
         message.push_str(help);
     }
@@ -1205,6 +1223,34 @@ mod tests {
             ..Diagnostic::error(Code::UnreachablePattern, span(4, 5), "unused")
         };
         assert!(render_human(&map, &d).starts_with("warning[type]: unused"));
+    }
+
+    #[test]
+    fn a_help_line_that_names_a_place_shows_it_in_every_rendering() {
+        let map = sources("let x = 1\nlet y = 2");
+        let mut d =
+            Diagnostic::error(Code::RuntimeError, Span::BUILTIN, "m").with_help("plain {at}");
+        d.help_at = Box::new([(d.help.len(), span(14, 15))]);
+        d.help.push("named at {at}".to_string());
+        let lines = vec![
+            "plain {at}".to_string(),
+            "named at test.silt:2:5".to_string(),
+        ];
+        assert_eq!(d.help_lines(&map), lines);
+        assert!(
+            render_human(&map, &d)
+                .ends_with("  = help: plain {at}\n  = help: named at test.silt:2:5")
+        );
+        assert_eq!(render_json(&map, &d)["help"], serde_json::json!(lines));
+        #[cfg(feature = "lsp")]
+        {
+            let lsp = to_lsp(&map, &d, &|_| None);
+            assert!(
+                lsp.message.ends_with("help: named at test.silt:2:5"),
+                "{}",
+                lsp.message
+            );
+        }
     }
 
     #[test]

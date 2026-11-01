@@ -1,0 +1,18 @@
+-- repeat: 10
+-- stderr-not-contains: never read
+-- `stream.take(s, 0)` reads nothing and cuts `s`, as a `take` that has
+-- all it reads does: a failure that `stream.buffered` read ahead is not
+-- reported.
+import stream
+import time
+
+fn main() {
+  let got = stream.from_list([0, 1])
+    |> stream.map { x -> 10 / x }
+    |> stream.buffered(4)
+    |> stream.take(0)
+    |> stream.collect
+  println("take 0 gave {got}")
+  time.sleep(time.ms(20))
+  println("end")
+}

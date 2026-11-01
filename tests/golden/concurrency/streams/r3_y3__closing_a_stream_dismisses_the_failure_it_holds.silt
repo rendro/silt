@@ -1,0 +1,26 @@
+-- repeat: 20
+-- stderr-not-contains: never read
+-- A `channel.select` over two streams asks both. The one it did not take
+-- fails on the value it was asked for; closing that stream cuts it, as a
+-- `stream.first` would, and its failure is not reported.
+import channel
+import stream
+import time
+
+fn main() {
+  let a = stream.from_list([1]) |> stream.map { x -> x }
+  let b = stream.from_list([0])
+    |> stream.map { x ->
+      time.sleep(time.ms(20))
+      10 / x
+    }
+  let got = match channel.select([channel.Recv(a), channel.Recv(b)]) {
+    channel.Received(_, Some(x)) -> x
+    _ -> -1
+  }
+  println(got)
+  time.sleep(time.ms(60))
+  channel.close(a)
+  channel.close(b)
+  println("end")
+}

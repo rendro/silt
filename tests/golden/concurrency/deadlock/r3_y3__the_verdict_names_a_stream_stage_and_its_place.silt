@@ -1,0 +1,22 @@
+-- exit: 1
+-- repeat: 5
+-- stderr-contains: deadlock on main thread: channel send with no counterparty
+-- stderr-contains: the `stream.map` stage at r3_y3__the_verdict_names_a_stream_stage_and_its_place.silt:18:17 waits for its output to be read
+-- stderr-contains: the `stream.filter` stage at r3_y3__the_verdict_names_a_stream_stage_and_its_place.silt:19:16 waits for its input
+-- stderr-not-contains: task <handle:
+-- stderr-not-contains: <channel:
+-- The deadlock report names each stream stage that waits, and the place
+-- of its call (not the start of the pipe). The `map` waits for its reader
+-- to ask (it sends nothing); the `filter` was asked, and waits for its
+-- input.
+import channel
+import stream
+
+fn main() {
+  let c = channel.new(0)
+  let d = channel.new(0)
+  let _s = c |> stream.map { x -> x + 1 }
+  let t = d |> stream.filter { x -> x > 0 }
+  let _ = channel.try_receive(t)
+  channel.send(c, 1)
+}

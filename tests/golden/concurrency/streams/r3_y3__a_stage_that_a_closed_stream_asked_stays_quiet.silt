@@ -1,0 +1,24 @@
+-- repeat: 20
+-- stderr-not-contains: never read
+-- A read that does not wait asks the stage for a value, and the stream is
+-- closed before the value comes: the stage is stopped by the close, so
+-- the value that would fail it is never taken, and nothing is reported.
+import channel
+import stream
+import time
+
+fn main() {
+  let c = channel.new(1)
+  let s = c |> stream.map { x -> 10 / x }
+  match channel.try_receive(s) {
+    channel.Message(v) -> println("got {v}")
+    channel.Empty -> println("nothing yet")
+    channel.Closed -> println("closed")
+  }
+  time.sleep(time.ms(20))
+  channel.close(s)
+  time.sleep(time.ms(20))
+  channel.send(c, 0)
+  time.sleep(time.ms(20))
+  println("end")
+}

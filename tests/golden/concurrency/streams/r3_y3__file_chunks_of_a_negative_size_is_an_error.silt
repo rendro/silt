@@ -1,0 +1,9 @@
+-- exit: 1
+-- stderr-contains: stream.file_chunks: size must be positive
+-- A negative chunk size is an error too, whether the file is there or not.
+import stream
+
+fn main() {
+  let chunks = stream.file_chunks("no-such-file", -3)
+  println(stream.collect(chunks))
+}

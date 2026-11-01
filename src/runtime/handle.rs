@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 
 use crate::runtime::sync::{Cell, Completion, Wake};
+use crate::source::Span;
 use crate::value::Value;
 use crate::vm::{VmError, Wanted};
 
@@ -1124,6 +1125,17 @@ impl Drop for Ended {
     }
 }
 
+/// The stream stage a task runs: its name (`stream.map`), for the
+/// report of a failure that nobody read, whether it is a source (a stage
+/// with no input), and the place of the call that started it, if it has
+/// one in the program.
+#[derive(Clone, Copy, Debug)]
+pub struct StageOf {
+    pub name: &'static str,
+    pub source: bool,
+    pub at: Option<Span>,
+}
+
 /// Handle to a spawned task. Thread-safe — shared between spawner and worker.
 pub struct TaskHandle {
     pub id: usize,
@@ -1165,9 +1177,8 @@ pub struct TaskHandle {
     /// inside it that has the same time (they share the count: of them
     /// only one runs at a time, the innermost).
     late: Arc<std::sync::atomic::AtomicUsize>,
-    /// The name of the stream stage the task runs (`stream.map`), for
-    /// the report of a failure that nobody read.
-    stage: Option<&'static str>,
+    /// The stream stage the task runs, if it runs one.
+    stage: Option<StageOf>,
 }
 
 impl TaskHandle {
@@ -1191,16 +1202,22 @@ impl TaskHandle {
         }
     }
 
-    /// The handle, for the task of the stream stage `name`.
-    pub fn of_stage(self, name: &'static str) -> Self {
+    /// The handle, for the task of the stream stage `name`, started by
+    /// the call at `at`.
+    pub fn of_stage(self, stage: StageOf) -> Self {
         Self {
-            stage: Some(name),
+            stage: Some(stage),
             ..self
         }
     }
 
     /// The name of the stream stage the task runs, if it runs one.
     pub fn stage(&self) -> Option<&'static str> {
+        self.stage.map(|stage| stage.name)
+    }
+
+    /// The stream stage the task runs, if it runs one.
+    pub fn stage_of(&self) -> Option<StageOf> {
         self.stage
     }
 

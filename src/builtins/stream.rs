@@ -28,6 +28,7 @@
 //! waiting, around a function (`Logic`) that says what comes next.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use parking_lot::Mutex;
 
@@ -36,7 +37,7 @@ use super::common::{READ_AT_ONCE, ok};
 #[cfg(feature = "tcp")]
 use super::typed::TcpStream;
 use super::typed::{Arg, Chan, List, builtins, unsound};
-use crate::runtime::handle::TaskHandle;
+use crate::runtime::handle::{StageOf, TaskHandle};
 use crate::runtime::sync::{Arm, Channel, Close, Fired, Outcome, TryReceive, TrySend, Wait};
 use crate::typeinfo::bv;
 use crate::value::Value;
@@ -182,6 +183,37 @@ struct Pipe {
     /// called when the pipe is stopped before its end, whether an
     /// operation is in flight then or not.
     stop: Option<Stop>,
+    /// For a source on a connection: the shut-down that its output's
+    /// reader runs when it stops reading, also before the source has
+    /// run. It is disarmed when the source ends by itself.
+    armed: Option<Arc<Armed>>,
+}
+
+/// The shut-down of a connection that a stage is stopped with: run
+/// once, by whoever stops the stage first, and not after the stage
+/// ended by itself.
+struct Armed {
+    stop: Stop,
+    armed: AtomicBool,
+}
+
+impl Armed {
+    fn new(stop: Stop) -> Armed {
+        Armed {
+            stop,
+            armed: AtomicBool::new(true),
+        }
+    }
+
+    fn fire(&self) {
+        if self.armed.swap(false, Ordering::SeqCst) {
+            (self.stop)();
+        }
+    }
+
+    fn disarm(&self) {
+        self.armed.store(false, Ordering::SeqCst);
+    }
 }
 
 /// How many steps a pipe takes without waiting before it gives way to
@@ -215,6 +247,7 @@ impl Pipe {
             drains: false,
             finished: false,
             stop: None,
+            armed: None,
         }
     }
 
@@ -251,10 +284,13 @@ impl Pipe {
     /// (`abandon`): a source that is cut short ends its connection at
     /// whatever moment its reader went.
     fn cut_short(&mut self, vm: &Vm) {
-        if !self.finished
-            && let Some(stop) = self.stop.take()
-        {
-            stop();
+        if !self.finished {
+            if let Some(stop) = self.stop.take() {
+                stop();
+            }
+            if let Some(armed) = &self.armed {
+                armed.fire();
+            }
         }
         self.finish(vm, None);
     }
@@ -365,6 +401,11 @@ impl Pipe {
                     return Ok(Step::Park(wait));
                 }
                 Next::Done(value) => {
+                    // A source that ended by itself leaves its
+                    // connection to the program.
+                    if let Some(armed) = &self.armed {
+                        armed.disarm();
+                    }
                     self.finish(vm, None);
                     return Ok(Step::Done(value));
                 }
@@ -418,10 +459,13 @@ impl Native for Pipe {
         // A pipe on a connection that is stopped before its end shuts
         // the connection down, whatever it was doing: not only when a
         // read happened to be in flight.
-        if !self.finished
-            && let Some(stop) = self.stop.take()
-        {
-            stop();
+        if !self.finished {
+            if let Some(stop) = self.stop.take() {
+                stop();
+            }
+            if let Some(armed) = &self.armed {
+                armed.fire();
+            }
         }
         // A stage that failed hands its failure to whoever reads its
         // output: the first read that raises it handles it. One that no
@@ -454,6 +498,20 @@ fn stage(
     output: Output,
     logic: impl FnMut(Got) -> Result<Next, VmError> + Send + 'static,
 ) -> Result<Step, VmError> {
+    stage_on(vm, name, inputs, output, None, logic)
+}
+
+/// Start a stage, as [`stage`] does, that works on a connection: `stop`
+/// shuts the connection down when the stage is stopped, whenever that
+/// is: in a read, between two, or before the stage has run at all.
+fn stage_on(
+    vm: &mut Vm,
+    name: &'static str,
+    inputs: Vec<Arc<Channel>>,
+    output: Output,
+    stop: Option<Stop>,
+    logic: impl FnMut(Got) -> Result<Next, VmError> + Send + 'static,
+) -> Result<Step, VmError> {
     if vm.takes_nothing_new() {
         return Ok(vm.end_here(name));
     }
@@ -464,17 +522,31 @@ fn stage(
     } = output;
     let out = Channel::fed(vm.next_channel_id(), capacity, ahead);
     let id = vm.next_task_id();
-    let handle =
-        Arc::new(TaskHandle::with_owner(id, vm.scheduler().current_owner()).of_stage(name));
+    let owner = vm.scheduler().current_owner();
+    let stage = StageOf {
+        name,
+        source: inputs.is_empty(),
+        at: vm.place_here(),
+    };
+    let handle = Arc::new(TaskHandle::with_owner(id, owner).of_stage(stage));
     // Whoever reads the output and stops reading stops the stage.
     let scheduler = Arc::downgrade(vm.scheduler());
     let stopped = handle.clone();
+    let armed = stop.map(|stop| Arc::new(Armed::new(stop)));
+    let shut = armed.clone();
     out.stop_feeder_with(move || {
+        // The connection first: a stage that is cancelled before it has
+        // run may be ended by a worker at once, and nothing of it runs
+        // then.
+        if let Some(shut) = &shut {
+            shut.fire();
+        }
         if let Some(scheduler) = scheduler.upgrade() {
             scheduler.cancel(&stopped);
         }
     });
     let mut pipe = Pipe::new(name, inputs, logic);
+    pipe.armed = armed;
     pipe.out = Some(out.clone());
     pipe.handle = Some(handle.clone());
     if drains {
@@ -585,7 +657,8 @@ fn reading(
     let read = Arc::new(Mutex::new(read));
     let mut failed = false;
     let mut items = std::collections::VecDeque::new();
-    stage(vm, name, vec![], SOURCE, move |got| {
+    let stop = on.stop.clone();
+    stage_on(vm, name, vec![], SOURCE, stop, move |got| {
         // The next item read, which ends the source if it is an error.
         fn emit(item: Value, failed: &mut bool) -> Next {
             *failed = matches!(&item, Value::Variant(item) if item.is(bv::ERR));
@@ -777,7 +850,7 @@ builtins! {
 
     fn file_chunks(vm, path: &str, size: i64) -> Result<Step, VmError> {
         let Ok(n @ 1..) = usize::try_from(size) else {
-            return Ok(closed_channel(vm));
+            return Err(VmError::new("stream.file_chunks: size must be positive".into()));
         };
         let path = path.to_string();
         let mut file: Option<std::fs::File> = None;
@@ -871,7 +944,7 @@ builtins! {
     #[cfg(feature = "tcp")]
     fn tcp_chunks(vm, stream: TcpStream, size: i64) -> Result<Step, VmError> {
         let Ok(n @ 1..) = usize::try_from(size) else {
-            return Ok(closed_channel(vm));
+            return Err(VmError::new("stream.tcp_chunks: size must be positive".into()));
         };
         let stream_handle = stream.clone();
         reading(
@@ -1009,7 +1082,10 @@ builtins! {
     }
 
     fn take(vm, ch: Chan, n: i64) -> Result<Step, VmError> {
+        // It reads nothing: its input is cut as a `take` that has all
+        // it reads cuts it.
         if n <= 0 {
+            ch.abandon(vm.scheduler().wake());
             return Ok(closed_channel(vm));
         }
         let in_ch = ch.clone();
@@ -1482,6 +1558,62 @@ mod tests {
         until("the connection was left open", || {
             stopped.load(Ordering::SeqCst)
         });
+    }
+
+    /// A pipe on a connection whose shut-down is armed, and the flag
+    /// that the shut-down sets.
+    fn armed_pipe(
+        logic: impl FnMut(Got) -> Result<Next, VmError> + Send + 'static,
+    ) -> (Pipe, Arc<AtomicBool>) {
+        let stopped = Arc::new(AtomicBool::new(false));
+        let flag = stopped.clone();
+        let mut pipe = Pipe::new("test.source", vec![], logic);
+        pipe.armed = Some(Arc::new(Armed::new(Arc::new(move || {
+            flag.store(true, Ordering::SeqCst)
+        }))));
+        (pipe, stopped)
+    }
+
+    /// A source on a connection that is stopped before it has run (a
+    /// worker ends a task that was cancelled before its first slice:
+    /// its frames are abandoned) shuts its connection down; it does not
+    /// take the stop for an end of its own. (Before, its abandon
+    /// disarmed the shut-down, and a reader that stopped it at that
+    /// moment left the connection open.)
+    #[test]
+    fn a_source_abandoned_before_it_has_run_shuts_its_connection() {
+        let mut vm = Vm::new(crate::HostIo::process());
+        let (mut pipe, stopped) = armed_pipe(|_| unexpected());
+        let armed = pipe.armed.clone().expect("armed");
+        pipe.abandon(&mut vm);
+        assert!(
+            stopped.load(Ordering::SeqCst),
+            "the connection was left open"
+        );
+        // Once: whoever stops it later shuts nothing again.
+        stopped.store(false, Ordering::SeqCst);
+        armed.fire();
+        assert!(!stopped.load(Ordering::SeqCst));
+    }
+
+    /// A source on a connection that ends by itself leaves the
+    /// connection to the program: a reader that goes afterwards shuts
+    /// nothing down.
+    #[test]
+    fn a_source_that_ended_by_itself_leaves_its_connection() {
+        let mut vm = Vm::new(crate::HostIo::process());
+        let (mut pipe, stopped) = armed_pipe(|_| Ok(Next::Done(Value::Unit)));
+        let armed = pipe.armed.clone().expect("armed");
+        assert!(matches!(
+            pipe.run(&mut vm, Next::Done(Value::Unit)),
+            Ok(Step::Done(_))
+        ));
+        armed.fire();
+        pipe.abandon(&mut vm);
+        assert!(
+            !stopped.load(Ordering::SeqCst),
+            "the connection was shut down"
+        );
     }
 
     /// The same when the source waits with an item for room in its

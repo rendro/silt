@@ -1,0 +1,17 @@
+-- exit: 1
+-- repeat: 3
+-- stderr-contains: the `stream.from_range` source at r3_y3__the_verdict_names_a_stream_source_as_a_source.silt:15:12 waits for its output to be read
+-- stderr-contains: the `stream.map` stage at r3_y3__the_verdict_names_a_stream_source_as_a_source.silt:15:41 waits for its output to be read
+-- The deadlock report calls a source a source, and a stage after it a
+-- stage, as the docs of `stream` do. The source works ahead until its
+-- output is full; the `map` waits to be asked.
+import channel
+import stream
+
+fn main() {
+  let fresh = channel.new(0)
+  -- (Both lines are about where the stream is written: the source's
+  -- call, and the stage's.)
+  let _s = stream.from_range(1, 100) |> stream.map { x -> x }
+  let _ = channel.receive(fresh)
+}

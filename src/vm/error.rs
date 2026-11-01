@@ -8,6 +8,10 @@ pub struct VmError {
     pub message: String,
     /// What to do about it, one line each: the diagnostic's help.
     pub help: Vec<String>,
+    /// The help lines that name a place of the program: the line at the
+    /// index has `{at}` where the place of the span is shown (see
+    /// [`Diagnostic::help_at`]).
+    pub help_at: Vec<(usize, Span)>,
     /// If true, an instruction met a value of a kind it cannot work on
     /// (see [`VmError::type_confusion`]).
     pub type_confusion: bool,
@@ -39,6 +43,7 @@ impl VmError {
         VmError {
             message,
             help: Vec::new(),
+            help_at: Vec::new(),
             type_confusion: false,
             out_of_steps: false,
             exit: None,
@@ -97,6 +102,14 @@ impl VmError {
         self
     }
 
+    /// The error with `help` as a help line that names the place `at`:
+    /// its `{at}` shows where that is.
+    pub fn with_help_at(mut self, help: impl Into<String>, at: Span) -> Self {
+        self.help_at.push((self.help.len(), at));
+        self.help.push(help.into());
+        self
+    }
+
     /// The error as a diagnostic: the first line of the message is its
     /// message, and the rest of the message, as it is (a `panic` text or
     /// a builtin's report can go on for several lines), its one note.
@@ -115,6 +128,7 @@ impl VmError {
         let mut d = Diagnostic::error(code, self.span.unwrap_or(Span::BUILTIN), head);
         d.notes.extend(rest.map(str::to_string));
         d.help = self.help.clone();
+        d.help_at = self.help_at.clone().into_boxed_slice();
         d.labels = self
             .call_stack
             .iter()

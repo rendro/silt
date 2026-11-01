@@ -1,0 +1,21 @@
+-- repeat: 5
+-- `channel.close` on a stream stops the stages that feed it at once: a
+-- `stream.buffered` that nobody read takes none of the values sent to
+-- its input after the close.
+import channel
+import stream
+import time
+
+fn main() {
+  let c = channel.new(3)
+  let s = c |> stream.buffered(4)
+  time.sleep(time.ms(20))
+  channel.close(s)
+  time.sleep(time.ms(20))
+  channel.send(c, 1)
+  channel.send(c, 2)
+  channel.send(c, 3)
+  channel.close(c)
+  time.sleep(time.ms(20))
+  println("the input still holds {stream.count(c)} of 3")
+}

@@ -70,8 +70,9 @@ use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use std::thread;
 use std::time::Duration;
 
-use crate::runtime::handle::TaskHandle;
+use crate::runtime::handle::{StageOf, TaskHandle};
 use crate::runtime::sync::{self, Channel, Fired, Parking, Resumed, Source, TaskId, Wait, Waiting};
+use crate::source::Span;
 use crate::value::Value;
 use crate::vm::{HostIo, Vm, VmError};
 
@@ -2254,30 +2255,45 @@ fn verdict(own: &[&Waiting<'_, Sleeper>], main: TaskId) -> Option<VmError> {
         _ => "channel select with no counterparty",
     };
     let mut verdict = VmError::new(format!("deadlock on main thread: {what}"));
-    for line in waits_of_the_others(own, main) {
-        verdict = verdict.with_help(line);
+    for (line, at) in waits_of_the_others(own, main) {
+        verdict = match at {
+            Some(at) => verdict.with_help_at(line, at),
+            None => verdict.with_help(line),
+        };
     }
     Some(verdict)
 }
 
 /// What each parked task besides the program's own waits on, one line
-/// each, for the deadlock report.
-fn waits_of_the_others(own: &[&Waiting<'_, Sleeper>], main: TaskId) -> Vec<String> {
+/// each, for the deadlock report. A line about a stream stage names the
+/// stage and the call that started it: the place of the call, where the
+/// line has `{at}`, is shown by whoever renders the report.
+fn waits_of_the_others(own: &[&Waiting<'_, Sleeper>], main: TaskId) -> Vec<(String, Option<Span>)> {
     /// How many tasks are listed.
     const LISTED: usize = 8;
     let others: Vec<&&Waiting<'_, Sleeper>> =
         own.iter().filter(|waiting| waiting.task != main).collect();
-    let mut lines: Vec<String> = others
+    let mut lines: Vec<(String, Option<Span>)> = others
         .iter()
         .take(LISTED)
         .map(|waiting| {
-            let on: Vec<String> = waiting
+            let stage = match waiting.sleeper {
+                Sleeper::Task(task) => task.handle.stage_of(),
+                Sleeper::Thread(_) => None,
+            };
+            let mut on: Vec<String> = waiting
                 .on
                 .iter()
                 .map(|source| match source {
+                    // A stream stage receives only from its inputs.
+                    Source::Recv(_) if stage.is_some() => "for its input".to_string(),
                     Source::Recv(channel) => format!("to receive from <channel:{}>", channel.id()),
-                    // A stream stage that waits for its reader to ask
-                    // for the value it would send.
+                    // A stream stage sends only on its output, and waits
+                    // there for its reader to ask for a value or to
+                    // make room.
+                    Source::Send(_) | Source::Demand(_) if stage.is_some() => {
+                        "for its output to be read".to_string()
+                    }
                     Source::Send(channel) | Source::Demand(channel) => {
                         format!("to send to <channel:{}>", channel.id())
                     }
@@ -2287,6 +2303,24 @@ fn waits_of_the_others(own: &[&Waiting<'_, Sleeper>], main: TaskId) -> Vec<Strin
                     },
                 })
                 .collect();
+            // (A stage that waits on several inputs waits for its input.)
+            on.dedup();
+            let on = on.join(", or ");
+            if let Some(StageOf { name, source, at }) = stage {
+                // A source is told apart from the stages after it, as
+                // the docs of `stream` tell them apart.
+                let what = match source {
+                    true => "source",
+                    false => "stage",
+                };
+                return match at {
+                    Some(at) => (
+                        format!("the `{name}` {what} at {{at}} waits {on}"),
+                        Some(at),
+                    ),
+                    None => (format!("the `{name}` {what} waits {on}"), None),
+                };
+            }
             let task = match waiting.sleeper {
                 Sleeper::Task(task) => Some(task.id),
                 Sleeper::Thread(park) => park.task,
@@ -2295,11 +2329,11 @@ fn waits_of_the_others(own: &[&Waiting<'_, Sleeper>], main: TaskId) -> Vec<Strin
                 Some(id) => format!("task <handle:{id}>"),
                 None => "a thread of the runtime".to_string(),
             };
-            format!("{who} waits {}", on.join(", or "))
+            (format!("{who} waits {on}"), None)
         })
         .collect();
     if others.len() > LISTED {
-        lines.push(format!("{} more tasks wait", others.len() - LISTED));
+        lines.push((format!("{} more tasks wait", others.len() - LISTED), None));
     }
     lines
 }

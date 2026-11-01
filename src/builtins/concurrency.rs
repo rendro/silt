@@ -154,8 +154,14 @@ pub(crate) mod channel {
             }))
         }
 
+        // A stream that its reader closes is given up as every other
+        // cut gives it up: the stages that feed it stop at once, and
+        // take nothing that comes after. A channel the program made is
+        // only closed: its other readers get what is buffered.
         fn close(vm, ch: Chan) {
-            ch.close(Close::default(), vm.scheduler().wake());
+            let wake = vm.scheduler().wake();
+            ch.close(Close::default(), wake);
+            ch.abandon(wake);
         }
 
         // `true` if the value was sent, `false` if there is no room and

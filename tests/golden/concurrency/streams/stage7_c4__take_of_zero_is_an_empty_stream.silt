@@ -1,0 +1,8 @@
+-- A take of zero gives a stream that is closed, not one that never
+-- ends. (A chunk size of zero is an error: see
+-- r3_y3__file_chunks_of_size_zero_is_an_error.)
+import stream
+
+fn main() {
+  println(stream.from_list([1, 2, 3]) |> stream.take(0) |> stream.count)
+}
