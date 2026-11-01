@@ -1242,12 +1242,15 @@ mod tests {
                 .ends_with("  = help: plain {at}\n  = help: named at test.silt:2:5")
         );
         assert_eq!(render_json(&map, &d)["help"], serde_json::json!(lines));
-        let lsp = to_lsp(&map, &d, &|_| None);
-        assert!(
-            lsp.message.ends_with("help: named at test.silt:2:5"),
-            "{}",
-            lsp.message
-        );
+        #[cfg(feature = "lsp")]
+        {
+            let lsp = to_lsp(&map, &d, &|_| None);
+            assert!(
+                lsp.message.ends_with("help: named at test.silt:2:5"),
+                "{}",
+                lsp.message
+            );
+        }
     }
 
     #[test]
