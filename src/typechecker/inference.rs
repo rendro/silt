@@ -2872,7 +2872,18 @@ impl TypeChecker {
                     .iter()
                     .map(|arg| super::names::shown_arg(arg))
                     .collect();
-                for (i, arg) in args.iter_mut().enumerate() {
+                // A closure is checked after the call's other arguments,
+                // which may decide the types of its parameters
+                // (`apply({ r -> r.zero() }, rec)` reads `r` as `rec`'s
+                // type, as `apply2(rec, { r -> r.zero() })` does).
+                let (closures, others): (Vec<usize>, Vec<usize>) =
+                    (0..args.len()).partition(|k| matches!(args[*k].kind, ExprKind::Lambda { .. }));
+                // (Each argument's place, the alias and the type, in the
+                // order the call writes them.)
+                let mut given_at: Vec<Option<(Span, Option<Symbol>, Type)>> =
+                    vec![None; args.len()];
+                for i in others.into_iter().chain(closures) {
+                    let arg = &mut args[i];
                     let param = params.get(i + implicit_self);
                     if let (ExprKind::Lambda { .. }, Some(param)) = (&arg.kind, param)
                         && let Type::Fun(expected, _) = self.apply(param)
@@ -2920,7 +2931,7 @@ impl TypeChecker {
                         None => arg_ty,
                     };
                     mismatched |= self.errors.len() > reported;
-                    given.push((arg.span, self.alias_named(arg), arg_ty.clone()));
+                    given_at[i] = Some((arg.span, self.alias_named(arg), arg_ty.clone()));
                     if let Some(param) = param {
                         let at = match form {
                             CallForm::Call => arg.span,
@@ -2945,6 +2956,7 @@ impl TypeChecker {
                         }
                     }
                 }
+                given.extend(given_at.into_iter().flatten());
                 // An argument of the wrong type is the one thing wrong
                 // with the call: what the callee owes for it is not
                 // asked as well.
