@@ -2284,10 +2284,12 @@ fn waits_of_the_others(own: &[&Waiting<'_, Sleeper>], main: TaskId) -> Vec<(Stri
                     .map(|name| (name, task.handle.stage_at())),
                 Sleeper::Thread(_) => None,
             };
-            let on: Vec<String> = waiting
+            let mut on: Vec<String> = waiting
                 .on
                 .iter()
                 .map(|source| match source {
+                    // A stream stage receives only from its inputs.
+                    Source::Recv(_) if stage.is_some() => "for its input".to_string(),
                     Source::Recv(channel) => format!("to receive from <channel:{}>", channel.id()),
                     // A stream stage sends only on its output, and waits
                     // there for its reader to ask for a value or to
@@ -2304,6 +2306,8 @@ fn waits_of_the_others(own: &[&Waiting<'_, Sleeper>], main: TaskId) -> Vec<(Stri
                     },
                 })
                 .collect();
+            // (A stage that waits on several inputs waits for its input.)
+            on.dedup();
             let on = on.join(", or ");
             if let Some((name, at)) = stage {
                 return match at {

@@ -2448,7 +2448,13 @@ impl<'a> Compiler<'a> {
         tail: bool,
     ) -> Result<(), Diagnostic> {
         // `val |> f(args)` is the call `f(val, args)`, and `val |> f` the
-        // call `f(val)`.
+        // call `f(val)`. The call is where `f` is written: an error of
+        // the call, and the place of a stage it starts, point there, not
+        // at the start of `val`.
+        let span = Span {
+            start: right.span.start,
+            ..span
+        };
         match &right.kind {
             ExprKind::Call(callee, args) => {
                 // The call `callee(left, args..)`.
