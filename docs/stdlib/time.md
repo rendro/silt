@@ -545,6 +545,7 @@ time.sleep(duration: Duration) -> ()
 ```
 
 Blocks the current task for the given duration. Other tasks continue running.
+A duration of zero or less returns at once.
 
 ```silt
 import time

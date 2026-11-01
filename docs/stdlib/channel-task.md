@@ -135,8 +135,8 @@ Blocking receive that waits no longer than `dur`. Returns:
 
 A value already buffered, or a rendezvous sender already parked, wins over an
 expired timer: the non-blocking path is always tried first so readiness is not
-preempted by the timer. A `Duration` of zero gives try-receive semantics (never
-schedules a timer); negative durations are a construction error. Positive
+preempted by the timer. A `Duration` of zero or less gives try-receive semantics (never
+schedules a timer). Positive
 sub-millisecond durations are rounded up to one millisecond so the caller
 always gets at least one timer tick of wait.
 
@@ -264,7 +264,8 @@ channel.timeout(dur: Duration) -> Channel(a)
 Creates a channel that automatically closes after the given `Duration`. The
 returned channel carries no values -- it simply closes when the duration
 elapses. This is useful for adding deadlines to `channel.select`. A positive
-duration below a millisecond is one millisecond; a negative one is an error.
+duration below a millisecond is one millisecond; a duration of zero or less
+closes the channel at once.
 
 ```silt
 import channel
