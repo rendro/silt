@@ -1,0 +1,56 @@
+-- A parameter with no annotation that holds a type, given as an argument
+-- of a type before a dot (`List(t).mk(s)`, `Box(t).mk(s)`), decodes at
+-- the type it is given, as a `type t` parameter does: in a function, a
+-- closure, a `let` of the type, a type nested in another, a closure that
+-- captures the parameter, and a function the parameter is passed on to.
+import json
+
+trait Mk: json.Decode {
+  fn mk(s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+trait Mk for List(a) where a: json.Decode {}
+
+type Box(a) {
+  v: a,
+}
+
+trait Mk for Box(a) where a: json.Decode {}
+
+fn list_of(t) {
+  List(t).mk("[1]")
+}
+
+fn box_of(t) {
+  Box(t).mk("\{\"v\": \"s\"}")
+}
+
+fn kept(t) {
+  let b = Box(t)
+  b.mk("\{\"v\": 2}")
+}
+
+fn nested(t) {
+  Box(List(t)).mk("\{\"v\": [3]}")
+}
+
+fn captured(t) {
+  let k = { s -> List(t).mk(s) }
+  k("[4]")
+}
+
+fn passed(t) {
+  nested(t)
+}
+
+fn main() {
+  println(list_of(Int))
+  println(box_of(String))
+  println(box_of(Int))
+  println(kept(Int))
+  println(nested(Int))
+  println(captured(Int))
+  println(passed(Int))
+  let k = { t -> List(t).mk("[5]") }
+  println(k(Int))
+}

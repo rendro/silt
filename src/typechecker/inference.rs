@@ -1681,6 +1681,36 @@ impl TypeChecker {
         self.error_help(Code::TypeMismatch, (message, Some(help)), at);
     }
 
+    /// Keep the parameter `param` of the type `ty` if it has no
+    /// annotation: it may hold a type (`held_params`).
+    fn note_held_param(&mut self, param: &crate::ast::Param, ty: &Type) {
+        if param.ty.is_none()
+            && param.kind == crate::ast::ParamKind::Data
+            && matches!(param.pattern.kind, PatternKind::Ident(_))
+        {
+            self.held_params.push((param.pattern.span, ty.clone()));
+        }
+    }
+
+    /// Write the parameters with no annotation that hold a type, with
+    /// the variable each holds (`Program::held_types`): the compiler
+    /// gives the variable the parameter's value, as it gives a `type a`
+    /// parameter's to `a`.
+    pub(super) fn write_held_types(&mut self, program: &mut crate::ast::Program) {
+        let held = std::mem::take(&mut self.held_params);
+        program.held_types = (held.into_iter())
+            .filter_map(|(span, ty)| match self.apply(&ty) {
+                Type::Generic(name, args) if name.is_builtin(crate::defs::TYPE_OF) => {
+                    match args.first() {
+                        Some(var @ (Type::Var(_) | Type::Rigid(_))) => Some((span, var.clone())),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            })
+            .collect();
+    }
+
     /// Note that the parameter `obj` (a name) holds the type `inner`.
     fn note_type_holder(&mut self, obj: &Expr, inner: &Type) {
         if let (ExprKind::Ident(name), Type::Var(v)) = (&obj.kind, self.apply(inner)) {
@@ -2129,6 +2159,7 @@ impl TypeChecker {
         env.push();
         for (i, param) in f.params.iter_mut().enumerate() {
             if let Some(ty) = param_types.get(i) {
+                self.note_held_param(param, ty);
                 self.check_pattern(
                     &mut param.pattern,
                     ty,
@@ -4181,6 +4212,7 @@ impl TypeChecker {
                         } else {
                             self.fresh_var()
                         };
+                        self.note_held_param(p, &ty);
                         self.check_pattern(
                             &mut p.pattern,
                             &ty,

@@ -94,6 +94,7 @@ impl CellInfo {
             late_evidence: checked.late_evidence.clone(),
             dict_owners: checked.dict_owners.clone(),
             pattern_lets: checked.pattern_lets.clone(),
+            held_types: checked.held_types.clone(),
         }
     }
 }

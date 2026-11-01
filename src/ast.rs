@@ -973,6 +973,10 @@ pub struct Program {
     /// of each of the name's bounds among those of the `let`'s value;
     /// written by the typechecker.
     pub pattern_lets: Vec<(Span, Vec<u16>)>,
+    /// Each parameter with no annotation that holds a type (`t` of `fn
+    /// f(t) { List(t).mk(s) }`), by the span of its name: the type
+    /// variable it holds; written by the typechecker.
+    pub held_types: Vec<(Span, Type)>,
 }
 
 /// What the parser saw of statements that the tree does not hold.

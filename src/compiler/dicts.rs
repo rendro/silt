@@ -389,7 +389,10 @@ impl Compiler<'_> {
                     || (self.decode_params.as_ref())
                         .is_some_and(|(_, params)| params.contains(&r.name))
             }
-            Type::Var(_) => false,
+            // (Held by a parameter with no annotation.)
+            Type::Var(_) => super::held_name(ty).is_some_and(|local| {
+                self.resolve_local(local).is_some() || self.resolve_upvalue(local).is_some()
+            }),
             _ if self.type_constant(ty).is_some() => true,
             _ => match self.type_parts(ty) {
                 Some((_, parts)) => parts.into_iter().all(|part| self.has_value(part)),
@@ -440,6 +443,16 @@ impl Compiler<'_> {
         }
         if let Type::Rigid(r) = ty {
             return self.compile_type_var(r.name, span);
+        }
+        if let Type::Var(_) = ty
+            && let Some(local) = super::held_name(ty)
+        {
+            if let Some(slot) = self.resolve_local(local) {
+                return self.emit(Asm::GetLocal { slot }, span);
+            }
+            if let Some(index) = self.resolve_upvalue(local) {
+                return self.emit(Asm::GetUpvalue { index }, span);
+            }
         }
         let Some((head, parts)) = self.type_parts(ty) else {
             return self.emit(Asm::Unit, span);

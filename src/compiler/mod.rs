@@ -388,6 +388,10 @@ pub struct Compiler<'a> {
     /// several names: the places of its bounds among the value's
     /// (`crate::ast::Program::pattern_lets`).
     pattern_lets: HashMap<Span, Vec<u16>>,
+    /// Each parameter with no annotation that holds a type, by the span
+    /// of its name: the type variable it holds
+    /// (`crate::ast::Program::held_types`).
+    held_types: HashMap<Span, Type>,
 }
 
 /// The names two or more types of the program's modules have (two
@@ -473,6 +477,7 @@ impl<'a> Compiler<'a> {
             owners: HashMap::new(),
             own_dicts: HashMap::new(),
             pattern_lets: HashMap::new(),
+            held_types: HashMap::new(),
             callee_call: None,
         };
         compiler.owners = (compiler.units.modules.iter())
@@ -480,6 +485,9 @@ impl<'a> Compiler<'a> {
             .collect();
         compiler.pattern_lets = (compiler.units.modules.iter())
             .flat_map(|unit| unit.program.pattern_lets.iter().cloned())
+            .collect();
+        compiler.held_types = (compiler.units.modules.iter())
+            .flat_map(|unit| unit.program.held_types.iter().cloned())
             .collect();
         compiler.builtin_defaults = compiler.assign_builtin_defaults(&mut globals)?;
         compiler.own_slots = compiler.assign_slots(&mut globals)?;
@@ -3487,9 +3495,14 @@ impl<'a> Compiler<'a> {
             let depth = ctx.scope_depth;
             ctx.locals.push(Local { name, depth, slot });
             // (A `type a` parameter is also the value of the type
-            // variable `a`: `compile_type_var`.)
+            // variable `a`: `compile_type_var`; so is a parameter with
+            // no annotation that holds a type, of the variable it holds.)
             if param.kind == crate::ast::ParamKind::Type {
                 let name = type_var_name(name);
+                ctx.locals.push(Local { name, depth, slot });
+            } else if let Some(name) = (self.held_types.get(&param.pattern.span)).and_then(held_name)
+            {
+                let ctx = self.ctx_mut();
                 ctx.locals.push(Local { name, depth, slot });
             }
         }
@@ -3581,6 +3594,16 @@ impl<'a> Compiler<'a> {
 /// `name`, a `type name` parameter's.
 pub(super) fn type_var_name(name: Symbol) -> Symbol {
     intern(&format!("__type_{}__", resolve(name)))
+}
+
+/// The name of the local that holds the value of the type variable
+/// `ty` (`type_var_name` of a rigid one), if it is one.
+pub(super) fn held_name(ty: &Type) -> Option<Symbol> {
+    match ty {
+        Type::Rigid(r) => Some(type_var_name(r.name)),
+        Type::Var(v) => Some(intern(&format!("__type_{v}__"))),
+        _ => None,
+    }
 }
 
 #[cfg(test)]

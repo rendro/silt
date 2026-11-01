@@ -345,6 +345,10 @@ pub struct TypeChecker {
     /// name and the reading. A later argument of that call of the other
     /// kind is told so (`misread_argument`).
     pub(super) closure_readings: Vec<(Type, Symbol, Reading)>,
+    /// The parameters with no annotation of the functions and closures
+    /// checked, by the span of their names, with their types: those that
+    /// hold a type are the program's `held_types`.
+    pub(super) held_params: Vec<(Span, Type)>,
     /// Spans of `?` uses in the current fn/lambda body. When the
     /// body/return-type unify fails on a Result/Option return that `?`
     /// itself demanded, the diagnostic points back at the `?` site instead
@@ -730,6 +734,7 @@ impl TypeChecker {
             unknown_receiver: None,
             readings: HashMap::new(),
             closure_readings: Vec::new(),
+            held_params: Vec::new(),
             type_holders: HashMap::new(),
             current_qmark_spans: Vec::new(),
             qmark_decided: HashMap::new(),
@@ -1392,6 +1397,7 @@ impl TypeChecker {
 
         // After all passes, resolve any remaining type variables in annotations
         self.resolve_all_types(program);
+        self.write_held_types(program);
         self.write_evidence(program, &env);
 
         // The order the top-level `let`s are initialised in: what each
