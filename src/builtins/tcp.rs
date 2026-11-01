@@ -615,10 +615,8 @@ builtins! {
     }
 
     fn read(vm, stream: typed::TcpStream, max: i64) -> Result<Step, VmError> {
-        let Ok(max) = usize::try_from(max) else {
-            return Ok(Step::Done(err(format!(
-                "max must be non-negative, got {max}"
-            ))));
+        let Ok(max @ 1..) = usize::try_from(max) else {
+            return Err(VmError::new("tcp.read: max must be positive".into()));
         };
         let stream = stream.clone();
         on_connection(vm, &stream.clone(), move || {
@@ -647,8 +645,8 @@ builtins! {
     }
 
     fn read_exact(vm, stream: typed::TcpStream, n: i64) -> Result<Step, VmError> {
-        let Ok(n) = usize::try_from(n) else {
-            return Ok(Step::Done(err(format!("n must be non-negative, got {n}"))));
+        let Ok(n @ 1..) = usize::try_from(n) else {
+            return Err(VmError::new("tcp.read_exact: n must be positive".into()));
         };
         let stream = stream.clone();
         on_connection(vm, &stream.clone(), move || {

@@ -134,10 +134,15 @@ same TLS connection until the read returns.
 
 **How much a read takes.** `tcp.read(conn, max)` gives what one read
 finds, at most `max` bytes and at most 64 KiB (65536 bytes) at once: a
-larger `max` asks for no more. `tcp.read_exact(conn, n)` reads until it
-has `n` bytes; a connection that ends before that is `Err(Closed)`.
-Neither sets memory aside for the number asked for, only for the bytes
-that arrive. The same holds for a chunk of `stream.tcp_chunks`.
+larger `max` asks for no more. An `Ok` of no bytes is the end of the
+data: the other end has closed the connection, or it was shut down
+while the read waited. `tcp.read_exact(conn, n)` reads until it has `n`
+bytes; a connection that ends before that is `Err(Closed)`. Neither
+sets memory aside for the number asked for, only for the bytes that
+arrive. The same holds for a chunk of `stream.tcp_chunks`. `max` and
+`n` must be positive: a size of 0 or less is a runtime error
+("tcp.read: max must be positive", "tcp.read_exact: n must be
+positive"), as a chunk size of 0 or less is for `stream.tcp_chunks`.
 
 ## Stream lifetime
 
@@ -171,6 +176,9 @@ runs to its end, and its connection is then shut down.) (The whole rule, for eve
 - silt does not use async/await. Blocking calls run on the same I/O pool as
   `io.read_file`, `fs.list_dir`, etc. (see
   [the I/O pool](../concurrency.md#the-io-pool-and-operations-that-nobody-waits-for)).
+- A line of `stream.tcp_lines` that is not UTF-8 is an `Err(Other(..))`
+  item and the last: the source ends there and shuts the connection
+  down, as `stream.file_lines` ends at such a line of a file.
 
 ## TLS
 

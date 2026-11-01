@@ -46,6 +46,11 @@ pub(crate) fn find_project_root(
 /// [`print_manifest_errors_as_json`]) and exit 1. Used by callers that
 /// need the manifest or the package graph to proceed.
 pub(crate) fn die_on_manifest_error(failure: PackageFailure) -> ! {
+    die_on_manifest_error_with(failure, 1)
+}
+
+/// [`die_on_manifest_error`] with the exit status `code`.
+pub(crate) fn die_on_manifest_error_with(failure: PackageFailure, code: i32) -> ! {
     let PackageFailure {
         sources,
         diagnostics,
@@ -61,7 +66,7 @@ pub(crate) fn die_on_manifest_error(failure: PackageFailure) -> ! {
     } else {
         silt::diagnostic::eprint_all(&sources, &diagnostics);
     }
-    process::exit(1);
+    process::exit(code);
 }
 
 /// Whether package errors are printed as `silt check --format json`

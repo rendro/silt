@@ -1,0 +1,38 @@
+-- exit: 1
+-- timeout: 10
+-- requires-feature: tcp
+-- stderr-contains: task <handle:4> failed and was never joined: tcp.read: max must be positive
+-- stderr-contains: task <handle:5> failed and was never joined: tcp.read: max must be positive
+-- stderr-contains: task <handle:6> failed and was never joined: tcp.read_exact: n must be positive
+-- stderr-contains: task <handle:7> failed and was never joined: tcp.read_exact: n must be positive
+-- A size of 0 or less is a runtime error for `tcp.read` and
+-- `tcp.read_exact`, as for the chunk sources: an empty `Ok` of a read is
+-- the end of the data, never a read of nothing. Each read is in a task
+-- of its own that nobody joins, so each failure is reported.
+import bytes
+import channel
+import task
+import tcp
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
+  let done = channel.new(0)
+  let _peer = task.spawn { ->
+    when let Ok(conn) = tcp.accept(listener) else {
+      panic("cannot accept")
+    }
+    let _ = tcp.write(conn, bytes.from_string("abc"))
+    channel.receive(done)
+  }
+  when let Ok(conn) = tcp.connect("127.0.0.1:{tcp.local_port(listener)}") else {
+    panic("cannot connect")
+  }
+  let _a = task.spawn { -> tcp.read(conn, 0) }
+  let _b = task.spawn { -> tcp.read(conn, -1) }
+  let _c = task.spawn { -> tcp.read_exact(conn, 0) }
+  let _d = task.spawn { -> tcp.read_exact(conn, -1) }
+  println(tcp.read(conn, 3))
+  channel.close(done)
+}

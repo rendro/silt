@@ -1,0 +1,8 @@
+Silt REPL (type :quit to exit, :help for commands)
+Fn() -> T
+Fn() -> <repl:1>.T
+Fn(T) -> String
+Fn(T) -> List((T, <repl:1>.T))
+Fn(a) -> String where a: Sh
+Fn(a) -> String where a: <repl:9>.Sh
+Fn(a) -> Int where a: Sh

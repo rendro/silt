@@ -1,0 +1,31 @@
+-- timeout: 10
+-- repeat: 5
+-- A negative duration is no time, as for `time.sleep` and
+-- `task.deadline`. `channel.receive_timeout` with one is a try-receive:
+-- a value that is there, `Closed`, or `Empty` without waiting (the value
+-- sent later is not taken). `channel.timeout` with one is closed at once:
+-- it wins a select against a timer of ten seconds.
+import channel
+import task
+import time
+
+fn main() {
+  let ch = channel.new(4)
+  channel.send(ch, 7)
+  println(channel.receive_timeout(ch, time.ms(-5)))
+  let _sender = task.spawn { ->
+    time.sleep(time.ms(200))
+    channel.send(ch, 8)
+  }
+  println(channel.receive_timeout(ch, time.Duration { ns: -1 }))
+  let later = channel.timeout(time.seconds(10))
+  let now = channel.timeout(time.ms(-1))
+  match channel.select([channel.Recv(later), channel.Recv(now)]) {
+    channel.Received(^now, None) -> println("the negative timeout is closed at once")
+    _ -> println("something else")
+  }
+  time.sleep(time.ms(-1))
+  println(channel.receive(ch))
+  channel.close(ch)
+  println(channel.receive_timeout(ch, time.ms(-5)))
+}

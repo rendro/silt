@@ -1,0 +1,9 @@
+-- cmd: fmt --check notes
+-- exit: 2
+-- stderr-contains: silt fmt: no .silt files found in notes
+-- A directory with no .silt file in it is nothing fmt can check: exit
+-- 2, as for a file it cannot read, not 1, which says "not formatted".
+
+fn main() {
+  println("hello")
+}

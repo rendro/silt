@@ -1,0 +1,6 @@
+-- cmd: repl
+-- stderr-contains: expected expression, found |>
+-- stdin: import list\n[1, 2]\n  |> list.length\n[1, 2] |>\n  list.length\n([1, 2]\n  |> list.length)\n:quit\n
+-- The REPL runs an input as soon as it is complete, so a line that
+-- starts with `|>` is a new input; a line that ends in `|>`, or the
+-- pipeline in parentheses, goes on.

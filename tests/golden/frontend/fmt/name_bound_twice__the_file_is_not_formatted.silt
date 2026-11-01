@@ -1,5 +1,5 @@
 -- cmd: fmt
--- exit: 1
+-- exit: 2
 -- stderr-contains: error[parse]: 'z' is bound twice at the top level
 -- A file in which a name is bound twice is never formatted: it is left
 -- as it is, the order of its import lines and its spacing included.

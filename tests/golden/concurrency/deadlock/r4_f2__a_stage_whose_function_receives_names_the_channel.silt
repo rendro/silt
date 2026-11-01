@@ -1,0 +1,17 @@
+-- exit: 1
+-- repeat: 5
+-- stderr-contains: deadlock on main thread: channel receive with no counterparty
+-- stderr-contains: the `stream.map` stage at r4_f2__a_stage_whose_function_receives_names_the_channel.silt:15:8 waits to receive from <channel:0>
+-- stderr-not-contains: waits for its input
+-- The deadlock report names the channel that the function of a stream
+-- stage waits on: the `map` has its input's values, and waits in the
+-- receive of its function, not for its input.
+import channel
+import stream
+
+fn main() {
+  let never = channel.new(0)
+  let s = stream.from_list([1, 2])
+    |> stream.map { x -> channel.receive(never) }
+  println(stream.collect(s))
+}

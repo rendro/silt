@@ -1,5 +1,5 @@
 -- cmd: fmt --test-tamper=0x10=>16
--- exit: 1
+-- exit: 2
 -- requires-feature: debug-build
 -- When `silt fmt` would write something that fails its own check, it
 -- refuses: the file stays as it is, and the refusal is a diagnostic

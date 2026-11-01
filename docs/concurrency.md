@@ -289,9 +289,9 @@ Like `channel.try_receive`, it returns a `ChannelResult(a)`:
 A value that is there wins over an expired timer: one in the buffer, or one
 held by a sender that waits on a rendezvous channel. The non-blocking path
 is always tried first, so a ready value is never preempted by the deadline.
-A `Duration` of zero gives try-receive semantics (no timer is scheduled): it
-returns such a value, and `Empty` when there is none.
-Negative durations are an error. Positive sub-millisecond durations are
+A `Duration` of zero or less gives try-receive semantics (no timer is
+scheduled): it returns such a value, and `Empty` when there is none.
+Positive sub-millisecond durations are
 rounded up to one millisecond, so the caller always waits at least one timer
 tick.
 
