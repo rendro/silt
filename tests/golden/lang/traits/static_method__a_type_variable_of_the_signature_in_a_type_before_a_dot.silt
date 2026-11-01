@@ -1,0 +1,61 @@
+-- A type variable the signature binds, or the header of the impl whose
+-- method it is, is a type among the arguments of a type before a dot, as
+-- it is before a dot: `Box(a).zero()` is the method of `Box(a)`'s impl,
+-- also nested (`Box(Box(a)).zero()`) and for a type named like its
+-- variant (`Cell(a).zero()`).
+trait Zero {
+  fn zero() -> Self
+}
+
+trait Zero for Int {
+  fn zero() -> Self { 7 }
+}
+
+trait Zero for String {
+  fn zero() -> Self { "z" }
+}
+
+type Box(a) {
+  v: a,
+}
+
+trait Zero for Box(a) where a: Zero {
+  fn zero() -> Self { Box { v: a.zero() } }
+}
+
+type Cell(a) {
+  Cell(a),
+  Blank,
+}
+
+trait Zero for Cell(a) where a: Zero {
+  fn zero() -> Self { Cell(a.zero()) }
+}
+
+type W(a) {
+  w: a,
+}
+
+trait Zero for W(a) where a: Zero {
+  fn zero() -> Self { W { w: Box(a).zero().v } }
+}
+
+fn boxed(x: a) -> Box(a) where a: Zero {
+  Box(a).zero()
+}
+
+fn twice(x: a) -> Box(Box(a)) where a: Zero {
+  Box(Box(a)).zero()
+}
+
+fn cell(x: a) -> Cell(a) where a: Zero {
+  Cell(a).zero()
+}
+
+fn main() {
+  println(boxed(1))
+  println(boxed("s"))
+  println(twice(1))
+  println(cell(1))
+  println(W(String).zero())
+}

@@ -1,0 +1,31 @@
+-- cmd: check
+-- exit: 1
+-- `Box(a).mk(s)`, where `mk` decodes `Self` and `a` is a type variable
+-- of the signature with no `type a` parameter, needs a value of `a`
+-- where the code runs: refused as a call through the trait is. Given to
+-- a call (`json.parse(s, a)`), a type variable of the signature is no
+-- value, and no "did you mean" names another name for it.
+import json
+
+trait Mk: json.Decode {
+  fn mk(s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+type Box(a) {
+  v: a,
+}
+
+trait Mk for Box(a) where a: json.Decode {}
+
+fn boxed(x: a, s: String) -> Result(Box(a), json.JsonError) where a: json.Decode {
+  Box(a).mk(s)
+}
+
+fn parsed(x: a, s: String) -> Result(a, json.JsonError) where a: json.Decode {
+  json.parse(s, a)
+}
+
+fn main() {
+  println(boxed(1, "\{\"v\": 2}"))
+  println(parsed(1, "2"))
+}

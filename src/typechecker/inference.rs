@@ -1029,6 +1029,13 @@ impl TypeChecker {
                     // arguments.)
                     let written = !self.holds_open_vars(&inner);
                     self.self_is(tr, field, (&instantiated, &inner, written), span);
+                    // (`Box(a).mk(s)` with no value of `a` where the code
+                    // runs: `refuse_type_without_value`.)
+                    if let Some(key) = self.entry_impl(name, &entry, field)
+                        && self.carries_full_type(key)
+                    {
+                        (self.full_type_uses).push((inner.clone(), tr, field, span));
+                    }
                 }
                 self.type_method_site(name, &entry, field, Some(inner.clone()), span);
                 Some(self.apply(&instantiated))
@@ -3563,6 +3570,13 @@ impl TypeChecker {
                     // A type parameter of an impl's header the call gives
                     // (`decode_params`), as a type: `json.decode(v, Tree(a))`.
                     Type::type_of(ty)
+                } else if self.type_receiver
+                    && expr.res == Some(crate::defs::Res::Local)
+                    && let Some(ty) = self.sig_type_var(name)
+                {
+                    // A type variable of the signature among the arguments
+                    // of a type before a dot, as a type: `Box(a).zero()`.
+                    Type::type_of(ty)
                 } else if let Some(ty) = self.alias_value(expr.res, env) {
                     ty
                 } else if self.res_def(expr.res).is_some_and(|def| {
@@ -3804,7 +3818,12 @@ impl TypeChecker {
                 }
 
                 // Could be record.field — infer the object type
+                let around = std::mem::replace(
+                    &mut self.type_receiver,
+                    matches!(obj.kind, ExprKind::Call(..)),
+                );
                 let obj_ty = self.infer_expr(obj, env);
+                self.type_receiver = around;
                 self.receiver_taken = false;
                 let obj_ty = self.apply(&obj_ty);
                 // Canonicalise before dispatch so a receiver whose type

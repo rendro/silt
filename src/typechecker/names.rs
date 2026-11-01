@@ -437,6 +437,7 @@ pub fn resolve_module(
         hidden_modules: Vec::new(),
         type_vars: Vec::new(),
         header_vars: Vec::new(),
+        type_receiver: false,
         used: RefCell::new(HashSet::new()),
     };
     resolver.alias_heads(program);
@@ -1161,6 +1162,10 @@ struct Resolver<'a> {
     /// The type parameters of the header of the impl whose methods are
     /// resolved: a call may give one as a type (`json.decode(v, Tree(a))`).
     header_vars: Vec<Symbol>,
+    /// Whether the call resolved next is a type before a dot (`Box(a)`
+    /// of `Box(a).zero()`), whose arguments may name type variables of
+    /// `type_vars` as types.
+    type_receiver: bool,
     /// The top-level names looked up: an import whose name is not among
     /// them is unused.
     used: RefCell<HashSet<Symbol>>,
@@ -2935,7 +2940,14 @@ impl Resolver<'_> {
     /// its arguments is no value: silt has no placeholder arguments, and
     /// the help writes the closure that takes the value instead.
     fn call(&mut self, callee: &mut Expr, args: &mut [Expr], piped: bool) {
+        let receiver = std::mem::take(&mut self.type_receiver);
         self.expr(callee);
+        // `Box(a).zero()`, `Box(Box(a)).zero()`: a type before a dot, whose
+        // arguments are types; a type variable of the signature among
+        // them is that type, as it is before a dot (`a.zero()`).
+        let of_type = receiver
+            && matches!(callee.res, Some(Res::Def(d))
+                if self.defs.get(d).is_type() || self.defs.variant_type(d).is_some());
         let help = args.iter().any(is_placeholder).then(|| {
             placeholder_help(callee, args, piped, |name| {
                 self.lookup_value(intern(name)).is_some()
@@ -2958,10 +2970,16 @@ impl Resolver<'_> {
                     a.res = Some(Res::Local);
                 }
                 _ if let ExprKind::Ident(name) = a.kind
-                    && self.header_vars.contains(&name)
+                    && (self.header_vars.contains(&name)
+                        || (of_type && self.type_vars.contains(&name)))
                     && self.lookup_value(name).is_none() =>
                 {
                     a.res = Some(Res::Local);
+                }
+                _ if of_type && matches!(a.kind, ExprKind::Call(..)) => {
+                    self.type_receiver = true;
+                    self.expr(a);
+                    self.type_receiver = false;
                 }
                 _ => self.expr(a),
             }
@@ -3057,6 +3075,10 @@ impl Resolver<'_> {
                         "`import {module}.{{ ... }}` binds only the names it lists; add \
                          `import {module}` to write `{module}.<name>`"
                     ))
+                } else if self.type_vars.contains(&name) {
+                    // (A type variable of the signature is no misspelt
+                    // value.)
+                    None
                 } else {
                     let candidates = self.visible_names();
                     suggest_similar(&name_str, candidates.iter())
@@ -3208,7 +3230,9 @@ impl Resolver<'_> {
             return res;
         }
         let ExprKind::Ident(head_name) = obj.kind else {
+            self.type_receiver = matches!(obj.kind, ExprKind::Call(..));
             self.expr(obj);
+            self.type_receiver = false;
             // `m.Box.default()`: the type, not its variant of that name.
             if let Some(Res::Def(d)) = obj.res
                 && let Some(ty) = self.type_named_like_its_variant(d)

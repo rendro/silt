@@ -352,6 +352,10 @@ pub struct TypeChecker {
     /// The arguments of the call whose callee, a method after a dot, is
     /// checked, as written (`1` of `Option(String).pure(1)`).
     pub(super) method_call_args: Option<String>,
+    /// Whether the expression checked is a type before a dot (`Box(a)` of
+    /// `Box(a).zero()`) or in one: a type variable of the signature among
+    /// its arguments is a type.
+    pub(super) type_receiver: bool,
     /// Spans of `?` uses in the current fn/lambda body. When the
     /// body/return-type unify fails on a Result/Option return that `?`
     /// itself demanded, the diagnostic points back at the `?` site instead
@@ -739,6 +743,7 @@ impl TypeChecker {
             closure_readings: Vec::new(),
             held_params: Vec::new(),
             method_call_args: None,
+            type_receiver: false,
             type_holders: HashMap::new(),
             current_qmark_spans: Vec::new(),
             qmark_decided: HashMap::new(),
