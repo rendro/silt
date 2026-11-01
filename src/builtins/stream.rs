@@ -1009,7 +1009,10 @@ builtins! {
     }
 
     fn take(vm, ch: Chan, n: i64) -> Result<Step, VmError> {
+        // It reads nothing: its input is cut as a `take` that has all
+        // it reads cuts it.
         if n <= 0 {
+            ch.abandon(vm.scheduler().wake());
             return Ok(closed_channel(vm));
         }
         let in_ch = ch.clone();
