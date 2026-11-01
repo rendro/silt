@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 0
+-- A wildcard arm on a `Never` value is exhaustive too.
+fn fail(message: String) -> Never {
+  panic(message)
+}
+fn elim() -> Int { match fail("no value") { _ -> 0 } }
+fn main() {}

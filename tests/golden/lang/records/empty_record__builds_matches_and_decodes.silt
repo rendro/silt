@@ -1,0 +1,34 @@
+-- `type Empty {}` is a record with no fields: `Empty {}` builds one, its
+-- patterns match it, and the decoders build it (owner Q1, audit R5).
+import json
+import toml
+
+type Empty {}
+type Holder { e: Empty, n: Int }
+
+fn f(e: Empty) -> Int {
+  match e {
+    Empty {} -> 1
+  }
+}
+
+fn g(e: Empty) -> Int {
+  match e {
+    Empty { .. } -> 2
+  }
+}
+
+fn main() {
+  let e = Empty {}
+  println(e)
+  println(f(e))
+  println(g(e))
+  println(e == Empty {})
+  match json.parse("\{\}", Empty) {
+    Ok(d) -> println(f(d))
+    Err(err) -> println("err {err}")
+  }
+  println(toml.parse("", Empty))
+  println(json.parse("\{\"e\": \{\}, \"n\": 1\}", Holder))
+  println(json.stringify(Holder { e: Empty {}, n: 2 }))
+}

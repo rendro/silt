@@ -1,0 +1,5 @@
+error[type]: non-exhaustive match: not all patterns of Absurd are covered
+ --> round81_exhaustiveness_alias_empty_enum__direct_record_without_fields.silt:7:35
+   |
+ 7 | fn elim(x: Absurd) -> Int { match x { } }
+   |                                   ^ non-exhaustive match: not all patterns of Absurd are covered
