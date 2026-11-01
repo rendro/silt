@@ -1,0 +1,31 @@
+-- cmd: check
+-- exit: 1
+-- A method that makes a value, called on a value of a generic type: the
+-- help names the type with its arguments (`Box(Int).zero()`), or with
+-- its parameters where they are not known (`Box(a).zero()`), as a bare
+-- generic type before a dot is refused.
+trait Zero {
+  fn zero() -> Self
+}
+
+trait Zero for Int {
+  fn zero() -> Self { 0 }
+}
+
+type Box(a) {
+  v: a,
+}
+
+trait Zero for Box(a) where a: Zero {
+  fn zero() -> Self { Box { v: a.zero() } }
+}
+
+fn open(b: Box(a)) -> Box(a) where a: Zero {
+  b.zero()
+}
+
+fn main() {
+  let b = Box { v: 1 }
+  println(b.zero())
+  println(open(b))
+}

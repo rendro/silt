@@ -327,13 +327,114 @@ impl TypeChecker {
     /// (`encode_deferred`): refused unless the bound's owner encodes the
     /// type.
     pub(super) fn settle_encode_owners(&mut self) {
-        for (ty, span, var) in std::mem::take(&mut self.encode_deferred) {
+        for (ty, span, var, passer) in std::mem::take(&mut self.encode_deferred) {
             let ty = self.apply(&ty);
             let owners = self.route_owner(var, true);
-            if let Some(refusal) = self.opaque_encode_refusal(&ty, span, &owners) {
+            if let Some(mut refusal) = self.opaque_encode_refusal(&ty, span, &owners) {
+                // (The way the function the use calls hands it on.)
+                if let Some(note) =
+                    passer.and_then(|passer| self.encode_note(passer, Asked::Bound(var), &ty))
+                {
+                    refusal = refusal.with_note(note);
+                }
                 self.refuse_opaque(span, refusal);
             }
         }
+    }
+
+    /// What the use at the evidence `ev` hands the type to through
+    /// another module's `json.Encode` bound (`encode_asked`).
+    pub(super) fn encode_asked_of(&self, ev: Option<super::evidence::EvRef>) -> Option<Asked> {
+        (self.encode_asked).or_else(|| ev.and_then(|ev| self.encode_asked_at.get(&ev).copied()))
+    }
+
+    /// The note of a refusal to encode `ty`, which `passer`, the function
+    /// the use calls, hands on as `asked` says: the functions on the way
+    /// and the encoder, following on each variable a route by which the
+    /// opaque type in `ty` is refused, where there is one.
+    pub(super) fn encode_note(&self, passer: Symbol, asked: Asked, ty: &Type) -> Option<String> {
+        let refused = self.opaque_module_in(ty);
+        let (links, encoder) = self.encoded_through(asked, refused)?;
+        Some(super::builtin_checks::passes_note(passer, &links, encoder))
+    }
+
+    /// The functions a `json.Encode` bound's body hands its type through
+    /// on the way to the encoder, and the encoder, as `asked` says.
+    fn encoded_through(
+        &self,
+        mut asked: Asked,
+        refused: Option<crate::session::ModuleId>,
+    ) -> Option<(Vec<Symbol>, Symbol)> {
+        let mut links = Vec::new();
+        let mut seen = Vec::new();
+        loop {
+            let var = match asked {
+                Asked::Builtin(encoder) => return Some((links, encoder)),
+                // (Another module's routes, each ending in its encoder: the
+                // one that refuses the type, where there is one.)
+                Asked::Through(_, through) => {
+                    let routes = Asked::routes(through);
+                    let route = (refused.and_then(|module| {
+                        routes.iter().find(|(owners, _)| !owners.contains(&module))
+                    }))
+                    .or(routes.first())?;
+                    let (encoder, on_the_way) = route.1.split_last()?;
+                    links.extend(on_the_way.iter().copied());
+                    return Some((links, *encoder));
+                }
+                Asked::Unknown => return None,
+                Asked::Bound(var) => self.rigid_rep_var(var),
+            };
+            if seen.contains(&var) {
+                return None;
+            }
+            seen.push(var);
+            let routes = self.owner_routes.get(&(var, true))?;
+            let route_owners = |route: &OwnerRoute| match route {
+                OwnerRoute::Direct(owners) => owners.clone(),
+                OwnerRoute::Passed(passed) => self.route_owner(*passed, true),
+            };
+            let asker = (refused.and_then(|module| {
+                (routes.iter()).find(|(route, asker)| {
+                    asker.is_some() && !route_owners(route).contains(&module)
+                })
+            }))
+            .or_else(|| routes.iter().find(|(_, asker)| asker.is_some()))
+            .and_then(|(_, asker)| *asker)?;
+            if !matches!(asker.by, Asked::Builtin(_)) {
+                links.extend(asker.passer);
+            }
+            asked = asker.by;
+        }
+    }
+
+    /// The routes of the `json.Encode` bound on `var` as another module
+    /// reads them (`Asked::Through`): of each, the modules of other
+    /// modules' definitions on it, and the functions on the way with the
+    /// encoder last.
+    fn encode_routes(&self, var: TyVar) -> Vec<crate::types::ThroughRoute> {
+        let var = self.rigid_rep_var(var);
+        let mut found = Vec::new();
+        for (route, asker) in self.owner_routes.get(&(var, true)).into_iter().flatten() {
+            let Some(asker) = asker else {
+                continue;
+            };
+            let owners = match route {
+                OwnerRoute::Direct(owners) => owners.clone(),
+                OwnerRoute::Passed(passed) => self.route_owner(*passed, true),
+            };
+            let mut links: Vec<Symbol> = match asker.by {
+                Asked::Builtin(_) => Vec::new(),
+                _ => asker.passer.into_iter().collect(),
+            };
+            let Some((rest, encoder)) = self.encoded_through(asker.by, None) else {
+                continue;
+            };
+            links.extend(rest);
+            links.push(encoder);
+            found.push((owners, links));
+        }
+        found
     }
 
     /// Keep, of each top-level function of the module, the owners of
@@ -349,6 +450,7 @@ impl TypeChecker {
             .map(|id| (defs.get(*id).name, *id))
             .collect();
         let mut found = Vec::new();
+        let mut found_encoders = Vec::new();
         for decl in &program.decls {
             // (A function's bounds by their routes; a `let`'s by the uses
             // its value owes them for.)
@@ -370,6 +472,7 @@ impl TypeChecker {
                     continue;
                 };
                 let mut owners = HashMap::new();
+                let mut encoders = HashMap::new();
                 for pred in &scheme.preds {
                     if let Pred::Trait {
                         tr,
@@ -379,6 +482,15 @@ impl TypeChecker {
                         && (Self::is_decode(*tr) || tr.is_builtin("Encode"))
                     {
                         let encode = tr.is_builtin("Encode");
+                        // (What its body hands an encode bound's type to,
+                        // for the note of a refusal in another module.)
+                        let routes = match encode && is_fn {
+                            true => self.encode_routes(*v),
+                            false => Vec::new(),
+                        };
+                        if let Some(encoder) = routes.first().and_then(|(_, l)| l.last()) {
+                            encoders.insert(*v, Asked::Through(*encoder, Asked::joined(&routes)));
+                        }
                         let found = match is_fn {
                             true => self.route_owner(*v, encode),
                             false => {
@@ -393,9 +505,13 @@ impl TypeChecker {
                 if !owners.is_empty() {
                     found.push((id, owners));
                 }
+                if !encoders.is_empty() {
+                    found_encoders.push((id, encoders));
+                }
             }
         }
         self.tables.def_owners.extend(found);
+        self.tables.def_encoders.extend(found_encoders);
     }
 
     /// The type a use gives a decoder through the declared bound of

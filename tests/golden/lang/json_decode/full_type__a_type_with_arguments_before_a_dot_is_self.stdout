@@ -1,0 +1,10 @@
+Box {v: 7}
+Box {v: z}
+8
+Ok(Box {v: s})
+Ok(Box {v: 3})
+Ok(Box {v: 4})
+Box {v: 7}
+Ok(Wrap {w: 5})
+Ok(Wrap {w: six})
+Blank

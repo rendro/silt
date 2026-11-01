@@ -16,7 +16,7 @@ type Box(a) { Box(a) }
 trait Default for Box(a) where a: Default { fn default() -> Box(a) { Box(a.default()) } }
 fn main() {
   println(concat_all([1, 2, 3]))
-  match Box.default() {
+  match Box(Int).default() {
     Box(n) -> println(n + 0)
   }
 }

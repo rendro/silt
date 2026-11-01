@@ -1,0 +1,18 @@
+import json
+pub type Box(a) { v: a }
+trait json.Decode for Box(a) where a: json.Decode {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match a.decode(value) {
+      Ok(x) -> Ok(Box { v: x })
+      Err(e) -> Err(e)
+    }
+  }
+}
+pub trait Mk: json.Decode {
+  fn mk(s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+trait Mk for Box(a) where a: json.Decode {}
+pub trait Default { fn default() -> Self }
+trait Default for Int { fn default() -> Self { 7 } }
+trait Default for Box(a) where a: Default { fn default() -> Self { Box { v: a.default() } } }
+pub type IB = Box(Int)

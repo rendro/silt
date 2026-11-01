@@ -1,0 +1,26 @@
+-- A method taken as a value through an alias of a generic type
+-- (`LB.decode` for `type LB = lib.Box(Int)`, another module's `lib.IB`)
+-- is the method at the alias's type in full, also the written `decode`
+-- of the generic type, which takes its type argument from it; as the
+-- call is, and as `lib.Box(Int).decode` is.
+import json
+import lib
+import list
+
+type LB = lib.Box(Int)
+
+fn main() {
+  let h = lib.IB.decode
+  println(h(json.Int(2)))
+  let m = lib.IB.mk
+  println(m("3"))
+  let d = lib.IB.default
+  println(d())
+  let l = LB.decode
+  println(l(json.Int(4)))
+  let lm = LB.mk
+  println(lm("5"))
+  let fs = [lib.Box(Int).decode, LB.decode, lib.IB.decode]
+  println(fs |> list.map { f -> f(json.Int(6)) })
+  println(LB.decode(json.Int(7)))
+}

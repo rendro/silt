@@ -193,8 +193,18 @@ pub struct TypeChecker {
     pub(super) encode_passing: Option<TyVar>,
     pub(super) encode_passed: HashMap<evidence::EvRef, TyVar>,
     /// The opaque encodings refused at a use of such a bound, with the
-    /// variable: decided once the module's bodies are, by its owner.
-    pub(super) encode_deferred: Vec<(Type, Span, TyVar)>,
+    /// variable and what the use calls: decided once the module's bodies
+    /// are, by its owner.
+    pub(super) encode_deferred: Vec<(Type, Span, TyVar, Option<Symbol>)>,
+    /// While a use owes the `json.Encode` bound of another module's
+    /// definition (or an earlier REPL input's): what that bound hands
+    /// its type to (`TypeTables::def_encoders`); and so, by the evidence
+    /// of what the use owes. A note of a refusal names the way.
+    pub(super) encode_asked: Option<Asked>,
+    pub(super) encode_asked_at: HashMap<evidence::EvRef, Asked>,
+    /// While such a definition is instantiated: its
+    /// `TypeTables::def_encoders`.
+    pub(super) def_encoders_now: Option<HashMap<TyVar, Asked>>,
     /// While a definition of another module (or an earlier REPL input)
     /// is instantiated: the owners of each of its `json.Decode` and
     /// `json.Encode` bounds that has some (`TypeTables::def_owners`).
@@ -208,6 +218,9 @@ pub struct TypeChecker {
     pub(super) decoded_owner: HashMap<Span, Vec<crate::session::ModuleId>>,
     /// As `decoded_owner`, of what is encoded at a place.
     pub(super) encoded_owner: HashMap<Span, Vec<crate::session::ModuleId>>,
+    /// And what another module's bound there hands it to (`encode_asked`),
+    /// for a type variable inside what is encoded.
+    pub(super) encoded_asked: HashMap<Span, Asked>,
     /// The variable of each `json.Decode` bound a trait declares for a
     /// method, with the variables it is in the module's impls of the
     /// method: what the trait's bound asks for is what they all ask for.
@@ -443,15 +456,6 @@ pub struct TypeChecker {
     /// trait and method: a refusal the solver makes at the receiver is
     /// the call's (one error for the call).
     pub(super) full_type_receivers: HashMap<Span, (Span, TraitKey, Symbol)>,
-    /// The type `Self` stands for at each use in the body being checked
-    /// of a method reached through its type whose impl's dictionary
-    /// carries its type in full (`Box.mk`): the dictionary is made where
-    /// the use is, so a `let` of the use is not general in that type.
-    pub(super) type_method_selves: Vec<Type>,
-    /// The types of `type_method_selves` a top-level `let` was kept from
-    /// being general in: a REPL input that leaves one open refuses the
-    /// `let` (its dictionary is made where the input runs).
-    pub(super) kept_selves: Vec<Type>,
     /// Each annotation variable of a declaration whose body was or is
     /// being checked, as its body sees it: rigid.
     pub(super) rigid_of: HashMap<TyVar, Type>,
@@ -683,10 +687,14 @@ impl TypeChecker {
             encode_passing: None,
             encode_passed: HashMap::new(),
             encode_deferred: Vec::new(),
+            encode_asked: None,
+            encode_asked_at: HashMap::new(),
+            def_encoders_now: None,
             def_owners_now: None,
             scheme_owners: HashMap::new(),
             decoded_owner: HashMap::new(),
             encoded_owner: HashMap::new(),
+            encoded_asked: HashMap::new(),
             bound_impls: HashMap::new(),
             bound_methods: HashMap::new(),
             decode_aliases: HashMap::new(),
@@ -752,8 +760,6 @@ impl TypeChecker {
             full_type_refused: Default::default(),
             full_type_uses: Vec::new(),
             full_type_receivers: HashMap::new(),
-            type_method_selves: Vec::new(),
-            kept_selves: Vec::new(),
             rigid_of: HashMap::new(),
             let_vars: std::collections::HashSet::new(),
             var_written: HashMap::new(),
@@ -1177,13 +1183,7 @@ impl TypeChecker {
     /// where it is reported. A REPL cell is exempt: the next cell may
     /// decide it.
     fn report_unknown_let_types(&mut self, program: &Program, env: &TypeEnv) {
-        // (In a REPL cell, only a `let` whose value makes a dictionary
-        // that carries its type in full, `let top = Box.mk`: the cell
-        // makes it when it runs, so a later input cannot.)
-        let kept: Vec<TyVar> = (self.kept_selves.iter())
-            .flat_map(|ty| free_vars_in(&self.apply(ty)))
-            .collect();
-        if self.is_cell && kept.is_empty() {
+        if self.is_cell {
             return;
         }
         for decl in &program.decls {
@@ -1196,8 +1196,6 @@ impl TypeChecker {
                 continue;
             }
             let (what, keyword, why) = match is_pub {
-                // (A REPL input's `let` is public to the inputs after it.)
-                _ if self.is_cell => ("top-level let", "let", "a later input does not decide it"),
                 true => (
                     "public let",
                     "pub let",
@@ -1211,9 +1209,6 @@ impl TypeChecker {
                 };
                 let ty = self.apply(&scheme.ty);
                 if free_vars_in(&ty).iter().all(|v| scheme.vars.contains(v)) {
-                    continue;
-                }
-                if self.is_cell && !free_vars_in(&ty).iter().any(|v| kept.contains(v)) {
                     continue;
                 }
                 // (A trait argument nothing decides: that error says it.)
@@ -1429,7 +1424,6 @@ impl TypeChecker {
             }
         }
         let mut awaited: Vec<(Symbol, Type)> = Vec::new();
-        let selves = self.type_method_selves.len();
         for &i in &component.members {
             match (&decls[i], &sigs[i]) {
                 (Decl::Fn(f), Some(sig)) if !sig.complete => {
@@ -1502,12 +1496,6 @@ impl TypeChecker {
         // Generalise. What a `let` that is not a value leaves unknown
         // stays unknown for everything that mentions it.
         self.exit_level();
-        // (Nor is a `let` general in the type a dictionary made at a use
-        // in its value carries in full, `let top = Box.mk`, as in a body.)
-        for ty in self.type_method_selves.split_off(selves) {
-            self.keep_monomorphic(&ty);
-            self.kept_selves.push(ty);
-        }
         for (names, is_value, span, _) in &lets {
             for name in names {
                 let Some(bound) = env.lookup(*name).cloned() else {

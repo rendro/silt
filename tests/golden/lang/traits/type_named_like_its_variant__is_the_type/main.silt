@@ -1,7 +1,7 @@
 -- A name that is both a type and one of its variants
 -- (`type Box(a) { Box(a), Empty }`) is the type where a type is meant:
--- before a method that makes a value (`Box.default()`, also through a
--- module, `lib.Box.default()`) and as a `type t` argument (`mk(Box)`).
+-- before a method that makes a value (`Box(Int).default()`, also
+-- through a module, `lib.Box(Int).default()`) and as a `type t` argument (`mk(Box)`).
 -- Elsewhere it is the variant. (It used to be the variant everywhere:
 -- "unknown method 'default' on type Fn".)
 import lib
@@ -23,9 +23,9 @@ fn mk(type t) -> t where t: Default {
 }
 
 fn main() {
-  let a: Cell(Int) = Cell.default()
+  let a: Cell(Int) = Cell(Int).default()
   let b: Cell(Int) = mk(Cell)
-  let c: lib.Box(Int) = lib.Box.default()
+  let c: lib.Box(Int) = lib.Box(Int).default()
   let d: lib.Box(Int) = mk(lib.Box)
   println("{a} {b} {c} {d}")
   println(Cell(1))

@@ -1,20 +1,29 @@
-error[type]: method 'mk' of trait 'Mk' needs the type `Box(a)` in full here: `a` is known only by its type
- --> full_type__a_method_making_self_through_its_type_is_refused.silt:23:43
+error[type]: `Box` takes 1 type argument here: write `Box(a)`
+ --> full_type__a_method_making_self_through_its_type_is_refused.silt:27:11
     |
- 23 |   let r: Result(Box(a), json.JsonError) = Box.mk(s)
-    |                                           ^^^^^^ method 'mk' of trait 'Mk' needs the type `Box(a)` in full here: `a` is known only by its type
-  = help: take the type as a parameter, `type a`
+ 27 | let top = Box.mk
+    |           ^^^ `Box` takes 1 type argument here: write `Box(a)`
 
-error[type]: method 'mk' of trait 'Mk' needs the type `Box(a)` in full here: `a` is known only by its type
- --> full_type__a_method_making_self_through_its_type_is_refused.silt:28:50
+error[type]: `Box` takes 1 type argument here: write `Box(a)`
+ --> full_type__a_method_making_self_through_its_type_is_refused.silt:30:45
     |
- 28 |   let r: Result(Box(a), json.JsonError) = apply1(Box.mk, s)
-    |                                                  ^^^^^^ method 'mk' of trait 'Mk' needs the type `Box(a)` in full here: `a` is known only by its type
-  = help: take the type as a parameter, `type a`
+ 30 |   let r: Result(Box(Int), json.JsonError) = Box.mk("\{\"v\": 9}")
+    |                                             ^^^ `Box` takes 1 type argument here: write `Box(a)`
 
-error[type]: method 'mk' of trait 'Mk' needs the type `Box(a)` in full here: `a` is known only by its type
- --> full_type__a_method_making_self_through_its_type_is_refused.silt:33:11
+error[type]: `Box` takes 1 type argument here: write `Box(a)`
+ --> full_type__a_method_making_self_through_its_type_is_refused.silt:32:52
     |
- 33 |   let f = Box.mk
-    |           ^^^^^^ method 'mk' of trait 'Mk' needs the type `Box(a)` in full here: `a` is known only by its type
-  = help: take the type as a parameter, `type a`
+ 32 |   let p: Result(Box(Int), json.JsonError) = apply1(Box.mk, "\{\"v\": 9}")
+    |                                                    ^^^ `Box` takes 1 type argument here: write `Box(a)`
+
+error[type]: `Box` takes 1 type argument here: write `Box(a)`
+ --> full_type__a_method_making_self_through_its_type_is_refused.silt:34:11
+    |
+ 34 |   let f = Box.mk
+    |           ^^^ `Box` takes 1 type argument here: write `Box(a)`
+
+error[type]: `Plain` takes 1 type argument here: write `Plain(a)`
+ --> full_type__a_method_making_self_through_its_type_is_refused.silt:36:47
+    |
+ 36 |   let d: Result(Plain(Int), json.JsonError) = Plain.decode(json.Null)
+    |                                               ^^^^^ `Plain` takes 1 type argument here: write `Plain(a)`

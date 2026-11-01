@@ -720,7 +720,7 @@ trait Monoid {
 ```
 
 A type with a variant of its own name (`type Box(a) { Box(a), Empty }`)
-is the type where a type is meant: `Box.default()` calls the method of
+is the type where a type is meant: `Box(Int).default()` calls the method of
 its impl, and `make(Box)` gives the type to a `type t` parameter;
 `Box(1)` is the variant.
 

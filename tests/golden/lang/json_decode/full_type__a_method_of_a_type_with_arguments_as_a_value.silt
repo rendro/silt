@@ -1,0 +1,34 @@
+-- `decode` of a type with arguments, taken as a value (`let f =
+-- Box(Int).decode`, also through a `let` of the type), is the function
+-- that decodes at that type, by its structure or by a written impl for
+-- the generic type, as the call is.
+import json
+
+type Box(a) {
+  v: a,
+}
+
+type Wrap(a) {
+  w: a,
+}
+
+trait json.Decode for Wrap(a) where a: json.Decode {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match a.decode(value) {
+      Ok(x) -> Ok(Wrap { w: x })
+      Err(e) -> Err(e)
+    }
+  }
+}
+
+fn main() {
+  let f = Box(String).decode
+  println(f(json.Object(#{ "v": json.String("q") })))
+  let g = Box(Int).decode
+  println(g(json.Object(#{ "v": json.Int(3) })))
+  let t = Box(Int)
+  let h = t.decode
+  println(h(json.Object(#{ "v": json.Int(4) })))
+  let w = Wrap(Int).decode
+  println(w(json.Int(5)))
+}

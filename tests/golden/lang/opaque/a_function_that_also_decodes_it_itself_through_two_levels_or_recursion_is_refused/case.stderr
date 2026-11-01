@@ -11,6 +11,7 @@ error[type]: type 'mail.Email' cannot be encoded outside module 'mail': it is op
     |
  12 |   println(outer_show(mail.mk("b")))
     |                      ^^^^^^^^^^^^ type 'mail.Email' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = note: `outer_show` passes it to `inner_show`, which passes it to `json.stringify`
   = help: encode it inside module 'mail', or write `trait json.Encode for Email` there
 
 error[type]: type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it

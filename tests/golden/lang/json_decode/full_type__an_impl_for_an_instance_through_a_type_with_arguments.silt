@@ -1,0 +1,38 @@
+-- A type with arguments before a dot reaches the impl written for that
+-- instance (`trait json.Decode for Cell(Int)`): called, through a `let`
+-- of the type, and as a value, as `json.decode(v, Box(String))` does.
+import json
+
+trait Zero {
+  fn zero() -> Self
+}
+
+type Box(a) {
+  v: a,
+}
+
+trait Zero for Box(Int) {
+  fn zero() -> Self { Box { v: 7 } }
+}
+
+type Cell(a) {
+  c: a,
+}
+
+trait json.Decode for Cell(Int) {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) { Ok(Cell { c: 99 }) }
+}
+
+trait json.Decode for Box(String) {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) { Ok(Box { v: "w" }) }
+}
+
+fn main() {
+  println(Box(Int).zero())
+  println(Cell(Int).decode(json.Null))
+  let t = Box(String)
+  println(t.decode(json.Null))
+  let f = Box(String).decode
+  println(f(json.Null))
+  println(json.decode(json.Null, Box(String)))
+}

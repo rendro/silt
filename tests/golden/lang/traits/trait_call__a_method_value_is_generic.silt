@@ -1,20 +1,12 @@
--- A method named through its trait, or one that makes a value named
--- through its type, is a value as a function's name is: a `let` of it,
+-- A method named through its trait is a value as a function's name is: a `let` of it,
 -- local or top-level, is general, and is used at two types.
 trait Greet { fn greet(self) -> String }
 trait Greet for Int { fn greet(self) -> String { "i" } }
 trait Greet for String { fn greet(self) -> String { "s" } }
-trait Default { fn default() -> Self }
-type Box(a) { Bx(a), Empty }
-trait Default for Box(a) { fn default() -> Self { Empty } }
 let top = Greet.greet
 fn main() {
   let f = Greet.greet
   println("{f(1)} {f("a")} {top(2)} {top("b")}")
   let c = Compare.compare
   println("{c(1, 2)} {c("b", "a")}")
-  let mk = Box.default
-  let a: Box(Int) = mk()
-  let b: Box(String) = mk()
-  println("{a} {b}")
 }

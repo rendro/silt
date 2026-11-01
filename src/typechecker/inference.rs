@@ -569,25 +569,28 @@ impl TypeChecker {
         }
     }
 
-    /// The type `Self` stands for in `ty`, the type of the use at `span`
-    /// of the method `method` of an impl reached through its type `head`
-    /// (`Box.mk`), if the impl's dictionary carries its type in full: the
-    /// trait's declaration of the method matched against `ty`. The use is
-    /// refused where the body is checked, as a call through the trait is,
-    /// if a type variable in it has no value there.
+    /// The type `Self` stands for in `ty`, the type of a use of the
+    /// method `method` of an impl reached through its type `head`
+    /// (`Box(Int).mk`), if the impl's dictionary carries its type in full.
     fn full_self(
         &mut self,
         head: TypeRef,
         entry: &MethodEntry,
         method: Symbol,
         ty: &Type,
-        span: Span,
     ) -> Option<Type> {
         let key = self.entry_impl(head, entry, method)?;
         if !self.carries_full_type(key) {
             return None;
         }
-        let info = self.tables.traits.get(&key.0)?;
+        self.self_of(key.0, method, ty)
+    }
+
+    /// The type `Self` stands for in `ty`, the type of a use of the
+    /// method `method` of `tr`: the trait's declaration of the method
+    /// matched against `ty`.
+    fn self_of(&mut self, tr: TraitKey, method: Symbol, ty: &Type) -> Option<Type> {
+        let info = self.tables.traits.get(&tr)?;
         let self_var = info.self_var;
         let (_, declared) = info.methods.iter().find(|(n, _)| *n == method)?.clone();
         let mapping: HashMap<TyVar, Type> = (free_vars_in(&declared).into_iter())
@@ -595,9 +598,33 @@ impl TypeChecker {
             .collect();
         let self_ty = mapping.get(&self_var)?.clone();
         let _ = self.unify_types(&substitute_vars(&declared, &mapping), ty);
-        (self.full_type_uses).push((self_ty.clone(), key.0, method, span));
-        self.type_method_selves.push(self_ty.clone());
         Some(self_ty)
+    }
+
+    /// Refuse `ty`, a generic type the receiver `obj` names with no type
+    /// arguments, before a dot that calls a method of `tr` (`Box.mk(s)`):
+    /// a type with arguments is written with them (`Box(Int).mk(s)`).
+    /// Whether it was. (A trait of type constructors is called on the
+    /// constructor alone: `Option.pure(1)`.)
+    fn bare_type_receiver(&mut self, obj: &Expr, ty: TypeRef, tr: Option<TraitKey>) -> bool {
+        if tr.is_some_and(|tr| self.is_constructor_trait(tr)) {
+            return false;
+        }
+        let shown = written_receiver(obj).unwrap_or_else(|| resolve(ty.name));
+        self.bare_generic(&shown, ty, obj.span)
+    }
+
+    /// Make `Self` of `ty`, the type of a use at `span` of the method
+    /// `method` of `tr`, the type the receiver names (`Box(Int)` of
+    /// `Box(Int).mk(s)`, the type an alias stands for). (A trait of type
+    /// constructors is called on the constructor alone.)
+    fn self_is(&mut self, tr: TraitKey, method: Symbol, ty: &Type, named: &Type, span: Span) {
+        if self.is_constructor_trait(tr) {
+            return;
+        }
+        if let Some(self_ty) = self.self_of(tr, method, ty) {
+            self.unify(named, &self_ty, span);
+        }
     }
 
     /// Refuse the call at `span` of the method `field` of `tr` on a value
@@ -967,6 +994,9 @@ impl TypeChecker {
                 let scheme = self.method_scheme(&entry);
                 self.instance_header = self.entry_impl(name, &entry, field);
                 let instantiated = self.instantiate_method(&scheme, field, span);
+                if let Some(tr) = self.method_trait {
+                    self.self_is(tr, field, &instantiated, &inner, span);
+                }
                 self.type_method_site(name, &entry, field, Some(inner.clone()), span);
                 Some(self.apply(&instantiated))
             }
@@ -1751,10 +1781,23 @@ impl TypeChecker {
                 }
                 _ => ty,
             };
+            // (A type with arguments is called on with them: `Box(Int)`,
+            // `Box(a)` where they are not known.)
             let on = match ty {
                 Type::Rigid(r) => r.name.to_string(),
-                _ => (self.type_name_for_impl(ty))
-                    .map_or_else(|| "T".to_string(), |t| self.spell_type(t)),
+                _ if !self.type_args_of(ty).is_empty() && free_vars_in(ty).is_empty() => {
+                    self.show_type(ty)
+                }
+                _ => match self.type_name_for_impl(ty) {
+                    Some(t) => {
+                        let name = self.spell_type(t);
+                        match self.type_param_names(t).join(", ") {
+                            params if params.is_empty() => name,
+                            params => format!("{name}({params})"),
+                        }
+                    }
+                    None => "T".to_string(),
+                },
             };
             let args = if params > 0 { ".." } else { "" };
             return Some(format!(
@@ -2000,9 +2043,7 @@ impl TypeChecker {
     /// say, and the body's type is the signature's result.
     pub(super) fn check_body(&mut self, f: &mut FnDecl, sig: &FnSig, env: &mut TypeEnv) {
         let uses = std::mem::take(&mut self.full_type_uses);
-        let selves = std::mem::take(&mut self.type_method_selves);
         self.check_body_in(f, sig, env);
-        self.type_method_selves = selves;
         // (As the body left the receivers' types.)
         for (recv, tr, field, span) in std::mem::replace(&mut self.full_type_uses, uses) {
             let recv = self.apply(&recv);
@@ -3528,6 +3569,10 @@ impl TypeChecker {
                         && self.self_param(tr, field).is_none()
                         && self.private_owner(tr).is_none()
                     {
+                        if self.bare_type_receiver(obj, ty, Some(tr)) {
+                            expr.ty = Some(Type::Error);
+                            return Type::Error;
+                        }
                         let instance = (self.type_instance(ty))
                             .unwrap_or_else(|| Type::Generic(key.0, Vec::new()));
                         self.method_trait = Some(tr);
@@ -3567,16 +3612,19 @@ impl TypeChecker {
                             expr.ty = Some(Type::Error);
                             return Type::Error;
                         }
+                        if self.bare_type_receiver(obj, ty, self.entry_trait(&entry, field)) {
+                            expr.ty = Some(Type::Error);
+                            return Type::Error;
+                        }
+                        // Written through an alias, the instance is the
+                        // alias's (`Ints` for `type Ints = List(Int)` is
+                        // a `List(Int)`), with its arguments.
+                        let instance = self.type_instance(ty).map(|instance| {
+                            crate::types::canonical::canonicalize(&self.tables.resolver, &instance)
+                        });
+                        // (The receiver is the value of that type.)
+                        obj.ty = instance.clone().map(Type::type_of);
                         if entry.structural {
-                            // Written through an alias, the instance is the
-                            // alias's (`Ints` for `type Ints = List(Int)` is
-                            // a `List(Int)`), with its arguments.
-                            let instance = self.type_instance(ty).map(|instance| {
-                                crate::types::canonical::canonicalize(
-                                    &self.tables.resolver,
-                                    &instance,
-                                )
-                            });
                             let ty = match instance {
                                 Some(inner) => {
                                     self.structural_type_method(key.0, &inner, field, span)
@@ -3608,7 +3656,10 @@ impl TypeChecker {
                         let scheme = self.method_scheme(&entry);
                         self.instance_header = self.entry_impl(key.0, &entry, field);
                         let ty = self.instantiate_method(&scheme, field, span);
-                        let full = self.full_self(key.0, &entry, field, &ty, span);
+                        if let (Some(tr), Some(named)) = (self.method_trait, &instance) {
+                            self.self_is(tr, field, &ty, named, span);
+                        }
+                        let full = self.full_self(key.0, &entry, field, &ty);
                         self.type_method_site(key.0, &entry, field, full, span);
                         let ty = self.apply(&ty);
                         expr.ty = Some(ty.clone());
@@ -3646,6 +3697,23 @@ impl TypeChecker {
                     let ty = resolved.unwrap_or(Type::Error);
                     expr.ty = Some(ty.clone());
                     return ty;
+                }
+
+                // A type named like its variant, given types before a dot,
+                // is the type (`Cell(Int).default()`), as it is alone.
+                // (So is a type of the module named like a variant of
+                // another type.)
+                if let ExprKind::Call(callee, args) = &mut obj.kind
+                    && args.iter().all(|arg| self.writes_types(arg))
+                {
+                    self.type_named_like_its_variant(callee);
+                    if let ExprKind::Ident(name) = callee.kind
+                        && let Some(crate::defs::Res::Def(id)) = callee.res
+                        && (self.defs.as_ref()).is_some_and(|defs| defs.variant_type(id).is_some())
+                        && let Some(ty) = self.own_types.get(&name)
+                    {
+                        callee.res = Some(crate::defs::Res::Def(ty.id.0));
+                    }
                 }
 
                 // Could be record.field — infer the object type
