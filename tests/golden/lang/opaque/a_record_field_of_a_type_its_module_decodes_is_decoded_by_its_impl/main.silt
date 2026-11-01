@@ -1,0 +1,35 @@
+-- `mail` writes a `json.Decode` impl for `Box(Email)`: a record of
+-- another module whose field is a `mail.Box(mail.Email)`, or a list of
+-- them, is decoded through that impl, as a `List(mail.Box(mail.Email))`
+-- given to `json.parse` is. The opaque `Email` inside is the impl's to
+-- build.
+import json
+import list
+import mail
+
+type W {
+  b: mail.Box(mail.Email),
+}
+
+type L {
+  bs: List(mail.Box(mail.Email)),
+}
+
+fn main() {
+  match json.parse("[\"a@x\"]", List(mail.Box(mail.Email))) {
+    Ok(bs) -> println(list.map(bs, mail.addr))
+    Err(e) -> println(Error.message(e))
+  }
+  match json.parse("\{\"b\": \"b@x\"}", W) {
+    Ok(w) -> println(mail.addr(w.b))
+    Err(e) -> println(Error.message(e))
+  }
+  match json.parse("\{\"bs\": [\"c@x\", \"d@x\"]}", L) {
+    Ok(l) -> println(list.map(l.bs, mail.addr))
+    Err(e) -> println(Error.message(e))
+  }
+  match json.parse("\{\"b\": 1}", W) {
+    Ok(w) -> println(mail.addr(w.b))
+    Err(e) -> println(Error.message(e))
+  }
+}

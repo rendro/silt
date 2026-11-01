@@ -1,0 +1,22 @@
+-- cmd: check
+-- exit: 1
+-- `mail` writes a `json.Decode` impl for `Box(Email)` only: a field of
+-- a record of another module that is a `mail.Box(mail.Phone)`, or a
+-- bare `mail.Email` beside a `mail.Box(mail.Email)`, would build an
+-- opaque type outside its module, and is refused.
+import json
+import mail
+
+type P {
+  b: mail.Box(mail.Phone),
+}
+
+type E {
+  b: mail.Box(mail.Email),
+  e: mail.Email,
+}
+
+fn main() {
+  println(json.parse("\{}", P))
+  println(json.parse("\{}", E))
+}

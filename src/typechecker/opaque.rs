@@ -109,7 +109,9 @@ impl TypeChecker {
     /// type arguments `args` would build by its structure: `head`
     /// itself, or a record or enum type in its fields, at any depth. A
     /// type with a written `json.Decode` impl is the impl's to decode,
-    /// and is not looked into.
+    /// and is not looked into; but for its arguments at the places the
+    /// impl's type leaves open (`trait json.Decode for Box(a) where a:
+    /// json.Decode`), which their own decoders build.
     fn opaque_decoded(
         &self,
         head: TypeRef,
@@ -120,34 +122,80 @@ impl TypeChecker {
         let instance = (head.id, args.to_vec());
         // (A type that grows with every level is refused as one no
         // decoder has: `undecodable_field`.)
-        if seen.contains(&instance)
-            || super::decodable::too_deep(args)
-            || self.has_decode_impl_at(head, args)
-        {
+        if seen.contains(&instance) || super::decodable::too_deep(args) {
             return None;
         }
         seen.push(instance);
-        if let Some(module) = self.opaque_outside_of(head, viewer) {
-            return Some((head, module));
-        }
-        let fields: Vec<Type> = match self.tables.is_enum(head) {
-            true => (self.tables.decoded_variant_fields(head, args).into_iter())
-                .flat_map(|(_, types)| types)
-                .collect(),
-            false => (self.tables.decoded_record_fields(head, args).into_iter())
-                .map(|(_, ty)| ty)
-                .collect(),
-        };
-        for ty in fields {
-            let mut nested = Vec::new();
-            let _ = self.tables.decoded_field_type(&ty, &[], &mut nested);
-            for (nested, args) in nested {
-                if let Some(found) = self.opaque_decoded(nested, &args, seen, viewer) {
-                    return Some(found);
-                }
+        let parts: Vec<Type> = if self.has_decode_impl_at(head, args) {
+            self.decode_impl_open_args(head, args)
+        } else {
+            if let Some(module) = self.opaque_outside_of(head, viewer) {
+                return Some((head, module));
             }
+            match self.tables.is_enum(head) {
+                true => (self.tables.decoded_variant_fields(head, args).into_iter())
+                    .flat_map(|(_, types)| types)
+                    .collect(),
+                false => (self.tables.decoded_record_fields(head, args).into_iter())
+                    .map(|(_, ty)| ty)
+                    .collect(),
+            }
+        };
+        let mut outer = Vec::new();
+        for ty in &parts {
+            self.outer_decoded(ty, &mut outer);
         }
-        None
+        (outer.into_iter()).find_map(|(nested, args)| self.opaque_decoded(nested, &args, seen, viewer))
+    }
+
+    /// The type arguments `args` of `head` that the `json.Decode` impl
+    /// that decodes it leaves to their own decoders: those at the places
+    /// its type leaves open, all of them for an impl for every
+    /// instantiation (none at `Box(Email)` of `trait json.Decode for
+    /// Box(Email)`).
+    fn decode_impl_open_args(&self, head: TypeRef, args: &[Type]) -> Vec<Type> {
+        let tr = TraitKey::builtin("Decode");
+        if !self.has_instances(tr, head) {
+            return args.to_vec();
+        }
+        let ty = Type::Generic(head, args.to_vec());
+        let written = (self.impls_fitting(tr, head, Some(&ty), &[]).first())
+            .and_then(|key| self.impl_instance(key));
+        let Some(Type::Generic(_, written)) = written else {
+            return args.to_vec();
+        };
+        (written.iter().zip(args))
+            .filter(|(written, _)| !free_vars_in(written).is_empty())
+            .map(|(_, arg)| arg.clone())
+            .collect()
+    }
+
+    /// The record and enum types of the program that decoding `ty` (a
+    /// field's type) builds first, each with its type arguments: through
+    /// a list, an option, a map's values and a tuple's parts, but not
+    /// into one of them (`Box(Email)` of `List(Box(Email))`, not the
+    /// `Email` that is `Box`'s to build, by an impl or by its fields).
+    fn outer_decoded(&self, ty: &Type, out: &mut Vec<(TypeRef, Vec<Type>)>) {
+        use crate::typeinfo::ty as bt;
+        match ty {
+            Type::List(elem) => self.outer_decoded(elem, out),
+            Type::Map(key, value) if matches!(**key, Type::String) => {
+                self.outer_decoded(value, out)
+            }
+            Type::Tuple(parts) => parts.iter().for_each(|part| self.outer_decoded(part, out)),
+            Type::Generic(t, args) if t.id == bt::OPTION && args.len() == 1 => {
+                self.outer_decoded(&args[0], out)
+            }
+            Type::Generic(t, args)
+                if crate::defs::builtin_types()
+                    .get(t.id.0.0 as usize)
+                    .is_none()
+                    && (self.tables.records.contains_key(t) || self.tables.enums.contains_key(t)) =>
+            {
+                out.push((*t, args.clone()))
+            }
+            _ => {}
+        }
     }
 
     /// The opaque type of a module other than `viewer`, without a
