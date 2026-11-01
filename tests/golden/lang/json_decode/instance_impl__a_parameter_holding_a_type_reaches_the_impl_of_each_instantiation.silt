@@ -1,0 +1,60 @@
+-- With json.Decode impls for two instantiations of one generic type
+-- (`Box(Int)`, `Box(String)`), a function with no annotations that decodes
+-- `Box(t)` for a parameter `t` that holds a type reaches the impl of the
+-- type each call gives, as it does for `List(Box(t))`: by json.parse,
+-- json.decode and `Box(t).decode`, in a closure, through another function,
+-- in a tuple of two such parameters, and beside an impl for `Box(List(a))`.
+import json
+
+type Box(a) {
+  v: a,
+}
+
+trait json.Decode for Box(Int) {
+  fn decode(v: json.Value) -> Result(Self, json.JsonError) { Ok(Box { v: 1 }) }
+}
+
+trait json.Decode for Box(String) {
+  fn decode(v: json.Value) -> Result(Self, json.JsonError) { Ok(Box { v: "s" }) }
+}
+
+trait json.Decode for Box(List(a)) where a: json.Decode {
+  fn decode(v: json.Value) -> Result(Self, json.JsonError) { Ok(Box { v: [] }) }
+}
+
+fn boxed(t) {
+  json.parse("0", Box(t))
+}
+
+fn listed(t) {
+  json.parse("[0]", List(Box(t)))
+}
+
+fn decoded(t) {
+  json.decode(json.Null, Box(t))
+}
+
+fn dot(t) {
+  Box(t).decode(json.Null)
+}
+
+fn again(t) {
+  boxed(t)
+}
+
+fn pair(t, u) {
+  json.parse("[0, 0]", (Box(t), Box(u)))
+}
+
+fn main() {
+  println(boxed(Int))
+  println(boxed(String))
+  println(boxed(List(Bool)))
+  println(listed(String))
+  println(decoded(Int))
+  println(dot(String))
+  println(again(String))
+  println(pair(String, Int))
+  let k = { t -> json.parse("0", Box(t)) }
+  println(k(String))
+}

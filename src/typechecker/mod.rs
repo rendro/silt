@@ -467,6 +467,12 @@ pub struct TypeChecker {
     /// a body with no annotations, with the definition they are in:
     /// judged once every body is (`refuse_unheld_full_types`).
     pub(super) unheld_full_uses: Vec<(Type, TraitKey, Symbol, Span, Symbol)>,
+    /// The uses of a definition with a bound whose impl's dictionary
+    /// carries its type in full (`twice([x], s)`), its type with a type
+    /// variable of a body with no annotations in it, with the callee and
+    /// the definition they are in, if known: judged as
+    /// `unheld_full_uses` are.
+    pub(super) unheld_full_calls: Vec<(Type, ImplKey, Option<Symbol>, Span, Option<Symbol>)>,
     /// The receiver of each call through a trait, with the call's place,
     /// trait and method: a refusal the solver makes at the receiver is
     /// the call's (one error for the call).
@@ -778,6 +784,7 @@ impl TypeChecker {
             full_type_refused: Default::default(),
             full_type_uses: Vec::new(),
             unheld_full_uses: Vec::new(),
+            unheld_full_calls: Vec::new(),
             full_type_receivers: HashMap::new(),
             rigid_of: HashMap::new(),
             let_vars: std::collections::HashSet::new(),
