@@ -266,9 +266,6 @@ impl Pipe {
         if std::mem::replace(&mut self.finished, true) {
             return;
         }
-        if let Some(armed) = &self.armed {
-            armed.disarm();
-        }
         let wake = vm.scheduler().wake();
         if let Some(out) = &self.out {
             let stage = failure.as_ref().and(self.handle.clone());
@@ -287,10 +284,13 @@ impl Pipe {
     /// (`abandon`): a source that is cut short ends its connection at
     /// whatever moment its reader went.
     fn cut_short(&mut self, vm: &Vm) {
-        if !self.finished
-            && let Some(stop) = self.stop.take()
-        {
-            stop();
+        if !self.finished {
+            if let Some(stop) = self.stop.take() {
+                stop();
+            }
+            if let Some(armed) = &self.armed {
+                armed.fire();
+            }
         }
         self.finish(vm, None);
     }
@@ -401,6 +401,11 @@ impl Pipe {
                     return Ok(Step::Park(wait));
                 }
                 Next::Done(value) => {
+                    // A source that ended by itself leaves its
+                    // connection to the program.
+                    if let Some(armed) = &self.armed {
+                        armed.disarm();
+                    }
                     self.finish(vm, None);
                     return Ok(Step::Done(value));
                 }
@@ -454,10 +459,13 @@ impl Native for Pipe {
         // A pipe on a connection that is stopped before its end shuts
         // the connection down, whatever it was doing: not only when a
         // read happened to be in flight.
-        if !self.finished
-            && let Some(stop) = self.stop.take()
-        {
-            stop();
+        if !self.finished {
+            if let Some(stop) = self.stop.take() {
+                stop();
+            }
+            if let Some(armed) = &self.armed {
+                armed.fire();
+            }
         }
         // A stage that failed hands its failure to whoever reads its
         // output: the first read that raises it handles it. One that no
@@ -527,11 +535,14 @@ fn stage_on(
     let armed = stop.map(|stop| Arc::new(Armed::new(stop)));
     let shut = armed.clone();
     out.stop_feeder_with(move || {
-        if let Some(scheduler) = scheduler.upgrade() {
-            scheduler.cancel(&stopped);
-        }
+        // The connection first: a stage that is cancelled before it has
+        // run may be ended by a worker at once, and nothing of it runs
+        // then.
         if let Some(shut) = &shut {
             shut.fire();
+        }
+        if let Some(scheduler) = scheduler.upgrade() {
+            scheduler.cancel(&stopped);
         }
     });
     let mut pipe = Pipe::new(name, inputs, logic);
@@ -1547,6 +1558,62 @@ mod tests {
         until("the connection was left open", || {
             stopped.load(Ordering::SeqCst)
         });
+    }
+
+    /// A pipe on a connection whose shut-down is armed, and the flag
+    /// that the shut-down sets.
+    fn armed_pipe(
+        logic: impl FnMut(Got) -> Result<Next, VmError> + Send + 'static,
+    ) -> (Pipe, Arc<AtomicBool>) {
+        let stopped = Arc::new(AtomicBool::new(false));
+        let flag = stopped.clone();
+        let mut pipe = Pipe::new("test.source", vec![], logic);
+        pipe.armed = Some(Arc::new(Armed::new(Arc::new(move || {
+            flag.store(true, Ordering::SeqCst)
+        }))));
+        (pipe, stopped)
+    }
+
+    /// A source on a connection that is stopped before it has run (a
+    /// worker ends a task that was cancelled before its first slice:
+    /// its frames are abandoned) shuts its connection down; it does not
+    /// take the stop for an end of its own. (Before, its abandon
+    /// disarmed the shut-down, and a reader that stopped it at that
+    /// moment left the connection open.)
+    #[test]
+    fn a_source_abandoned_before_it_has_run_shuts_its_connection() {
+        let mut vm = Vm::new(crate::HostIo::process());
+        let (mut pipe, stopped) = armed_pipe(|_| unexpected());
+        let armed = pipe.armed.clone().expect("armed");
+        pipe.abandon(&mut vm);
+        assert!(
+            stopped.load(Ordering::SeqCst),
+            "the connection was left open"
+        );
+        // Once: whoever stops it later shuts nothing again.
+        stopped.store(false, Ordering::SeqCst);
+        armed.fire();
+        assert!(!stopped.load(Ordering::SeqCst));
+    }
+
+    /// A source on a connection that ends by itself leaves the
+    /// connection to the program: a reader that goes afterwards shuts
+    /// nothing down.
+    #[test]
+    fn a_source_that_ended_by_itself_leaves_its_connection() {
+        let mut vm = Vm::new(crate::HostIo::process());
+        let (mut pipe, stopped) = armed_pipe(|_| Ok(Next::Done(Value::Unit)));
+        let armed = pipe.armed.clone().expect("armed");
+        assert!(matches!(
+            pipe.run(&mut vm, Next::Done(Value::Unit)),
+            Ok(Step::Done(_))
+        ));
+        armed.fire();
+        pipe.abandon(&mut vm);
+        assert!(
+            !stopped.load(Ordering::SeqCst),
+            "the connection was shut down"
+        );
     }
 
     /// The same when the source waits with an item for room in its
