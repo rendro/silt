@@ -464,8 +464,8 @@ fn stage(
     } = output;
     let out = Channel::fed(vm.next_channel_id(), capacity, ahead);
     let id = vm.next_task_id();
-    let handle =
-        Arc::new(TaskHandle::with_owner(id, vm.scheduler().current_owner()).of_stage(name));
+    let owner = vm.scheduler().current_owner();
+    let handle = Arc::new(TaskHandle::with_owner(id, owner).of_stage(name, vm.place_here()));
     // Whoever reads the output and stops reading stops the stage.
     let scheduler = Arc::downgrade(vm.scheduler());
     let stopped = handle.clone();

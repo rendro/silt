@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 
 use crate::runtime::sync::{Cell, Completion, Wake};
+use crate::source::Span;
 use crate::value::Value;
 use crate::vm::{VmError, Wanted};
 
@@ -1166,8 +1167,9 @@ pub struct TaskHandle {
     /// only one runs at a time, the innermost).
     late: Arc<std::sync::atomic::AtomicUsize>,
     /// The name of the stream stage the task runs (`stream.map`), for
-    /// the report of a failure that nobody read.
-    stage: Option<&'static str>,
+    /// the report of a failure that nobody read, and the place of the
+    /// call that started it, if it has one in the program.
+    stage: Option<(&'static str, Option<Span>)>,
 }
 
 impl TaskHandle {
@@ -1191,17 +1193,24 @@ impl TaskHandle {
         }
     }
 
-    /// The handle, for the task of the stream stage `name`.
-    pub fn of_stage(self, name: &'static str) -> Self {
+    /// The handle, for the task of the stream stage `name`, started by
+    /// the call at `at`.
+    pub fn of_stage(self, name: &'static str, at: Option<Span>) -> Self {
         Self {
-            stage: Some(name),
+            stage: Some((name, at)),
             ..self
         }
     }
 
     /// The name of the stream stage the task runs, if it runs one.
     pub fn stage(&self) -> Option<&'static str> {
-        self.stage
+        self.stage.map(|(name, _)| name)
+    }
+
+    /// The place of the call that started the stream stage the task
+    /// runs, if it runs one and the call has a place in the program.
+    pub fn stage_at(&self) -> Option<Span> {
+        self.stage.and_then(|(_, at)| at)
     }
 
     /// The handle, for a task that is over at `deadline`. `late` is the

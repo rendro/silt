@@ -786,6 +786,22 @@ impl Vm {
 
     // ── Error enrichment ─────────────────────────────────────────
 
+    /// Where the program is now: the place of the instruction that the
+    /// innermost function of the program runs, if it has one in the
+    /// source. A builtin's place is its caller's: the innermost
+    /// function. So is that of code silt compiled for a builtin trait's
+    /// default method (`Error.message`), which has no place in the
+    /// program: the place is the call's.
+    pub(crate) fn place_here(&self) -> Option<crate::source::Span> {
+        let innermost = self.frames.iter().rev().find_map(|frame| match frame {
+            Frame::Code(frame) if !silts_own(frame.closure.function.name(), place(frame)) => {
+                Some(frame)
+            }
+            Frame::Code(_) | Frame::Native(_) => None,
+        });
+        innermost.map(place).filter(|span| span.is_in_source())
+    }
+
     /// Enrich a VmError with the current instruction's source span and the
     /// call stack derived from the VM's frame list.
     ///
@@ -796,36 +812,10 @@ impl Vm {
     /// `middle` and `main` both tail-called) would render a single-frame
     /// stack that drops both intermediate names.
     pub(crate) fn enrich_error(&self, mut err: VmError) -> VmError {
-        /// Whether the function `name`, at the place `span`, is code silt
-        /// compiled for a builtin trait (`Error.message`'s default): code
-        /// with no place in the program that is no synthetic frame
-        /// (`<script>`, which the call stack's rendering leaves out).
-        fn silts_own(name: &str, span: crate::source::Span) -> bool {
-            !span.is_in_source() && !name.starts_with('<')
-        }
         if err.span.is_some() {
             return err;
         }
-        // Capture span from current frame's IP position.
-        // A builtin's error is its caller's: the innermost function. So
-        // is the error of code silt compiled for a builtin trait's
-        // default method (`Error.message`), which has no place in the
-        // program: the error is the call's.
-        let place = |frame: &crate::vm::runtime::CallFrame| {
-            (frame.closure.function.chunk()).span_at(frame.ip.saturating_sub(1))
-        };
-        let innermost = self.frames.iter().rev().find_map(|frame| match frame {
-            Frame::Code(frame) if !silts_own(frame.closure.function.name(), place(frame)) => {
-                Some(frame)
-            }
-            Frame::Code(_) | Frame::Native(_) => None,
-        });
-        if let Some(frame) = innermost {
-            let span = place(frame);
-            if span.is_in_source() {
-                err.span = Some(span);
-            }
-        }
+        err.span = self.place_here();
         // Build call stack from all frames, innermost first (matches the
         // existing rendering contract in vm/error.rs::render_call_stack).
         // For each physical frame at depth `d`, emit (a) the physical
@@ -980,3 +970,17 @@ impl Vm {
 
 #[cfg(test)]
 mod tests;
+
+/// Whether the function `name`, at the place `span`, is code silt
+/// compiled for a builtin trait (`Error.message`'s default): code with no
+/// place in the program that is no synthetic frame (`<script>`, which the
+/// call stack's rendering leaves out).
+fn silts_own(name: &str, span: crate::source::Span) -> bool {
+    !span.is_in_source() && !name.starts_with('<')
+}
+
+/// The place of the instruction a frame runs: the one before its
+/// instruction pointer.
+fn place(frame: &crate::vm::runtime::CallFrame) -> crate::source::Span {
+    (frame.closure.function.chunk()).span_at(frame.ip.saturating_sub(1))
+}
