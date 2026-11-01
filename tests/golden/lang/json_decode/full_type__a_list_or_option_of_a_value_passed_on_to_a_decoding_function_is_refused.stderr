@@ -1,0 +1,20 @@
+error[type]: `twice` needs the type `List(a)` in full here: `a` is known only by its type
+ --> full_type__a_list_or_option_of_a_value_passed_on_to_a_decoding_function_is_refused.silt:25:9
+    |
+ 25 |   twice([x], s)
+    |         ^^^ `twice` needs the type `List(a)` in full here: `a` is known only by its type
+  = help: take the type as a parameter, `type a`
+
+error[type]: `twice` needs the type `Option(a)` in full here: `a` is known only by its type
+ --> full_type__a_list_or_option_of_a_value_passed_on_to_a_decoding_function_is_refused.silt:29:9
+    |
+ 29 |   twice(Some(x), s)
+    |         ^^^^^^^ `twice` needs the type `Option(a)` in full here: `a` is known only by its type
+  = help: take the type as a parameter, `type a`
+
+error[type]: `twice` needs the type `List(a)` in full here: `a` is known only by its type
+ --> full_type__a_list_or_option_of_a_value_passed_on_to_a_decoding_function_is_refused.silt:36:24
+    |
+ 36 |   let k = { x -> twice([x], "[3]") }
+    |                        ^^^ `twice` needs the type `List(a)` in full here: `a` is known only by its type
+  = help: take the type as a parameter, `type a`

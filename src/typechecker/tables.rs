@@ -432,6 +432,13 @@ pub struct Tables {
     /// impl's self type (`impl_self_types`): a use that the impl answers
     /// owes them at the subject's parts (`verify_trait_obligation`).
     pub(super) impl_preds: HashMap<ImplKey, Vec<Pred>>,
+    /// Of a decoded type with impls for some instantiations only, at
+    /// variables parameters holding a type give (`json.parse(s, Box(t))`):
+    /// by the variable a `Pred::Given` gives the tuple of those variables,
+    /// the type, the variables and the decoder's check. Each use judges
+    /// the type it gives whole, in whichever module or REPL entry
+    /// (`owe_held_decode`).
+    pub(super) held_needs: HashMap<TyVar, (Type, Vec<TyVar>, crate::types::BuiltinCheck)>,
     /// Of each top-level function whose `json.Decode` or `json.Encode`
     /// bound (`true`: encode) on a variable of its scheme is handed on to
     /// other modules' definitions on every route: those modules, any of

@@ -138,6 +138,59 @@ impl TypeChecker {
         !self.by_structure(TraitKey::builtin("Decode"), head)
     }
 
+    /// Whether `ty`, a decoded type, has in it a type with `json.Decode`
+    /// impls for some instantiations only whose arguments are type
+    /// variables that parameters holding a type give where the code runs
+    /// (`Box(t)`, `List(Box(t))`): which impl decodes it, if one does, is
+    /// each use's to say (`owe_held_decode`).
+    pub(super) fn held_instance_in(&self, ty: &Type) -> bool {
+        let tr = TraitKey::builtin("Decode");
+        match ty {
+            Type::Generic(head, args) => {
+                let vars = free_vars_in(ty);
+                (self.has_instances(tr, *head)
+                    && !vars.is_empty()
+                    && vars.iter().all(|v| self.held_by_param(*v)))
+                    || args.iter().any(|arg| self.held_instance_in(arg))
+            }
+            Type::List(t) | Type::Set(t) => self.held_instance_in(t),
+            Type::Map(k, v) => self.held_instance_in(k) || self.held_instance_in(v),
+            Type::Tuple(parts) => parts.iter().any(|part| self.held_instance_in(part)),
+            _ => false,
+        }
+    }
+
+    /// Owe, of each use of the definition the decode at `origin` is in,
+    /// the decoder's judgement of `whole` (`held_instance_in`) at the
+    /// types the use gives the variables in it, as an annotation
+    /// variable's need is owed: a `Pred::Given` of the tuple of the
+    /// variables (`held_needs`).
+    pub(super) fn owe_held_decode(&mut self, whole: &Type, origin: Origin) {
+        let builtin = origin.callee.unwrap_or_else(|| intern("json.parse"));
+        let check = crate::types::BuiltinCheck::Decodes {
+            builtin,
+            decoding: Decoding::JSON,
+            written: None,
+        };
+        let vars = free_vars_in(whole);
+        let Type::Var(stand) = self.fresh_var() else {
+            return;
+        };
+        self.tables
+            .held_needs
+            .insert(stand, (whole.clone(), vars.clone(), check));
+        // (A use names the argument that gives the one variable.)
+        let given = Pred::Given {
+            subject: held_subject(&vars),
+            given: stand,
+            written: None,
+            passer: builtin,
+            body: None,
+            group: None,
+        };
+        self.want(given, origin);
+    }
+
     /// Whether a `json.Decode` impl the program wrote decodes `head` at
     /// the type arguments `args`: its impl for every instantiation, or
     /// one for an instantiation `args` could be (`Box(Int)`).
@@ -941,5 +994,14 @@ impl TypeChecker {
                 )
             }
         }
+    }
+}
+
+/// What a use gives the variables `vars` of a decoded type, as one type
+/// (`owe_held_decode`): the one variable, or the tuple of several.
+pub(super) fn held_subject(vars: &[TyVar]) -> Type {
+    match vars {
+        [one] => Type::Var(*one),
+        _ => Type::Tuple(vars.iter().map(|v| Type::Var(*v)).collect()),
     }
 }

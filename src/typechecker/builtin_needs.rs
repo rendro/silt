@@ -1089,6 +1089,10 @@ impl TypeChecker {
             if use_.taken || matches!(self.apply(&use_.subject), Type::Rigid(_)) {
                 continue;
             }
+            if self.tables.held_needs.contains_key(&use_.given) {
+                self.judge_held_decode(&use_);
+                continue;
+            }
             let needs = self.builtin_needs_of(use_.given, use_.body);
             for (index, check) in needs.into_iter().enumerate() {
                 let check = match check {
@@ -1125,6 +1129,44 @@ impl TypeChecker {
         }
     }
 
+    /// Judge, at the use `use_` gives the variables of a decoded type
+    /// with impls for some instantiations only (`held_needs`), the type
+    /// whole: `Box(Bool)` has no impl, nor a part of `List(Box(Bool))`.
+    fn judge_held_decode(&mut self, use_: &super::builtin_needs::GivenUse) {
+        let Some(&(_, _, check)) = self.tables.held_needs.get(&use_.given) else {
+            return;
+        };
+        let Some(whole) = self.held_whole(use_.given, &use_.subject) else {
+            return;
+        };
+        if !free_vars_in(&whole).is_empty() {
+            return;
+        }
+        let builtin = check.builtin();
+        // (A note names a decoder of a module, `json.parse`; a type's
+        // `decode` method, `Box(t).decode(v)`, is no link a note writes.)
+        let note = use_.passer != builtin && resolve(builtin).contains('.');
+        let mut owners: Vec<crate::session::ModuleId> = use_.owner.into_iter().collect();
+        owners.extend(use_.also.iter().copied());
+        if self.decodes_whole_refused(check, &whole, &owners) {
+            let passer = (note.then_some(use_.passer), &[][..]);
+            self.check_builtin_argument(check, &whole, passer, &owners, use_.origin);
+        }
+    }
+
+    /// The decoded type of the held need `stand` (`held_needs`) at the
+    /// types `subject` gives its variables.
+    fn held_whole(&self, stand: TyVar, subject: &Type) -> Option<Type> {
+        let (whole, vars, _) = self.tables.held_needs.get(&stand)?;
+        let given = match (vars.len(), self.apply(subject)) {
+            (1, one) => vec![one],
+            (_, Type::Tuple(given)) => given,
+            _ => return None,
+        };
+        let mapping: HashMap<TyVar, Type> = vars.iter().copied().zip(given).collect();
+        Some(self.apply(&substitute_vars(whole, &mapping)))
+    }
+
     /// The predicates of a scheme as another module reads them: what a
     /// body does to a row variable of its signature, and what it asks of
     /// an annotation variable of it, is decided.
@@ -1157,6 +1199,11 @@ impl TypeChecker {
                             });
                         }
                     }
+                }
+                // (A decoded type a parameter holding a type gives parts
+                // of: judged at each use, `owe_held_decode`.)
+                Pred::Given { given: var, .. } if self.tables.held_needs.contains_key(var) => {
+                    settled.push(pred.clone());
                 }
                 Pred::Given {
                     subject,

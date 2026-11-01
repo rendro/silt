@@ -598,7 +598,11 @@ impl TypeChecker {
         // (Of impls for some instantiations of the subject's type, the
         // subject's parts choose as trait arguments do: `Box(_)` waits
         // where there are impls for `Box(Int)` and `Box(String)`.)
-        let by_subject = !free_vars_in(&subject).is_empty() && self.has_instances(tr, head);
+        // (Not where parameters holding a type give the parts where the
+        // code runs, to a decoder: each use's, `owe_held_decode`.)
+        let by_subject = !free_vars_in(&subject).is_empty()
+            && self.has_instances(tr, head)
+            && !(Self::is_decode(tr) && self.held_instance_in(&subject));
         // (Trait arguments with no variable left fit one impl at most,
         // and leave it nothing to decide.)
         let open = self.trait_args_open(args);
@@ -2064,6 +2068,11 @@ impl TypeChecker {
             self.ev_set(ev, super::evidence::EvNode::Structural(trait_name));
             let owners = self.owners_at(ev);
             if Self::is_decode(trait_name) {
+                // (A type in it with impls for some instantiations, at
+                // arguments a parameter holding a type gives: each use's.)
+                if self.held_instance_in(&resolved) {
+                    self.owe_held_decode(&resolved, origin);
+                }
                 // What a type variable in a decoded list, option, map or
                 // tuple stands for is decoded too.
                 for part in super::builtin_checks::decoded_variables(&resolved) {
@@ -2153,6 +2162,19 @@ impl TypeChecker {
                     }
                 }
             }
+            return;
+        }
+        // A type with impls for some instantiations, at arguments a
+        // parameter holding a type gives where the code runs (`Box(t)`):
+        // the decoder finds the impl of the type it is given, as of a
+        // part of a list (`List(Box(t))`), and each use judges the type
+        // it gives.
+        if Self::is_decode(trait_name)
+            && self.has_instances(trait_name, type_name)
+            && self.held_instance_in(&resolved)
+        {
+            self.ev_set(ev, super::evidence::EvNode::Structural(trait_name));
+            self.owe_held_decode(&resolved, origin);
             return;
         }
         self.verify_impl(trait_name, bound_trait_args, &resolved, origin, ev);
@@ -2742,6 +2764,12 @@ impl TypeChecker {
                 _ => {
                     let callee = origin.callee;
                     self.refuse_type_without_value(key, &resolved, None, callee, origin.span);
+                    // (A variable of a body with no annotations is known
+                    // once every body is: `refuse_unheld_full_types`.)
+                    if !free_vars_in(&resolved).is_empty() && self.carries_full_type(key) {
+                        let at = (resolved.clone(), key, callee, origin.span, self.passing_on);
+                        self.unheld_full_calls.push(at);
+                    }
                 }
             }
         }
