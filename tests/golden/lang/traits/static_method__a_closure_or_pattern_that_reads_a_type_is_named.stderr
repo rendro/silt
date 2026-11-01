@@ -1,0 +1,20 @@
+error[type]: 'pat' takes a type as `t`, not a value of type `Rec`: `t.zero()` in it reads as the method of trait 'Zero' that makes a value
+ --> static_method__a_closure_or_pattern_that_reads_a_type_is_named.silt:33:7
+    |
+ 33 |   let Rec { n, .. } = t
+    |       ^^^^^^^^^^^^^ 'pat' takes a type as `t`, not a value of type `Rec`: `t.zero()` in it reads as the method of trait 'Zero' that makes a value
+  = help: to call the field `zero` of the `Rec`, annotate the parameter: `fn pat(t: Rec)`
+
+error[type]: 'g' takes a type as `r`, not a value of type `Rec`: `r.zero()` in it reads as the method of trait 'Zero' that makes a value
+ --> static_method__a_closure_or_pattern_that_reads_a_type_is_named.silt:40:20
+    |
+ 40 |   println(apply(g, rec))
+    |                    ^^^ 'g' takes a type as `r`, not a value of type `Rec`: `r.zero()` in it reads as the method of trait 'Zero' that makes a value
+  = help: to call the field `zero` of the `Rec`, annotate the parameter: `r: Rec`
+
+error[type]: the closure takes a type as `r`, not a value of type `Rec`: `r.zero()` in it reads as the method of trait 'Zero' that makes a value
+ --> static_method__a_closure_or_pattern_that_reads_a_type_is_named.silt:41:27
+    |
+ 41 |   println(list.map([rec], id({ r -> r.zero() })))
+    |                           ^^^^^^^^^^^^^^^^^^^^^ the closure takes a type as `r`, not a value of type `Rec`: `r.zero()` in it reads as the method of trait 'Zero' that makes a value
+  = help: to call the field `zero` of the `Rec`, annotate the parameter: `r: Rec`

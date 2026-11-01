@@ -1542,7 +1542,7 @@ impl TypeChecker {
     /// is asked whose parameter has the other kind (`list.map([1], go)`).
     fn misread_argument(
         &mut self,
-        (callee, i): (&Expr, usize),
+        (callee, i, named_args): (&Expr, usize, &[(Expr, Type)]),
         (arg, arg_ty): (&Expr, &Type),
         param_ty: &Type,
         reported: usize,
@@ -1572,16 +1572,50 @@ impl TypeChecker {
                     (intern("closure"), false, Some(*name), reading.clone(), None)
                 })
         };
+        // (A closure given straight to a call whose parameter's type is
+        // `ty`.)
+        let closure_of = |this: &Self, ty: &Type| {
+            let ty = this.apply(ty);
+            (this.closure_readings.iter())
+                .find(|(param, _, reading)| {
+                    this.apply(param) == ty && matches!(reading, Reading::Type { .. })
+                })
+                .map(|(_, name, reading)| {
+                    (intern("closure"), false, Some(*name), reading.clone(), None)
+                })
+        };
+        // (A function a name given earlier to the call names, whose
+        // parameter's type the parameter `i` has: `apply(g, rec)`.)
+        let of_named = |this: &Self| {
+            let asked = this.apply(param_ty);
+            named_args.iter().find_map(|(named, ty)| match this.apply(ty) {
+                Type::Fun(takes, _) => (takes.iter().enumerate())
+                    .filter(|(_, take)| this.apply(take) == asked)
+                    .find_map(|(j, _)| reading_of(this, named, j))
+                    .filter(|(.., reading, _)| matches!(reading, Reading::Type { .. })),
+                _ => None,
+            })
+        };
         let mut anonymous = false;
         let found = match reading_of(self, callee, i) {
             Some(found) => Some((found, self.apply(arg_ty))),
             None => match (self.apply(arg_ty), self.apply(param_ty)) {
                 (Type::Fun(takes, _), Type::Fun(asked, _)) => (0..takes.len().min(asked.len()))
                     .filter(|j| self.apply(&takes[*j]) != self.apply(&asked[*j]))
-                    .find_map(|j| Some((reading_of(self, arg, j)?, self.apply(&asked[j])))),
-                _ => of_closure(self).map(|found| {
-                    anonymous = true;
-                    (found, self.apply(arg_ty))
+                    .find_map(|j| {
+                        let found = reading_of(self, arg, j).or_else(|| {
+                            // (A closure a call returns: `id({ r -> .. })`.)
+                            let found = closure_of(self, &takes[j]);
+                            anonymous |= found.is_some();
+                            found
+                        })?;
+                        Some((found, self.apply(&asked[j])))
+                    }),
+                _ => of_named(self).map(|found| (found, self.apply(arg_ty))).or_else(|| {
+                    of_closure(self).map(|found| {
+                        anonymous = true;
+                        (found, self.apply(arg_ty))
+                    })
                 }),
             },
         };
@@ -1727,6 +1761,66 @@ impl TypeChecker {
         };
         self.errors.truncate(reported);
         self.error_help(Code::TypeMismatch, (message, Some(help)), at);
+    }
+
+    /// Replace the mismatch just reported (the errors from `reported`) of
+    /// a pattern of the type `given` matched against `ty` at `at`, where
+    /// `ty` is held by a parameter of an enclosing function that a call
+    /// `t.m(..)` in it read as a type (`let Rec { n, .. } = t` after
+    /// `t.zero()`): the note a call that gives it a value gets.
+    pub(super) fn misread_pattern(&mut self, ty: &Type, given: &Type, reported: usize, at: Span) {
+        let ty = self.apply(ty);
+        let found = (self.fn_frames.iter()).find_map(|frame| {
+            let owner = frame.owner?;
+            let callee = self.callee_of(owner)?;
+            let function = match owner {
+                unused::FrameOwner::Local(name) | unused::FrameOwner::TopLevel(name) => name,
+            };
+            (frame.params.iter().enumerate())
+                .filter(|(_, param)| self.apply(param) == ty)
+                .find_map(|(k, _)| match self.readings.get(&(callee, k)) {
+                    Some((param, reading @ Reading::Type { .. }, site)) => {
+                        Some((function, *param, reading.clone(), *site))
+                    }
+                    _ => None,
+                })
+        });
+        let Some((
+            function,
+            param,
+            Reading::Type {
+                receiver,
+                tr,
+                method,
+            },
+            site,
+        )) = found
+        else {
+            return;
+        };
+        let param = param.map_or_else(|| receiver.clone(), |p| p.to_string());
+        let shown = self.show_type(given);
+        let args = if self.method_arity(tr, method) > 0 { ".." } else { "" };
+        let place = site.map_or_else(|| "it".to_string(), |site| format!("'{site}'"));
+        let message = format!(
+            "'{function}' takes a type as `{param}`, not a value of type `{shown}`: \
+             `{receiver}.{method}({args})` in {place} reads as the method of trait '{}' that \
+             makes a value",
+            self.show_trait(tr)
+        );
+        let has_field = match given {
+            Type::Generic(name, _) => (self.tables.records.get(name))
+                .is_some_and(|record| record.fields.iter().any(|(n, _)| *n == method)),
+            _ => false,
+        };
+        let help = has_field.then(|| {
+            format!(
+                "to call the field `{method}` of the `{shown}`, annotate the parameter: \
+                 `fn {function}({param}: {shown})`"
+            )
+        });
+        self.errors.truncate(reported);
+        self.error_help(Code::TypeMismatch, (message, help), at);
     }
 
     /// Keep the parameter `param` of the type `ty` if it has no
@@ -3022,6 +3116,9 @@ impl TypeChecker {
                     (0..args.len()).partition(|k| matches!(args[*k].kind, ExprKind::Lambda { .. }));
                 // (Each argument's place, the alias and the type, in the
                 // order the call writes them.)
+                // (The names given as arguments so far, with their types:
+                // a closure a `let` names, for `misread_argument`.)
+                let mut named_args: Vec<(Expr, Type)> = Vec::new();
                 let mut given_at: Vec<Option<(Span, Option<Symbol>, Type)>> =
                     vec![None; args.len()];
                 for i in others.into_iter().chain(closures) {
@@ -3089,13 +3186,22 @@ impl TypeChecker {
                         self.unify(&arg_ty, param, at);
                         mismatched |= self.errors.len() > reported;
                         if self.errors.len() > reported {
-                            self.misread_argument((callee, i), (arg, &arg_ty), param, reported, at);
+                            self.misread_argument(
+                                (callee, i, &named_args),
+                                (arg, &arg_ty),
+                                param,
+                                reported,
+                                at,
+                            );
                         } else {
                             self.pass_on_reading(callee, i, &arg_ty);
                         }
                         if let (Some(statement), Some(passed_on)) = (statement, passed_on) {
                             self.name_statement_unit(statement, reported, passed_on);
                         }
+                    }
+                    if matches!(arg.kind, ExprKind::Ident(_)) {
+                        named_args.push(((**arg).clone(), arg_ty.clone()));
                     }
                 }
                 given.extend(given_at.into_iter().flatten());

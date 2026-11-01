@@ -701,7 +701,12 @@ impl TypeChecker {
                         for (arg, fixed) in args.iter().zip(fixed.iter().flatten()) {
                             self.unify(arg, fixed, span);
                         }
-                        self.unify_pattern(&Type::Generic(rec_ref, args), expected, pattern_span);
+                        let reported = self.errors.len();
+                        let given = Type::Generic(rec_ref, args);
+                        self.unify_pattern(&given, expected, pattern_span);
+                        if self.errors.len() > reported {
+                            self.misread_pattern(expected, &given, reported, pattern_span);
+                        }
                         (rec_ref, fields)
                     });
                 if let Some((rec_ref, _)) = &declared
