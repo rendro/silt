@@ -128,7 +128,7 @@ impl VmError {
         let mut d = Diagnostic::error(code, self.span.unwrap_or(Span::BUILTIN), head);
         d.notes.extend(rest.map(str::to_string));
         d.help = self.help.clone();
-        d.help_at = self.help_at.clone();
+        d.help_at = self.help_at.clone().into_boxed_slice();
         d.labels = self
             .call_stack
             .iter()

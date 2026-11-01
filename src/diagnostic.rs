@@ -317,7 +317,7 @@ pub struct Diagnostic {
     /// `{at}` where the place of the span is shown, as a frame of a
     /// call stack is (`file:line:col`). The place is known only where
     /// the diagnostic is shown, to the [`SourceView`].
-    pub help_at: Vec<(usize, Span)>,
+    pub help_at: Box<[(usize, Span)]>,
     pub fixes: Vec<Fix>,
 }
 
@@ -342,7 +342,7 @@ impl Diagnostic {
             labels: Vec::new(),
             notes: Vec::new(),
             help: Vec::new(),
-            help_at: Vec::new(),
+            help_at: Box::default(),
             fixes: Vec::new(),
         }
     }
@@ -1228,18 +1228,26 @@ mod tests {
     #[test]
     fn a_help_line_that_names_a_place_shows_it_in_every_rendering() {
         let map = sources("let x = 1\nlet y = 2");
-        let mut d = Diagnostic::error(Code::RuntimeError, Span::BUILTIN, "m")
-            .with_help("plain {at}");
-        d.help_at.push((d.help.len(), span(14, 15)));
+        let mut d =
+            Diagnostic::error(Code::RuntimeError, Span::BUILTIN, "m").with_help("plain {at}");
+        d.help_at = Box::new([(d.help.len(), span(14, 15))]);
         d.help.push("named at {at}".to_string());
-        let lines = vec!["plain {at}".to_string(), "named at test.silt:2:5".to_string()];
+        let lines = vec![
+            "plain {at}".to_string(),
+            "named at test.silt:2:5".to_string(),
+        ];
         assert_eq!(d.help_lines(&map), lines);
-        assert!(render_human(&map, &d).ends_with(
-            "  = help: plain {at}\n  = help: named at test.silt:2:5"
-        ));
+        assert!(
+            render_human(&map, &d)
+                .ends_with("  = help: plain {at}\n  = help: named at test.silt:2:5")
+        );
         assert_eq!(render_json(&map, &d)["help"], serde_json::json!(lines));
         let lsp = to_lsp(&map, &d, &|_| None);
-        assert!(lsp.message.ends_with("help: named at test.silt:2:5"), "{}", lsp.message);
+        assert!(
+            lsp.message.ends_with("help: named at test.silt:2:5"),
+            "{}",
+            lsp.message
+        );
     }
 
     #[test]
