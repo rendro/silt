@@ -1689,10 +1689,23 @@ impl TypeChecker {
                 }
                 _ => ty,
             };
+            // (A type with arguments is called on with them: `Box(Int)`,
+            // `Box(a)` where they are not known.)
             let on = match ty {
                 Type::Rigid(r) => r.name.to_string(),
-                _ => (self.type_name_for_impl(ty))
-                    .map_or_else(|| "T".to_string(), |t| self.spell_type(t)),
+                _ if !self.type_args_of(ty).is_empty() && free_vars_in(ty).is_empty() => {
+                    self.show_type(ty)
+                }
+                _ => match self.type_name_for_impl(ty) {
+                    Some(t) => {
+                        let name = self.spell_type(t);
+                        match self.type_param_names(t).join(", ") {
+                            params if params.is_empty() => name,
+                            params => format!("{name}({params})"),
+                        }
+                    }
+                    None => "T".to_string(),
+                },
             };
             let args = if params > 0 { ".." } else { "" };
             return Some(format!(
