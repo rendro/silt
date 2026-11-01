@@ -145,7 +145,8 @@ impl TypeChecker {
         for ty in &parts {
             self.outer_decoded(ty, &mut outer);
         }
-        (outer.into_iter()).find_map(|(nested, args)| self.opaque_decoded(nested, &args, seen, viewer))
+        (outer.into_iter())
+            .find_map(|(nested, args)| self.opaque_decoded(nested, &args, seen, viewer))
     }
 
     /// The type arguments `args` of `head` that the `json.Decode` impl
@@ -190,7 +191,8 @@ impl TypeChecker {
                 if crate::defs::builtin_types()
                     .get(t.id.0.0 as usize)
                     .is_none()
-                    && (self.tables.records.contains_key(t) || self.tables.enums.contains_key(t)) =>
+                    && (self.tables.records.contains_key(t)
+                        || self.tables.enums.contains_key(t)) =>
             {
                 out.push((*t, args.clone()))
             }
