@@ -44,8 +44,9 @@ function is: `Greet.greet(c)`, `c |> Greet.greet`,
 `list.map(shapes, Greet.greet)`. The call reaches the impl for the type
 of that argument. A trait of another module is named as its other items
 are: `shapes.Area.area(s)` after `import shapes`, or `Area.area(s)` after
-`import shapes.{ Area }`. A dot after a value always names a field (see
-[A dot after a value](#a-dot-after-a-value)).
+`import shapes.{ Area }`. A dot after a value names a field, but for the
+one case of an unannotated parameter that
+[A dot after a value](#a-dot-after-a-value) gives.
 
 A trait declares complete signatures: every parameter but `self` has a
 type annotation, and a method declared without a return type returns
@@ -761,7 +762,8 @@ A method that makes a value is taken through its type
 
 ## A dot after a value
 
-A dot after a value names a field, whatever methods traits declare:
+A dot after a value names a field, whatever methods traits declare, with
+one exception (the third point):
 
 - `p.name` is the record's field; `r.f(..)` calls the function the field
   `f` holds.
