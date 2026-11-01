@@ -33,6 +33,7 @@ mod solve;
 mod structural;
 mod tables;
 mod typeexpr;
+#[cfg(feature = "lsp")]
 pub(crate) use typeexpr::type_expr_text;
 mod unify;
 mod unused;
