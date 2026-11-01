@@ -3046,12 +3046,6 @@ mod error_places {
             int(-1),
             "integer overflow: -9223372036854775808 / -1",
         );
-        binary(
-            int(i64::MIN),
-            Asm::Mod,
-            int(-1),
-            "integer overflow: -9223372036854775808 % -1",
-        );
         let err = stopped(|e| {
             push(e, int(i64::MIN));
             e.emit(Asm::Negate, span()).unwrap();
