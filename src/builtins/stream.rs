@@ -37,7 +37,7 @@ use super::common::{READ_AT_ONCE, ok};
 #[cfg(feature = "tcp")]
 use super::typed::TcpStream;
 use super::typed::{Arg, Chan, List, builtins, unsound};
-use crate::runtime::handle::TaskHandle;
+use crate::runtime::handle::{StageOf, TaskHandle};
 use crate::runtime::sync::{Arm, Channel, Close, Fired, Outcome, TryReceive, TrySend, Wait};
 use crate::typeinfo::bv;
 use crate::value::Value;
@@ -515,7 +515,12 @@ fn stage_on(
     let out = Channel::fed(vm.next_channel_id(), capacity, ahead);
     let id = vm.next_task_id();
     let owner = vm.scheduler().current_owner();
-    let handle = Arc::new(TaskHandle::with_owner(id, owner).of_stage(name, vm.place_here()));
+    let stage = StageOf {
+        name,
+        source: inputs.is_empty(),
+        at: vm.place_here(),
+    };
+    let handle = Arc::new(TaskHandle::with_owner(id, owner).of_stage(stage));
     // Whoever reads the output and stops reading stops the stage.
     let scheduler = Arc::downgrade(vm.scheduler());
     let stopped = handle.clone();

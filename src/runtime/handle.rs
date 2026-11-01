@@ -1125,6 +1125,17 @@ impl Drop for Ended {
     }
 }
 
+/// The stream stage a task runs: its name (`stream.map`), for the
+/// report of a failure that nobody read, whether it is a source (a stage
+/// with no input), and the place of the call that started it, if it has
+/// one in the program.
+#[derive(Clone, Copy, Debug)]
+pub struct StageOf {
+    pub name: &'static str,
+    pub source: bool,
+    pub at: Option<Span>,
+}
+
 /// Handle to a spawned task. Thread-safe — shared between spawner and worker.
 pub struct TaskHandle {
     pub id: usize,
@@ -1166,10 +1177,8 @@ pub struct TaskHandle {
     /// inside it that has the same time (they share the count: of them
     /// only one runs at a time, the innermost).
     late: Arc<std::sync::atomic::AtomicUsize>,
-    /// The name of the stream stage the task runs (`stream.map`), for
-    /// the report of a failure that nobody read, and the place of the
-    /// call that started it, if it has one in the program.
-    stage: Option<(&'static str, Option<Span>)>,
+    /// The stream stage the task runs, if it runs one.
+    stage: Option<StageOf>,
 }
 
 impl TaskHandle {
@@ -1195,22 +1204,21 @@ impl TaskHandle {
 
     /// The handle, for the task of the stream stage `name`, started by
     /// the call at `at`.
-    pub fn of_stage(self, name: &'static str, at: Option<Span>) -> Self {
+    pub fn of_stage(self, stage: StageOf) -> Self {
         Self {
-            stage: Some((name, at)),
+            stage: Some(stage),
             ..self
         }
     }
 
     /// The name of the stream stage the task runs, if it runs one.
     pub fn stage(&self) -> Option<&'static str> {
-        self.stage.map(|(name, _)| name)
+        self.stage.map(|stage| stage.name)
     }
 
-    /// The place of the call that started the stream stage the task
-    /// runs, if it runs one and the call has a place in the program.
-    pub fn stage_at(&self) -> Option<Span> {
-        self.stage.and_then(|(_, at)| at)
+    /// The stream stage the task runs, if it runs one.
+    pub fn stage_of(&self) -> Option<StageOf> {
+        self.stage
     }
 
     /// The handle, for a task that is over at `deadline`. `late` is the

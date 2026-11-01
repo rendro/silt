@@ -70,7 +70,7 @@ use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use std::thread;
 use std::time::Duration;
 
-use crate::runtime::handle::TaskHandle;
+use crate::runtime::handle::{StageOf, TaskHandle};
 use crate::runtime::sync::{self, Channel, Fired, Parking, Resumed, Source, TaskId, Wait, Waiting};
 use crate::source::Span;
 use crate::value::Value;
@@ -2278,10 +2278,7 @@ fn waits_of_the_others(own: &[&Waiting<'_, Sleeper>], main: TaskId) -> Vec<(Stri
         .take(LISTED)
         .map(|waiting| {
             let stage = match waiting.sleeper {
-                Sleeper::Task(task) => task
-                    .handle
-                    .stage()
-                    .map(|name| (name, task.handle.stage_at())),
+                Sleeper::Task(task) => task.handle.stage_of(),
                 Sleeper::Thread(_) => None,
             };
             let mut on: Vec<String> = waiting
@@ -2309,10 +2306,19 @@ fn waits_of_the_others(own: &[&Waiting<'_, Sleeper>], main: TaskId) -> Vec<(Stri
             // (A stage that waits on several inputs waits for its input.)
             on.dedup();
             let on = on.join(", or ");
-            if let Some((name, at)) = stage {
+            if let Some(StageOf { name, source, at }) = stage {
+                // A source is told apart from the stages after it, as
+                // the docs of `stream` tell them apart.
+                let what = match source {
+                    true => "source",
+                    false => "stage",
+                };
                 return match at {
-                    Some(at) => (format!("the `{name}` stage at {{at}} waits {on}"), Some(at)),
-                    None => (format!("the `{name}` stage waits {on}"), None),
+                    Some(at) => (
+                        format!("the `{name}` {what} at {{at}} waits {on}"),
+                        Some(at),
+                    ),
+                    None => (format!("the `{name}` {what} waits {on}"), None),
                 };
             }
             let task = match waiting.sleeper {
