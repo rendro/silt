@@ -345,6 +345,17 @@ pub struct TypeChecker {
     /// name and the reading. A later argument of that call of the other
     /// kind is told so (`misread_argument`).
     pub(super) closure_readings: Vec<(Type, Symbol, Reading)>,
+    /// The parameters with no annotation of the functions and closures
+    /// checked, by the span of their names, with their types: those that
+    /// hold a type are the program's `held_types`.
+    pub(super) held_params: Vec<(Span, Type)>,
+    /// The arguments of the call whose callee, a method after a dot, is
+    /// checked, as written (`1` of `Option(String).pure(1)`).
+    pub(super) method_call_args: Option<String>,
+    /// Whether the expression checked is a type before a dot (`Box(a)` of
+    /// `Box(a).zero()`) or in one: a type variable of the signature among
+    /// its arguments is a type.
+    pub(super) type_receiver: bool,
     /// Spans of `?` uses in the current fn/lambda body. When the
     /// body/return-type unify fails on a Result/Option return that `?`
     /// itself demanded, the diagnostic points back at the `?` site instead
@@ -452,6 +463,10 @@ pub struct TypeChecker {
     /// for: checked once the body is, if the impl's dictionary carries its
     /// type (`refuse_type_without_value`).
     pub(super) full_type_uses: Vec<(Type, TraitKey, Symbol, Span)>,
+    /// The uses of `full_type_uses` whose `Self` had a type variable of
+    /// a body with no annotations, with the definition they are in:
+    /// judged once every body is (`refuse_unheld_full_types`).
+    pub(super) unheld_full_uses: Vec<(Type, TraitKey, Symbol, Span, Symbol)>,
     /// The receiver of each call through a trait, with the call's place,
     /// trait and method: a refusal the solver makes at the receiver is
     /// the call's (one error for the call).
@@ -730,6 +745,9 @@ impl TypeChecker {
             unknown_receiver: None,
             readings: HashMap::new(),
             closure_readings: Vec::new(),
+            held_params: Vec::new(),
+            method_call_args: None,
+            type_receiver: false,
             type_holders: HashMap::new(),
             current_qmark_spans: Vec::new(),
             qmark_decided: HashMap::new(),
@@ -759,6 +777,7 @@ impl TypeChecker {
             valued_vars: Default::default(),
             full_type_refused: Default::default(),
             full_type_uses: Vec::new(),
+            unheld_full_uses: Vec::new(),
             full_type_receivers: HashMap::new(),
             rigid_of: HashMap::new(),
             let_vars: std::collections::HashSet::new(),
@@ -1391,7 +1410,9 @@ impl TypeChecker {
         self.check_unresolved_let_types(program);
 
         // After all passes, resolve any remaining type variables in annotations
+        self.refuse_unheld_full_types(&env);
         self.resolve_all_types(program);
+        self.write_held_types(program);
         self.write_evidence(program, &env);
 
         // The order the top-level `let`s are initialised in: what each

@@ -1,0 +1,43 @@
+-- cmd: check
+-- exit: 1
+-- A closure whose `r.zero()` reads `r` as a type, given a value where it
+-- is passed on, is named as a call of it is: by its `let` name when the
+-- call is given the name (`apply(g, rec)`), as "the closure" when a call
+-- returns it (`id({ r -> r.zero() })`). A record pattern on a parameter
+-- read as a type names the function the same way.
+import list
+
+trait Zero {
+  fn zero() -> Self
+}
+
+trait Zero for Int {
+  fn zero() -> Self { 0 }
+}
+
+type Rec {
+  n: Int,
+  zero: Fn() -> Int,
+}
+
+fn apply(f: Fn(a) -> b, x: a) -> b {
+  f(x)
+}
+
+fn id(x: a) -> a {
+  x
+}
+
+fn pat(t) {
+  let z = t.zero()
+  let Rec { n, .. } = t
+  z + n
+}
+
+fn main() {
+  let rec = Rec { n: 1, zero: { -> 5 } }
+  let g = { r -> r.zero() }
+  println(apply(g, rec))
+  println(list.map([rec], id({ r -> r.zero() })))
+  println(pat(Int))
+}

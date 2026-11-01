@@ -1,0 +1,5 @@
+Box {v: 7}
+Box {v: z}
+Box {v: Box {v: 7}}
+Cell(7)
+W {w: z}

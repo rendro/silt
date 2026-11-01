@@ -1,0 +1,6 @@
+error[type]: 'k' takes a record with a field `pure` as `m`, not the type `Option`: `m.pure(..)` in it is read as a field, since a trait of type constructors ('Applicative') is not inferred
+ --> static_method__a_closure_that_takes_a_type_constructor_is_told_to_be_a_function.silt:10:13
+    |
+ 10 |   println(k(Option))
+    |             ^^^^^^ 'k' takes a record with a field `pure` as `m`, not the type `Option`: `m.pure(..)` in it is read as a field, since a trait of type constructors ('Applicative') is not inferred
+  = help: a closure cannot take a type parameter: declare a named function with one and its bound, as in `fn wrap(x: a, type m) -> m(a) where m: Applicative`

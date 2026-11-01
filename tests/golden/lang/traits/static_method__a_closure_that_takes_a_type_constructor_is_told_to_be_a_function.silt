@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- A closure whose parameter's method is a trait of type constructors'
+-- (`m.pure(3)`) reads the parameter as a record with that field. Given
+-- the type constructor, it is told that a closure cannot take a type
+-- parameter, and how a named function takes one (a named function is
+-- told to take one: static_method__a_constructor_method_on_a_parameter_is_named_at_the_call).
+fn main() {
+  let k = { m -> m.pure(3) }
+  println(k(Option))
+}

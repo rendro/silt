@@ -1,0 +1,23 @@
+-- cmd: check
+-- exit: 1
+-- `Cell(Int)` with no dot after it is the variant `Cell` holding the
+-- type `Int` as a value, of type `Cell(type Int)`. A method that makes a
+-- value, called on it, is refused with the help to call it on the type,
+-- written as code: `Cell(Int).zero()`.
+trait Zero {
+  fn zero() -> Self
+}
+
+type Cell(a) {
+  Cell(a),
+  Blank,
+}
+
+trait Zero for Cell(a) {
+  fn zero() -> Self { Blank }
+}
+
+fn main() {
+  let c = Cell(Int)
+  println(c.zero())
+}

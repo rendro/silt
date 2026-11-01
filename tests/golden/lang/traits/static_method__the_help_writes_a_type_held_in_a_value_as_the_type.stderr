@@ -1,0 +1,6 @@
+error[type]: type 'Cell(type Int)' has no field 'zero'
+ --> static_method__the_help_writes_a_type_held_in_a_value_as_the_type.silt:22:11
+    |
+ 22 |   println(c.zero())
+    |           ^^^^^^ type 'Cell(type Int)' has no field 'zero'
+  = help: `zero` is a method of trait `Zero` that makes a value: call it on the type, `Cell(Int).zero()`

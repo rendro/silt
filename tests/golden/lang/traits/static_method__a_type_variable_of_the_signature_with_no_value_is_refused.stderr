@@ -1,0 +1,12 @@
+error[type]: undefined variable 'a'
+ --> static_method__a_type_variable_of_the_signature_with_no_value_is_refused.silt:25:17
+    |
+ 25 |   json.parse(s, a)
+    |                 ^ undefined variable 'a'
+
+error[type]: method 'mk' of trait 'Mk' needs the type `Box(a)` in full here: `a` is known only by its type
+ --> static_method__a_type_variable_of_the_signature_with_no_value_is_refused.silt:21:3
+    |
+ 21 |   Box(a).mk(s)
+    |   ^^^^^^^^^ method 'mk' of trait 'Mk' needs the type `Box(a)` in full here: `a` is known only by its type
+  = help: take the type as a parameter, `type a`

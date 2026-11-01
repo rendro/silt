@@ -1,0 +1,41 @@
+error[type]: 'Option(String)' is a type, but `pure` is a method of trait 'Applicative' of type constructors
+ --> static_method__a_type_with_arguments_before_a_constructor_method_is_refused.silt:28:11
+    |
+ 28 |   println(Option(String).pure(1))
+    |           ^^^^^^^^^^^^^^^^^^^ 'Option(String)' is a type, but `pure` is a method of trait 'Applicative' of type constructors
+  = help: call it on the type constructor: `Option.pure(1)`
+
+error[type]: 'Option(Int)' is a type, but `pure` is a method of trait 'Applicative' of type constructors
+ --> static_method__a_type_with_arguments_before_a_constructor_method_is_refused.silt:29:27
+    |
+ 29 |   let z: Option(String) = IntOpt.pure("s")
+    |                           ^^^^^^^^^^^ 'Option(Int)' is a type, but `pure` is a method of trait 'Applicative' of type constructors
+  = help: call it on the type constructor: `Option.pure("s")`
+
+error[type]: 'Option(Int)' is a type, but `pure` is a method of trait 'Applicative' of type constructors
+ --> static_method__a_type_with_arguments_before_a_constructor_method_is_refused.silt:31:11
+    |
+ 31 |   println(Opt(Int).pure(2))
+    |           ^^^^^^^^^^^^^ 'Option(Int)' is a type, but `pure` is a method of trait 'Applicative' of type constructors
+  = help: call it on the type constructor: `Option.pure(2)`
+
+error[type]: 'Option(Int)' is a type, but `pure` is a method of trait 'Applicative' of type constructors
+ --> static_method__a_type_with_arguments_before_a_constructor_method_is_refused.silt:33:11
+    |
+ 33 |   println(t.pure(3))
+    |           ^^^^^^ 'Option(Int)' is a type, but `pure` is a method of trait 'Applicative' of type constructors
+  = help: call it on the type constructor: `Option.pure(3)`
+
+error[type]: 'Pair(Bool, String)' is a type, but `point` is a method of trait 'Pointed' of type constructors
+ --> static_method__a_type_with_arguments_before_a_constructor_method_is_refused.silt:34:11
+    |
+ 34 |   println(Pair(Bool, String).point(1))
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^ 'Pair(Bool, String)' is a type, but `point` is a method of trait 'Pointed' of type constructors
+  = help: call it on the type constructor: `Pair.point(1)`
+
+error[type]: 'Pair(Bool, String)' is a type, but `point` is a method of trait 'Pointed' of type constructors
+ --> static_method__a_type_with_arguments_before_a_constructor_method_is_refused.silt:35:11
+    |
+ 35 |   println(PS.point(1))
+    |           ^^^^^^^^ 'Pair(Bool, String)' is a type, but `point` is a method of trait 'Pointed' of type constructors
+  = help: call it on the type constructor: `Pair.point(1)`

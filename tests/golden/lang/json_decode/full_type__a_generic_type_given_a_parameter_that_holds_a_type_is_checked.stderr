@@ -1,0 +1,7 @@
+error[type]: `json.parse` cannot decode `NoDec`: field `g` has type `Fn(Int) -> Int`, which has no decoder
+ --> full_type__a_generic_type_given_a_parameter_that_holds_a_type_is_checked.silt:21:17
+    |
+ 21 |   println(boxed(NoDec))
+    |                 ^^^^^ `json.parse` cannot decode `NoDec`: field `g` has type `Fn(Int) -> Int`, which has no decoder
+  = note: `boxed` passes it to `json.parse`
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
