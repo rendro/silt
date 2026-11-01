@@ -85,9 +85,7 @@ pub(crate) fn dispatch(args: &[String]) {
                 expanded.push(f);
             }
         }
-        let mut seen = std::collections::HashSet::new();
-        expanded.retain(|f| seen.insert(fs::canonicalize(f).unwrap_or_else(|_| PathBuf::from(f))));
-        files = expanded;
+        files = once_each(expanded);
     }
     let implicit_recursive = files.is_empty();
     if implicit_recursive {
@@ -101,7 +99,8 @@ pub(crate) fn dispatch(args: &[String]) {
             Ok(None) => false,
             Err(e) => die_on_manifest_error_with(e, 2),
         };
-        files = find_silt_files(Path::new("."));
+        // (A file reached twice, through a link, is handled once.)
+        files = once_each(find_silt_files(Path::new(".")));
         if files.is_empty() {
             eprintln!("no .silt files found in current directory");
             process::exit(2);
@@ -176,6 +175,14 @@ pub(crate) fn dispatch(args: &[String]) {
 }
 
 type Tamper = (String, String);
+
+/// `files` with each file once: two paths of one file (two spellings,
+/// or a link and what it points to) are the first of them.
+fn once_each(mut files: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    files.retain(|f| seen.insert(fs::canonicalize(f).unwrap_or_else(|_| PathBuf::from(f))));
+    files
+}
 
 /// Format `source`, the text of the file at `path`. An error is the
 /// rendered diagnostic: the lexer's or the parser's, as `silt check`
