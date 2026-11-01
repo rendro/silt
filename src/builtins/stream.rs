@@ -777,7 +777,7 @@ builtins! {
 
     fn file_chunks(vm, path: &str, size: i64) -> Result<Step, VmError> {
         let Ok(n @ 1..) = usize::try_from(size) else {
-            return Err(VmError::new("stream.file_chunks: n must be positive".into()));
+            return Err(VmError::new("stream.file_chunks: size must be positive".into()));
         };
         let path = path.to_string();
         let mut file: Option<std::fs::File> = None;
@@ -871,7 +871,7 @@ builtins! {
     #[cfg(feature = "tcp")]
     fn tcp_chunks(vm, stream: TcpStream, size: i64) -> Result<Step, VmError> {
         let Ok(n @ 1..) = usize::try_from(size) else {
-            return Err(VmError::new("stream.tcp_chunks: n must be positive".into()));
+            return Err(VmError::new("stream.tcp_chunks: size must be positive".into()));
         };
         let stream_handle = stream.clone();
         reading(

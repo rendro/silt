@@ -1,5 +1,5 @@
 -- exit: 1
--- stderr-contains: stream.file_chunks: n must be positive
+-- stderr-contains: stream.file_chunks: size must be positive
 -- A negative chunk size is an error too, whether the file is there or not.
 import stream
 

@@ -1,6 +1,6 @@
 -- requires-feature: tcp
 -- exit: 1
--- stderr-contains: stream.tcp_chunks: n must be positive
+-- stderr-contains: stream.tcp_chunks: size must be positive
 -- A chunk size of zero or less is an error, as for `stream.chunks`.
 import stream
 import tcp

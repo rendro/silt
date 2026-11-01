@@ -1,5 +1,5 @@
 -- exit: 1
--- stderr-contains: stream.file_chunks: n must be positive
+-- stderr-contains: stream.file_chunks: size must be positive
 -- A chunk size of zero or less is an error, as for `stream.chunks`; it
 -- does not read as an empty file.
 import stream
