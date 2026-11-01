@@ -1748,26 +1748,12 @@ impl<'a> Compiler<'a> {
                 self.compile_dict_method_value(tr, &recv, &own, *method, span)?;
             }
 
-            ExprKind::FieldAccess(..)
-                if let Some(TypeMember::Slot(slot)) = self.type_member(expr)? =>
-            {
-                self.emit(Asm::GetGlobal { slot }, span)?;
-            }
-
             // `Box(Int).decode` as a value, a method of a type held as a
-            // value (`let t = Box(Int); t.decode`): the function that calls
-            // it, `{ v -> Box(Int).decode(v) }`, named as the method.
-            ExprKind::FieldAccess(of, method, _)
-                if written_type_of(of).is_some()
-                    && matches!(
-                        expr.sel,
-                        Some(
-                            crate::ast::Selection::Dynamic { .. }
-                                | crate::ast::Selection::Impl { .. }
-                                | crate::ast::Selection::Native { .. }
-                        )
-                    ) =>
-            {
+            // value (`let t = Box(Int); t.decode`) or of an alias whose
+            // written `decode` takes its type arguments from it (`IB.decode`
+            // for `type IB = Box(Int)`): the function that calls it, `{ v ->
+            // Box(Int).decode(v) }`, named as the method.
+            ExprKind::FieldAccess(of, method, _) if self.method_of_a_full_type(expr)? => {
                 let arity = match &expr.ty {
                     Some(Type::Fun(params, _)) => params.len(),
                     _ => return Err(checker_missed(span, "a method of no type")),
@@ -1808,6 +1794,12 @@ impl<'a> Compiler<'a> {
                     context.closures = around;
                 }
                 compiled?;
+            }
+
+            ExprKind::FieldAccess(..)
+                if let Some(TypeMember::Slot(slot)) = self.type_member(expr)? =>
+            {
+                self.emit(Asm::GetGlobal { slot }, span)?;
             }
 
             // `m.f`, `m.limit`, `list.map` used as a value.
@@ -2359,10 +2351,9 @@ impl<'a> Compiler<'a> {
                 self.compile_dict_call(tr, &recv, &own, *method, args, span, tail)?;
             } else if let Some(TypeMember::Slot(_)) = member
                 && let Some(t) = crate::defs::builtin_trait_id("Decode")
-                && self.res_trait(callee.res) == Some(t)
-                && let Some(descriptor) = written_type_of(receiver)
-                    .filter(|ty| matches!(ty, Type::Generic(_, args) if !args.is_empty()))
-                    .and_then(|ty| self.type_constant(ty))
+                && self.written_decode_of_a_full_type(callee)
+                && let Some(descriptor) =
+                    written_type_of(receiver).and_then(|ty| self.type_constant(ty))
             {
                 // `IntBox.decode(v)`, an alias of a generic type with a
                 // written `decode`: by the descriptor of the type in full,
@@ -3135,6 +3126,43 @@ impl<'a> Compiler<'a> {
     /// head, or, where the impl has none, the VM's own method of the
     /// trait (a structural trait's, a builtin error enum's `message`).
     /// `None` when `expr` is not such an access.
+    /// Whether `expr`, a method of a type before a dot taken as a value,
+    /// is called through the type in full (`Box(Int).decode`, `t.decode`
+    /// of a `let t = Box(Int)`; `IB.decode` of an alias whose written
+    /// `decode` takes its type arguments from it): a function that calls
+    /// it is made for it.
+    fn method_of_a_full_type(&self, expr: &Expr) -> Result<bool, Diagnostic> {
+        use crate::ast::Selection;
+        let ExprKind::FieldAccess(of, ..) = &expr.kind else {
+            return Ok(false);
+        };
+        if written_type_of(of).is_none() {
+            return Ok(false);
+        }
+        Ok(match self.type_member(expr)? {
+            None => matches!(
+                expr.sel,
+                Some(Selection::Dynamic { .. } | Selection::Impl { .. } | Selection::Native { .. })
+            ),
+            Some(TypeMember::Slot(_)) => self.written_decode_of_a_full_type(expr),
+            Some(_) => false,
+        })
+    }
+
+    /// Whether `callee`, `decode` through a type name, is the written
+    /// `decode` of a generic type at the arguments the name gives it in
+    /// full (`IB.decode` for `type IB = Box(Int)`): it takes them from
+    /// the type's descriptor.
+    fn written_decode_of_a_full_type(&self, callee: &Expr) -> bool {
+        let ExprKind::FieldAccess(of, ..) = &callee.kind else {
+            return false;
+        };
+        crate::defs::builtin_trait_id("Decode")
+            .is_some_and(|t| self.res_trait(callee.res) == Some(t))
+            && written_type_of(of)
+                .is_some_and(|ty| matches!(ty, Type::Generic(_, args) if !args.is_empty()))
+    }
+
     fn type_member(&self, expr: &Expr) -> Result<Option<TypeMember>, Diagnostic> {
         let ExprKind::FieldAccess(obj, field, _) = &expr.kind else {
             return Ok(None);

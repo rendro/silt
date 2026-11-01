@@ -1,0 +1,7 @@
+Ok(Box {v: 2})
+Ok(Box {v: 3})
+Box {v: 7}
+Ok(Box {v: 4})
+Ok(Box {v: 5})
+[Ok(Box {v: 6}), Ok(Box {v: 6}), Ok(Box {v: 6})]
+Ok(Box {v: 7})
