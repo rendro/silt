@@ -1,0 +1,34 @@
+-- cmd: check
+-- exit: 1
+-- stderr-not-contains: type _
+-- stderr-not-contains: SomeTrait
+-- A field read after a dot on a type not known yet (a parameter that an
+-- earlier `t.zero()` or `json.parse(s, t)` made a type) names the
+-- parameter that holds it, as a dot after a value of that type does.
+import json
+
+trait Zero {
+  fn zero() -> Self
+}
+
+trait Zero for Int {
+  fn zero() -> Self {
+    0
+  }
+}
+
+fn copied(t) {
+  let z = t.zero()
+  let u = t
+  (z, u.n)
+}
+
+fn parsed(s, t) {
+  let r = json.parse(s, t)
+  (r, t.n)
+}
+
+fn main() {
+  println(copied(Int))
+  println(parsed("1", Int))
+}

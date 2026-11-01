@@ -1,0 +1,35 @@
+-- A closure given to a call is checked after the call's other
+-- arguments, which may decide its parameters' types: in
+-- `apply({ r -> r.zero() }, rec)` `r` is a `Rec` and `r.zero()` calls
+-- its field, as in `apply2(rec, { r -> r.zero() })`, in either place and
+-- through a pipe; given the type `Int`, `r.zero()` is `Int`'s method.
+trait Zero {
+  fn zero() -> Self
+}
+
+trait Zero for Int {
+  fn zero() -> Self {
+    0
+  }
+}
+
+type Rec {
+  n: Int,
+  zero: Fn() -> Int,
+}
+
+fn apply(f, x) {
+  f(x)
+}
+
+fn apply2(x, f) {
+  f(x)
+}
+
+fn main() {
+  let rec = Rec { n: 1, zero: { -> 5 } }
+  println(apply({ r -> r.zero() }, rec))
+  println(apply2(rec, { r -> r.zero() }))
+  println({ r -> r.zero() } |> apply(rec))
+  println(apply({ r -> r.zero() }, Int))
+}

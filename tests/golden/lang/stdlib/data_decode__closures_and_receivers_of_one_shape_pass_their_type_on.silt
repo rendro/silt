@@ -3,9 +3,10 @@
 -- Two receivers of one shape in one function are checked each with its
 -- own type; a closure that captures a receiver of a known type passes the
 -- type it takes on through an annotated or an unannotated generic
--- function; a closure a function returns, keeps in a record or gives to
--- another function is refused at the type argument of the call that
--- gives the type.
+-- function; a closure a function returns or keeps in a record is refused
+-- at the type argument of the call that gives the type; a closure given
+-- to a call with the type is checked after it, so at the type it is given
+-- (`t` in `{ t -> Loader.load(src, t) }`).
 import json
 
 type Blob { data: Bytes }

@@ -1,0 +1,23 @@
+-- cmd: check
+-- exit: 1
+-- stderr-not-contains: expected type _
+-- stderr-not-contains: the closure
+-- A closure given to a call is checked after the call's other arguments:
+-- given an Int, `r.zero()` asks a field of an Int, which has none.
+trait Zero {
+  fn zero() -> Self
+}
+
+trait Zero for Int {
+  fn zero() -> Self {
+    0
+  }
+}
+
+fn apply(f, x) {
+  f(x)
+}
+
+fn main() {
+  println(apply({ r -> r.zero() }, 7))
+}

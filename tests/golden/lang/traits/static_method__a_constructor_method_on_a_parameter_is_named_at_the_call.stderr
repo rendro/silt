@@ -1,0 +1,13 @@
+error[type]: 'go' takes a record with a field `pure` as `m`, not the type `Option`: `m.pure(..)` in it is read as a field, since a trait of type constructors ('Applicative') is not inferred
+ --> static_method__a_constructor_method_on_a_parameter_is_named_at_the_call.silt:14:14
+    |
+ 14 |   println(go(Option))
+    |              ^^^^^^ 'go' takes a record with a field `pure` as `m`, not the type `Option`: `m.pure(..)` in it is read as a field, since a trait of type constructors ('Applicative') is not inferred
+  = help: say which: give 'go' a type parameter with its bound, and write it with its type argument, as in `fn wrap(x: a, type m) -> m(a) where m: Applicative`
+
+error[type]: 'go' takes a record with a field `pure` as `m`, not the type `List`: `m.pure(..)` in it is read as a field, since a trait of type constructors ('Applicative') is not inferred
+ --> static_method__a_constructor_method_on_a_parameter_is_named_at_the_call.silt:15:14
+    |
+ 15 |   println(go(List))
+    |              ^^^^ 'go' takes a record with a field `pure` as `m`, not the type `List`: `m.pure(..)` in it is read as a field, since a trait of type constructors ('Applicative') is not inferred
+  = help: say which: give 'go' a type parameter with its bound, and write it with its type argument, as in `fn wrap(x: a, type m) -> m(a) where m: Applicative`

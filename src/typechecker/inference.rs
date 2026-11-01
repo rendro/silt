@@ -1442,6 +1442,37 @@ impl TypeChecker {
         (makers, taking)
     }
 
+    /// The traits of type constructors in sight with a method `field`
+    /// that makes a value (`Applicative`'s `pure`): `m.pure(x)` on an `m`
+    /// still unknown is not taken for one (`value_makers`).
+    fn constructor_makers(&self, field: Symbol) -> Vec<TraitKey> {
+        let mut traits: Vec<TraitKey> = (self.tables.traits.iter())
+            .filter(|(_, info)| info.constructor)
+            .filter(|(_, info)| info.methods.iter().any(|(n, _)| *n == field))
+            .map(|(t, _)| *t)
+            .filter(|t| self.sees_trait(*t) && self.private_owner(*t).is_none())
+            .filter(|t| self.self_param(*t, field).is_none())
+            .collect();
+        traits.sort_by_key(|t| self.show_trait(*t));
+        traits
+    }
+
+    /// Whether `tr` is a trait of type constructors.
+    fn of_constructors_trait(&self, tr: TraitKey) -> bool {
+        (self.tables.traits.get(&tr)).is_some_and(|info| info.constructor)
+    }
+
+    /// Whether `ty` is the type of a parameter of an enclosing function
+    /// or closure whose body reads a field of it (`FnFrame::read_fields`):
+    /// a record, whose `t.zero()` calls its field.
+    fn read_as_record(&self, ty: &Type) -> bool {
+        let ty = self.apply(ty);
+        (self.fn_frames.iter()).any(|frame| {
+            (frame.params.iter().zip(&frame.read_fields))
+                .any(|(param, read)| *read && self.apply(param) == ty)
+        })
+    }
+
     /// Pass on how the parameter `i` of `callee` is read (`readings`) to
     /// the parameters of the enclosing functions and closures whose
     /// types the argument `arg_ty` shares (`fn again(s, t) { go(s, t) }`
@@ -1489,17 +1520,37 @@ impl TypeChecker {
                 (this.res_def(e.res)).is_some_and(|def| def.kind == crate::defs::DefKind::Fn);
             Some((function, declared, param, reading, site))
         };
+        // (A closure given straight to the call, whose parameter's type
+        // the parameter `i` has: no name calls it.)
+        let of_closure = |this: &Self| {
+            let asked = this.apply(param_ty);
+            (this.closure_readings.iter())
+                .find(|(ty, _, reading)| {
+                    this.apply(ty) == asked && matches!(reading, Reading::Type { .. })
+                })
+                .map(|(_, name, reading)| {
+                    (intern("closure"), false, Some(*name), reading.clone(), None)
+                })
+        };
+        let mut anonymous = false;
         let found = match reading_of(self, callee, i) {
             Some(found) => Some((found, self.apply(arg_ty))),
             None => match (self.apply(arg_ty), self.apply(param_ty)) {
                 (Type::Fun(takes, _), Type::Fun(asked, _)) => (0..takes.len().min(asked.len()))
                     .filter(|j| self.apply(&takes[*j]) != self.apply(&asked[*j]))
                     .find_map(|j| Some((reading_of(self, arg, j)?, self.apply(&asked[j])))),
-                _ => None,
+                _ => of_closure(self).map(|found| {
+                    anonymous = true;
+                    (found, self.apply(arg_ty))
+                }),
             },
         };
         let Some(((function, declared, param, reading, site), given)) = found else {
             return;
+        };
+        let who = match anonymous {
+            true => "the closure".to_string(),
+            false => format!("'{function}'"),
         };
         // (Where the call `x.m(..)` is: the function called, or the one
         // it passes the parameter on to.)
@@ -1558,7 +1609,7 @@ impl TypeChecker {
                 };
                 (
                     format!(
-                        "'{function}' takes a type as `{param}`, not a value of type `{shown}`: \
+                        "{who} takes a type as `{param}`, not a value of type `{shown}`: \
                          `{call}` in {place} reads as the method of trait '{trait_name}' that makes a \
                          value"
                     ),
@@ -1574,7 +1625,11 @@ impl TypeChecker {
                 Some(held),
             ) => {
                 let param = named(&receiver);
-                let shown = self.show_type(&held);
+                // (A generic type alone as the program writes it: `Option`.)
+                let shown = match self.names_generic_type(arg) {
+                    true => super::names::shown_arg(arg),
+                    false => self.show_type(&held),
+                };
                 let call = written_call(self, &receiver, traits[0], method);
                 let of: Vec<String> = (traits.iter())
                     .map(|t| format!("trait '{}'", self.show_trait(*t)))
@@ -1582,18 +1637,42 @@ impl TypeChecker {
                 let bound = (traits.iter().copied())
                     .find(|t| has_trait(self, *t, &held))
                     .unwrap_or(traits[0]);
+                let why = match self.of_constructors_trait(bound) {
+                    // (The one trait is of type constructors, which a call
+                    // never makes a parameter owe.)
+                    true => format!(
+                        "is read as a field, since a trait of type constructors ('{}') is not \
+                         inferred",
+                        self.show_trait(bound)
+                    ),
+                    false => format!(
+                        "can be the method of {}, so it is read as a field",
+                        of.join(" or of ")
+                    ),
+                };
                 (
                     format!(
                         "'{function}' takes a record with a field `{method}` as `{param}`, not the \
-                         type `{shown}`: `{call}` in {place} can be the method of {}, so it is read as a \
-                         field",
-                        of.join(" or of ")
+                         type `{shown}`: `{call}` in {place} {why}"
                     ),
-                    format!(
-                        "say which: give '{function}' a type parameter with its bound, \
-                         `fn {function}(type {param}) where {param}: {}`",
-                        self.show_trait(bound)
-                    ),
+                    match self.of_constructors_trait(bound) {
+                        // (A type constructor is written with its type
+                        // argument where it is used.)
+                        true => {
+                            let a = if param == "a" { "b" } else { "a" };
+                            format!(
+                                "say which: give '{function}' a type parameter with its bound, and \
+                                 write it with its type argument, as in `fn wrap(x: {a}, type \
+                                 {param}) -> {param}({a}) where {param}: {}`",
+                                self.show_trait(bound)
+                            )
+                        }
+                        false => format!(
+                            "say which: give '{function}' a type parameter with its bound, \
+                             `fn {function}(type {param}) where {param}: {}`",
+                            self.show_trait(bound)
+                        ),
+                    },
                 )
             }
             _ => return,
@@ -1639,6 +1718,19 @@ impl TypeChecker {
                 .unwrap_or_else(|| "_".to_string());
             self.readings
                 .insert((callee, at), (name, reading(receiver), None));
+        }
+        // (A parameter of a closure no `let` names.)
+        let obj_ty = self.apply(obj_ty);
+        let closure_param = (self.fn_frames.last())
+            .filter(|frame| frame.owner.is_none())
+            .and_then(|frame| {
+                (frame.params.iter().zip(&frame.names))
+                    .find(|(param, _)| self.apply(param) == obj_ty)
+                    .and_then(|(_, name)| *name)
+            });
+        if let Some(name) = closure_param {
+            let receiver = (written_receiver(obj)).unwrap_or_else(|| name.to_string());
+            (self.closure_readings).push((obj_ty, name, reading(receiver)));
         }
     }
 
@@ -2059,16 +2151,18 @@ impl TypeChecker {
 
         // Infer the body and unify with declared return type
         let owner = self.frame_owner.take();
-        let names = (f.params.iter())
+        let names: Vec<Option<Symbol>> = (f.params.iter())
             .map(|p| match p.pattern.kind {
                 PatternKind::Ident(name) => Some(name),
                 _ => None,
             })
             .collect();
+        let read_fields = read_fields(&mut f.body, &names);
         self.fn_frames.push(unused::FnFrame {
             owner,
             params: param_types,
             names,
+            read_fields,
         });
         let body_type = self.infer_expr(&mut f.body, env);
         self.fn_frames.pop();
@@ -2830,7 +2924,18 @@ impl TypeChecker {
                     .iter()
                     .map(|arg| super::names::shown_arg(arg))
                     .collect();
-                for (i, arg) in args.iter_mut().enumerate() {
+                // A closure is checked after the call's other arguments,
+                // which may decide the types of its parameters
+                // (`apply({ r -> r.zero() }, rec)` reads `r` as `rec`'s
+                // type, as `apply2(rec, { r -> r.zero() })` does).
+                let (closures, others): (Vec<usize>, Vec<usize>) =
+                    (0..args.len()).partition(|k| matches!(args[*k].kind, ExprKind::Lambda { .. }));
+                // (Each argument's place, the alias and the type, in the
+                // order the call writes them.)
+                let mut given_at: Vec<Option<(Span, Option<Symbol>, Type)>> =
+                    vec![None; args.len()];
+                for i in others.into_iter().chain(closures) {
+                    let arg = &mut args[i];
                     let param = params.get(i + implicit_self);
                     if let (ExprKind::Lambda { .. }, Some(param)) = (&arg.kind, param)
                         && let Type::Fun(expected, _) = self.apply(param)
@@ -2878,7 +2983,7 @@ impl TypeChecker {
                         None => arg_ty,
                     };
                     mismatched |= self.errors.len() > reported;
-                    given.push((arg.span, self.alias_named(arg), arg_ty.clone()));
+                    given_at[i] = Some((arg.span, self.alias_named(arg), arg_ty.clone()));
                     if let Some(param) = param {
                         let at = match form {
                             CallForm::Call => arg.span,
@@ -2903,6 +3008,7 @@ impl TypeChecker {
                         }
                     }
                 }
+                given.extend(given_at.into_iter().flatten());
                 // An argument of the wrong type is the one thing wrong
                 // with the call: what the callee owes for it is not
                 // asked as well.
@@ -3027,6 +3133,14 @@ impl TypeChecker {
                         Type::Error
                     }
                     (Type::Never, _) => Type::Never,
+                    // A type given an argument already reported (`List(t)`,
+                    // `t` undefined) was meant as a type of types.
+                    (Type::Generic(name, _), _)
+                        if name.is_builtin(crate::defs::TYPE_OF)
+                            && (arg_types.iter()).any(|ty| self.apply(ty) == Type::Error) =>
+                    {
+                        Type::Error
+                    }
                     (_, CallForm::Call) => {
                         let mut d = Diagnostic::error(
                             Code::TypeMismatch,
@@ -3661,6 +3775,16 @@ impl TypeChecker {
                         }
                         return Type::Error;
                     }
+                    // (A field of a type not known yet, which has none:
+                    // named by the parameter that holds it, or as written.)
+                    if let (false, Type::Var(v)) = (called, &inner) {
+                        let name = (self.type_holder(*v))
+                            .or_else(|| written_receiver(obj).map(|shown| intern(&shown)))
+                            .unwrap_or_else(|| intern("_"));
+                        let held = Type::Rigid(RigidId { var: *v, name });
+                        self.no_field(&held, field, Some(obj), &[], span);
+                        return Type::Error;
+                    }
                     let resolved = self.resolve_type_descriptor_method(&gargs[0], field, span);
                     if let Some(ty) = resolved {
                         expr.ty = Some(ty.clone());
@@ -3766,7 +3890,9 @@ impl TypeChecker {
                             true => self.value_makers(field),
                             false => (Vec::new(), Vec::new()),
                         };
-                        if let ([tr], []) = (makers.as_slice(), taking.as_slice()) {
+                        if let ([tr], []) = (makers.as_slice(), taking.as_slice())
+                            && !self.read_as_record(&obj_ty)
+                        {
                             // `t.mk(s)` where one trait in sight has a
                             // method `mk`, which makes a value: `t` is a
                             // type, which owes the trait, as `json.parse(s,
@@ -3784,8 +3910,16 @@ impl TypeChecker {
                             self.through_trait(tr, field, inner, None, span)
                         } else if called {
                             // (Of several traits' methods that make a value
-                            // the call does not say which: a field.)
-                            if makers.len() > 1 {
+                            // the call does not say which, and one of a trait
+                            // of type constructors is not taken for one: a
+                            // field.)
+                            let makers = match (makers.len(), taking.is_empty()) {
+                                (0, true) => self.constructor_makers(field),
+                                _ => makers,
+                            };
+                            if makers.len() > 1
+                                || (!makers.is_empty() && self.of_constructors_trait(makers[0]))
+                            {
                                 self.note_reading(obj, &obj_ty, |receiver| Reading::Field {
                                     receiver,
                                     traits: makers.clone(),
@@ -4070,16 +4204,18 @@ impl TypeChecker {
                 let prev_return_type = self.current_return_type.replace(lambda_ret.clone());
                 let prev_qmark_spans = std::mem::take(&mut self.current_qmark_spans);
 
-                let names = (params.iter())
+                let names: Vec<Option<Symbol>> = (params.iter())
                     .map(|p| match p.pattern.kind {
                         PatternKind::Ident(name) => Some(name),
                         _ => None,
                     })
                     .collect();
+                let read_fields = read_fields(body, &names);
                 self.fn_frames.push(unused::FnFrame {
                     owner,
                     params: param_types.clone(),
                     names,
+                    read_fields,
                 });
                 let body_type = self.infer_expr(body, env);
                 self.fn_frames.pop();
@@ -5483,4 +5619,93 @@ fn rigid_vars(ty: &Type) -> Vec<RigidId> {
     let mut out = Vec::new();
     walk(ty, &mut out);
     out
+}
+
+/// For each parameter `names` names, whether `body` reads a field of it
+/// (`t.n`, not a call `t.zero()`).
+fn read_fields(body: &mut Expr, names: &[Option<Symbol>]) -> Vec<bool> {
+    (names.iter())
+        .map(|name| name.is_some_and(|name| reads_field_of(body, name)))
+        .collect()
+}
+
+/// Whether `expr` reads a field of the local `name` (`name.n`) where no
+/// binding in `expr` hides it. A dot that is called (`name.f(..)`, `x |>
+/// name.f`) reads none.
+fn reads_field_of(expr: &mut Expr, name: Symbol) -> bool {
+    let binds = |pattern: &Pattern| collect_pattern_vars(pattern).contains(&name);
+    // (The receiver of a dot that is called.)
+    let callee_reads = |callee: &mut Expr| match &mut callee.kind {
+        ExprKind::FieldAccess(obj, ..) => reads_field_of(obj, name),
+        _ => reads_field_of(callee, name),
+    };
+    match &mut expr.kind {
+        ExprKind::FieldAccess(obj, ..)
+            if matches!(obj.kind, ExprKind::Ident(n) if n == name)
+                && obj.res == Some(crate::defs::Res::Local) =>
+        {
+            true
+        }
+        ExprKind::Call(callee, args) => {
+            callee_reads(callee) || args.iter_mut().any(|arg| reads_field_of(arg, name))
+        }
+        ExprKind::Pipe(value, callee) => reads_field_of(value, name) || callee_reads(callee),
+        ExprKind::Lambda { params, body } => {
+            !params.iter().any(|param| binds(&param.pattern)) && reads_field_of(body, name)
+        }
+        ExprKind::Match {
+            expr: scrutinee,
+            arms,
+        } => {
+            (scrutinee.as_deref_mut()).is_some_and(|s| reads_field_of(s, name))
+                || arms.iter_mut().any(|arm| {
+                    !binds(&arm.pattern)
+                        && ((arm.guard.as_deref_mut()).is_some_and(|g| reads_field_of(g, name))
+                            || reads_field_of(&mut arm.body, name))
+                })
+        }
+        ExprKind::Block(stmts) => {
+            for stmt in stmts {
+                let (reads, hidden) = match stmt {
+                    Stmt::Let { pattern, value, .. } => {
+                        (reads_field_of(value, name), binds(pattern))
+                    }
+                    Stmt::When {
+                        pattern,
+                        expr,
+                        else_body,
+                    } => (
+                        reads_field_of(expr, name) || reads_field_of(else_body, name),
+                        binds(pattern),
+                    ),
+                    Stmt::WhenBool {
+                        condition,
+                        else_body,
+                    } => (
+                        reads_field_of(condition, name) || reads_field_of(else_body, name),
+                        false,
+                    ),
+                    Stmt::Expr(e) => (reads_field_of(e, name), false),
+                };
+                if reads || hidden {
+                    return reads;
+                }
+            }
+            false
+        }
+        ExprKind::Loop { bindings, body } => {
+            bindings
+                .iter_mut()
+                .any(|(_, _, value)| reads_field_of(value, name))
+                || (!bindings.iter().any(|(bound, ..)| *bound == name)
+                    && reads_field_of(body, name))
+        }
+        _ => {
+            let mut found = false;
+            super::resolve::each_child_mut(expr, &mut |child| {
+                found |= reads_field_of(child, name);
+            });
+            found
+        }
+    }
 }

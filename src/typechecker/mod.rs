@@ -340,6 +340,11 @@ pub struct TypeChecker {
     pub(super) type_holders: HashMap<TyVar, Symbol>,
     pub(super) readings:
         HashMap<(unused::Callee, usize), (Option<Symbol>, Reading, Option<Symbol>)>,
+    /// How a call `x.m(..)` read a parameter of a closure that no `let`
+    /// names (one given straight to a call): the parameter's type, its
+    /// name and the reading. A later argument of that call of the other
+    /// kind is told so (`misread_argument`).
+    pub(super) closure_readings: Vec<(Type, Symbol, Reading)>,
     /// Spans of `?` uses in the current fn/lambda body. When the
     /// body/return-type unify fails on a Result/Option return that `?`
     /// itself demanded, the diagnostic points back at the `?` site instead
@@ -724,6 +729,7 @@ impl TypeChecker {
             method_value_lets: HashMap::new(),
             unknown_receiver: None,
             readings: HashMap::new(),
+            closure_readings: Vec::new(),
             type_holders: HashMap::new(),
             current_qmark_spans: Vec::new(),
             qmark_decided: HashMap::new(),

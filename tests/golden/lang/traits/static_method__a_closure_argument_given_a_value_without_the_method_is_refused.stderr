@@ -1,0 +1,6 @@
+error[type]: type 'Int' has no field 'zero'
+ --> static_method__a_closure_argument_given_a_value_without_the_method_is_refused.silt:22:24
+    |
+ 22 |   println(apply({ r -> r.zero() }, 7))
+    |                        ^^^^^^ type 'Int' has no field 'zero'
+  = help: `zero` is a method of trait `Zero` that makes a value: call it on the type, `Int.zero()`

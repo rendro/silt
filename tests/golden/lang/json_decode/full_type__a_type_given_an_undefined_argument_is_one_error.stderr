@@ -1,0 +1,5 @@
+error[type]: undefined variable 't'
+ --> full_type__a_type_given_an_undefined_argument_is_one_error.silt:8:17
+   |
+ 8 |   let lt = List(t)
+   |                 ^ undefined variable 't'
