@@ -1412,6 +1412,17 @@ impl TypeChecker {
         (makers, taking)
     }
 
+    /// Whether `ty` is the type of a parameter of an enclosing function
+    /// or closure whose body reads a field of it (`FnFrame::read_fields`):
+    /// a record, whose `t.zero()` calls its field.
+    fn read_as_record(&self, ty: &Type) -> bool {
+        let ty = self.apply(ty);
+        (self.fn_frames.iter()).any(|frame| {
+            (frame.params.iter().zip(&frame.read_fields))
+                .any(|(param, read)| *read && self.apply(param) == ty)
+        })
+    }
+
     /// Pass on how the parameter `i` of `callee` is read (`readings`) to
     /// the parameters of the enclosing functions and closures whose
     /// types the argument `arg_ty` shares (`fn again(s, t) { go(s, t) }`
@@ -2018,16 +2029,18 @@ impl TypeChecker {
 
         // Infer the body and unify with declared return type
         let owner = self.frame_owner.take();
-        let names = (f.params.iter())
+        let names: Vec<Option<Symbol>> = (f.params.iter())
             .map(|p| match p.pattern.kind {
                 PatternKind::Ident(name) => Some(name),
                 _ => None,
             })
             .collect();
+        let read_fields = read_fields(&mut f.body, &names);
         self.fn_frames.push(unused::FnFrame {
             owner,
             params: param_types,
             names,
+            read_fields,
         });
         let body_type = self.infer_expr(&mut f.body, env);
         self.fn_frames.pop();
@@ -3698,7 +3711,9 @@ impl TypeChecker {
                             true => self.value_makers(field),
                             false => (Vec::new(), Vec::new()),
                         };
-                        if let ([tr], []) = (makers.as_slice(), taking.as_slice()) {
+                        if let ([tr], []) = (makers.as_slice(), taking.as_slice())
+                            && !self.read_as_record(&obj_ty)
+                        {
                             // `t.mk(s)` where one trait in sight has a
                             // method `mk`, which makes a value: `t` is a
                             // type, which owes the trait, as `json.parse(s,
@@ -4002,16 +4017,18 @@ impl TypeChecker {
                 let prev_return_type = self.current_return_type.replace(lambda_ret.clone());
                 let prev_qmark_spans = std::mem::take(&mut self.current_qmark_spans);
 
-                let names = (params.iter())
+                let names: Vec<Option<Symbol>> = (params.iter())
                     .map(|p| match p.pattern.kind {
                         PatternKind::Ident(name) => Some(name),
                         _ => None,
                     })
                     .collect();
+                let read_fields = read_fields(body, &names);
                 self.fn_frames.push(unused::FnFrame {
                     owner,
                     params: param_types.clone(),
                     names,
+                    read_fields,
                 });
                 let body_type = self.infer_expr(body, env);
                 self.fn_frames.pop();
@@ -5415,4 +5432,93 @@ fn rigid_vars(ty: &Type) -> Vec<RigidId> {
     let mut out = Vec::new();
     walk(ty, &mut out);
     out
+}
+
+/// For each parameter `names` names, whether `body` reads a field of it
+/// (`t.n`, not a call `t.zero()`).
+fn read_fields(body: &mut Expr, names: &[Option<Symbol>]) -> Vec<bool> {
+    (names.iter())
+        .map(|name| name.is_some_and(|name| reads_field_of(body, name)))
+        .collect()
+}
+
+/// Whether `expr` reads a field of the local `name` (`name.n`) where no
+/// binding in `expr` hides it. A dot that is called (`name.f(..)`, `x |>
+/// name.f`) reads none.
+fn reads_field_of(expr: &mut Expr, name: Symbol) -> bool {
+    let binds = |pattern: &Pattern| collect_pattern_vars(pattern).contains(&name);
+    // (The receiver of a dot that is called.)
+    let callee_reads = |callee: &mut Expr| match &mut callee.kind {
+        ExprKind::FieldAccess(obj, ..) => reads_field_of(obj, name),
+        _ => reads_field_of(callee, name),
+    };
+    match &mut expr.kind {
+        ExprKind::FieldAccess(obj, ..)
+            if matches!(obj.kind, ExprKind::Ident(n) if n == name)
+                && obj.res == Some(crate::defs::Res::Local) =>
+        {
+            true
+        }
+        ExprKind::Call(callee, args) => {
+            callee_reads(callee) || args.iter_mut().any(|arg| reads_field_of(arg, name))
+        }
+        ExprKind::Pipe(value, callee) => reads_field_of(value, name) || callee_reads(callee),
+        ExprKind::Lambda { params, body } => {
+            !params.iter().any(|param| binds(&param.pattern)) && reads_field_of(body, name)
+        }
+        ExprKind::Match {
+            expr: scrutinee,
+            arms,
+        } => {
+            (scrutinee.as_deref_mut()).is_some_and(|s| reads_field_of(s, name))
+                || arms.iter_mut().any(|arm| {
+                    !binds(&arm.pattern)
+                        && ((arm.guard.as_deref_mut()).is_some_and(|g| reads_field_of(g, name))
+                            || reads_field_of(&mut arm.body, name))
+                })
+        }
+        ExprKind::Block(stmts) => {
+            for stmt in stmts {
+                let (reads, hidden) = match stmt {
+                    Stmt::Let { pattern, value, .. } => {
+                        (reads_field_of(value, name), binds(pattern))
+                    }
+                    Stmt::When {
+                        pattern,
+                        expr,
+                        else_body,
+                    } => (
+                        reads_field_of(expr, name) || reads_field_of(else_body, name),
+                        binds(pattern),
+                    ),
+                    Stmt::WhenBool {
+                        condition,
+                        else_body,
+                    } => (
+                        reads_field_of(condition, name) || reads_field_of(else_body, name),
+                        false,
+                    ),
+                    Stmt::Expr(e) => (reads_field_of(e, name), false),
+                };
+                if reads || hidden {
+                    return reads;
+                }
+            }
+            false
+        }
+        ExprKind::Loop { bindings, body } => {
+            bindings
+                .iter_mut()
+                .any(|(_, _, value)| reads_field_of(value, name))
+                || (!bindings.iter().any(|(bound, ..)| *bound == name)
+                    && reads_field_of(body, name))
+        }
+        _ => {
+            let mut found = false;
+            super::resolve::each_child_mut(expr, &mut |child| {
+                found |= reads_field_of(child, name);
+            });
+            found
+        }
+    }
 }

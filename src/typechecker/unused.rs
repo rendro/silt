@@ -59,6 +59,9 @@ pub(crate) struct FnFrame {
     pub(super) params: Vec<Type>,
     /// Its parameters' names, where a parameter is a name.
     pub(super) names: Vec<Option<Symbol>>,
+    /// Whether the body reads a field of the parameter (`t.n`): it is
+    /// a record, and a call `t.zero()` calls its field.
+    pub(super) read_fields: Vec<bool>,
 }
 
 /// What names a function or closure where it is defined.

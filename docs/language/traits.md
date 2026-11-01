@@ -772,7 +772,8 @@ A dot after a value names a field, whatever methods traits declare:
   that trait, as `json.parse(s, t)` takes one that has `json.Decode`:
   `fn zeros(t) { t.zero() }` is `fn zeros(type a) -> a where a: Zero`.
   Annotate the parameter (`fn get(r: Rec)`) to call a record's field of
-  that name.
+  that name. If the function also reads a field of `t`, `t` is a record,
+  and `t.zero()` calls its field.
 - A trait's method is called through the trait: `fn g(x) {
   Greet.greet(x) }` is `fn g(x: a) -> String where a: Greet`, the bound
   coming from the trait the call names.
