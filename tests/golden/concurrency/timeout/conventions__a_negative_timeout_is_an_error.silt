@@ -1,8 +1,0 @@
--- exit: 1
--- stderr-contains: channel.timeout: duration must be non-negative
-import channel
-import time
-
-fn main() {
-  println(channel.receive(channel.timeout(time.ms(-1))))
-}

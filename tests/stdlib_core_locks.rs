@@ -237,18 +237,14 @@ fn main() { channel.new(-1) }
 // ════════════════════════════════════════════════════════════════════
 
 #[test]
-fn test_channel_timeout_negative_duration_rejected_or_latent() {
-    // Negative durations are rejected with a clean VmError instead of
-    // wrapping via `as u64` into a near-infinite delay.
-    let err = run_err(
-        r#"
+fn test_channel_timeout_negative_duration_is_no_time() {
+    // A negative duration is no time, as for `time.sleep` and
+    // `task.deadline`: the timeout channel is closed at once (never
+    // wrapped via `as u64` into a near-infinite delay).
+    let result = run(r#"
 import channel
 import time
-fn main() { channel.timeout(time.ms(-1)) }
-    "#,
-    );
-    assert!(
-        err.contains("channel.timeout: duration must be non-negative"),
-        "expected negative-duration rejection, got: {err}"
-    );
+fn main() { channel.receive(channel.timeout(time.ms(-1))) }
+    "#);
+    assert_eq!(result, Value::variant(bv::NONE, []));
 }

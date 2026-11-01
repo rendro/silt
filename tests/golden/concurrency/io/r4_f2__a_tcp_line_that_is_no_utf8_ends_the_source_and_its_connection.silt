@@ -1,0 +1,54 @@
+-- timeout: 10
+-- repeat: 5
+-- requires-feature: tcp
+-- A line that is no UTF-8 is an error item of `stream.tcp_lines`, as of
+-- `stream.file_lines`, and the last: the line after it is not read, no
+-- byte is replaced, and the source shuts its connection down, as a
+-- source does whenever it stops. The peer sends its lines, waits for
+-- more, and sees the connection end; a write on the connection then
+-- says closed.
+import bytes
+import channel
+import stream
+import task
+import tcp
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
+  let seen = channel.new(1)
+  let _peer = task.spawn { ->
+    when let Ok(conn) = tcp.accept(listener) else {
+      panic("cannot accept")
+    }
+    -- "ok", then 0xff 0xfe " bad", then "after", each with its newline.
+    when let Ok(sent) = bytes.from_hex("6f6b0afffe206261640a61667465720a") else {
+      panic("no hex")
+    }
+    let _ = tcp.write(conn, sent)
+    -- The end of the connection is a read of no bytes, or an error
+    -- where the system resets a connection that is shut down with
+    -- bytes of the peer unread (Windows).
+    match tcp.read(conn, 16) {
+      Ok(read) -> match bytes.length(read) {
+        0 -> channel.send(seen, "the peer saw the connection end")
+        n -> channel.send(seen, "the peer read {n} bytes")
+      }
+      Err(_) -> channel.send(seen, "the peer saw the connection end")
+    }
+  }
+  when let Ok(conn) = tcp.connect("127.0.0.1:{tcp.local_port(listener)}") else {
+    panic("cannot connect")
+  }
+  let lines = stream.tcp_lines(conn) |> stream.collect
+  println(lines)
+  when let Some(said) = channel.receive(seen) else {
+    panic("the peer said nothing")
+  }
+  println(said)
+  match tcp.write(conn, bytes.from_string("x")) {
+    Err(tcp.Closed) -> println("closed")
+    _ -> println("something else")
+  }
+}

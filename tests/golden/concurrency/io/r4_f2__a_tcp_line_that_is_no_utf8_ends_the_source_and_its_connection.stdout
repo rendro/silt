@@ -1,0 +1,3 @@
+[Ok(ok), Err(stream did not contain valid UTF-8)]
+the peer saw the connection end
+closed

@@ -45,15 +45,10 @@ fn empty() -> Value {
     Value::variant(bv::EMPTY, [])
 }
 
-/// The time a `Duration` argument of `name` is: an error if it is
-/// negative.
-fn span(name: &str, duration: time::Duration) -> Result<Duration, VmError> {
-    match u64::try_from(duration.0) {
-        Ok(nanos) => Ok(Duration::from_nanos(nanos)),
-        Err(_) => Err(VmError::new(format!(
-            "{name}: duration must be non-negative"
-        ))),
-    }
+/// The time a `Duration` argument is: a negative one is no time, as
+/// for `time.sleep` and `task.deadline`.
+fn span(duration: time::Duration) -> Duration {
+    Duration::from_nanos(u64::try_from(duration.0).unwrap_or(0))
 }
 
 fn no_timer() -> VmError {
@@ -248,9 +243,7 @@ pub(crate) mod channel {
         // is closed and empty. `Empty` if the duration passed with no
         // value and no close.
         fn receive_timeout(vm, ch: Chan, dur: time::Duration) -> Result<Step, VmError> {
-            // A negative duration is an error even when a value is
-            // there.
-            let dur = span("channel.receive_timeout", dur)?;
+            let dur = span(dur);
             if vm.takes_nothing_new() {
                 return Ok(vm.end_here("channel.receive_timeout"));
             }
@@ -285,7 +278,7 @@ pub(crate) mod channel {
         }
 
         fn timeout(vm, dur: time::Duration) -> Result<Value, VmError> {
-            let dur = span("channel.timeout", dur)?;
+            let dur = span(dur);
             let deadline = vm
                 .runtime
                 .io
