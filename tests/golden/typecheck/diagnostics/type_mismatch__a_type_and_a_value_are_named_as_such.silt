@@ -1,0 +1,35 @@
+-- cmd: check
+-- exit: 1
+-- A value given where a type is asked, or a type where a value is, is
+-- said in those words: "expected a type, got a value of type `Rec`",
+-- "expected a value of type `Int`, got the type `Int`".
+trait Zero {
+  fn zero() -> Self
+}
+
+trait Zero for Int {
+  fn zero() -> Self { 0 }
+}
+
+type Rec {
+  n: Int,
+  zero: Fn() -> Int,
+}
+
+fn fn_of() {
+  { r -> r.zero() }
+}
+
+fn apply(f, x) {
+  f(x)
+}
+
+fn twice(n: Int) -> Int {
+  n * 2
+}
+
+fn main() {
+  let rec = Rec { n: 1, zero: { -> 5 } }
+  println(apply(fn_of(), rec))
+  println(twice(Int))
+}

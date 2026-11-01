@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: expected Int, got type Int
+-- stderr-contains: expected a value of type `Int`, got the type `Int`
 fn double(n: Int) -> Int { n * 2 }
 fn main() {
   let _ = double(Int)

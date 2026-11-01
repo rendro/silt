@@ -5929,7 +5929,7 @@ fn without_held(ty: &Type) -> Type {
 }
 
 /// For each parameter `names` names, whether `body` reads a field of it
-/// (`t.n`, not a call `t.zero()`).
+/// (`t.n`, or a record update `t.{ n: 3 }`; not a call `t.zero()`).
 fn read_fields(body: &mut Expr, names: &[Option<Symbol>]) -> Vec<bool> {
     (names.iter())
         .map(|name| name.is_some_and(|name| reads_field_of(body, name)))
@@ -5950,6 +5950,13 @@ fn reads_field_of(expr: &mut Expr, name: Symbol) -> bool {
         ExprKind::FieldAccess(obj, ..)
             if matches!(obj.kind, ExprKind::Ident(n) if n == name)
                 && obj.res == Some(crate::defs::Res::Local) =>
+        {
+            true
+        }
+        // (A record update of it reads its fields as a field read does.)
+        ExprKind::RecordUpdate { expr: base, .. }
+            if matches!(base.kind, ExprKind::Ident(n) if n == name)
+                && base.res == Some(crate::defs::Res::Local) =>
         {
             true
         }

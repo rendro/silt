@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: type mismatch: expected String
+-- stderr-contains: type mismatch: expected a value of type `String`, got the type `Todo`
 import json
 type Todo { id: Int, title: String, done: Bool }
 

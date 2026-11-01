@@ -945,9 +945,27 @@ impl TypeChecker {
     /// The fault of two types whose heads differ.
     fn type_mismatch(&self, got: &Type, expected: &Type) -> Fault {
         let (got_shown, expected_shown) = self.show_apart(got, expected);
+        // (A type given where a value is asked, or a value where a type
+        // is: said in those words, not as `type _`.)
+        let held = |ty: &Type| match self.apply(ty) {
+            Type::Generic(name, args) if name.is_builtin(crate::defs::TYPE_OF) => {
+                args.first().cloned()
+            }
+            _ => None,
+        };
+        let message = match (held(got), held(expected)) {
+            (None, Some(_)) => {
+                format!("type mismatch: expected a type, got a value of type `{got_shown}`")
+            }
+            (Some(given), None) => format!(
+                "type mismatch: expected a value of type `{expected_shown}`, got the type `{}`",
+                self.show_type(&self.apply(&given))
+            ),
+            _ => format!("type mismatch: expected {expected_shown}, got {got_shown}"),
+        };
         Fault {
             code: Code::TypeMismatch,
-            message: format!("type mismatch: expected {expected_shown}, got {got_shown}"),
+            message,
             help: Self::chain_hint(got, expected),
             apart: Some((got.clone(), expected.clone())),
             note: None,
