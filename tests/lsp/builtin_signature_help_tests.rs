@@ -211,3 +211,18 @@ fn completion_after_a_module_that_is_not_built_offers_nothing() {
         .expect("completion items");
     assert!(items.is_empty(), "{items:?}");
 }
+
+/// Signature help on a function of the prelude documents it by its own
+/// section of the globals page, as for a function of a module, not by
+/// the whole page.
+#[test]
+fn a_prelude_function_is_documented_by_its_own_section() {
+    let source = "fn main() {\n  println(1)\n}\n";
+    let help = signature_help("println_doc", source, 1, 10);
+    let doc = help["signatures"][0]["documentation"]["value"]
+        .as_str()
+        .expect("documentation");
+    assert!(doc.contains("println(value: a)"), "{doc}");
+    assert!(!doc.contains("# Globals"), "{doc}");
+    assert!(!doc.contains("panic"), "{doc}");
+}
