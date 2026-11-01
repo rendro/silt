@@ -474,7 +474,7 @@ pub(super) fn modules() -> Vec<Module> {
             name: "fs",
             page: "io-fs.md",
             types: "\
-                pub type FileStat { size: Int, is_file: Bool, is_dir: Bool, is_symlink: Bool, modified: Int, readonly: Bool, mode: Int, accessed: Option(DateTime), created: Option(DateTime) }\n\
+                pub type FileStat { size: Int, is_file: Bool, is_dir: Bool, is_symlink: Bool, modified: Option(DateTime), readonly: Bool, mode: Int, accessed: Option(DateTime), created: Option(DateTime) }\n\
             ",
             rows: [
                 f("fn copy(from: String, to: String) -> Result((), IoError)", "Copy a file", io::fs::copy),

@@ -323,16 +323,7 @@ pub(crate) mod fs {
                 // is_file=false / is_dir=false. Surface that directly so
                 // callers can see "this is a symlink, neither file nor
                 // dir" without a follow step.
-                //
-                // modified() can fail on platforms that don't track mtime
-                // (rare, but the API requires us to handle it). Fall back
-                // to 0 in that case rather than fail the whole stat call.
-                let modified = md
-                    .modified()
-                    .ok()
-                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                    .map(|d| d.as_secs() as i64)
-                    .unwrap_or(0);
+
                 // Unix permission bits (e.g. 0o755). On Windows no
                 // equivalent exists — std exposes `FILE_ATTRIBUTE_*`
                 // bits via `MetadataExt::file_attributes()` but those
@@ -346,18 +337,19 @@ pub(crate) mod fs {
                 };
                 #[cfg(not(unix))]
                 let mode: i64 = 0;
-                // accessed() may fail on filesystems mounted with
+                // modified() can fail on platforms that don't track
+                // mtime, accessed() on filesystems mounted with
                 // `noatime`, and created() (`btime`) is notoriously
                 // flaky: it's absent on older ext4, only surfaced via
                 // statx(2) on Linux, and not exposed at all on some
-                // Unixes. Both map to Option(DateTime) so callers can
+                // Unixes. All three map to Option(DateTime) so callers can
                 // pattern-match rather than probe for sentinels.
                 Value::builtin_record(ty::FILE_STAT, [
                     ("size", Value::Int(md.len() as i64)),
                     ("is_file", Value::Bool(md.is_file())),
                     ("is_dir", Value::Bool(md.is_dir())),
                     ("is_symlink", Value::Bool(md.file_type().is_symlink())),
-                    ("modified", Value::Int(modified)),
+                    ("modified", system_time_to_option_datetime(md.modified())),
                     ("readonly", Value::Bool(md.permissions().readonly())),
                     ("mode", Value::Int(mode)),
                     ("accessed", system_time_to_option_datetime(md.accessed())),
