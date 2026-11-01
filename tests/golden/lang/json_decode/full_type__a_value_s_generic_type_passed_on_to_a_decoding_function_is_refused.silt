@@ -1,0 +1,33 @@
+-- cmd: check
+-- exit: 1
+-- A function with no annotations that gives a value of a generic type
+-- whose argument only the value's type knows (`Box { v: x }`) to a
+-- function that decodes its argument's type (`twice`) is refused, as on
+-- the base, in a function and in a closure: nothing gives that argument
+-- where the code runs. (`twice(Box { v: 1 }, s)` runs:
+-- full_type__a_value_s_generic_type_known_to_the_call_decodes.)
+import json
+
+trait Dec: json.Decode {
+  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+type Box(a) {
+  v: a,
+}
+
+trait Dec for Box(a) where a: json.Decode {}
+
+fn twice(b, s) {
+  Dec.again(b, s)
+}
+
+fn deep(x, s) {
+  twice(Box { v: x }, s)
+}
+
+fn main() {
+  println(deep(1, "\{\"v\": 9}"))
+  let g = { x, s -> twice(Box { v: x }, s) }
+  println(g(1, "\{\"v\": 4}"))
+}

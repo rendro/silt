@@ -1,0 +1,28 @@
+-- A function with no annotations that decodes its argument's type
+-- (`twice`) decodes a value of a generic type whose arguments the call
+-- knows (`Box { v: 1 }`), also from a closure given a value at the call.
+import json
+
+trait Dec: json.Decode {
+  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+type Box(a) {
+  v: a,
+}
+
+trait Dec for Box(a) where a: json.Decode {}
+
+fn twice(b, s) {
+  Dec.again(b, s)
+}
+
+fn app(f, x) {
+  f(x)
+}
+
+fn main() {
+  println(twice(Box { v: 1 }, "\{\"v\": 9}"))
+  println(twice(Box { v: "a" }, "\{\"v\": \"q\"}"))
+  println(app({ x -> Dec.again(Box { v: x }, "\{\"v\": 7}") }, 1))
+}

@@ -289,11 +289,14 @@ impl TypeChecker {
             // A generic type whose arguments are not all known (`Box`, of
             // whatever `a` is): a decoder builds a value of one type, by
             // its structure or by its impl. (Before the enum's help below,
-            // which names an impl.) An argument a value gives where the
-            // code runs (`Box(t)`, `t` a parameter that holds a type) is
-            // known there, as a `type t` parameter's is.
-            let open =
-                self.tables.is_generic(head) && (args.is_empty() || self.holds_open_vars(ty));
+            // which names an impl.) An argument a parameter that holds a
+            // type gives where the code runs (`Box(t)`) is known there, as
+            // a `type t` parameter's is; a variable only a value's type
+            // knows (`Box { v: x }`) is not.
+            let open = self.tables.is_generic(head)
+                && (args.is_empty()
+                    || self.holds_open_vars(ty)
+                    || free_vars_in(ty).into_iter().any(|v| !self.held_by_param(v)));
             if self.has_decode_impl(head) && !open {
                 return None;
             }

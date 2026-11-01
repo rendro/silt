@@ -1,0 +1,13 @@
+error[type]: `twice` cannot decode `Box`: it is a generic record type, and a decoder builds a value of one type
+ --> full_type__a_value_s_generic_type_passed_on_to_a_decoding_function_is_refused.silt:26:9
+    |
+ 26 |   twice(Box { v: x }, s)
+    |         ^^^^^^^^^^^^ `twice` cannot decode `Box`: it is a generic record type, and a decoder builds a value of one type
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `twice` cannot decode `Box`: it is a generic record type, and a decoder builds a value of one type
+ --> full_type__a_value_s_generic_type_passed_on_to_a_decoding_function_is_refused.silt:31:27
+    |
+ 31 |   let g = { x, s -> twice(Box { v: x }, s) }
+    |                           ^^^^^^^^^^^^ `twice` cannot decode `Box`: it is a generic record type, and a decoder builds a value of one type
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these

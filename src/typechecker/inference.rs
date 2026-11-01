@@ -1845,17 +1845,25 @@ impl TypeChecker {
         }
     }
 
+    /// Whether a parameter with no annotation holds the type variable `v`
+    /// as a type (`held_params`): a value gives it where the code runs.
+    pub(super) fn held_by_param(&self, v: TyVar) -> bool {
+        let held = Type::type_of(Type::Var(v));
+        (self.held_params.iter()).any(|(_, ty)| self.apply(ty) == held)
+    }
+
     /// Write the parameters with no annotation that hold a type, with
     /// the variable each holds (`Program::held_types`): the compiler
     /// gives the variable the parameter's value, as it gives a `type a`
     /// parameter's to `a`.
     pub(super) fn write_held_types(&mut self, program: &mut crate::ast::Program) {
-        let held = std::mem::take(&mut self.held_params);
-        program.held_types = (held.into_iter())
-            .filter_map(|(span, ty)| match self.apply(&ty) {
+        // (Kept: a builtin's argument checked after this asks
+        // `held_by_param`.)
+        program.held_types = (self.held_params.iter())
+            .filter_map(|(span, ty)| match self.apply(ty) {
                 Type::Generic(name, args) if name.is_builtin(crate::defs::TYPE_OF) => {
                     match args.first() {
-                        Some(var @ (Type::Var(_) | Type::Rigid(_))) => Some((span, var.clone())),
+                        Some(var @ (Type::Var(_) | Type::Rigid(_))) => Some((*span, var.clone())),
                         _ => None,
                     }
                 }
