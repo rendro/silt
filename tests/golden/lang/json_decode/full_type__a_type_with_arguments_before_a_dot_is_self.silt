@@ -1,0 +1,79 @@
+-- A type with arguments before a dot is the `Self` of the method it
+-- calls, wherever it stands: `Box(Int).zero()` is a `Box(Int)` with no
+-- annotation, `Box(a).mk(s)` decodes at the `type a` given, a `let` of
+-- the type and an alias (`IntBox`) are that type, also for a written
+-- `json.Decode` impl, and a type named like its variant is the type
+-- there (`Cell(Int).default()`).
+import json
+
+trait Zero {
+  fn zero() -> Self
+}
+
+trait Zero for Int {
+  fn zero() -> Self { 7 }
+}
+
+trait Zero for String {
+  fn zero() -> Self { "z" }
+}
+
+type Box(a) {
+  v: a,
+}
+
+trait Zero for Box(a) where a: Zero {
+  fn zero() -> Self { Box { v: a.zero() } }
+}
+
+trait Mk: json.Decode {
+  fn mk(s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+trait Mk for Box(a) where a: json.Decode {}
+
+type Wrap(a) {
+  w: a,
+}
+
+trait json.Decode for Wrap(a) where a: json.Decode {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match a.decode(value) {
+      Ok(x) -> Ok(Wrap { w: x })
+      Err(e) -> Err(e)
+    }
+  }
+}
+
+type IntBox = Box(Int)
+
+type IntWrap = Wrap(Int)
+
+type Cell(a) {
+  Cell(a),
+  Blank,
+}
+
+trait Zero for Cell(a) {
+  fn zero() -> Self { Blank }
+}
+
+fn load(s: String, type a) -> Result(Box(a), json.JsonError) where a: json.Decode {
+  Box(a).mk(s)
+}
+
+fn main() {
+  println(Box(Int).zero())
+  println(Box(String).zero())
+  let x = Box(Int).zero()
+  println(x.v + 1)
+  println(load("\{\"v\": \"s\"}", String))
+  let t = Box(Int)
+  println(t.mk("\{\"v\": 3}"))
+  println(IntBox.mk("\{\"v\": 4}"))
+  println(IntBox.zero())
+  println(IntWrap.decode(json.Int(5)))
+  println(Wrap(String).decode(json.String("six")))
+  let c: Cell(Int) = Cell(Int).zero()
+  println(c)
+}

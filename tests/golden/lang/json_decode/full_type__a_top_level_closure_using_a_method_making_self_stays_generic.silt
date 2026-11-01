@@ -1,5 +1,5 @@
 -- A top-level `let` whose value uses a method that makes `Self` at a
--- known type (`Box.mk` at `Box(Int)`) is general in everything else:
+-- known type (`Box(Int).mk`) is general in everything else:
 -- the closure takes an Int and a String.
 import json
 
@@ -14,7 +14,7 @@ type Box(a) {
 trait Mk for Box(a) where a: json.Decode {}
 
 let f = { x, s ->
-  let r: Result(Box(Int), json.JsonError) = Box.mk(s)
+  let r: Result(Box(Int), json.JsonError) = Box(Int).mk(s)
   println(r)
   x
 }

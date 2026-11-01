@@ -36,6 +36,6 @@ error[type]: `go` cannot decode `Box(Set(Int))`: field `v` has type `Set(Int)`, 
 error[type]: `mk` cannot decode `Box(Set(Int))`: field `v` has type `Set(Int)`, which has no decoder
  --> full_type__a_refused_decode_through_a_trait_method_is_one_error.silt:45:50
     |
- 45 |   let r: Result(Box(Set(Int)), json.JsonError) = Box.mk("1")
-    |                                                  ^^^^^^ `mk` cannot decode `Box(Set(Int))`: field `v` has type `Set(Int)`, which has no decoder
+ 45 |   let r: Result(Box(Set(Int)), json.JsonError) = Box(Set(Int)).mk("1")
+    |                                                  ^^^^^^^^^^^^^^^^ `mk` cannot decode `Box(Set(Int))`: field `v` has type `Set(Int)`, which has no decoder
   = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these

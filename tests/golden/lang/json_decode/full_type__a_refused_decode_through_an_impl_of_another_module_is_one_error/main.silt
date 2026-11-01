@@ -8,7 +8,7 @@ import set
 import shapes
 
 fn main() {
-  let bad: Fn(String) -> Result(shapes.Box(Set(Int)), json.JsonError) = shapes.Box.mk
+  let bad: Fn(String) -> Result(shapes.Box(Set(Int)), json.JsonError) = shapes.Box(Set(Int)).mk
   println(bad("1"))
   println(shapes.Mk.again(shapes.Box { v: set.from_list([1]) }, "1"))
 }

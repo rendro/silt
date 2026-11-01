@@ -1,0 +1,39 @@
+-- cmd: check
+-- exit: 1
+-- A type with arguments before a dot (`Box(mail.Email).mk(s)`) is the
+-- type the method decodes: an opaque type of another module in it is
+-- refused, as `json.parse(s, Box(mail.Email))` is, through a trait
+-- with `json.Decode` among its supertraits, a `let` of the type, and the
+-- module's own written `json.Decode` impl of a generic type.
+import json
+import mail
+
+trait Mk: json.Decode {
+  fn mk(s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+type Box(a) {
+  v: a,
+}
+
+trait Mk for Box(a) where a: json.Decode {}
+
+type Wrap(a) {
+  w: a,
+}
+
+trait json.Decode for Wrap(a) where a: json.Decode {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match a.decode(value) {
+      Ok(x) -> Ok(Wrap { w: x })
+      Err(e) -> Err(e)
+    }
+  }
+}
+
+fn main() {
+  println(Box(mail.Email).mk("\{\"v\": \{\"addr\": \"evil\"}}"))
+  let t = Box(mail.Email)
+  println(t.mk("\{\"v\": \{\"addr\": \"evil\"}}"))
+  println(Wrap(mail.Email).decode(json.Object(#{ "addr": json.String("evil") })))
+}

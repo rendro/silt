@@ -2284,8 +2284,10 @@ impl<'a> Compiler<'a> {
                 self.compile_trait_call(callee, *method, args, span, tail)?;
             } else if let Some(TypeMember::Native(t)) = member {
                 // `T.decode(v)`: the VM's method of the type, which takes
-                // no value of it; the type's descriptor chooses it.
-                let Some(descriptor) = self.type_value(receiver.res) else {
+                // no value of it; the type's descriptor chooses it. (An
+                // alias gives the type it stands for in full, `Box(Int)`.)
+                let full = written_type_of(receiver).and_then(|ty| self.type_constant(ty));
+                let Some(descriptor) = full.or_else(|| self.type_value(receiver.res)) else {
                     return Err(checker_missed(span, "a method of no named type"));
                 };
                 let idx = self.add_constant(descriptor, span)?;
@@ -2299,6 +2301,21 @@ impl<'a> Compiler<'a> {
                 // trait reached through its type, through the dictionary.
                 let (recv, own) = (recv.clone(), own.to_vec());
                 self.compile_dict_call(tr, &recv, &own, *method, args, span, tail)?;
+            } else if let Some(TypeMember::Slot(_)) = member
+                && let Some(t) = crate::defs::builtin_trait_id("Decode")
+                && self.res_trait(callee.res) == Some(t)
+                && let Some(descriptor) = written_type_of(receiver)
+                    .filter(|ty| matches!(ty, Type::Generic(_, args) if !args.is_empty()))
+                    .and_then(|ty| self.type_constant(ty))
+            {
+                // `IntBox.decode(v)`, an alias of a generic type with a
+                // written `decode`: by the descriptor of the type in full,
+                // which gives the impl its type arguments, as
+                // `Box(Int).decode(v)` does.
+                let idx = self.add_constant(descriptor, span)?;
+                self.emit(Asm::Constant { k: idx }, span)?;
+                self.compile_operands(args.iter().copied())?;
+                self.emit_call_method(*method, args.len() + 1, t, 0, tail, span)?;
             } else if let Some(TypeMember::Slot(slot)) = member {
                 // `Pt.make(1)`, `m.Pt.make(1)`: a method reached
                 // through its type.

@@ -104,11 +104,6 @@ impl TypeChecker {
                 self.keep_monomorphic(&ty);
             }
         }
-        // (Nor in the type a dictionary made at a use carries in full,
-        // `let f = Box.mk`: each use of the `let` is a use of that one.)
-        for ty in self.type_method_selves.clone() {
-            self.keep_monomorphic(&ty);
-        }
         self.generalize_decided(ty)
     }
 
