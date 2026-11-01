@@ -1,0 +1,44 @@
+-- A json.Decode impl for each of two instantiations of one generic type
+-- (`Box(Int)` and `Box(String)`): each use reaches the impl of its whole
+-- type, directly, through a `type t` parameter, a bound, `Box(Int).decode`
+-- (also through a `let` of the type and as a value), a trait method that
+-- makes Self, a field of a record (in a list, an option), toml and
+-- `json.decode`.
+import json
+import toml
+import list
+type Box(a) { v: a }
+trait json.Decode for Box(Int) {
+  fn decode(v: json.Value) -> Result(Self, json.JsonError) { Ok(Box { v: 1 }) }
+}
+trait json.Decode for Box(String) {
+  fn decode(v: json.Value) -> Result(Self, json.JsonError) { Ok(Box { v: "s" }) }
+}
+trait Mk: json.Decode {
+  fn mk(s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+trait Mk for Box(Int) {}
+trait Mk for Box(String) {}
+type R { a: Box(Int), b: Box(String), c: List(Box(Int)), d: Option(Box(String)) }
+type T { a: Box(Int), b: Box(String) }
+fn load(s: String, type t) -> Result(t, json.JsonError) where t: json.Decode { json.parse(s, t) }
+fn by_mk(s: String, type t) -> Result(t, json.JsonError) where t: Mk { t.mk(s) }
+fn main() {
+  println(json.parse("\{}", Box(Int)))
+  println(json.parse("\{}", Box(String)))
+  println(load("\{}", Box(Int)))
+  println(load("\{}", Box(String)))
+  println(Box(Int).decode(json.Null))
+  println(Box(String).decode(json.Null))
+  let t = Box(String)
+  println(t.decode(json.Null))
+  let f = Box(Int).decode
+  println(f(json.Null))
+  println(Box(Int).mk("1"))
+  println(Box(String).mk("1"))
+  println(by_mk("1", Box(String)))
+  println(json.parse("\{\"a\": 0, \"b\": 0, \"c\": [0, 0], \"d\": 0}", R))
+  println(toml.parse("a = 0\nb = 0\n", T))
+  println(json.decode(json.Null, Box(String)))
+  println(list.map([json.Null], Box(String).decode))
+}

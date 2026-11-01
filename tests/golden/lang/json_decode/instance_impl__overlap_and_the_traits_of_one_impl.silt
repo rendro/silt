@@ -1,0 +1,20 @@
+-- cmd: check
+-- exit: 1
+-- An impl for some instantiations and one for every instantiation
+-- overlap; `json.Encode` and `Display` keep one impl for every
+-- instantiation.
+import json
+type Box(a) { v: a }
+trait json.Decode for Box(Int) {
+  fn decode(v: json.Value) -> Result(Self, json.JsonError) { Ok(Box { v: 1 }) }
+}
+trait json.Decode for Box(a) {
+  fn decode(v: json.Value) -> Result(Self, json.JsonError) { Err(json.Other("x")) }
+}
+trait json.Encode for Box(Int) {
+  fn encode(self) -> json.Value { json.Null }
+}
+trait Display for Box(String) {
+  fn display(self) -> String { "b" }
+}
+fn main() {}

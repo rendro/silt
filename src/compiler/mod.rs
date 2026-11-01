@@ -156,6 +156,48 @@ fn written_type_of(expr: &Expr) -> Option<&Type> {
     }
 }
 
+/// Each type parameter the impl `ti` names in its type, with its place
+/// there: the type argument at each place in turn (`b` of `trait
+/// json.Decode for Pair(String, b)`: `[1]`; of `for Box(List(b))`:
+/// `[0, 0]`). A parameter the type writes nowhere (an alias's) is at its
+/// own place among them.
+fn param_paths(ti: &crate::ast::TraitImpl) -> Vec<(Symbol, Vec<u8>)> {
+    fn find(args: &[crate::ast::TypeExpr], name: Symbol, path: &mut Vec<u8>) -> bool {
+        use crate::ast::TypeExprKind;
+        for (k, arg) in args.iter().enumerate() {
+            let Ok(k) = u8::try_from(k) else {
+                return false;
+            };
+            path.push(k);
+            let found = match &arg.kind {
+                TypeExprKind::Named {
+                    module: None,
+                    name: written,
+                    ..
+                } => *written == name,
+                TypeExprKind::Generic { args, .. } | TypeExprKind::Tuple(args) => {
+                    find(args, name, path)
+                }
+                _ => false,
+            };
+            if found {
+                return true;
+            }
+            path.pop();
+        }
+        false
+    }
+    (ti.target_param_names.iter().enumerate())
+        .map(|(k, name)| {
+            let mut path = Vec::new();
+            if !find(&ti.target_type_args, *name, &mut path) {
+                path = vec![u8::try_from(k).unwrap_or(u8::MAX)];
+            }
+            (*name, path)
+        })
+        .collect()
+}
+
 /// The types alone in the type argument `expr` written in full (`a` in
 /// `List(a)`), added to `out`.
 fn written_leaves<'e>(expr: &'e Expr, out: &mut Vec<&'e Expr>) {
@@ -370,7 +412,7 @@ pub struct Compiler<'a> {
     /// `a` from it (`TypeArg`). The same of a method of an impl whose dictionary
     /// carries its type in full (`by_dict`): from the type of the
     /// dictionary in the slot of the callee (`DictType`).
-    decode_params: Option<(Span, Vec<Symbol>)>,
+    decode_params: Option<(Span, Vec<(Symbol, Vec<u8>)>)>,
     by_dict: bool,
     /// The definitions that take dictionaries, by the span that names
     /// them (`crate::evidence::Evidence::Param`), with what they take.
@@ -636,7 +678,7 @@ impl<'a> Compiler<'a> {
         };
         let type_name = self.type_info(ty).name.clone();
         for method in &ti.methods {
-            globals
+            let slot = globals
                 .add_method_at(
                     t,
                     ty,
@@ -645,6 +687,13 @@ impl<'a> Compiler<'a> {
                     format!("{type_name}.{}", method.name),
                 )
                 .ok_or_else(|| too_many_globals(globals.len() + 1, method.span))?;
+            // (The `decode` of an impl for some instantiations of its
+            // type, `Box(Int)`, is found by the type arguments.)
+            if crate::defs::builtin_trait_id("Decode") == Some(t)
+                && let Some(pattern) = self.units.tables.decoded_instance(ty, ti.args_key)
+            {
+                globals.add_decoded_instance(ty, pattern, slot);
+            }
         }
         for (method, slot) in globals.default_methods(t) {
             if !ti
@@ -1040,7 +1089,7 @@ impl<'a> Compiler<'a> {
                     let span = method.span;
                     let around = (self.decode_params.take(), self.by_dict);
                     if generic_decode || by_dict {
-                        let params = trait_impl.target_param_names.clone();
+                        let params = param_paths(trait_impl);
                         self.decode_params = Some((method.body.span, params));
                         self.by_dict = by_dict;
                     }
@@ -1605,8 +1654,8 @@ impl<'a> Compiler<'a> {
             // A type parameter of a written `json.Decode` impl for a
             // generic type, as a type (`a.decode(v)`): the type
             // argument at its place, of the type the impl decodes.
-            ExprKind::Ident(_) if let Some((owner, k)) = self.decode_param(expr) => {
-                self.compile_type_param(owner, k, span)?;
+            ExprKind::Ident(_) if let Some((owner, path)) = self.decode_param(expr) => {
+                self.compile_type_param(owner, &path, span)?;
             }
 
             ExprKind::Ident(name) => {
@@ -2898,7 +2947,7 @@ impl<'a> Compiler<'a> {
     /// is one of the written `json.Decode` impl for a generic type whose
     /// `decode` is being compiled, used as a type (no local has its
     /// name).
-    fn decode_param(&self, expr: &Expr) -> Option<(Span, u8)> {
+    fn decode_param(&self, expr: &Expr) -> Option<(Span, Vec<u8>)> {
         let ExprKind::Ident(name) = expr.kind else {
             return None;
         };
@@ -2906,23 +2955,29 @@ impl<'a> Compiler<'a> {
         if expr.res != Some(crate::defs::Res::Local) || self.resolve_local(name).is_some() {
             return None;
         }
-        let k = params.iter().position(|param| *param == name)?;
-        Some((*owner, u8::try_from(k).ok()?))
+        let (_, path) = params.iter().find(|(param, _)| *param == name)?;
+        Some((*owner, path.clone()))
     }
 
-    /// Push the value of the type parameter `k` of the impl whose method
-    /// `owner` the code is in (`decode_params`).
+    /// Push the value of the type parameter of the impl whose method
+    /// `owner` the code is in (`decode_params`) at `path` in the impl's
+    /// type: the type argument at each place in turn (`b` of `for
+    /// Pair(String, b)` is the second; of `for Box(List(b))`, the first
+    /// of the first).
     pub(super) fn compile_type_param(
         &mut self,
         owner: Span,
-        k: u8,
+        path: &[u8],
         span: Span,
     ) -> Result<(), Diagnostic> {
         self.load_frame_dict(owner, span)?;
         if self.by_dict {
             self.emit(Asm::DictType, span)?;
         }
-        self.emit(Asm::TypeArg { k: usize::from(k) }, span)
+        for k in path {
+            self.emit(Asm::TypeArg { k: usize::from(*k) }, span)?;
+        }
+        Ok(())
     }
 
     /// The type `ty` applied to types, or the tuple of types, as its head

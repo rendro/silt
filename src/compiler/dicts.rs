@@ -387,7 +387,7 @@ impl Compiler<'_> {
                 self.resolve_local(local).is_some()
                     || self.resolve_upvalue(local).is_some()
                     || (self.decode_params.as_ref())
-                        .is_some_and(|(_, params)| params.contains(&r.name))
+                        .is_some_and(|(_, params)| params.iter().any(|(p, _)| *p == r.name))
             }
             // (Held by a parameter with no annotation.)
             Type::Var(_) => super::held_name(ty).is_some_and(|local| {
@@ -414,11 +414,10 @@ impl Compiler<'_> {
             return self.emit(Asm::GetUpvalue { index }, span);
         }
         if let Some((owner, params)) = &self.decode_params
-            && let Some(k) = params.iter().position(|param| *param == name)
-            && let Ok(k) = u8::try_from(k)
+            && let Some((_, path)) = params.iter().find(|(param, _)| *param == name)
         {
-            let owner = *owner;
-            return self.compile_type_param(owner, k, span);
+            let (owner, path) = (*owner, path.clone());
+            return self.compile_type_param(owner, &path, span);
         }
         Err(super::checker_missed(span, "a type variable with no value"))
     }

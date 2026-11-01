@@ -3778,6 +3778,12 @@ impl TypeChecker {
                         }
                         let instance = (self.type_instance(ty))
                             .unwrap_or_else(|| Type::Generic(key.0, Vec::new()));
+                        // (The receiver is the value of that type, an
+                        // alias's in full: `BI.decode` of `type BI =
+                        // Box(Int)` is `Box(Int)`'s.)
+                        let instance =
+                            crate::types::canonical::canonicalize(&self.tables.resolver, &instance);
+                        obj.ty = Some(Type::type_of(instance.clone()));
                         self.method_trait = Some(tr);
                         let ty = self.through_trait(tr, field, instance, None, span);
                         expr.ty = Some(ty.clone());

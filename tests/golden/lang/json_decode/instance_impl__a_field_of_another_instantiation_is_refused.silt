@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- A field of an instantiation with no impl (`Box(String)` beside an impl
+-- for `Box(Int)` only) is refused, not decoded by the other's impl.
+import json
+type Box(a) { v: a }
+trait json.Decode for Box(Int) {
+  fn decode(v: json.Value) -> Result(Self, json.JsonError) { Ok(Box { v: 1 }) }
+}
+type R { b: Box(Int), c: List(Box(Int)) }
+type R2 { b: Box(String) }
+fn main() {
+  println(json.parse("\{\"b\": 5, \"c\": [1, 2]}", R))
+  println(json.parse("\{\"b\": 5}", R2))
+}

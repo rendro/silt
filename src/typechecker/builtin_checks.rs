@@ -598,8 +598,9 @@ impl TypeChecker {
                     Some(self.show_type(&part))
                 }
                 Ok(field_type) => family.lacks(&field_type).map(str::to_string).or_else(|| {
-                    let (enum_type, _) = (nested.iter())
-                        .find(|(t, _)| self.tables.is_enum(*t) && !self.has_decode_impl(*t))?;
+                    let (enum_type, _) = (nested.iter()).find(|(t, args)| {
+                        self.tables.is_enum(*t) && !self.has_decode_impl_at(*t, args)
+                    })?;
                     (!family.decodes_enums()).then(|| match self.other_module(*enum_type) {
                         Some(module) => format!("{module}.{}", enum_type.name),
                         None => resolve(enum_type.name),
@@ -620,8 +621,23 @@ impl TypeChecker {
             }
             for (nested_record, nested_args) in nested {
                 let family = family.nested();
-                if self.has_decode_impl(nested_record) {
+                if self.has_decode_impl_at(nested_record, &nested_args) {
                     continue;
+                }
+                // (A type with impls for some instantiations only, none
+                // of them this one: no decoder has it.)
+                if self.has_decode_impl(nested_record) {
+                    let part = Type::Generic(nested_record, nested_args.clone());
+                    return Some(UndecodableField {
+                        record: record_shown,
+                        field: resolve(field),
+                        in_variant,
+                        field_type: self.show_type(&ty),
+                        part: self.show_type(&part),
+                        map_key: false,
+                        nested: false,
+                        grows: false,
+                    });
                 }
                 // This field gives a type ever deeper arguments: the type
                 // that declares it, the field as it declares it.

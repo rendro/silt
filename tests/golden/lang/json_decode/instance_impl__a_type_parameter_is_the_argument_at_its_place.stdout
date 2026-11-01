@@ -1,0 +1,4 @@
+Ok(Pair {x: s, y: 3})
+Err(json type mismatch: expected Int, got string)
+Ok(Box {v: [3]})
+Ok(M {m: #{"k": true}})
