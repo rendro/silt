@@ -42,6 +42,7 @@ lsp-types = { version = "0.97", optional = true }
 notify = { version = "6", optional = true }
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 regex = "1"
+regex-syntax = "0.8"
 # The trees long lists, large maps and large sets are stored in
 # (src/value/list.rs, src/value/map.rs).
 imbl = "7"

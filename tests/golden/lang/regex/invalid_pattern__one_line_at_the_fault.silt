@@ -1,0 +1,24 @@
+import regex
+import string
+
+-- An invalid pattern says what is wrong in one line, at the character
+-- where it is wrong; a pattern that ends too soon is wrong at its length,
+-- wherever its last escape begins; a pattern of several lines counts
+-- its line breaks as characters.
+fn show(pattern) {
+  match regex.is_match("x", pattern) {
+    Err(regex.InvalidPattern(why, at)) -> {
+      let lines = string.lines(why)
+      println("{string.length(pattern)} characters, at {at}, {lines}")
+    }
+    other -> println(other)
+  }
+}
+
+fn main() {
+  show("a\\")
+  show("\\x")
+  show("ab\\")
+  show("a\n(")
+  show("a\nb\n[c")
+}

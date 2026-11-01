@@ -92,10 +92,13 @@ pub(crate) fn int_error_text(tag: &str, fields: &[Value]) -> Option<String> {
 
 /// What `FloatError`'s `message` says of the variant `tag` with
 /// `fields`: `None` if they are no variant of it. It has the variants
-/// of `IntError` and `NotFinite`.
+/// of `IntError` and `NotFinite`; a literal out of range is said by the
+/// `Float` bound it passes.
 pub(crate) fn float_error_text(tag: &str, fields: &[Value]) -> Option<String> {
     match (tag, fields) {
         ("NotFinite", []) => Some("not a finite number".to_string()),
+        ("Overflow", []) => Some("number out of range: above float.max_value".to_string()),
+        ("Underflow", []) => Some("number out of range: below float.min_value".to_string()),
         _ => parse_error_text(tag, fields),
     }
 }

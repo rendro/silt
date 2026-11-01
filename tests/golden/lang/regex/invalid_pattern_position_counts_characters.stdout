@@ -6,4 +6,4 @@
 4 characters, at 3 `(`: unclosed group
 7 characters, at 5 `z`: unrecognized flag
 2 characters, at 0 `(`: unclosed group
-2 characters, at 1 `\`: incomplete escape sequence, reached end of pattern prematurely
+2 characters, at 2 ``: incomplete escape sequence, reached end of pattern prematurely
