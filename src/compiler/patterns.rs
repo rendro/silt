@@ -1114,7 +1114,7 @@ impl Compiler<'_> {
             } => (field_ways(fields).into_iter())
                 .map(|fields| {
                     rebuilt(PatternKind::Record {
-                        module: module.clone(),
+                        module: *module,
                         name: *name,
                         name_span: *name_span,
                         fields,
