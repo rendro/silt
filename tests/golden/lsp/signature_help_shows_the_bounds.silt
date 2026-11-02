@@ -1,0 +1,13 @@
+-- cmd: lsp
+-- lsp: signature 11:17
+-- lsp: signature 12:9
+-- Signature help on a call of a generic function writes the bounds of
+-- its where clause, inferred or written, as hover on the function does.
+
+fn shown(x) { "{x}" }
+fn keep(x: a) -> a where a: Equal + Display { x }
+fn main() {
+  let _f = shown
+  println(shown(1))
+  keep(2) |> println
+}

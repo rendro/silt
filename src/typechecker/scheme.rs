@@ -227,16 +227,31 @@ impl TypeChecker {
                     };
                     taken.push((self.wanted[i].ev, node));
                 }
+                // A `json.Encode` the body owes: each way it hands the
+                // type to, for the note of a refusal at a use
+                // (`encoded_through`).
+                if let Pred::Trait { tr, .. } = pred
+                    && tr.is_builtin("Encode")
+                    && let Some(asker) = self.encode_asker(i)
+                {
+                    let mut owners = self.owners_at(Some(self.wanted[i].ev));
+                    owners.retain(|module| module.builtin_name().is_none());
+                    self.encode_askers
+                        .entry(subject)
+                        .or_default()
+                        .push((owners, asker));
+                }
                 // A `json.Decode` the body owes for a function or method
                 // it gives a parameter's type to, which the definition
                 // passes on: the scheme's variable asks what that one
                 // asks, as a declared bound does, so a note names every
-                // link (`passed_through`).
+                // link (`passed_through`). Of two it passes it on to, the
+                // first in the body is the one a note names.
                 let asker = match pred {
                     Pred::Trait {
                         asker: Some(asker), ..
                     } if passed.contains(&subject) && self.passing_on.is_some() => {
-                        self.bound_askers.insert(subject, *asker);
+                        self.bound_askers.entry(subject).or_insert(*asker);
                         Some(Asker {
                             by: Asked::Bound(subject),
                             passer: self.passing_on,
@@ -828,8 +843,15 @@ impl TypeChecker {
                 };
                 let passing_around = std::mem::replace(&mut self.encode_passing, passing);
                 let asked = match json_bound {
+                    // (Of this module's definition with no annotation: its
+                    // body's, `encode_askers`.)
                     Some((v, true)) => (self.def_encoders_now.as_ref())
-                        .and_then(|encoders| encoders.get(&v).copied()),
+                        .and_then(|encoders| encoders.get(&v).copied())
+                        .or_else(|| {
+                            self.encode_askers
+                                .contains_key(&v)
+                                .then_some(Asked::Bound(v))
+                        }),
                     _ => None,
                 };
                 let asked_around = std::mem::replace(&mut self.encode_asked, asked);

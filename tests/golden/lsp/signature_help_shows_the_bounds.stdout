@@ -1,0 +1,6 @@
+> signature 11:17
+fn shown(x: a) -> String where a: Display
+argument 1: x: a
+> signature 12:9
+fn keep(x: a) -> a where a: Equal + Display
+argument 1: x: a

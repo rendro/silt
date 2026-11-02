@@ -109,6 +109,30 @@ fn a_link_stays_a_link_and_the_file_keeps_its_mode() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// `silt fmt --check .` reaches a file once, though a link beside it
+/// points at it too: it reports the file once, as a link named beside
+/// the file itself does.
+#[cfg(unix)]
+#[test]
+fn a_link_under_the_dot_does_not_report_its_file_twice() {
+    let dir = temp_dir("link_under_the_dot");
+    fs::write(dir.join("ugly.silt"), UNFORMATTED).unwrap();
+    std::os::unix::fs::symlink(dir.join("ugly.silt"), dir.join("link.silt")).unwrap();
+
+    let check = (silt_cmd().args(["fmt", "--check", "."]))
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&check.stderr);
+    assert_eq!(check.status.code(), Some(1), "stderr:\n{stderr}");
+    assert_eq!(
+        stderr.matches(": not formatted").count(),
+        1,
+        "stderr:\n{stderr}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// A `.` beside another positional is a directory like any other: the
 /// files under it are formatted too, and a file it holds that is named
 /// on its own as well is formatted once.

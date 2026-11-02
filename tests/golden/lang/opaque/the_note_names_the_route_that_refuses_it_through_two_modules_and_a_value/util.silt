@@ -1,0 +1,14 @@
+import json
+import mail
+import bridge
+
+pub fn hm(s: String, type a) -> (Result(a, json.JsonError), Result(a, json.JsonError)) where a: json.Decode {
+  bridge.hmixed(s, a)
+}
+
+pub fn choose(b: Bool) {
+  match b {
+    true -> mail.load
+    _ -> json.parse
+  }
+}

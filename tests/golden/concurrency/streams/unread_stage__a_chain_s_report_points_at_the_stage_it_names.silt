@@ -1,0 +1,15 @@
+-- exit: 1
+-- repeat: 3
+-- The map fails on its second value; the filter reads the failure and
+-- fails with it, and so does `stream.buffered`, which reads ahead
+-- without being asked. Nobody reads buffered: the report names it, and
+-- points at its call, not at the map's function where the failure was.
+import stream
+
+fn main() {
+  let _s = stream.from_list([1, 2, 3])
+    |> stream.map { x -> 10 / (x - 2) }
+    |> stream.filter { x -> x > 0 }
+    |> stream.buffered(4)
+  println("done")
+}

@@ -298,7 +298,19 @@ impl TypeChecker {
                     || self.holds_open_vars(ty)
                     || free_vars_in(ty).into_iter().any(|v| !self.held_by_param(v)));
             if self.has_decode_impl(head) && !open {
-                return None;
+                // (Of impls for some instantiations, none for this one,
+                // known in full: a parameter holding a type gave it,
+                // `boxed(Bool)` of `json.parse(s, Box(t))`.)
+                let lacks = free_vars_in(ty).is_empty()
+                    && super::inference::rigid_vars(ty).is_empty()
+                    && !self.has_decode_impl_at(head, args);
+                return lacks.then(|| {
+                    let message = format!(
+                        "type '{}' does not implement trait 'json.Decode'",
+                        self.show_type(ty)
+                    );
+                    Diagnostic::error(Code::MissingTraitImpl, span, message)
+                });
             }
             if let Some(refusal) = self.opaque_decode_refusal(ty, span, owner) {
                 return Some(refusal);
@@ -502,15 +514,28 @@ impl TypeChecker {
             },
             _ => None,
         };
+        // A type with impls for some instantiations only, none of them
+        // this one: no decoder has it. (A type with a variable in it is
+        // the use's to judge.)
+        let no_instance = match part {
+            Type::Generic(t, args) => {
+                free_vars_in(part).is_empty()
+                    && super::inference::rigid_vars(part).is_empty()
+                    && self.has_decode_impl(*t)
+                    && !self.has_decode_impl_at(*t, args)
+            }
+            _ => false,
+        };
         match (leaf, decoded_parts(part), part) {
             (Some(leaf), ..) if family.decodes(leaf) => None,
             (None, Some(parts), _) => (parts.into_iter())
                 .find_map(|inner| self.part_refusal(builtin, decoding, whole, inner, owner, span)),
             // A record or enum type of the program.
             (None, None, Type::Generic(t, _))
-                if crate::defs::builtin_types()
-                    .get(t.id.0.0 as usize)
-                    .is_none() =>
+                if !no_instance
+                    && crate::defs::builtin_types()
+                        .get(t.id.0.0 as usize)
+                        .is_none() =>
             {
                 let decoding = Decoding {
                     family,

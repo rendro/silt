@@ -1,0 +1,24 @@
+-- cmd: check
+-- exit: 1
+-- `bridge.hmixed` hands its type to `mail.load` and to `json.parse`;
+-- `mail.Email` is refused by the second. A function of another module
+-- that passes the type on to it (`util.hm`) keeps the two apart: the
+-- note names the route that refuses the type. A value that is
+-- `mail.load` or `json.parse` (`util.choose(false)`, a local `k`) is
+-- refused by `json.parse` itself, which nothing passes the type to: no
+-- note.
+import json
+import mail
+import bridge
+import util
+
+fn main() {
+  println(bridge.hmixed("\{}", mail.Email))
+  println(util.hm("\{}", mail.Email))
+  println(util.choose(false)("\{}", mail.Email))
+  let k = match true {
+    true -> mail.load
+    _ -> json.parse
+  }
+  println(k("\{}", mail.Email))
+}

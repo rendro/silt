@@ -1,0 +1,46 @@
+-- cmd: check
+-- exit: 1
+-- With json.Decode impls for some instantiations of a generic type, a
+-- call that gives a function's parameter holding a type a type whose
+-- instantiation has none (`Box(Bool)`) is refused there, as
+-- `json.parse(s, Box(Bool))` is: at the top, in a list, in a tuple of two
+-- such parameters, through another function and in a closure.
+import json
+
+type Box(a) {
+  v: a,
+}
+
+trait json.Decode for Box(Int) {
+  fn decode(v: json.Value) -> Result(Self, json.JsonError) { Ok(Box { v: 1 }) }
+}
+
+trait json.Decode for Box(String) {
+  fn decode(v: json.Value) -> Result(Self, json.JsonError) { Ok(Box { v: "s" }) }
+}
+
+fn boxed(t) {
+  json.parse("0", Box(t))
+}
+
+fn listed(t) {
+  json.parse("[0]", List(Box(t)))
+}
+
+fn again(t) {
+  boxed(t)
+}
+
+fn pair(t, u) {
+  json.parse("[0, 0]", (Box(t), Box(u)))
+}
+
+fn main() {
+  println(boxed(Bool))
+  println(listed(Bool))
+  println(again(Bool))
+  println(pair(Int, Bool))
+  let k = { t -> json.parse("0", Box(t)) }
+  println(k(Bool))
+  println(boxed(Int))
+}

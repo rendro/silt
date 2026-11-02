@@ -26,6 +26,7 @@ error[type]: type 'mail.User' cannot be encoded outside module 'mail': it is opa
     |
  17 |   println(as_is(u))
     |                 ^ type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = note: `as_is` passes it to `toml.stringify`
   = help: encode it inside module 'mail', or write `trait json.Encode for User` there
 
 error[type]: type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
@@ -33,4 +34,5 @@ error[type]: type 'mail.User' cannot be encoded outside module 'mail': it is opa
     |
  22 |   println(mixed(u))
     |                 ^ type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = note: `mixed` passes it to `toml.stringify`
   = help: encode it inside module 'mail', or write `trait json.Encode for User` there

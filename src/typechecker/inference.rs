@@ -2275,32 +2275,65 @@ impl TypeChecker {
             .collect();
         for (recv, tr, field, span, owner) in std::mem::take(&mut self.unheld_full_uses) {
             let recv = self.apply(&recv);
-            let unheld: Vec<TyVar> = (free_vars_in(&recv).into_iter())
-                .filter(|v| !held.contains(v))
-                .collect();
-            if unheld.is_empty() {
-                continue;
-            }
             let Some(key) =
                 (self.type_name_for_impl(&recv)).and_then(|head| self.tables.one_impl(tr, head))
             else {
                 continue;
             };
-            let letters = env.lookup(owner).map(Scheme::letters).unwrap_or_default();
-            let mut spare = (b'a'..=b'z')
-                .map(|letter| intern(&char::from(letter).to_string()))
-                .filter(|letter| !letters.values().any(|used| used == letter));
-            let mapping: HashMap<TyVar, Type> = (unheld.into_iter())
-                .map(|var| {
-                    let name = (letters.get(&var).copied())
-                        .or_else(|| spare.next())
-                        .unwrap_or_else(|| intern("_"));
-                    (var, Type::Rigid(crate::types::RigidId { var, name }))
-                })
-                .collect();
-            let named = substitute_vars(&recv, &mapping);
-            self.refuse_type_without_value(key, &named, Some((tr, field)), None, span);
+            if let Some(named) = self.named_unheld(&recv, &held, Some(owner), env) {
+                self.refuse_type_without_value(key, &named, Some((tr, field)), None, span);
+            }
         }
+        // (A use of a definition with the bound, `twice([x], s)`, of a
+        // builtin type: by the impl the solver chose. A generic type of
+        // the program there, `Box { v: x }`, is the decoder's refusal.)
+        for (ty, key, callee, span, owner) in std::mem::take(&mut self.unheld_full_calls) {
+            let ty = self.apply(&ty);
+            let builtin = (self.type_name_for_impl(&ty)).is_some_and(|head| {
+                crate::defs::builtin_types()
+                    .get(head.id.0.0 as usize)
+                    .is_some()
+            });
+            if !builtin {
+                continue;
+            }
+            if let Some(named) = self.named_unheld(&ty, &held, owner, env) {
+                self.refuse_type_without_value(key, &named, None, callee, span);
+            }
+        }
+    }
+
+    /// `ty` with each type variable no parameter holding a type gives a
+    /// value (none of `held`) named as the scheme of `owner` names it,
+    /// or by a spare letter; `None` if it has none.
+    fn named_unheld(
+        &self,
+        ty: &Type,
+        held: &std::collections::HashSet<TyVar>,
+        owner: Option<Symbol>,
+        env: &TypeEnv,
+    ) -> Option<Type> {
+        let unheld: Vec<TyVar> = (free_vars_in(ty).into_iter())
+            .filter(|v| !held.contains(v))
+            .collect();
+        if unheld.is_empty() {
+            return None;
+        }
+        let letters = (owner.and_then(|owner| env.lookup(owner)))
+            .map(Scheme::letters)
+            .unwrap_or_default();
+        let mut spare = (b'a'..=b'z')
+            .map(|letter| intern(&char::from(letter).to_string()))
+            .filter(|letter| !letters.values().any(|used| used == letter));
+        let mapping: HashMap<TyVar, Type> = (unheld.into_iter())
+            .map(|var| {
+                let name = (letters.get(&var).copied())
+                    .or_else(|| spare.next())
+                    .unwrap_or_else(|| intern("_"));
+                (var, Type::Rigid(crate::types::RigidId { var, name }))
+            })
+            .collect();
+        Some(substitute_vars(ty, &mapping))
     }
 
     /// `check_body`, with the body's `type a` parameters known.
@@ -5885,7 +5918,7 @@ pub(super) fn distinct(traits: &mut Vec<TraitKey>) {
 }
 
 /// The rigid type variables in `ty`, in order.
-fn rigid_vars(ty: &Type) -> Vec<RigidId> {
+pub(super) fn rigid_vars(ty: &Type) -> Vec<RigidId> {
     fn walk(ty: &Type, out: &mut Vec<RigidId>) {
         match ty {
             Type::Rigid(r) if !out.contains(r) => out.push(*r),

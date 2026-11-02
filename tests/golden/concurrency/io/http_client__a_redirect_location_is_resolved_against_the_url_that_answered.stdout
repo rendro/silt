@@ -1,0 +1,12 @@
+GET /q?x=1
+  first: GET /q ?y=2, no content-type
+  the client: 200
+GET /far
+  second: GET /there ?, text/plain
+  the client: 200
+POST /303
+  first: GET /echo ?, no content-type
+  the client: 200
+POST /307
+  first: POST /echo ?, text/plain
+  the client: 200
