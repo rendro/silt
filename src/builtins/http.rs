@@ -414,17 +414,16 @@ fn client_with_times(connect: Duration, global: Duration) -> ureq::Agent {
         .into()
 }
 
-/// Perform a synchronous HTTP GET and return a `Value`.
+/// Perform a synchronous HTTP GET and return a `Value`: the request of
+/// `http.request` with no body and no headers, so that a redirect is
+/// followed as there.
 #[cfg(feature = "http")]
 fn do_http_get(url: &str) -> Value {
-    if let Some(refused) = refuse_port(url) {
-        return refused;
-    }
-    finish_http_response(client().get(url).call(), url, false)
+    do_http_request("GET", url, &[], &[])
 }
 
-/// How many redirects `http.request` follows, as ureq does for
-/// `http.get`.
+/// How many redirects `http.get` and `http.request` follow, as many as
+/// ureq would.
 #[cfg(feature = "http")]
 const REDIRECTS_MAX: usize = 10;
 
