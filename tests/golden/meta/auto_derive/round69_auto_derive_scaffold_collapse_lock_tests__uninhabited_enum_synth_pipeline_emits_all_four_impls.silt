@@ -1,7 +1,0 @@
-type Absurd {}
-
-fn elim(x: Absurd) -> Int { match x { } }
-
-fn main() {
-    println("uninhabited-pipeline-ok")
-}

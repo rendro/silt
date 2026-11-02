@@ -1,6 +1,0 @@
--- cmd: check
--- exit: 0
--- stderr-not-contains: error
-type Absurd { }
-fn elim(x: Absurd) -> Int { match x { } }
-fn main() {}

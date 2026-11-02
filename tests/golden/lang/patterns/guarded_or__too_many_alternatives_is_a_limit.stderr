@@ -1,0 +1,6 @@
+error[compile]: too many alternatives of an or-pattern under a guard: 2048 (the limit is 1024)
+ --> guarded_or__too_many_alternatives_is_a_limit.silt:8:5
+   |
+ 8 |     (A(x0) | B(x0), A(x1) | B(x1), A(x2) | B(x2), A(x3) | B(x3), A(x4) | B(x4), A(x5) | B(x5), A(x6) | B(x6), A(x7) | B(x7), A(x8) | B(x8), A(x9) | B(x9), A(x10…
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |     too many alternatives of an or-pattern under a guard: 2048 (the limit is 1024)

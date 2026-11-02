@@ -1738,6 +1738,10 @@ impl<'src> Parser<'src> {
     fn is_record_body(&self) -> bool {
         // Look ahead: if we see `ident :` it's a record. If we see `Ident(` or `Ident,` or `Ident }` it's enum.
         // Record field names start lowercase, enum variant names start uppercase.
+        // An empty body, `type Empty {}`, is a record with no fields.
+        if self.tokens[self.pos].kind == Token::RBrace {
+            return true;
+        }
         if let Token::Ident(ref name) = self.tokens[self.pos].kind {
             // lowercase first char → likely record field
             intern::resolve(*name).starts_with(|c: char| c.is_lowercase())

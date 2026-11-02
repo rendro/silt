@@ -210,6 +210,21 @@ impl TypeChecker {
         );
     }
 
+    /// Refuse the range pattern `lo..hi` whose start is greater than its
+    /// end: no value is in it.
+    fn empty_range_pattern(&mut self, lo: &str, hi: &str, span: Span) {
+        self.errors.push(
+            Diagnostic::error(
+                Code::InvalidPatternUse,
+                span,
+                format!(
+                    "the range pattern `{lo}..{hi}` matches no value: its start is greater than its end"
+                ),
+            )
+            .with_help(format!("write the smaller end first: `{hi}..{lo}`")),
+        );
+    }
+
     /// The part of a refutable `pattern` to name in a diagnostic: the
     /// first pattern in it, outermost first and left to right, whose own
     /// form can fail to match whatever its parts are. `None` when the
@@ -619,14 +634,23 @@ impl TypeChecker {
             }
             PatternKind::Range(lo, hi) => {
                 self.unify_pattern(&Type::Int, expected, pattern_span);
+                if lo > hi {
+                    self.empty_range_pattern(&lo.to_string(), &hi.to_string(), pattern_span);
+                }
                 if (*lo, *hi) == (i64::MIN, i64::MAX) {
                     Pat::Wild
                 } else {
                     Pat::IntRange(*lo, *hi)
                 }
             }
-            PatternKind::FloatRange(_, _) => {
+            PatternKind::FloatRange(lo, hi) => {
                 self.unify_pattern(&Type::Float, expected, pattern_span);
+                if lo > hi {
+                    let shown = |n: f64| {
+                        crate::value::Float::new(n).map_or_else(|| n.to_string(), |n| n.to_string())
+                    };
+                    self.empty_range_pattern(&shown(*lo), &shown(*hi), pattern_span);
+                }
                 Pat::Lit
             }
             PatternKind::Tuple(pats) => {

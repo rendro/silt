@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- Through an alias the same: a record with no fields needs an arm.
+-- stderr-contains: non-exhaustive match
+type Void81 { }
+type Aliased = Void81
+fn elim(x: Aliased) -> Int { match x { } }
+fn main() {}

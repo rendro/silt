@@ -1,0 +1,9 @@
+-- On Ints `/` rounds down and `%` takes the sign of the divisor, so
+-- a == a / b * b + a % b; the smallest Int % -1 is 0 (owner Q3, Q5).
+fn main() {
+  let min = -9223372036854775808
+  let max = 9223372036854775807
+  println([-7 / 3, -7 % 3, 7 / -3, 7 % -3, -7 / -3, -7 % -3, 7 / 3, 7 % 3])
+  println([-7 / 2, -7 % 2, 7 / -2, 7 % -2, -6 / 3, -6 % 3, 0 / -5, 0 % -5])
+  println([min % -1, min / 3, min % 3, min / max, min % max, max / -2, max % -2])
+}

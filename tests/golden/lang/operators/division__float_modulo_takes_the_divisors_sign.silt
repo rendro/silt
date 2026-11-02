@@ -1,0 +1,6 @@
+-- On Floats `%` takes the sign of the divisor, as on Ints; `/` is exact
+-- division (owner Q5; the Float rule is a proposal on the owner's card).
+fn main() {
+  println([-7.5 % 2.0, 7.5 % -2.0, -7.5 % -2.0, 7.5 % 2.0, -6.0 % 3.0, 6.0 % -3.0])
+  println([-7.5 / 2.0, 7.5 / -2.0])
+}
