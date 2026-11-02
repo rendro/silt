@@ -680,6 +680,25 @@ impl TypeChecker {
         free_vars_in(&whole).is_empty().then_some(whole)
     }
 
+    /// What the `json.Decode` bound of an impl's header on `var` asks
+    /// for, where no body of the module says: the impl's type is decoded
+    /// as its trait's methods decode `Self` (`json.parse(s, Self)` of a
+    /// trait with `json.Decode` among its supertraits), or by the impl's
+    /// own `decode` (`Box.decode`).
+    fn impl_asker(&self, var: TyVar) -> Option<Asker> {
+        let &(tr, target) = self.impl_decode_vars.get(&var)?;
+        if Self::is_decode(tr) {
+            return Some(Asker {
+                by: Asked::Builtin(intern(&format!("{target}.decode"))),
+                passer: None,
+            });
+        }
+        let self_var = self.tables.traits.get(&tr)?.self_var;
+        self.bound_askers
+            .get(&self.rigid_rep_var(self_var))
+            .copied()
+    }
+
     /// The decoder `asker` comes from: a declared bound asks for what
     /// its body gives the variable to, if that is known.
     pub(super) fn asking_decoder(&self, asker: Option<Asker>) -> Option<Symbol> {
@@ -700,7 +719,12 @@ impl TypeChecker {
             return None;
         }
         seen.push(var);
-        if let Some(asker) = self.bound_askers.get(&var) {
+        if let Some(asker) = self
+            .bound_askers
+            .get(&var)
+            .copied()
+            .or_else(|| self.impl_asker(var))
+        {
             return self.asked_decoder(asker.by, seen);
         }
         let mut found = None;
@@ -783,7 +807,8 @@ impl TypeChecker {
             let next = (refused
                 .flatten()
                 .and_then(|module| self.refused_route(var, module)))
-            .or_else(|| self.bound_askers.get(&var).copied());
+            .or_else(|| self.bound_askers.get(&var).copied())
+            .or_else(|| self.impl_asker(var));
             let Some(next) = next else {
                 break;
             };

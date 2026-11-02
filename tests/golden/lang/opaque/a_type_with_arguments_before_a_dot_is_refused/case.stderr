@@ -3,6 +3,7 @@ error[type]: type 'mail.Email' cannot be decoded outside module 'mail': it is op
     |
  35 |   println(Box(mail.Email).mk("\{\"v\": \{\"addr\": \"evil\"}}"))
     |           ^^^^^^^^^^^^^^^^^^ type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+  = note: `Box.mk` passes it to `json.parse`
   = help: decode it inside module 'mail', or write `trait json.Decode for Email` there
 
 error[type]: type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
@@ -10,6 +11,7 @@ error[type]: type 'mail.Email' cannot be decoded outside module 'mail': it is op
     |
  37 |   println(t.mk("\{\"v\": \{\"addr\": \"evil\"}}"))
     |           ^^^^ type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+  = note: `Box.mk` passes it to `json.parse`
   = help: decode it inside module 'mail', or write `trait json.Decode for Email` there
 
 error[type]: type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it

@@ -1318,6 +1318,27 @@ impl TypeChecker {
         }
     }
 
+    /// The bounds of an impl's header as a use of its method `passer`
+    /// (`Bx.mk`) owes them: a `json.Decode` bound's type is passed to
+    /// the method, which a note names. (The method of a `json.Decode`
+    /// impl is the decoder itself: `impl_asker`.)
+    fn header_passed_to(header: &[Pred], tr: TraitKey, passer: Symbol) -> Vec<Pred> {
+        let mut preds = header.to_vec();
+        if Self::is_decode(tr) {
+            return preds;
+        }
+        for pred in &mut preds {
+            if let Pred::Trait {
+                asker: Some(asker), ..
+            } = pred
+                && asker.passer.is_none()
+            {
+                asker.passer = Some(passer);
+            }
+        }
+        preds
+    }
+
     /// Whether the header of the impl `ti` of `tr`, for the type
     /// `written`, fits the trait's kind: an impl of a trait of type
     /// constructors writes `_` for its type's first type argument
@@ -1792,6 +1813,13 @@ impl TypeChecker {
                         continue;
                     }
                     if let Type::Var(tv) = resolved {
+                        // (A note follows the type a use gives the
+                        // variable through the impl: `json_decode`'s
+                        // `impl_asker`.)
+                        if Self::is_decode(*trait_name) {
+                            let at = (impl_trait, target_type.name);
+                            self.impl_decode_vars.insert(self.rigid_rep_var(tv), at);
+                        }
                         impl_level_constraints.push(Pred::bound(
                             tv,
                             *trait_name,
@@ -2312,7 +2340,9 @@ impl TypeChecker {
             // header and the bounds the trait declares for the method.
             // The method's own `where` clauses may restate these; one
             // that adds a bound is an error below.
-            let mut method_constraints = impl_level_constraints.clone();
+            let passer = intern(&format!("{target_type}.{}", method.name));
+            let mut method_constraints =
+                Self::header_passed_to(&impl_level_constraints, impl_trait, passer);
             method_constraints.extend(declared_bounds);
             for wc in &method.where_clauses {
                 // A bound the resolver resolved to nothing: it reported why.
@@ -2502,8 +2532,9 @@ impl TypeChecker {
                 for v in free_vars_in(ty) {
                     mapping.entry(v).or_insert_with(|| self.fresh_var());
                 }
-                let mut method_constraints = impl_level_constraints.clone();
                 let passer = intern(&format!("{target_type}.{name}"));
+                let mut method_constraints =
+                    Self::header_passed_to(&impl_level_constraints, impl_trait, passer);
                 // (A `json.Decode` bound asks what the trait's body asks.)
                 method_constraints.extend(
                     Self::bounds_under(info, *name, &mapping)

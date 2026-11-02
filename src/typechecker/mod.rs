@@ -234,6 +234,10 @@ pub struct TypeChecker {
     /// The method each such bound is declared for, as a note names it
     /// (`Loader.load`).
     pub(super) bound_methods: HashMap<TyVar, Symbol>,
+    /// The variable of each `json.Decode` bound of an impl's header,
+    /// with the impl's trait and the name of its type: a use of the
+    /// impl's methods gives the variable a type the impl decodes.
+    pub(super) impl_decode_vars: HashMap<TyVar, (TraitKey, Symbol)>,
     /// The alias a use names the type a decoder is given by, at the
     /// place of the type argument.
     pub(super) decode_aliases: HashMap<Span, Symbol>,
@@ -725,6 +729,7 @@ impl TypeChecker {
             encoded_asked: HashMap::new(),
             bound_impls: HashMap::new(),
             bound_methods: HashMap::new(),
+            impl_decode_vars: HashMap::new(),
             decode_aliases: HashMap::new(),
             sig_rows: std::collections::HashSet::new(),
             anon_rows: std::collections::HashSet::new(),

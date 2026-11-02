@@ -1,0 +1,47 @@
+error[type]: type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+ --> main.silt:58:21
+    |
+ 58 |   println(fb("\{}", mail.Email))
+    |                     ^^^^^^^^^^ type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+  = note: `fb` passes it to `Bx.mk`, which passes it to `json.parse`
+  = help: decode it inside module 'mail', or write `trait json.Decode for Email` there
+
+error[type]: type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+ --> main.silt:59:24
+    |
+ 59 |   println(outer("\{}", mail.Email))
+    |                        ^^^^^^^^^^ type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+  = note: `outer` passes it to `fb`, which passes it to `Bx.mk`, which passes it to `json.parse`
+  = help: decode it inside module 'mail', or write `trait json.Decode for Email` there
+
+error[type]: type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+ --> main.silt:60:25
+    |
+ 60 |   println(bd(json.Null, mail.Email))
+    |                         ^^^^^^^^^^ type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+  = note: `bd` passes it to `Box.decode`
+  = help: decode it inside module 'mail', or write `trait json.Decode for Email` there
+
+error[type]: type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+ --> main.silt:61:14
+    |
+ 61 |   println(fi(mail.Email))
+    |              ^^^^^^^^^^ type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+  = note: `fi` passes it to `Bx.mk`, which passes it to `json.parse`
+  = help: decode it inside module 'mail', or write `trait json.Decode for Email` there
+
+error[type]: type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+ --> main.silt:62:27
+    |
+ 62 |   println(util.ufb("\{}", mail.Email))
+    |                           ^^^^^^^^^^ type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+  = note: `util.ufb` passes it to `Bx.mk`, which passes it to `json.parse`
+  = help: decode it inside module 'mail', or write `trait json.Decode for Email` there
+
+error[type]: type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+ --> main.silt:63:23
+    |
+ 63 |   println(mine("\{}", mail.Email))
+    |                       ^^^^^^^^^^ type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+  = note: `mine` passes it to `util.ufb`, which passes it to `Bx.mk`, which passes it to `json.parse`
+  = help: decode it inside module 'mail', or write `trait json.Decode for Email` there
