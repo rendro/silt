@@ -295,13 +295,29 @@ pub(crate) mod fs {
             result(removed, path, unit)
         }
 
+        // An error names the path it is about: a `from` that is not
+        // there, else `to` (in a directory that is not there, or one
+        // that is there already).
         fn rename(from: &str, to: &str) -> Value {
-            result(std::fs::rename(from, to), from, unit)
+            let renamed = std::fs::rename(from, to);
+            let about = match &renamed {
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => to,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    match std::fs::symlink_metadata(from) {
+                        Ok(_) => to,
+                        Err(_) => from,
+                    }
+                }
+                _ => from,
+            };
+            result(renamed, about, unit)
         }
 
         // A copy of a file onto itself would empty it (the destination
         // is truncated before the source is read): it is refused, and
-        // nothing is written.
+        // nothing is written. An error names the path it is about: the
+        // source is opened first, so a failure to open it names `from`,
+        // and a failure after that names `to`.
         fn copy(from: &str, to: &str) -> Value {
             if same_file(from, to) {
                 let same = std::io::Error::new(
@@ -310,7 +326,10 @@ pub(crate) mod fs {
                 );
                 return result(Err::<u64, _>(same), from, unit);
             }
-            result(std::fs::copy(from, to), from, unit)
+            if let Err(e) = std::fs::File::open(from) {
+                return result(Err::<u64, _>(e), from, unit);
+            }
+            result(std::fs::copy(from, to), to, unit)
         }
 
         fn stat(path: &str) -> Value {

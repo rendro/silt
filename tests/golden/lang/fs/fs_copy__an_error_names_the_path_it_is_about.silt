@@ -1,0 +1,20 @@
+import fs
+import io
+
+-- fs.copy and fs.rename name the path an error is about: the source
+-- when it is not there, else the destination (in a directory that is
+-- not there).
+fn main() {
+  let _ = io.write_file("a.txt", "data")
+  println(fs.copy("a.txt", "missing/b.txt"))
+  println(fs.copy("gone.txt", "b.txt"))
+  println(fs.rename("a.txt", "missing/b.txt"))
+  println(fs.rename("gone.txt", "b.txt"))
+  match fs.copy("a.txt", "missing/b.txt") {
+    Ok(_) -> println("copied")
+    Err(e) -> println(Error.message(e))
+  }
+  -- Nothing was written, and the source is still there.
+  println(fs.exists("missing"))
+  println(io.read_file("a.txt"))
+}
