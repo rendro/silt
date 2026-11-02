@@ -1,0 +1,31 @@
+-- cmd: run
+-- exit: 0
+-- A value of a type with a part decided later, by an annotation, a
+-- pattern or the call of a closure, decodes at that type; encoding a
+-- type nothing decides runs. (A part nothing decides is refused:
+-- full_type__a_type_nothing_decides_is_refused.)
+import json
+
+trait Dec: json.Decode {
+  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+trait Dec for List(a) where a: json.Decode {}
+
+fn twice(b, s) {
+  Dec.again(b, s)
+}
+
+fn main() {
+  let k = { x -> twice(x, "[1]") }
+  println(k([1]))
+  let w: Result(List(Int), json.JsonError) = twice([], "[2]")
+  println(w)
+  match twice([], "[3]") {
+    Ok([x]) -> println(x + 1)
+    _ -> println("no")
+  }
+  let _ = json.parse
+  println(json.stringify([]))
+  println(json.stringify(None))
+}

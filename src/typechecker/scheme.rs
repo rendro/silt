@@ -496,6 +496,45 @@ impl TypeChecker {
             let error = self.undecided_trait_args(*tr, args, subject, wanted.origin);
             self.errors.push(error);
         }
+        // A type nothing decides that an impl's header asks `json.Decode`
+        // of, where the impl's dictionary carries its type in full
+        // (`twice([], s)`, `Dec.again(None, s)`): the decoder is given
+        // it where the code runs, and nothing gives it a value. (First:
+        // what fixes a structural trait's subject to `()` must not
+        // decide it.)
+        for wanted in &mut recorded {
+            let Goal::Pred(Pred::Trait { tr, subject, .. }) = &wanted.goal else {
+                continue;
+            };
+            let Some((key, _)) = wanted.origin.header else {
+                continue;
+            };
+            if wanted.solved
+                || wanted.in_scheme
+                || !Self::is_decode(*tr)
+                || !matches!(self.apply(subject), Type::Var(_))
+                || self.waits_for_outer(subject)
+                || !self.carries_full_type(key)
+                || self.full_type_refused.contains(&wanted.origin.span)
+            {
+                continue;
+            }
+            wanted.solved = true;
+            self.full_type_refused.insert(wanted.origin.span);
+            let bound = self.show_bound(*tr, &[]);
+            let what = match wanted.origin.callee {
+                Some(callee) => format!("this use of '{callee}'"),
+                None => "this".to_string(),
+            };
+            self.errors.push(
+                Diagnostic::error(
+                    Code::AmbiguousType,
+                    wanted.origin.span,
+                    format!("cannot infer the type {what} needs to implement trait '{bound}'"),
+                )
+                .with_help("annotate the value it is given"),
+            );
+        }
         // (What stood at the places the scope's goals leave is gone.)
         let kept = self.closed_mark;
         self.waiting_decoders.retain(|&k| k < kept);
