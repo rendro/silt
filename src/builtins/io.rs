@@ -72,6 +72,32 @@ fn system_time_to_option_datetime(t: Result<SystemTime, std::io::Error>) -> Valu
     Value::variant(bv::SOME, [make_datetime(dt.naive_utc())])
 }
 
+/// The path a failed `fs.rename` of `from` to `to` is about, as
+/// `fs.copy` names the side that fails: `from` when it cannot be
+/// looked at (it is not there, or its directory cannot be looked
+/// into); `to` when it is there already (`kind`), when it cannot be
+/// looked at for want of permission, or when the directory it goes
+/// into is not there, cannot be looked at or is read-only; else
+/// `from`.
+fn rename_failed_at<'a>(kind: std::io::ErrorKind, from: &'a str, to: &'a str) -> &'a str {
+    use std::io::ErrorKind;
+    use std::path::Path;
+    if std::fs::symlink_metadata(from).is_err() {
+        return from;
+    }
+    let into = Path::new(to)
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let unreachable = std::fs::metadata(into).map_or(true, |md| md.permissions().readonly());
+    let hidden =
+        std::fs::symlink_metadata(to).is_err_and(|e| e.kind() == ErrorKind::PermissionDenied);
+    match kind == ErrorKind::AlreadyExists || unreachable || hidden {
+        true => to,
+        false => from,
+    }
+}
+
 /// Whether the paths `a` and `b` name one file: on Unix the same device
 /// and inode (a hard link too), elsewhere the same canonical path. A
 /// path that does not exist names no file.
@@ -295,20 +321,11 @@ pub(crate) mod fs {
             result(removed, path, unit)
         }
 
-        // An error names the path it is about: a `from` that is not
-        // there, else `to` (in a directory that is not there, or one
-        // that is there already).
         fn rename(from: &str, to: &str) -> Value {
             let renamed = std::fs::rename(from, to);
             let about = match &renamed {
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => to,
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    match std::fs::symlink_metadata(from) {
-                        Ok(_) => to,
-                        Err(_) => from,
-                    }
-                }
-                _ => from,
+                Err(e) => rename_failed_at(e.kind(), from, to),
+                Ok(()) => from,
             };
             result(renamed, about, unit)
         }
@@ -541,5 +558,46 @@ pub(crate) mod env {
                 .map(|(k, v)| Value::tuple(vec![Value::String(k.into()), Value::String(v.into())]))
                 .collect()
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::io::ErrorKind;
+    use std::os::unix::fs::PermissionsExt;
+
+    use super::rename_failed_at;
+
+    /// A failed rename names the side that fails: the source when it is
+    /// not there, else the destination when its directory is not there
+    /// or may not be written or looked into, as fs.copy does.
+    #[test]
+    fn a_failed_rename_names_the_side_that_fails() {
+        let dir = std::env::temp_dir().join(format!("silt_rename_side_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("closed")).unwrap();
+        std::fs::create_dir_all(dir.join("open")).unwrap();
+        std::fs::write(dir.join("a.txt"), "a").unwrap();
+        std::fs::set_permissions(dir.join("closed"), std::fs::Permissions::from_mode(0o000))
+            .unwrap();
+        let at = |name: &str| dir.join(name).to_string_lossy().into_owned();
+        let (a, gone) = (at("a.txt"), at("gone.txt"));
+        let (closed, missing, open) = (at("closed/b.txt"), at("missing/b.txt"), at("open/b.txt"));
+        for (kind, from, to, about) in [
+            (ErrorKind::PermissionDenied, &a, &closed, &closed),
+            (ErrorKind::NotFound, &a, &missing, &missing),
+            (ErrorKind::NotFound, &gone, &open, &gone),
+            (ErrorKind::AlreadyExists, &a, &open, &open),
+            (ErrorKind::PermissionDenied, &a, &open, &a),
+        ] {
+            assert_eq!(
+                rename_failed_at(kind, from, to),
+                about,
+                "{kind:?} {from} -> {to}"
+            );
+        }
+        std::fs::set_permissions(dir.join("closed"), std::fs::Permissions::from_mode(0o755))
+            .unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
