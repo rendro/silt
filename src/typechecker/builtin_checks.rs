@@ -316,6 +316,35 @@ impl TypeChecker {
                 return Some(refusal);
             }
             let enum_type = self.tables.is_enum(head);
+            // Written with its arguments, one of which only a value's type
+            // knows (`Box { v: x }` given to a function that decodes its
+            // argument's type): refused as a dictionary that needs its
+            // type in full is (`refuse_type_without_value`), the variable
+            // named by its place among the type's.
+            if open && !args.is_empty() && !self.holds_open_vars(ty) {
+                let mut letters = (b'a'..=b'z').map(|letter| char::from(letter).to_string());
+                let names: HashMap<TyVar, Type> = (free_vars_in(ty).into_iter())
+                    .map(|var| {
+                        let name = intern(&letters.next().unwrap_or_else(|| "_".to_string()));
+                        (var, Type::Rigid(crate::types::RigidId { var, name }))
+                    })
+                    .collect();
+                let unheld = (free_vars_in(ty).into_iter())
+                    .find(|v| !self.held_by_param(*v))
+                    .and_then(|v| names.get(&v).cloned());
+                if let Some(Type::Rigid(r)) = unheld {
+                    let name = r.name;
+                    return refusal(
+                        Code::InvalidMethodCall,
+                        format!(
+                            "`{builtin_name}` needs the type `{}` in full here: `{name}` is known \
+                             only by its type",
+                            self.show_type(&substitute_vars(ty, &names))
+                        ),
+                        &format!("take the type as a parameter, `type {name}`"),
+                    );
+                }
+            }
             if open {
                 let kind = match enum_type {
                     true => "enum",
