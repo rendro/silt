@@ -1,0 +1,20 @@
+error[type]: `twice` needs the type `Box(List(a))` in full here: `a` is known only by its type
+ --> full_type__a_part_nothing_decides_of_a_generic_type_is_refused_as_needing_it_in_full.silt:34:17
+    |
+ 34 |   println(twice(Box { v: [] }, "\{\"v\": [1]}"))
+    |                 ^^^^^^^^^^^^^ `twice` needs the type `Box(List(a))` in full here: `a` is known only by its type
+  = help: take the type as a parameter, `type a`
+
+error[type]: `twice` needs the type `R(a)` in full here: `a` is known only by its type
+ --> full_type__a_part_nothing_decides_of_a_generic_type_is_refused_as_needing_it_in_full.silt:35:17
+    |
+ 35 |   println(twice(R { xs: [] }, "\{\"xs\": [1]}"))
+    |                 ^^^^^^^^^^^^ `twice` needs the type `R(a)` in full here: `a` is known only by its type
+  = help: take the type as a parameter, `type a`
+
+error[type]: `twice` needs the type `Box(Option(a))` in full here: `a` is known only by its type
+ --> full_type__a_part_nothing_decides_of_a_generic_type_is_refused_as_needing_it_in_full.silt:36:17
+    |
+ 36 |   println(twice([Box { v: None }], "[\{\"v\": 1}]"))
+    |                 ^^^^^^^^^^^^^^^^^ `twice` needs the type `Box(Option(a))` in full here: `a` is known only by its type
+  = help: take the type as a parameter, `type a`

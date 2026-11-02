@@ -472,6 +472,9 @@ pub struct TypeChecker {
     pub(super) valued_vars: std::collections::HashSet<TyVar>,
     /// The places refused by `refuse_type_without_value`, once each.
     pub(super) full_type_refused: std::collections::HashSet<Span>,
+    /// The uses that give a decoder a type nothing decides, with their
+    /// refusal (`settle_undecided_decodes`).
+    pub(super) undecided_decodes: Vec<(Span, Diagnostic)>,
     /// The uses of a trait's method in the body being checked (calls,
     /// values, through the trait or a type), with the type `Self` stands
     /// for: checked once the body is, if the impl's dictionary carries its
@@ -799,6 +802,7 @@ impl TypeChecker {
             header_params: Vec::new(),
             valued_vars: Default::default(),
             full_type_refused: Default::default(),
+            undecided_decodes: Vec::new(),
             full_type_uses: Vec::new(),
             unheld_full_uses: Vec::new(),
             unheld_full_calls: Vec::new(),
@@ -2056,6 +2060,7 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
     checker.settle_builtin_needs();
     checker.settle_decode_gaps();
     checker.settle_encode_owners();
+    checker.settle_undecided_decodes();
     checker.record_def_owners(program, &env);
     checker.drop_errors_of_refused_calls();
     checker.report_private_in_schemes(program, &env);

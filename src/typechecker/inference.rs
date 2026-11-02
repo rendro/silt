@@ -673,7 +673,10 @@ impl TypeChecker {
         callee: Option<Symbol>,
         span: Span,
     ) {
-        if !self.carries_full_type(key) || self.full_type_refused.contains(&span) {
+        if !self.carries_full_type(key)
+            || self.full_type_refused.contains(&span)
+            || (self.undecided_decodes.iter()).any(|(at, _)| *at == span)
+        {
             return;
         }
         let recv = self.apply(recv);

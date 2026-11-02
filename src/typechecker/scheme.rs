@@ -511,7 +511,9 @@ impl TypeChecker {
         // (`twice([], s)`, `Dec.again(None, s)`): the decoder is given
         // it where the code runs, and nothing gives it a value. (First:
         // what fixes a structural trait's subject to `()` must not
-        // decide it.)
+        // decide it. Refused once every check is done, where nothing
+        // else refuses the use as needing its type in full:
+        // `settle_undecided_decodes`.)
         for wanted in &mut recorded {
             let Goal::Pred(Pred::Trait { tr, subject, .. }) = &wanted.goal else {
                 continue;
@@ -526,24 +528,23 @@ impl TypeChecker {
                 || self.waits_for_outer(subject)
                 || !self.carries_full_type(key)
                 || self.full_type_refused.contains(&wanted.origin.span)
+                || (self.undecided_decodes.iter()).any(|(at, _)| *at == wanted.origin.span)
             {
                 continue;
             }
             wanted.solved = true;
-            self.full_type_refused.insert(wanted.origin.span);
             let bound = self.show_bound(*tr, &[]);
             let what = match wanted.origin.callee {
                 Some(callee) => format!("this use of '{callee}'"),
                 None => "this".to_string(),
             };
-            self.errors.push(
-                Diagnostic::error(
-                    Code::AmbiguousType,
-                    wanted.origin.span,
-                    format!("cannot infer the type {what} needs to implement trait '{bound}'"),
-                )
-                .with_help("annotate the value it is given"),
-            );
+            let error = Diagnostic::error(
+                Code::AmbiguousType,
+                wanted.origin.span,
+                format!("cannot infer the type {what} needs to implement trait '{bound}'"),
+            )
+            .with_help("annotate the value it is given");
+            self.undecided_decodes.push((wanted.origin.span, error));
         }
         // (What stood at the places the scope's goals leave is gone.)
         let kept = self.closed_mark;
@@ -661,6 +662,31 @@ impl TypeChecker {
                     )
                     .with_help("annotate the value it is given"),
                 );
+            }
+        }
+    }
+
+    /// Refuse each use `settle_bounds` found to give a decoder a type
+    /// nothing decides (`undecided_decodes`), once at its place: a
+    /// refusal there of the use as needing its type in full (`twice(Box
+    /// { v: [] }, s)`: `Box(List(a))`) is the one error; else this one.
+    pub(super) fn settle_undecided_decodes(&mut self) {
+        for (span, error) in std::mem::take(&mut self.undecided_decodes) {
+            let in_full = |e: &Diagnostic| {
+                e.span == span
+                    && e.code == Code::InvalidMethodCall
+                    && e.message.contains(" in full here: ")
+            };
+            match self.errors.iter().position(in_full) {
+                Some(first) => {
+                    let mut index = 0;
+                    self.errors.retain(|e| {
+                        let keep = e.span != span || index == first;
+                        index += 1;
+                        keep
+                    });
+                }
+                None => self.errors.push(error),
             }
         }
     }
