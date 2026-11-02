@@ -3046,12 +3046,6 @@ mod error_places {
             int(-1),
             "integer overflow: -9223372036854775808 / -1",
         );
-        binary(
-            int(i64::MIN),
-            Asm::Mod,
-            int(-1),
-            "integer overflow: -9223372036854775808 % -1",
-        );
         let err = stopped(|e| {
             push(e, int(i64::MIN));
             e.emit(Asm::Negate, span()).unwrap();
@@ -5236,8 +5230,9 @@ mod two_operands {
             (7, Asm::Add, 5, int(12)),
             (7, Asm::Sub, 5, int(2)),
             (7, Asm::Mul, -5, int(-35)),
-            (-7, Asm::Div, 2, int(-3)),
-            (-7, Asm::Mod, 2, int(-1)),
+            (-7, Asm::Div, 2, int(-4)),
+            (-7, Asm::Mod, 2, int(1)),
+            (i64::MIN, Asm::Mod, -1, int(0)),
             (i64::MAX - 1, Asm::Add, 1, int(i64::MAX)),
             (i64::MIN + 1, Asm::Sub, 1, int(i64::MIN)),
             (7, Asm::Lt, 5, Value::Bool(false)),
@@ -5331,7 +5326,6 @@ mod two_operands {
             (int(i64::MIN), Asm::Sub, int(1)),
             (int(i64::MAX), Asm::Mul, int(2)),
             (int(i64::MIN), Asm::Div, int(-1)),
-            (int(i64::MIN), Asm::Mod, int(-1)),
             (int(7), Asm::Div, int(0)),
             (int(7), Asm::Mod, int(0)),
             (float(7.0), Asm::Div, float(0.0)),
