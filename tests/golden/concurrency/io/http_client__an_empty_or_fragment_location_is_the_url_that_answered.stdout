@@ -1,0 +1,7 @@
+GET /a/b?x=1
+  the server: GET /a/b ?x=1
+  the server: 302 to ""
+  the server: GET /a/b ?x=1
+  the server: 302 to "#top"
+  the server: GET /a/b ?x=1
+  the client: 200

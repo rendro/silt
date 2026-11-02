@@ -1,0 +1,36 @@
+-- timeout: 30
+-- requires-feature: http
+-- A redirect's location that is empty, or a fragment alone (`#top`),
+-- is the URL that answered, as RFC 3986 says: its own path and query,
+-- not its directory. The fragment never goes to the server.
+import bytes
+import channel
+import http
+import task
+import tcp
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let locations = channel.new(2)
+  channel.send(locations, "")
+  channel.send(locations, "#top")
+  let server = task.spawn { ->
+    http.serve(listener) { req ->
+      println("  the server: {req.method} {req.path} ?{req.query}")
+      match channel.try_receive(locations) {
+        channel.Message(location) -> {
+          println("  the server: 302 to \"{location}\"")
+          http.Response { status: 302, body: bytes.empty(), headers: #{"location": location} }
+        }
+        _ -> http.Response { status: 200, body: bytes.empty(), headers: #{} }
+      }
+    }
+  }
+  let url = "http://127.0.0.1:{tcp.local_port(listener)}/a/b?x=1"
+  println("GET /a/b?x=1")
+  match http.request(http.GET, url, bytes.empty(), #{}) {
+    Ok(resp) -> println("  the client: {resp.status}")
+    Err(e) -> println("  the client: {Error.message(e)}")
+  }
+  task.cancel(server)
+}

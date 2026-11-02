@@ -557,9 +557,12 @@ fn redirect(response: &ureq::http::Response<ureq::Body>, url: &str) -> Option<(u
 /// as it is, one without (`//host/x`) on the base's scheme, a path from
 /// the root on the base's scheme and host, a query alone (`?y=2`) on
 /// the base's path, any other path next to the base's, with its `.` and
-/// `..` segments taken away.
+/// `..` segments taken away. A fragment (`#x`) is not sent to a server,
+/// so it is dropped first; a location that is then empty is the base's
+/// own path and query.
 #[cfg(feature = "http")]
 fn resolve_location(base: &str, location: &str) -> String {
+    let location = location.split('#').next().unwrap_or_default();
     let has_scheme = location
         .parse::<ureq::http::Uri>()
         .is_ok_and(|uri| uri.scheme().is_some());
@@ -584,6 +587,10 @@ fn resolve_location(base: &str, location: &str) -> String {
     }
     if location.starts_with('?') {
         return format!("{origin}{}{location}", uri.path());
+    }
+    if location.is_empty() {
+        let own = uri.path_and_query().map_or("/", |own| own.as_str());
+        return format!("{origin}{own}");
     }
     let mut segments: Vec<&str> = uri.path().split('/').collect();
     segments.pop();
@@ -2190,6 +2197,11 @@ mod http_body_tests {
             ("?y=2", "http://a.test:8/p/q?y=2"),
             ("r", "http://a.test:8/p/r"),
             ("../r", "http://a.test:8/r"),
+            ("", "http://a.test:8/p/q?x=1"),
+            ("#f", "http://a.test:8/p/q?x=1"),
+            ("?y=2#f", "http://a.test:8/p/q?y=2"),
+            ("r#f", "http://a.test:8/p/r"),
+            ("https://b.test/y#f", "https://b.test/y"),
         ] {
             assert_eq!(resolve_location(base, location), resolved, "{location}");
         }
