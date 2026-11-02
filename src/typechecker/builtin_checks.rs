@@ -171,7 +171,8 @@ impl TypeChecker {
             return;
         }
         if let Some(passer) = passer {
-            diagnostic = diagnostic.with_note(passes_note(passer, through, check.builtin()));
+            let (passer, links) = self.through_let(origin.callee, passer, through.to_vec());
+            diagnostic = diagnostic.with_note(passes_note(passer, &links, check.builtin()));
         }
         // (The bound that passes it on refused the same encoding there:
         // this one, which names the encoder, takes its place.)

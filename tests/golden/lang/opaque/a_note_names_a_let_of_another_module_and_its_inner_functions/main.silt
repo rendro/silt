@@ -1,0 +1,35 @@
+-- cmd: check
+-- exit: 1
+-- The note of a refusal names every link on the way: a `let` of another
+-- module's encoder or decoder (`otl`, `opt`, `omix`) passes the type to
+-- that definition, and a function of another module that passes it to
+-- one of its own (`other.mix3` to `tonly`) names it as this module calls
+-- it, `other.tonly`. (A function of this module stays `tl`.)
+import json
+import toml
+import mail
+import other
+
+fn tl(x) {
+  toml.stringify(#{"k": x})
+}
+
+fn mixm(x) {
+  (json.stringify(1), tl(x))
+}
+
+let otl = other.tonly
+let opt = other.ptoml
+let omix = other.mix1
+
+fn main() {
+  let e = mail.mk("a")
+  println(other.mix3(e))
+  println(other.mix2(e))
+  println(mixm(e))
+  println(otl(e))
+  println(opt("", mail.Email))
+  println(omix(e))
+  let local = other.tonly
+  println(local(e))
+}

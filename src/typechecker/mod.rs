@@ -238,6 +238,10 @@ pub struct TypeChecker {
     /// with the impl's trait and the name of its type: a use of the
     /// impl's methods gives the variable a type the impl decodes.
     pub(super) impl_decode_vars: HashMap<TyVar, (TraitKey, Symbol)>,
+    /// Each name a `let` binds to another module's definition (`let
+    /// oenc = other.enc`: `other.enc`), for the note of a refusal at a
+    /// call of it (`through_let`).
+    pub(super) let_links: HashMap<Symbol, Symbol>,
     /// The alias a use names the type a decoder is given by, at the
     /// place of the type argument.
     pub(super) decode_aliases: HashMap<Span, Symbol>,
@@ -730,6 +734,7 @@ impl TypeChecker {
             bound_impls: HashMap::new(),
             bound_methods: HashMap::new(),
             impl_decode_vars: HashMap::new(),
+            let_links: HashMap::new(),
             decode_aliases: HashMap::new(),
             sig_rows: std::collections::HashSet::new(),
             anon_rows: std::collections::HashSet::new(),
@@ -1506,6 +1511,7 @@ impl TypeChecker {
                     _,
                 ) => {
                     let names = collect_pattern_vars(pattern);
+                    self.note_let_link(pattern, value);
                     let is_value =
                         self.check_top_level_let(pattern, ty.as_ref(), value, *span, env);
                     // (`let top = go`: a call of `top` reads its parameters
