@@ -48,7 +48,8 @@ Unary `-` and `!` have precedence 90 — tighter than `*`, looser than `as`. So 
 
 On Ints, `/` rounds down, toward negative infinity, and `%` is the
 modulo that goes with it: its result has the sign of the divisor, so
-`a == a / b * b + a % b` always holds.
+`a / b * b + a % b` is `a` (unless `a / b * b` itself overflows, as it
+can next to the smallest Int).
 
 ```silt
 println(-7 / 2) -- -4
