@@ -222,13 +222,13 @@ fn needs_a_feature_not_built(stderr: &[u8]) -> bool {
 
 /// Whether this test build has the cargo feature `name`.
 fn feature_is_built(name: &str) -> bool {
-    match name {
-        "tcp-tls" => cfg!(feature = "tcp-tls"),
-        "postgres" => cfg!(feature = "postgres"),
-        "http" => cfg!(feature = "http"),
-        "tcp" => cfg!(feature = "tcp"),
-        _ => true,
-    }
+    let built = [
+        ("tcp-tls", cfg!(feature = "tcp-tls")),
+        ("postgres", cfg!(feature = "postgres")),
+        ("http", cfg!(feature = "http")),
+        ("tcp", cfg!(feature = "tcp")),
+    ];
+    (built.iter().find(|(feature, _)| *feature == name)).is_none_or(|(_, on)| *on)
 }
 
 /// Regression test for GAP audit findings D1+D2: every ```silt fenced
