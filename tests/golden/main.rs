@@ -25,7 +25,11 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 /// A case that has not exited after this long has failed.
-const CASE_TIMEOUT: Duration = Duration::from_secs(20);
+/// Windows runners of CI have let a run that ends in milliseconds
+/// (`silt fmt` on a file it refuses: 10 ms in a debug build here) go
+/// past 20 s under load, after it had printed its error; there the
+/// bound is 60 s.
+const CASE_TIMEOUT: Duration = Duration::from_secs(if cfg!(windows) { 60 } else { 20 });
 
 /// One golden case: the program to run and what it must produce.
 struct Case {
