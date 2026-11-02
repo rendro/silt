@@ -1,0 +1,22 @@
+-- cmd: check
+-- exit: 1
+-- A value with a part nothing decides (`R { xs: [] }`) given to a method
+-- that hands its type to toml's decoder (`TDec.tagain`) is refused once,
+-- as a type nothing decides: not also by what `toml.parse` says of
+-- `R(())`, the type the scope's end picks, which nobody wrote.
+import json
+import toml
+
+type R(a) {
+  xs: List(a),
+}
+
+trait TDec: json.Decode {
+  fn tagain(self, s: String) -> Result(Self, toml.TomlError) { toml.parse(s, Self) }
+}
+
+trait TDec for R(a) where a: json.Decode {}
+
+fn main() {
+  println(TDec.tagain(R { xs: [] }, "xs = [1]"))
+}

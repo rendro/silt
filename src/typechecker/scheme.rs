@@ -669,7 +669,9 @@ impl TypeChecker {
     /// Refuse each use `settle_bounds` found to give a decoder a type
     /// nothing decides (`undecided_decodes`), once at its place: a
     /// refusal there of the use as needing its type in full (`twice(Box
-    /// { v: [] }, s)`: `Box(List(a))`) is the one error; else this one.
+    /// { v: [] }, s)`: `Box(List(a))`) is the one error; else this one,
+    /// in the place of what a decoder said of the type the scope's end
+    /// picked for the part (`toml.parse` of `R(())`), which nobody wrote.
     pub(super) fn settle_undecided_decodes(&mut self) {
         for (span, error) in std::mem::take(&mut self.undecided_decodes) {
             let in_full = |e: &Diagnostic| {
@@ -686,7 +688,10 @@ impl TypeChecker {
                         keep
                     });
                 }
-                None => self.errors.push(error),
+                None => {
+                    self.errors.retain(|e| e.span != span);
+                    self.errors.push(error);
+                }
             }
         }
     }
