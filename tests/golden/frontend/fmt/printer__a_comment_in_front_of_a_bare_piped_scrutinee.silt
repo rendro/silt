@@ -1,0 +1,18 @@
+-- cmd: fmt
+-- A pipeline that ends in a bare stage is written in parentheses as a
+-- match scrutinee. A comment in front of it goes inside them, and they
+-- are written as the source's own would be, so that a second pass,
+-- which finds the comment inside parentheses, agrees.
+import list
+
+fn main() {
+  let short = match {- first -} [1, 2] |> list.head {
+    _ -> "short"
+  }
+  let long = match {- first -} [1, 2] |> list.filter {- keep -} { x -> -- the large ones
+    x > 1
+  } |> list.length {
+    _ -> "long"
+  }
+  println("{short} {long}")
+}
