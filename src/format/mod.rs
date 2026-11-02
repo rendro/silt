@@ -263,7 +263,8 @@ impl Handover {
 /// `slot`, locked. (Nothing panics while it holds one.)
 #[cfg(not(target_arch = "wasm32"))]
 fn held<T>(slot: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    slot.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    slot.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// On wasm32 there are no threads to give a stack to.
@@ -440,7 +441,13 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     fn the_owner_s_end_takes_no_lock_its_formatter_s_thread_takes() {
         let worker = Worker::start();
-        assert_eq!(worker.run(Box::new(|| Ok(Ok("x".into())))).unwrap().unwrap(), "x");
+        assert_eq!(
+            worker
+                .run(Box::new(|| Ok(Ok("x".into()))))
+                .unwrap()
+                .unwrap(),
+            "x"
+        );
         let handover = std::sync::Arc::clone(&worker.handover);
         let job = held(&handover.job);
         let answer = held(&handover.answer);
