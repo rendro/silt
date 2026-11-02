@@ -119,6 +119,13 @@ impl TypeChecker {
         );
     }
 
+    /// The definition of the module's function `name`.
+    fn fn_def_id(&self, name: Symbol) -> Option<crate::defs::DefId> {
+        let defs = self.defs.as_ref()?;
+        (defs.of_module(self.module).iter().copied())
+            .find(|id| defs.get(*id).name == name && defs.get(*id).kind == crate::defs::DefKind::Fn)
+    }
+
     /// Read the signature of `f`. A function with a complete signature
     /// (see [`FnSig::complete`]) is bound in `env` with its scheme; any
     /// other is bound when its body is checked, in the order the
@@ -131,6 +138,15 @@ impl TypeChecker {
             self.recovery_stub_names.insert(f.name);
         }
         let applied = self.check_signature_kinds(f);
+        if let Some(id) = self.fn_def_id(f.name) {
+            let type_params = (f.params.iter().enumerate())
+                .filter_map(|(i, param)| match (&param.kind, &param.pattern.kind) {
+                    (ParamKind::Type, PatternKind::Ident(name)) => Some((i, *name)),
+                    _ => None,
+                })
+                .collect();
+            self.tables.fn_type_params.insert(id, type_params);
+        }
         let outer_signature = std::mem::replace(&mut self.resolving_signature, true);
         let mut param_map = HashMap::new();
         let mut param_types = Vec::new();
