@@ -1,0 +1,17 @@
+error[type]: duplicate implementation of trait 'S' for type 'Tuple'
+ --> tuple_impl__an_impl_for_every_tuple_overlaps_one_for_a_size.silt:13:1
+    |
+ 13 | trait S for Tuple(a, b) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^ duplicate implementation of trait 'S' for type 'Tuple'
+
+error[type]: duplicate implementation of trait 'T' for type 'Tuple'
+ --> tuple_impl__an_impl_for_every_tuple_overlaps_one_for_a_size.silt:25:1
+    |
+ 25 | trait T for Tuple {
+    | ^^^^^^^^^^^^^^^^^^^ duplicate implementation of trait 'T' for type 'Tuple'
+
+error[type]: duplicate implementation of trait 'U' for type '(x, y)'
+ --> tuple_impl__an_impl_for_every_tuple_overlaps_one_for_a_size.silt:37:1
+    |
+ 37 | trait U for Tuple(x, y) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^ duplicate implementation of trait 'U' for type '(x, y)'

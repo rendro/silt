@@ -3203,9 +3203,22 @@ impl TypeChecker {
             true => trait_name.clone(),
             false => self.show_named(tr, &mine.args, &mine.names),
         };
-        let (message, help) = if args == met {
+        // (An impl for every tuple or every function overlaps one for
+        // some of them, by its type: said as two impls for one type.)
+        let every_shape = |checker: &Self, head: Option<&Type>| match head.map(|h| checker.apply(h))
+        {
+            Some(Type::Var(v)) => checker.shape_vars.contains_key(&v),
+            Some(Type::Rigid(r)) => checker.shape_vars.contains_key(&r.var),
+            _ => false,
+        };
+        let earlier_head = (self.impl_written.get(&(tr, ty, met)))
+            .and_then(|earlier| earlier.head.clone())
+            .or_else(|| self.tables.impl_self_types.get(&(tr, ty, met)).cloned());
+        let shaped =
+            every_shape(self, mine.head.as_ref()) || every_shape(self, earlier_head.as_ref());
+        let (message, help) = if args == met || shaped {
             // (Of an impl for some instantiations of its type, the type.)
-            let target = match mine.head.as_ref().filter(|_| instance(self, &mine)) {
+            let target = match (mine.head.as_ref()).filter(|_| instance(self, &mine) && !shaped) {
                 Some(head) => self.show_type(&self.with_names(head, &mine.names)),
                 None => target,
             };

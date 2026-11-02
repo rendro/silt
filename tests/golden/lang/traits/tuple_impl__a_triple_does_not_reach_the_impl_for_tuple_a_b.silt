@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: tuple length mismatch: expected 2, got 3
+-- stderr-contains: type '(Int, Int, Int)' does not implement trait 'S': the only impl is for '(_, _)'
 -- An impl for `Tuple(a, b)` is for pairs only.
 trait S {
   fn s(self) -> Int
