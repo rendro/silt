@@ -1,0 +1,35 @@
+error[type]: `Box` takes 1 type argument here: write `Box(a)`
+ --> impl_target_arity__a_wrong_count_has_the_one_form.silt:21:13
+    |
+ 21 | trait Q for Box(Int, Int) {
+    |             ^^^^^^^^^^^^^ `Box` takes 1 type argument here: write `Box(a)`
+
+error[type]: `Int` takes no type arguments: write `Int`
+ --> impl_target_arity__a_wrong_count_has_the_one_form.silt:25:13
+    |
+ 25 | trait Q for Int(a) {
+    |             ^^^^^^ `Int` takes no type arguments: write `Int`
+
+error[type]: `W` takes no type arguments: write `W`
+ --> impl_target_arity__a_wrong_count_has_the_one_form.silt:29:13
+    |
+ 29 | trait Q for W(Int) {
+    |             ^^^^^^ `W` takes no type arguments: write `W`
+
+error[type]: `List` takes 1 type argument here: write `List(a)`
+ --> impl_target_arity__a_wrong_count_has_the_one_form.silt:33:13
+    |
+ 33 | trait Q for List(a, b) {
+    |             ^^^^^^^^^^ `List` takes 1 type argument here: write `List(a)`
+
+error[type]: `Map` takes 2 type arguments here: write `Map(k, v)`
+ --> impl_target_arity__a_wrong_count_has_the_one_form.silt:37:13
+    |
+ 37 | trait Q for Map(a) {
+    |             ^^^^^^ `Map` takes 2 type arguments here: write `Map(k, v)`
+
+error[type]: `Pair` takes 1 type argument here: write `Pair(a)`
+ --> impl_target_arity__a_wrong_count_has_the_one_form.silt:41:13
+    |
+ 41 | trait Q for Pair(a, b) {
+    |             ^^^^^^^^^^ `Pair` takes 1 type argument here: write `Pair(a)`

@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: type argument count mismatch for builtin 'Map' in trait impl: expected 2, got 1
+-- stderr-contains: `Map` takes 2 type arguments here: write `Map(k, v)`
 trait MyDisplay { fn my_display(self) -> String }
 trait MyDisplay for Map(a) {
   fn my_display(self) -> String { "bad" }

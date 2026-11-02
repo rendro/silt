@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: type argument count mismatch for builtin 'Set' in trait impl: expected 1, got 2
+-- stderr-contains: `Set` takes 1 type argument here: write `Set(a)`
 trait MyDisplay { fn my_display(self) -> String }
 trait MyDisplay for Set(a, b) {
   fn my_display(self) -> String { "bad" }

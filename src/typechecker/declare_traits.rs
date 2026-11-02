@@ -2919,45 +2919,30 @@ impl TypeChecker {
             // `Fn`, `Fun`, `Handle`) carry `arity: None` and are
             // intentionally skipped — they do not participate in this
             // trait-impl arity check.
-            let builtin_arity: Option<(usize, &'static str)> = builtin_type_name(written)
+            let builtin_arity: Option<usize> = builtin_type_name(written)
                 .and_then(crate::types::builtins::lookup)
-                .and_then(|b| b.arity.map(|a| (a as usize, "builtin")));
+                .and_then(|b| b.arity.map(|a| a as usize));
             // User-declared type aliases are in the arity table too:
             // `trait Show for Pair(a)` where `type Pair(a) = (a, a)` is
             // checked for its arity, and does not fall through to the
             // `_ => Type::Generic("Pair", [tv])` arm at the bottom, an
             // impl whose self_type would never unify with a concrete
             // `(Int, Int)` receiver.
-            let alias_arity: Option<(usize, &'static str)> = self
-                .tables
-                .type_alias_arity
-                .get(&written)
-                .copied()
-                .map(|a| (a, "alias"));
-            let expected_arity = self
-                .tables
-                .record_param_var_ids
-                .get(&written)
-                .map(|v| (v.len(), "record"))
-                .or_else(|| {
-                    self.tables
-                        .enums
-                        .get(&written)
-                        .map(|e| (e.params.len(), "enum"))
-                })
-                .or(alias_arity)
-                .or(builtin_arity);
-            if let Some((expected, kind)) = expected_arity
+            // (A record, an enum or an alias; a record of no type
+            // parameters takes none: `trait Q for W(Int)`.)
+            let expected_arity = self.type_arity(written).or(builtin_arity);
+            // (In the one form for a number of type arguments, as an
+            // annotation's: `Box(Int, Int)`, `Int(a)`.)
+            if let Some(expected) = expected_arity
                 && expected != ti.target_type_args.len()
             {
-                self.error(Code::ArityMismatch,
-                    format!(
-                        "type argument count mismatch for {kind} '{}' in trait impl: expected {expected}, got {}",
-                        resolve(written.name),
-                        ti.target_type_args.len()
-                    ),
-                    ti.span,
-                );
+                let shown = Qualifier::written(ti.target_module, ti.target_type);
+                let message = self.type_arguments_message(&shown, written);
+                let span = Span {
+                    start: ti.target_type_span.start,
+                    ..ti.header_span
+                };
+                self.error(Code::ArityMismatch, message, span);
             }
             // Resolve through a dedicated Generic form so the head symbol
             // is preserved alongside the impl-level tyvar args.
@@ -3014,9 +2999,7 @@ impl TypeChecker {
                     // A primitive takes no arguments (the error above
                     // says so): the impl is for the type itself, not a
                     // phantom `Int(_)` that no value has.
-                    _ if matches!(expected_arity, Some((0, "builtin"))) => {
-                        Self::type_from_name(target_type)
-                    }
+                    _ if builtin_arity == Some(0) => Self::type_from_name(target_type),
                     _ => Type::Generic(written, resolved_args),
                 }
             }
