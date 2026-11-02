@@ -385,6 +385,36 @@ fn ends_in_stage(expr: &Expr) -> bool {
     }
 }
 
+/// Whether the last operand of `expr` is a stage of a pipeline written as
+/// a bare name (`list.head` of `xs |> list.head`), not called.
+fn ends_in_bare_stage(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::Pipe(_, stage) => {
+            matches!(stage.kind, ExprKind::Ident(_) | ExprKind::FieldAccess(..))
+        }
+        // (An operator that binds looser than `|>`: the pipeline is
+        // printed without parentheses behind it. A tighter one, `-` or
+        // `..`, has them around the pipeline.)
+        ExprKind::Binary(_, op, right)
+            if matches!(
+                op,
+                BinOp::Eq
+                    | BinOp::Neq
+                    | BinOp::Lt
+                    | BinOp::Gt
+                    | BinOp::Leq
+                    | BinOp::Geq
+                    | BinOp::And
+                    | BinOp::Or
+            ) =>
+        {
+            ends_in_bare_stage(right)
+        }
+        ExprKind::Return(Some(inner)) => ends_in_bare_stage(inner),
+        _ => false,
+    }
+}
+
 /// Whether `pattern`, printed without parentheses, starts with a `{`.
 fn pattern_starts_with_brace(pattern: &Pattern) -> bool {
     match &pattern.kind {
@@ -1426,12 +1456,22 @@ impl Printer<'_> {
                     let closure = arms.first().is_some_and(closure_shaped);
                     let piped = closure && ends_in_stage(scrutinee);
                     let in_parens = self.cur.wrappers(scrutinee.span.end) > 0;
+                    // A scrutinee that ends in a stage written as a bare
+                    // name (`xs |> list.head`), which the body's `{`
+                    // could follow as a trailing closure, is written in
+                    // parentheses, whatever the source has: the
+                    // source's own are dropped, and these written.
+                    let bare = ends_in_bare_stage(scrutinee);
                     let ctx = Ctx {
-                        ends_scrutinee: closure,
+                        ends_scrutinee: closure && !bare,
                         ..Ctx::in_header(Header::Match)
                     };
-                    docs.push(self.expr(scrutinee, ctx));
-                    if piped && !in_parens && self.cur.line_break_before() {
+                    let doc = self.expr(scrutinee, ctx);
+                    match bare {
+                        true => docs.push(Doc::concat(vec![Doc::text("("), doc, Doc::text(")")])),
+                        false => docs.push(doc),
+                    }
+                    if piped && !in_parens && !bare && self.cur.line_break_before() {
                         docs.push(Doc::HardLine);
                     } else {
                         docs.push(space());

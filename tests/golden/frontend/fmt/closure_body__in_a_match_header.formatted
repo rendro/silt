@@ -5,7 +5,7 @@ import list
 
 fn main() {
   let xs = [1, 2]
-  let size = match xs |> list.map({ x -> x + 1 }) |> list.length {
+  let size = match (xs |> list.map({ x -> x + 1 }) |> list.length) {
     0 -> "none"
     _ -> "some"
   }

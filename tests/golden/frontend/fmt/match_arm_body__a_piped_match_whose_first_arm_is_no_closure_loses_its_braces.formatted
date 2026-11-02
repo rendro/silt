@@ -9,19 +9,19 @@ fn up(x) {
 
 fn braced(r, text, k) {
   match r {
-    { a: 1 } -> match text |> up {
+    { a: 1 } -> match (text |> up) {
       "one" -> 1
       _ -> 0
     }
-    { a: 2 } -> match k |> up {
+    { a: 2 } -> match (k |> up) {
       ^k -> 2
       _ -> 0
     }
-    { a: 3 } -> match k |> up {
+    { a: 3 } -> match (k |> up) {
       n when n > 2 -> 3
       _ -> 0
     }
-    { a: 4 } -> match k |> up {
+    { a: 4 } -> match (k |> up) {
       1 | 2 -> 4
       _ -> 0
     }
@@ -31,19 +31,19 @@ fn braced(r, text, k) {
 
 fn bare(r, text, k) {
   match r {
-    { a: 1 } -> match text |> up {
+    { a: 1 } -> match (text |> up) {
       "one" -> 1
       _ -> 0
     }
-    { a: 2 } -> match k |> up {
+    { a: 2 } -> match (k |> up) {
       ^k -> 2
       _ -> 0
     }
-    { a: 3 } -> match k |> up {
+    { a: 3 } -> match (k |> up) {
       n when n > 2 -> 3
       _ -> 0
     }
-    { a: 4 } -> match k |> up {
+    { a: 4 } -> match (k |> up) {
       1 | 2 -> 4
       _ -> 0
     }
