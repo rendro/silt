@@ -1,0 +1,41 @@
+-- cmd: check
+-- exit: 1
+-- The one form for a wrong number of type arguments
+-- (type_args__empty_parentheses_and_a_wrong_count_have_one_form) holds
+-- for the builtin containers (`Map(String)`, `List(Int, Int)`,
+-- `Set()`, `Channel(Int, Int)`), for a builtin type that takes none
+-- (`Int(String)`), and for empty parentheses in an impl's head
+-- (`trait Q for W()`, `trait Q for Box()`).
+trait Q {
+  fn q(self) -> Int
+}
+
+type W {
+  n: Int,
+}
+
+type Box(a) {
+  v: a,
+}
+
+trait Q for W() {
+  fn q(self) -> Int { self.n }
+}
+
+trait Q for Box() {
+  fn q(self) -> Int { 1 }
+}
+
+fn a(m: Map(String)) -> Int { 0 }
+
+fn b(l: List(Int, Int)) -> Int { 0 }
+
+fn c(s: Set()) -> Int { 0 }
+
+fn d(c: Channel(Int, Int)) -> Int { 0 }
+
+fn e(i: Int(String)) -> Int { 0 }
+
+fn main() {
+  println(1)
+}
