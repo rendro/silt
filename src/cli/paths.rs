@@ -79,27 +79,14 @@ fn files_under(root: &Path, enter: &dyn Fn(&Path) -> bool) -> Vec<PathBuf> {
 /// `silt.toml` of its own: another package (a path dependency kept
 /// inside this one), whose tests are its own.
 pub(crate) fn package_test_files(root: &Path) -> Vec<String> {
-    fn walk(dir: &Path, out: &mut Vec<String>) {
-        let Ok(entries) = fs::read_dir(dir) else {
-            return;
-        };
-        for path in entries.filter_map(|e| e.ok()).map(|e| e.path()) {
-            if path.is_dir() {
-                if !silt::file_discovery::should_skip_dir(&path)
-                    && !path.join("silt.toml").is_file()
-                {
-                    walk(&path, out);
-                }
-            } else {
-                let name = path.to_string_lossy().into_owned();
-                if name.ends_with("_test.silt") || name.ends_with(".test.silt") {
-                    out.push(name);
-                }
-            }
-        }
-    }
-    let mut out = Vec::new();
-    walk(root, &mut out);
+    let enter = |path: &Path| {
+        !silt::file_discovery::should_skip_dir(path) && !path.join("silt.toml").is_file()
+    };
+    let names = files_under(root, &enter).into_iter();
+    let mut out: Vec<String> = names
+        .map(|path| path.to_string_lossy().into_owned())
+        .filter(|name| name.ends_with("_test.silt") || name.ends_with(".test.silt"))
+        .collect();
     out.sort();
     out
 }

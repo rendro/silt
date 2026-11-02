@@ -157,6 +157,31 @@ fn a_link_back_to_the_dot_is_not_followed() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// `silt test` runs a test file once, though a link back to its
+/// directory is beside it.
+#[cfg(unix)]
+#[test]
+fn silt_test_does_not_follow_a_link_back_to_the_dot() {
+    let dir = temp_dir("test_link_back_to_the_dot");
+    let test = "fn test_one() {\n  println(\"ran\")\n}\n";
+    fs::write(dir.join("one_test.silt"), test).unwrap();
+    std::os::unix::fs::symlink(&dir, dir.join("loop")).unwrap();
+
+    let run = silt_cmd().arg("test").current_dir(&dir).output().unwrap();
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert_eq!(
+        run.status.code(),
+        Some(0),
+        "stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.matches("ran").count() == 1 && stderr.contains("1 test: 1 passed"),
+        "stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// A `.` beside another positional is a directory like any other: the
 /// files under it are formatted too, and a file it holds that is named
 /// on its own as well is formatted once.
