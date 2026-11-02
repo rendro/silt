@@ -1,0 +1,44 @@
+-- cmd: fmt
+-- A pipeline that ends in a bare stage is written in parentheses as a
+-- match scrutinee. A comment in front of it goes inside them, and they
+-- are written as the source's own would be, so that a second pass,
+-- which finds the comment inside parentheses, agrees.
+import list
+
+fn main() {
+  let short = match {- first -} [1, 2] |> list.head {
+    _ -> "short"
+  }
+  let long = match {- first -} [1, 2] |> list.filter {- keep -} { x -> -- the large ones
+    x > 1
+  } |> list.length {
+    _ -> "long"
+  }
+  -- The comment's other places in such a scrutinee: behind a `|>`, a
+  -- line comment in front of it or behind a `|>`, and in front of the
+  -- source's closing parenthesis.
+  let behind_a_pipe = match [1, 2] |> {- c -} list.filter {- keep -} { x -> -- the large ones
+    x > 1
+  } |> list.length {
+    _ -> "behind a pipe"
+  }
+  let a_line_first = match -- c
+    [1, 2] |> list.filter {- keep -} { x -> -- the large ones
+    x > 1
+  } |> list.length {
+    _ -> "a line first"
+  }
+  let a_line_behind_a_pipe = match [1, 2] |> list.filter {- keep -} { x -> -- the large ones
+    x > 1
+  } |> -- c
+    list.length {
+    _ -> "a line behind a pipe"
+  }
+  let a_line_last = match ([1, 2] |> list.filter {- keep -} { x -> -- the large ones
+    x > 1
+  } |> list.length -- c
+  ) {
+    _ -> "a line last"
+  }
+  println("{short} {long} {behind_a_pipe} {a_line_first} {a_line_behind_a_pipe} {a_line_last}")
+}

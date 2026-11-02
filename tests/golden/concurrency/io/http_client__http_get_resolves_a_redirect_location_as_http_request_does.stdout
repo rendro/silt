@@ -1,0 +1,13 @@
+GET /q?x=1
+  first: GET /q ?y=2
+  the client: 200
+GET /far
+  second: GET /there ?
+  the client: 200
+GET /a/b?x=1
+  first: GET /a/b ?x=1
+  302 to ""
+  first: GET /a/b ?x=1
+  302 to "#top"
+  first: GET /a/b ?x=1
+  the client: 200

@@ -133,6 +133,55 @@ fn a_link_under_the_dot_does_not_report_its_file_twice() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A link back to a directory the walk is in is not followed: `silt
+/// fmt --check .` names the file at its own depth, not through the
+/// link many times over.
+#[cfg(unix)]
+#[test]
+fn a_link_back_to_the_dot_is_not_followed() {
+    let dir = temp_dir("link_back_to_the_dot");
+    fs::write(dir.join("ugly.silt"), UNFORMATTED).unwrap();
+    std::os::unix::fs::symlink(&dir, dir.join("loop")).unwrap();
+
+    let check = (silt_cmd().args(["fmt", "--check", "."]))
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&check.stderr);
+    assert_eq!(check.status.code(), Some(1), "stderr:\n{stderr}");
+    let reported: Vec<&str> = (stderr.lines())
+        .filter(|line| line.contains(": not formatted"))
+        .collect();
+    assert_eq!(reported.len(), 1, "stderr:\n{stderr}");
+    assert!(!reported[0].contains("loop"), "stderr:\n{stderr}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// `silt test` runs a test file once, though a link back to its
+/// directory is beside it.
+#[cfg(unix)]
+#[test]
+fn silt_test_does_not_follow_a_link_back_to_the_dot() {
+    let dir = temp_dir("test_link_back_to_the_dot");
+    let test = "fn test_one() {\n  println(\"ran\")\n}\n";
+    fs::write(dir.join("one_test.silt"), test).unwrap();
+    std::os::unix::fs::symlink(&dir, dir.join("loop")).unwrap();
+
+    let run = silt_cmd().arg("test").current_dir(&dir).output().unwrap();
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert_eq!(
+        run.status.code(),
+        Some(0),
+        "stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.matches("ran").count() == 1 && stderr.contains("1 test: 1 passed"),
+        "stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// A `.` beside another positional is a directory like any other: the
 /// files under it are formatted too, and a file it holds that is named
 /// on its own as well is formatted once.

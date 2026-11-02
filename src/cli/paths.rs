@@ -7,6 +7,7 @@
 //! single definition, so the manifest form and lockfile resolution
 //! can never normalize differently.)
 
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -27,26 +28,48 @@ use crate::cli::package::{PackageFailure, die_on_manifest_error};
 /// `target/`, would otherwise see its contents rewritten by an
 /// unsuspecting `silt fmt .`), and `silt test` would try to run them.
 pub(crate) fn find_silt_files(dir: &Path) -> Vec<String> {
-    let mut results = Vec::new();
-    let Ok(entries) = fs::read_dir(dir) else {
-        return results;
-    };
-    for entry in entries.filter_map(|e| e.ok()) {
-        let path = entry.path();
-        if path.is_dir() {
-            if silt::file_discovery::should_skip_dir(&path) {
-                continue;
-            }
-            results.extend(find_silt_files(&path));
-        } else {
-            let name = path.to_string_lossy().to_string();
-            if name.ends_with(".silt") {
-                results.push(name);
+    let enter = |path: &Path| !silt::file_discovery::should_skip_dir(path);
+    let names = files_under(dir, &enter).into_iter();
+    let mut results: Vec<String> = names
+        .map(|path| path.to_string_lossy().to_string())
+        .filter(|name| name.ends_with(".silt"))
+        .collect();
+    results.sort();
+    results
+}
+
+/// The files under `root`, in the directories `enter` lets the walk
+/// into. A directory is entered once, by the first path that reaches
+/// it (in the order of names): a link back to a directory the walk has
+/// entered (a loop) or a second way into one is not followed, so each
+/// file is named at its own depth.
+fn files_under(root: &Path, enter: &dyn Fn(&Path) -> bool) -> Vec<PathBuf> {
+    fn walk(
+        dir: &Path,
+        enter: &dyn Fn(&Path) -> bool,
+        entered: &mut HashSet<PathBuf>,
+        out: &mut Vec<PathBuf>,
+    ) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
+        let mut paths: Vec<PathBuf> = entries.filter_map(|e| e.ok()).map(|e| e.path()).collect();
+        paths.sort();
+        for path in paths {
+            if !path.is_dir() {
+                out.push(path);
+            } else if enter(&path) && entered.insert(canonical(&path)) {
+                walk(&path, enter, entered, out);
             }
         }
     }
-    results.sort();
-    results
+    fn canonical(dir: &Path) -> PathBuf {
+        fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf())
+    }
+    let mut entered = HashSet::from([canonical(root)]);
+    let mut out = Vec::new();
+    walk(root, enter, &mut entered, &mut out);
+    out
 }
 
 /// The test files under `root` (`*_test.silt`, `*.test.silt`), sorted,
@@ -56,27 +79,14 @@ pub(crate) fn find_silt_files(dir: &Path) -> Vec<String> {
 /// `silt.toml` of its own: another package (a path dependency kept
 /// inside this one), whose tests are its own.
 pub(crate) fn package_test_files(root: &Path) -> Vec<String> {
-    fn walk(dir: &Path, out: &mut Vec<String>) {
-        let Ok(entries) = fs::read_dir(dir) else {
-            return;
-        };
-        for path in entries.filter_map(|e| e.ok()).map(|e| e.path()) {
-            if path.is_dir() {
-                if !silt::file_discovery::should_skip_dir(&path)
-                    && !path.join("silt.toml").is_file()
-                {
-                    walk(&path, out);
-                }
-            } else {
-                let name = path.to_string_lossy().into_owned();
-                if name.ends_with("_test.silt") || name.ends_with(".test.silt") {
-                    out.push(name);
-                }
-            }
-        }
-    }
-    let mut out = Vec::new();
-    walk(root, &mut out);
+    let enter = |path: &Path| {
+        !silt::file_discovery::should_skip_dir(path) && !path.join("silt.toml").is_file()
+    };
+    let names = files_under(root, &enter).into_iter();
+    let mut out: Vec<String> = names
+        .map(|path| path.to_string_lossy().into_owned())
+        .filter(|name| name.ends_with("_test.silt") || name.ends_with(".test.silt"))
+        .collect();
     out.sort();
     out
 }

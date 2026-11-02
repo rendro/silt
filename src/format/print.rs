@@ -1468,10 +1468,17 @@ impl Printer<'_> {
                     let commented = self
                         .cur
                         .comments_inside_parens(self.cur.wrappers(scrutinee.span.end));
+                    // A comment in front of the scrutinee is inside the
+                    // parentheses written: they are written as the
+                    // source's would be then, so that a second pass,
+                    // which finds them there, agrees.
+                    let comment_first = self.cur.comment_ahead();
                     let doc = self.expr(scrutinee, ctx);
-                    match bare && !commented {
-                        true => docs.push(Doc::concat(vec![Doc::text("("), doc, Doc::text(")")])),
-                        false => docs.push(doc),
+                    let (open, close) = (Doc::text("("), Doc::text(")"));
+                    match (bare && !commented, comment_first) {
+                        (true, false) => docs.push(Doc::concat(vec![open, doc, close])),
+                        (true, true) => docs.push(parenthesized(open, doc, close)),
+                        (false, _) => docs.push(doc),
                     }
                     if piped && !in_parens && !bare && self.cur.line_break_before() {
                         docs.push(Doc::HardLine);

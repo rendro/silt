@@ -41,7 +41,7 @@ byte-order mark and before any code, each `-- key: value`:
 | `-- repeat: N` | run N times, every run must pass (timing-sensitive cases) | 1 |
 | `-- requires-feature: NAME` | skip the case unless the cargo feature is enabled (repeatable). `debug-build` is accepted as a name too: the case needs a debug build of `silt` (see "Format cases") | — |
 | `-- without-feature: NAME` | skip the case when the cargo feature is enabled: what a build that lacks it does (repeatable). Such a case runs in the default-features CI job, not under `--all-features` | — |
-| `-- timeout: SECONDS` | kill the case after this long (only for cases that are slow, not to hide a hang) | 20 |
+| `-- timeout: SECONDS` | kill the case after this long (only for cases that are slow, not to hide a hang) | 20 (60 on Windows) |
 | `-- verdict: same` / `known-divergent <doors>` | also run the case in verdict mode, see "Verdicts" below | — |
 
 Comparison:

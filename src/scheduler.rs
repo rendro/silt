@@ -2862,8 +2862,9 @@ mod tests {
     /// How long after the last event of a deadlocked program the
     /// verdict may come. It is given by the event itself (the last
     /// park, the last task's end, the last timer), so the bound is
-    /// that of waking one thread.
-    const VERDICT_WITHIN: Duration = Duration::from_millis(100);
+    /// that of waking one thread. A loaded Windows runner of CI has
+    /// taken 143 ms to wake one, so there the bound is wider.
+    const VERDICT_WITHIN: Duration = Duration::from_millis(if cfg!(windows) { 500 } else { 100 });
 
     fn assert_deadlock(result: Result<Value, VmError>, what: &str) {
         let error = result.expect_err("the program is deadlocked");
