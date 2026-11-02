@@ -119,6 +119,30 @@ impl TypeChecker {
     /// whose callee is written `origin.callee`: as the call writes it
     /// (`store.load`), if that is the function.
     pub(super) fn passer_at(&self, passer: Symbol, origin: &Origin) -> Symbol {
+        self.passer_label(passer, origin)
+    }
+
+    /// `passer_at` of the passer of a `Pred::Builtin`, a path
+    /// (`passer_path`): its first function as the call writes it, and,
+    /// where that is another module's (`other.tw`), each function after
+    /// it of that module named so (`other.tonly`).
+    pub(super) fn passer_path_at(&self, passer: Symbol, origin: &Origin) -> Symbol {
+        let (head, links) = super::builtin_checks::passer_path(passer);
+        let label = self.passer_at(head, origin);
+        let module = (resolve(label).split_once('.'))
+            .filter(|_| label != head)
+            .map(|(module, _)| module.to_string());
+        let links: Vec<Symbol> = (links.into_iter())
+            .map(|link| match &module {
+                Some(module) if !resolve(link).contains('.') => intern(&format!("{module}.{link}")),
+                _ => link,
+            })
+            .collect();
+        super::builtin_checks::join_passer_path(label, &links)
+    }
+
+    /// `passer_at`'s rule.
+    fn passer_label(&self, passer: Symbol, origin: &Origin) -> Symbol {
         match origin.callee {
             Some(label) if label == passer || resolve(label).ends_with(&format!(".{passer}")) => {
                 label
@@ -726,10 +750,11 @@ impl TypeChecker {
                     }) => {
                         self.wanted[k].solved = true;
                         let owners = self.owners_at(Some(self.wanted[k].ev));
+                        let (passer, links) = super::builtin_checks::passer_links(passer);
                         self.check_builtin_argument(
                             check,
                             &subject,
-                            (passer, &[]),
+                            (passer, &links),
                             &owners,
                             origin,
                         );

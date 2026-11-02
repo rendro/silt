@@ -52,6 +52,40 @@ struct UndecodableField {
 /// The note that names the way a type takes to the builtin `builtin`
 /// that refuses it: from `passer`, the function or method the use calls,
 /// through `links`, the ones each passes it to in turn.
+/// The function a `Pred::Builtin` names as passing its type on, and the
+/// functions it passes it through, the first first (`tw` passes it to
+/// `tonly`, which passes it to `toml.parse`): one symbol, the names apart
+/// by spaces, as `Asked::Through` keeps its links.
+pub(super) fn passer_path(passer: Symbol) -> (Symbol, Vec<Symbol>) {
+    let text = resolve(passer);
+    let mut names = text.split(' ').map(intern);
+    let head = names.next().unwrap_or(passer);
+    (head, names.collect())
+}
+
+/// `passer_path` of `head` and `links`, as one symbol.
+pub(super) fn join_passer_path(head: Symbol, links: &[Symbol]) -> Symbol {
+    if links.is_empty() {
+        return head;
+    }
+    let names: Vec<String> = std::iter::once(head)
+        .chain(links.iter().copied())
+        .map(resolve)
+        .collect();
+    intern(&names.join(" "))
+}
+
+/// The passer of a `Pred::Builtin` and the functions after it.
+pub(super) fn passer_links(passer: Option<Symbol>) -> (Option<Symbol>, Vec<Symbol>) {
+    match passer {
+        Some(passer) => {
+            let (head, links) = passer_path(passer);
+            (Some(head), links)
+        }
+        None => (None, Vec::new()),
+    }
+}
+
 pub(super) fn passes_note(passer: Symbol, links: &[Symbol], builtin: Symbol) -> String {
     let mut note = format!("`{passer}` passes it to ");
     for link in links {

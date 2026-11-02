@@ -282,10 +282,20 @@ impl TypeChecker {
                     },
                     // The definition passes the type on to the builtin;
                     // each use names its own type (`written`).
+                    // (Through the function it passed it to: `tw` passes
+                    // it to `tonly`, `passer_path`.)
                     Pred::Builtin { check, passer, .. } => Pred::Builtin {
                         check: check.unwritten(),
                         subject: Type::Var(subject),
-                        passer: passer_of(*passer, subject),
+                        passer: match (passer_of(*passer, subject), *passer) {
+                            (Some(outer), Some(inner)) if outer != inner => {
+                                let (head, links) = super::builtin_checks::passer_path(inner);
+                                let links: Vec<Symbol> =
+                                    std::iter::once(head).chain(links).collect();
+                                Some(super::builtin_checks::join_passer_path(outer, &links))
+                            }
+                            (outer, _) => outer,
+                        },
                     },
                     Pred::Via {
                         tr,

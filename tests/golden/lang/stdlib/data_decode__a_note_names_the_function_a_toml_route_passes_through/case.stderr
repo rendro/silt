@@ -1,0 +1,31 @@
+error[type]: `toml.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
+ --> main.silt:37:19
+    |
+ 37 |   let _ = tw("x", Blob)
+    |                   ^^^^ `toml.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
+  = note: `tw` passes it to `tonly`, which passes it to `toml.parse`
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `toml.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
+ --> main.silt:38:21
+    |
+ 38 |   let _ = mix1("x", Blob)
+    |                     ^^^^ `toml.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
+  = note: `mix1` passes it to `tonly`, which passes it to `toml.parse`
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `toml.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
+ --> main.silt:39:24
+    |
+ 39 |   let _ = util.tw("x", Blob)
+    |                        ^^^^ `toml.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
+  = note: `util.tw` passes it to `util.tonly`, which passes it to `toml.parse`
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `toml.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
+ --> main.silt:40:21
+    |
+ 40 |   let _ = both("x", Blob)
+    |                     ^^^^ `toml.parse` cannot decode `Blob`: field `data` has type `Bytes`, which has no decoder
+  = note: `both` passes it to `toml.parse`
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
