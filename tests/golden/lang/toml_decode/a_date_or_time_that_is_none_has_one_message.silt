@@ -1,0 +1,32 @@
+import toml
+import time
+
+type D { d: time.Date }
+type T { t: time.Time }
+type DT { dt: time.DateTime }
+type S { s: String }
+type Other { n: Int }
+type Ds { ds: List(time.Date) }
+
+-- A date or a time that is none has one message whether it is written
+-- in quotes or as a literal, with the path of the value.
+fn main() {
+  println(toml.parse("d = 1979-02-29", D))
+  println(toml.parse("d = \"1979-02-29\"", D))
+  println(toml.parse("d = 1979-13-01", D))
+  println(toml.parse("d = \"1979-13-01\"", D))
+  println(toml.parse("t = 24:00:00", T))
+  println(toml.parse("t = \"24:00:00\"", T))
+  println(toml.parse("dt = 1979-02-30T07:32:00", DT))
+  println(toml.parse("dt = \"1979-02-30T07:32:00\"", DT))
+  -- In an array, and after a literal that is one.
+  println(toml.parse("ds = [1979-02-28, 1979-02-29]", Ds))
+  -- A literal is a datetime, for a String too.
+  println(toml.parse("s = 1979-02-29", S))
+  -- A key no field reads is not looked at.
+  println(toml.parse("n = 1\nx = 1979-02-29", Other))
+  -- A syntax error after one is at its place in the document.
+  println(toml.parse("d = 1979-02-29\nx = [", D))
+  -- A time without seconds stays no literal.
+  println(toml.parse("t = 07:32", T))
+}

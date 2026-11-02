@@ -72,6 +72,27 @@ fn system_time_to_option_datetime(t: Result<SystemTime, std::io::Error>) -> Valu
     Value::variant(bv::SOME, [make_datetime(dt.naive_utc())])
 }
 
+/// Whether the paths `a` and `b` name one file: on Unix the same device
+/// and inode (a hard link too), elsewhere the same canonical path. A
+/// path that does not exist names no file.
+fn same_file(a: &str, b: &str) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        match (std::fs::metadata(a), std::fs::metadata(b)) {
+            (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+            _ => false,
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+            (Ok(a), Ok(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
 /// Maximum number of entries that may be materialized into a single
 /// `fs.walk` / `fs.glob` result list. Mirrors the philosophy of
 /// `MAX_COLLECTION_LEN` in `src/value/list.rs`: keep recursive traversal
@@ -278,7 +299,17 @@ pub(crate) mod fs {
             result(std::fs::rename(from, to), from, unit)
         }
 
+        // A copy of a file onto itself would empty it (the destination
+        // is truncated before the source is read): it is refused, and
+        // nothing is written.
         fn copy(from: &str, to: &str) -> Value {
+            if same_file(from, to) {
+                let same = std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "source and destination are the same file",
+                );
+                return result(Err::<u64, _>(same), from, unit);
+            }
             result(std::fs::copy(from, to), from, unit)
         }
 
@@ -292,16 +323,7 @@ pub(crate) mod fs {
                 // is_file=false / is_dir=false. Surface that directly so
                 // callers can see "this is a symlink, neither file nor
                 // dir" without a follow step.
-                //
-                // modified() can fail on platforms that don't track mtime
-                // (rare, but the API requires us to handle it). Fall back
-                // to 0 in that case rather than fail the whole stat call.
-                let modified = md
-                    .modified()
-                    .ok()
-                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                    .map(|d| d.as_secs() as i64)
-                    .unwrap_or(0);
+
                 // Unix permission bits (e.g. 0o755). On Windows no
                 // equivalent exists — std exposes `FILE_ATTRIBUTE_*`
                 // bits via `MetadataExt::file_attributes()` but those
@@ -315,18 +337,19 @@ pub(crate) mod fs {
                 };
                 #[cfg(not(unix))]
                 let mode: i64 = 0;
-                // accessed() may fail on filesystems mounted with
+                // modified() can fail on platforms that don't track
+                // mtime, accessed() on filesystems mounted with
                 // `noatime`, and created() (`btime`) is notoriously
                 // flaky: it's absent on older ext4, only surfaced via
                 // statx(2) on Linux, and not exposed at all on some
-                // Unixes. Both map to Option(DateTime) so callers can
+                // Unixes. All three map to Option(DateTime) so callers can
                 // pattern-match rather than probe for sentinels.
                 Value::builtin_record(ty::FILE_STAT, [
                     ("size", Value::Int(md.len() as i64)),
                     ("is_file", Value::Bool(md.is_file())),
                     ("is_dir", Value::Bool(md.is_dir())),
                     ("is_symlink", Value::Bool(md.file_type().is_symlink())),
-                    ("modified", Value::Int(modified)),
+                    ("modified", system_time_to_option_datetime(md.modified())),
                     ("readonly", Value::Bool(md.permissions().readonly())),
                     ("mode", Value::Int(mode)),
                     ("accessed", system_time_to_option_datetime(md.accessed())),

@@ -130,10 +130,6 @@ fn test_fs_stat_on_file_reports_size_and_is_file() {
     // Contents length is 13 bytes ("hello, world!"); len() on metadata
     // returns the byte count which must match.
     std::fs::write(&file, "hello, world!").unwrap();
-    let before = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as i64;
 
     let file_str = file.to_str().unwrap().replace('\\', "/");
     let input = format!(
@@ -152,21 +148,17 @@ fn main() {{
     assert_eq!(fields.get("is_file"), Some(&Value::Bool(true)));
     assert_eq!(fields.get("is_dir"), Some(&Value::Bool(false)));
     assert_eq!(fields.get("is_symlink"), Some(&Value::Bool(false)));
+    // modified: an Option(DateTime), Some on every common filesystem for
+    // a file just written; the clock details are covered by time.* tests.
     match fields.get("modified") {
-        Some(Value::Int(m)) => {
-            // `modified` should be within the last minute: we just wrote
-            // the file, so it can't be wildly in the past. Allow a small
-            // negative slack for systems with sub-second clock skew.
-            let after = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs() as i64;
+        Some(Value::Variant(option)) => {
             assert!(
-                *m >= before - 2 && *m <= after + 2,
-                "modified {m} not within [{before}, {after}] window"
+                option.is(bv::SOME),
+                "modified should be Some(DateTime), got {}",
+                option.name()
             );
         }
-        other => panic!("modified field missing or non-int: {other:?}"),
+        other => panic!("modified field missing or not a variant: {other:?}"),
     }
     // readonly is platform-dependent for a freshly-written file; we just
     // assert the field exists and is a Bool.

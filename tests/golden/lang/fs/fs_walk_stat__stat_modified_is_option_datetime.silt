@@ -1,0 +1,16 @@
+import fs
+import time
+
+-- `modified` is an Option(DateTime), as `accessed` and `created` are.
+fn main() {
+    let modified: Option(time.DateTime) = match fs.stat("fs_walk_stat__stat_modified_is_option_datetime.silt") {
+        Ok(s) -> s.modified
+        Err(_) -> None
+    }
+    -- Every common filesystem keeps the modified time of a file.
+    let y = match modified {
+        Some(dt) -> dt.date.year
+        None -> 0
+    }
+    println(y >= 1970)
+}

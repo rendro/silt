@@ -66,7 +66,15 @@ builtins! {
         vm.shown_within(x, "string.from")
     }
 
+    // An empty separator splits into the characters, with no empty
+    // piece at either end.
     fn split(s: &str, separator: &str) -> Vec<Value> {
+        if separator.is_empty() {
+            return s
+                .chars()
+                .map(|c| Value::String(c.to_string().into()))
+                .collect();
+        }
         s.split(separator)
             .map(|part| Value::String(part.into()))
             .collect()

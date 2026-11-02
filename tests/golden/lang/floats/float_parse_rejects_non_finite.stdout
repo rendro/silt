@@ -1,6 +1,6 @@
 inf: not a finite number
 -infinity: not a finite number
 NaN: not a finite number
-1e400: number too large
--1e400: number too small
+1e400: number out of range: above float.max_value
+-1e400: number out of range: below float.min_value
 1e-400: Ok(0.0)

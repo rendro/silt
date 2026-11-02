@@ -1,0 +1,10 @@
+-- exit: 1
+-- stderr-contains: json.stringify: two keys of a map show as the same text: [a, b]
+import json
+
+-- Two keys that show as one text would be one key of the object, and a
+-- value would be lost: json.stringify refuses the map.
+fn main() {
+  println(json.stringify(#{[1]: "one", [2]: "two"}))
+  println(json.stringify(#{["a, b"]: 1, ["a", "b"]: 2}))
+}
