@@ -143,45 +143,8 @@ fn on_own_stack(
     source: &str,
     tamper: impl FnOnce(String) -> String + Send + 'static,
 ) -> Result<String, Diagnostic> {
-    use std::sync::mpsc;
-
-    type Formatted = std::thread::Result<Result<String, Diagnostic>>;
-    type Job = Box<dyn FnOnce() -> Formatted + Send>;
-
-    /// The thread that formats for the thread that owns this. Starting
-    /// one costs several times what formatting a file does, so it is
-    /// kept; it ends when its owner does.
-    ///
-    /// It answers a job only when everything of the job is freed, on
-    /// channels that live as long as it: once its owner has the answer,
-    /// the thread allocates and frees nothing more. (An owner that ends
-    /// the process then does not kill it in the middle of a free: on
-    /// Windows the exit kills the other threads first and then runs the
-    /// allocator's clean-up, which a lock held by a killed thread would
-    /// hold up for ever.)
-    struct Worker {
-        jobs: mpsc::Sender<Job>,
-        answers: mpsc::Receiver<Formatted>,
-    }
-
     thread_local! {
-        static WORKER: Worker = {
-            let (jobs, queue) = mpsc::channel::<Job>();
-            let (answer, answers) = mpsc::sync_channel::<Formatted>(1);
-            std::thread::Builder::new()
-                .name("silt-format".into())
-                .stack_size(STACK)
-                .spawn(move || {
-                    for job in queue {
-                        let formatted = job();
-                        if answer.send(formatted).is_err() {
-                            return;
-                        }
-                    }
-                })
-                .expect("spawning the formatter's thread");
-            Worker { jobs, answers }
-        };
+        static WORKER: Worker = Worker::start();
     }
 
     // The tree and its symbols stay on that thread (the interner is per
@@ -193,20 +156,115 @@ fn on_own_stack(
         let run = std::panic::AssertUnwindSafe(|| format_here(file, &source, tamper));
         std::panic::catch_unwind(run)
     });
-    let formatted = WORKER.with(|worker| {
-        worker
-            .jobs
-            .send(job)
-            .expect("the formatter's thread is gone");
-        worker
-            .answers
-            .recv()
-            .expect("the formatter's thread is gone")
-    });
-    match formatted {
+    match WORKER.with(|worker| worker.run(job)) {
         Ok(result) => result,
         Err(panic) => std::panic::resume_unwind(panic),
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+type Formatted = std::thread::Result<Result<String, Diagnostic>>;
+#[cfg(not(target_arch = "wasm32"))]
+type Job = Box<dyn FnOnce() -> Formatted + Send>;
+
+/// The thread that formats for the thread that owns this. Starting one
+/// costs several times what formatting a file does, so it is kept; it
+/// ends when its owner does.
+///
+/// The owner's end takes no lock, and the thread allocates and frees
+/// nothing once it has answered. On Windows the exit of a process kills
+/// every other thread first, and then runs the destructors of the
+/// exiting thread's thread-locals (this one among them) and the
+/// allocator's clean-up: a lock that the formatter's thread held when
+/// it was killed would hold the exit up for ever. (It did: the jobs
+/// came on a channel, whose lock the thread took to wait for the next
+/// job right after it had answered, and whose sender, dropped at the
+/// exit, took it too. On a busy machine about one `silt fmt` in a
+/// thousand that ended there never ended.)
+#[cfg(not(target_arch = "wasm32"))]
+struct Worker {
+    handover: std::sync::Arc<Handover>,
+    thread: std::thread::Thread,
+}
+
+/// What a [`Worker`]'s owner and thread hand each other: a job, its
+/// answer, and the owner's end.
+#[cfg(not(target_arch = "wasm32"))]
+struct Handover {
+    job: std::sync::Mutex<Option<Job>>,
+    answer: std::sync::Mutex<Option<Formatted>>,
+    owner_gone: std::sync::atomic::AtomicBool,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Worker {
+    /// Start the formatter's thread of the calling thread.
+    fn start() -> Worker {
+        let handover = std::sync::Arc::new(Handover {
+            job: std::sync::Mutex::new(None),
+            answer: std::sync::Mutex::new(None),
+            owner_gone: std::sync::atomic::AtomicBool::new(false),
+        });
+        let owner = std::thread::current();
+        let serving = std::sync::Arc::clone(&handover);
+        let thread = std::thread::Builder::new()
+            .name("silt-format".into())
+            .stack_size(STACK)
+            .spawn(move || serving.serve(&owner))
+            .expect("spawning the formatter's thread")
+            .thread()
+            .clone();
+        Worker { handover, thread }
+    }
+
+    /// Run `job` on the thread and wait for its answer.
+    fn run(&self, job: Job) -> Formatted {
+        *held(&self.handover.job) = Some(job);
+        self.thread.unpark();
+        loop {
+            if let Some(answer) = held(&self.handover.answer).take() {
+                return answer;
+            }
+            std::thread::park();
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for Worker {
+    fn drop(&mut self) {
+        self.handover
+            .owner_gone
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.thread.unpark();
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Handover {
+    /// The formatter's thread: each job is run and answered, until the
+    /// owner has ended.
+    fn serve(&self, owner: &std::thread::Thread) {
+        loop {
+            let job = held(&self.job).take();
+            match job {
+                Some(job) => {
+                    let formatted = job();
+                    *held(&self.answer) = Some(formatted);
+                    owner.unpark();
+                }
+                None if self.owner_gone.load(std::sync::atomic::Ordering::SeqCst) => return,
+                None => std::thread::park(),
+            }
+        }
+    }
+}
+
+/// `slot`, locked. (Nothing panics while it holds one.)
+#[cfg(not(target_arch = "wasm32"))]
+fn held<T>(slot: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    slot.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// On wasm32 there are no threads to give a stack to.
@@ -372,6 +430,35 @@ mod tests {
             .unwrap()
             .join()
             .unwrap();
+    }
+
+    /// The end of a formatter's owner takes no lock: at a Windows exit
+    /// the formatter's thread has been killed wherever it was, and a
+    /// lock it held then stays held. Here both locks of the handover
+    /// are held, as by a thread killed while it took a job or gave an
+    /// answer, and the owner's handle still drops.
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn the_owner_s_end_takes_no_lock_its_formatter_s_thread_takes() {
+        let worker = Worker::start();
+        assert_eq!(
+            worker
+                .run(Box::new(|| Ok(Ok("x".into()))))
+                .unwrap()
+                .unwrap(),
+            "x"
+        );
+        let handover = std::sync::Arc::clone(&worker.handover);
+        let job = held(&handover.job);
+        let answer = held(&handover.answer);
+        let (dropped, done) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            drop(worker);
+            let _ = dropped.send(());
+        });
+        let ended = done.recv_timeout(std::time::Duration::from_secs(60));
+        drop((job, answer));
+        assert!(ended.is_ok(), "the owner's end waited for a lock");
     }
 
     #[test]
