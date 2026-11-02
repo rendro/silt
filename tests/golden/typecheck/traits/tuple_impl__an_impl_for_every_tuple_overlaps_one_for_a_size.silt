@@ -1,0 +1,43 @@
+-- cmd: check
+-- exit: 1
+-- An impl for every tuple overlaps one for tuples of a size, in either
+-- order, as two impls for one size do.
+trait S {
+  fn s(self) -> Int
+}
+
+trait S for Tuple {
+  fn s(self) -> Int { 0 }
+}
+
+trait S for Tuple(a, b) {
+  fn s(self) -> Int { 2 }
+}
+
+trait T {
+  fn t(self) -> Int
+}
+
+trait T for Tuple(a, b) {
+  fn t(self) -> Int { 2 }
+}
+
+trait T for Tuple {
+  fn t(self) -> Int { 0 }
+}
+
+trait U {
+  fn u(self) -> Int
+}
+
+trait U for Tuple(a, b) {
+  fn u(self) -> Int { 2 }
+}
+
+trait U for Tuple(x, y) {
+  fn u(self) -> Int { 3 }
+}
+
+fn main() {
+  println(1)
+}

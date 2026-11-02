@@ -536,9 +536,9 @@ impl TypeChecker {
         let scrutinee_ty =
             crate::types::canonical::canonicalize(&self.tables.resolver, &scrutinee_ty);
 
-        // A type without values needs no arm: `match x { }` on an enum
-        // without variants. The search takes every type to have a value,
-        // so it is not asked.
+        // A type without values needs no arm: `match x { }` on a
+        // `Never`. The search takes every type to have a value, so it is
+        // not asked.
         if arms.is_empty() && self.is_uninhabited(&scrutinee_ty) {
             return;
         }
@@ -586,20 +586,13 @@ impl TypeChecker {
         Some((enum_ty, info))
     }
 
-    /// Whether `ty` has no value. Recognised: an enum without variants,
-    /// and `Never`. A composite type with such a part (a tuple, a record)
-    /// is not looked into: taking a type with values for an empty one
-    /// would accept a match that misses them.
+    /// Whether `ty` has no value: `Never`, the one type without one
+    /// (`type Empty {}` is a record with no fields, which has one). A
+    /// composite type with such a part (a tuple, a record) is not looked
+    /// into: taking a type with values for an empty one would accept a
+    /// match that misses them.
     pub(super) fn is_uninhabited(&self, ty: &Type) -> bool {
-        match ty {
-            Type::Generic(name, _) => self
-                .tables
-                .enums
-                .get(name)
-                .is_some_and(|info| info.variants.is_empty()),
-            Type::Never => true,
-            _ => false,
-        }
+        matches!(ty, Type::Never)
     }
 
     /// What the rows of a non-exhaustive match on a value of type `ty`

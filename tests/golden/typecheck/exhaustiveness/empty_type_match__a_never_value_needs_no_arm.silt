@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 0
+-- `match x { }` on a `Never` value is vacuously exhaustive: `Never` is
+-- the type with no values.
+fn fail(message: String) -> Never {
+  panic(message)
+}
+fn elim() -> Int { match fail("no value") { } }
+fn main() {}

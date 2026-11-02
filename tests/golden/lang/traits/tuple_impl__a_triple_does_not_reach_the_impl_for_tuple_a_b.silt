@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type '(Int, Int, Int)' does not implement trait 'S': the only impl is for '(_, _)'
+-- An impl for `Tuple(a, b)` is for pairs only.
+trait S {
+  fn s(self) -> Int
+}
+
+trait S for Tuple(a, b) {
+  fn s(self) -> Int { 2 }
+}
+
+fn main() {
+  println(S.s((1, 2, 3)))
+}

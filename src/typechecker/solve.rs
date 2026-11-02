@@ -403,10 +403,15 @@ impl TypeChecker {
     /// Whether the impl whose self type is `ty` is for some
     /// instantiations of its type only (`trait Sum for Box(Int)`, or
     /// `for Pair(a)` of `type Pair(a) = (a, a)`): not each argument of
-    /// the type a variable of its own.
+    /// the type a variable of its own. An impl for tuples of one size is
+    /// one too.
     pub(super) fn is_instance(&self, ty: &Type) -> bool {
         if matches!(ty, Type::Con(..)) {
             return false;
+        }
+        // (`Tuple(a, b)`: the tuples of one size, of all there are.)
+        if matches!(ty, Type::Tuple(_)) {
+            return true;
         }
         let mut vars: Vec<TyVar> = Vec::new();
         !(self.type_args_of(ty).iter()).all(|arg| match self.apply(arg) {

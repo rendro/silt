@@ -1,7 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: type argument count mismatch
--- stderr-contains: expected 2, got 3
+-- stderr-contains: `Pair` takes 2 type arguments here: write `Pair(a, b)`
 -- stderr-not-contains: expected 3, got 2
 type Pair(a, b) { Pair(a, b) }
 fn mk() -> Pair(Int, Int) { Pair(1, 2) }

@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: type argument count mismatch for record 'Point': expected 0, got 1
+-- stderr-contains: `Point` takes no type arguments: write `Point`
 type Point { x: Int, y: Int }
 fn read(p: Point(Bool)) -> Int { p.x }
 fn main() {

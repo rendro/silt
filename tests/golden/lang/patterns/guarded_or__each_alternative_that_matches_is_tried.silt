@@ -1,0 +1,92 @@
+-- A guard on an or-pattern is tried with each alternative that matches,
+-- in order, until one passes; the body runs once, with that alternative's
+-- names (owner Q2, audit R5).
+type E { A(Int, Int), B(Int), C }
+type R { x: Int, y: Int }
+
+fn noisy(tag: String, b: Bool) -> Bool {
+  println("guard {tag}")
+  b
+}
+
+fn orguard(p: (Int, Int)) -> String {
+  match p {
+    (x, _) | (_, x) when x > 3 -> "big {x}"
+    _ -> "small"
+  }
+}
+
+fn nested(o: Option((Int, Int))) -> String {
+  match o {
+    Some((x, _) | (_, x)) when x > 3 -> "big {x}"
+    Some(_) -> "small"
+    None -> "none"
+  }
+}
+
+fn two(p: ((Int, Int), (Int, Int))) -> String {
+  match p {
+    ((a, _) | (_, a), (b, _) | (_, b)) when noisy("{a},{b}", a + b == 10) -> "ten {a} {b}"
+    _ -> "no"
+  }
+}
+
+fn enums(e: E) -> String {
+  match e {
+    A(n, _) | A(_, n) | B(n) when n % 2 == 0 -> "even {n}"
+    A(n, m) -> "odd pair {n} {m}"
+    B(n) -> "odd {n}"
+    C -> "c"
+  }
+}
+
+fn recs(r: R) -> String {
+  let k = 4
+  match r {
+    R { x: ^k, y: v } | R { x: v, y: ^k } when v > 0 -> "has4 other {v}"
+    R { x, y } -> "{x},{y}"
+  }
+}
+
+fn lists(xs: List(Int)) -> String {
+  match xs {
+    [a, ..] | [_, a, ..] when a == 7 -> "seven"
+    [first, ..rest] -> "first {first} rest {rest}"
+    [] -> "empty"
+  }
+}
+
+fn tailcall(n: Int, acc: Int) -> Int {
+  match (n, n) {
+    (0, k) | (k, 0) when k == 0 -> acc
+    (m, _) | (_, m) when m > 0 -> tailcall(m - 1, acc + 1)
+    _ -> -1
+  }
+}
+
+fn main() {
+  println(orguard((1, 5)))
+  println(orguard((5, 1)))
+  println(orguard((1, 1)))
+  println(nested(Some((1, 9))))
+  println(nested(Some((1, 1))))
+  println(nested(None))
+  println(two(((1, 2), (3, 8))))
+  println(enums(A(1, 4)))
+  println(enums(A(3, 5)))
+  println(enums(B(6)))
+  println(enums(B(7)))
+  println(enums(C))
+  println(recs(R { x: 1, y: 4 }))
+  println(recs(R { x: 4, y: 2 }))
+  println(recs(R { x: 4, y: -2 }))
+  println(lists([1, 7, 3]))
+  println(lists([1, 2]))
+  println(lists([]))
+  println(tailcall(1000000, 0))
+  let v = match (2, 9) {
+    (a, b) | (b, a) when a > b -> "{a}>{b}"
+    _ -> "?"
+  }
+  println(v)
+}

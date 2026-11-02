@@ -1,8 +1,8 @@
-error[type]: type mismatch: expected a, got type a
+error[type]: type mismatch: expected a value of type `a`, got the type `a`
  --> rigid_variable_mismatch__type_parameter.silt:6:3
    |
  6 |   a
-   |   ^ type mismatch: expected a, got type a
+   |   ^ type mismatch: expected a value of type `a`, got the type `a`
  ::: rigid_variable_mismatch__type_parameter.silt:5:29
    |
  5 | fn parse(body: String, type a) -> a {

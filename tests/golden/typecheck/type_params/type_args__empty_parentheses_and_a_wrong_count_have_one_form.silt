@@ -1,0 +1,31 @@
+-- cmd: check
+-- exit: 1
+-- A type is written one way: without parentheses when it takes no type
+-- arguments, with all of them when it takes some. Empty parentheses
+-- (`Bytes()`, `Int()`, `Flat()`, `Box()`) and a wrong number of
+-- arguments are refused in one form, with the caret on the type.
+type Flat {
+  v: Int,
+}
+
+type Box(a) {
+  v: a,
+}
+
+fn a(x: Bytes()) -> Int { 0 }
+
+fn b(x: Int()) -> Int { 0 }
+
+fn c(x: Flat()) -> Int { 0 }
+
+fn d(x: Box()) -> Int { 0 }
+
+fn e(x: Flat(Int)) -> Int { 0 }
+
+fn f(x: Bytes(Int)) -> Int { 0 }
+
+fn g(x: Box(Int, Int)) -> Int { 0 }
+
+fn main() {
+  println(1)
+}

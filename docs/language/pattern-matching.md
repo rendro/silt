@@ -220,6 +220,10 @@ match n {
 Guard expressions are checked after the pattern matches. Pattern bindings
 are available in the guard.
 
+A guard on an or-pattern is tried with each alternative that matches, in
+order, until one passes: `(x, _) | (_, x) when x > 3` on `(1, 5)` takes
+the arm with `x` = 5.
+
 ## Range Patterns
 
 Inclusive numeric ranges:
@@ -234,6 +238,9 @@ match score {
 ```
 
 Float ranges work too: `0.0..1.0` matches `value >= 0.0 && value <= 1.0`.
+
+A range whose start is greater than its end, such as `5..1`, matches no
+value and is an error.
 
 ## Pin Operator (`^`)
 
@@ -318,10 +325,12 @@ fn main() {
 }
 ```
 
-An arm with a guard may not be taken, so it covers nothing. Number and
-string literals, ranges, pins and map patterns never cover their type
-between them: a match on such a value needs an arm that takes every value
-(`_` or a name).
+An arm with a guard may not be taken, so it covers nothing. Int literals
+and ranges cover the numbers they hold, so arms that hold every Int
+between them cover `Int` (`-9223372036854775808..-1` and
+`0..9223372036854775807`). Float and string literals, Float ranges, pins
+and map patterns never cover their type between them: a match on such a
+value needs an arm that takes every value (`_` or a name).
 
 A match with so many interdependent patterns that the check cannot finish
 is an error too ("could not verify that the match is exhaustive"); a `_`

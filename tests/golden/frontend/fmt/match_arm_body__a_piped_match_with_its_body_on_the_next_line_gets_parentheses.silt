@@ -1,8 +1,8 @@
 -- cmd: fmt
--- The formatter does not look at where the body of the inner match
--- starts: on a line of its own it is no closure and the arm would parse
--- without its braces, and they stay all the same. So this arm has two
--- spellings, each kept as written.
+-- The inner match's scrutinee ends in a stage written as a bare name
+-- (`xs |> first`): it is written in parentheses, whether the body of the
+-- match starts on a line of its own in the source or not. The braces
+-- around the arm's body stay as written.
 import list
 
 fn first(xs) {

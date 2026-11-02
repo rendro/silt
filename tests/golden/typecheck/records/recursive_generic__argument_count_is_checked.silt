@@ -3,8 +3,8 @@
 -- parameters.
 -- cmd: check
 -- exit: 1
--- stderr-contains: type argument count mismatch for record 'Tree': expected 1, got 2
--- stderr-contains: type argument count mismatch for record 'Box': expected 2, got 1
+-- stderr-contains: `Tree` takes 1 type argument here: write `Tree(a)`
+-- stderr-contains: `Box` takes 2 type arguments here: write `Box(a, b)`
 type Tree(a) { val: a, kids: List(Tree(a, a)) }
 type Leaf(a) { kids: List(Box(a)) }
 type Box(a, b) { v: a, w: b }

@@ -5,7 +5,7 @@ fn head(x: Int) -> String { match x {
   _ -> "no"
 } }
 fn tail(x: Int) -> String { match x {
-  0..-9223372036854775807 -> "yes"
+  -9223372036854775808..-9223372036854775807 -> "yes"
   _ -> "no"
 } }
 fn both(x: Int) -> String { match x {
@@ -16,6 +16,6 @@ fn both(x: Int) -> String { match x {
 fn main() {
   let min1 = 0 - 9223372036854775807
   println("head: {head(min1)} {head(0)} {head(1)}")
-  println("tail: {tail(min1)} {tail(0)}")
+  println("tail: {tail(min1)} {tail(min1 - 1)} {tail(min1 + 1)}")
   println("both: {both(min1)} {both(min1 + 1)}")
 }

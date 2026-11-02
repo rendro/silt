@@ -1,0 +1,22 @@
+-- cmd: check
+-- exit: 1
+-- A value given where a function takes a type names the function, the
+-- parameter and the value's type; a value made by a variant names the
+-- variant and its type, and the help gives the type.
+import json
+
+type Slot {
+  Cell(Int),
+  Empty,
+}
+
+fn load(s: String, type a) -> Result(a, json.JsonError) where a: json.Decode {
+  json.parse(s, a)
+}
+
+fn main() {
+  println(json.parse("1", Cell(Int)))
+  println(json.parse("1", Empty))
+  println(json.parse("1", 5))
+  println(load("1", Cell(Int)))
+}

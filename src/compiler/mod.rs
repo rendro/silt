@@ -2225,6 +2225,18 @@ impl<'a> Compiler<'a> {
                 self.emit_slide(arm_height, span)?;
             }
 
+            // (A guard on an or-pattern that binds names is tried with
+            // each alternative that matches.)
+            if let Some(ways) = self.guarded_or_ways(arm)? {
+                let (end_jump, next_arm) =
+                    self.compile_guarded_or_arm(arm, &ways, scrutinee_slot, tail, span)?;
+                end_jumps.push(end_jump);
+                for jump in next_arm {
+                    self.bind_over(jump, MATCH_ARM, span)?;
+                }
+                continue;
+            }
+
             // 2. Test the pattern (value is on TOS, tests peek it)
             let fail_jumps = self.compile_pattern_test(&arm.pattern, span)?;
 

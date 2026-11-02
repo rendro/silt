@@ -1,0 +1,34 @@
+-- cmd: fmt
+-- The inner match's scrutinee ends in a stage written as a bare name
+-- (`xs |> first`): it is written in parentheses, whether the body of the
+-- match starts on a line of its own in the source or not. The braces
+-- around the arm's body stay as written.
+import list
+
+fn first(xs) {
+  list.head(xs)
+}
+
+fn braced(r, xs) {
+  match r {
+    { a: 1 } -> {
+      match (xs |> first) {
+        x -> 1
+      }
+    }
+    { a } -> a
+  }
+}
+
+fn bare(r, xs) {
+  match r {
+    { a: 1 } -> match (xs |> first) {
+      x -> 1
+    }
+    { a } -> a
+  }
+}
+
+fn main() {
+  println((braced({ a: 1 }, [1]), bare({ a: 1 }, [1])))
+}

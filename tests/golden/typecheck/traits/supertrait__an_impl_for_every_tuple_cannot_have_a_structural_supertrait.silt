@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- A trait whose supertrait a tuple has by its parts (`Equal`) cannot be
+-- implemented for every tuple: no bound on the parts can be written.
+trait S: Equal {
+  fn s(self) -> Int
+}
+
+trait S for Tuple {
+  fn s(self) -> Int { 1 }
+}
+
+fn main() {
+  println(1)
+}

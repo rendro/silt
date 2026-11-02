@@ -20,7 +20,13 @@ impl TypeChecker {
         let heads: Vec<TyVar> = (crate::types::constructor_heads(&ty).into_iter())
             .filter(|v| scheme.vars.contains(v))
             .collect();
-        let mut taken: Vec<String> = Vec::new();
+        // (A letter is no name of a parameter: `fn pair(a: c, b: d)`.)
+        let mut taken: Vec<String> = (f.params.iter())
+            .filter_map(|param| match (&param.kind, &param.pattern.kind) {
+                (ParamKind::Data, PatternKind::Ident(name)) => Some(resolve(*name)),
+                _ => None,
+            })
+            .collect();
         let mut mapping: HashMap<TyVar, Type> = HashMap::new();
         let mut constructors = ["m", "n", "o", "p", "q", "r"].into_iter().map(String::from);
         let mut letters = ('a'..='z').map(|c| c.to_string());

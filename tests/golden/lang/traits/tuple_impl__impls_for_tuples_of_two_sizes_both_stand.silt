@@ -1,0 +1,23 @@
+-- Impls of one trait for `Tuple(a, b)` and `Tuple(a, b, c)` are told
+-- apart by their whole types, which do not unify: both stand, and each
+-- tuple reaches the impl of its size, also through a function.
+trait S {
+  fn s(self) -> Int
+}
+
+trait S for Tuple(a, b) {
+  fn s(self) -> Int { 2 }
+}
+
+trait S for Tuple(a, b, c) {
+  fn s(self) -> Int { 3 }
+}
+
+fn size(x) { S.s(x) }
+
+fn main() {
+  println(S.s((1, 2)))
+  println(S.s((1, "x", true)))
+  println(size(("a", 1)))
+  println(size((1, 2, 3)))
+}

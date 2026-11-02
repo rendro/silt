@@ -1,0 +1,6 @@
+-- exit: 1
+-- The one quotient that is no Int stays an overflow (owner Q3).
+fn main() {
+  let min = -9223372036854775808
+  println(min / -1)
+}

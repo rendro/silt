@@ -11,7 +11,8 @@ use super::VmError;
 
 /// `a op b` of two Ints, for the arithmetic instruction `op`: computed
 /// in the caller, the instruction loop. (Operands that are not two
-/// Ints are [`float_arithmetic`]'s, a call.)
+/// Ints are [`float_arithmetic`]'s, a call.) `/` rounds down and `%`
+/// takes the sign of the divisor, so `a == a / b * b + a % b`.
 #[inline(always)]
 pub(super) fn int_arithmetic(op: Op, a: i64, b: i64) -> Result<i64, VmError> {
     let result = match op {
@@ -19,14 +20,55 @@ pub(super) fn int_arithmetic(op: Op, a: i64, b: i64) -> Result<i64, VmError> {
         Op::Sub => a.checked_sub(b),
         Op::Mul => a.checked_mul(b),
         Op::Div if b == 0 => return Err(VmError::new("division by zero".to_string())),
-        Op::Div => a.checked_div(b),
+        Op::Div => floored_div(a, b),
         Op::Mod if b == 0 => return Err(VmError::new("modulo by zero".to_string())),
-        Op::Mod => a.checked_rem(b),
+        Op::Mod => Some(floored_mod(a, b)),
         _ => unreachable!(),
     };
     match result {
         Some(v) => Ok(v),
         None => Err(int_overflow(op, a, b)),
+    }
+}
+
+/// `a / b` rounded down, for a `b` that is not 0: `None` where it is
+/// no Int (the smallest Int over -1).
+#[inline(always)]
+fn floored_div(a: i64, b: i64) -> Option<i64> {
+    let q = a.checked_div(b)?;
+    // Truncation rounded a negative quotient up: one less. (It was not
+    // the smallest Int then.)
+    Some(if a % b != 0 && (a < 0) != (b < 0) {
+        q - 1
+    } else {
+        q
+    })
+}
+
+/// `a % b` with the sign of `b`, for a `b` that is not 0. The smallest
+/// Int over -1 leaves 0, as every Int over -1 does.
+#[inline(always)]
+fn floored_mod(a: i64, b: i64) -> i64 {
+    if b == -1 {
+        return 0;
+    }
+    let r = a % b;
+    // Of opposite signs, `r + b` lies between them.
+    if r != 0 && (r < 0) != (b < 0) {
+        r + b
+    } else {
+        r
+    }
+}
+
+/// `x % y` with the sign of `y`, as for Ints, for a `y` that is not 0.
+/// (A tiny `x` of the other sign can round to `y` itself.)
+fn floored_float_mod(x: f64, y: f64) -> f64 {
+    let r = x % y;
+    if r != 0.0 && (r < 0.0) != (y < 0.0) {
+        r + y
+    } else {
+        r
     }
 }
 
@@ -68,7 +110,7 @@ pub(super) fn float_arithmetic(op: Op, a: &Value, b: &Value) -> Result<Float, Vm
                 }
                 Op::Div => x / y,
                 Op::Mod if y == 0.0 => return Err(VmError::new("modulo by zero".to_string())),
-                Op::Mod => x % y,
+                Op::Mod => floored_float_mod(x, y),
                 _ => unreachable!(),
             };
             // (The text of the error is made where there is one.)
@@ -178,4 +220,60 @@ pub(super) fn check_same_type(a: &Value, b: &Value) -> Result<(), VmError> {
         )));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn int(op: Op, a: i64, b: i64) -> i64 {
+        int_arithmetic(op, a, b).expect("an Int")
+    }
+
+    #[test]
+    fn int_division_rounds_down_and_modulo_takes_the_divisors_sign() {
+        let cases = [
+            (-7, 3, -3, 2),
+            (7, -3, -3, -2),
+            (-7, -3, 2, -1),
+            (7, 3, 2, 1),
+            (-6, 3, -2, 0),
+            (6, -3, -2, 0),
+            (0, -5, 0, 0),
+            (i64::MIN, 3, -3074457345618258603, 1),
+            (i64::MIN, i64::MAX, -2, i64::MAX - 1),
+            (i64::MAX, -2, -4611686018427387904, -1),
+            (i64::MAX, i64::MIN, -1, -1),
+        ];
+        for (a, b, quotient, modulo) in cases {
+            assert_eq!(int(Op::Div, a, b), quotient, "{a} / {b}");
+            assert_eq!(int(Op::Mod, a, b), modulo, "{a} % {b}");
+            let whole = i128::from(quotient) * i128::from(b) + i128::from(modulo);
+            assert_eq!(whole, i128::from(a), "{a} = {a} / {b} * {b} + {a} % {b}");
+        }
+    }
+
+    #[test]
+    fn float_modulo_takes_the_divisors_sign() {
+        let float = |n: f64| Value::Float(Float::new(n).expect("finite"));
+        let cases = [
+            (-7.5, 2.0, 0.5),
+            (7.5, -2.0, -0.5),
+            (-7.5, -2.0, -1.5),
+            (7.5, 2.0, 1.5),
+            (-6.0, 3.0, 0.0),
+            (6.0, -3.0, 0.0),
+        ];
+        for (x, y, modulo) in cases {
+            let got = float_arithmetic(Op::Mod, &float(x), &float(y)).expect("a Float");
+            assert_eq!(got.get(), modulo, "{x} % {y}");
+        }
+    }
+
+    #[test]
+    fn the_smallest_int_modulo_minus_one_is_zero_and_its_quotient_overflows() {
+        assert_eq!(int(Op::Mod, i64::MIN, -1), 0);
+        let err = int_arithmetic(Op::Div, i64::MIN, -1).expect_err("no Int");
+        assert_eq!(err.message, "integer overflow: -9223372036854775808 / -1");
+    }
 }

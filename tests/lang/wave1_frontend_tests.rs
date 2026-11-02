@@ -874,7 +874,7 @@ fn main() {
   println("{r}")
 }
 "#;
-    assert_fmt_keeps_program("fmt_pipe_head", head, &["match xs |> list.head {\n"]);
+    assert_fmt_keeps_program("fmt_pipe_head", head, &["match (xs |> list.head) {\n"]);
 }
 
 /// Guard. A trailing closure on the right operand of a pipe in a

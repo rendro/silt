@@ -1,0 +1,15 @@
+-- exit: 1
+-- An or-pattern under a guard is compiled once for each way it can match;
+-- eleven two-way or-patterns in one arm are 2048 ways, over the limit.
+type E { A(Int), B(Int) }
+
+fn f(t: (E, E, E, E, E, E, E, E, E, E, E)) -> Int {
+  match t {
+    (A(x0) | B(x0), A(x1) | B(x1), A(x2) | B(x2), A(x3) | B(x3), A(x4) | B(x4), A(x5) | B(x5), A(x6) | B(x6), A(x7) | B(x7), A(x8) | B(x8), A(x9) | B(x9), A(x10) | B(x10)) when x0 + x1 + x2 + x3 + x4 + x5 + x6 + x7 + x8 + x9 + x10 > 0 -> 1
+    _ -> 0
+  }
+}
+
+fn main() {
+  println(f((A(1), A(1), A(1), A(1), A(1), A(1), A(1), A(1), A(1), A(1), A(1))))
+}

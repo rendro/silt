@@ -1,0 +1,26 @@
+error[type]: `json.parse` takes a type as `a`, not a value of type `Slot`: `Cell` is a variant of `Slot`
+ --> type_args__a_value_given_for_a_type_parameter_is_named.silt:18:27
+    |
+ 18 |   println(json.parse("1", Cell(Int)))
+    |                           ^^^^^^^^^ `json.parse` takes a type as `a`, not a value of type `Slot`: `Cell` is a variant of `Slot`
+  = help: give the type, `Slot`
+
+error[type]: `json.parse` takes a type as `a`, not a value of type `Slot`: `Empty` is a variant of `Slot`
+ --> type_args__a_value_given_for_a_type_parameter_is_named.silt:19:27
+    |
+ 19 |   println(json.parse("1", Empty))
+    |                           ^^^^^ `json.parse` takes a type as `a`, not a value of type `Slot`: `Empty` is a variant of `Slot`
+  = help: give the type, `Slot`
+
+error[type]: `json.parse` takes a type as `a`, not a value of type `Int`
+ --> type_args__a_value_given_for_a_type_parameter_is_named.silt:20:27
+    |
+ 20 |   println(json.parse("1", 5))
+    |                           ^ `json.parse` takes a type as `a`, not a value of type `Int`
+
+error[type]: `load` takes a type as `a`, not a value of type `Slot`: `Cell` is a variant of `Slot`
+ --> type_args__a_value_given_for_a_type_parameter_is_named.silt:21:21
+    |
+ 21 |   println(load("1", Cell(Int)))
+    |                     ^^^^^^^^^ `load` takes a type as `a`, not a value of type `Slot`: `Cell` is a variant of `Slot`
+  = help: give the type, `Slot`

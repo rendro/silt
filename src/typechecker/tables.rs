@@ -451,6 +451,9 @@ pub struct Tables {
     /// the encoder and the functions on the way (`Asked::Through`), which
     /// the note of a refusal in another module names.
     pub(super) def_encoders: HashMap<crate::defs::DefId, HashMap<TyVar, crate::types::Asked>>,
+    /// The `type` parameters of each function of the program, by their
+    /// places: what a message about a value given for one calls it.
+    pub(super) fn_type_params: HashMap<crate::defs::DefId, Vec<(usize, Symbol)>>,
     /// Maps `(trait_name, target_head)` → the resolved trait args supplied
     /// at impl site. For `trait TryInto(Float) for String { ... }` this
     /// stores `(TryInto, String) -> [Float]`. `verify_trait_obligation`

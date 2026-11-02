@@ -1,0 +1,12 @@
+import set
+
+-- A record with no fields gets Display, Equal, Compare and Hash.
+type Absurd {}
+
+fn main() {
+  let a = Absurd {}
+  println(a)
+  println(a == Absurd {})
+  println(a < Absurd {})
+  println(set.from_list([a, Absurd {}]))
+}

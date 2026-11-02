@@ -1,0 +1,5 @@
+error[runtime]: integer overflow: -9223372036854775808 / -1
+ --> division__the_smallest_int_over_minus_one_overflows.silt:5:11
+   |
+ 5 |   println(min / -1)
+   |           ^^^^^^^^ integer overflow: -9223372036854775808 / -1

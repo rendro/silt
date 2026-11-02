@@ -5,29 +5,29 @@ error[type]: type variable `a` is not known to implement trait 'json.Decode', wh
     |                    ^^^^^^^ type variable `a` is not known to implement trait 'json.Decode', which 'json.parse' needs
   = help: add `where a: json.Decode`
 
-error[type]: type argument count mismatch for builtin type 'List': expected 1, got 2
+error[type]: `List` takes 1 type argument here: write `List(a)`
  --> type_args__a_type_written_wrong_is_refused.silt:24:20
     |
  24 |   let _ = count(1, List(Int, Int))
-    |                    ^^^^^^^^^^^^^^ type argument count mismatch for builtin type 'List': expected 1, got 2
+    |                    ^^^^^^^^^^^^^^ `List` takes 1 type argument here: write `List(a)`
 
-error[type]: type argument count mismatch for record 'Box': expected 1, got 2
+error[type]: `Box` takes 1 type argument here: write `Box(a)`
  --> type_args__a_type_written_wrong_is_refused.silt:25:20
     |
  25 |   let _ = count(2, Box(Int, String))
-    |                    ^^^^^^^^^^^^^^^^ type argument count mismatch for record 'Box': expected 1, got 2
+    |                    ^^^^^^^^^^^^^^^^ `Box` takes 1 type argument here: write `Box(a)`
 
-error[type]: type argument count mismatch for record 'User': expected 0, got 1
+error[type]: `User` takes no type arguments: write `User`
  --> type_args__a_type_written_wrong_is_refused.silt:26:20
     |
  26 |   let _ = count(3, User(Int))
-    |                    ^^^^^^^^^ type argument count mismatch for record 'User': expected 0, got 1
+    |                    ^^^^^^^^^ `User` takes no type arguments: write `User`
 
-error[type]: type argument count mismatch for alias 'Pairs': expected 1, got 2
+error[type]: `Pairs` takes 1 type argument here: write `Pairs(a)`
  --> type_args__a_type_written_wrong_is_refused.silt:27:20
     |
  27 |   let _ = count(4, Pairs(Int, Int))
-    |                    ^^^^^^^^^^^^^^^ type argument count mismatch for alias 'Pairs': expected 1, got 2
+    |                    ^^^^^^^^^^^^^^^ `Pairs` takes 1 type argument here: write `Pairs(a)`
 
 error[type]: 'List(Int)' is a type, but 'm' is a type constructor
  --> type_args__a_type_written_wrong_is_refused.silt:28:19

@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- `type Absurd { }` is a record with no fields: it has a value, so a
+-- match on it needs an arm (owner Q1, audit R5).
+-- stderr-contains: non-exhaustive match: not all patterns of Absurd are covered
+type Absurd { }
+fn elim(x: Absurd) -> Int { match x { } }
+fn main() {}

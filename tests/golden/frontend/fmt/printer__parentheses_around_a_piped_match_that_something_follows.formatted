@@ -20,34 +20,34 @@ fn g(x: Int) -> Int {
 }
 
 fn stays_before_a_brace(xs) {
-  let a = (match xs |> first {
+  let a = (match (xs |> first) {
     y -> 1
   })
   { -> 1 }
-  (match xs |> first {
+  (match (xs |> first) {
     y -> 2
   })
   { -> 2 }
   let b = 1 +
-    (match xs |> first {
+    (match (xs |> first) {
       y -> 3
     })
   { -> 3 }
   let c = (1 +
-    match xs |> first {
+    match (xs |> first) {
       y -> 4
     })
   { -> 4 }
   let d = (1 +
-    match xs |> first {
+    match (xs |> first) {
       y -> 5
     })
   { -> 5 }
-  let e = -(match xs |> first {
+  let e = -(match (xs |> first) {
     y -> 6
   })
   { a: 6 }
-  match (match xs |> first {
+  match (match (xs |> first) {
     y -> 7
   }) {
     _ -> 7
@@ -56,39 +56,39 @@ fn stays_before_a_brace(xs) {
 
 fn stays_before_an_operator(xs) {
   let a = (1 +
-    match xs |> first {
+    match (xs |> first) {
       y -> 1
     }) == 2
   let b = (1 +
-    match xs |> first {
+    match (xs |> first) {
       y -> 2
     }) < 2
   let c = (1 +
-    match xs |> first {
+    match (xs |> first) {
       y -> 3
     })..2
   let d = (1 +
-    match xs |> first {
+    match (xs |> first) {
       y -> 4
     }) |> g
   let e = (1
-    * match xs |> first {
+    * match (xs |> first) {
       y -> 5
     }) + 2
-  let f = -(match xs |> first {
+  let f = -(match (xs |> first) {
     y -> 6
   }) == 2
-  let h = (-match xs |> first {
+  let h = (-match (xs |> first) {
     y -> 7
   })?
-  let i = (match xs |> first {
+  let i = (match (xs |> first) {
     y -> 8
   }) == 2
   [a, b, d, e]
 }
 
 fn stays_in_a_scrutinee(xs) {
-  let a = match 1 == (xs |> first) {
+  let a = match (1 == xs |> first) {
     y -> true
   }
   { -> 1 }
@@ -100,23 +100,23 @@ fn stays_in_a_scrutinee(xs) {
     y -> true
   }
   { -> 3 }
-  let d = match 1 == (xs |> first) {
+  let d = match (1 == xs |> first) {
     y -> true
   }
   [b]
 }
 
 fn goes(xs) {
-  let a = match xs |> first {
+  let a = match (xs |> first) {
     y -> 1
   }
   (a, 1)
-  let b = match xs |> first {
+  let b = match (xs |> first) {
     y -> 2
   }
   b
   let c = (
-    match xs |> first {
+    match (xs |> first) {
       y -> 3
     },
     { -> 3 },
@@ -125,12 +125,12 @@ fn goes(xs) {
     y -> 5
   }
   { -> 5 }
-  let f = match xs |> list.length {
+  let f = match (xs |> list.length) {
     0 -> 6
     _ -> 6
   }
   { -> 6 }
-  let h = match xs |> first {
+  let h = match (xs |> first) {
     y -> 7
   }
   #{ "a": 7 }
@@ -138,26 +138,26 @@ fn goes(xs) {
 }
 
 fn goes_when_no_closure(xs) {
-  let a = match xs |> first {
+  let a = match (xs |> first) {
     "s" -> 1
     _ -> 1
   }
   { -> 1 }
-  let b = match xs |> first {
+  let b = match (xs |> first) {
     y when y > 0 -> 2
     _ -> 2
   }
   { -> 2 }
-  let c = match xs |> first {
+  let c = match (xs |> first) {
     0 | 1 -> 3
     _ -> 3
   }
   { -> 3 }
-  let d = match xs |> first {
+  let d = match (xs |> first) {
     -1 -> 4
     _ -> 4
   } == 4
-  let e = match 1 == xs |> first {
+  let e = match (1 == xs |> first) {
     "s" -> true
     _ -> false
   }

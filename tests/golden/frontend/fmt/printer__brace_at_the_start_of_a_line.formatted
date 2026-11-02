@@ -9,7 +9,7 @@ fn main() {
   {
     1
   }
-  let a = match 7 |> dbl {
+  let a = match (7 |> dbl) {
     x -> x
   }
   ({

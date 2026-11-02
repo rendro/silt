@@ -1,0 +1,8 @@
+Empty {}
+1
+2
+true
+1
+Ok(Empty {})
+Ok(Holder {e: Empty {}, n: 1})
+{"e":{},"n":2}

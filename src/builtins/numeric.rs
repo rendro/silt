@@ -251,11 +251,12 @@ pub(crate) mod float {
             const LEAST: f64 = i64::MIN as f64;
             const TOO_LARGE: f64 = 9223372036854775808.0;
             if !(LEAST..TOO_LARGE).contains(&f) {
-                // Such a number has nineteen digits or more, up to 309:
-                // it is named with an exponent, as a program may write
-                // it (`1e300`).
+                // (Shown as a program prints the Float.)
+                let mut shown = String::new();
+                // (Writing to a String does not fail.)
+                let _ = Float::write_text(f, &mut shown);
                 return Err(VmError::new(format!(
-                    "float.to_int: {f:e} is outside the Int range"
+                    "float.to_int: {shown} is outside the Int range"
                 )));
             }
             Ok(f as i64)
@@ -415,13 +416,19 @@ mod tests {
     #[test]
     fn float_to_int_rejects_positive_out_of_range() {
         let err = to_int(1.0e20).expect_err("expected out-of-range error");
-        assert_eq!(err.message, "float.to_int: 1e20 is outside the Int range");
+        assert_eq!(
+            err.message,
+            "float.to_int: 100000000000000000000.0 is outside the Int range"
+        );
     }
 
     #[test]
     fn float_to_int_rejects_negative_out_of_range() {
         let err = to_int(-1.0e20).expect_err("expected out-of-range error");
-        assert_eq!(err.message, "float.to_int: -1e20 is outside the Int range");
+        assert_eq!(
+            err.message,
+            "float.to_int: -100000000000000000000.0 is outside the Int range"
+        );
     }
 
     #[test]
@@ -433,7 +440,7 @@ mod tests {
             .expect_err("expected out-of-range for i64::MAX + 1");
         assert_eq!(
             err.message,
-            "float.to_int: 9.223372036854776e18 is outside the Int range"
+            "float.to_int: 9223372036854776000.0 is outside the Int range"
         );
     }
 

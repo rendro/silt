@@ -135,6 +135,17 @@ impl TypeChecker {
             .map(|(v, t, args)| format!("{}: {}", name_of(*v), self.show_bound(*t, args)))
             .collect();
         let bounds = bounds.join(", ");
+        // (An impl for every tuple names no part, and no bound can
+        // help: the supertrait holds for a tuple by its parts.)
+        if !named && key.1.is_builtin("Tuple") {
+            let message = format!(
+                "trait '{tr_shown}' cannot be implemented for every tuple: its supertrait \
+                 '{sup_shown}' holds for a tuple only when it holds for the tuple's parts, and \
+                 an impl for every tuple has no bounds on its parts"
+            );
+            self.error(Code::MissingTraitImpl, message, span);
+            return true;
+        }
         let help = match named {
             true => format!("add `where {bounds}` to the impl"),
             false => format!("write the impl for `{shown_ty}`, with `where {bounds}`"),
@@ -2954,6 +2965,9 @@ impl TypeChecker {
                             Box::new(iter.next().unwrap()),
                         )
                     }
+                    // A tuple of the impl's arity: `(a, b)` of
+                    // `Tuple(a, b)`, which a pair's type is.
+                    "Tuple" if resolved_args.len() >= 2 => Type::Tuple(resolved_args),
                     // A primitive takes no arguments (the error above
                     // says so): the impl is for the type itself, not a
                     // phantom `Int(_)` that no value has.
@@ -3189,9 +3203,22 @@ impl TypeChecker {
             true => trait_name.clone(),
             false => self.show_named(tr, &mine.args, &mine.names),
         };
-        let (message, help) = if args == met {
+        // (An impl for every tuple or every function overlaps one for
+        // some of them, by its type: said as two impls for one type.)
+        let every_shape = |checker: &Self, head: Option<&Type>| match head.map(|h| checker.apply(h))
+        {
+            Some(Type::Var(v)) => checker.shape_vars.contains_key(&v),
+            Some(Type::Rigid(r)) => checker.shape_vars.contains_key(&r.var),
+            _ => false,
+        };
+        let earlier_head = (self.impl_written.get(&(tr, ty, met)))
+            .and_then(|earlier| earlier.head.clone())
+            .or_else(|| self.tables.impl_self_types.get(&(tr, ty, met)).cloned());
+        let shaped =
+            every_shape(self, mine.head.as_ref()) || every_shape(self, earlier_head.as_ref());
+        let (message, help) = if args == met || shaped {
             // (Of an impl for some instantiations of its type, the type.)
-            let target = match mine.head.as_ref().filter(|_| instance(self, &mine)) {
+            let target = match (mine.head.as_ref()).filter(|_| instance(self, &mine) && !shaped) {
                 Some(head) => self.show_type(&self.with_names(head, &mine.names)),
                 None => target,
             };

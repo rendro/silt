@@ -15,18 +15,18 @@ fn first(xs) {
 fn stays(r, xs) {
   match r {
     { a: 1 } -> {
-      match xs |> first {
+      match (xs |> first) {
         x -> 1
       }
     }
     { a: 2 } -> {
       1 +
-        match xs |> first {
+        match (xs |> first) {
           x -> 2
         }
     }
     { a: 3 } -> {
-      -match xs |> first {
+      -match (xs |> first) {
         x -> 3
       }
     }
@@ -37,12 +37,12 @@ fn stays(r, xs) {
       }
     }
     { a: 5 } -> {
-      match 1 == xs |> list.length {
+      match (1 == xs |> list.length) {
         x -> 5
       }
     }
     { a: 6 } -> {
-      return match xs |> first {
+      return match (xs |> first) {
         x -> 6
       }
     }
@@ -59,7 +59,7 @@ fn stays(r, xs) {
 fn stays_in_front_of_a_condition(n, xs) {
   match {
     n > 1 -> {
-      match xs |> first {
+      match (xs |> first) {
         x -> 1
       }
     }
@@ -71,21 +71,21 @@ fn stays_in_front_of_a_condition(n, xs) {
 fn goes(r, xs) {
   let last_arm = match r {
     { a: 1 } -> 1
-    { a } -> match xs |> first {
+    { a } -> match (xs |> first) {
       x -> a
     }
   }
   let parentheses_follow = match r {
-    { a: 1 } -> match xs |> first {
+    { a: 1 } -> match (xs |> first) {
       x -> 1
     }
     ({ a }) -> a
   }
   let a_name_follows = match xs {
-    [] -> match xs |> first {
+    [] -> match (xs |> first) {
       x -> 1
     }
-    other -> match other |> first {
+    other -> match (other |> first) {
       x -> 2
     }
   }
@@ -96,7 +96,7 @@ fn goes(r, xs) {
     { a } -> a
   }
   let no_closure = match r {
-    { a: 1 } -> match xs |> list.length {
+    { a: 1 } -> match (xs |> list.length) {
       0 -> 1
       _ -> 2
     }
@@ -105,7 +105,7 @@ fn goes(r, xs) {
   let in_an_inner_last_arm = match r {
     { a: 1 } -> match r.a {
       0 -> 2
-      _ -> match xs |> first {
+      _ -> match (xs |> first) {
         x -> 1
       }
     }
