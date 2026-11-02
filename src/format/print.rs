@@ -395,21 +395,18 @@ fn ends_in_bare_stage(expr: &Expr) -> bool {
         // (An operator that binds looser than `|>`: the pipeline is
         // printed without parentheses behind it. A tighter one, `-` or
         // `..`, has them around the pipeline.)
-        ExprKind::Binary(_, op, right)
-            if matches!(
-                op,
-                BinOp::Eq
-                    | BinOp::Neq
-                    | BinOp::Lt
-                    | BinOp::Gt
-                    | BinOp::Leq
-                    | BinOp::Geq
-                    | BinOp::And
-                    | BinOp::Or
-            ) =>
-        {
-            ends_in_bare_stage(right)
-        }
+        ExprKind::Binary(
+            _,
+            BinOp::Eq
+            | BinOp::Neq
+            | BinOp::Lt
+            | BinOp::Gt
+            | BinOp::Leq
+            | BinOp::Geq
+            | BinOp::And
+            | BinOp::Or,
+            right,
+        ) => ends_in_bare_stage(right),
         ExprKind::Return(Some(inner)) => ends_in_bare_stage(inner),
         _ => false,
     }
