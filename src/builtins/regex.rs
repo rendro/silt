@@ -40,53 +40,35 @@ fn option(found: Option<Value>) -> Value {
 }
 
 /// What is wrong with a pattern, and the character of the pattern
-/// where it is wrong, counted from 0 as `string.slice` counts (the
-/// pattern's length for a fault at its end), from the report of the
-/// `regex` crate. The report shows
-/// the pattern, marks the place with `^` under it, and says what is
-/// wrong after `error: `:
-///
-/// ```text
-/// regex parse error:
-///     a(b
-///      ^
-/// error: unclosed group
-/// ```
-///
-/// A report of another shape (the crate lays out a pattern of several
-/// lines differently) is given whole, with the place 0.
+/// where it is wrong, counted from 0 as `string.slice` counts: where the
+/// fault begins, or the pattern's length when the fault is that the
+/// pattern ends too soon (`a\`, `\x`). The pattern is parsed again
+/// with the parser the `regex` crate uses, whose error says both;
+/// `report`, the `regex` crate's text, stands only where that parser
+/// finds no fault, with the place 0.
 fn syntax_error(pattern: &str, report: &str) -> (String, usize) {
-    const INDENT: &str = "    ";
-    let lines: Vec<&str> = report.lines().collect();
-    let found = (|| {
-        let shown = lines
-            .iter()
-            .position(|line| line.strip_prefix(INDENT) == Some(pattern))?;
-        let marks = lines.get(shown + 1)?.strip_prefix(INDENT)?;
-        if marks.trim_matches(|c| c == ' ' || c == '^').is_empty() && marks.contains('^') {
-            // A mark stands under the character it is about, one
-            // column a character. Where the crate marks two places (a
-            // second group of a name, a flag given twice), the first
-            // is the earlier one the fault repeats and the last is the
-            // fault: the place is where the last mark begins. A flag
-            // is one character, and two of them may stand side by
-            // side under one run of marks: the last mark is the fault.
-            let what = lines.last()?.strip_prefix("error: ")?;
-            let marks: Vec<char> = marks.chars().collect();
-            let end = marks.iter().rposition(|c| *c == '^')?;
-            let of_a_flag = matches!(what, "duplicate flag" | "flag negation operator repeated");
-            let at = match of_a_flag {
-                true => end,
-                false => marks[..end]
-                    .iter()
-                    .rposition(|c| *c != '^')
-                    .map_or(0, |space| space + 1),
+    use regex_syntax::ast::ErrorKind;
+    let chars = |offset: usize| pattern[..offset].chars().count();
+    match regex_syntax::ParserBuilder::new()
+        .nest_limit(250)
+        .build()
+        .parse(pattern)
+    {
+        Err(regex_syntax::Error::Parse(error)) => {
+            let at = match error.kind() {
+                ErrorKind::EscapeUnexpectedEof
+                | ErrorKind::FlagUnexpectedEof
+                | ErrorKind::GroupNameUnexpectedEof
+                | ErrorKind::SpecialWordOrRepetitionUnexpectedEof => pattern.chars().count(),
+                _ => chars(error.span().start.offset),
             };
-            return Some((what.to_string(), at));
+            (error.kind().to_string(), at)
         }
-        None
-    })();
-    found.unwrap_or_else(|| (report.to_string(), 0))
+        Err(regex_syntax::Error::Translate(error)) => {
+            (error.kind().to_string(), chars(error.span().start.offset))
+        }
+        _ => (report.to_string(), 0),
+    }
 }
 
 /// `Err(RegexError)` of the pattern `pattern`, which did not compile.

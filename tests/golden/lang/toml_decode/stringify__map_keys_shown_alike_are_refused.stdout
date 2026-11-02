@@ -1,0 +1,5 @@
+Err(toml.stringify: two keys of a map show as the same text: [a, b])
+Err(toml.pretty: two keys of a map show as the same text: [a, b])
+Ok("[1]" = "one"
+"[2]" = "two"
+)

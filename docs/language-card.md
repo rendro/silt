@@ -643,7 +643,7 @@ http.serve(listener: TcpListener, handler: Fn(Request) -> Response) -> ()  -- ca
 ### fs
 
 ```
-type FileStat { size: Int, is_file: Bool, is_dir: Bool, is_symlink: Bool, modified: Int, readonly: Bool, mode: Int, accessed: Option(DateTime), created: Option(DateTime) }
+type FileStat { size: Int, is_file: Bool, is_dir: Bool, is_symlink: Bool, modified: Option(DateTime), readonly: Bool, mode: Int, accessed: Option(DateTime), created: Option(DateTime) }
 fs.copy(from: String, to: String) -> Result((), IoError)
 fs.exists(path: String) -> Bool
 fs.glob(pattern: String) -> Result(List(String), IoError)

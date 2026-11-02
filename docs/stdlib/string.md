@@ -517,7 +517,12 @@ fn main() {
 string.split(s: String, separator: String) -> List(String)
 ```
 
-Splits the string on every occurrence of `separator`.
+Splits the string on every occurrence of `separator`. A separator at the
+start or the end of `s`, or two side by side, gives an empty piece there
+(`string.split(",a,", ",")` is `["", "a", ""]`), and an empty `s` is one
+empty piece. An empty separator splits `s` into its characters, with no
+empty piece at either end: `string.split("abc", "")` is `["a", "b",
+"c"]`, and `string.split("", "")` is `[]`.
 
 ```silt
 import string

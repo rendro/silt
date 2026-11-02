@@ -638,7 +638,7 @@ written as follows:
 |-------|------------|
 | `Int`, `Float`, `String`, `Bool` | a number, a string, `true` or `false` |
 | `List(a)`, a tuple | an array: `(1, "a")` is `[1,"a"]` |
-| `Map(k, v)` | an object; a key that is no `String` is written as its shown text (the `Float` key `1.0` reads `"1.0"`) |
+| `Map(k, v)` | an object; a key that is no `String` is written as its shown text (the `Float` key `1.0` reads `"1.0"`); two keys shown as one text (`["a, b"]` and `["a", "b"]` both read `"[a, b]"`) are a runtime error, `json.stringify: two keys of a map show as the same text: [a, b]` (in `json.encode` too) |
 | a record | an object of its fields, in the order the type declares them: `{"name":"Ada","age":36}` |
 | `Some(x)` | `x`, as `x` is written |
 | `None`, `()` | `null` |

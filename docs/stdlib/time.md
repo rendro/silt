@@ -208,6 +208,8 @@ time.to_datetime(instant: Instant, offset_minutes: Int) -> DateTime
 ```
 
 Converts an `Instant` to a `DateTime` by applying a UTC offset in minutes.
+An offset that takes the `DateTime` past the dates silt holds is a runtime
+error, `time.to_datetime: datetime + offset out of range`.
 
 ```silt
 import time

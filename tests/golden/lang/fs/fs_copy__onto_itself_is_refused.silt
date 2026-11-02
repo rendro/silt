@@ -1,0 +1,14 @@
+import fs
+import io
+
+-- A copy of a file onto itself, by its own name or by another spelling,
+-- is an error, and the file keeps what it held.
+fn main() {
+  let _ = io.write_file("same.txt", "data")
+  println(fs.copy("same.txt", "same.txt"))
+  println(fs.copy("same.txt", "./same.txt"))
+  println(io.read_file("same.txt"))
+  -- A copy to another file still works.
+  println(fs.copy("same.txt", "other.txt"))
+  println(io.read_file("other.txt"))
+}

@@ -1,0 +1,9 @@
+import toml
+
+-- Two keys that show as one text would be one key of the table, and a
+-- value would be lost: toml.stringify and toml.pretty refuse the map.
+fn main() {
+  println(toml.stringify(#{["a, b"]: 1, ["a", "b"]: 2}))
+  println(toml.pretty(#{"m": #{["a, b"]: 1, ["a", "b"]: 2}}))
+  println(toml.stringify(#{[1]: "one", [2]: "two"}))
+}

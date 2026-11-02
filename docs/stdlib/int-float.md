@@ -106,6 +106,12 @@ Parses a string as an integer. Leading/trailing whitespace is trimmed. Returns
 Match on the variant to handle specific cases, or fall back to `Error.message(e)` for
 a human-readable default.
 
+`offset` is the byte of `s` as written, the whitespace in front counted,
+that cannot continue the number (`"1_000"` is `InvalidDigit(1)`,
+`"  12x"` is `InvalidDigit(4)`), or the end of the number where it stops
+short: a lone sign (`"-"` is `InvalidDigit(1)`). A text of nothing but
+whitespace is `Empty`. `float.parse` counts the same way.
+
 ```silt
 import int
 
@@ -336,8 +342,11 @@ Parses a string as a float. Leading/trailing whitespace is trimmed. Returns
 the variants `int.parse` has (`Empty`, `InvalidDigit(offset)`, `Overflow`,
 `Underflow`, `Other(message)`) and `NotFinite`. A `Float` is always finite, so
 `"NaN"` and `"inf"` are rejected as `NotFinite` ("not a finite number"), and a
-literal outside the `Float` range as `Overflow` (`"1e400"`) or `Underflow`
-(`"-1e400"`).
+literal outside the `Float` range as `Overflow` (`"1e400"`, "number out of
+range: above float.max_value") or `Underflow` (`"-1e400"`, "number out of
+range: below float.min_value"). `InvalidDigit(offset)` is counted as for
+`int.parse`: `"1.5.5"` is `InvalidDigit(3)`, `"1e"` (an exponent with no
+digits) `InvalidDigit(2)`, and a lone sign `InvalidDigit(1)`.
 
 ```silt
 import float

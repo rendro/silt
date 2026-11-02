@@ -386,9 +386,18 @@ impl<'c> Writer<'c> {
                         Ok((key, inner(v, Place::Member)?))
                     })
                     .collect();
-                // Sorted by key; of a key shown twice the last value
-                // counts.
-                let members: std::collections::BTreeMap<_, _> = entries?.into_iter().collect();
+                // Sorted by key. Two keys shown as one text would be one
+                // key of the table, and a value would be lost: an error.
+                let mut members = std::collections::BTreeMap::new();
+                for (key, value) in entries? {
+                    if members.contains_key(&key) {
+                        return Err(VmError::new(format!(
+                            "{}: two keys of a map show as the same text: {key}",
+                            self.caller
+                        )));
+                    }
+                    members.insert(key, value);
+                }
                 Data::Table(members.into_iter().collect())
             }
             Value::Tuple(vs) => Data::Tuple(each(vs.iter(), |v| inner(v, Place::Element))?),

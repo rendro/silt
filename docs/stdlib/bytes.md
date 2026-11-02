@@ -31,7 +31,7 @@ work as `Map`/`Set` keys and respect the standard `==` operator.
 | `index_of` | `(Bytes, Bytes) -> Option(Int)` | First offset at which `needle` appears |
 | `length` | `(Bytes) -> Int` | Number of bytes |
 | `slice` | `(Bytes, Int, Int) -> Bytes` | The bytes from `start` up to `end`, both clamped to the length (a negative index is a runtime error) |
-| `split` | `(Bytes, Bytes) -> List(Bytes)` | Split on every occurrence of `sep` (an empty `sep` is a runtime error) |
+| `split` | `(Bytes, Bytes) -> List(Bytes)` | Split on every occurrence of `sep` (an empty `sep` splits into the single bytes) |
 | `starts_with` | `(Bytes, Bytes) -> Bool` | True if `b` begins with `prefix` |
 | `to_base64` | `(Bytes) -> String` | Encode as base64 |
 | `to_hex` | `(Bytes) -> String` | Encode as lowercase hex |
@@ -105,7 +105,7 @@ for granular handling or fall back to `Error.message(e)`:
 |---------|--------|-----------|
 | `InvalidUtf8(offset)` | `Int` | `to_string` on non-UTF-8 input |
 | `InvalidHex(msg)` | `String` | `from_hex` on odd length / non-hex char |
-| `InvalidBase64(msg)` | `String` | `from_base64` on malformed input |
+| `InvalidBase64(msg)` | `String` | `from_base64` on malformed input, or input without its `=` padding (`"aGVsbG8"` for `"aGVsbG8="`) |
 | `ByteOutOfRange(value)` | `Int` | `from_list` when an element is negative or `> 255` |
 | `Other(msg)` | `String` | unclassified failure |
 
@@ -124,5 +124,8 @@ indices to the length, as `string.slice` does, and returns `Bytes` (empty if
   for stable serialization.
 - `bytes.index_of` returns `Some(0)` for an empty `needle`. `bytes.starts_with`
   and `bytes.ends_with` return `true` for an empty prefix / suffix.
-- `bytes.split` with an empty `sep` is a runtime error (ambiguous). Splitting an empty
-  `b` yields `[empty_bytes]` — one element — mirroring `string.split`.
+- `bytes.split` splits as `string.split` does: a `sep` at the start or the
+  end of `b`, or two side by side, gives an empty piece there, and an empty
+  `b` is one empty piece. An empty `sep` splits `b` into its single bytes,
+  with no empty piece at either end, as `string.split` with an empty
+  separator splits a string into its characters.

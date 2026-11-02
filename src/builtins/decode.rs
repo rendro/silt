@@ -107,7 +107,7 @@ fn signed_year(s: &str) -> std::borrow::Cow<'_, str> {
 /// The date that the text `s` of a document writes: `YYYY-MM-DD`, the
 /// year with more digits or a sign where it has them, as silt shows it
 /// (`12026-01-01`, `-001-01-01`).
-fn parse_date(s: &str) -> Result<NaiveDate, chrono::ParseError> {
+pub(crate) fn parse_date(s: &str) -> Result<NaiveDate, chrono::ParseError> {
     NaiveDate::parse_from_str(&signed_year(s), "%Y-%m-%d")
 }
 

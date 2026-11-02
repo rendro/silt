@@ -237,6 +237,9 @@ env.set(key: String, value: String) -> ()
 ```
 
 Sets the environment variable `key` to `value` for the current process.
+A `key` that is empty or holds a `=` or a NUL character, and a `value`
+that holds a NUL character, is no variable the environment can hold: a
+runtime error.
 
 The environment belongs to the whole process, and a change to it is not
 synchronized with a thread that reads it at the same moment: a task, or
@@ -276,7 +279,9 @@ env.remove(name: String) -> ()
 ```
 
 Unsets the environment variable `name` for the current process.
-Idempotent: removing a variable that is not set is not an error.
+Idempotent: removing a variable that is not set is not an error. A
+`name` that no variable can have (empty, or holding a `=` or a NUL
+character) is a runtime error, as for `env.set`.
 
 ```silt
 import env
@@ -358,7 +363,10 @@ fs.copy(from: String, to: String) -> Result((), IoError)
 ```
 
 Copies a file from `from` to `to`. Returns `Ok(())` on success or
-`Err(IoError)` on failure.
+`Err(IoError)` on failure. A `to` that is the file `from` names, by the
+same path or another spelling of it (`dir/./a.txt`) or as a hard link of
+it, is `Err(InvalidInput("source and destination are the same file"))`,
+and nothing is written.
 
 ```silt
 import fs
@@ -439,7 +447,9 @@ fs.list_dir(path: String) -> Result(List(String), IoError)
 ```
 
 Returns `Ok(entries)` with a list of entry names in the given directory,
-or `Err(IoError)` if the path does not exist or is not a directory.
+or `Err(IoError)` if the path does not exist or is not a directory. The
+entries come in the order the file system gives them, which is no order
+in particular: sort the list where the order matters.
 
 ```silt
 import fs
@@ -529,7 +539,7 @@ record FileStat {
     is_file: Bool,
     is_dir: Bool,
     is_symlink: Bool,            // true if the path itself is a symlink
-    modified: Int,               // modified time, unix seconds (0 if unsupported)
+    modified: Option(DateTime),  // last-modified time, or None if unsupported
     readonly: Bool,              // true if the OS reports the path as read-only
     mode: Int,                   // Unix permission bits (e.g. 0o755); 0 on Windows
     accessed: Option(DateTime),  // last-access time, or None if unsupported / noatime
@@ -549,9 +559,11 @@ with `0o777` for permission bits, or compare against `0o040000`,
 because NTFS does not expose a Unix-style permission triple; use
 `readonly` / `is_dir` / `is_file` instead for portable code.
 
-`accessed` and `created` are `Option(DateTime)` because neither
+`modified`, `accessed` and `created` are `Option(DateTime)` because no
 timestamp is universally available:
 
+- **`modified`** is missing only where the platform keeps no
+  modification time.
 - **`accessed`** is missing when the filesystem is mounted with
   `noatime` (common on modern Linux). Where present, it may also be
   coalesced (`relatime`) so it does not strictly reflect the *last*
@@ -560,7 +572,7 @@ timestamp is universally available:
   older ext4 inodes, some network filesystems, and any platform that
   pre-dates the relevant `statx(2)` / `getattrlist(2)` surface.
 
-Both fields are expressed as naive UTC `DateTime` records (no timezone
+All three fields are expressed as naive UTC `DateTime` records (no timezone
 — see the `time` module's "naive" conventions).
 
 Returns `Err(IoError)` when the path does not exist, permission is

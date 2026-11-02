@@ -1,0 +1,18 @@
+-- The original bug was an infinite loop; the harness timeout catches a hang.
+import bytes
+import list
+import string
+
+-- An empty separator splits into the single bytes (bytes.split) and the
+-- characters (string.split), with no empty piece at either end. A
+-- separator that is not empty keeps the empty pieces.
+fn main() {
+  let parts = bytes.split(bytes.from_string("hé"), bytes.empty())
+  println(list.map(parts) { b -> bytes.to_hex(b) })
+  println(list.length(bytes.split(bytes.empty(), bytes.empty())))
+  println(list.length(bytes.split(bytes.from_string(",a,"), bytes.from_string(","))))
+  println(string.split("hé!", ""))
+  println(list.length(string.split("", "")))
+  println(list.length(string.split(",a,", ",")))
+  println(list.length(string.split("", ",")))
+}

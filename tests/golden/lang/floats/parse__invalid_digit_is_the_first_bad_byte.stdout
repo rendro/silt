@@ -1,0 +1,23 @@
+int '1_000': InvalidDigit(1)
+int '  12x': InvalidDigit(4)
+int '--5': InvalidDigit(1)
+int '+': InvalidDigit(1)
+int '-': InvalidDigit(1)
+int '12 ': Ok(12)
+int ' -': InvalidDigit(2)
+int '': cannot parse empty string
+int '  ': cannot parse empty string
+float '1_000.5': InvalidDigit(1)
+float '  1_000.5 ': InvalidDigit(3)
+float '1.5.5': InvalidDigit(3)
+float '1e5e5': InvalidDigit(3)
+float '1e': InvalidDigit(2)
+float '1e+': InvalidDigit(3)
+float '.': InvalidDigit(1)
+float '.e5': InvalidDigit(1)
+float '0x10': InvalidDigit(1)
+float '+': InvalidDigit(1)
+float '-': InvalidDigit(1)
+float ' 2.5x': InvalidDigit(4)
+float '': cannot parse empty string
+float ' ': cannot parse empty string

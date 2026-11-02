@@ -283,7 +283,10 @@ impl Document for ::toml::Value {
 
     fn node(&self) -> Node<'_, Self> {
         match self {
-            ::toml::Value::String(s) => Node::String(s),
+            ::toml::Value::String(s) => match s.strip_prefix(marked()) {
+                Some(literal) => Node::Datetime(literal.to_string()),
+                None => Node::String(s),
+            },
             ::toml::Value::Integer(n) => Node::Int(*n),
             ::toml::Value::Float(f) => Node::Float(*f),
             ::toml::Value::Boolean(b) => Node::Bool(*b),
@@ -295,6 +298,7 @@ impl Document for ::toml::Value {
 
     fn kind(&self) -> &'static str {
         match self {
+            ::toml::Value::String(s) if s.starts_with(marked()) => "datetime",
             ::toml::Value::String(_) => "string",
             ::toml::Value::Integer(_) => "integer",
             ::toml::Value::Float(_) => "float",
@@ -378,8 +382,125 @@ fn text(caller: &str, data: Result<Data, VmError>, pretty: bool) -> Result<Value
 }
 
 /// The TOML document `s`, or the result of a text that is none.
+///
+/// A date or time literal that is no day or time of the calendar
+/// (`1979-02-29`, `24:00:00`) is valid TOML in its form, but the `toml`
+/// crate refuses it while parsing. So that it reads as such a text does
+/// in quotes, with the one message of a date or time that is none
+/// (and as a literal: a datetime, for a `String`), the literal is
+/// written as a marked string ([`marked`]) and the document parsed
+/// again; the marked string decodes as the literal would. Only a text
+/// silt's own reader refuses too is marked, and only so many: what is
+/// left is the crate's error, at its place in `s`. (A document whose
+/// marked strings are more than the ones written here, which no
+/// document can be, is refused with the first error.)
 fn document(s: &str) -> Result<::toml::Value, Value> {
-    ::toml::from_str::<::toml::Value>(s).map_err(|e| toml_de_result_err(&e))
+    const MOST: usize = 64;
+    let mut text = std::borrow::Cow::Borrowed(s);
+    // Where each marked literal ends in `text`, and how many bytes it
+    // grew by: an offset in `text` less the growth before it is the
+    // offset in `s`.
+    let mut grown: Vec<(usize, usize)> = Vec::new();
+    let mut first = None;
+    loop {
+        match ::toml::from_str::<::toml::Value>(&text) {
+            Ok(doc) => {
+                return match first {
+                    Some(e) if marked_strings(&doc) != grown.len() => Err(toml_de_result_err(&e)),
+                    _ => Ok(doc),
+                };
+            }
+            Err(e) => {
+                let at = e.span().map_or(0, |span| span.start);
+                let literal = (grown.len() < MOST)
+                    .then(|| none_literal_at(&text, at))
+                    .flatten();
+                let Some(range) = literal else {
+                    let growth: usize = grown
+                        .iter()
+                        .filter(|(end, _)| *end <= at)
+                        .map(|(_, by)| by)
+                        .sum();
+                    return Err(toml_err_wrap(Value::variant(
+                        bv::TOML_SYNTAX,
+                        [
+                            Value::String(e.message().into()),
+                            Value::Int(at.saturating_sub(growth) as i64),
+                        ],
+                    )));
+                };
+                first.get_or_insert(e);
+                let source = marked().replace('\u{0}', "\\u0000");
+                let marked = format!("\"{source}{}\"", &text[range.clone()]);
+                let by = marked.len() - range.len();
+                let mut next = String::with_capacity(text.len() + by);
+                next.push_str(&text[..range.start]);
+                next.push_str(&marked);
+                next.push_str(&text[range.end..]);
+                grown.push((range.start + marked.len(), by));
+                text = std::borrow::Cow::Owned(next);
+            }
+        }
+    }
+}
+
+/// The start of a string that stands for a date or time literal that
+/// is none ([`document`]): it holds a number drawn once per process, so
+/// no document can know it.
+fn marked() -> &'static str {
+    static MARKED: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    MARKED.get_or_init(|| {
+        use std::hash::{BuildHasher, Hasher};
+        let drawn = || {
+            std::collections::hash_map::RandomState::new()
+                .build_hasher()
+                .finish()
+        };
+        format!("\u{0}silt:datetime:{:016x}{:016x}\u{0}", drawn(), drawn())
+    })
+}
+
+/// How many strings of `doc` are marked ([`marked`]).
+fn marked_strings(doc: &::toml::Value) -> usize {
+    match doc {
+        ::toml::Value::String(s) => usize::from(s.starts_with(marked())),
+        ::toml::Value::Array(items) => items.iter().map(marked_strings).sum(),
+        ::toml::Value::Table(table) => table.values().map(marked_strings).sum(),
+        _ => 0,
+    }
+}
+
+/// The date or time literal of `text` that the parser's error at `at`
+/// is in, if it is one in a value's place whose text silt's reader
+/// refuses as a date, a time and a datetime alike: one that is no day
+/// or time of the calendar.
+fn none_literal_at(text: &str, at: usize) -> Option<std::ops::Range<usize>> {
+    static LITERAL: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(
+            r"^(?:[0-9]{4}-[0-9]{2}-[0-9]{2}(?:[Tt ][0-9]{2}:[0-9]{2}(?::[0-9]{2}(?:\.[0-9]+)?)?(?:[Zz]|[+-][0-9]{2}:[0-9]{2})?)?|[0-9]{2}:[0-9]{2}(?::[0-9]{2}(?:\.[0-9]+)?)?)",
+        )
+        .expect("the pattern of a literal")
+    });
+    let bytes = text.as_bytes();
+    let part = |b: u8| b.is_ascii_digit() || b"-:.+TtZz ".contains(&b);
+    let mut start = at.min(bytes.len());
+    while start > 0 && part(bytes[start - 1]) {
+        start -= 1;
+    }
+    while start < at && bytes[start] == b' ' {
+        start += 1;
+    }
+    let before = text[..start].trim_end_matches([' ', '\t', '\r', '\n']);
+    if !before.ends_with(['=', '[', ',']) {
+        return None;
+    }
+    let end = start + LITERAL.find(&text[start..])?.end();
+    let ends = bytes.get(end).is_none_or(|b| b" \t\r\n,]}#".contains(b));
+    let literal = &text[start..end];
+    let none = decode::parse_date(literal).is_err()
+        && decode::parse_time(literal).is_err()
+        && decode::parse_datetime(literal).is_err();
+    (at <= end && ends && none).then_some(start..end)
 }
 
 /// A document read as one value.

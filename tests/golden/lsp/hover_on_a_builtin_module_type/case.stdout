@@ -352,7 +352,7 @@ type fs.FileStat {
   is_file: Bool,
   is_dir: Bool,
   is_symlink: Bool,
-  modified: Int,
+  modified: Option(time.DateTime),
   readonly: Bool,
   mode: Int,
   accessed: Option(time.DateTime),
