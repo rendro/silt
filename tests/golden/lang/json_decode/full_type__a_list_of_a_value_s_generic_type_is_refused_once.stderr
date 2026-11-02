@@ -1,0 +1,6 @@
+error[type]: `twice` needs the type `List(Box(a))` in full here: `a` is known only by its type
+ --> full_type__a_list_of_a_value_s_generic_type_is_refused_once.silt:24:9
+    |
+ 24 |   twice([Box { v: x }], s)
+    |         ^^^^^^^^^^^^^^ `twice` needs the type `List(Box(a))` in full here: `a` is known only by its type
+  = help: take the type as a parameter, `type a`

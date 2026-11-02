@@ -1,0 +1,29 @@
+-- cmd: check
+-- exit: 1
+-- A list of a value of a generic type whose argument only the value's
+-- type knows (`[Box { v: x }]`), given to a function that decodes its
+-- argument's type (`twice`), is one error: the list's type is needed in
+-- full; its element's decoder says nothing more there.
+import json
+
+trait Dec: json.Decode {
+  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+type Box(a) {
+  v: a,
+}
+
+trait Dec for List(a) where a: json.Decode {}
+
+fn twice(b, s) {
+  Dec.again(b, s)
+}
+
+fn deep(x, s) {
+  twice([Box { v: x }], s)
+}
+
+fn main() {
+  println(deep(1, "[]"))
+}

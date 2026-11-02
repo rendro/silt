@@ -900,6 +900,12 @@ impl TypeChecker {
                 self.refused_calls.push(gap.origin.span);
                 continue;
             }
+            // (A use refused as one that needs its type in full,
+            // `twice([Box { v: x }], s)`, is refused once.)
+            if self.full_type_refused.contains(&gap.origin.span) {
+                self.refused_calls.push(gap.origin.span);
+                continue;
+            }
             let decoder = self.asking_decoder(gap.asker);
             // The function or method that passes the type on, as the use
             // writes it (`store.load`).
