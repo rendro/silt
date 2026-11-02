@@ -1,0 +1,11 @@
+error[type]: type mismatch: expected a type, got a value of type `Rec`
+ --> type_mismatch__a_type_and_a_value_are_named_as_such.silt:33:26
+    |
+ 33 |   println(apply(fn_of(), rec))
+    |                          ^^^ type mismatch: expected a type, got a value of type `Rec`
+
+error[type]: type mismatch: expected a value of type `Int`, got the type `Int`
+ --> type_mismatch__a_type_and_a_value_are_named_as_such.silt:34:17
+    |
+ 34 |   println(twice(Int))
+    |                 ^^^ type mismatch: expected a value of type `Int`, got the type `Int`

@@ -1536,6 +1536,96 @@ impl TypeChecker {
         }
     }
 
+    /// Replace the mismatch just reported (from `reported`) of the
+    /// argument `arg`, the `i`th of a call of `callee`, a value given
+    /// where the function takes a type (`json.parse(s, Cell(Int))`): the
+    /// call says so, naming the parameter, and the variant the value is
+    /// of; what giving the variant a type made the argument report (from
+    /// `before_arg`, at `arg`) goes with it.
+    fn value_for_type_argument(
+        &mut self,
+        (callee, i): (&Expr, usize),
+        (arg, arg_ty): (&Expr, &Type),
+        param: &Type,
+        (before_arg, reported): (usize, usize),
+    ) {
+        let takes_type = |ty: &Type| matches!(ty, Type::Generic(name, _) if name.is_builtin(crate::defs::TYPE_OF));
+        let given = self.apply(arg_ty);
+        if !takes_type(&self.apply(param)) || takes_type(&given) {
+            return;
+        }
+        let is_ours = |e: &Diagnostic| {
+            e.message
+                .starts_with("type mismatch: expected a type, got a value of type")
+        };
+        if self.errors.len() != reported + 1 || !is_ours(&self.errors[reported]) {
+            return;
+        }
+        let Some(who) = Self::callee_label(callee) else {
+            return;
+        };
+        // (A `type` parameter of the function's declaration: not one a
+        // call made a type, `apply(fn_of(), rec)`.)
+        let param_name = match self.res_def(callee.res) {
+            Some(def) if def.module.is_builtin() => (crate::builtins::registry::registry())
+                .named(&resolve(who))
+                .and_then(|row| row.params.get(i).map(|p| (row.signature, p.to_string())))
+                .filter(|(signature, p)| signature.contains(&format!("type {p}")))
+                .map(|(_, p)| p),
+            _ => (callee.res)
+                .and_then(|res| match res {
+                    crate::defs::Res::Def(id) => self.tables.fn_type_params.get(&id),
+                    _ => None,
+                })
+                .and_then(|params| params.iter().find(|(at, _)| *at == i))
+                .map(|(_, name)| resolve(*name)),
+        };
+        let Some(param_name) = param_name else {
+            return;
+        };
+        let shown = self.show_type(&given);
+        // (The variant the value is made by: `Cell` of `Cell(Int)`.)
+        let made_by = match &arg.kind {
+            ExprKind::Call(maker, _) => Some(&**maker),
+            _ => Some(arg),
+        }
+        .and_then(|maker| match self.res_def(maker.res) {
+            Some(def) if matches!(def.kind, crate::defs::DefKind::Variant { .. }) => Some(def.name),
+            _ => None,
+        });
+        let at = self.errors[reported].span;
+        let mut message =
+            format!("`{who}` takes a type as `{param_name}`, not a value of type `{shown}`");
+        let mut help = None;
+        if let Some(variant) = made_by {
+            message.push_str(&format!(": `{variant}` is a variant of `{shown}`"));
+            help = Some(format!("give the type, `{shown}`"));
+        }
+        self.errors.truncate(reported);
+        // (What giving the variant a type reported, a type where a value
+        // is asked.)
+        let mut kept = Vec::new();
+        for e in self.errors.drain(before_arg..) {
+            let cascade = e
+                .message
+                .starts_with("type mismatch: expected a value of type")
+                && e.span.file == arg.span.file
+                && e.span.start >= arg.span.start
+                && e.span.end <= arg.span.end;
+            if !cascade {
+                kept.push(e);
+            }
+        }
+        self.errors.extend(kept);
+        let mut diagnostic = Diagnostic::error(Code::TypeMismatch, at, message);
+        if let Some(help) = help {
+            diagnostic = diagnostic.with_help(help);
+        }
+        // (Re-inserting a diagnostic built for the call, in place of the
+        // mismatch: not a new emission site of `self.error(...)`.)
+        self.errors.push(diagnostic);
+    }
+
     /// Replace the mismatch just reported (the errors from `reported`)
     /// of the argument at `at`, the `i`th of a call of `callee`, when a
     /// call `x.m(..)` read the parameter as the other kind of argument
@@ -2730,23 +2820,11 @@ impl TypeChecker {
         Some(ty)
     }
 
-    /// Report the type `name`, a `kind` (`record`, `builtin type`), given
-    /// `got` types where it takes `expected`, at `span`: the type is
-    /// unknown.
-    fn type_arguments_mismatch(
-        &mut self,
-        kind: &str,
-        name: &str,
-        (expected, got): (usize, usize),
-        span: Span,
-    ) -> Type {
-        self.error(
-            Code::ArityMismatch,
-            format!(
-                "type argument count mismatch for {kind} '{name}': expected {expected}, got {got}"
-            ),
-            span,
-        );
+    /// Report the type `ty`, given types where it takes another number
+    /// of them, at `span`: the type is unknown.
+    fn type_arguments_mismatch(&mut self, ty: TypeRef, span: Span) -> Type {
+        let message = self.type_arguments_message(&resolve(ty.name), ty);
+        self.error(Code::ArityMismatch, message, span);
         Type::Error
     }
 
@@ -2824,12 +2902,7 @@ impl TypeChecker {
                 if let Some(alias) = alias {
                     let expected = self.type_arity(alias).unwrap_or(0);
                     if expected != args.len() {
-                        return Some(self.type_arguments_mismatch(
-                            "alias",
-                            &resolve(alias.name),
-                            (expected, args.len()),
-                            span,
-                        ));
+                        return Some(self.type_arguments_mismatch(alias, span));
                     }
                     let ty = Type::Generic(alias, args);
                     return Some(crate::types::canonical::canonicalize(
@@ -2857,33 +2930,20 @@ impl TypeChecker {
                     }
                     // A type given more or fewer types than it takes.
                     (head, _) => {
-                        let (kind, name, expected) = match &head {
-                            Type::List(_) => ("builtin type", "List".to_string(), 1),
-                            Type::Set(_) => ("builtin type", "Set".to_string(), 1),
-                            Type::Channel(_) => ("builtin type", "Channel".to_string(), 1),
-                            Type::Map(..) => ("builtin type", "Map".to_string(), 2),
+                        let (ty, expected) = match &head {
+                            Type::List(_) => (TypeRef::builtin("List"), 1),
+                            Type::Set(_) => (TypeRef::builtin("Set"), 1),
+                            Type::Channel(_) => (TypeRef::builtin("Channel"), 1),
+                            Type::Map(..) => (TypeRef::builtin("Map"), 2),
                             Type::Generic(r, params) if !r.is_builtin(crate::defs::TYPE_OF) => {
-                                let builtin = crate::defs::builtin_types().get(r.id.0.0 as usize);
-                                let kind = if builtin.is_some() {
-                                    "builtin type"
-                                } else if self.tables.records.contains_key(r) {
-                                    "record"
-                                } else {
-                                    "enum"
-                                };
-                                (kind, resolve(r.name), params.len())
+                                (*r, params.len())
                             }
                             _ => return None,
                         };
                         if expected == args.len() {
                             return None;
                         }
-                        Some(self.type_arguments_mismatch(
-                            kind,
-                            &name,
-                            (expected, args.len()),
-                            span,
-                        ))
+                        Some(self.type_arguments_mismatch(ty, span))
                     }
                 }
             }
@@ -3259,6 +3319,7 @@ impl TypeChecker {
                     if spelled.is_none() && self.names_generic_type(arg) {
                         self.open_type_arguments.insert(arg.span);
                     }
+                    let before_arg = self.errors.len();
                     let arg_ty = match spelled {
                         Some(ty) => Type::type_of(ty),
                         None => self.infer_expr(arg, env),
@@ -3298,6 +3359,12 @@ impl TypeChecker {
                                 param,
                                 reported,
                                 at,
+                            );
+                            self.value_for_type_argument(
+                                (callee, i),
+                                (arg, &arg_ty),
+                                param,
+                                (before_arg, reported),
                             );
                         } else {
                             self.pass_on_reading(callee, i, &arg_ty);
@@ -5959,7 +6026,7 @@ fn without_held(ty: &Type) -> Type {
 }
 
 /// For each parameter `names` names, whether `body` reads a field of it
-/// (`t.n`, not a call `t.zero()`).
+/// (`t.n`, or a record update `t.{ n: 3 }`; not a call `t.zero()`).
 fn read_fields(body: &mut Expr, names: &[Option<Symbol>]) -> Vec<bool> {
     (names.iter())
         .map(|name| name.is_some_and(|name| reads_field_of(body, name)))
@@ -5980,6 +6047,13 @@ fn reads_field_of(expr: &mut Expr, name: Symbol) -> bool {
         ExprKind::FieldAccess(obj, ..)
             if matches!(obj.kind, ExprKind::Ident(n) if n == name)
                 && obj.res == Some(crate::defs::Res::Local) =>
+        {
+            true
+        }
+        // (A record update of it reads its fields as a field read does.)
+        ExprKind::RecordUpdate { expr: base, .. }
+            if matches!(base.kind, ExprKind::Ident(n) if n == name)
+                && base.res == Some(crate::defs::Res::Local) =>
         {
             true
         }

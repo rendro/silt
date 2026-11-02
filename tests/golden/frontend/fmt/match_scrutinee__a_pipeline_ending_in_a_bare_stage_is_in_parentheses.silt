@@ -1,0 +1,34 @@
+-- cmd: fmt
+-- A match whose scrutinee ends in a stage of a pipeline written as a
+-- bare name, which the body's `{` could follow as a trailing closure,
+-- has the scrutinee in parentheses: one spelling, with or without them
+-- in the source. A stage that is called keeps its form.
+import list
+
+fn main() {
+  let xs = [1, 2]
+  let a = match (xs |> list.head) {
+    Some(x) -> x
+    None -> 0
+  }
+  let b = match xs |> list.head {
+    Some(x) -> x
+    None -> 0
+  }
+  let c = match (1 == xs |> list.length) {
+    true -> 1
+    false -> 0
+  }
+  let d = match 1 == xs |> list.length {
+    true -> 1
+    false -> 0
+  }
+  println(a + b + c + d)
+}
+
+fn called(xs) {
+  match xs |> list.take(1) {
+    [] -> "none"
+    _ -> "some"
+  }
+}

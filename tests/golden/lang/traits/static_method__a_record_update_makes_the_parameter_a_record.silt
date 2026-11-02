@@ -1,0 +1,26 @@
+-- A parameter the function updates as a record (`t.{ n: 3 }`) is a
+-- record, as one whose field it reads is: `t.zero()` calls its field,
+-- though a trait in sight has a method `zero` that makes a value.
+trait Zero {
+  fn zero() -> Self
+}
+
+trait Zero for Int {
+  fn zero() -> Self { 0 }
+}
+
+type Rec {
+  n: Int,
+  zero: Fn() -> Int,
+}
+
+fn f(t) {
+  let z = t.zero()
+  let r = t.{ n: 3 }
+  (z, r.n)
+}
+
+fn main() {
+  let rec = Rec { n: 1, zero: { -> 5 } }
+  println(f(rec))
+}

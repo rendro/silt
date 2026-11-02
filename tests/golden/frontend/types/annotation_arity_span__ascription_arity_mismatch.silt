@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: type argument count mismatch for enum 'Box': expected 2, got 1
+-- stderr-contains: `Box` takes 2 type arguments here: write `Box(a, b)`
 -- stderr-contains: annotation_arity_span__ascription_arity_mismatch.silt:7:17
 type Box(a, b) { Two(a, b) }
 fn main() {

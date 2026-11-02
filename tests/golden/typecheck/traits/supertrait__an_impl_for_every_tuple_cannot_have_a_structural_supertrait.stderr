@@ -1,0 +1,5 @@
+error[type]: trait 'S' cannot be implemented for every tuple: its supertrait 'Equal' holds for a tuple only when it holds for the tuple's parts, and an impl for every tuple has no bounds on its parts
+ --> supertrait__an_impl_for_every_tuple_cannot_have_a_structural_supertrait.silt:9:1
+   |
+ 9 | trait S for Tuple {
+   | ^^^^^^^^^^^^^^^^^^^ trait 'S' cannot be implemented for every tuple: its supertrait 'Equal' holds for a tuple only when it holds for the tuple's parts, and an impl for every tuple has no bounds on its parts

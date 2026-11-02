@@ -1,0 +1,16 @@
+-- cmd: lsp
+-- lsp: hover 9:4
+-- lsp: hover 10:4
+-- lsp: signature 15:20
+-- The letters a signature names its type variables by skip the names of
+-- the function's parameters, in hover and signature help: `fn pair(a: c,
+-- b: d) -> (c, d)`, `fn first(a: b, n: Int) -> b`.
+
+fn pair(a, b) { (a, b) }
+fn first(a: x, n: Int) -> x { a }
+fn ident(x) { x }
+
+fn main() {
+  let _p = pair(1, "s")
+  println(first(ident(1), 2))
+}

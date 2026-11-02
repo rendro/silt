@@ -1017,7 +1017,7 @@ builtins! {
                     stream_handle.shut_down();
                     let not_utf8 = std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
-                        "stream did not contain valid UTF-8",
+                        "invalid input: stream did not contain valid UTF-8",
                     );
                     Some(super::tcp::tcp_io_err(super::tcp::Doing::Using, &not_utf8))
                 }

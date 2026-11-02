@@ -1,0 +1,11 @@
+> hover 9:4
+```silt
+fn pair(a: c, b: d) -> (c, d)
+```
+> hover 10:4
+```silt
+fn first(a: b, n: Int) -> b
+```
+> signature 15:20
+fn first(a: b, n: Int) -> b
+argument 1: a: b

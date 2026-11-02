@@ -1,0 +1,22 @@
+-- An impl for `Tuple(a, b)` is for pairs: a pair reaches it, with the
+-- bounds its header writes on the parts.
+trait S {
+  fn s(self) -> Int
+}
+
+trait S for Tuple(a, b) {
+  fn s(self) -> Int { 2 }
+}
+
+trait T: Equal {
+  fn t(self) -> String
+}
+
+trait T for Tuple(a, b) where a: Equal, b: Equal {
+  fn t(self) -> String { "pair" }
+}
+
+fn main() {
+  println(S.s((1, 2)))
+  println(T.t((1, "x")))
+}
