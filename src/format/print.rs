@@ -1463,8 +1463,13 @@ impl Printer<'_> {
                         ends_scrutinee: closure && !bare,
                         ..Ctx::in_header(Header::Match)
                     };
+                    // (Parentheses with a comment at their inside stay as
+                    // they are: then they are the pair.)
+                    let commented = self
+                        .cur
+                        .comments_inside_parens(self.cur.wrappers(scrutinee.span.end));
                     let doc = self.expr(scrutinee, ctx);
-                    match bare {
+                    match bare && !commented {
                         true => docs.push(Doc::concat(vec![Doc::text("("), doc, Doc::text(")")])),
                         false => docs.push(doc),
                     }
