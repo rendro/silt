@@ -1,0 +1,41 @@
+-- cmd: check
+-- exit: 1
+-- A function with no annotations that passes its type to another that
+-- gives it to toml's decoder (`tw` to `tonly`) is named on the way, as
+-- one that gives it to json's is (`jonly`), here and in another module
+-- (`util.tw` passes it to `util.tonly`). (A function that gives it to
+-- both decoders itself names the decoder that refuses it, `toml.parse`.)
+import json
+import toml
+import util
+
+type Blob {
+  data: Bytes,
+}
+
+fn tonly(s, t) {
+  toml.parse(s, t)
+}
+
+fn jonly(s, t) {
+  json.parse(s, t)
+}
+
+fn tw(s, t) {
+  tonly(s, t)
+}
+
+fn mix1(s, t) {
+  (jonly(s, t), tonly(s, t))
+}
+
+fn both(s, t) {
+  (json.parse(s, t), toml.parse(s, t))
+}
+
+fn main() {
+  let _ = tw("x", Blob)
+  let _ = mix1("x", Blob)
+  let _ = util.tw("x", Blob)
+  let _ = both("x", Blob)
+}

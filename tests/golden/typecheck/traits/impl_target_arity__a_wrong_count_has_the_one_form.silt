@@ -1,0 +1,47 @@
+-- cmd: check
+-- exit: 1
+-- An impl head with a number of type arguments its type does not take
+-- (`Box(Int, Int)`, `W(Int)`, `Int(a)`, `List(a, b)`, `Map(a)`, an
+-- alias `Pair(a, b)`) is refused in the one form for type-argument
+-- counts, as an annotation is, the caret on the type.
+trait Q {
+  fn q(self) -> Int
+}
+
+type Box(a) {
+  v: a,
+}
+
+type W {
+  n: Int,
+}
+
+type Pair(a) = (a, a)
+
+trait Q for Box(Int, Int) {
+  fn q(self) -> Int { 1 }
+}
+
+trait Q for Int(a) {
+  fn q(self) -> Int { 1 }
+}
+
+trait Q for W(Int) {
+  fn q(self) -> Int { 1 }
+}
+
+trait Q for List(a, b) {
+  fn q(self) -> Int { 1 }
+}
+
+trait Q for Map(a) {
+  fn q(self) -> Int { 1 }
+}
+
+trait Q for Pair(a, b) {
+  fn q(self) -> Int { 1 }
+}
+
+fn main() {
+  println(1)
+}

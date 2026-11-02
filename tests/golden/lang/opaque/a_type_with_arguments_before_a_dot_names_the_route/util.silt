@@ -1,0 +1,15 @@
+import json
+
+pub trait Mk: json.Decode {
+  fn mk(s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+pub type Bx(a) {
+  v: a,
+}
+
+trait Mk for Bx(a) where a: json.Decode {}
+
+pub fn ufb(s: String, type t) -> Result(Bx(t), json.JsonError) where t: json.Decode {
+  Bx(t).mk(s)
+}

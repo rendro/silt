@@ -234,6 +234,14 @@ pub struct TypeChecker {
     /// The method each such bound is declared for, as a note names it
     /// (`Loader.load`).
     pub(super) bound_methods: HashMap<TyVar, Symbol>,
+    /// The variable of each `json.Decode` bound of an impl's header,
+    /// with the impl's trait and the name of its type: a use of the
+    /// impl's methods gives the variable a type the impl decodes.
+    pub(super) impl_decode_vars: HashMap<TyVar, (TraitKey, Symbol)>,
+    /// Each name a `let` binds to another module's definition (`let
+    /// oenc = other.enc`: `other.enc`), for the note of a refusal at a
+    /// call of it (`through_let`).
+    pub(super) let_links: HashMap<Symbol, Symbol>,
     /// The alias a use names the type a decoder is given by, at the
     /// place of the type argument.
     pub(super) decode_aliases: HashMap<Span, Symbol>,
@@ -464,6 +472,9 @@ pub struct TypeChecker {
     pub(super) valued_vars: std::collections::HashSet<TyVar>,
     /// The places refused by `refuse_type_without_value`, once each.
     pub(super) full_type_refused: std::collections::HashSet<Span>,
+    /// The uses that give a decoder a type nothing decides, with their
+    /// refusal (`settle_undecided_decodes`).
+    pub(super) undecided_decodes: Vec<(Span, Diagnostic)>,
     /// The uses of a trait's method in the body being checked (calls,
     /// values, through the trait or a type), with the type `Self` stands
     /// for: checked once the body is, if the impl's dictionary carries its
@@ -725,6 +736,8 @@ impl TypeChecker {
             encoded_asked: HashMap::new(),
             bound_impls: HashMap::new(),
             bound_methods: HashMap::new(),
+            impl_decode_vars: HashMap::new(),
+            let_links: HashMap::new(),
             decode_aliases: HashMap::new(),
             sig_rows: std::collections::HashSet::new(),
             anon_rows: std::collections::HashSet::new(),
@@ -789,6 +802,7 @@ impl TypeChecker {
             header_params: Vec::new(),
             valued_vars: Default::default(),
             full_type_refused: Default::default(),
+            undecided_decodes: Vec::new(),
             full_type_uses: Vec::new(),
             unheld_full_uses: Vec::new(),
             unheld_full_calls: Vec::new(),
@@ -1501,6 +1515,7 @@ impl TypeChecker {
                     _,
                 ) => {
                     let names = collect_pattern_vars(pattern);
+                    self.note_let_link(pattern, value);
                     let is_value =
                         self.check_top_level_let(pattern, ty.as_ref(), value, *span, env);
                     // (`let top = go`: a call of `top` reads its parameters
@@ -2045,6 +2060,7 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
     checker.settle_builtin_needs();
     checker.settle_decode_gaps();
     checker.settle_encode_owners();
+    checker.settle_undecided_decodes();
     checker.record_def_owners(program, &env);
     checker.drop_errors_of_refused_calls();
     checker.report_private_in_schemes(program, &env);

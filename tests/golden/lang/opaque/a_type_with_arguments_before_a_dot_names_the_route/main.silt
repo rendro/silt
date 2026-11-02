@@ -1,0 +1,64 @@
+-- cmd: check
+-- exit: 1
+-- A function that hands its type parameter to a method through a type
+-- with arguments before a dot (`Bx(t).mk(s)`, `Box(t).decode(v)`) is
+-- refused at a use that gives it an opaque type of another module, as
+-- `a_type_with_arguments_before_a_dot_is_refused` refuses it written
+-- there, with the note that names the way: the method, and what the
+-- method's trait passes `Self` to (`json.parse`), or the impl's own
+-- `decode`; through another function, of this module or another, too.
+import json
+import mail
+import util
+
+trait Mk: json.Decode {
+  fn mk(s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+type Bx(a) {
+  v: a,
+}
+
+trait Mk for Bx(a) where a: json.Decode {}
+
+type Box(a) {
+  v: a,
+}
+
+trait json.Decode for Box(a) where a: json.Decode {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match a.decode(value) {
+      Ok(x) -> Ok(Box { v: x })
+      Err(e) -> Err(e)
+    }
+  }
+}
+
+fn fb(s: String, type t) -> Result(Bx(t), json.JsonError) where t: json.Decode {
+  Bx(t).mk(s)
+}
+
+fn outer(s: String, type t) -> Result(Bx(t), json.JsonError) where t: json.Decode {
+  fb(s, t)
+}
+
+fn bd(v: json.Value, type t) -> Result(Box(t), json.JsonError) where t: json.Decode {
+  Box(t).decode(v)
+}
+
+fn fi(t) {
+  Bx(t).mk("\{}")
+}
+
+fn mine(s: String, type t) -> Result(util.Bx(t), json.JsonError) where t: json.Decode {
+  util.ufb(s, t)
+}
+
+fn main() {
+  println(fb("\{}", mail.Email))
+  println(outer("\{}", mail.Email))
+  println(bd(json.Null, mail.Email))
+  println(fi(mail.Email))
+  println(util.ufb("\{}", mail.Email))
+  println(mine("\{}", mail.Email))
+}

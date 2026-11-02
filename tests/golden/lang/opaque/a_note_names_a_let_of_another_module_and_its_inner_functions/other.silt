@@ -1,0 +1,30 @@
+import json
+import toml
+
+pub fn enc(x: a) -> String where a: json.Encode {
+  json.stringify([x])
+}
+
+pub fn dec(s: String, type a) -> Result(List(a), json.JsonError) where a: json.Decode {
+  json.parse(s, List(a))
+}
+
+pub fn tonly(x: a) -> Result(String, toml.TomlError) where a: json.Encode {
+  toml.stringify(#{"k": x})
+}
+
+pub fn mix1(x: a) -> (String, Result(String, toml.TomlError)) where a: json.Encode {
+  (json.stringify(x), tonly(x))
+}
+
+pub fn mix2(x: a) -> (Result(String, toml.TomlError), String) where a: json.Encode {
+  (tonly(x), enc(x))
+}
+
+pub fn mix3(x: a) -> Result(String, toml.TomlError) where a: json.Encode {
+  tonly(x)
+}
+
+pub fn ptoml(s: String, type a) -> Result(a, toml.TomlError) where a: json.Decode {
+  toml.parse(s, a)
+}

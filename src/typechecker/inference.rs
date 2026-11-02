@@ -673,7 +673,10 @@ impl TypeChecker {
         callee: Option<Symbol>,
         span: Span,
     ) {
-        if !self.carries_full_type(key) || self.full_type_refused.contains(&span) {
+        if !self.carries_full_type(key)
+            || self.full_type_refused.contains(&span)
+            || (self.undecided_decodes.iter()).any(|(at, _)| *at == span)
+        {
             return;
         }
         let recv = self.apply(recv);
@@ -2973,6 +2976,18 @@ impl TypeChecker {
                 }
             }
         }
+    }
+
+    /// Keep the definition of another module a `let` binds a name to
+    /// (`let oenc = other.enc`), or forget what the name was bound to.
+    pub(super) fn note_let_link(&mut self, pattern: &Pattern, value: &Expr) {
+        let PatternKind::Ident(name) = pattern.kind else {
+            return;
+        };
+        match Self::callee_label(value).filter(|label| resolve(*label).contains('.')) {
+            Some(label) => self.let_links.insert(name, label),
+            None => self.let_links.remove(&name),
+        };
     }
 
     /// The name a callee is written with, for a message about a call of
@@ -5413,6 +5428,7 @@ impl TypeChecker {
         match stmt {
             Stmt::Let { pattern, ty, value } => {
                 let value_span = value.span;
+                self.note_let_link(pattern, value);
                 // (`let h = go`: a call of `h` reads its parameters as
                 // `go` does.)
                 if let PatternKind::Ident(name) = pattern.kind

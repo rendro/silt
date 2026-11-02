@@ -1318,12 +1318,45 @@ impl TypeChecker {
         }
     }
 
+    /// The bounds of an impl's header as a use of its method `passer`
+    /// (`Bx.mk`) owes them: a `json.Decode` bound's type is passed to
+    /// the method, which a note names. (The method of a `json.Decode`
+    /// impl is the decoder itself: `impl_asker`.)
+    fn header_passed_to(header: &[Pred], tr: TraitKey, passer: Symbol) -> Vec<Pred> {
+        let mut preds = header.to_vec();
+        if Self::is_decode(tr) {
+            return preds;
+        }
+        for pred in &mut preds {
+            if let Pred::Trait {
+                asker: Some(asker), ..
+            } = pred
+                && asker.passer.is_none()
+            {
+                asker.passer = Some(passer);
+            }
+        }
+        preds
+    }
+
     /// Whether the header of the impl `ti` of `tr`, for the type
     /// `written`, fits the trait's kind: an impl of a trait of type
     /// constructors writes `_` for its type's first type argument
     /// (`trait Functor for Result(_, e)`), an impl of a trait of types
     /// names every type argument. What does not fit is reported.
     fn impl_header_fits(&mut self, ti: &TraitImpl, tr: TraitKey, written: TypeRef) -> bool {
+        // (`trait Q for W()`: empty parentheses, which the header ends
+        // with, are no spelling of a type, as in an annotation.)
+        if ti.target_type_args.is_empty() && ti.header_span.end > ti.target_type_span.end {
+            let shown = Qualifier::written(ti.target_module, ti.target_type);
+            let message = self.type_arguments_message(&shown, written);
+            let span = Span {
+                start: ti.target_type_span.start,
+                ..ti.header_span
+            };
+            self.error(Code::ArityMismatch, message, span);
+            return false;
+        }
         let holes: Vec<usize> = (ti.target_type_args.iter().enumerate())
             .filter(|(_, arg)| is_hole(arg))
             .map(|(i, _)| i)
@@ -1780,6 +1813,13 @@ impl TypeChecker {
                         continue;
                     }
                     if let Type::Var(tv) = resolved {
+                        // (A note follows the type a use gives the
+                        // variable through the impl: `json_decode`'s
+                        // `impl_asker`.)
+                        if Self::is_decode(*trait_name) {
+                            let at = (impl_trait, target_type.name);
+                            self.impl_decode_vars.insert(self.rigid_rep_var(tv), at);
+                        }
                         impl_level_constraints.push(Pred::bound(
                             tv,
                             *trait_name,
@@ -2300,7 +2340,9 @@ impl TypeChecker {
             // header and the bounds the trait declares for the method.
             // The method's own `where` clauses may restate these; one
             // that adds a bound is an error below.
-            let mut method_constraints = impl_level_constraints.clone();
+            let passer = intern(&format!("{target_type}.{}", method.name));
+            let mut method_constraints =
+                Self::header_passed_to(&impl_level_constraints, impl_trait, passer);
             method_constraints.extend(declared_bounds);
             for wc in &method.where_clauses {
                 // A bound the resolver resolved to nothing: it reported why.
@@ -2490,8 +2532,9 @@ impl TypeChecker {
                 for v in free_vars_in(ty) {
                     mapping.entry(v).or_insert_with(|| self.fresh_var());
                 }
-                let mut method_constraints = impl_level_constraints.clone();
                 let passer = intern(&format!("{target_type}.{name}"));
+                let mut method_constraints =
+                    Self::header_passed_to(&impl_level_constraints, impl_trait, passer);
                 // (A `json.Decode` bound asks what the trait's body asks.)
                 method_constraints.extend(
                     Self::bounds_under(info, *name, &mapping)
@@ -2876,45 +2919,30 @@ impl TypeChecker {
             // `Fn`, `Fun`, `Handle`) carry `arity: None` and are
             // intentionally skipped — they do not participate in this
             // trait-impl arity check.
-            let builtin_arity: Option<(usize, &'static str)> = builtin_type_name(written)
+            let builtin_arity: Option<usize> = builtin_type_name(written)
                 .and_then(crate::types::builtins::lookup)
-                .and_then(|b| b.arity.map(|a| (a as usize, "builtin")));
+                .and_then(|b| b.arity.map(|a| a as usize));
             // User-declared type aliases are in the arity table too:
             // `trait Show for Pair(a)` where `type Pair(a) = (a, a)` is
             // checked for its arity, and does not fall through to the
             // `_ => Type::Generic("Pair", [tv])` arm at the bottom, an
             // impl whose self_type would never unify with a concrete
             // `(Int, Int)` receiver.
-            let alias_arity: Option<(usize, &'static str)> = self
-                .tables
-                .type_alias_arity
-                .get(&written)
-                .copied()
-                .map(|a| (a, "alias"));
-            let expected_arity = self
-                .tables
-                .record_param_var_ids
-                .get(&written)
-                .map(|v| (v.len(), "record"))
-                .or_else(|| {
-                    self.tables
-                        .enums
-                        .get(&written)
-                        .map(|e| (e.params.len(), "enum"))
-                })
-                .or(alias_arity)
-                .or(builtin_arity);
-            if let Some((expected, kind)) = expected_arity
+            // (A record, an enum or an alias; a record of no type
+            // parameters takes none: `trait Q for W(Int)`.)
+            let expected_arity = self.type_arity(written).or(builtin_arity);
+            // (In the one form for a number of type arguments, as an
+            // annotation's: `Box(Int, Int)`, `Int(a)`.)
+            if let Some(expected) = expected_arity
                 && expected != ti.target_type_args.len()
             {
-                self.error(Code::ArityMismatch,
-                    format!(
-                        "type argument count mismatch for {kind} '{}' in trait impl: expected {expected}, got {}",
-                        resolve(written.name),
-                        ti.target_type_args.len()
-                    ),
-                    ti.span,
-                );
+                let shown = Qualifier::written(ti.target_module, ti.target_type);
+                let message = self.type_arguments_message(&shown, written);
+                let span = Span {
+                    start: ti.target_type_span.start,
+                    ..ti.header_span
+                };
+                self.error(Code::ArityMismatch, message, span);
             }
             // Resolve through a dedicated Generic form so the head symbol
             // is preserved alongside the impl-level tyvar args.
@@ -2971,9 +2999,7 @@ impl TypeChecker {
                     // A primitive takes no arguments (the error above
                     // says so): the impl is for the type itself, not a
                     // phantom `Int(_)` that no value has.
-                    _ if matches!(expected_arity, Some((0, "builtin"))) => {
-                        Self::type_from_name(target_type)
-                    }
+                    _ if builtin_arity == Some(0) => Self::type_from_name(target_type),
                     _ => Type::Generic(written, resolved_args),
                 }
             }

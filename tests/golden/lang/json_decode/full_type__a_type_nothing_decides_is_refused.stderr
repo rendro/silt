@@ -1,0 +1,55 @@
+error[type]: cannot infer the type this use of 'twice' needs to implement trait 'json.Decode'
+ --> full_type__a_type_nothing_decides_is_refused.silt:30:17
+    |
+ 30 |   println(twice([], "[1]"))
+    |                 ^^ cannot infer the type this use of 'twice' needs to implement trait 'json.Decode'
+  = help: annotate the value it is given
+
+error[type]: cannot infer the type this use of 'again' needs to implement trait 'json.Decode'
+ --> full_type__a_type_nothing_decides_is_refused.silt:31:11
+    |
+ 31 |   println(Dec.again([], "[1]"))
+    |           ^^^^^^^^^ cannot infer the type this use of 'again' needs to implement trait 'json.Decode'
+  = help: annotate the value it is given
+
+error[type]: cannot infer the type this use of 'twice' needs to implement trait 'json.Decode'
+ --> full_type__a_type_nothing_decides_is_refused.silt:32:17
+    |
+ 32 |   println(twice(None, "1"))
+    |                 ^^^^ cannot infer the type this use of 'twice' needs to implement trait 'json.Decode'
+  = help: annotate the value it is given
+
+error[type]: cannot infer the type this use of 'twice' needs to implement trait 'json.Decode'
+ --> full_type__a_type_nothing_decides_is_refused.silt:34:17
+    |
+ 34 |   println(twice(e, "[1]"))
+    |                 ^ cannot infer the type this use of 'twice' needs to implement trait 'json.Decode'
+  = help: annotate the value it is given
+
+error[type]: cannot infer the type this use of 'twice' needs to implement trait 'json.Decode'
+ --> full_type__a_type_nothing_decides_is_refused.silt:35:17
+    |
+ 35 |   println(twice(mk(), "[1]"))
+    |                 ^^^^ cannot infer the type this use of 'twice' needs to implement trait 'json.Decode'
+  = help: annotate the value it is given
+
+error[type]: cannot infer the type this use of 'twice' needs to implement trait 'json.Decode'
+ --> full_type__a_type_nothing_decides_is_refused.silt:36:17
+    |
+ 36 |   println(twice([[]], "[[1]]"))
+    |                 ^^^^ cannot infer the type this use of 'twice' needs to implement trait 'json.Decode'
+  = help: annotate the value it is given
+
+error[type]: cannot infer the type this use of 'twice' needs to implement trait 'json.Decode'
+ --> full_type__a_type_nothing_decides_is_refused.silt:37:17
+    |
+ 37 |   println(twice([None], "[1]"))
+    |                 ^^^^^^ cannot infer the type this use of 'twice' needs to implement trait 'json.Decode'
+  = help: annotate the value it is given
+
+error[type]: cannot infer the type this use of 'twice' needs to implement trait 'json.Decode'
+ --> full_type__a_type_nothing_decides_is_refused.silt:38:17
+    |
+ 38 |   println(twice(top, "[1]"))
+    |                 ^^^ cannot infer the type this use of 'twice' needs to implement trait 'json.Decode'
+  = help: annotate the value it is given

@@ -1,0 +1,55 @@
+error[type]: type 'mail.Email' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+ --> main.silt:27:22
+    |
+ 27 |   println(other.mix3(e))
+    |                      ^ type 'mail.Email' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = note: `other.mix3` passes it to `other.tonly`, which passes it to `toml.stringify`
+  = help: encode it inside module 'mail', or write `trait json.Encode for Email` there
+
+error[type]: type 'mail.Email' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+ --> main.silt:28:22
+    |
+ 28 |   println(other.mix2(e))
+    |                      ^ type 'mail.Email' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = note: `other.mix2` passes it to `other.tonly`, which passes it to `toml.stringify`
+  = help: encode it inside module 'mail', or write `trait json.Encode for Email` there
+
+error[type]: type 'mail.Email' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+ --> main.silt:29:16
+    |
+ 29 |   println(mixm(e))
+    |                ^ type 'mail.Email' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = note: `mixm` passes it to `tl`, which passes it to `toml.stringify`
+  = help: encode it inside module 'mail', or write `trait json.Encode for Email` there
+
+error[type]: type 'mail.Email' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+ --> main.silt:30:15
+    |
+ 30 |   println(otl(e))
+    |               ^ type 'mail.Email' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = note: `otl` passes it to `other.tonly`, which passes it to `toml.stringify`
+  = help: encode it inside module 'mail', or write `trait json.Encode for Email` there
+
+error[type]: type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+ --> main.silt:31:19
+    |
+ 31 |   println(opt("", mail.Email))
+    |                   ^^^^^^^^^^ type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+  = note: `opt` passes it to `other.ptoml`, which passes it to `toml.parse`
+  = help: decode it inside module 'mail', or write `trait json.Decode for Email` there
+
+error[type]: type 'mail.Email' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+ --> main.silt:32:16
+    |
+ 32 |   println(omix(e))
+    |                ^ type 'mail.Email' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = note: `omix` passes it to `other.mix1`, which passes it to `json.stringify`
+  = help: encode it inside module 'mail', or write `trait json.Encode for Email` there
+
+error[type]: type 'mail.Email' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+ --> main.silt:34:17
+    |
+ 34 |   println(local(e))
+    |                 ^ type 'mail.Email' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = note: `local` passes it to `other.tonly`, which passes it to `toml.stringify`
+  = help: encode it inside module 'mail', or write `trait json.Encode for Email` there

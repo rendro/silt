@@ -443,7 +443,34 @@ impl TypeChecker {
     pub(super) fn encode_note(&self, passer: Symbol, asked: Asked, ty: &Type) -> Option<String> {
         let refused = self.opaque_module_in(ty);
         let (links, encoder) = self.encoded_through(asked, refused)?;
+        let (passer, links) = self.through_let(Some(passer), passer, links);
         Some(super::builtin_checks::passes_note(passer, &links, encoder))
+    }
+
+    /// The function a note says passes a type on, and the links after
+    /// it, at a use whose callee is written `callee`: a `let` of another
+    /// module's definition (`let oenc = other.enc`) passes it to that
+    /// definition (`oenc` passes it to `other.enc`, which ...).
+    pub(super) fn through_let(
+        &self,
+        callee: Option<Symbol>,
+        passer: Symbol,
+        mut links: Vec<Symbol>,
+    ) -> (Symbol, Vec<Symbol>) {
+        let Some((callee, target)) =
+            callee.and_then(|callee| Some((callee, *self.let_links.get(&callee)?)))
+        else {
+            return (passer, links);
+        };
+        if passer == callee {
+            links.insert(0, target);
+            return (callee, links);
+        }
+        if target == passer || resolve(target).ends_with(&format!(".{passer}")) {
+            links.insert(0, target);
+            return (callee, links);
+        }
+        (passer, links)
     }
 
     /// The functions a `json.Encode` bound's body hands its type through
@@ -534,9 +561,24 @@ impl TypeChecker {
             };
             links.extend(rest);
             links.push(encoder);
-            found.push((owners, links));
+            found.push((owners, self.exported_links(links)));
         }
         found
+    }
+
+    /// The functions on a route of a definition of the module, as
+    /// another module reads them: one of this module by its module's
+    /// name (`other.tonly`), as the call there writes it.
+    fn exported_links(&self, links: Vec<Symbol>) -> Vec<Symbol> {
+        if self.is_cell {
+            return links;
+        }
+        (links.into_iter())
+            .map(|link| match resolve(link).contains('.') {
+                true => link,
+                false => intern(&format!("{}.{link}", self.module_name)),
+            })
+            .collect()
     }
 
     /// Keep, of each top-level function of the module, the owners of
@@ -680,6 +722,25 @@ impl TypeChecker {
         free_vars_in(&whole).is_empty().then_some(whole)
     }
 
+    /// What the `json.Decode` bound of an impl's header on `var` asks
+    /// for, where no body of the module says: the impl's type is decoded
+    /// as its trait's methods decode `Self` (`json.parse(s, Self)` of a
+    /// trait with `json.Decode` among its supertraits), or by the impl's
+    /// own `decode` (`Box.decode`).
+    fn impl_asker(&self, var: TyVar) -> Option<Asker> {
+        let &(tr, target) = self.impl_decode_vars.get(&var)?;
+        if Self::is_decode(tr) {
+            return Some(Asker {
+                by: Asked::Builtin(intern(&format!("{target}.decode"))),
+                passer: None,
+            });
+        }
+        let self_var = self.tables.traits.get(&tr)?.self_var;
+        self.bound_askers
+            .get(&self.rigid_rep_var(self_var))
+            .copied()
+    }
+
     /// The decoder `asker` comes from: a declared bound asks for what
     /// its body gives the variable to, if that is known.
     pub(super) fn asking_decoder(&self, asker: Option<Asker>) -> Option<Symbol> {
@@ -700,7 +761,12 @@ impl TypeChecker {
             return None;
         }
         seen.push(var);
-        if let Some(asker) = self.bound_askers.get(&var) {
+        if let Some(asker) = self
+            .bound_askers
+            .get(&var)
+            .copied()
+            .or_else(|| self.impl_asker(var))
+        {
             return self.asked_decoder(asker.by, seen);
         }
         let mut found = None;
@@ -783,7 +849,8 @@ impl TypeChecker {
             let next = (refused
                 .flatten()
                 .and_then(|module| self.refused_route(var, module)))
-            .or_else(|| self.bound_askers.get(&var).copied());
+            .or_else(|| self.bound_askers.get(&var).copied())
+            .or_else(|| self.impl_asker(var));
             let Some(next) = next else {
                 break;
             };
@@ -796,7 +863,9 @@ impl TypeChecker {
     /// `asker` as another module or a later REPL entry reads it: the
     /// decoder, where it is known.
     pub(super) fn settled_asker(&self, asker: Option<Asker>) -> Option<Asker> {
-        let routes = self.settled_routes(asker);
+        let routes: Vec<crate::types::ThroughRoute> = (self.settled_routes(asker).into_iter())
+            .map(|(owners, links)| (owners, self.exported_links(links)))
+            .collect();
         let by = match self.asking_decoder(asker) {
             Some(decoder) if routes.iter().all(|(_, links)| links.is_empty()) => {
                 Asked::Builtin(decoder)
@@ -900,6 +969,12 @@ impl TypeChecker {
                 self.refused_calls.push(gap.origin.span);
                 continue;
             }
+            // (A use refused as one that needs its type in full,
+            // `twice([Box { v: x }], s)`, is refused once.)
+            if self.full_type_refused.contains(&gap.origin.span) {
+                self.refused_calls.push(gap.origin.span);
+                continue;
+            }
             let decoder = self.asking_decoder(gap.asker);
             // The function or method that passes the type on, as the use
             // writes it (`store.load`).
@@ -943,6 +1018,7 @@ impl TypeChecker {
                 let refused =
                     (self.opaque_module_in(&ty)).filter(|module| !owners.contains(module));
                 let links = self.passed_through_refused(gap.asker, refused);
+                let (passer, links) = self.through_let(gap.origin.callee, passer, links);
                 diagnostic = (diagnostic)
                     .with_note(super::builtin_checks::passes_note(passer, &links, decoder));
             }

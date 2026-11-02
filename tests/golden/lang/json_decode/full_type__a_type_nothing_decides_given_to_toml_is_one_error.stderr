@@ -1,0 +1,6 @@
+error[type]: cannot infer the type this use of 'tagain' needs to implement trait 'json.Decode'
+ --> full_type__a_type_nothing_decides_given_to_toml_is_one_error.silt:21:11
+    |
+ 21 |   println(TDec.tagain(R { xs: [] }, "xs = [1]"))
+    |           ^^^^^^^^^^^ cannot infer the type this use of 'tagain' needs to implement trait 'json.Decode'
+  = help: annotate the value it is given

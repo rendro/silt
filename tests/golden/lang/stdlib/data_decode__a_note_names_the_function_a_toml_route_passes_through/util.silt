@@ -1,0 +1,9 @@
+import toml
+
+fn tonly(s, t) {
+  toml.parse(s, t)
+}
+
+pub fn tw(s, t) {
+  tonly(s, t)
+}

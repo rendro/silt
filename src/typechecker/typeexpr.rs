@@ -800,6 +800,16 @@ impl TypeChecker {
                 // undeclared `Frobnitz` reports "unknown type
                 // 'Frobnitz'" at the annotation span, matching the
                 // bare-name path.
+                // (A builtin type given a number of arguments it does
+                // not take, `Map(String)`, `List(Int, Int)`, `Int(a)`.)
+                if let Some(ty) = ty
+                    && builtin_type_name(ty).is_some()
+                    && self.type_arity(ty).is_none()
+                {
+                    let message = self.type_arguments_message(&shown, ty);
+                    self.error(Code::ArityMismatch, message, te.span);
+                    return Type::Error;
+                }
                 let Some((ty, expected)) = ty.and_then(|ty| Some((ty, self.type_arity(ty)?)))
                 else {
                     self.error(

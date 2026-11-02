@@ -1,8 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: type argument count mismatch
--- stderr-contains: 'Box'
--- stderr-contains: expected 1, got 2
+-- stderr-contains: `Box` takes 1 type argument here: write `Box(a)`
 type Box(a) { Box(a) }
 trait X { fn x(self) -> Int }
 trait X for Box(a, b) {

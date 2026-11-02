@@ -222,7 +222,7 @@ impl TypeChecker {
             } => Pred::Builtin {
                 check,
                 subject,
-                passer: Some(self.passer_at(passer, &origin)),
+                passer: Some(self.passer_path_at(passer, &origin)),
             },
             Pred::Via {
                 tr,
@@ -787,10 +787,11 @@ impl TypeChecker {
                         if !matches!(subject, Type::Var(_)) {
                             self.wanted[i].solved = true;
                             let owners = self.owners_at(Some(self.wanted[i].ev));
+                            let (passer, links) = super::builtin_checks::passer_links(passer);
                             self.check_builtin_argument(
                                 check,
                                 &subject,
-                                (passer, &[]),
+                                (passer, &links),
                                 &owners,
                                 origin,
                             );

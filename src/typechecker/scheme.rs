@@ -282,10 +282,20 @@ impl TypeChecker {
                     },
                     // The definition passes the type on to the builtin;
                     // each use names its own type (`written`).
+                    // (Through the function it passed it to: `tw` passes
+                    // it to `tonly`, `passer_path`.)
                     Pred::Builtin { check, passer, .. } => Pred::Builtin {
                         check: check.unwritten(),
                         subject: Type::Var(subject),
-                        passer: passer_of(*passer, subject),
+                        passer: match (passer_of(*passer, subject), *passer) {
+                            (Some(outer), Some(inner)) if outer != inner => {
+                                let (head, links) = super::builtin_checks::passer_path(inner);
+                                let links: Vec<Symbol> =
+                                    std::iter::once(head).chain(links).collect();
+                                Some(super::builtin_checks::join_passer_path(outer, &links))
+                            }
+                            (outer, _) => outer,
+                        },
                     },
                     Pred::Via {
                         tr,
@@ -496,6 +506,46 @@ impl TypeChecker {
             let error = self.undecided_trait_args(*tr, args, subject, wanted.origin);
             self.errors.push(error);
         }
+        // A type nothing decides that an impl's header asks `json.Decode`
+        // of, where the impl's dictionary carries its type in full
+        // (`twice([], s)`, `Dec.again(None, s)`): the decoder is given
+        // it where the code runs, and nothing gives it a value. (First:
+        // what fixes a structural trait's subject to `()` must not
+        // decide it. Refused once every check is done, where nothing
+        // else refuses the use as needing its type in full:
+        // `settle_undecided_decodes`.)
+        for wanted in &mut recorded {
+            let Goal::Pred(Pred::Trait { tr, subject, .. }) = &wanted.goal else {
+                continue;
+            };
+            let Some((key, _)) = wanted.origin.header else {
+                continue;
+            };
+            if wanted.solved
+                || wanted.in_scheme
+                || !Self::is_decode(*tr)
+                || !matches!(self.apply(subject), Type::Var(_))
+                || self.waits_for_outer(subject)
+                || !self.carries_full_type(key)
+                || self.full_type_refused.contains(&wanted.origin.span)
+                || (self.undecided_decodes.iter()).any(|(at, _)| *at == wanted.origin.span)
+            {
+                continue;
+            }
+            wanted.solved = true;
+            let bound = self.show_bound(*tr, &[]);
+            let what = match wanted.origin.callee {
+                Some(callee) => format!("this use of '{callee}'"),
+                None => "this".to_string(),
+            };
+            let error = Diagnostic::error(
+                Code::AmbiguousType,
+                wanted.origin.span,
+                format!("cannot infer the type {what} needs to implement trait '{bound}'"),
+            )
+            .with_help("annotate the value it is given");
+            self.undecided_decodes.push((wanted.origin.span, error));
+        }
         // (What stood at the places the scope's goals leave is gone.)
         let kept = self.closed_mark;
         self.waiting_decoders.retain(|&k| k < kept);
@@ -612,6 +662,36 @@ impl TypeChecker {
                     )
                     .with_help("annotate the value it is given"),
                 );
+            }
+        }
+    }
+
+    /// Refuse each use `settle_bounds` found to give a decoder a type
+    /// nothing decides (`undecided_decodes`), once at its place: a
+    /// refusal there of the use as needing its type in full (`twice(Box
+    /// { v: [] }, s)`: `Box(List(a))`) is the one error; else this one,
+    /// in the place of what a decoder said of the type the scope's end
+    /// picked for the part (`toml.parse` of `R(())`), which nobody wrote.
+    pub(super) fn settle_undecided_decodes(&mut self) {
+        for (span, error) in std::mem::take(&mut self.undecided_decodes) {
+            let in_full = |e: &Diagnostic| {
+                e.span == span
+                    && e.code == Code::InvalidMethodCall
+                    && e.message.contains(" in full here: ")
+            };
+            match self.errors.iter().position(in_full) {
+                Some(first) => {
+                    let mut index = 0;
+                    self.errors.retain(|e| {
+                        let keep = e.span != span || index == first;
+                        index += 1;
+                        keep
+                    });
+                }
+                None => {
+                    self.errors.retain(|e| e.span != span);
+                    self.errors.push(error);
+                }
             }
         }
     }

@@ -1,0 +1,41 @@
+-- cmd: check
+-- exit: 1
+-- A value whose type has a part nothing decides (`[]`, `None`, a `let`
+-- of `[]`, a function that returns `[]`, a top-level `let`) given to a
+-- function that decodes its argument's type (`twice`, `Dec.again`) is
+-- refused: the decoder is given the type where the code runs, and
+-- nothing decides it. (Encoding one runs: `json.stringify([])`;
+-- full_type__a_type_decided_by_a_later_use_decodes.)
+import json
+
+trait Dec: json.Decode {
+  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+trait Dec for List(a) where a: json.Decode {}
+
+trait Dec for Option(a) where a: json.Decode {}
+
+fn twice(b, s) {
+  Dec.again(b, s)
+}
+
+fn mk() {
+  []
+}
+
+let top = []
+
+fn main() {
+  println(twice([], "[1]"))
+  println(Dec.again([], "[1]"))
+  println(twice(None, "1"))
+  let e = []
+  println(twice(e, "[1]"))
+  println(twice(mk(), "[1]"))
+  println(twice([[]], "[[1]]"))
+  println(twice([None], "[1]"))
+  println(twice(top, "[1]"))
+  let n: List(Int) = top
+  println(n)
+}

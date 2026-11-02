@@ -1325,18 +1325,10 @@ impl TypeChecker {
                     // catch-all arm at the bottom of `unify`).
                     out.push(self.type_mismatch(&t1, &t2));
                 } else if a1.len() != a2.len() {
-                    // Directional convention: t1 (=a1) is the "got" side,
-                    // t2 (=a2) is the "expected" side (see the Record arm
-                    // above and the unify() callsite convention). Earlier
-                    // wording had a1/a2 reversed.
-                    out.push(Fault::new(
-                        Code::ArityMismatch,
-                        format!(
-                            "type argument count mismatch for {n1}: expected {}, got {}",
-                            a2.len(),
-                            a1.len()
-                        ),
-                    ));
+                    // (In the one form for a number of type arguments:
+                    // the number the type takes.)
+                    let message = self.type_arguments_message(&self.spell_type(*n1), *n1);
+                    out.push(Fault::new(Code::ArityMismatch, message));
                 } else {
                     for (x, y) in a1.iter().zip(a2.iter()) {
                         self.unify_into(x, y, out);
