@@ -1,0 +1,29 @@
+error[type]: type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+ --> main.silt:16:32
+    |
+ 16 |   println(bridge.hmixed("\{}", mail.Email))
+    |                                ^^^^^^^^^^ type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+  = note: `bridge.hmixed` passes it to `json.parse`
+  = help: decode it inside module 'mail', or write `trait json.Decode for Email` there
+
+error[type]: type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+ --> main.silt:17:26
+    |
+ 17 |   println(util.hm("\{}", mail.Email))
+    |                          ^^^^^^^^^^ type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+  = note: `util.hm` passes it to `bridge.hmixed`, which passes it to `json.parse`
+  = help: decode it inside module 'mail', or write `trait json.Decode for Email` there
+
+error[type]: type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+ --> main.silt:18:37
+    |
+ 18 |   println(util.choose(false)("\{}", mail.Email))
+    |                                     ^^^^^^^^^^ type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+  = help: decode it inside module 'mail', or write `trait json.Decode for Email` there
+
+error[type]: type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+ --> main.silt:23:20
+    |
+ 23 |   println(k("\{}", mail.Email))
+    |                    ^^^^^^^^^^ type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+  = help: decode it inside module 'mail', or write `trait json.Decode for Email` there

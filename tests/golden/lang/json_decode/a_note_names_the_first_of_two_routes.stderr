@@ -1,0 +1,15 @@
+error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Set(Int)`, which has no decoder
+ --> a_note_names_the_first_of_two_routes.silt:40:26
+    |
+ 40 |   let _ = mix3(src, "x", Blob)
+    |                          ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Set(Int)`, which has no decoder
+  = note: `mix3` passes it to `Loader.load`, which passes it to `json.parse`
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Set(Int)`, which has no decoder
+ --> a_note_names_the_first_of_two_routes.silt:41:26
+    |
+ 41 |   let _ = mix4(src, "x", Blob)
+    |                          ^^^^ `json.parse` cannot decode `Blob`: field `data` has type `Set(Int)`, which has no decoder
+  = note: `mix4` passes it to `jonly`, which passes it to `json.parse`
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these

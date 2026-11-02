@@ -1,6 +1,6 @@
 error[runtime]: a `stream.buffered` stage failed and its output was never read: division by zero
- --> wave7_s1__a_failure_the_next_stage_raised_is_reported_once.silt:10:34
+ --> wave7_s1__a_failure_the_next_stage_raised_is_reported_once.silt:11:12
     |
- 10 |   let a = stream.map(src) { x -> 10 / (x - 2) }
-    |                                  ^^^^^^^^^^^^ a `stream.buffered` stage failed and its output was never read: division by zero
+ 11 |   let _b = stream.buffered(a, 4)
+    |            ^^^^^^^^^^^^^^^^^^^^^ a `stream.buffered` stage failed and its output was never read: division by zero
   = help: read its output, where the failure is raised, or drop the stage if you don't need it

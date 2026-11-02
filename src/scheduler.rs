@@ -2605,6 +2605,7 @@ fn report_unjoined_failures(inner: &Inner) -> usize {
             task_id: handle.id,
             owner: 0,
             stage: handle.stage(),
+            stage_call: handle.stage_call_of_a_failed_input(),
             error,
         };
         let d = failure.report_error().to_diagnostic();
@@ -2721,6 +2722,9 @@ pub struct UnjoinedFailure {
     /// The name of the stream stage the task ran (`stream.map`): its
     /// failure was in its output, which nobody read.
     pub stage: Option<&'static str>,
+    /// The place of the call that started the stage, if it failed with
+    /// the failure of an earlier stage, which it read from its input.
+    pub stage_call: Option<crate::source::Span>,
     /// The error the task ended with, as the task raised it.
     pub error: VmError,
 }
@@ -2728,9 +2732,15 @@ pub struct UnjoinedFailure {
 impl UnjoinedFailure {
     /// The error to report: the task's error, with a message that names
     /// the task and a help line that says what to do. Span and call
-    /// stack are the task's.
+    /// stack are the task's; those of a stage that failed with an
+    /// earlier stage's failure are its call's: the stage the report
+    /// names.
     pub fn report_error(&self) -> VmError {
         let mut error = self.error.clone();
+        if let Some(at) = self.stage_call {
+            error.span = Some(at);
+            error.call_stack.clear();
+        }
         match self.stage {
             Some(stage) => {
                 error.message = unread_stage_failure_headline(stage, &self.error.message);
@@ -2801,6 +2811,7 @@ pub fn take_unjoined_failures() -> UnjoinedFailures {
                 task_id: handle.id,
                 owner: handle.owner(),
                 stage: handle.stage(),
+                stage_call: handle.stage_call_of_a_failed_input(),
                 error,
             })
         })

@@ -1,0 +1,32 @@
+-- cmd: check
+-- exit: 1
+-- An opaque type encoded outside its module through a function with no
+-- annotations (`jinf`), a `let` of another module's encoder (`oenc`) or a
+-- closure (`c`) is refused with the note that names the way to the
+-- encoder, as the decoding twins are.
+import json
+import mail
+import other
+
+fn jinf(x) {
+  json.stringify([x])
+}
+
+fn jdec(s, t) {
+  json.parse(s, t)
+}
+
+let oenc = other.enc
+let odec = other.dec
+
+fn main() {
+  let e = mail.mk("a")
+  println(jinf(e))
+  println(oenc(e))
+  let c = { x -> json.stringify([x]) }
+  println(c(e))
+  println(jdec("\{}", mail.Email))
+  println(odec("[]", mail.Email))
+  let d = { s, t -> json.parse(s, t) }
+  println(d("\{}", mail.Email))
+}

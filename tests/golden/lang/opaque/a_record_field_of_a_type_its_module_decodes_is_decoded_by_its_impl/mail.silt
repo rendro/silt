@@ -1,0 +1,22 @@
+import json
+
+pub opaque type Email {
+  addr: String,
+}
+
+pub type Box(a) {
+  v: a,
+}
+
+pub fn addr(b: Box(Email)) -> String {
+  b.v.addr
+}
+
+trait json.Decode for Box(Email) {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    match value {
+      json.String(text) -> Ok(Box { v: Email { addr: text } })
+      _ -> Err(json.Other("an address is a string"))
+    }
+  }
+}

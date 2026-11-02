@@ -43,6 +43,7 @@ error[type]: type 'mail.User' cannot be encoded outside module 'mail': it is opa
     |
  50 |   println(inferred(u))
     |                    ^ type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = note: `inferred` passes it to `toml.stringify`
   = help: encode it inside module 'mail', or write `trait json.Encode for User` there
 
 error[type]: type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
@@ -50,4 +51,5 @@ error[type]: type 'mail.User' cannot be encoded outside module 'mail': it is opa
     |
  51 |   println(inferred_list(u))
     |                         ^ type 'mail.User' cannot be encoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Encode' impl for it
+  = note: `inferred_list` passes it to `toml.stringify`
   = help: encode it inside module 'mail', or write `trait json.Encode for User` there
