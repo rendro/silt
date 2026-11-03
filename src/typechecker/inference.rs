@@ -2855,6 +2855,50 @@ impl TypeChecker {
         Some(ty)
     }
 
+    /// Keep `e`, a generic type or alias written alone, as written, for a
+    /// decoder's refusal at the argument `at` (`bare_written`).
+    fn note_bare_written(&mut self, e: &Expr, at: Span) {
+        let Some(Type::Generic(name, args)) = e.ty.as_ref().map(|ty| self.apply(ty)) else {
+            return;
+        };
+        if !name.is_builtin(crate::defs::TYPE_OF) {
+            return;
+        }
+        let head = args
+            .first()
+            .and_then(|ty| super::builtin_checks::head_ref(&self.apply(ty)));
+        if let Some(head) = head {
+            let written = intern(&super::names::shown_arg(e));
+            self.bare_written.entry(at).or_insert((written, head));
+        }
+    }
+
+    /// `note_bare_written` of the first generic type or alias written
+    /// alone among the types `e` gives another type (`L` of `List(L)`).
+    fn note_bare_part(&mut self, e: &Expr, at: Span) {
+        match &e.kind {
+            ExprKind::Call(_, args) => {
+                for arg in args {
+                    if self.names_generic_type(arg) {
+                        self.note_bare_written(arg, at);
+                        return;
+                    }
+                    self.note_bare_part(arg, at);
+                }
+            }
+            ExprKind::Tuple(elems) => {
+                for elem in elems {
+                    if self.names_generic_type(elem) {
+                        self.note_bare_written(elem, at);
+                        return;
+                    }
+                    self.note_bare_part(elem, at);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Report the type `ty`, given types where it takes another number
     /// of them, at `span`: the type is unknown.
     fn type_arguments_mismatch(&mut self, ty: TypeRef, span: Span) -> Type {
@@ -3400,7 +3444,8 @@ impl TypeChecker {
                         _ => None,
                     };
                     let full = spelled.is_some();
-                    if spelled.is_none() && self.names_generic_type(arg) {
+                    let alone = spelled.is_none() && self.names_generic_type(arg);
+                    if alone {
                         self.open_type_arguments.insert(arg.span);
                     }
                     let before_arg = self.errors.len();
@@ -3408,6 +3453,11 @@ impl TypeChecker {
                         Some(ty) => Type::type_of(ty),
                         None => self.infer_expr(arg, env),
                     };
+                    if alone {
+                        self.note_bare_written(arg, arg.span);
+                    } else if full {
+                        self.note_bare_part(arg, arg.span);
+                    }
                     self.expected_closure = None;
                     let reported = self.errors.len();
                     let arg_ty = match param {

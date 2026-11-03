@@ -257,6 +257,21 @@ impl TypeChecker {
         // (`List(Int)`, `(Int, String)`): a decoder that takes any value
         // reads it as the type of a field, each part as one. (A type
         // with its arguments left open, `List`, is not one type.)
+        // (A generic type or alias written alone in the type argument,
+        // `L` of `List(L)`, `Box` given to `p(s, type t)` that decodes
+        // `List(t)`: it is what is refused, named as written.)
+        if self.open_type_arguments.contains(&span)
+            && let Some(&(name, head)) = self.bare_written.get(&span)
+            && written != Some(name)
+        {
+            let part = match head_ref(ty) == Some(head) {
+                true => Some(ty),
+                false => part_with_head(ty, head),
+            };
+            if let Some(part) = part {
+                return self.decode_refusal(builtin_name, decoding, Some(name), part, owner, span);
+            }
+        }
         // (A part written alone, `List(Box)`: that part is what is
         // refused, as it would be at the top.)
         if self.open_type_arguments.contains(&span)
@@ -892,4 +907,35 @@ pub(super) fn decoded_variables(ty: &Type) -> Vec<Type> {
         }
     }
     out
+}
+
+/// The head of `ty`, a type named by one: `Box` of `Box(Int)`, `List` of
+/// `List(Int)`.
+pub(super) fn head_ref(ty: &Type) -> Option<TypeRef> {
+    match ty {
+        Type::Generic(t, _) => Some(*t),
+        Type::List(_) => Some(TypeRef::builtin("List")),
+        Type::Map(..) => Some(TypeRef::builtin("Map")),
+        Type::Set(_) => Some(TypeRef::builtin("Set")),
+        Type::Channel(_) => Some(TypeRef::builtin("Channel")),
+        _ => None,
+    }
+}
+
+/// The first part of `ty` below its top whose head is `head`.
+fn part_with_head(ty: &Type, head: TypeRef) -> Option<&Type> {
+    let parts: Vec<&Type> = match ty {
+        Type::Generic(_, args) => args.iter().collect(),
+        Type::List(t) | Type::Set(t) | Type::Channel(t) => vec![&**t],
+        Type::Map(k, v) => vec![&**k, &**v],
+        Type::Tuple(ts) => ts.iter().collect(),
+        _ => Vec::new(),
+    };
+    (parts.iter().copied())
+        .find(|part| head_ref(part) == Some(head))
+        .or_else(|| {
+            parts
+                .into_iter()
+                .find_map(|part| part_with_head(part, head))
+        })
 }
