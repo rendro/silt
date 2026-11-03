@@ -14,13 +14,14 @@ pub fn builtin_modules() -> &'static [&'static str] {
     NAMES.get_or_init(|| registry().modules.iter().map(|m| m.name).collect())
 }
 
-/// Returns true if `name` is a builtin module (io, string, int, etc.).
-/// Whether `name` (an identifier written after `import`) can name a
-/// module: a module's name is all lowercase.
+/// Whether `name` (written after `import`, or a module file's name) can
+/// name a module: a module's name has no upper-case letter, in any
+/// script.
 pub fn is_lowercase_module_name(name: &str) -> bool {
-    !name.chars().any(|c| c.is_ascii_uppercase())
+    !name.chars().any(char::is_uppercase)
 }
 
+/// Returns true if `name` is a builtin module (io, string, int, etc.).
 pub fn is_builtin_module(name: &str) -> bool {
     registry().module(name).is_some()
 }

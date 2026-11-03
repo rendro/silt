@@ -148,7 +148,7 @@ pub(super) fn modules_named_like_builtins(
                         .and_then(|stem| stem.to_str())
                         .is_some_and(|stem| {
                             crate::module::is_builtin_module(stem)
-                                || stem.chars().any(|c| c.is_ascii_uppercase())
+                                || !crate::module::is_lowercase_module_name(stem)
                         })
             })
             .collect();
@@ -189,6 +189,6 @@ pub(super) fn upper_case_file_name(name: &str, file: FileId) -> Diagnostic {
     )
     .with_help(format!(
         "rename `{name}.silt` to `{}.silt`",
-        name.to_ascii_lowercase()
+        name.to_lowercase()
     ))
 }
