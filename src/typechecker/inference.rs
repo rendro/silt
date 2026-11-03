@@ -2266,7 +2266,10 @@ impl TypeChecker {
                 // (A generic alias alone, `L` of `type L(a) = List(a)`,
                 // holds open arguments, as `List` alone does.)
                 if self.type_arity(alias).is_some_and(|arity| arity > 0) {
-                    self.open_vars.extend(free_vars_in(&target));
+                    for v in free_vars_in(&target) {
+                        self.open_vars.insert(v);
+                        self.open_var_names.insert(v, alias.name);
+                    }
                 }
                 Some(Type::type_of(target))
             }
