@@ -1466,9 +1466,8 @@ impl<'a> Compiler<'a> {
         let tail = self.in_tail_position;
         let before = self.emitter().height();
         if let Some(ty) = self.written_type(expr) {
-            let mut leaves = Vec::new();
-            written_leaves(expr, &mut leaves);
-            self.compile_type_value(ty, &leaves, expr.span)?;
+            let ty = ty.clone();
+            self.compile_checked_type(expr, &ty)?;
         } else if let Some((row, bounds)) = self.builtin_with_dicts(expr) {
             // (A builtin is no closure to bind its dictionaries to.)
             self.compile_builtin_value(row, bounds, expr.span)?;
@@ -1630,12 +1629,6 @@ impl<'a> Compiler<'a> {
                 self.emit(Asm::Constant { k: idx }, span)?;
             }
 
-            // A type used as a value is its descriptor.
-            ExprKind::Ident(_) if let Some(descriptor) = self.type_value(expr.res) => {
-                let idx = self.add_constant(descriptor, span)?;
-                self.emit(Asm::Constant { k: idx }, span)?;
-            }
-
             ExprKind::Ident(_) if let Some(def) = self.value_def(expr.res) => {
                 self.emit_global_value(def, span)?;
             }
@@ -1676,12 +1669,6 @@ impl<'a> Compiler<'a> {
             // A variant: `EnumName.Variant`, `time.Monday`, `m.Color.Red`.
             ExprKind::FieldAccess(..) if let Some(variant) = self.variant_value(expr) => {
                 let idx = self.add_constant(variant, span)?;
-                self.emit(Asm::Constant { k: idx }, span)?;
-            }
-
-            // `m.Pt` used as a value: the type's descriptor.
-            ExprKind::FieldAccess(..) if let Some(descriptor) = self.type_value(expr.res) => {
-                let idx = self.add_constant(descriptor, span)?;
                 self.emit(Asm::Constant { k: idx }, span)?;
             }
 
@@ -2403,8 +2390,9 @@ impl<'a> Compiler<'a> {
                 // `T.decode(v)`: the VM's method of the type, which takes
                 // no value of it; the type's descriptor chooses it. (An
                 // alias gives the type it stands for in full, `Box(Int)`.)
-                let full = written_type_of(receiver).and_then(|ty| self.type_constant(ty));
-                let Some(descriptor) = full.or_else(|| self.type_value(receiver.res)) else {
+                let Some(descriptor) = written_type_of(receiver)
+                    .and_then(|ty| (self.type_constant(ty)).or_else(|| self.type_alone(ty)))
+                else {
                     return Err(checker_missed(span, "a method of no named type"));
                 };
                 let idx = self.add_constant(descriptor, span)?;
@@ -2863,11 +2851,36 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    /// The value of a type used as a value, if the resolution names a
-    /// type: a primitive type's descriptor, or the descriptor of a record,
-    /// enum or container type.
-    fn type_value(&self, res: Option<crate::defs::Res>) -> Option<Value> {
-        Some(self.type_descriptor(self.res_type(res)?))
+    /// Push the value of a type used as a value, `expr`, from `ty`, the
+    /// type the checker decided it is (never from the name written): a
+    /// constant if no type variable is in it; a type written in full
+    /// with type variables (`List(t)`) made of the values of the names
+    /// that hold them; a generic type written alone whose arguments
+    /// nothing decides (`List`, `Option` given to a `type m`) the type
+    /// alone. The checker refuses every decoder given such a type.
+    fn compile_checked_type(&mut self, expr: &Expr, ty: &Type) -> Result<(), Diagnostic> {
+        let span = expr.span;
+        if let Some(value) = self.type_constant(ty) {
+            let k = self.add_constant(value, span)?;
+            return self.emit(Asm::Constant { k }, span);
+        }
+        if matches!(expr.kind, ExprKind::Ident(_) | ExprKind::FieldAccess(..)) {
+            let value = (self.type_alone(ty)).ok_or_else(|| {
+                checker_missed(span, &format!("the type `{}` as a value", shown(ty)))
+            })?;
+            let k = self.add_constant(value, span)?;
+            return self.emit(Asm::Constant { k }, span);
+        }
+        let mut leaves = Vec::new();
+        written_leaves(expr, &mut leaves);
+        self.compile_type_value(ty, &leaves, span)
+    }
+
+    /// The value of the generic type `ty` alone, its head (`List` of
+    /// `List(a)`).
+    fn type_alone(&self, ty: &Type) -> Option<Value> {
+        let (head, _) = self.type_parts(ty)?;
+        Some(Value::TypeDescriptor(head))
     }
 
     /// Push the value of the type `ty`, which a type argument written in
@@ -2923,13 +2936,8 @@ impl<'a> Compiler<'a> {
         let written = match &expr.kind {
             ExprKind::Call(callee, _) => names_type(callee),
             ExprKind::Tuple(_) => true,
-            // (An alias left general, `type AnyBox(a) = Box(a)`, is its
-            // head's value.)
-            ExprKind::Ident(_) | ExprKind::FieldAccess(..) => {
-                matches!(expr.res, Some(crate::defs::Res::Def(id))
-                    if self.units.defs.get(id).kind == crate::defs::DefKind::TypeAlias)
-                    && written_type_of(expr).is_some_and(|ty| self.type_constant(ty).is_some())
-            }
+            // (A type's or an alias's name alone, `Int`, `Box`, `IntBox`.)
+            ExprKind::Ident(_) | ExprKind::FieldAccess(..) => names_type(expr),
             _ => false,
         };
         written.then(|| written_type_of(expr)).flatten()
@@ -3009,7 +3017,7 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    /// The descriptor of the type `ty`, its value (`type_value`).
+    /// The descriptor of the type `ty`, its value.
     pub(super) fn type_descriptor(&self, ty: crate::types::TypeRef) -> Value {
         let name = resolve(ty.name);
         if crate::defs::builtin_types()
