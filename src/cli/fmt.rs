@@ -43,7 +43,8 @@ pub(crate) fn dispatch(args: &[String]) {
             println!("`.silt` file or a directory; directories are expanded recursively");
             println!("to every `.silt` descendant. Pass `.` as the sentinel to recursively");
             println!("format the current directory, or run with no positionals inside a");
-            println!("silt package to recursively format every `.silt` under cwd.");
+            println!("silt package to recursively format every `.silt` under cwd");
+            println!("of this package, not of a package inside it.");
             println!();
             println!("Options:");
             println!("  --check    Check formatting without modifying files");
