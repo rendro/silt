@@ -180,6 +180,9 @@ pub struct TypeChecker {
     /// one whose body decodes it, by the argument that gives the type
     /// (`boxed` of `twice(boxed, Bool)`): links of a note.
     pub(super) passed_to: HashMap<Span, Vec<Symbol>>,
+    /// The name each argument that is a name writes, by its place: a
+    /// function a call passes on as a value is a link of a note.
+    pub(super) arg_names: HashMap<Span, Symbol>,
     /// The function whose body is being checked, and the names of its
     /// parameters (`_` for one bound by a pattern): what an error about a
     /// parameter writes as a call of it.
@@ -736,6 +739,7 @@ impl TypeChecker {
             open_vars: std::collections::HashSet::new(),
             fn_spans: Vec::new(),
             passed_to: HashMap::new(),
+            arg_names: HashMap::new(),
             checked_fn: None,
             bound_askers: HashMap::new(),
             decoded_at: HashMap::new(),

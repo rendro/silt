@@ -3422,6 +3422,9 @@ impl TypeChecker {
                     };
                     mismatched |= self.errors.len() > reported;
                     given_at[i] = Some((arg.span, self.alias_named(arg), arg_ty.clone()));
+                    if let ExprKind::Ident(name) = arg.kind {
+                        self.arg_names.insert(arg.span, name);
+                    }
                     if let Some(param) = param {
                         let at = match form {
                             CallForm::Call => arg.span,

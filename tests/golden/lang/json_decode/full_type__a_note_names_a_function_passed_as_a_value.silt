@@ -4,7 +4,8 @@
 -- another that gives it the type (`twice(boxed, Bool)`), is named in the
 -- note between them: `twice` passes it to `boxed`, which passes it to the
 -- decoder. For a type with impls for some instantiations (`Box(Bool)`)
--- and for a record with a field no decoder has.
+-- and for a record with a field no decoder has. Passed on twice
+-- (`thrice(twice, boxed, Bool)`), each function is a step.
 import json
 
 type Box(a) {
@@ -31,8 +32,14 @@ fn twice(f, t) {
   f(t)
 }
 
+fn thrice(g, f, t) {
+  g(f, t)
+}
+
 fn main() {
   println(twice(boxed, Bool))
   println(twice(load, Holder))
+  println(thrice(twice, boxed, Bool))
+  println(thrice(twice, load, Holder))
   println(twice(boxed, Int))
 }

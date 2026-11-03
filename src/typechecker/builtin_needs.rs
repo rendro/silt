@@ -687,6 +687,20 @@ impl TypeChecker {
                 i != at && mentions_type_of(&checker.apply(ty), subject, &|t| checker.apply(t))
             })
         };
+        // The other arguments that hold a decoder of the type, as their
+        // names write them, in order (`twice` of `thrice(twice, mid,
+        // Bool)`): the call passes the type through them on the way to
+        // the definition given at `from`.
+        let between = |checker: &Self, at: usize, from: Span, subject: &Type| -> Vec<Symbol> {
+            (given.iter().enumerate())
+                .filter(|(i, (span, _, ty))| {
+                    *i != at
+                        && *span != from
+                        && mentions_type_of(&checker.apply(ty), subject, &|t| checker.apply(t))
+                })
+                .filter_map(|(_, (span, ..))| checker.arg_names.get(span).copied())
+                .collect()
+        };
         let scope = self.wanted_marks.last().copied().unwrap_or(0);
         // (Only the decoders whose type was unknown when they were owed:
         // `waiting_decoders`, kept small as they are decided.)
@@ -720,6 +734,7 @@ impl TypeChecker {
                 continue;
             }
             let passed_on = passer.filter(|_| holds_decoder(self, at, &subject));
+            let through = between(self, at, self.wanted[k].origin.span, &subject);
             let wanted = &mut self.wanted[k];
             wanted.origin.span = span;
             match &mut wanted.goal {
@@ -738,7 +753,9 @@ impl TypeChecker {
                         // body decodes it: a link of the note,
                         // `passed_to`.)
                         if let Some(before) = asker.passer.filter(|before| *before != passer) {
-                            self.passed_to.entry(span).or_default().insert(0, before);
+                            let links = self.passed_to.entry(span).or_default();
+                            links.insert(0, before);
+                            links.splice(0..0, through);
                         }
                         asker.passer = Some(passer);
                     }
@@ -806,6 +823,7 @@ impl TypeChecker {
                 continue;
             }
             let passed_on = passer.filter(|_| holds_decoder(self, at, &subject));
+            let through = between(self, at, self.given_waiting[k].origin.span, &subject);
             let use_ = &mut self.given_waiting[k];
             use_.origin.span = span;
             use_.placed = !matches!(subject, Type::Var(_));
@@ -815,6 +833,7 @@ impl TypeChecker {
             {
                 let before = std::mem::replace(&mut use_.passer, passer);
                 use_.through.insert(0, before);
+                use_.through.splice(0..0, through);
             }
         }
     }
