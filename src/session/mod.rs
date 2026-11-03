@@ -658,13 +658,11 @@ impl Session {
                 }
             }
         }
-        // The entry's own parse errors, then why an import failed (a
-        // module that cannot be read or parsed, a name that resolves to
-        // nothing, a cycle), then the type diagnostics.
-        for d in &self.graph.module(entry).problems {
-            push(d, &mut out);
-        }
-        for &id in ordering.modules.iter().filter(|&&id| id != entry) {
+        // Modules come in the order they are checked in, a module's
+        // imports before it and the entry last: first why a module failed
+        // (its parse errors, a file that cannot be read, a name that
+        // resolves to nothing, a cycle), then the type diagnostics.
+        for &id in &ordering.modules {
             for d in &self.graph.module(id).problems {
                 push(d, &mut out);
             }
@@ -689,15 +687,10 @@ impl Session {
         for d in &ordering.cycles {
             push(d, &mut out);
         }
-        if let Some(analysis) = self.analyses.get(&entry) {
-            for d in &analysis.diagnostics {
-                push(d, &mut out);
-            }
-        }
         let package = self.graph.module(entry).package;
-        for &id in ordering.modules.iter().filter(|&&id| id != entry) {
-            let warnings =
-                self.graph.module(id).package == package && !self.cells.info.contains_key(&id);
+        for &id in &ordering.modules {
+            let warnings = id == entry
+                || (self.graph.module(id).package == package && !self.cells.info.contains_key(&id));
             if let Some(analysis) = self.analyses.get(&id) {
                 for d in analysis.diagnostics.iter() {
                     if d.is_error() || warnings {
