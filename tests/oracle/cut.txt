@@ -17,6 +17,7 @@ tests/golden/heavy/compute/stage7_perf__tail_calls.silt | a speed measurement: m
 tests/golden/lang/collections/a_large_map_or_set_is_built_an_entry_at_a_time.silt | a speed measurement: maps and sets of 200,000 entries built and changed an entry at a time
 tests/golden/lang/compiler/selection__impl_method_recursion_is_a_tail_call.silt | a tail-call depth test: millions of calls
 tests/golden/lang/compiler/selection__method_found_at_run_time_is_a_tail_call.silt | a tail-call depth test: millions of calls
+tests/golden/lang/patterns/guarded_or__each_alternative_that_matches_is_tried.silt | a tail-call depth test through guards on or-patterns: a million calls
 tests/golden/repros/compiler_vm/deep_nest_disp_1000000.silt | a value nested a million levels deep is built and shown: loops of millions of rounds
 tests/golden/repros/compiler_vm/deep_nest_drop_1000000.silt | a value nested a million levels deep is built and dropped: loops of millions of rounds
 tests/golden/repros/compiler_vm/deep_nest_eq_1000000.silt | a value nested a million levels deep is built and compared with `==`: loops of millions of rounds
