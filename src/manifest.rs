@@ -106,7 +106,8 @@ enum RawDependency {
     /// Inline-table form: `foo = { path = "..." }` (and, in later phases,
     /// `{ git = "...", rev = "..." }` or `{ version = "..." }`).
     Inline(BTreeMap<String, toml::Value>),
-    // Future: bare-version form `foo = "1.2.3"`.
+    /// Anything else (`foo = "1.2.3"`): an error.
+    Other(serde::de::IgnoredAny),
 }
 
 impl Manifest {
@@ -359,29 +360,9 @@ pub fn is_silt_identifier(name: &str) -> bool {
 /// builtin-colliding dep names (see `src/cli/add.rs:273-279`) so init,
 /// add, and the manifest loader report identical canonical shapes.
 pub fn validate_package_name(name: &str) -> Result<(), String> {
-    if !is_silt_identifier(name) {
-        // The message is returned as text, not as an error type that
-        // escapes when shown, so the name is escaped here. In the two
-        // messages below the name is known to be an identifier.
-        return Err(format!(
-            "invalid package name `{}`: \
-             must match silt identifier rules `[a-z_][a-z0-9_]*`",
-            escape_for_display(name)
-        ));
-    }
-    if is_builtin_module(name) {
-        return Err(format!(
-            "package name `{name}` collides with builtin module `{name}`; \
-             pick a different name"
-        ));
-    }
-    if is_reserved_keyword(name) {
-        return Err(format!(
-            "package name `{name}` is a reserved silt keyword; \
-             pick a different name"
-        ));
-    }
-    Ok(())
+    // The message is returned as text, not as an error type that escapes
+    // when shown, so it is escaped here.
+    validate_package_name_rules(name).map_err(|m| escape_for_display(&m))
 }
 
 /// Is `name` a reserved silt keyword? Consults both `lexer::KEYWORDS`
@@ -401,7 +382,7 @@ pub fn is_reserved_keyword(name: &str) -> bool {
 /// The rules a `[package].name` follows: an identifier, not a builtin
 /// module, not a keyword.
 fn validate_package_name_rules(name: &str) -> Result<(), String> {
-    validate_identifier(name, "package name")?;
+    validate_identifier(name)?;
     // Builtin-collision check: a manifest whose `[package].name`
     // equals a stdlib module (`io`, `string`, …) is rejected for
     // the same reason `silt add` rejects builtin-colliding dep
@@ -430,7 +411,7 @@ fn validate_package_name_rules(name: &str) -> Result<(), String> {
 /// The rules a dependency's name follows: an identifier, not a builtin
 /// module, not a keyword.
 fn validate_dependency_name(name: &str) -> Result<(), String> {
-    validate_identifier(name, "dependency name")?;
+    validate_identifier(name)?;
     if builtin_modules().contains(&name) {
         return Err(format!(
             "dependency name `{name}` collides with builtin module `{name}`; \
@@ -466,27 +447,20 @@ fn manifest_span(
     Some((range.start, range.end))
 }
 
-fn validate_identifier(name: &str, role: &str) -> Result<(), String> {
-    if is_silt_identifier(name) {
-        return Ok(());
+fn validate_identifier(name: &str) -> Result<(), String> {
+    match is_silt_identifier(name) {
+        true => Ok(()),
+        false => Err(invalid_name(name)),
     }
-    let detail = if name.is_empty() {
-        "must not be empty".to_string()
-    } else if name.chars().any(|c| c.is_ascii_uppercase()) {
-        "must be lowercase (snake_case); uppercase letters are not allowed".to_string()
-    } else if name.contains('.') || name.contains('-') || name.contains(' ') {
-        "must contain only lowercase letters, digits, and underscores".to_string()
-    } else if name
-        .chars()
-        .next()
-        .map(|c| c.is_ascii_digit())
-        .unwrap_or(false)
-    {
-        "must not start with a digit".to_string()
-    } else {
-        "must match the silt identifier rules `[a-z_][a-z0-9_]*`".to_string()
-    };
-    Err(format!("invalid {role} `{name}`: {detail}"))
+}
+
+/// The error for a package, dependency or module name that is not an
+/// identifier of lowercase letters, digits and `_`.
+pub fn invalid_name(name: &str) -> String {
+    format!(
+        "`{name}` is not a valid name: use lowercase letters, digits and `_`, \
+         not starting with a digit"
+    )
 }
 
 /// Lightweight semver shape check: `MAJOR.MINOR.PATCH` where each component
@@ -570,6 +544,10 @@ fn validate_version(version: &str) -> Result<(), String> {
 
 fn convert_dependency(name: &str, raw: RawDependency) -> Result<Dependency, String> {
     match raw {
+        RawDependency::Other(serde::de::IgnoredAny) => Err(format!(
+            "dependency `{name}` must be a table: `{name} = {{ path = \"...\" }}` or \
+             `{name} = {{ git = \"...\", tag = \"...\" }}`"
+        )),
         RawDependency::Inline(table) => {
             let has_path = table.contains_key("path");
             let has_git = table.contains_key("git");

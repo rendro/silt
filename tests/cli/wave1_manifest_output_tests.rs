@@ -436,7 +436,7 @@ fn dependency_key_is_escaped() {
     assert_check_escapes(
         "dependency_key",
         &manifest("app", &dependencies(&line)),
-        &format!("invalid dependency name `{HOSTILE_ESCAPED}`"),
+        &format!("`{HOSTILE_ESCAPED}` is not a valid name"),
         1,
     );
 }
@@ -451,7 +451,7 @@ fn package_name_is_escaped() {
     assert_check_escapes(
         "package_name",
         &text,
-        &format!("invalid package name `{HOSTILE_ESCAPED}`"),
+        &format!("`{HOSTILE_ESCAPED}` is not a valid name"),
         1,
     );
 }
@@ -981,7 +981,7 @@ fn silt_add_escapes_its_arguments() {
         (
             "add_name",
             vec!["add", HOSTILE, "--path", "../dep"],
-            format!("silt add: invalid dependency name `{HOSTILE_ESCAPED}`"),
+            format!("silt add: `{HOSTILE_ESCAPED}` is not a valid name"),
         ),
         (
             "add_path",

@@ -314,8 +314,8 @@ fn test_add_fails_on_invalid_name() {
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("invalid dependency name"),
-        "expected 'invalid dependency name' diagnostic; got: {stderr}"
+        stderr.contains("`Foo` is not a valid name: use lowercase letters, digits and `_`, not starting with a digit"),
+        "expected the name error; got: {stderr}"
     );
 }
 

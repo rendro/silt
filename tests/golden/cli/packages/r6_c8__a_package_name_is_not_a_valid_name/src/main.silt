@@ -1,0 +1,6 @@
+-- exit: 1
+-- stderr-contains: error[package]: invalid manifest: `my-pkg` is not a valid name: use lowercase letters, digits and `_`, not starting with a digit
+-- stderr-contains: --> silt.toml:2:8
+fn main() {
+  println(1)
+}

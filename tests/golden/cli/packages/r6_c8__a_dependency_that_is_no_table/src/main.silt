@@ -1,0 +1,7 @@
+-- exit: 1
+-- stderr-contains: error[package]: invalid manifest: dependency `d` must be a table: `d = { path = "..." }` or `d = { git = "...", tag = "..." }`
+-- stderr-contains: --> silt.toml:6:5
+-- stderr-not-contains: untagged
+fn main() {
+  println(1)
+}

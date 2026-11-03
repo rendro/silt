@@ -345,11 +345,7 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
     // a name that's both invalid AND a builtin should report invalid
     // (the user's bigger problem).
     if !silt::manifest::is_silt_identifier(&name) {
-        return Err(format!(
-            "silt add: invalid dependency name `{name}`: \
-             must match silt identifier rules `[a-z_][a-z0-9_]*`"
-        )
-        .into());
+        return Err(format!("silt add: {}", silt::manifest::invalid_name(&name)).into());
     }
     if silt::module::is_builtin_module(&name) {
         return Err(format!(
