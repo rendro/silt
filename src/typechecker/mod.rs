@@ -187,7 +187,9 @@ pub struct TypeChecker {
     /// written, with the head of the type it names, by the argument's
     /// place (`L` of `List(L)`, `Box` given to `p(s, type t)`): what a
     /// decoder's refusal there names.
-    pub(super) bare_written: HashMap<Span, (Symbol, TypeRef)>,
+    /// (No head: an alias of a type with no arguments, `type K(a) =
+    /// Int`.)
+    pub(super) bare_written: HashMap<Span, (Symbol, Option<TypeRef>)>,
     /// The function whose body is being checked, and the names of its
     /// parameters (`_` for one bound by a pattern): what an error about a
     /// parameter writes as a call of it.

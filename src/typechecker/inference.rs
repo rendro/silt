@@ -2864,13 +2864,17 @@ impl TypeChecker {
         if !name.is_builtin(crate::defs::TYPE_OF) {
             return;
         }
-        let head = args
-            .first()
-            .and_then(|ty| super::builtin_checks::head_ref(&self.apply(ty)));
-        if let Some(head) = head {
-            let written = intern(&super::names::shown_arg(e));
-            self.bare_written.entry(at).or_insert((written, head));
+        let Some(ty) = args.first().map(|ty| self.apply(ty)) else {
+            return;
+        };
+        let head = super::builtin_checks::head_ref(&ty);
+        // (Of an alias of a type with no arguments, `K` of `type K(a) =
+        // Int`, nothing in the type says it was written alone.)
+        if head.is_none() {
+            self.open_type_arguments.insert(at);
         }
+        let written = intern(&super::names::shown_arg(e));
+        self.bare_written.entry(at).or_insert((written, head));
     }
 
     /// `note_bare_written` of the first generic type or alias written

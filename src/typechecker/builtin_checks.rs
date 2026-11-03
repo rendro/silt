@@ -262,14 +262,41 @@ impl TypeChecker {
         // `List(t)`: it is what is refused, named as written.)
         if self.open_type_arguments.contains(&span)
             && let Some(&(name, head)) = self.bare_written.get(&span)
-            && written != Some(name)
         {
-            let part = match head_ref(ty) == Some(head) {
-                true => Some(ty),
-                false => part_with_head(ty, head),
-            };
-            if let Some(part) = part {
-                return self.decode_refusal(builtin_name, decoding, Some(name), part, owner, span);
+            match head {
+                Some(head) if written != Some(name) => {
+                    let part = match head_ref(ty) == Some(head) {
+                        true => Some(ty),
+                        false => part_with_head(ty, head),
+                    };
+                    if let Some(part) = part {
+                        return self.decode_refusal(
+                            builtin_name,
+                            decoding,
+                            Some(name),
+                            part,
+                            owner,
+                            span,
+                        );
+                    }
+                }
+                Some(_) => {}
+                // An alias with type parameters of a type with none
+                // (`type K(a) = Int`), written alone: a generic type
+                // alone, as `L` of `type L(a) = List(a)` is.
+                None => {
+                    let accepted = decoding.type_arguments(str::to_string);
+                    let help = match decoding.primitives {
+                        true => decoding.family.help(),
+                        false => decoding.family.type_argument_help().to_string(),
+                    };
+                    let message = format!(
+                        "`{builtin_name}` cannot decode `{name}`: its type argument must be {accepted}"
+                    );
+                    return Some(
+                        Diagnostic::error(Code::Undecodable, span, message).with_help(help),
+                    );
+                }
             }
         }
         // (A part written alone, `List(Box)`: that part is what is
