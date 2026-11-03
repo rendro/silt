@@ -1056,6 +1056,15 @@ impl TypeChecker {
             else {
                 continue;
             };
+            // (Needed in full: named as a later use decided it, by the
+            // letters the program wrote, `Box(List((t, a)))`.)
+            if diagnostic.code == Code::InvalidMethodCall
+                && diagnostic.message.contains(" in full here: ")
+                && let Some(decided) =
+                    self.decided_in_full_text(&resolve(named), &gap.subject, gap.origin.span)
+            {
+                diagnostic = decided;
+            }
             // (Said of the type the bound's body gives the decoder, whole,
             // as the decoder refuses it: `Box(Set(Int))`, field `v`. One
             // error for that type at one place.)
@@ -1315,13 +1324,25 @@ impl TypeChecker {
         ty: &Type,
         span: Span,
     ) -> Option<Diagnostic> {
+        (self.decided_in_full_text(builtin, subject, span))
+            .or_else(|| self.in_full_refusal(builtin, ty, span))
+    }
+
+    /// The refusal at `span` of `subject` as needing its type in full,
+    /// named as later uses decided it, where they decided it with a
+    /// letter the program wrote that only a value holds (`List((a,
+    /// Int))`); none where a part is still undecided.
+    fn decided_in_full_text(
+        &self,
+        builtin: &str,
+        subject: &Type,
+        span: Span,
+    ) -> Option<Diagnostic> {
         let decided =
             crate::types::canonical::canonicalize(self.tables.resolver(), &self.apply(subject));
         let unvalued = (super::inference::rigid_vars(&decided).into_iter())
             .find(|r| !self.valued_vars.contains(&r.var));
-        let Some(r) = unvalued.filter(|_| free_vars_in(&decided).is_empty()) else {
-            return self.in_full_refusal(builtin, ty, span);
-        };
+        let r = unvalued.filter(|_| free_vars_in(&decided).is_empty())?;
         let name = r.name;
         let message = format!(
             "`{builtin}` needs the type `{}` in full here: `{name}` is known only by its type",

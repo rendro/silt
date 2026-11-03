@@ -1,0 +1,6 @@
+error[type]: `ag` needs the type `Box(List((t, a)))` in full here: `a` is known only by its type
+ --> full_type__a_part_decided_later_is_named_with_the_letters_written.silt:26:14
+    |
+ 26 |   let q = ag(Box { v: [] }, s)
+    |              ^^^^^^^^^^^^^ `ag` needs the type `Box(List((t, a)))` in full here: `a` is known only by its type
+  = help: take the type as a parameter, `type a`

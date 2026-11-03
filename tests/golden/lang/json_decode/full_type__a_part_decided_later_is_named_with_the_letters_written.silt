@@ -1,0 +1,33 @@
+-- cmd: check
+-- exit: 1
+-- A part a later use decides with letters the program wrote, one held by
+-- a `type t` parameter and one only a value holds (`(t, a)`), is refused
+-- as needing the type in full, named as the later use decided it,
+-- `Box(List((t, a)))`: not by its place alone (`Box(List(a))`).
+import json
+
+type Box(a) {
+  v: a,
+}
+
+trait Dec: json.Decode {
+  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+trait Dec for Box(a) where a: json.Decode {}
+
+trait Dec for List(a) where a: json.Decode {}
+
+fn ag(x, s) {
+  Dec.again(x, s)
+}
+
+fn mix(y: a, s: String, type t) -> Result(Box(List((t, a))), json.JsonError) where t: json.Decode, a: json.Decode {
+  let q = ag(Box { v: [] }, s)
+  let r: Result(Box(List((t, a))), json.JsonError) = q
+  r
+}
+
+fn main() {
+  println(mix(1, "\{\"v\": [[true, 2]]}", Bool))
+}
