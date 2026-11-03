@@ -772,8 +772,9 @@ impl TypeChecker {
     }
 
     /// The function `site` written with a type parameter of its own, the
-    /// type of its first parameter whose type is not known: `fn
-    /// held2(x: t, s, type t)`. None where every parameter's type is
+    /// type of its first parameter whose type is not known, bounded as the
+    /// decode needs: `fn held2(x: t, s, type t) where t: json.Decode`.
+    /// None where every parameter's type is
     /// known: the value is not one the function is given.
     fn with_type_parameter(&self, site: &super::FnSite) -> Option<String> {
         let taken = |name: &str| {
@@ -798,7 +799,14 @@ impl TypeChecker {
             })
             .collect();
         params.push(format!("type {letter}"));
-        typed.then(|| format!("fn {}({})", site.name, params.join(", ")))
+        // (With the bound the decode needs, so it checks as written.)
+        typed.then(|| {
+            format!(
+                "fn {}({}) where {letter}: json.Decode",
+                site.name,
+                params.join(", ")
+            )
+        })
     }
 
     pub(super) fn settle_undecided_decodes(&mut self) {
