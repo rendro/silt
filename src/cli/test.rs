@@ -249,8 +249,9 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         let setup_owner = owners.add_owner(file_index);
 
         let mut vm = Vm::new(silt::HostIo::process());
-        // A `process.exit` fails the test it is in: the other tests run.
-        vm.set_exit(Exit::FailsTest);
+        // A `process.exit` fails the file's top-level code, or the test
+        // it is in: the other files and tests run.
+        vm.set_exit(Exit::FailsTestFile);
         #[cfg(feature = "test-hooks")]
         crate::cli::run::panic_where_a_test_says(&vm);
         vm.set_task_owner(setup_owner);
@@ -283,6 +284,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         }
 
         // Run each selected test function
+        vm.set_exit(Exit::FailsTest);
         for test in tests {
             let name = &test.name;
             total += 1;

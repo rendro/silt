@@ -24,8 +24,9 @@ pub struct VmError {
     /// what ended the run ([`Exit::EndsRun`](super::Exit::EndsRun)):
     /// the error of every run of the VM from then on.
     pub exit: Option<u8>,
-    /// If true, this is a `process.exit` that a test called
-    /// ([`Exit::FailsTest`](super::Exit::FailsTest)): it fails the test
+    /// If true, this is a `process.exit` that a test, or a test file's
+    /// top-level code, called ([`Exit::FailsTest`](super::Exit::FailsTest),
+    /// [`Exit::FailsTestFile`](super::Exit::FailsTestFile)): it fails the test
     /// wherever it was raised, also where the failure of a callback is
     /// otherwise handled (an `http.serve` handler's).
     // (Read where a callback's failure is handled: in a build without
@@ -92,6 +93,18 @@ impl VmError {
             ..VmError::new(format!(
                 "process.exit({code}) was called in a test: a test ends by returning, or by \
                  failing an assertion"
+            ))
+        }
+    }
+
+    /// A `process.exit(code)` in the top-level code of a test file
+    /// ([`Exit::FailsTestFile`](super::Exit::FailsTestFile)).
+    pub(crate) fn exit_in_a_test_file(code: u8) -> Self {
+        VmError {
+            exit_in_a_test: true,
+            ..VmError::new(format!(
+                "process.exit({code}) was called in a test file's top-level code: a test file \
+                 ends by returning"
             ))
         }
     }
