@@ -517,6 +517,7 @@ fn copy_and_rename_name_the_path_of_a_directory_fault() {
     let dir = TempDir::new("moves");
     std::fs::write(dir.path().join("a.txt"), "a").unwrap();
     std::fs::create_dir_all(dir.path().join("dir/sub")).unwrap();
+    std::fs::create_dir_all(dir.path().join("full/inner")).unwrap();
     let d = dir.as_silt_str();
     for (call, message) in [
         (
@@ -542,6 +543,12 @@ fn copy_and_rename_name_the_path_of_a_directory_fault() {
         (
             format!(r#"fs.copy("{d}/a.txt", "{d}/a.txt/b.txt")"#),
             format!("not a directory: {d}/a.txt/b.txt"),
+        ),
+        // Any other fault: what it is, in the words of its kind, and
+        // the path.
+        (
+            format!(r#"fs.rename("{d}/dir", "{d}/full")"#),
+            format!("directory not empty: {d}/full"),
         ),
     ] {
         let got = err_msg(run(&format!("import fs\nfn main() {{\n  {call}\n}}\n")));

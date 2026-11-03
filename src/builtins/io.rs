@@ -125,17 +125,30 @@ fn moves_into_itself(from: &str, to: &str) -> bool {
 }
 
 /// The error of a failed `fs.copy` or `fs.rename` about `path`: a
-/// fault whose `IoError` variant names a path, or has no text, is that
-/// variant; a path that is a directory, or one that is not where a
-/// directory is needed, is `Other` that says so and names it
-/// (`is a directory: dir`); any other fault is as for every `io` and
-/// `fs` function.
+/// fault with an `IoError` variant of its own is that variant; any
+/// other is `Other` that says what the fault is and names the path
+/// (`is a directory: dir`), in the words the kind of fault has, or in
+/// the system's where it has no kind of its own.
 fn moved_err(err: &std::io::Error, path: &str) -> Value {
     use std::io::ErrorKind;
     match err.kind() {
+        ErrorKind::NotFound
+        | ErrorKind::PermissionDenied
+        | ErrorKind::AlreadyExists
+        | ErrorKind::InvalidInput
+        | ErrorKind::Interrupted
+        | ErrorKind::UnexpectedEof
+        | ErrorKind::WriteZero => io_result_err(err, path),
         ErrorKind::IsADirectory => moved_err_text("is a directory", path),
         ErrorKind::NotADirectory => moved_err_text("not a directory", path),
-        _ => io_result_err(err, path),
+        kind => {
+            let words = kind.to_string();
+            let what = match kind == ErrorKind::Other || words == "uncategorized error" {
+                true => err.to_string(),
+                false => words,
+            };
+            moved_err_text(&what, path)
+        }
     }
 }
 
@@ -377,7 +390,8 @@ pub(crate) mod fs {
                     let about = match e.kind() {
                         _ if std::fs::symlink_metadata(from).is_err() => from,
                         std::io::ErrorKind::IsADirectory
-                        | std::io::ErrorKind::NotADirectory => to,
+                        | std::io::ErrorKind::NotADirectory
+                        | std::io::ErrorKind::DirectoryNotEmpty => to,
                         kind => rename_failed_at(kind, from, to),
                     };
                     moved_err(&e, about)
