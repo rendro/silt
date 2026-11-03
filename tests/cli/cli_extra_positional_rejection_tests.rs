@@ -166,3 +166,36 @@ fn silt_check_json_reports_an_unreadable_file_as_json() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+/// `silt check|disasm` and the run command given no file outside a
+/// package: an error line in the prefix form, then the usage line.
+/// FAILS on the base: the usage line alone.
+#[test]
+fn no_file_outside_a_package_is_an_error_with_the_usage() {
+    let dir = fresh_dir("no_file");
+    for command in ["run", "check", "disasm"] {
+        let out = silt_cmd()
+            .arg(command)
+            .current_dir(&dir)
+            .output()
+            .expect("failed to run silt");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{command}: {stderr}");
+        let mut lines = stderr.lines();
+        assert_eq!(
+            lines.next(),
+            Some(
+                format!(
+                    "error: silt {command}: no file given, and no silt.toml found in this \
+                     directory or any parent"
+                )
+                .as_str()
+            ),
+            "{stderr}"
+        );
+        assert!(
+            lines.next().is_some_and(|l| l.starts_with(&format!("Usage: silt {command}"))),
+            "{stderr}"
+        );
+    }
+}

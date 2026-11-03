@@ -40,3 +40,11 @@ pub(crate) fn once_only(command: &str, flag: &str) -> ! {
     eprintln!("error: {command}: {flag} was specified more than once");
     std::process::exit(1);
 }
+
+/// The first line of the usage error of `silt <command>` given no file
+/// outside a package, where there is no `src/main.silt` to take.
+pub(crate) fn no_file(command: &str) {
+    eprintln!(
+        "error: silt {command}: no file given, and no silt.toml found in this directory or any parent"
+    );
+}

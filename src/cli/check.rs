@@ -108,6 +108,7 @@ pub(crate) fn dispatch(args: &[String]) {
                 (p.to_string_lossy().into_owned(), package_test_files(root))
             }
             Ok(None) => {
+                crate::cli::no_file("check");
                 eprintln!("Usage: {}", check_usage_banner());
                 process::exit(1);
             }

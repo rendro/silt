@@ -219,6 +219,7 @@ fn handle_watch(args: &[String]) {
                     "disasm" => format!("Usage: {}", disasm_usage_banner()),
                     _ => unreachable!(),
                 };
+                crate::cli::no_file(sub);
                 eprintln!("{banner}");
                 process::exit(1);
             }

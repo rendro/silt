@@ -56,6 +56,7 @@ pub(crate) fn dispatch(args: &[String]) {
         None => match resolve_package_entry_point() {
             Ok(Some(p)) => p.to_string_lossy().into_owned(),
             Ok(None) => {
+                crate::cli::no_file("disasm");
                 eprintln!("Usage: {}", disasm_usage_banner());
                 process::exit(1);
             }
