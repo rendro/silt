@@ -575,7 +575,7 @@ fn resolve_location(base: &str, location: &str) -> String {
         .parse::<ureq::http::Uri>()
         .is_ok_and(|uri| uri.scheme().is_some());
     if has_scheme {
-        return location.to_string();
+        return with_dot_segments_taken_away(location);
     }
     let Ok(uri) = base.parse::<ureq::http::Uri>() else {
         return location.to_string();
@@ -586,7 +586,7 @@ fn resolve_location(base: &str, location: &str) -> String {
     };
     if location.starts_with("//") {
         return match uri.scheme_str() {
-            Some(scheme) => format!("{scheme}:{location}"),
+            Some(scheme) => with_dot_segments_taken_away(&format!("{scheme}:{location}")),
             None => location.to_string(),
         };
     }
@@ -607,6 +607,31 @@ fn resolve_location(base: &str, location: &str) -> String {
         }
     };
     format!("{origin}{}{query}", without_dot_segments(&path))
+}
+
+/// The URL `url`, which has a scheme and a host, with the `.` and `..`
+/// segments of its path taken away; its query as it is.
+#[cfg(feature = "http")]
+fn with_dot_segments_taken_away(url: &str) -> String {
+    let Ok(uri) = url.parse::<ureq::http::Uri>() else {
+        return url.to_string();
+    };
+    let dotted = uri
+        .path()
+        .split('/')
+        .any(|segment| matches!(segment, "." | ".."));
+    match (dotted, uri.scheme_str(), uri.authority()) {
+        (true, Some(scheme), Some(authority)) => {
+            let query = uri
+                .query()
+                .map_or(String::new(), |query| format!("?{query}"));
+            format!(
+                "{scheme}://{authority}{}{query}",
+                without_dot_segments(uri.path())
+            )
+        }
+        _ => url.to_string(),
+    }
 }
 
 /// The path `path`, which starts with `/`, with its `.` and `..`
@@ -2238,6 +2263,10 @@ mod http_body_tests {
             ("./", "http://a.test:8/p/"),
             ("s/..", "http://a.test:8/p/"),
             ("../../../r", "http://a.test:8/r"),
+            ("http://b.test/./x/../y?q=/..", "http://b.test/y?q=/.."),
+            ("//b.test:9/a/./b/../c", "http://b.test:9/a/c"),
+            ("https://b.test/a/..", "https://b.test/"),
+            ("https://b.test/a/b?c=/../d", "https://b.test/a/b?c=/../d"),
         ] {
             assert_eq!(resolve_location(base, location), resolved, "{location}");
         }

@@ -4,6 +4,12 @@ GET /q?x=1
 GET /far
   second: GET /there ?, text/plain
   the client: 200
+GET /far/dots
+  second: GET /there ?q=/.., text/plain
+  the client: 200
+GET /far/scheme
+  second: GET /there ?, text/plain
+  the client: 200
 POST /303
   first: GET /echo ?, no content-type
   the client: 200
