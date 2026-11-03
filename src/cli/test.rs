@@ -142,6 +142,13 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
     };
 
     if paths.is_empty() {
+        // A filter that selects nothing fails the run, also where there
+        // is nothing to select from.
+        if let Some(filter) = &filter {
+            let filter = silt::git::escape_for_display(filter);
+            say(&format!("no test matches --filter '{filter}'\n"));
+            silt::scheduler::exit_with_status(1);
+        }
         println!("no test files found");
         return;
     }
@@ -391,7 +398,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         }
     };
     if total == 0 && !file_errors.any() {
-        said += "hint: test functions must be named 'fn test_*'; test files should end with '_test.silt'\n";
+        said += "hint: test functions must be named 'fn test_*'; test files end with '_test.silt' or '.test.silt'\n";
     }
     say(&said);
     // (The tests may have left threads: see `vm_run_file`.)
