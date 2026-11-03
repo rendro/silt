@@ -16,6 +16,7 @@ use lsp_types::Uri;
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 
 use super::Server;
+use crate::file_discovery::Found;
 
 /// Characters that must be percent-encoded inside a `file://` path
 /// component. Built from `CONTROLS` (all bytes below 0x20 plus 0x7F)
@@ -58,7 +59,7 @@ const URI_PATH_RESERVED: &AsciiSet = &CONTROLS
     .add(b'\x7f');
 
 /// Walk `root`, load every `.silt` file, and feed it as an indexed
-/// document. The walk is the CLI's ([`crate::file_discovery::files_under`]):
+/// document. The walk is the CLI's ([`crate::file_discovery::walk_files`]):
 /// links are followed, each directory and each file once, so a folder
 /// reached through a link is indexed as `silt fmt` and `silt test`
 /// reach it, and a link back into the walk is not followed.
@@ -69,9 +70,18 @@ const URI_PATH_RESERVED: &AsciiSet = &CONTROLS
 pub(super) fn preload_workspace(server: &mut Server, root: &Path) {
     let enter = |path: &Path| !should_skip_dir(path);
     let wanted = |path: &Path| path.extension().and_then(|s| s.to_str()) == Some("silt");
-    for path in crate::file_discovery::files_under(root, &enter, &wanted) {
-        load_file(server, &path);
-    }
+    crate::file_discovery::walk_files(root, &enter, &wanted, &mut |found| {
+        match found {
+            Found::File(path) => load_file(server, &path),
+            Found::Unreadable(dir, err) => {
+                eprintln!(
+                    "silt-lsp: preload: cannot read dir {}: {err}",
+                    dir.display()
+                );
+            }
+        }
+        true
+    });
 }
 
 /// Skip-list policy: delegate to the crate-wide `file_discovery`

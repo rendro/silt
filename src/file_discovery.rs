@@ -23,52 +23,99 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// The files under `root` that `wanted` takes, in the directories
-/// `enter` lets the walk into, in the order of names. Links are
-/// followed, and a directory is entered once, by the first path that
-/// reaches it: a link back to a directory the walk has entered (a loop)
-/// or a second way into one is not followed, so each file is named at
-/// its own depth. A file reached by a second path (a link to it) is
-/// named once, by the first.
+/// `enter` lets the walk into, in the order of names (see
+/// [`walk_files`]).
 pub fn files_under(
     root: &Path,
     enter: &dyn Fn(&Path) -> bool,
     wanted: &dyn Fn(&Path) -> bool,
 ) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    walk_files(root, enter, wanted, &mut |found| {
+        if let Found::File(path) = found {
+            out.push(path);
+        }
+        true
+    });
+    out
+}
+
+/// What [`walk_files`] finds.
+pub enum Found {
+    /// A file `wanted` takes.
+    File(PathBuf),
+    /// A directory that could not be read: it is skipped.
+    Unreadable(PathBuf, std::io::Error),
+}
+
+/// Hand `found` each file under `root` that `wanted` takes, in the
+/// directories `enter` lets the walk into, in the order of names, as
+/// the walk reaches it; the walk stops when `found` says `false`.
+/// Links are followed, and a directory is entered once, by the first
+/// path that reaches it: a link back to a directory the walk has
+/// entered (a loop) or a second way into one is not followed, so each
+/// file is named at its own depth. A file reached by a second path (a
+/// link to it) is named once, by the first. Only a link costs a look
+/// at where it leads: the place of anything else is that of its
+/// directory and its name.
+pub fn walk_files(
+    root: &Path,
+    enter: &dyn Fn(&Path) -> bool,
+    wanted: &dyn Fn(&Path) -> bool,
+    found: &mut dyn FnMut(Found) -> bool,
+) {
     struct Walk<'a> {
         enter: &'a dyn Fn(&Path) -> bool,
         wanted: &'a dyn Fn(&Path) -> bool,
+        found: &'a mut dyn FnMut(Found) -> bool,
         entered: HashSet<PathBuf>,
         named: HashSet<PathBuf>,
-        out: Vec<PathBuf>,
     }
-    fn walk(dir: &Path, w: &mut Walk<'_>) {
-        let Ok(entries) = fs::read_dir(dir) else {
-            return;
+    /// Walk `dir`, whose place without links is `place`; `false` once
+    /// `found` has said stop.
+    fn walk(dir: &Path, place: &Path, w: &mut Walk<'_>) -> bool {
+        let entries = match fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(e) => return (w.found)(Found::Unreadable(dir.to_path_buf(), e)),
         };
-        let mut paths: Vec<PathBuf> = entries.filter_map(|e| e.ok()).map(|e| e.path()).collect();
-        paths.sort();
-        for path in paths {
-            if !path.is_dir() {
-                if (w.wanted)(&path) && w.named.insert(canonical(&path)) {
-                    w.out.push(path);
-                }
-            } else if (w.enter)(&path) && w.entered.insert(canonical(&path)) {
-                walk(&path, w);
+        let mut entries: Vec<(PathBuf, Option<fs::FileType>)> = entries
+            .filter_map(|e| e.ok())
+            .map(|e| (e.path(), e.file_type().ok()))
+            .collect();
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        for (path, kind) in entries {
+            // Where the entry is without links, and whether it is a
+            // directory (where a link leads, for a link).
+            let (is_dir, real) = match kind {
+                Some(kind) if !kind.is_symlink() => (
+                    kind.is_dir(),
+                    place.join(path.file_name().unwrap_or_default()),
+                ),
+                _ => (path.is_dir(), canonical(&path)),
+            };
+            let go_on = if !is_dir {
+                !((w.wanted)(&path) && w.named.insert(real)) || (w.found)(Found::File(path))
+            } else {
+                !((w.enter)(&path) && w.entered.insert(real.clone())) || walk(&path, &real, w)
+            };
+            if !go_on {
+                return false;
             }
         }
+        true
     }
     fn canonical(path: &Path) -> PathBuf {
         fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
     }
+    let place = canonical(root);
     let mut w = Walk {
         enter,
         wanted,
-        entered: HashSet::from([canonical(root)]),
+        found,
+        entered: HashSet::from([place.clone()]),
         named: HashSet::new(),
-        out: Vec::new(),
     };
-    walk(root, &mut w);
-    w.out
+    walk(root, &place, &mut w);
 }
 
 /// Returns `true` if the recursive `.silt` walker should *not* descend
@@ -107,4 +154,48 @@ pub fn should_skip_dir(path: &Path) -> bool {
         }
     }
     false
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    /// The walk names each file once, by the first path in the order of
+    /// names (a link to a file before the file, a link to a folder, a
+    /// link back into the walk), and reports a folder it cannot read.
+    #[test]
+    fn the_walk_names_each_file_once_and_reports_an_unreadable_folder() {
+        let dir = std::env::temp_dir().join(format!("silt_walk_files_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("real/inner")).unwrap();
+        fs::create_dir_all(dir.join("shut")).unwrap();
+        fs::write(dir.join("real/inner/x.silt"), "").unwrap();
+        fs::write(dir.join("z.silt"), "").unwrap();
+        symlink(dir.join("z.silt"), dir.join("a_link.silt")).unwrap();
+        symlink(dir.join("real"), dir.join("b_folder")).unwrap();
+        symlink(&dir, dir.join("real/back")).unwrap();
+        fs::set_permissions(dir.join("shut"), fs::Permissions::from_mode(0o000)).unwrap();
+
+        let mut files = Vec::new();
+        let mut unreadable = Vec::new();
+        let any = |_: &Path| true;
+        walk_files(&dir, &any, &any, &mut |found| {
+            match found {
+                Found::File(path) => files.push(path.strip_prefix(&dir).unwrap().to_owned()),
+                Found::Unreadable(path, _) => unreadable.push(path),
+            }
+            true
+        });
+        fs::set_permissions(dir.join("shut"), fs::Permissions::from_mode(0o755)).unwrap();
+        let _ = fs::remove_dir_all(&dir);
+
+        let files: Vec<&str> = files.iter().filter_map(|p| p.to_str()).collect();
+        assert_eq!(files, ["a_link.silt", "b_folder/inner/x.silt"]);
+        // (Root reads every folder.)
+        if unreadable.is_empty() {
+            return;
+        }
+        assert_eq!(unreadable, [dir.join("shut")]);
+    }
 }
