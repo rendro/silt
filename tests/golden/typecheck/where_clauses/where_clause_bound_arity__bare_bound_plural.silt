@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: trait 'Convert' expects 2 type arguments in bound, got 0
+-- stderr-contains: `Convert` takes 2 type arguments here: write `Convert(from, to)`
 trait Convert(from, to) {
   fn convert(self) -> to
 }

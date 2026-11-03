@@ -722,20 +722,7 @@ impl TypeChecker {
             // (In the one form for a number of type arguments, as a
             // type's: `Sup` takes no type arguments: write `Sup`.)
             if params.len() != r.args.len() {
-                let name = r.name;
-                let message = match params.is_empty() {
-                    true => format!("`{name}` takes no type arguments: write `{name}`"),
-                    false => {
-                        let names: Vec<String> =
-                            params.iter().map(|p| resolve(*p).to_string()).collect();
-                        format!(
-                            "`{name}` takes {} {} here: write `{name}({})`",
-                            params.len(),
-                            inference::plural(params.len(), "type argument", "type arguments"),
-                            names.join(", ")
-                        )
-                    }
-                };
+                let message = trait_arguments_message(r.name, &params);
                 self.error(Code::ArityMismatch, message, r.span);
             }
         }
@@ -3393,17 +3380,11 @@ impl TypeChecker {
         let Some(info) = self.tables.traits.get(&trait_name) else {
             return true;
         };
-        let n = info.params.len();
-        if got == n {
+        if got == info.params.len() {
             return true;
         }
-        let msg = format!(
-            "trait '{}' expects {} {} in bound, got {}",
-            resolve(trait_name.name),
-            n,
-            inference::plural(n, "type argument", "type arguments"),
-            got
-        );
+        // (In the one form for a number of type arguments.)
+        let msg = trait_arguments_message(trait_name.name, &info.params.clone());
         if !self
             .errors
             .iter()
@@ -3491,4 +3472,22 @@ impl WrittenImpl {
     fn full(&self) -> Vec<Type> {
         self.args.iter().chain(&self.head).cloned().collect()
     }
+}
+
+/// What is wrong with the trait `name`, written with another number of
+/// type arguments than its parameters `params`, in the one form for a
+/// number of type arguments, as a type's: "`Sup` takes no type
+/// arguments: write `Sup`", "`Holds` takes 1 type argument here: write
+/// `Holds(a)`".
+fn trait_arguments_message(name: Symbol, params: &[Symbol]) -> String {
+    if params.is_empty() {
+        return format!("`{name}` takes no type arguments: write `{name}`");
+    }
+    let names: Vec<String> = params.iter().map(|p| resolve(*p).to_string()).collect();
+    format!(
+        "`{name}` takes {} {} here: write `{name}({})`",
+        params.len(),
+        inference::plural(params.len(), "type argument", "type arguments"),
+        names.join(", ")
+    )
 }
