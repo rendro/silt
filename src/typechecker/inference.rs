@@ -2258,6 +2258,11 @@ impl TypeChecker {
         let scheme = self.def_scheme(Some(crate::defs::Res::Def(head.id.0)), env)?;
         match self.instantiate(&scheme) {
             Type::Generic(name, _) if name.is_builtin(crate::defs::TYPE_OF) => {
+                // (A generic alias alone, `L` of `type L(a) = List(a)`,
+                // holds open arguments, as `List` alone does.)
+                if self.type_arity(alias).is_some_and(|arity| arity > 0) {
+                    self.open_vars.extend(free_vars_in(&target));
+                }
                 Some(Type::type_of(target))
             }
             _ => None,
@@ -2798,7 +2803,16 @@ impl TypeChecker {
             return None;
         };
         let def = self.defs.as_ref()?.get(id);
-        (def.kind == crate::defs::DefKind::TypeAlias).then_some(def.name)
+        if def.kind != crate::defs::DefKind::TypeAlias {
+            return None;
+        }
+        // (Another module's, as written: `m.IntBox`.)
+        match &arg.kind {
+            ExprKind::FieldAccess(obj, field, _) if let ExprKind::Ident(module) = obj.kind => {
+                Some(intern(&format!("{module}.{field}")))
+            }
+            _ => Some(def.name),
+        }
     }
 
     /// The type `arg` writes as a value if it writes a type of types:
@@ -2831,17 +2845,24 @@ impl TypeChecker {
         Type::Error
     }
 
-    /// Whether `e` names a generic type alone (`List`, `Box`).
+    /// Whether `e` names a generic type alone (`List`, `Box`, an alias
+    /// `L` of `type L(a) = List(a)`).
     fn names_generic_type(&mut self, e: &Expr) -> bool {
         if !matches!(e.kind, ExprKind::Ident(_) | ExprKind::FieldAccess(..)) {
             return false;
         }
-        let is_type = (self.res_def(e.res))
-            .is_some_and(|def| matches!(def.kind, crate::defs::DefKind::Type(_)));
-        is_type
-            && (self.res_type(e.res))
+        let Some(def) = self.res_def(e.res) else {
+            return false;
+        };
+        match def.kind {
+            crate::defs::DefKind::Type(_) => (self.res_type(e.res))
                 .and_then(|ty| self.type_instance(ty))
-                .is_some_and(|ty| !free_vars_in(&ty).is_empty())
+                .is_some_and(|ty| !free_vars_in(&ty).is_empty()),
+            crate::defs::DefKind::TypeAlias => (self.res_type(e.res))
+                .and_then(|ty| self.type_arity(ty))
+                .is_some_and(|arity| arity > 0),
+            _ => false,
+        }
     }
 
     /// The alias without type parameters `e` names, if it names one.
