@@ -1,8 +1,9 @@
 -- timeout: 30
 -- requires-feature: http
 -- `http.request` follows a redirect. 307 and 308 send the same method
--- and body again, DELETE too; 301, 302 and 303 go on as a GET without
--- a body, and a HEAD stays a HEAD. A location that is no full URL is
+-- and body again, DELETE too; a 303 goes on as a GET without a body,
+-- and so does a POST that gets a 301 or 302, while any other method
+-- keeps its method and body there (RFC 9110); a HEAD stays a HEAD. A location that is no full URL is
 -- resolved against the URL that answered. A redirect drops the
 -- `authorization` header. After ten redirects the request gives up.
 import bytes
@@ -53,6 +54,10 @@ fn main() {
     (http.POST, "/301"),
     (http.PUT, "/302"),
     (http.POST, "/303"),
+    (http.DELETE, "/301"),
+    (http.PATCH, "/302"),
+    (http.OPTIONS, "/301"),
+    (http.DELETE, "/303"),
     (http.HEAD, "/302"),
     (http.POST, "/loop"),
   ]

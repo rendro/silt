@@ -430,9 +430,10 @@ const REDIRECTS_MAX: usize = 10;
 /// Perform a synchronous HTTP request and return a `Value`.
 ///
 /// The request follows redirects itself, because ureq does not send a
-/// body again: 301, 302 and 303 go on without a body, as a GET (a
-/// HEAD stays a HEAD) and without the program's `content-type` header,
-/// 307 and 308 go on with the same method and body. As ureq does, a
+/// body again: a 303 goes on as a GET without a body (a HEAD stays a
+/// HEAD) and without the program's `content-type` header, and so does
+/// a POST that gets a 301 or 302; any other request goes on with the
+/// same method and body. As ureq does, a
 /// redirect drops the `authorization` and `cookie` headers. A `content-length` header of the program's is not sent:
 /// the body's own length is (an empty body of a method that takes
 /// none by default has none).
@@ -474,10 +475,15 @@ fn do_http_request(
         let Some((status, next)) = result.as_ref().ok().and_then(|r| redirect(r, &url)) else {
             return finish_http_response(result, &url, method == "HEAD");
         };
-        if !matches!(status, 307 | 308) {
-            if method != "HEAD" {
-                method = "GET";
-            }
+        // A 303 turns any method but HEAD into a GET, a 301 or 302 only
+        // a POST (RFC 9110); a 307 or 308 none.
+        let to_get = match status {
+            303 => method != "HEAD",
+            301 | 302 => method == "POST",
+            _ => false,
+        };
+        if to_get {
+            method = "GET";
             body = &[];
             // (What the body was is no part of a request without one.)
             headers.retain(|(key, _)| !key.eq_ignore_ascii_case("content-type"));
@@ -555,10 +561,10 @@ fn redirect(response: &ureq::http::Response<ureq::Body>, url: &str) -> Option<(u
 /// `location` resolved against `base` (RFC 3986): a URL with a scheme
 /// as it is, one without (`//host/x`) on the base's scheme, a path from
 /// the root on the base's scheme and host, a query alone (`?y=2`) on
-/// the base's path, any other path next to the base's, with its `.` and
-/// `..` segments taken away. A fragment (`#x`) is not sent to a server,
-/// so it is dropped first; a location that is then empty is the base's
-/// own path and query.
+/// the base's path, any other path next to the base's; a path's `.` and
+/// `..` segments are taken away, and its query is left as it is. A
+/// fragment (`#x`) is not sent to a server, so it is dropped first; a
+/// location that is then empty is the base's own path and query.
 #[cfg(feature = "http")]
 fn resolve_location(base: &str, location: &str) -> String {
     let location = location.split('#').next().unwrap_or_default();
@@ -581,9 +587,6 @@ fn resolve_location(base: &str, location: &str) -> String {
             None => location.to_string(),
         };
     }
-    if location.starts_with('/') {
-        return format!("{origin}{location}");
-    }
     if location.starts_with('?') {
         return format!("{origin}{}{location}", uri.path());
     }
@@ -591,20 +594,40 @@ fn resolve_location(base: &str, location: &str) -> String {
         let own = uri.path_and_query().map_or("/", |own| own.as_str());
         return format!("{origin}{own}");
     }
-    let mut segments: Vec<&str> = uri.path().split('/').collect();
-    segments.pop();
-    for segment in location.split('/') {
-        match segment {
-            "." => {}
-            ".." => {
-                if segments.len() > 1 {
-                    segments.pop();
+    let (path, query) = location.split_at(location.find('?').unwrap_or(location.len()));
+    let path = match path.starts_with('/') {
+        true => path.to_string(),
+        // (Next to the base's: after its last `/`.)
+        false => {
+            let own = uri.path();
+            format!("{}{path}", &own[..own.rfind('/').map_or(0, |at| at + 1)])
+        }
+    };
+    format!("{origin}{}{query}", without_dot_segments(&path))
+}
+
+/// The path `path`, which starts with `/`, with its `.` and `..`
+/// segments taken away (RFC 3986 5.2.4): a last one leaves the path
+/// ending in `/` (`/a/b/..` is `/a/`).
+#[cfg(feature = "http")]
+fn without_dot_segments(path: &str) -> String {
+    let segments: Vec<&str> = path.split('/').skip(1).collect();
+    let mut kept: Vec<&str> = Vec::new();
+    for (at, segment) in segments.iter().enumerate() {
+        let last = at + 1 == segments.len();
+        match *segment {
+            "." | ".." => {
+                if *segment == ".." {
+                    kept.pop();
+                }
+                if last {
+                    kept.push("");
                 }
             }
-            _ => segments.push(segment),
+            other => kept.push(other),
         }
     }
-    format!("{origin}{}", segments.join("/"))
+    format!("/{}", kept.join("/"))
 }
 
 // ── The server ──────────────────────────────────────────────────────
@@ -2201,6 +2224,17 @@ mod http_body_tests {
             ("?y=2#f", "http://a.test:8/p/q?y=2"),
             ("r#f", "http://a.test:8/p/r"),
             ("https://b.test/y#f", "https://b.test/y"),
+            (
+                "echo?next=/../../etc",
+                "http://a.test:8/p/echo?next=/../../etc",
+            ),
+            ("../r?a=./b/../c", "http://a.test:8/r?a=./b/../c"),
+            ("/x/../y?z=/..", "http://a.test:8/y?z=/.."),
+            (".", "http://a.test:8/p/"),
+            ("..", "http://a.test:8/"),
+            ("./", "http://a.test:8/p/"),
+            ("s/..", "http://a.test:8/p/"),
+            ("../../../r", "http://a.test:8/r"),
         ] {
             assert_eq!(resolve_location(base, location), resolved, "{location}");
         }
