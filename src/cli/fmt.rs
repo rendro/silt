@@ -117,7 +117,7 @@ pub(crate) fn dispatch(args: &[String]) {
                 "error: silt fmt: refusing to recursively format {} — no silt.toml found in this directory or any parent",
                 cwd.display()
             );
-            eprintln!("         pass an explicit `.` or file paths to format anyway.");
+            eprintln!("                 pass an explicit `.` or file paths to format anyway.");
             process::exit(1);
         }
         let doing = if check_mode { "checking" } else { "formatting" };
