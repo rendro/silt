@@ -121,6 +121,16 @@ impl TypeChecker {
             }
             _ => (refusal.message.split_once(": ")).map_or("", |(_, reason)| reason),
         };
+        // (A type with impls for other instantiations of it only: what a
+        // decode of it says, the impl there is.)
+        let only = match reason.is_empty() {
+            true => Some(match self.only_decode_impl(head) {
+                Some(only) => format!("the only impl is for `{}`", self.show_type(&only)),
+                None => "it has no `json.Decode` impl".to_string(),
+            }),
+            false => None,
+        };
+        let reason = only.as_deref().unwrap_or(reason);
         let shown = self.show_type(&ty);
         let message = format!(
             "trait `{}` cannot be implemented for `{shown}`: it has `json.Decode` as a \
@@ -129,6 +139,20 @@ impl TypeChecker {
         );
         // (The decoder's help is for a call, not for an impl.)
         Some(Diagnostic::error(Code::InvalidTraitImpl, span, message))
+    }
+
+    /// The one instantiation of `head` with a `json.Decode` impl, where
+    /// the program wrote impls for some instantiations of it and that is
+    /// the one (`Box(Int)`).
+    pub(super) fn only_decode_impl(&self, head: TypeRef) -> Option<Type> {
+        let tr = TraitKey::builtin("Decode");
+        let instances: Vec<Type> = (self.tables.impl_args_of(tr, head).iter())
+            .filter_map(|at| self.impl_instance(&(tr, head, *at)))
+            .collect();
+        match instances.as_slice() {
+            [only] => Some(only.clone()),
+            _ => None,
+        }
     }
 
     /// Whether the program wrote a `json.Decode` impl for `head`: every
