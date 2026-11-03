@@ -1,0 +1,22 @@
+-- cmd: check
+-- exit: 1
+-- The note of a refusal through other modules names each function by
+-- its own module (`bridge.hmixed`, `mail.load`), not by the first one's.
+-- Of an opaque type, a route through a function of the type's own module
+-- (`mail.load`) decodes it, so the note names only what refuses it,
+-- `json.parse` of `bridge.hmixed`, two levels away too. A type no route
+-- decodes names the route the body takes first.
+import json
+import mail
+import bridge
+import util
+
+type Holder {
+  s: Set(Int),
+}
+
+fn main() {
+  println(bridge.hmixed("1", mail.Email, true))
+  println(util.hm("1", mail.Email))
+  println(util.hm("1", Holder))
+}

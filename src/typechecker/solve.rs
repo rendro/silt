@@ -259,6 +259,22 @@ impl TypeChecker {
                 passer: Some(self.passer_at(passer, &origin)),
                 at,
             },
+            // (Named as the use writes it, `mail.load`: another module's
+            // link keeps its module.)
+            Pred::Trait {
+                tr,
+                args,
+                subject,
+                asker: Some(asker),
+            } => Pred::Trait {
+                tr,
+                args,
+                subject,
+                asker: Some(crate::types::Asker {
+                    passer: asker.passer.map(|passer| self.passer_at(passer, &origin)),
+                    ..asker
+                }),
+            },
             other => other,
         };
         // A bound of another module's definition, or what its body asks

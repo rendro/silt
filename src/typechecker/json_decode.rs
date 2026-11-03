@@ -851,15 +851,40 @@ impl TypeChecker {
                             })
                             .collect();
                     };
-                    let route = (refused.and_then(|module| {
-                        routes.iter().find(|(owners, _)| !owners.contains(&module))
-                    }))
-                    .or(routes.first());
-                    links.extend(
-                        route
-                            .into_iter()
-                            .flat_map(|(_, links)| links.iter().copied()),
-                    );
+                    // (A route through a function of the type's own
+                    // module, `mail.load`, decodes it: not the one that
+                    // refuses it.)
+                    let own = |module: crate::session::ModuleId, links: &[Symbol]| {
+                        let name = self.tables.module_names.get(&module).copied();
+                        name.is_some_and(|name| {
+                            let prefix = format!("{name}.");
+                            links.iter().any(|link| resolve(*link).starts_with(&prefix))
+                        })
+                    };
+                    let route = match refused {
+                        Some(module) => routes.iter().find(|(owners, links)| {
+                            !owners.contains(&module) && !own(module, links)
+                        }),
+                        None => routes.first(),
+                    };
+                    match (route, refused) {
+                        (Some((_, route)), _) => links.extend(route.iter().copied()),
+                        // (None known to refuse it: what is known, the
+                        // functions before the type's own module's.)
+                        (None, Some(module)) => {
+                            let name = self.tables.module_names.get(&module).copied();
+                            let prefix = name.map(|name| format!("{name}."));
+                            let first = routes.first().map(|(_, route)| route.as_slice());
+                            links.extend((first.unwrap_or(&[]).iter().copied()).take_while(
+                                |link| {
+                                    prefix
+                                        .as_ref()
+                                        .is_none_or(|p| !resolve(*link).starts_with(p))
+                                },
+                            ));
+                        }
+                        (None, None) => {}
+                    }
                     break;
                 }
                 _ => break,
