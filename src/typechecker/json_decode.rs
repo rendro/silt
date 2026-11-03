@@ -1022,6 +1022,11 @@ impl TypeChecker {
                 diagnostic = (diagnostic)
                     .with_note(super::builtin_checks::passes_note(passer, &links, decoder));
             }
+            // (One error at one place: the trait the call names refused
+            // the type there first, `Dec` of `twice(Box { v: true }, s)`.)
+            if (self.errors.iter()).any(|e| e.span == gap.origin.span && e.is_error()) {
+                continue;
+            }
             self.errors.push(diagnostic);
         }
     }

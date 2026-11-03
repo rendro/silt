@@ -1,0 +1,11 @@
+error[type]: type 'Box(Bool)' does not implement trait 'Dec'
+ --> instance_impl__a_call_refused_by_its_trait_is_one_error.silt:35:17
+    |
+ 35 |   println(twice(Box { v: true }, "0"))
+    |                 ^^^^^^^^^^^^^^^ type 'Box(Bool)' does not implement trait 'Dec'
+
+error[type]: type 'Box(List(_))' does not implement trait 'Dec'
+ --> instance_impl__a_call_refused_by_its_trait_is_one_error.silt:36:21
+    |
+ 36 |   println(Dec.again(Box { v: [] }, "0"))
+    |                     ^^^^^^^^^^^^^ type 'Box(List(_))' does not implement trait 'Dec'
