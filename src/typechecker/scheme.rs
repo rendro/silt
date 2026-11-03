@@ -706,6 +706,7 @@ impl TypeChecker {
             .map(|e| e.span)
             .collect();
         let fns = std::mem::take(&mut self.fn_spans);
+        let closures = std::mem::take(&mut self.closure_spans);
         let mut kept = Vec::new();
         for mut error in std::mem::take(&mut self.errors) {
             let in_full =
@@ -718,7 +719,18 @@ impl TypeChecker {
             if return_errors.iter().any(|at| within(*at, span)) {
                 continue;
             }
-            if !fns.iter().any(|at| within(*at, span)) {
+            // In a closure, a letter its function's signature does not
+            // write is no type the program can take as a parameter: the
+            // impl would be picked from a value (`{ x -> Dec.again(Box { v:
+            // x }, s) }`), which the help says, with the type route.
+            let letter = in_full_letter(&error.message);
+            let closure = (closures.iter())
+                .find(|(at, written)| {
+                    within(*at, span) && letter.is_some_and(|l| !written.contains(&l))
+                })
+                .is_some();
+            if closure || !fns.iter().any(|at| within(*at, span)) {
+                let head = in_full_head(&error.message);
                 let callee = in_full_callee(&error.message);
                 let what = match callee {
                     Some(callee) => format!("this use of '{callee}'"),
@@ -728,6 +740,13 @@ impl TypeChecker {
                     format!("cannot infer the type {what} needs to implement trait 'json.Decode'");
                 error.code = Code::AmbiguousType;
                 error.help = vec!["annotate the value it is given".to_string()];
+                if closure {
+                    let example = head.map_or_else(|| "Box(t)".to_string(), |h| format!("{h}(t)"));
+                    error.help.push(format!(
+                        "the impl is picked from a type, not from a value: take the type as a \
+                         parameter, as in `{{ t -> json.parse(s, {example}) }}`"
+                    ));
+                }
             }
             kept.push(error);
         }
@@ -1229,4 +1248,19 @@ fn in_full_callee(message: &str) -> Option<String> {
     }
     let rest = message.strip_prefix("method '")?;
     rest.split('\'').next().map(str::to_string)
+}
+
+/// The letter an in-full refusal says is known only by its type: `a` of
+/// "... `Box(a)` in full here: `a` is known only by its type".
+fn in_full_letter(message: &str) -> Option<Symbol> {
+    let (_, rest) = message.split_once(" in full here: `")?;
+    rest.split('`').next().map(intern)
+}
+
+/// The head of the type an in-full refusal names, if it names one with
+/// type arguments: `Box` of "needs the type `Box(a)` in full".
+fn in_full_head(message: &str) -> Option<String> {
+    let (_, rest) = message.split_once("needs the type `")?;
+    let (head, _) = rest.split_once('(')?;
+    (!head.contains('`')).then(|| head.to_string())
 }

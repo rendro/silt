@@ -176,6 +176,12 @@ pub struct TypeChecker {
     /// needing its type in full outside one says that nothing decides
     /// the type (`settle_in_full_refusals`).
     pub(super) fn_spans: Vec<Span>,
+    /// The closures of the module's bodies, each with the type variables
+    /// the signature of the function it is in writes: a use in a closure
+    /// refused as needing its type in full names no letter the program
+    /// did not write (`settle_in_full_refusals`).
+    pub(super) closure_spans: Vec<(Span, Vec<Symbol>)>,
+    pub(super) written_vars: Vec<Symbol>,
     /// The definitions a call passes a decoded type to on the way to the
     /// one whose body decodes it, by the argument that gives the type
     /// (`boxed` of `twice(boxed, Bool)`): links of a note.
@@ -761,6 +767,8 @@ impl TypeChecker {
             open_type_arguments: std::collections::HashSet::new(),
             open_vars: std::collections::HashSet::new(),
             fn_spans: Vec::new(),
+            closure_spans: Vec::new(),
+            written_vars: Vec::new(),
             passed_to: HashMap::new(),
             arg_names: HashMap::new(),
             closure_param_vars: std::collections::HashSet::new(),

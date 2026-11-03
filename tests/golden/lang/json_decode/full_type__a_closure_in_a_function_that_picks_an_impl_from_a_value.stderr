@@ -1,0 +1,23 @@
+error[type]: cannot infer the type this use of 'again' needs to implement trait 'json.Decode'
+ --> full_type__a_closure_in_a_function_that_picks_an_impl_from_a_value.silt:24:22
+    |
+ 24 |   let l7 = { x, s -> Dec.again(Box { v: x }, s) }
+    |                      ^^^^^^^^^ cannot infer the type this use of 'again' needs to implement trait 'json.Decode'
+  = help: annotate the value it is given
+  = help: the impl is picked from a type, not from a value: take the type as a parameter, as in `{ t -> json.parse(s, Box(t)) }`
+
+error[type]: cannot infer the type this use of 'again' needs to implement trait 'json.Decode'
+ --> full_type__a_closure_in_a_function_that_picks_an_impl_from_a_value.silt:29:22
+    |
+ 29 |   let l8 = { x, s -> Dec.again(Box { v: x }, s) }
+    |                      ^^^^^^^^^ cannot infer the type this use of 'again' needs to implement trait 'json.Decode'
+  = help: annotate the value it is given
+  = help: the impl is picked from a type, not from a value: take the type as a parameter, as in `{ t -> json.parse(s, Box(t)) }`
+
+error[type]: cannot infer the type this use of 'again' needs to implement trait 'json.Decode'
+ --> full_type__a_closure_in_a_function_that_picks_an_impl_from_a_value.silt:34:22
+    |
+ 34 |   let l9 = { x, s -> Dec.again(Box { v: x }, s) }
+    |                      ^^^^^^^^^ cannot infer the type this use of 'again' needs to implement trait 'json.Decode'
+  = help: annotate the value it is given
+  = help: the impl is picked from a type, not from a value: take the type as a parameter, as in `{ t -> json.parse(s, Box(t)) }`
