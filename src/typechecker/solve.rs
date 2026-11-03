@@ -1475,14 +1475,8 @@ impl TypeChecker {
                 self.instantiate_record_fields_with_args(*name, args)
             }
             other => {
-                self.error(
-                    Code::TypeMismatch,
-                    format!(
-                        "record update requires a record base, but '{}' is not a record type",
-                        self.show_type(other)
-                    ),
-                    span,
-                );
+                let message = self.not_a_record_base(other);
+                self.error(Code::TypeMismatch, message, span);
                 return;
             }
         };

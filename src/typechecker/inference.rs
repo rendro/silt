@@ -1476,6 +1476,25 @@ impl TypeChecker {
         self.error_help(Code::UnknownField, (base, help), span);
     }
 
+    /// The refusal of a record update whose base is of the type `ty`,
+    /// not a record: a type a parameter holds (`t.{ n: 3 }` after
+    /// `t.zero()`) is named by the parameter, as a type.
+    pub(super) fn not_a_record_base(&self, ty: &Type) -> String {
+        let shown = match self.apply(ty) {
+            Type::Generic(name, args) if name.is_builtin(crate::defs::TYPE_OF) => {
+                let held = self.apply(&args[0]);
+                let shown = match held {
+                    Type::Var(v) => self.type_holder(v).map(resolve),
+                    _ => None,
+                };
+                let shown = shown.unwrap_or_else(|| self.show_type(&held));
+                return format!("record update requires a record base, got the type `{shown}`");
+            }
+            other => self.show_type(&other),
+        };
+        format!("record update requires a record base, but '{shown}' is not a record type")
+    }
+
     /// The traits in sight with a method `field` that makes a value
     /// (takes none of the type), of a type, not of a type constructor,
     /// and those with one of that name that takes a value: `t.field(..)`
@@ -4387,8 +4406,11 @@ impl TypeChecker {
                         let name = (self.type_holder(*v))
                             .or_else(|| written_receiver(obj).map(|shown| intern(&shown)))
                             .unwrap_or_else(|| intern("_"));
-                        let held = Type::Rigid(RigidId { var: *v, name });
-                        self.no_field(&held, field, Some(obj), &[], span);
+                        let message = format!(
+                            "type mismatch: expected a value with a field `{field}`, got the type \
+                             `{name}`"
+                        );
+                        self.error(Code::TypeMismatch, message, span);
                         return Type::Error;
                     }
                     let resolved = self.resolve_type_descriptor_method(&gargs[0], field, span);
@@ -5104,13 +5126,8 @@ impl TypeChecker {
                         }
                     }
                     if !matches!(resolved, Type::Error | Type::Var(_) | Type::Never) {
-                        self.error(Code::TypeMismatch,
-                            format!(
-                                "record update requires a record base, but '{}' is not a record type",
-                                self.show_type(&resolved)
-                            ),
-                            base_span,
-                        );
+                        let message = self.not_a_record_base(&resolved);
+                        self.error(Code::TypeMismatch, message, base_span);
                     }
                 }
                 base_ty

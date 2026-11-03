@@ -1305,11 +1305,27 @@ impl TypeChecker {
                 && !fields.is_empty() =>
             {
                 let field = *fields.keys().next().expect("a field");
-                let shown = self.show_type(other);
-                let mut fault = Fault::new(
-                    Code::UnknownField,
-                    format!("type '{shown}' has no field '{field}'"),
-                );
+                // (A type given where a value with fields is asked: said
+                // in those words, not as `type Rec`.)
+                let mut fault = match self.apply(other) {
+                    Type::Generic(name, args) if name.is_builtin(crate::defs::TYPE_OF) => {
+                        Fault::new(
+                            Code::TypeMismatch,
+                            format!(
+                                "type mismatch: expected a value with a field `{field}`, got the type \
+                             `{}`",
+                                self.show_type(&self.apply(&args[0]))
+                            ),
+                        )
+                    }
+                    _ => {
+                        let shown = self.show_type(other);
+                        Fault::new(
+                            Code::UnknownField,
+                            format!("type '{shown}' has no field '{field}'"),
+                        )
+                    }
+                };
                 fault.help = self.method_help(other, field, "x");
                 out.push(fault);
             }
