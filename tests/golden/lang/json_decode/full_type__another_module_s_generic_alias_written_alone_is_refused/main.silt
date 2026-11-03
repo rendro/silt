@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- Another module's generic alias written alone as a decoder's type
+-- argument is refused as the generic type alone is, directly and through
+-- that module's function that passes it on.
+import json
+import util
+
+fn main() {
+  println(json.parse("[1]", util.L))
+  println(util.load("[1]", util.L))
+  println(json.parse("[1]", util.L(Int)))
+}

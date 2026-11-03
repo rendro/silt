@@ -257,6 +257,57 @@ impl TypeChecker {
         // (`List(Int)`, `(Int, String)`): a decoder that takes any value
         // reads it as the type of a field, each part as one. (A type
         // with its arguments left open, `List`, is not one type.)
+        // (A generic type or alias written alone in the type argument,
+        // `L` of `List(L)`, `Box` given to `p(s, type t)` that decodes
+        // `List(t)`: it is what is refused, named as written.)
+        if self.open_type_arguments.contains(&span)
+            && let Some(&(name, head)) = self.bare_written.get(&span)
+        {
+            match head {
+                Some(head) if written != Some(name) => {
+                    let part = match head_ref(ty) == Some(head) {
+                        true => Some(ty),
+                        false => part_with_head(ty, head),
+                    };
+                    if let Some(part) = part {
+                        return self.decode_refusal(
+                            builtin_name,
+                            decoding,
+                            Some(name),
+                            part,
+                            owner,
+                            span,
+                        );
+                    }
+                }
+                Some(_) => {}
+                // An alias with type parameters of a type with none
+                // (`type K(a) = Int`), written alone: a generic type
+                // alone, as `L` of `type L(a) = List(a)` is.
+                None => {
+                    let accepted = decoding.type_arguments(str::to_string);
+                    let help = match decoding.primitives {
+                        true => decoding.family.help(),
+                        false => decoding.family.type_argument_help().to_string(),
+                    };
+                    let message = format!(
+                        "`{builtin_name}` cannot decode `{name}`: its type argument must be {accepted}"
+                    );
+                    return Some(
+                        Diagnostic::error(Code::Undecodable, span, message).with_help(help),
+                    );
+                }
+            }
+        }
+        // (A part written alone, `List(Box)`: that part is what is
+        // refused, as it would be at the top.)
+        if self.open_type_arguments.contains(&span)
+            && let Some(parts) = decoded_parts(ty)
+            && let Some(part) = (parts.into_iter())
+                .find(|part| !matches!(part, Type::Var(_)) && self.holds_open_vars(part))
+        {
+            return self.decode_refusal(builtin_name, decoding, None, part, owner, span);
+        }
         if decoding.primitives
             && let Some(parts) = decoded_parts(ty)
             && !self.open_type_arguments.contains(&span)
@@ -347,7 +398,11 @@ impl TypeChecker {
                     Diagnostic::error(Code::MissingTraitImpl, span, message)
                 });
             }
-            if let Some(refusal) = self.opaque_decode_refusal(ty, span, owner) {
+            // (An opaque type with impls for some instantiations, written
+            // alone: refused as a generic type, below.)
+            if !(open && self.has_decode_impl(head))
+                && let Some(refusal) = self.opaque_decode_refusal(ty, span, owner)
+            {
                 return Some(refusal);
             }
             let enum_type = self.tables.is_enum(head);
@@ -356,29 +411,12 @@ impl TypeChecker {
             // argument's type): refused as a dictionary that needs its
             // type in full is (`refuse_type_without_value`), the variable
             // named by its place among the type's.
-            if open && !args.is_empty() && !self.holds_open_vars(ty) {
-                let mut letters = (b'a'..=b'z').map(|letter| char::from(letter).to_string());
-                let names: HashMap<TyVar, Type> = (free_vars_in(ty).into_iter())
-                    .map(|var| {
-                        let name = intern(&letters.next().unwrap_or_else(|| "_".to_string()));
-                        (var, Type::Rigid(crate::types::RigidId { var, name }))
-                    })
-                    .collect();
-                let unheld = (free_vars_in(ty).into_iter())
-                    .find(|v| !self.held_by_param(*v))
-                    .and_then(|v| names.get(&v).cloned());
-                if let Some(Type::Rigid(r)) = unheld {
-                    let name = r.name;
-                    return refusal(
-                        Code::InvalidMethodCall,
-                        format!(
-                            "`{builtin_name}` needs the type `{}` in full here: `{name}` is known \
-                             only by its type",
-                            self.show_type(&substitute_vars(ty, &names))
-                        ),
-                        &format!("take the type as a parameter, `type {name}`"),
-                    );
-                }
+            if open
+                && !args.is_empty()
+                && !self.holds_open_vars(ty)
+                && let Some(refusal) = self.in_full_refusal(builtin_name, ty, span)
+            {
+                return Some(refusal);
             }
             if open {
                 let kind = match enum_type {
@@ -544,6 +582,37 @@ impl TypeChecker {
         None
     }
 
+    /// The refusal of a use at `span` that gives `builtin_name` the type
+    /// `ty` with a variable only a value's type knows (`Box { v: x }`
+    /// given to a function that decodes its argument's type), as a
+    /// dictionary that needs its type in full is refused
+    /// (`refuse_type_without_value`), the variable named by its place
+    /// among the type's.
+    fn in_full_refusal(&self, builtin_name: &str, ty: &Type, span: Span) -> Option<Diagnostic> {
+        let mut letters = (b'a'..=b'z').map(|letter| char::from(letter).to_string());
+        let names: HashMap<TyVar, Type> = (free_vars_in(ty).into_iter())
+            .map(|var| {
+                let name = intern(&letters.next().unwrap_or_else(|| "_".to_string()));
+                (var, Type::Rigid(crate::types::RigidId { var, name }))
+            })
+            .collect();
+        let unheld = (free_vars_in(ty).into_iter())
+            .find(|v| !self.held_by_param(*v))
+            .and_then(|v| names.get(&v).cloned());
+        let Some(Type::Rigid(r)) = unheld else {
+            return None;
+        };
+        let name = r.name;
+        let message = format!(
+            "`{builtin_name}` needs the type `{}` in full here: `{name}` is known only by its type",
+            self.show_type(&substitute_vars(ty, &names))
+        );
+        Some(
+            Diagnostic::error(Code::InvalidMethodCall, span, message)
+                .with_help(format!("take the type as a parameter, `type {name}`")),
+        )
+    }
+
     /// The error of the decoder `builtin`, which decodes as `decoding`
     /// says, given `whole` at `span`, if `part` of it, a type its list,
     /// option, map or tuple holds, has no decoder: a record or enum type
@@ -605,7 +674,13 @@ impl TypeChecker {
                     family,
                     primitives: true,
                 };
-                self.decode_refusal(builtin, decoding, None, part, owner, span)
+                let refusal = self.decode_refusal(builtin, decoding, None, part, owner, span)?;
+                // (Needed in full: the whole type the use gives, its list
+                // too, `List(Box(Option(a)))`.)
+                match refusal.code == Code::InvalidMethodCall {
+                    true => self.in_full_refusal(builtin, whole, span).or(Some(refusal)),
+                    false => Some(refusal),
+                }
             }
             _ => {
                 let help = match leaf {
@@ -859,4 +934,35 @@ pub(super) fn decoded_variables(ty: &Type) -> Vec<Type> {
         }
     }
     out
+}
+
+/// The head of `ty`, a type named by one: `Box` of `Box(Int)`, `List` of
+/// `List(Int)`.
+pub(super) fn head_ref(ty: &Type) -> Option<TypeRef> {
+    match ty {
+        Type::Generic(t, _) => Some(*t),
+        Type::List(_) => Some(TypeRef::builtin("List")),
+        Type::Map(..) => Some(TypeRef::builtin("Map")),
+        Type::Set(_) => Some(TypeRef::builtin("Set")),
+        Type::Channel(_) => Some(TypeRef::builtin("Channel")),
+        _ => None,
+    }
+}
+
+/// The first part of `ty` below its top whose head is `head`.
+fn part_with_head(ty: &Type, head: TypeRef) -> Option<&Type> {
+    let parts: Vec<&Type> = match ty {
+        Type::Generic(_, args) => args.iter().collect(),
+        Type::List(t) | Type::Set(t) | Type::Channel(t) => vec![&**t],
+        Type::Map(k, v) => vec![&**k, &**v],
+        Type::Tuple(ts) => ts.iter().collect(),
+        _ => Vec::new(),
+    };
+    (parts.iter().copied())
+        .find(|part| head_ref(part) == Some(head))
+        .or_else(|| {
+            parts
+                .into_iter()
+                .find_map(|part| part_with_head(part, head))
+        })
 }

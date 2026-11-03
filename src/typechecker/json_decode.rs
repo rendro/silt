@@ -1017,10 +1017,18 @@ impl TypeChecker {
                 // (Of an opaque type, the route that refuses it.)
                 let refused =
                     (self.opaque_module_in(&ty)).filter(|module| !owners.contains(module));
-                let links = self.passed_through_refused(gap.asker, refused);
+                let mut links = self.passed_through_refused(gap.asker, refused);
+                if let Some(before) = self.passed_to.get(&gap.origin.span) {
+                    links.splice(0..0, before.iter().copied());
+                }
                 let (passer, links) = self.through_let(gap.origin.callee, passer, links);
                 diagnostic = (diagnostic)
                     .with_note(super::builtin_checks::passes_note(passer, &links, decoder));
+            }
+            // (One error at one place: the trait the call names refused
+            // the type there first, `Dec` of `twice(Box { v: true }, s)`.)
+            if (self.errors.iter()).any(|e| e.span == gap.origin.span && e.is_error()) {
+                continue;
             }
             self.errors.push(diagnostic);
         }

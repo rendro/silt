@@ -1,0 +1,24 @@
+-- cmd: check
+-- exit: 1
+-- A generic alias of a type that takes no type arguments (`type K(a) =
+-- Int`), written alone as a decoder's type argument, is a generic alias
+-- alone as `L` of `type L(a) = List(a)` is: refused, naming it, at the
+-- top, inside another type, through a parameter that holds a type and in
+-- toml. (`json.parse(s, K(Bool))` is `Int`, and decodes.)
+import json
+import toml
+
+type K(a) = Int
+
+
+fn load(s, t) {
+  json.parse(s, t)
+}
+
+fn main() {
+  println(json.parse("3", K))
+  println(json.parse("[3]", List(K)))
+  println(load("3", K))
+  println(toml.parse_list("a = [3]", K))
+  println(json.parse("3", K(Bool)))
+}

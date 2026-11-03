@@ -1,0 +1,19 @@
+-- cmd: check
+-- exit: 1
+-- A data parameter that holds a type cannot be given type arguments
+-- (`m(Int)` in `fn dec(s, m)`): the whole type is passed, as the call of
+-- the function with `List(Int)` in the parameter's place shows.
+import json
+
+fn dec(s, m) {
+  json.parse(s, m(Int))
+}
+
+fn wrapped(m, s) {
+  json.parse(s, List(m(Int)))
+}
+
+fn main() {
+  println(dec("[1]", List(Int)))
+  println(wrapped(Int, "[[1]]"))
+}

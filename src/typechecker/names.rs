@@ -2963,9 +2963,14 @@ impl Resolver<'_> {
         let of_type = receiver
             && matches!(callee.res, Some(Res::Def(d))
                 if self.defs.get(d).is_type() || self.defs.variant_type(d).is_some());
+        // (A type given types, `Result(_, String)`: no closure is
+        // meant.)
+        let names_type = matches!(callee.res, Some(Res::Def(d)) if self.defs.get(d).is_type());
         let help = args.iter().any(is_placeholder).then(|| {
-            placeholder_help(callee, args, piped, |name| {
-                self.lookup_value(intern(name)).is_some()
+            (!names_type).then(|| {
+                placeholder_help(callee, args, piped, |name| {
+                    self.lookup_value(intern(name)).is_some()
+                })
             })
         });
         for a in args {
@@ -2973,7 +2978,10 @@ impl Resolver<'_> {
                 Some(help) if is_placeholder(a) => {
                     let d =
                         Diagnostic::error(Code::UnresolvedName, a.span, "undefined variable '_'");
-                    self.error(d.with_help(help.clone()));
+                    self.error(match help {
+                        Some(help) => d.with_help(help.clone()),
+                        None => d,
+                    });
                     a.res = Some(Res::Error);
                 }
                 // `json.parse(s, Self)` in a trait's default body: `Self`

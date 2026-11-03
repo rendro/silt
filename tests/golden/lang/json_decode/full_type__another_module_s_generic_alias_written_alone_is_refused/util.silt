@@ -1,0 +1,7 @@
+import json
+
+pub type L(a) = List(a)
+
+pub fn load(s, t) {
+  json.parse(s, t)
+}

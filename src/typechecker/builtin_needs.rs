@@ -22,6 +22,10 @@ pub(crate) struct GivenUse {
     pub(super) written: Option<Symbol>,
     /// The function or method a note names.
     pub(super) passer: Symbol,
+    /// The functions `passer` passes the type to on the way to the
+    /// definition whose bound it is (`boxed` of `twice(boxed, Bool)`):
+    /// a note names each.
+    pub(super) through: Vec<Symbol>,
     /// The method body whose variable `given` is (`Pred::Given`).
     pub(super) body: Option<Symbol>,
     /// The method body the use is in: what its subject asks, if the
@@ -683,6 +687,20 @@ impl TypeChecker {
                 i != at && mentions_type_of(&checker.apply(ty), subject, &|t| checker.apply(t))
             })
         };
+        // The other arguments that hold a decoder of the type, as their
+        // names write them, in order (`twice` of `thrice(twice, mid,
+        // Bool)`): the call passes the type through them on the way to
+        // the definition given at `from`.
+        let between = |checker: &Self, at: usize, from: Span, subject: &Type| -> Vec<Symbol> {
+            (given.iter().enumerate())
+                .filter(|(i, (span, _, ty))| {
+                    *i != at
+                        && *span != from
+                        && mentions_type_of(&checker.apply(ty), subject, &|t| checker.apply(t))
+                })
+                .filter_map(|(_, (span, ..))| checker.arg_names.get(span).copied())
+                .collect()
+        };
         let scope = self.wanted_marks.last().copied().unwrap_or(0);
         // (Only the decoders whose type was unknown when they were owed:
         // `waiting_decoders`, kept small as they are decided.)
@@ -716,6 +734,7 @@ impl TypeChecker {
                 continue;
             }
             let passed_on = passer.filter(|_| holds_decoder(self, at, &subject));
+            let through = between(self, at, self.wanted[k].origin.span, &subject);
             let wanted = &mut self.wanted[k];
             wanted.origin.span = span;
             match &mut wanted.goal {
@@ -730,6 +749,14 @@ impl TypeChecker {
                 // (`json.Decode`.)
                 Goal::Pred(Pred::Trait { asker, .. }) => {
                     if let (Some(asker), Some(passer)) = (asker, passed_on) {
+                        // (The definition the call passes it to, whose
+                        // body decodes it: a link of the note,
+                        // `passed_to`.)
+                        if let Some(before) = asker.passer.filter(|before| *before != passer) {
+                            let links = self.passed_to.entry(span).or_default();
+                            links.insert(0, before);
+                            links.splice(0..0, through);
+                        }
                         asker.passer = Some(passer);
                     }
                     if let Some(alias) = alias {
@@ -796,12 +823,17 @@ impl TypeChecker {
                 continue;
             }
             let passed_on = passer.filter(|_| holds_decoder(self, at, &subject));
+            let through = between(self, at, self.given_waiting[k].origin.span, &subject);
             let use_ = &mut self.given_waiting[k];
             use_.origin.span = span;
             use_.placed = !matches!(subject, Type::Var(_));
             use_.written = alias;
-            if let Some(passer) = passed_on {
-                use_.passer = passer;
+            if let Some(passer) = passed_on
+                && passer != use_.passer
+            {
+                let before = std::mem::replace(&mut use_.passer, passer);
+                use_.through.insert(0, before);
+                use_.through.splice(0..0, through);
             }
         }
     }
@@ -1130,7 +1162,8 @@ impl TypeChecker {
                     },
                     other => other,
                 };
-                let through = self.need_path(use_.given, use_.body, index);
+                let mut through = use_.through.clone();
+                through.extend(self.need_path(use_.given, use_.body, index));
                 let passer = (Some(use_.passer), through.as_slice());
                 // (The modules on the way: the definition's, those its
                 // bound hands the type to, those the body's need passes.)
@@ -1174,7 +1207,7 @@ impl TypeChecker {
         let mut owners: Vec<crate::session::ModuleId> = use_.owner.into_iter().collect();
         owners.extend(use_.also.iter().copied());
         if self.decodes_whole_refused(check, &whole, &owners) {
-            let passer = (note.then_some(use_.passer), &[][..]);
+            let passer = (note.then_some(use_.passer), &use_.through[..]);
             self.check_builtin_argument(check, &whole, passer, &owners, use_.origin);
         }
     }

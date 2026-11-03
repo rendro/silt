@@ -1,0 +1,28 @@
+error[type]: `json.parse` cannot decode `K`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, a type with a `json.Decode` impl, or List(T), Option(T), Map(String, T) or a tuple of decodable types
+ --> full_type__a_generic_alias_of_a_type_without_arguments_written_alone_is_refused.silt:19:27
+    |
+ 19 |   println(json.parse("3", K))
+    |                           ^ `json.parse` cannot decode `K`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, a type with a `json.Decode` impl, or List(T), Option(T), Map(String, T) or a tuple of decodable types
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `json.parse` cannot decode `K`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, a type with a `json.Decode` impl, or List(T), Option(T), Map(String, T) or a tuple of decodable types
+ --> full_type__a_generic_alias_of_a_type_without_arguments_written_alone_is_refused.silt:20:29
+    |
+ 20 |   println(json.parse("[3]", List(K)))
+    |                             ^^^^^^^ `json.parse` cannot decode `K`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, a type with a `json.Decode` impl, or List(T), Option(T), Map(String, T) or a tuple of decodable types
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `json.parse` cannot decode `K`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, a type with a `json.Decode` impl, or List(T), Option(T), Map(String, T) or a tuple of decodable types
+ --> full_type__a_generic_alias_of_a_type_without_arguments_written_alone_is_refused.silt:21:21
+    |
+ 21 |   println(load("3", K))
+    |                     ^ `json.parse` cannot decode `K`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, a type with a `json.Decode` impl, or List(T), Option(T), Map(String, T) or a tuple of decodable types
+  = note: `load` passes it to `json.parse`
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `toml.parse_list` cannot decode `K`: its type argument must be Int, Float, String, Bool, a record type, an enum type, a type with a `json.Decode` impl, or List(T), Option(T), Map(String, T) or a tuple of decodable types
+ --> full_type__a_generic_alias_of_a_type_without_arguments_written_alone_is_refused.silt:22:38
+    |
+ 22 |   println(toml.parse_list("a = [3]", K))
+    |                                      ^ `toml.parse_list` cannot decode `K`: its type argument must be Int, Float, String, Bool, a record type, an enum type, a type with a `json.Decode` impl, or List(T), Option(T), Map(String, T) or a tuple of decodable types
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these

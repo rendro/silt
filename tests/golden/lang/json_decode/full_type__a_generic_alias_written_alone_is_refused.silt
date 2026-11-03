@@ -1,0 +1,50 @@
+-- cmd: check
+-- exit: 1
+-- A generic alias written alone as a decoder's type argument (`L` of
+-- `type L(a) = List(a)`) is refused as the generic type alone is
+-- (`json.parse(s, List)`), naming the alias: of List, Option, Map and a
+-- record type with an impl for one instantiation, by json.parse,
+-- json.decode, toml.parse_list and toml.parse_map, with an annotation,
+-- through a parameter that holds a type and inside `List(t)`.
+-- (`json.parse(s, L(Int))` decodes.)
+import json
+import toml
+
+type L(a) = List(a)
+
+type O(a) = Option(a)
+
+type M(a) = Map(String, a)
+
+type Box(a) {
+  v: a,
+}
+
+trait json.Decode for Box(Int) {
+  fn decode(v: json.Value) -> Result(Self, json.JsonError) { Ok(Box { v: 1 }) }
+}
+
+type B2(a) = Box(a)
+
+fn load(s, t) {
+  json.parse(s, t)
+}
+
+fn listed(s, t) {
+  json.parse(s, List(t))
+}
+
+fn main() {
+  println(json.parse("[1]", L))
+  println(json.parse("1", O))
+  println(json.parse("\{}", M))
+  println(json.parse("0", B2))
+  println(json.decode(json.Null, L))
+  let r: Result(List(Int), json.JsonError) = json.parse("[1]", L)
+  println(r)
+  println(load("[1]", L))
+  println(listed("[[1]]", L))
+  println(toml.parse_list("a = [1]", L))
+  println(toml.parse_map("a = [1]", L))
+  println(json.parse("[1]", L(Int)))
+}

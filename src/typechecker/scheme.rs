@@ -488,7 +488,10 @@ impl TypeChecker {
         // later one does.
         for wanted in &mut recorded {
             let Goal::Pred(Pred::Trait {
-                tr, args, subject, ..
+                tr,
+                args,
+                subject,
+                asker,
             }) = &wanted.goal
             else {
                 continue;
@@ -500,6 +503,15 @@ impl TypeChecker {
                 continue;
             }
             wanted.solved = true;
+            // (A generic type written alone, `json.parse(s, Box)`: the
+            // decoder's refusal, as without impls.)
+            if self.written_alone(*tr, subject, wanted.origin.span) {
+                self.open_type_arguments.insert(wanted.origin.span);
+                let subject = self.apply(subject);
+                let ev = Some(wanted.ev);
+                self.verify_trait_obligation(*tr, args, &subject, wanted.origin, *asker, ev);
+                continue;
+            }
             for arg in args {
                 (self.reported_trait_args).extend(free_vars_in(&self.apply(arg)));
             }
@@ -672,6 +684,53 @@ impl TypeChecker {
     /// { v: [] }, s)`: `Box(List(a))`) is the one error; else this one,
     /// in the place of what a decoder said of the type the scope's end
     /// picked for the part (`toml.parse` of `R(())`), which nobody wrote.
+    /// Settle each use refused as needing its type in full (`twice` needs
+    /// the type `List(a)` in full here) where no parameter can take the
+    /// type: in a function whose return type the same type leaves
+    /// undecided (`fn f(s) { twice([], s) }`), that error is the one; in
+    /// `main` (a closure in it too) and outside any function (a top-level
+    /// `let`, the REPL), nothing decides the type, and the use says so as
+    /// one that nothing decides does.
+    pub(super) fn settle_in_full_refusals(&mut self) {
+        let within = |outer: Span, inner: Span| {
+            outer.file == inner.file && outer.start <= inner.start && inner.end <= outer.end
+        };
+        let return_errors: Vec<Span> = (self.errors.iter())
+            .filter(|e| {
+                e.code == Code::InvalidTypeAnnotation
+                    && e.message.contains("and no parameter decides")
+            })
+            .map(|e| e.span)
+            .collect();
+        let fns = std::mem::take(&mut self.fn_spans);
+        let mut kept = Vec::new();
+        for mut error in std::mem::take(&mut self.errors) {
+            let in_full =
+                error.code == Code::InvalidMethodCall && error.message.contains(" in full here: ");
+            if !in_full {
+                kept.push(error);
+                continue;
+            }
+            let span = error.span;
+            if return_errors.iter().any(|at| within(*at, span)) {
+                continue;
+            }
+            if !fns.iter().any(|at| within(*at, span)) {
+                let callee = in_full_callee(&error.message);
+                let what = match callee {
+                    Some(callee) => format!("this use of '{callee}'"),
+                    None => "this".to_string(),
+                };
+                error.message =
+                    format!("cannot infer the type {what} needs to implement trait 'json.Decode'");
+                error.code = Code::AmbiguousType;
+                error.help = vec!["annotate the value it is given".to_string()];
+            }
+            kept.push(error);
+        }
+        self.errors = kept;
+    }
+
     pub(super) fn settle_undecided_decodes(&mut self) {
         for (span, error) in std::mem::take(&mut self.undecided_decodes) {
             let in_full = |e: &Diagnostic| {
@@ -732,7 +791,28 @@ impl TypeChecker {
                 "annotate the value it is given, `let x: {} = ...`",
                 self.show_type(instance)
             );
-            return Diagnostic::error(Code::AmbiguousType, origin.span, message).with_help(help);
+            let diagnostic = Diagnostic::error(Code::AmbiguousType, origin.span, message);
+            let diagnostic = diagnostic.with_help(help);
+            // (Its arguments are a closure's parameter's: the impl would be
+            // picked from a value. A type the closure takes picks it.)
+            let from_value = (self.closure_param_vars.iter()).any(|v| {
+                free_vars_in(&self.apply(&Type::Var(*v)))
+                    .iter()
+                    .any(|w| free_vars_in(&subject_ty).contains(w))
+            });
+            if !from_value {
+                return diagnostic;
+            }
+            let example = match &subject_ty {
+                Type::Generic(head, args) if args.len() == 1 => {
+                    format!("{}(t)", self.show_type(&Type::Generic(*head, Vec::new())))
+                }
+                _ => "Box(t)".to_string(),
+            };
+            return diagnostic.with_help(format!(
+                "the impl is picked from a type, not from a value: take the type as a parameter, \
+                 as in `{{ t -> json.parse(s, {example}) }}`"
+            ));
         }
         let message = format!(
             "cannot decide which impl of '{}' for '{}' {what} means: its trait argument is not \
@@ -1135,4 +1215,15 @@ fn take_pred(
             owners.push(owner);
         }
     }
+}
+
+/// The function or method an in-full refusal names: `twice` of
+/// "`twice` needs the type ...", `again` of "method 'again' of trait
+/// 'Dec' needs the type ...".
+fn in_full_callee(message: &str) -> Option<String> {
+    if let Some(rest) = message.strip_prefix('`') {
+        return rest.split('`').next().map(str::to_string);
+    }
+    let rest = message.strip_prefix("method '")?;
+    rest.split('\'').next().map(str::to_string)
 }

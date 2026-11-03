@@ -1564,6 +1564,11 @@ impl TypeChecker {
         if self.errors.len() != reported + 1 || !is_ours(&self.errors[reported]) {
             return;
         }
+        // (A part already reported, `(m(Int), m)`: that error is the one.)
+        if self.apply(&given).holds_error() {
+            self.errors.truncate(reported);
+            return;
+        }
         let Some(who) = Self::callee_label(callee) else {
             return;
         };
@@ -2258,6 +2263,11 @@ impl TypeChecker {
         let scheme = self.def_scheme(Some(crate::defs::Res::Def(head.id.0)), env)?;
         match self.instantiate(&scheme) {
             Type::Generic(name, _) if name.is_builtin(crate::defs::TYPE_OF) => {
+                // (A generic alias alone, `L` of `type L(a) = List(a)`,
+                // holds open arguments, as `List` alone does.)
+                if self.type_arity(alias).is_some_and(|arity| arity > 0) {
+                    self.open_vars.extend(free_vars_in(&target));
+                }
                 Some(Type::type_of(target))
             }
             _ => None,
@@ -2329,8 +2339,21 @@ impl TypeChecker {
     /// annotation variables are rigid and bounded as the `where` clauses
     /// say, and the body's type is the signature's result.
     pub(super) fn check_body(&mut self, f: &mut FnDecl, sig: &FnSig, env: &mut TypeEnv) {
+        // (`main` and the function of a REPL entry's statements take no
+        // parameter a program gives.)
+        if f.name != intern("main") && !crate::session::is_cell_name(&resolve(f.name)) {
+            self.fn_spans.push(f.span);
+        }
+        let params = (f.params.iter())
+            .map(|p| match p.pattern.kind {
+                PatternKind::Ident(name) => (name, p.kind == ParamKind::Data),
+                _ => (intern("_"), false),
+            })
+            .collect();
+        let outer = self.checked_fn.replace((f.name, params));
         let uses = std::mem::take(&mut self.full_type_uses);
         self.check_body_in(f, sig, env);
+        self.checked_fn = outer;
         // (As the body left the receivers' types.)
         for (recv, tr, field, span) in std::mem::replace(&mut self.full_type_uses, uses) {
             let recv = self.apply(&recv);
@@ -2798,7 +2821,16 @@ impl TypeChecker {
             return None;
         };
         let def = self.defs.as_ref()?.get(id);
-        (def.kind == crate::defs::DefKind::TypeAlias).then_some(def.name)
+        if def.kind != crate::defs::DefKind::TypeAlias {
+            return None;
+        }
+        // (Another module's, as written: `m.IntBox`.)
+        match &arg.kind {
+            ExprKind::FieldAccess(obj, field, _) if let ExprKind::Ident(module) = obj.kind => {
+                Some(intern(&format!("{module}.{field}")))
+            }
+            _ => Some(def.name),
+        }
     }
 
     /// The type `arg` writes as a value if it writes a type of types:
@@ -2823,6 +2855,54 @@ impl TypeChecker {
         Some(ty)
     }
 
+    /// Keep `e`, a generic type or alias written alone, as written, for a
+    /// decoder's refusal at the argument `at` (`bare_written`).
+    fn note_bare_written(&mut self, e: &Expr, at: Span) {
+        let Some(Type::Generic(name, args)) = e.ty.as_ref().map(|ty| self.apply(ty)) else {
+            return;
+        };
+        if !name.is_builtin(crate::defs::TYPE_OF) {
+            return;
+        }
+        let Some(ty) = args.first().map(|ty| self.apply(ty)) else {
+            return;
+        };
+        let head = super::builtin_checks::head_ref(&ty);
+        // (Of an alias of a type with no arguments, `K` of `type K(a) =
+        // Int`, nothing in the type says it was written alone.)
+        if head.is_none() {
+            self.open_type_arguments.insert(at);
+        }
+        let written = intern(&super::names::shown_arg(e));
+        self.bare_written.entry(at).or_insert((written, head));
+    }
+
+    /// `note_bare_written` of the first generic type or alias written
+    /// alone among the types `e` gives another type (`L` of `List(L)`).
+    fn note_bare_part(&mut self, e: &Expr, at: Span) {
+        match &e.kind {
+            ExprKind::Call(_, args) => {
+                for arg in args {
+                    if self.names_generic_type(arg) {
+                        self.note_bare_written(arg, at);
+                        return;
+                    }
+                    self.note_bare_part(arg, at);
+                }
+            }
+            ExprKind::Tuple(elems) => {
+                for elem in elems {
+                    if self.names_generic_type(elem) {
+                        self.note_bare_written(elem, at);
+                        return;
+                    }
+                    self.note_bare_part(elem, at);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Report the type `ty`, given types where it takes another number
     /// of them, at `span`: the type is unknown.
     fn type_arguments_mismatch(&mut self, ty: TypeRef, span: Span) -> Type {
@@ -2831,17 +2911,54 @@ impl TypeChecker {
         Type::Error
     }
 
-    /// Whether `e` names a generic type alone (`List`, `Box`).
+    /// The error of a call that gives type arguments to `callee`, a local
+    /// name that holds a type (`m(Int)` in `fn dec(s, m)`): it takes
+    /// none, the whole type is passed, as the call of the function being
+    /// checked shows where `callee` is its data parameter.
+    fn held_type_applied(&self, callee: &Expr, callee_ty: &Type) -> Option<String> {
+        let ExprKind::Ident(name) = callee.kind else {
+            return None;
+        };
+        if callee.res != Some(crate::defs::Res::Local)
+            || !matches!(callee_ty, Type::Generic(head, _) if head.is_builtin(crate::defs::TYPE_OF))
+        {
+            return None;
+        }
+        let said =
+            format!("`{name}` holds a type and takes no type arguments: pass the whole type");
+        let Some((function, params)) = self.checked_fn.as_ref() else {
+            return Some(said);
+        };
+        if !params.contains(&(name, true)) {
+            return Some(said);
+        }
+        let args: Vec<String> = (params.iter())
+            .map(|(param, _)| match *param == name {
+                true => "List(Int)".to_string(),
+                false => resolve(*param).to_string(),
+            })
+            .collect();
+        Some(format!("{said}, as in `{function}({})`", args.join(", ")))
+    }
+
+    /// Whether `e` names a generic type alone (`List`, `Box`, an alias
+    /// `L` of `type L(a) = List(a)`).
     fn names_generic_type(&mut self, e: &Expr) -> bool {
         if !matches!(e.kind, ExprKind::Ident(_) | ExprKind::FieldAccess(..)) {
             return false;
         }
-        let is_type = (self.res_def(e.res))
-            .is_some_and(|def| matches!(def.kind, crate::defs::DefKind::Type(_)));
-        is_type
-            && (self.res_type(e.res))
+        let Some(def) = self.res_def(e.res) else {
+            return false;
+        };
+        match def.kind {
+            crate::defs::DefKind::Type(_) => (self.res_type(e.res))
                 .and_then(|ty| self.type_instance(ty))
-                .is_some_and(|ty| !free_vars_in(&ty).is_empty())
+                .is_some_and(|ty| !free_vars_in(&ty).is_empty()),
+            crate::defs::DefKind::TypeAlias => (self.res_type(e.res))
+                .and_then(|ty| self.type_arity(ty))
+                .is_some_and(|arity| arity > 0),
+            _ => false,
+        }
     }
 
     /// The alias without type parameters `e` names, if it names one.
@@ -3331,7 +3448,8 @@ impl TypeChecker {
                         _ => None,
                     };
                     let full = spelled.is_some();
-                    if spelled.is_none() && self.names_generic_type(arg) {
+                    let alone = spelled.is_none() && self.names_generic_type(arg);
+                    if alone {
                         self.open_type_arguments.insert(arg.span);
                     }
                     let before_arg = self.errors.len();
@@ -3339,6 +3457,11 @@ impl TypeChecker {
                         Some(ty) => Type::type_of(ty),
                         None => self.infer_expr(arg, env),
                     };
+                    if alone {
+                        self.note_bare_written(arg, arg.span);
+                    } else if full {
+                        self.note_bare_part(arg, arg.span);
+                    }
                     self.expected_closure = None;
                     let reported = self.errors.len();
                     let arg_ty = match param {
@@ -3353,6 +3476,9 @@ impl TypeChecker {
                     };
                     mismatched |= self.errors.len() > reported;
                     given_at[i] = Some((arg.span, self.alias_named(arg), arg_ty.clone()));
+                    if let ExprKind::Ident(name) = arg.kind {
+                        self.arg_names.insert(arg.span, name);
+                    }
                     if let Some(param) = param {
                         let at = match form {
                             CallForm::Call => arg.span,
@@ -3366,6 +3492,17 @@ impl TypeChecker {
                         let passed_on = statement.map(|_| self.frames_sharing(&arg_ty));
                         let reported = self.errors.len();
                         self.unify(&arg_ty, param, at);
+                        // A type argument already reported (`_` of
+                        // `wrap(1, Result(_, String))`): what it would
+                        // decide is asked about no more.
+                        if self.apply(&arg_ty) == Type::Error
+                            && let Type::Generic(name, args) = self.apply(param)
+                            && name.is_builtin(crate::defs::TYPE_OF)
+                        {
+                            for v in args.iter().flat_map(free_vars_in) {
+                                self.unify(&Type::Var(v), &Type::Error, at);
+                            }
+                        }
                         mismatched |= self.errors.len() > reported;
                         if self.errors.len() > reported {
                             self.misread_argument(
@@ -3526,6 +3663,12 @@ impl TypeChecker {
                         Type::Error
                     }
                     (_, CallForm::Call) => {
+                        // A parameter that holds a type, given type
+                        // arguments (`m(Int)`): the whole type is passed.
+                        if let Some(message) = self.held_type_applied(callee, other) {
+                            self.error(Code::TypeMismatch, message, span);
+                            return Type::Error;
+                        }
                         let mut d = Diagnostic::error(
                             Code::TypeMismatch,
                             span,
@@ -4598,6 +4741,7 @@ impl TypeChecker {
                         ty
                     })
                     .collect();
+                (self.closure_param_vars).extend(param_types.iter().flat_map(free_vars_in));
 
                 // A lambda is its own `?`/`return`
                 // boundary — the VM's Op::QuestionMark pops exactly ONE

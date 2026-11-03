@@ -1,11 +1,13 @@
 -- cmd: check
 -- exit: 1
 -- A value of a generic type of the program with a part nothing decides
--- (`Box { v: [] }`, `R { xs: [] }`, `[Box { v: None }]`), given to a
--- function that decodes its argument's type, is refused as needing the
--- type in full, once at its place: not as a type nothing decides
--- (full_type__a_type_nothing_decides_is_refused), nor by what a decoder
--- says of the type the scope's end picks for the part.
+-- (`Box { v: [] }`, `R { xs: [] }`, `[Box { v: None }]`), given in a
+-- function to a function that decodes its argument's type, is refused as
+-- needing the whole type in full (its list too), once at its place: not
+-- as a type nothing decides, nor by what a decoder says of the type the
+-- scope's end picks for the part. (In `main`, where no parameter can take
+-- the type, it is a type nothing decides:
+-- full_type__a_type_nothing_decides_is_refused.)
 import json
 
 trait Dec: json.Decode {
@@ -30,8 +32,12 @@ fn twice(b, s) {
   Dec.again(b, s)
 }
 
+fn show(s: String) {
+  println(twice(Box { v: [] }, s))
+  println(twice(R { xs: [] }, s))
+  println(twice([Box { v: None }], s))
+}
+
 fn main() {
-  println(twice(Box { v: [] }, "\{\"v\": [1]}"))
-  println(twice(R { xs: [] }, "\{\"xs\": [1]}"))
-  println(twice([Box { v: None }], "[\{\"v\": 1}]"))
+  show("\{\"v\": [1]}")
 }

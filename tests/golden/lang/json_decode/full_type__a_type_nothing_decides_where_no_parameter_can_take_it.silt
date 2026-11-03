@@ -1,0 +1,46 @@
+-- cmd: check
+-- exit: 1
+-- A type with a part nothing decides given to a function that decodes
+-- its argument's type is one error for one cause. In a function whose
+-- result it leaves undecided (`f`, `g`), the function's own error alone.
+-- Where no parameter can take the type, in `main` and in a closure there,
+-- it is a type nothing decides ("cannot infer ...
+-- annotate the value it is given"), as `twice([], s)` there is, for a
+-- generic type of the program with such a part too.
+import json
+
+trait Dec: json.Decode {
+  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+type Box(a) {
+  v: a,
+}
+
+trait Dec for List(a) where a: json.Decode {}
+
+trait Dec for Box(a) where a: json.Decode {}
+
+fn twice(b, s) {
+  Dec.again(b, s)
+}
+
+fn f(s) {
+  twice([], s)
+}
+
+fn g(s) {
+  let e = []
+  twice(e, s)
+}
+
+fn main() {
+  println(f("[1]"))
+  println(g("[1]"))
+  println(twice(Box { v: [] }, "\{\"v\": [1]}"))
+  println(twice([Box { v: None }], "[\{\"v\": 1}]"))
+  let p = { s -> twice([], s) }
+  println(p("[1]"))
+  let q = { s -> Dec.again(Box { v: None }, s) }
+  println(q("\{\"v\": 1}"))
+}

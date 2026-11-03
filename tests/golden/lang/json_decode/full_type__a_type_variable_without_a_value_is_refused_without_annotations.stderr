@@ -5,9 +5,9 @@ error[type]: method 'again' of trait 'Dec' needs the type `Box(a)` in full here:
     |   ^^^^^^^^^ method 'again' of trait 'Dec' needs the type `Box(a)` in full here: `a` is known only by its type
   = help: take the type as a parameter, `type a`
 
-error[type]: method 'again' of trait 'Dec' needs the type `Box(a)` in full here: `a` is known only by its type
+error[type]: cannot infer the type this use of 'again' needs to implement trait 'json.Decode'
  --> full_type__a_type_variable_without_a_value_is_refused_without_annotations.silt:33:18
     |
  33 |   let k = { x -> Dec.again(Box { v: x }, "\{\"v\": 9}") }
-    |                  ^^^^^^^^^ method 'again' of trait 'Dec' needs the type `Box(a)` in full here: `a` is known only by its type
-  = help: take the type as a parameter, `type a`
+    |                  ^^^^^^^^^ cannot infer the type this use of 'again' needs to implement trait 'json.Decode'
+  = help: annotate the value it is given

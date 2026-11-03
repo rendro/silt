@@ -1,0 +1,78 @@
+-- cmd: check
+-- exit: 1
+-- An impl header that gives a type another number of type arguments
+-- than it takes (`W()`, `W`, `W(Int, Int)`) is one error, in the one form
+-- for a number of type arguments; a use of the trait for the type owes
+-- no second one. In the header of a trait of type constructors the form
+-- writes `_` first (`W(_)`, `V(_, b)`). A supertrait with another number
+-- of type arguments than its trait takes is said in the same form.
+type W(a) {
+  v: a,
+}
+
+type V(a, b) {
+  v: a,
+  w: b,
+}
+
+type U(a) {
+  v: a,
+}
+
+type T(a) {
+  v: a,
+}
+
+trait C {
+  fn c(self) -> Int
+}
+
+trait D {
+  fn d(self) -> Int
+}
+
+trait E {
+  fn e(self) -> Int
+}
+
+trait C for W() {
+  fn c(self) -> Int { 1 }
+}
+
+trait D for U {
+  fn d(self) -> Int { 1 }
+}
+
+trait E for T(Int, Int) {
+  fn e(self) -> Int { 1 }
+}
+
+trait Functor for W(_, Int) {
+  fn map(t, f) { W { v: f(t.v) } }
+}
+
+trait Functor for V(_, Int, Int) {
+  fn map(t, f) { V { v: f(t.v), w: t.w } }
+}
+
+trait Sup {
+  fn s(self) -> Int
+}
+
+trait Holds(x) {
+  fn h(self, v: x) -> Int
+}
+
+trait Sub: Sup(Int) {
+  fn t(self) -> Int
+}
+
+trait Sub2: Holds {
+  fn t2(self) -> Int
+}
+
+fn main() {
+  println(C.c(W { v: 1 }))
+  println(D.d(U { v: 1 }))
+  println(E.e(T { v: 1 }))
+}

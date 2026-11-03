@@ -1,0 +1,11 @@
+error[type]: `m` holds a type and takes no type arguments: pass the whole type, as in `dec(s, List(Int))`
+ --> held_type__a_parameter_holding_a_type_takes_no_type_arguments.silt:9:17
+   |
+ 9 |   json.parse(s, m(Int))
+   |                 ^^^^^^ `m` holds a type and takes no type arguments: pass the whole type, as in `dec(s, List(Int))`
+
+error[type]: `m` holds a type and takes no type arguments: pass the whole type, as in `wrapped(List(Int), s)`
+ --> held_type__a_parameter_holding_a_type_takes_no_type_arguments.silt:13:22
+    |
+ 13 |   json.parse(s, List(m(Int)))
+    |                      ^^^^^^ `m` holds a type and takes no type arguments: pass the whole type, as in `wrapped(List(Int), s)`

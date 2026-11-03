@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: trait 'Cast' expects 1 type argument in bound, got 0
+-- stderr-contains: `Cast` takes 1 type argument here: write `Cast(to)`
 trait Cast(to) {
   fn cast(self) -> to
 }

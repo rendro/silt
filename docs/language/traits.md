@@ -183,7 +183,7 @@ A supertrait is given as many type arguments as it has parameters:
 ```silt
 trait Holds(a) { fn held(self) -> a }
 trait Bad: Holds(Int, String) { ... }
--- error: trait 'Holds' expects 1 type argument as a supertrait of 'Bad', got 2
+-- error: `Holds` takes 1 type argument here: write `Holds(a)`
 ```
 
 Implementing a subtrait without the supertrait fails:

@@ -1,0 +1,41 @@
+error[type]: `W` takes 1 type argument here: write `W(a)`
+ --> impl_head__a_refused_head_is_one_error_in_the_one_form.silt:38:13
+    |
+ 38 | trait C for W() {
+    |             ^^^ `W` takes 1 type argument here: write `W(a)`
+
+error[type]: `U` takes 1 type argument here: write `U(a)`
+ --> impl_head__a_refused_head_is_one_error_in_the_one_form.silt:42:13
+    |
+ 42 | trait D for U {
+    |             ^ `U` takes 1 type argument here: write `U(a)`
+
+error[type]: `T` takes 1 type argument here: write `T(a)`
+ --> impl_head__a_refused_head_is_one_error_in_the_one_form.silt:46:13
+    |
+ 46 | trait E for T(Int, Int) {
+    |             ^^^^^^^^^^^ `T` takes 1 type argument here: write `T(a)`
+
+error[type]: `W` takes 1 type argument here: write `W(_)`
+ --> impl_head__a_refused_head_is_one_error_in_the_one_form.silt:50:19
+    |
+ 50 | trait Functor for W(_, Int) {
+    |                   ^^^^^^^^^ `W` takes 1 type argument here: write `W(_)`
+
+error[type]: `V` takes 2 type arguments here: write `V(_, b)`
+ --> impl_head__a_refused_head_is_one_error_in_the_one_form.silt:54:19
+    |
+ 54 | trait Functor for V(_, Int, Int) {
+    |                   ^^^^^^^^^^^^^^ `V` takes 2 type arguments here: write `V(_, b)`
+
+error[type]: `Sup` takes no type arguments: write `Sup`
+ --> impl_head__a_refused_head_is_one_error_in_the_one_form.silt:66:12
+    |
+ 66 | trait Sub: Sup(Int) {
+    |            ^^^ `Sup` takes no type arguments: write `Sup`
+
+error[type]: `Holds` takes 1 type argument here: write `Holds(x)`
+ --> impl_head__a_refused_head_is_one_error_in_the_one_form.silt:70:13
+    |
+ 70 | trait Sub2: Holds {
+    |             ^^^^^ `Holds` takes 1 type argument here: write `Holds(x)`

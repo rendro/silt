@@ -1,0 +1,59 @@
+-- cmd: check
+-- exit: 1
+-- A generic type with json.Decode impls for some instantiations
+-- (`Box(Int)`, `Box(String)`), written alone as a decoder's type argument
+-- (`json.parse(s, Box)`), is refused as a generic type without impls is:
+-- the decoder is given the type as written, so no annotation, pattern or
+-- later use decides which impl it means. By json.parse and json.decode,
+-- through a `let` of the type, a parameter that holds a type and a
+-- closure, for a generic enum, and with no annotation at all.
+-- (`json.parse(s, Box(Int))` reaches the impl.)
+import json
+
+type Box(a) {
+  v: a,
+}
+
+trait json.Decode for Box(Int) {
+  fn decode(v: json.Value) -> Result(Self, json.JsonError) { Ok(Box { v: 1 }) }
+}
+
+trait json.Decode for Box(String) {
+  fn decode(v: json.Value) -> Result(Self, json.JsonError) { Ok(Box { v: "s" }) }
+}
+
+type Sh(a) {
+  Dot(a),
+  Non,
+}
+
+trait json.Decode for Sh(Int) {
+  fn decode(v: json.Value) -> Result(Self, json.JsonError) { Ok(Non) }
+}
+
+fn dec(s, t) {
+  json.parse(s, t)
+}
+
+fn main() {
+  let r: Result(Box(Int), json.JsonError) = json.parse("0", Box)
+  println(r)
+  let d: Result(Box(String), json.JsonError) = json.decode(json.Null, Box)
+  println(d)
+  match json.parse("0", Box) {
+    Ok(b) -> println(b.v + 1)
+    Err(e) -> println("{e}")
+  }
+  let t = Box
+  let l: Result(Box(Int), json.JsonError) = json.parse("0", t)
+  println(l)
+  let h: Result(Box(Int), json.JsonError) = dec("0", Box)
+  println(h)
+  let k = { s -> json.parse(s, Box) }
+  let c: Result(Box(Int), json.JsonError) = k("0")
+  println(c)
+  let e: Result(Sh(Int), json.JsonError) = json.parse("0", Sh)
+  println(e)
+  println(json.parse("0", Box))
+  println(json.parse("0", Box(Int)))
+}

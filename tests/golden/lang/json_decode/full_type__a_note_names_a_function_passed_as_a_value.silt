@@ -1,0 +1,45 @@
+-- cmd: check
+-- exit: 1
+-- A function that decodes a type it is given, passed as a value to
+-- another that gives it the type (`twice(boxed, Bool)`), is named in the
+-- note between them: `twice` passes it to `boxed`, which passes it to the
+-- decoder. For a type with impls for some instantiations (`Box(Bool)`)
+-- and for a record with a field no decoder has. Passed on twice
+-- (`thrice(twice, boxed, Bool)`), each function is a step.
+import json
+
+type Box(a) {
+  v: a,
+}
+
+trait json.Decode for Box(Int) {
+  fn decode(v: json.Value) -> Result(Self, json.JsonError) { Ok(Box { v: 1 }) }
+}
+
+type Holder {
+  s: Set(Int),
+}
+
+fn boxed(t) {
+  json.parse("0", Box(t))
+}
+
+fn load(t) {
+  json.parse("0", t)
+}
+
+fn twice(f, t) {
+  f(t)
+}
+
+fn thrice(g, f, t) {
+  g(f, t)
+}
+
+fn main() {
+  println(twice(boxed, Bool))
+  println(twice(load, Holder))
+  println(thrice(twice, boxed, Bool))
+  println(thrice(twice, load, Holder))
+  println(twice(boxed, Int))
+}

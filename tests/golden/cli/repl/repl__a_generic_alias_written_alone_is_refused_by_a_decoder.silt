@@ -1,0 +1,7 @@
+-- cmd: repl
+-- stderr-contains: `json.parse` cannot decode `L`: its type argument must be
+-- stdout-contains: Ok([1])
+-- stdin: import json\ntype L(a) = List(a)\njson.parse("[1]", L)\njson.parse("[1]", L(Int))\n:quit\n
+-- In the REPL as in a file, a generic alias written alone as a decoder's
+-- type argument is refused when checked (it used to stop with a run-time
+-- error, "unknown record type 'List'").

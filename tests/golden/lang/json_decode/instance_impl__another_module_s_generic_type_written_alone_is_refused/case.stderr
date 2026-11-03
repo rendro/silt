@@ -1,0 +1,20 @@
+error[type]: `json.parse` cannot decode `util.Bx`: it is a generic record type, and a decoder builds a value of one type
+ --> main.silt:11:27
+    |
+ 11 |   println(json.parse("0", util.Bx))
+    |                           ^^^^^^^ `json.parse` cannot decode `util.Bx`: it is a generic record type, and a decoder builds a value of one type
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `json.parse` cannot decode `util.Bx`: it is a generic record type, and a decoder builds a value of one type
+ --> main.silt:12:65
+    |
+ 12 |   let r: Result(util.Bx(Int), json.JsonError) = json.parse("0", util.Bx)
+    |                                                                 ^^^^^^^ `json.parse` cannot decode `util.Bx`: it is a generic record type, and a decoder builds a value of one type
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `json.parse` cannot decode `util.Op`: it is a generic record type, and a decoder builds a value of one type
+ --> main.silt:14:27
+    |
+ 14 |   println(json.parse("0", util.Op))
+    |                           ^^^^^^^ `json.parse` cannot decode `util.Op`: it is a generic record type, and a decoder builds a value of one type
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these

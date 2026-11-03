@@ -1,0 +1,32 @@
+-- cmd: check
+-- exit: 1
+-- A generic type or alias written alone inside a decoder's type
+-- argument (`List(Box)`, `(Int, Box)`, `Option(Box)`, `List(L)`,
+-- `Option(L)`), or given to a `type t` parameter whose body decodes it
+-- inside another type (`List(t)`), is named in the refusal as written,
+-- as it is at the top: `Box`, `L`, not the list around it. (`List(List)`
+-- names the inner `List`.)
+import json
+
+type Box(a) {
+  v: a,
+}
+
+type L(a) = List(a)
+
+fn p(s: String, type t) -> Result(List(t), json.JsonError) where t: json.Decode {
+  json.parse(s, List(t))
+}
+
+fn main() {
+  println(json.parse("[0]", List(Box)))
+  println(json.parse("[0, 0]", (Int, Box)))
+  println(json.parse("0", Option(Box)))
+  println(json.parse("[[0]]", List(List)))
+  println(json.parse("[[0]]", List(L)))
+  println(json.parse("[0]", Option(L)))
+  let r: Result(List(Box(Int)), json.JsonError) = p("[0]", Box)
+  println(r)
+  let q: Result(List(List(Int)), json.JsonError) = p("[[0]]", L)
+  println(q)
+}

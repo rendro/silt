@@ -204,6 +204,7 @@ impl TypeChecker {
                     subject,
                     written,
                     passer,
+                    through: Vec::new(),
                     body,
                     in_body: self.body_owner,
                     origin,
@@ -654,6 +655,14 @@ impl TypeChecker {
                 .all(|(written, arg)| match_one_way(&canon(written), &canon(arg), &mut mapping))
     }
 
+    /// Whether `subject`, owed `tr` at `span`, is a generic type a
+    /// decoder is given written alone (`json.parse(s, Box)`, `let t =
+    /// Box`), whatever decides its arguments later: decoded as written.
+    pub(super) fn written_alone(&self, tr: TraitKey, subject: &Type, span: Span) -> bool {
+        Self::is_decode(tr)
+            && (self.holds_open_vars(subject) || self.open_type_arguments.contains(&span))
+    }
+
     pub(super) fn solve_wanted(&mut self, from: usize) {
         let mut i = from;
         while i < self.wanted.len() {
@@ -666,13 +675,21 @@ impl TypeChecker {
                 Goal::Pred(Pred::Trait {
                     tr, args, subject, ..
                 }) => {
+                    // (A generic type written alone, `json.parse(s, Box)`,
+                    // is decoded as written, whatever decides its
+                    // arguments later: refused, not waited for.)
+                    let span = self.wanted[i].origin.span;
+                    let open = self.written_alone(*tr, subject, span);
+                    if open {
+                        self.open_type_arguments.insert(span);
+                    }
                     // (A type constructor variable applied waits for the
                     // variable, as a variable does.)
                     let subject = self.apply(subject);
                     matches!(&subject, Type::Var(_))
                         || matches!(&subject, Type::App(head, _)
                             if matches!(self.apply(head), Type::Var(_)))
-                        || self.waits_for_trait_args(*tr, &subject, args)
+                        || (!open && self.waits_for_trait_args(*tr, &subject, args))
                 }
                 _ => false,
             };
@@ -1885,6 +1902,18 @@ impl TypeChecker {
     ) {
         let before = self.errors.len();
         self.check_trait_obligation(trait_name, bound_trait_args, ty, origin, asker, ev);
+        // (The impl's header was refused: that error is the one.)
+        if self.errors.len() > before
+            && let Some(head) = self.type_name_for_impl(&self.apply(ty))
+            && self.refused_impl_heads.contains(&(trait_name, head))
+        {
+            let mut index = 0;
+            self.errors.retain(|e| {
+                let keep = index < before || e.code != Code::MissingTraitImpl;
+                index += 1;
+                keep
+            });
+        }
         if let Some(header) = origin.header
             && self.errors.len() > before
             && let Some(note) = self.header_note(header)
@@ -2047,14 +2076,20 @@ impl TypeChecker {
         }
         // A generic type whose arguments stay unknown (`Box`) is decoded
         // by neither its structure nor its written impl: the decoder's
-        // refusal, once the module's bodies are checked.
+        // refusal, once the module's bodies are checked. (So is one
+        // written alone, `json.parse(s, Box)`, whose arguments a later
+        // use decides: the decoder is given the type as written.)
         if Self::is_decode(trait_name)
             && self.tables.is_generic(type_name)
             && !self.by_structure(trait_name, type_name)
-            && !free_vars_in(&resolved).is_empty()
+            && (!free_vars_in(&resolved).is_empty()
+                || self.open_type_arguments.contains(&origin.span))
         {
             let owners = self.owners_at(ev);
             self.want_decode(&resolved, origin, asker, owners);
+            if self.open_type_arguments.contains(&origin.span) {
+                return;
+            }
         }
         // (So is a generic type, at its arguments, by the impl of a trait
         // that has `json.Decode` among its supertraits: `Dec for Box(a)`

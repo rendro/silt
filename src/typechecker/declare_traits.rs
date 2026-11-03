@@ -712,25 +712,18 @@ impl TypeChecker {
     /// (`trait Bad: Holds(Int, String)` for `trait Holds(a)`).
     pub(super) fn check_supertrait_arity(&mut self, t: &TraitDecl) {
         for r in &t.supertraits {
-            let Some(expected) = self
+            let Some(params) = self
                 .named_trait(r.res, r.name)
                 .and_then(|sup| self.tables.traits.get(&sup))
-                .map(|info| info.params.len())
+                .map(|info| info.params.clone())
             else {
                 continue;
             };
-            if expected != r.args.len() {
-                self.error(
-                    Code::ArityMismatch,
-                    format!(
-                        "trait '{}' expects {expected} {} as a supertrait of '{}', got {}",
-                        r.name,
-                        inference::plural(expected, "type argument", "type arguments"),
-                        t.name,
-                        r.args.len()
-                    ),
-                    r.span,
-                );
+            // (In the one form for a number of type arguments, as a
+            // type's: `Sup` takes no type arguments: write `Sup`.)
+            if params.len() != r.args.len() {
+                let message = trait_arguments_message(r.name, &params);
+                self.error(Code::ArityMismatch, message, r.span);
             }
         }
     }
@@ -1378,6 +1371,25 @@ impl TypeChecker {
             self.error(Code::KindMismatch, message, ti.header_span);
             return false;
         }
+        // Another number of type arguments than the type takes, in the one
+        // form (`W(_)` for a trait of type constructors): no impl, so its
+        // uses owe no second error.
+        if let Some(expected) = arity
+            && !ti.target_type_args.is_empty()
+            && expected != ti.target_type_args.len()
+        {
+            let shown = Qualifier::written(ti.target_module, ti.target_type);
+            let message = match constructor {
+                true => self.constructor_arguments_message(&shown, written),
+                false => self.type_arguments_message(&shown, written),
+            };
+            let span = Span {
+                start: ti.target_type_span.start,
+                ..ti.header_span
+            };
+            self.error(Code::ArityMismatch, message, span);
+            return false;
+        }
         if !constructor {
             if ti.target_type_args.is_empty() {
                 let shown = Qualifier::written(ti.target_module, ti.target_type);
@@ -1538,6 +1550,7 @@ impl TypeChecker {
         if !self.impl_header_fits(ti, trait_key, written) {
             self.unresolved_impl_methods
                 .extend(ti.methods.iter().map(|m| m.name));
+            self.refused_impl_heads.insert((trait_key, target_type));
             return;
         }
         let args_key = self.impl_args_key_of(ti);
@@ -3367,17 +3380,11 @@ impl TypeChecker {
         let Some(info) = self.tables.traits.get(&trait_name) else {
             return true;
         };
-        let n = info.params.len();
-        if got == n {
+        if got == info.params.len() {
             return true;
         }
-        let msg = format!(
-            "trait '{}' expects {} {} in bound, got {}",
-            resolve(trait_name.name),
-            n,
-            inference::plural(n, "type argument", "type arguments"),
-            got
-        );
+        // (In the one form for a number of type arguments.)
+        let msg = trait_arguments_message(trait_name.name, &info.params.clone());
         if !self
             .errors
             .iter()
@@ -3465,4 +3472,22 @@ impl WrittenImpl {
     fn full(&self) -> Vec<Type> {
         self.args.iter().chain(&self.head).cloned().collect()
     }
+}
+
+/// What is wrong with the trait `name`, written with another number of
+/// type arguments than its parameters `params`, in the one form for a
+/// number of type arguments, as a type's: "`Sup` takes no type
+/// arguments: write `Sup`", "`Holds` takes 1 type argument here: write
+/// `Holds(a)`".
+fn trait_arguments_message(name: Symbol, params: &[Symbol]) -> String {
+    if params.is_empty() {
+        return format!("`{name}` takes no type arguments: write `{name}`");
+    }
+    let names: Vec<String> = params.iter().map(|p| resolve(*p).to_string()).collect();
+    format!(
+        "`{name}` takes {} {} here: write `{name}({})`",
+        params.len(),
+        inference::plural(params.len(), "type argument", "type arguments"),
+        names.join(", ")
+    )
 }

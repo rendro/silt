@@ -171,6 +171,33 @@ pub struct TypeChecker {
     /// names the type alone, which no decoder decodes, whatever the
     /// checker learns of the variables.
     pub(super) open_vars: std::collections::HashSet<TyVar>,
+    /// The module's functions that can take a parameter for a type
+    /// (every function but `main` and a REPL entry's): a use refused as
+    /// needing its type in full outside one says that nothing decides
+    /// the type (`settle_in_full_refusals`).
+    pub(super) fn_spans: Vec<Span>,
+    /// The definitions a call passes a decoded type to on the way to the
+    /// one whose body decodes it, by the argument that gives the type
+    /// (`boxed` of `twice(boxed, Bool)`): links of a note.
+    pub(super) passed_to: HashMap<Span, Vec<Symbol>>,
+    /// The name each argument that is a name writes, by its place: a
+    /// function a call passes on as a value is a link of a note.
+    pub(super) arg_names: HashMap<Span, Symbol>,
+    /// The type variables of closures' parameters: an impl a use cannot
+    /// decide from them is decided from a value's type, which a help
+    /// names (`undecided_trait_args`).
+    pub(super) closure_param_vars: std::collections::HashSet<TyVar>,
+    /// A generic type or alias written alone in a type argument, as
+    /// written, with the head of the type it names, by the argument's
+    /// place (`L` of `List(L)`, `Box` given to `p(s, type t)`): what a
+    /// decoder's refusal there names.
+    /// (No head: an alias of a type with no arguments, `type K(a) =
+    /// Int`.)
+    pub(super) bare_written: HashMap<Span, (Symbol, Option<TypeRef>)>,
+    /// The function whose body is being checked, and the names of its
+    /// parameters (`_` for one bound by a pattern): what an error about a
+    /// parameter writes as a call of it.
+    pub(super) checked_fn: Option<(Symbol, Vec<(Symbol, bool)>)>,
     /// What each body asks `json.Decode` of its annotation variable for
     /// (`Asked`), by the variable's representative.
     pub(super) bound_askers: HashMap<TyVar, Asker>,
@@ -653,6 +680,9 @@ pub struct TypeChecker {
     /// The methods of the impls whose trait or type the resolver resolved
     /// to nothing: a call of one is not reported again as unknown.
     pub(super) unresolved_impl_methods: std::collections::HashSet<Symbol>,
+    /// The trait and type of each impl whose header was refused: a use
+    /// of the trait for the type owes no second error.
+    pub(super) refused_impl_heads: std::collections::HashSet<(TraitKey, TypeRef)>,
     /// The traits of the module's rejected impls for every type
     /// (`trait T for a`): a type that lacks one is not reported again.
     pub(super) blanket_traits: std::collections::HashSet<TraitKey>,
@@ -718,6 +748,12 @@ impl TypeChecker {
             decode_gaps: Vec::new(),
             open_type_arguments: std::collections::HashSet::new(),
             open_vars: std::collections::HashSet::new(),
+            fn_spans: Vec::new(),
+            passed_to: HashMap::new(),
+            arg_names: HashMap::new(),
+            closure_param_vars: std::collections::HashSet::new(),
+            bare_written: HashMap::new(),
+            checked_fn: None,
             bound_askers: HashMap::new(),
             decoded_at: HashMap::new(),
             bound_within: HashMap::new(),
@@ -854,6 +890,7 @@ impl TypeChecker {
             own_traits: HashMap::new(),
             rejected_types: std::collections::HashSet::new(),
             unresolved_impl_methods: std::collections::HashSet::new(),
+            refused_impl_heads: std::collections::HashSet::new(),
             blanket_traits: std::collections::HashSet::new(),
             duplicated_impls: std::collections::HashSet::new(),
             impl_written: HashMap::new(),
@@ -2061,6 +2098,7 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
     checker.settle_decode_gaps();
     checker.settle_encode_owners();
     checker.settle_undecided_decodes();
+    checker.settle_in_full_refusals();
     checker.record_def_owners(program, &env);
     checker.drop_errors_of_refused_calls();
     checker.report_private_in_schemes(program, &env);
