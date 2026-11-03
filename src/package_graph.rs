@@ -312,18 +312,21 @@ impl Resolver<'_> {
                 let dir = normalize_path(&base.join(path));
                 let shown = escape_for_display(&path.display().to_string());
                 if !dir.exists() {
-                    self.diagnostics.push(
-                        Diagnostic::error(
-                            Code::DependencyNotFound,
-                            entry.value,
-                            format!("dependency `{key_name}`: path `{shown}` does not exist"),
-                        )
-                        .with_note(format!(
-                            "the path is relative to the directory of this silt.toml and \
-                             resolves to {}",
-                            escape_for_display(&display_path(&dir).display().to_string())
-                        )),
+                    let mut d = Diagnostic::error(
+                        Code::DependencyNotFound,
+                        entry.value,
+                        format!("dependency `{key_name}`: path `{shown}` does not exist"),
                     );
+                    // Where it resolves to, when that is not the path as
+                    // written.
+                    let resolved = escape_for_display(&display_path(&dir).display().to_string());
+                    if resolved != shown {
+                        d = d.with_note(format!(
+                            "the path is relative to the directory of this silt.toml and \
+                             resolves to {resolved}"
+                        ));
+                    }
+                    self.diagnostics.push(d);
                     return None;
                 }
                 // Followed: a link here is rejected with the package's
@@ -588,7 +591,7 @@ impl Resolver<'_> {
                 // The last key of the last chain is the primary span.
                 d.labels
                     .extend(self.chain(id).into_iter().filter(|(span, _)| *span != at));
-                d.notes.push(format!("`{name}` from {}", self.describe(id)));
+                d.notes.push(self.source_note(&name, id));
             }
             d.help.push(format!(
                 "a graph holds one package per name: make every dependency on `{name}` \
@@ -622,27 +625,24 @@ impl Resolver<'_> {
         labels
     }
 
-    /// Where the package `id` comes from, for a note.
-    fn describe(&self, id: PackageId) -> String {
+    /// The note that says where the package `id`, named `name`, comes
+    /// from.
+    fn source_note(&self, name: &str, id: PackageId) -> String {
         match &self.locked[id.0 as usize].0 {
-            LockedSource::Local => format!(
-                "{} (this package)",
-                escape_for_display(
-                    &display_path(&self.nodes[id.0 as usize].root)
-                        .display()
-                        .to_string()
-                )
-            ),
+            LockedSource::Local => format!("`{name}` (this package)"),
             // A path package by its manifest, whose path is shown as every
             // `silt.toml` is.
-            LockedSource::Path { .. } => escape_for_display(
-                &display_path(&self.nodes[id.0 as usize].root.join("silt.toml"))
-                    .display()
-                    .to_string(),
+            LockedSource::Path { .. } => format!(
+                "`{name}` from {}",
+                escape_for_display(
+                    &display_path(&self.nodes[id.0 as usize].root.join("silt.toml"))
+                        .display()
+                        .to_string(),
+                )
             ),
             LockedSource::Git {
                 url, resolved_sha, ..
-            } => format!("{} at {resolved_sha}", escape_for_display(url)),
+            } => format!("`{name}` from {} at {resolved_sha}", escape_for_display(url)),
         }
     }
 

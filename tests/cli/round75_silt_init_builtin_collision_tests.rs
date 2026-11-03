@@ -306,6 +306,12 @@ fn keyword_init_in_dir_named_loop_is_rejected() {
         stderr.contains("pick a different name"),
         "stderr should suggest picking a different name (canonical shape): {stderr}"
     );
+    // The directory's name is a keyword, not a module: the advice names
+    // both. FAILS on the base: it said "is not a stdlib module".
+    assert!(
+        stderr.contains("is not a keyword or a stdlib module"),
+        "{stderr}"
+    );
     // No partial state left behind.
     assert!(
         !dir.join("silt.toml").exists(),

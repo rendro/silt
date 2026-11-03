@@ -533,9 +533,10 @@ fn duplicate_manifest_key_is_escaped() {
     );
 }
 
-/// The value of a `path` dependency that does not exist is shown twice:
-/// as the path in the message and in the path it resolves to. FAILS on
-/// the base commit: both are printed as they are.
+/// The value of a `path` dependency that does not exist is shown in the
+/// message (checked from the package's directory it resolves to the
+/// path as written, so no note says where). FAILS on the base commit:
+/// it was printed as it is.
 #[test]
 fn path_dependency_value_is_escaped() {
     let line = format!("dep = {{ path = {} }}", toml_str(&format!("../{HOSTILE}")));
@@ -543,7 +544,7 @@ fn path_dependency_value_is_escaped() {
         "path_value",
         &manifest("app", &dependencies(&line)),
         &format!("dependency `dep`: path `../{HOSTILE_ESCAPED}` does not exist"),
-        2,
+        1,
     );
 }
 

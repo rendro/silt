@@ -1071,3 +1071,37 @@ fn a_changed_manifest_in_a_cached_checkout_is_refused() {
     assert_eq!(fs::read_to_string(app.join("silt.lock")).unwrap(), lock);
     let _ = fs::remove_dir_all(&ws);
 }
+
+// ── The lock written again ────────────────────────────────────────────
+
+/// A dependency taken out of silt.toml by hand: the lock is written
+/// again, and the line that says so does not call the dependencies new.
+/// FAILS on the base: "Updating silt.lock for new dependencies in
+/// silt.toml".
+#[test]
+fn a_dependency_taken_out_rewrites_the_lock_for_the_dependencies() {
+    let ws = fresh_workspace("lock_dep_removed");
+    let app = ws.join("app");
+    write_package(
+        &app,
+        "app",
+        &["calc = { path = \"../calc\" }"],
+        "main.silt",
+        "fn main() {}\n",
+    );
+    write_package(&ws.join("calc"), "calc", &[], "lib.silt", "pub fn two() { 2 }\n");
+    let first = silt(&ws, &app, &["check"]);
+    assert!(first.status.success(), "{}", stderr(&first));
+
+    write_package(&app, "app", &[], "main.silt", "fn main() {}\n");
+    let out = silt(&ws, &app, &["check"]);
+
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(
+        stderr(&out),
+        "Updating silt.lock for the dependencies in silt.toml\n"
+    );
+    let lock = fs::read_to_string(app.join("silt.lock")).unwrap();
+    assert!(!lock.contains("calc"), "{lock}");
+    let _ = fs::remove_dir_all(&ws);
+}

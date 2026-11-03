@@ -228,7 +228,7 @@ pub fn module_load_error(
         }
         d = d.with_help(format!(
             "if '{module_name}' is a separate package, declare it under \
-             `[dependencies]` in silt.toml (e.g. `silt add {module_name}`)"
+             `[dependencies]` in silt.toml (e.g. `silt add {module_name} --path <dir>`)"
         ));
     }
     d

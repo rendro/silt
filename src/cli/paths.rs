@@ -108,7 +108,7 @@ pub(crate) fn open_entry(path: &str, lock: LockPolicy) -> std::io::Result<(Sessi
         Ok(packages) => {
             match packages.lock {
                 LockChange::Updated => {
-                    eprintln!("Updating silt.lock for new dependencies in silt.toml")
+                    eprintln!("Updating silt.lock for the dependencies in silt.toml")
                 }
                 LockChange::Rewritten => eprintln!("Updating silt.lock"),
                 LockChange::Created | LockChange::Unchanged => {}

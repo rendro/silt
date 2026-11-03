@@ -131,7 +131,7 @@ fn init_project(lib: bool) {
         eprintln!("silt init: {msg}");
         eprintln!("       (the package name was derived from the directory name `{dirname}`;");
         eprintln!("        rename the directory or run `silt init` from a directory whose name");
-        eprintln!("        is not a stdlib module).");
+        eprintln!("        is not a keyword or a stdlib module).");
         process::exit(1);
     }
 

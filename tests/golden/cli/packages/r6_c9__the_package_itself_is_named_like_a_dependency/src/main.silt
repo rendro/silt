@@ -1,0 +1,9 @@
+-- exit: 1
+-- stderr-contains: error[package]: two different packages are named `c`
+-- stderr-contains:   = note: `c` (this package)
+-- stderr-contains:   = note: `c` from dep/silt.toml
+import x
+
+fn main() {
+  println(x.f())
+}

@@ -116,7 +116,7 @@ impl WatchSet {
             });
             match session.packages().map(|packages| packages.lock) {
                 Ok(LockChange::Updated) => {
-                    eprintln!("Updating silt.lock for new dependencies in silt.toml")
+                    eprintln!("Updating silt.lock for the dependencies in silt.toml")
                 }
                 Ok(LockChange::Rewritten) => eprintln!("Updating silt.lock"),
                 _ => {}
