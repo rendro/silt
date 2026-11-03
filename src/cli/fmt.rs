@@ -85,7 +85,7 @@ pub(crate) fn dispatch(args: &[String]) {
                 let found = find_silt_files(p);
                 if found.is_empty() {
                     eprintln!("error: silt fmt: no .silt files found in {f}");
-                    process::exit(2);
+                    process::exit(1);
                 }
                 expanded.extend(found);
             } else {
@@ -110,7 +110,7 @@ pub(crate) fn dispatch(args: &[String]) {
         files = once_each(find_silt_files(Path::new(".")));
         if files.is_empty() {
             eprintln!("error: silt fmt: no .silt files found in current directory");
-            process::exit(2);
+            process::exit(1);
         }
         if !has_anchor && !explicit_dot {
             eprintln!(
@@ -118,7 +118,7 @@ pub(crate) fn dispatch(args: &[String]) {
                 cwd.display()
             );
             eprintln!("         pass an explicit `.` or file paths to format anyway.");
-            process::exit(2);
+            process::exit(1);
         }
         let doing = if check_mode { "checking" } else { "formatting" };
         let unasked = if explicit_dot {
@@ -146,9 +146,9 @@ pub(crate) fn dispatch(args: &[String]) {
         //   2 — at least one file failed to read or parse, or the
         //       formatter refused its own result for it (infra failure);
         //       CI should distinguish this from "diff would be produced".
-        //       So does every other case in which fmt cannot do its job
-        //       (an unknown flag, nothing to format, the refusal to
-        //       recurse outside a package), with `--check` or without.
+        //       A usage error (an unknown or repeated flag, nothing to
+        //       format, the refusal to recurse outside a package) exits
+        //       1, as for every command, before any file is looked at.
         // An infra failure on any file is the dominant outcome — if we
         // hit a parse error we can't *know* whether the file is
         // formatted, so we must not collapse that into exit 1.
