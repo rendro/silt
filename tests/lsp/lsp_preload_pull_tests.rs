@@ -73,6 +73,39 @@ fn preload_indexes_unopened_files() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A folder reached through a link is indexed, as the CLI walks it;
+/// a link back into the workspace (a loop) and a second link to the
+/// folder do not index its file twice.
+#[cfg(unix)]
+#[test]
+fn preload_follows_a_linked_folder_once() {
+    let dir = unique_tmp_dir("linked");
+    let (ws, outside) = (dir.join("ws"), dir.join("outside"));
+    fs::create_dir_all(&ws).unwrap();
+    fs::create_dir_all(&outside).unwrap();
+    fs::write(ws.join("main.silt"), "fn main() { 0 }\n").unwrap();
+    fs::write(outside.join("lib.silt"), "fn linked_unique_sym() { 0 }\n").unwrap();
+    std::os::unix::fs::symlink(&outside, ws.join("linked")).unwrap();
+    std::os::unix::fs::symlink(&outside, ws.join("linked_again")).unwrap();
+    std::os::unix::fs::symlink(&ws, ws.join("back")).unwrap();
+
+    let mut client = LspClient::spawn_with_root(Some(&path_to_uri(&ws)));
+    let resp = client.request("workspace/symbol", json!({ "query": "linked_unique_sym" }));
+    let found = resp
+        .get("result")
+        .and_then(|r| r.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let names: Vec<&str> = found
+        .iter()
+        .filter_map(|s| s.get("name").and_then(|n| n.as_str()))
+        .collect();
+    assert_eq!(names, ["linked_unique_sym"], "{resp}");
+
+    client.shutdown();
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn pull_diagnostic_returns_cached_errors() {
     let mut client = LspClient::spawn_with_root(None);

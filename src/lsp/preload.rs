@@ -4,9 +4,9 @@
 //! user hasn't explicitly opened. Indexing publishes nothing: a file has
 //! diagnostics once it is open or an open document imports it.
 //!
-//! The scan is best-effort: unreadable files, parse failures, and
-//! symlink loops never abort startup — they're logged to stderr and
-//! the walk continues.
+//! The scan is best-effort: unreadable files and parse failures never
+//! abort startup (they're logged to stderr and the walk continues), and
+//! a link loop is not followed.
 
 use std::fs;
 use std::path::Path;
@@ -57,56 +57,20 @@ const URI_PATH_RESERVED: &AsciiSet = &CONTROLS
     .add(b'}')
     .add(b'\x7f');
 
-/// Maximum recursion depth for the workspace scan. Keeps a rogue
-/// symlink cycle or an inhumanly-deep tree from pegging the thread.
-const MAX_DEPTH: usize = 16;
-
-/// Recursively walk `root`, load every `.silt` file, and feed it
-/// as an indexed document.
+/// Walk `root`, load every `.silt` file, and feed it as an indexed
+/// document. The walk is the CLI's ([`crate::file_discovery::files_under`]):
+/// links are followed, each directory and each file once, so a folder
+/// reached through a link is indexed as `silt fmt` and `silt test`
+/// reach it, and a link back into the walk is not followed.
 ///
 /// Skips `target/`, `.git/`, and any directory under `fuzz/corpus/`
 /// (the last of which would otherwise ingest tens of thousands of
 /// 1-byte entries and swamp memory).
 pub(super) fn preload_workspace(server: &mut Server, root: &Path) {
-    walk(server, root, 0);
-}
-
-fn walk(server: &mut Server, dir: &Path, depth: usize) {
-    if depth > MAX_DEPTH {
-        return;
-    }
-
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(err) => {
-            eprintln!(
-                "silt-lsp: preload: cannot read dir {}: {err}",
-                dir.display()
-            );
-            return;
-        }
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let file_type = match entry.file_type() {
-            Ok(t) => t,
-            Err(_) => continue,
-        };
-
-        if file_type.is_dir() {
-            if should_skip_dir(&path) {
-                continue;
-            }
-            walk(server, &path, depth + 1);
-        } else if file_type.is_file() {
-            if path.extension().and_then(|s| s.to_str()) != Some("silt") {
-                continue;
-            }
-            load_file(server, &path);
-        }
-        // Symlinks: ignored. `is_file`/`is_dir` on a DirEntry's file_type
-        // do not follow them, so symlink loops can't recurse here.
+    let enter = |path: &Path| !should_skip_dir(path);
+    let wanted = |path: &Path| path.extension().and_then(|s| s.to_str()) == Some("silt");
+    for path in crate::file_discovery::files_under(root, &enter, &wanted) {
+        load_file(server, &path);
     }
 }
 
