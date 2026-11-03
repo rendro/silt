@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[compile]: the entry point 'main' must take no parameters, but it declares 1 parameter
+-- stderr-contains: --> r6_c2__a_main_with_parameters_beside_a_pub_fn.silt:9:9
+pub fn f() {
+  1
+}
+
+fn main(x) {
+  println(x)
+}

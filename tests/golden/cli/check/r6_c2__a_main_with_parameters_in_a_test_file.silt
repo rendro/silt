@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[compile]: the entry point 'main' must take no parameters, but it declares 1 parameter
+-- stderr-contains: --> r6_c2__a_main_with_parameters_in_a_test_file.silt:11:9
+import test
+
+fn test_a() {
+  test.assert(true)
+}
+
+fn main(x) {
+  println(x)
+}

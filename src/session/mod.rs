@@ -37,7 +37,6 @@ use crate::types::Type;
 use crate::value::{HostFn, HostShape};
 
 pub use entry::{ENTRY_POINT, TestFn, TestKind, selected_tests, test_functions, test_kind};
-use entry::{looks_like_library_module, looks_like_test_file};
 pub(crate) use graph::is_cell_name;
 pub use graph::{Import, ImportResolution, Module, ModuleGraph, ModuleId, Ordering, parse_text};
 pub use host::{HostFunction, HostModule};
@@ -748,13 +747,9 @@ impl Session {
                 EntryPoint::Main
             }
             Entry::Tests { filter } => {
-                // A file run for its tests that is a program too (it binds
-                // `main` and is neither a library module nor a test file)
+                // A file checked or run for its tests that binds `main`
                 // must have a `main` that can start.
-                if let Some(ty) = analysis.top_level.get(&main)
-                    && !looks_like_library_module(&analysis.ast)
-                    && !looks_like_test_file(&analysis.ast)
-                {
+                if let Some(ty) = analysis.top_level.get(&main) {
                     entry_errors.extend(entry::check_main(&analysis.ast, ty));
                 }
                 let (tests, errors) =
