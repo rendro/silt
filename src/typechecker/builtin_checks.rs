@@ -695,9 +695,19 @@ impl TypeChecker {
                             "`{builtin}` cannot decode `{}`: `{}` has no decoder{}",
                             self.show_type(whole),
                             self.show_type(part),
-                            match map_with_other_keys(part) {
-                                true => format!(", as {MAP_KEY}"),
-                                false => String::new(),
+                            match (map_with_other_keys(part), part) {
+                                (true, _) => format!(", as {MAP_KEY}"),
+                                // (As a decode of it at the top says.)
+                                (false, Type::Generic(head, _)) if no_instance => {
+                                    match self.only_decode_impl(*head) {
+                                        Some(only) => format!(
+                                            ": the only impl is for `{}`",
+                                            self.show_type(&only)
+                                        ),
+                                        None => String::new(),
+                                    }
+                                }
+                                (false, _) => String::new(),
                             }
                         ),
                     )

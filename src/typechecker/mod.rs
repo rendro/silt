@@ -176,6 +176,12 @@ pub struct TypeChecker {
     /// needing its type in full outside one says that nothing decides
     /// the type (`settle_in_full_refusals`).
     pub(super) fn_spans: Vec<Span>,
+    /// The closures of the module's bodies, each with the type variables
+    /// the signature of the function it is in writes: a use in a closure
+    /// refused as needing its type in full names no letter the program
+    /// did not write (`settle_in_full_refusals`).
+    pub(super) closure_spans: Vec<(Span, Vec<Symbol>)>,
+    pub(super) written_vars: Vec<Symbol>,
     /// The definitions a call passes a decoded type to on the way to the
     /// one whose body decodes it, by the argument that gives the type
     /// (`boxed` of `twice(boxed, Bool)`): links of a note.
@@ -194,7 +200,11 @@ pub struct TypeChecker {
     /// the decoder, and the types of the names of types alone and the
     /// held type variables of what it is given
     /// (`refuse_undecided_decoder_types`).
-    pub(super) decoder_uses: Vec<(Span, Symbol, Vec<Type>, Vec<Type>)>,
+    pub(super) decoder_uses: Vec<json_decode::DecoderUse>,
+    /// The places a decode of the type a use gives is owed at, as the
+    /// checker places it: the argument that gives the type (or the
+    /// callee of a method called through its trait).
+    pub(super) decode_places: std::collections::HashSet<Span>,
     /// A generic type or alias written alone in a type argument, as
     /// written, with the head of the type it names, by the argument's
     /// place (`L` of `List(L)`, `Box` given to `p(s, type t)`): what a
@@ -757,11 +767,14 @@ impl TypeChecker {
             open_type_arguments: std::collections::HashSet::new(),
             open_vars: std::collections::HashSet::new(),
             fn_spans: Vec::new(),
+            closure_spans: Vec::new(),
+            written_vars: Vec::new(),
             passed_to: HashMap::new(),
             arg_names: HashMap::new(),
             closure_param_vars: std::collections::HashSet::new(),
             defaulted_vars: std::collections::HashSet::new(),
             decoder_uses: Vec::new(),
+            decode_places: std::collections::HashSet::new(),
             bare_written: HashMap::new(),
             checked_fn: None,
             bound_askers: HashMap::new(),

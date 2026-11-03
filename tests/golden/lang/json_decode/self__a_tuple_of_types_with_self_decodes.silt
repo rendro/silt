@@ -1,0 +1,35 @@
+-- `Self` among the types of a tuple of types in a trait's default body
+-- is the impl's type, as it is given to a call (`List(Self)`): `(Self,
+-- Int)`, a nested tuple, a tuple inside a type, and a type inside a
+-- tuple all decode at the impl's type.
+import json
+
+type Box(a) {
+  v: a,
+}
+
+trait Dec: json.Decode {
+  fn pair(self, s: String) -> Result((Self, Int), json.JsonError) { json.parse(s, (Self, Int)) }
+
+  fn nested(self, s: String) -> Result(((Self, Int), Bool), json.JsonError) {
+    json.parse(s, ((Self, Int), Bool))
+  }
+
+  fn listed(self, s: String) -> Result(List((Self, Int)), json.JsonError) {
+    json.parse(s, List((Self, Int)))
+  }
+
+  fn mixed(self, s: String) -> Result((List(Self), Self), json.JsonError) {
+    json.parse(s, (List(Self), Self))
+  }
+}
+
+trait Dec for Box(Int) {}
+
+fn main() {
+  let b = Box { v: 0 }
+  println(Dec.pair(b, "[\{\"v\": 1}, 2]"))
+  println(Dec.nested(b, "[[\{\"v\": 1}, 2], true]"))
+  println(Dec.listed(b, "[[\{\"v\": 1}, 2]]"))
+  println(Dec.mixed(b, "[[\{\"v\": 1}], \{\"v\": 2}]"))
+}

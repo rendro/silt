@@ -11,3 +11,4 @@ error[type]: cannot infer the type this use of 'twice' needs to implement trait 
  31 |   let g = { x, s -> twice(Box { v: x }, s) }
     |                           ^^^^^^^^^^^^ cannot infer the type this use of 'twice' needs to implement trait 'json.Decode'
   = help: annotate the value it is given
+  = help: the impl is picked from a type, not from a value: take the type as a parameter, as in `{ t -> json.parse(s, Box(t)) }`

@@ -1,0 +1,28 @@
+-- cmd: check
+-- exit: 1
+-- A bound on a trait argument (`b` of `trait Conv(b) for String`) works
+-- in one place: on the method in the trait. Written on the impl's header,
+-- or on the impl's method, both refusals point there.
+import json
+
+trait Conv(b) {
+  fn conv(self) -> Result(b, json.JsonError)
+}
+
+trait Conv(b) for String where b: json.Decode {
+  fn conv(self) -> Result(b, json.JsonError) { Err(json.TypeMismatch("x", "y")) }
+}
+
+trait Turn(b) {
+  fn turn(self) -> Result(b, json.JsonError)
+}
+
+trait Turn(b) for Int {
+  fn turn(self) -> Result(b, json.JsonError) where b: json.Decode {
+    Err(json.TypeMismatch("x", "y"))
+  }
+}
+
+fn main() {
+  println(1)
+}

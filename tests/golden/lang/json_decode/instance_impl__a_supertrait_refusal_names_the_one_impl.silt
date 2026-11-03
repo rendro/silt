@@ -1,0 +1,25 @@
+-- cmd: check
+-- exit: 1
+-- An impl of a trait with json.Decode as a supertrait, for an
+-- instantiation of a type whose json.Decode impl is for another one
+-- (`Box(String)`, the impl for `Box(Int)`), is refused with the reason a
+-- decode of it gives: the one impl there is. The reason is never empty.
+import json
+
+type Box(a) {
+  v: a,
+}
+
+trait json.Decode for Box(Int) {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) { Ok(Box { v: 1 }) }
+}
+
+trait Dec: json.Decode {
+  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+trait Dec for Box(String) {}
+
+fn main() {
+  println(json.parse("1", Box(Int)))
+}

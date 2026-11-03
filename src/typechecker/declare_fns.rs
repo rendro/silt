@@ -287,6 +287,16 @@ impl TypeChecker {
                         }),
                     });
                 }
+            } else if resolve(*type_param).starts_with(char::is_uppercase) {
+                // (A type, not a variable: `where Int: Show2`. Whether
+                // the type implements the trait is the uses' to say.)
+                self.error(
+                    Code::InvalidTypeAnnotation,
+                    format!(
+                        "a where clause bounds a type variable; `{type_param}` is a type, not a variable: drop the bound"
+                    ),
+                    f.span,
+                );
             } else {
                 let first_param_name = f
                     .params

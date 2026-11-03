@@ -2338,3 +2338,60 @@ fn main() {
         "the decoders judged undecided"
     );
 }
+
+/// The one check judges a decode owed through a function that hands
+/// its parameter to a decoder (`load(s, L)`), through a method of a
+/// trait with `json.Decode` among its supertraits called on a value
+/// whose part a scope's end fixed to `()` (`twice([], s)`, `Dec.again([],
+/// s)`), and through `postgres.query`'s type argument.
+#[test]
+fn the_one_check_judges_decodes_through_functions_and_traits() {
+    super::json_decode::JUDGED_UNDECIDED.with(|judged| judged.borrow_mut().clear());
+    let errors = check_errors(
+        r#"
+import json
+trait Dec: json.Decode {
+  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+trait Dec for List(a) where a: json.Decode {}
+type L(a) = List(a)
+fn load(s, t) { json.parse(s, t) }
+fn twice(b, s) { Dec.again(b, s) }
+fn main() {
+  println(load("[1]", L))
+  println(twice([], "[1]"))
+  println(Dec.again([], "[1]"))
+  println(load("[1]", List(Int)))
+  println(twice([1], "[1]"))
+}
+        "#,
+    );
+    assert!(errors.iter().any(|e| e.is_error()));
+    let judged = super::json_decode::JUDGED_UNDECIDED.with(|judged| judged.borrow().clone());
+    assert_eq!(
+        judged,
+        ["load", "twice", "again"],
+        "the uses judged undecided"
+    );
+}
+
+#[cfg(feature = "postgres")]
+#[test]
+fn the_one_check_judges_a_rows_type_given_to_postgres() {
+    super::json_decode::JUDGED_UNDECIDED.with(|judged| judged.borrow_mut().clear());
+    let errors = check_errors(
+        r#"
+import postgres
+type Row(a) { id: a }
+fn main() {
+  match postgres.connect("postgres://localhost/x") {
+    Ok(db) -> println(postgres.query(db, "SELECT 1", (), Row))
+    Err(e) -> println(e)
+  }
+}
+        "#,
+    );
+    assert!(errors.iter().any(|e| e.is_error()));
+    let judged = super::json_decode::JUDGED_UNDECIDED.with(|judged| judged.borrow().clone());
+    assert_eq!(judged, ["postgres.query"], "the uses judged undecided");
+}

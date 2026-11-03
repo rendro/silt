@@ -121,6 +121,16 @@ impl TypeChecker {
             }
             _ => (refusal.message.split_once(": ")).map_or("", |(_, reason)| reason),
         };
+        // (A type with impls for other instantiations of it only: what a
+        // decode of it says, the impl there is.)
+        let only = match reason.is_empty() {
+            true => Some(match self.only_decode_impl(head) {
+                Some(only) => format!("the only impl is for `{}`", self.show_type(&only)),
+                None => "it has no `json.Decode` impl".to_string(),
+            }),
+            false => None,
+        };
+        let reason = only.as_deref().unwrap_or(reason);
         let shown = self.show_type(&ty);
         let message = format!(
             "trait `{}` cannot be implemented for `{shown}`: it has `json.Decode` as a \
@@ -129,6 +139,20 @@ impl TypeChecker {
         );
         // (The decoder's help is for a call, not for an impl.)
         Some(Diagnostic::error(Code::InvalidTraitImpl, span, message))
+    }
+
+    /// The one instantiation of `head` with a `json.Decode` impl, where
+    /// the program wrote impls for some instantiations of it and that is
+    /// the one (`Box(Int)`).
+    pub(super) fn only_decode_impl(&self, head: TypeRef) -> Option<Type> {
+        let tr = TraitKey::builtin("Decode");
+        let instances: Vec<Type> = (self.tables.impl_args_of(tr, head).iter())
+            .filter_map(|at| self.impl_instance(&(tr, head, *at)))
+            .collect();
+        match instances.as_slice() {
+            [only] => Some(only.clone()),
+            _ => None,
+        }
     }
 
     /// Whether the program wrote a `json.Decode` impl for `head`: every
@@ -1097,21 +1121,64 @@ impl TypeChecker {
     /// `postgres.query`), and the `decode` method of a type written before
     /// a dot (`Box(t).decode(v)`).
     pub(super) fn keep_decoder_uses(&mut self, program: &mut Program) {
+        let decoding = self.decode_places.clone();
         let mut uses = Vec::new();
         let mut visit = |expr: &mut Expr| {
             let ExprKind::Call(callee, args) = &expr.kind else {
                 return;
             };
-            let mut keep = |arg: &Expr, name: Symbol| {
-                if matches!(&arg.ty, Some(Type::Generic(head, _)) if head.is_builtin(crate::defs::TYPE_OF))
-                {
+            let call = expr.span;
+            let mut keep = |arg: &Expr, callee: Symbol, span: Span| match &arg.ty {
+                Some(Type::Generic(head, _)) if head.is_builtin(crate::defs::TYPE_OF) => {
                     let (mut names, mut held) = (Vec::new(), Vec::new());
                     self.type_leaves(arg, &mut names, &mut held);
-                    uses.push((arg.span, name, names, held));
+                    uses.push(DecoderUse {
+                        span,
+                        call,
+                        callee,
+                        names,
+                        held,
+                        value: None,
+                    });
                 }
+                Some(ty) => uses.push(DecoderUse {
+                    span,
+                    call,
+                    callee,
+                    names: Vec::new(),
+                    held: Vec::new(),
+                    value: Some(ty.clone()),
+                }),
+                None => {}
             };
+            let label = Self::callee_label(callee).unwrap_or_else(|| intern("it"));
             if let Some(name) = self.decoder_named(callee) {
-                args.iter().for_each(|arg| keep(arg, name));
+                (args.iter())
+                    .filter(|arg| {
+                        matches!(&arg.ty, Some(Type::Generic(head, _))
+                            if head.is_builtin(crate::defs::TYPE_OF))
+                    })
+                    .for_each(|arg| keep(arg, name, arg.span));
+            } else {
+                // A function or method whose body hands what it is given
+                // to a decoder (`load(s, L)`, `twice([], s)`): the
+                // argument a decode is owed at.
+                // (A call given as an argument is a use of its own,
+                // owed at its place: not this one's.)
+                for arg in (args.iter())
+                    .filter(|arg| decoding.contains(&arg.span))
+                    .filter(|arg| !matches!(arg.kind, ExprKind::Call(..) | ExprKind::Pipe(..)))
+                {
+                    keep(arg, label, arg.span);
+                }
+                // A method called through the trait (`Dec.again(b, s)`),
+                // owed at the callee: of the value it is called on.
+                if decoding.contains(&callee.span)
+                    && let Some(receiver) = args.first()
+                    && let ExprKind::FieldAccess(_, method, _) = &callee.kind
+                {
+                    keep(receiver, *method, callee.span);
+                }
             }
             if let ExprKind::FieldAccess(receiver, field, _) = &callee.kind
                 && resolve(*field) == "decode"
@@ -1119,7 +1186,7 @@ impl TypeChecker {
                     |t| matches!(callee.res, Some(crate::defs::Res::Def(id)) if id == t.0),
                 )
             {
-                keep(receiver, *field);
+                keep(receiver, *field, receiver.span);
             }
         };
         for decl in &mut program.decls {
@@ -1151,26 +1218,37 @@ impl TypeChecker {
     /// routes that refuse such a use with a text of their own, which come
     /// first: a use with an error at its place is not judged again.
     pub(super) fn refuse_undecided_decoder_types(&mut self) {
-        for (span, callee, names, held) in std::mem::take(&mut self.decoder_uses) {
+        for use_ in std::mem::take(&mut self.decoder_uses) {
+            let DecoderUse {
+                span,
+                call,
+                callee,
+                names,
+                held,
+                value,
+            } = use_;
             let held: Vec<TyVar> = (held.iter())
                 .flat_map(|ty| free_vars_in(&self.apply(ty)))
                 .collect();
-            let undecided = names.iter().any(|ty| {
-                self.reaches_defaulted(ty)
-                    || free_vars_in(&self.apply(ty))
-                        .iter()
-                        .any(|v| !held.contains(v))
-            });
+            // (A value: a part of its type a scope's end fixed to `()`.)
+            let undecided = value.is_some_and(|ty| self.reaches_defaulted(&ty))
+                || names.iter().any(|ty| {
+                    self.reaches_defaulted(ty)
+                        || free_vars_in(&self.apply(ty))
+                            .iter()
+                            .any(|v| !held.contains(v))
+                });
             #[cfg(test)]
             if undecided {
                 JUDGED_UNDECIDED
                     .with(|judged| judged.borrow_mut().push(resolve(callee).to_string()));
             }
+            // (An error anywhere in the call speaks for it.)
             let reported = (self.errors.iter()).any(|e| {
                 e.is_error()
-                    && e.span.file == span.file
-                    && e.span.start < span.end.max(span.start + 1)
-                    && span.start < e.span.end.max(e.span.start + 1)
+                    && e.span.file == call.file
+                    && e.span.start < call.end.max(call.start + 1)
+                    && call.start < e.span.end.max(e.span.start + 1)
             });
             if !undecided || reported {
                 continue;
@@ -1264,4 +1342,20 @@ thread_local! {
     /// what a test reads to lock the one check.
     pub(super) static JUDGED_UNDECIDED: std::cell::RefCell<Vec<String>> =
         const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// A use of a decoder, kept before the types are written final
+/// (`keep_decoder_uses`): its place, what it is called by, and of the
+/// type it is given, the types of the names of types alone in it and of
+/// the names holding types (`type_leaves`), or the type of the value it
+/// is given (`twice([], s)`).
+#[derive(Clone, Debug)]
+pub(crate) struct DecoderUse {
+    span: Span,
+    /// The call the use is (an error anywhere in it speaks for it).
+    call: Span,
+    callee: Symbol,
+    names: Vec<Type>,
+    held: Vec<Type>,
+    value: Option<Type>,
 }

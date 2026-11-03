@@ -1,0 +1,5 @@
+error[type]: trait `Dec` cannot be implemented for `Box(String)`: it has `json.Decode` as a supertrait, and `Box(String)` cannot be decoded: the only impl is for `Box(Int)`
+ --> instance_impl__a_supertrait_refusal_names_the_one_impl.silt:21:1
+    |
+ 21 | trait Dec for Box(String) {}
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ trait `Dec` cannot be implemented for `Box(String)`: it has `json.Decode` as a supertrait, and `Box(String)` cannot be decoded: the only impl is for `Box(Int)`

@@ -1860,12 +1860,16 @@ impl TypeChecker {
                         ),
                         None => String::new(),
                     };
+                    // (The one place a call through the trait owes it: the
+                    // trait's own method.)
                     self.error(
                         Code::InvalidTypeAnnotation,
                         format!(
                             "type variable '{}' in impl-level where clause is a trait argument, \
-                             not a target type argument; write the bound on the method that needs it{example}",
+                             not a target type argument; declare the bound on the method in trait \
+                             '{}'{example}",
                             resolve(*type_param),
+                            self.impl_trait_name(ti),
                         ),
                         ti.span,
                     );
@@ -2425,6 +2429,11 @@ impl TypeChecker {
                                 &resolved_bound_args,
                             );
                             if !declared && has_declared_type {
+                                let of_trait_arg = (ti.trait_args.iter()).any(|te| {
+                                    let mut vars = Vec::new();
+                                    super::names::type_vars_of(te, &mut vars);
+                                    vars.contains(type_param)
+                                });
                                 self.errors.push(
                                     Diagnostic::error(
                                         Code::InvalidTraitImpl,
@@ -2439,11 +2448,21 @@ impl TypeChecker {
                                             self.show_bound(*trait_name, &resolved_bound_args)
                                         ),
                                     )
-                                    .with_help(format!(
-                                        "a call through the trait would not owe it: declare the \
-                                         bound on the method in trait '{}', or on the impl's header",
-                                        self.impl_trait_name(ti)
-                                    )),
+                                    .with_help(match of_trait_arg {
+                                        // (A trait argument's bound is
+                                        // refused on the impl's header.)
+                                        true => format!(
+                                            "a call through the trait would not owe it: declare \
+                                             the bound on the method in trait '{}'",
+                                            self.impl_trait_name(ti)
+                                        ),
+                                        false => format!(
+                                            "a call through the trait would not owe it: declare \
+                                             the bound on the method in trait '{}', or on the \
+                                             impl's header",
+                                            self.impl_trait_name(ti)
+                                        ),
+                                    }),
                                 );
                                 // (A bound refused beside the trait's
                                 // own bound of its trait is not the

@@ -2344,6 +2344,12 @@ impl TypeChecker {
         if f.name != intern("main") && !crate::session::is_cell_name(&resolve(f.name)) {
             self.fn_spans.push(f.span);
         }
+        // (The type variables its signature writes.)
+        let mut written = Vec::new();
+        for te in (f.params.iter().filter_map(|p| p.ty.as_ref())).chain(f.return_type.as_ref()) {
+            super::names::type_vars_of(te, &mut written);
+        }
+        let outer_written = std::mem::replace(&mut self.written_vars, written);
         let params = (f.params.iter())
             .map(|p| match p.pattern.kind {
                 PatternKind::Ident(name) => (name, p.kind == ParamKind::Data),
@@ -2354,6 +2360,7 @@ impl TypeChecker {
         let uses = std::mem::take(&mut self.full_type_uses);
         self.check_body_in(f, sig, env);
         self.checked_fn = outer;
+        self.written_vars = outer_written;
         // (As the body left the receivers' types.)
         for (recv, tr, field, span) in std::mem::replace(&mut self.full_type_uses, uses) {
             let recv = self.apply(&recv);
@@ -3109,7 +3116,7 @@ impl TypeChecker {
 
     /// The name a callee is written with, for a message about a call of
     /// it: `f`, or `m.f` for a member of a module.
-    fn callee_label(callee: &Expr) -> Option<Symbol> {
+    pub(super) fn callee_label(callee: &Expr) -> Option<Symbol> {
         match &callee.kind {
             ExprKind::Ident(name) => Some(*name),
             ExprKind::FieldAccess(obj, field, _)
@@ -3328,6 +3335,9 @@ impl TypeChecker {
                         .position(|param| free_vars_in(param).contains(v))
                         .and_then(|i| args.get(i));
                     if let (Some(arg), CallForm::Call) = (at, form) {
+                        if self.decode_places.contains(&self.wanted[k].origin.span) {
+                            self.decode_places.insert(arg.span);
+                        }
                         self.wanted[k].origin.span = arg.span;
                         // A type argument the call names by an alias:
                         // what a decoder's refusal calls it.
@@ -3387,6 +3397,9 @@ impl TypeChecker {
                     if let (Some(arg), CallForm::Call) = (at, form) {
                         let alias = self.alias_named(arg);
                         let use_ = &mut self.given_waiting[k];
+                        if self.decode_places.contains(&use_.origin.span) {
+                            self.decode_places.insert(arg.span);
+                        }
                         use_.origin.span = arg.span;
                         use_.written = alias;
                     }
@@ -4700,6 +4713,7 @@ impl TypeChecker {
             }
 
             ExprKind::Lambda { params, body } => {
+                self.closure_spans.push((span, self.written_vars.clone()));
                 let owner = self.frame_owner.take();
                 env.push();
                 // Soundness: lambda param lists are a single conjunctive

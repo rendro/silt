@@ -188,6 +188,25 @@ impl TypeChecker {
     /// predicate is the scheme's (`generalize`), or it belongs to an
     /// outer binding and waits on.
     pub(super) fn want(&mut self, pred: Pred, origin: Origin) -> Option<super::evidence::EvId> {
+        // (Where a decode is owed: `refuse_undecided_decoder_types`.)
+        let decodes = match &pred {
+            Pred::Trait { tr, .. } | Pred::Via { tr, .. } => {
+                Self::is_decode(*tr) || self.implies_decode(*tr)
+            }
+            Pred::Builtin {
+                check: BuiltinCheck::Decodes { .. },
+                ..
+            } => true,
+            Pred::Given { given, body, .. } => {
+                self.tables.held_needs.contains_key(given)
+                    || (self.builtin_needs_of(*given, *body).iter())
+                        .any(|check| matches!(check, BuiltinCheck::Decodes { .. }))
+            }
+            _ => false,
+        };
+        if decodes {
+            self.decode_places.insert(origin.span);
+        }
         let pred = match pred {
             Pred::Given {
                 subject,

@@ -2794,7 +2794,24 @@ impl Resolver<'_> {
                     self.expr(v);
                 }
             }
-            ExprKind::SetLit(elems) | ExprKind::Tuple(elems) | ExprKind::Recur(elems) => {
+            // (`Self` among the types of a tuple of types, `(Self, Int)` in a
+            // trait's default body, is the type, as it is given to a
+            // call: `List(Self)`.)
+            ExprKind::Tuple(elems) => {
+                for e in elems {
+                    match e.kind {
+                        ExprKind::Ident(name)
+                            if name == intern("Self")
+                                && self.type_vars.contains(&intern("Self"))
+                                && self.lookup_value(intern("Self")).is_none() =>
+                        {
+                            e.res = Some(Res::Local);
+                        }
+                        _ => self.expr(e),
+                    }
+                }
+            }
+            ExprKind::SetLit(elems) | ExprKind::Recur(elems) => {
                 for e in elems {
                     self.expr(e);
                 }
