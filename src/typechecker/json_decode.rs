@@ -1089,3 +1089,179 @@ pub(super) fn held_subject(vars: &[TyVar]) -> Type {
         _ => Type::Tuple(vars.iter().map(|v| Type::Var(*v)).collect()),
     }
 }
+
+impl TypeChecker {
+    /// Keep each use of a decoder in `program`, before the types are
+    /// written final (`decoder_uses`). A decoder is a builtin that decodes
+    /// into the type its argument names (`json.parse`, `toml.parse_list`,
+    /// `postgres.query`), and the `decode` method of a type written before
+    /// a dot (`Box(t).decode(v)`).
+    pub(super) fn keep_decoder_uses(&mut self, program: &mut Program) {
+        let mut uses = Vec::new();
+        let mut visit = |expr: &mut Expr| {
+            let ExprKind::Call(callee, args) = &expr.kind else {
+                return;
+            };
+            let mut keep = |arg: &Expr, name: Symbol| {
+                if matches!(&arg.ty, Some(Type::Generic(head, _)) if head.is_builtin(crate::defs::TYPE_OF))
+                {
+                    let (mut names, mut held) = (Vec::new(), Vec::new());
+                    self.type_leaves(arg, &mut names, &mut held);
+                    uses.push((arg.span, name, names, held));
+                }
+            };
+            if let Some(name) = self.decoder_named(callee) {
+                args.iter().for_each(|arg| keep(arg, name));
+            }
+            if let ExprKind::FieldAccess(receiver, field, _) = &callee.kind
+                && resolve(*field) == "decode"
+                && crate::defs::builtin_trait_id("Decode").is_some_and(
+                    |t| matches!(callee.res, Some(crate::defs::Res::Def(id)) if id == t.0),
+                )
+            {
+                keep(receiver, *field);
+            }
+        };
+        for decl in &mut program.decls {
+            match decl {
+                Decl::Fn(f) => super::resolve::each_expr_mut(&mut f.body, &mut visit),
+                Decl::TraitImpl(ti) => {
+                    for m in &mut ti.methods {
+                        super::resolve::each_expr_mut(&mut m.body, &mut visit);
+                    }
+                }
+                Decl::Trait(t) => {
+                    for m in t.methods.iter_mut().filter(|m| !m.is_signature_only) {
+                        super::resolve::each_expr_mut(&mut m.body, &mut visit);
+                    }
+                }
+                Decl::Let { value, .. } => super::resolve::each_expr_mut(value, &mut visit),
+                _ => {}
+            }
+        }
+        self.decoder_uses.extend(uses);
+    }
+
+    /// Refuse, once the module's bodies are checked, each decoder use
+    /// (`decoder_uses`) given a type with a generic type or alias written
+    /// alone in it (`Box`, `List(L)`) whose type arguments nothing decides,
+    /// no name holding a type gives where the code runs, or a scope's end
+    /// fixed to `()`: the compiler builds the decoder from the type the
+    /// checker decided, and that is no one type. The one check behind the
+    /// routes that refuse such a use with a text of their own, which come
+    /// first: a use with an error at its place is not judged again.
+    pub(super) fn refuse_undecided_decoder_types(&mut self) {
+        for (span, callee, names, held) in std::mem::take(&mut self.decoder_uses) {
+            let held: Vec<TyVar> = (held.iter())
+                .flat_map(|ty| free_vars_in(&self.apply(ty)))
+                .collect();
+            let undecided = names.iter().any(|ty| {
+                self.reaches_defaulted(ty)
+                    || free_vars_in(&self.apply(ty))
+                        .iter()
+                        .any(|v| !held.contains(v))
+            });
+            #[cfg(test)]
+            if undecided {
+                JUDGED_UNDECIDED
+                    .with(|judged| judged.borrow_mut().push(resolve(callee).to_string()));
+            }
+            let reported = (self.errors.iter()).any(|e| {
+                e.is_error()
+                    && e.span.file == span.file
+                    && e.span.start < span.end.max(span.start + 1)
+                    && span.start < e.span.end.max(e.span.start + 1)
+            });
+            if !undecided || reported {
+                continue;
+            }
+            let message = format!(
+                "cannot infer the type this use of '{callee}' needs to implement trait 'json.Decode'"
+            );
+            self.errors.push(
+                Diagnostic::error(Code::AmbiguousType, span, message)
+                    .with_help("annotate the value it is given"),
+            );
+        }
+    }
+
+    /// Whether `ty` has in it, also through what the checker learnt of
+    /// its variables, one a scope's end fixed to `()` (`defaulted_vars`).
+    fn reaches_defaulted(&self, ty: &Type) -> bool {
+        free_vars_in(ty).into_iter().any(|v| {
+            self.defaulted_vars.contains(&v)
+                || matches!(self.tables.vars.subst.get(v), Some(Some(resolved))
+                    if self.reaches_defaulted(resolved))
+        })
+    }
+
+    /// The name of the builtin decoder `callee` calls, as written, if it
+    /// calls one.
+    fn decoder_named(&self, callee: &Expr) -> Option<Symbol> {
+        let def = self.res_def(callee.res)?;
+        let module = def.module.builtin_name()?;
+        let row = crate::builtins::registry::registry().named(&format!("{module}.{}", def.name))?;
+        row.decoding?;
+        Some(match &callee.kind {
+            ExprKind::FieldAccess(obj, field, _) => match &obj.kind {
+                ExprKind::Ident(m) => intern(&format!("{m}.{field}")),
+                _ => *field,
+            },
+            ExprKind::Ident(name) => *name,
+            _ => def.name,
+        })
+    }
+
+    /// The types the names of types alone in `e` stand for (`names`), and
+    /// the types the other names in it hold (`held`).
+    fn type_leaves(&self, e: &Expr, names: &mut Vec<Type>, held: &mut Vec<Type>) {
+        match &e.kind {
+            ExprKind::Call(_, args) if self.names_a_type(e) => args
+                .iter()
+                .for_each(|arg| self.type_leaves(arg, names, held)),
+            ExprKind::Tuple(elems) => elems
+                .iter()
+                .for_each(|elem| self.type_leaves(elem, names, held)),
+            _ => {
+                let Some(Type::Generic(head, args)) = &e.ty else {
+                    return;
+                };
+                let Some(ty) = args
+                    .first()
+                    .filter(|_| head.is_builtin(crate::defs::TYPE_OF))
+                else {
+                    return;
+                };
+                match self.names_a_type(e) {
+                    true => names.push(ty.clone()),
+                    false => held.push(ty.clone()),
+                }
+            }
+        }
+    }
+
+    /// Whether `e` is a type's or an alias's name, or one applied to
+    /// types.
+    fn names_a_type(&self, e: &Expr) -> bool {
+        let named = match &e.kind {
+            ExprKind::Call(callee, _) => callee,
+            _ => e,
+        };
+        matches!(named.kind, ExprKind::Ident(_) | ExprKind::FieldAccess(..))
+            && self.res_def(named.res).is_some_and(|def| {
+                matches!(
+                    def.kind,
+                    crate::defs::DefKind::Type(_) | crate::defs::DefKind::TypeAlias
+                )
+            })
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The decoders `refuse_undecided_decoder_types` judged given a type
+    /// nothing decides, also where an earlier refusal speaks for the use:
+    /// what a test reads to lock the one check.
+    pub(super) static JUDGED_UNDECIDED: std::cell::RefCell<Vec<String>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}

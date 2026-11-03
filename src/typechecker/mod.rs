@@ -187,6 +187,14 @@ pub struct TypeChecker {
     /// decide from them is decided from a value's type, which a help
     /// names (`undecided_trait_args`).
     pub(super) closure_param_vars: std::collections::HashSet<TyVar>,
+    /// The type variables a scope's end fixed to `()` because nothing
+    /// decided them (`println([])`): no decoder is given such a part.
+    pub(super) defaulted_vars: std::collections::HashSet<TyVar>,
+    /// Each decoder's use, kept before the types are final: its place,
+    /// the decoder, and the types of the names of types alone and the
+    /// held type variables of what it is given
+    /// (`refuse_undecided_decoder_types`).
+    pub(super) decoder_uses: Vec<(Span, Symbol, Vec<Type>, Vec<Type>)>,
     /// A generic type or alias written alone in a type argument, as
     /// written, with the head of the type it names, by the argument's
     /// place (`L` of `List(L)`, `Box` given to `p(s, type t)`): what a
@@ -752,6 +760,8 @@ impl TypeChecker {
             passed_to: HashMap::new(),
             arg_names: HashMap::new(),
             closure_param_vars: std::collections::HashSet::new(),
+            defaulted_vars: std::collections::HashSet::new(),
+            decoder_uses: Vec::new(),
             bare_written: HashMap::new(),
             checked_fn: None,
             bound_askers: HashMap::new(),
@@ -1476,6 +1486,7 @@ impl TypeChecker {
 
         // After all passes, resolve any remaining type variables in annotations
         self.refuse_unheld_full_types(&env);
+        self.keep_decoder_uses(program);
         self.resolve_all_types(program);
         self.write_held_types(program);
         self.write_evidence(program, &env);
@@ -2099,6 +2110,7 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
     checker.settle_encode_owners();
     checker.settle_undecided_decodes();
     checker.settle_in_full_refusals();
+    checker.refuse_undecided_decoder_types();
     checker.record_def_owners(program, &env);
     checker.drop_errors_of_refused_calls();
     checker.report_private_in_schemes(program, &env);
