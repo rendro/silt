@@ -654,6 +654,9 @@ impl TypeChecker {
                 .iter()
                 .any(|(name, _)| tr.is_builtin(name))
             {
+                if let Type::Var(v) = self.apply(subject) {
+                    self.defaulted_vars.insert(v);
+                }
                 let _ = self.unify_types(subject, &Type::Unit);
                 self.ev_set(Some(wanted.ev), super::evidence::EvNode::Structural(*tr));
                 continue;

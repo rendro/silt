@@ -2295,3 +2295,46 @@ fn record_fields_at_a_wrong_number_of_arguments_take_fresh_variables() {
         }
     }
 }
+
+// ── The one check of a decoder's undecided type ─────────────────────
+
+/// Each decoder given a generic type or alias written alone whose type
+/// arguments nothing decides is judged by the one check, also where an
+/// earlier refusal with a text of its own speaks for the use; a type
+/// written in full, and one a parameter holding a type gives, is not.
+#[test]
+fn the_one_check_judges_every_decoder_given_an_undecided_type() {
+    super::json_decode::JUDGED_UNDECIDED.with(|judged| judged.borrow_mut().clear());
+    let errors = check_errors(
+        r#"
+import json
+import toml
+type Box(a) { v: a }
+type L(a) = List(a)
+fn held(s, t) { json.parse(s, List(t)) }
+fn main() {
+  let a = json.parse("[1]", L)
+  let b = json.decode(json.Null, Option(L))
+  let c = toml.parse_map("a = 1", L)
+  let e = json.parse("[0]", List(Box))
+  let f = json.parse("[[0]]", (L, Int))
+  let g = json.parse("[1]", List(Int))
+  let h = held("[1]", Int)
+  println("{a} {b} {c} {e} {f} {g} {h}")
+}
+        "#,
+    );
+    assert!(errors.iter().any(|e| e.is_error()));
+    let judged = super::json_decode::JUDGED_UNDECIDED.with(|judged| judged.borrow().clone());
+    assert_eq!(
+        judged,
+        [
+            "json.parse",
+            "json.decode",
+            "toml.parse_map",
+            "json.parse",
+            "json.parse"
+        ],
+        "the decoders judged undecided"
+    );
+}
