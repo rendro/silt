@@ -18,13 +18,16 @@ pub(crate) fn dispatch(args: &[String]) {
         match arg.as_str() {
             "--help" | "-h" => wants_help = true,
             other if other.starts_with('-') => {
-                eprintln!("silt update: unknown flag '{}'", escape_for_display(other));
+                eprintln!(
+                    "error: silt update: unknown flag '{}'",
+                    escape_for_display(other)
+                );
                 eprintln!("Run 'silt update --help' for usage.");
                 process::exit(1);
             }
             other => {
                 eprintln!(
-                    "silt update: unexpected extra argument '{}'",
+                    "error: silt update: unexpected extra argument '{}'",
                     escape_for_display(other)
                 );
                 process::exit(1);
@@ -59,7 +62,7 @@ fn run_dependency_update() {
         Ok(Some(pair)) => pair,
         Ok(None) => {
             eprintln!(
-                "silt update must be run inside a silt package (no silt.toml found in this directory or any parent)"
+                "error: silt update: must be run inside a silt package (no silt.toml found in this directory or any parent)"
             );
             process::exit(1);
         }

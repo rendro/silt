@@ -1,0 +1,5 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[compile]: the entry point 'main' must take no parameters, but it declares 1 parameter
+pub fn greet() -> String { "hi" }
+pub fn main(x: Int) { x }

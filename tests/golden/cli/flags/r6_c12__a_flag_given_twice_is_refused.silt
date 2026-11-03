@@ -1,0 +1,6 @@
+-- cmd: check --deny-warnings --deny-warnings
+-- exit: 1
+-- stderr-contains: error: silt check: --deny-warnings was specified more than once
+fn main() {
+  println(1)
+}

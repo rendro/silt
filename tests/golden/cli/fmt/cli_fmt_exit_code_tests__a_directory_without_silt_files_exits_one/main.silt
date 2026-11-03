@@ -1,0 +1,9 @@
+-- cmd: fmt --check notes
+-- exit: 1
+-- stderr-contains: error: silt fmt: no .silt files found in notes
+-- A directory with no .silt file in it is nothing fmt can check: a
+-- usage error, exit 1, as for every command.
+
+fn main() {
+  println("hello")
+}

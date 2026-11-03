@@ -532,6 +532,24 @@ impl ModuleGraph {
                 )
             } else if module::is_builtin_module(&resolve(name)) {
                 ImportResolution::Builtin
+            } else if !module::is_lowercase_module_name(&resolve(name)) {
+                // A module's name is all lowercase, whatever file or
+                // dependency the name would find.
+                // The help names the lowercase name, unless that is a
+                // builtin module's, which no file can take.
+                let written = resolve(name);
+                let lower = written.to_lowercase();
+                let d = Diagnostic::error(
+                    Code::ModuleNamedLikeBuiltin,
+                    span,
+                    crate::manifest::invalid_module_name(&written),
+                );
+                ImportResolution::Unresolved(match module::is_builtin_module(&lower) {
+                    true => d,
+                    false => d.with_help(format!(
+                        "name the file `{lower}.silt` and write `import {lower}`"
+                    )),
+                })
             } else if let Some(cell) = self.cell_module(name) {
                 ImportResolution::Cell(cell)
             } else if let Some(&host) = self.hosts.get(&name) {

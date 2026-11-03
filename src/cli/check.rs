@@ -9,7 +9,7 @@ use silt::session::{Entry, LockPolicy};
 
 use crate::cli::help::check_usage_banner;
 use crate::cli::package::{EntryPointKind, resolve_package_entry_point_for};
-use crate::cli::paths::{ProgramFiles, door_diagnostics, open_entry_or_exit, package_test_files};
+use crate::cli::paths::{ProgramFiles, door_diagnostics, open_entry, package_test_files};
 
 /// Output format for `silt check` — human-readable by default, or
 /// machine-readable JSON when `--format json` is passed.
@@ -27,32 +27,37 @@ pub(crate) fn dispatch(args: &[String]) {
     let mut i = 2;
     while i < args.len() {
         if args[i] == "--" {
-            // Positionals after `--` are forwarded to the
-            // program as `io.args()`. `silt check` doesn't execute, so
-            // these are effectively ignored — but we accept and silently
-            // skip them so that `silt check` is a transparent drop-in
-            // for `silt run` in CI scripts that pre-bake program args.
-            // Stop CLI flag parsing here.
-            break;
-        } else if args[i] == "--format" {
-            if i + 1 < args.len() && args[i + 1] == "json" {
+            // `silt check` runs no program, so it takes no program
+            // arguments: `--` is an argument too many.
+            eprintln!("error: silt check: unexpected extra argument '--'");
+            eprintln!("Run 'silt check --help' for usage.");
+            process::exit(1);
+        } else if args[i] == "--format" || args[i].starts_with("--format=") {
+            if format == OutputFormat::Json {
+                crate::cli::once_only("check", "--format");
+            }
+            if let Some(value) = args[i].strip_prefix("--format=") {
+                // GNU-style `--format=json` form, to match `silt add
+                // --path=...` and every other subcommand that accepts an
+                // `=`-joined value.
+                if value == "json" {
+                    format = OutputFormat::Json;
+                    i += 1;
+                } else {
+                    eprintln!("error: silt check: --format requires 'json'");
+                    process::exit(1);
+                }
+            } else if i + 1 < args.len() && args[i + 1] == "json" {
                 format = OutputFormat::Json;
                 i += 2;
             } else {
-                eprintln!("--format requires 'json'");
-                process::exit(1);
-            }
-        } else if let Some(value) = args[i].strip_prefix("--format=") {
-            // GNU-style `--format=json` form, to match `silt add --path=...`
-            // and every other subcommand that accepts an `=`-joined value.
-            if value == "json" {
-                format = OutputFormat::Json;
-                i += 1;
-            } else {
-                eprintln!("--format requires 'json'");
+                eprintln!("error: silt check: --format requires 'json'");
                 process::exit(1);
             }
         } else if args[i] == "--deny-warnings" {
+            if deny_warnings {
+                crate::cli::once_only("check", "--deny-warnings");
+            }
             deny_warnings = true;
             i += 1;
         } else if args[i] == "--help" || args[i] == "-h" {
@@ -70,28 +75,19 @@ pub(crate) fn dispatch(args: &[String]) {
                 "--h" | "-help" => " (did you mean --help?)",
                 _ => "",
             };
-            eprintln!("silt check: unknown flag '{}'{}", args[i], suggestion);
+            eprintln!(
+                "error: silt check: unknown flag '{}'{}",
+                args[i], suggestion
+            );
             eprintln!("Run 'silt check --help' for usage.");
             process::exit(1);
         } else if file.is_none() {
             file = Some(args[i].clone());
             i += 1;
         } else {
-            // Reject extra positionals — `silt check` takes at most
-            // one file. Pre-fix the assign was unconditional and
-            // last-wins, so `silt check a.silt b.silt` silently
-            // checked only `b.silt` while the user thought both ran.
-            // Mirror the rejection pattern used by `silt update`,
-            // `silt repl`, `silt lsp`, and `silt add`.
-            //
-            // To bake program args into a `silt check`
-            // invocation (e.g. for CI parity with `silt run`), use
-            // `--` as a separator.
-            eprintln!("silt check: unexpected extra argument '{}'", args[i]);
-            eprintln!(
-                "If '{}' is meant for the program, separate it with '--' (e.g. 'silt check <file>.silt -- {}').",
-                args[i], args[i]
-            );
+            // Reject extra positionals: `silt check` takes at most one
+            // file.
+            eprintln!("error: silt check: unexpected extra argument '{}'", args[i]);
             eprintln!("Run 'silt check --help' for usage.");
             process::exit(1);
         }
@@ -112,6 +108,7 @@ pub(crate) fn dispatch(args: &[String]) {
                 (p.to_string_lossy().into_owned(), package_test_files(root))
             }
             Ok(None) => {
+                crate::cli::no_file("check");
                 eprintln!("Usage: {}", check_usage_banner());
                 process::exit(1);
             }
@@ -129,19 +126,19 @@ fn check_files(path: &str, tests: &[String], format: OutputFormat, deny_warnings
     // and the compile step, as the language server does. A module needs
     // no `main`; `silt run` asks for one. A `main` the file binds must be
     // able to start, and so must its test functions.
-    let (mut session, file) = open_entry_or_exit(path, LockPolicy::Update);
-    let mut unreadable = false;
+    let (mut session, file) = match open_entry(path, LockPolicy::Update) {
+        Ok(opened) => opened,
+        Err(e) => {
+            report_unreadable(format, &[(path.to_string(), e)]);
+            process::exit(1);
+        }
+    };
+    let mut unreadable = Vec::new();
     let mut files = vec![file];
     for test in tests {
         match session.open(Path::new(test)) {
             Ok(file) => files.push(file),
-            Err(e) => {
-                eprintln!(
-                    "error reading {test}: {}",
-                    silt::diagnostic::io_error_text(&e)
-                );
-                unreadable = true;
-            }
+            Err(e) => unreadable.push((test.clone(), e)),
         }
     }
     // Each once, in the order found (a set beside the list: a program
@@ -159,29 +156,77 @@ fn check_files(path: &str, tests: &[String], format: OutputFormat, deny_warnings
 
     let files = ProgramFiles::new(path, session.sources());
     if format == OutputFormat::Json {
-        print_json_errors(&files, &diagnostics);
+        print_json_errors(&files, &unreadable, &diagnostics);
     } else {
+        report_unreadable(format, &unreadable);
         // F14: separate diagnostics with blank lines.
         silt::diagnostic::eprint_all(&files, &diagnostics);
     }
 
-    if unreadable || diagnostics.iter().any(Diagnostic::is_error) {
+    if !unreadable.is_empty() || diagnostics.iter().any(Diagnostic::is_error) {
         process::exit(1);
     }
     let warnings = diagnostics.iter().filter(|d| d.is_warning()).count();
     if deny_warnings && warnings > 0 {
         let noun = if warnings == 1 { "warning" } else { "warnings" };
-        eprintln!("silt check: {warnings} {noun}, denied by --deny-warnings");
+        eprintln!("error: silt check: {warnings} {noun}, denied by --deny-warnings");
         process::exit(1);
     }
 }
 
-/// `errors` as one JSON array on stdout (see `diagnostic::render_json`).
-/// Nothing in it is colored: the renderer writes no escape sequences.
-fn print_json_errors(files: &dyn SourceView, errors: &[Diagnostic]) {
-    let json_errors: Vec<serde_json::Value> = errors
+/// The files that could not be read, each with why: "error reading
+/// <file>: <why>" lines, or under `--format json` the JSON array of them
+/// on stdout.
+fn report_unreadable(format: OutputFormat, unreadable: &[(String, std::io::Error)]) {
+    match format {
+        OutputFormat::Json => print_json_errors(&silt::source::SourceMap::new(), unreadable, &[]),
+        OutputFormat::Human => {
+            for (path, e) in unreadable {
+                eprintln!(
+                    "error reading {path}: {}",
+                    silt::diagnostic::io_error_text(e)
+                );
+            }
+        }
+    }
+}
+
+/// A file that could not be read as an entry of the JSON array: the
+/// fields of a diagnostic (`diagnostic::render_json`), with the file as
+/// its place and no position in it.
+fn unreadable_json(path: &str, e: &std::io::Error) -> serde_json::Value {
+    serde_json::json!({
+        "code": silt::diagnostic::Code::ModuleNotFound.id(),
+        "col": 0,
+        "end_col": 0,
+        "end_line": 0,
+        "file": path,
+        "help": [],
+        "kind": "compile",
+        "labels": [],
+        "line": 0,
+        "message": format!("error reading {path}: {}", silt::diagnostic::io_error_text(e)),
+        "notes": [],
+        "severity": "error",
+    })
+}
+
+/// The files that could not be read, then `errors`, as one JSON array
+/// on stdout (see `diagnostic::render_json`). Nothing in it is colored:
+/// the renderer writes no escape sequences.
+fn print_json_errors(
+    files: &dyn SourceView,
+    unreadable: &[(String, std::io::Error)],
+    errors: &[Diagnostic],
+) {
+    let json_errors: Vec<serde_json::Value> = unreadable
         .iter()
-        .map(|d| silt::diagnostic::render_json(files, d))
+        .map(|(path, e)| unreadable_json(path, e))
+        .chain(
+            errors
+                .iter()
+                .map(|d| silt::diagnostic::render_json(files, d)),
+        )
         .collect();
     match serde_json::to_string(&json_errors) {
         Ok(json) => println!("{json}"),

@@ -1,0 +1,11 @@
+-- cmd: test
+-- exit: 1
+-- A test file named with an upper-case letter is refused too. (The
+-- case's name has an upper-case letter on purpose.)
+-- stderr-contains: error[compile]: `r6_c14__An_upper_case_test` is not a valid module name
+-- stderr-contains: failed to compile
+import test
+
+fn test_a() {
+  test.assert(true)
+}

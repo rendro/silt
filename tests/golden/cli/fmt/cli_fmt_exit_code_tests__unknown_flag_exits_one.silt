@@ -1,0 +1,8 @@
+-- cmd: fmt --chek
+-- exit: 1
+-- stderr-contains: error: silt fmt: unknown flag '--chek'
+-- A mistyped flag is a usage error: exit 1, as for every command.
+
+fn main() {
+  println("hello")
+}

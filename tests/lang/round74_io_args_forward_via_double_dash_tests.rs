@@ -141,50 +141,6 @@ fn silt_run_forwards_args_that_look_like_flags() {
 }
 
 #[test]
-fn silt_check_accepts_double_dash_separator() {
-    // `silt check script.silt -- foo bar` must succeed (the args are
-    // ignored since `check` doesn't execute, but the separator must
-    // parse cleanly so CI scripts can swap `silt run` ↔ `silt check`
-    // without rewriting argv).
-    let dir = fresh_dir("check_dd");
-    let script = dir.join("ok.silt");
-    fs::write(&script, "fn main() { print(\"hi\") }\n").unwrap();
-
-    let out = silt_cmd()
-        .args(["check", script.to_str().unwrap(), "--", "foo", "bar"])
-        .output()
-        .expect("failed to run silt");
-
-    assert!(
-        out.status.success(),
-        "silt check must accept `--` separator; \
-         exit={:?}\nstderr={}",
-        out.status.code(),
-        String::from_utf8_lossy(&out.stderr),
-    );
-}
-
-#[test]
-fn silt_disasm_accepts_double_dash_separator() {
-    let dir = fresh_dir("disasm_dd");
-    let script = dir.join("ok.silt");
-    fs::write(&script, "fn main() { print(\"hi\") }\n").unwrap();
-
-    let out = silt_cmd()
-        .args(["disasm", script.to_str().unwrap(), "--", "foo", "bar"])
-        .output()
-        .expect("failed to run silt");
-
-    assert!(
-        out.status.success(),
-        "silt disasm must accept `--` separator; \
-         exit={:?}\nstderr={}",
-        out.status.code(),
-        String::from_utf8_lossy(&out.stderr),
-    );
-}
-
-#[test]
 fn silt_run_extra_positional_without_double_dash_still_rejected() {
     // Round-72's intent is preserved: bare extras WITHOUT `--` still
     // hard-error. This protects against `silt run a.silt b.silt`

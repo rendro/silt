@@ -4,7 +4,7 @@ error[compile]: cannot load module 'nosuch': no such file
  8 | import nosuch
    | ^^^^^^^^^^^^^ cannot load module 'nosuch': no such file
   = note: looked for `nosuch.silt`
-  = help: if 'nosuch' is a separate package, declare it under `[dependencies]` in silt.toml (e.g. `silt add nosuch`)
+  = help: if 'nosuch' is a separate package, declare it under `[dependencies]` in silt.toml (e.g. `silt add nosuch --path <dir>`)
 
 error[type]: 'hidden' is private to module 'helper'
  --> main.silt:6:17

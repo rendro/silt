@@ -1,0 +1,6 @@
+-- cmd: test
+-- exit: 0
+-- stderr-contains: hint: test functions must be named 'fn test_*'; test files end with '_test.silt' or '.test.silt'
+fn helper() {
+  1
+}

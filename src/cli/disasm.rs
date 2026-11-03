@@ -27,36 +27,25 @@ pub(crate) fn dispatch(args: &[String]) {
         println!("  silt disasm main.silt");
         process::exit(0);
     }
-    // Reject unknown flags before interpreting args as filenames.
-    // Also collect the first positional so we can reject any extras
-    // — pre-fix the dispatcher only read `args[2]` and silently
-    // dropped any further positionals, so `silt disasm a.silt
-    // b.silt` looked like it had disassembled both. Mirror the
-    // rejection pattern used by `silt update`, `silt repl`,
-    // `silt lsp`, and `silt add`.
+    // Reject unknown flags before interpreting args as filenames, and
+    // every positional after the first.
     let mut positional: Option<String> = None;
-    let mut iter = args[2..].iter();
-    while let Some(arg) = iter.next() {
+    for arg in &args[2..] {
         if arg == "--" {
-            // Positionals after `--` are program args. Disasm
-            // doesn't execute, so these are silently skipped — but we
-            // accept the separator so `silt disasm` parses identically
-            // to `silt run`/`silt check` and CI scripts can swap one
-            // subcommand for another without rewriting argv.
-            for _ in iter.by_ref() {}
-            break;
+            // `silt disasm` runs no program, so it takes no program
+            // arguments: `--` is an argument too many.
+            eprintln!("error: silt disasm: unexpected extra argument '--'");
+            eprintln!("Run 'silt disasm --help' for usage.");
+            process::exit(1);
         } else if arg.starts_with('-') && arg != "--help" && arg != "-h" {
-            eprintln!("silt disasm: unknown flag '{arg}'");
+            eprintln!("error: silt disasm: unknown flag '{arg}'");
             eprintln!("Run 'silt disasm --help' for usage.");
             process::exit(1);
         } else if !arg.starts_with('-') {
             if positional.is_none() {
                 positional = Some(arg.clone());
             } else {
-                eprintln!("silt disasm: unexpected extra argument '{arg}'");
-                eprintln!(
-                    "If '{arg}' is meant for the program, separate it with '--' (e.g. 'silt disasm <file>.silt -- {arg}')."
-                );
+                eprintln!("error: silt disasm: unexpected extra argument '{arg}'");
                 eprintln!("Run 'silt disasm --help' for usage.");
                 process::exit(1);
             }
@@ -67,6 +56,7 @@ pub(crate) fn dispatch(args: &[String]) {
         None => match resolve_package_entry_point() {
             Ok(Some(p)) => p.to_string_lossy().into_owned(),
             Ok(None) => {
+                crate::cli::no_file("disasm");
                 eprintln!("Usage: {}", disasm_usage_banner());
                 process::exit(1);
             }
@@ -107,7 +97,7 @@ fn disasm_file(path: &str) {
                 process::exit(141);
             }
             eprintln!(
-                "silt disasm: cannot write to stdout: {}",
+                "error: silt disasm: cannot write to stdout: {}",
                 silt::diagnostic::io_error_text(&e)
             );
             process::exit(1);

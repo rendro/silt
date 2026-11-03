@@ -1,0 +1,7 @@
+-- cmd: disasm -- --help
+-- exit: 1
+-- `silt disasm` runs no program that could read arguments after `--`.
+-- stderr-contains: error: silt disasm: unexpected extra argument '--'
+fn main() {
+  println("disassembled")
+}

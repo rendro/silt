@@ -1,0 +1,6 @@
+-- cmd: test --filter zz
+-- exit: 1
+-- stderr-contains: no test matches --filter 'zz'
+fn main() {
+  println(1)
+}

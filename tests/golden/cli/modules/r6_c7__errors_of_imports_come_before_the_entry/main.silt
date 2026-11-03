@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+import b
+import a
+
+fn main() {
+  println(a.f())
+  println(b.h())
+  let x: Int = "t"
+  println(x)
+}

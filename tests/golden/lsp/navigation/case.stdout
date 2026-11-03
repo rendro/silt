@@ -1,4 +1,4 @@
-17:1 error cannot load module 'li': no such file\nnote: looked for `li.silt`\nhelp: if 'li' is a separate package, declare it under `[dependencies]` in silt.toml (e.g. `silt add li`)
+17:1 error cannot load module 'li': no such file\nnote: looked for `li.silt`\nhelp: if 'li' is a separate package, declare it under `[dependencies]` in silt.toml (e.g. `silt add li --path <dir>`)
 > definition 27:13
 main.silt:19:24-19:27
 > definition 28:11

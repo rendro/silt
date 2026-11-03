@@ -1,0 +1,8 @@
+-- exit: 1
+-- stderr-contains: error[package]: a package cannot depend on itself: `me` is this package
+-- stderr-contains: --> silt.toml:6:1
+import me
+
+fn main() {
+  println(me.f())
+}

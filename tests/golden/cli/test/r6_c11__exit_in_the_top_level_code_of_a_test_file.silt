@@ -1,0 +1,14 @@
+-- cmd: test
+-- exit: 1
+-- stderr-contains: error[runtime]: process.exit(0) was called in a test file's top-level code: a test file ends by returning
+import process
+import test
+
+let k = {
+  process.exit(0)
+  1
+}
+
+fn test_after() {
+  test.assert(true)
+}

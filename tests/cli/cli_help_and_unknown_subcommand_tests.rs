@@ -38,10 +38,10 @@ fn silt_unknown_subcommand_suggests_close_match() {
         stderr.contains("Did you mean 'run'"),
         "silt rn stderr must suggest 'run', got: {stderr}"
     );
-    // The original "Unknown command:" line should still be there.
+    // The "unknown command" line should still be there.
     assert!(
-        stderr.contains("Unknown command:"),
-        "silt rn must still print 'Unknown command:' line, got: {stderr}"
+        stderr.contains("error: silt: unknown command 'rn'"),
+        "silt rn must still print the unknown-command line, got: {stderr}"
     );
 }
 
@@ -90,7 +90,7 @@ fn silt_unknown_subcommand_no_suggestion_for_far_typo() {
 #[test]
 fn silt_unknown_subcommand_quotes_the_typo() {
     // The output shape specified by round-62 wraps the unknown name in
-    // single quotes (`Unknown command: 'rn'`) so it's unambiguous what
+    // single quotes (`unknown command 'rn'`) so it's unambiguous what
     // the user typed even if it contains spaces or punctuation.
     let output = silt_cmd()
         .args(["zzzzzz"])
@@ -98,7 +98,7 @@ fn silt_unknown_subcommand_quotes_the_typo() {
         .expect("failed to run silt zzzzzz");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("Unknown command: 'zzzzzz'"),
+        stderr.contains("error: silt: unknown command 'zzzzzz'"),
         "stderr must quote the unknown command, got: {stderr}"
     );
 }

@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- A module name is all lowercase: `import Util` is refused although
+-- Util.silt is there.
+-- stderr-contains: error[compile]: `Util` is not a valid module name: use lowercase letters, digits and `_`, not starting with a digit
+-- stderr-contains: --> main.silt:8:1
+-- stderr-contains: = help: name the file `util.silt` and write `import util`
+import Util
+
+fn main() {
+  println(Util.f())
+}

@@ -306,6 +306,12 @@ fn keyword_init_in_dir_named_loop_is_rejected() {
         stderr.contains("pick a different name"),
         "stderr should suggest picking a different name (canonical shape): {stderr}"
     );
+    // The directory's name is a keyword, not a module: the advice names
+    // both. FAILS on the base: it said "is not a stdlib module".
+    assert!(
+        stderr.contains("is not a keyword or a stdlib module"),
+        "{stderr}"
+    );
     // No partial state left behind.
     assert!(
         !dir.join("silt.toml").exists(),
@@ -348,4 +354,34 @@ fn keyword_init_rejects_every_reserved_keyword() {
             "silt.toml must not be written when init refuses (`{name}`)"
         );
     }
+}
+
+/// The lines under the error stand under the text of its first line,
+/// after the `error: silt init: ` prefix (the parenthesised one a column
+/// further in). FAILS on the base: they were indented for the old,
+/// shorter prefix.
+#[test]
+fn init_refusal_lines_are_aligned_under_the_first() {
+    let dir = temp_dir_named("fn");
+    let out = silt_cmd()
+        .arg("init")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke silt init");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let lines: Vec<&str> = stderr.lines().collect();
+    let pad = " ".repeat("error: silt init: ".len());
+    assert!(lines[0].starts_with("error: silt init: "), "{stderr}");
+    assert!(
+        lines[1].starts_with(&format!("{pad}(the package name")),
+        "{stderr}"
+    );
+    assert!(
+        lines[2].starts_with(&format!("{pad} rename the directory")),
+        "{stderr}"
+    );
+    assert!(
+        lines[3].starts_with(&format!("{pad} is not a keyword")),
+        "{stderr}"
+    );
 }

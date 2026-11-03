@@ -18,6 +18,8 @@ pub(crate) fn dispatch(args: &[String]) {
                 println!("  --force      Reinstall even when already up to date");
                 process::exit(0);
             }
+            "--dry-run" if dry_run => crate::cli::once_only("self-update", "--dry-run"),
+            "--force" if force => crate::cli::once_only("self-update", "--force"),
             "--dry-run" => dry_run = true,
             "--force" => force = true,
             other => {
@@ -27,14 +29,14 @@ pub(crate) fn dispatch(args: &[String]) {
                     "--h" | "-help" => " (did you mean --help?)",
                     _ => "",
                 };
-                eprintln!("silt self-update: unknown flag '{other}'{suggestion}");
+                eprintln!("error: silt self-update: unknown flag '{other}'{suggestion}");
                 eprintln!("Run 'silt self-update --help' for usage.");
                 process::exit(1);
             }
         }
     }
     if let Err(e) = silt::update::run_update(silt::update::UpdateOptions { dry_run, force }) {
-        eprintln!("  error: {e}");
+        eprintln!("error: silt self-update: {e}");
         process::exit(1);
     }
 }

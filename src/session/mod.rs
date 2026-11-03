@@ -37,7 +37,6 @@ use crate::types::Type;
 use crate::value::{HostFn, HostShape};
 
 pub use entry::{ENTRY_POINT, TestFn, TestKind, selected_tests, test_functions, test_kind};
-use entry::{looks_like_library_module, looks_like_test_file};
 pub(crate) use graph::is_cell_name;
 pub use graph::{Import, ImportResolution, Module, ModuleGraph, ModuleId, Ordering, parse_text};
 pub use host::{HostFunction, HostModule};
@@ -646,6 +645,9 @@ impl Session {
             for d in &self.module_name_problems {
                 push(d, &mut out);
             }
+            if let Some(d) = self.entry_name_problem(entry) {
+                push(&d, &mut out);
+            }
         }
         // What is wrong with a host module is reported whether or not
         // the program imports it.
@@ -659,13 +661,11 @@ impl Session {
                 }
             }
         }
-        // The entry's own parse errors, then why an import failed (a
-        // module that cannot be read or parsed, a name that resolves to
-        // nothing, a cycle), then the type diagnostics.
-        for d in &self.graph.module(entry).problems {
-            push(d, &mut out);
-        }
-        for &id in ordering.modules.iter().filter(|&&id| id != entry) {
+        // Modules come in the order they are checked in, a module's
+        // imports before it and the entry last: first why a module failed
+        // (its parse errors, a file that cannot be read, a name that
+        // resolves to nothing, a cycle), then the type diagnostics.
+        for &id in &ordering.modules {
             for d in &self.graph.module(id).problems {
                 push(d, &mut out);
             }
@@ -690,15 +690,10 @@ impl Session {
         for d in &ordering.cycles {
             push(d, &mut out);
         }
-        if let Some(analysis) = self.analyses.get(&entry) {
-            for d in &analysis.diagnostics {
-                push(d, &mut out);
-            }
-        }
         let package = self.graph.module(entry).package;
-        for &id in ordering.modules.iter().filter(|&&id| id != entry) {
-            let warnings =
-                self.graph.module(id).package == package && !self.cells.info.contains_key(&id);
+        for &id in &ordering.modules {
+            let warnings = id == entry
+                || (self.graph.module(id).package == package && !self.cells.info.contains_key(&id));
             if let Some(analysis) = self.analyses.get(&id) {
                 for d in analysis.diagnostics.iter() {
                     if d.is_error() || warnings {
@@ -708,6 +703,32 @@ impl Session {
             }
         }
         out.list
+    }
+
+    /// The error for the entry file `entry` when its name has an
+    /// upper-case letter: a file named on the command line or opened in an
+    /// editor is a module too, and a module's name is all lowercase. A
+    /// module file of a package's `src/` is reported already, by
+    /// [`Session::packages`].
+    fn entry_name_problem(&self, entry: ModuleId) -> Option<Diagnostic> {
+        let module = self.graph.module(entry);
+        if module.host.is_some() || module.path.extension().is_none_or(|ext| ext != "silt") {
+            return None;
+        }
+        let name = module.path.file_stem()?.to_str()?;
+        if crate::module::is_lowercase_module_name(name) {
+            return None;
+        }
+        let key = graph::canonical_key(&module.path);
+        let reported = self.module_name_problems.iter().any(|d| {
+            self.sources.get(d.span.file).is_some_and(
+                |f| matches!(&f.path, SourceName::Path(p) if graph::canonical_key(p) == key),
+            )
+        });
+        match reported {
+            true => None,
+            false => Some(packages::upper_case_file_name(name, module.file?)),
+        }
     }
 
     /// Compile the entry file `entry` for `target`. An analysis with an
@@ -748,13 +769,9 @@ impl Session {
                 EntryPoint::Main
             }
             Entry::Tests { filter } => {
-                // A file run for its tests that is a program too (it binds
-                // `main` and is neither a library module nor a test file)
+                // A file checked or run for its tests that binds `main`
                 // must have a `main` that can start.
-                if let Some(ty) = analysis.top_level.get(&main)
-                    && !looks_like_library_module(&analysis.ast)
-                    && !looks_like_test_file(&analysis.ast)
-                {
+                if let Some(ty) = analysis.top_level.get(&main) {
                     entry_errors.extend(entry::check_main(&analysis.ast, ty));
                 }
                 let (tests, errors) =

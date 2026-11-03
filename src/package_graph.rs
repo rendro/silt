@@ -204,6 +204,7 @@ pub fn resolve_packages(
     }
     resolver.check_duplicate_names();
     resolver.check_key_collisions();
+    resolver.check_dependency_targets();
     if !resolver.diagnostics.is_empty() {
         return Err(resolver.diagnostics);
     }
@@ -312,18 +313,21 @@ impl Resolver<'_> {
                 let dir = normalize_path(&base.join(path));
                 let shown = escape_for_display(&path.display().to_string());
                 if !dir.exists() {
-                    self.diagnostics.push(
-                        Diagnostic::error(
-                            Code::DependencyNotFound,
-                            entry.value,
-                            format!("dependency `{key_name}`: path `{shown}` does not exist"),
-                        )
-                        .with_note(format!(
-                            "the path is relative to the directory of this silt.toml and \
-                             resolves to {}",
-                            escape_for_display(&display_path(&dir).display().to_string())
-                        )),
+                    let mut d = Diagnostic::error(
+                        Code::DependencyNotFound,
+                        entry.value,
+                        format!("dependency `{key_name}`: path `{shown}` does not exist"),
                     );
+                    // Where it resolves to, when that is not the path as
+                    // written.
+                    let resolved = escape_for_display(&display_path(&dir).display().to_string());
+                    if resolved != shown {
+                        d = d.with_note(format!(
+                            "the path is relative to the directory of this silt.toml and \
+                             resolves to {resolved}"
+                        ));
+                    }
+                    self.diagnostics.push(d);
                     return None;
                 }
                 // Followed: a link here is rejected with the package's
@@ -357,8 +361,13 @@ impl Resolver<'_> {
                 )
             }
             Dependency::Git { url, ref_spec } => {
-                let url = resolve_git_url(url, &base);
-                let commit = match self.pinned_commit(&url, ref_spec) {
+                let written = url;
+                let url = resolve_git_url(written, &base);
+                // The lock names the repository as the manifest does: a
+                // relative local URL relative to the project's directory,
+                // so a package moved together with it keeps its pin.
+                let lock_url = locked_git_url(written, &url, &self.nodes[0].root);
+                let commit = match self.pinned_commit(&lock_url, ref_spec) {
                     Some(commit) => commit,
                     None if self.policy == LockPolicy::ReadOnly && self.existing.is_some() => {
                         self.diagnostics.push(stale_diagnostic(
@@ -399,7 +408,7 @@ impl Resolver<'_> {
                     LockPolicy::Refresh => (git::fetch_afresh(&url, &commit), None),
                     LockPolicy::Update | LockPolicy::ReadOnly => (
                         git::fetch_to_cache(&url, &commit),
-                        self.locked_checksum(&url, &commit),
+                        self.locked_checksum(&lock_url, &commit),
                     ),
                 };
                 let root = match fetched {
@@ -422,7 +431,7 @@ impl Resolver<'_> {
                     other => other.clone(),
                 };
                 let locked = LockedSource::Git {
-                    url: url.clone(),
+                    url: lock_url,
                     ref_spec,
                     resolved_sha: commit.clone(),
                 };
@@ -583,7 +592,7 @@ impl Resolver<'_> {
                 // The last key of the last chain is the primary span.
                 d.labels
                     .extend(self.chain(id).into_iter().filter(|(span, _)| *span != at));
-                d.notes.push(format!("`{name}` from {}", self.describe(id)));
+                d.notes.push(self.source_note(&name, id));
             }
             d.help.push(format!(
                 "a graph holds one package per name: make every dependency on `{name}` \
@@ -617,27 +626,27 @@ impl Resolver<'_> {
         labels
     }
 
-    /// Where the package `id` comes from, for a note.
-    fn describe(&self, id: PackageId) -> String {
+    /// The note that says where the package `id`, named `name`, comes
+    /// from.
+    fn source_note(&self, name: &str, id: PackageId) -> String {
         match &self.locked[id.0 as usize].0 {
-            LockedSource::Local => format!(
-                "{} (this package)",
-                escape_for_display(
-                    &display_path(&self.nodes[id.0 as usize].root)
-                        .display()
-                        .to_string()
-                )
-            ),
+            LockedSource::Local => format!("`{name}` (this package)"),
             // A path package by its manifest, whose path is shown as every
             // `silt.toml` is.
-            LockedSource::Path { .. } => escape_for_display(
-                &display_path(&self.nodes[id.0 as usize].root.join("silt.toml"))
-                    .display()
-                    .to_string(),
+            LockedSource::Path { .. } => format!(
+                "`{name}` from {}",
+                escape_for_display(
+                    &display_path(&self.nodes[id.0 as usize].root.join("silt.toml"))
+                        .display()
+                        .to_string(),
+                )
             ),
             LockedSource::Git {
                 url, resolved_sha, ..
-            } => format!("{} at {resolved_sha}", escape_for_display(url)),
+            } => format!(
+                "`{name}` from {} at {resolved_sha}",
+                escape_for_display(url)
+            ),
         }
     }
 
@@ -663,6 +672,30 @@ impl Resolver<'_> {
                         )),
                     );
                 }
+            }
+        }
+    }
+
+    /// `DependencyTwice` for every dependency of a package on itself, and
+    /// for every key of a package that names a package an earlier key
+    /// names: `import` of one package goes by one name.
+    fn check_dependency_targets(&mut self) {
+        for node in &self.nodes {
+            let mut first_key: HashMap<PackageId, Symbol> = HashMap::new();
+            // In the order the keys are written.
+            let mut deps: Vec<&(Symbol, PackageId, Span)> = node.deps.iter().collect();
+            deps.sort_by_key(|(_, _, span)| span.start);
+            for (key, dep, span) in deps {
+                let message = if *dep == node.id {
+                    format!("a package cannot depend on itself: `{key}` is this package")
+                } else if let Some(first) = first_key.get(dep) {
+                    format!("`{key}` and `{first}` name the same package: keep one")
+                } else {
+                    first_key.insert(*dep, *key);
+                    continue;
+                };
+                self.diagnostics
+                    .push(Diagnostic::error(Code::DependencyTwice, *span, message));
             }
         }
     }
@@ -719,6 +752,22 @@ fn resolve_git_url(url: &str, base: &Path) -> String {
         normalize_path(&base.join(url)).display().to_string()
     } else {
         url.to_string()
+    }
+}
+
+/// The URL the lock writes for a git dependency written `written` in a
+/// manifest and resolved to `resolved`: a relative local URL (`./x`,
+/// `../x`) relative to the project's directory `project`, as a path
+/// dependency is, any other URL as it is.
+fn locked_git_url(written: &str, resolved: &str, project: &Path) -> String {
+    if !(written.starts_with("./") || written.starts_with("../")) {
+        return written.to_string();
+    }
+    match crate::lockfile::relative_path(project, Path::new(resolved)) {
+        Some(rel) if rel.starts_with("..") => rel,
+        Some(rel) if rel == "." => "./".to_string(),
+        Some(rel) => format!("./{rel}"),
+        None => resolved.to_string(),
     }
 }
 
@@ -837,6 +886,29 @@ mod tests {
         assert_eq!(resolve_git_url("/abs/r", base), "/abs/r");
         assert_eq!(
             resolve_git_url("https://example.com/r.git", base),
+            "https://example.com/r.git"
+        );
+    }
+
+    #[test]
+    fn a_relative_git_url_is_locked_relative_to_the_project() {
+        let project = Path::new("/srv/app");
+        let resolved = |url: &str| resolve_git_url(url, project);
+        assert_eq!(
+            locked_git_url("../repo", &resolved("../repo"), project),
+            "../repo"
+        );
+        assert_eq!(
+            locked_git_url("./vendor/r", &resolved("./vendor/r"), project),
+            "./vendor/r"
+        );
+        assert_eq!(locked_git_url("/abs/r", "/abs/r", project), "/abs/r");
+        assert_eq!(
+            locked_git_url(
+                "https://example.com/r.git",
+                "https://example.com/r.git",
+                project
+            ),
             "https://example.com/r.git"
         );
     }

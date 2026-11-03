@@ -132,7 +132,7 @@ pub(crate) fn dispatch(args: &[String]) {
         Ok(()) => {}
         Err(AddError::Package(failure)) => die_on_manifest_error(failure),
         Err(e) => {
-            eprintln!("error: {e}");
+            eprintln!("error: silt add: {e}");
             process::exit(1);
         }
     }
@@ -244,15 +244,15 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
             // Every other subcommand emits a `Run 'silt <sub> --help'
             // for usage.` nudge on a second stderr line; `Usage` adds
             // that line here.
-            return Err(AddError::Usage(format!("silt add: unknown flag '{arg}'")));
+            return Err(AddError::Usage(format!("unknown flag '{arg}'")));
         } else if name.is_none() {
             name = Some(arg.clone());
             i += 1;
         } else {
-            return Err(format!("silt add: unexpected extra argument '{arg}'").into());
+            return Err(format!("unexpected extra argument '{arg}'").into());
         }
     }
-    let name = name.ok_or("silt add: missing required <name> argument")?;
+    let name = name.ok_or("missing required <name> argument")?;
 
     // ── Source selection (path vs git) ────────────────────────────────
     //
@@ -260,14 +260,12 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
     // error. For `--git` we additionally require exactly one ref form.
     let source = match (path_arg.is_some(), git_arg.is_some()) {
         (true, true) => {
-            return Err("silt add: --path and --git are mutually exclusive; pick one".into());
+            return Err("--path and --git are mutually exclusive; pick one".into());
         }
         (false, false) => {
-            return Err(
-                "silt add: missing source flag; use --path <path> or --git <url> \
+            return Err("missing source flag; use --path <path> or --git <url> \
                  (--rev|--branch|--tag) <ref>"
-                    .into(),
-            );
+                .into());
         }
         (true, false) => {
             // Bare ref flags without --git make no sense — surface a
@@ -278,10 +276,9 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
                 (&tag_arg, "--tag"),
             ] {
                 if val.is_some() {
-                    return Err(format!(
-                        "silt add: {flag} requires --git (it has no meaning with --path)"
-                    )
-                    .into());
+                    return Err(
+                        format!("{flag} requires --git (it has no meaning with --path)").into(),
+                    );
                 }
             }
             AddSource::Path(path_arg.expect("checked above"))
@@ -302,9 +299,7 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
             }
             let ref_spec = match chosen.len() {
                 0 => {
-                    return Err(
-                        "silt add: --git requires exactly one of --rev, --branch, or --tag".into(),
-                    );
+                    return Err("--git requires exactly one of --rev, --branch, or --tag".into());
                 }
                 1 => {
                     let (kind, value) = chosen.into_iter().next().unwrap();
@@ -318,7 +313,7 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
                 _ => {
                     let mentioned: Vec<&str> = chosen.iter().map(|(k, _)| *k).collect();
                     return Err(format!(
-                        "silt add: --git takes exactly one ref form, but multiple were given: {}",
+                        "--git takes exactly one ref form, but multiple were given: {}",
                         mentioned
                             .iter()
                             .map(|k| format!("--{k}"))
@@ -336,7 +331,7 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
     let cwd = std::env::current_dir().map_err(|e| format!("failed to determine cwd: {e}"))?;
     let (root, manifest) = match find_project_root(&cwd)? {
         Some(pair) => pair,
-        None => return Err("silt add must be run inside a silt package".into()),
+        None => return Err("must be run inside a silt package".into()),
     };
 
     // ── Name validation ────────────────────────────────────────────────
@@ -345,22 +340,18 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
     // a name that's both invalid AND a builtin should report invalid
     // (the user's bigger problem).
     if !silt::manifest::is_silt_identifier(&name) {
-        return Err(format!(
-            "silt add: invalid dependency name `{name}`: \
-             must match silt identifier rules `[a-z_][a-z0-9_]*`"
-        )
-        .into());
+        return Err(silt::manifest::invalid_name(&name).into());
     }
     if silt::module::is_builtin_module(&name) {
         return Err(format!(
-            "silt add: dependency name `{name}` collides with builtin module `{name}`; \
+            "dependency name `{name}` collides with builtin module `{name}`; \
              pick a different name"
         )
         .into());
     }
     if silt::manifest::is_reserved_keyword(&name) {
         return Err(format!(
-            "silt add: dependency name `{name}` is a reserved silt keyword; \
+            "dependency name `{name}` is a reserved silt keyword; \
              pick a different name"
         )
         .into());
@@ -370,7 +361,7 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
         .keys()
         .any(|sym| intern::resolve(*sym) == name);
     if already_present {
-        return Err(format!("silt add: dependency '{name}' is already declared").into());
+        return Err(format!("dependency '{name}' is already declared").into());
     }
 
     // ── Source validation + the rendered TOML inline-table ────────────
@@ -395,16 +386,12 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
             };
             let absolute_dep_path = normalize_path(&absolute_dep_path);
             if !absolute_dep_path.exists() {
-                return Err(format!(
-                    "silt add: path does not exist: {}",
-                    absolute_dep_path.display()
-                )
-                .into());
+                return Err(format!("path does not exist: {}", absolute_dep_path.display()).into());
             }
             let dep_manifest = absolute_dep_path.join("silt.toml");
             if !dep_manifest.is_file() {
                 return Err(format!(
-                    "silt add: path is not a silt package (no silt.toml found): {}",
+                    "path is not a silt package (no silt.toml found): {}",
                     absolute_dep_path.display()
                 )
                 .into());
@@ -446,7 +433,7 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
             // before it can reach `git` at all.
             if let Err(e) = silt::git::validate_git_url(&url) {
                 return Err(format!(
-                    "silt add: --git URL `{}` doesn't look like a git URL: {}",
+                    "--git URL `{}` doesn't look like a git URL: {}",
                     e.url, e.reason
                 )
                 .into());
@@ -459,7 +446,7 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
                 && !silt::git::is_valid_sha_shape(sha)
             {
                 return Err(format!(
-                    "silt add: --rev `{sha}` is not a valid commit SHA shape \
+                    "--rev `{sha}` is not a valid commit SHA shape \
                      (expected 7-64 hexadecimal characters)"
                 )
                 .into());
@@ -471,7 +458,7 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
             // diagnostic, e.g. "Repository not found" or "Permission
             // denied (publickey)".
             silt::git::verify_reachable(&url)
-                .map_err(|e| AddError::caused(format!("silt add: cannot reach `{url}`"), e))?;
+                .map_err(|e| AddError::caused(format!("cannot reach `{url}`"), e))?;
 
             // Whether the ref exists (`--branch nonexistent_xyz`) is
             // found out when the graph is resolved below, as a
