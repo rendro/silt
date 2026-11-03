@@ -1,3 +1,4 @@
+-- timeout: 60
 -- A guard on an or-pattern is tried with each alternative that matches,
 -- in order, until one passes; the body runs once, with that alternative's
 -- names (owner Q2, audit R5).
