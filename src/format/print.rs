@@ -1696,7 +1696,7 @@ impl Printer<'_> {
             let hole = render(&self.expr(hole, Ctx::top()), usize::MAX / 2);
             let hole = hole.trim_end_matches('\n');
             verbatim |= hole.contains('\n');
-            docs.push(Doc::text(hole));
+            docs.push(Doc::text(hole.to_string()));
             if seen < holes {
                 docs.push(self.tok(Token::StringMiddle(String::new())));
             }
