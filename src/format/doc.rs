@@ -13,8 +13,9 @@ pub const INDENT: usize = 2;
 pub enum Doc {
     Nil,
     /// Text as it is. A line break inside it (a multi-line string
-    /// literal) is written as it is, without indentation.
-    Text(String),
+    /// literal) is written as it is, without indentation. (A keyword or
+    /// a mark is no copy: a large file has millions of them.)
+    Text(std::borrow::Cow<'static, str>),
     /// A `{- -}` comment between two tokens, or behind the last token
     /// of a line. The renderer keeps it apart from its neighbours by a
     /// space, except after an opening bracket and before a closing one
@@ -55,7 +56,7 @@ pub enum Doc {
 }
 
 impl Doc {
-    pub fn text(text: impl Into<String>) -> Doc {
+    pub fn text(text: impl Into<std::borrow::Cow<'static, str>>) -> Doc {
         Doc::Text(text.into())
     }
 
@@ -563,7 +564,7 @@ mod tests {
     use super::*;
 
     fn t(text: &str) -> Doc {
-        Doc::text(text)
+        Doc::text(text.to_string())
     }
 
     /// `open item, item close`: on one line, or one item per line with a

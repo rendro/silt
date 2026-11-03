@@ -390,6 +390,8 @@ pub const KEYWORD_LITERALS: &[&str] = &["true", "false"];
 
 pub struct Lexer {
     file: FileId,
+    /// Room for this many tokens is made at the start (see `expecting`).
+    expected: usize,
     source: Vec<char>,
     pos: usize,
     byte_offset: usize,
@@ -429,6 +431,7 @@ impl Lexer {
     pub fn new(file: FileId, source: &str) -> Self {
         let mut lexer = Self {
             file,
+            expected: 0,
             source: source.chars().collect(),
             pos: 0,
             byte_offset: 0,
@@ -466,8 +469,17 @@ impl Lexer {
     /// end: the lexer goes on only to count, and the rest of the text,
     /// from the token of that error (or from its `{-`, when it is the
     /// error of a comment that is not closed), is one `Token::Error`.
+    /// About how many tokens the text has, where the caller knows (the
+    /// formatter's result has those of the text it formatted): room for
+    /// them is made at once, and a large text's tokens are not copied
+    /// each time they outgrow it.
+    pub fn expecting(mut self, tokens: usize) -> Self {
+        self.expected = tokens;
+        self
+    }
+
     pub fn tokenize(&mut self) -> Lexed {
-        let mut tokens: Vec<Tok> = Vec::new();
+        let mut tokens: Vec<Tok> = Vec::with_capacity(self.expected);
         // Whether the tokens have ended: the last of them is the token
         // of the rest, which ends where the text ends.
         let mut cut = false;

@@ -61,8 +61,22 @@ impl LspClient {
     /// Spawn `silt lsp` without any handshake, for tests that drive
     /// `initialize` themselves.
     pub fn spawn_uninitialized() -> Self {
+        Self::spawn_uninitialized_with_env(&[])
+    }
+
+    /// Like `spawn_with_root`, with the variables `env` set for the server.
+    pub fn spawn_with_root_and_env(root_uri: Option<&str>, env: &[(&str, &str)]) -> Self {
+        let mut client = Self::spawn_uninitialized_with_env(env);
+        client.initialize_with_root(root_uri);
+        client
+    }
+
+    /// Like `spawn_uninitialized`, with the variables `env` set for the
+    /// server.
+    pub fn spawn_uninitialized_with_env(env: &[(&str, &str)]) -> Self {
         let mut child = Command::new(env!("CARGO_BIN_EXE_silt"))
             .arg("lsp")
+            .envs(env.iter().copied())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

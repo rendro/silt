@@ -1,0 +1,15 @@
+-- A TOML date literal that is no date has the one message of such a
+-- date also where a comment comes between it and the `=`, `[` or `,`
+-- before it. A `#` in a string is no comment.
+import time
+import toml
+
+type L { d: List(time.Date) }
+
+fn main() {
+  println(toml.parse("d = [1979-02-30]", L))
+  println(toml.parse("d = [ # c\n 1979-02-30 ]", L))
+  println(toml.parse("d = [\n  1979-02-28, # c\n  # more\n  1979-02-30,\n]", L))
+  println(toml.parse("d = [\n  1979-02-28, # c, d = [\n  1979-02-30,\n]", L))
+  println(toml.parse("x = \"#\"\nd = [\"1979-02-28\", # \"c\n 1979-02-30]", L))
+}

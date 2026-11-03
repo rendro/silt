@@ -4,18 +4,20 @@
 //! user hasn't explicitly opened. Indexing publishes nothing: a file has
 //! diagnostics once it is open or an open document imports it.
 //!
-//! The scan is best-effort: unreadable files, parse failures, and
-//! symlink loops never abort startup — they're logged to stderr and
-//! the walk continues.
+//! The scan is best-effort: unreadable files and parse failures never
+//! abort startup (they're logged to stderr and the walk continues), and
+//! a link loop is not followed.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::mpsc;
 
 use lsp_types::Uri;
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 
 use super::Server;
+use crate::file_discovery::Found;
 
 /// Characters that must be percent-encoded inside a `file://` path
 /// component. Built from `CONTROLS` (all bytes below 0x20 plus 0x7F)
@@ -57,56 +59,85 @@ const URI_PATH_RESERVED: &AsciiSet = &CONTROLS
     .add(b'}')
     .add(b'\x7f');
 
-/// Maximum recursion depth for the workspace scan. Keeps a rogue
-/// symlink cycle or an inhumanly-deep tree from pegging the thread.
-const MAX_DEPTH: usize = 16;
+/// What the walk of the workspace hands the server.
+pub(super) enum Preloaded {
+    /// A `.silt` file and its text.
+    File(PathBuf, String),
+    /// A line for the log: a folder or a file that could not be read.
+    Log(String),
+}
 
-/// Recursively walk `root`, load every `.silt` file, and feed it
-/// as an indexed document.
+/// The walk of the workspace, on a thread of its own: the server takes
+/// what it found between the editor's requests (see
+/// `Server::index_preloaded`), so a large workspace (one that holds a
+/// link to a home folder) does not keep the editor waiting.
+pub(super) struct Preload {
+    pub(super) found: mpsc::Receiver<Preloaded>,
+}
+
+/// Start the walk of `root` for every `.silt` file. The walk is the
+/// CLI's ([`crate::file_discovery::walk_files`]): links are followed,
+/// each directory and each file once, so a folder reached through a
+/// link is indexed as `silt fmt` and `silt test` reach it, and a link
+/// back into the walk is not followed. It ends when the server stops
+/// taking what it finds.
 ///
 /// Skips `target/`, `.git/`, and any directory under `fuzz/corpus/`
 /// (the last of which would otherwise ingest tens of thousands of
 /// 1-byte entries and swamp memory).
-pub(super) fn preload_workspace(server: &mut Server, root: &Path) {
-    walk(server, root, 0);
+pub(super) fn start(root: &Path) -> Preload {
+    // (A few files ahead of the server: what is read and not yet taken
+    // stays small.)
+    let (send, found) = mpsc::sync_channel(64);
+    let root = root.to_path_buf();
+    let walk = move || {
+        let enter = |path: &Path| !should_skip_dir(path);
+        let wanted = |path: &Path| path.extension().and_then(|s| s.to_str()) == Some("silt");
+        crate::file_discovery::walk_files(&root, &enter, &wanted, &mut |item| {
+            hold_for_a_test();
+            let item = match item {
+                Found::File(path) => match fs::read_to_string(&path) {
+                    Ok(text) => Preloaded::File(path, text),
+                    Err(err) => Preloaded::Log(format!(
+                        "silt-lsp: preload: cannot read {}: {err}",
+                        path.display()
+                    )),
+                },
+                Found::Unreadable(dir, err) => Preloaded::Log(format!(
+                    "silt-lsp: preload: cannot read dir {}: {err}",
+                    dir.display()
+                )),
+            };
+            send.send(item).is_ok()
+        });
+    };
+    if let Err(err) = std::thread::Builder::new()
+        .name("silt-lsp-preload".into())
+        .spawn(walk)
+    {
+        eprintln!("silt-lsp: preload: cannot start the walk of the workspace: {err}");
+    }
+    Preload { found }
 }
 
-fn walk(server: &mut Server, dir: &Path, depth: usize) {
-    if depth > MAX_DEPTH {
-        return;
+/// In a debug build, the walk waits before each file while the file
+/// that `SILT_LSP_PRELOAD_GATE` names is there: a test holds the walk
+/// so, as a very large workspace would, to see the editor answered
+/// meanwhile.
+fn hold_for_a_test() {
+    #[cfg(debug_assertions)]
+    if let Some(gate) = std::env::var_os("SILT_LSP_PRELOAD_GATE") {
+        while Path::new(&gate).exists() {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
     }
+}
 
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(err) => {
-            eprintln!(
-                "silt-lsp: preload: cannot read dir {}: {err}",
-                dir.display()
-            );
-            return;
-        }
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let file_type = match entry.file_type() {
-            Ok(t) => t,
-            Err(_) => continue,
-        };
-
-        if file_type.is_dir() {
-            if should_skip_dir(&path) {
-                continue;
-            }
-            walk(server, &path, depth + 1);
-        } else if file_type.is_file() {
-            if path.extension().and_then(|s| s.to_str()) != Some("silt") {
-                continue;
-            }
-            load_file(server, &path);
-        }
-        // Symlinks: ignored. `is_file`/`is_dir` on a DirEntry's file_type
-        // do not follow them, so symlink loops can't recurse here.
+/// Index what the walk found.
+pub(super) fn index(server: &mut Server, item: Preloaded) {
+    match item {
+        Preloaded::File(path, text) => load_file(server, &path, text),
+        Preloaded::Log(line) => eprintln!("{line}"),
     }
 }
 
@@ -125,15 +156,7 @@ fn should_skip_dir(path: &Path) -> bool {
     crate::file_discovery::should_skip_dir(path)
 }
 
-fn load_file(server: &mut Server, path: &Path) {
-    let contents = match fs::read_to_string(path) {
-        Ok(s) => s,
-        Err(err) => {
-            eprintln!("silt-lsp: preload: cannot read {}: {err}", path.display());
-            return;
-        }
-    };
-
+fn load_file(server: &mut Server, path: &Path, contents: String) {
     // The URI spells the path as the client's root does (through a
     // symbolic link, say), as the client names the documents it opens.
     let uri = match file_uri(path) {

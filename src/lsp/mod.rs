@@ -118,7 +118,18 @@ struct Server {
     /// What references and rename learned about the workspace, kept
     /// until the next analysis (a document or a file changed).
     def_uses: Option<workspace::DefUses>,
+    /// The walk of the workspace while it goes on: what it finds is
+    /// indexed between the editor's requests.
+    preload: Option<preload::Preload>,
 }
+
+/// How long the start waits for the walk of the workspace: one of the
+/// usual size is indexed whole before the first request is answered.
+const PRELOAD_FIRST: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// How long the server indexes what the walk found between two looks
+/// at the editor's messages, while the walk goes on.
+const PRELOAD_SLICE: std::time::Duration = std::time::Duration::from_millis(20);
 
 impl Server {
     fn new(connection: Connection) -> Self {
@@ -136,11 +147,54 @@ impl Server {
             root: None,
             published: BTreeMap::new(),
             def_uses: None,
+            preload: None,
         }
+    }
+
+    /// Index what the walk of the workspace has found, until `until` or
+    /// until the walk has ended (which ends the preload).
+    fn index_preloaded(&mut self, until: Instant) {
+        let Some(preload) = self.preload.take() else {
+            return;
+        };
+        loop {
+            let left = until.saturating_duration_since(Instant::now());
+            match preload.found.recv_timeout(left) {
+                Ok(item) => {
+                    preload::index(self, item);
+                    // (What the workspace holds has changed.)
+                    self.def_uses = None;
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break,
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+            }
+            if Instant::now() >= until {
+                break;
+            }
+        }
+        self.preload = Some(preload);
     }
 
     fn run(&mut self) {
         loop {
+            // While the walk of the workspace goes on, the editor's
+            // messages come first, the analysis when it is due, and what
+            // the walk found in the time between.
+            if self.preload.is_some() {
+                match self.connection.receiver.try_recv() {
+                    Ok(msg) => {
+                        if self.handle_message(msg) {
+                            return;
+                        }
+                    }
+                    Err(e) if e.is_disconnected() => return,
+                    Err(_) if self.deadline.is_some_and(|due| due <= Instant::now()) => {
+                        self.analyse_pending();
+                    }
+                    Err(_) => self.index_preloaded(Instant::now() + PRELOAD_SLICE),
+                }
+                continue;
+            }
             let msg = match self.deadline {
                 Some(deadline) => {
                     let left = deadline.saturating_duration_since(Instant::now());
@@ -158,10 +212,20 @@ impl Server {
                     Err(_) => return,
                 },
             };
+            if self.handle_message(msg) {
+                return;
+            }
+        }
+    }
+
+    /// Handle the editor's message `msg`: `true` when the server is to
+    /// stop (a shutdown).
+    fn handle_message(&mut self, msg: Message) -> bool {
+        {
             match msg {
                 Message::Request(req) => {
                     if self.connection.handle_shutdown(&req).unwrap_or(true) {
-                        return;
+                        return true;
                     }
                     self.guard_request(req, Self::handle_request);
                 }
@@ -179,6 +243,7 @@ impl Server {
                 }
             }
         }
+        false
     }
 
     // ── Panic boundary ─────────────────────────────────────────────
@@ -702,7 +767,8 @@ pub fn run() {
         .and_then(file_uri_to_path);
     if let Some(root) = root_path {
         server.root = Some(project::path_key(&root));
-        preload::preload_workspace(&mut server, &root);
+        server.preload = Some(preload::start(&root));
+        server.index_preloaded(Instant::now() + PRELOAD_FIRST);
     }
 
     server.run();

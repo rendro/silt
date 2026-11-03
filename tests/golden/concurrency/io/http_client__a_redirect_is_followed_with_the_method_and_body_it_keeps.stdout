@@ -14,12 +14,27 @@ POST /301
   the handler: GET /echo [], without authorization
   the client:  200 []
 PUT /302
-  the handler: GET /echo [], without authorization
-  the client:  200 []
+  the handler: PUT /echo [abc], without authorization
+  the client:  200 [abc]
 POST /303
   the handler: GET /echo [], without authorization
   the client:  200 []
+DELETE /301
+  the handler: DELETE /echo [abc], without authorization
+  the client:  200 [abc]
+PATCH /302
+  the handler: PATCH /echo [abc], without authorization
+  the client:  200 [abc]
+OPTIONS /301
+  the handler: OPTIONS /echo [abc], without authorization
+  the client:  200 [abc]
+DELETE /303
+  the handler: GET /echo [], without authorization
+  the client:  200 []
 HEAD /302
+  the handler: HEAD /echo [abc], without authorization
+  the client:  200 []
+HEAD /303
   the handler: HEAD /echo [], without authorization
   the client:  200 []
 POST /loop

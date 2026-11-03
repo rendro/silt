@@ -182,6 +182,42 @@ fn silt_test_does_not_follow_a_link_back_to_the_dot() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A test file reached twice, by its name and by a link to it, runs
+/// once, by the name that comes first, as `silt fmt` handles it once.
+#[cfg(unix)]
+#[test]
+fn silt_test_runs_a_linked_test_file_once() {
+    let dir = temp_dir("test_linked_file");
+    let test = "fn test_one() {\n  println(\"ran\")\n}\n";
+    fs::write(dir.join("a_test.silt"), test).unwrap();
+    std::os::unix::fs::symlink(dir.join("a_test.silt"), dir.join("b_test.silt")).unwrap();
+    // A link whose own name is no test file's does not take the place
+    // of the test file it names.
+    std::os::unix::fs::symlink(dir.join("z_test.silt"), dir.join("0_link.silt")).unwrap();
+    fs::write(
+        dir.join("z_test.silt"),
+        "fn test_z() {\n  println(\"zed\")\n}\n",
+    )
+    .unwrap();
+
+    let run = silt_cmd().arg("test").current_dir(&dir).output().unwrap();
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert_eq!(
+        run.status.code(),
+        Some(0),
+        "stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.matches("ran").count() == 1
+            && stdout.matches("zed").count() == 1
+            && !stdout.contains("b_test")
+            && stderr.contains("2 tests: 2 passed"),
+        "stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// A `.` beside another positional is a directory like any other: the
 /// files under it are formatted too, and a file it holds that is named
 /// on its own as well is formatted once.

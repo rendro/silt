@@ -7,9 +7,9 @@
 //! single definition, so the manifest form and lockfile resolution
 //! can never normalize differently.)
 
-use std::collections::HashSet;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+
+use silt::file_discovery::files_under;
 
 use silt::package_graph::LockChange;
 use silt::session::{Config, LockPolicy, ProjectSetup, Session};
@@ -20,10 +20,10 @@ use crate::cli::package::{PackageFailure, die_on_manifest_error};
 /// Recursively find all .silt files in a directory, as `silt fmt` does:
 /// in the directories [`enters_package_dir`] lets the walk into.
 pub(crate) fn find_silt_files(dir: &Path) -> Vec<String> {
-    let names = files_under(dir, &enters_package_dir).into_iter();
+    let wanted = |path: &Path| path.to_string_lossy().ends_with(".silt");
+    let names = files_under(dir, &enters_package_dir, &wanted).into_iter();
     let mut results: Vec<String> = names
         .map(|path| path.to_string_lossy().to_string())
-        .filter(|name| name.ends_with(".silt"))
         .collect();
     results.sort();
     results
@@ -40,48 +40,17 @@ fn enters_package_dir(path: &Path) -> bool {
     !silt::file_discovery::should_skip_dir(path) && !path.join("silt.toml").is_file()
 }
 
-/// The files under `root`, in the directories `enter` lets the walk
-/// into. A directory is entered once, by the first path that reaches
-/// it (in the order of names): a link back to a directory the walk has
-/// entered (a loop) or a second way into one is not followed, so each
-/// file is named at its own depth.
-fn files_under(root: &Path, enter: &dyn Fn(&Path) -> bool) -> Vec<PathBuf> {
-    fn walk(
-        dir: &Path,
-        enter: &dyn Fn(&Path) -> bool,
-        entered: &mut HashSet<PathBuf>,
-        out: &mut Vec<PathBuf>,
-    ) {
-        let Ok(entries) = fs::read_dir(dir) else {
-            return;
-        };
-        let mut paths: Vec<PathBuf> = entries.filter_map(|e| e.ok()).map(|e| e.path()).collect();
-        paths.sort();
-        for path in paths {
-            if !path.is_dir() {
-                out.push(path);
-            } else if enter(&path) && entered.insert(canonical(&path)) {
-                walk(&path, enter, entered, out);
-            }
-        }
-    }
-    fn canonical(dir: &Path) -> PathBuf {
-        fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf())
-    }
-    let mut entered = HashSet::from([canonical(root)]);
-    let mut out = Vec::new();
-    walk(root, enter, &mut entered, &mut out);
-    out
-}
-
 /// The test files under `root` (`*_test.silt`, `*.test.silt`), sorted,
 /// as `silt test` and `silt check` find them, in the directories
 /// [`enters_package_dir`] lets the walk into.
 pub(crate) fn package_test_files(root: &Path) -> Vec<String> {
-    let names = files_under(root, &enters_package_dir).into_iter();
+    let wanted = |path: &Path| {
+        let name = path.to_string_lossy();
+        name.ends_with("_test.silt") || name.ends_with(".test.silt")
+    };
+    let names = files_under(root, &enters_package_dir, &wanted).into_iter();
     let mut out: Vec<String> = names
         .map(|path| path.to_string_lossy().into_owned())
-        .filter(|name| name.ends_with("_test.silt") || name.ends_with(".test.silt"))
         .collect();
     out.sort();
     out

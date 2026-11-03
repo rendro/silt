@@ -1513,7 +1513,21 @@ impl Printer<'_> {
                     docs.push(space());
                     docs.push(self.tok(Token::Eq));
                     docs.push(space());
-                    docs.push(self.expr(init, Ctx::in_header(Header::Loop)));
+                    // The last value, which the body's `{` follows, is
+                    // written in parentheses when it ends in a stage
+                    // written as a bare name, as a match's scrutinee is.
+                    let bare = i + 1 == bindings.len() && ends_in_bare_stage(init);
+                    let commented = self
+                        .cur
+                        .comments_inside_parens(self.cur.wrappers(init.span.end));
+                    let comment_first = self.cur.comment_ahead();
+                    let doc = self.expr(init, Ctx::in_header(Header::Loop));
+                    let (open, close) = (Doc::text("("), Doc::text(")"));
+                    docs.push(match (bare && !commented, comment_first) {
+                        (true, false) => Doc::concat(vec![open, doc, close]),
+                        (true, true) => parenthesized(open, doc, close),
+                        (false, _) => doc,
+                    });
                     if i + 1 < bindings.len() {
                         docs.push(self.tok(Token::Comma));
                     }
@@ -1682,7 +1696,7 @@ impl Printer<'_> {
             let hole = render(&self.expr(hole, Ctx::top()), usize::MAX / 2);
             let hole = hole.trim_end_matches('\n');
             verbatim |= hole.contains('\n');
-            docs.push(Doc::text(hole));
+            docs.push(Doc::text(hole.to_string()));
             if seen < holes {
                 docs.push(self.tok(Token::StringMiddle(String::new())));
             }

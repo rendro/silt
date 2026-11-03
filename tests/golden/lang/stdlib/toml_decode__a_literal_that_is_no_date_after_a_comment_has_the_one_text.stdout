@@ -1,0 +1,5 @@
+Err(invalid date '1979-02-30' (expected YYYY-MM-DD): input is out of range at d[0])
+Err(invalid date '1979-02-30' (expected YYYY-MM-DD): input is out of range at d[0])
+Err(invalid date '1979-02-30' (expected YYYY-MM-DD): input is out of range at d[1])
+Err(invalid date '1979-02-30' (expected YYYY-MM-DD): input is out of range at d[1])
+Err(invalid date '1979-02-30' (expected YYYY-MM-DD): input is out of range at d[1])
