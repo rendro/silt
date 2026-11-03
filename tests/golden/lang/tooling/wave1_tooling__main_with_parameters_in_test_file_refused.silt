@@ -1,6 +1,6 @@
 -- cmd: test
--- exit: 0
--- stderr-contains: PASS
--- stderr-not-contains: must take no parameters
+-- exit: 1
+-- stderr-contains: error[compile]: the entry point 'main' must take no parameters, but it declares 1 parameter
+-- stderr-contains: failed to compile
 fn main(args: List(String)) { () }
 fn test_a() { 1 }
