@@ -123,9 +123,11 @@ pub(super) fn project_packages(
 }
 
 /// An error for each module file of a project package (one with a
-/// manifest) named like a builtin module: `import list` always means the
-/// builtin `list`, so `src/list.silt` could never be imported. The file
-/// is registered in `sources`, and the error is at its start.
+/// manifest) whose name is no module name: one named like a builtin
+/// module (`import list` always means the builtin `list`, so
+/// `src/list.silt` could never be imported), and one with an upper-case
+/// letter (a module's name is all lowercase). The file is registered in
+/// `sources`, and the error is at its start.
 pub(super) fn modules_named_like_builtins(
     packages: &Packages,
     sources: &mut SourceMap,
@@ -144,7 +146,10 @@ pub(super) fn modules_named_like_builtins(
                 p.extension().is_some_and(|ext| ext == "silt")
                     && p.file_stem()
                         .and_then(|stem| stem.to_str())
-                        .is_some_and(crate::module::is_builtin_module)
+                        .is_some_and(|stem| {
+                            crate::module::is_builtin_module(stem)
+                                || stem.chars().any(|c| c.is_ascii_uppercase())
+                        })
             })
             .collect();
         paths.sort();
@@ -155,7 +160,7 @@ pub(super) fn modules_named_like_builtins(
                 .unwrap_or_default();
             let text = std::fs::read_to_string(&path).unwrap_or_default();
             let file = sources.add(SourceName::Path(path.clone()), text.into());
-            errors.push(
+            let error = if crate::module::is_builtin_module(&name) {
                 Diagnostic::error(
                     Code::ModuleNamedLikeBuiltin,
                     Span::point(file, 0),
@@ -164,8 +169,19 @@ pub(super) fn modules_named_like_builtins(
                          builtin module `{name}`"
                     ),
                 )
-                .with_help(format!("rename `{name}.silt`")),
-            );
+                .with_help(format!("rename `{name}.silt`"))
+            } else {
+                Diagnostic::error(
+                    Code::ModuleNamedLikeBuiltin,
+                    Span::point(file, 0),
+                    crate::manifest::invalid_module_name(&name),
+                )
+                .with_help(format!(
+                    "rename `{name}.silt` to `{}.silt`",
+                    name.to_ascii_lowercase()
+                ))
+            };
+            errors.push(error);
         }
     }
     errors

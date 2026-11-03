@@ -1,8 +1,10 @@
 -- cmd: check
 -- exit: 1
--- The module `Shape` does not parse, and a local type has its name:
--- `Shape.describe(s)` reports nothing about the module.
+-- `import Shape` is refused (a module name is all lowercase), and a
+-- local type has its name: `Shape.describe(s)` reports nothing about
+-- the module, which is never read.
 -- stderr-not-contains: on module
+-- stderr-contains: `Shape` is not a valid module name
 import Shape
 
 type Shape { sides: Int }

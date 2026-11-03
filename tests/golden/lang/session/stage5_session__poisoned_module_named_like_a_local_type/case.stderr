@@ -1,43 +1,30 @@
-error[parse]: expected declaration, found =
- --> Shape.silt:1:30
-   |
- 1 | pub fn describe(n) -> String = "MODULE fn describe"
-   |                              ^ expected declaration, found =
- ::: main.silt:6:1
-   |
- 6 | import Shape
-   | ------------ module 'Shape' is imported here
-
-error[parse]: expected declaration, found =
- --> Shape.silt:2:27
-   |
- 2 | pub fn other(n) -> String = "MODULE fn other"
-   |                           ^ expected declaration, found =
- ::: main.silt:6:1
-   |
- 6 | import Shape
-   | ------------ module 'Shape' is imported here
-
 error[parse]: expected fn, found =
- --> main.silt:15:31
+ --> main.silt:17:31
     |
- 15 |   fn describe(self) -> String = "TRAIT method on Shape with {self.sides} sides"
+ 17 |   fn describe(self) -> String = "TRAIT method on Shape with {self.sides} sides"
     |                               ^ expected fn, found =
 
 error[parse]: 'Shape' is bound twice at the top level: by the import and by the type here
- --> main.silt:8:6
+ --> main.silt:10:6
+    |
+ 10 | type Shape { sides: Int }
+    |      ^^^^^ 'Shape' is bound twice at the top level: by the import and by the type here
+ ::: main.silt:8:1
    |
- 8 | type Shape { sides: Int }
-   |      ^^^^^ 'Shape' is bound twice at the top level: by the import and by the type here
- ::: main.silt:6:1
-   |
- 6 | import Shape
+ 8 | import Shape
    | ------------ first bound here, by the import
   = note: a top-level name can be bound only once
 
+error[compile]: `Shape` is not a valid module name: use lowercase letters, digits and `_`, not starting with a digit
+ --> main.silt:8:1
+   |
+ 8 | import Shape
+   | ^^^^^^^^^^^^ `Shape` is not a valid module name: use lowercase letters, digits and `_`, not starting with a digit
+  = help: name the file `shape.silt` and write `import shape`
+
 error[type]: type 'Shape' has no field 'describe'
- --> main.silt:20:11
+ --> main.silt:22:11
     |
- 20 |   println(s.describe())
+ 22 |   println(s.describe())
     |           ^^^^^^^^^^ type 'Shape' has no field 'describe'
   = help: `describe` is a method of trait `Describe`: call it as `Describe.describe(s)`

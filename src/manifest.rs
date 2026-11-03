@@ -454,7 +454,16 @@ fn validate_identifier(name: &str) -> Result<(), String> {
     }
 }
 
-/// The error for a package, dependency or module name that is not an
+/// The error for a module name that is not one of lowercase letters,
+/// digits and `_`.
+pub fn invalid_module_name(name: &str) -> String {
+    format!(
+        "`{name}` is not a valid module name: use lowercase letters, digits and `_`, \
+         not starting with a digit"
+    )
+}
+
+/// The error for a package or dependency name that is not an
 /// identifier of lowercase letters, digits and `_`.
 pub fn invalid_name(name: &str) -> String {
     format!(

@@ -15,6 +15,12 @@ pub fn builtin_modules() -> &'static [&'static str] {
 }
 
 /// Returns true if `name` is a builtin module (io, string, int, etc.).
+/// Whether `name` (an identifier written after `import`) can name a
+/// module: a module's name is all lowercase.
+pub fn is_lowercase_module_name(name: &str) -> bool {
+    !name.chars().any(|c| c.is_ascii_uppercase())
+}
+
 pub fn is_builtin_module(name: &str) -> bool {
     registry().module(name).is_some()
 }
