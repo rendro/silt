@@ -4741,6 +4741,7 @@ impl TypeChecker {
                         ty
                     })
                     .collect();
+                (self.closure_param_vars).extend(param_types.iter().flat_map(free_vars_in));
 
                 // A lambda is its own `?`/`return`
                 // boundary — the VM's Op::QuestionMark pops exactly ONE

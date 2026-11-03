@@ -183,6 +183,10 @@ pub struct TypeChecker {
     /// The name each argument that is a name writes, by its place: a
     /// function a call passes on as a value is a link of a note.
     pub(super) arg_names: HashMap<Span, Symbol>,
+    /// The type variables of closures' parameters: an impl a use cannot
+    /// decide from them is decided from a value's type, which a help
+    /// names (`undecided_trait_args`).
+    pub(super) closure_param_vars: std::collections::HashSet<TyVar>,
     /// A generic type or alias written alone in a type argument, as
     /// written, with the head of the type it names, by the argument's
     /// place (`L` of `List(L)`, `Box` given to `p(s, type t)`): what a
@@ -747,6 +751,7 @@ impl TypeChecker {
             fn_spans: Vec::new(),
             passed_to: HashMap::new(),
             arg_names: HashMap::new(),
+            closure_param_vars: std::collections::HashSet::new(),
             bare_written: HashMap::new(),
             checked_fn: None,
             bound_askers: HashMap::new(),

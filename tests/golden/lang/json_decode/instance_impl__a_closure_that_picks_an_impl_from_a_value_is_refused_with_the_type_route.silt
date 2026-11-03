@@ -1,0 +1,39 @@
+-- cmd: check
+-- exit: 1
+-- A closure that would pick a hand-written impl from its parameter's
+-- value (`{ x -> twice(Box { v: x }, s) }`, with impls for `Box(Int)` and
+-- `Box(String)` only) is refused: no type where the code runs decides
+-- which impl. The help shows the way that picks it, a closure that takes
+-- the type (`{ t -> json.parse(s, Box(t)) }`), which checks.
+import json
+
+type Box(a) {
+  v: a,
+}
+
+trait json.Decode for Box(Int) {
+  fn decode(v: json.Value) -> Result(Self, json.JsonError) { Ok(Box { v: 1 }) }
+}
+
+trait json.Decode for Box(String) {
+  fn decode(v: json.Value) -> Result(Self, json.JsonError) { Ok(Box { v: "s" }) }
+}
+
+trait Dec: json.Decode {
+  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+trait Dec for Box(Int) {}
+
+trait Dec for Box(String) {}
+
+fn twice(b, s) {
+  Dec.again(b, s)
+}
+
+fn main() {
+  let k = { x -> twice(Box { v: x }, "0") }
+  println(k(1))
+  let by_type = { t -> json.parse("0", Box(t)) }
+  println(by_type(Int))
+}

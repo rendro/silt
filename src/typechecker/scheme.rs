@@ -791,7 +791,28 @@ impl TypeChecker {
                 "annotate the value it is given, `let x: {} = ...`",
                 self.show_type(instance)
             );
-            return Diagnostic::error(Code::AmbiguousType, origin.span, message).with_help(help);
+            let diagnostic = Diagnostic::error(Code::AmbiguousType, origin.span, message);
+            let diagnostic = diagnostic.with_help(help);
+            // (Its arguments are a closure's parameter's: the impl would be
+            // picked from a value. A type the closure takes picks it.)
+            let from_value = (self.closure_param_vars.iter()).any(|v| {
+                free_vars_in(&self.apply(&Type::Var(*v)))
+                    .iter()
+                    .any(|w| free_vars_in(&subject_ty).contains(w))
+            });
+            if !from_value {
+                return diagnostic;
+            }
+            let example = match &subject_ty {
+                Type::Generic(head, args) if args.len() == 1 => {
+                    format!("{}(t)", self.show_type(&Type::Generic(*head, Vec::new())))
+                }
+                _ => "Box(t)".to_string(),
+            };
+            return diagnostic.with_help(format!(
+                "the impl is picked from a type, not from a value: take the type as a parameter, \
+                 as in `{{ t -> json.parse(s, {example}) }}`"
+            ));
         }
         let message = format!(
             "cannot decide which impl of '{}' for '{}' {what} means: its trait argument is not \
