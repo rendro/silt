@@ -1,0 +1,15 @@
+-- Every fs function names the path an error is about, in the words of
+-- the fault (as fs.copy and fs.rename do): "is a directory: d", not the
+-- system's "Is a directory (os error 21)".
+import fs
+import io
+
+fn main() {
+  let _ = fs.mkdir("k2_dir")
+  let _ = io.write_file("k2_file.txt", "x")
+  println(io.read_file("k2_dir"))
+  println(io.write_file("k2_dir", "x"))
+  println(fs.list_dir("k2_file.txt"))
+  let _ = fs.remove("k2_file.txt")
+  let _ = fs.remove("k2_dir")
+}
