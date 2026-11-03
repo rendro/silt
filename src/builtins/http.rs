@@ -475,15 +475,18 @@ fn do_http_request(
         let Some((status, next)) = result.as_ref().ok().and_then(|r| redirect(r, &url)) else {
             return finish_http_response(result, &url, method == "HEAD");
         };
-        // A 303 turns any method but HEAD into a GET, a 301 or 302 only
-        // a POST (RFC 9110); a 307 or 308 none.
-        let to_get = match status {
-            303 => method != "HEAD",
+        // A 303 goes on without a body, as a GET (a HEAD stays a HEAD);
+        // a 301 or 302 so only for a POST (RFC 9110); a 307 or 308
+        // keeps the request as it is.
+        let bodiless = match status {
+            303 => true,
             301 | 302 => method == "POST",
             _ => false,
         };
-        if to_get {
-            method = "GET";
+        if bodiless {
+            if method != "HEAD" {
+                method = "GET";
+            }
             body = &[];
             // (What the body was is no part of a request without one.)
             headers.retain(|(key, _)| !key.eq_ignore_ascii_case("content-type"));

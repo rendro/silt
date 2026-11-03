@@ -34,5 +34,8 @@ DELETE /303
 HEAD /302
   the handler: HEAD /echo [abc], without authorization
   the client:  200 []
+HEAD /303
+  the handler: HEAD /echo [], without authorization
+  the client:  200 []
 POST /loop
   the client: too many redirects
