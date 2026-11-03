@@ -5,6 +5,7 @@
 -- stream after the lines before it.
 import bytes
 import channel
+import fs
 import io
 import list
 import stream
@@ -58,4 +59,7 @@ fn main() {
       None -> println("end")
     }
   }
+  -- (The files go again: run by hand, the program leaves nothing.)
+  let _ = fs.remove("many.txt")
+  let _ = fs.remove("bad.txt")
 }

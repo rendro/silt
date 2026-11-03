@@ -7,6 +7,7 @@
 -- of a connection that ended too early, and a chunk of a stream is no
 -- larger than what was read.
 import bytes
+import fs
 import io
 import list
 import stream
@@ -47,4 +48,6 @@ fn main() {
   when let Ok(_) = io.write_file("five.txt", "hello") else { panic("no file") }
   let chunks = stream.collect(stream.file_chunks("five.txt", huge))
   println("file_chunks: {list.map(chunks) { chunk -> text(chunk) }}")
+  -- (The file goes again: run by hand, the program leaves nothing.)
+  let _ = fs.remove("five.txt")
 }
