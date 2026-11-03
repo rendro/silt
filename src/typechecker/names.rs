@@ -661,8 +661,12 @@ fn bind_imports(
             }
             ImportTarget::Alias(module, alias, alias_span) => {
                 // `list.` always means the builtin `list`, so no other
-                // module can be imported under its name.
-                if *alias != *module && crate::module::is_builtin_module(&alias.to_string()) {
+                // module can be imported under its name. (An import that
+                // failed is reported where it is, once.)
+                if *alias != *module
+                    && !matches!(imported, Imported::Poisoned)
+                    && crate::module::is_builtin_module(&alias.to_string())
+                {
                     diagnostics.push(Diagnostic::error(
                         Code::ModuleNamedLikeBuiltin,
                         *alias_span,
