@@ -17,25 +17,27 @@ use silt::source::FileId;
 
 use crate::cli::package::{PackageFailure, die_on_manifest_error};
 
-/// Recursively find all .silt files in a directory.
-///
-/// Skips directories that the LSP preloader also skips (the shared
-/// `silt::file_discovery::should_skip_dir` policy): `target/`, `.git/`,
-/// `node_modules/`, and anything under `fuzz/corpus/`. Without that
-/// filter, `silt fmt <dir>` would happily rewrite vendored or generated
-/// `.silt` files (a workspace that vendors a sibling silt project under
-/// `vendor/silt-src/target/`, or has a `.silt` artefact deposited under
-/// `target/`, would otherwise see its contents rewritten by an
-/// unsuspecting `silt fmt .`), and `silt test` would try to run them.
+/// Recursively find all .silt files in a directory, as `silt fmt` does:
+/// in the directories [`enters_package_dir`] lets the walk into.
 pub(crate) fn find_silt_files(dir: &Path) -> Vec<String> {
-    let enter = |path: &Path| !silt::file_discovery::should_skip_dir(path);
-    let names = files_under(dir, &enter).into_iter();
+    let names = files_under(dir, &enters_package_dir).into_iter();
     let mut results: Vec<String> = names
         .map(|path| path.to_string_lossy().to_string())
         .filter(|name| name.ends_with(".silt"))
         .collect();
     results.sort();
     results
+}
+
+/// Whether a walk of a package's files goes into the directory `path`
+/// below its start: not into one of the skip list
+/// (`file_discovery::should_skip_dir`: `target/`, `.git/`,
+/// `node_modules/`, `fuzz/corpus/...`, generated or vendored files), and
+/// not into one that holds a `silt.toml` of its own: another package (a
+/// path dependency kept inside this one), whose files are its own.
+/// `silt fmt`, `silt test` and `silt check` walk alike.
+fn enters_package_dir(path: &Path) -> bool {
+    !silt::file_discovery::should_skip_dir(path) && !path.join("silt.toml").is_file()
 }
 
 /// The files under `root`, in the directories `enter` lets the walk
@@ -73,16 +75,10 @@ fn files_under(root: &Path, enter: &dyn Fn(&Path) -> bool) -> Vec<PathBuf> {
 }
 
 /// The test files under `root` (`*_test.silt`, `*.test.silt`), sorted,
-/// as `silt test` and `silt check` find them. The directories of the
-/// skip list (`file_discovery::should_skip_dir`: `target/`, `.git/`,
-/// ...) are not looked into, and neither is a directory that holds a
-/// `silt.toml` of its own: another package (a path dependency kept
-/// inside this one), whose tests are its own.
+/// as `silt test` and `silt check` find them, in the directories
+/// [`enters_package_dir`] lets the walk into.
 pub(crate) fn package_test_files(root: &Path) -> Vec<String> {
-    let enter = |path: &Path| {
-        !silt::file_discovery::should_skip_dir(path) && !path.join("silt.toml").is_file()
-    };
-    let names = files_under(root, &enter).into_iter();
+    let names = files_under(root, &enters_package_dir).into_iter();
     let mut out: Vec<String> = names
         .map(|path| path.to_string_lossy().into_owned())
         .filter(|name| name.ends_with("_test.silt") || name.ends_with(".test.silt"))
