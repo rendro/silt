@@ -143,8 +143,11 @@ fn path_err(err: &std::io::Error, path: &str) -> Value {
         ErrorKind::NotADirectory => path_err_text("not a directory", path),
         kind => {
             let words = kind.to_string();
+            // (A loop of links has a kind whose name is not stable yet;
+            // it is known by its words, which name it at length.)
             let what = match kind == ErrorKind::Other || words == "uncategorized error" {
                 true => err.to_string(),
+                false if words.contains("symlink loop") => "symlink loop".to_string(),
                 false => words,
             };
             path_err_text(&what, path)
@@ -476,9 +479,17 @@ pub(crate) mod fs {
         }
 
         fn read_link(path: &str) -> Value {
-            result(std::fs::read_link(path), path, |target| {
-                Value::String(target.to_string_lossy().into_owned().into())
-            })
+            match std::fs::read_link(path) {
+                // (What the system says of a path that is no link names
+                // neither the fault nor the path.)
+                Err(e) if e.kind() == std::io::ErrorKind::InvalidInput => io_err(Value::variant(
+                    bv::IO_INVALID_INPUT,
+                    [Value::String(format!("not a symlink: {path}").into())],
+                )),
+                done => result(done, path, |target| {
+                    Value::String(target.to_string_lossy().into_owned().into())
+                }),
+            }
         }
 
         fn walk(root: &str) -> Value {
