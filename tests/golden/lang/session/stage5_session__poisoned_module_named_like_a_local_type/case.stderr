@@ -1,20 +1,3 @@
-error[parse]: expected fn, found =
- --> main.silt:15:31
-    |
- 15 |   fn describe(self) -> String = "TRAIT method on Shape with {self.sides} sides"
-    |                               ^ expected fn, found =
-
-error[parse]: 'Shape' is bound twice at the top level: by the import and by the type here
- --> main.silt:8:6
-   |
- 8 | type Shape { sides: Int }
-   |      ^^^^^ 'Shape' is bound twice at the top level: by the import and by the type here
- ::: main.silt:6:1
-   |
- 6 | import Shape
-   | ------------ first bound here, by the import
-  = note: a top-level name can be bound only once
-
 error[parse]: expected declaration, found =
  --> Shape.silt:1:30
    |
@@ -34,6 +17,23 @@ error[parse]: expected declaration, found =
    |
  6 | import Shape
    | ------------ module 'Shape' is imported here
+
+error[parse]: expected fn, found =
+ --> main.silt:15:31
+    |
+ 15 |   fn describe(self) -> String = "TRAIT method on Shape with {self.sides} sides"
+    |                               ^ expected fn, found =
+
+error[parse]: 'Shape' is bound twice at the top level: by the import and by the type here
+ --> main.silt:8:6
+   |
+ 8 | type Shape { sides: Int }
+   |      ^^^^^ 'Shape' is bound twice at the top level: by the import and by the type here
+ ::: main.silt:6:1
+   |
+ 6 | import Shape
+   | ------------ first bound here, by the import
+  = note: a top-level name can be bound only once
 
 error[type]: type 'Shape' has no field 'describe'
  --> main.silt:20:11
