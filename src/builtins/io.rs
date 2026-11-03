@@ -57,15 +57,24 @@ fn system_time_to_option_datetime(t: Result<SystemTime, std::io::Error>) -> Valu
     let Ok(t) = t else {
         return Value::variant(bv::NONE, []);
     };
-    let Ok(d) = t.duration_since(UNIX_EPOCH) else {
-        return Value::variant(bv::NONE, []);
+    // Seconds since 1970 and the nanoseconds after them: a time before
+    // 1970 is a negative second and the nanoseconds forward from it.
+    // `chrono::DateTime::from_timestamp` returns None if they compose
+    // to a value outside chrono's range.
+    let (secs, nanos) = match t.duration_since(UNIX_EPOCH) {
+        Ok(d) => (
+            i64::try_from(d.as_secs()).unwrap_or(i64::MAX),
+            d.subsec_nanos(),
+        ),
+        Err(before) => {
+            let d = before.duration();
+            let secs = i64::try_from(d.as_secs()).map_or(i64::MIN, |s| -s);
+            match d.subsec_nanos() {
+                0 => (secs, 0),
+                n => (secs.saturating_sub(1), 1_000_000_000 - n),
+            }
+        }
     };
-    // i64 seconds range ≈ ±292 billion years — the cast is never a
-    // truncation in practice but we guard against negative→overflow
-    // below. `chrono::DateTime::from_timestamp` returns None if the
-    // seconds/nanoseconds compose to a value outside chrono's range.
-    let secs = d.as_secs() as i64;
-    let nanos = d.subsec_nanos();
     let Some(dt) = chrono::DateTime::from_timestamp(secs, nanos) else {
         return Value::variant(bv::NONE, []);
     };
@@ -96,6 +105,56 @@ fn rename_failed_at<'a>(kind: std::io::ErrorKind, from: &'a str, to: &'a str) ->
         true => to,
         false => from,
     }
+}
+
+/// Whether `fs.rename` of `from` to `to` would move the directory
+/// `from` into itself: `to` is in it, at any depth.
+fn moves_into_itself(from: &str, to: &str) -> bool {
+    use std::path::Path;
+    if !std::fs::symlink_metadata(from).is_ok_and(|md| md.is_dir()) {
+        return false;
+    }
+    let into = Path::new(to)
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    match (std::fs::canonicalize(from), std::fs::canonicalize(into)) {
+        (Ok(from), Ok(into)) => into.starts_with(from),
+        _ => false,
+    }
+}
+
+/// The error of a failed `fs.copy` or `fs.rename` about `path`: a
+/// fault with an `IoError` variant of its own is that variant; any
+/// other is `Other` that says what the fault is and names the path
+/// (`is a directory: dir`), in the words the kind of fault has, or in
+/// the system's where it has no kind of its own.
+fn moved_err(err: &std::io::Error, path: &str) -> Value {
+    use std::io::ErrorKind;
+    match err.kind() {
+        ErrorKind::NotFound
+        | ErrorKind::PermissionDenied
+        | ErrorKind::AlreadyExists
+        | ErrorKind::InvalidInput
+        | ErrorKind::Interrupted
+        | ErrorKind::UnexpectedEof
+        | ErrorKind::WriteZero => io_result_err(err, path),
+        ErrorKind::IsADirectory => moved_err_text("is a directory", path),
+        ErrorKind::NotADirectory => moved_err_text("not a directory", path),
+        kind => {
+            let words = kind.to_string();
+            let what = match kind == ErrorKind::Other || words == "uncategorized error" {
+                true => err.to_string(),
+                false => words,
+            };
+            moved_err_text(&what, path)
+        }
+    }
+}
+
+/// `Err(Other("<what>: <path>"))`, the form of `file not found: <path>`.
+fn moved_err_text(what: &str, path: &str) -> Value {
+    io_result_err_unknown(format!("{what}: {path}"))
 }
 
 /// Whether the paths `a` and `b` name one file: on Unix the same device
@@ -322,12 +381,22 @@ pub(crate) mod fs {
         }
 
         fn rename(from: &str, to: &str) -> Value {
-            let renamed = std::fs::rename(from, to);
-            let about = match &renamed {
-                Err(e) => rename_failed_at(e.kind(), from, to),
-                Ok(()) => from,
-            };
-            result(renamed, about, unit)
+            match std::fs::rename(from, to) {
+                Ok(()) => fs_ok(Value::Unit),
+                Err(_) if moves_into_itself(from, to) => {
+                    moved_err_text("cannot move a directory into itself", to)
+                }
+                Err(e) => {
+                    let about = match e.kind() {
+                        _ if std::fs::symlink_metadata(from).is_err() => from,
+                        std::io::ErrorKind::IsADirectory
+                        | std::io::ErrorKind::NotADirectory
+                        | std::io::ErrorKind::DirectoryNotEmpty => to,
+                        kind => rename_failed_at(kind, from, to),
+                    };
+                    moved_err(&e, about)
+                }
+            }
         }
 
         // A copy of a file onto itself would empty it (the destination
@@ -346,7 +415,14 @@ pub(crate) mod fs {
             if let Err(e) = std::fs::File::open(from) {
                 return result(Err::<u64, _>(e), from, unit);
             }
-            result(std::fs::copy(from, to), to, unit)
+            // (A directory opens on some systems, and is no file to copy.)
+            if std::fs::metadata(from).is_ok_and(|md| md.is_dir()) {
+                return moved_err_text("is a directory", from);
+            }
+            match std::fs::copy(from, to) {
+                Ok(_) => fs_ok(Value::Unit),
+                Err(e) => moved_err(&e, to),
+            }
         }
 
         fn stat(path: &str) -> Value {
@@ -566,7 +642,24 @@ mod tests {
     use std::io::ErrorKind;
     use std::os::unix::fs::PermissionsExt;
 
-    use super::rename_failed_at;
+    use super::{rename_failed_at, system_time_to_option_datetime};
+
+    /// A time of a file before 1970 is a date as any other.
+    #[test]
+    fn a_file_time_before_1970_is_a_date() {
+        use std::time::{Duration, UNIX_EPOCH};
+        for (before, shown) in [
+            (
+                Duration::new(315_619_199, 500_000_000),
+                "Some(1960-01-01T00:00:00.500000000)",
+            ),
+            (Duration::new(1, 0), "Some(1969-12-31T23:59:59)"),
+            (Duration::new(0, 1), "Some(1969-12-31T23:59:59.999999999)"),
+        ] {
+            let time = system_time_to_option_datetime(Ok(UNIX_EPOCH - before));
+            assert_eq!(time.to_string(), shown, "{before:?} before 1970");
+        }
+    }
 
     /// A failed rename names the side that fails: the source when it is
     /// not there, else the destination when its directory is not there

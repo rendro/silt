@@ -125,6 +125,29 @@ fn with(vm: &mut Vm, pattern: &str, found: impl FnOnce(&regex::Regex) -> Value) 
     }
 }
 
+/// The pieces of `text` between the matches of `re`, cut as
+/// `string.split` cuts: a match of nothing at the start or the end of
+/// the text cuts nothing there, so it gives no empty piece (`""` cuts
+/// `"abc"` into its characters, and empty text into none).
+fn pieces<'t>(re: &regex::Regex, text: &'t str) -> Vec<&'t str> {
+    let mut pieces = Vec::new();
+    let mut start = 0;
+    let mut matched = false;
+    for m in re.find_iter(text) {
+        matched = true;
+        if m.is_empty() && (m.start() == 0 || m.start() == text.len()) {
+            continue;
+        }
+        pieces.push(&text[start..m.start()]);
+        start = m.end();
+    }
+    // (Empty text that a match of nothing cut is no piece.)
+    if !(text.is_empty() && matched) {
+        pieces.push(&text[start..]);
+    }
+    pieces
+}
+
 // Every function takes the text first and the pattern second, and
 // returns a `Result`: a pattern is text like any other, and one that
 // is no pattern is an error value.
@@ -144,7 +167,7 @@ builtins! {
     }
 
     fn split(vm, text: &str, pattern: &str) -> Value {
-        with(vm, pattern, |re| Value::list(re.split(text).map(string).collect()))
+        with(vm, pattern, |re| Value::list(pieces(re, text).into_iter().map(string).collect()))
     }
 
     fn replace(vm, text: &str, pattern: &str, replacement: &str) -> Result<Value, VmError> {

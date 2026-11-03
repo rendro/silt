@@ -937,6 +937,24 @@ impl<'src> Parser<'src> {
         self.skipped
     }
 
+    /// As `Parser::new(lexed, source).parse_program()` of a `lexed` the
+    /// caller keeps: its tokens are lent to the parser and given back,
+    /// not copied (the formatter holds the tokens of a file beside its
+    /// tree).
+    pub fn parse_lent(lexed: &mut Lexed, source: &'src str) -> Result<Program> {
+        let tokens = std::mem::take(&mut lexed.tokens);
+        let mut parser = Parser::new(
+            Lexed {
+                tokens,
+                ..lexed.clone()
+            },
+            source,
+        );
+        let program = parser.parse_program();
+        lexed.tokens = parser.tokens;
+        program
+    }
+
     /// The declarations of the file, or the first thing wrong with its
     /// text (see `parse_program_recovering`, which this is).
     pub fn parse_program(&mut self) -> Result<Program> {
