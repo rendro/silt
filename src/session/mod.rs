@@ -721,9 +721,9 @@ impl Session {
         }
         let key = graph::canonical_key(&module.path);
         let reported = self.module_name_problems.iter().any(|d| {
-            self.sources.get(d.span.file).is_some_and(|f| {
-                matches!(&f.path, SourceName::Path(p) if graph::canonical_key(p) == key)
-            })
+            self.sources.get(d.span.file).is_some_and(
+                |f| matches!(&f.path, SourceName::Path(p) if graph::canonical_key(p) == key),
+            )
         });
         match reported {
             true => None,
