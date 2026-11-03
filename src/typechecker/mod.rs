@@ -176,6 +176,10 @@ pub struct TypeChecker {
     /// needing its type in full outside one says that nothing decides
     /// the type (`settle_in_full_refusals`).
     pub(super) fn_spans: Vec<Span>,
+    /// The function whose body is being checked, and the names of its
+    /// parameters (`_` for one bound by a pattern): what an error about a
+    /// parameter writes as a call of it.
+    pub(super) checked_fn: Option<(Symbol, Vec<(Symbol, bool)>)>,
     /// What each body asks `json.Decode` of its annotation variable for
     /// (`Asked`), by the variable's representative.
     pub(super) bound_askers: HashMap<TyVar, Asker>,
@@ -724,6 +728,7 @@ impl TypeChecker {
             open_type_arguments: std::collections::HashSet::new(),
             open_vars: std::collections::HashSet::new(),
             fn_spans: Vec::new(),
+            checked_fn: None,
             bound_askers: HashMap::new(),
             decoded_at: HashMap::new(),
             bound_within: HashMap::new(),

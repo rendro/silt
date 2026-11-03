@@ -2339,8 +2339,16 @@ impl TypeChecker {
         if f.name != intern("main") && !crate::session::is_cell_name(&resolve(f.name)) {
             self.fn_spans.push(f.span);
         }
+        let params = (f.params.iter())
+            .map(|p| match p.pattern.kind {
+                PatternKind::Ident(name) => (name, p.kind == ParamKind::Data),
+                _ => (intern("_"), false),
+            })
+            .collect();
+        let outer = self.checked_fn.replace((f.name, params));
         let uses = std::mem::take(&mut self.full_type_uses);
         self.check_body_in(f, sig, env);
+        self.checked_fn = outer;
         // (As the body left the receivers' types.)
         for (recv, tr, field, span) in std::mem::replace(&mut self.full_type_uses, uses) {
             let recv = self.apply(&recv);
@@ -2848,6 +2856,34 @@ impl TypeChecker {
         let message = self.type_arguments_message(&resolve(ty.name), ty);
         self.error(Code::ArityMismatch, message, span);
         Type::Error
+    }
+
+    /// The error of a call that gives type arguments to `callee`, a data
+    /// parameter of the function being checked that holds a type
+    /// (`m(Int)` in `fn dec(s, m)`): it takes none, the whole type is
+    /// passed, as the function's call shows.
+    fn held_type_applied(&self, callee: &Expr, callee_ty: &Type) -> Option<String> {
+        let ExprKind::Ident(name) = callee.kind else {
+            return None;
+        };
+        if !matches!(callee_ty, Type::Generic(head, _) if head.is_builtin(crate::defs::TYPE_OF)) {
+            return None;
+        }
+        let (function, params) = self.checked_fn.as_ref()?;
+        if !params.contains(&(name, true)) {
+            return None;
+        }
+        let args: Vec<String> = (params.iter())
+            .map(|(param, _)| match *param == name {
+                true => "List(Int)".to_string(),
+                false => resolve(*param).to_string(),
+            })
+            .collect();
+        Some(format!(
+            "`{name}` holds a type and takes no type arguments: pass the whole type, as in \
+             `{function}({})`",
+            args.join(", ")
+        ))
     }
 
     /// Whether `e` names a generic type alone (`List`, `Box`, an alias
@@ -3552,6 +3588,12 @@ impl TypeChecker {
                         Type::Error
                     }
                     (_, CallForm::Call) => {
+                        // A parameter that holds a type, given type
+                        // arguments (`m(Int)`): the whole type is passed.
+                        if let Some(message) = self.held_type_applied(callee, other) {
+                            self.error(Code::TypeMismatch, message, span);
+                            return Type::Error;
+                        }
                         let mut d = Diagnostic::error(
                             Code::TypeMismatch,
                             span,
