@@ -36,7 +36,7 @@ use imbl::Vector;
 use imbl::shared_ptr::DefaultSharedPtr;
 use std::collections::BTreeSet;
 use std::fmt;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 /// The most elements a list or a set, and the most entries a map, that a
 /// builtin or an operator makes may have (`builtins::collections::fits`),
@@ -112,18 +112,17 @@ pub struct List(Stored);
 
 #[derive(Clone)]
 enum Stored {
-    /// `len` elements of `buf` from `start`.
-    Items { buf: Buf, start: usize, len: usize },
+    /// `len` elements of `buf` from `start`, at most [`FLAT_MOST`] of
+    /// them: a `u32` counts them ([`List::of_buf`]).
+    Items { buf: Buf, start: u32, len: u32 },
     /// A list kept otherwise.
-    Other(Other),
+    Other(Arc<Other>),
 }
 
-/// A list kept otherwise than in a buffer. (Apart from [`Stored::Items`]
-/// so that a list stays 32 bytes, and a value 40 with a tag of its own:
-/// the pointer of a buffer is never null, and the null one says a list
-/// is one of these; and the pointer of a long list's elements, the one
-/// of a list that holds none.)
-#[derive(Clone)]
+/// A list kept otherwise than in a buffer. (Apart from [`Stored::Items`],
+/// and behind a pointer, so that a list is two words and a value three
+/// with a tag of its own: the pointer of a buffer is never null, and
+/// the null one says a list is one of these.)
 enum Other {
     /// `len` elements of `long` from `start`: a list of more than
     /// [`FLAT_MOST`], kept side by side if it was made in one go, and in
@@ -138,13 +137,33 @@ enum Other {
     Ints { lo: i64, hi: i64 },
 }
 
-// A list is 32 bytes where pointers are 64 bits, and has no value of
+// A list is 16 bytes where pointers are 64 bits, and has no value of
 // its bytes to spare for another's tag: a value, which holds one, is
-// 40 bytes with its own tag (src/value/mod.rs).
+// 24 bytes with its own tag (src/value/mod.rs).
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(std::mem::size_of::<List>() <= 32);
+const _: () = assert!(std::mem::size_of::<List>() <= 16);
 #[cfg(target_pointer_width = "64")]
 const _: () = assert!(std::mem::size_of::<Option<List>>() > std::mem::size_of::<List>());
+// The start and the length of a list in a buffer are `u32`s.
+const _: () = assert!(FLAT_MOST <= u32::MAX as usize && MAX_COLLECTION_LEN <= u32::MAX as usize);
+
+/// How a list is kept, as the functions of a list read it.
+enum Form<'a> {
+    /// `len` elements of `buf` from `start`.
+    Items {
+        buf: &'a Buf,
+        start: usize,
+        len: usize,
+    },
+    /// `len` elements of `long` from `start`.
+    Long {
+        long: &'a Long,
+        start: usize,
+        len: usize,
+    },
+    /// The Ints from `lo` to `hi`, both included.
+    Ints { lo: i64, hi: i64 },
+}
 
 /// The most elements a list has: what its length, a `usize`, counts.
 /// (All the Ints there are, from the least to the greatest, are one
@@ -225,7 +244,7 @@ impl List {
             .ok()
             .and_then(|difference| difference.checked_add(1));
         match counted {
-            Some(_) => Ok(List(Stored::Other(Other::Ints { lo, hi }))),
+            Some(_) => Ok(List::ints_of(lo, hi)),
             None => Err(TooLong {
                 lo,
                 hi,
@@ -235,10 +254,54 @@ impl List {
     }
 
     pub fn len(&self) -> usize {
-        match &self.0 {
-            Stored::Items { len, .. } | Stored::Other(Other::Long { len, .. }) => *len,
-            Stored::Other(Other::Ints { lo, hi }) => hi.abs_diff(*lo) as usize + 1,
+        match self.form() {
+            Form::Items { len, .. } | Form::Long { len, .. } => len,
+            Form::Ints { lo, hi } => hi.abs_diff(lo) as usize + 1,
         }
+    }
+
+    /// How the list is kept.
+    #[inline]
+    fn form(&self) -> Form<'_> {
+        match &self.0 {
+            Stored::Items { buf, start, len } => Form::Items {
+                buf,
+                start: *start as usize,
+                len: *len as usize,
+            },
+            Stored::Other(other) => match &**other {
+                Other::Long { long, start, len } => Form::Long {
+                    long,
+                    start: *start,
+                    len: *len,
+                },
+                Other::Ints { lo, hi } => Form::Ints { lo: *lo, hi: *hi },
+            },
+        }
+    }
+
+    /// The `len` elements of `buf` from `start`. (A buffer holds at
+    /// most [`FLAT_MOST`] elements, but for the tests' twin of a list
+    /// kept otherwise, `List::held_flat`: a `u32` counts them.)
+    fn of_buf(buf: Buf, start: usize, len: usize) -> List {
+        debug_assert!(start + len <= buf.len());
+        let counted = |n: usize| u32::try_from(n).expect("a buffer holds fewer than 2^32 values");
+        List(Stored::Items {
+            start: counted(start),
+            len: counted(len),
+            buf,
+        })
+    }
+
+    /// The `len` elements of `long` from `start`.
+    fn of_long(long: Long, start: usize, len: usize) -> List {
+        List(Stored::Other(Arc::new(Other::Long { long, start, len })))
+    }
+
+    /// The Ints from `lo` to `hi`, both included: `lo <= hi`, and at
+    /// most [`MAX_LEN`] of them.
+    fn ints_of(lo: i64, hi: i64) -> List {
+        List(Stored::Other(Arc::new(Other::Ints { lo, hi })))
     }
 
     pub fn is_empty(&self) -> bool {
@@ -248,17 +311,13 @@ impl List {
     /// The element at `index`, counted from 0.
     #[inline]
     pub fn get(&self, index: usize) -> Option<Value> {
-        match &self.0 {
-            Stored::Items { buf, start, len } => buf[*start..*start + *len].get(index).cloned(),
-            Stored::Other(Other::Long { long, start, len }) => {
-                (index < *len).then(|| match &**long {
-                    LongItems::Side { items, .. } => items[start + index].clone(),
-                    LongItems::Tree(tree) => tree[start + index].clone(),
-                })
-            }
-            Stored::Other(Other::Ints { lo, .. }) => {
-                (index < self.len()).then(|| Value::Int(nth(*lo, index)))
-            }
+        match self.form() {
+            Form::Items { buf, start, len } => buf[start..start + len].get(index).cloned(),
+            Form::Long { long, start, len } => (index < len).then(|| match &**long {
+                LongItems::Side { items, .. } => items[start + index].clone(),
+                LongItems::Tree(tree) => tree[start + index].clone(),
+            }),
+            Form::Ints { lo, .. } => (index < self.len()).then(|| Value::Int(nth(lo, index))),
         }
     }
 
@@ -293,13 +352,13 @@ impl List {
     /// Where the elements are.
     #[inline]
     fn kept(&self) -> Kept<'_> {
-        match &self.0 {
-            Stored::Items { buf, start, len } => Kept::Side(&buf[*start..*start + *len], *start),
-            Stored::Other(Other::Long { long, start, len }) => match &**long {
-                LongItems::Side { items, .. } => Kept::Side(&items[*start..*start + *len], *start),
-                LongItems::Tree(tree) => Kept::Tree(tree, *start, *len),
+        match self.form() {
+            Form::Items { buf, start, len } => Kept::Side(&buf[start..start + len], start),
+            Form::Long { long, start, len } => match &**long {
+                LongItems::Side { items, .. } => Kept::Side(&items[start..start + len], start),
+                LongItems::Tree(tree) => Kept::Tree(tree, start, len),
             },
-            Stored::Other(Other::Ints { lo, .. }) => Kept::Ints(*lo),
+            Form::Ints { lo, .. } => Kept::Ints(lo),
         }
     }
 
@@ -340,9 +399,9 @@ impl List {
     /// (`a..b`): the Ints from the one to the other. `None` for a list
     /// that holds its elements ([`List::runs`]).
     pub(super) fn range_ends(&self) -> Option<(i64, i64)> {
-        match self.0 {
-            Stored::Other(Other::Ints { lo, hi }) => Some((lo, hi)),
-            Stored::Items { .. } | Stored::Other(Other::Long { .. }) => None,
+        match self.form() {
+            Form::Ints { lo, hi } => Some((lo, hi)),
+            Form::Items { .. } | Form::Long { .. } => None,
         }
     }
 
@@ -369,17 +428,13 @@ impl List {
             return List::new();
         }
         let len = to - from;
-        List(match &self.0 {
-            Stored::Items { buf, start, .. } if len < buf.len() / 4 => {
-                return List::flat(buf[start + from..start + to].to_vec());
+        match self.form() {
+            Form::Items { buf, start, .. } if len < buf.len() / 4 => {
+                List::flat(buf[start + from..start + to].to_vec())
             }
-            Stored::Items { buf, start, .. } => Stored::Items {
-                buf: buf.clone(),
-                start: start + from,
-                len,
-            },
-            Stored::Other(Other::Long { long, start, .. }) if len < long.len() / 4 => {
-                return match (self.flat_for(len), &**long) {
+            Form::Items { buf, start, .. } => List::of_buf(buf.clone(), start + from, len),
+            Form::Long { long, start, .. } if len < long.len() / 4 => {
+                match (self.flat_for(len), &**long) {
                     (true, _) => List::flat(self.iter_part(from, to).collect()),
                     (false, LongItems::Side { items, .. }) => {
                         List::from(items[start + from..start + to].to_vec())
@@ -387,18 +442,11 @@ impl List {
                     (false, LongItems::Tree(tree)) => {
                         List::of_tree(part_of(tree, start + from, len))
                     }
-                };
+                }
             }
-            Stored::Other(Other::Long { long, start, .. }) => Stored::Other(Other::Long {
-                long: long.clone(),
-                start: start + from,
-                len,
-            }),
-            Stored::Other(Other::Ints { lo, .. }) => Stored::Other(Other::Ints {
-                lo: nth(*lo, from),
-                hi: nth(*lo, to - 1),
-            }),
-        })
+            Form::Long { long, start, .. } => List::of_long(long.clone(), start + from, len),
+            Form::Ints { lo, .. } => List::ints_of(nth(lo, from), nth(lo, to - 1)),
+        }
     }
 
     /// The elements, each a value of its own. A list that holds none
@@ -534,16 +582,12 @@ impl List {
     /// the text of the list): a list that holds its elements always, one
     /// that holds none (`a..b`) up to 10,000,000 of them.
     pub fn writable(&self) -> Result<(), TooLong> {
-        match self.0 {
-            Stored::Other(Other::Ints { lo, hi })
-                if hi.abs_diff(lo) >= MAX_COLLECTION_LEN as u64 =>
-            {
-                Err(TooLong {
-                    lo,
-                    hi,
-                    most: MAX_COLLECTION_LEN as u64,
-                })
-            }
+        match self.form() {
+            Form::Ints { lo, hi } if hi.abs_diff(lo) >= MAX_COLLECTION_LEN as u64 => Err(TooLong {
+                lo,
+                hi,
+                most: MAX_COLLECTION_LEN as u64,
+            }),
             _ => Ok(()),
         }
     }
@@ -665,17 +709,17 @@ impl List {
 
     /// The elements as they are stored.
     fn elements(&self) -> Elements<'_> {
-        match self.0 {
-            Stored::Other(Other::Ints { lo, hi }) => Elements::Ints(lo, hi),
-            Stored::Items { .. } | Stored::Other(Other::Long { .. }) => Elements::Held(self.runs()),
+        match self.form() {
+            Form::Ints { lo, hi } => Elements::Ints(lo, hi),
+            Form::Items { .. } | Form::Long { .. } => Elements::Held(self.runs()),
         }
     }
 
     /// Push the elements onto `items`, in order.
     fn write_into(&self, items: &mut Vec<Value>) {
-        match self.0 {
-            Stored::Other(Other::Ints { lo, hi }) => items.extend((lo..=hi).map(Value::Int)),
-            Stored::Items { .. } | Stored::Other(Other::Long { .. }) => {
+        match self.form() {
+            Form::Ints { lo, hi } => items.extend((lo..=hi).map(Value::Int)),
+            Form::Items { .. } | Form::Long { .. } => {
                 for run in self.runs() {
                     items.extend_from_slice(run);
                 }
@@ -687,21 +731,13 @@ impl List {
     fn flat(items: Vec<Value>) -> List {
         copied(items.len());
         let len = items.len();
-        List(Stored::Items {
-            buf: Buf::from(items),
-            start: 0,
-            len,
-        })
+        List::of_buf(Buf::from(items), 0, len)
     }
 
     /// The list of the elements of `tree`.
     fn of_tree(tree: Vector<Value>) -> List {
         let len = tree.len();
-        List(Stored::Other(Other::Long {
-            long: Long::from(LongItems::Tree(tree)),
-            start: 0,
-            len,
-        }))
+        List::of_long(Long::from(LongItems::Tree(tree)), 0, len)
     }
 
     /// Whether a list a change makes of this one writes its elements out
@@ -711,26 +747,22 @@ impl List {
     /// list made keeps them as a list made in one go does, and its own
     /// first change makes its tree.)
     fn written_out(&self) -> bool {
-        matches!(self.0, Stored::Other(Other::Ints { .. }))
+        matches!(self.form(), Form::Ints { .. })
     }
 
     /// Whether the list is a part of a long list's elements, side by
     /// side or in a tree.
     fn in_long(&self) -> bool {
-        matches!(self.0, Stored::Other(Other::Long { .. }))
+        matches!(self.form(), Form::Long { .. })
     }
 
     /// Whether a list of `len` elements made from this one keeps them
     /// side by side in a buffer: up to [`FLAT_MOST`] of them, and if
     /// this one keeps its own in a tree, up to half as many.
     fn flat_for(&self, len: usize) -> bool {
-        match &self.0 {
-            Stored::Other(Other::Long { long, .. }) if matches!(**long, LongItems::Tree(_)) => {
-                len <= FLAT_MOST / 2
-            }
-            Stored::Items { .. } | Stored::Other(Other::Long { .. } | Other::Ints { .. }) => {
-                len <= FLAT_MOST
-            }
+        match self.form() {
+            Form::Long { long, .. } if matches!(**long, LongItems::Tree(_)) => len <= FLAT_MOST / 2,
+            Form::Items { .. } | Form::Long { .. } | Form::Ints { .. } => len <= FLAT_MOST,
         }
     }
 
@@ -738,9 +770,9 @@ impl List {
     /// to: the tree the list keeps them in, or the part of it the list
     /// is, which shares all of it but its edges with it.
     fn to_tree(&self) -> Vector<Value> {
-        match &self.0 {
-            Stored::Other(Other::Long { long, start, len }) => match &**long {
-                LongItems::Tree(tree) => part_of(tree, *start, *len),
+        match self.form() {
+            Form::Long { long, start, len } => match &**long {
+                LongItems::Tree(tree) => part_of(tree, start, len),
                 // (The tree of a list made in one go is made once, and
                 // the next change starts from it too.)
                 LongItems::Side { items, tree } => {
@@ -748,10 +780,10 @@ impl List {
                         copied(items.len());
                         items.iter().cloned().collect()
                     });
-                    part_of(tree, *start, *len)
+                    part_of(tree, start, len)
                 }
             },
-            Stored::Items { .. } | Stored::Other(Other::Ints { .. }) => {
+            Form::Items { .. } | Form::Ints { .. } => {
                 copied(self.len());
                 self.iter().collect()
             }
@@ -771,13 +803,13 @@ impl List {
     /// kept ask.
     #[cfg(test)]
     pub(super) fn kept_as(&self) -> &'static str {
-        match &self.0 {
-            Stored::Items { .. } => "buffer",
-            Stored::Other(Other::Long { long, .. }) => match **long {
+        match self.form() {
+            Form::Items { .. } => "buffer",
+            Form::Long { long, .. } => match **long {
                 LongItems::Side { .. } => "side",
                 LongItems::Tree(_) => "tree",
             },
-            Stored::Other(Other::Ints { .. }) => "ints",
+            Form::Ints { .. } => "ints",
         }
     }
 
@@ -785,12 +817,10 @@ impl List {
     /// where the storage is: what the tests of sharing ask.
     #[cfg(test)]
     pub(super) fn buffer(&self) -> Option<(usize, *const ())> {
-        match &self.0 {
-            Stored::Items { buf, .. } => Some((buf.len(), buf.as_ptr().cast())),
-            Stored::Other(Other::Long { long, .. }) => {
-                Some((long.len(), (&**long as *const LongItems).cast()))
-            }
-            Stored::Other(Other::Ints { .. }) => None,
+        match self.form() {
+            Form::Items { buf, .. } => Some((buf.len(), buf.as_ptr().cast())),
+            Form::Long { long, .. } => Some((long.len(), (&**long as *const LongItems).cast())),
+            Form::Ints { .. } => None,
         }
     }
 
@@ -895,11 +925,7 @@ impl From<Vec<Value>> for List {
             items: items.into_boxed_slice(),
             tree: OnceLock::new(),
         };
-        List(Stored::Other(Other::Long {
-            long: Long::from(long),
-            start: 0,
-            len,
-        }))
+        List::of_long(Long::from(long), 0, len)
     }
 }
 
@@ -915,7 +941,7 @@ impl FromIterator<Value> for List {
                 let buf: Buf = items.collect();
                 let len = buf.len();
                 copied(len);
-                List(Stored::Items { buf, start: 0, len })
+                List::of_buf(buf, 0, len)
             }
             _ => List::from(items.collect::<Vec<Value>>()),
         }
@@ -1113,26 +1139,26 @@ impl IntoIterator for List {
 
     fn into_iter(self) -> IntoIter {
         let len = self.len();
-        IntoIter(match self.0 {
-            Stored::Items { buf, start, len } => IntoIterOf::Items {
-                buf,
+        IntoIter(match self.form() {
+            Form::Items { buf, start, len } => IntoIterOf::Items {
+                buf: buf.clone(),
                 next: start,
                 end: start + len,
             },
-            Stored::Other(Other::Long { long, start, len }) => match &*long {
+            Form::Long { long, start, len } => match &**long {
                 LongItems::Side { .. } => IntoIterOf::Side {
-                    long,
+                    long: long.clone(),
                     next: start,
                     end: start + len,
                 },
                 LongItems::Tree(_) => IntoIterOf::Tree {
-                    long,
+                    long: long.clone(),
                     next: start,
                     end: start + len,
                     leaf: Vec::new(),
                 },
             },
-            Stored::Other(Other::Ints { lo, .. }) => IntoIterOf::Ints(IntsLeft {
+            Form::Ints { lo, .. } => IntoIterOf::Ints(IntsLeft {
                 next: lo,
                 left: len,
             }),
