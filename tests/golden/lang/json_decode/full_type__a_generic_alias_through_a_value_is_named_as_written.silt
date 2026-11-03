@@ -1,0 +1,18 @@
+-- cmd: check
+-- exit: 1
+-- A generic alias written alone that reaches a decoder through a value
+-- (`id(L)`) is named as written in the refusal, `L`, as given directly
+-- or in a tuple: not by the type it stands for, `List`.
+import json
+
+type L(a) = List(a)
+
+fn id(x) {
+  x
+}
+
+fn main() {
+  println(json.parse("[1]", id(L)))
+  println(json.parse("[1]", L))
+  println(json.parse("[[1], 1]", (L, Int)))
+}

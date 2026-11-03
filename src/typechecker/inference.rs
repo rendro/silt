@@ -246,12 +246,18 @@ impl TypeChecker {
         };
         // (A refusal of `T.decode` names it so.)
         let callee = intern(&format!("{head}.{method}"));
+        // (The decoder a note names, through a function that hands its
+        // type on: `bm` passes it to `Box.decode`.)
+        let asker = Asker {
+            by: Asked::Builtin(callee),
+            passer: None,
+        };
         let ev = self.want(
             Pred::Trait {
                 tr,
                 args: Vec::new(),
                 subject: recv.clone(),
-                asker: None,
+                asker: Some(asker),
             },
             Origin {
                 span,
@@ -2266,7 +2272,10 @@ impl TypeChecker {
                 // (A generic alias alone, `L` of `type L(a) = List(a)`,
                 // holds open arguments, as `List` alone does.)
                 if self.type_arity(alias).is_some_and(|arity| arity > 0) {
-                    self.open_vars.extend(free_vars_in(&target));
+                    for v in free_vars_in(&target) {
+                        self.open_vars.insert(v);
+                        self.open_var_names.insert(v, alias.name);
+                    }
                 }
                 Some(Type::type_of(target))
             }

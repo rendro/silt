@@ -1,0 +1,14 @@
+-- cmd: lsp
+-- lsp: hover 10:7
+-- lsp: hover 11:7
+-- Hover on a local bound to a generic value writes what nothing decides
+-- with letters, as hover on a generic function does: `let f = id`,
+-- `let e = []`.
+
+fn id(y) { y }
+fn main() {
+  let f = id
+  let e = []
+  println(f(1))
+  println(f(e))
+}

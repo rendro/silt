@@ -1,0 +1,27 @@
+-- cmd: check
+-- exit: 1
+-- A function that gives a type it holds to a type's `decode` before a
+-- dot (`Box(t).decode(v)`) is named in the note, and the refusal names
+-- the decoder it reaches, `Box.decode`, as through `json.parse`.
+import json
+
+type Box(a) {
+  v: a,
+}
+
+type Holder {
+  s: Set(Int),
+}
+
+fn bm(t) {
+  Box(t).decode(json.Null)
+}
+
+fn bp(t) {
+  json.parse("1", Box(t))
+}
+
+fn main() {
+  println(bm(Holder))
+  println(bp(Holder))
+}

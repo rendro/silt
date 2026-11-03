@@ -171,6 +171,9 @@ pub struct TypeChecker {
     /// names the type alone, which no decoder decodes, whatever the
     /// checker learns of the variables.
     pub(super) open_vars: std::collections::HashSet<TyVar>,
+    /// The generic alias written alone each variable of `open_vars` is
+    /// of (`L` of `id(L)`): what a decoder's refusal names.
+    pub(super) open_var_names: HashMap<TyVar, Symbol>,
     /// The module's functions that can take a parameter for a type
     /// (every function but `main` and a REPL entry's): a use refused as
     /// needing its type in full outside one says that nothing decides
@@ -766,6 +769,7 @@ impl TypeChecker {
             decode_gaps: Vec::new(),
             open_type_arguments: std::collections::HashSet::new(),
             open_vars: std::collections::HashSet::new(),
+            open_var_names: HashMap::new(),
             fn_spans: Vec::new(),
             closure_spans: Vec::new(),
             written_vars: Vec::new(),

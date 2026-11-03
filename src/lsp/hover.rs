@@ -51,7 +51,11 @@ impl Server {
         if let Some(binding) = find_local_binding_at_offset(&doc.locals, cursor)
             && let Some(ref ty) = binding.ty
         {
-            // A local has no documentation of its own.
+            // A local has no documentation of its own. (A local bound to
+            // a generic value, `let f = id`, is general in what nothing
+            // decides: written with letters, `Fn(a) -> a`, as a generic
+            // function's hover is.)
+            let ty = super::ast_walk::written_with_letters(ty);
             let value = format!("```silt\n{ty}\n```");
             return Some(Hover {
                 contents: HoverContents::Markup(MarkupContent {

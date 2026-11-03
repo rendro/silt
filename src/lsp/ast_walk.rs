@@ -41,6 +41,19 @@ pub(super) fn written_general(scheme: &Scheme) -> Type {
     substitute_vars(&scheme.ty, &letters)
 }
 
+/// `ty` with each type variable nothing decided written as a letter, in
+/// the order they first appear (`Fn(a) -> a`).
+pub(super) fn written_with_letters(ty: &Type) -> Type {
+    let letters: std::collections::HashMap<TyVar, Type> = (free_vars_in(ty).into_iter())
+        .zip(b'a'..=b'z')
+        .map(|(var, letter)| {
+            let name = intern(&char::from(letter).to_string());
+            (var, Type::Rigid(RigidId { var, name }))
+        })
+        .collect();
+    substitute_vars(ty, &letters)
+}
+
 // ── AST walkers (offset-based) ─────────────────────────────────────
 
 pub(super) fn token_start(span: &crate::source::Span) -> usize {

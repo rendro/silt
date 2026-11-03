@@ -259,6 +259,15 @@ impl TypeChecker {
         owner: &[crate::session::ModuleId],
         span: Span,
     ) -> Option<Diagnostic> {
+        // (A generic alias written alone that reaches the decoder through
+        // a value, `id(L)`: named as written.)
+        let written = written.or_else(|| {
+            (self.open_type_arguments.contains(&span))
+                .then(|| {
+                    (free_vars_in(ty).iter()).find_map(|v| self.open_var_names.get(v).copied())
+                })
+                .flatten()
+        });
         // A list, an option, a map with String keys or a tuple
         // (`List(Int)`, `(Int, String)`): a decoder that takes any value
         // reads it as the type of a field, each part as one. (A type
