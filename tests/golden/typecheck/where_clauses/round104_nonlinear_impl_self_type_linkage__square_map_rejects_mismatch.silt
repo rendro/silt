@@ -1,6 +1,6 @@
 -- exit: 1
 -- stderr-contains: error[type]
--- stderr-contains: does not implement trait 'Tag'
+-- stderr-contains: does not implement trait `Tag`
 type Square(a) = Map(a, a)
 trait Tag { fn tag(self) -> String }
 trait Tag for Square(a) { fn tag(self) -> String { "square" } }

@@ -1,0 +1,38 @@
+-- A part of a value's type that a later annotation decides (`None`'s,
+-- `[]`'s) is decided for its decoder on every route: given to a function
+-- that hands the value to a method of a trait with json.Decode among
+-- its supertraits (`ag`), through another function (`ag2`), and to the
+-- method directly. (A part a scope's end fixes to `()` stays undecided:
+-- full_type__a_type_nothing_decides_is_refused.)
+import json
+
+type Box(a) {
+  v: a,
+}
+
+trait Dec: json.Decode {
+  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+trait Dec for List(a) where a: json.Decode {}
+
+trait Dec for Box(a) where a: json.Decode {}
+
+fn ag(x, s) {
+  Dec.again(x, s)
+}
+
+fn ag2(x, s) {
+  ag(x, s)
+}
+
+fn main() {
+  let r: Result(List(Int), json.JsonError) = ag2([], "[1]")
+  println(r)
+  let q: Result(Box(Option(String)), json.JsonError) = ag(Box { v: None }, "\{\"v\": \"x\"}")
+  println(q)
+  let p: Result(Box(Option(String)), json.JsonError) = ag2(Box { v: None }, "\{\"v\": \"z\"}")
+  println(p)
+  let w: Result(Box(Option(String)), json.JsonError) = Dec.again(Box { v: None }, "\{\"v\": \"y\"}")
+  println(w)
+}

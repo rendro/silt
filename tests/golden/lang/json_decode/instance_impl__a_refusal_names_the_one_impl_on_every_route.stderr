@@ -1,8 +1,8 @@
-error[type]: type 'Pair(Bool, Int)' does not implement trait 'json.Decode': the only impl is for 'Pair(String, Int)'
+error[type]: type `Pair(Bool, Int)` does not implement trait `json.Decode`: the only impl is for `Pair(String, Int)`
  --> instance_impl__a_refusal_names_the_one_impl_on_every_route.silt:27:27
     |
  27 |   println(json.parse("1", P(Bool)))
-    |                           ^^^^^^^ type 'Pair(Bool, Int)' does not implement trait 'json.Decode': the only impl is for 'Pair(String, Int)'
+    |                           ^^^^^^^ type `Pair(Bool, Int)` does not implement trait `json.Decode`: the only impl is for `Pair(String, Int)`
 
 error[type]: `json.parse` cannot decode `List(Pair(Bool, Int))`: `Pair(Bool, Int)` has no decoder: the only impl is for `Pair(String, Int)`
  --> instance_impl__a_refusal_names_the_one_impl_on_every_route.silt:28:29

@@ -2339,15 +2339,26 @@ impl TypeChecker {
     /// annotation variables are rigid and bounded as the `where` clauses
     /// say, and the body's type is the signature's result.
     pub(super) fn check_body(&mut self, f: &mut FnDecl, sig: &FnSig, env: &mut TypeEnv) {
-        // (`main` and the function of a REPL entry's statements take no
-        // parameter a program gives.)
-        if f.name != intern("main") && !crate::session::is_cell_name(&resolve(f.name)) {
-            self.fn_spans.push(f.span);
-        }
         // (The type variables its signature writes.)
         let mut written = Vec::new();
         for te in (f.params.iter().filter_map(|p| p.ty.as_ref())).chain(f.return_type.as_ref()) {
             super::names::type_vars_of(te, &mut written);
+        }
+        // (`main` and the function of a REPL entry's statements take no
+        // parameter a program gives.)
+        if f.name != intern("main") && !crate::session::is_cell_name(&resolve(f.name)) {
+            let params = (f.params.iter().zip(&sig.params))
+                .map(|(p, ty)| match p.pattern.kind {
+                    PatternKind::Ident(name) => (name, ty.clone()),
+                    _ => (intern("_"), ty.clone()),
+                })
+                .collect();
+            self.fn_spans.push(super::FnSite {
+                span: f.span,
+                name: f.name,
+                params,
+                written: written.clone(),
+            });
         }
         let outer_written = std::mem::replace(&mut self.written_vars, written);
         let params = (f.params.iter())

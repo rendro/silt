@@ -218,6 +218,12 @@ impl TypeChecker {
             *earlier = diagnostic;
             return;
         }
+        // (One error for one refusal at one place: the trait's route said
+        // it there first, `toml.parse(s, P(Bool))`'s "the only impl is
+        // for ...".)
+        if (self.errors.iter()).any(|e| e.span == span && e.message == diagnostic.message) {
+            return;
+        }
         self.errors.push(diagnostic);
     }
 
@@ -390,11 +396,20 @@ impl TypeChecker {
                 let lacks = free_vars_in(ty).is_empty()
                     && super::inference::rigid_vars(ty).is_empty()
                     && !self.has_decode_impl_at(head, args);
+                // (As a decode of it through its trait says: the one impl
+                // there is, if one.)
                 return lacks.then(|| {
-                    let message = format!(
-                        "type '{}' does not implement trait 'json.Decode'",
-                        self.show_type(ty)
-                    );
+                    let message = match self.only_decode_impl(head) {
+                        Some(only) => format!(
+                            "type `{}` does not implement trait `json.Decode`: the only impl is for `{}`",
+                            self.show_type(ty),
+                            self.show_type(&only)
+                        ),
+                        None => format!(
+                            "type '{}' does not implement trait 'json.Decode'",
+                            self.show_type(ty)
+                        ),
+                    };
                     Diagnostic::error(Code::MissingTraitImpl, span, message)
                 });
             }
@@ -588,7 +603,12 @@ impl TypeChecker {
     /// dictionary that needs its type in full is refused
     /// (`refuse_type_without_value`), the variable named by its place
     /// among the type's.
-    fn in_full_refusal(&self, builtin_name: &str, ty: &Type, span: Span) -> Option<Diagnostic> {
+    pub(super) fn in_full_refusal(
+        &self,
+        builtin_name: &str,
+        ty: &Type,
+        span: Span,
+    ) -> Option<Diagnostic> {
         let mut letters = (b'a'..=b'z').map(|letter| char::from(letter).to_string());
         let names: HashMap<TyVar, Type> = (free_vars_in(ty).into_iter())
             .map(|var| {

@@ -2716,7 +2716,7 @@ impl TypeChecker {
                     self.error(
                         Code::MissingTraitImpl,
                         format!(
-                            "type '{}' does not implement trait '{}': the only impl is for '{}'",
+                            "type `{}` does not implement trait `{}`: the only impl is for `{}`",
                             obligated,
                             self.show_bound(trait_name, bound_trait_args),
                             only
@@ -2744,7 +2744,7 @@ impl TypeChecker {
                 self.error(
                     Code::MissingTraitImpl,
                     format!(
-                        "type '{}' does not implement trait '{}': the only impl is for '{}'",
+                        "type `{}` does not implement trait `{}`: the only impl is for `{}`",
                         obligated,
                         self.show_bound(trait_name, bound_trait_args),
                         only

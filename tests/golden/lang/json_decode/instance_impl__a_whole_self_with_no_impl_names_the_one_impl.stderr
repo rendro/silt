@@ -1,0 +1,11 @@
+error[type]: type `Pair(Bool, Int)` does not implement trait `json.Decode`: the only impl is for `Pair(String, Int)`
+ --> instance_impl__a_whole_self_with_no_impl_names_the_one_impl.silt:31:21
+    |
+ 31 |   println(Dec.again(Pair { l: true, r: 1 }, "1"))
+    |                     ^^^^^^^^^^^^^^^^^^^^^^ type `Pair(Bool, Int)` does not implement trait `json.Decode`: the only impl is for `Pair(String, Int)`
+
+error[type]: type `Pair(Bool, Int)` does not implement trait `json.Decode`: the only impl is for `Pair(String, Int)`
+ --> instance_impl__a_whole_self_with_no_impl_names_the_one_impl.silt:32:15
+    |
+ 32 |   println(via(Pair { l: true, r: 1 }, "1"))
+    |               ^^^^^^^^^^^^^^^^^^^^^^ type `Pair(Bool, Int)` does not implement trait `json.Decode`: the only impl is for `Pair(String, Int)`

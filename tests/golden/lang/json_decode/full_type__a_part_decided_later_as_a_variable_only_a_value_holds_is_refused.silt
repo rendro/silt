@@ -1,0 +1,46 @@
+-- cmd: check
+-- exit: 1
+-- A part of a value's type that a later use decides as a type variable
+-- only a value holds (`a` of `y: a`), given through a function to a
+-- decode through a dictionary that carries the type in full, is refused
+-- as needing the type in full, as when the call itself decides it: by an
+-- annotation and by a later use (`same(b.v, Some(y))`). (A part decided
+-- in full later decodes:
+-- full_type__a_part_a_later_annotation_decides_decodes_on_every_route.)
+import json
+
+type Box(a) {
+  v: a,
+}
+
+trait Dec: json.Decode {
+  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+trait Dec for Box(a) where a: json.Decode {}
+
+fn ag(x, s) {
+  Dec.again(x, s)
+}
+
+fn same(a: x, b: x) -> x {
+  a
+}
+
+fn annotated(y: a, s: String) -> Result(Box(Option(a)), json.JsonError) where a: json.Decode {
+  let q = ag(Box { v: None }, s)
+  let r: Result(Box(Option(a)), json.JsonError) = q
+  r
+}
+
+fn used(y: a, s: String) -> Option(a) where a: json.Decode {
+  match ag(Box { v: None }, s) {
+    Ok(b) -> same(b.v, Some(y))
+    Err(_) -> None
+  }
+}
+
+fn main() {
+  println(annotated(1, "\{\"v\": 2}"))
+  println(used(1, "\{\"v\": 2}"))
+}

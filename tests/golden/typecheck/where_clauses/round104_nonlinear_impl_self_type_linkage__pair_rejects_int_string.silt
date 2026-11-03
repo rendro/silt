@@ -1,7 +1,7 @@
 -- Rejected even though Int and String both satisfy Display.
 -- exit: 1
 -- stderr-contains: error[type]
--- stderr-contains: does not implement trait 'Show2'
+-- stderr-contains: does not implement trait `Show2`
 type Pair(a) = (a, a)
 trait Show2 { fn show2(self) -> String }
 trait Show2 for Pair(a) where a: Display {

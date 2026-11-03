@@ -1,8 +1,8 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: type '(Int, Int, Int)' does not implement trait 'T': the only impl is for '(Int, Int)'
--- stderr-contains: type 'Fn(Int, Int) -> Int' does not implement trait 'U': the only impl is for 'Fn(Int) -> Int'
--- stderr-contains: type 'Fn(Int) -> Tag' does not implement trait 'U': the only impl is for 'Fn(Int) -> Int'
+-- stderr-contains: type `(Int, Int, Int)` does not implement trait `T`: the only impl is for `(Int, Int)`
+-- stderr-contains: type `Fn(Int, Int) -> Int` does not implement trait `U`: the only impl is for `Fn(Int) -> Int`
+-- stderr-contains: type `Fn(Int) -> Tag` does not implement trait `U`: the only impl is for `Fn(Int) -> Int`
 -- An impl for one tuple or function type (written through an alias) is no
 -- impl for a tuple of another length or a function of other parameters:
 -- a bound is refused. (A length that differs was not compared.)

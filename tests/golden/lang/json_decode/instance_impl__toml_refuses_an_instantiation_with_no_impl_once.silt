@@ -1,0 +1,23 @@
+-- cmd: check
+-- exit: 1
+-- toml's decoder given an instantiation with no json.Decode impl
+-- (`P(Bool)`, the impl for `Pair(String, Int)`) is one error at its place,
+-- naming the one impl, as json's is.
+import json
+import toml
+
+type Pair(a, b) {
+  l: a,
+  r: b,
+}
+
+type P(a) = Pair(a, Int)
+
+trait json.Decode for P(String) {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) { Ok(Pair { l: "s", r: 1 }) }
+}
+
+fn main() {
+  println(toml.parse("l = 1", P(Bool)))
+  println(json.parse("1", P(Bool)))
+}

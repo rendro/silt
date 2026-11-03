@@ -1,6 +1,6 @@
 -- exit: 1
 -- stderr-contains: error[type]
--- stderr-contains: does not implement trait 'Total'
+-- stderr-contains: does not implement trait `Total`
 -- stderr-contains: (String, String)
 -- stderr-contains: (Int, Int)
 type P2 = (Int, Int)

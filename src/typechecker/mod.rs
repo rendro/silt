@@ -175,7 +175,7 @@ pub struct TypeChecker {
     /// (every function but `main` and a REPL entry's): a use refused as
     /// needing its type in full outside one says that nothing decides
     /// the type (`settle_in_full_refusals`).
-    pub(super) fn_spans: Vec<Span>,
+    pub(super) fn_spans: Vec<FnSite>,
     /// The closures of the module's bodies, each with the type variables
     /// the signature of the function it is in writes: a use in a closure
     /// refused as needing its type in full names no letter the program
@@ -2238,3 +2238,15 @@ mod size_locks;
 
 #[cfg(test)]
 mod tests;
+
+/// A function that can take a parameter for a type, as
+/// `settle_in_full_refusals` reads it: its place, its name, its
+/// parameters with their types, and the type variables its signature
+/// writes.
+#[derive(Clone, Debug)]
+pub(crate) struct FnSite {
+    pub(super) span: Span,
+    pub(super) name: Symbol,
+    pub(super) params: Vec<(Symbol, Type)>,
+    pub(super) written: Vec<Symbol>,
+}

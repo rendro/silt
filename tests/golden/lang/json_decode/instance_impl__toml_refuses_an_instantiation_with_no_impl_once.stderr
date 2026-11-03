@@ -1,0 +1,11 @@
+error[type]: type `Pair(Bool, Int)` does not implement trait `json.Decode`: the only impl is for `Pair(String, Int)`
+ --> instance_impl__toml_refuses_an_instantiation_with_no_impl_once.silt:21:31
+    |
+ 21 |   println(toml.parse("l = 1", P(Bool)))
+    |                               ^^^^^^^ type `Pair(Bool, Int)` does not implement trait `json.Decode`: the only impl is for `Pair(String, Int)`
+
+error[type]: type `Pair(Bool, Int)` does not implement trait `json.Decode`: the only impl is for `Pair(String, Int)`
+ --> instance_impl__toml_refuses_an_instantiation_with_no_impl_once.silt:22:27
+    |
+ 22 |   println(json.parse("1", P(Bool)))
+    |                           ^^^^^^^ type `Pair(Bool, Int)` does not implement trait `json.Decode`: the only impl is for `Pair(String, Int)`
