@@ -218,6 +218,12 @@ impl TypeChecker {
             *earlier = diagnostic;
             return;
         }
+        // (One error for one refusal at one place: the trait's route said
+        // it there first, `toml.parse(s, P(Bool))`'s "the only impl is
+        // for ...".)
+        if (self.errors.iter()).any(|e| e.span == span && e.message == diagnostic.message) {
+            return;
+        }
         self.errors.push(diagnostic);
     }
 
