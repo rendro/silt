@@ -1564,6 +1564,11 @@ impl TypeChecker {
         if self.errors.len() != reported + 1 || !is_ours(&self.errors[reported]) {
             return;
         }
+        // (A part already reported, `(m(Int), m)`: that error is the one.)
+        if self.apply(&given).holds_error() {
+            self.errors.truncate(reported);
+            return;
+        }
         let Some(who) = Self::callee_label(callee) else {
             return;
         };
@@ -2858,20 +2863,26 @@ impl TypeChecker {
         Type::Error
     }
 
-    /// The error of a call that gives type arguments to `callee`, a data
-    /// parameter of the function being checked that holds a type
-    /// (`m(Int)` in `fn dec(s, m)`): it takes none, the whole type is
-    /// passed, as the function's call shows.
+    /// The error of a call that gives type arguments to `callee`, a local
+    /// name that holds a type (`m(Int)` in `fn dec(s, m)`): it takes
+    /// none, the whole type is passed, as the call of the function being
+    /// checked shows where `callee` is its data parameter.
     fn held_type_applied(&self, callee: &Expr, callee_ty: &Type) -> Option<String> {
         let ExprKind::Ident(name) = callee.kind else {
             return None;
         };
-        if !matches!(callee_ty, Type::Generic(head, _) if head.is_builtin(crate::defs::TYPE_OF)) {
+        if callee.res != Some(crate::defs::Res::Local)
+            || !matches!(callee_ty, Type::Generic(head, _) if head.is_builtin(crate::defs::TYPE_OF))
+        {
             return None;
         }
-        let (function, params) = self.checked_fn.as_ref()?;
+        let said =
+            format!("`{name}` holds a type and takes no type arguments: pass the whole type");
+        let Some((function, params)) = self.checked_fn.as_ref() else {
+            return Some(said);
+        };
         if !params.contains(&(name, true)) {
-            return None;
+            return Some(said);
         }
         let args: Vec<String> = (params.iter())
             .map(|(param, _)| match *param == name {
@@ -2879,11 +2890,7 @@ impl TypeChecker {
                 false => resolve(*param).to_string(),
             })
             .collect();
-        Some(format!(
-            "`{name}` holds a type and takes no type arguments: pass the whole type, as in \
-             `{function}({})`",
-            args.join(", ")
-        ))
+        Some(format!("{said}, as in `{function}({})`", args.join(", ")))
     }
 
     /// Whether `e` names a generic type alone (`List`, `Box`, an alias

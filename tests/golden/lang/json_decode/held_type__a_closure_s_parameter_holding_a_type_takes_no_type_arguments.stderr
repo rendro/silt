@@ -1,0 +1,11 @@
+error[type]: `t` holds a type and takes no type arguments: pass the whole type, as in `two(List(Int), s)`
+ --> held_type__a_closure_s_parameter_holding_a_type_takes_no_type_arguments.silt:10:18
+    |
+ 10 |   json.parse(s, (t(Int), t))
+    |                  ^^^^^^ `t` holds a type and takes no type arguments: pass the whole type, as in `two(List(Int), s)`
+
+error[type]: `m` holds a type and takes no type arguments: pass the whole type
+ --> held_type__a_closure_s_parameter_holding_a_type_takes_no_type_arguments.silt:14:35
+    |
+ 14 |   let k = { s, m -> json.parse(s, m(Int)) }
+    |                                   ^^^^^^ `m` holds a type and takes no type arguments: pass the whole type

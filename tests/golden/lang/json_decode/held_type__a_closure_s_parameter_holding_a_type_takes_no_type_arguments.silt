@@ -1,0 +1,17 @@
+-- cmd: check
+-- exit: 1
+-- A closure's parameter that holds a type cannot be given type arguments
+-- either (`m(Int)`); with no function to show a call of, the text stops
+-- at "pass the whole type". In a tuple of types, the one error is the
+-- parameter's (`(t(Int), t)`).
+import json
+
+fn two(t, s) {
+  json.parse(s, (t(Int), t))
+}
+
+fn main() {
+  let k = { s, m -> json.parse(s, m(Int)) }
+  println(k("[1]", List(Int)))
+  println(two(Int, "[1, 2]"))
+}
