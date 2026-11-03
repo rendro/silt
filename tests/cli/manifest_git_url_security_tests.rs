@@ -707,9 +707,9 @@ fn relative_path_git_dependency_resolves() {
     }
     let repo = ws.join("remote");
     let head = create_locallib_repository(&ws, &repo);
-    let locked = fs::canonicalize(&repo).unwrap().display().to_string();
 
-    assert_git_dependency_resolves(&ws, "../remote", &locked, &head);
+    // The lock names it as the manifest does.
+    assert_git_dependency_resolves(&ws, "../remote", "../remote", &head);
 
     let _ = fs::remove_dir_all(&ws);
 }
