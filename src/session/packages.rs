@@ -181,14 +181,17 @@ pub(super) fn modules_named_like_builtins(
 
 /// The error at the start of the module file `file`, named `name`, whose
 /// name has an upper-case letter: a module's name is all lowercase.
+/// The help names the lowercase name, unless that is a builtin module's,
+/// which no file can take.
 pub(super) fn upper_case_file_name(name: &str, file: FileId) -> Diagnostic {
-    Diagnostic::error(
+    let d = Diagnostic::error(
         Code::ModuleNamedLikeBuiltin,
         Span::point(file, 0),
         crate::manifest::invalid_module_name(name),
-    )
-    .with_help(format!(
-        "rename `{name}.silt` to `{}.silt`",
-        name.to_lowercase()
-    ))
+    );
+    let lower = name.to_lowercase();
+    match crate::module::is_builtin_module(&lower) {
+        true => d,
+        false => d.with_help(format!("rename `{name}.silt` to `{lower}.silt`")),
+    }
 }

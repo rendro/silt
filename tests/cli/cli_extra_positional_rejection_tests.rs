@@ -194,7 +194,9 @@ fn no_file_outside_a_package_is_an_error_with_the_usage() {
             "{stderr}"
         );
         assert!(
-            lines.next().is_some_and(|l| l.starts_with(&format!("Usage: silt {command}"))),
+            lines
+                .next()
+                .is_some_and(|l| l.starts_with(&format!("Usage: silt {command}"))),
             "{stderr}"
         );
     }
