@@ -976,9 +976,15 @@ impl TypeChecker {
         for gap in gaps {
             // (What a later use decided of a part, an annotation, is the
             // type's; what a scope's end fixed to `()` is not.)
+            // (Decided in full only: a type variable it was decided as,
+            // `a` that only a value holds, is judged as on the call, as
+            // needing the type in full.)
             let decided: HashMap<TyVar, Type> = (free_vars_in(&gap.subject).into_iter())
                 .filter(|v| !self.reaches_defaulted(&Type::Var(*v)))
                 .map(|v| (v, self.apply(&Type::Var(v))))
+                .filter(|(_, ty)| {
+                    free_vars_in(ty).is_empty() && super::inference::rigid_vars(ty).is_empty()
+                })
                 .collect();
             let subject = substitute_vars(&gap.subject, &decided);
             let ty = crate::types::canonical::canonicalize(self.tables.resolver(), &subject);
