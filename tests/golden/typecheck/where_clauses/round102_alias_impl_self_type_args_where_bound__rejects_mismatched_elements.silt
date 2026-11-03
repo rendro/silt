@@ -2,7 +2,7 @@
 -- time (the run fails with a type error, citing both types).
 -- exit: 1
 -- stderr-contains: error[type]
--- stderr-contains: does not implement trait 'Total'
+-- stderr-contains: does not implement trait `Total`
 -- stderr-contains: List(String)
 -- stderr-contains: List(Int)
 import list

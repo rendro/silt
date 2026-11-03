@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: does not implement trait 'Keys'
+-- stderr-contains: does not implement trait `Keys`
 import map
 type Named(a) = Map(String, a)
 trait Keys { fn keys_count(self) -> Int }

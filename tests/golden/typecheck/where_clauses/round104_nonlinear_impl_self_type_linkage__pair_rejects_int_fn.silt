@@ -1,6 +1,6 @@
 -- exit: 1
 -- stderr-contains: error[type]
--- stderr-contains: does not implement trait 'Show2'
+-- stderr-contains: does not implement trait `Show2`
 -- stderr-contains: the only impl is for `(_, _)`
 type Pair(a) = (a, a)
 trait Show2 { fn show2(self) -> String }

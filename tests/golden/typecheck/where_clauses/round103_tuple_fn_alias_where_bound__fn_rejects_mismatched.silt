@@ -1,6 +1,6 @@
 -- exit: 1
 -- stderr-contains: error[type]
--- stderr-contains: does not implement trait 'Apply1'
+-- stderr-contains: does not implement trait `Apply1`
 -- stderr-contains: Fn(String) -> String
 -- stderr-contains: Fn(Int) -> Int
 type IntOp = Fn(Int) -> Int
