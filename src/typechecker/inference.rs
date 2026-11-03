@@ -246,12 +246,18 @@ impl TypeChecker {
         };
         // (A refusal of `T.decode` names it so.)
         let callee = intern(&format!("{head}.{method}"));
+        // (The decoder a note names, through a function that hands its
+        // type on: `bm` passes it to `Box.decode`.)
+        let asker = Asker {
+            by: Asked::Builtin(callee),
+            passer: None,
+        };
         let ev = self.want(
             Pred::Trait {
                 tr,
                 args: Vec::new(),
                 subject: recv.clone(),
-                asker: None,
+                asker: Some(asker),
             },
             Origin {
                 span,
