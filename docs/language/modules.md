@@ -230,7 +230,9 @@ At the top level there is no shadowing: an import and a top-level `fn`,
 `type`, `let` or trait may not bind the same name, and neither may two
 imports (`import a.{ x }` and `import b.{ x }`, or two `import m as n` with
 the same alias). Such a program is rejected with an error naming both
-declarations.
+declarations. An import alias cannot be the name of a builtin module:
+`import a as list` is an error, since `list.` always means the builtin
+`list`.
 
 ```silt
 import other -- other.silt: pub fn double(x) { x * 2 }
