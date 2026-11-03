@@ -204,6 +204,7 @@ impl TypeChecker {
                     subject,
                     written,
                     passer,
+                    through: Vec::new(),
                     body,
                     in_body: self.body_owner,
                     origin,

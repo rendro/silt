@@ -176,6 +176,10 @@ pub struct TypeChecker {
     /// needing its type in full outside one says that nothing decides
     /// the type (`settle_in_full_refusals`).
     pub(super) fn_spans: Vec<Span>,
+    /// The definitions a call passes a decoded type to on the way to the
+    /// one whose body decodes it, by the argument that gives the type
+    /// (`boxed` of `twice(boxed, Bool)`): links of a note.
+    pub(super) passed_to: HashMap<Span, Vec<Symbol>>,
     /// The function whose body is being checked, and the names of its
     /// parameters (`_` for one bound by a pattern): what an error about a
     /// parameter writes as a call of it.
@@ -728,6 +732,7 @@ impl TypeChecker {
             open_type_arguments: std::collections::HashSet::new(),
             open_vars: std::collections::HashSet::new(),
             fn_spans: Vec::new(),
+            passed_to: HashMap::new(),
             checked_fn: None,
             bound_askers: HashMap::new(),
             decoded_at: HashMap::new(),

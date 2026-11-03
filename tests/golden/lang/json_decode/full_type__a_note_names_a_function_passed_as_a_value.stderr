@@ -1,0 +1,14 @@
+error[type]: type 'Box(Bool)' does not implement trait 'json.Decode'
+ --> full_type__a_note_names_a_function_passed_as_a_value.silt:35:24
+    |
+ 35 |   println(twice(boxed, Bool))
+    |                        ^^^^ type 'Box(Bool)' does not implement trait 'json.Decode'
+  = note: `twice` passes it to `boxed`, which passes it to `json.parse`
+
+error[type]: `json.parse` cannot decode `Holder`: field `s` has type `Set(Int)`, which has no decoder
+ --> full_type__a_note_names_a_function_passed_as_a_value.silt:36:23
+    |
+ 36 |   println(twice(load, Holder))
+    |                       ^^^^^^ `json.parse` cannot decode `Holder`: field `s` has type `Set(Int)`, which has no decoder
+  = note: `twice` passes it to `load`, which passes it to `json.parse`
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
