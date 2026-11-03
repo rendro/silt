@@ -251,6 +251,17 @@ impl Drop for ThinSlice {
         if self.is_static() || self.header().count.fetch_sub(1, Ordering::Release) != 1 {
             return;
         }
+        self.drop_last();
+    }
+}
+
+impl ThinSlice {
+    /// The last holder drops the values and frees the block. (Out of
+    /// line, as `Arc`'s is: inlined, it made the drop of every value,
+    /// an Int's too, save and restore six registers.)
+    #[cold]
+    #[inline(never)]
+    fn drop_last(&mut self) {
         fence(Ordering::Acquire);
         // SAFETY: this was the last holder: nobody else reads the
         // values, which are initialized, and the block was allocated
