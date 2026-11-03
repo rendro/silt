@@ -1,0 +1,33 @@
+-- cmd: check
+-- exit: 1
+-- A value of a type whose json.Decode impl is for another instantiation
+-- (`Pair(Bool, Int)`, the impl for `Pair(String, Int)`), given whole to a
+-- method of a trait with json.Decode as a supertrait, directly or through
+-- a function's bound, is refused naming the one impl, as a decode of the
+-- type does.
+import json
+
+type Pair(a, b) {
+  l: a,
+  r: b,
+}
+
+trait json.Decode for Pair(String, Int) {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) { Ok(Pair { l: "s", r: 1 }) }
+}
+
+trait Dec: json.Decode {
+  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+trait Dec for Pair(a, Int) where a: json.Decode {}
+
+fn via(x: t, s) -> Result(t, json.JsonError) where t: Dec {
+  Dec.again(x, s)
+}
+
+fn main() {
+  println(Dec.again(Pair { l: "x", r: 1 }, "1"))
+  println(Dec.again(Pair { l: true, r: 1 }, "1"))
+  println(via(Pair { l: true, r: 1 }, "1"))
+}

@@ -1,8 +1,8 @@
-error[type]: type 'Box(Bool)' does not implement trait 'json.Decode'
+error[type]: type `Box(Bool)` does not implement trait `json.Decode`: the only impl is for `Box(Int)`
  --> full_type__a_note_names_a_function_passed_as_a_value.silt:40:24
     |
  40 |   println(twice(boxed, Bool))
-    |                        ^^^^ type 'Box(Bool)' does not implement trait 'json.Decode'
+    |                        ^^^^ type `Box(Bool)` does not implement trait `json.Decode`: the only impl is for `Box(Int)`
   = note: `twice` passes it to `boxed`, which passes it to `json.parse`
 
 error[type]: `json.parse` cannot decode `Holder`: field `s` has type `Set(Int)`, which has no decoder
@@ -13,11 +13,11 @@ error[type]: `json.parse` cannot decode `Holder`: field `s` has type `Set(Int)`,
   = note: `twice` passes it to `load`, which passes it to `json.parse`
   = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
-error[type]: type 'Box(Bool)' does not implement trait 'json.Decode'
+error[type]: type `Box(Bool)` does not implement trait `json.Decode`: the only impl is for `Box(Int)`
  --> full_type__a_note_names_a_function_passed_as_a_value.silt:42:32
     |
  42 |   println(thrice(twice, boxed, Bool))
-    |                                ^^^^ type 'Box(Bool)' does not implement trait 'json.Decode'
+    |                                ^^^^ type `Box(Bool)` does not implement trait `json.Decode`: the only impl is for `Box(Int)`
   = note: `thrice` passes it to `twice`, which passes it to `boxed`, which passes it to `json.parse`
 
 error[type]: `json.parse` cannot decode `Holder`: field `s` has type `Set(Int)`, which has no decoder

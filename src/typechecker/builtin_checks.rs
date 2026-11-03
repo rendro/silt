@@ -390,11 +390,20 @@ impl TypeChecker {
                 let lacks = free_vars_in(ty).is_empty()
                     && super::inference::rigid_vars(ty).is_empty()
                     && !self.has_decode_impl_at(head, args);
+                // (As a decode of it through its trait says: the one impl
+                // there is, if one.)
                 return lacks.then(|| {
-                    let message = format!(
-                        "type '{}' does not implement trait 'json.Decode'",
-                        self.show_type(ty)
-                    );
+                    let message = match self.only_decode_impl(head) {
+                        Some(only) => format!(
+                            "type `{}` does not implement trait `json.Decode`: the only impl is for `{}`",
+                            self.show_type(ty),
+                            self.show_type(&only)
+                        ),
+                        None => format!(
+                            "type '{}' does not implement trait 'json.Decode'",
+                            self.show_type(ty)
+                        ),
+                    };
                     Diagnostic::error(Code::MissingTraitImpl, span, message)
                 });
             }
