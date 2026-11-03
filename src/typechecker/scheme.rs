@@ -741,7 +741,6 @@ impl TypeChecker {
             let unwritten =
                 function.filter(|site| letter.is_some_and(|l| !site.written.contains(&l)));
             if closure || function.is_none() || unwritten.is_some() {
-                let head = in_full_head(&error.message);
                 let callee = in_full_callee(&error.message);
                 let what = match callee {
                     Some(callee) => format!("this use of '{callee}'"),
@@ -751,15 +750,7 @@ impl TypeChecker {
                     format!("cannot infer the type {what} needs to implement trait 'json.Decode'");
                 error.code = Code::AmbiguousType;
                 error.help = vec!["annotate the value it is given".to_string()];
-                if closure {
-                    let example = head.map_or_else(|| "Box(t)".to_string(), |h| format!("{h}(t)"));
-                    error.help.push(format!(
-                        "the impl is picked from a type, not from a value: take the type as a \
-                         parameter, as in `{{ t -> json.parse(s, {example}) }}`"
-                    ));
-                } else if let Some(example) =
-                    unwritten.and_then(|site| self.with_type_parameter(site))
-                {
+                if let Some(example) = unwritten.and_then(|site| self.with_type_parameter(site)) {
                     error.help.push(format!(
                         "the impl is picked from a type, not from a value: take the type as a \
                          parameter, as in `{example}`"
@@ -869,28 +860,7 @@ impl TypeChecker {
                 "annotate the value it is given, `let x: {} = ...`",
                 self.show_type(instance)
             );
-            let diagnostic = Diagnostic::error(Code::AmbiguousType, origin.span, message);
-            let diagnostic = diagnostic.with_help(help);
-            // (Its arguments are a closure's parameter's: the impl would be
-            // picked from a value. A type the closure takes picks it.)
-            let from_value = (self.closure_param_vars.iter()).any(|v| {
-                free_vars_in(&self.apply(&Type::Var(*v)))
-                    .iter()
-                    .any(|w| free_vars_in(&subject_ty).contains(w))
-            });
-            if !from_value {
-                return diagnostic;
-            }
-            let example = match &subject_ty {
-                Type::Generic(head, args) if args.len() == 1 => {
-                    format!("{}(t)", self.show_type(&Type::Generic(*head, Vec::new())))
-                }
-                _ => "Box(t)".to_string(),
-            };
-            return diagnostic.with_help(format!(
-                "the impl is picked from a type, not from a value: take the type as a parameter, \
-                 as in `{{ t -> json.parse(s, {example}) }}`"
-            ));
+            return Diagnostic::error(Code::AmbiguousType, origin.span, message).with_help(help);
         }
         let message = format!(
             "cannot decide which impl of '{}' for '{}' {what} means: its trait argument is not \
@@ -1311,12 +1281,4 @@ fn in_full_callee(message: &str) -> Option<String> {
 fn in_full_letter(message: &str) -> Option<Symbol> {
     let (_, rest) = message.split_once(" in full here: `")?;
     rest.split('`').next().map(intern)
-}
-
-/// The head of the type an in-full refusal names, if it names one with
-/// type arguments: `Box` of "needs the type `Box(a)` in full".
-fn in_full_head(message: &str) -> Option<String> {
-    let (_, rest) = message.split_once("needs the type `")?;
-    let (head, _) = rest.split_once('(')?;
-    (!head.contains('`')).then(|| head.to_string())
 }

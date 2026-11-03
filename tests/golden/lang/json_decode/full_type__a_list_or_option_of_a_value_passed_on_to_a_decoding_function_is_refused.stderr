@@ -1,23 +1,15 @@
 error[type]: cannot infer the type this use of 'twice' needs to implement trait 'json.Decode'
- --> full_type__a_list_or_option_of_a_value_passed_on_to_a_decoding_function_is_refused.silt:25:9
+ --> full_type__a_list_or_option_of_a_value_passed_on_to_a_decoding_function_is_refused.silt:26:9
     |
- 25 |   twice([x], s)
+ 26 |   twice([x], s)
     |         ^^^ cannot infer the type this use of 'twice' needs to implement trait 'json.Decode'
   = help: annotate the value it is given
   = help: the impl is picked from a type, not from a value: take the type as a parameter, as in `fn deep(x: t, s, type t) where t: json.Decode`
 
 error[type]: cannot infer the type this use of 'twice' needs to implement trait 'json.Decode'
- --> full_type__a_list_or_option_of_a_value_passed_on_to_a_decoding_function_is_refused.silt:29:9
+ --> full_type__a_list_or_option_of_a_value_passed_on_to_a_decoding_function_is_refused.silt:30:9
     |
- 29 |   twice(Some(x), s)
+ 30 |   twice(Some(x), s)
     |         ^^^^^^^ cannot infer the type this use of 'twice' needs to implement trait 'json.Decode'
   = help: annotate the value it is given
   = help: the impl is picked from a type, not from a value: take the type as a parameter, as in `fn maybe(x: t, s, type t) where t: json.Decode`
-
-error[type]: cannot infer the type this use of 'twice' needs to implement trait 'json.Decode'
- --> full_type__a_list_or_option_of_a_value_passed_on_to_a_decoding_function_is_refused.silt:36:24
-    |
- 36 |   let k = { x -> twice([x], "[3]") }
-    |                        ^^^ cannot infer the type this use of 'twice' needs to implement trait 'json.Decode'
-  = help: annotate the value it is given
-  = help: the impl is picked from a type, not from a value: take the type as a parameter, as in `{ t -> json.parse(s, List(t)) }`

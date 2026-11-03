@@ -2968,6 +2968,30 @@ impl TypeChecker {
         Some(format!("{said}, as in `{function}({})`", args.join(", ")))
     }
 
+    /// Whether what a value owes since `from` has a decode that only the
+    /// types its parameters' values take decide: a trait with
+    /// `json.Decode` among its supertraits owed of a type with a part
+    /// still unknown (the impl it picks is the one of that part), or
+    /// `json.Decode` of an unknown part asked by an impl's header whose
+    /// dictionary carries its type in full. Generalised, such a closure
+    /// is refused; of one type, its later call decides it.
+    fn decodes_by_its_values(&self, from: usize) -> bool {
+        (self.wanted[from.min(self.wanted.len())..].iter())
+            .filter(|wanted| !wanted.solved)
+            .any(|wanted| match &wanted.goal {
+                Goal::Pred(Pred::Trait { tr, subject, .. }) => {
+                    let subject = self.apply(subject);
+                    let open = !free_vars_in(&subject).is_empty();
+                    let compound = !matches!(subject, Type::Var(_));
+                    let full = (wanted.origin.header).is_some_and(|(key, _)| {
+                        Self::is_decode(*tr) && self.carries_full_type(key)
+                    });
+                    open && ((compound && self.implies_decode(*tr)) || full)
+                }
+                _ => false,
+            })
+    }
+
     /// Whether `e` names a generic type alone (`List`, `Box`, an alias
     /// `L` of `type L(a) = List(a)`).
     fn names_generic_type(&mut self, e: &Expr) -> bool {
@@ -4775,7 +4799,6 @@ impl TypeChecker {
                         ty
                     })
                     .collect();
-                (self.closure_param_vars).extend(param_types.iter().flat_map(free_vars_in));
 
                 // A lambda is its own `?`/`return`
                 // boundary — the VM's Op::QuestionMark pops exactly ONE
@@ -5626,6 +5649,9 @@ impl TypeChecker {
                 if is_value {
                     self.enter_level();
                 }
+                // (What the value owes from here: a closure whose decode
+                // only its later call decides stays of one type.)
+                let owed_from = self.wanted.len();
                 // In `let f = { … }` the closure is `f` inside itself: of
                 // one type there, the closure's, which is generalised
                 // only after it is checked.
@@ -5666,7 +5692,23 @@ impl TypeChecker {
                 // element type is shared across all uses.
                 match &pattern.kind {
                     PatternKind::Ident(name) => {
-                        let scheme = if is_value {
+                        // A closure whose decode picks an impl or needs its
+                        // type in full by a type only its parameters' values
+                        // give (`{ x -> twice(Box { v: x }, s) }`): of one
+                        // type, which its later call decides, as a value's
+                        // later use decides a part of the value's type.
+                        let decided_later = matches!(value.kind, ExprKind::Lambda { .. })
+                            && self.decodes_by_its_values(owed_from);
+                        let scheme = if is_value && decided_later {
+                            self.exit_level();
+                            // (Its variables are the scope's: a later `let`
+                            // of a value holding it, `[k]`, is not general
+                            // in them either.)
+                            let ty = self.apply(&val_ty);
+                            let level = self.tables.vars.level();
+                            self.tables.vars.lower(&ty, level);
+                            Scheme::mono(ty)
+                        } else if is_value {
                             self.exit_level();
                             self.passing_on =
                                 matches!(value.kind, ExprKind::Lambda { .. }).then_some(*name);

@@ -192,10 +192,6 @@ pub struct TypeChecker {
     /// The name each argument that is a name writes, by its place: a
     /// function a call passes on as a value is a link of a note.
     pub(super) arg_names: HashMap<Span, Symbol>,
-    /// The type variables of closures' parameters: an impl a use cannot
-    /// decide from them is decided from a value's type, which a help
-    /// names (`undecided_trait_args`).
-    pub(super) closure_param_vars: std::collections::HashSet<TyVar>,
     /// The type variables a scope's end fixed to `()` because nothing
     /// decided them (`println([])`): no decoder is given such a part.
     pub(super) defaulted_vars: std::collections::HashSet<TyVar>,
@@ -775,7 +771,6 @@ impl TypeChecker {
             written_vars: Vec::new(),
             passed_to: HashMap::new(),
             arg_names: HashMap::new(),
-            closure_param_vars: std::collections::HashSet::new(),
             defaulted_vars: std::collections::HashSet::new(),
             decoder_uses: Vec::new(),
             decode_places: std::collections::HashSet::new(),
