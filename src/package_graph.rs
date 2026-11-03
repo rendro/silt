@@ -357,8 +357,13 @@ impl Resolver<'_> {
                 )
             }
             Dependency::Git { url, ref_spec } => {
-                let url = resolve_git_url(url, &base);
-                let commit = match self.pinned_commit(&url, ref_spec) {
+                let written = url;
+                let url = resolve_git_url(written, &base);
+                // The lock names the repository as the manifest does: a
+                // relative local URL relative to the project's directory,
+                // so a package moved together with it keeps its pin.
+                let lock_url = locked_git_url(written, &url, &self.nodes[0].root);
+                let commit = match self.pinned_commit(&lock_url, ref_spec) {
                     Some(commit) => commit,
                     None if self.policy == LockPolicy::ReadOnly && self.existing.is_some() => {
                         self.diagnostics.push(stale_diagnostic(
@@ -399,7 +404,7 @@ impl Resolver<'_> {
                     LockPolicy::Refresh => (git::fetch_afresh(&url, &commit), None),
                     LockPolicy::Update | LockPolicy::ReadOnly => (
                         git::fetch_to_cache(&url, &commit),
-                        self.locked_checksum(&url, &commit),
+                        self.locked_checksum(&lock_url, &commit),
                     ),
                 };
                 let root = match fetched {
@@ -422,7 +427,7 @@ impl Resolver<'_> {
                     other => other.clone(),
                 };
                 let locked = LockedSource::Git {
-                    url: url.clone(),
+                    url: lock_url,
                     ref_spec,
                     resolved_sha: commit.clone(),
                 };
@@ -722,6 +727,22 @@ fn resolve_git_url(url: &str, base: &Path) -> String {
     }
 }
 
+/// The URL the lock writes for a git dependency written `written` in a
+/// manifest and resolved to `resolved`: a relative local URL (`./x`,
+/// `../x`) relative to the project's directory `project`, as a path
+/// dependency is, any other URL as it is.
+fn locked_git_url(written: &str, resolved: &str, project: &Path) -> String {
+    if !(written.starts_with("./") || written.starts_with("../")) {
+        return written.to_string();
+    }
+    match crate::lockfile::relative_path(project, Path::new(resolved)) {
+        Some(rel) if rel.starts_with("..") => rel,
+        Some(rel) if rel == "." => "./".to_string(),
+        Some(rel) => format!("./{rel}"),
+        None => resolved.to_string(),
+    }
+}
+
 /// A git failure at the dependency `key` on `url` at `ref_spec`: git's
 /// message, then its own output as notes, each line marked as git's.
 fn git_diagnostic(at: Span, key: &str, url: &str, ref_spec: &GitRef, err: &GitError) -> Diagnostic {
@@ -837,6 +858,25 @@ mod tests {
         assert_eq!(resolve_git_url("/abs/r", base), "/abs/r");
         assert_eq!(
             resolve_git_url("https://example.com/r.git", base),
+            "https://example.com/r.git"
+        );
+    }
+
+    #[test]
+    fn a_relative_git_url_is_locked_relative_to_the_project() {
+        let project = Path::new("/srv/app");
+        let resolved = |url: &str| resolve_git_url(url, project);
+        assert_eq!(
+            locked_git_url("../repo", &resolved("../repo"), project),
+            "../repo"
+        );
+        assert_eq!(
+            locked_git_url("./vendor/r", &resolved("./vendor/r"), project),
+            "./vendor/r"
+        );
+        assert_eq!(locked_git_url("/abs/r", "/abs/r", project), "/abs/r");
+        assert_eq!(
+            locked_git_url("https://example.com/r.git", "https://example.com/r.git", project),
             "https://example.com/r.git"
         );
     }

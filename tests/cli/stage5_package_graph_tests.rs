@@ -320,9 +320,52 @@ fn a_relative_git_url_resolves_against_the_manifest_from_another_directory() {
     assert_eq!(stdout(&out), "from lib\n");
     let lock = fs::read_to_string(app.join("silt.lock")).unwrap();
     assert!(
-        lock.contains(&format!("git = {}", toml_path(&ws.join("lib"))))
-            && lock.contains(&format!("rev = \"{head}\"")),
-        "the lock records the URL made absolute and the commit:\n{lock}"
+        lock.contains("git = \"../lib\"") && lock.contains(&format!("rev = \"{head}\"")),
+        "the lock records the URL as written and the commit:\n{lock}"
+    );
+    let _ = fs::remove_dir_all(&ws);
+}
+
+/// A package moved together with the repository its relative git URL
+/// names keeps its pin: the moved copy runs the pinned commit although
+/// the branch has moved on, and its lock is not rewritten. FAILS on the
+/// base: the lock held the URL made absolute, so the moved copy had no
+/// pin, resolved the branch again and ran the new commit.
+#[test]
+fn a_moved_package_keeps_the_pin_of_a_relative_git_url() {
+    let ws = fresh_workspace("rel_git_moved");
+    if !git_installed() {
+        return;
+    }
+    sibling_repository(&ws, "pub fn v() { \"one\" }\n");
+    let app = ws.join("app");
+    write_package(
+        &app,
+        "app",
+        &["remote = { git = \"../lib\", branch = \"main\" }"],
+        "main.silt",
+        "import remote\nfn main() { println(remote.v()) }\n",
+    );
+    let first = silt(&ws, &app, &["run"]);
+    assert_eq!(stdout(&first), "one\n", "{}", stderr(&first));
+    let lock = fs::read_to_string(app.join("silt.lock")).unwrap();
+
+    let moved = ws.join("moved");
+    fs::create_dir_all(&moved).unwrap();
+    fs::rename(&app, moved.join("app")).unwrap();
+    fs::rename(ws.join("lib"), moved.join("lib")).unwrap();
+    let lib = moved.join("lib");
+    fs::write(lib.join("src/lib.silt"), "pub fn v() { \"two\" }\n").unwrap();
+    commit_all(&ws, &lib, "two");
+
+    let out = silt(&ws, &moved.join("app"), &["run"]);
+
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "one\n", "the pinned commit runs");
+    assert_eq!(
+        fs::read_to_string(moved.join("app/silt.lock")).unwrap(),
+        lock,
+        "the lock is not rewritten"
     );
     let _ = fs::remove_dir_all(&ws);
 }
