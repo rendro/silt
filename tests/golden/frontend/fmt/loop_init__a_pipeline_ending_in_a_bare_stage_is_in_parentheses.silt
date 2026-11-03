@@ -1,0 +1,50 @@
+-- cmd: fmt
+-- A loop whose last value ends in a stage of a pipeline written as a
+-- bare name, which the body's `{` could follow as a trailing closure,
+-- has that value in parentheses, as a match's scrutinee: one spelling,
+-- with or without them in the source. A value that a `,` follows, and
+-- a stage that is called, keep their form. A comment in front of the
+-- value goes inside the parentheses.
+import list
+
+fn main() {
+  let xs = [1, 2]
+  let a = loop n = (xs |> list.length) {
+    match n {
+      0 -> 0
+      _ -> loop(n - 1)
+    }
+  }
+  let b = loop n = xs |> list.length {
+    match n {
+      0 -> 0
+      _ -> loop(n - 1)
+    }
+  }
+  let c = loop ys = xs |> list.reverse, n = xs |> list.length {
+    match n {
+      0 -> list.length(ys)
+      _ -> loop(ys, n - 1)
+    }
+  }
+  let d = loop n = xs |> list.take(1) {
+    match n {
+      [] -> 0
+      _ -> loop([])
+    }
+  }
+  let e = loop n = {- first -} xs |> list.length {
+    match n {
+      0 -> 0
+      _ -> loop(n - 1)
+    }
+  }
+  let f = loop n = -- c
+    xs |> list.length {
+    match n {
+      0 -> 0
+      _ -> loop(n - 1)
+    }
+  }
+  println(a + b + c + d + e + f)
+}
