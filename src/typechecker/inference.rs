@@ -2334,6 +2334,11 @@ impl TypeChecker {
     /// annotation variables are rigid and bounded as the `where` clauses
     /// say, and the body's type is the signature's result.
     pub(super) fn check_body(&mut self, f: &mut FnDecl, sig: &FnSig, env: &mut TypeEnv) {
+        // (`main` and the function of a REPL entry's statements take no
+        // parameter a program gives.)
+        if f.name != intern("main") && !crate::session::is_cell_name(&resolve(f.name)) {
+            self.fn_spans.push(f.span);
+        }
         let uses = std::mem::take(&mut self.full_type_uses);
         self.check_body_in(f, sig, env);
         // (As the body left the receivers' types.)

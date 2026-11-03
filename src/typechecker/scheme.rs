@@ -684,6 +684,53 @@ impl TypeChecker {
     /// { v: [] }, s)`: `Box(List(a))`) is the one error; else this one,
     /// in the place of what a decoder said of the type the scope's end
     /// picked for the part (`toml.parse` of `R(())`), which nobody wrote.
+    /// Settle each use refused as needing its type in full (`twice` needs
+    /// the type `List(a)` in full here) where no parameter can take the
+    /// type: in a function whose return type the same type leaves
+    /// undecided (`fn f(s) { twice([], s) }`), that error is the one; in
+    /// `main` (a closure in it too) and outside any function (a top-level
+    /// `let`, the REPL), nothing decides the type, and the use says so as
+    /// one that nothing decides does.
+    pub(super) fn settle_in_full_refusals(&mut self) {
+        let within = |outer: Span, inner: Span| {
+            outer.file == inner.file && outer.start <= inner.start && inner.end <= outer.end
+        };
+        let return_errors: Vec<Span> = (self.errors.iter())
+            .filter(|e| {
+                e.code == Code::InvalidTypeAnnotation
+                    && e.message.contains("and no parameter decides")
+            })
+            .map(|e| e.span)
+            .collect();
+        let fns = std::mem::take(&mut self.fn_spans);
+        let mut kept = Vec::new();
+        for mut error in std::mem::take(&mut self.errors) {
+            let in_full =
+                error.code == Code::InvalidMethodCall && error.message.contains(" in full here: ");
+            if !in_full {
+                kept.push(error);
+                continue;
+            }
+            let span = error.span;
+            if return_errors.iter().any(|at| within(*at, span)) {
+                continue;
+            }
+            if !fns.iter().any(|at| within(*at, span)) {
+                let callee = in_full_callee(&error.message);
+                let what = match callee {
+                    Some(callee) => format!("this use of '{callee}'"),
+                    None => "this".to_string(),
+                };
+                error.message =
+                    format!("cannot infer the type {what} needs to implement trait 'json.Decode'");
+                error.code = Code::AmbiguousType;
+                error.help = vec!["annotate the value it is given".to_string()];
+            }
+            kept.push(error);
+        }
+        self.errors = kept;
+    }
+
     pub(super) fn settle_undecided_decodes(&mut self) {
         for (span, error) in std::mem::take(&mut self.undecided_decodes) {
             let in_full = |e: &Diagnostic| {
@@ -1147,4 +1194,15 @@ fn take_pred(
             owners.push(owner);
         }
     }
+}
+
+/// The function or method an in-full refusal names: `twice` of
+/// "`twice` needs the type ...", `again` of "method 'again' of trait
+/// 'Dec' needs the type ...".
+fn in_full_callee(message: &str) -> Option<String> {
+    if let Some(rest) = message.strip_prefix('`') {
+        return rest.split('`').next().map(str::to_string);
+    }
+    let rest = message.strip_prefix("method '")?;
+    rest.split('\'').next().map(str::to_string)
 }

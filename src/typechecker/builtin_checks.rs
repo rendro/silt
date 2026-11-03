@@ -360,29 +360,12 @@ impl TypeChecker {
             // argument's type): refused as a dictionary that needs its
             // type in full is (`refuse_type_without_value`), the variable
             // named by its place among the type's.
-            if open && !args.is_empty() && !self.holds_open_vars(ty) {
-                let mut letters = (b'a'..=b'z').map(|letter| char::from(letter).to_string());
-                let names: HashMap<TyVar, Type> = (free_vars_in(ty).into_iter())
-                    .map(|var| {
-                        let name = intern(&letters.next().unwrap_or_else(|| "_".to_string()));
-                        (var, Type::Rigid(crate::types::RigidId { var, name }))
-                    })
-                    .collect();
-                let unheld = (free_vars_in(ty).into_iter())
-                    .find(|v| !self.held_by_param(*v))
-                    .and_then(|v| names.get(&v).cloned());
-                if let Some(Type::Rigid(r)) = unheld {
-                    let name = r.name;
-                    return refusal(
-                        Code::InvalidMethodCall,
-                        format!(
-                            "`{builtin_name}` needs the type `{}` in full here: `{name}` is known \
-                             only by its type",
-                            self.show_type(&substitute_vars(ty, &names))
-                        ),
-                        &format!("take the type as a parameter, `type {name}`"),
-                    );
-                }
+            if open
+                && !args.is_empty()
+                && !self.holds_open_vars(ty)
+                && let Some(refusal) = self.in_full_refusal(builtin_name, ty, span)
+            {
+                return Some(refusal);
             }
             if open {
                 let kind = match enum_type {
@@ -548,6 +531,37 @@ impl TypeChecker {
         None
     }
 
+    /// The refusal of a use at `span` that gives `builtin_name` the type
+    /// `ty` with a variable only a value's type knows (`Box { v: x }`
+    /// given to a function that decodes its argument's type), as a
+    /// dictionary that needs its type in full is refused
+    /// (`refuse_type_without_value`), the variable named by its place
+    /// among the type's.
+    fn in_full_refusal(&self, builtin_name: &str, ty: &Type, span: Span) -> Option<Diagnostic> {
+        let mut letters = (b'a'..=b'z').map(|letter| char::from(letter).to_string());
+        let names: HashMap<TyVar, Type> = (free_vars_in(ty).into_iter())
+            .map(|var| {
+                let name = intern(&letters.next().unwrap_or_else(|| "_".to_string()));
+                (var, Type::Rigid(crate::types::RigidId { var, name }))
+            })
+            .collect();
+        let unheld = (free_vars_in(ty).into_iter())
+            .find(|v| !self.held_by_param(*v))
+            .and_then(|v| names.get(&v).cloned());
+        let Some(Type::Rigid(r)) = unheld else {
+            return None;
+        };
+        let name = r.name;
+        let message = format!(
+            "`{builtin_name}` needs the type `{}` in full here: `{name}` is known only by its type",
+            self.show_type(&substitute_vars(ty, &names))
+        );
+        Some(
+            Diagnostic::error(Code::InvalidMethodCall, span, message)
+                .with_help(format!("take the type as a parameter, `type {name}`")),
+        )
+    }
+
     /// The error of the decoder `builtin`, which decodes as `decoding`
     /// says, given `whole` at `span`, if `part` of it, a type its list,
     /// option, map or tuple holds, has no decoder: a record or enum type
@@ -609,7 +623,13 @@ impl TypeChecker {
                     family,
                     primitives: true,
                 };
-                self.decode_refusal(builtin, decoding, None, part, owner, span)
+                let refusal = self.decode_refusal(builtin, decoding, None, part, owner, span)?;
+                // (Needed in full: the whole type the use gives, its list
+                // too, `List(Box(Option(a)))`.)
+                match refusal.code == Code::InvalidMethodCall {
+                    true => self.in_full_refusal(builtin, whole, span).or(Some(refusal)),
+                    false => Some(refusal),
+                }
             }
             _ => {
                 let help = match leaf {

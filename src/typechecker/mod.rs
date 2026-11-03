@@ -171,6 +171,11 @@ pub struct TypeChecker {
     /// names the type alone, which no decoder decodes, whatever the
     /// checker learns of the variables.
     pub(super) open_vars: std::collections::HashSet<TyVar>,
+    /// The module's functions that can take a parameter for a type
+    /// (every function but `main` and a REPL entry's): a use refused as
+    /// needing its type in full outside one says that nothing decides
+    /// the type (`settle_in_full_refusals`).
+    pub(super) fn_spans: Vec<Span>,
     /// What each body asks `json.Decode` of its annotation variable for
     /// (`Asked`), by the variable's representative.
     pub(super) bound_askers: HashMap<TyVar, Asker>,
@@ -718,6 +723,7 @@ impl TypeChecker {
             decode_gaps: Vec::new(),
             open_type_arguments: std::collections::HashSet::new(),
             open_vars: std::collections::HashSet::new(),
+            fn_spans: Vec::new(),
             bound_askers: HashMap::new(),
             decoded_at: HashMap::new(),
             bound_within: HashMap::new(),
@@ -2061,6 +2067,7 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
     checker.settle_decode_gaps();
     checker.settle_encode_owners();
     checker.settle_undecided_decodes();
+    checker.settle_in_full_refusals();
     checker.record_def_owners(program, &env);
     checker.drop_errors_of_refused_calls();
     checker.report_private_in_schemes(program, &env);
