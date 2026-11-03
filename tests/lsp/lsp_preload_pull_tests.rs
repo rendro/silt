@@ -199,16 +199,23 @@ fn the_preload_reads_files_only() {
         .collect();
     names.sort();
     assert_eq!(names, ["first_kind_sym", "last_kind_sym"], "{resp}");
+    // The line was written before the last file was indexed; it reaches
+    // the client's copy of stderr a little later. (Root reads every
+    // folder: there is no line then.)
     let readable = fs::read_dir(dir.join("p_shut")).is_ok();
+    let start = std::time::Instant::now();
+    let logged = |stderr: &str| stderr.contains("silt-lsp: preload: cannot read dir");
+    while !readable
+        && !logged(&client.stderr())
+        && start.elapsed() < std::time::Duration::from_secs(20)
+    {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
     let stderr = client.stderr();
     client.shutdown();
     let _ = fs::set_permissions(dir.join("p_shut"), fs::Permissions::from_mode(0o755));
     let _ = fs::remove_dir_all(&dir);
-    // (Root reads every folder.)
-    assert!(
-        readable || stderr.contains("silt-lsp: preload: cannot read dir"),
-        "{stderr}"
-    );
+    assert!(readable || logged(&stderr), "{stderr}");
 }
 
 #[test]
