@@ -204,6 +204,7 @@ pub fn resolve_packages(
     }
     resolver.check_duplicate_names();
     resolver.check_key_collisions();
+    resolver.check_dependency_targets();
     if !resolver.diagnostics.is_empty() {
         return Err(resolver.diagnostics);
     }
@@ -668,6 +669,30 @@ impl Resolver<'_> {
                         )),
                     );
                 }
+            }
+        }
+    }
+
+    /// `DependencyTwice` for every dependency of a package on itself, and
+    /// for every key of a package that names a package an earlier key
+    /// names: `import` of one package goes by one name.
+    fn check_dependency_targets(&mut self) {
+        for node in &self.nodes {
+            let mut first_key: HashMap<PackageId, Symbol> = HashMap::new();
+            // In the order the keys are written.
+            let mut deps: Vec<&(Symbol, PackageId, Span)> = node.deps.iter().collect();
+            deps.sort_by_key(|(_, _, span)| span.start);
+            for (key, dep, span) in deps {
+                let message = if *dep == node.id {
+                    format!("a package cannot depend on itself: `{key}` is this package")
+                } else if let Some(first) = first_key.get(dep) {
+                    format!("`{key}` and `{first}` name the same package: keep one")
+                } else {
+                    first_key.insert(*dep, *key);
+                    continue;
+                };
+                self.diagnostics
+                    .push(Diagnostic::error(Code::DependencyTwice, *span, message));
             }
         }
     }

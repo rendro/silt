@@ -1,0 +1,8 @@
+-- exit: 1
+-- stderr-contains: error[package]: `other` and `dep1` name the same package: keep one
+-- stderr-contains: --> silt.toml:7:1
+import dep1
+
+fn main() {
+  println(dep1.f())
+}
