@@ -130,6 +130,7 @@ missing belong to codes that are gone.
 | `E0609` | A symbolic link in a dependency's sources. |
 | `E0610` | A package file that cannot be read or written. |
 | `E0611` | A git dependency's checkout whose checksum is not the one `silt.lock` pins. |
+| `E0612` | A package that depends on itself, or names one package by two dependency keys. |
 
 ## Running (7xx)
 
