@@ -1,0 +1,4 @@
+Ok((Box {v: 1}, 2))
+Ok(((Box {v: 1}, 2), true))
+Ok([(Box {v: 1}, 2)])
+Ok(([Box {v: 1}], Box {v: 2}))
