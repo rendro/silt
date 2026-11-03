@@ -659,7 +659,18 @@ fn bind_imports(
             ImportTarget::Module(m) => {
                 scope.values.entry(*m).or_insert(module_binding);
             }
-            ImportTarget::Alias(_, alias, _) => {
+            ImportTarget::Alias(module, alias, alias_span) => {
+                // `list.` always means the builtin `list`, so no other
+                // module can be imported under its name.
+                if *alias != *module && crate::module::is_builtin_module(&alias.to_string()) {
+                    diagnostics.push(Diagnostic::error(
+                        Code::ModuleNamedLikeBuiltin,
+                        *alias_span,
+                        format!(
+                            "`{alias}` is a builtin module: import `{module}` under another name"
+                        ),
+                    ));
+                }
                 scope.values.entry(*alias).or_insert(module_binding);
             }
             ImportTarget::Items(m, items) => {

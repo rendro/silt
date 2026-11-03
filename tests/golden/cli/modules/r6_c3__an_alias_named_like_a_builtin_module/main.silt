@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+import a as list
+import io as string
+import list as l
+
+fn main() {
+  println(list.map([1], { x -> x }))
+  println(string.args())
+  println(l.length([1]))
+}
