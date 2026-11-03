@@ -18,7 +18,10 @@ pub(crate) fn dispatch(args: &[String]) {
         match arg.as_str() {
             "--help" | "-h" => wants_help = true,
             other if other.starts_with('-') => {
-                eprintln!("error: silt update: unknown flag '{}'", escape_for_display(other));
+                eprintln!(
+                    "error: silt update: unknown flag '{}'",
+                    escape_for_display(other)
+                );
                 eprintln!("Run 'silt update --help' for usage.");
                 process::exit(1);
             }

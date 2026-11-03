@@ -263,11 +263,9 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
             return Err("--path and --git are mutually exclusive; pick one".into());
         }
         (false, false) => {
-            return Err(
-                "missing source flag; use --path <path> or --git <url> \
+            return Err("missing source flag; use --path <path> or --git <url> \
                  (--rev|--branch|--tag) <ref>"
-                    .into(),
-            );
+                .into());
         }
         (true, false) => {
             // Bare ref flags without --git make no sense — surface a
@@ -278,10 +276,9 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
                 (&tag_arg, "--tag"),
             ] {
                 if val.is_some() {
-                    return Err(format!(
-                        "{flag} requires --git (it has no meaning with --path)"
-                    )
-                    .into());
+                    return Err(
+                        format!("{flag} requires --git (it has no meaning with --path)").into(),
+                    );
                 }
             }
             AddSource::Path(path_arg.expect("checked above"))
@@ -302,9 +299,7 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
             }
             let ref_spec = match chosen.len() {
                 0 => {
-                    return Err(
-                        "--git requires exactly one of --rev, --branch, or --tag".into(),
-                    );
+                    return Err("--git requires exactly one of --rev, --branch, or --tag".into());
                 }
                 1 => {
                     let (kind, value) = chosen.into_iter().next().unwrap();
@@ -345,7 +340,7 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
     // a name that's both invalid AND a builtin should report invalid
     // (the user's bigger problem).
     if !silt::manifest::is_silt_identifier(&name) {
-        return Err(format!("{}", silt::manifest::invalid_name(&name)).into());
+        return Err(silt::manifest::invalid_name(&name).into());
     }
     if silt::module::is_builtin_module(&name) {
         return Err(format!(
@@ -391,11 +386,7 @@ fn run_add_command(args: &[String]) -> Result<(), AddError> {
             };
             let absolute_dep_path = normalize_path(&absolute_dep_path);
             if !absolute_dep_path.exists() {
-                return Err(format!(
-                    "path does not exist: {}",
-                    absolute_dep_path.display()
-                )
-                .into());
+                return Err(format!("path does not exist: {}", absolute_dep_path.display()).into());
             }
             let dep_manifest = absolute_dep_path.join("silt.toml");
             if !dep_manifest.is_file() {

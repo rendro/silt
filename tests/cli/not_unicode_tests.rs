@@ -64,7 +64,9 @@ fn an_argument_that_is_not_unicode_is_a_usage_error() {
         let (stderr, code) = refused(&args);
         let at = args.len();
         assert!(
-            stderr.starts_with(&format!("error: silt: argument {at} is not valid Unicode: ")),
+            stderr.starts_with(&format!(
+                "error: silt: argument {at} is not valid Unicode: "
+            )),
             "{stderr}"
         );
         assert!(!stderr.contains("panicked"), "{stderr}");

@@ -86,7 +86,12 @@ fn handle_watch(args: &[String]) {
     // `separator_index` works on the full `args` (it skips `args[0]`); the
     // post-`--` tail starts at `sep` and is spliced through unchanged.
     let sep = separator_index(args);
-    if args[1..sep].iter().filter(|a| *a == "--watch" || *a == "-w").count() > 1 {
+    if args[1..sep]
+        .iter()
+        .filter(|a| *a == "--watch" || *a == "-w")
+        .count()
+        > 1
+    {
         let sub = args[1..sep]
             .iter()
             .find(|a| !a.starts_with('-'))

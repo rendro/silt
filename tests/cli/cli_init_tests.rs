@@ -278,7 +278,8 @@ fn test_init_lib_refuses_to_overwrite_lib() {
         .unwrap();
     assert_eq!(out.status.code(), Some(1));
     assert!(
-        String::from_utf8_lossy(&out.stderr).starts_with("error: silt init: src/lib.silt already exists at "),
+        String::from_utf8_lossy(&out.stderr)
+            .starts_with("error: silt init: src/lib.silt already exists at "),
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );

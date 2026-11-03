@@ -643,7 +643,10 @@ impl Resolver<'_> {
             ),
             LockedSource::Git {
                 url, resolved_sha, ..
-            } => format!("`{name}` from {} at {resolved_sha}", escape_for_display(url)),
+            } => format!(
+                "`{name}` from {} at {resolved_sha}",
+                escape_for_display(url)
+            ),
         }
     }
 
@@ -901,7 +904,11 @@ mod tests {
         );
         assert_eq!(locked_git_url("/abs/r", "/abs/r", project), "/abs/r");
         assert_eq!(
-            locked_git_url("https://example.com/r.git", "https://example.com/r.git", project),
+            locked_git_url(
+                "https://example.com/r.git",
+                "https://example.com/r.git",
+                project
+            ),
             "https://example.com/r.git"
         );
     }

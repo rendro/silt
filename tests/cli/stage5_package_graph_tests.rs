@@ -1087,7 +1087,13 @@ fn a_dependency_taken_out_rewrites_the_lock_for_the_dependencies() {
         "main.silt",
         "fn main() {}\n",
     );
-    write_package(&ws.join("calc"), "calc", &[], "lib.silt", "pub fn two() { 2 }\n");
+    write_package(
+        &ws.join("calc"),
+        "calc",
+        &[],
+        "lib.silt",
+        "pub fn two() { 2 }\n",
+    );
     let first = silt(&ws, &app, &["check"]);
     assert!(first.status.success(), "{}", stderr(&first));
 

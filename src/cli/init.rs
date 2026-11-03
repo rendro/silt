@@ -95,7 +95,10 @@ fn init_project(lib: bool) {
 
     let manifest_path = cwd.join("silt.toml");
     if manifest_path.exists() {
-        eprintln!("error: silt init: silt.toml already exists at {}", manifest_path.display());
+        eprintln!(
+            "error: silt init: silt.toml already exists at {}",
+            manifest_path.display()
+        );
         process::exit(1);
     }
     let entry = match lib {
@@ -104,7 +107,10 @@ fn init_project(lib: bool) {
     };
     let entry_path = cwd.join("src").join(entry);
     if entry_path.exists() {
-        eprintln!("error: silt init: src/{entry} already exists at {}", entry_path.display());
+        eprintln!(
+            "error: silt init: src/{entry} already exists at {}",
+            entry_path.display()
+        );
         process::exit(1);
     }
 

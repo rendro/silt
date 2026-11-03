@@ -83,9 +83,7 @@ fn remove(args: &[String]) -> Result<(), RemoveError> {
     let (root, manifest) = match find_project_root(&cwd)? {
         Some(pair) => pair,
         None => {
-            return Err("must be run inside a silt package"
-                .to_string()
-                .into());
+            return Err("must be run inside a silt package".to_string().into());
         }
     };
     if !manifest

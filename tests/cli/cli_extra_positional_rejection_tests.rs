@@ -79,7 +79,8 @@ fn silt_check_refuses_a_double_dash() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(1), "stderr={stderr}");
     assert!(
-        stderr.contains("unexpected extra argument '--'") && !stderr.contains("meant for the program"),
+        stderr.contains("unexpected extra argument '--'")
+            && !stderr.contains("meant for the program"),
         "stderr={stderr}"
     );
 }
@@ -100,7 +101,8 @@ fn silt_disasm_refuses_a_double_dash() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(1), "stderr={stderr}");
     assert!(
-        stderr.contains("unexpected extra argument '--'") && !stderr.contains("meant for the program"),
+        stderr.contains("unexpected extra argument '--'")
+            && !stderr.contains("meant for the program"),
         "stderr={stderr}"
     );
 }
@@ -158,5 +160,9 @@ fn silt_check_json_reports_an_unreadable_file_as_json() {
             .is_some_and(|m| m.starts_with("error reading ") && m.ends_with("no such file")),
         "{stdout}"
     );
-    assert!(out.stderr.is_empty(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }

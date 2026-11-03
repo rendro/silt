@@ -75,7 +75,10 @@ pub(crate) fn dispatch(args: &[String]) {
                 "--h" | "-help" => " (did you mean --help?)",
                 _ => "",
             };
-            eprintln!("error: silt check: unknown flag '{}'{}", args[i], suggestion);
+            eprintln!(
+                "error: silt check: unknown flag '{}'{}",
+                args[i], suggestion
+            );
             eprintln!("Run 'silt check --help' for usage.");
             process::exit(1);
         } else if file.is_none() {
@@ -218,7 +221,11 @@ fn print_json_errors(
     let json_errors: Vec<serde_json::Value> = unreadable
         .iter()
         .map(|(path, e)| unreadable_json(path, e))
-        .chain(errors.iter().map(|d| silt::diagnostic::render_json(files, d)))
+        .chain(
+            errors
+                .iter()
+                .map(|d| silt::diagnostic::render_json(files, d)),
+        )
         .collect();
     match serde_json::to_string(&json_errors) {
         Ok(json) => println!("{json}"),
