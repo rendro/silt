@@ -1,2 +1,2 @@
-silt run: unknown flag '--disassemble'
+error: silt run: unknown flag '--disassemble'
 Run 'silt run --help' for usage.

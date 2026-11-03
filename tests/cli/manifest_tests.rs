@@ -501,7 +501,7 @@ version = "0.1.0"
     );
     let msg = text(&err);
     assert!(
-        msg.to_lowercase().contains("dependency name") && msg.to_lowercase().contains("lowercase"),
+        msg.contains("is not a valid name: use lowercase letters, digits and `_`"),
         "expected invalid dep name error, got: {msg}"
     );
 }

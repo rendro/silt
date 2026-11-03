@@ -75,15 +75,6 @@ pub fn looks_like_test_file(program: &Program) -> bool {
         })
 }
 
-/// Is `program` a library module: does it declare a `pub fn`? Such a file
-/// has no `main` on purpose; it is imported, not run.
-pub fn looks_like_library_module(program: &Program) -> bool {
-    program
-        .decls
-        .iter()
-        .any(|decl| matches!(decl, Decl::Fn(f) if f.is_pub))
-}
-
 /// A test function selected to run or to be reported as skipped.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TestFn {
@@ -267,19 +258,13 @@ mod tests {
     }
 
     #[test]
-    fn test_file_and_library_module() {
+    fn test_file() {
         assert!(looks_like_test_file(&parse("fn test_a() { 1 }")));
         assert!(looks_like_test_file(&parse(
             "import test\nfn helper() { 1 }"
         )));
         assert!(!looks_like_test_file(&parse(
             "-- fn test_a() { 1 }\nfn helper() { 1 }"
-        )));
-        assert!(looks_like_library_module(&parse(
-            "pub fn double(x) { x * 2 }"
-        )));
-        assert!(!looks_like_library_module(&parse(
-            "-- pub fn double(x) { x * 2 }\nfn helper() { 1 }"
         )));
     }
 }

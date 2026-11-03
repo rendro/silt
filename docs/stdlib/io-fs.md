@@ -54,7 +54,7 @@ io.args() -> List(String)
 Returns the program's own arguments as a list of strings: what the command
 line has after `--` (`silt run main.silt -- a b` gives `["a", "b"]`), and the
 empty list without it. Every one is text: silt refuses a command line with an
-argument that is not Unicode before the program starts (`silt: argument 4 is
+argument that is not Unicode before the program starts (`error: silt: argument 4 is
 not valid Unicode`).
 
 ```silt

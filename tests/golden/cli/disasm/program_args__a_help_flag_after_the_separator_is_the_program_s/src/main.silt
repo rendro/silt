@@ -1,7 +1,0 @@
--- cmd: disasm -- --help
--- What follows `--` is the program's: silt disassembles the program
--- and prints no help.
--- stdout-contains: "disassembled"
-fn main() {
-  println("disassembled")
-}

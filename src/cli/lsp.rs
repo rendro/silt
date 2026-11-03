@@ -32,7 +32,7 @@ pub(crate) fn dispatch(args: &[String]) {
     // Reject unknown flags before starting the server.
     for arg in &args[2..] {
         if arg.starts_with('-') && arg != "--help" && arg != "-h" {
-            eprintln!("silt lsp: unknown flag '{arg}'");
+            eprintln!("error: silt lsp: unknown flag '{arg}'");
             eprintln!("Run 'silt lsp --help' for usage.");
             process::exit(1);
         }
@@ -44,7 +44,7 @@ pub(crate) fn dispatch(args: &[String]) {
     // `silt fmt`, `silt run`, `silt update`, and `silt add`.
     for arg in &args[2..] {
         if !arg.starts_with('-') {
-            eprintln!("silt lsp: unexpected argument '{arg}'");
+            eprintln!("error: silt lsp: unexpected argument '{arg}'");
             eprintln!("Run 'silt lsp --help' for usage.");
             process::exit(1);
         }

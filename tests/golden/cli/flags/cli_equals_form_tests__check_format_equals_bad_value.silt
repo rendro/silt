@@ -1,4 +1,4 @@
 -- cmd: check --format=xml
 -- exit: 1
--- stderr-contains: --format requires 'json'
+-- stderr-contains: error: silt check: --format requires 'json'
 fn main() {}

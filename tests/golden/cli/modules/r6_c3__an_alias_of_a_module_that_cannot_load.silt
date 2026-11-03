@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- An import that fails is reported once, at the import: not again for
+-- its alias.
+-- stderr-contains: cannot load module 'nothere'
+-- stderr-not-contains: is a builtin module
+import nothere as list
+
+fn main() {
+  println(1)
+}

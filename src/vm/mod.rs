@@ -145,6 +145,9 @@ pub enum Exit {
     /// The call is a runtime error that says a test must not exit:
     /// `silt test`, whose other tests go on.
     FailsTest,
+    /// The same in the top-level code of a test file, which fails the
+    /// file: `silt test` before the file's tests run.
+    FailsTestFile,
 }
 
 pub struct Vm {
@@ -381,6 +384,7 @@ impl Vm {
         match self.runtime.exit.load(Ordering::Relaxed) {
             n if n == Exit::EndsProcess as u8 => Exit::EndsProcess,
             n if n == Exit::FailsTest as u8 => Exit::FailsTest,
+            n if n == Exit::FailsTestFile as u8 => Exit::FailsTestFile,
             _ => Exit::EndsRun,
         }
     }

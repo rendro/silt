@@ -1,1 +1,1 @@
-silt update: unexpected extra argument 'dep'
+error: silt update: unexpected extra argument 'dep'

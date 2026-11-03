@@ -265,6 +265,9 @@ codes! {
     /// A git dependency's checkout whose checksum is not the one
     /// `silt.lock` pins.
     LockfileChecksum = "E0611", Package;
+    /// A package that depends on itself, or names one package by two
+    /// dependency keys.
+    DependencyTwice = "E0612", Package;
     // ── runtime ──
     RuntimeError = "E0701", Runtime;
     /// `main` returned `Err(..)`.

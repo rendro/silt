@@ -11,4 +11,4 @@ warning[type]: unused import 'trim' from module 'string'
  6 | import string.{ length, trim }
    |                         ^^^^ unused import 'trim' from module 'string'
   = help: remove `trim` from the import
-silt check: 2 warnings, denied by --deny-warnings
+error: silt check: 2 warnings, denied by --deny-warnings

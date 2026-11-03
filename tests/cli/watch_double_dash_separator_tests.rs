@@ -137,10 +137,10 @@ fn run_long_watch_after_separator_runs_once_and_forwards_arg() {
 }
 
 #[test]
-fn check_dash_w_after_separator_does_one_shot_check() {
-    // `silt check <file> -- -w` must one-shot check (exit promptly), not
-    // enter the watch loop. `check` doesn't execute, so we only assert it
-    // returns within the timeout and succeeds on a valid program.
+fn check_dash_w_after_separator_is_refused_at_once() {
+    // `silt check <file> -- -w` is refused (check runs no program and
+    // takes no program arguments) and exits at once: it does not enter
+    // the watch loop.
     let dir = fresh_dir("check_w");
     let script = dir.join("ok.silt");
     fs::write(&script, "fn main() { print(\"hi\") }\n").unwrap();
@@ -156,8 +156,8 @@ fn check_dash_w_after_separator_does_one_shot_check() {
     );
 
     assert!(
-        success,
-        "`silt check <file> -- -w` must one-shot check and exit 0, not enter watch mode"
+        !success,
+        "`silt check <file> -- -w` must be refused, not check or enter watch mode"
     );
 }
 

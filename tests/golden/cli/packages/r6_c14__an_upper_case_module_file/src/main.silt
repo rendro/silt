@@ -1,0 +1,7 @@
+-- exit: 1
+-- stderr-contains: error[compile]: `Helper` is not a valid module name: use lowercase letters, digits and `_`, not starting with a digit
+-- stderr-contains: --> src/Helper.silt:1:1
+-- stderr-contains: = help: rename `Helper.silt` to `helper.silt`
+fn main() {
+  println(1)
+}

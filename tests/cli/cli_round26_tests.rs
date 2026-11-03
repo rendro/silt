@@ -71,9 +71,10 @@ fn test_silt_disasm_no_file_outside_package_prints_canonical_banner() {
         .output()
         .expect("failed to run silt disasm");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let first_line = stderr.lines().next().unwrap_or("");
+    // The error line, then the banner.
+    let banner = stderr.lines().nth(1).unwrap_or("");
     assert_eq!(
-        first_line, "Usage: silt disasm [<file.silt>]",
+        banner, "Usage: silt disasm [<file.silt>]",
         "expected canonical disasm banner, got stderr: {stderr}"
     );
     assert!(
@@ -95,9 +96,10 @@ fn test_silt_disasm_watch_no_file_outside_package_prints_canonical_banner() {
         .output()
         .expect("failed to run silt disasm --watch");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let first_line = stderr.lines().next().unwrap_or("");
+    // The error line, then the banner.
+    let banner = stderr.lines().nth(1).unwrap_or("");
     assert_eq!(
-        first_line, "Usage: silt disasm [<file.silt>]",
+        banner, "Usage: silt disasm [<file.silt>]",
         "expected canonical disasm banner via watch path, got stderr: {stderr}"
     );
     assert!(

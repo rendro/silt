@@ -436,7 +436,7 @@ fn dependency_key_is_escaped() {
     assert_check_escapes(
         "dependency_key",
         &manifest("app", &dependencies(&line)),
-        &format!("invalid dependency name `{HOSTILE_ESCAPED}`"),
+        &format!("`{HOSTILE_ESCAPED}` is not a valid name"),
         1,
     );
 }
@@ -451,7 +451,7 @@ fn package_name_is_escaped() {
     assert_check_escapes(
         "package_name",
         &text,
-        &format!("invalid package name `{HOSTILE_ESCAPED}`"),
+        &format!("`{HOSTILE_ESCAPED}` is not a valid name"),
         1,
     );
 }
@@ -533,9 +533,10 @@ fn duplicate_manifest_key_is_escaped() {
     );
 }
 
-/// The value of a `path` dependency that does not exist is shown twice:
-/// as the path in the message and in the path it resolves to. FAILS on
-/// the base commit: both are printed as they are.
+/// The value of a `path` dependency that does not exist is shown in the
+/// message (checked from the package's directory it resolves to the
+/// path as written, so no note says where). FAILS on the base commit:
+/// it was printed as it is.
 #[test]
 fn path_dependency_value_is_escaped() {
     let line = format!("dep = {{ path = {} }}", toml_str(&format!("../{HOSTILE}")));
@@ -543,7 +544,7 @@ fn path_dependency_value_is_escaped() {
         "path_value",
         &manifest("app", &dependencies(&line)),
         &format!("dependency `dep`: path `../{HOSTILE_ESCAPED}` does not exist"),
-        2,
+        1,
     );
 }
 
@@ -981,7 +982,7 @@ fn silt_add_escapes_its_arguments() {
         (
             "add_name",
             vec!["add", HOSTILE, "--path", "../dep"],
-            format!("silt add: invalid dependency name `{HOSTILE_ESCAPED}`"),
+            format!("silt add: `{HOSTILE_ESCAPED}` is not a valid name"),
         ),
         (
             "add_path",

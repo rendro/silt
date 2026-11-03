@@ -98,8 +98,8 @@ fn test_fmt_recursive_only_inside_package() {
         .expect("failed to invoke silt fmt");
     assert_eq!(
         out_outside.status.code(),
-        Some(2),
-        "fmt should refuse recursion outside a package with exit 2 (it could not do its job)"
+        Some(1),
+        "fmt should refuse recursion outside a package with exit 1 (a usage error)"
     );
     let stderr = String::from_utf8_lossy(&out_outside.stderr);
     assert!(
@@ -150,5 +150,33 @@ fn test_self_update_rename_works() {
     assert!(
         stdout.contains("--dry-run") && stdout.contains("--force"),
         "help banner missing its flags: {stdout}"
+    );
+}
+
+/// The refusal's second line stands under the text of the first, after
+/// the `error: silt fmt: ` prefix. FAILS on the base: it was indented
+/// for the old, shorter prefix.
+#[test]
+fn fmt_refusal_second_line_is_aligned_under_the_first() {
+    let outside = fresh_dir("fmt_refusal_aligned");
+    std::fs::write(outside.join("a.silt"), "fn main() {}\n").unwrap();
+    let out = silt_cmd()
+        .args(["fmt", "--check"])
+        .current_dir(&outside)
+        .output()
+        .expect("failed to invoke silt fmt");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let mut lines = stderr.lines();
+    let first = lines.next().unwrap_or("");
+    let second = lines.next().unwrap_or("");
+    assert!(first.starts_with("error: silt fmt: refusing"), "{stderr}");
+    let indent = "error: silt fmt: ".len();
+    assert_eq!(
+        second,
+        format!(
+            "{}pass an explicit `.` or file paths to format anyway.",
+            " ".repeat(indent)
+        ),
+        "{stderr}"
     );
 }

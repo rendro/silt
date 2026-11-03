@@ -86,7 +86,7 @@ fn every_builtin_error_enum_has_a_message_row() {
                  println(Error.message(e))\n\
              }}\n"
         );
-        let path = temp_silt_file(&format!("trait_{enum_name}"), &src);
+        let path = temp_silt_file(&format!("trait_{}", enum_name.to_lowercase()), &src);
 
         let output = Command::new(env!("CARGO_BIN_EXE_silt"))
             .arg("run")

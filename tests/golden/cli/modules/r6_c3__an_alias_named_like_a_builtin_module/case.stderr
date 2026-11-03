@@ -1,0 +1,11 @@
+error[compile]: `list` is a builtin module: import `a` under another name
+ --> main.silt:3:13
+   |
+ 3 | import a as list
+   |             ^^^^ `list` is a builtin module: import `a` under another name
+
+error[compile]: `string` is a builtin module: import `io` under another name
+ --> main.silt:4:14
+   |
+ 4 | import io as string
+   |              ^^^^^^ `string` is a builtin module: import `io` under another name

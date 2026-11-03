@@ -106,7 +106,7 @@ fn main() {
             Ok(arg) => args.push(arg),
             Err(arg) if at == 0 => args.push(arg.to_string_lossy().into_owned()),
             Err(arg) => {
-                eprintln!("silt: argument {at} is not valid Unicode: {arg:?}");
+                eprintln!("error: silt: argument {at} is not valid Unicode: {arg:?}");
                 process::exit(1);
             }
         }
@@ -213,7 +213,7 @@ fn run_main(args: Vec<String>) {
         // A file is run by `silt run`, with what follows it.
         other if other.ends_with(".silt") => cli::help::file_is_no_command(other, &args[1..]),
         other => {
-            eprintln!("Unknown command: '{other}'");
+            eprintln!("error: silt: unknown command '{other}'");
             if let Some(suggestion) = suggest_subcommand(other) {
                 eprintln!("  Did you mean '{suggestion}'?");
             }

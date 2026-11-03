@@ -18,16 +18,22 @@ pub(crate) fn dispatch(args: &[String]) {
     let mut files: Vec<String> = Vec::new();
     for arg in &args[2..] {
         if arg == "--check" {
+            if check_mode {
+                crate::cli::once_only("fmt", "--check");
+            }
             check_mode = true;
         } else if cfg!(debug_assertions) && arg.starts_with("--test-tamper=") {
             // Only in a debug build, and not in the help: for the test
             // of how a refusal is shown. `FROM=>TO` replaces the last
             // FROM by TO in the printer's result before the formatter
             // checks it, as a defect of the printer would.
+            if tamper.is_some() {
+                crate::cli::once_only("fmt", "--test-tamper");
+            }
             let swap = &arg["--test-tamper=".len()..];
             let Some((from, to)) = swap.split_once("=>") else {
-                eprintln!("silt fmt: --test-tamper takes FROM=>TO");
-                process::exit(2);
+                eprintln!("error: silt fmt: --test-tamper takes FROM=>TO");
+                process::exit(1);
             };
             tamper = Some((from.to_string(), to.to_string()));
         } else if arg == "--help" || arg == "-h" {
@@ -37,7 +43,8 @@ pub(crate) fn dispatch(args: &[String]) {
             println!("`.silt` file or a directory; directories are expanded recursively");
             println!("to every `.silt` descendant. Pass `.` as the sentinel to recursively");
             println!("format the current directory, or run with no positionals inside a");
-            println!("silt package to recursively format every `.silt` under cwd.");
+            println!("silt package to recursively format every `.silt` under cwd");
+            println!("of this package, not of a package inside it.");
             println!();
             println!("Options:");
             println!("  --check    Check formatting without modifying files");
@@ -49,9 +56,9 @@ pub(crate) fn dispatch(args: &[String]) {
                 "--h" | "-help" => " (did you mean --help?)",
                 _ => "",
             };
-            eprintln!("silt fmt: unknown flag '{arg}'{suggestion}");
+            eprintln!("error: silt fmt: unknown flag '{arg}'{suggestion}");
             eprintln!("Run 'silt fmt --help' for usage.");
-            process::exit(2);
+            process::exit(1);
         } else {
             files.push(arg.clone());
         }
@@ -77,8 +84,8 @@ pub(crate) fn dispatch(args: &[String]) {
             if p.is_dir() {
                 let found = find_silt_files(p);
                 if found.is_empty() {
-                    eprintln!("silt fmt: no .silt files found in {f}");
-                    process::exit(2);
+                    eprintln!("error: silt fmt: no .silt files found in {f}");
+                    process::exit(1);
                 }
                 expanded.extend(found);
             } else {
@@ -102,16 +109,16 @@ pub(crate) fn dispatch(args: &[String]) {
         // (A file reached twice, through a link, is handled once.)
         files = once_each(find_silt_files(Path::new(".")));
         if files.is_empty() {
-            eprintln!("no .silt files found in current directory");
-            process::exit(2);
+            eprintln!("error: silt fmt: no .silt files found in current directory");
+            process::exit(1);
         }
         if !has_anchor && !explicit_dot {
             eprintln!(
-                "silt fmt: refusing to recursively format {} — no silt.toml found in this directory or any parent",
+                "error: silt fmt: refusing to recursively format {} — no silt.toml found in this directory or any parent",
                 cwd.display()
             );
-            eprintln!("         pass an explicit `.` or file paths to format anyway.");
-            process::exit(2);
+            eprintln!("                 pass an explicit `.` or file paths to format anyway.");
+            process::exit(1);
         }
         let doing = if check_mode { "checking" } else { "formatting" };
         let unasked = if explicit_dot {
@@ -139,9 +146,9 @@ pub(crate) fn dispatch(args: &[String]) {
         //   2 — at least one file failed to read or parse, or the
         //       formatter refused its own result for it (infra failure);
         //       CI should distinguish this from "diff would be produced".
-        //       So does every other case in which fmt cannot do its job
-        //       (an unknown flag, nothing to format, the refusal to
-        //       recurse outside a package), with `--check` or without.
+        //       A usage error (an unknown or repeated flag, nothing to
+        //       format, the refusal to recurse outside a package) exits
+        //       1, as for every command, before any file is looked at.
         // An infra failure on any file is the dominant outcome — if we
         // hit a parse error we can't *know* whether the file is
         // formatted, so we must not collapse that into exit 1.

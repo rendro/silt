@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- A file named on the command line is a module too: its name is all
+-- lowercase. (The case's name has an upper-case letter on purpose.)
+-- stderr-contains: error[compile]: `r6_c14__An_upper_case_entry` is not a valid module name: use lowercase letters, digits and `_`, not starting with a digit
+-- stderr-contains: --> r6_c14__An_upper_case_entry.silt:1:1
+-- stderr-contains: = help: rename `r6_c14__An_upper_case_entry.silt` to `r6_c14__an_upper_case_entry.silt`
+fn main() {
+  println(1)
+}

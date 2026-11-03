@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- `import List` is refused, and no help leads to `import list`, the
+-- builtin module.
+-- stderr-contains: `List` is not a valid module name
+-- stderr-not-contains: help
+import List
+
+fn main() {
+  println(1)
+}

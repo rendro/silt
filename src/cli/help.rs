@@ -112,7 +112,7 @@ pub(crate) const GLOBAL_FLAGS: &[&str] = &["--version", "-V", "-v", "--help", "-
 /// its place, `silt -w hello.silt` as `silt run -w hello.silt`.
 pub(crate) fn file_is_no_command(file: &str, args: &[String]) -> ! {
     let written: Vec<String> = args.iter().map(|arg| shell_word(arg)).collect();
-    eprintln!("Unknown command: '{file}'");
+    eprintln!("error: silt: unknown command '{file}'");
     eprintln!("  Did you mean 'silt run {}'?", written.join(" "));
     eprintln!("Run 'silt' with no arguments to see available commands.");
     std::process::exit(1);

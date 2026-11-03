@@ -1,0 +1,8 @@
+-- exit: 1
+-- src/String.silt is refused, and no help leads to string.silt, the
+-- builtin module's name.
+-- stderr-contains: `String` is not a valid module name
+-- stderr-not-contains: rename
+fn main() {
+  println(1)
+}

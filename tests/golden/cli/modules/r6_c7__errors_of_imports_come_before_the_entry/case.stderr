@@ -1,0 +1,17 @@
+error[type]: type mismatch: expected Int, got String
+ --> a.silt:2:3
+   |
+ 2 |   "a"
+   |   ^^^ type mismatch: expected Int, got String
+
+error[type]: type mismatch: expected Int, got String
+ --> b.silt:2:3
+   |
+ 2 |   "b"
+   |   ^^^ type mismatch: expected Int, got String
+
+error[type]: type mismatch: expected Int, got String
+ --> main.silt:9:16
+   |
+ 9 |   let x: Int = "t"
+   |                ^^^ type mismatch: expected Int, got String

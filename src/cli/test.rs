@@ -21,12 +21,15 @@ pub(crate) fn dispatch(args: &[String]) {
     let mut filter: Option<String> = None;
     let mut i = 2;
     while i < args.len() {
+        if (args[i] == "--filter" || args[i].starts_with("--filter=")) && filter.is_some() {
+            crate::cli::once_only("test", "--filter");
+        }
         if args[i] == "--filter" {
             if i + 1 < args.len() {
                 filter = Some(args[i + 1].clone());
                 i += 2;
             } else {
-                eprintln!("--filter requires a pattern");
+                eprintln!("error: silt test: --filter requires a pattern");
                 process::exit(1);
             }
         } else if let Some(value) = args[i].strip_prefix("--filter=") {
@@ -35,7 +38,7 @@ pub(crate) fn dispatch(args: &[String]) {
             // An empty value (`--filter=`) is a usage error — treat it
             // the same as `--filter` with no following argument.
             if value.is_empty() {
-                eprintln!("--filter requires a pattern");
+                eprintln!("error: silt test: --filter requires a pattern");
                 process::exit(1);
             }
             filter = Some(value.to_string());
@@ -44,7 +47,7 @@ pub(crate) fn dispatch(args: &[String]) {
             // The tests are functions of the files, called with no
             // arguments: nothing could read what would follow.
             eprintln!(
-                "silt test takes no program arguments: '--' passes arguments to a program run by 'silt run'"
+                "error: silt test: takes no program arguments: '--' passes arguments to a program run by 'silt run'"
             );
             eprintln!("Run 'silt test --help' for usage.");
             process::exit(1);
@@ -65,7 +68,7 @@ pub(crate) fn dispatch(args: &[String]) {
                 "--h" | "-help" => " (did you mean --help?)",
                 _ => "",
             };
-            eprintln!("silt test: unknown flag '{}'{}", args[i], suggestion);
+            eprintln!("error: silt test: unknown flag '{}'{}", args[i], suggestion);
             eprintln!("Run 'silt test --help' for usage.");
             process::exit(1);
         } else if file.is_none() {
@@ -79,7 +82,7 @@ pub(crate) fn dispatch(args: &[String]) {
             // `b_test.silt` and reported green while `a_test.silt` never
             // ran — a CI hazard (a skipped test reads as passing).
             // Mirror the rejection pattern in `silt check`/`silt run`.
-            eprintln!("silt test: unexpected extra argument '{}'", args[i]);
+            eprintln!("error: silt test: unexpected extra argument '{}'", args[i]);
             eprintln!("silt test takes at most one path (a file or a directory to scan).");
             eprintln!("Run 'silt test --help' for usage.");
             process::exit(1);
@@ -142,6 +145,13 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
     };
 
     if paths.is_empty() {
+        // A filter that selects nothing fails the run, also where there
+        // is nothing to select from.
+        if let Some(filter) = &filter {
+            let filter = silt::git::escape_for_display(filter);
+            say(&format!("no test matches --filter '{filter}'\n"));
+            silt::scheduler::exit_with_status(1);
+        }
         println!("no test files found");
         return;
     }
@@ -242,8 +252,9 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         let setup_owner = owners.add_owner(file_index);
 
         let mut vm = Vm::new(silt::HostIo::process());
-        // A `process.exit` fails the test it is in: the other tests run.
-        vm.set_exit(Exit::FailsTest);
+        // A `process.exit` fails the file's top-level code, or the test
+        // it is in: the other files and tests run.
+        vm.set_exit(Exit::FailsTestFile);
         #[cfg(feature = "test-hooks")]
         crate::cli::run::panic_where_a_test_says(&vm);
         vm.set_task_owner(setup_owner);
@@ -276,6 +287,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         }
 
         // Run each selected test function
+        vm.set_exit(Exit::FailsTest);
         for test in tests {
             let name = &test.name;
             total += 1;
@@ -391,7 +403,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         }
     };
     if total == 0 && !file_errors.any() {
-        said += "hint: test functions must be named 'fn test_*'; test files should end with '_test.silt'\n";
+        said += "hint: test functions must be named 'fn test_*'; test files end with '_test.silt' or '.test.silt'\n";
     }
     say(&said);
     // (The tests may have left threads: see `vm_run_file`.)

@@ -14,6 +14,13 @@ pub fn builtin_modules() -> &'static [&'static str] {
     NAMES.get_or_init(|| registry().modules.iter().map(|m| m.name).collect())
 }
 
+/// Whether `name` (written after `import`, or a module file's name) can
+/// name a module: a module's name has no upper-case letter, in any
+/// script.
+pub fn is_lowercase_module_name(name: &str) -> bool {
+    !name.chars().any(char::is_uppercase)
+}
+
 /// Returns true if `name` is a builtin module (io, string, int, etc.).
 pub fn is_builtin_module(name: &str) -> bool {
     registry().module(name).is_some()
@@ -228,7 +235,7 @@ pub fn module_load_error(
         }
         d = d.with_help(format!(
             "if '{module_name}' is a separate package, declare it under \
-             `[dependencies]` in silt.toml (e.g. `silt add {module_name}`)"
+             `[dependencies]` in silt.toml (e.g. `silt add {module_name} --path <dir>`)"
         ));
     }
     d

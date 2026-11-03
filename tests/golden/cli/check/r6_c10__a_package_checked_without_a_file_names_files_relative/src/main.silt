@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: --> src/util.silt:2:3
+-- stderr-contains: --> src/main.silt:9:16
+import util
+
+fn main() {
+  println(util.f())
+  let x: Int = "t"
+  println(x)
+}

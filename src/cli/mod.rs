@@ -30,3 +30,21 @@ pub(crate) mod self_update;
 pub(crate) mod test;
 pub(crate) mod update;
 pub(crate) mod watch;
+
+/// The usage error of a flag given twice to `silt <command>`: exit 1.
+pub(crate) fn once_only(command: &str, flag: &str) -> ! {
+    let command = match command {
+        "" => "silt".to_string(),
+        command => format!("silt {command}"),
+    };
+    eprintln!("error: {command}: {flag} was specified more than once");
+    std::process::exit(1);
+}
+
+/// The first line of the usage error of `silt <command>` given no file
+/// outside a package, where there is no `src/main.silt` to take.
+pub(crate) fn no_file(command: &str) {
+    eprintln!(
+        "error: silt {command}: no file given, and no silt.toml found in this directory or any parent"
+    );
+}
