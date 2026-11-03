@@ -27,13 +27,11 @@ pub(crate) fn dispatch(args: &[String]) {
     let mut i = 2;
     while i < args.len() {
         if args[i] == "--" {
-            // Positionals after `--` are forwarded to the
-            // program as `io.args()`. `silt check` doesn't execute, so
-            // these are effectively ignored — but we accept and silently
-            // skip them so that `silt check` is a transparent drop-in
-            // for `silt run` in CI scripts that pre-bake program args.
-            // Stop CLI flag parsing here.
-            break;
+            // `silt check` runs no program, so it takes no program
+            // arguments: `--` is an argument too many.
+            eprintln!("silt check: unexpected extra argument '--'");
+            eprintln!("Run 'silt check --help' for usage.");
+            process::exit(1);
         } else if args[i] == "--format" {
             if i + 1 < args.len() && args[i + 1] == "json" {
                 format = OutputFormat::Json;
@@ -77,21 +75,9 @@ pub(crate) fn dispatch(args: &[String]) {
             file = Some(args[i].clone());
             i += 1;
         } else {
-            // Reject extra positionals — `silt check` takes at most
-            // one file. Pre-fix the assign was unconditional and
-            // last-wins, so `silt check a.silt b.silt` silently
-            // checked only `b.silt` while the user thought both ran.
-            // Mirror the rejection pattern used by `silt update`,
-            // `silt repl`, `silt lsp`, and `silt add`.
-            //
-            // To bake program args into a `silt check`
-            // invocation (e.g. for CI parity with `silt run`), use
-            // `--` as a separator.
+            // Reject extra positionals: `silt check` takes at most one
+            // file.
             eprintln!("silt check: unexpected extra argument '{}'", args[i]);
-            eprintln!(
-                "If '{}' is meant for the program, separate it with '--' (e.g. 'silt check <file>.silt -- {}').",
-                args[i], args[i]
-            );
             eprintln!("Run 'silt check --help' for usage.");
             process::exit(1);
         }

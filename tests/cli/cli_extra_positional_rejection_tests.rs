@@ -63,11 +63,10 @@ fn silt_run_accepts_extras_after_double_dash() {
     );
 }
 
-/// Round-74 follow-up: extras after `--` are accepted by `silt check`
-/// (silently ignored — `check` doesn't execute, but `--` parses as the
-/// program-args separator so CI scripts can swap subcommands cleanly).
+/// `silt check` runs no program, so `--` and what follows it are
+/// arguments too many: refused, with exit status 1.
 #[test]
-fn silt_check_accepts_extras_after_double_dash() {
+fn silt_check_refuses_a_double_dash() {
     let dir = fresh_dir("check_dd");
     let a = dir.join("a.silt");
     write_trivial(&a);
@@ -77,19 +76,18 @@ fn silt_check_accepts_extras_after_double_dash() {
         .output()
         .expect("failed to run silt");
 
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "stderr={stderr}");
     assert!(
-        out.status.success(),
-        "silt check a.silt -- extra1 extra2 must succeed; \
-         exit={:?}\nstderr={}",
-        out.status.code(),
-        String::from_utf8_lossy(&out.stderr),
+        stderr.contains("unexpected extra argument '--'") && !stderr.contains("meant for the program"),
+        "stderr={stderr}"
     );
 }
 
-/// Round-74 follow-up: extras after `--` are accepted by `silt disasm`
-/// (silently ignored — disasm doesn't execute, but `--` parses cleanly).
+/// `silt disasm` runs no program, so `--` and what follows it are
+/// arguments too many: refused, with exit status 1.
 #[test]
-fn silt_disasm_accepts_extras_after_double_dash() {
+fn silt_disasm_refuses_a_double_dash() {
     let dir = fresh_dir("disasm_dd");
     let a = dir.join("a.silt");
     write_trivial(&a);
@@ -99,12 +97,11 @@ fn silt_disasm_accepts_extras_after_double_dash() {
         .output()
         .expect("failed to run silt");
 
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "stderr={stderr}");
     assert!(
-        out.status.success(),
-        "silt disasm a.silt -- extra1 extra2 must succeed; \
-         exit={:?}\nstderr={}",
-        out.status.code(),
-        String::from_utf8_lossy(&out.stderr),
+        stderr.contains("unexpected extra argument '--'") && !stderr.contains("meant for the program"),
+        "stderr={stderr}"
     );
 }
 

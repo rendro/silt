@@ -179,6 +179,13 @@ fn handle_watch(args: &[String]) {
     // discoverable). In that case the subcommand resolves the entry
     // point to `<root>/src/main.silt`, so we let the watcher start.
     let sub = sub.expect("runnable check above guarantees Some");
+    // `check` and `disasm` run no program and take no program arguments,
+    // as they say without `--watch`.
+    if matches!(sub, "check" | "disasm") && filtered.iter().any(|a| a == "--") {
+        eprintln!("silt {sub}: unexpected extra argument '--'");
+        eprintln!("Run 'silt {sub} --help' for usage.");
+        process::exit(1);
+    }
     let requires_file = matches!(sub, "run" | "check" | "disasm");
     // `silt test` takes an optional file / path, so it's NOT in
     // the list above — `silt test --watch` alone is legitimate
