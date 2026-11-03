@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- Another module's generic type with json.Decode impls for some
+-- instantiations, written alone as a decoder's type argument, is refused
+-- as a generic type, with or without an annotation, an opaque one too
+-- (its module writes impls: not the opaque text).
+import json
+import util
+
+fn main() {
+  println(json.parse("0", util.Bx))
+  let r: Result(util.Bx(Int), json.JsonError) = json.parse("0", util.Bx)
+  println(r)
+  println(json.parse("0", util.Op))
+  println(json.parse("0", util.Bx(Int)))
+}

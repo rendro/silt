@@ -347,7 +347,11 @@ impl TypeChecker {
                     Diagnostic::error(Code::MissingTraitImpl, span, message)
                 });
             }
-            if let Some(refusal) = self.opaque_decode_refusal(ty, span, owner) {
+            // (An opaque type with impls for some instantiations, written
+            // alone: refused as a generic type, below.)
+            if !(open && self.has_decode_impl(head))
+                && let Some(refusal) = self.opaque_decode_refusal(ty, span, owner)
+            {
                 return Some(refusal);
             }
             let enum_type = self.tables.is_enum(head);

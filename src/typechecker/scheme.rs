@@ -488,7 +488,10 @@ impl TypeChecker {
         // later one does.
         for wanted in &mut recorded {
             let Goal::Pred(Pred::Trait {
-                tr, args, subject, ..
+                tr,
+                args,
+                subject,
+                asker,
             }) = &wanted.goal
             else {
                 continue;
@@ -500,6 +503,15 @@ impl TypeChecker {
                 continue;
             }
             wanted.solved = true;
+            // (A generic type written alone, `json.parse(s, Box)`: the
+            // decoder's refusal, as without impls.)
+            if self.written_alone(*tr, subject, wanted.origin.span) {
+                self.open_type_arguments.insert(wanted.origin.span);
+                let subject = self.apply(subject);
+                let ev = Some(wanted.ev);
+                self.verify_trait_obligation(*tr, args, &subject, wanted.origin, *asker, ev);
+                continue;
+            }
             for arg in args {
                 (self.reported_trait_args).extend(free_vars_in(&self.apply(arg)));
             }

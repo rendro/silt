@@ -1,0 +1,17 @@
+import json
+
+pub type Bx(a) {
+  v: a,
+}
+
+trait json.Decode for Bx(Int) {
+  fn decode(v: json.Value) -> Result(Self, json.JsonError) { Ok(Bx { v: 7 }) }
+}
+
+pub opaque type Op(a) {
+  v: a,
+}
+
+trait json.Decode for Op(Int) {
+  fn decode(v: json.Value) -> Result(Self, json.JsonError) { Ok(Op { v: 7 }) }
+}
