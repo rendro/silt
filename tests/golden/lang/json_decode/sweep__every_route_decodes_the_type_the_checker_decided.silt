@@ -1,0 +1,81 @@
+-- A decoder is built from the type the checker decided, on every route
+-- the audits went through: a type written in full, an alias, a
+-- parameter that holds a type (alone, inside `Box(t)` and `List(Box(t))`,
+-- in a closure, passed on as a function value), a `let` of a type,
+-- `json.decode`, a type's `decode` before a dot (also through an alias),
+-- a trait whose supertrait is json.Decode called on a value, toml's three
+-- decoders, and a part a later annotation decides.
+import json
+import toml
+
+type Box(a) {
+  v: a,
+}
+
+trait json.Decode for Box(Int) {
+  fn decode(v: json.Value) -> Result(Self, json.JsonError) { Ok(Box { v: 1 }) }
+}
+
+trait json.Decode for Box(String) {
+  fn decode(v: json.Value) -> Result(Self, json.JsonError) { Ok(Box { v: "s" }) }
+}
+
+type IB = Box(Int)
+
+type Pt {
+  x: Int,
+}
+
+type Pairs(a) = List((a, a))
+
+trait Dec: json.Decode {
+  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+trait Dec for List(a) where a: json.Decode {}
+
+fn load(s, t) {
+  json.parse(s, t)
+}
+
+fn boxed(s, t) {
+  json.parse(s, Box(t))
+}
+
+fn boxes(s, t) {
+  json.parse(s, List(Box(t)))
+}
+
+fn apply(f, s, t) {
+  f(s, t)
+}
+
+fn twice(b, s) {
+  Dec.again(b, s)
+}
+
+fn main() {
+  println(json.parse("\{\"x\": 1}", Pt))
+  println(json.parse("0", IB))
+  println(json.parse("[[1, 2]]", Pairs(Int)))
+  println(load("[1, 2]", List(Int)))
+  println(boxed("0", String))
+  println(boxes("[0, 0]", Int))
+  let k = { s, t -> json.parse(s, Box(t)) }
+  println(k("0", Int))
+  println(apply(load, "\{\"x\": 2}", Pt))
+  let t = Box(String)
+  println(json.parse("0", t))
+  println(json.decode(json.Null, Box(Int)))
+  println(Box(String).decode(json.Null))
+  println(IB.decode(json.Null))
+  println(twice([1], "[3, 4]"))
+  let w: Result(List(Int), json.JsonError) = twice([], "[5]")
+  println(w)
+  println(json.parse("[1, \"a\"]", (Int, String)))
+  println(json.parse("\{\"a\": 1}", Map(String, Int)))
+  println(json.parse("null", Option(Int)))
+  println(toml.parse("x = 7", Pt))
+  println(toml.parse_list("p = [1, 2]", Int))
+  println(toml.parse_map("a = 1", Int))
+}
