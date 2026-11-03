@@ -41,7 +41,7 @@ pub(crate) fn dispatch(args: &[String]) {
                 "--h" | "-help" => " (did you mean --help?)",
                 _ => "",
             };
-            eprintln!("silt run: unknown flag '{arg}'{suggestion}");
+            eprintln!("error: silt run: unknown flag '{arg}'{suggestion}");
             eprintln!("Run 'silt run --help' for usage.");
             process::exit(1);
         } else if file.is_none() {
@@ -56,7 +56,7 @@ pub(crate) fn dispatch(args: &[String]) {
             //
             // To forward args to the running program, use
             // `--` as a separator (`silt run a.silt -- foo bar`).
-            eprintln!("silt run: unexpected extra argument '{arg}'");
+            eprintln!("error: silt run: unexpected extra argument '{arg}'");
             eprintln!(
                 "If '{arg}' is meant for the program, separate it with '--' (e.g. 'silt run <file>.silt -- {arg}')."
             );

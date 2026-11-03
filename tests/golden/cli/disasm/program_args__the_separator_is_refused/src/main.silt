@@ -1,7 +1,7 @@
 -- cmd: disasm -- --help
--- What follows `--` is the program's: silt disassembles the program
--- and prints no help.
--- stdout-contains: "disassembled"
+-- exit: 1
+-- `silt disasm` runs no program that could read arguments after `--`.
+-- stderr-contains: error: silt disasm: unexpected extra argument '--'
 fn main() {
   println("disassembled")
 }

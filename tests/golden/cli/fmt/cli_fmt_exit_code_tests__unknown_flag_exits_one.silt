@@ -1,7 +1,7 @@
 -- cmd: fmt --chek
--- exit: 2
--- stderr-contains: silt fmt: unknown flag '--chek'
--- A mistyped flag is not "not formatted": exit 2, never 1.
+-- exit: 1
+-- stderr-contains: error: silt fmt: unknown flag '--chek'
+-- A mistyped flag is a usage error: exit 1, as for every command.
 
 fn main() {
   println("hello")

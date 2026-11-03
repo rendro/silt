@@ -21,12 +21,15 @@ pub(crate) fn dispatch(args: &[String]) {
     let mut filter: Option<String> = None;
     let mut i = 2;
     while i < args.len() {
+        if (args[i] == "--filter" || args[i].starts_with("--filter=")) && filter.is_some() {
+            crate::cli::once_only("test", "--filter");
+        }
         if args[i] == "--filter" {
             if i + 1 < args.len() {
                 filter = Some(args[i + 1].clone());
                 i += 2;
             } else {
-                eprintln!("--filter requires a pattern");
+                eprintln!("error: silt test: --filter requires a pattern");
                 process::exit(1);
             }
         } else if let Some(value) = args[i].strip_prefix("--filter=") {
@@ -35,7 +38,7 @@ pub(crate) fn dispatch(args: &[String]) {
             // An empty value (`--filter=`) is a usage error — treat it
             // the same as `--filter` with no following argument.
             if value.is_empty() {
-                eprintln!("--filter requires a pattern");
+                eprintln!("error: silt test: --filter requires a pattern");
                 process::exit(1);
             }
             filter = Some(value.to_string());
@@ -44,7 +47,7 @@ pub(crate) fn dispatch(args: &[String]) {
             // The tests are functions of the files, called with no
             // arguments: nothing could read what would follow.
             eprintln!(
-                "silt test takes no program arguments: '--' passes arguments to a program run by 'silt run'"
+                "error: silt test: takes no program arguments: '--' passes arguments to a program run by 'silt run'"
             );
             eprintln!("Run 'silt test --help' for usage.");
             process::exit(1);
@@ -65,7 +68,7 @@ pub(crate) fn dispatch(args: &[String]) {
                 "--h" | "-help" => " (did you mean --help?)",
                 _ => "",
             };
-            eprintln!("silt test: unknown flag '{}'{}", args[i], suggestion);
+            eprintln!("error: silt test: unknown flag '{}'{}", args[i], suggestion);
             eprintln!("Run 'silt test --help' for usage.");
             process::exit(1);
         } else if file.is_none() {
@@ -79,7 +82,7 @@ pub(crate) fn dispatch(args: &[String]) {
             // `b_test.silt` and reported green while `a_test.silt` never
             // ran — a CI hazard (a skipped test reads as passing).
             // Mirror the rejection pattern in `silt check`/`silt run`.
-            eprintln!("silt test: unexpected extra argument '{}'", args[i]);
+            eprintln!("error: silt test: unexpected extra argument '{}'", args[i]);
             eprintln!("silt test takes at most one path (a file or a directory to scan).");
             eprintln!("Run 'silt test --help' for usage.");
             process::exit(1);

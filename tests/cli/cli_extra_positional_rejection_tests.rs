@@ -132,3 +132,31 @@ fn silt_fmt_help_runtime_emits_directory_expansion_blurb() {
         "fmt --help stdout must call out the `.` recursive sentinel; got: {stdout}"
     );
 }
+
+/// Under `--format json` a file that cannot be read is an entry of the
+/// JSON array on stdout, like every other error. FAILS on the base: it
+/// was a plain "error reading ..." line on stderr.
+#[test]
+fn silt_check_json_reports_an_unreadable_file_as_json() {
+    let dir = fresh_dir("check_json_unreadable");
+    let missing = dir.join("missing.silt");
+
+    let out = silt_cmd()
+        .args(["check", "--format", "json", missing.to_str().unwrap()])
+        .output()
+        .expect("failed to run silt");
+
+    assert_eq!(out.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let json: serde_json::Value = serde_json::from_str(stdout.trim()).expect("JSON on stdout");
+    let entry = &json[0];
+    assert_eq!(entry["severity"], "error", "{stdout}");
+    assert_eq!(entry["code"], "E0401", "{stdout}");
+    assert!(
+        entry["message"]
+            .as_str()
+            .is_some_and(|m| m.starts_with("error reading ") && m.ends_with("no such file")),
+        "{stdout}"
+    );
+    assert!(out.stderr.is_empty(), "{}", String::from_utf8_lossy(&out.stderr));
+}

@@ -34,18 +34,18 @@ pub(crate) fn dispatch(args: &[String]) {
         if arg == "--" {
             // `silt disasm` runs no program, so it takes no program
             // arguments: `--` is an argument too many.
-            eprintln!("silt disasm: unexpected extra argument '--'");
+            eprintln!("error: silt disasm: unexpected extra argument '--'");
             eprintln!("Run 'silt disasm --help' for usage.");
             process::exit(1);
         } else if arg.starts_with('-') && arg != "--help" && arg != "-h" {
-            eprintln!("silt disasm: unknown flag '{arg}'");
+            eprintln!("error: silt disasm: unknown flag '{arg}'");
             eprintln!("Run 'silt disasm --help' for usage.");
             process::exit(1);
         } else if !arg.starts_with('-') {
             if positional.is_none() {
                 positional = Some(arg.clone());
             } else {
-                eprintln!("silt disasm: unexpected extra argument '{arg}'");
+                eprintln!("error: silt disasm: unexpected extra argument '{arg}'");
                 eprintln!("Run 'silt disasm --help' for usage.");
                 process::exit(1);
             }
@@ -96,7 +96,7 @@ fn disasm_file(path: &str) {
                 process::exit(141);
             }
             eprintln!(
-                "silt disasm: cannot write to stdout: {}",
+                "error: silt disasm: cannot write to stdout: {}",
                 silt::diagnostic::io_error_text(&e)
             );
             process::exit(1);

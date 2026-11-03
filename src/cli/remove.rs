@@ -53,11 +53,11 @@ pub(crate) fn dispatch(args: &[String]) {
         Ok(()) => {}
         Err(RemoveError::Package(failure)) => die_on_manifest_error(failure),
         Err(RemoveError::Message(message)) => {
-            eprintln!("error: {}", escape_for_display(&message));
+            eprintln!("error: silt remove: {}", escape_for_display(&message));
             process::exit(1);
         }
         Err(RemoveError::Usage(message)) => {
-            eprintln!("error: {}", escape_for_display(&message));
+            eprintln!("error: silt remove: {}", escape_for_display(&message));
             eprintln!("Run 'silt remove --help' for usage.");
             process::exit(1);
         }
@@ -74,7 +74,7 @@ fn remove(args: &[String]) -> Result<(), RemoveError> {
         [name] if !name.starts_with('-') => name.clone(),
         _ => {
             return Err(RemoveError::Usage(
-                "silt remove: expected the name of one dependency: silt remove <name>".into(),
+                "expected the name of one dependency: silt remove <name>".into(),
             ));
         }
     };
@@ -83,7 +83,7 @@ fn remove(args: &[String]) -> Result<(), RemoveError> {
     let (root, manifest) = match find_project_root(&cwd)? {
         Some(pair) => pair,
         None => {
-            return Err("silt remove: must be run inside a silt package"
+            return Err("must be run inside a silt package"
                 .to_string()
                 .into());
         }
@@ -93,7 +93,7 @@ fn remove(args: &[String]) -> Result<(), RemoveError> {
         .keys()
         .any(|key| intern::resolve(*key) == name)
     {
-        return Err(format!("silt remove: no dependency '{name}' in silt.toml").into());
+        return Err(format!("no dependency '{name}' in silt.toml").into());
     }
 
     let manifest_path = root.join("silt.toml");
@@ -114,7 +114,7 @@ fn remove(args: &[String]) -> Result<(), RemoveError> {
         .and_then(|deps| deps.as_table_like_mut())
         .and_then(|deps| deps.remove(&name));
     if removed.is_none() {
-        return Err(format!("silt remove: no dependency '{name}' in silt.toml").into());
+        return Err(format!("no dependency '{name}' in silt.toml").into());
     }
     fs::write(&manifest_path, doc.to_string())
         .map_err(|e| format!("failed to write {}: {e}", manifest_path.display()))?;

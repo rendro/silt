@@ -86,6 +86,13 @@ fn handle_watch(args: &[String]) {
     // `separator_index` works on the full `args` (it skips `args[0]`); the
     // post-`--` tail starts at `sep` and is spliced through unchanged.
     let sep = separator_index(args);
+    if args[1..sep].iter().filter(|a| *a == "--watch" || *a == "-w").count() > 1 {
+        let sub = args[1..sep]
+            .iter()
+            .find(|a| !a.starts_with('-'))
+            .map_or("", String::as_str);
+        crate::cli::once_only(sub, "--watch");
+    }
     let mut filtered: Vec<String> = args[1..sep]
         .iter()
         .filter(|a| *a != "--watch" && *a != "-w")
@@ -153,7 +160,7 @@ fn handle_watch(args: &[String]) {
         match sub {
             None => {
                 eprintln!(
-                    "error: --watch requires a runnable subcommand (run, check, test, disasm)"
+                    "error: silt: --watch requires a runnable subcommand (run, check, test, disasm)"
                 );
             }
             // A file is run by `silt run`, which watches: the command to
@@ -161,7 +168,7 @@ fn handle_watch(args: &[String]) {
             Some(s) if s.ends_with(".silt") => crate::cli::help::file_is_no_command(s, &args[1..]),
             Some(s) => {
                 eprintln!(
-                    "error: silt {s} does not support --watch (only run, check, test, disasm do)"
+                    "error: silt {s}: does not support --watch (only run, check, test, disasm do)"
                 );
             }
         }
@@ -182,7 +189,7 @@ fn handle_watch(args: &[String]) {
     // `check` and `disasm` run no program and take no program arguments,
     // as they say without `--watch`.
     if matches!(sub, "check" | "disasm") && filtered.iter().any(|a| a == "--") {
-        eprintln!("silt {sub}: unexpected extra argument '--'");
+        eprintln!("error: silt {sub}: unexpected extra argument '--'");
         eprintln!("Run 'silt {sub} --help' for usage.");
         process::exit(1);
     }

@@ -18,16 +18,22 @@ pub(crate) fn dispatch(args: &[String]) {
     let mut files: Vec<String> = Vec::new();
     for arg in &args[2..] {
         if arg == "--check" {
+            if check_mode {
+                crate::cli::once_only("fmt", "--check");
+            }
             check_mode = true;
         } else if cfg!(debug_assertions) && arg.starts_with("--test-tamper=") {
             // Only in a debug build, and not in the help: for the test
             // of how a refusal is shown. `FROM=>TO` replaces the last
             // FROM by TO in the printer's result before the formatter
             // checks it, as a defect of the printer would.
+            if tamper.is_some() {
+                crate::cli::once_only("fmt", "--test-tamper");
+            }
             let swap = &arg["--test-tamper=".len()..];
             let Some((from, to)) = swap.split_once("=>") else {
-                eprintln!("silt fmt: --test-tamper takes FROM=>TO");
-                process::exit(2);
+                eprintln!("error: silt fmt: --test-tamper takes FROM=>TO");
+                process::exit(1);
             };
             tamper = Some((from.to_string(), to.to_string()));
         } else if arg == "--help" || arg == "-h" {
@@ -49,9 +55,9 @@ pub(crate) fn dispatch(args: &[String]) {
                 "--h" | "-help" => " (did you mean --help?)",
                 _ => "",
             };
-            eprintln!("silt fmt: unknown flag '{arg}'{suggestion}");
+            eprintln!("error: silt fmt: unknown flag '{arg}'{suggestion}");
             eprintln!("Run 'silt fmt --help' for usage.");
-            process::exit(2);
+            process::exit(1);
         } else {
             files.push(arg.clone());
         }
@@ -77,7 +83,7 @@ pub(crate) fn dispatch(args: &[String]) {
             if p.is_dir() {
                 let found = find_silt_files(p);
                 if found.is_empty() {
-                    eprintln!("silt fmt: no .silt files found in {f}");
+                    eprintln!("error: silt fmt: no .silt files found in {f}");
                     process::exit(2);
                 }
                 expanded.extend(found);
@@ -102,12 +108,12 @@ pub(crate) fn dispatch(args: &[String]) {
         // (A file reached twice, through a link, is handled once.)
         files = once_each(find_silt_files(Path::new(".")));
         if files.is_empty() {
-            eprintln!("no .silt files found in current directory");
+            eprintln!("error: silt fmt: no .silt files found in current directory");
             process::exit(2);
         }
         if !has_anchor && !explicit_dot {
             eprintln!(
-                "silt fmt: refusing to recursively format {} — no silt.toml found in this directory or any parent",
+                "error: silt fmt: refusing to recursively format {} — no silt.toml found in this directory or any parent",
                 cwd.display()
             );
             eprintln!("         pass an explicit `.` or file paths to format anyway.");

@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use silt::intern;
+use silt::diagnostic::Code;
 use silt::package_graph::{LockPolicy, resolve_packages};
 use silt::source::SourceMap;
 
@@ -570,9 +570,10 @@ fn a_symlink_in_a_git_dependency_is_rejected() {
 
 // ── Identity by source ────────────────────────────────────────────────
 
-/// Two keys naming one directory give one package, known by both keys.
+/// Two keys naming one directory (two spellings of its path) are one
+/// package by two names: refused (one package has one key).
 #[test]
-fn two_keys_for_one_source_are_one_package() {
+fn two_keys_for_one_source_are_refused() {
     let ws = fresh_workspace("two_keys");
     let app = ws.join("app");
     write_package(
@@ -593,18 +594,15 @@ fn two_keys_for_one_source_are_one_package() {
         "pub fn f() { 1 }\n",
     );
 
-    let graph = resolve_packages(&app, LockPolicy::ReadOnly, &mut SourceMap::new())
-        .unwrap_or_else(|d| panic!("{d:?}"));
-
-    assert_eq!(graph.packages.len(), 2, "{graph:?}");
-    let a = graph.dependency(graph.root, intern::intern("a"));
-    let b = graph.dependency(graph.root, intern::intern("b"));
-    assert!(a.is_some() && a == b, "{graph:?}");
-    let shared = graph.package(a.unwrap());
-    assert_eq!(intern::resolve(shared.name), "shared");
-    assert!(
-        shared.src.ends_with(Path::new("shared").join("src")),
-        "{shared:?}"
+    // One package has one key: the second spelling of its path is
+    // refused at its key.
+    let errors = resolve_packages(&app, LockPolicy::ReadOnly, &mut SourceMap::new())
+        .expect_err("two keys for one package are refused");
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert_eq!(errors[0].code, Code::DependencyTwice);
+    assert_eq!(
+        errors[0].message,
+        "`b` and `a` name the same package: keep one"
     );
     let _ = fs::remove_dir_all(&ws);
 }

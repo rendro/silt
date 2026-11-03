@@ -41,7 +41,7 @@ fn every_global_flag_is_handled() {
             "silt {flag}: expected usage in stdout, got: {stdout}"
         );
         assert!(
-            !stderr.contains("Unknown command"),
+            !stderr.contains("unknown command"),
             "silt {flag}: routed to the unknown-command arm: {stderr}"
         );
     }
@@ -53,7 +53,7 @@ fn global_flags_are_offered_as_typo_suggestions() {
         let (code, _stdout, stderr) = silt(typo);
         assert_eq!(code, Some(1), "silt {typo}: stderr={stderr}");
         assert!(
-            stderr.contains("Unknown command")
+            stderr.contains("error: silt: unknown command")
                 && stderr.contains(&format!("Did you mean '{flag}'?")),
             "silt {typo}: expected a suggestion of {flag}, got: {stderr}"
         );

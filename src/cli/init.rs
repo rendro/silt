@@ -23,7 +23,7 @@ pub(crate) fn dispatch(args: &[String]) {
     // Reject unknown flags before proceeding.
     for arg in &args[2..] {
         if arg.starts_with('-') && arg != "--help" && arg != "-h" && arg != "--lib" {
-            eprintln!("silt init: unknown flag '{arg}'");
+            eprintln!("error: silt init: unknown flag '{arg}'");
             eprintln!("Run 'silt init --help' for usage.");
             process::exit(1);
         }
@@ -36,7 +36,7 @@ pub(crate) fn dispatch(args: &[String]) {
     for arg in &args[2..] {
         if !arg.starts_with('-') {
             eprintln!(
-                "silt init: unexpected argument '{arg}' (silt init takes no positional arguments; the package name is derived from the current directory)"
+                "error: silt init: unexpected argument '{arg}' (silt init takes no positional arguments; the package name is derived from the current directory)"
             );
             eprintln!(
                 "       to create a package in a new directory, run: mkdir {arg} && cd {arg} && silt init"
@@ -44,7 +44,11 @@ pub(crate) fn dispatch(args: &[String]) {
             process::exit(1);
         }
     }
-    init_project(args[2..].iter().any(|arg| arg == "--lib"));
+    let libs = args[2..].iter().filter(|arg| *arg == "--lib").count();
+    if libs > 1 {
+        crate::cli::once_only("init", "--lib");
+    }
+    init_project(libs == 1);
 }
 
 /// Sanitize a directory name into a valid silt identifier:
@@ -85,13 +89,13 @@ fn sanitize_package_name(dirname: &str) -> Option<String> {
 /// program (`src/main.silt`) otherwise.
 fn init_project(lib: bool) {
     let cwd = std::env::current_dir().unwrap_or_else(|e| {
-        eprintln!("error: failed to determine current directory: {e}");
+        eprintln!("error: silt init: failed to determine current directory: {e}");
         process::exit(1);
     });
 
     let manifest_path = cwd.join("silt.toml");
     if manifest_path.exists() {
-        eprintln!("silt.toml already exists at {}", manifest_path.display());
+        eprintln!("error: silt init: silt.toml already exists at {}", manifest_path.display());
         process::exit(1);
     }
     let entry = match lib {
@@ -100,7 +104,7 @@ fn init_project(lib: bool) {
     };
     let entry_path = cwd.join("src").join(entry);
     if entry_path.exists() {
-        eprintln!("src/{entry} already exists at {}", entry_path.display());
+        eprintln!("error: silt init: src/{entry} already exists at {}", entry_path.display());
         process::exit(1);
     }
 
@@ -109,7 +113,7 @@ fn init_project(lib: bool) {
         Some(name) => name,
         None => {
             eprintln!(
-                "error: cannot derive a package name from the current directory `{}`",
+                "error: silt init: cannot derive a package name from the current directory `{}`",
                 cwd.display()
             );
             eprintln!(
@@ -128,7 +132,7 @@ fn init_project(lib: bool) {
     // silently wrote `name = "io"`, producing a package whose top-level
     // name shadowed the stdlib `io` module.
     if let Err(msg) = silt::manifest::validate_package_name(&package_name) {
-        eprintln!("silt init: {msg}");
+        eprintln!("error: silt init: {msg}");
         eprintln!("       (the package name was derived from the directory name `{dirname}`;");
         eprintln!("        rename the directory or run `silt init` from a directory whose name");
         eprintln!("        is not a keyword or a stdlib module).");
@@ -144,7 +148,7 @@ fn init_project(lib: bool) {
     // Create src/ first so a failure there doesn't leave a stray manifest.
     if let Err(e) = fs::create_dir_all(entry_path.parent().unwrap()) {
         eprintln!(
-            "error: failed to create directory {}: {e}",
+            "error: silt init: failed to create directory {}: {e}",
             entry_path.parent().unwrap().display()
         );
         process::exit(1);
