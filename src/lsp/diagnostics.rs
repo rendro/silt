@@ -311,7 +311,7 @@ impl Server {
             let modules = analyse_project(project, &entries, &texts);
             project.record_disk(skip);
             let packages_failed = project.session.packages().is_err();
-            for (uri, id, mut found) in modules {
+            for (uri, id, mut found, own_name) in modules {
                 if packages_failed {
                     // The cascade an unresolved project causes is not
                     // shown; its errors are in the manifest.
@@ -323,8 +323,12 @@ impl Server {
                 }
                 let sources = project.session.sources();
                 let uri_of = |f: FileId| uri_of(&uris_by_key, sources, f);
-                for d in &found {
-                    let Some(uri) = uri_of(d.span.file) else {
+                // The document's own file-name error is its own, whichever
+                // document of the same file the session read last.
+                let own_name = own_name.filter(|_| !packages_failed);
+                let owned = own_name.iter().map(|d| (Some(uri.clone()), d));
+                for (to, d) in owned.chain(found.iter().map(|d| (None, d))) {
+                    let Some(uri) = to.or_else(|| uri_of(d.span.file)) else {
                         continue;
                     };
                     let converted = crate::diagnostic::to_lsp(sources, d, &uri_of);
@@ -444,9 +448,14 @@ fn analyse_project(
     project: &mut Project,
     entries: &[(Uri, PathBuf)],
     texts: &[(PathBuf, Arc<str>)],
-) -> Vec<(Uri, ModuleId, Vec<crate::diagnostic::Diagnostic>)> {
+) -> Vec<(
+    Uri,
+    ModuleId,
+    Vec<crate::diagnostic::Diagnostic>,
+    Option<crate::diagnostic::Diagnostic>,
+)> {
     let mut changed: Vec<ModuleId> = Vec::new();
-    let mut modules: Vec<(Uri, ModuleId)> = Vec::new();
+    let mut modules: Vec<(Uri, ModuleId, PathBuf)> = Vec::new();
     for (uri, path) in entries {
         let text = &texts
             .iter()
@@ -460,13 +469,13 @@ fn analyse_project(
             }
             None => project.module_at(path),
         };
-        modules.push((uri.clone(), id));
+        modules.push((uri.clone(), id, path.clone()));
     }
     // Each other file in `texts` that a graph reads gets its text, and
     // the analyses run again. Each round gives one more file its text, so
     // this ends.
     loop {
-        for (_, id) in &modules {
+        for (_, id, _) in &modules {
             let file = project.file(*id);
             project.session.analyze(file);
         }
@@ -486,10 +495,15 @@ fn analyse_project(
     project.forget_compiled(&changed);
     modules
         .into_iter()
-        .map(|(uri, id)| {
+        .map(|(uri, id, path)| {
             let file = project.file(id);
             let analysis = project.session.analyze(file).clone();
             let mut found = analysis.diagnostics;
+            // A document is judged by its own file name, also where
+            // another open document (a link) is the same file: the
+            // analysis's verdict, by the name given last, goes, and the
+            // document's own is given with it.
+            let (shared, own) = project.session.entry_name_problems(id, &path);
             if !found.iter().any(crate::diagnostic::Diagnostic::is_error) {
                 found.extend(
                     project
@@ -498,7 +512,13 @@ fn analyse_project(
                         .cloned(),
                 );
             }
-            (uri, id, found)
+            // (The analysis can be one made before the file was given its
+            // last name, and compiling repeats its errors: the error is
+            // known by what it says.)
+            if let Some(shared) = shared {
+                found.retain(|d| d.code != shared.code || d.message != shared.message);
+            }
+            (uri, id, found, own)
         })
         .collect()
 }
@@ -546,6 +566,53 @@ mod tests {
         let diagnostic = &published[0][0];
         assert_eq!(diagnostic.range.start, Position::new(1, 10));
         assert_eq!(diagnostic.range.end, Position::new(1, 11));
+    }
+
+    /// A file open under two names (`Demo.silt` and a link `lnk.silt` to
+    /// it) is one analysis, and each document is judged by its own name:
+    /// `Demo.silt` gets the error that a module's name is all lowercase,
+    /// `lnk.silt` does not, in whichever order they are opened. (The
+    /// shared analysis judged both by the name given last.)
+    #[cfg(unix)]
+    #[test]
+    fn a_document_is_judged_by_its_own_file_name() {
+        let dir = std::env::temp_dir().join(format!("silt_lsp_link_name_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let text = "fn main() {\n  println(1)\n}\n";
+        std::fs::write(dir.join("Demo.silt"), text).unwrap();
+        std::os::unix::fs::symlink(dir.join("Demo.silt"), dir.join("lnk.silt")).unwrap();
+        // (The URIs as an editor gives them: the link's own path.)
+        let uri = |name: &str| Uri::from_str(&format!("file://{}/{name}", dir.display())).unwrap();
+        let (demo, link) = (uri("Demo.silt"), uri("lnk.silt"));
+        let names_error = |server: &Server, uri: &Uri| {
+            let found = server
+                .published
+                .get(uri)
+                .expect("diagnostics are published");
+            found
+                .iter()
+                .any(|d| d.message.contains("is not a valid module name"))
+        };
+        for order in [[&demo, &link], [&link, &demo]] {
+            let (connection, _client) = Connection::memory();
+            let mut server = Server::new(connection);
+            for uri in order {
+                server.update_document(uri.clone(), text.to_string());
+            }
+            server.analyse_pending();
+            assert!(
+                names_error(&server, &demo),
+                "Demo.silt: {:?}",
+                server.published
+            );
+            assert!(
+                !names_error(&server, &link),
+                "lnk.silt: {:?}",
+                server.published
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A panic inside the analysis must not leave the previous text in the

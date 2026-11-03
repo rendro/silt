@@ -645,7 +645,8 @@ impl Session {
             for d in &self.module_name_problems {
                 push(d, &mut out);
             }
-            if let Some(d) = self.entry_name_problem(entry) {
+            let path = self.graph.module(entry).path.clone();
+            if let Some(d) = self.entry_name_problem(entry, &path) {
                 push(&d, &mut out);
             }
         }
@@ -705,17 +706,17 @@ impl Session {
         out.list
     }
 
-    /// The error for the entry file `entry` when its name has an
-    /// upper-case letter: a file named on the command line or opened in an
-    /// editor is a module too, and a module's name is all lowercase. A
-    /// module file of a package's `src/` is reported already, by
-    /// [`Session::packages`].
-    fn entry_name_problem(&self, entry: ModuleId) -> Option<Diagnostic> {
+    /// The error for the entry file `entry`, named `path`, when that
+    /// name has an upper-case letter: a file named on the command line or
+    /// opened in an editor is a module too, and a module's name is all
+    /// lowercase. A module file of a package's `src/` is reported
+    /// already, by [`Session::packages`].
+    fn entry_name_problem(&self, entry: ModuleId, path: &Path) -> Option<Diagnostic> {
         let module = self.graph.module(entry);
-        if module.host.is_some() || module.path.extension().is_none_or(|ext| ext != "silt") {
+        if module.host.is_some() || path.extension().is_none_or(|ext| ext != "silt") {
             return None;
         }
-        let name = module.path.file_stem()?.to_str()?;
+        let name = path.file_stem()?.to_str()?;
         if crate::module::is_lowercase_module_name(name) {
             return None;
         }
@@ -729,6 +730,23 @@ impl Session {
             true => None,
             false => Some(packages::upper_case_file_name(name, module.file?)),
         }
+    }
+
+    /// The file-name error of the entry module `entry` as its analysis
+    /// reports it (by the name the file was given last), and as it is for
+    /// the name `opened_as`. An editor with one file open by two names (a
+    /// link and the file it leads to) shares one analysis between them,
+    /// and judges each document by its own name.
+    pub fn entry_name_problems(
+        &self,
+        entry: ModuleId,
+        opened_as: &Path,
+    ) -> (Option<Diagnostic>, Option<Diagnostic>) {
+        let path = &self.graph.module(entry).path;
+        (
+            self.entry_name_problem(entry, path),
+            self.entry_name_problem(entry, opened_as),
+        )
     }
 
     /// Compile the entry file `entry` for `target`. An analysis with an
