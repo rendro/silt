@@ -103,6 +103,15 @@ fn is_closer_or_comma(kind: &Token) -> bool {
     )
 }
 
+/// The spellings of the keywords and marks: the text of such a token is
+/// one of these, written without a copy.
+const SPELLINGS: [&str; 53] = [
+    "let", "fn", "type", "trait", "match", "when", "return", "pub", "opaque", "import", "as",
+    "else", "where", "loop", "true", "false", "+", "-", "*", "/", "%", "==", "!=", "<", ">", "<=",
+    ">=", "&&", "||", "!", "|>", "|", "?", "^", "..", "...", "->", "(", ")", "{", "}", "[", "]",
+    "#{", "#[", ",", ":", "::", ".", "=", "_", "self", "Self",
+];
+
 impl<'a> Cursor<'a> {
     pub fn new(source: &'a str, lexed: &'a Lexed) -> Self {
         let tokens: Vec<&Tok> = lexed.tokens.iter().collect();
@@ -452,7 +461,10 @@ impl<'a> Cursor<'a> {
                 Doc::text(format!("}}{}", text.replace("\r\n", "\n")))
             }
             Token::StringLit(_) | Token::StringStart(_) => Doc::text(text.replace("\r\n", "\n")),
-            _ => Doc::text(text),
+            _ => match SPELLINGS.iter().find(|spelling| **spelling == text) {
+                Some(spelling) => Doc::text(*spelling),
+                None => Doc::text(text.to_string()),
+            },
         }
     }
 
@@ -864,6 +876,10 @@ impl<'a> Cursor<'a> {
         let leading = self.kept_and_leading();
         let text = self.bare();
         let trailing = self.trailing();
+        // (A token without comments, nearly every one, is its text.)
+        if leading.is_nil() && trailing.is_nil() {
+            return text;
+        }
         Doc::concat(vec![leading, text, trailing])
     }
 
@@ -875,6 +891,9 @@ impl<'a> Cursor<'a> {
         }
         let leading = self.kept_and_leading();
         let text = self.bare();
+        if leading.is_nil() {
+            return text;
+        }
         Doc::concat(vec![leading, text])
     }
 

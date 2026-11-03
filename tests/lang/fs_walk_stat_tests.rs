@@ -505,3 +505,81 @@ fn main() {{
         "expected silt's InvalidInput framing 'invalid input' in: {msg}"
     );
 }
+
+// ── fs.copy, fs.rename: a fault of a directory ──────────────────────
+
+/// A fault of `fs.copy` or `fs.rename` that comes of a directory names
+/// the path it is about, in the form of `file not found: <path>`. (Unix:
+/// Windows answers these with other faults.)
+#[cfg(unix)]
+#[test]
+fn copy_and_rename_name_the_path_of_a_directory_fault() {
+    let dir = TempDir::new("moves");
+    std::fs::write(dir.path().join("a.txt"), "a").unwrap();
+    std::fs::create_dir_all(dir.path().join("dir/sub")).unwrap();
+    std::fs::create_dir_all(dir.path().join("full/inner")).unwrap();
+    let d = dir.as_silt_str();
+    for (call, message) in [
+        (
+            format!(r#"fs.copy("{d}/a.txt", "{d}/dir")"#),
+            format!("is a directory: {d}/dir"),
+        ),
+        (
+            format!(r#"fs.copy("{d}/dir", "{d}/out.txt")"#),
+            format!("is a directory: {d}/dir"),
+        ),
+        (
+            format!(r#"fs.rename("{d}/a.txt", "{d}/dir")"#),
+            format!("is a directory: {d}/dir"),
+        ),
+        (
+            format!(r#"fs.rename("{d}/dir", "{d}/a.txt")"#),
+            format!("not a directory: {d}/a.txt"),
+        ),
+        (
+            format!(r#"fs.rename("{d}/dir", "{d}/dir/sub/inside")"#),
+            format!("cannot move a directory into itself: {d}/dir/sub/inside"),
+        ),
+        (
+            format!(r#"fs.copy("{d}/a.txt", "{d}/a.txt/b.txt")"#),
+            format!("not a directory: {d}/a.txt/b.txt"),
+        ),
+        // Any other fault: what it is, in the words of its kind, and
+        // the path.
+        (
+            format!(r#"fs.rename("{d}/dir", "{d}/full")"#),
+            format!("directory not empty: {d}/full"),
+        ),
+    ] {
+        let got = err_msg(run(&format!("import fs\nfn main() {{\n  {call}\n}}\n")));
+        assert_eq!(got, message, "{call}");
+    }
+    // Nothing moved, nothing written.
+    assert!(dir.path().join("dir/sub").is_dir() && !dir.path().join("out.txt").exists());
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+        "a"
+    );
+}
+
+/// A file last changed before 1970 has that date, not `None`.
+#[test]
+fn stat_gives_a_time_before_1970() {
+    use std::time::{Duration, UNIX_EPOCH};
+    let dir = TempDir::new("before_1970");
+    let file = dir.path().join("old.txt");
+    std::fs::write(&file, "old").unwrap();
+    let old = UNIX_EPOCH - Duration::new(315_619_199, 500_000_000);
+    let opened = std::fs::File::options().write(true).open(&file).unwrap();
+    opened.set_modified(old).unwrap();
+    drop(opened);
+    let path = file.to_str().unwrap().replace('\\', "/");
+    let stat = ok_inner(run(&format!(
+        "import fs\nfn main() {{\n  fs.stat(\"{path}\")\n}}\n"
+    )));
+    let (_, fields) = record_fields(stat);
+    assert_eq!(
+        fields["modified"].to_string(),
+        "Some(1960-01-01T00:00:00.500000000)"
+    );
+}

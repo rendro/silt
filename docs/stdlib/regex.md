@@ -258,7 +258,11 @@ fn main() {
 regex.split(text: String, pattern: String) -> Result(List(String), RegexError)
 ```
 
-Splits the text on every occurrence of the pattern.
+Splits the text on every occurrence of the pattern. A match of nothing at
+the start or the end of the text gives no empty piece there, as
+`string.split` with an empty separator: `regex.split("abc", "")` is
+`Ok([a, b, c])`, and `regex.split("", "")` is `Ok([])`. A match of
+something there does (`regex.split(",a,", ",")` is `Ok(["", a, ""])`).
 
 ```silt
 import regex

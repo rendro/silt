@@ -102,13 +102,30 @@ pub fn format_with(
 
 /// A refusal as a diagnostic: at its place, or at the first token.
 fn refused(file: FileId, lexed: &Lexed, refusal: Refusal) -> Diagnostic {
-    let span = refusal
-        .span
-        .or_else(|| lexed.tokens.first().map(|tok| tok.span))
-        .unwrap_or(Span::point(file, 0));
+    refused_in(file, &Refusable::of(lexed), refusal)
+}
+
+/// What a refusal needs of the tokens of the text, kept when they are
+/// not (see [`check::verify`]).
+struct Refusable {
+    first: Option<Span>,
+    commented: bool,
+}
+
+impl Refusable {
+    fn of(lexed: &Lexed) -> Refusable {
+        Refusable {
+            first: lexed.tokens.first().map(|tok| tok.span),
+            commented: !lexed.comments.is_empty(),
+        }
+    }
+}
+
+fn refused_in(file: FileId, text: &Refusable, refusal: Refusal) -> Diagnostic {
+    let span = refusal.span.or(text.first).unwrap_or(Span::point(file, 0));
     // What helps until the defect is fixed; a comment only where the
     // text has one.
-    let way_out = if lexed.comments.is_empty() {
+    let way_out = if !text.commented {
         "simplifying the expression"
     } else {
         "moving the comment onto a line of its own or simplifying the expression"
@@ -282,8 +299,8 @@ fn format_here(
     source: &str,
     tamper: impl FnOnce(String) -> String,
 ) -> Result<String, Diagnostic> {
-    let lexed = Lexer::new(file, source).tokenize().checked()?;
-    let program = Parser::new(lexed.clone(), source).parse_program()?;
+    let mut lexed = Lexer::new(file, source).tokenize().checked()?;
+    let program = Parser::parse_lent(&mut lexed, source)?;
     let doc = print::program(source, &lexed, &program).map_err(|mismatch| {
         let refusal = Refusal {
             message: mismatch.message,
@@ -292,6 +309,9 @@ fn format_here(
         refused(file, &lexed, refusal)
     })?;
     let mut output = doc::render(&doc, WIDTH);
+    // (What is held at once is what a large file costs: the document is
+    // done with.)
+    drop(doc);
     // A byte-order mark stays where it is.
     if source.starts_with('\u{feff}') {
         output.insert(0, '\u{feff}');
@@ -299,8 +319,9 @@ fn format_here(
     let output = tamper(output);
     // Text that is returned unchanged needs no check.
     if output != source {
-        check::verify(source, &lexed, &program, &output)
-            .map_err(|refusal| refused(file, &lexed, refusal))?;
+        let refusable = Refusable::of(&lexed);
+        check::verify(source, lexed, program, &output)
+            .map_err(|refusal| refused_in(file, &refusable, refusal))?;
     }
     Ok(output)
 }

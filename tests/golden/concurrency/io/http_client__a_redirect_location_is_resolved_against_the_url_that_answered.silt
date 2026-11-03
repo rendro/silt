@@ -2,10 +2,13 @@
 -- requires-feature: http
 -- `http.request` resolves a redirect's location against the URL that
 -- answered, as RFC 3986 says: a query alone (`?y=2`) on that URL's
--- path, a location without a scheme (`//host:port/x`) on that host.
--- After a 301, 302 or 303 the request goes on as a GET without a
--- body, and without the `content-type` header that said what the
--- body was; after a 307 the header goes with the body.
+-- path, a location without a scheme (`//host:port/x`) on that host,
+-- a relative path next to that path; the `.` and `..` of every path,
+-- that of a full URL too, are taken away (a last one leaves a `/`), and
+-- its query is left as it is.
+-- After a 303 the request goes on as a GET without a body, and
+-- without the `content-type` header that said what the body was;
+-- after a 307, and a GET's 302, the header goes with the body.
 import bytes
 import http
 import list
@@ -33,8 +36,13 @@ fn main() {
       match req.path {
         "/q" when req.query == "x=1" -> moved(302, "?y=2")
         "/far" -> moved(307, "{other}/there")
+        "/far/dots" -> moved(307, "{other}/x/./y/../../there?q=/..")
+        "/far/scheme" -> moved(307, "http:{other}/x/../there")
         "/303" -> moved(303, "/echo")
         "/307" -> moved(307, "/echo")
+        "/a/dotq" -> moved(302, "echo?next=/../../etc")
+        "/a/b/dot" -> moved(302, ".")
+        "/a/b/dotdot" -> moved(302, "..")
         _ -> echo("first", req)
       }
     }
@@ -42,7 +50,17 @@ fn main() {
   let two = task.spawn { -> http.serve(second) { req -> echo("second", req) } }
   let url = "http://127.0.0.1:{tcp.local_port(first)}"
   let typed = #{"content-type": "text/plain"}
-  let asks = [(http.GET, "/q?x=1"), (http.GET, "/far"), (http.POST, "/303"), (http.POST, "/307")]
+  let asks = [
+    (http.GET, "/q?x=1"),
+    (http.GET, "/far"),
+    (http.GET, "/far/dots"),
+    (http.GET, "/far/scheme"),
+    (http.POST, "/303"),
+    (http.POST, "/307"),
+    (http.GET, "/a/dotq"),
+    (http.GET, "/a/b/dot"),
+    (http.GET, "/a/b/dotdot"),
+  ]
   list.each(asks) { (method, path) ->
     println("{method} {path}")
     match http.request(method, "{url}{path}", bytes.from_string("abc"), typed) {

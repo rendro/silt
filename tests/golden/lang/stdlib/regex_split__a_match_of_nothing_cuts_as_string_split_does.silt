@@ -1,0 +1,20 @@
+-- A pattern that matches nothing at the start or the end of the text
+-- gives no empty piece there, as `string.split` with an empty
+-- separator; empty text that such a match cuts is no piece. A match of
+-- something at either end does give one.
+import io
+import regex
+import string
+
+fn main() {
+  println(io.inspect(regex.split("abc", "")))
+  println(io.inspect(string.split("abc", "")))
+  println(io.inspect(regex.split("", "")))
+  println(io.inspect(string.split("", "")))
+  println(io.inspect(regex.split("axb", "x*")))
+  println(io.inspect(regex.split("", "x*")))
+  println(io.inspect(regex.split("", ",")))
+  println(io.inspect(regex.split(",a,", ",")))
+  println(io.inspect(string.split(",a,", ",")))
+  println(io.inspect(regex.split("a b", "\\b")))
+}

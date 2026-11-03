@@ -1,7 +1,13 @@
 GET /q?x=1
-  first: GET /q ?y=2, no content-type
+  first: GET /q ?y=2, text/plain
   the client: 200
 GET /far
+  second: GET /there ?, text/plain
+  the client: 200
+GET /far/dots
+  second: GET /there ?q=/.., text/plain
+  the client: 200
+GET /far/scheme
   second: GET /there ?, text/plain
   the client: 200
 POST /303
@@ -9,4 +15,13 @@ POST /303
   the client: 200
 POST /307
   first: POST /echo ?, text/plain
+  the client: 200
+GET /a/dotq
+  first: GET /a/echo ?next=/../../etc, text/plain
+  the client: 200
+GET /a/b/dot
+  first: GET /a/b/ ?, text/plain
+  the client: 200
+GET /a/b/dotdot
+  first: GET /a/ ?, text/plain
   the client: 200

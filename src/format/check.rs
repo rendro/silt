@@ -46,16 +46,21 @@ use super::Refusal;
 
 /// Check `output`, the text produced for `source`, whose tokens are
 /// `lexed` and whose tree is `program`.
-pub fn verify(source: &str, lexed: &Lexed, program: &Program, output: &str) -> Result<(), Refusal> {
-    let output_lexed = Lexer::new(FileId::default(), output)
+pub fn verify(source: &str, lexed: Lexed, program: Program, output: &str) -> Result<(), Refusal> {
+    // (The source's tokens and tree are done with once its shapes are
+    // taken: a large file's two of each are not held at once.)
+    let before = decl_shapes(source, &lexed, &program);
+    // (The result has about the text's tokens, a few commas and
+    // parentheses more or less.)
+    let expected = lexed.tokens.len() + lexed.tokens.len() / 16;
+    drop((lexed, program));
+    let mut output_lexed = Lexer::new(FileId::default(), output)
+        .expecting(expected)
         .tokenize()
         .checked()
         .map_err(|e| unparseable(&e.message, e.span, output))?;
-    let output_program = Parser::new(output_lexed.clone(), output)
-        .parse_program()
+    let output_program = Parser::parse_lent(&mut output_lexed, output)
         .map_err(|e| unparseable(&e.message, e.span, output))?;
-
-    let before = decl_shapes(source, lexed, program);
     let after = decl_shapes(output, &output_lexed, &output_program);
     compare_programs(&before.decls, &after.decls)?;
     compare_comments(&before, &after)?;
@@ -1252,7 +1257,7 @@ mod tests {
             .checked()
             .unwrap();
         let program = Parser::new(lexed.clone(), source).parse_program().unwrap();
-        verify(source, &lexed, &program, output).map_err(|refusal| refusal.message)
+        verify(source, lexed, program, output).map_err(|refusal| refusal.message)
     }
 
     fn refusal(source: &str, output: &str) -> String {
