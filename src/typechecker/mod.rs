@@ -194,7 +194,11 @@ pub struct TypeChecker {
     /// the decoder, and the types of the names of types alone and the
     /// held type variables of what it is given
     /// (`refuse_undecided_decoder_types`).
-    pub(super) decoder_uses: Vec<(Span, Symbol, Vec<Type>, Vec<Type>)>,
+    pub(super) decoder_uses: Vec<json_decode::DecoderUse>,
+    /// The places a decode of the type a use gives is owed at, as the
+    /// checker places it: the argument that gives the type (or the
+    /// callee of a method called through its trait).
+    pub(super) decode_places: std::collections::HashSet<Span>,
     /// A generic type or alias written alone in a type argument, as
     /// written, with the head of the type it names, by the argument's
     /// place (`L` of `List(L)`, `Box` given to `p(s, type t)`): what a
@@ -762,6 +766,7 @@ impl TypeChecker {
             closure_param_vars: std::collections::HashSet::new(),
             defaulted_vars: std::collections::HashSet::new(),
             decoder_uses: Vec::new(),
+            decode_places: std::collections::HashSet::new(),
             bare_written: HashMap::new(),
             checked_fn: None,
             bound_askers: HashMap::new(),

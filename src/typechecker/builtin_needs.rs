@@ -737,6 +737,7 @@ impl TypeChecker {
             let through = between(self, at, self.wanted[k].origin.span, &subject);
             let wanted = &mut self.wanted[k];
             wanted.origin.span = span;
+            self.decode_places.insert(span);
             match &mut wanted.goal {
                 Goal::Pred(Pred::Builtin {
                     check: BuiltinCheck::Decodes { written, .. },
@@ -824,6 +825,12 @@ impl TypeChecker {
             }
             let passed_on = passer.filter(|_| holds_decoder(self, at, &subject));
             let through = between(self, at, self.given_waiting[k].origin.span, &subject);
+            if self
+                .decode_places
+                .contains(&self.given_waiting[k].origin.span)
+            {
+                self.decode_places.insert(span);
+            }
             let use_ = &mut self.given_waiting[k];
             use_.origin.span = span;
             use_.placed = !matches!(subject, Type::Var(_));

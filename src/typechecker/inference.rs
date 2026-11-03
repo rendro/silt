@@ -3109,7 +3109,7 @@ impl TypeChecker {
 
     /// The name a callee is written with, for a message about a call of
     /// it: `f`, or `m.f` for a member of a module.
-    fn callee_label(callee: &Expr) -> Option<Symbol> {
+    pub(super) fn callee_label(callee: &Expr) -> Option<Symbol> {
         match &callee.kind {
             ExprKind::Ident(name) => Some(*name),
             ExprKind::FieldAccess(obj, field, _)
@@ -3328,6 +3328,9 @@ impl TypeChecker {
                         .position(|param| free_vars_in(param).contains(v))
                         .and_then(|i| args.get(i));
                     if let (Some(arg), CallForm::Call) = (at, form) {
+                        if self.decode_places.contains(&self.wanted[k].origin.span) {
+                            self.decode_places.insert(arg.span);
+                        }
                         self.wanted[k].origin.span = arg.span;
                         // A type argument the call names by an alias:
                         // what a decoder's refusal calls it.
@@ -3387,6 +3390,9 @@ impl TypeChecker {
                     if let (Some(arg), CallForm::Call) = (at, form) {
                         let alias = self.alias_named(arg);
                         let use_ = &mut self.given_waiting[k];
+                        if self.decode_places.contains(&use_.origin.span) {
+                            self.decode_places.insert(arg.span);
+                        }
                         use_.origin.span = arg.span;
                         use_.written = alias;
                     }
