@@ -470,6 +470,27 @@ fn marked_strings(doc: &::toml::Value) -> usize {
     }
 }
 
+/// Where the comment of the TOML line `line` starts: its first `#`
+/// outside a string.
+fn comment_in(line: &str) -> Option<usize> {
+    let mut quote = None;
+    let mut escaped = false;
+    for (at, c) in line.char_indices() {
+        match (quote, c) {
+            (Some('"'), '\\') if !escaped => {
+                escaped = true;
+                continue;
+            }
+            (Some(q), c) if c == q && !escaped => quote = None,
+            (None, '"' | '\'') => quote = Some(c),
+            (None, '#') => return Some(at),
+            _ => {}
+        }
+        escaped = false;
+    }
+    None
+}
+
 /// The date or time literal of `text` that the parser's error at `at`
 /// is in, if it is one in a value's place whose text silt's reader
 /// refuses as a date, a time and a datetime alike: one that is no day
@@ -490,7 +511,17 @@ fn none_literal_at(text: &str, at: usize) -> Option<std::ops::Range<usize>> {
     while start < at && bytes[start] == b' ' {
         start += 1;
     }
-    let before = text[..start].trim_end_matches([' ', '\t', '\r', '\n']);
+    const SPACE: [char; 4] = [' ', '\t', '\r', '\n'];
+    let mut before = text[..start].trim_end_matches(SPACE);
+    // (A comment at the end of a line before the literal is no part of
+    // what comes before it.)
+    loop {
+        let line = before.rfind('\n').map_or(0, |at| at + 1);
+        let Some(comment) = comment_in(&before[line..]) else {
+            break;
+        };
+        before = before[..line + comment].trim_end_matches(SPACE);
+    }
     if !before.ends_with(['=', '[', ',']) {
         return None;
     }
