@@ -242,8 +242,9 @@ impl TypeChecker {
         if self.holds_open_vars(ty) {
             self.open_type_arguments.insert(origin.span);
         }
-        // (As it is now: what a variable in it is bound to later, a
-        // type a scope's end picks, is no part of what it was given.)
+        // (As it is now: a type a scope's end picks for a variable in it
+        // is no part of what it was given; what a later use decides, an
+        // annotation, is, judged in `settle_decode_gaps`.)
         self.decode_gaps.push(DecodeGap {
             subject: self.apply(ty),
             origin,
@@ -973,7 +974,14 @@ impl TypeChecker {
         let mut gaps = std::mem::take(&mut self.decode_gaps);
         gaps.sort_by_key(|gap| gap.asker.is_some_and(|asker| asker.passer.is_some()));
         for gap in gaps {
-            let ty = crate::types::canonical::canonicalize(self.tables.resolver(), &gap.subject);
+            // (What a later use decided of a part, an annotation, is the
+            // type's; what a scope's end fixed to `()` is not.)
+            let decided: HashMap<TyVar, Type> = (free_vars_in(&gap.subject).into_iter())
+                .filter(|v| !self.reaches_defaulted(&Type::Var(*v)))
+                .map(|v| (v, self.apply(&Type::Var(v))))
+                .collect();
+            let subject = substitute_vars(&gap.subject, &decided);
+            let ty = crate::types::canonical::canonicalize(self.tables.resolver(), &subject);
             // (A bound whose body hands the type to another module's
             // definition is judged as that module sees it.)
             let mut owners = gap.owners.clone();
