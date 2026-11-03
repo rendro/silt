@@ -3435,6 +3435,17 @@ impl TypeChecker {
                         let passed_on = statement.map(|_| self.frames_sharing(&arg_ty));
                         let reported = self.errors.len();
                         self.unify(&arg_ty, param, at);
+                        // A type argument already reported (`_` of
+                        // `wrap(1, Result(_, String))`): what it would
+                        // decide is asked about no more.
+                        if self.apply(&arg_ty) == Type::Error
+                            && let Type::Generic(name, args) = self.apply(param)
+                            && name.is_builtin(crate::defs::TYPE_OF)
+                        {
+                            for v in args.iter().flat_map(free_vars_in) {
+                                self.unify(&Type::Var(v), &Type::Error, at);
+                            }
+                        }
                         mismatched |= self.errors.len() > reported;
                         if self.errors.len() > reported {
                             self.misread_argument(

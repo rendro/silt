@@ -257,6 +257,15 @@ impl TypeChecker {
         // (`List(Int)`, `(Int, String)`): a decoder that takes any value
         // reads it as the type of a field, each part as one. (A type
         // with its arguments left open, `List`, is not one type.)
+        // (A part written alone, `List(Box)`: that part is what is
+        // refused, as it would be at the top.)
+        if self.open_type_arguments.contains(&span)
+            && let Some(parts) = decoded_parts(ty)
+            && let Some(part) = (parts.into_iter())
+                .find(|part| !matches!(part, Type::Var(_)) && self.holds_open_vars(part))
+        {
+            return self.decode_refusal(builtin_name, decoding, None, part, owner, span);
+        }
         if decoding.primitives
             && let Some(parts) = decoded_parts(ty)
             && !self.open_type_arguments.contains(&span)

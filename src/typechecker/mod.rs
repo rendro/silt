@@ -666,6 +666,9 @@ pub struct TypeChecker {
     /// The methods of the impls whose trait or type the resolver resolved
     /// to nothing: a call of one is not reported again as unknown.
     pub(super) unresolved_impl_methods: std::collections::HashSet<Symbol>,
+    /// The trait and type of each impl whose header was refused: a use
+    /// of the trait for the type owes no second error.
+    pub(super) refused_impl_heads: std::collections::HashSet<(TraitKey, TypeRef)>,
     /// The traits of the module's rejected impls for every type
     /// (`trait T for a`): a type that lacks one is not reported again.
     pub(super) blanket_traits: std::collections::HashSet<TraitKey>,
@@ -870,6 +873,7 @@ impl TypeChecker {
             own_traits: HashMap::new(),
             rejected_types: std::collections::HashSet::new(),
             unresolved_impl_methods: std::collections::HashSet::new(),
+            refused_impl_heads: std::collections::HashSet::new(),
             blanket_traits: std::collections::HashSet::new(),
             duplicated_impls: std::collections::HashSet::new(),
             impl_written: HashMap::new(),

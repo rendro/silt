@@ -1,0 +1,11 @@
+error[type]: undefined variable '_'
+ --> a_reported_type_argument_of_a_constructor_is_one_error.silt:14:26
+    |
+ 14 |   println(wrap(1, Result(_, String)))
+    |                          ^ undefined variable '_'
+
+error[type]: undefined variable 'nothere'
+ --> a_reported_type_argument_of_a_constructor_is_one_error.silt:15:19
+    |
+ 15 |   println(wrap(1, nothere))
+    |                   ^^^^^^^ undefined variable 'nothere'

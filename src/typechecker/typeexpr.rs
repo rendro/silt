@@ -192,6 +192,23 @@ impl TypeChecker {
     /// arguments it does not take: none, or the number it takes (`Box()`
     /// of a generic `Box`, `Bytes()`, `Bytes(Int)`). A type is written
     /// one way: without parentheses when it takes no arguments.
+    /// `type_arguments_message` for the header of an impl of a trait of
+    /// type constructors, which writes `_` for the first type argument:
+    /// `W(_)`, `W(_, b)`.
+    pub(super) fn constructor_arguments_message(&self, shown: &str, ty: TypeRef) -> String {
+        let mut params = self.type_param_names(ty);
+        let Some(first) = params.first_mut() else {
+            return self.type_arguments_message(shown, ty);
+        };
+        *first = "_".to_string();
+        format!(
+            "`{shown}` takes {} {} here: write `{shown}({})`",
+            params.len(),
+            super::inference::plural(params.len(), "type argument", "type arguments"),
+            params.join(", ")
+        )
+    }
+
     pub(super) fn type_arguments_message(&self, shown: &str, ty: TypeRef) -> String {
         (self.bare_generic_message(shown, ty))
             .unwrap_or_else(|| format!("`{shown}` takes no type arguments: write `{shown}`"))

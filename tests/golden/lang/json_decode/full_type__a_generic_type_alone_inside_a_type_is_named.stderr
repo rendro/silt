@@ -1,0 +1,27 @@
+error[type]: `json.parse` cannot decode `Box`: it is a generic record type, and a decoder builds a value of one type
+ --> full_type__a_generic_type_alone_inside_a_type_is_named.silt:14:29
+    |
+ 14 |   println(json.parse("[0]", List(Box)))
+    |                             ^^^^^^^^^ `json.parse` cannot decode `Box`: it is a generic record type, and a decoder builds a value of one type
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `json.parse` cannot decode `Box`: it is a generic record type, and a decoder builds a value of one type
+ --> full_type__a_generic_type_alone_inside_a_type_is_named.silt:15:32
+    |
+ 15 |   println(json.parse("[0, 0]", (Int, Box)))
+    |                                ^^^^^^^^^^ `json.parse` cannot decode `Box`: it is a generic record type, and a decoder builds a value of one type
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `json.parse` cannot decode `Box`: it is a generic record type, and a decoder builds a value of one type
+ --> full_type__a_generic_type_alone_inside_a_type_is_named.silt:16:27
+    |
+ 16 |   println(json.parse("0", Option(Box)))
+    |                           ^^^^^^^^^^^ `json.parse` cannot decode `Box`: it is a generic record type, and a decoder builds a value of one type
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `json.parse` cannot decode `List`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, a type with a `json.Decode` impl, or List(T), Option(T), Map(String, T) or a tuple of decodable types
+ --> full_type__a_generic_type_alone_inside_a_type_is_named.silt:17:31
+    |
+ 17 |   println(json.parse("[[0]]", List(List)))
+    |                               ^^^^^^^^^^ `json.parse` cannot decode `List`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, a type with a `json.Decode` impl, or List(T), Option(T), Map(String, T) or a tuple of decodable types
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these

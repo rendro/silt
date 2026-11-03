@@ -1,10 +1,12 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: error[type]: trait 'Holds' expects 1 type argument as a supertrait of 'Bad', got 2
--- stderr-contains: error[type]: trait 'Holds' expects 1 type argument as a supertrait of 'Bare', got 0
--- stderr-not-contains: 'Fine'
--- A supertrait is given as many type arguments as it has parameters:
--- checked where the trait is declared, whether or not a `where` clause
+-- stderr-contains: error[type]: `Holds` takes 1 type argument here: write `Holds(a)`
+-- stderr-contains: supertrait_arity__wrong_number_of_arguments.silt:12:12
+-- stderr-contains: supertrait_arity__wrong_number_of_arguments.silt:13:13
+-- stderr-not-contains: supertrait_arity__wrong_number_of_arguments.silt:14:
+-- A supertrait is given as many type arguments as it has parameters, said
+-- in the one form for a number of type arguments: checked where the trait
+-- is declared, whether or not a `where` clause
 -- names the trait.
 trait Holds(a) { fn held(self) -> a }
 trait Bad: Holds(Int, String) { fn bad(self) -> Int }

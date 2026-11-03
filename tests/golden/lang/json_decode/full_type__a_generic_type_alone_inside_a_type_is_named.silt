@@ -1,0 +1,18 @@
+-- cmd: check
+-- exit: 1
+-- A generic type written alone inside a decoder's type argument
+-- (`List(Box)`, `(Int, Box)`, `Option(Box)`) is named in the refusal, as
+-- it is at the top: `Box`, not the list around it. (`List(List)` names
+-- the inner `List`.)
+import json
+
+type Box(a) {
+  v: a,
+}
+
+fn main() {
+  println(json.parse("[0]", List(Box)))
+  println(json.parse("[0, 0]", (Int, Box)))
+  println(json.parse("0", Option(Box)))
+  println(json.parse("[[0]]", List(List)))
+}

@@ -1,0 +1,18 @@
+-- cmd: check
+-- exit: 1
+-- A type given to a `type m` parameter with `_` among its arguments
+-- (`Result(_, String)`) is one error, "undefined variable '_'", with no
+-- help that writes a closure (a type is meant, not a call); a name the
+-- resolver reports there is one error too: what the argument would
+-- decide is asked about no more. (`Result` alone is the constructor,
+-- `wrap(1, Result)`.)
+fn wrap(x: a, type m) -> m(a) where m: Applicative {
+  m.pure(x)
+}
+
+fn main() {
+  println(wrap(1, Result(_, String)))
+  println(wrap(1, nothere))
+  let r: Result(Int, String) = wrap(1, Result)
+  println(r)
+}

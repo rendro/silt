@@ -1902,6 +1902,18 @@ impl TypeChecker {
     ) {
         let before = self.errors.len();
         self.check_trait_obligation(trait_name, bound_trait_args, ty, origin, asker, ev);
+        // (The impl's header was refused: that error is the one.)
+        if self.errors.len() > before
+            && let Some(head) = self.type_name_for_impl(&self.apply(ty))
+            && self.refused_impl_heads.contains(&(trait_name, head))
+        {
+            let mut index = 0;
+            self.errors.retain(|e| {
+                let keep = index < before || e.code != Code::MissingTraitImpl;
+                index += 1;
+                keep
+            });
+        }
         if let Some(header) = origin.header
             && self.errors.len() > before
             && let Some(note) = self.header_note(header)
