@@ -24,6 +24,10 @@ fn helper(x) {
 } -- private
 ```
 
+A module's name is all lowercase: letters, digits and `_`, not starting
+with a digit (`src/geo_util.silt`, imported as `geo_util`). A file such as
+`src/Util.silt` is an error, and so is `import Util`.
+
 A module path is one name: there is no `import net.http`, and a file in a
 subdirectory of `src/` is not a module.
 

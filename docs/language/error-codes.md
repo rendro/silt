@@ -108,7 +108,7 @@ missing belong to codes that are gone.
 | `E0402` | Modules that import each other in a cycle. |
 | `E0405` | Something the bytecode cannot express: too many constants, locals, arguments, a jump too far. |
 | `E0409` | A defect in silt: the compiler lost track of its own state. |
-| `E0410` | A module file, or an import alias, named like a builtin module: `import` of the name always means the builtin one. |
+| `E0410` | A module file, or an import, whose name is not a module name: named like a builtin module (`import` of the name always means the builtin one; an import alias too), or not all lowercase. |
 | `E0411` | A host module an embedder declared that a builtin module, a dependency or a module file of the same name hides or is hidden by. |
 | `E0412` | A host function whose signature is not one `fn` header. |
 | `E0501` | `silt run` of a program without a `main` function. |
