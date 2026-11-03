@@ -1,0 +1,20 @@
+error[type]: type 'Pair(Bool, Int)' does not implement trait 'json.Decode': the only impl is for 'Pair(String, Int)'
+ --> instance_impl__a_refusal_names_the_one_impl_on_every_route.silt:27:27
+    |
+ 27 |   println(json.parse("1", P(Bool)))
+    |                           ^^^^^^^ type 'Pair(Bool, Int)' does not implement trait 'json.Decode': the only impl is for 'Pair(String, Int)'
+
+error[type]: `json.parse` cannot decode `List(Pair(Bool, Int))`: `Pair(Bool, Int)` has no decoder: the only impl is for `Pair(String, Int)`
+ --> instance_impl__a_refusal_names_the_one_impl_on_every_route.silt:28:29
+    |
+ 28 |   println(json.parse("[1]", List(P(Bool))))
+    |                             ^^^^^^^^^^^^^ `json.parse` cannot decode `List(Pair(Bool, Int))`: `Pair(Bool, Int)` has no decoder: the only impl is for `Pair(String, Int)`
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `json.parse` cannot decode `List(Pair(List(Int), Int))`: `Pair(List(Int), Int)` has no decoder: the only impl is for `Pair(String, Int)`
+ --> instance_impl__a_refusal_names_the_one_impl_on_every_route.silt:29:23
+    |
+ 29 |   println(load("[1]", List(Q(Int))))
+    |                       ^^^^^^^^^^^^ `json.parse` cannot decode `List(Pair(List(Int), Int))`: `Pair(List(Int), Int)` has no decoder: the only impl is for `Pair(String, Int)`
+  = note: `load` passes it to `json.parse`
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these

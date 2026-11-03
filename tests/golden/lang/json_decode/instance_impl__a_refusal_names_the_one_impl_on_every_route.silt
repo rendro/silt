@@ -1,0 +1,31 @@
+-- cmd: check
+-- exit: 1
+-- A type with a json.Decode impl for one instantiation only (`Pair(String,
+-- Int)`, through the alias `P(String)`), at another instantiation, is
+-- refused naming that impl on every route: decoded directly, inside a
+-- list, and in a list given through a function's type parameter.
+import json
+
+type Pair(a, b) {
+  l: a,
+  r: b,
+}
+
+type P(a) = Pair(a, Int)
+
+type Q(x) = P(List(x))
+
+trait json.Decode for P(String) {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) { Ok(Pair { l: "s", r: 42 }) }
+}
+
+fn load(s, type t) -> Result(t, json.JsonError) where t: json.Decode {
+  json.parse(s, t)
+}
+
+fn main() {
+  println(json.parse("1", P(Bool)))
+  println(json.parse("[1]", List(P(Bool))))
+  println(load("[1]", List(Q(Int))))
+  println(json.parse("\"a\"", P(String)))
+}
