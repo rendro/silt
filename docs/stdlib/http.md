@@ -194,9 +194,10 @@ say, in a `Content-Type` header among `headers`: none is added. A
 `Content-Length` among `headers` is not sent: the body's own length is.
 
 A redirect is followed, up to ten of them: after a 307 or 308 with the
-same method and body, after a 301, 302 or 303 as a `GET` without a body
-and without the `Content-Type` among `headers` (a `HEAD` stays a
-`HEAD`). The `authorization` and `cookie` headers are not sent to where
+same method and body; after a 303 as a `GET` without a body and without
+the `Content-Type` among `headers` (a `HEAD` stays a `HEAD`); after a 301
+or 302 a `POST` as such a `GET`, and any other method with the same
+method and body. The `authorization` and `cookie` headers are not sent to where
 a redirect leads. A location that is no full URL is resolved against
 the URL that answered: `?y=2` on its path, `//host/x` on its scheme.
 
