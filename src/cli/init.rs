@@ -39,7 +39,7 @@ pub(crate) fn dispatch(args: &[String]) {
                 "error: silt init: unexpected argument '{arg}' (silt init takes no positional arguments; the package name is derived from the current directory)"
             );
             eprintln!(
-                "       to create a package in a new directory, run: mkdir {arg} && cd {arg} && silt init"
+                "                  to create a package in a new directory, run: mkdir {arg} && cd {arg} && silt init"
             );
             process::exit(1);
         }
@@ -123,9 +123,11 @@ fn init_project(lib: bool) {
                 cwd.display()
             );
             eprintln!(
-                "       the directory needs a name that contains at least one lowercase letter,"
+                "                  the directory needs a name that contains at least one lowercase letter,"
             );
-            eprintln!("       digit, or underscore (or rename it to a valid silt identifier).");
+            eprintln!(
+                "                  digit, or underscore (or rename it to a valid silt identifier)."
+            );
             process::exit(1);
         }
     };
@@ -139,9 +141,13 @@ fn init_project(lib: bool) {
     // name shadowed the stdlib `io` module.
     if let Err(msg) = silt::manifest::validate_package_name(&package_name) {
         eprintln!("error: silt init: {msg}");
-        eprintln!("       (the package name was derived from the directory name `{dirname}`;");
-        eprintln!("        rename the directory or run `silt init` from a directory whose name");
-        eprintln!("        is not a keyword or a stdlib module).");
+        eprintln!(
+            "                  (the package name was derived from the directory name `{dirname}`;"
+        );
+        eprintln!(
+            "                   rename the directory or run `silt init` from a directory whose name"
+        );
+        eprintln!("                   is not a keyword or a stdlib module).");
         process::exit(1);
     }
 

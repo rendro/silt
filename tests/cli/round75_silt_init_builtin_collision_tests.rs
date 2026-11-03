@@ -355,3 +355,33 @@ fn keyword_init_rejects_every_reserved_keyword() {
         );
     }
 }
+
+/// The lines under the error stand under the text of its first line,
+/// after the `error: silt init: ` prefix (the parenthesised one a column
+/// further in). FAILS on the base: they were indented for the old,
+/// shorter prefix.
+#[test]
+fn init_refusal_lines_are_aligned_under_the_first() {
+    let dir = temp_dir_named("fn");
+    let out = silt_cmd()
+        .arg("init")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to invoke silt init");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let lines: Vec<&str> = stderr.lines().collect();
+    let pad = " ".repeat("error: silt init: ".len());
+    assert!(lines[0].starts_with("error: silt init: "), "{stderr}");
+    assert!(
+        lines[1].starts_with(&format!("{pad}(the package name")),
+        "{stderr}"
+    );
+    assert!(
+        lines[2].starts_with(&format!("{pad} rename the directory")),
+        "{stderr}"
+    );
+    assert!(
+        lines[3].starts_with(&format!("{pad} is not a keyword")),
+        "{stderr}"
+    );
+}
