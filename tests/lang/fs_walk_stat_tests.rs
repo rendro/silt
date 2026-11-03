@@ -583,3 +583,51 @@ fn stat_gives_a_time_before_1970() {
         "Some(1960-01-01T00:00:00.500000000)"
     );
 }
+
+// ── Errors name the path they are about ────────────────────────────
+
+/// Every fs function names the path an error is about, in the words of
+/// the fault (`is a directory: d`), not the system's text without the
+/// path (`Is a directory (os error 21)`). Unix only: on Windows reading
+/// a directory is a refused access, which has a variant of its own.
+#[cfg(unix)]
+#[test]
+fn test_fs_errors_name_the_path_they_are_about() {
+    let dir = TempDir::new("errors");
+    let sub = dir.path().join("d");
+    std::fs::create_dir(&sub).unwrap();
+    let file = dir.path().join("f.txt");
+    std::fs::write(&file, "x").unwrap();
+    let ring = dir.path().join("ring.txt");
+    std::os::unix::fs::symlink(&ring, &ring).expect("make symlink");
+    let (sub, file, ring) = (
+        sub.to_str().unwrap().to_string(),
+        file.to_str().unwrap().to_string(),
+        ring.to_str().unwrap().to_string(),
+    );
+    let call = |expr: &str| {
+        err_msg(run(&format!(
+            "import fs\nimport io\nfn main() {{\n  {expr}\n}}\n"
+        )))
+    };
+    assert_eq!(
+        call(&format!("io.read_file(\"{sub}\")")),
+        format!("is a directory: {sub}")
+    );
+    assert_eq!(
+        call(&format!("io.write_file(\"{sub}\", \"x\")")),
+        format!("is a directory: {sub}")
+    );
+    assert_eq!(
+        call(&format!("fs.list_dir(\"{file}\")")),
+        format!("not a directory: {file}")
+    );
+    assert_eq!(
+        call(&format!("io.read_file(\"{ring}\")")),
+        format!("symlink loop: {ring}")
+    );
+    assert_eq!(
+        call(&format!("fs.read_link(\"{file}\")")),
+        format!("invalid input: not a symlink: {file}")
+    );
+}

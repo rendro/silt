@@ -34,7 +34,7 @@ Every fallible `io` / `fs` function returns `Result(T, IoError)`.
 | `Interrupted`              | syscall was interrupted                    |
 | `UnexpectedEof`            | stream ended before the requested bytes    |
 | `WriteZero`                | write returned 0 bytes                     |
-| `Other(msg)`             | everything else                            |
+| `Other(msg)`             | everything else: the fault, then the path (`is a directory: dir`) |
 
 `IoError` implements the built-in `Error` trait, so every value exposes
 `Error.message(e) -> String` for a human-readable summary. Most call sites

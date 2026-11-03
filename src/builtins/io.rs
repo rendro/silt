@@ -124,13 +124,16 @@ fn moves_into_itself(from: &str, to: &str) -> bool {
     }
 }
 
-/// The error of a failed `fs.copy` or `fs.rename` about `path`: a
-/// fault with an `IoError` variant of its own is that variant; any
-/// other is `Other` that says what the fault is and names the path
-/// (`is a directory: dir`), in the words the kind of fault has, or in
-/// the system's where it has no kind of its own.
-fn moved_err(err: &std::io::Error, path: &str) -> Value {
+/// The error of a failed file operation about `path`: a fault with an
+/// `IoError` variant of its own is that variant; any other is `Other`
+/// that says what the fault is and names the path (`is a directory:
+/// dir`), in the words the kind of fault has, or in the system's where
+/// it has no kind of its own.
+fn path_err(err: &std::io::Error, path: &str) -> Value {
     use std::io::ErrorKind;
+    if is_link_loop(err) {
+        return path_err_text("symlink loop", path);
+    }
     match err.kind() {
         ErrorKind::NotFound
         | ErrorKind::PermissionDenied
@@ -139,21 +142,41 @@ fn moved_err(err: &std::io::Error, path: &str) -> Value {
         | ErrorKind::Interrupted
         | ErrorKind::UnexpectedEof
         | ErrorKind::WriteZero => io_result_err(err, path),
-        ErrorKind::IsADirectory => moved_err_text("is a directory", path),
-        ErrorKind::NotADirectory => moved_err_text("not a directory", path),
+        ErrorKind::IsADirectory => path_err_text("is a directory", path),
+        ErrorKind::NotADirectory => path_err_text("not a directory", path),
         kind => {
             let words = kind.to_string();
             let what = match kind == ErrorKind::Other || words == "uncategorized error" {
                 true => err.to_string(),
                 false => words,
             };
-            moved_err_text(&what, path)
+            path_err_text(&what, path)
         }
     }
 }
 
+/// Whether `err` is a loop of symbolic links, by the system's code for
+/// it (ELOOP on Unix, ERROR_CANT_RESOLVE_FILENAME on Windows): the kind
+/// std gives it is not stable yet, and its words may change. Where no
+/// code is known, by those words.
+fn is_link_loop(err: &std::io::Error) -> bool {
+    #[cfg(unix)]
+    {
+        err.raw_os_error() == Some(libc::ELOOP)
+    }
+    #[cfg(windows)]
+    {
+        const ERROR_CANT_RESOLVE_FILENAME: i32 = 1921;
+        err.raw_os_error() == Some(ERROR_CANT_RESOLVE_FILENAME)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        err.kind().to_string().contains("symlink loop")
+    }
+}
+
 /// `Err(Other("<what>: <path>"))`, the form of `file not found: <path>`.
-fn moved_err_text(what: &str, path: &str) -> Value {
+fn path_err_text(what: &str, path: &str) -> Value {
     io_result_err_unknown(format!("{what}: {path}"))
 }
 
@@ -195,7 +218,7 @@ fn fs_ok(inner: Value) -> Value {
 fn result<T>(done: std::io::Result<T>, path: &str, ok: impl FnOnce(T) -> Value) -> Value {
     match done {
         Ok(value) => fs_ok(ok(value)),
-        Err(e) => io_result_err(&e, path),
+        Err(e) => path_err(&e, path),
     }
 }
 
@@ -384,7 +407,7 @@ pub(crate) mod fs {
             match std::fs::rename(from, to) {
                 Ok(()) => fs_ok(Value::Unit),
                 Err(_) if moves_into_itself(from, to) => {
-                    moved_err_text("cannot move a directory into itself", to)
+                    path_err_text("cannot move a directory into itself", to)
                 }
                 Err(e) => {
                     let about = match e.kind() {
@@ -394,7 +417,7 @@ pub(crate) mod fs {
                         | std::io::ErrorKind::DirectoryNotEmpty => to,
                         kind => rename_failed_at(kind, from, to),
                     };
-                    moved_err(&e, about)
+                    path_err(&e, about)
                 }
             }
         }
@@ -417,11 +440,11 @@ pub(crate) mod fs {
             }
             // (A directory opens on some systems, and is no file to copy.)
             if std::fs::metadata(from).is_ok_and(|md| md.is_dir()) {
-                return moved_err_text("is a directory", from);
+                return path_err_text("is a directory", from);
             }
             match std::fs::copy(from, to) {
                 Ok(_) => fs_ok(Value::Unit),
-                Err(e) => moved_err(&e, to),
+                Err(e) => path_err(&e, to),
             }
         }
 
@@ -476,9 +499,17 @@ pub(crate) mod fs {
         }
 
         fn read_link(path: &str) -> Value {
-            result(std::fs::read_link(path), path, |target| {
-                Value::String(target.to_string_lossy().into_owned().into())
-            })
+            match std::fs::read_link(path) {
+                // (What the system says of a path that is no link names
+                // neither the fault nor the path.)
+                Err(e) if e.kind() == std::io::ErrorKind::InvalidInput => io_err(Value::variant(
+                    bv::IO_INVALID_INPUT,
+                    [Value::String(format!("not a symlink: {path}").into())],
+                )),
+                done => result(done, path, |target| {
+                    Value::String(target.to_string_lossy().into_owned().into())
+                }),
+            }
         }
 
         fn walk(root: &str) -> Value {
@@ -505,7 +536,7 @@ pub(crate) mod fs {
                     // non-io cause (cycle detection etc.).
                     Err(err) => {
                         return match err.io_error() {
-                            Some(io_error) => io_result_err(io_error, root),
+                            Some(io_error) => path_err(io_error, root),
                             None => io_result_err_unknown(err.to_string()),
                         };
                     }
@@ -547,7 +578,7 @@ pub(crate) mod fs {
                 }
                 match entry {
                     Ok(path) => out.push(Value::String(path.to_string_lossy().into_owned().into())),
-                    Err(e) => return io_result_err(&e, pattern),
+                    Err(e) => return path_err(&e, pattern),
                 }
             }
             fs_ok(Value::list(out))
