@@ -982,9 +982,7 @@ impl TypeChecker {
             let decided: HashMap<TyVar, Type> = (free_vars_in(&gap.subject).into_iter())
                 .filter(|v| !self.reaches_defaulted(&Type::Var(*v)))
                 .map(|v| (v, self.apply(&Type::Var(v))))
-                .filter(|(_, ty)| {
-                    free_vars_in(ty).is_empty() && super::inference::rigid_vars(ty).is_empty()
-                })
+                .filter(|(_, ty)| self.given_where_it_runs(ty))
                 .collect();
             let subject = substitute_vars(&gap.subject, &decided);
             let ty = crate::types::canonical::canonicalize(self.tables.resolver(), &subject);
@@ -1024,6 +1022,35 @@ impl TypeChecker {
             let named =
                 (decoder.or(passer).or(gap.origin.callee)).unwrap_or_else(|| intern("json.decode"));
             let written = self.decode_aliases.get(&gap.origin.span).copied();
+            // A list, an option, a map or a tuple with a part nothing
+            // gives where the code runs (`[]` whose element a later use
+            // decides as `a`, which only a value holds): refused as
+            // needing its type in full, as a generic type of the program
+            // with such a part is (`Box { v: [] }`).
+            if super::builtin_checks::decoded_parts(&ty).is_some()
+                && !self.holds_open_vars(&ty)
+                && let Some(refusal) = (free_vars_in(&ty).iter())
+                    .any(|v| !self.held_by_param(*v))
+                    .then(|| {
+                        self.part_given_by_no_name(
+                            &resolve(named),
+                            &gap.subject,
+                            &ty,
+                            gap.origin.span,
+                        )
+                    })
+                    .flatten()
+            {
+                self.refused_calls.push(gap.origin.span);
+                // (One error at one place: the whole type's, `Box(Option(a))`
+                // of `ag(Box { v: None }, s)`, there first.)
+                let reported =
+                    (self.errors.iter()).any(|e| e.span == gap.origin.span && e.is_error());
+                if !reported {
+                    self.errors.push(refusal);
+                }
+                continue;
+            }
             let Some(mut diagnostic) =
                 self.json_decode_refusal(&resolve(named), written, &ty, (&owners, gap.origin.span))
             else {
@@ -1275,6 +1302,43 @@ impl TypeChecker {
                     .with_help("annotate the value it is given"),
             );
         }
+    }
+
+    /// The refusal at `span` of `ty` (`subject` with what later uses
+    /// decided in full) as needing its type in full: named as a later use
+    /// decided it, by the letter the program wrote (`List((a, Int))`), or
+    /// by its place where nothing decided it.
+    fn part_given_by_no_name(
+        &self,
+        builtin: &str,
+        subject: &Type,
+        ty: &Type,
+        span: Span,
+    ) -> Option<Diagnostic> {
+        let decided =
+            crate::types::canonical::canonicalize(self.tables.resolver(), &self.apply(subject));
+        let unvalued = (super::inference::rigid_vars(&decided).into_iter())
+            .find(|r| !self.valued_vars.contains(&r.var));
+        let Some(r) = unvalued.filter(|_| free_vars_in(&decided).is_empty()) else {
+            return self.in_full_refusal(builtin, ty, span);
+        };
+        let name = r.name;
+        let message = format!(
+            "`{builtin}` needs the type `{}` in full here: `{name}` is known only by its type",
+            self.show_type(&decided)
+        );
+        Some(
+            Diagnostic::error(Code::InvalidMethodCall, span, message)
+                .with_help(format!("take the type as a parameter, `type {name}`")),
+        )
+    }
+
+    /// Whether every part of `ty`, a type a later use decided, is given
+    /// where the code runs: no variable a value alone holds; a `type t`
+    /// parameter's, or a parameter's that holds a type, is.
+    fn given_where_it_runs(&self, ty: &Type) -> bool {
+        free_vars_in(ty).iter().all(|v| self.held_by_param(*v))
+            && (super::inference::rigid_vars(ty).iter()).all(|r| self.valued_vars.contains(&r.var))
     }
 
     /// Whether `ty` has in it, also through what the checker learnt of

@@ -1,0 +1,34 @@
+error[type]: `ag` needs the type `List(a)` in full here: `a` is known only by its type
+ --> full_type__an_empty_container_decided_later_as_a_variable_only_a_value_holds_is_refused.silt:38:47
+    |
+ 38 |   let r: Result(List(a), json.JsonError) = ag([], s)
+    |                                               ^^ `ag` needs the type `List(a)` in full here: `a` is known only by its type
+  = help: take the type as a parameter, `type a`
+
+error[type]: `ag2` needs the type `List((a, Int))` in full here: `a` is known only by its type
+ --> full_type__an_empty_container_decided_later_as_a_variable_only_a_value_holds_is_refused.silt:43:55
+    |
+ 43 |   let r: Result(List((a, Int)), json.JsonError) = ag2([], s)
+    |                                                       ^^ `ag2` needs the type `List((a, Int))` in full here: `a` is known only by its type
+  = help: take the type as a parameter, `type a`
+
+error[type]: `k` needs the type `Option(a)` in full here: `a` is known only by its type
+ --> full_type__an_empty_container_decided_later_as_a_variable_only_a_value_holds_is_refused.silt:49:48
+    |
+ 49 |   let r: Result(Option(a), json.JsonError) = k(None)
+    |                                                ^^^^ `k` needs the type `Option(a)` in full here: `a` is known only by its type
+  = help: take the type as a parameter, `type a`
+
+error[type]: `ag` needs the type `Map(String, a)` in full here: `a` is known only by its type
+ --> full_type__an_empty_container_decided_later_as_a_variable_only_a_value_holds_is_refused.silt:54:14
+    |
+ 54 |   let r = ag(#{}, s)
+    |              ^^^ `ag` needs the type `Map(String, a)` in full here: `a` is known only by its type
+  = help: take the type as a parameter, `type a`
+
+error[type]: `ag` needs the type `(List(a), Int)` in full here: `a` is known only by its type
+ --> full_type__an_empty_container_decided_later_as_a_variable_only_a_value_holds_is_refused.silt:59:54
+    |
+ 59 |   let r: Result((List(a), Int), json.JsonError) = ag(([], 1), s)
+    |                                                      ^^^^^^^ `ag` needs the type `(List(a), Int)` in full here: `a` is known only by its type
+  = help: take the type as a parameter, `type a`

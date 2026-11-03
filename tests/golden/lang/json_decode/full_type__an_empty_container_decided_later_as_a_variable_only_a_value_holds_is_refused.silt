@@ -1,0 +1,69 @@
+-- cmd: check
+-- exit: 1
+-- An empty list, `None`, an empty map or a tuple holding `[]`, given to
+-- a function that decodes its argument's type through a dictionary that
+-- carries the type in full (`ag`, with impls of `Dec` for List(a),
+-- Option(a), Map(String, a) and tuples), whose part a later use decides
+-- as a type variable only a value holds (`a` of `y: a`), is refused as
+-- needing the type in full, named as the later use decided it: by an
+-- annotation, through another function, in a closure, and by a later use
+-- (`same(r, ...)`).
+import json
+
+trait Dec: json.Decode {
+  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+trait Dec for List(a) where a: json.Decode {}
+
+trait Dec for Option(a) where a: json.Decode {}
+
+trait Dec for Map(String, a) where a: json.Decode {}
+
+trait Dec for Tuple(a, b) where a: json.Decode, b: json.Decode {}
+
+fn ag(x, s) {
+  Dec.again(x, s)
+}
+
+fn ag2(x, s) {
+  ag(x, s)
+}
+
+fn same(a: x, b: x) -> x {
+  a
+}
+
+fn listed(y: a, s: String) -> Result(List(a), json.JsonError) where a: json.Decode {
+  let r: Result(List(a), json.JsonError) = ag([], s)
+  r
+}
+
+fn paired(y: a, s: String) -> Result(List((a, Int)), json.JsonError) where a: json.Decode {
+  let r: Result(List((a, Int)), json.JsonError) = ag2([], s)
+  r
+}
+
+fn optional(y: a, s: String) -> Result(Option(a), json.JsonError) where a: json.Decode {
+  let k = { x -> ag(x, s) }
+  let r: Result(Option(a), json.JsonError) = k(None)
+  r
+}
+
+fn mapped(y: a, s: String) -> Result(Map(String, a), json.JsonError) where a: json.Decode {
+  let r = ag(#{}, s)
+  same(r, Ok(#{"k": y}))
+}
+
+fn tupled(y: a, s: String) -> Result((List(a), Int), json.JsonError) where a: json.Decode {
+  let r: Result((List(a), Int), json.JsonError) = ag(([], 1), s)
+  r
+}
+
+fn main() {
+  println(listed(1, "[2]"))
+  println(paired(1, "[[2, 3]]"))
+  println(optional(1, "2"))
+  println(mapped(1, "\{\"k\": 2}"))
+  println(tupled(1, "[[2], 3]"))
+}

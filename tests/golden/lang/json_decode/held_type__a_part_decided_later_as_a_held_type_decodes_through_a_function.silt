@@ -1,0 +1,58 @@
+-- A part of a value's type that a later use decides as a type a `type t`
+-- parameter holds (`Box(List(t))`, `Box(Option(Box(t)))`, `List((t,
+-- Int))`), given through a function that decodes its argument's type
+-- (`ag`, `ag2`, a closure), decodes: the parameter gives the type where
+-- the code runs, as on the direct route.
+import json
+
+type Box(a) {
+  v: a,
+}
+
+trait Dec: json.Decode {
+  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+trait Dec for Box(a) where a: json.Decode {}
+
+trait Dec for List(a) where a: json.Decode {}
+
+fn ag(x, s) {
+  Dec.again(x, s)
+}
+
+fn ag2(x, s) {
+  ag(x, s)
+}
+
+fn t1(s: String, type t) -> Result(Box(List(t)), json.JsonError) where t: json.Decode {
+  let q = ag(Box { v: [] }, s)
+  let r: Result(Box(List(t)), json.JsonError) = q
+  r
+}
+
+fn t2(s: String, type t) -> Result(Box(Option(Box(t))), json.JsonError) where t: json.Decode {
+  let q = ag2(Box { v: None }, s)
+  let r: Result(Box(Option(Box(t))), json.JsonError) = q
+  r
+}
+
+fn t3(s: String, type t) -> Result(List((t, Int)), json.JsonError) where t: json.Decode {
+  let q = ag([], s)
+  let r: Result(List((t, Int)), json.JsonError) = q
+  r
+}
+
+fn t4(s: String, type t) -> Result(Box(Option(t)), json.JsonError) where t: json.Decode {
+  let k = { b -> ag(b, s) }
+  let r: Result(Box(Option(t)), json.JsonError) = k(Box { v: None })
+  r
+}
+
+fn main() {
+  println(t1("\{\"v\": [1, 2]}", Int))
+  println(t2("\{\"v\": \{\"v\": \"x\"}}", String))
+  println(t3("[[true, 1]]", Bool))
+  println(t4("\{\"v\": 3.5}", Float))
+  println(t1("\{\"v\": [\"no\"]}", Int))
+}

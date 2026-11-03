@@ -603,7 +603,12 @@ impl TypeChecker {
     /// dictionary that needs its type in full is refused
     /// (`refuse_type_without_value`), the variable named by its place
     /// among the type's.
-    fn in_full_refusal(&self, builtin_name: &str, ty: &Type, span: Span) -> Option<Diagnostic> {
+    pub(super) fn in_full_refusal(
+        &self,
+        builtin_name: &str,
+        ty: &Type,
+        span: Span,
+    ) -> Option<Diagnostic> {
         let mut letters = (b'a'..=b'z').map(|letter| char::from(letter).to_string());
         let names: HashMap<TyVar, Type> = (free_vars_in(ty).into_iter())
             .map(|var| {
