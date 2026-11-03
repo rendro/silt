@@ -40,6 +40,15 @@ pub fn files_under(
     out
 }
 
+/// Which file a walk has named: on Unix its device and inode, elsewhere
+/// its place without links.
+#[derive(PartialEq, Eq, Hash)]
+enum FileKey {
+    #[cfg_attr(not(unix), allow(dead_code))]
+    Inode(u64, u64),
+    Place(PathBuf),
+}
+
 /// What [`walk_files`] finds.
 pub enum Found {
     /// A file `wanted` takes.
@@ -56,9 +65,10 @@ pub enum Found {
 /// path that reaches it: a link back to a directory the walk has
 /// entered (a loop) or a second way into one is not followed, so each
 /// file is named at its own depth. A file reached by a second path (a
-/// link to it) is named once, by the first. Only a link costs a look
-/// at where it leads: the place of anything else is that of its
-/// directory and its name.
+/// link to it, or on Unix a hard link: the same device and inode) is
+/// named once, by the first. Only a link costs a look at where it
+/// leads: the place of anything else is that of its directory and its
+/// name (on Unix, its directory's device and its own inode).
 pub fn walk_files(
     root: &Path,
     enter: &dyn Fn(&Path) -> bool,
@@ -70,7 +80,7 @@ pub fn walk_files(
         wanted: &'a dyn Fn(&Path) -> bool,
         found: &'a mut dyn FnMut(Found) -> bool,
         entered: HashSet<PathBuf>,
-        named: HashSet<PathBuf>,
+        named: HashSet<FileKey>,
     }
     /// Walk `dir`, whose place without links is `place`; `false` once
     /// `found` has said stop.
@@ -79,22 +89,40 @@ pub fn walk_files(
             Ok(entries) => entries,
             Err(e) => return (w.found)(Found::Unreadable(dir.to_path_buf(), e)),
         };
-        let mut entries: Vec<(PathBuf, Option<fs::FileType>)> = entries
+        #[cfg(unix)]
+        let device = {
+            use std::os::unix::fs::MetadataExt;
+            fs::metadata(dir).map_or(0, |md| md.dev())
+        };
+        let mut entries: Vec<(PathBuf, Option<fs::FileType>, FileKey)> = entries
             .filter_map(|e| e.ok())
-            .map(|e| (e.path(), e.file_type().ok()))
+            .map(|e| {
+                #[cfg(unix)]
+                let key = {
+                    use std::os::unix::fs::DirEntryExt;
+                    FileKey::Inode(device, e.ino())
+                };
+                #[cfg(not(unix))]
+                let key = FileKey::Place(place.join(e.file_name()));
+                (e.path(), e.file_type().ok(), key)
+            })
             .collect();
         entries.sort_by(|a, b| a.0.cmp(&b.0));
-        for (path, kind) in entries {
+        for (path, kind, key) in entries {
             // What the entry is (where a link leads, for a link), and
-            // where it is without links.
-            let (kind, real) = match kind {
-                Some(kind) if !kind.is_symlink() => {
-                    (Some(kind), place.join(path.file_name().unwrap_or_default()))
-                }
-                _ => (
-                    fs::metadata(&path).ok().map(|md| md.file_type()),
-                    canonical(&path),
+            // where it is without links; which file it is.
+            let (kind, real, key) = match kind {
+                Some(kind) if !kind.is_symlink() => (
+                    Some(kind),
+                    place.join(path.file_name().unwrap_or_default()),
+                    key,
                 ),
+                _ => {
+                    let md = fs::metadata(&path).ok();
+                    let real = canonical(&path);
+                    let key = file_key(md.as_ref(), &real);
+                    (md.map(|md| md.file_type()), real, key)
+                }
             };
             // (Only a file is read: a pipe would hold the reader, a
             // device give it bytes without end.)
@@ -103,7 +131,7 @@ pub fn walk_files(
                     !((w.enter)(&path) && w.entered.insert(real.clone())) || walk(&path, &real, w)
                 }
                 Some(kind) if kind.is_file() => {
-                    !((w.wanted)(&path) && w.named.insert(real)) || (w.found)(Found::File(path))
+                    !((w.wanted)(&path) && w.named.insert(key)) || (w.found)(Found::File(path))
                 }
                 _ => true,
             };
@@ -115,6 +143,18 @@ pub fn walk_files(
     }
     fn canonical(path: &Path) -> PathBuf {
         fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+    }
+    /// Which file a link leads to, at `real` with the metadata `md`: on
+    /// Unix its device and inode, which two names of one file (hard
+    /// links) share; else its place.
+    #[cfg_attr(not(unix), allow(unused_variables))]
+    fn file_key(md: Option<&fs::Metadata>, real: &Path) -> FileKey {
+        #[cfg(unix)]
+        if let Some(md) = md {
+            use std::os::unix::fs::MetadataExt;
+            return FileKey::Inode(md.dev(), md.ino());
+        }
+        FileKey::Place(real.to_path_buf())
     }
     let place = canonical(root);
     let mut w = Walk {
@@ -206,6 +246,30 @@ mod tests {
             return;
         }
         assert_eq!(unreadable, [dir.join("shut")]);
+    }
+
+    /// A hard link is one file by two names: the walk names it once, by
+    /// the first name, as it does a file reached through a link. (The
+    /// test command ran such a test file twice.)
+    #[test]
+    fn the_walk_names_a_hard_linked_file_once() {
+        let dir = std::env::temp_dir().join(format!("silt_walk_hard_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("sub")).unwrap();
+        fs::write(dir.join("a_test.silt"), "").unwrap();
+        fs::hard_link(dir.join("a_test.silt"), dir.join("b_test.silt")).unwrap();
+        fs::hard_link(dir.join("a_test.silt"), dir.join("sub/c_test.silt")).unwrap();
+        fs::write(dir.join("d_test.silt"), "").unwrap();
+
+        let any = |_: &Path| true;
+        let files: Vec<PathBuf> = files_under(&dir, &any, &any)
+            .into_iter()
+            .map(|p| p.strip_prefix(&dir).unwrap().to_owned())
+            .collect();
+        let _ = fs::remove_dir_all(&dir);
+
+        let files: Vec<&str> = files.iter().filter_map(|p| p.to_str()).collect();
+        assert_eq!(files, ["a_test.silt", "d_test.silt"]);
     }
 
     /// Only a file is handed over: a pipe (which would hold its reader
