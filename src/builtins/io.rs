@@ -131,6 +131,9 @@ fn moves_into_itself(from: &str, to: &str) -> bool {
 /// it has no kind of its own.
 fn path_err(err: &std::io::Error, path: &str) -> Value {
     use std::io::ErrorKind;
+    if is_link_loop(err) {
+        return path_err_text("symlink loop", path);
+    }
     match err.kind() {
         ErrorKind::NotFound
         | ErrorKind::PermissionDenied
@@ -143,15 +146,32 @@ fn path_err(err: &std::io::Error, path: &str) -> Value {
         ErrorKind::NotADirectory => path_err_text("not a directory", path),
         kind => {
             let words = kind.to_string();
-            // (A loop of links has a kind whose name is not stable yet;
-            // it is known by its words, which name it at length.)
             let what = match kind == ErrorKind::Other || words == "uncategorized error" {
                 true => err.to_string(),
-                false if words.contains("symlink loop") => "symlink loop".to_string(),
                 false => words,
             };
             path_err_text(&what, path)
         }
+    }
+}
+
+/// Whether `err` is a loop of symbolic links, by the system's code for
+/// it (ELOOP on Unix, ERROR_CANT_RESOLVE_FILENAME on Windows): the kind
+/// std gives it is not stable yet, and its words may change. Where no
+/// code is known, by those words.
+fn is_link_loop(err: &std::io::Error) -> bool {
+    #[cfg(unix)]
+    {
+        err.raw_os_error() == Some(libc::ELOOP)
+    }
+    #[cfg(windows)]
+    {
+        const ERROR_CANT_RESOLVE_FILENAME: i32 = 1921;
+        err.raw_os_error() == Some(ERROR_CANT_RESOLVE_FILENAME)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        err.kind().to_string().contains("symlink loop")
     }
 }
 
