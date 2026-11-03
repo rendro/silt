@@ -48,7 +48,8 @@ pub enum Found {
     Unreadable(PathBuf, std::io::Error),
 }
 
-/// Hand `found` each file under `root` that `wanted` takes, in the
+/// Hand `found` each file under `root` that `wanted` takes (a regular
+/// file, or a link to one: no pipe, device or broken link), in the
 /// directories `enter` lets the walk into, in the order of names, as
 /// the walk reaches it; the walk stops when `found` says `false`.
 /// Links are followed, and a directory is entered once, by the first
@@ -84,19 +85,27 @@ pub fn walk_files(
             .collect();
         entries.sort_by(|a, b| a.0.cmp(&b.0));
         for (path, kind) in entries {
-            // Where the entry is without links, and whether it is a
-            // directory (where a link leads, for a link).
-            let (is_dir, real) = match kind {
-                Some(kind) if !kind.is_symlink() => (
-                    kind.is_dir(),
-                    place.join(path.file_name().unwrap_or_default()),
+            // What the entry is (where a link leads, for a link), and
+            // where it is without links.
+            let (kind, real) = match kind {
+                Some(kind) if !kind.is_symlink() => {
+                    (Some(kind), place.join(path.file_name().unwrap_or_default()))
+                }
+                _ => (
+                    fs::metadata(&path).ok().map(|md| md.file_type()),
+                    canonical(&path),
                 ),
-                _ => (path.is_dir(), canonical(&path)),
             };
-            let go_on = if !is_dir {
-                !((w.wanted)(&path) && w.named.insert(real)) || (w.found)(Found::File(path))
-            } else {
-                !((w.enter)(&path) && w.entered.insert(real.clone())) || walk(&path, &real, w)
+            // (Only a file is read: a pipe would hold the reader, a
+            // device give it bytes without end.)
+            let go_on = match kind {
+                Some(kind) if kind.is_dir() => {
+                    !((w.enter)(&path) && w.entered.insert(real.clone())) || walk(&path, &real, w)
+                }
+                Some(kind) if kind.is_file() => {
+                    !((w.wanted)(&path) && w.named.insert(real)) || (w.found)(Found::File(path))
+                }
+                _ => true,
             };
             if !go_on {
                 return false;
@@ -197,5 +206,32 @@ mod tests {
             return;
         }
         assert_eq!(unreadable, [dir.join("shut")]);
+    }
+
+    /// Only a file is handed over: a pipe (which would hold its reader
+    /// for ever), a link to a device (which gives bytes without end)
+    /// and a broken link are passed by.
+    #[test]
+    fn the_walk_hands_over_files_only() {
+        let dir = std::env::temp_dir().join(format!("silt_walk_kinds_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("a.silt"), "").unwrap();
+        let made = std::process::Command::new("mkfifo")
+            .arg(dir.join("pipe.silt"))
+            .status();
+        assert!(made.is_ok_and(|status| status.success()), "mkfifo");
+        symlink("/dev/zero", dir.join("zero.silt")).unwrap();
+        symlink(dir.join("gone"), dir.join("broken.silt")).unwrap();
+        symlink(dir.join("a.silt"), dir.join("b.silt")).unwrap();
+        fs::write(dir.join("c.silt"), "").unwrap();
+
+        let any = |_: &Path| true;
+        let files = files_under(&dir, &any, &any);
+        let _ = fs::remove_dir_all(&dir);
+        let files: Vec<_> = (files.iter())
+            .filter_map(|p| p.file_name()?.to_str().map(String::from))
+            .collect();
+        assert_eq!(files, ["a.silt", "c.silt"]);
     }
 }

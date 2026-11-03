@@ -94,6 +94,7 @@ pub(super) fn start(root: &Path) -> Preload {
         let enter = |path: &Path| !should_skip_dir(path);
         let wanted = |path: &Path| path.extension().and_then(|s| s.to_str()) == Some("silt");
         crate::file_discovery::walk_files(&root, &enter, &wanted, &mut |item| {
+            hold_for_a_test();
             let item = match item {
                 Found::File(path) => match fs::read_to_string(&path) {
                     Ok(text) => Preloaded::File(path, text),
@@ -117,6 +118,19 @@ pub(super) fn start(root: &Path) -> Preload {
         eprintln!("silt-lsp: preload: cannot start the walk of the workspace: {err}");
     }
     Preload { found }
+}
+
+/// In a debug build, the walk waits before each file while the file
+/// that `SILT_LSP_PRELOAD_GATE` names is there: a test holds the walk
+/// so, as a very large workspace would, to see the editor answered
+/// meanwhile.
+fn hold_for_a_test() {
+    #[cfg(debug_assertions)]
+    if let Some(gate) = std::env::var_os("SILT_LSP_PRELOAD_GATE") {
+        while Path::new(&gate).exists() {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
 }
 
 /// Index what the walk found.

@@ -107,22 +107,22 @@ fn preload_follows_a_linked_folder_once() {
 }
 
 /// The editor's requests are answered while the walk of the workspace
-/// goes on, and the walk goes on to its end. The walk here waits for a
-/// file that is a pipe nobody writes to (as a walk into a very large
-/// folder takes long): a request is answered all the same, with what
-/// was indexed before it; once the pipe is written, the files behind it
-/// are indexed too.
-#[cfg(unix)]
+/// goes on, and the walk goes on to its end. A test hook of debug
+/// builds holds the walk before each file while a gate file is there,
+/// as a walk into a very large folder takes long: a request is answered
+/// all the same; once the gate is gone, every file is indexed.
+#[cfg(debug_assertions)]
 #[test]
 fn requests_are_answered_while_the_preload_walks() {
     use std::time::{Duration, Instant};
 
     let dir = unique_tmp_dir("walking");
-    fs::write(dir.join("a.silt"), "fn early_unique_sym() { 0 }\n").unwrap();
-    fs::write(dir.join("z.silt"), "fn late_unique_sym() { 0 }\n").unwrap();
-    let pipe = dir.join("m.silt");
-    let made = std::process::Command::new("mkfifo").arg(&pipe).status();
-    assert!(made.is_ok_and(|status| status.success()), "mkfifo");
+    let ws = dir.join("ws");
+    fs::create_dir_all(&ws).unwrap();
+    fs::write(ws.join("a.silt"), "fn early_unique_sym() { 0 }\n").unwrap();
+    fs::write(ws.join("z.silt"), "fn late_unique_sym() { 0 }\n").unwrap();
+    let gate = dir.join("gate");
+    fs::write(&gate, "").unwrap();
 
     let names = |resp: &serde_json::Value| -> Vec<String> {
         (resp.get("result").and_then(|r| r.as_array()).cloned())
@@ -131,26 +131,21 @@ fn requests_are_answered_while_the_preload_walks() {
             .filter_map(|s| s.get("name").and_then(|n| n.as_str()).map(String::from))
             .collect()
     };
-    let mut client = LspClient::spawn_with_root(Some(&path_to_uri(&dir)));
+    let gate_text = gate.to_str().expect("utf8 path");
+    let mut client = LspClient::spawn_with_root_and_env(
+        Some(&path_to_uri(&ws)),
+        &[("SILT_LSP_PRELOAD_GATE", gate_text)],
+    );
     let query = |name: &str| json!({ "query": name });
-    let early = client.request_within(
+    let held = client.request_within(
         Duration::from_secs(20),
         "workspace/symbol",
         query("early_unique_sym"),
     );
-    assert_eq!(names(&early), ["early_unique_sym"], "{early}");
-    let late = client.request_within(
-        Duration::from_secs(20),
-        "workspace/symbol",
-        query("late_unique_sym"),
-    );
-    assert!(
-        names(&late).is_empty(),
-        "the walk waits at the pipe: {late}"
-    );
+    assert!(names(&held).is_empty(), "the walk is held: {held}");
 
-    // The walk goes on once the pipe is written and closed.
-    fs::write(&pipe, "fn piped_unique_sym() { 0 }\n").unwrap();
+    // The walk goes on once the gate is gone.
+    fs::remove_file(&gate).unwrap();
     let start = Instant::now();
     loop {
         let late = client.request("workspace/symbol", query("late_unique_sym"));
@@ -163,11 +158,57 @@ fn requests_are_answered_while_the_preload_walks() {
         );
         std::thread::sleep(Duration::from_millis(50));
     }
-    let piped = client.request("workspace/symbol", query("piped_unique_sym"));
-    assert_eq!(names(&piped), ["piped_unique_sym"], "{piped}");
+    let early = client.request("workspace/symbol", query("early_unique_sym"));
+    assert_eq!(names(&early), ["early_unique_sym"], "{early}");
 
     client.shutdown();
     let _ = fs::remove_dir_all(&dir);
+}
+
+/// A pipe, a link to a device and a broken link named `.silt` are not
+/// read: the walk goes past them to the files behind them (a pipe held
+/// the preload for ever, a link to /dev/zero read without end). An
+/// unreadable folder is in the log.
+#[cfg(unix)]
+#[test]
+fn the_preload_reads_files_only() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    let dir = unique_tmp_dir("kinds");
+    fs::write(dir.join("a.silt"), "fn first_kind_sym() { 0 }\n").unwrap();
+    let made = std::process::Command::new("mkfifo")
+        .arg(dir.join("m_pipe.silt"))
+        .status();
+    assert!(made.is_ok_and(|status| status.success()), "mkfifo");
+    symlink("/dev/zero", dir.join("n_zero.silt")).unwrap();
+    symlink(dir.join("gone"), dir.join("o_broken.silt")).unwrap();
+    fs::create_dir_all(dir.join("p_shut")).unwrap();
+    fs::set_permissions(dir.join("p_shut"), fs::Permissions::from_mode(0o000)).unwrap();
+    fs::write(dir.join("z.silt"), "fn last_kind_sym() { 0 }\n").unwrap();
+
+    let mut client = LspClient::spawn_with_root(Some(&path_to_uri(&dir)));
+    let resp = client.request_within(
+        std::time::Duration::from_secs(20),
+        "workspace/symbol",
+        json!({ "query": "kind_sym" }),
+    );
+    let mut names: Vec<String> = (resp.get("result").and_then(|r| r.as_array()).cloned())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|s| s.get("name").and_then(|n| n.as_str()).map(String::from))
+        .collect();
+    names.sort();
+    assert_eq!(names, ["first_kind_sym", "last_kind_sym"], "{resp}");
+    let readable = fs::read_dir(dir.join("p_shut")).is_ok();
+    let stderr = client.stderr();
+    client.shutdown();
+    let _ = fs::set_permissions(dir.join("p_shut"), fs::Permissions::from_mode(0o755));
+    let _ = fs::remove_dir_all(&dir);
+    // (Root reads every folder.)
+    assert!(
+        readable || stderr.contains("silt-lsp: preload: cannot read dir"),
+        "{stderr}"
+    );
 }
 
 #[test]
