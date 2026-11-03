@@ -106,6 +106,70 @@ fn preload_follows_a_linked_folder_once() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// The editor's requests are answered while the walk of the workspace
+/// goes on, and the walk goes on to its end. The walk here waits for a
+/// file that is a pipe nobody writes to (as a walk into a very large
+/// folder takes long): a request is answered all the same, with what
+/// was indexed before it; once the pipe is written, the files behind it
+/// are indexed too.
+#[cfg(unix)]
+#[test]
+fn requests_are_answered_while_the_preload_walks() {
+    use std::time::{Duration, Instant};
+
+    let dir = unique_tmp_dir("walking");
+    fs::write(dir.join("a.silt"), "fn early_unique_sym() { 0 }\n").unwrap();
+    fs::write(dir.join("z.silt"), "fn late_unique_sym() { 0 }\n").unwrap();
+    let pipe = dir.join("m.silt");
+    let made = std::process::Command::new("mkfifo").arg(&pipe).status();
+    assert!(made.is_ok_and(|status| status.success()), "mkfifo");
+
+    let names = |resp: &serde_json::Value| -> Vec<String> {
+        (resp.get("result").and_then(|r| r.as_array()).cloned())
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|s| s.get("name").and_then(|n| n.as_str()).map(String::from))
+            .collect()
+    };
+    let mut client = LspClient::spawn_with_root(Some(&path_to_uri(&dir)));
+    let query = |name: &str| json!({ "query": name });
+    let early = client.request_within(
+        Duration::from_secs(20),
+        "workspace/symbol",
+        query("early_unique_sym"),
+    );
+    assert_eq!(names(&early), ["early_unique_sym"], "{early}");
+    let late = client.request_within(
+        Duration::from_secs(20),
+        "workspace/symbol",
+        query("late_unique_sym"),
+    );
+    assert!(
+        names(&late).is_empty(),
+        "the walk waits at the pipe: {late}"
+    );
+
+    // The walk goes on once the pipe is written and closed.
+    fs::write(&pipe, "fn piped_unique_sym() { 0 }\n").unwrap();
+    let start = Instant::now();
+    loop {
+        let late = client.request("workspace/symbol", query("late_unique_sym"));
+        if names(&late) == ["late_unique_sym"] {
+            break;
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(20),
+            "never indexed: {late}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let piped = client.request("workspace/symbol", query("piped_unique_sym"));
+    assert_eq!(names(&piped), ["piped_unique_sym"], "{piped}");
+
+    client.shutdown();
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn pull_diagnostic_returns_cached_errors() {
     let mut client = LspClient::spawn_with_root(None);
