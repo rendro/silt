@@ -1,6 +1,7 @@
-error[type]: `twice` needs the type `List(Box(a))` in full here: `a` is known only by its type
+error[type]: cannot infer the type this use of 'twice' needs to implement trait 'json.Decode'
  --> full_type__a_list_of_a_value_s_generic_type_is_refused_once.silt:24:9
     |
  24 |   twice([Box { v: x }], s)
-    |         ^^^^^^^^^^^^^^ `twice` needs the type `List(Box(a))` in full here: `a` is known only by its type
-  = help: take the type as a parameter, `type a`
+    |         ^^^^^^^^^^^^^^ cannot infer the type this use of 'twice' needs to implement trait 'json.Decode'
+  = help: annotate the value it is given
+  = help: the impl is picked from a type, not from a value: take the type as a parameter, as in `fn deep(x: t, s, type t)`

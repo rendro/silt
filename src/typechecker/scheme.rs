@@ -729,7 +729,18 @@ impl TypeChecker {
                     within(*at, span) && letter.is_some_and(|l| !written.contains(&l))
                 })
                 .is_some();
-            if closure || !fns.iter().any(|at| within(*at, span)) {
+            // In a function, likewise: the help writes the function with
+            // a type parameter of its own (`fn held2(x: t, s, type t)`).
+            let function = (!closure)
+                .then(|| {
+                    (fns.iter())
+                        .filter(|site| within(site.span, span))
+                        .min_by_key(|site| site.span.end - site.span.start)
+                })
+                .flatten();
+            let unwritten =
+                function.filter(|site| letter.is_some_and(|l| !site.written.contains(&l)));
+            if closure || function.is_none() || unwritten.is_some() {
                 let head = in_full_head(&error.message);
                 let callee = in_full_callee(&error.message);
                 let what = match callee {
@@ -746,11 +757,48 @@ impl TypeChecker {
                         "the impl is picked from a type, not from a value: take the type as a \
                          parameter, as in `{{ t -> json.parse(s, {example}) }}`"
                     ));
+                } else if let Some(example) =
+                    unwritten.and_then(|site| self.with_type_parameter(site))
+                {
+                    error.help.push(format!(
+                        "the impl is picked from a type, not from a value: take the type as a \
+                         parameter, as in `{example}`"
+                    ));
                 }
             }
             kept.push(error);
         }
         self.errors = kept;
+    }
+
+    /// The function `site` written with a type parameter of its own, the
+    /// type of its first parameter whose type is not known: `fn
+    /// held2(x: t, s, type t)`. None where every parameter's type is
+    /// known: the value is not one the function is given.
+    fn with_type_parameter(&self, site: &super::FnSite) -> Option<String> {
+        let taken = |name: &str| {
+            (site.params.iter()).any(|(p, _)| resolve(*p) == name)
+                || site.written.iter().any(|w| resolve(*w) == name)
+        };
+        let letter = ["t", "u", "v", "w"]
+            .into_iter()
+            .find(|l| !taken(l))
+            .unwrap_or("t");
+        let mut typed = false;
+        let mut params: Vec<String> = (site.params.iter())
+            .map(|(name, ty)| {
+                let open = matches!(self.apply(ty), Type::Var(_));
+                match open && !typed {
+                    true => {
+                        typed = true;
+                        format!("{name}: {letter}")
+                    }
+                    false => resolve(*name).to_string(),
+                }
+            })
+            .collect();
+        params.push(format!("type {letter}"));
+        typed.then(|| format!("fn {}({})", site.name, params.join(", ")))
     }
 
     pub(super) fn settle_undecided_decodes(&mut self) {

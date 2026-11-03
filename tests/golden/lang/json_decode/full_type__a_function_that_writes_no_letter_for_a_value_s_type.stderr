@@ -1,0 +1,14 @@
+error[type]: cannot infer the type this use of 'p3' needs to implement trait 'json.Decode'
+ --> full_type__a_function_that_writes_no_letter_for_a_value_s_type.silt:26:3
+    |
+ 26 |   Dec.p3(Box { v: x }, s)
+    |   ^^^^^^ cannot infer the type this use of 'p3' needs to implement trait 'json.Decode'
+  = help: annotate the value it is given
+  = help: the impl is picked from a type, not from a value: take the type as a parameter, as in `fn held2(x: t, s, type t)`
+
+error[type]: method 'p3' of trait 'Dec' needs the type `List(Box(a))` in full here: `a` is known only by its type
+ --> full_type__a_function_that_writes_no_letter_for_a_value_s_type.silt:30:3
+    |
+ 30 |   Dec.p3([Box { v: x }], s)
+    |   ^^^^^^ method 'p3' of trait 'Dec' needs the type `List(Box(a))` in full here: `a` is known only by its type
+  = help: take the type as a parameter, `type a`

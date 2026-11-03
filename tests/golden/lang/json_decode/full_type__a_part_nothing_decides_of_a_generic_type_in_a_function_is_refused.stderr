@@ -1,0 +1,20 @@
+error[type]: cannot infer the type this use of 'twice' needs to implement trait 'json.Decode'
+ --> full_type__a_part_nothing_decides_of_a_generic_type_in_a_function_is_refused.silt:35:17
+    |
+ 35 |   println(twice(Box { v: [] }, s))
+    |                 ^^^^^^^^^^^^^ cannot infer the type this use of 'twice' needs to implement trait 'json.Decode'
+  = help: annotate the value it is given
+
+error[type]: cannot infer the type this use of 'twice' needs to implement trait 'json.Decode'
+ --> full_type__a_part_nothing_decides_of_a_generic_type_in_a_function_is_refused.silt:36:17
+    |
+ 36 |   println(twice(R { xs: [] }, s))
+    |                 ^^^^^^^^^^^^ cannot infer the type this use of 'twice' needs to implement trait 'json.Decode'
+  = help: annotate the value it is given
+
+error[type]: cannot infer the type this use of 'twice' needs to implement trait 'json.Decode'
+ --> full_type__a_part_nothing_decides_of_a_generic_type_in_a_function_is_refused.silt:37:17
+    |
+ 37 |   println(twice([Box { v: None }], s))
+    |                 ^^^^^^^^^^^^^^^^^ cannot infer the type this use of 'twice' needs to implement trait 'json.Decode'
+  = help: annotate the value it is given

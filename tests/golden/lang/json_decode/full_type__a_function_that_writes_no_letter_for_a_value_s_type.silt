@@ -1,0 +1,36 @@
+-- cmd: check
+-- exit: 1
+-- A function whose signature writes no type variable, giving a value of
+-- a type only its parameter's value knows to a decode through a
+-- dictionary that carries the type in full (`Dec.p3(Box { v: x }, s)`), is
+-- refused naming no letter the program did not write: the type nothing
+-- decides, with the function written with a type parameter of its own as
+-- the way that decides it. A function whose signature writes the letter
+-- (`x: a`) keeps the text that names it, with the whole type
+-- (`List(Box(a))`).
+import json
+
+type Box(a) {
+  v: a,
+}
+
+trait Dec: json.Decode {
+  fn p3(self, s: String) -> Result((Self, Int), json.JsonError) { json.parse(s, (Self, Int)) }
+}
+
+trait Dec for Box(a) where a: json.Decode {}
+
+trait Dec for List(a) where a: json.Decode {}
+
+fn held2(x, s) {
+  Dec.p3(Box { v: x }, s)
+}
+
+fn held(x: a, s: String) -> Result((List(Box(a)), Int), json.JsonError) where a: json.Decode {
+  Dec.p3([Box { v: x }], s)
+}
+
+fn main() {
+  println(held2(1, "[\{\"v\": 1}, 2]"))
+  println(held(1, "[[\{\"v\": 1}], 2]"))
+}

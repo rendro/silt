@@ -1,9 +1,10 @@
-error[type]: method 'again' of trait 'Dec' needs the type `Box(a)` in full here: `a` is known only by its type
+error[type]: cannot infer the type this use of 'again' needs to implement trait 'json.Decode'
  --> full_type__a_type_variable_without_a_value_is_refused_without_annotations.silt:23:3
     |
  23 |   Dec.again(Box { v: x }, s)
-    |   ^^^^^^^^^ method 'again' of trait 'Dec' needs the type `Box(a)` in full here: `a` is known only by its type
-  = help: take the type as a parameter, `type a`
+    |   ^^^^^^^^^ cannot infer the type this use of 'again' needs to implement trait 'json.Decode'
+  = help: annotate the value it is given
+  = help: the impl is picked from a type, not from a value: take the type as a parameter, as in `fn wrap(x: t, s, type t)`
 
 error[type]: cannot infer the type this use of 'again' needs to implement trait 'json.Decode'
  --> full_type__a_type_variable_without_a_value_is_refused_without_annotations.silt:33:18
