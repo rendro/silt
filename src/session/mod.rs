@@ -645,6 +645,9 @@ impl Session {
             for d in &self.module_name_problems {
                 push(d, &mut out);
             }
+            if let Some(d) = self.entry_name_problem(entry) {
+                push(&d, &mut out);
+            }
         }
         // What is wrong with a host module is reported whether or not
         // the program imports it.
@@ -700,6 +703,32 @@ impl Session {
             }
         }
         out.list
+    }
+
+    /// The error for the entry file `entry` when its name has an
+    /// upper-case letter: a file named on the command line or opened in an
+    /// editor is a module too, and a module's name is all lowercase. A
+    /// module file of a package's `src/` is reported already, by
+    /// [`Session::packages`].
+    fn entry_name_problem(&self, entry: ModuleId) -> Option<Diagnostic> {
+        let module = self.graph.module(entry);
+        if module.host.is_some() || module.path.extension().is_none_or(|ext| ext != "silt") {
+            return None;
+        }
+        let name = module.path.file_stem()?.to_str()?;
+        if crate::module::is_lowercase_module_name(name) {
+            return None;
+        }
+        let key = graph::canonical_key(&module.path);
+        let reported = self.module_name_problems.iter().any(|d| {
+            self.sources.get(d.span.file).is_some_and(|f| {
+                matches!(&f.path, SourceName::Path(p) if graph::canonical_key(p) == key)
+            })
+        });
+        match reported {
+            true => None,
+            false => Some(packages::upper_case_file_name(name, module.file?)),
+        }
     }
 
     /// Compile the entry file `entry` for `target`. An analysis with an

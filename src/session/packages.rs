@@ -171,18 +171,24 @@ pub(super) fn modules_named_like_builtins(
                 )
                 .with_help(format!("rename `{name}.silt`"))
             } else {
-                Diagnostic::error(
-                    Code::ModuleNamedLikeBuiltin,
-                    Span::point(file, 0),
-                    crate::manifest::invalid_module_name(&name),
-                )
-                .with_help(format!(
-                    "rename `{name}.silt` to `{}.silt`",
-                    name.to_ascii_lowercase()
-                ))
+                upper_case_file_name(&name, file)
             };
             errors.push(error);
         }
     }
     errors
+}
+
+/// The error at the start of the module file `file`, named `name`, whose
+/// name has an upper-case letter: a module's name is all lowercase.
+pub(super) fn upper_case_file_name(name: &str, file: FileId) -> Diagnostic {
+    Diagnostic::error(
+        Code::ModuleNamedLikeBuiltin,
+        Span::point(file, 0),
+        crate::manifest::invalid_module_name(name),
+    )
+    .with_help(format!(
+        "rename `{name}.silt` to `{}.silt`",
+        name.to_ascii_lowercase()
+    ))
 }
