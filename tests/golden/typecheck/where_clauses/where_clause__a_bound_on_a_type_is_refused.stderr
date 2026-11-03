@@ -1,0 +1,5 @@
+error[type]: a where clause bounds a type variable; `Int` is a type, not a variable: drop the bound
+ --> where_clause__a_bound_on_a_type_is_refused.silt:14:1
+    |
+ 14 | fn via(s: Int) -> String where Int: Show2 {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ a where clause bounds a type variable; `Int` is a type, not a variable: drop the bound

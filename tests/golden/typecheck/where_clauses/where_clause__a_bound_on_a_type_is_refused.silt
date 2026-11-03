@@ -1,0 +1,20 @@
+-- cmd: check
+-- exit: 1
+-- A where clause bounds a type variable. A bound written on a type
+-- (`where Int: Show2`) is refused with that, and the way out: drop the
+-- bound (a use of a type without the trait is refused where it is used).
+trait Show2 {
+  fn show2(self) -> String
+}
+
+trait Show2 for Int {
+  fn show2(self) -> String { "i" }
+}
+
+fn via(s: Int) -> String where Int: Show2 {
+  Show2.show2(s)
+}
+
+fn main() {
+  println(via(1))
+}
