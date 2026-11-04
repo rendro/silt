@@ -145,7 +145,8 @@ const _: () = assert!(std::mem::size_of::<List>() <= 16);
 #[cfg(target_pointer_width = "64")]
 const _: () = assert!(std::mem::size_of::<Option<List>>() > std::mem::size_of::<List>());
 // The start and the length of a list in a buffer are `u32`s.
-const _: () = assert!(FLAT_MOST <= u32::MAX as usize && MAX_COLLECTION_LEN <= u32::MAX as usize);
+const _: () = assert!(FLAT_MOST <= u32::MAX as usize);
+const _: () = assert!(MAX_COLLECTION_LEN <= u32::MAX as usize);
 
 /// How a list is kept, as the functions of a list read it.
 enum Form<'a> {
