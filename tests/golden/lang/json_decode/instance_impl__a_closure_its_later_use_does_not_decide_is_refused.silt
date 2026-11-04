@@ -1,0 +1,47 @@
+-- cmd: check
+-- exit: 1
+-- A closure whose decode picks an impl by its parameter's value is of
+-- one type, which its later call decides; where nothing decides it, it
+-- is refused as today: never called; called with a value whose part
+-- stays undecided; called at two types (one type, so a mismatch);
+-- returned from a function and called by the caller (the function's own
+-- closure, refused in the function).
+import json
+
+type Box(a) {
+  v: a,
+}
+
+trait json.Decode for Box(Int) {
+  fn decode(v: json.Value) -> Result(Self, json.JsonError) { Ok(Box { v: 1 }) }
+}
+
+trait json.Decode for Box(Option(Int)) {
+  fn decode(v: json.Value) -> Result(Self, json.JsonError) { Ok(Box { v: None }) }
+}
+
+trait Dec: json.Decode {
+  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+trait Dec for Box(Int) {}
+
+trait Dec for Box(Option(Int)) {}
+
+fn twice(b, s) {
+  Dec.again(b, s)
+}
+
+fn mk(s) {
+  { x -> twice(Box { v: x }, s) }
+}
+
+fn main() {
+  let never = { x -> twice(Box { v: x }, "0") }
+  let undecided = { x -> twice(Box { v: x }, "0") }
+  println(undecided(None))
+  let two = { x -> twice(Box { v: x }, "0") }
+  println(two(1))
+  println(two("s"))
+  println(mk("0")(1))
+}

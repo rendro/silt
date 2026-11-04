@@ -725,13 +725,17 @@ impl TypeChecker {
             // x }, s) }`), which the help says, with the type route.
             let letter = in_full_letter(&error.message);
             let closure = (closures.iter())
-                .find(|(at, written)| {
+                .filter(|(at, written)| {
                     within(*at, span) && letter.is_some_and(|l| !written.contains(&l))
                 })
-                .is_some();
+                .min_by_key(|(at, _)| at.end - at.start)
+                .map(|(at, _)| *at);
+            // A closure a `let` keeps for its later use to decide: that
+            // use is in its function, whose parameter may take the type.
+            let decided = closure.is_some_and(|at| self.decided_closures.contains(&at));
             // In a function, likewise: the help writes the function with
             // a type parameter of its own (`fn held2(x: t, s, type t)`).
-            let function = (!closure)
+            let function = (closure.is_none() || decided)
                 .then(|| {
                     (fns.iter())
                         .filter(|site| within(site.span, span))
@@ -740,7 +744,7 @@ impl TypeChecker {
                 .flatten();
             let unwritten =
                 function.filter(|site| letter.is_some_and(|l| !site.written.contains(&l)));
-            if closure || function.is_none() || unwritten.is_some() {
+            if closure.is_some() || function.is_none() || unwritten.is_some() {
                 let head = in_full_head(&error.message);
                 let callee = in_full_callee(&error.message);
                 let what = match callee {
@@ -751,7 +755,7 @@ impl TypeChecker {
                     format!("cannot infer the type {what} needs to implement trait 'json.Decode'");
                 error.code = Code::AmbiguousType;
                 error.help = vec!["annotate the value it is given".to_string()];
-                if closure {
+                if closure.is_some() && !decided {
                     let example = head.map_or_else(|| "Box(t)".to_string(), |h| format!("{h}(t)"));
                     error.help.push(format!(
                         "the impl is picked from a type, not from a value: take the type as a \
@@ -865,32 +869,48 @@ impl TypeChecker {
                 self.show_bound(tr, args),
                 self.show_type(&subject_ty)
             );
-            let help = format!(
-                "annotate the value it is given, `let x: {} = ...`",
-                self.show_type(instance)
-            );
-            let diagnostic = Diagnostic::error(Code::AmbiguousType, origin.span, message);
-            let diagnostic = diagnostic.with_help(help);
-            // (Its arguments are a closure's parameter's: the impl would be
-            // picked from a value. A type the closure takes picks it.)
-            let from_value = (self.closure_param_vars.iter()).any(|v| {
-                free_vars_in(&self.apply(&Type::Var(*v)))
-                    .iter()
-                    .any(|w| free_vars_in(&subject_ty).contains(w))
+            // (Its arguments are a closure's parameter's: the help names
+            // the parameter, at the type the impl's instance gives it.)
+            let open = free_vars_in(&subject_ty);
+            let param = (self.closure_params.iter()).find(|(_, _, ty)| {
+                let ty = self.apply(ty);
+                !free_vars_in(&ty).is_empty() && free_vars_in(&ty).iter().all(|v| open.contains(v))
             });
-            if !from_value {
-                return diagnostic;
-            }
-            let example = match &subject_ty {
-                Type::Generic(head, args) if args.len() == 1 => {
-                    format!("{}(t)", self.show_type(&Type::Generic(*head, Vec::new())))
+            let help = match param {
+                Some((_, name, ty)) => {
+                    let mut mapping = HashMap::new();
+                    super::builtin_needs::match_type(&subject_ty, instance, &open, &mut mapping);
+                    let at = crate::types::substitute_vars(&self.apply(ty), &mapping);
+                    format!(
+                        "annotate the value it is given, `{name}: {}`",
+                        self.show_type(&at)
+                    )
                 }
-                _ => "Box(t)".to_string(),
+                None => format!(
+                    "annotate the value it is given, `let x: {} = ...`",
+                    self.show_type(instance)
+                ),
             };
-            return diagnostic.with_help(format!(
-                "the impl is picked from a type, not from a value: take the type as a parameter, \
-                 as in `{{ t -> json.parse(s, {example}) }}`"
-            ));
+            let diagnostic =
+                Diagnostic::error(Code::AmbiguousType, origin.span, message).with_help(help);
+            // (A closure no `let` keeps for its later use to decide, as
+            // one a function returns: a type the closure takes picks the
+            // impl.)
+            return match param {
+                Some((at, ..)) if !self.decided_closures.contains(at) => {
+                    let example = match &subject_ty {
+                        Type::Generic(head, args) if args.len() == 1 => {
+                            format!("{}(t)", self.show_type(&Type::Generic(*head, Vec::new())))
+                        }
+                        _ => "Box(t)".to_string(),
+                    };
+                    diagnostic.with_help(format!(
+                        "the impl is picked from a type, not from a value: take the type as a \
+                         parameter, as in `{{ t -> json.parse(s, {example}) }}`"
+                    ))
+                }
+                _ => diagnostic,
+            };
         }
         let message = format!(
             "cannot decide which impl of '{}' for '{}' {what} means: its trait argument is not \

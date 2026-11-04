@@ -1,7 +1,0 @@
-error[type]: cannot decide which impl of 'Dec' for 'Box(_)' this use of 'twice' means: the type's arguments are not decided here
- --> instance_impl__a_closure_that_picks_an_impl_from_a_value_is_refused_with_the_type_route.silt:35:24
-    |
- 35 |   let k = { x -> twice(Box { v: x }, "0") }
-    |                        ^^^^^^^^^^^^ cannot decide which impl of 'Dec' for 'Box(_)' this use of 'twice' means: the type's arguments are not decided here
-  = help: annotate the value it is given, `let x: Box(Int) = ...`
-  = help: the impl is picked from a type, not from a value: take the type as a parameter, as in `{ t -> json.parse(s, Box(t)) }`

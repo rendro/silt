@@ -32,12 +32,10 @@ error[type]: cannot infer the type this use of 'twice' needs to implement trait 
  42 |   let p = { s -> twice([], s) }
     |                        ^^ cannot infer the type this use of 'twice' needs to implement trait 'json.Decode'
   = help: annotate the value it is given
-  = help: the impl is picked from a type, not from a value: take the type as a parameter, as in `{ t -> json.parse(s, List(t)) }`
 
-error[type]: cannot infer the type this use of 'again' needs to implement trait 'json.Decode'
+error[type]: cannot infer the type this use of 'json.parse' needs to implement trait 'json.Decode'
  --> full_type__a_type_nothing_decides_where_no_parameter_can_take_it.silt:44:18
     |
  44 |   let q = { s -> Dec.again(Box { v: None }, s) }
-    |                  ^^^^^^^^^ cannot infer the type this use of 'again' needs to implement trait 'json.Decode'
+    |                  ^^^^^^^^^ cannot infer the type this use of 'json.parse' needs to implement trait 'json.Decode'
   = help: annotate the value it is given
-  = help: the impl is picked from a type, not from a value: take the type as a parameter, as in `{ t -> json.parse(s, Box(t)) }`

@@ -3,10 +3,10 @@
 -- The unannotated twin of full_type__a_type_variable_without_a_value_is_refused:
 -- a dictionary that carries its type in full needs a value of each type
 -- variable in it where the code runs. In a function with no annotations
--- (`wrap(x, s)`) or a closure, a variable known only by a value's type
--- is refused at the method call, named as the definition's type names
--- it. A value whose type the caller gives (`twice`) passes the
--- caller's dictionary.
+-- (`wrap(x, s)`), a variable known only by a value's type is refused at
+-- the method call. A value whose type the caller gives (`twice`) passes
+-- the caller's dictionary, and a closure's later call decides its type
+-- (`k(1)`).
 import json
 
 trait Dec: json.Decode {
