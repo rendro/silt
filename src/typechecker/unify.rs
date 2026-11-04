@@ -473,6 +473,11 @@ impl TypeChecker {
         if self.tables.vars.is_outermost(v)
             && let Some(r) = rigid_in(&self.apply(&t))
         {
+            // (Said once of a variable; it stays unbound, so what else is
+            // wrong with it is still said.)
+            if !self.escaped_vars.insert(v) {
+                return;
+            }
             out.push(Fault::new(
                 Code::TypeMismatch,
                 format!(
@@ -482,9 +487,6 @@ impl TypeChecker {
                     r.name
                 ),
             ));
-            // (Said once: the variable is of no type a later use could
-            // be judged by.)
-            self.tables.vars.bind(v, Type::Error);
             return;
         }
         self.tables.vars.bind(v, t);

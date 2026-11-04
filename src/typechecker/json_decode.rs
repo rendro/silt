@@ -1070,6 +1070,9 @@ impl TypeChecker {
             let named =
                 (decoder.or(passer).or(gap.origin.callee)).unwrap_or_else(|| intern("json.decode"));
             let written = self.decode_aliases.get(&gap.origin.span).copied();
+            if let Some(callee) = gap.origin.callee {
+                self.use_callees.insert(gap.origin.span, callee);
+            }
             // A list, an option, a map or a tuple with a part nothing
             // gives where the code runs (`[]` whose element a later use
             // decides as `a`, which only a value holds): refused as

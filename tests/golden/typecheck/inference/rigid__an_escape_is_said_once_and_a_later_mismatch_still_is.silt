@@ -1,0 +1,20 @@
+-- cmd: check
+-- exit: 1
+-- An annotation variable that would escape into a top-level `let` is
+-- said once, at its first place (not again where the same call meets it,
+-- nor as the let's type not fully known); the variable stays as it was,
+-- so main's two sends of different types are still a mismatch.
+-- stderr-not-contains: not fully known
+import channel
+
+let cell = channel.new(4)
+
+fn put(x: a) -> a {
+  channel.send(cell, x)
+  x
+}
+
+fn main() {
+  channel.send(cell, 1)
+  channel.send(cell, "s")
+}
