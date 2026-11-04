@@ -1,13 +1,13 @@
 -- cmd: check
 -- exit: 1
 -- verdict: same
--- stderr-contains: error[type]: type 'Option(_)' has no method 'compare'
--- stderr-contains: error[type]: type 'Result(_, _)' has no method 'compare'
--- stderr-contains: error[type]: type 'Map(_, _)' has no method 'compare'
+-- stderr-contains: error[type]: type 'Option' has no method 'compare'
+-- stderr-contains: error[type]: type 'Result' has no method 'compare'
+-- stderr-contains: error[type]: type 'Map' has no method 'compare'
 -- stderr-contains: error[type]: type 'time.Weekday' has no method 'nope'
 -- stderr-not-contains: undefined variable
 -- A builtin type reached through its name that lacks the method is told
--- so, whichever builtin type it is.
+-- so, whichever builtin type it is, named as written.
 import time
 fn main() {
   println(Option.compare(Some(1), None))

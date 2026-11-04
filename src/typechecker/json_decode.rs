@@ -593,17 +593,32 @@ impl TypeChecker {
 
     /// The functions on a route of a definition of the module, as
     /// another module reads them: one of this module by its module's
-    /// name (`other.tonly`), as the call there writes it.
+    /// name (`other.tonly`), as the call there writes it, and so a
+    /// method of one of its types (`other.Box.decode`).
     fn exported_links(&self, links: Vec<Symbol>) -> Vec<Symbol> {
-        if self.is_cell {
-            return links;
-        }
         (links.into_iter())
-            .map(|link| match resolve(link).contains('.') {
-                true => link,
-                false => intern(&format!("{}.{link}", self.module_name)),
-            })
+            .map(|link| self.exported_link(link))
             .collect()
+    }
+
+    /// The function or type's method `link` of a route as another
+    /// module reads it (`exported_links`).
+    fn exported_link(&self, link: Symbol) -> Symbol {
+        if self.is_cell {
+            return link;
+        }
+        let own_type = |name: &str| {
+            (self.defs.as_ref()).is_some_and(|defs| {
+                (defs.of_module(self.module).iter()).any(|id| {
+                    let def = defs.get(*id);
+                    matches!(def.kind, crate::defs::DefKind::Type(_)) && resolve(def.name) == name
+                })
+            })
+        };
+        match resolve(link).split_once('.') {
+            Some((head, _)) if !own_type(head) => link,
+            _ => intern(&format!("{}.{link}", self.module_name)),
+        }
     }
 
     /// Keep, of each top-level function of the module, the owners of
@@ -851,15 +866,40 @@ impl TypeChecker {
                             })
                             .collect();
                     };
-                    let route = (refused.and_then(|module| {
-                        routes.iter().find(|(owners, _)| !owners.contains(&module))
-                    }))
-                    .or(routes.first());
-                    links.extend(
-                        route
-                            .into_iter()
-                            .flat_map(|(_, links)| links.iter().copied()),
-                    );
+                    // (A route through a function of the type's own
+                    // module, `mail.load`, decodes it: not the one that
+                    // refuses it.)
+                    let own = |module: crate::session::ModuleId, links: &[Symbol]| {
+                        let name = self.tables.module_names.get(&module).copied();
+                        name.is_some_and(|name| {
+                            let prefix = format!("{name}.");
+                            links.iter().any(|link| resolve(*link).starts_with(&prefix))
+                        })
+                    };
+                    let route = match refused {
+                        Some(module) => routes.iter().find(|(owners, links)| {
+                            !owners.contains(&module) && !own(module, links)
+                        }),
+                        None => routes.first(),
+                    };
+                    match (route, refused) {
+                        (Some((_, route)), _) => links.extend(route.iter().copied()),
+                        // (None known to refuse it: what is known, the
+                        // functions before the type's own module's.)
+                        (None, Some(module)) => {
+                            let name = self.tables.module_names.get(&module).copied();
+                            let prefix = name.map(|name| format!("{name}."));
+                            let first = routes.first().map(|(_, route)| route.as_slice());
+                            links.extend((first.unwrap_or(&[]).iter().copied()).take_while(
+                                |link| {
+                                    prefix
+                                        .as_ref()
+                                        .is_none_or(|p| !resolve(*link).starts_with(p))
+                                },
+                            ));
+                        }
+                        (None, None) => {}
+                    }
                     break;
                 }
                 _ => break,
@@ -891,7 +931,15 @@ impl TypeChecker {
         let routes: Vec<crate::types::ThroughRoute> = (self.settled_routes(asker).into_iter())
             .map(|(owners, links)| (owners, self.exported_links(links)))
             .collect();
-        let by = match self.asking_decoder(asker) {
+        // (A decode of a type of the module, `Box.decode`, by the
+        // module's name, as a link is.)
+        let decoder = (self.asking_decoder(asker)).map(|decoder| match resolve(decoder) {
+            name if name.starts_with(|c: char| c.is_ascii_uppercase()) => {
+                self.exported_link(decoder)
+            }
+            _ => decoder,
+        });
+        let by = match decoder {
             Some(decoder) if routes.iter().all(|(_, links)| links.is_empty()) => {
                 Asked::Builtin(decoder)
             }
@@ -1022,6 +1070,9 @@ impl TypeChecker {
             let named =
                 (decoder.or(passer).or(gap.origin.callee)).unwrap_or_else(|| intern("json.decode"));
             let written = self.decode_aliases.get(&gap.origin.span).copied();
+            if let Some(callee) = gap.origin.callee {
+                self.use_callees.insert(gap.origin.span, callee);
+            }
             // A list, an option, a map or a tuple with a part nothing
             // gives where the code runs (`[]` whose element a later use
             // decides as `a`, which only a value holds): refused as
@@ -1340,18 +1391,23 @@ impl TypeChecker {
     ) -> Option<Diagnostic> {
         let decided =
             crate::types::canonical::canonicalize(self.tables.resolver(), &self.apply(subject));
-        let unvalued = (super::inference::rigid_vars(&decided).into_iter())
-            .find(|r| !self.valued_vars.contains(&r.var));
-        let r = unvalued.filter(|_| free_vars_in(&decided).is_empty())?;
-        let name = r.name;
+        let unvalued: Vec<Symbol> = (super::inference::rigid_vars(&decided).into_iter())
+            .filter(|r| !self.valued_vars.contains(&r.var))
+            .map(|r| r.name)
+            .collect();
+        if unvalued.is_empty() || !free_vars_in(&decided).is_empty() {
+            return None;
+        }
+        let (said, help) = super::inference::known_only_by_type(&unvalued, &unvalued);
         let message = format!(
-            "`{builtin}` needs the type `{}` in full here: `{name}` is known only by its type",
+            "`{builtin}` needs the type `{}` in full here: {said}",
             self.show_type(&decided)
         );
-        Some(
-            Diagnostic::error(Code::InvalidMethodCall, span, message)
-                .with_help(format!("take the type as a parameter, `type {name}`")),
-        )
+        let diagnostic = Diagnostic::error(Code::InvalidMethodCall, span, message);
+        Some(match help {
+            Some(help) => diagnostic.with_help(help),
+            None => diagnostic,
+        })
     }
 
     /// Whether every part of `ty`, a type a later use decided, is given

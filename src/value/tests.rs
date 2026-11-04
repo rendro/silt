@@ -2442,3 +2442,41 @@ fn a_changed_range_is_written_out_side_by_side() {
     assert_eq!(short.kept_as(), "buffer");
     assert_eq!(elements(&short).len(), 11);
 }
+
+/// The kind of a value is a tag of its own, not a spare value of what
+/// it holds (src/value/mod.rs says why): the byte that says a value is a
+/// variant is the same whatever the variant holds, and differs from the
+/// one of an Int and of a list, however those are kept.
+#[test]
+fn the_kind_of_a_value_is_a_plain_tag() {
+    /// The first byte of `value`, where its tag is.
+    fn first_byte(value: &Value) -> u8 {
+        // SAFETY: a value's first byte is its tag, which is always
+        // written: it is read through a reference, in place.
+        unsafe { *(value as *const Value).cast::<u8>() }
+    }
+    let variants = [
+        Value::variant(bv::NONE, []),
+        Value::variant(bv::SOME, [Value::Int(1)]),
+        Value::variant(bv::RECEIVED, [Value::Int(1), Value::Unit]),
+    ];
+    let tags: Vec<u8> = variants.iter().map(first_byte).collect();
+    assert!(tags.iter().all(|tag| *tag == tags[0]), "{tags:?}");
+    let lists = [
+        Value::list(vec![Value::Int(1)]),
+        Value::List(List::ints(1, 5).expect("a range")),
+        Value::list((0..100).map(Value::Int).collect()),
+    ];
+    let list_tags: Vec<u8> = lists.iter().map(first_byte).collect();
+    assert!(
+        list_tags.iter().all(|tag| *tag == list_tags[0]),
+        "{list_tags:?}"
+    );
+    for int in [Value::Int(0), Value::Int(-1), Value::Int(i64::MAX)] {
+        let tag = first_byte(&int);
+        assert!(
+            tag != tags[0] && tag != list_tags[0],
+            "{tag} {tags:?} {list_tags:?}"
+        );
+    }
+}

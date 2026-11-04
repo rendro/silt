@@ -58,18 +58,16 @@ impl Drop for One {
 #[derive(Clone)]
 pub struct Variant {
     of: Of,
-    /// The position of the variant's declaration in its type.
-    ordinal: u16,
 }
 
 #[derive(Clone)]
 enum Of {
     /// No fields: the type.
-    Type(Arc<TypeInfo>),
+    Type(Arc<TypeInfo>, u16),
     /// The type and the one field.
-    One(Arc<One>),
+    One(Arc<One>, u16),
     /// The type and the fields, of which there are two at least.
-    Obj(Arc<Obj>),
+    Obj(Arc<Obj>, u16),
 }
 
 impl Variant {
@@ -79,25 +77,28 @@ impl Variant {
         let ordinal = tag.ordinal();
         let ty = tag.into_ty();
         let of = match fields.len() {
-            0 => Of::Type(ty),
+            0 => Of::Type(ty, ordinal),
             1 => match fields.next() {
-                Some(field) => Of::One(Arc::new(One { ty, field })),
+                Some(field) => Of::One(Arc::new(One { ty, field }), ordinal),
                 None => unreachable!("an iterator of one field gives one"),
             },
-            _ => Of::Obj(Arc::new(Obj {
-                ty,
-                fields: fields.collect(),
-            })),
+            _ => Of::Obj(
+                Arc::new(Obj {
+                    ty,
+                    fields: fields.collect(),
+                }),
+                ordinal,
+            ),
         };
-        Variant { of, ordinal }
+        Variant { of }
     }
 
     /// The type the variant is of.
     pub fn ty(&self) -> &Arc<TypeInfo> {
         match &self.of {
-            Of::Type(ty) => ty,
-            Of::One(one) => &one.ty,
-            Of::Obj(obj) => &obj.ty,
+            Of::Type(ty, _) => ty,
+            Of::One(one, _) => &one.ty,
+            Of::Obj(obj, _) => &obj.ty,
         }
     }
 
@@ -107,21 +108,23 @@ impl Variant {
 
     /// The position of the variant's declaration in its type.
     pub fn ordinal(&self) -> u16 {
-        self.ordinal
+        match self.of {
+            Of::Type(_, o) | Of::One(_, o) | Of::Obj(_, o) => o,
+        }
     }
 
     /// Which variant of which type this is.
     pub fn tag(&self) -> Tag {
-        Tag::new(self.ty().clone(), self.ordinal)
+        Tag::new(self.ty().clone(), self.ordinal())
     }
 
     pub fn name(&self) -> &str {
-        &self.ty().variants()[self.ordinal as usize].name
+        &self.ty().variants()[self.ordinal() as usize].name
     }
 
     /// Whether this is the builtin variant `variant`.
     pub fn is(&self, variant: BuiltinVariant) -> bool {
-        self.ordinal == variant.ordinal && self.ty().id == variant.ty
+        self.ordinal() == variant.ordinal && self.ty().id == variant.ty
     }
 
     /// Whether this is a variant of the type `ty`.
@@ -131,15 +134,15 @@ impl Variant {
 
     /// Whether this is the variant `tag`.
     pub fn has_tag(&self, tag: &Tag) -> bool {
-        self.ordinal == tag.ordinal() && self.ty().id == tag.type_id()
+        self.ordinal() == tag.ordinal() && self.ty().id == tag.type_id()
     }
 
     /// The fields, in the order the variant's declaration gives them.
     pub fn fields(&self) -> &[Value] {
         match &self.of {
-            Of::Type(_) => &[],
-            Of::One(one) => std::slice::from_ref(&one.field),
-            Of::Obj(obj) => &obj.fields,
+            Of::Type(..) => &[],
+            Of::One(one, _) => std::slice::from_ref(&one.field),
+            Of::Obj(obj, _) => &obj.fields,
         }
     }
 }
@@ -285,16 +288,16 @@ mod tests {
     #[test]
     fn a_variant_of_one_field_is_one_object() {
         let one = Variant::new(bv::SOME.into(), [Value::Int(1)].into_iter());
-        assert!(matches!(one.of, Of::One(_)));
+        assert!(matches!(one.of, Of::One(..)));
         assert_eq!(one.fields(), [Value::Int(1)]);
         assert!(one.is(bv::SOME));
         let clone = one.clone();
         match (&one.of, &clone.of) {
-            (Of::One(a), Of::One(b)) => assert!(Arc::ptr_eq(a, b)),
+            (Of::One(a, _), Of::One(b, _)) => assert!(Arc::ptr_eq(a, b)),
             _ => unreachable!(),
         }
         let none = Variant::new(bv::NONE.into(), [].into_iter());
-        assert!(matches!(none.of, Of::Type(_)));
+        assert!(matches!(none.of, Of::Type(..)));
         assert!(none.fields().is_empty());
     }
 }

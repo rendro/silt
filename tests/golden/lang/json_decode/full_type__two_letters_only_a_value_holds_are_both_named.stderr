@@ -1,0 +1,6 @@
+error[type]: `ag` needs the type `Box(List((a, b)))` in full here: `a` and `b` are known only by their types
+ --> full_type__two_letters_only_a_value_holds_are_both_named.silt:24:14
+    |
+ 24 |   let q = ag(Box { v: [] }, s)
+    |              ^^^^^^^^^^^^^ `ag` needs the type `Box(List((a, b)))` in full here: `a` and `b` are known only by their types
+  = help: take the types as parameters, `type a, type b`

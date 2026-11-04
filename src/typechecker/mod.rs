@@ -581,6 +581,14 @@ pub struct TypeChecker {
     /// parameters' values decide: of one type, which a later use in
     /// the module decides (in a REPL cell, a use in the same entry).
     pub(super) decided_by_use: Vec<Span>,
+    /// The variables of something defined outside every declaration that
+    /// an annotation variable would escape into, said once each
+    /// (`bind`).
+    pub(super) escaped_vars: std::collections::HashSet<TyVar>,
+    /// What the use at each place a decode gap was refused at calls, as
+    /// the program writes it (`again` of `Dec.again(..)`): a use nothing
+    /// decides is named by it, not by the decoder inside.
+    pub(super) use_callees: HashMap<Span, Symbol>,
     /// The signature of each method written in an impl of the module, as
     /// its body sees it, by the impl's type, the method and the trait,
     /// until the body is checked.
@@ -889,6 +897,8 @@ impl TypeChecker {
             let_order: Vec::new(),
             let_rings: Vec::new(),
             decided_by_use: Vec::new(),
+            escaped_vars: std::collections::HashSet::new(),
+            use_callees: HashMap::new(),
             impl_sigs: HashMap::new(),
             receiver_taken: false,
             method_trait: None,
@@ -1313,6 +1323,8 @@ impl TypeChecker {
             if self.is_cell && !self.decided_by_use.contains(span) {
                 continue;
             }
+            let decided_by_use = self.decided_by_use.contains(span);
+            let let_span = *span;
             // (A `let` that needs its own value is reported for that:
             // its type is unknown because of it.)
             if self.let_rings.contains(span) {
@@ -1336,8 +1348,12 @@ impl TypeChecker {
                 if free_vars_in(&ty).iter().all(|v| scheme.vars.contains(v)) {
                     continue;
                 }
-                // (A trait argument nothing decides: that error says it.)
-                if (free_vars_in(&ty).iter()).any(|v| self.reported_trait_args.contains(v)) {
+                // (A trait argument nothing decides, or a variable an
+                // annotation variable would escape into: that error says
+                // it.)
+                if (free_vars_in(&ty).iter())
+                    .any(|v| self.reported_trait_args.contains(v) || self.escaped_vars.contains(v))
+                {
                     continue;
                 }
                 self.errors.push(
@@ -1353,6 +1369,22 @@ impl TypeChecker {
                         "annotate it, e.g. `{keyword} {name}: <type> = ...`: {why}"
                     )),
                 );
+                // (A closure's decode nothing decides is this one fault:
+                // what its body's decode reported is said by it.)
+                if decided_by_use {
+                    let reported = self.errors.len() - 1;
+                    let mut index = 0;
+                    self.errors.retain(|e| {
+                        let inside = e.span.file == let_span.file
+                            && let_span.start <= e.span.start
+                            && e.span.end <= let_span.end;
+                        let keep = index >= reported
+                            || !(inside
+                                && matches!(e.code, Code::AmbiguousType | Code::InvalidMethodCall));
+                        index += 1;
+                        keep
+                    });
+                }
             }
         }
     }

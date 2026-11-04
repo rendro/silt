@@ -11,7 +11,9 @@ impl TypeChecker {
 
     /// Check whether a fully-applied type is a bare unresolved type variable.
     fn is_bare_type_var(&self, ty: &Type) -> bool {
-        matches!(self.apply(ty), Type::Var(_))
+        // (The type a parameter holds, `t` of `t.zero()`: known where the
+        // code runs, as a `type t` parameter's is.)
+        matches!(self.apply(ty), Type::Var(v) if !self.held_by_param(v))
     }
 
     /// Check whether any already-emitted error has a span that points at

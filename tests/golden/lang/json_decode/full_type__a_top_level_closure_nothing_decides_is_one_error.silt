@@ -1,0 +1,34 @@
+-- cmd: check
+-- exit: 1
+-- A top-level closure whose decode nothing decides is one error, at its
+-- `let` (not again at the decode in it); one a function with a type
+-- variable of its own calls is one error at the call; an empty map
+-- decided with keys that are no `String` is refused.
+import json
+
+type Box(a) {
+  v: a,
+}
+
+trait Dec: json.Decode {
+  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+trait Dec for Box(a) where a: json.Decode {}
+
+let never = { s -> Dec.again(Box { v: [] }, s) }
+
+let k = { x, s -> Dec.again(Box { v: x }, s) }
+
+let m = { s -> Dec.again(Box { v: #{} }, s) }
+
+fn use_it(y: a) -> Result(Box(a), json.JsonError) where a: json.Decode {
+  k(y, "\{\"v\": 2}")
+}
+
+fn main() {
+  println(never("\{\"v\": [1]}"))
+  println(use_it(1))
+  let r: Result(Box(Map(Int, Int)), json.JsonError) = m("\{\"v\": \{\"1\": 2}}")
+  println(r)
+}

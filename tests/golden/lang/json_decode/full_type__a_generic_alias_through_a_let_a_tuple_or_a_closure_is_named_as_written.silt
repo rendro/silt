@@ -1,0 +1,30 @@
+-- cmd: check
+-- exit: 1
+-- A generic alias written alone is named as written when it reaches a
+-- decoder through a tuple's pattern, a `let` or a closure, and when its
+-- `decode` is asked for, alone or through a value.
+import json
+
+type Box(a) {
+  v: a,
+}
+
+type L(a) = List(a)
+
+type BL(a) = Box(List(a))
+
+fn id(x) {
+  x
+}
+
+fn main() {
+  let s = "[]"
+  let (t, _) = (L, 1)
+  println(json.parse(s, t))
+  let u = BL
+  println(json.parse(s, u))
+  let k = { -> L }
+  println(json.parse(s, k()))
+  println(L.decode(json.Null))
+  println(id(L).decode(json.Null))
+}
