@@ -686,17 +686,24 @@ impl TypeChecker {
             return;
         }
         let recv = self.apply(recv);
-        let Some(r) = (rigid_vars(&recv).into_iter()).find(|r| {
-            let header =
-                self.decode_params.contains(&r.name) && self.header_params.contains(&r.name);
-            !(self.valued_vars.contains(&r.var) || header)
-        }) else {
+        let names: Vec<Symbol> = (rigid_vars(&recv).into_iter())
+            .filter(|r| {
+                let header =
+                    self.decode_params.contains(&r.name) && self.header_params.contains(&r.name);
+                !(self.valued_vars.contains(&r.var) || header)
+            })
+            .map(|r| r.name)
+            .collect();
+        if names.is_empty() {
             return;
-        };
-        let name = r.name;
+        }
         self.full_type_refused.insert(span);
-        let help = (!self.header_params.contains(&name))
-            .then(|| format!("take the type as a parameter, `type {name}`"));
+        // (A variable of an impl's header has no `type a` parameter to
+        // be given by.)
+        let takeable: Vec<Symbol> = (names.iter().copied())
+            .filter(|name| !self.header_params.contains(name))
+            .collect();
+        let (said, help) = known_only_by_type(&names, &takeable);
         let what = match method {
             Some((tr, field)) => format!("method '{field}' of trait '{}'", self.show_trait(tr)),
             None => match callee {
@@ -708,7 +715,7 @@ impl TypeChecker {
             Code::InvalidMethodCall,
             (
                 format!(
-                    "{what} needs the type `{}` in full here: `{name}` is known only by its type",
+                    "{what} needs the type `{}` in full here: {said}",
                     self.show_type(&recv)
                 ),
                 help,
@@ -1474,6 +1481,25 @@ impl TypeChecker {
             },
         };
         self.error_help(Code::UnknownField, (base, help), span);
+    }
+
+    /// The refusal of a record update whose base is of the type `ty`,
+    /// not a record: a type a parameter holds (`t.{ n: 3 }` after
+    /// `t.zero()`) is named by the parameter, as a type.
+    pub(super) fn not_a_record_base(&self, ty: &Type) -> String {
+        let shown = match self.apply(ty) {
+            Type::Generic(name, args) if name.is_builtin(crate::defs::TYPE_OF) => {
+                let held = self.apply(&args[0]);
+                let shown = match held {
+                    Type::Var(v) => self.type_holder(v).map(resolve),
+                    _ => None,
+                };
+                let shown = shown.unwrap_or_else(|| self.show_type(&held));
+                return format!("record update requires a record base, got the type `{shown}`");
+            }
+            other => self.show_type(&other),
+        };
+        format!("record update requires a record base, but '{shown}' is not a record type")
     }
 
     /// The traits in sight with a method `field` that makes a value
@@ -3449,6 +3475,10 @@ impl TypeChecker {
                     }
                 }
                 let mut mismatched = false;
+                // (A type given where the callee reads a record's fields,
+                // `f(Rec)`: what the call returns is of no type a later
+                // message could judge.)
+                let mut type_for_record = false;
                 // Each argument's place, the alias it names a type by,
                 // and its type.
                 let mut given: Vec<(Span, Option<Symbol>, Type)> = Vec::new();
@@ -3561,6 +3591,10 @@ impl TypeChecker {
                             }
                         }
                         mismatched |= self.errors.len() > reported;
+                        type_for_record |= (self.errors[reported..].iter()).any(|e| {
+                            e.message
+                                .starts_with("type mismatch: expected a value with a field")
+                        });
                         if self.errors.len() > reported {
                             self.misread_argument(
                                 (callee, i, &named_args),
@@ -3682,6 +3716,9 @@ impl TypeChecker {
                             self.unify(param, &Type::Error, span);
                         }
                     }
+                }
+                if type_for_record {
+                    return Type::Error;
                 }
                 (**ret).clone()
             }
@@ -4272,7 +4309,15 @@ impl TypeChecker {
                     if matches!(obj.kind, ExprKind::FieldAccess(..))
                         || self.def_scheme(obj.res, env).is_none()
                     {
-                        self.no_type_method(&resolve(ty.name), field, span, Some(key.0));
+                        // (An alias is named as written: `L` of `type L(a)
+                        // = List(a)`.)
+                        match self.res_def(obj.res) {
+                            Some(def) if def.kind == crate::defs::DefKind::TypeAlias => {
+                                let written = super::names::shown_arg(obj);
+                                self.no_type_method(&written, field, span, None);
+                            }
+                            _ => self.no_type_method(&resolve(ty.name), field, span, Some(key.0)),
+                        }
                         expr.ty = Some(Type::Error);
                         return Type::Error;
                     }
@@ -4387,8 +4432,11 @@ impl TypeChecker {
                         let name = (self.type_holder(*v))
                             .or_else(|| written_receiver(obj).map(|shown| intern(&shown)))
                             .unwrap_or_else(|| intern("_"));
-                        let held = Type::Rigid(RigidId { var: *v, name });
-                        self.no_field(&held, field, Some(obj), &[], span);
+                        let message = format!(
+                            "type mismatch: expected a value with a field `{field}`, got the type \
+                             `{name}`"
+                        );
+                        self.error(Code::TypeMismatch, message, span);
                         return Type::Error;
                     }
                     let resolved = self.resolve_type_descriptor_method(&gargs[0], field, span);
@@ -4400,7 +4448,30 @@ impl TypeChecker {
                     // variable's case is reported above).
                     let inner = self.apply(&gargs[0]);
                     if !matches!(inner, Type::Var(_) | Type::Rigid(_) | Type::Error) {
-                        self.no_type_method(&self.show_type(&inner), field, span, None);
+                        // (A generic type or alias written alone, `id(L)`:
+                        // named as written, not with its open arguments.)
+                        let alone = (free_vars_in(&inner).iter())
+                            .find_map(|v| self.open_var_names.get(v))
+                            .map(|name| resolve(*name))
+                            .or_else(|| match &inner {
+                                Type::List(_) | Type::Set(_) | Type::Map(..) | Type::Channel(_)
+                                    if self.holds_open_vars(&inner) =>
+                                {
+                                    let head = match &inner {
+                                        Type::List(_) => "List",
+                                        Type::Set(_) => "Set",
+                                        Type::Map(..) => "Map",
+                                        _ => "Channel",
+                                    };
+                                    Some(head.to_string())
+                                }
+                                Type::Generic(name, _) if self.holds_open_vars(&inner) => {
+                                    Some(self.show_type(&Type::Generic(*name, Vec::new())))
+                                }
+                                _ => None,
+                            });
+                        let shown = alone.unwrap_or_else(|| self.show_type(&inner));
+                        self.no_type_method(&shown, field, span, None);
                     }
                     return Type::Error;
                 }
@@ -5109,13 +5180,8 @@ impl TypeChecker {
                         }
                     }
                     if !matches!(resolved, Type::Error | Type::Var(_) | Type::Never) {
-                        self.error(Code::TypeMismatch,
-                            format!(
-                                "record update requires a record base, but '{}' is not a record type",
-                                self.show_type(&resolved)
-                            ),
-                            base_span,
-                        );
+                        let message = self.not_a_record_base(&resolved);
+                        self.error(Code::TypeMismatch, message, base_span);
                     }
                 }
                 base_ty
@@ -6224,6 +6290,36 @@ pub(super) fn distinct(traits: &mut Vec<TraitKey>) {
         }
         first
     });
+}
+
+/// What an in-full refusal says of the letters `names` only a value
+/// holds (`` `a` is known only by its type ``), and the help that takes
+/// those of them in `takeable` as type parameters.
+pub(super) fn known_only_by_type(
+    names: &[Symbol],
+    takeable: &[Symbol],
+) -> (String, Option<String>) {
+    let quoted = |names: &[Symbol]| -> Vec<String> {
+        names.iter().map(|name| format!("`{name}`")).collect()
+    };
+    let listed = |names: Vec<String>| match names.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
+        _ => names.concat(),
+    };
+    let said = match names {
+        [_] => format!("{} is known only by its type", listed(quoted(names))),
+        _ => format!("{} are known only by their types", listed(quoted(names))),
+    };
+    let params: Vec<String> = takeable.iter().map(|name| format!("type {name}")).collect();
+    let help = match takeable {
+        [] => None,
+        [_] => Some(format!("take the type as a parameter, `{}`", params[0])),
+        _ => Some(format!(
+            "take the types as parameters, `{}`",
+            params.join(", ")
+        )),
+    };
+    (said, help)
 }
 
 /// The rigid type variables in `ty`, in order.

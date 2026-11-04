@@ -1,0 +1,20 @@
+error[type]: the type of top-level let 'never' is not fully known here: Fn(String) -> Result(Box(List(_)), json.JsonError)
+ --> full_type__a_top_level_closure_nothing_decides_is_one_error.silt:19:5
+    |
+ 19 | let never = { s -> Dec.again(Box { v: [] }, s) }
+    |     ^^^^^ the type of top-level let 'never' is not fully known here: Fn(String) -> Result(Box(List(_)), json.JsonError)
+  = help: annotate it, e.g. `let never: <type> = ...`: nothing in the module decides it
+
+error[type]: `json.parse` cannot decode `Box(Map(Int, Int))`: field `v` has type `Map(Int, Int)`, which has no decoder, as a decoded map's key type must be String
+ --> full_type__a_top_level_closure_nothing_decides_is_one_error.silt:23:16
+    |
+ 23 | let m = { s -> Dec.again(Box { v: #{} }, s) }
+    |                ^^^^^^^^^ `json.parse` cannot decode `Box(Map(Int, Int))`: field `v` has type `Map(Int, Int)`, which has no decoder, as a decoded map's key type must be String
+  = note: `Box.again` passes it to `json.parse`
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: the type variable `a` would escape its declaration: inside it `a` stands for any type, but here it would become the type of a value defined outside
+ --> full_type__a_top_level_closure_nothing_decides_is_one_error.silt:26:5
+    |
+ 26 |   k(y, "\{\"v\": 2}")
+    |     ^ the type variable `a` would escape its declaration: inside it `a` stands for any type, but here it would become the type of a value defined outside

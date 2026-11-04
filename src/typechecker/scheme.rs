@@ -746,7 +746,9 @@ impl TypeChecker {
                 function.filter(|site| letter.is_some_and(|l| !site.written.contains(&l)));
             if closure.is_some() || function.is_none() || unwritten.is_some() {
                 let head = in_full_head(&error.message);
-                let callee = in_full_callee(&error.message);
+                // (Named by what the use calls, as written.)
+                let callee = (self.use_callees.get(&span).map(|callee| resolve(*callee)))
+                    .or_else(|| in_full_callee(&error.message));
                 let what = match callee {
                     Some(callee) => format!("this use of '{callee}'"),
                     None => "this".to_string(),
@@ -1046,6 +1048,10 @@ impl TypeChecker {
                 && self.open_vars.contains(&v)
             {
                 self.open_vars.insert(w);
+                // (And the generic alias it is of: `L` of `let u = L`.)
+                if let Some(&name) = self.open_var_names.get(&v) {
+                    self.open_var_names.insert(w, name);
+                }
             }
             mapping.insert(v, fresh);
         }

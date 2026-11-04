@@ -1,11 +1,11 @@
-error[type]: type 't' has no field 'n'
+error[type]: type mismatch: expected a value with a field `n`, got the type `t`
  --> static_method__a_field_of_a_held_type_names_its_holder.silt:23:7
     |
  23 |   (z, u.n)
-    |       ^^^ type 't' has no field 'n'
+    |       ^^^ type mismatch: expected a value with a field `n`, got the type `t`
 
-error[type]: type 't' has no field 'n'
+error[type]: type mismatch: expected a value with a field `n`, got the type `t`
  --> static_method__a_field_of_a_held_type_names_its_holder.silt:28:7
     |
  28 |   (r, t.n)
-    |       ^^^ type 't' has no field 'n'
+    |       ^^^ type mismatch: expected a value with a field `n`, got the type `t`

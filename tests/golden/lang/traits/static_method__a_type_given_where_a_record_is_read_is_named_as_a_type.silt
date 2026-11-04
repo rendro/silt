@@ -1,0 +1,44 @@
+-- cmd: check
+-- exit: 1
+-- stderr-not-contains: type _
+-- stderr-not-contains: 'type Rec'
+-- stderr-not-contains: Display
+-- A parameter that a `t.zero()` reads as a type, whose fields are read
+-- or updated too, is named as a type: given the type `Rec` where its
+-- field reads make it a record (one error: what the call returns is not
+-- judged again), and updated after a copy (`let u = t`).
+trait Zero {
+  fn zero() -> Self
+}
+
+type Rec {
+  n: Int,
+}
+
+trait Zero for Rec {
+  fn zero() -> Self {
+    Rec { n: 0 }
+  }
+}
+
+fn read(t) {
+  let _z = t.zero()
+  t.n
+}
+
+fn updated(t) {
+  let _z = t.zero()
+  t.{ n: 3 }
+}
+
+fn copied(t) {
+  let _z = t.zero()
+  let u = t
+  u.{ n: 3 }
+}
+
+fn main() {
+  let _ = read(Rec)
+  println(updated(Rec))
+  let _ = copied(Rec)
+}

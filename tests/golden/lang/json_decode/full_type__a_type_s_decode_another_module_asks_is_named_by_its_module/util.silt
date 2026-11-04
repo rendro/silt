@@ -1,0 +1,17 @@
+import json
+
+pub type Holder {
+  s: Set(Int),
+}
+
+pub type Box(a) {
+  v: a,
+}
+
+pub fn bm(t) {
+  Box(t).decode(json.Null)
+}
+
+pub fn bm2(t) {
+  bm(t)
+}

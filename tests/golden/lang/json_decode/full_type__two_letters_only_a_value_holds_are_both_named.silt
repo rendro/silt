@@ -1,0 +1,31 @@
+-- cmd: check
+-- exit: 1
+-- A type needed in full with two letters only values hold names both,
+-- and the help takes both as type parameters.
+import json
+
+type Box(a) {
+  v: a,
+}
+
+trait Dec: json.Decode {
+  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+trait Dec for Box(a) where a: json.Decode {}
+
+trait Dec for List(a) where a: json.Decode {}
+
+fn ag(x, s) {
+  Dec.again(x, s)
+}
+
+fn two(y: a, z: b, s: String) -> Result(Box(List((a, b))), json.JsonError) where a: json.Decode, b: json.Decode {
+  let q = ag(Box { v: [] }, s)
+  let r: Result(Box(List((a, b))), json.JsonError) = q
+  r
+}
+
+fn main() {
+  println(two(1, "x", "\{\"v\": []}"))
+}

@@ -625,21 +625,26 @@ impl TypeChecker {
                 (var, Type::Rigid(crate::types::RigidId { var, name }))
             })
             .collect();
-        let unheld = (free_vars_in(ty).into_iter())
-            .find(|v| !self.held_by_param(*v))
-            .and_then(|v| names.get(&v).cloned());
-        let Some(Type::Rigid(r)) = unheld else {
+        let unheld: Vec<Symbol> = (free_vars_in(ty).into_iter())
+            .filter(|v| !self.held_by_param(*v))
+            .filter_map(|v| match names.get(&v) {
+                Some(Type::Rigid(r)) => Some(r.name),
+                _ => None,
+            })
+            .collect();
+        if unheld.is_empty() {
             return None;
-        };
-        let name = r.name;
+        }
+        let (said, help) = super::inference::known_only_by_type(&unheld, &unheld);
         let message = format!(
-            "`{builtin_name}` needs the type `{}` in full here: `{name}` is known only by its type",
+            "`{builtin_name}` needs the type `{}` in full here: {said}",
             self.show_type(&substitute_vars(ty, &names))
         );
-        Some(
-            Diagnostic::error(Code::InvalidMethodCall, span, message)
-                .with_help(format!("take the type as a parameter, `type {name}`")),
-        )
+        let diagnostic = Diagnostic::error(Code::InvalidMethodCall, span, message);
+        Some(match help {
+            Some(help) => diagnostic.with_help(help),
+            None => diagnostic,
+        })
     }
 
     /// The error of the decoder `builtin`, which decodes as `decoding`
@@ -949,6 +954,9 @@ pub(super) fn decoded_parts(ty: &Type) -> Option<Vec<&Type>> {
     match ty {
         Type::List(t) => Some(vec![&**t]),
         Type::Map(k, v) if matches!(**k, Type::String) => Some(vec![&**v]),
+        // (A map whose key a later use decides, `#{}`: its key is a part
+        // that use must make `String`.)
+        Type::Map(k, v) if matches!(**k, Type::Var(_)) => Some(vec![&**k, &**v]),
         Type::Tuple(ts) if !ts.is_empty() => Some(ts.iter().collect()),
         Type::Generic(t, args) if t.id == crate::typeinfo::ty::OPTION && args.len() == 1 => {
             Some(vec![&args[0]])

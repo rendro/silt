@@ -259,6 +259,22 @@ impl TypeChecker {
                 passer: Some(self.passer_at(passer, &origin)),
                 at,
             },
+            // (Named as the use writes it, `mail.load`: another module's
+            // link keeps its module.)
+            Pred::Trait {
+                tr,
+                args,
+                subject,
+                asker: Some(asker),
+            } => Pred::Trait {
+                tr,
+                args,
+                subject,
+                asker: Some(crate::types::Asker {
+                    passer: asker.passer.map(|passer| self.passer_at(passer, &origin)),
+                    ..asker
+                }),
+            },
             other => other,
         };
         // A bound of another module's definition, or what its body asks
@@ -1459,14 +1475,8 @@ impl TypeChecker {
                 self.instantiate_record_fields_with_args(*name, args)
             }
             other => {
-                self.error(
-                    Code::TypeMismatch,
-                    format!(
-                        "record update requires a record base, but '{}' is not a record type",
-                        self.show_type(other)
-                    ),
-                    span,
-                );
+                let message = self.not_a_record_base(other);
+                self.error(Code::TypeMismatch, message, span);
                 return;
             }
         };
@@ -2134,8 +2144,12 @@ impl TypeChecker {
                     self.owe_held_decode(&resolved, origin);
                 }
                 // What a type variable in a decoded list, option, map or
-                // tuple stands for is decoded too.
-                for part in super::builtin_checks::decoded_variables(&resolved) {
+                // tuple stands for is decoded too. (Not of a type written
+                // alone, `Map`: refused as one.)
+                let open = self.holds_open_vars(&resolved);
+                for part in (super::builtin_checks::decoded_variables(&resolved).into_iter())
+                    .filter(|_| !open)
+                {
                     let pred = Pred::Trait {
                         tr: trait_name,
                         args: Vec::new(),

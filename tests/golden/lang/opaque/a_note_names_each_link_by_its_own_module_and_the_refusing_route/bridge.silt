@@ -1,0 +1,9 @@
+import json
+import mail
+
+pub fn hmixed(s, t, b) {
+  match b {
+    true -> mail.load(s, t)
+    false -> json.parse(s, t)
+  }
+}

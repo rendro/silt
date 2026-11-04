@@ -1,0 +1,9 @@
+import json
+
+pub opaque type Email {
+  addr: String,
+}
+
+pub fn load(s, t) {
+  json.parse(s, t)
+}
