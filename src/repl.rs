@@ -1233,6 +1233,29 @@ mod tests {
         assert!(!other.committed, "a call at another type must fail");
     }
 
+    /// A value a parameter's held type makes, kept in a local nothing
+    /// uses, is of the type the function is given: the function is
+    /// defined, and runs (the owner's card G1).
+    #[test]
+    fn a_value_made_from_a_held_type_and_kept_runs() {
+        let mut repl = repl();
+        let setup = [
+            "trait Zero { fn zero() -> Self }",
+            "type Rec { n: Int }",
+            "trait Zero for Rec { fn zero() -> Self { Rec { n: 0 } } }",
+            "fn g(t) {\n  let _z = t.zero()\n  1\n}",
+        ];
+        for entry in setup {
+            let evaluation = repl.eval(entry);
+            assert!(
+                evaluation.committed,
+                "`{entry}` must run: {:?}",
+                evaluation.diagnostics
+            );
+        }
+        assert_eq!(value(&mut repl, "g(Rec)"), "1");
+    }
+
     /// The value `input` returns, which must run.
     fn value(repl: &mut Repl, input: &str) -> String {
         let evaluation = repl.eval(input);

@@ -1,0 +1,79 @@
+-- A value a parameter's held type makes (`t.zero()`) kept in a local is
+-- of the type the function is given, as with `fn g(type t) where t:
+-- Zero`: unused, passed on, compared, in a tuple, two of them, and in a
+-- closure in the function.
+trait Zero {
+  fn zero() -> Self
+}
+
+type Rec {
+  n: Int,
+}
+
+trait Zero for Rec {
+  fn zero() -> Self { Rec { n: 0 } }
+}
+
+trait Zero for Int {
+  fn zero() -> Self { 0 }
+}
+
+trait Shown {
+  fn shown(self) -> String
+}
+
+trait Shown for Rec {
+  fn shown(self) -> String { "rec {self.n}" }
+}
+
+trait Shown for Int {
+  fn shown(self) -> String { "int {self}" }
+}
+
+fn show(x: a) -> String where a: Shown {
+  Shown.shown(x)
+}
+
+fn kept(t) {
+  let _z = t.zero()
+  1
+}
+
+fn passed(t) {
+  let z = t.zero()
+  show(z)
+}
+
+fn compared(t) {
+  let z = t.zero()
+  z == t.zero()
+}
+
+fn paired(t) {
+  let z = t.zero()
+  (z, 1)
+}
+
+fn two(t, u) {
+  let _x = t.zero()
+  let _y = u.zero()
+  2
+}
+
+fn in_a_closure(t) {
+  let f = { ->
+    let _z = t.zero()
+    3
+  }
+  f()
+}
+
+fn main() {
+  println(kept(Rec))
+  println(passed(Rec))
+  println(passed(Int))
+  println(compared(Rec))
+  println(paired(Int))
+  println(two(Rec, Int))
+  println(in_a_closure(Rec))
+}
