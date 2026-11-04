@@ -482,6 +482,9 @@ impl TypeChecker {
                     r.name
                 ),
             ));
+            // (Said once: the variable is of no type a later use could
+            // be judged by.)
+            self.tables.vars.bind(v, Type::Error);
             return;
         }
         self.tables.vars.bind(v, t);

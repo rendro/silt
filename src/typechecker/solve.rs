@@ -2144,8 +2144,12 @@ impl TypeChecker {
                     self.owe_held_decode(&resolved, origin);
                 }
                 // What a type variable in a decoded list, option, map or
-                // tuple stands for is decoded too.
-                for part in super::builtin_checks::decoded_variables(&resolved) {
+                // tuple stands for is decoded too. (Not of a type written
+                // alone, `Map`: refused as one.)
+                let open = self.holds_open_vars(&resolved);
+                for part in (super::builtin_checks::decoded_variables(&resolved).into_iter())
+                    .filter(|_| !open)
+                {
                     let pred = Pred::Trait {
                         tr: trait_name,
                         args: Vec::new(),

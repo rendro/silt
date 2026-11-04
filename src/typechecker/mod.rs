@@ -1313,6 +1313,8 @@ impl TypeChecker {
             if self.is_cell && !self.decided_by_use.contains(span) {
                 continue;
             }
+            let decided_by_use = self.decided_by_use.contains(span);
+            let let_span = *span;
             // (A `let` that needs its own value is reported for that:
             // its type is unknown because of it.)
             if self.let_rings.contains(span) {
@@ -1353,6 +1355,22 @@ impl TypeChecker {
                         "annotate it, e.g. `{keyword} {name}: <type> = ...`: {why}"
                     )),
                 );
+                // (A closure's decode nothing decides is this one fault:
+                // what its body's decode reported is said by it.)
+                if decided_by_use {
+                    let reported = self.errors.len() - 1;
+                    let mut index = 0;
+                    self.errors.retain(|e| {
+                        let inside = e.span.file == let_span.file
+                            && let_span.start <= e.span.start
+                            && e.span.end <= let_span.end;
+                        let keep = index >= reported
+                            || !(inside
+                                && matches!(e.code, Code::AmbiguousType | Code::InvalidMethodCall));
+                        index += 1;
+                        keep
+                    });
+                }
             }
         }
     }

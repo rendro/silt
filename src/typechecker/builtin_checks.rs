@@ -954,6 +954,9 @@ pub(super) fn decoded_parts(ty: &Type) -> Option<Vec<&Type>> {
     match ty {
         Type::List(t) => Some(vec![&**t]),
         Type::Map(k, v) if matches!(**k, Type::String) => Some(vec![&**v]),
+        // (A map whose key a later use decides, `#{}`: its key is a part
+        // that use must make `String`.)
+        Type::Map(k, v) if matches!(**k, Type::Var(_)) => Some(vec![&**k, &**v]),
         Type::Tuple(ts) if !ts.is_empty() => Some(ts.iter().collect()),
         Type::Generic(t, args) if t.id == crate::typeinfo::ty::OPTION && args.len() == 1 => {
             Some(vec![&args[0]])

@@ -1,0 +1,30 @@
+-- An empty map handed to a decode whose key and value a later use
+-- decides counts as an empty list does: decided `Map(String, Int)` by an
+-- annotation, in `main`, in a closure kept for its call and in a
+-- top-level closure, it decodes that type.
+import json
+
+type Box(a) {
+  v: a,
+}
+
+trait Dec: json.Decode {
+  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+trait Dec for Box(a) where a: json.Decode {}
+
+let top = { s -> Dec.again(Box { v: #{} }, s) }
+
+fn main() {
+  let s = "\{\"v\": \{\"b\": 2}}"
+  let r: Result(Box(Map(String, Int)), json.JsonError) = Dec.again(Box { v: #{} }, s)
+  println(r)
+  let k = { t -> Dec.again(Box { v: #{} }, t) }
+  let q: Result(Box(Map(String, Int)), json.JsonError) = k(s)
+  println(q)
+  let p: Result(Box(Map(String, Int)), json.JsonError) = top(s)
+  println(p)
+  let wrong: Result(Box(Map(String, Int)), json.JsonError) = top("\{\"v\": \{\"b\": \"x\"}}")
+  println(wrong)
+}
