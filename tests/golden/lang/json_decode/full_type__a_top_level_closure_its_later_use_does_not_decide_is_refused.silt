@@ -1,0 +1,26 @@
+-- cmd: check
+-- exit: 1
+-- A top-level `let` of a closure whose decode only its parameter's value
+-- decides is of one type (it was general in it, and decoded a type not
+-- known): called at two types, the second is a mismatch; never called,
+-- its type is not fully known.
+import json
+
+type Box(a) {
+  v: a,
+}
+
+trait Dec: json.Decode {
+  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+trait Dec for Box(a) where a: json.Decode {}
+
+let two = { x, s -> Dec.again(Box { v: x }, s) }
+
+let never = { x, s -> Dec.again(Box { v: x }, s) }
+
+fn main() {
+  println(two(1, "\{\"v\": 2}"))
+  println(two("a", "\{\"v\": \"b\"}"))
+}

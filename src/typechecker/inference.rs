@@ -2994,7 +2994,7 @@ impl TypeChecker {
     /// `json.Decode` of an unknown part asked by an impl's header whose
     /// dictionary carries its type in full. Generalised, such a closure
     /// is refused; of one type, its later call decides it.
-    fn decodes_by_its_values(&self, from: usize) -> bool {
+    pub(super) fn decodes_by_its_values(&self, from: usize) -> bool {
         (self.wanted[from.min(self.wanted.len())..].iter())
             .filter(|wanted| !wanted.solved)
             .any(|wanted| match &wanted.goal {
@@ -4821,6 +4821,11 @@ impl TypeChecker {
                         ty
                     })
                     .collect();
+                for (p, ty) in params.iter().zip(&param_types) {
+                    if let (PatternKind::Ident(name), None) = (&p.pattern.kind, &p.ty) {
+                        self.closure_params.push((span, *name, ty.clone()));
+                    }
+                }
 
                 // A lambda is its own `?`/`return`
                 // boundary — the VM's Op::QuestionMark pops exactly ONE
@@ -5717,6 +5722,7 @@ impl TypeChecker {
                         let decided_later = matches!(value.kind, ExprKind::Lambda { .. })
                             && self.decodes_by_its_values(owed_from);
                         let scheme = if is_value && decided_later {
+                            self.decided_closures.push(value.span);
                             self.exit_level();
                             // (Its variables are the scope's: a later `let`
                             // of a value holding it, `[k]`, is not general

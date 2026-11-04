@@ -1,0 +1,3 @@
+Ok(Box {v: 2})
+Err(json type mismatch: expected Int, got string at v)
+Ok(Box {v: 3})
