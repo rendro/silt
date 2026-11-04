@@ -10,12 +10,6 @@ error[type]: cannot infer the type of `_z` — add an annotation, e.g. `let _z: 
  30 |   let _z = t.zero()
     |            ^^^^^^^^ cannot infer the type of `_z` — add an annotation, e.g. `let _z: SomeType = ...`
 
-error[type]: cannot infer the type of `_z` — add an annotation, e.g. `let _z: SomeType = ...`
- --> static_method__a_type_given_where_a_record_is_read_is_named_as_a_type.silt:35:12
-    |
- 35 |   let _z = t.zero()
-    |            ^^^^^^^^ cannot infer the type of `_z` — add an annotation, e.g. `let _z: SomeType = ...`
-
 error[type]: record update requires a record base, got the type `t`
  --> static_method__a_type_given_where_a_record_is_read_is_named_as_a_type.silt:37:3
     |
