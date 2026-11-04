@@ -1,0 +1,25 @@
+-- cmd: check
+-- exit: 1
+-- A type's decode another module's function asks (`util.bm` decodes
+-- util's `Box`) is named by that module, `util.Box.decode`, in the
+-- refusal and its note: this module has a `Box` of its own.
+import json
+import util
+
+type Box(a) {
+  v: a,
+}
+
+type Holder {
+  s: Set(Int),
+}
+
+fn bm(t) {
+  Box(t).decode(json.Null)
+}
+
+fn main() {
+  println(bm(Holder))
+  println(util.bm(Holder))
+  println(util.bm2(util.Holder))
+}

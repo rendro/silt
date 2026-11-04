@@ -1,0 +1,23 @@
+error[type]: `Box.decode` cannot decode `Holder`: field `s` has type `Set(Int)`, which has no decoder
+ --> main.silt:22:14
+    |
+ 22 |   println(bm(Holder))
+    |              ^^^^^^ `Box.decode` cannot decode `Holder`: field `s` has type `Set(Int)`, which has no decoder
+  = note: `bm` passes it to `Box.decode`
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `util.Box.decode` cannot decode `Holder`: field `s` has type `Set(Int)`, which has no decoder
+ --> main.silt:23:19
+    |
+ 23 |   println(util.bm(Holder))
+    |                   ^^^^^^ `util.Box.decode` cannot decode `Holder`: field `s` has type `Set(Int)`, which has no decoder
+  = note: `util.bm` passes it to `util.Box.decode`
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `util.Box.decode` cannot decode `util.Holder`: field `s` has type `Set(Int)`, which has no decoder
+ --> main.silt:24:20
+    |
+ 24 |   println(util.bm2(util.Holder))
+    |                    ^^^^^^^^^^^ `util.Box.decode` cannot decode `util.Holder`: field `s` has type `Set(Int)`, which has no decoder
+  = note: `util.bm2` passes it to `util.bm`, which passes it to `util.Box.decode`
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these

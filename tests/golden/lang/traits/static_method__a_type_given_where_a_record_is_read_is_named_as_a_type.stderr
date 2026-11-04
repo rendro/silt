@@ -1,35 +1,35 @@
 error[type]: cannot infer the type of `_z` — add an annotation, e.g. `let _z: SomeType = ...`
- --> static_method__a_type_given_where_a_record_is_read_is_named_as_a_type.silt:23:12
+ --> static_method__a_type_given_where_a_record_is_read_is_named_as_a_type.silt:25:12
     |
- 23 |   let _z = t.zero()
+ 25 |   let _z = t.zero()
     |            ^^^^^^^^ cannot infer the type of `_z` — add an annotation, e.g. `let _z: SomeType = ...`
 
 error[type]: cannot infer the type of `_z` — add an annotation, e.g. `let _z: SomeType = ...`
- --> static_method__a_type_given_where_a_record_is_read_is_named_as_a_type.silt:28:12
+ --> static_method__a_type_given_where_a_record_is_read_is_named_as_a_type.silt:30:12
     |
- 28 |   let _z = t.zero()
+ 30 |   let _z = t.zero()
     |            ^^^^^^^^ cannot infer the type of `_z` — add an annotation, e.g. `let _z: SomeType = ...`
 
 error[type]: cannot infer the type of `_z` — add an annotation, e.g. `let _z: SomeType = ...`
- --> static_method__a_type_given_where_a_record_is_read_is_named_as_a_type.silt:33:12
+ --> static_method__a_type_given_where_a_record_is_read_is_named_as_a_type.silt:35:12
     |
- 33 |   let _z = t.zero()
+ 35 |   let _z = t.zero()
     |            ^^^^^^^^ cannot infer the type of `_z` — add an annotation, e.g. `let _z: SomeType = ...`
 
 error[type]: record update requires a record base, got the type `t`
- --> static_method__a_type_given_where_a_record_is_read_is_named_as_a_type.silt:35:3
+ --> static_method__a_type_given_where_a_record_is_read_is_named_as_a_type.silt:37:3
     |
- 35 |   u.{ n: 3 }
+ 37 |   u.{ n: 3 }
     |   ^ record update requires a record base, got the type `t`
 
 error[type]: type mismatch: expected a value with a field `n`, got the type `Rec`
- --> static_method__a_type_given_where_a_record_is_read_is_named_as_a_type.silt:39:16
+ --> static_method__a_type_given_where_a_record_is_read_is_named_as_a_type.silt:41:16
     |
- 39 |   let _ = read(Rec)
+ 41 |   let _ = read(Rec)
     |                ^^^ type mismatch: expected a value with a field `n`, got the type `Rec`
 
 error[type]: type mismatch: expected a value with a field `n`, got the type `Rec`
- --> static_method__a_type_given_where_a_record_is_read_is_named_as_a_type.silt:40:19
+ --> static_method__a_type_given_where_a_record_is_read_is_named_as_a_type.silt:42:19
     |
- 40 |   let _ = updated(Rec)
+ 42 |   println(updated(Rec))
     |                   ^^^ type mismatch: expected a value with a field `n`, got the type `Rec`

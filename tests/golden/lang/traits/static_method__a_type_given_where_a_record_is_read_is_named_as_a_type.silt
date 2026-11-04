@@ -2,9 +2,11 @@
 -- exit: 1
 -- stderr-not-contains: type _
 -- stderr-not-contains: 'type Rec'
+-- stderr-not-contains: Display
 -- A parameter that a `t.zero()` reads as a type, whose fields are read
 -- or updated too, is named as a type: given the type `Rec` where its
--- field reads make it a record, and updated after a copy (`let u = t`).
+-- field reads make it a record (one error: what the call returns is not
+-- judged again), and updated after a copy (`let u = t`).
 trait Zero {
   fn zero() -> Self
 }
@@ -37,6 +39,6 @@ fn copied(t) {
 
 fn main() {
   let _ = read(Rec)
-  let _ = updated(Rec)
+  println(updated(Rec))
   let _ = copied(Rec)
 }

@@ -1046,6 +1046,10 @@ impl TypeChecker {
                 && self.open_vars.contains(&v)
             {
                 self.open_vars.insert(w);
+                // (And the generic alias it is of: `L` of `let u = L`.)
+                if let Some(&name) = self.open_var_names.get(&v) {
+                    self.open_var_names.insert(w, name);
+                }
             }
             mapping.insert(v, fresh);
         }
