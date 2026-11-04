@@ -101,6 +101,10 @@ pub enum Value {
 const _: () = assert!(std::mem::size_of::<Value>() == 24);
 #[cfg(target_pointer_width = "64")]
 const _: () = assert!(std::mem::size_of::<List>() <= 16 && std::mem::size_of::<Variant>() <= 16);
+// (A spare value of the tag says "none": an optional value is a value's
+// size.)
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(std::mem::size_of::<Option<Value>>() == 24);
 
 impl Value {
     /// The list of `items`.
