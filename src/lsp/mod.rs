@@ -4,21 +4,21 @@
 //! over the standard LSP JSON-RPC transport (stdin/stdout).
 
 use std::any::Any;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
 use std::time::Instant;
 
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, RequestId, Response};
 use lsp_types::notification::{
-    DidChangeTextDocument, DidChangeWatchedFiles, DidCloseTextDocument, DidOpenTextDocument,
-    Notification as _,
+    Cancel, DidChangeTextDocument, DidChangeWatchedFiles, DidCloseTextDocument,
+    DidOpenTextDocument, Exit, Notification as _,
 };
 use lsp_types::request::{
     CodeActionRequest, Completion, DocumentDiagnosticRequest, DocumentHighlightRequest,
     DocumentSymbolRequest, FoldingRangeRequest, Formatting, GotoDefinition, GotoImplementation,
     GotoTypeDefinition, HoverRequest, InlayHintRequest, PrepareRenameRequest, References, Rename,
-    Request as _, SelectionRangeRequest, SemanticTokensFullRequest, SignatureHelpRequest,
+    Request as _, SelectionRangeRequest, SemanticTokensFullRequest, Shutdown, SignatureHelpRequest,
     WorkspaceSymbolRequest,
 };
 use lsp_types::{
@@ -121,6 +121,10 @@ struct Server {
     /// The walk of the workspace while it goes on: what it finds is
     /// indexed between the editor's requests.
     preload: Option<preload::Preload>,
+    /// The editor's messages that came while a request waited for the
+    /// walk of the workspace to end (see `Server::finish_preload`): they
+    /// are taken, in their order, before the next one.
+    held: VecDeque<Message>,
 }
 
 /// How long the start waits for the walk of the workspace: one of the
@@ -148,6 +152,7 @@ impl Server {
             published: BTreeMap::new(),
             def_uses: None,
             preload: None,
+            held: VecDeque::new(),
         }
     }
 
@@ -175,8 +180,86 @@ impl Server {
         self.preload = Some(preload);
     }
 
+    /// Index the rest of the walk of the workspace, for the request `id`
+    /// whose answer spans the workspace's files: `false` when the editor
+    /// cancels the request meanwhile, or ends the session (a shutdown or
+    /// an exit, which must not wait behind the walk). The editor's other
+    /// messages wait in `held`; one of them that the editor cancels is
+    /// answered so. Nothing after a shutdown or an exit is taken: the
+    /// shutdown's own wait for the exit reads it from the editor.
+    fn finish_preload(&mut self, id: &RequestId) -> bool {
+        let ends_the_session = |msg: &Message| match msg {
+            Message::Request(req) => req.method == Shutdown::METHOD,
+            Message::Notification(notif) => notif.method == Exit::METHOD,
+            Message::Response(_) => false,
+        };
+        while self.preload.is_some() {
+            if self.held.iter().any(ends_the_session) {
+                return false;
+            }
+            loop {
+                let msg = match self.connection.receiver.try_recv() {
+                    Ok(msg) => msg,
+                    Err(e) if e.is_disconnected() => return false,
+                    Err(_) => break,
+                };
+                let cancelled = match &msg {
+                    Message::Notification(notif) if notif.method == Cancel::METHOD => {
+                        serde_json::from_value::<lsp_types::CancelParams>(notif.params.clone())
+                            .ok()
+                            .map(|params| match params.id {
+                                lsp_types::NumberOrString::Number(n) => RequestId::from(n),
+                                lsp_types::NumberOrString::String(s) => RequestId::from(s),
+                            })
+                    }
+                    _ => None,
+                };
+                let Some(cancelled) = cancelled else {
+                    let ends = ends_the_session(&msg);
+                    self.held.push_back(msg);
+                    if ends {
+                        return false;
+                    }
+                    continue;
+                };
+                if cancelled == *id {
+                    return false;
+                }
+                let waiting = self
+                    .held
+                    .iter()
+                    .position(|held| matches!(held, Message::Request(req) if req.id == cancelled));
+                match waiting {
+                    Some(at) => {
+                        self.held.remove(at);
+                        self.answer_cancelled(cancelled);
+                    }
+                    None => self.held.push_back(msg),
+                }
+            }
+            self.index_preloaded(Instant::now() + PRELOAD_SLICE);
+        }
+        true
+    }
+
+    /// Answer the request `id`, which the editor cancelled.
+    fn answer_cancelled(&self, id: RequestId) {
+        let resp = Response::new_err(
+            id,
+            ErrorCode::RequestCanceled as i32,
+            "the request was cancelled".to_string(),
+        );
+        self.connection.sender.send(Message::Response(resp)).ok();
+    }
+
     fn run(&mut self) {
         loop {
+            if let Some(msg) = self.held.pop_front() {
+                if self.handle_message(msg) {
+                    return;
+                }
+                continue;
+            }
             // While the walk of the workspace goes on, the editor's
             // messages come first, the analysis when it is due, and what
             // the walk found in the time between.
@@ -226,6 +309,14 @@ impl Server {
                 Message::Request(req) => {
                     if self.connection.handle_shutdown(&req).unwrap_or(true) {
                         return true;
+                    }
+                    // An answer that spans the workspace's files waits
+                    // for the walk of the workspace: it would miss the
+                    // files not found yet. One for a document is given
+                    // at once.
+                    if spans_files(&req.method) && !self.finish_preload(&req.id) {
+                        self.answer_cancelled(req.id);
+                        return false;
                     }
                     self.guard_request(req, Self::handle_request);
                 }
@@ -518,6 +609,20 @@ impl Server {
 
 /// The id of the file-watcher registration, and of its request.
 const WATCH_REGISTRATION: &str = "silt-watched-files";
+
+/// Whether the answer to a request of `method` spans the workspace's
+/// files (the indexed ones too), rather than one document and what it
+/// imports.
+fn spans_files(method: &str) -> bool {
+    [
+        References::METHOD,
+        Rename::METHOD,
+        PrepareRenameRequest::METHOD,
+        WorkspaceSymbolRequest::METHOD,
+        GotoImplementation::METHOD,
+    ]
+    .contains(&method)
+}
 
 impl Server {
     /// Register for `workspace/didChangeWatchedFiles` on silt files and

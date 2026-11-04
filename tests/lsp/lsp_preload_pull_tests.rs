@@ -106,15 +106,14 @@ fn preload_follows_a_linked_folder_once() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// The editor's requests are answered while the walk of the workspace
-/// goes on, and the walk goes on to its end. A test hook of debug
-/// builds holds the walk before each file while a gate file is there,
-/// as a walk into a very large folder takes long: a request is answered
-/// all the same; once the gate is gone, every file is indexed.
+/// A request about one document is answered while the walk of the
+/// workspace goes on, and the walk goes on to its end. A test hook of
+/// debug builds holds the walk before each file while a gate file is
+/// there, as a walk into a very large folder takes long.
 #[cfg(debug_assertions)]
 #[test]
 fn requests_are_answered_while_the_preload_walks() {
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     let dir = unique_tmp_dir("walking");
     let ws = dir.join("ws");
@@ -124,45 +123,205 @@ fn requests_are_answered_while_the_preload_walks() {
     let gate = dir.join("gate");
     fs::write(&gate, "").unwrap();
 
-    let names = |resp: &serde_json::Value| -> Vec<String> {
-        (resp.get("result").and_then(|r| r.as_array()).cloned())
-            .unwrap_or_default()
-            .iter()
-            .filter_map(|s| s.get("name").and_then(|n| n.as_str()).map(String::from))
-            .collect()
-    };
     let gate_text = gate.to_str().expect("utf8 path");
     let mut client = LspClient::spawn_with_root_and_env(
         Some(&path_to_uri(&ws)),
         &[("SILT_LSP_PRELOAD_GATE", gate_text)],
     );
-    let query = |name: &str| json!({ "query": name });
+    let open = path_to_uri(&dir.join("open.silt"));
+    client.did_open_and_wait(&open, "fn open_unique_sym() { 0 }\n");
     let held = client.request_within(
         Duration::from_secs(20),
-        "workspace/symbol",
-        query("early_unique_sym"),
+        "textDocument/documentSymbol",
+        json!({ "textDocument": { "uri": open } }),
     );
-    assert!(names(&held).is_empty(), "the walk is held: {held}");
+    let names: Vec<&str> = (held["result"].as_array().into_iter().flatten())
+        .filter_map(|s| s["name"].as_str())
+        .collect();
+    assert_eq!(names, ["open_unique_sym"], "{held}");
+    assert!(gate.exists(), "the walk is held");
 
     // The walk goes on once the gate is gone.
     fs::remove_file(&gate).unwrap();
-    let start = Instant::now();
-    loop {
-        let late = client.request("workspace/symbol", query("late_unique_sym"));
-        if names(&late) == ["late_unique_sym"] {
-            break;
-        }
-        assert!(
-            start.elapsed() < Duration::from_secs(20),
-            "never indexed: {late}"
-        );
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    let early = client.request("workspace/symbol", query("early_unique_sym"));
-    assert_eq!(names(&early), ["early_unique_sym"], "{early}");
+    let all = client.request_within(
+        Duration::from_secs(20),
+        "workspace/symbol",
+        json!({ "query": "unique_sym" }),
+    );
+    let mut names: Vec<&str> = (all["result"].as_array().into_iter().flatten())
+        .filter_map(|s| s["name"].as_str())
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        ["early_unique_sym", "late_unique_sym", "open_unique_sym"],
+        "{all}"
+    );
 
     client.shutdown();
     let _ = fs::remove_dir_all(&dir);
+}
+
+/// A rename asked while the walk of the workspace goes on waits for its
+/// end: it covers every file that names what it renames, not only the
+/// ones found so far.
+#[cfg(debug_assertions)]
+#[test]
+fn a_rename_while_the_preload_walks_covers_every_file() {
+    use std::time::Duration;
+
+    const IMPORTERS: usize = 5;
+    let dir = unique_tmp_dir("rename_walking");
+    let ws = dir.join("ws");
+    fs::create_dir_all(&ws).unwrap();
+    let lib = "pub fn shared(x: Int) -> Int {\n  x\n}\n";
+    fs::write(ws.join("lib.silt"), lib).unwrap();
+    for i in 0..IMPORTERS {
+        let text = format!("import lib\n\npub fn g{i}() -> Int {{\n  lib.shared({i})\n}}\n");
+        fs::write(ws.join(format!("u{i}.silt")), text).unwrap();
+    }
+    let gate = dir.join("gate");
+    fs::write(&gate, "").unwrap();
+
+    let gate_text = gate.to_str().expect("utf8 path");
+    let mut client = LspClient::spawn_with_root_and_env(
+        Some(&path_to_uri(&ws)),
+        &[("SILT_LSP_PRELOAD_GATE", gate_text)],
+    );
+    let uri = path_to_uri(&ws.join("lib.silt"));
+    client.did_open_and_wait(&uri, lib);
+    let id = crate::support::next_id();
+    client.send_request(
+        id,
+        "textDocument/rename",
+        json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": 0, "character": 7 },
+            "newName": "common",
+        }),
+    );
+    // (The server reads the rename while the walk is held: a server
+    // that answered it at once would answer it now, from lib.silt
+    // alone.)
+    std::thread::sleep(Duration::from_millis(300));
+    fs::remove_file(&gate).unwrap();
+    let resp = client.recv_until_within(Duration::from_secs(20), "the rename", |msg| {
+        msg.get("id").and_then(|v| v.as_u64()) == Some(id)
+    });
+    let changes = resp["result"]["changes"]
+        .as_object()
+        .unwrap_or_else(|| panic!("no changes: {resp}"));
+    let mut files: Vec<&str> = changes
+        .keys()
+        .filter_map(|uri| uri.rsplit('/').next())
+        .collect();
+    files.sort();
+    let mut expected: Vec<String> = (0..IMPORTERS).map(|i| format!("u{i}.silt")).collect();
+    expected.push("lib.silt".to_string());
+    expected.sort();
+    assert_eq!(files, expected, "{resp}");
+
+    client.shutdown();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A request that waits for the walk of the workspace ends when the
+/// editor cancels it, and the server answers the next request.
+#[cfg(debug_assertions)]
+#[test]
+fn a_cancel_ends_the_wait_for_the_preload() {
+    use std::time::Duration;
+
+    let dir = unique_tmp_dir("cancel_walking");
+    let ws = dir.join("ws");
+    fs::create_dir_all(&ws).unwrap();
+    fs::write(ws.join("a.silt"), "fn a_unique_sym() { 0 }\n").unwrap();
+    let gate = dir.join("gate");
+    fs::write(&gate, "").unwrap();
+
+    let gate_text = gate.to_str().expect("utf8 path");
+    let mut client = LspClient::spawn_with_root_and_env(
+        Some(&path_to_uri(&ws)),
+        &[("SILT_LSP_PRELOAD_GATE", gate_text)],
+    );
+    let open = path_to_uri(&dir.join("open.silt"));
+    client.did_open_and_wait(&open, "fn open_unique_sym() { 0 }\n");
+    let id = crate::support::next_id();
+    client.send_request(id, "workspace/symbol", json!({ "query": "unique_sym" }));
+    client.send_notification("$/cancelRequest", json!({ "id": id }));
+    let resp = client.recv_until_within(Duration::from_secs(20), "the cancelled answer", |msg| {
+        msg.get("id").and_then(|v| v.as_u64()) == Some(id)
+    });
+    assert_eq!(resp["error"]["code"], -32800, "{resp}");
+    let next = client.request_within(
+        Duration::from_secs(20),
+        "textDocument/documentSymbol",
+        json!({ "textDocument": { "uri": open } }),
+    );
+    assert!(next["result"].is_array(), "{next}");
+    assert!(gate.exists(), "the walk is held");
+
+    fs::remove_file(&gate).unwrap();
+    client.shutdown();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A shutdown and an exit that come while a request waits for the walk
+/// of the workspace end the wait: the waiting request is answered as
+/// cancelled, the shutdown is answered, and the server stops at once.
+#[cfg(debug_assertions)]
+#[test]
+fn a_shutdown_ends_the_wait_for_the_preload() {
+    use std::time::{Duration, Instant};
+
+    let dir = unique_tmp_dir("shutdown_walking");
+    let ws = dir.join("ws");
+    fs::create_dir_all(&ws).unwrap();
+    fs::write(ws.join("a.silt"), "fn a_unique_sym() { 0 }\n").unwrap();
+    let gate = dir.join("gate");
+    fs::write(&gate, "").unwrap();
+
+    let gate_text = gate.to_str().expect("utf8 path");
+    let mut client = LspClient::spawn_with_root_and_env(
+        Some(&path_to_uri(&ws)),
+        &[("SILT_LSP_PRELOAD_GATE", gate_text)],
+    );
+    let open = path_to_uri(&dir.join("open.silt"));
+    client.did_open_and_wait(&open, "fn open_unique_sym() { 0 }\n");
+    let waiting = crate::support::next_id();
+    client.send_request(
+        waiting,
+        "workspace/symbol",
+        json!({ "query": "unique_sym" }),
+    );
+    let shutdown = crate::support::next_id();
+    client.send_raw(&json!({ "jsonrpc": "2.0", "id": shutdown, "method": "shutdown" }));
+    client.send_raw(&json!({ "jsonrpc": "2.0", "method": "exit" }));
+    let start = Instant::now();
+    let resp = client.recv_until_within(Duration::from_secs(20), "the waiting answer", |msg| {
+        msg.get("id").and_then(|v| v.as_u64()) == Some(waiting)
+    });
+    assert_eq!(resp["error"]["code"], -32800, "{resp}");
+    let resp = client.recv_until_within(Duration::from_secs(20), "the shutdown", |msg| {
+        msg.get("id").and_then(|v| v.as_u64()) == Some(shutdown)
+    });
+    assert!(resp.get("error").is_none(), "{resp}");
+    let exited = loop {
+        if let Some(status) = client.child.try_wait().expect("try_wait") {
+            break Some(status);
+        }
+        if start.elapsed() > Duration::from_secs(10) {
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert!(gate.exists(), "the walk is held");
+    let _ = fs::remove_file(&gate);
+    let _ = fs::remove_dir_all(&dir);
+    assert!(
+        exited.is_some_and(|status| status.success()),
+        "the server did not stop: {exited:?}"
+    );
 }
 
 /// A pipe, a link to a device and a broken link named `.silt` are not
