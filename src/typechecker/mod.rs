@@ -192,6 +192,14 @@ pub struct TypeChecker {
     /// The name each argument that is a name writes, by its place: a
     /// function a call passes on as a value is a link of a note.
     pub(super) arg_names: HashMap<Span, Symbol>,
+    /// The parameters with no annotation of closures, each with the
+    /// closure's span and its type: an impl a use cannot decide from
+    /// them is decided from a value's type, which a help names
+    /// (`undecided_trait_args`).
+    pub(super) closure_params: Vec<(Span, Symbol, Type)>,
+    /// The closures a `let` keeps of one type for their later use to
+    /// decide their decode (`decodes_by_its_values`), by their spans.
+    pub(super) decided_closures: Vec<Span>,
     /// The type variables a scope's end fixed to `()` because nothing
     /// decided them (`println([])`): no decoder is given such a part.
     pub(super) defaulted_vars: std::collections::HashSet<TyVar>,
@@ -569,6 +577,10 @@ pub struct TypeChecker {
     /// Those of them, by the span of each, that are reported because
     /// they reach themselves.
     pub(super) let_rings: Vec<Span>,
+    /// The top-level `let`s of a closure whose decode only its
+    /// parameters' values decide: of one type, which a later use in
+    /// the module decides (in a REPL cell, a use in the same entry).
+    pub(super) decided_by_use: Vec<Span>,
     /// The signature of each method written in an impl of the module, as
     /// its body sees it, by the impl's type, the method and the trait,
     /// until the body is checked.
@@ -771,6 +783,8 @@ impl TypeChecker {
             written_vars: Vec::new(),
             passed_to: HashMap::new(),
             arg_names: HashMap::new(),
+            closure_params: Vec::new(),
+            decided_closures: Vec::new(),
             defaulted_vars: std::collections::HashSet::new(),
             decoder_uses: Vec::new(),
             decode_places: std::collections::HashSet::new(),
@@ -874,6 +888,7 @@ impl TypeChecker {
             rigid_alias: HashMap::new(),
             let_order: Vec::new(),
             let_rings: Vec::new(),
+            decided_by_use: Vec::new(),
             impl_sigs: HashMap::new(),
             receiver_taken: false,
             method_trait: None,
@@ -1287,21 +1302,25 @@ impl TypeChecker {
     /// importers could fix it two ways; a private one is reached through
     /// the module's public functions just the same. The declaration is
     /// where it is reported. A REPL cell is exempt: the next cell may
-    /// decide it.
+    /// decide it. But not of a closure whose decode its later use
+    /// decides (`decided_by_use`): its code is made with the cell, which
+    /// decodes the type it has then.
     fn report_unknown_let_types(&mut self, program: &Program, env: &TypeEnv) {
-        if self.is_cell {
-            return;
-        }
         for decl in &program.decls {
             let Decl::Let { is_pub, span, .. } = decl else {
                 continue;
             };
+            if self.is_cell && !self.decided_by_use.contains(span) {
+                continue;
+            }
             // (A `let` that needs its own value is reported for that:
             // its type is unknown because of it.)
             if self.let_rings.contains(span) {
                 continue;
             }
+            // (A REPL entry's `let`s are public to the next entries.)
             let (what, keyword, why) = match is_pub {
+                _ if self.is_cell => ("top-level let", "let", "nothing in the entry decides it"),
                 true => (
                     "public let",
                     "pub let",
@@ -1576,8 +1595,19 @@ impl TypeChecker {
                 ) => {
                     let names = collect_pattern_vars(pattern);
                     self.note_let_link(pattern, value);
+                    let owed_from = self.wanted.len();
                     let is_value =
                         self.check_top_level_let(pattern, ty.as_ref(), value, *span, env);
+                    // A closure whose decode only its parameters' values
+                    // decide is of one type, which its later use decides,
+                    // as in a function's body (`infer_stmt`).
+                    let decided_by_use = matches!(value.kind, ExprKind::Lambda { .. })
+                        && self.decodes_by_its_values(owed_from);
+                    if decided_by_use {
+                        self.decided_by_use.push(*span);
+                        self.decided_closures.push(value.span);
+                    }
+                    let is_value = is_value && !decided_by_use;
                     // (`let top = go`: a call of `top` reads its parameters
                     // as `go` does.)
                     if let PatternKind::Ident(name) = pattern.kind

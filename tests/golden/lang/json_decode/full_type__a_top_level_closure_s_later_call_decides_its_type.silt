@@ -1,0 +1,27 @@
+-- A top-level `let` of a closure whose decode only its parameter's value
+-- decides is of one type, as in a function's body: a later call in the
+-- module decides it (in `main`, or in a function whose parameter it is
+-- given), and the decode reads that type.
+import json
+
+type Box(a) {
+  v: a,
+}
+
+trait Dec: json.Decode {
+  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+trait Dec for Box(a) where a: json.Decode {}
+
+let k = { x, s -> Dec.again(Box { v: x }, s) }
+
+fn use_it(y) {
+  k(y, "\{\"v\": 3}")
+}
+
+fn main() {
+  println(k(1, "\{\"v\": 2}"))
+  println(k(1, "\{\"v\": \"b\"}"))
+  println(use_it(1))
+}

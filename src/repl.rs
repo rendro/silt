@@ -1192,6 +1192,47 @@ mod tests {
         assert_eq!(value(&mut repl, "y"), "s6");
     }
 
+    /// A closure whose decode only its parameters' values decide is of
+    /// one type, as in a file: a use in its own entry decides it, and
+    /// one nothing in its entry decides fails there, as a top-level
+    /// `let` nothing in its module decides does. (Its code is made with
+    /// the entry: a later entry's call would decode a type not known.)
+    #[test]
+    fn a_closure_whose_decode_nothing_in_its_entry_decides_fails() {
+        let mut repl = repl();
+        let setup = [
+            "import json",
+            "type Box(a) { v: a }",
+            "trait Dec: json.Decode {\n  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }\n}",
+            "trait Dec for Box(a) where a: json.Decode {}",
+        ];
+        for entry in setup {
+            let evaluation = repl.eval(entry);
+            assert!(
+                evaluation.committed,
+                "`{entry}` must run: {:?}",
+                evaluation.diagnostics
+            );
+        }
+        let closure = "let k = { x, s -> Dec.again(Box { v: x }, s) }";
+        let undecided = repl.eval(closure);
+        assert!(!undecided.committed, "the entry must fail");
+        let messages: Vec<&str> = (undecided.diagnostics.iter())
+            .map(|d| d.message.as_str())
+            .collect();
+        assert_eq!(
+            messages,
+            ["the type of top-level let 'k' is not fully known here: \
+              Fn(_, String) -> Result(Box(_), json.JsonError)"]
+        );
+        let used = format!("{closure}\nlet r = k(1, \"\\{{\\\"v\\\": 2}}\")");
+        assert!(repl.eval(&used).committed, "`{used}` must run");
+        assert_eq!(value(&mut repl, "r"), "Ok(Box {v: 2})");
+        assert_eq!(value(&mut repl, r#"k(3, "\{\"v\": 4}")"#), "Ok(Box {v: 4})");
+        let other = repl.eval(r#"k("a", "\{\"v\": \"b\"}")"#);
+        assert!(!other.committed, "a call at another type must fail");
+    }
+
     /// The value `input` returns, which must run.
     fn value(repl: &mut Repl, input: &str) -> String {
         let evaluation = repl.eval(input);
