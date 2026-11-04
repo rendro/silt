@@ -1140,29 +1140,32 @@ impl IntoIterator for List {
 
     fn into_iter(self) -> IntoIter {
         let len = self.len();
-        IntoIter(match self.form() {
-            Form::Items { buf, start, len } => IntoIterOf::Items {
-                buf: buf.clone(),
-                next: start,
-                end: start + len,
+        IntoIter(match self.0 {
+            // (The buffer is moved, not shared and then let go.)
+            Stored::Items { buf, start, len } => IntoIterOf::Items {
+                buf,
+                next: start as usize,
+                end: (start + len) as usize,
             },
-            Form::Long { long, start, len } => match &**long {
-                LongItems::Side { .. } => IntoIterOf::Side {
-                    long: long.clone(),
-                    next: start,
-                    end: start + len,
+            Stored::Other(other) => match &*other {
+                Other::Long { long, start, len } => match &**long {
+                    LongItems::Side { .. } => IntoIterOf::Side {
+                        long: long.clone(),
+                        next: *start,
+                        end: start + len,
+                    },
+                    LongItems::Tree(_) => IntoIterOf::Tree {
+                        long: long.clone(),
+                        next: *start,
+                        end: start + len,
+                        leaf: Vec::new(),
+                    },
                 },
-                LongItems::Tree(_) => IntoIterOf::Tree {
-                    long: long.clone(),
-                    next: start,
-                    end: start + len,
-                    leaf: Vec::new(),
-                },
+                Other::Ints { lo, .. } => IntoIterOf::Ints(IntsLeft {
+                    next: *lo,
+                    left: len,
+                }),
             },
-            Form::Ints { lo, .. } => IntoIterOf::Ints(IntsLeft {
-                next: lo,
-                left: len,
-            }),
         })
     }
 }

@@ -53,6 +53,22 @@ static EMPTY: Header = Header {
 /// would free a block that is still held.
 const MAX_COUNT: usize = isize::MAX as usize;
 
+/// The most values an iterator's exact size hint is taken at its word
+/// for: a block of that many is made before its values come. A hint of
+/// more is not trusted (an iterator may say what it likes): its values
+/// are gathered first, so what is allocated is what was given.
+const HINT_MOST: usize = 1024;
+
+/// `made` with the values of `items` after it, in a vector that grows as
+/// they come: their size hint is not trusted (`collect` and `extend` make
+/// room for as many as it says first).
+fn gathered(mut made: Vec<Value>, items: impl Iterator<Item = Value>) -> Vec<Value> {
+    for item in items {
+        made.push(item);
+    }
+    made
+}
+
 /// The layout of a block of `len` values, and where its values start.
 fn layout(len: usize) -> (Layout, usize) {
     let items = Layout::array::<Value>(len).expect("a block of values fits the address space");
@@ -140,14 +156,14 @@ impl ThinSlice {
     }
 
     /// A slice of exactly `len` values, written from `items`; a slice of
-    /// those `items` gives if it gives fewer or more.
+    /// those `items` gives if it gives fewer or more. A block of `len`
+    /// values is made first: `len` is at most [`HINT_MOST`], or the
+    /// number of values a vector holds.
     fn from_exact(len: usize, mut items: impl Iterator<Item = Value>) -> ThinSlice {
         if len == 0 {
             return match items.next() {
                 None => ThinSlice::empty(),
-                Some(first) => {
-                    ThinSlice::from(std::iter::once(first).chain(items).collect::<Vec<_>>())
-                }
+                Some(first) => ThinSlice::from(gathered(vec![first], items)),
             };
         }
         /// The block being written: if a value's making panics, the
@@ -177,12 +193,14 @@ impl ThinSlice {
         while writing.written < len {
             let Some(item) = items.next() else {
                 // Fewer than promised: the ones written, through a vector.
-                let made: Vec<Value> = (0..writing.written)
-                    // SAFETY: each of these was written, and is read once
-                    // (the count of written values goes to 0 below).
+                // (The guard is told first that it holds none of them:
+                // were the reading to unwind, they would be leaked, never
+                // dropped twice.)
+                let written = std::mem::replace(&mut writing.written, 0);
+                let made: Vec<Value> = (0..written)
+                    // SAFETY: each of these was written, and is read once.
                     .map(|i| unsafe { first.add(i).read() })
                     .collect();
-                writing.written = 0;
                 return ThinSlice::from(made);
             };
             // SAFETY: within the block, not yet written.
@@ -190,15 +208,15 @@ impl ThinSlice {
             writing.written += 1;
         }
         if let Some(more) = items.next() {
-            // More than promised: all of them, through a vector.
+            // More than promised: all of them, through a vector (the
+            // guard told first, as above).
+            writing.written = 0;
             let mut made: Vec<Value> = (0..len)
                 // SAFETY: as above.
                 .map(|i| unsafe { first.add(i).read() })
                 .collect();
-            writing.written = 0;
             made.push(more);
-            made.extend(items);
-            return ThinSlice::from(made);
+            return ThinSlice::from(gathered(made, items));
         }
         let block = writing.block;
         std::mem::forget(writing);
@@ -220,8 +238,13 @@ impl FromIterator<Value> for ThinSlice {
     fn from_iter<I: IntoIterator<Item = Value>>(items: I) -> ThinSlice {
         let items = items.into_iter();
         match items.size_hint() {
-            (least, Some(most)) if least == most => ThinSlice::from_exact(least, items),
-            _ => ThinSlice::from(items.collect::<Vec<Value>>()),
+            (least, Some(most)) if least == most && most <= HINT_MOST => {
+                ThinSlice::from_exact(least, items)
+            }
+            (least, _) => {
+                let made = Vec::with_capacity(least.min(HINT_MOST));
+                ThinSlice::from(gathered(made, items))
+            }
         }
     }
 }
@@ -414,5 +437,109 @@ mod tests {
             assert_eq!(t.join().unwrap(), 2000);
         }
         assert_eq!(made.len(), 1000);
+    }
+
+    #[test]
+    fn a_panic_after_more_than_promised_drops_every_value_once() {
+        let marker = Arc::new(Vec::<u8>::new());
+        let m = marker.clone();
+        let made = std::panic::catch_unwind(move || {
+            let items = (0..6).map(move |i| match i {
+                5 => panic!("the sixth value"),
+                _ => Value::Bytes(m.clone()),
+            });
+            ExactLen(items, 2).collect::<ThinSlice>()
+        });
+        assert!(made.is_err());
+        assert_eq!(Arc::strong_count(&marker), 1);
+    }
+
+    #[test]
+    fn fewer_than_promised_keeps_each_value_once() {
+        let marker = Arc::new(Vec::<u8>::new());
+        let m = marker.clone();
+        let items = (0..2).map(move |_| Value::Bytes(m.clone()));
+        let made = ExactLen(items, 7).collect::<ThinSlice>();
+        assert_eq!(made.len(), 2);
+        assert_eq!(Arc::strong_count(&marker), 3);
+        drop(made);
+        assert_eq!(Arc::strong_count(&marker), 1);
+    }
+
+    #[test]
+    fn a_panic_on_the_first_value_frees_the_block() {
+        let made = std::panic::catch_unwind(|| {
+            ExactLen((0..3).map(|_| -> Value { panic!("the first value") }), 3)
+                .collect::<ThinSlice>()
+        });
+        assert!(made.is_err());
+    }
+
+    #[test]
+    fn a_huge_size_hint_allocates_only_what_is_given() {
+        let none = ExactLen(std::iter::empty(), usize::MAX / 8).collect::<ThinSlice>();
+        assert!(none.is_empty());
+        let three = ExactLen((0..3).map(Value::Int), usize::MAX).collect::<ThinSlice>();
+        assert_eq!(three.len(), 3);
+        // One past the hint that is trusted, and told truly.
+        let many =
+            ExactLen((0..=HINT_MOST as i64).map(Value::Int), HINT_MOST + 1).collect::<ThinSlice>();
+        assert_eq!(many.len(), HINT_MOST + 1);
+        assert!(matches!(many[HINT_MOST], Value::Int(n) if n == HINT_MOST as i64));
+    }
+
+    #[test]
+    fn the_last_holder_may_be_on_another_thread() {
+        for _ in 0..20 {
+            let marker = Arc::new(Vec::<u8>::new());
+            let made: ThinSlice = (0..8).map(|_| Value::Bytes(marker.clone())).collect();
+            let threads: Vec<_> = (0..3)
+                .map(|k| {
+                    let mine = made.clone();
+                    std::thread::spawn(move || {
+                        let copy = mine.clone();
+                        let len = copy.len() + k;
+                        drop(mine);
+                        drop(copy);
+                        len
+                    })
+                })
+                .collect();
+            drop(made);
+            for t in threads {
+                t.join().unwrap();
+            }
+            assert_eq!(Arc::strong_count(&marker), 1);
+        }
+    }
+
+    #[test]
+    fn empty_slices_go_between_threads() {
+        let threads: Vec<_> = (0..3)
+            .map(|_| {
+                std::thread::spawn(|| {
+                    let empty = ThinSlice::empty();
+                    let copies: Vec<ThinSlice> = (0..50).map(|_| empty.clone()).collect();
+                    copies.iter().map(|s| s.len()).sum::<usize>()
+                })
+            })
+            .collect();
+        for t in threads {
+            assert_eq!(t.join().unwrap(), 0);
+        }
+        assert_eq!(EMPTY.count.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn a_deep_nest_of_lists_is_dropped() {
+        // Deeper than the holders dropped each inside the one before: the
+        // buffers further in are put aside (`src/value/deep.rs`).
+        let mut nest = Value::list(vec![Value::Int(1)]);
+        for _ in 0..300 {
+            nest = Value::list(vec![nest.clone(), Value::Int(2)]);
+        }
+        let copy = nest.clone();
+        drop(nest);
+        drop(copy);
     }
 }
