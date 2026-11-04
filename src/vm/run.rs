@@ -153,10 +153,11 @@ fn put(slot: &mut Value, value: Value) {
 }
 
 // A new value is written where it goes, and a push makes room first.
-// A Value is 40 bytes; one just written in two smaller stores (its tag,
-// its number) and then read back in 16-byte pieces, as a move reads
-// it, makes the processor wait for the stores, 12 to 14 cycles each
-// time. (Measured in pull request #54, 2026-10-12.)
+// A Value is 24 bytes (src/value/mod.rs); one just written in two
+// smaller stores (its tag, its number) and then read back in bigger
+// pieces, as a move reads it, makes the processor wait for the stores,
+// 12 to 14 cycles each time. (Measured in pull request #54, 2026-10-12,
+// when a Value was 40 bytes; the loop guard finds no such load at 24.)
 
 /// A value as the instructions that copy one sort it: a number, a Bool
 /// or unit, which owns nothing and is built where it goes; a closure,

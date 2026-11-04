@@ -7,11 +7,11 @@ A check of the machine code of silt's instruction loop
 
 ## What it guards
 
-A silt Value is 40 bytes. When the loop writes a new one in two small
-stores (its tag, its number) and then reads it back in 16-byte pieces,
-as a move of the whole value does, the processor cannot serve the load
-from its store buffer and waits for the stores, 12 to 14 cycles each
-time. rustc 1.98 began to compile the loop that way where 1.96 had not:
+A silt Value is 24 bytes (40 until the value was made smaller in
+November 2026). When the loop writes a new one in two small stores (its
+tag, its number) and then reads it back in bigger pieces, as a move of
+the whole value does, the processor cannot serve the load from its
+store buffer and waits for the stores, 12 to 14 cycles each time. rustc 1.98 began to compile the loop that way where 1.96 had not:
 the plain loop ran 36 to 41% slower in the released binary, with no
 change in silt. Pull request #54 changed the loop so that a new value
 is written where it goes; the guard holds that.

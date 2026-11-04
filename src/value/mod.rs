@@ -14,6 +14,7 @@ mod key;
 mod list;
 mod map;
 mod obj;
+mod thin;
 mod tuple;
 
 #[cfg(test)]
@@ -86,11 +87,20 @@ pub enum Value {
     Unit,
 }
 
-// A value is 40 bytes where pointers are 64 bits: the instruction loop
-// is written, and checked by the loop guard in CI
-// (.github/scripts/loop-guard), for that size.
+// A value is 24 bytes where pointers are 64 bits: a word for its kind
+// and two for what it holds, which a list (src/value/list.rs), a variant
+// (src/value/obj.rs), a string and a type token fill. The instruction
+// loop is written, and checked by the loop guard in CI
+// (.github/scripts/loop-guard), for that size. The kind must stay a
+// plain tag of its own: put into a spare value of a variant's bytes
+// (where a variant was 24 bytes), it cost every instruction that looks
+// at a value's kind some 7% more instructions in all and the Int, Float
+// and tail-call loops 12-15% of their time. The test
+// `the_kind_of_a_value_is_a_plain_tag` (src/value/tests.rs) holds that.
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(std::mem::size_of::<Value>() == 40);
+const _: () = assert!(std::mem::size_of::<Value>() == 24);
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(std::mem::size_of::<List>() <= 16 && std::mem::size_of::<Variant>() <= 16);
 
 impl Value {
     /// The list of `items`.

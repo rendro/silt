@@ -30,6 +30,7 @@ use imbl::Vector;
 
 use super::Value;
 use super::map::{Entries, Members};
+use super::thin::ThinSlice;
 
 /// How many holders drop what they hold each inside the one before;
 /// what one further in holds is put aside.
@@ -52,6 +53,7 @@ pub(crate) enum Held {
     Value(Value),
     Values(Box<[Value]>),
     Shared(Arc<[Value]>),
+    Thin(ThinSlice),
     Long(Arc<LongItems>),
     Entries(Entries),
     Members(Members),
@@ -164,7 +166,7 @@ where
 /// second field, which is dropped last, counts it out.
 #[derive(Clone)]
 pub(super) struct Buf {
-    items: Arc<[Value]>,
+    items: ThinSlice,
     _leave: Leave,
 }
 
@@ -176,7 +178,7 @@ impl Drop for Buf {
     #[inline]
     fn drop(&mut self) {
         if enter() {
-            put_aside(Held::Shared(std::mem::take(&mut self.items)));
+            put_aside(Held::Thin(std::mem::take(&mut self.items)));
         }
     }
 }
@@ -199,7 +201,7 @@ impl Deref for Buf {
 impl From<Vec<Value>> for Buf {
     fn from(items: Vec<Value>) -> Buf {
         Buf {
-            items: Arc::from(items),
+            items: ThinSlice::from(items),
             _leave: Leave,
         }
     }
