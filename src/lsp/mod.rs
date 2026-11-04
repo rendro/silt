@@ -12,13 +12,13 @@ use std::time::Instant;
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, RequestId, Response};
 use lsp_types::notification::{
     Cancel, DidChangeTextDocument, DidChangeWatchedFiles, DidCloseTextDocument,
-    DidOpenTextDocument, Notification as _,
+    DidOpenTextDocument, Exit, Notification as _,
 };
 use lsp_types::request::{
     CodeActionRequest, Completion, DocumentDiagnosticRequest, DocumentHighlightRequest,
     DocumentSymbolRequest, FoldingRangeRequest, Formatting, GotoDefinition, GotoImplementation,
     GotoTypeDefinition, HoverRequest, InlayHintRequest, PrepareRenameRequest, References, Rename,
-    Request as _, SelectionRangeRequest, SemanticTokensFullRequest, SignatureHelpRequest,
+    Request as _, SelectionRangeRequest, SemanticTokensFullRequest, Shutdown, SignatureHelpRequest,
     WorkspaceSymbolRequest,
 };
 use lsp_types::{
@@ -182,11 +182,27 @@ impl Server {
 
     /// Index the rest of the walk of the workspace, for the request `id`
     /// whose answer spans the workspace's files: `false` when the editor
-    /// cancels the request meanwhile. The editor's other messages wait
-    /// in `held`; one of them that the editor cancels is answered so.
+    /// cancels the request meanwhile, or ends the session (a shutdown or
+    /// an exit, which must not wait behind the walk). The editor's other
+    /// messages wait in `held`; one of them that the editor cancels is
+    /// answered so. Nothing after a shutdown or an exit is taken: the
+    /// shutdown's own wait for the exit reads it from the editor.
     fn finish_preload(&mut self, id: &RequestId) -> bool {
+        let ends_the_session = |msg: &Message| match msg {
+            Message::Request(req) => req.method == Shutdown::METHOD,
+            Message::Notification(notif) => notif.method == Exit::METHOD,
+            Message::Response(_) => false,
+        };
         while self.preload.is_some() {
-            while let Ok(msg) = self.connection.receiver.try_recv() {
+            if self.held.iter().any(ends_the_session) {
+                return false;
+            }
+            loop {
+                let msg = match self.connection.receiver.try_recv() {
+                    Ok(msg) => msg,
+                    Err(e) if e.is_disconnected() => return false,
+                    Err(_) => break,
+                };
                 let cancelled = match &msg {
                     Message::Notification(notif) if notif.method == Cancel::METHOD => {
                         serde_json::from_value::<lsp_types::CancelParams>(notif.params.clone())
@@ -199,7 +215,11 @@ impl Server {
                     _ => None,
                 };
                 let Some(cancelled) = cancelled else {
+                    let ends = ends_the_session(&msg);
                     self.held.push_back(msg);
+                    if ends {
+                        return false;
+                    }
                     continue;
                 };
                 if cancelled == *id {

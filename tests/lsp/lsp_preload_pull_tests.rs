@@ -266,6 +266,64 @@ fn a_cancel_ends_the_wait_for_the_preload() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A shutdown and an exit that come while a request waits for the walk
+/// of the workspace end the wait: the waiting request is answered as
+/// cancelled, the shutdown is answered, and the server stops at once.
+#[cfg(debug_assertions)]
+#[test]
+fn a_shutdown_ends_the_wait_for_the_preload() {
+    use std::time::{Duration, Instant};
+
+    let dir = unique_tmp_dir("shutdown_walking");
+    let ws = dir.join("ws");
+    fs::create_dir_all(&ws).unwrap();
+    fs::write(ws.join("a.silt"), "fn a_unique_sym() { 0 }\n").unwrap();
+    let gate = dir.join("gate");
+    fs::write(&gate, "").unwrap();
+
+    let gate_text = gate.to_str().expect("utf8 path");
+    let mut client = LspClient::spawn_with_root_and_env(
+        Some(&path_to_uri(&ws)),
+        &[("SILT_LSP_PRELOAD_GATE", gate_text)],
+    );
+    let open = path_to_uri(&dir.join("open.silt"));
+    client.did_open_and_wait(&open, "fn open_unique_sym() { 0 }\n");
+    let waiting = crate::support::next_id();
+    client.send_request(
+        waiting,
+        "workspace/symbol",
+        json!({ "query": "unique_sym" }),
+    );
+    let shutdown = crate::support::next_id();
+    client.send_raw(&json!({ "jsonrpc": "2.0", "id": shutdown, "method": "shutdown" }));
+    client.send_raw(&json!({ "jsonrpc": "2.0", "method": "exit" }));
+    let start = Instant::now();
+    let resp = client.recv_until_within(Duration::from_secs(20), "the waiting answer", |msg| {
+        msg.get("id").and_then(|v| v.as_u64()) == Some(waiting)
+    });
+    assert_eq!(resp["error"]["code"], -32800, "{resp}");
+    let resp = client.recv_until_within(Duration::from_secs(20), "the shutdown", |msg| {
+        msg.get("id").and_then(|v| v.as_u64()) == Some(shutdown)
+    });
+    assert!(resp.get("error").is_none(), "{resp}");
+    let exited = loop {
+        if let Some(status) = client.child.try_wait().expect("try_wait") {
+            break Some(status);
+        }
+        if start.elapsed() > Duration::from_secs(10) {
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert!(gate.exists(), "the walk is held");
+    let _ = fs::remove_file(&gate);
+    let _ = fs::remove_dir_all(&dir);
+    assert!(
+        exited.is_some_and(|status| status.success()),
+        "the server did not stop: {exited:?}"
+    );
+}
+
 /// A pipe, a link to a device and a broken link named `.silt` are not
 /// read: the walk goes past them to the files behind them (a pipe held
 /// the preload for ever, a link to /dev/zero read without end). An
