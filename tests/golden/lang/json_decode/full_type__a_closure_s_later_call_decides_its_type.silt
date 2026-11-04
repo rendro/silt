@@ -1,0 +1,41 @@
+-- A closure that would decode through a dictionary carrying its type in
+-- full, the type known only from its parameter's value (`{ x, s ->
+-- Dec.again(Box { v: x }, s) }`), is of one type, which its later call
+-- decides: it runs wherever the closure is, in `main` or in another
+-- function, as the direct call does; with a part a held type gives too.
+import json
+
+type Box(a) {
+  v: a,
+}
+
+trait Dec: json.Decode {
+  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+trait Dec for Box(a) where a: json.Decode {}
+
+trait Dec for List(a) where a: json.Decode {}
+
+fn ag(x, s) {
+  Dec.again(x, s)
+}
+
+fn more() {
+  let l7 = { x, s -> Dec.again(Box { v: x }, s) }
+  println(l7(1, "\{\"v\": 8}"))
+}
+
+fn inner(s: String, type t) -> Result(List(Box(t)), json.JsonError) where t: json.Decode {
+  let k = { u -> ag([], u) }
+  let r: Result(List(Box(t)), json.JsonError) = k(s)
+  r
+}
+
+fn main() {
+  let l9 = { x, s -> Dec.again(Box { v: x }, s) }
+  println(l9("a", "\{\"v\": \"b\"}"))
+  more()
+  println(inner("[\{\"v\": 1}]", Int))
+  println(inner("[\{\"v\": \"x\"}]", String))
+}

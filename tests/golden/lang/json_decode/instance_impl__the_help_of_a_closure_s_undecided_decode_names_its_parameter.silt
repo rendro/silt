@@ -1,0 +1,43 @@
+-- cmd: check
+-- exit: 1
+-- A closure's decode nothing decides: the help names the closure's own
+-- parameter at the type the impl takes (`item: Int`); a closure a
+-- function returns is told to take the type as a parameter; one a
+-- function's `let` keeps for its call, whose value the function's
+-- parameter gives, is told to give the function a type parameter.
+import json
+
+type Box(a) {
+  v: a,
+}
+
+trait json.Decode for Box(Int) {
+  fn decode(v: json.Value) -> Result(Self, json.JsonError) { Ok(Box { v: 1 }) }
+}
+
+trait Dec: json.Decode {
+  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+trait Dec for Box(Int) {}
+
+trait Again: json.Decode {
+  fn more(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+trait Again for Box(a) where a: json.Decode {}
+
+fn mk(s) {
+  { x -> Again.more(Box { v: x }, s) }
+}
+
+fn by_value(y, s) {
+  let k = { x -> Again.more(Box { v: x }, s) }
+  k(y)
+}
+
+fn main() {
+  let kept = { item -> Dec.again(Box { v: item }, "0") }
+  println(mk("0")(1))
+  println(by_value(1, "0"))
+}

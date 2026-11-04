@@ -3,10 +3,10 @@
 -- A type with a part nothing decides given to a function that decodes
 -- its argument's type is one error for one cause. In a function whose
 -- result it leaves undecided (`f`, `g`), the function's own error alone.
--- Where no parameter can take the type, in `main` and in a closure there,
--- it is a type nothing decides ("cannot infer ...
--- annotate the value it is given"), as `twice([], s)` there is, for a
--- generic type of the program with such a part too.
+-- Where no parameter can take the type, in `main` and in a closure whose
+-- later call does not decide it either, it is a type nothing decides
+-- ("cannot infer ... annotate the value it is given"), as `twice([], s)`
+-- there is, for a generic type of the program with such a part too.
 import json
 
 trait Dec: json.Decode {

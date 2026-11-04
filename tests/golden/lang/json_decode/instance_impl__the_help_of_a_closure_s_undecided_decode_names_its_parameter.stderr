@@ -1,0 +1,29 @@
+error[type]: cannot infer the type this use of 'more' needs to implement trait 'json.Decode'
+ --> instance_impl__the_help_of_a_closure_s_undecided_decode_names_its_parameter.silt:31:10
+    |
+ 31 |   { x -> Again.more(Box { v: x }, s) }
+    |          ^^^^^^^^^^ cannot infer the type this use of 'more' needs to implement trait 'json.Decode'
+  = help: annotate the value it is given
+  = help: the impl is picked from a type, not from a value: take the type as a parameter, as in `{ t -> json.parse(s, Box(t)) }`
+
+error[type]: cannot infer the type this use of 'more' needs to implement trait 'json.Decode'
+ --> instance_impl__the_help_of_a_closure_s_undecided_decode_names_its_parameter.silt:35:18
+    |
+ 35 |   let k = { x -> Again.more(Box { v: x }, s) }
+    |                  ^^^^^^^^^^ cannot infer the type this use of 'more' needs to implement trait 'json.Decode'
+  = help: annotate the value it is given
+  = help: the impl is picked from a type, not from a value: take the type as a parameter, as in `fn by_value(y: t, s, type t) where t: json.Decode`
+
+error[type]: cannot decide which impl of 'Dec' for 'Box(_)' this use of 'again' means: the type's arguments are not decided here
+ --> instance_impl__the_help_of_a_closure_s_undecided_decode_names_its_parameter.silt:40:34
+    |
+ 40 |   let kept = { item -> Dec.again(Box { v: item }, "0") }
+    |                                  ^^^^^^^^^^^^^^^ cannot decide which impl of 'Dec' for 'Box(_)' this use of 'again' means: the type's arguments are not decided here
+  = help: annotate the value it is given, `item: Int`
+
+warning[type]: 'kept' is never used
+ --> instance_impl__the_help_of_a_closure_s_undecided_decode_names_its_parameter.silt:40:7
+    |
+ 40 |   let kept = { item -> Dec.again(Box { v: item }, "0") }
+    |       ^^^^ 'kept' is never used
+  = help: remove it, or name it `_kept`

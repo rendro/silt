@@ -1,0 +1,53 @@
+-- A closure that picks a hand-written impl from its parameter's value
+-- (`{ x -> twice(Box { v: x }, s) }`, with impls for `Box(Int)` and
+-- `Box(String)` only) is of one type, which its later call decides, as a
+-- value's later use decides a part of the value's type: `k(1)` reaches
+-- Box(Int)'s impl, `ks("a")` Box(String)'s, also through a function that
+-- calls it and kept in a list and called from there. A closure that
+-- takes the type picks it as well.
+import json
+import list
+
+type Box(a) {
+  v: a,
+}
+
+trait json.Decode for Box(Int) {
+  fn decode(v: json.Value) -> Result(Self, json.JsonError) { Ok(Box { v: 1 }) }
+}
+
+trait json.Decode for Box(String) {
+  fn decode(v: json.Value) -> Result(Self, json.JsonError) { Ok(Box { v: "s" }) }
+}
+
+trait Dec: json.Decode {
+  fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) }
+}
+
+trait Dec for Box(Int) {}
+
+trait Dec for Box(String) {}
+
+fn twice(b, s) {
+  Dec.again(b, s)
+}
+
+fn apply(f, x) {
+  f(x)
+}
+
+fn main() {
+  let k = { x -> twice(Box { v: x }, "0") }
+  println(k(1))
+  let ks = { x -> twice(Box { v: x }, "0") }
+  println(ks("a"))
+  let kp = { x -> twice(Box { v: x }, "0") }
+  println(apply(kp, 2))
+  let kept = { x -> twice(Box { v: x }, "0") }
+  println(list.map([kept], { f -> f(3) }))
+  let stored = { x -> twice(Box { v: x }, "0") }
+  let all = [stored]
+  println(list.map(all, { f -> f("b") }))
+  let by_type = { t -> json.parse("0", Box(t)) }
+  println(by_type(Int))
+}

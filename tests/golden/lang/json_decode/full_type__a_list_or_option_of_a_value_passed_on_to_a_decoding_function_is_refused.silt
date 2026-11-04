@@ -4,9 +4,10 @@
 -- full_type__a_value_s_generic_type_passed_on_to_a_decoding_function_is_refused:
 -- a function with no annotations that gives a list or an option of a
 -- value whose type only the value knows (`[x]`, `Some(x)`) to a function
--- that decodes its argument's type (`twice`) is refused, in a function
--- and in a closure: nothing gives that type where the code runs. (A
--- list the call knows the type of, `twice([1], s)`, runs.)
+-- that decodes its argument's type (`twice`) is refused in a function:
+-- nothing gives that type where the code runs. (A list the call knows
+-- the type of, `twice([1], s)`, runs; so does a closure, whose later call
+-- decides it: full_type__a_closure_s_later_call_decides_its_type.)
 import json
 
 trait Dec: json.Decode {
