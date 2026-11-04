@@ -70,7 +70,9 @@ pub(super) enum Preloaded {
 /// The walk of the workspace, on a thread of its own: the server takes
 /// what it found between the editor's requests (see
 /// `Server::index_preloaded`), so a large workspace (one that holds a
-/// link to a home folder) does not keep the editor waiting.
+/// link to a home folder) does not keep a request about one document
+/// waiting. A request whose answer spans the workspace's files waits
+/// for the walk to end (see `Server::finish_preload`).
 pub(super) struct Preload {
     pub(super) found: mpsc::Receiver<Preloaded>,
 }
