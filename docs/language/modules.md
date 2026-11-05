@@ -283,13 +283,16 @@ them). After adding, imports from the dependency package work exactly
 like local modules. `silt remove <name>` takes one out of `silt.toml`
 and `silt.lock` again.
 
-`import x` in a module of a package means, in this order: the builtin
-module `x`; the dependency whose key under `[dependencies]` in this
-package's `silt.toml` is `x` (its `src/lib.silt`); this package's own
-`src/x.silt`. A dependency's own dependencies are its own: to import one,
-declare it in your `silt.toml` too. A module file named like a builtin
-module (`src/list.silt`) is an error, because `import list` always means
-the builtin one.
+`import x` in a module of a package means one of three things: the
+builtin module `x`; the dependency whose key under `[dependencies]` in
+this package's `silt.toml` is `x` (its `src/lib.silt`); or this
+package's own `src/x.silt`. A name never means two of them: a module
+file named like a builtin module (`src/list.silt`), a dependency key
+named like a builtin module (`silt add list ...` is refused, and so is
+the key in `silt.toml`), and a dependency key named like a module of the
+package (`src/x.silt` beside the dependency `x`, E0605) are errors. A
+dependency's own dependencies are its own: to import one, declare it in
+your `silt.toml` too.
 
 A package consumed as a dependency exposes `src/lib.silt` instead of
 `src/main.silt` (`silt init --lib` creates one). Such a library-only package has nothing to execute — `silt

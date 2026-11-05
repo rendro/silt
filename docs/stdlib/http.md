@@ -112,8 +112,11 @@ Makes an HTTP GET request. Returns `Ok(Response)` for a response of any
 status (4xx and 5xx too) that arrived whole, and `Err(HttpError)`
 otherwise: see [Errors](#errors).
 The names of the response's headers are in lower case
-(`map.get(resp.headers, "content-type")`), and its body is the bytes the
-server sent, with one exception:
+(`map.get(resp.headers, "content-type")`); a header that came more than
+once is one entry, its values joined with `", "` in the order they came
+(two `Set-Cookie` headers give `"a=1, b=2"`, which is hard to split
+again, since a cookie's date has a comma in it). Its body is the bytes
+the server sent, with one exception:
 
 - A body with the header `Content-Encoding: gzip`, written exactly so, is
   unpacked: `resp.body` is the content, and `content-encoding` and
@@ -339,9 +342,11 @@ An `Expect` header that asks for anything but `100-continue` is answered
 
 - `req.headers` has every name in lower case, however the client wrote
   it: a header's name is not case-sensitive, and a lookup asks for one
-  spelling, `map.get(req.headers, "content-type")`. Of a header sent
-  twice the last one stays. (The headers of a `Response` that `http.get`
-  or `http.request` returns have their names in lower case too.) A
+  spelling, `map.get(req.headers, "content-type")`. A header sent more
+  than once is one entry, its values joined with `", "` in the order
+  they came (`x-a: 1` and `x-a: 2` give `"1, 2"`). (The headers of a
+  `Response` that `http.get` or `http.request` returns are the same: names
+  in lower case, values joined.) A
   header's value is text: bytes in it that are no UTF-8 reach the handler
   as U+FFFD, unlike the body, which is exact.
 - `req.body` is `Bytes`, exactly what arrived: a binary upload is intact.

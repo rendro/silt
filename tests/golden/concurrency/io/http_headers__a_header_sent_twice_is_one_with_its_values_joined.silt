@@ -1,0 +1,45 @@
+-- timeout: 30
+-- requires-feature: http
+-- A header that comes more than once is one entry of the map, its values
+-- joined with ", " in the order they came: of a request, in what the
+-- handler gets, and of a response, in what `http.request` returns. A
+-- header that comes once is as it came.
+import bytes
+import http
+import map
+import option
+import task
+import tcp
+
+fn answer(req: http.Request) -> http.Response {
+  let a = map.get(req.headers, "x-a") |> option.unwrap_or("none")
+  let b = map.get(req.headers, "x-b") |> option.unwrap_or("none")
+  http.Response {
+    status: 200,
+    body: bytes.from_string("x-a: {a}; x-b: {b}"),
+    headers: #{ "Set-Cookie": "a=1", "set-cookie": "b=2", "X-One": "1" },
+  }
+}
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let url = "http://127.0.0.1:{tcp.local_port(listener)}/"
+  let server = task.spawn { -> http.serve(listener, answer) }
+  let sent = #{ "X-A": "1", "x-a": "2", "X-B": "3" }
+  match http.request(http.GET, url, bytes.empty(), sent) {
+    Ok(response) -> {
+      println(bytes.to_string(response.body) |> result_text)
+      println("set-cookie: {map.get(response.headers, "set-cookie") |> option.unwrap_or("none")}")
+      println("x-one: {map.get(response.headers, "x-one") |> option.unwrap_or("none")}")
+    }
+    Err(e) -> println("error: {e}")
+  }
+  task.cancel(server)
+}
+
+fn result_text(r: Result(String, bytes.BytesError)) -> String {
+  match r {
+    Ok(text) -> text
+    Err(_) -> "(no text)"
+  }
+}

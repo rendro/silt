@@ -1,6 +1,5 @@
 -- exit: 1
--- stderr-contains: float overflow: 17976931348623157
--- stderr-contains: 000.0 + 17976931348623157
+-- stderr-contains: float overflow: 1.7976931348623157e308 + 1.7976931348623157e308
 import float
 fn main() {
   println(float.max_value + float.max_value)

@@ -2200,6 +2200,7 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
     checker.refuse_undecided_decoder_types();
     checker.record_def_owners(program, &env);
     checker.drop_errors_of_refused_calls();
+    checker.drop_ambiguities_over_errors();
     checker.report_private_in_schemes(program, &env);
     checker.report_unknown_let_types(program, &env);
     checker.enter_schemes(&env);

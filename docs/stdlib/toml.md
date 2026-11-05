@@ -144,8 +144,10 @@ the path appended as it is (`TypeMismatch("Int", "string at k at
 posts[1].tags")` for one the impl got from `json.decode`). A `Syntax` error (an impl that
 parses a JSON text of its own) is an `Other` of json's message of it,
 `Other("json syntax error at byte 3: ... at posts[1].tags")`, since its
-offset is in that text and not in the TOML document. The first error the
-decoder comes to counts, the impl's or the decoder's own.
+offset is in that text and not in the TOML document. The first error
+counts, the impl's or the decoder's own: a record's errors in the order
+its type declares the fields, a map's in the sorted order of its keys; a
+syntax error anywhere in the text wins.
 
 
 ## Enums

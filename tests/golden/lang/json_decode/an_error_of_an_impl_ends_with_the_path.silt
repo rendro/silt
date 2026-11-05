@@ -3,8 +3,8 @@
 -- The `Err` a `decode` impl returns is the decoder's, with the path of
 -- its part appended as to a decoder's own error: a message ends with
 -- ` at <path>`, a missing field's path starts with the part's. At the top
--- it is as the impl wrote it. The first error in the document counts,
--- the impl's or the decoder's.
+-- it is as the impl wrote it. The first error counts, the impl's or the
+-- decoder's: a record's in the order its type declares the fields.
 import json
 
 type Code { n: Int }
