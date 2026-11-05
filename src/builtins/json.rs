@@ -463,36 +463,30 @@ pub(crate) fn decode_value(vm: &mut Vm, value: &Value, ty: Type) -> Result<Step,
     // A `json.Value` holds only what JSON has a form for, so the one way
     // to fail here is a value nested past the limit: an `Err`, as
     // `json.parse` gives one for a document nested too deep.
-    let document = match data::data("json.decode", Format::Json, value) {
+    let expected = decode::target(&DECODE, ty)?.element();
+    let read = |r: &decode::Reader, expected: &FieldType, parts: &decode::seed::Parts| {
+        decode::seed::json_value(r, expected, value, parts).map_err(json_unknown_err)
+    };
+    let source = || -> Box<dyn Source> { Box::new(Read(value.clone())) };
+    vm.decode_read("json.decode", &RULES, expected, read, source)
+}
+
+/// The JSON document of the `json.Value` `value` as `json.decode` read
+/// it before it read the value itself ([`decode::seed::json_value`]):
+/// the referee of that reading in the fuzz checks, until the walk goes.
+pub(crate) fn document_of(value: &Value) -> Result<serde_json::Value, Value> {
+    match data::data("json.decode", Format::Json, value) {
         Ok(data) => {
-            let mut json = serde_json::to_value(Json(&data))
-                .map_err(|e| VmError::new(format!("json.decode: {e}")))?;
+            let mut json = serde_json::to_value(Json(&data)).expect("JSON data");
             whole_numbers(&mut json);
             Ok(json)
         }
         Err(e) => Err(json_unknown_err(e.message)),
-    };
-    let expected = decode::target(&DECODE, ty)?.element();
-    let document = std::cell::RefCell::new(document);
-    let read =
-        |r: &decode::Reader, expected: &FieldType, parts: &decode::seed::Parts| match &*document
-            .borrow()
-        {
-            Ok(doc) => Ok(decode::seed::json_document(r, expected, doc, parts)),
-            Err(result) => Err(result.clone()),
-        };
-    let source = || -> Box<dyn Source> {
-        match document.replace(Ok(serde_json::Value::Null)) {
-            Ok(doc) => Box::new(Read(doc)),
-            // (No document has no parts.)
-            Err(_) => unreachable!("a document with parts was read"),
-        }
-    };
-    vm.decode_read("json.decode", &RULES, expected, read, source)
+    }
 }
 
-/// A JSON document already read, read again.
-struct Read(serde_json::Value);
+/// A `json.Value` decoded, read again.
+struct Read(Value);
 
 impl Source for Read {
     fn read(
@@ -501,7 +495,7 @@ impl Source for Read {
         expected: &FieldType,
         parts: &decode::seed::Parts,
     ) -> Result<decode::seed::Outcome, Value> {
-        Ok(decode::seed::json_document(r, expected, &self.0, parts))
+        decode::seed::json_value(r, expected, &self.0, parts).map_err(json_unknown_err)
     }
 }
 

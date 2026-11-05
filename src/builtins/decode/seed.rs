@@ -328,6 +328,135 @@ pub(crate) fn json_cell(r: &Reader, expected: &FieldType, doc: &serde_json::Valu
         }
     }
 }
+/// The `json.Value` `v` decoded into a value of `expected` by `r`, its
+/// parts of a type with a written impl as `parts` says (`json.decode`,
+/// `T.decode`): read as the JSON document `json.stringify` writes of it
+/// would be, a whole number held as a `json.Float` an `Int`; or `Err` of
+/// the message of a value nested past the encoder's limit.
+pub(crate) fn json_value(
+    r: &Reader,
+    expected: &FieldType,
+    v: &Value,
+    parts: &Parts,
+) -> Result<Outcome, String> {
+    let restart = Cell::new(false);
+    let kept = Cell::new(None);
+    let cx = Cx {
+        r,
+        rules: &json::RULES,
+        format: Format::Json,
+        digits: Digits::Read,
+        marked: None,
+        parts,
+        restart: &restart,
+        kept: &kept,
+    };
+    let read = Seed {
+        cx: &cx,
+        expected,
+        at: &At::Top,
+    }
+    .deserialize(JsonValueDe {
+        value: v.clone(),
+        level: 0,
+    });
+    // (A `json.Value` has each key of an object once: the one error of
+    // its reading is its depth.)
+    read.map_err(|e| e.to_string())
+}
+
+/// A `json.Value` `level` levels deep in the one decoded, read as the
+/// JSON of it: `json.Int(n)` and a `json.Float` of a whole number in
+/// `Int`'s range as an integer, an object's `variant` first (as
+/// [`ValueDe`] reads a document). A value nested more than the encoder
+/// writes is an error, of its message.
+struct JsonValueDe {
+    value: Value,
+    level: usize,
+}
+
+impl<'de> de::Deserializer<'de> for JsonValueDe {
+    type Error = de::value::Error;
+
+    fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        use crate::builtins::data::MAX_ENCODE_DEPTH;
+        if self.level > MAX_ENCODE_DEPTH {
+            return Err(de::Error::custom(format_args!(
+                "json.decode: the value is nested more than {MAX_ENCODE_DEPTH} levels deep"
+            )));
+        }
+        let level = self.level + 1;
+        let Value::Variant(json) = &self.value else {
+            return Err(de::Error::custom(
+                "json.decode: a value that is no json.Value",
+            ));
+        };
+        match json.fields() {
+            [] => visitor.visit_unit(),
+            [Value::Bool(b)] => visitor.visit_bool(*b),
+            [Value::Int(n)] => visitor.visit_i64(*n),
+            [Value::Float(f)] => {
+                let f = f.get();
+                match f.fract() == 0.0 && (-I64_MAX_PLUS_ONE..I64_MAX_PLUS_ONE).contains(&f) {
+                    true => visitor.visit_i64(f as i64),
+                    false => visitor.visit_f64(f),
+                }
+            }
+            [Value::String(s)] => visitor.visit_str(s),
+            [Value::List(items)] => {
+                let items = items.iter().map(|value| JsonValueDe { value, level });
+                let mut seq = SeqDeserializer::new(items);
+                let read = visitor.visit_seq(&mut seq)?;
+                seq.end()?;
+                Ok(read)
+            }
+            [Value::Map(members)] => {
+                fn key(key: &Value) -> Cow<'_, str> {
+                    match key {
+                        Value::String(key) => Cow::Borrowed(key),
+                        other => Cow::Owned(other.to_string()),
+                    }
+                }
+                let mut entries: Vec<(Cow<str>, JsonValueDe)> = Vec::with_capacity(members.len());
+                for (name, value) in members.iter() {
+                    let member = (
+                        key(name),
+                        JsonValueDe {
+                            value: value.clone(),
+                            level,
+                        },
+                    );
+                    match member.0 == "variant" {
+                        true => entries.insert(0, member),
+                        false => entries.push(member),
+                    }
+                }
+                let mut map = MapDeserializer::new(entries.into_iter());
+                let read = visitor.visit_map(&mut map)?;
+                map.end()?;
+                Ok(read)
+            }
+            _ => Err(de::Error::custom(
+                "json.decode: a value that is no json.Value",
+            )),
+        }
+    }
+
+    serde::forward_to_deserialize_any! {
+        bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
+        bytes byte_buf option unit unit_struct newtype_struct seq tuple
+        tuple_struct map struct enum identifier ignored_any
+    }
+}
+
+impl<'de> IntoDeserializer<'de, de::value::Error> for JsonValueDe {
+    type Deserializer = Self;
+
+    fn into_deserializer(self) -> Self {
+        self
+    }
+}
+
 /// A JSON document already read, read as serde_json reads it, but for
 /// the order of an object's members: its `variant` comes first, so that
 /// a variant's fields are decoded as they are read, not kept. (No other

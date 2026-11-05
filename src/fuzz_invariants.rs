@@ -548,6 +548,20 @@ pub fn check_json_decoders_agree(text: &[u8]) -> Result<(), String> {
                             Ok(seed::json_document(r, expected, doc, parts))
                         });
                     agree_with_calls(name, &walked, &read, &format!("the document {doc}"))?;
+                    // json.decode of the json.Value of the document: the
+                    // walk of the document made of it, as before.
+                    let value = decode::json_value(doc);
+                    let made = json::document_of(&value);
+                    let walked = walked_decoding(rt, written, &json::RULES, |r| match &made {
+                        Ok(doc) => Ok(decode::value(r, doc, expected, &At::Top)),
+                        Err(result) => Err(result.clone()),
+                    });
+                    let read =
+                        read_decoding(only_finding, rt, written, &json::RULES, |r, parts| {
+                            seed::json_value(r, expected, &value, parts)
+                                .map_err(json::json_unknown_err)
+                        });
+                    agree_with_calls(name, &walked, &read, &format!("the json.Value {value}"))?;
                 }
             }
         }
