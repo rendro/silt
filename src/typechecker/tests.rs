@@ -2395,3 +2395,81 @@ fn main() {
     let judged = super::json_decode::JUDGED_UNDECIDED.with(|judged| judged.borrow().clone());
     assert_eq!(judged, ["postgres.query"], "the uses judged undecided");
 }
+
+// ── The numbers of a type's variants, fields and parameters ─────
+
+/// `type Big { V0, V1, … }` with `variants` variants, and a `main` that
+/// tells the last one from the first.
+fn enum_of(variants: usize) -> String {
+    let names: Vec<String> = (0..variants).map(|k| format!("V{k}")).collect();
+    let last = variants - 1;
+    format!(
+        "type Big {{ {} }}\n\
+         fn name(b: Big) -> String {{\n  match b {{\n    V0 -> \"first\"\n    V{last} -> \"last\"\n    _ -> \"other\"\n  }}\n}}\n\
+         fn main() {{ [name(V0), name(V{last})] }}\n",
+        names.join(", ")
+    )
+}
+
+/// The ordinal of a variant is a `u16`: an enum of 65,537 variants
+/// would number its last one 0, its first. It is refused at its name
+/// with the wording of every compile limit.
+#[test]
+fn test_more_than_65536_variants_refused() {
+    let source = enum_of(65_537);
+    let errors = check_errors(&source);
+    let limit: Vec<_> = errors
+        .iter()
+        .filter(|e| e.code == Code::CompileLimit)
+        .collect();
+    assert_eq!(
+        limit.len(),
+        1,
+        "{:?}",
+        errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        limit[0].message,
+        "too many variants of a type: 65537 (the limit is 65536)"
+    );
+    let span = limit[0].span;
+    assert_eq!(&source[span.start as usize..span.end as usize], "Big");
+}
+
+/// 65,536 variants fit, and the last is not the first.
+#[test]
+fn test_65536_variants_accepted() {
+    let value = crate::session::testing::run_str(&enum_of(65_536)).expect("runs");
+    assert_eq!(
+        format!("{value:?}").matches("\"last\"").count(),
+        1,
+        "{value:?}"
+    );
+}
+
+/// A variant's arity is a `u16`, and the index of a type parameter is
+/// one: past them, the declaration is refused.
+#[test]
+fn test_more_than_65535_variant_fields_or_65536_type_params_refused() {
+    let fields = vec!["Int"; 65_536].join(", ");
+    let errors = check_errors(&format!("type Wide {{ W({fields}) }}\nfn main() {{}}\n"));
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.message == "too many fields of a variant: 65536 (the limit is 65535)"),
+        "{:?}",
+        errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+    let params: Vec<String> = (0..65_537).map(|k| format!("a{k}")).collect();
+    let errors = check_errors(&format!(
+        "type Many({}) {{ x: a0 }}\nfn main() {{}}\n",
+        params.join(", ")
+    ));
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.message == "too many parameters of a type: 65537 (the limit is 65536)"),
+        "{:?}",
+        errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}

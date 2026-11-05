@@ -419,7 +419,10 @@ impl Tag {
     /// The variant of the enum `ty` named `name`.
     pub fn named(ty: &Arc<TypeInfo>, name: &str) -> Option<Tag> {
         let ordinal = ty.variants().iter().position(|v| v.name == name)?;
-        Some(Tag::new(ty.clone(), ordinal as u16))
+        Some(Tag::new(
+            ty.clone(),
+            u16::try_from(ordinal).expect("the checker refuses more than 65,536 variants"),
+        ))
     }
 
     pub fn ty(&self) -> &Arc<TypeInfo> {
@@ -810,7 +813,8 @@ fn builtin_types() -> &'static [Arc<TypeInfo>] {
                             .iter()
                             .map(|(name, arity)| VariantInfo {
                                 name: (*name).to_string(),
-                                arity: *arity as u16,
+                                arity: u16::try_from(*arity)
+                                    .expect("a builtin variant's arity fits"),
                                 fields: vec![FieldType::undecoded(); *arity],
                             })
                             .collect(),

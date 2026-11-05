@@ -148,7 +148,10 @@ impl Tables {
             Type::String => Ok(FieldType::String),
             Type::Bool => Ok(FieldType::Bool),
             Type::Var(_) | Type::Rigid(_) => match params.iter().position(|p| p == ty) {
-                Some(at) => Ok(FieldType::Param(at as u16)),
+                Some(at) => Ok(FieldType::Param(
+                    u16::try_from(at)
+                        .expect("the checker refuses more than 65,536 type parameters"),
+                )),
                 None => Err(ty.clone()),
             },
             Type::List(elem) => Ok(FieldType::List(Box::new(part(elem)?))),
