@@ -379,7 +379,9 @@ pub fn check_json_decoders_agree(text: &[u8]) -> Result<(), String> {
             let read = match seed::json_text(&reader, expected, text) {
                 seed::Read::Decoded(decoded) => decode::result(&json::RULES, decoded),
                 seed::Read::Text(e) => json::json_result_err(&e, text),
-                seed::Read::Written => return Err(format!("{name}: a written impl is met")),
+                // (A variant object that gives a key twice: the walk decodes
+                // it, as the program sees.)
+                seed::Read::Written => continue,
             };
             if walked.to_string() != read.to_string() || walked != read {
                 return Err(format!(

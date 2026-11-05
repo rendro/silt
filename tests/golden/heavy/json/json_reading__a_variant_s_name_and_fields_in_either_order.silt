@@ -1,0 +1,30 @@
+-- A variant with fields is read from its name and its fields in either
+-- order, nested too; of a key given twice the last counts; the name's
+-- error comes before the fields', and the count of the fields before
+-- an error in one of them.
+import json
+import list
+
+type E { Wrap(E), Pair(Int, String), Leaf(List(Int)), Dot }
+
+fn main() {
+  let docs = [
+    "\{\"variant\": \"Wrap\", \"fields\": [\{\"fields\": [1, \"a\"], \"variant\": \"Pair\"}]}",
+    "\{\"fields\": [\{\"variant\": \"Wrap\", \"fields\": [\{\"variant\": \"Leaf\", \"fields\": [[1, 2]]}]}], \"variant\": \"Wrap\"}",
+    "\{\"variant\": \"Pair\", \"variant\": \"Leaf\", \"fields\": [[3]]}",
+    "\{\"fields\": [\"x\"], \"variant\": \"Leaf\", \"fields\": [[4]]}",
+    "\{\"variant\": \"Pair\", \"fields\": [1, \"a\"], \"variant\": \"Wrap\"}",
+    "\{\"variant\": \"Pair\", \"fields\": [\"x\", 2, 3]}",
+    "\{\"fields\": [\"x\", 2], \"variant\": \"Pair\"}",
+    "\{\"fields\": [\"x\", 2], \"variant\": \"Nope\"}",
+    "\{\"variant\": \"Nope\", \"fields\": [\"x\", 2]}",
+    "\{\"variant\": \"Dot\", \"fields\": []}",
+    "\{\"variant\": 1, \"fields\": [1, \"a\"]}",
+    "\{\"fields\": [1, \"a\"]}",
+    "\{\"variant\": \"Pair\"}",
+    "\{\"variant\": \"Pair\", \"fields\": \{\"a\": 1}}",
+    "\{\"fields\": null, \"variant\": \"Pair\"}",
+    "\{\"variant\": \"Wrap\", \"fields\": [\{\"variant\": \"Pair\", \"fields\": [1, 2]}], \"x\": [1,]}",
+  ]
+  list.each(docs) { d -> println(json.parse(d, E)) }
+}
