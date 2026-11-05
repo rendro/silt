@@ -761,6 +761,19 @@ pub struct TypeChecker {
     pub(super) ev: evidence::Ledger,
 }
 
+impl TypeChecker {
+    /// Refuse `count` past the limit `(what, max)` at `span`, with the
+    /// wording of every compile limit.
+    pub(super) fn refuse_past_limit(
+        &mut self,
+        count: usize,
+        limit: (&'static str, usize),
+        span: Span,
+    ) {
+        names::refuse_past_limit(count, limit, span, &mut self.errors);
+    }
+}
+
 impl Default for TypeChecker {
     fn default() -> Self {
         Self::new()

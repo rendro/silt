@@ -2396,6 +2396,46 @@ fn main() {
     assert_eq!(judged, ["postgres.query"], "the uses judged undecided");
 }
 
+// ── The numbers of a type's variants, fields and parameters ─────
+
+/// `type Big { V0, V1, … }` with `variants` variants, and a `main` that
+/// tells the last one from the first.
+fn enum_of(variants: usize) -> String {
+    let names: Vec<String> = (0..variants).map(|k| format!("V{k}")).collect();
+    let last = variants - 1;
+    format!(
+        "type Big {{ {} }}\n\
+         fn name(b: Big) -> String {{\n  match b {{\n    V0 -> \"first\"\n    V{last} -> \"last\"\n    _ -> \"other\"\n  }}\n}}\n\
+         fn main() {{ [name(V0), name(V{last})] }}\n",
+        names.join(", ")
+    )
+}
+
+/// The ordinal of a variant is a `u16`: an enum of 65,537 variants
+/// would number its last one 0, its first. It is refused at its name
+/// with the wording of every compile limit.
+#[test]
+fn test_more_than_65536_variants_refused() {
+    let source = enum_of(65_537);
+    let errors = check_errors(&source);
+    let limit: Vec<_> = errors
+        .iter()
+        .filter(|e| e.code == Code::CompileLimit)
+        .collect();
+    assert_eq!(
+        limit.len(),
+        1,
+        "{:?}",
+        errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        limit[0].message,
+        "too many variants of a type: 65537 (the limit is 65536)"
+    );
+    let span = limit[0].span;
+    assert_eq!(&source[span.start as usize..span.end as usize], "Big");
+}
+
 // ── A decoder's type argument that is no type ───────────────────
 
 /// An undefined name in the type a decoder is given is the error; the

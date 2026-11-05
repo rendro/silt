@@ -1,3 +1,4 @@
+use super::names::{IMPL_BOUNDS, IMPL_TYPE_VARS};
 use super::typeexpr::type_expr_text;
 use super::*;
 
@@ -1641,6 +1642,13 @@ impl TypeChecker {
             impl_param_map.insert(param_name, self.fresh_var());
         }
         let self_type = self.impl_self_type(ti, written, target_type, &mut impl_param_map);
+        // A decoder numbers the header's type variables (each one a name
+        // the header writes) with a `u16`: an impl of more is refused,
+        // and not entered.
+        if impl_param_map.len() > IMPL_TYPE_VARS.1 {
+            self.refuse_past_limit(impl_param_map.len(), IMPL_TYPE_VARS, ti.span);
+            return;
+        }
 
         // (The same of a trait that has `json.Decode` among its
         // supertraits, for a generic type, of the program or a builtin
@@ -1892,6 +1900,7 @@ impl TypeChecker {
                 }
             }
         }
+        self.refuse_past_limit(impl_level_constraints.len(), IMPL_BOUNDS, ti.span);
         if !impl_level_constraints.is_empty() {
             self.tables
                 .impl_preds

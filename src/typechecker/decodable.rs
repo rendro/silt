@@ -148,7 +148,11 @@ impl Tables {
             Type::String => Ok(FieldType::String),
             Type::Bool => Ok(FieldType::Bool),
             Type::Var(_) | Type::Rigid(_) => match params.iter().position(|p| p == ty) {
-                Some(at) => Ok(FieldType::Param(at as u16)),
+                // (More than a `u16` numbers are refused: of a type's
+                // parameters, of an impl header's type variables.)
+                Some(at) => u16::try_from(at)
+                    .map(FieldType::Param)
+                    .map_err(|_| ty.clone()),
                 None => Err(ty.clone()),
             },
             Type::List(elem) => Ok(FieldType::List(Box::new(part(elem)?))),

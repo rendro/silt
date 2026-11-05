@@ -31,3 +31,4 @@ mod runtime_scaling;
 #[cfg(feature = "lsp")]
 #[path = "../lsp/support.rs"]
 mod support;
+mod type_limits;
