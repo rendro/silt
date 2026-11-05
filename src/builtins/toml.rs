@@ -47,7 +47,7 @@ use chrono::{NaiveDate, NaiveTime};
 use super::registry::decoding::Family;
 use crate::typeinfo::bv;
 use crate::value::Value;
-use crate::vm::{Step, Vm, VmError};
+use crate::vm::{Source, Step, Vm, VmError};
 
 use super::data::{self, Data, Format};
 use super::decode::{self, At, Decoder, Document, Node, Numbers, Rules, seed, shown};
@@ -396,43 +396,62 @@ fn text(caller: &str, data: Result<Data, VmError>, pretty: bool) -> Result<Value
 /// document can be, is refused with the first error.)
 pub(crate) fn document(s: &str) -> Result<::toml::Value, Value> {
     marking(s, ::toml::from_str::<::toml::Value>, |doc, _| {
-        Some(marked_strings(doc))
+        marked_strings(doc)
     })
 }
 
 /// The TOML text `s` decoded by `r` as `top` says, read once
 /// (`decode::seed`), its date and time literals that are none marked as
-/// [`document`] marks them: what the document decodes into, `None`
-/// where it is the walk's, or `Err` of the call's result where the
-/// text is no document.
+/// [`document`] marks them, its parts of a type with a written impl as
+/// `parts` says: what the document decodes into, or `Err` of the call's
+/// result where the text is no document.
 pub(crate) fn read_text(
     r: &decode::Reader,
     top: &seed::Top,
     s: &str,
-) -> Result<Option<seed::Outcome>, Value> {
-    let read = |text: &str| seed::toml_text(r, top, text, marked());
-    marking(s, read, |read, text| {
-        // (The marked strings, counted where any was written; a text
-        // the walk reads as no document is the walk's.)
-        read.as_ref()?;
-        match ::toml::from_str::<::toml::Value>(text) {
-            Ok(doc) => Some(marked_strings(&doc)),
-            Err(_) => {
-                *read = None;
-                None
-            }
-        }
+    parts: &seed::Parts,
+) -> Result<seed::Outcome, Value> {
+    let read = |text: &str| seed::toml_text(r, top, text, marked(), parts);
+    // (The marked strings, counted where any was written.)
+    marking(s, read, |_, text| {
+        ::toml::from_str::<::toml::Value>(text).map_or(usize::MAX, |doc| marked_strings(&doc))
     })
+}
+
+/// A TOML text read again, decoded as `toml.parse` (`list`: `None`),
+/// `toml.parse_list` (`Some` of the element type as its error shows it)
+/// or `toml.parse_map` (`map`) decodes it.
+struct Text {
+    text: String,
+    list: Option<String>,
+    map: bool,
+}
+
+impl Source for Text {
+    fn read(
+        &self,
+        r: &decode::Reader,
+        expected: &FieldType,
+        parts: &seed::Parts,
+    ) -> Result<seed::Outcome, Value> {
+        let keys = |n: usize| not_one_key(self.list.as_deref().unwrap_or_default(), n);
+        let top = match (&self.list, self.map) {
+            (Some(_), _) => seed::Top::List(expected, &keys),
+            (None, true) => seed::Top::Map(expected),
+            (None, false) => seed::Top::One(expected),
+        };
+        read_text(r, &top, &self.text, parts)
+    }
 }
 
 /// What `parse` reads of the TOML text `s`, its date and time literals
 /// that are none marked as [`document`] says, or the result of a text
 /// that is none. `marked_in` counts the marked strings of what was read
-/// of a text (`None`: no count, the reading is the walk's).
+/// of a text.
 fn marking<T>(
     s: &str,
     mut parse: impl FnMut(&str) -> Result<T, ::toml::de::Error>,
-    marked_in: impl Fn(&mut T, &str) -> Option<usize>,
+    marked_in: impl Fn(&T, &str) -> usize,
 ) -> Result<T, Value> {
     const MOST: usize = 64;
     let mut text = std::borrow::Cow::Borrowed(s);
@@ -443,11 +462,9 @@ fn marking<T>(
     let mut first = None;
     loop {
         match parse(&text) {
-            Ok(mut doc) => {
+            Ok(doc) => {
                 return match first {
-                    Some(e) if marked_in(&mut doc, &text).is_some_and(|n| n != grown.len()) => {
-                        Err(toml_de_result_err(&e))
-                    }
+                    Some(e) if marked_in(&doc, &text) != grown.len() => Err(toml_de_result_err(&e)),
                     _ => Ok(doc),
                 };
             }
@@ -607,15 +624,6 @@ fn map_of(
     decode::map(r, element, doc, &At::Top)
 }
 
-/// The document `s` that `toml.parse_list` decodes, of the one key it
-/// checks it has (`keys` says the error of a document of more or none),
-/// for the walk; or the call's result.
-fn list_document(s: &str, keys: &dyn Fn(usize) -> String) -> Result<::toml::Value, Value> {
-    let tv = document(s)?;
-    one_key(&tv, keys)?;
-    Ok(tv)
-}
-
 /// `Err` of `toml.parse_list`'s result where the document `tv` is no
 /// table of one key.
 fn one_key(tv: &::toml::Value, keys: &dyn Fn(usize) -> String) -> Result<(), Value> {
@@ -632,28 +640,23 @@ fn one_key(tv: &::toml::Value, keys: &dyn Fn(usize) -> String) -> Result<(), Val
 }
 
 /// What the walk of the tree of the TOML document `doc` (`document`'s
-/// reading of a text) gives decoded by `r` as `top` says, where no part
-/// is decoded by a written impl: the referee of [`read_text`].
+/// reading of a text) gives decoded by `r` as `top` says: the decoder's
+/// outcome, or the call's result where there is no document of the
+/// shape. The referee of [`read_text`].
 pub(crate) fn walked(
     r: &decode::Reader,
     top: &seed::Top,
     doc: &Result<::toml::Value, Value>,
-) -> Value {
-    let doc = match doc {
-        Ok(doc) => doc,
-        Err(result) => return result.clone(),
-    };
-    if let seed::Top::List(_, keys) = top
-        && let Err(result) = one_key(doc, *keys)
-    {
-        return result;
+) -> Result<seed::Outcome, Value> {
+    let doc = doc.as_ref().map_err(Clone::clone)?;
+    if let seed::Top::List(_, keys) = top {
+        one_key(doc, *keys)?;
     }
-    let decoded = match top {
+    Ok(match top {
         seed::Top::One(expected) => one(r, doc, expected),
         seed::Top::List(element, _) => list_under_its_key(r, doc, element),
         seed::Top::Map(element) => map_of(r, doc, element),
-    };
-    decode::result(&RULES, decoded)
+    })
 }
 
 /// The message of `toml.parse_list` of a document of `keys` top-level
@@ -669,36 +672,37 @@ fn not_one_key(shown: &str, keys: usize) -> String {
 builtins! {
     fn parse(vm, s: &str, ty: Type) -> Result<Step, VmError> {
         let expected = decode::target(&PARSE, ty)?.element();
-        let read = |r: &decode::Reader, expected: &FieldType| {
-            read_text(r, &seed::Top::One(expected), s)
+        let read = |r: &decode::Reader, expected: &FieldType, parts: &seed::Parts| {
+            read_text(r, &seed::Top::One(expected), s, parts)
         };
-        vm.decode_read(&RULES, expected, read, |vm, expected| {
-            vm.decode_document(PARSE.name, expected, one, || document(s))
-        })
+        let source = || -> Box<dyn Source> {
+            Box::new(Text { text: s.to_string(), list: None, map: false })
+        };
+        vm.decode_read(PARSE.name, &RULES, expected, read, source)
     }
 
     fn parse_list(vm, s: &str, ty: Type) -> Result<Step, VmError> {
         let element = decode::target(&PARSE_LIST, ty)?.element();
         let shown = shown(&vm.runtime, &element);
         let keys = |n: usize| not_one_key(&shown, n);
-        let read = |r: &decode::Reader, element: &FieldType| {
-            read_text(r, &seed::Top::List(element, &keys), s)
+        let read = |r: &decode::Reader, element: &FieldType, parts: &seed::Parts| {
+            read_text(r, &seed::Top::List(element, &keys), s, parts)
         };
-        vm.decode_read(&RULES, element, read, |vm, element| {
-            vm.decode_document(PARSE_LIST.name, element, list_under_its_key, || {
-                list_document(s, &keys)
-            })
-        })
+        let source = || -> Box<dyn Source> {
+            Box::new(Text { text: s.to_string(), list: Some(shown.clone()), map: false })
+        };
+        vm.decode_read(PARSE_LIST.name, &RULES, element, read, source)
     }
 
     fn parse_map(vm, s: &str, ty: Type) -> Result<Step, VmError> {
         let element = decode::target(&PARSE_MAP, ty)?.element();
-        let read = |r: &decode::Reader, element: &FieldType| {
-            read_text(r, &seed::Top::Map(element), s)
+        let read = |r: &decode::Reader, element: &FieldType, parts: &seed::Parts| {
+            read_text(r, &seed::Top::Map(element), s, parts)
         };
-        vm.decode_read(&RULES, element, read, |vm, element| {
-            vm.decode_document(PARSE_MAP.name, element, map_of, || document(s))
-        })
+        let source = || -> Box<dyn Source> {
+            Box::new(Text { text: s.to_string(), list: None, map: true })
+        };
+        vm.decode_read(PARSE_MAP.name, &RULES, element, read, source)
     }
 
     fn stringify(vm, value: &Value) -> Result<Step, VmError> {

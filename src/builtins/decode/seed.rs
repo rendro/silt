@@ -23,29 +23,29 @@
 //!   types read from its text (the parser gives it as a table of one
 //!   key, its mark, [`DATETIME`]).
 //!
-//! A part of a type with a written `json.Decode` impl stops the reading
-//! (`Ok(None)`): such a document is decoded by the walk, which reads it
-//! twice (`vm::decode`).
+//! A part of a type with a written `json.Decode` impl is the impl's: a
+//! document with such parts is read twice ([`Parts`], `vm::decode`),
+//! first to find them, the json.Value of each, in the order the walk
+//! comes to them; then, once the impls gave their values, to put those
+//! in their places.
 //!
 //! [`value`]: super::value
 //! [`parse_document`]: crate::builtins::json::parse_document
 
 use std::borrow::Cow;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
-use std::marker::PhantomData;
+use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use serde::de::value::{MapDeserializer, SeqDeserializer};
-use serde::de::{
-    self, DeserializeSeed, IgnoredAny, IntoDeserializer, MapAccess, SeqAccess, Visitor,
-};
+use serde::de::{self, DeserializeSeed, IntoDeserializer, MapAccess, SeqAccess, Visitor};
 
 use super::{
-    At, Error, I64_MAX_PLUS_ONE, Numbers, Reader, Rules, decodable_enum, decodable_record,
-    field_record_type, invalid_date_message, invalid_time_message, parse_date, parse_datetime,
-    parse_time, shown, unsupported_field_type_message, variant_field_message,
+    At, Error, Hole, I64_MAX_PLUS_ONE, Numbers, Reader, Rules, decodable_enum, decodable_record,
+    descriptor, field_record_type, invalid_date_message, invalid_time_message, parse_date,
+    parse_datetime, parse_time, shown, unsupported_field_type_message, variant_field_message,
 };
 use crate::builtins::registry::decoding::Leaf;
 use crate::builtins::time::{make_date, make_datetime, make_time};
@@ -57,53 +57,212 @@ use crate::value::{Float, Value};
 /// error of it. (An error of the text is the parser's.)
 pub(crate) type Outcome = Result<Value, Error>;
 
-/// What a reading of a text gives: `Ok(Some(..))` of what the document
-/// decodes into, `Ok(None)` where the document is the walk's (a part of
-/// a type with a written impl, or a TOML table the walk reads as no
-/// table of the text, [`open`]), `Err` of the parser's error where
-/// the text is no document.
-pub(crate) type Read<E> = Result<Option<Outcome>, E>;
+/// What a reading does at the parts of a document of a type with a
+/// written `json.Decode` impl, each numbered in the order the reading
+/// meets it (the same in both readings of a document).
+pub(crate) struct Parts {
+    /// How many parts the reading met.
+    met: Cell<usize>,
+    /// Finding (the first reading): each part found, with its number,
+    /// in the order the walk of the tree comes to them (each record,
+    /// map, tuple and variant puts its own parts in that order when it
+    /// ends), up to the first error of the document.
+    found: RefCell<Vec<Found>>,
+    /// Supplying (the second reading): what the impls gave, by number;
+    /// `None` for a part no impl was called for.
+    given: Option<Vec<Option<Result<Value, Value>>>>,
+    /// Whether every variant's fields are kept as read, decoded when
+    /// its table ends: so a JSON text that gives a variant's name or
+    /// fields twice is read (the last of each counts).
+    keep_fields: Cell<bool>,
+    /// Whether the reading makes the value; a first reading of a
+    /// document a second reading will make the value of builds nothing
+    /// but the parts' `json.Value`s, finding the first error all the
+    /// same.
+    build: bool,
+}
 
-/// The JSON text `text` decoded into a value of `expected` by `r`.
-pub(crate) fn json_text(r: &Reader, expected: &FieldType, text: &[u8]) -> Read<serde_json::Error> {
-    let at = Cell::new(0);
-    let walk = Cell::new(false);
-    let kept = Cell::new(None);
-    let cx = Cx {
-        r,
-        rules: &json::RULES,
-        format: Format::Json,
-        digits: Digits::Text(json::Node::new(text, &at)),
-        marked: None,
-        walk: &walk,
-        kept: &kept,
-    };
-    let mut de = serde_json::Deserializer::from_slice(text);
-    let read = Seed {
-        cx: &cx,
-        expected,
-        at: &At::Top,
+/// A part found by the first reading.
+pub(crate) struct Found {
+    /// The number of the part.
+    pub(crate) number: usize,
+    pub(crate) hole: Hole,
+}
+
+impl Parts {
+    /// The first reading's: finding the parts.
+    pub(crate) fn finding() -> Parts {
+        Parts {
+            met: Cell::new(0),
+            found: RefCell::new(Vec::new()),
+            given: None,
+            keep_fields: Cell::new(false),
+            build: true,
+        }
     }
-    .deserialize(&mut de)
-    .and_then(|decoded| de.end().map(|()| decoded));
-    match read {
-        _ if walk.get() => Ok(None),
-        Ok(decoded) => Ok(Some(decoded)),
-        Err(e) => Err(e),
+
+    /// The first reading's of a document whose value a second reading
+    /// makes: finding the parts, building nothing else.
+    pub(crate) fn only_finding() -> Parts {
+        Parts {
+            build: false,
+            ..Parts::finding()
+        }
+    }
+
+    /// Whether the reading made the value of the document.
+    pub(crate) fn built(&self) -> bool {
+        self.build
+    }
+
+    /// The second reading's: supplying, in the places of the parts
+    /// `numbers` (in the walk's order, as found), what the impls gave
+    /// for them, `given`, in that order (up to the first `Err`).
+    /// `keep_fields`: as the first reading kept the variants' fields.
+    pub(crate) fn supplying(
+        numbers: &[usize],
+        given: Vec<Result<Value, Value>>,
+        keep_fields: bool,
+    ) -> Parts {
+        let mut by_number = vec![None; numbers.iter().max().map_or(0, |n| n + 1)];
+        for (&number, given) in numbers.iter().zip(given) {
+            by_number[number] = Some(given);
+        }
+        Parts {
+            given: Some(by_number),
+            keep_fields: Cell::new(keep_fields),
+            ..Parts::finding()
+        }
+    }
+
+    /// The parts found, in the walk's order, and whether the variants'
+    /// fields were kept.
+    pub(crate) fn into_found(self) -> (Vec<Found>, bool) {
+        (self.found.into_inner(), self.keep_fields.get())
+    }
+
+    /// As before a reading again from the start.
+    fn restart(&self) {
+        self.met.set(0);
+        self.found.borrow_mut().clear();
+    }
+
+    /// Where the parts found from now on begin.
+    fn mark(&self) -> usize {
+        self.found.borrow().len()
+    }
+
+    /// The parts found from `start` on in the order of `ranges` (each a
+    /// range of them, as they were found), the others dropped.
+    fn reorder(&self, start: usize, ranges: impl IntoIterator<Item = Range<usize>>) {
+        let mut found = self.found.borrow_mut();
+        if found.len() == start {
+            return;
+        }
+        let mut found_since: Vec<Option<Found>> = found.drain(start..).map(Some).collect();
+        for range in ranges {
+            for part in &mut found_since[range.start - start..range.end - start] {
+                found.extend(part.take());
+            }
+        }
+    }
+}
+
+/// Whether a written impl decodes a part of a value of `expected` (a
+/// record or enum type, at any depth, generic ones at their arguments),
+/// as `r` sees the impls and decoders of `rules` the types. (Past so
+/// many types it says so, to be safe.)
+pub(crate) fn reaches_written(r: &Reader, rules: &Rules, expected: &FieldType) -> bool {
+    fn reaches(r: &Reader, rules: &Rules, ty: &FieldType, seen: &mut Vec<FieldType>) -> bool {
+        let (id, args) = match ty {
+            FieldType::Option(inner) | FieldType::List(inner) | FieldType::Map(inner) => {
+                return reaches(r, rules, inner, seen);
+            }
+            FieldType::Tuple(elems) => {
+                return elems.iter().any(|elem| reaches(r, rules, elem, seen));
+            }
+            FieldType::Record(id) | FieldType::Enum(id) => (id, &[][..]),
+            FieldType::Applied(id, args) => (id, args.as_slice()),
+            _ => return false,
+        };
+        if r.impls
+            .as_ref()
+            .is_some_and(|impls| (impls.written)(*id, args).is_some())
+        {
+            return true;
+        }
+        if seen.contains(ty) {
+            return false;
+        }
+        if seen.len() > 256 {
+            return true;
+        }
+        seen.push(ty.clone());
+        let Ok(info) = field_record_type(r, rules.caller, *id) else {
+            return false;
+        };
+        let fields: Vec<&FieldType> = match &info.shape {
+            Shape::Enum(_) => (info.variants().iter()).flat_map(|v| &v.fields).collect(),
+            _ => info.fields().iter().map(|(_, field)| field).collect(),
+        };
+        (fields.into_iter()).any(|field| reaches(r, rules, &field.instantiated(args), seen))
+    }
+    reaches(r, rules, expected, &mut Vec::new())
+}
+
+/// The JSON text `text` decoded into a value of `expected` by `r`, its
+/// parts of a type with a written impl as `parts` says: the decoder's
+/// outcome, or the parser's error.
+pub(crate) fn json_text(
+    r: &Reader,
+    expected: &FieldType,
+    text: &[u8],
+    parts: &Parts,
+) -> Result<Outcome, serde_json::Error> {
+    loop {
+        let at = Cell::new(0);
+        let restart = Cell::new(false);
+        let kept = Cell::new(None);
+        let cx = Cx {
+            r,
+            rules: &json::RULES,
+            format: Format::Json,
+            digits: Digits::Text(json::Node::new(text, &at)),
+            marked: None,
+            parts,
+            restart: &restart,
+            kept: &kept,
+        };
+        let mut de = serde_json::Deserializer::from_slice(text);
+        let read = Seed {
+            cx: &cx,
+            expected,
+            at: &At::Top,
+        }
+        .deserialize(&mut de)
+        .and_then(|decoded| de.end().map(|()| decoded));
+        if !restart.get() {
+            return read;
+        }
+        // A variant's name or fields given twice: read again, every
+        // variant's fields kept.
+        parts.restart();
+        parts.keep_fields.set(true);
     }
 }
 
 /// The JSON document `doc`, already read (as [`parse_document`] reads
-/// one), decoded into a value of `expected` by `r`: `None` where the
-/// document is the walk's.
+/// one), decoded into a value of `expected` by `r`, its parts of a type
+/// with a written impl as `parts` says.
 ///
 /// [`parse_document`]: crate::builtins::json::parse_document
 pub(crate) fn json_document(
     r: &Reader,
     expected: &FieldType,
     doc: &serde_json::Value,
-) -> Option<Outcome> {
-    let walk = Cell::new(false);
+    parts: &Parts,
+) -> Outcome {
+    let restart = Cell::new(false);
     let kept = Cell::new(None);
     let cx = Cx {
         r,
@@ -111,7 +270,8 @@ pub(crate) fn json_document(
         format: Format::Json,
         digits: Digits::Read,
         marked: None,
-        walk: &walk,
+        parts,
+        restart: &restart,
         kept: &kept,
     };
     let read = Seed {
@@ -120,12 +280,54 @@ pub(crate) fn json_document(
         at: &At::Top,
     }
     .deserialize(ValueDe(doc));
-    match read {
-        Ok(decoded) if !walk.get() => Some(decoded),
-        _ => None,
-    }
+    // (A document read has each key of an object once, and no other
+    // error of a reading.)
+    read.expect("a document read is read")
 }
 
+/// The JSON document `doc` of a postgres cell decoded into a value of
+/// `expected` by `r`, which does at the parts of a type with a written
+/// impl what the reader of the row says: finding them, after the parts
+/// of the cells before (`Holes::Collect`), or putting in the next of
+/// what the impls gave (`Holes::Supply`), as the walk takes them.
+#[cfg(feature = "postgres")]
+pub(crate) fn json_cell(r: &Reader, expected: &FieldType, doc: &serde_json::Value) -> Outcome {
+    use super::Holes;
+    let Some(impls) = &r.impls else {
+        return json_document(r, expected, doc, &Parts::finding());
+    };
+    let finding = Parts::finding();
+    let decoded = json_document(r, expected, doc, &finding);
+    let (found, keep_fields) = finding.into_found();
+    let mut holes = impls.holes.borrow_mut();
+    match &mut *holes {
+        Holes::Collect(holes) => {
+            holes.extend(found.into_iter().map(|found| found.hole));
+            decoded
+        }
+        // The walk takes the next value at each part it comes to, up to
+        // an impl's `Err`.
+        Holes::Supply(values) => {
+            let numbers: Vec<usize> = found.iter().map(|found| found.number).collect();
+            let mut given = Vec::new();
+            for _ in &numbers {
+                let Some(value) = values.next() else { break };
+                let failed = value.is_err();
+                given.push(value);
+                if failed {
+                    break;
+                }
+            }
+            drop(holes);
+            json_document(
+                r,
+                expected,
+                doc,
+                &Parts::supplying(&numbers, given, keep_fields),
+            )
+        }
+    }
+}
 /// A JSON document already read, read as serde_json reads it, but for
 /// the order of an object's members: its `variant` comes first, so that
 /// a variant's fields are decoded as they are read, not kept. (No other
@@ -198,16 +400,20 @@ pub(crate) enum Top<'t> {
     Map(&'t FieldType),
 }
 
-/// The TOML text `text` decoded by `r` as `top` says. A string that
-/// starts with `marked` stands for the date or time literal after it
-/// (`toml::document`).
+/// The TOML text `text` decoded by `r` as `top` says, its parts of a
+/// type with a written impl as `parts` says: the decoder's outcome, or
+/// the parser's error. A string that starts with `marked` stands for
+/// the date or time literal after it (`toml::document`).
 pub(crate) fn toml_text(
     r: &Reader,
     top: &Top,
     text: &str,
     marked: &'static str,
-) -> Read<::toml::de::Error> {
-    let walk = Cell::new(false);
+    parts: &Parts,
+) -> Result<Outcome, ::toml::de::Error> {
+    // (A reading that ended in the parser's error is read again.)
+    parts.restart();
+    let restart = Cell::new(false);
     let kept = Cell::new(None);
     let cx = Cx {
         r,
@@ -215,12 +421,13 @@ pub(crate) fn toml_text(
         format: Format::Toml,
         digits: Digits::Read,
         marked: Some(marked),
-        walk: &walk,
+        parts,
+        restart: &restart,
         kept: &kept,
     };
     let de = ::toml::Deserializer::new(text);
     let map;
-    let read = match top {
+    match top {
         Top::One(expected) => Seed {
             cx: &cx,
             expected,
@@ -242,11 +449,6 @@ pub(crate) fn toml_text(
             keys: *keys,
         }
         .deserialize(de),
-    };
-    match read {
-        _ if walk.get() => Ok(None),
-        Ok(decoded) => Ok(Some(decoded)),
-        Err(e) => Err(e),
     }
 }
 
@@ -260,8 +462,10 @@ struct Cx<'c> {
     /// The start of a TOML string that stands for a date or time
     /// literal.
     marked: Option<&'static str>,
-    /// Set where the document is found to be the walk's.
-    walk: &'c Cell<bool>,
+    parts: &'c Parts,
+    /// Set where a JSON text gives a variant's name or fields twice
+    /// while its fields are decoded as they are read.
+    restart: &'c Cell<bool>,
     /// What was kept of a part that is read again ([`Capture`]), handed
     /// over as it is.
     kept: &'c Cell<Option<Content>>,
@@ -277,11 +481,21 @@ impl Cx<'_> {
         }
     }
 
-    /// The error that stops the reading: the document is the walk's.
-    fn for_the_walk<E: de::Error>(&self) -> E {
-        self.walk.set(true);
-        E::custom("the document is decoded by the walk")
+    /// The error that stops the reading, to read again with the
+    /// variants' fields kept.
+    fn for_a_restart<E: de::Error>(&self) -> E {
+        self.restart.set(true);
+        E::custom("a variant's key is given twice")
     }
+}
+
+/// What a reading does at a part of a type with a written impl it
+/// meets.
+enum Met {
+    /// Find it: its number.
+    Find(usize),
+    /// Put in what the impl gave.
+    Given(Outcome),
 }
 
 /// The format of a document, where formats differ in what a decoder
@@ -409,21 +623,41 @@ enum Opened<'de> {
 }
 
 /// The table `map` opened: under TOML, a table whose first key is
-/// [`DATETIME`] is the literal whose text its value is, as `toml::Value`
-/// reads one; one that holds more, or no datetime, is the walk's.
+/// [`DATETIME`] is the literal whose text its value is, read as
+/// `toml::Value` reads one: the value must be a string of a datetime
+/// (else the parser's error), and what follows is not read.
 fn open<'de, A: MapAccess<'de>>(cx: &Cx, map: &mut A) -> Result<Opened<'de>, A::Error> {
     let first = map.next_key_seed(Key)?;
     if cx.format != Format::Toml || first.as_deref() != Some(DATETIME) {
         return Ok(Opened::Table(first));
     }
-    let text = map.next_value_seed(Capture(*cx))?;
-    let more = map.next_key_seed(PhantomData::<IgnoredAny>)?;
-    match (text, more) {
-        (Content::String(text), None) => match text.parse::<::toml::value::Datetime>() {
-            Ok(datetime) => Ok(Opened::Datetime(datetime.to_string())),
-            Err(_) => Err(cx.for_the_walk()),
-        },
-        _ => Err(cx.for_the_walk()),
+    Ok(Opened::Datetime(map.next_value_seed(DatetimeText)?))
+}
+
+/// The value of [`DATETIME`]: the text of the datetime, as the `toml`
+/// crate reads it.
+struct DatetimeText;
+
+impl<'de> DeserializeSeed<'de> for DatetimeText {
+    type Value = String;
+
+    fn deserialize<D: de::Deserializer<'de>>(self, d: D) -> Result<String, D::Error> {
+        d.deserialize_str(self)
+    }
+}
+
+impl<'de> Visitor<'de> for DatetimeText {
+    type Value = String;
+
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("string containing a datetime")
+    }
+
+    fn visit_str<E: de::Error>(self, s: &str) -> Result<String, E> {
+        match s.parse::<::toml::value::Datetime>() {
+            Ok(datetime) => Ok(datetime.to_string()),
+            Err(e) => Err(de::Error::custom(e)),
+        }
     }
 }
 
@@ -498,17 +732,66 @@ impl<'s> Seed<'s> {
         Skip(*self.cx)
     }
 
-    /// `Err` where a written impl decodes a value of the type: the
-    /// reading stops.
-    fn unwritten<E: de::Error>(&self) -> Result<(), E> {
+    /// The slot of the `decode` the program wrote for the type of the
+    /// part, if it wrote one.
+    fn written(&self) -> Option<u16> {
         let (id, args) = match self.expected {
             FieldType::Record(id) | FieldType::Enum(id) => (id, &[][..]),
             FieldType::Applied(id, args) => (id, args.as_slice()),
-            _ => return Ok(()),
+            _ => return None,
         };
-        match self.cx.r.written(*id, args) {
-            true => Err(self.cx.for_the_walk()),
-            false => Ok(()),
+        let impls = self.cx.r.impls.as_ref()?;
+        (impls.written)(*id, args)
+    }
+
+    /// The part of a type with a written impl the reading meets: its
+    /// number to find it by, or what the impl gave for it, as the
+    /// format's error with the part's path where it gave an `Err`.
+    fn met(&self) -> Met {
+        let parts = self.cx.parts;
+        let number = parts.met.get();
+        parts.met.set(number + 1);
+        let Some(given) = &parts.given else {
+            return Met::Find(number);
+        };
+        Met::Given(match given.get(number).cloned().flatten() {
+            Some(Ok(value)) => Ok(value),
+            Some(Err(error)) => Err(Error::Given((self.cx.rules.from_impl)(
+                &error,
+                &self.at.to_string(),
+            ))),
+            None => Ok(Value::Unit),
+        })
+    }
+
+    /// The part numbered `number`, of the impl in `slot`, found with
+    /// its `json.Value`: a stand-in until the impl gives its value; or,
+    /// where it has none (a TOML float that is no number), the error.
+    fn found(&self, number: usize, slot: u16, json: Result<Value, Error>) -> Outcome {
+        let json = json?;
+        let ty = match self.expected {
+            FieldType::Applied(..) => descriptor(self.cx.r, self.expected),
+            _ => Value::Unit,
+        };
+        let hole = Hole { json, slot, ty };
+        self.cx
+            .parts
+            .found
+            .borrow_mut()
+            .push(Found { number, hole });
+        Ok(Value::Unit)
+    }
+
+    /// Whether the reading makes the value.
+    fn build(&self) -> bool {
+        self.cx.parts.build
+    }
+
+    /// `Some` of `value`, where the reading makes the value.
+    fn some(&self, value: Value) -> Value {
+        match self.build() {
+            true => Value::variant(bv::SOME, [value]),
+            false => Value::Unit,
         }
     }
 
@@ -574,6 +857,12 @@ impl<'s> Seed<'s> {
 
     /// The value of the part that is `scalar`.
     fn scalar<E: de::Error>(self, scalar: Scalar) -> Result<Outcome, E> {
+        if let Some(slot) = self.written() {
+            return Ok(match self.met() {
+                Met::Find(number) => self.found(number, slot, self.json().scalar(scalar)),
+                Met::Given(outcome) => outcome,
+            });
+        }
         // (The most of a document: no type to look up.)
         if let FieldType::String
         | FieldType::Int
@@ -591,14 +880,13 @@ impl<'s> Seed<'s> {
         let mismatch = |expected: &'static str| Error::mismatch(expected, kind, at);
         Ok(match self.want() {
             Want::Option(_) if matches!(scalar, Scalar::Null) => Ok(Value::variant(bv::NONE, [])),
-            Want::Option(inner) => {
-                let some = self.of(inner, at);
-                some.unwritten()?;
-                some.scalar(scalar)?
-                    .map(|value| Value::variant(bv::SOME, [value]))
-            }
+            Want::Option(inner) => self
+                .of(inner, at)
+                .scalar(scalar)?
+                .map(|value| self.some(value)),
             Want::Fails(e) => Err(e),
-            Want::JsonValue => Ok(scalar.json()),
+            Want::JsonValue if !self.build() => Ok(Value::Unit),
+            Want::JsonValue => self.json().scalar(scalar),
             Want::List(_) => Err(mismatch("List")),
             Want::Map(_) => Err(mismatch("Map")),
             Want::Tuple(_) => Err(mismatch("Tuple")),
@@ -620,6 +908,7 @@ impl<'s> Seed<'s> {
         match self.expected {
             // (A datetime literal is no string, as a float is no `Int`.)
             FieldType::String => match scalar {
+                Scalar::String(_) if !self.build() => Ok(Value::Unit),
                 Scalar::String(s) => Ok(Value::String(s.into())),
                 _ => Err(mismatch("String")),
             },
@@ -679,24 +968,33 @@ impl<'s> Seed<'s> {
 
     /// The value of the part that is an array, read by `seq`.
     fn array<'de, A: SeqAccess<'de>>(self, mut seq: A) -> Result<Outcome, A::Error> {
+        if let Some(slot) = self.written() {
+            return Ok(match self.met() {
+                Met::Find(number) => self.found(number, slot, self.json().array(seq)?),
+                Met::Given(outcome) => {
+                    while seq.next_element_seed(self.skip())?.is_some() {}
+                    outcome
+                }
+            });
+        }
         let rules = self.cx.rules;
         let at = self.at;
         let mismatch = |expected: &'static str| Error::mismatch(expected, "array", at);
         let failed = match self.want() {
             Want::Option(inner) => {
-                let some = self.of(inner, at);
-                some.unwritten()?;
-                let some = some.array(seq)?;
-                return Ok(some.map(|value| Value::variant(bv::SOME, [value])));
+                let some = self.of(inner, at).array(seq)?;
+                return Ok(some.map(|value| self.some(value)));
             }
             // The elements in order, up to the first that is no value of
             // the type.
             Want::List(inner) => {
                 let mut values = Vec::with_capacity(room(&seq));
                 let mut index = 0;
+                let build = self.build();
                 while let Some(decoded) = seq.next_element_seed(self.of(inner, &at.index(index)))? {
                     match decoded {
-                        Ok(value) => values.push(value),
+                        Ok(value) if build => values.push(value),
+                        Ok(_) => {}
                         Err(e) => {
                             while seq.next_element_seed(self.skip())?.is_some() {}
                             return Ok(Err(e));
@@ -704,11 +1002,15 @@ impl<'s> Seed<'s> {
                     }
                     index += 1;
                 }
-                return Ok(Ok(Value::list(values)));
+                return Ok(Ok(match build {
+                    true => Value::list(values),
+                    false => Value::Unit,
+                }));
             }
             // An array of as many elements as the tuple has, which it
             // takes before any element is decoded.
             Want::Tuple(elems) => {
+                let start = self.cx.parts.mark();
                 let mut values = Vec::with_capacity(elems.len());
                 let mut error = None;
                 let mut count = 0;
@@ -729,6 +1031,11 @@ impl<'s> Seed<'s> {
                     }
                     count += 1;
                 }
+                // (A tuple of the wrong length decodes none of its
+                // elements.)
+                if count != elems.len() {
+                    self.cx.parts.reorder(start, []);
+                }
                 return Ok(match (count == elems.len(), error) {
                     (false, _) => Err(Error::other(
                         format_args!(
@@ -738,10 +1045,15 @@ impl<'s> Seed<'s> {
                         at,
                     )),
                     (true, Some(e)) => Err(e),
+                    (true, None) if !self.build() => Ok(Value::Unit),
                     (true, None) => Ok(Value::tuple(values)),
                 });
             }
-            Want::JsonValue => return Ok(Ok(JsonSeed(*self.cx).array(seq)?)),
+            Want::JsonValue if !self.build() => {
+                while seq.next_element_seed(self.skip())?.is_some() {}
+                return Ok(Ok(Value::Unit));
+            }
+            Want::JsonValue => return self.json().array(seq),
             Want::Fails(e) => e,
             Want::Map(_) => mismatch("Map"),
             Want::Record(..) => mismatch(rules.table),
@@ -763,20 +1075,31 @@ impl<'s> Seed<'s> {
     /// The value of the part that is a table of the entries `entries`,
     /// of a type that a table is a value of.
     fn table<'de, A: MapAccess<'de>>(self, entries: Entries<'de, A>) -> Result<Outcome, A::Error> {
+        if let Some(slot) = self.written() {
+            return Ok(match self.met() {
+                Met::Find(number) => self.found(number, slot, self.json().table(entries)?),
+                Met::Given(outcome) => {
+                    entries.skip(self.skip())?;
+                    outcome
+                }
+            });
+        }
         let at = self.at;
         let mismatch =
             |expected: &'static str| Error::mismatch(expected, self.cx.format.table(), at);
         let failed = match self.want() {
             Want::Option(inner) => {
-                let some = self.of(inner, at);
-                some.unwritten()?;
-                let some = some.table(entries)?;
-                return Ok(some.map(|value| Value::variant(bv::SOME, [value])));
+                let some = self.of(inner, at).table(entries)?;
+                return Ok(some.map(|value| self.some(value)));
             }
             Want::Map(inner) => return self.map(entries, inner),
             Want::Record(ty, args) => return self.record(entries, &ty, args),
             Want::Variant(ty, args) => return self.variant(entries, &ty, args),
-            Want::JsonValue => return Ok(Ok(JsonSeed(*self.cx).table(entries)?)),
+            Want::JsonValue if !self.build() => {
+                entries.skip(self.skip())?;
+                return Ok(Ok(Value::Unit));
+            }
+            Want::JsonValue => return self.json().table(entries),
             Want::Fails(e) => e,
             Want::List(_) => mismatch("List"),
             Want::Tuple(_) => mismatch("Tuple"),
@@ -794,30 +1117,49 @@ impl<'s> Seed<'s> {
         mut entries: Entries<'de, A>,
         inner: &FieldType,
     ) -> Result<Outcome, A::Error> {
-        let mut read: Vec<(Arc<str>, Outcome)> = Vec::new();
+        let parts = self.cx.parts;
+        let start = parts.mark();
+        let mut read: Vec<(Arc<str>, Outcome, Range<usize>)> = Vec::new();
         while let Some(key) = entries.key()? {
+            let from = parts.mark();
             let decoded = entries.value(self.of(inner, &self.at.key(&key)))?;
-            read.push((key.into(), decoded));
+            read.push((key.into(), decoded, from..parts.mark()));
         }
-        if read.iter().all(|(_, decoded)| decoded.is_ok()) {
-            let read = read
-                .into_iter()
-                .filter_map(|(key, decoded)| decoded.ok().map(|value| (Value::String(key), value)));
+        let all_ok = read.iter().all(|(_, decoded, _)| decoded.is_ok());
+        if !self.build() && all_ok && parts.mark() == start {
+            return Ok(Ok(Value::Unit));
+        }
+        if parts.mark() == start && all_ok {
+            let read = read.into_iter().filter_map(|(key, decoded, _)| {
+                decoded.ok().map(|value| (Value::String(key), value))
+            });
             return Ok(Ok(Value::map(read)));
         }
-        // (Of a key written twice the last value counts, its error too.)
+        // (Of a key written twice the last value counts, its error and
+        // its parts too.)
         let mut sorted = BTreeMap::new();
-        for (key, decoded) in read {
-            sorted.insert(key, decoded);
+        for (key, decoded, found) in read {
+            sorted.insert(key, (decoded, found));
         }
         let mut values = Vec::with_capacity(sorted.len());
-        for (key, decoded) in sorted {
+        let mut ranges = Vec::with_capacity(sorted.len());
+        let mut error = None;
+        for (key, (decoded, found)) in sorted {
+            ranges.push(found);
             match decoded {
                 Ok(value) => values.push((Value::String(key), value)),
-                Err(e) => return Ok(Err(e)),
+                Err(e) => {
+                    error = Some(e);
+                    break;
+                }
             }
         }
-        Ok(Ok(Value::map(values)))
+        parts.reorder(start, ranges);
+        Ok(match error {
+            Some(e) => Err(e),
+            None if !self.build() => Ok(Value::Unit),
+            None => Ok(Value::map(values)),
+        })
     }
 
     /// The record of type `ty` at its type arguments `args` that the
@@ -830,35 +1172,65 @@ impl<'s> Seed<'s> {
         args: &[FieldType],
     ) -> Result<Outcome, A::Error> {
         let fields = ty.fields();
-        let mut read: Vec<Option<Outcome>> = (0..fields.len()).map(|_| None).collect();
+        let parts = self.cx.parts;
+        let start = parts.mark();
+        let mut read: Vec<Option<(Outcome, Range<usize>)>> =
+            (0..fields.len()).map(|_| None).collect();
         while let Some(key) = entries.key()? {
             match fields.iter().position(|(name, _)| *name == *key) {
                 Some(k) => {
                     let (name, field) = &fields[k];
                     let field = field.instantiated(args);
                     let at = self.at.key(name);
-                    read[k] = Some(entries.value(self.of(&field, &at))?);
+                    let from = parts.mark();
+                    let decoded = entries.value(self.of(&field, &at))?;
+                    read[k] = Some((decoded, from..parts.mark()));
                 }
                 None => entries.value(self.skip())?,
             }
         }
+        // (The parts found in the fields, in the order the type declares
+        // them, where there are any.)
+        let found_any = parts.mark() != start;
         let mut values = Vec::with_capacity(fields.len());
+        let mut ranges = Vec::new();
+        let mut error = None;
         for ((name, field), read) in fields.iter().zip(read) {
-            values.push(match read {
-                Some(Ok(value)) => value,
-                Some(Err(Error::Unsupported(declared))) => {
-                    let message = unsupported_field_type_message(&ty.name, name, &declared);
-                    return Ok(Err(Error::Other(message)));
+            let decoded = match read {
+                Some((decoded, found)) => {
+                    if found_any {
+                        ranges.push(found);
+                    }
+                    decoded
                 }
-                Some(Err(e)) => return Ok(Err(e)),
                 // (TOML has no null: a key it leaves out is a `None`.)
                 None => match &*field.instantiated(args) {
-                    FieldType::Option(_) => Value::variant(bv::NONE, []),
-                    _ => return Ok(Err(Error::MissingField(self.at.key(name).to_string()))),
+                    FieldType::Option(_) => Ok(Value::variant(bv::NONE, [])),
+                    _ => Err(Error::MissingField(self.at.key(name).to_string())),
                 },
-            });
+            };
+            match decoded {
+                Ok(value) if self.build() => values.push(value),
+                Ok(_) => {}
+                Err(Error::Unsupported(declared)) => {
+                    let message = unsupported_field_type_message(&ty.name, name, &declared);
+                    error = Some(Error::Other(message));
+                    break;
+                }
+                Err(e) => {
+                    error = Some(e);
+                    break;
+                }
+            }
         }
-        Ok(Ok(Value::record(ty.clone(), values)))
+        if found_any {
+            parts.reorder(start, ranges);
+        }
+        Ok(match error {
+            Some(e) => Err(e),
+            None if !self.build() => Ok(Value::Unit),
+            None => Ok(Value::record(ty.clone(), values)),
+        })
     }
 
     /// The variant of the enum type `ty` at its type arguments `args`
@@ -867,8 +1239,9 @@ impl<'s> Seed<'s> {
     /// ignored. The fields are decoded as they are read where the name
     /// came before them; where they come first they are kept as read
     /// (once: a variant in them is read from what is kept, which it
-    /// shares) and decoded once the name is read. A table that gives
-    /// either key twice is the walk's.
+    /// shares) and decoded once the name is read. A JSON text that gives
+    /// either key twice is read again with every variant's fields kept
+    /// ([`Parts::keep_fields`]), the last of each counting.
     fn variant<'de, A: MapAccess<'de>>(
         self,
         mut entries: Entries<'de, A>,
@@ -877,22 +1250,23 @@ impl<'s> Seed<'s> {
     ) -> Result<Outcome, A::Error> {
         let cx = self.cx;
         let at = self.at;
+        let keep = cx.parts.keep_fields.get();
         let mut name = None;
         let mut fields = None;
         while let Some(key) = entries.key()? {
             match &*key {
-                "variant" if name.is_some() => return Err(cx.for_the_walk()),
-                "fields" if fields.is_some() => return Err(cx.for_the_walk()),
+                "variant" if !keep && name.is_some() => return Err(cx.for_a_restart()),
+                "fields" if !keep && fields.is_some() => return Err(cx.for_a_restart()),
                 "variant" => name = Some(entries.value(Capture(*cx))?),
                 "fields" => {
-                    fields = Some(match named(cx, ty, name.as_ref(), at) {
-                        Ok(tag) => Fields::Read(entries.value(self.fields(&tag, args))?),
+                    fields = Some(match (keep, named(cx, ty, name.as_ref(), at)) {
+                        (false, Ok(tag)) => Fields::Read(entries.value(self.fields(&tag, args))?),
                         // (The name's error is the variant's.)
-                        Err(_) if name.is_some() => {
+                        (false, Err(_)) if name.is_some() => {
                             entries.value(self.skip())?;
                             Fields::Passed
                         }
-                        Err(_) => Fields::Kept(entries.value(Capture(*cx))?),
+                        _ => Fields::Kept(entries.value(Capture(*cx))?),
                     })
                 }
                 _ => entries.value(self.skip())?,
@@ -1001,6 +1375,7 @@ impl FieldsSeed<'_> {
                 &declared,
             ))),
             Some(e) => Err(e),
+            None if !self.seed.build() => Ok(Value::Unit),
             None => Ok(Value::variant(self.tag.clone(), values)),
         }
     }
@@ -1058,6 +1433,7 @@ impl<'de> Visitor<'de> for FieldsSeed<'_> {
     fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Outcome, A::Error> {
         let declared = &self.tag.ty().variants()[self.tag.ordinal() as usize].fields;
         let at_fields = self.seed.at.key("fields");
+        let start = self.seed.cx.parts.mark();
         let mut values = Vec::with_capacity(declared.len());
         let mut error = None;
         let mut count = 0;
@@ -1078,6 +1454,10 @@ impl<'de> Visitor<'de> for FieldsSeed<'_> {
                 None => break,
             }
             count += 1;
+        }
+        // (Fields of the wrong count decode none of them.)
+        if count != declared.len() {
+            self.seed.cx.parts.reorder(start, []);
         }
         Ok(self.count(count, values, error))
     }
@@ -1150,8 +1530,6 @@ impl<'de> DeserializeSeed<'de> for Seed<'_> {
     type Value = Outcome;
 
     fn deserialize<D: de::Deserializer<'de>>(self, d: D) -> Result<Outcome, D::Error> {
-        // A record or enum type with a written impl: the impl's.
-        self.unwritten()?;
         d.deserialize_any(self)
     }
 }
@@ -1250,7 +1628,11 @@ impl<'de> Visitor<'de> for ListUnderItsKey<'_> {
         }
         Ok(match (keys, decoded) {
             (1, Some(decoded)) => decoded,
-            _ => Err(Error::Other((self.keys)(keys))),
+            // (A document of more keys or none decodes none of them.)
+            _ => {
+                self.cx.parts.reorder(0, []);
+                Err(Error::Other((self.keys)(keys)))
+            }
         })
     }
 }
@@ -1635,18 +2017,61 @@ impl<'de> IntoDeserializer<'de, de::value::Error> for ContentDe<'de> {
     }
 }
 
-/// The reading of a part into the `json.Value` that holds it.
+/// The reading of a part, `at` a path, into the `json.Value` that holds
+/// it: a written impl's part, or a part of type `json.Value`. A TOML
+/// float that is no number has none: a type mismatch at its own path
+/// (the first, as the walk comes to them: a table's keys sorted).
 #[derive(Clone, Copy)]
-struct JsonSeed<'t>(Cx<'t>);
+struct JsonSeed<'s> {
+    cx: &'s Cx<'s>,
+    at: &'s At<'s>,
+}
+
+impl<'s> Seed<'s> {
+    /// The reading of the part into its `json.Value`.
+    fn json(&self) -> JsonSeed<'s> {
+        JsonSeed {
+            cx: self.cx,
+            at: self.at,
+        }
+    }
+}
 
 impl JsonSeed<'_> {
-    /// The `json.Array` of the array `seq` reads.
-    fn array<'de, A: SeqAccess<'de>>(self, mut seq: A) -> Result<Value, A::Error> {
-        let mut items = Vec::with_capacity(room(&seq));
-        while let Some(item) = seq.next_element_seed(self)? {
-            items.push(item);
+    /// The `json.Value` of `scalar`.
+    fn scalar(&self, scalar: Scalar) -> Outcome {
+        match scalar {
+            Scalar::Float(f) if !f.is_finite() => {
+                Err(Error::mismatch("json.Value", "a non-finite float", self.at))
+            }
+            scalar => Ok(scalar.json()),
         }
-        Ok(Value::variant(bv::JSON_ARRAY, [Value::list(items)]))
+    }
+
+    /// The `json.Array` of the array `seq` reads.
+    fn array<'de, A: SeqAccess<'de>>(self, mut seq: A) -> Result<Outcome, A::Error> {
+        let mut items = Vec::with_capacity(room(&seq));
+        let mut error = None;
+        let mut index = 0;
+        loop {
+            let at = self.at.index(index);
+            let item = JsonSeed {
+                cx: self.cx,
+                at: &at,
+            };
+            match seq.next_element_seed(item)? {
+                Some(Ok(item)) => items.push(item),
+                Some(Err(e)) => {
+                    error.get_or_insert(e);
+                }
+                None => break,
+            }
+            index += 1;
+        }
+        Ok(match error {
+            Some(e) => Err(e),
+            None => Ok(Value::variant(bv::JSON_ARRAY, [Value::list(items)])),
+        })
     }
 
     /// The `json.Object` of the table of `entries`. (Of a key written
@@ -1654,63 +2079,78 @@ impl JsonSeed<'_> {
     fn table<'de, A: MapAccess<'de>>(
         self,
         mut entries: Entries<'de, A>,
-    ) -> Result<Value, A::Error> {
+    ) -> Result<Outcome, A::Error> {
         let mut members = Vec::new();
+        let mut failed = false;
         while let Some(key) = entries.key()? {
-            members.push((Value::String(key.into()), entries.value(self)?));
+            let at = self.at.key(&key);
+            let member = entries.value(JsonSeed {
+                cx: self.cx,
+                at: &at,
+            })?;
+            failed |= member.is_err();
+            members.push((Arc::<str>::from(key), member));
         }
-        Ok(Value::variant(bv::JSON_OBJECT, [Value::map(members)]))
+        if failed {
+            let sorted: BTreeMap<_, _> = members.into_iter().collect();
+            let first = sorted.into_values().find_map(Result::err);
+            return Ok(Err(first.expect("a member has no json.Value")));
+        }
+        let members = members
+            .into_iter()
+            .map(|(key, member)| (Value::String(key), member.expect("no member failed")));
+        Ok(Ok(Value::variant(bv::JSON_OBJECT, [Value::map(members)])))
     }
 }
 
 impl<'de> DeserializeSeed<'de> for JsonSeed<'_> {
-    type Value = Value;
+    type Value = Outcome;
 
-    fn deserialize<D: de::Deserializer<'de>>(self, d: D) -> Result<Value, D::Error> {
+    fn deserialize<D: de::Deserializer<'de>>(self, d: D) -> Result<Outcome, D::Error> {
         d.deserialize_any(self)
     }
 }
 
 impl<'de> Visitor<'de> for JsonSeed<'_> {
-    type Value = Value;
+    type Value = Outcome;
 
     fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         f.write_str("a JSON value")
     }
 
-    fn visit_bool<E: de::Error>(self, b: bool) -> Result<Value, E> {
-        Ok(Scalar::Bool(b).json())
+    fn visit_bool<E: de::Error>(self, b: bool) -> Result<Outcome, E> {
+        Ok(self.scalar(Scalar::Bool(b)))
     }
 
-    fn visit_i64<E: de::Error>(self, n: i64) -> Result<Value, E> {
-        self.0.digits.integer();
-        Ok(Scalar::Int(n).json())
+    fn visit_i64<E: de::Error>(self, n: i64) -> Result<Outcome, E> {
+        self.cx.digits.integer();
+        Ok(self.scalar(Scalar::Int(n)))
     }
 
-    fn visit_u64<E: de::Error>(self, n: u64) -> Result<Value, E> {
-        self.0.digits.integer();
-        Ok(Scalar::unsigned(n).json())
+    fn visit_u64<E: de::Error>(self, n: u64) -> Result<Outcome, E> {
+        self.cx.digits.integer();
+        Ok(self.scalar(Scalar::unsigned(n)))
     }
 
-    fn visit_f64<E: de::Error>(self, f: f64) -> Result<Value, E> {
-        Ok(self.0.digits.float(f).json())
+    fn visit_f64<E: de::Error>(self, f: f64) -> Result<Outcome, E> {
+        Ok(self.scalar(self.cx.digits.float(f)))
     }
 
-    fn visit_str<E: de::Error>(self, s: &str) -> Result<Value, E> {
-        Ok(self.0.string(s).json())
+    fn visit_str<E: de::Error>(self, s: &str) -> Result<Outcome, E> {
+        Ok(self.scalar(self.cx.string(s)))
     }
 
-    fn visit_unit<E: de::Error>(self) -> Result<Value, E> {
-        Ok(Scalar::Null.json())
+    fn visit_unit<E: de::Error>(self) -> Result<Outcome, E> {
+        Ok(self.scalar(Scalar::Null))
     }
 
-    fn visit_seq<A: SeqAccess<'de>>(self, seq: A) -> Result<Value, A::Error> {
+    fn visit_seq<A: SeqAccess<'de>>(self, seq: A) -> Result<Outcome, A::Error> {
         self.array(seq)
     }
 
-    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Value, A::Error> {
-        let first = match open(&self.0, &mut map)? {
-            Opened::Datetime(text) => return Ok(Scalar::Datetime(&text).json()),
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Outcome, A::Error> {
+        let first = match open(self.cx, &mut map)? {
+            Opened::Datetime(text) => return Ok(self.scalar(Scalar::Datetime(&text))),
             Opened::Table(first) => first,
         };
         self.table(Entries { first, map })
@@ -1770,9 +2210,9 @@ mod tests {
     }
 
     /// How many parts `read` kept, and that it decoded a variant.
-    fn kept(read: impl FnOnce() -> Option<Outcome>) -> usize {
+    fn kept(read: impl FnOnce() -> Outcome) -> usize {
         CAPTURED.with(|captured| captured.set(0));
-        let decoded = read().expect("the reading decodes the document");
+        let decoded = read();
         assert!(decoded.is_ok(), "{:?}", decoded.err());
         CAPTURED.with(Cell::get)
     }
@@ -1788,18 +2228,20 @@ mod tests {
         const NUMBERS: usize = 1_000;
         for levels in [1, 10, 20] {
             let text = nested(NUMBERS, levels, false);
-            let from_text = kept(|| json_text(&reader, &e, text.as_bytes()).expect("JSON"));
+            let parts = Parts::finding();
+            let from_text = kept(|| json_text(&reader, &e, text.as_bytes(), &parts).expect("JSON"));
             assert!(
                 from_text <= NUMBERS + 10 * levels,
                 "{levels} levels: {from_text} parts kept"
             );
             let doc: serde_json::Value = serde_json::from_str(&text).expect("JSON");
-            let from_doc = kept(|| json_document(&reader, &e, &doc));
+            let from_doc = kept(|| json_document(&reader, &e, &doc, &parts));
             // (Each variant's name alone.)
             assert_eq!(from_doc, levels + 1, "{levels} levels of a document read");
             let toml = format!("e = {}\n", nested(NUMBERS, levels.min(10), true));
             let top = Top::One(&r);
-            let from_toml = kept(|| toml_text(&reader, &top, &toml, "\u{0}").expect("TOML"));
+            let from_toml =
+                kept(|| toml_text(&reader, &top, &toml, "\u{0}", &parts).expect("TOML"));
             assert!(
                 from_toml <= NUMBERS + 10 * levels,
                 "{levels} levels of TOML: {from_toml} parts kept"

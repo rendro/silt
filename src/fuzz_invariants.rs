@@ -334,7 +334,15 @@ type Targets {
 struct JsonTargets {
     vm: crate::vm::Vm,
     targets: Vec<(String, crate::typeinfo::FieldType)>,
+    /// The types a written impl decodes, of [`IMPLS`], each with the
+    /// slot of its `decode`.
+    impls: Vec<(crate::defs::TypeId, u16)>,
 }
+
+/// The types of [`JSON_TYPES`] that a written `json.Decode` impl
+/// decodes where a decoding honours impls ([`fake_impl`] stands for
+/// each).
+const IMPLS: [&str; 3] = ["Tag", "Shape", "Box"];
 
 impl JsonTargets {
     fn new() -> JsonTargets {
@@ -349,48 +357,198 @@ impl JsonTargets {
             .expect("Targets is described")
             .fields()
             .to_vec();
-        JsonTargets { vm, targets }
+        let impls = (program.types.iter())
+            .filter_map(|info| {
+                let slot = IMPLS.iter().position(|name| *name == info.name)?;
+                Some((info.id, 100 + slot as u16))
+            })
+            .collect();
+        JsonTargets { vm, targets, impls }
     }
+
+    /// The slot of the written impl of the type `id`, if [`IMPLS`] has
+    /// one.
+    fn written(&self, id: crate::defs::TypeId, _: &[crate::typeinfo::FieldType]) -> Option<u16> {
+        (self.impls.iter()).find_map(|(of, slot)| (*of == id).then_some(*slot))
+    }
+}
+
+/// What the written impl of a part gives for its `json.Value` `json`:
+/// the text of the value, or, for one of a text a multiple of four
+/// long, a `JsonError` that says so.
+fn fake_impl(json: &crate::value::Value) -> Result<crate::value::Value, crate::value::Value> {
+    use crate::typeinfo::bv;
+    use crate::value::Value;
+    let text = json.to_string();
+    match text.len() % 4 {
+        0 => Err(Value::variant(
+            bv::JSON_OTHER,
+            [Value::String(format!("no {text}").into())],
+        )),
+        _ => Ok(Value::String(text.into())),
+    }
+}
+
+/// The impls' calls of a decoding, as the frame makes them for the parts
+/// `holes`: in order, each one's slot, type and `json.Value`, up to the
+/// first that gives an `Err`; and what they gave.
+fn impl_calls<'h>(
+    holes: impl IntoIterator<Item = &'h crate::builtins::decode::Hole>,
+) -> (
+    Vec<String>,
+    Vec<Result<crate::value::Value, crate::value::Value>>,
+) {
+    let mut calls = Vec::new();
+    let mut given = Vec::new();
+    for hole in holes {
+        calls.push(format!("{} {} {}", hole.slot, hole.ty, hole.json));
+        let gave = fake_impl(&hole.json);
+        let failed = gave.is_err();
+        given.push(gave);
+        if failed {
+            break;
+        }
+    }
+    (calls, given)
+}
+
+/// A decoding by the walk of a tree as the VM's frame ran it (two
+/// walks, with the impls between them): the impls' calls and the
+/// result. `walk` walks the tree with a reader, or gives the call's
+/// result where there is no document.
+fn walked_decoding(
+    rt: &crate::vm::Runtime,
+    written: &dyn Fn(crate::defs::TypeId, &[crate::typeinfo::FieldType]) -> Option<u16>,
+    rules: &crate::builtins::decode::Rules,
+    walk: impl Fn(
+        &crate::builtins::decode::Reader,
+    ) -> Result<crate::builtins::decode::seed::Outcome, crate::value::Value>,
+) -> (Vec<String>, crate::value::Value) {
+    use crate::builtins::decode::{self, Holes, Reader};
+    let first = Reader::with_impls(rt, written, Holes::Collect(Vec::new()));
+    let decoded = match walk(&first) {
+        Ok(decoded) => decoded,
+        Err(result) => return (Vec::new(), result),
+    };
+    let holes = first.into_holes();
+    if holes.is_empty() {
+        return (Vec::new(), decode::result(rules, decoded));
+    }
+    let (calls, given) = impl_calls(&holes);
+    if let (Ok(_), Err(e)) = (given.last().expect("a call").as_ref(), decoded) {
+        return (calls, decode::result(rules, Err(e)));
+    }
+    let second = Reader::with_impls(rt, written, Holes::Supply(given.into_iter()));
+    let decoded = walk(&second).expect("a document");
+    (calls, decode::result(rules, decoded))
+}
+
+/// A decoding by the reading of a document as the VM's frame runs it
+/// (two readings, with the impls between them; the first only finding
+/// the parts where `only_finding`): the impls' calls and the result.
+/// `read` reads the document, or gives the call's result where there is
+/// none.
+fn read_decoding(
+    only_finding: bool,
+    rt: &crate::vm::Runtime,
+    written: &dyn Fn(crate::defs::TypeId, &[crate::typeinfo::FieldType]) -> Option<u16>,
+    rules: &crate::builtins::decode::Rules,
+    read: impl Fn(
+        &crate::builtins::decode::Reader,
+        &crate::builtins::decode::seed::Parts,
+    ) -> Result<crate::builtins::decode::seed::Outcome, crate::value::Value>,
+) -> (Vec<String>, crate::value::Value) {
+    use crate::builtins::decode::seed::Parts;
+    use crate::builtins::decode::{self, Holes, Reader};
+    let reader = Reader::with_impls(rt, written, Holes::Collect(Vec::new()));
+    let finding = match only_finding {
+        true => Parts::only_finding(),
+        false => Parts::finding(),
+    };
+    let decoded = match read(&reader, &finding) {
+        Ok(decoded) => decoded,
+        Err(result) => return (Vec::new(), result),
+    };
+    let built = finding.built();
+    let (found, keep_fields) = finding.into_found();
+    if found.is_empty() {
+        let decoded = match (built, decoded) {
+            (false, Ok(_)) => {
+                read(&reader, &Parts::supplying(&[], Vec::new(), keep_fields)).expect("a document")
+            }
+            (_, decoded) => decoded,
+        };
+        return (Vec::new(), decode::result(rules, decoded));
+    }
+    let (calls, given) = impl_calls(found.iter().map(|found| &found.hole));
+    if let (Ok(_), Err(e)) = (given.last().expect("a call").as_ref(), decoded) {
+        return (calls, decode::result(rules, Err(e)));
+    }
+    let numbers: Vec<usize> = found.iter().map(|found| found.number).collect();
+    let supplying = Parts::supplying(&numbers, given, keep_fields);
+    let decoded = read(&reader, &supplying).expect("a document");
+    (calls, decode::result(rules, decoded))
+}
+
+/// `Err` where the walk's decoding and the reading's differ: in the
+/// impls they call, or in their result, its text or as a value.
+fn agree_with_calls(
+    name: &str,
+    walked: &(Vec<String>, crate::value::Value),
+    read: &(Vec<String>, crate::value::Value),
+    what: &str,
+) -> Result<(), String> {
+    if walked.0 != read.0 {
+        return Err(format!(
+            "{name}: the walk calls {:?}, the reading {:?}, of {what}",
+            walked.0, read.0
+        ));
+    }
+    agree(name, &walked.1, &read.1, what)
 }
 
 /// `json.parse` of the text `text` into a value of each of a set of
 /// types (records, enums and generic types of them, lists, maps,
-/// tuples, options, dates and times, `json.Value`): the reading of the
-/// text (`decode::seed`) gives what the walk of the document's tree
-/// gives, value or error, to the byte; and so does the reading of the
-/// document read (`json.decode`'s, a postgres cell's).
+/// tuples, options, dates and times, `json.Value`), with and without
+/// written impls of some of them (`IMPLS`, `fake_impl`): the
+/// reading of the text (`decode::seed`) gives what the walk of the
+/// document's tree gives, value or error, to the byte, and calls the
+/// impls with the same parts in the same order; and so does the reading
+/// of the document read (`json.decode`'s, a postgres cell's).
 pub fn check_json_decoders_agree(text: &[u8]) -> Result<(), String> {
-    use crate::builtins::decode::{self, At, Holes, Reader, seed};
+    use crate::builtins::decode::{self, At, seed};
     use crate::builtins::json;
     thread_local! {
         static TARGETS: JsonTargets = JsonTargets::new();
     }
     TARGETS.with(|targets| {
+        let rt = &targets.vm.runtime;
         let none = |_, _: &[crate::typeinfo::FieldType]| None;
-        let reader = Reader::with_impls(&targets.vm.runtime, &none, Holes::Collect(Vec::new()));
+        let impls = |id, args: &[crate::typeinfo::FieldType]| targets.written(id, args);
         let tree = json::parse_document(text);
+        let shown = String::from_utf8_lossy(text);
         for (name, expected) in &targets.targets {
-            let walked = match &tree {
-                Ok(doc) => decode::result(
-                    &json::RULES,
-                    decode::value(&reader, doc, expected, &At::Top),
-                ),
-                Err(e) => json::json_result_err(e, text),
-            };
-            let read = match seed::json_text(&reader, expected, text) {
-                Ok(Some(decoded)) => decode::result(&json::RULES, decoded),
-                Err(e) => json::json_result_err(&e, text),
-                // (A variant table that gives a key twice: the walk decodes
-                // it, as the program sees.)
-                Ok(None) => continue,
-            };
-            agree(name, &walked, &read, &String::from_utf8_lossy(text))?;
-            if let Ok(doc) = &tree {
-                let read = match seed::json_document(&reader, expected, doc) {
-                    Some(decoded) => decode::result(&json::RULES, decoded),
-                    None => continue,
-                };
-                agree(name, &walked, &read, &format!("the document {doc}"))?;
+            for (with_impls, written) in [&none as &dyn Fn(_, &[_]) -> _, &impls]
+                .into_iter()
+                .enumerate()
+            {
+                let only_finding = with_impls == 1;
+                let walked = walked_decoding(rt, written, &json::RULES, |r| match &tree {
+                    Ok(doc) => Ok(decode::value(r, doc, expected, &At::Top)),
+                    Err(e) => Err(json::json_result_err(e, text)),
+                });
+                let read = read_decoding(only_finding, rt, written, &json::RULES, |r, parts| {
+                    seed::json_text(r, expected, text, parts)
+                        .map_err(|e| json::json_result_err(&e, text))
+                });
+                agree_with_calls(name, &walked, &read, &shown)?;
+                if let Ok(doc) = &tree {
+                    let read =
+                        read_decoding(only_finding, rt, written, &json::RULES, |r, parts| {
+                            Ok(seed::json_document(r, expected, doc, parts))
+                        });
+                    agree_with_calls(name, &walked, &read, &format!("the document {doc}"))?;
+                }
             }
         }
         Ok(())
@@ -415,18 +573,20 @@ fn agree(
 
 /// `toml.parse`, `toml.parse_map` and `toml.parse_list` of the text
 /// `text` into a value of each of the types of
-/// [`check_json_decoders_agree`]: the reading of the text
-/// (`decode::seed`) gives what the walk of the document's tree gives,
-/// value or error, to the byte.
+/// [`check_json_decoders_agree`], with and without written impls: the
+/// reading of the text (`decode::seed`) gives what the walk of the
+/// document's tree gives, value or error, to the byte, and calls the
+/// impls with the same parts in the same order.
 pub fn check_toml_decoders_agree(text: &str) -> Result<(), String> {
-    use crate::builtins::decode::{Holes, Reader, seed};
+    use crate::builtins::decode::seed;
     use crate::builtins::toml;
     thread_local! {
         static TARGETS: JsonTargets = JsonTargets::new();
     }
     TARGETS.with(|targets| {
+        let rt = &targets.vm.runtime;
         let none = |_, _: &[crate::typeinfo::FieldType]| None;
-        let reader = Reader::with_impls(&targets.vm.runtime, &none, Holes::Collect(Vec::new()));
+        let impls = |id, args: &[crate::typeinfo::FieldType]| targets.written(id, args);
         let keys = |n: usize| format!("{n} keys");
         let doc = toml::document(text);
         for (name, expected) in &targets.targets {
@@ -435,14 +595,19 @@ pub fn check_toml_decoders_agree(text: &str) -> Result<(), String> {
                 seed::Top::Map(expected),
                 seed::Top::List(expected, &keys),
             ] {
-                let walked = toml::walked(&reader, &top, &doc);
-                let read = match toml::read_text(&reader, &top, text) {
-                    Ok(Some(decoded)) => crate::builtins::decode::result(&toml::RULES, decoded),
-                    Err(result) => result,
-                    // (A table the walk reads as no table of the text.)
-                    Ok(None) => continue,
-                };
-                agree(name, &walked, &read, text)?;
+                for (with_impls, written) in [&none as &dyn Fn(_, &[_]) -> _, &impls]
+                    .into_iter()
+                    .enumerate()
+                {
+                    let only_finding = with_impls == 1;
+                    let walked =
+                        walked_decoding(rt, written, &toml::RULES, |r| toml::walked(r, &top, &doc));
+                    let read =
+                        read_decoding(only_finding, rt, written, &toml::RULES, |r, parts| {
+                            toml::read_text(r, &top, text, parts)
+                        });
+                    agree_with_calls(name, &walked, &read, text)?;
+                }
             }
         }
         Ok(())

@@ -1,0 +1,118 @@
+-- The parts a written impl decodes are found, and their impls called,
+-- in the order of the walk of the document: the fields of a record in
+-- the order its type declares them, the keys of a map sorted, up to the
+-- first error; a key given twice counts once, its last; a tuple, or a
+-- variant's fields, of the wrong length calls none; the same through
+-- json.decode and in TOML.
+import json
+import list
+import toml
+
+-- A part decoded by an impl that says when it is called: its text,
+-- and an Err for a text "bad" or an object with a key "bad".
+type P { s: String }
+
+trait json.Decode for P {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    println("  impl P {value}")
+    match value {
+      json.String("bad") -> Err(json.Other("P refuses bad"))
+      json.String(s) -> Ok(P { s: s })
+      json.Int(n) -> Ok(P { s: "{n}" })
+      json.Object(m) -> match json.decode(json.Object(m), Inner) {
+        Ok(inner) -> Ok(P { s: "obj {inner.a}" })
+        Err(e) -> Err(e)
+      }
+      _ -> Err(json.TypeMismatch("string", "other"))
+    }
+  }
+}
+
+type Inner { a: Int }
+
+type Q { Qa, Qb(Int) }
+
+trait json.Decode for Q {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    println("  impl Q {value}")
+    match value {
+      json.Int(n) -> Ok(Qb(n))
+      json.Null -> Err(json.MissingField("q"))
+      _ -> Ok(Qa)
+    }
+  }
+}
+
+type Box(t) { v: t }
+
+trait json.Decode for Box(t) where t: json.Decode {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    println("  impl Box {value}")
+    match t.decode(value) {
+      Ok(v) -> Ok(Box { v: v })
+      Err(e) -> Err(e)
+    }
+  }
+}
+
+type R { z: P, a: P, m: Map(String, P), l: List(P), o: Option(P), t: (P, Q), n: Int }
+
+type E { One(P), Two(P, Q), Wrap(E), Plain }
+
+type B { b: Box(P), bs: List(Box(Q)) }
+
+fn show(label: String, r: Result(a, e)) where a: Display, e: Display {
+  match r {
+    Ok(v) -> println("{label} -> Ok {v}")
+    Err(e) -> println("{label} -> Err {e}")
+  }
+}
+
+fn main() {
+  let jsons = [
+    "\{\"n\": 1, \"t\": [\"t0\", 5], \"o\": \"o\", \"l\": [\"l0\", \"l1\"], \"m\": \{\"b\": \"mb\", \"a\": \"ma\"}, \"a\": \"a\", \"z\": \"z\"}",
+    "\{\"n\": \"x\", \"t\": [\"t0\", 5], \"o\": null, \"l\": [\"l0\", \"bad\", \"l2\"], \"m\": \{\"b\": \"mb\", \"a\": \"ma\"}, \"a\": \"a\", \"z\": \"z\"}",
+    "\{\"n\": 1, \"t\": [\"t0\"], \"l\": [], \"m\": \{\"b\": \"bad\", \"a\": \"ma\"}, \"a\": \"a\", \"z\": \"z\"}",
+    "\{\"n\": 1, \"t\": [\"t0\", 1, 2], \"l\": [], \"m\": \{\"b\": \"mb\", \"a\": \"bad\"}, \"a\": \"bad\", \"z\": \"z\"}",
+    "\{\"n\": 1, \"t\": [\"t0\", null], \"l\": [], \"m\": \{}, \"a\": \"a\", \"z\": \"z\", \"a\": \"a2\", \"z\": 3}",
+    "\{\"n\": 1, \"t\": [\"t0\", 1], \"l\": [], \"m\": \{\"k\": \"bad\", \"k\": \"good\"}, \"a\": \{\"a\": 7}, \"z\": \{\"a\": \"x\"}}",
+    "\{\"n\": 1, \"t\": [\"t0\", 1], \"l\": [\"l0\"], \"m\": \{}, \"a\": \"a\", \"z\": \"z\"} trailing",
+    "\{\"z\": \"z\", \"n\": 1, \"t\": [\"t0\", 1], \"l\": [], \"m\": \{}}",
+    "\{\"n\": 1, \"t\": [\"t0\", 1], \"l\": [], \"m\": \{}, \"a\": [1], \"z\": \"z\"}",
+  ]
+  list.each(jsons) { j -> show("R {j}", json.parse(j, R)) }
+  let variants = [
+    "\{\"variant\": \"Two\", \"fields\": [\"p\", 1]}",
+    "\{\"fields\": [\"p\", 1], \"variant\": \"Two\"}",
+    "\{\"fields\": [\"bad\", 1], \"variant\": \"Two\"}",
+    "\{\"fields\": [\"p\", null], \"variant\": \"Two\"}",
+    "\{\"fields\": [\"p\"], \"variant\": \"Two\"}",
+    "\{\"fields\": [\"p\", 1], \"variant\": \"Nope\"}",
+    "\{\"variant\": \"Wrap\", \"fields\": [\{\"fields\": [\"in\"], \"variant\": \"One\"}]}",
+    "\{\"variant\": \"One\", \"fields\": [\"a\"], \"variant\": \"Two\", \"fields\": [\"b\", 2]}",
+    "\{\"fields\": [\"a\"], \"variant\": \"One\", \"fields\": [\"bad\"]}",
+    "[\"Plain\", \{\"variant\": \"One\", \"fields\": [\"x\"]}, \{\"variant\": \"One\", \"fields\": [\"bad\"]}, \{\"variant\": \"One\", \"fields\": [\"y\"]}]",
+  ]
+  list.each(variants) { j ->
+    show("E {j}", json.parse(j, E))
+    show("[E] {j}", json.parse(j, List(E)))
+  }
+  show("B", json.parse("\{\"bs\": [1, \"q\"], \"b\": \"x\"}", B))
+  show("B bad", json.parse("\{\"bs\": [null, 1], \"b\": \"bad\"}", B))
+  show("Map(Q)", json.parse("\{\"c\": 3, \"a\": null, \"b\": 2}", Map(String, Q)))
+  show("Map(Option(P))", json.parse("\{\"c\": \"c\", \"a\": null, \"b\": \"bad\"}", Map(String, Option(P))))
+  show("decode R", json.decode(json.Object(#{"n": json.Int(1), "t": json.Array([json.String("t0"), json.Int(5)]), "l": json.Array([json.String("x")]), "m": json.Object(#{"b": json.String("mb"), "a": json.String("ma")}), "a": json.String("a"), "z": json.String("z")}), R))
+  show("decode R bad", json.decode(json.Object(#{"n": json.Int(1), "t": json.Array([json.String("t0"), json.Int(5)]), "l": json.Array([]), "m": json.Object(#{"b": json.String("bad"), "a": json.String("ma")}), "a": json.String("bad"), "z": json.String("z")}), R))
+  show("decode E", json.decode(json.Object(#{"fields": json.Array([json.String("p"), json.Int(1)]), "variant": json.String("Two")}), E))
+  let tomls = [
+    "n = 1\nt = [\"t0\", 5]\nl = [\"l0\", \"l1\"]\nz = \"z\"\na = \"a\"\n[m]\nb = \"mb\"\na = \"ma\"\n",
+    "n = 1\nt = [\"t0\", 5]\nl = [\"l0\", \"bad\"]\nz = \"z\"\na = \"bad\"\n[m]\nb = \"bad\"\na = \"ma\"\n",
+    "n = 1.5\nt = [\"t0\"]\nl = []\nz = \"z\"\na = 1979-05-27\n[m]\n",
+    "n = 1\nt = [\"t0\", 1]\nl = []\nz = \{ a = 3 }\na = \{ a = 1.5 }\n[m]\nx = \"bad\"\n",
+  ]
+  list.each(tomls) { t -> show("toml R {t}", toml.parse(t, R)) }
+  show("toml list", toml.parse_list("ps = [\"a\", \"bad\", \"c\"]", P))
+  show("toml list 2 keys", toml.parse_list("ps = [\"a\"]\nqs = [\"b\"]", P))
+  show("toml map", toml.parse_map("b = \"b\"\na = \"a\"\nc = \"bad\"", P))
+  show("toml nan", toml.parse_map("b = \"b\"\na = nan", P))
+}
