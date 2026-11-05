@@ -140,6 +140,7 @@ the error of a record does (here of an enum at the top):
 | no string and no object (a number, an array) | `TypeMismatch("String or object", "number")` |
 | an object that names a variant without fields | `TypeMismatch("String", "object")` |
 | an object without a `"variant"` key | `MissingField("variant")` |
+| an object without a `"fields"` key | `MissingField("fields")` |
 | a `"variant"` that is no string | `TypeMismatch("String", "number at variant")` |
 | a `"variant"` the enum has no variant of | ``Other("`Status` has no variant `Gone` at variant")`` |
 | `"fields"` that is no array | `TypeMismatch("array", "number at fields")` |

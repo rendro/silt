@@ -2,7 +2,8 @@
 -- a name the enum has no variant of and the wrong number of fields are
 -- Other and name the enum and the variant; a field of the wrong type is
 -- the TypeMismatch a record field gets; an object without "variant" is
--- MissingField("variant"). A variant without fields is only its name:
+-- MissingField("variant"), one without "fields" that names a variant
+-- with fields MissingField("fields"). A variant without fields is only its name:
 -- an object that names one is TypeMismatch("String", "object"), and the
 -- name of a variant with fields alone has 0 fields. A value that is no
 -- string and no object is TypeMismatch("String or object", ...). In a
