@@ -4367,7 +4367,16 @@ impl TypeChecker {
                     &mut self.type_receiver,
                     matches!(obj.kind, ExprKind::Call(..)),
                 );
-                let obj_ty = self.infer_expr(obj, env);
+                // A tuple of types before a dot is the tuple type
+                // (`(Int, Int).empty()`), as `Box(Int)` is that type.
+                let spelled = match obj.kind {
+                    ExprKind::Tuple(_) => self.spelled_type(obj, env),
+                    _ => None,
+                };
+                let obj_ty = match spelled {
+                    Some(ty) => Type::type_of(ty),
+                    None => self.infer_expr(obj, env),
+                };
                 self.type_receiver = around;
                 self.receiver_taken = false;
                 let obj_ty = self.apply(&obj_ty);
@@ -6359,6 +6368,7 @@ fn without_held(ty: &Type) -> Type {
             args.first().map_or_else(|| ty.clone(), without_held)
         }
         Type::Generic(name, args) => Type::Generic(*name, args.iter().map(without_held).collect()),
+        Type::Tuple(elems) => Type::Tuple(elems.iter().map(without_held).collect()),
         _ => ty.clone(),
     }
 }

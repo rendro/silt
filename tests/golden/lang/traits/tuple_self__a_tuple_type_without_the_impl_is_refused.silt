@@ -1,0 +1,28 @@
+-- exit: 1
+-- A tuple type before a dot is refused as any type is where its impl is
+-- missing: of a part (`String` has no `Monoid`), or of the tuple type
+-- itself. `Tuple(Int, Int)` is no spelling of it before a dot. The help
+-- of a value of types calls it on the tuple type, `(Int, Int).empty()`.
+trait Monoid {
+  fn empty() -> Self
+}
+
+trait Monoid for Int {
+  fn empty() -> Self { 0 }
+}
+
+trait Monoid for Tuple(a, b) where a: Monoid, b: Monoid {
+  fn empty() -> Self { (a.empty(), b.empty()) }
+}
+
+trait Zero {
+  fn zero() -> Self
+}
+
+fn main() {
+  println((Int, String).empty())
+  println(Tuple(Int, Int).empty())
+  println((Int, String).zero())
+  let t = (Int, Int)
+  println(t.empty())
+}
