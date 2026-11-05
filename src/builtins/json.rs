@@ -333,8 +333,15 @@ fn exact_int(text: &[u8]) -> Option<i64> {
         Some(dot) => (&mantissa[..dot], &mantissa[dot + 1..]),
         None => (mantissa, &b""[..]),
     };
+    // (A text the parser broke off in, as `1e3-` of `[1e3-]`, is no
+    // number: the parser's error follows.)
+    let digit = |b: &u8| b.checked_sub(b'0').filter(|d| *d < 10);
     // The digits, and the power of ten they are multiplied by.
-    let digits: Vec<u8> = whole.iter().chain(fraction).map(|b| b - b'0').collect();
+    let digits: Vec<u8> = whole
+        .iter()
+        .chain(fraction)
+        .map(digit)
+        .collect::<Option<_>>()?;
     let first = digits.iter().position(|&d| d != 0);
     let last = digits.iter().rposition(|&d| d != 0);
     let (Some(first), Some(last)) = (first, last) else {
@@ -348,8 +355,8 @@ fn exact_int(text: &[u8]) -> Option<i64> {
         Some((b'+', rest)) => (1, rest),
         _ => (1, exponent),
     };
-    for &b in exponent {
-        power = (power * 10 + i64::from(b - b'0')).min(1 << 40);
+    for b in exponent {
+        power = (power * 10 + i64::from(digit(b)?)).min(1 << 40);
     }
     let power = sign * power - fraction.len() as i64 + (digits.len() - 1 - last) as i64;
     let significant = &digits[first..=last];
