@@ -1,52 +1,55 @@
 //! Decoding a document: `json.parse`, `json.decode`, `T.decode(value)`
-//! of a type with no
-//! written impl, and `toml.parse`, `toml.parse_list`, `toml.parse_map`.
+//! of a type with no written impl, and `toml.parse`, `toml.parse_list`,
+//! `toml.parse_map`.
 //!
-//! `json.parse` reads its text once, making the value as it reads
-//! (`builtins::decode::seed`), unless the document has a part of a type
-//! with a written impl; the others, and such a document, are walked as a
-//! tree.
-//!
-//! A document is decoded by the one decoder (`builtins::decode`), but a
-//! part of a record or enum type the program wrote a `json.Decode` impl
-//! for is decoded by the impl's `decode`, wherever it is in the
-//! document. The impl is silt code, so decoding such a document is a
-//! frame ([`Decoding`]): the decoder reads the document once, collecting
-//! each such part (its `json.Value`); the frame calls the impl for
-//! each, in the order the decoder came to them; then the decoder reads
-//! the document again and puts what the impls gave in their places. An
-//! impl's `Err` is the result, with the place of its part appended as a
-//! decoder's own errors have it, as the format's error
-//! (`Rules::from_impl`): the second reading stops there with it. A
-//! program with no
-//! written `json.Decode` impl, and a document with no such part, takes
-//! no frame.
+//! A document is decoded by the one decoder (`builtins::decode::seed`),
+//! which makes the value as it reads the document; but a part of a
+//! record or enum type the program wrote a `json.Decode` impl for is
+//! decoded by the impl's `decode`, wherever it is in the document. The
+//! impl is silt code, so decoding such a document is a frame
+//! ([`Reading`]): the decoder reads the document once, finding each such
+//! part (its `json.Value`), in the order the walk of the document comes
+//! to them; the frame calls the impl for each, in that order; then the
+//! decoder reads the document again and puts what the impls gave in
+//! their places. An impl's `Err` is the result, with the place of its
+//! part appended as a decoder's own errors have it, as the format's
+//! error (`Rules::from_impl`). A program with no written `json.Decode`
+//! impl, and a document with no such part, takes no frame.
 
 use std::sync::Arc;
 
 use super::runtime::{Native, Step};
 use super::{Vm, VmError};
-use crate::builtins::decode::{self, Document, Error, Hole, Holes, Reader, Rules, seed};
+use crate::builtins::decode::seed::{self, Outcome, Parts};
+use crate::builtins::decode::{self, Error, Hole, Holes, Reader, Rules};
 use crate::bytecode::Globals;
 use crate::typeinfo::{FieldType, bv};
 use crate::value::Value;
 
-/// How a document of the format `D` is read as a value of a field
-/// type: as one value (`decode::value`), as a list (`decode::list`), or
-/// as a map (`decode::map`) of them.
-pub(crate) type Read<D> = fn(&Reader, &D, &FieldType) -> Result<Value, Error>;
+/// A document a decoding reads, again for its second reading: its text,
+/// or the document read.
+pub(crate) trait Source: Send {
+    /// What the document decodes into as a value of `expected`, read by
+    /// `r`, its parts of a type with a written impl as `parts` says; or
+    /// the result of the call where the text is no document.
+    fn read(&self, r: &Reader, expected: &FieldType, parts: &Parts) -> Result<Outcome, Value>;
+}
 
 /// The frame that decodes a document with parts a written
 /// `json.Decode` impl decodes.
-struct Decoding<D: Document> {
+struct Reading {
     /// The builtin that decodes.
     name: &'static str,
     /// The table the parts were found with.
     table: Arc<Globals>,
-    doc: D,
+    rules: &'static Rules,
+    source: Box<dyn Source>,
     expected: FieldType,
-    read: Read<D>,
     holes: Vec<Hole>,
+    /// The number of each part, in the order of `holes`.
+    numbers: Vec<usize>,
+    /// Whether the first reading kept every variant's fields.
+    keep_fields: bool,
     /// What the impls gave for the parts so far: a value, or the
     /// `JsonError` of the last.
     decoded: Vec<Result<Value, Value>>,
@@ -56,7 +59,7 @@ struct Decoding<D: Document> {
     calling: bool,
 }
 
-impl<D: Document + Send> Native for Decoding<D> {
+impl Native for Reading {
     fn name(&self) -> &str {
         self.name
     }
@@ -82,97 +85,99 @@ impl<D: Document + Send> Native for Decoding<D> {
         // Every part decoded: the decoder's own error after them, or
         // the value with them.
         if let Some(error) = self.error.take() {
-            return Ok(Step::Done(decode::result(D::RULES, Err(error))));
+            return Ok(Step::Done(decode::result(self.rules, Err(error))));
         }
         Ok(Step::Done(self.supplied(vm)))
     }
 }
 
-impl<D: Document> Decoding<D> {
+impl Reading {
     /// The result of the document read again with what the impls gave
     /// in the places of its parts.
     fn supplied(&mut self, vm: &Vm) -> Value {
         let table = self.table.clone();
         let written = move |id, args: &[FieldType]| table.decoded(id, args);
+        let reader = Reader::with_impls(&vm.runtime, &written, Holes::Collect(Vec::new()));
         let given = std::mem::take(&mut self.decoded);
-        let reader = Reader::with_impls(&vm.runtime, &written, Holes::Supply(given.into_iter()));
-        decode::result(D::RULES, (self.read)(&reader, &self.doc, &self.expected))
+        let parts = Parts::supplying(&self.numbers, given, self.keep_fields);
+        match self.source.read(&reader, &self.expected, &parts) {
+            Ok(decoded) => decode::result(self.rules, decoded),
+            // (A text read once is a document.)
+            Err(result) => result,
+        }
     }
 }
 
 impl Vm {
-    /// The result of `name`, decoding the document `read_doc` gives as
-    /// `read` reads it into values of `expected`, honouring the
-    /// `json.Decode` impls the program wrote: `Ok` of the value, or
-    /// `Err` of the format's error. A type a field of which no decoder
-    /// fills is refused before the document is read (`read_doc` gives
-    /// it, or the result of the call where there is none).
-    pub(crate) fn decode_document<D: Document + Send>(
+    /// The result of `name`, decoding a document into values of
+    /// `expected` by the rules `rules`, honouring the `json.Decode`
+    /// impls the program wrote: `Ok` of the value, or `Err` of the
+    /// format's error. A type a field of which no decoder fills is
+    /// refused before the document is read. `read` reads the document,
+    /// giving what it decodes into, or the result of the call where
+    /// there is no document; `source` is the document to read again
+    /// where it has parts a written impl decodes. (An impl is the
+    /// program's code: a step.)
+    pub(crate) fn decode_read(
         &mut self,
         name: &'static str,
+        rules: &'static Rules,
         expected: FieldType,
-        read: Read<D>,
-        read_doc: impl FnOnce() -> Result<D, Value>,
+        read: impl Fn(&Reader, &FieldType, &Parts) -> Result<Outcome, Value>,
+        source: impl FnOnce() -> Box<dyn Source>,
     ) -> Result<Step, VmError> {
         let table = self.decoding_table();
         let written = |id, args: &[FieldType]| table.decoded(id, args);
         let reader = Reader::with_impls(&self.runtime, &written, Holes::Collect(Vec::new()));
         let target = decode::Target::Value(expected.clone());
-        if let Some(refused) = decode::refused(&reader, D::RULES, &target) {
+        if let Some(refused) = decode::refused(&reader, rules, &target) {
             return Ok(Step::Done(refused));
         }
-        let doc = match read_doc() {
-            Ok(doc) => doc,
+        // Where a written impl may decode a part, the first reading only
+        // finds the parts.
+        let parts = match table.any_decoded() && seed::reaches_written(&reader, rules, &expected) {
+            true => Parts::only_finding(),
+            false => Parts::finding(),
+        };
+        let decoded = match read(&reader, &expected, &parts) {
+            Ok(decoded) => decoded,
             Err(result) => return Ok(Step::Done(result)),
         };
-        let decoded = read(&reader, &doc, &expected);
-        let holes = reader.into_holes();
-        if holes.is_empty() {
-            return Ok(Step::Done(decode::result(D::RULES, decoded)));
+        let built = parts.built();
+        let (found, keep_fields) = parts.into_found();
+        if found.is_empty() {
+            // (A document with no such part, read again to make its
+            // value where the first reading did not.)
+            let decoded = match (built, decoded) {
+                (false, Ok(_)) => {
+                    let making = Parts::supplying(&[], Vec::new(), keep_fields);
+                    match read(&reader, &expected, &making) {
+                        Ok(decoded) => decoded,
+                        Err(result) => return Ok(Step::Done(result)),
+                    }
+                }
+                (_, decoded) => decoded,
+            };
+            return Ok(Step::Done(decode::result(rules, decoded)));
         }
-        Ok(Step::Run(Box::new(Decoding {
+        drop(reader);
+        let (numbers, holes) = found
+            .into_iter()
+            .map(|found| (found.number, found.hole))
+            .unzip();
+        Ok(Step::Run(Box::new(Reading {
             name,
             table,
-            doc,
+            rules,
+            source: source(),
             expected,
-            read,
             holes,
+            numbers,
+            keep_fields,
             decoded: Vec::new(),
             error: decoded.err(),
             calling: false,
         })))
-    }
-
-    /// A document decoded into values of `expected` by the rules
-    /// `rules`, read once, the value made as it is read
-    /// (`decode::seed`): `read` reads it, giving what it decodes into,
-    /// `None` where the document is the walk's, or `Err` of the call's
-    /// result where there is no document. A type a field of which no
-    /// decoder fills is refused before the document is read, and a
-    /// document that is the walk's is decoded by `walk`, as
-    /// [`Vm::decode_document`] decodes one.
-    pub(crate) fn decode_read(
-        &mut self,
-        rules: &'static Rules,
-        expected: FieldType,
-        read: impl FnOnce(&Reader, &FieldType) -> Result<Option<seed::Outcome>, Value>,
-        walk: impl FnOnce(&mut Vm, FieldType) -> Result<Step, VmError>,
-    ) -> Result<Step, VmError> {
-        let read = {
-            let table = self.decoding_table();
-            let written = |id, args: &[FieldType]| table.decoded(id, args);
-            let reader = Reader::with_impls(&self.runtime, &written, Holes::Collect(Vec::new()));
-            let target = decode::Target::Value(expected.clone());
-            if let Some(refused) = decode::refused(&reader, rules, &target) {
-                return Ok(Step::Done(refused));
-            }
-            read(&reader, &expected)
-        };
-        Ok(Step::Done(match read {
-            Ok(Some(decoded)) => decode::result(rules, decoded),
-            Ok(None) => return walk(self, expected),
-            Err(result) => result,
-        }))
     }
 
     /// The table a document is decoded by: this VM's, or, for a task of

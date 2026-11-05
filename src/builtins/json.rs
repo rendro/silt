@@ -3,13 +3,13 @@
 use std::sync::Arc;
 
 use super::data::{self, Data, Format};
-use super::decode::{self, At, Decoder, Document, I64_MAX_PLUS_ONE, Numbers, Rules};
+use super::decode::{self, Decoder, Document, I64_MAX_PLUS_ONE, Numbers, Rules};
 use super::registry::decoding::Family;
 use super::typed::{Type, builtins};
 use crate::typeinfo::FieldType;
 use crate::typeinfo::bv;
 use crate::value::Value;
-use crate::vm::{Step, Vm, VmError};
+use crate::vm::{Source, Step, Vm, VmError};
 
 // ── JsonError helpers ────────────────────────────────────────────────
 //
@@ -444,9 +444,7 @@ pub(crate) fn decode_field(
     json: &serde_json::Value,
     expected: &FieldType,
 ) -> Result<Value, std::string::String> {
-    let decoded = decode::seed::json_document(r, expected, json)
-        .unwrap_or_else(|| decode::value(r, json, expected, &At::Top));
-    decoded.map_err(|e| message(&e.variant(&RULES)))
+    decode::seed::json_cell(r, expected, json).map_err(|e| message(&e.variant(&RULES)))
 }
 
 /// What `JsonError`'s `message` says of `error`.
@@ -475,32 +473,51 @@ pub(crate) fn decode_value(vm: &mut Vm, value: &Value, ty: Type) -> Result<Step,
         Err(e) => Err(json_unknown_err(e.message)),
     };
     let expected = decode::target(&DECODE, ty)?.element();
-    let read = |r: &decode::Reader, expected: &FieldType| match &document {
-        Ok(doc) => Ok(decode::seed::json_document(r, expected, doc)),
-        Err(result) => Err(result.clone()),
+    let document = std::cell::RefCell::new(document);
+    let read =
+        |r: &decode::Reader, expected: &FieldType, parts: &decode::seed::Parts| match &*document
+            .borrow()
+        {
+            Ok(doc) => Ok(decode::seed::json_document(r, expected, doc, parts)),
+            Err(result) => Err(result.clone()),
+        };
+    let source = || -> Box<dyn Source> {
+        match document.replace(Ok(serde_json::Value::Null)) {
+            Ok(doc) => Box::new(Read(doc)),
+            // (No document has no parts.)
+            Err(_) => unreachable!("a document with parts was read"),
+        }
     };
-    vm.decode_read(&RULES, expected, read, |vm, expected| {
-        vm.decode_document("json.decode", expected, one, || document.clone())
-    })
+    vm.decode_read("json.decode", &RULES, expected, read, source)
 }
 
-/// `json.parse` of the text `text` into values of `expected` by the walk
-/// of its tree: what a document a written `json.Decode` impl decodes a
-/// part of is decoded by, and the referee of the reading of the text
-/// (`decode::seed`), which gives what it gives.
-pub(crate) fn parse_tree(vm: &mut Vm, expected: FieldType, text: &[u8]) -> Result<Step, VmError> {
-    vm.decode_document("json.decode", expected, one, || {
-        parse_document(text).map_err(|e| json_result_err(&e, text))
-    })
+/// A JSON document already read, read again.
+struct Read(serde_json::Value);
+
+impl Source for Read {
+    fn read(
+        &self,
+        r: &decode::Reader,
+        expected: &FieldType,
+        parts: &decode::seed::Parts,
+    ) -> Result<decode::seed::Outcome, Value> {
+        Ok(decode::seed::json_document(r, expected, &self.0, parts))
+    }
 }
 
-/// A document read as one value.
-fn one(
-    r: &decode::Reader,
-    doc: &serde_json::Value,
-    expected: &FieldType,
-) -> Result<Value, decode::Error> {
-    decode::value(r, doc, expected, &At::Top)
+/// A JSON text read again.
+struct Text(Box<[u8]>);
+
+impl Source for Text {
+    fn read(
+        &self,
+        r: &decode::Reader,
+        expected: &FieldType,
+        parts: &decode::seed::Parts,
+    ) -> Result<decode::seed::Outcome, Value> {
+        decode::seed::json_text(r, expected, &self.0, parts)
+            .map_err(|e| json_result_err(&e, &self.0))
+    }
 }
 
 // ── The functions ───────────────────────────────────────────────────
@@ -529,12 +546,11 @@ builtins! {
     fn parse(vm, s: &str, ty: Type) -> Result<Step, VmError> {
         let text = s.as_bytes();
         let expected = decode::target(&PARSE, ty)?.element();
-        let read = |r: &decode::Reader, expected: &FieldType| {
-            decode::seed::json_text(r, expected, text).map_err(|e| json_result_err(&e, text))
+        let read = |r: &decode::Reader, expected: &FieldType, parts: &decode::seed::Parts| {
+            decode::seed::json_text(r, expected, text, parts).map_err(|e| json_result_err(&e, text))
         };
-        vm.decode_read(&RULES, expected, read, |vm, expected| {
-            parse_tree(vm, expected, text)
-        })
+        let source = || -> Box<dyn Source> { Box::new(Text(text.into())) };
+        vm.decode_read("json.decode", &RULES, expected, read, source)
     }
 
     // (A part of a type with a written `json.Encode` impl is written
@@ -556,7 +572,7 @@ builtins! {
 mod tests {
     use super::*;
     use crate::builtins::data::MAX_ENCODE_DEPTH;
-    use crate::builtins::decode::shown;
+    use crate::builtins::decode::{At, shown};
     use crate::typeinfo::{FieldType, TypeInfo};
 
     /// A field whose type holds `Bytes` has no decoder, whatever the

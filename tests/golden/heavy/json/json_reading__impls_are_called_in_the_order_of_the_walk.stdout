@@ -1,0 +1,155 @@
+  impl P String(z)
+  impl P String(a)
+  impl P String(ma)
+  impl P String(mb)
+  impl P String(l0)
+  impl P String(l1)
+  impl P String(o)
+  impl P String(t0)
+  impl Q Int(5)
+R {"n": 1, "t": ["t0", 5], "o": "o", "l": ["l0", "l1"], "m": {"b": "mb", "a": "ma"}, "a": "a", "z": "z"} -> Ok R {z: P {s: z}, a: P {s: a}, m: #{"a": P {s: ma}, "b": P {s: mb}}, l: [P {s: l0}, P {s: l1}], o: Some(P {s: o}), t: (P {s: t0}, Qb(5)), n: 1}
+  impl P String(z)
+  impl P String(a)
+  impl P String(ma)
+  impl P String(mb)
+  impl P String(l0)
+  impl P String(bad)
+R {"n": "x", "t": ["t0", 5], "o": null, "l": ["l0", "bad", "l2"], "m": {"b": "mb", "a": "ma"}, "a": "a", "z": "z"} -> Err P refuses bad at l[1]
+  impl P String(z)
+  impl P String(a)
+  impl P String(ma)
+  impl P String(bad)
+R {"n": 1, "t": ["t0"], "l": [], "m": {"b": "bad", "a": "ma"}, "a": "a", "z": "z"} -> Err P refuses bad at m.b
+  impl P String(z)
+  impl P String(bad)
+R {"n": 1, "t": ["t0", 1, 2], "l": [], "m": {"b": "mb", "a": "bad"}, "a": "bad", "z": "z"} -> Err P refuses bad at a
+  impl P Int(3)
+  impl P String(a2)
+  impl P String(t0)
+  impl Q Null
+R {"n": 1, "t": ["t0", null], "l": [], "m": {}, "a": "a", "z": "z", "a": "a2", "z": 3} -> Err json missing field: t[1].q
+  impl P Object(#{"a": String(x)})
+R {"n": 1, "t": ["t0", 1], "l": [], "m": {"k": "bad", "k": "good"}, "a": {"a": 7}, "z": {"a": "x"}} -> Err json type mismatch: expected Int, got string at a at z
+R {"n": 1, "t": ["t0", 1], "l": ["l0"], "m": {}, "a": "a", "z": "z"} trailing -> Err json syntax error at byte 67: trailing characters at line 1 column 68
+  impl P String(z)
+R {"z": "z", "n": 1, "t": ["t0", 1], "l": [], "m": {}} -> Err json missing field: a
+  impl P String(z)
+  impl P Array([Int(1)])
+R {"n": 1, "t": ["t0", 1], "l": [], "m": {}, "a": [1], "z": "z"} -> Err json type mismatch: expected string, got other at a
+  impl P String(p)
+  impl Q Int(1)
+E {"variant": "Two", "fields": ["p", 1]} -> Ok Two(P {s: p}, Qb(1))
+[E] {"variant": "Two", "fields": ["p", 1]} -> Err json type mismatch: expected List, got object
+  impl P String(p)
+  impl Q Int(1)
+E {"fields": ["p", 1], "variant": "Two"} -> Ok Two(P {s: p}, Qb(1))
+[E] {"fields": ["p", 1], "variant": "Two"} -> Err json type mismatch: expected List, got object
+  impl P String(bad)
+E {"fields": ["bad", 1], "variant": "Two"} -> Err P refuses bad at fields[0]
+[E] {"fields": ["bad", 1], "variant": "Two"} -> Err json type mismatch: expected List, got object
+  impl P String(p)
+  impl Q Null
+E {"fields": ["p", null], "variant": "Two"} -> Err json missing field: fields[1].q
+[E] {"fields": ["p", null], "variant": "Two"} -> Err json type mismatch: expected List, got object
+E {"fields": ["p"], "variant": "Two"} -> Err variant `Two` of `E` has 2 fields, got 1 at fields
+[E] {"fields": ["p"], "variant": "Two"} -> Err json type mismatch: expected List, got object
+E {"fields": ["p", 1], "variant": "Nope"} -> Err `E` has no variant `Nope` at variant
+[E] {"fields": ["p", 1], "variant": "Nope"} -> Err json type mismatch: expected List, got object
+  impl P String(in)
+E {"variant": "Wrap", "fields": [{"fields": ["in"], "variant": "One"}]} -> Ok Wrap(One(P {s: in}))
+[E] {"variant": "Wrap", "fields": [{"fields": ["in"], "variant": "One"}]} -> Err json type mismatch: expected List, got object
+  impl P String(b)
+  impl Q Int(2)
+E {"variant": "One", "fields": ["a"], "variant": "Two", "fields": ["b", 2]} -> Ok Two(P {s: b}, Qb(2))
+[E] {"variant": "One", "fields": ["a"], "variant": "Two", "fields": ["b", 2]} -> Err json type mismatch: expected List, got object
+  impl P String(bad)
+E {"fields": ["a"], "variant": "One", "fields": ["bad"]} -> Err P refuses bad at fields[0]
+[E] {"fields": ["a"], "variant": "One", "fields": ["bad"]} -> Err json type mismatch: expected List, got object
+E ["Plain", {"variant": "One", "fields": ["x"]}, {"variant": "One", "fields": ["bad"]}, {"variant": "One", "fields": ["y"]}] -> Err json type mismatch: expected String or object, got array
+  impl P String(x)
+  impl P String(bad)
+[E] ["Plain", {"variant": "One", "fields": ["x"]}, {"variant": "One", "fields": ["bad"]}, {"variant": "One", "fields": ["y"]}] -> Err P refuses bad at [2].fields[0]
+  impl Box String(x)
+  impl P String(x)
+  impl Box Int(1)
+  impl Q Int(1)
+  impl Box String(q)
+  impl Q String(q)
+B -> Ok B {b: Box {v: P {s: x}}, bs: [Box {v: Qb(1)}, Box {v: Qa}]}
+  impl Box String(bad)
+  impl P String(bad)
+B bad -> Err P refuses bad at b
+  impl Q Null
+Map(Q) -> Err json missing field: a.q
+  impl P String(bad)
+Map(Option(P)) -> Err P refuses bad at b
+  impl P String(z)
+  impl P String(a)
+  impl P String(ma)
+  impl P String(mb)
+  impl P String(x)
+  impl P String(t0)
+  impl Q Int(5)
+decode R -> Ok R {z: P {s: z}, a: P {s: a}, m: #{"a": P {s: ma}, "b": P {s: mb}}, l: [P {s: x}], o: None, t: (P {s: t0}, Qb(5)), n: 1}
+  impl P String(z)
+  impl P String(bad)
+decode R bad -> Err P refuses bad at a
+  impl P String(p)
+  impl Q Int(1)
+decode E -> Ok Two(P {s: p}, Qb(1))
+  impl P String(z)
+  impl P String(a)
+  impl P String(ma)
+  impl P String(mb)
+  impl P String(l0)
+  impl P String(l1)
+  impl P String(t0)
+  impl Q Int(5)
+toml R n = 1
+t = ["t0", 5]
+l = ["l0", "l1"]
+z = "z"
+a = "a"
+[m]
+b = "mb"
+a = "ma"
+ -> Ok R {z: P {s: z}, a: P {s: a}, m: #{"a": P {s: ma}, "b": P {s: mb}}, l: [P {s: l0}, P {s: l1}], o: None, t: (P {s: t0}, Qb(5)), n: 1}
+  impl P String(z)
+  impl P String(bad)
+toml R n = 1
+t = ["t0", 5]
+l = ["l0", "bad"]
+z = "z"
+a = "bad"
+[m]
+b = "bad"
+a = "ma"
+ -> Err P refuses bad at a
+  impl P String(z)
+  impl P String(1979-05-27)
+toml R n = 1.5
+t = ["t0"]
+l = []
+z = "z"
+a = 1979-05-27
+[m]
+ -> Err expected an array of 2 elements for a tuple, got 1 at t
+  impl P Object(#{"a": Int(3)})
+  impl P Object(#{"a": Float(1.5)})
+toml R n = 1
+t = ["t0", 1]
+l = []
+z = { a = 3 }
+a = { a = 1.5 }
+[m]
+x = "bad"
+ -> Err toml type mismatch: expected Int, got a number with a fraction at a at a
+  impl P String(a)
+  impl P String(bad)
+toml list -> Err P refuses bad at ps[1]
+toml list 2 keys -> Err toml.parse_list(P): expected a document with exactly one top-level key, an array, found 2 keys
+  impl P String(a)
+  impl P String(b)
+  impl P String(bad)
+toml map -> Err P refuses bad at c
+toml nan -> Err toml type mismatch: expected json.Value, got a non-finite float at a

@@ -20,6 +20,7 @@ use std::fmt::Write as _;
 
 use show::write_plain;
 
+pub(crate) use decode::Source;
 pub use error::VmError;
 pub use io::{Buffer, Clock, HostIo, Output, SystemClock};
 pub(crate) use io::{NO_PANIC_TEXT, panic_message, write_stderr};
