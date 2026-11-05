@@ -3770,11 +3770,32 @@ impl TypeChecker {
                                     _ => true,
                                 }) =>
                     {
-                        let message = format!(
-                            "`{}` is given a value of type `{}`, not a type",
-                            self.show_type(other),
-                            self.show_type(&ty)
-                        );
+                        let name = match Self::callee_label(callee) {
+                            Some(name) => resolve(name).to_string(),
+                            None => self.show_type(other),
+                        };
+                        // (The value by its text when that is short.)
+                        let text = match &arg.kind {
+                            ExprKind::Unit => Some("()".to_string()),
+                            ExprKind::Int(n) => Some(n.to_string()),
+                            ExprKind::Float(x) => Some(x.to_string()),
+                            ExprKind::Bool(b) => Some(b.to_string()),
+                            ExprKind::StringLit(s)
+                                if s.len() <= 20 && !s.contains(['"', '\\', '\n', '`']) =>
+                            {
+                                Some(format!("\"{s}\""))
+                            }
+                            _ => None,
+                        };
+                        let message = match text {
+                            Some(text) => {
+                                format!("`{name}` takes a type here, and `{text}` is a value")
+                            }
+                            None => format!(
+                                "`{name}` takes a type here, and a value of type `{}` is given",
+                                self.show_type(&ty)
+                            ),
+                        };
                         self.error(Code::TypeMismatch, message, arg.span);
                         Type::Error
                     }

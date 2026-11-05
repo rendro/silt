@@ -2434,8 +2434,28 @@ fn test_a_type_given_a_value_says_the_argument_is_a_value() {
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert_eq!(
         errors[0].message,
-        "`type List(_)` is given a value of type `()`, not a type"
+        "`List` takes a type here, and `()` is a value"
     );
     let span = errors[0].span;
     assert_eq!(&source[span.start as usize..span.end as usize], "()");
+}
+
+/// Any generic type given a value says so, by the value's text when it
+/// is a short literal, else by its type.
+#[test]
+fn test_a_generic_type_given_a_value_names_the_value() {
+    let errors = check_errors(
+        "import json\ntype Box(a) { v: a }\nfn main() {\n  let n = 1\n  println(json.parse(\"null\", Box(1)))\n  println(json.parse(\"null\", Box(n)))\n}\n",
+    );
+    let messages: Vec<&str> = (errors.iter())
+        .filter(|e| e.is_error())
+        .map(|e| e.message.as_str())
+        .collect();
+    assert_eq!(
+        messages,
+        [
+            "`Box` takes a type here, and `1` is a value",
+            "`Box` takes a type here, and a value of type `Int` is given",
+        ]
+    );
 }
