@@ -444,7 +444,9 @@ pub(crate) fn decode_field(
     json: &serde_json::Value,
     expected: &FieldType,
 ) -> Result<Value, std::string::String> {
-    decode::value(r, json, expected, &At::Top).map_err(|e| message(&e.variant(&RULES)))
+    let decoded = decode::seed::json_document(r, expected, json)
+        .unwrap_or_else(|| decode::value(r, json, expected, &At::Top));
+    decoded.map_err(|e| message(&e.variant(&RULES)))
 }
 
 /// What `JsonError`'s `message` says of `error`.
@@ -455,23 +457,6 @@ pub(crate) fn message(error: &Value) -> std::string::String {
         _ => None,
     };
     text.unwrap_or_else(|| error.to_string())
-}
-
-/// What `caller`, a json decoder, gives for its type argument `ty`:
-/// `Ok` of the value of the document `read_doc` gives, or `Err` of the
-/// `JsonError` that says why there is none, the program's `json.Decode`
-/// impls honoured. As every decoder does, it takes the type and refuses
-/// one no decoder fills before the document is read; `read_doc` gives
-/// the document, or the call's result where there is none. (An impl is
-/// the program's code: a step.)
-fn decoded(
-    vm: &mut Vm,
-    caller: &Decoder,
-    ty: Type,
-    read_doc: impl FnOnce() -> Result<serde_json::Value, Value>,
-) -> Result<Step, VmError> {
-    let expected = decode::target(caller, ty)?.element();
-    vm.decode_document("json.decode", expected, one, read_doc)
 }
 
 /// `json.decode(value, ty)`, and `T.decode(value)` of a type with no
@@ -489,7 +474,14 @@ pub(crate) fn decode_value(vm: &mut Vm, value: &Value, ty: Type) -> Result<Step,
         }
         Err(e) => Err(json_unknown_err(e.message)),
     };
-    decoded(vm, &DECODE, ty, || document)
+    let expected = decode::target(&DECODE, ty)?.element();
+    let read = |r: &decode::Reader, expected: &FieldType| match &document {
+        Ok(doc) => Ok(decode::seed::json_document(r, expected, doc)),
+        Err(result) => Err(result.clone()),
+    };
+    vm.decode_read(&RULES, expected, read, |vm, expected| {
+        vm.decode_document("json.decode", expected, one, || document.clone())
+    })
 }
 
 /// `json.parse` of the text `text` into values of `expected` by the walk
@@ -535,8 +527,14 @@ builtins! {
     }
 
     fn parse(vm, s: &str, ty: Type) -> Result<Step, VmError> {
+        let text = s.as_bytes();
         let expected = decode::target(&PARSE, ty)?.element();
-        vm.decode_json_text(expected, s.as_bytes())
+        let read = |r: &decode::Reader, expected: &FieldType| {
+            decode::seed::json_text(r, expected, text).map_err(|e| json_result_err(&e, text))
+        };
+        vm.decode_read(&RULES, expected, read, |vm, expected| {
+            parse_tree(vm, expected, text)
+        })
     }
 
     // (A part of a type with a written `json.Encode` impl is written

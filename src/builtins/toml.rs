@@ -50,7 +50,7 @@ use crate::value::Value;
 use crate::vm::{Step, Vm, VmError};
 
 use super::data::{self, Data, Format};
-use super::decode::{self, At, Decoder, Document, Node, Numbers, Rules, shown};
+use super::decode::{self, At, Decoder, Document, Node, Numbers, Rules, seed, shown};
 use super::typed::{Type, builtins};
 use crate::typeinfo::FieldType;
 
@@ -237,7 +237,7 @@ fn top_level(caller: &str, data: Data) -> Result<Data, VmError> {
 /// float is no `Int` whatever its value; a date and a time are TOML's
 /// literals or strings; TOML has no null (a key left out is a `None`);
 /// no `json.Value` is decoded.
-const RULES: Rules = Rules {
+pub(crate) const RULES: Rules = Rules {
     caller: "toml.parse",
     table: "table",
     variant: "String or table",
@@ -394,7 +394,46 @@ fn text(caller: &str, data: Result<Data, VmError>, pretty: bool) -> Result<Value
 /// left is the crate's error, at its place in `s`. (A document whose
 /// marked strings are more than the ones written here, which no
 /// document can be, is refused with the first error.)
-fn document(s: &str) -> Result<::toml::Value, Value> {
+pub(crate) fn document(s: &str) -> Result<::toml::Value, Value> {
+    marking(s, ::toml::from_str::<::toml::Value>, |doc, _| {
+        Some(marked_strings(doc))
+    })
+}
+
+/// The TOML text `s` decoded by `r` as `top` says, read once
+/// (`decode::seed`), its date and time literals that are none marked as
+/// [`document`] marks them: what the document decodes into, `None`
+/// where it is the walk's, or `Err` of the call's result where the
+/// text is no document.
+pub(crate) fn read_text(
+    r: &decode::Reader,
+    top: &seed::Top,
+    s: &str,
+) -> Result<Option<seed::Outcome>, Value> {
+    let read = |text: &str| seed::toml_text(r, top, text, marked());
+    marking(s, read, |read, text| {
+        // (The marked strings, counted where any was written; a text
+        // the walk reads as no document is the walk's.)
+        read.as_ref()?;
+        match ::toml::from_str::<::toml::Value>(text) {
+            Ok(doc) => Some(marked_strings(&doc)),
+            Err(_) => {
+                *read = None;
+                None
+            }
+        }
+    })
+}
+
+/// What `parse` reads of the TOML text `s`, its date and time literals
+/// that are none marked as [`document`] says, or the result of a text
+/// that is none. `marked_in` counts the marked strings of what was read
+/// of a text (`None`: no count, the reading is the walk's).
+fn marking<T>(
+    s: &str,
+    mut parse: impl FnMut(&str) -> Result<T, ::toml::de::Error>,
+    marked_in: impl Fn(&mut T, &str) -> Option<usize>,
+) -> Result<T, Value> {
     const MOST: usize = 64;
     let mut text = std::borrow::Cow::Borrowed(s);
     // Where each marked literal ends in `text`, and how many bytes it
@@ -403,10 +442,12 @@ fn document(s: &str) -> Result<::toml::Value, Value> {
     let mut grown: Vec<(usize, usize)> = Vec::new();
     let mut first = None;
     loop {
-        match ::toml::from_str::<::toml::Value>(&text) {
-            Ok(doc) => {
+        match parse(&text) {
+            Ok(mut doc) => {
                 return match first {
-                    Some(e) if marked_strings(&doc) != grown.len() => Err(toml_de_result_err(&e)),
+                    Some(e) if marked_in(&mut doc, &text).is_some_and(|n| n != grown.len()) => {
+                        Err(toml_de_result_err(&e))
+                    }
                     _ => Ok(doc),
                 };
             }
@@ -566,38 +607,98 @@ fn map_of(
     decode::map(r, element, doc, &At::Top)
 }
 
+/// The document `s` that `toml.parse_list` decodes, of the one key it
+/// checks it has (`keys` says the error of a document of more or none),
+/// for the walk; or the call's result.
+fn list_document(s: &str, keys: &dyn Fn(usize) -> String) -> Result<::toml::Value, Value> {
+    let tv = document(s)?;
+    one_key(&tv, keys)?;
+    Ok(tv)
+}
+
+/// `Err` of `toml.parse_list`'s result where the document `tv` is no
+/// table of one key.
+fn one_key(tv: &::toml::Value, keys: &dyn Fn(usize) -> String) -> Result<(), Value> {
+    // TOML's top level is always a table: the list is the array under
+    // its one key (`[[points]]` for records, `xs = [1, 2]`).
+    let ::toml::Value::Table(table) = tv else {
+        let error = decode::Error::mismatch("table", tv.kind(), &At::Top);
+        return Err(decode::result(&RULES, Err(error)));
+    };
+    match table.len() {
+        1 => Ok(()),
+        n => Err(toml_unknown_err(keys(n))),
+    }
+}
+
+/// What the walk of the tree of the TOML document `doc` (`document`'s
+/// reading of a text) gives decoded by `r` as `top` says, where no part
+/// is decoded by a written impl: the referee of [`read_text`].
+pub(crate) fn walked(
+    r: &decode::Reader,
+    top: &seed::Top,
+    doc: &Result<::toml::Value, Value>,
+) -> Value {
+    let doc = match doc {
+        Ok(doc) => doc,
+        Err(result) => return result.clone(),
+    };
+    if let seed::Top::List(_, keys) = top
+        && let Err(result) = one_key(doc, *keys)
+    {
+        return result;
+    }
+    let decoded = match top {
+        seed::Top::One(expected) => one(r, doc, expected),
+        seed::Top::List(element, _) => list_under_its_key(r, doc, element),
+        seed::Top::Map(element) => map_of(r, doc, element),
+    };
+    decode::result(&RULES, decoded)
+}
+
+/// The message of `toml.parse_list` of a document of `keys` top-level
+/// keys, not one; `shown` is its element type.
+fn not_one_key(shown: &str, keys: usize) -> String {
+    format!(
+        "toml.parse_list({shown}): expected a document with exactly one top-level key, an array, found {keys} keys"
+    )
+}
+
 // (A part of a type with a written `json.Decode` impl is decoded by the
 // impl, which is the program's code: the decoders are steps.)
 builtins! {
     fn parse(vm, s: &str, ty: Type) -> Result<Step, VmError> {
         let expected = decode::target(&PARSE, ty)?.element();
-        vm.decode_document(PARSE.name, expected, one, || document(s))
+        let read = |r: &decode::Reader, expected: &FieldType| {
+            read_text(r, &seed::Top::One(expected), s)
+        };
+        vm.decode_read(&RULES, expected, read, |vm, expected| {
+            vm.decode_document(PARSE.name, expected, one, || document(s))
+        })
     }
 
     fn parse_list(vm, s: &str, ty: Type) -> Result<Step, VmError> {
         let element = decode::target(&PARSE_LIST, ty)?.element();
         let shown = shown(&vm.runtime, &element);
-        vm.decode_document(PARSE_LIST.name, element, list_under_its_key, || {
-            let tv = document(s)?;
-            // TOML's top level is always a table: the list is the array
-            // under its one key (`[[points]]` for records, `xs = [1, 2]`).
-            let ::toml::Value::Table(table) = &tv else {
-                let error = decode::Error::mismatch("table", tv.kind(), &At::Top);
-                return Err(decode::result(&RULES, Err(error)));
-            };
-            if table.len() != 1 {
-                return Err(toml_unknown_err(format!(
-                    "toml.parse_list({shown}): expected a document with exactly one top-level key, an array, found {} keys",
-                    table.len()
-                )));
-            }
-            Ok(tv)
+        let keys = |n: usize| not_one_key(&shown, n);
+        let read = |r: &decode::Reader, element: &FieldType| {
+            read_text(r, &seed::Top::List(element, &keys), s)
+        };
+        vm.decode_read(&RULES, element, read, |vm, element| {
+            vm.decode_document(PARSE_LIST.name, element, list_under_its_key, || {
+                list_document(s, &keys)
+            })
         })
     }
 
     fn parse_map(vm, s: &str, ty: Type) -> Result<Step, VmError> {
         let element = decode::target(&PARSE_MAP, ty)?.element();
-        vm.decode_document(PARSE_MAP.name, element, map_of, || document(s))
+        let read = |r: &decode::Reader, element: &FieldType| {
+            read_text(r, &seed::Top::Map(element), s)
+        };
+        vm.decode_read(&RULES, element, read, |vm, element| {
+            vm.decode_document(PARSE_MAP.name, element, map_of, || document(s))
+        })
     }
 
     fn stringify(vm, value: &Value) -> Result<Step, VmError> {

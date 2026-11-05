@@ -60,6 +60,6 @@ path = "fuzz_targets/fuzz_run.rs"
 doc = false
 
 [[bin]]
-name = "fuzz_json_decode"
-path = "fuzz_targets/fuzz_json_decode.rs"
+name = "fuzz_decode"
+path = "fuzz_targets/fuzz_decode.rs"
 doc = false

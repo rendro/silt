@@ -1,0 +1,19 @@
+-- The TOML parser hands a date or time literal to a decoder as a table
+-- of one key, `$__toml_private_datetime`. A table a document writes with
+-- that key first is read as that literal: a datetime where its text is
+-- one (what follows the key is not read), broken text where it is none.
+-- A table with the key after another is a table.
+import time
+import toml
+
+type D { x: time.Date, i: Int }
+type S { x: String, i: Int }
+
+fn main() {
+  let marked = "x = \{ \"$__toml_private_datetime\" = \"1979-05-27\" }\ni = 1"
+  println(toml.parse(marked, D))
+  println(toml.parse(marked, S))
+  println(toml.parse("x = \{ \"$__toml_private_datetime\" = \"nope\" }\ni = 1", D))
+  println(toml.parse("x = \{ \"$__toml_private_datetime\" = \"1979-05-27\", y = 1 }\ni = 1", D))
+  println(toml.parse("x = \{ a = 1, \"$__toml_private_datetime\" = 1 }\ni = 1", S))
+}

@@ -1,0 +1,7 @@
+Err(toml syntax error at byte 6: duplicate key `a` in document root)
+Err(toml syntax error at byte 10: invalid table header
+duplicate key `x` in document root)
+Err(toml syntax error at byte 11: duplicate key `b`)
+Err(toml syntax error at byte 6: duplicate key `a` in document root)
+Err(toml type mismatch: expected Int, got string at ["a b"])
+Err(toml type mismatch: expected Int, got string at [""])
