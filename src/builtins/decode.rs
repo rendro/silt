@@ -20,6 +20,8 @@ use crate::typeinfo::{BuiltinVariant, FieldType, Shape, Tag, TypeInfo, bv, ty};
 use crate::value::{Float, Value};
 use crate::vm::{Runtime, VmError};
 
+pub(crate) mod seed;
+
 /// The message of the error a decoder returns for a field whose declared
 /// type has no decoder. `field` is the field of the record type `record`
 /// whose type is, or contains, `declared`.

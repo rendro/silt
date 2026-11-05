@@ -1,0 +1,7 @@
+Err(json syntax error at byte 23: trailing comma at line 1 column 24)
+Err(json type mismatch: expected Int, got string at x)
+Err(json syntax error at byte 11: EOF while parsing a list at line 1 column 11)
+Err(json syntax error at byte 10: trailing characters at line 1 column 11)
+Err(json syntax error at byte 41: trailing characters at line 1 column 42)
+Err(json type mismatch: expected Int, got boolean at fields[1])
+Ok(Rect(1, 2))

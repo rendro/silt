@@ -2,6 +2,11 @@
 //! of a type with no
 //! written impl, and `toml.parse`, `toml.parse_list`, `toml.parse_map`.
 //!
+//! `json.parse` reads its text once, making the value as it reads
+//! (`builtins::decode::seed`), unless the document has a part of a type
+//! with a written impl; the others, and such a document, are walked as a
+//! tree.
+//!
 //! A document is decoded by the one decoder (`builtins::decode`), but a
 //! part of a record or enum type the program wrote a `json.Decode` impl
 //! for is decoded by the impl's `decode`, wherever it is in the
@@ -21,7 +26,7 @@ use std::sync::Arc;
 
 use super::runtime::{Native, Step};
 use super::{Vm, VmError};
-use crate::builtins::decode::{self, Document, Error, Hole, Holes, Reader};
+use crate::builtins::decode::{self, Document, Error, Hole, Holes, Reader, seed};
 use crate::bytecode::Globals;
 use crate::typeinfo::{FieldType, bv};
 use crate::value::Value;
@@ -136,6 +141,34 @@ impl Vm {
             error: decoded.err(),
             calling: false,
         })))
+    }
+
+    /// `json.parse` of the text `text` into values of `expected`: read
+    /// once, the value made as the text is read (`decode::seed`). A type
+    /// a field of which no decoder fills is refused before the text is
+    /// read, and a document with a part a written `json.Decode` impl
+    /// decodes is decoded as [`Vm::decode_document`] decodes one.
+    pub(crate) fn decode_json_text(
+        &mut self,
+        expected: FieldType,
+        text: &[u8],
+    ) -> Result<Step, VmError> {
+        use crate::builtins::json;
+        let read = {
+            let table = self.decoding_table();
+            let written = |id, args: &[FieldType]| table.decoded(id, args);
+            let reader = Reader::with_impls(&self.runtime, &written, Holes::Collect(Vec::new()));
+            let target = decode::Target::Value(expected.clone());
+            if let Some(refused) = decode::refused(&reader, &json::RULES, &target) {
+                return Ok(Step::Done(refused));
+            }
+            decode::seed::json_text(&reader, &expected, text)
+        };
+        Ok(Step::Done(match read {
+            seed::Read::Decoded(decoded) => decode::result(&json::RULES, decoded),
+            seed::Read::Text(e) => json::json_result_err(&e, text),
+            seed::Read::Written => return json::parse_tree(self, expected, text),
+        }))
     }
 
     /// The table a document is decoded by: this VM's, or, for a task of

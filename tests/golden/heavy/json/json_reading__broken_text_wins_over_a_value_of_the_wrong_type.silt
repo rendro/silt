@@ -1,0 +1,17 @@
+-- Broken text anywhere in a document is the error, also after a value
+-- of the wrong type: the document is read to its end.
+import json
+
+type P { x: Int, y: List(Int) }
+
+type Shape { Dot, Rect(Int, Int) }
+
+fn main() {
+  println(json.parse("\{\"x\": \"no\", \"y\": [1, 2,]}", P))
+  println(json.parse("\{\"x\": \"no\", \"y\": [1, 2]}", P))
+  println(json.parse("[\"no\", 1, 2", List(Int)))
+  println(json.parse("[\"no\", 1] x", List(Int)))
+  println(json.parse("\{\"fields\": [1, true], \"variant\": \"Rect\"} ]", Shape))
+  println(json.parse("\{\"fields\": [1, true], \"variant\": \"Rect\"}", Shape))
+  println(json.parse("\{\"variant\": \"Rect\", \"fields\": [1, 2]}", Shape))
+}

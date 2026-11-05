@@ -1,0 +1,6 @@
+Ok(P {x: 1, y: None})
+Err(json type mismatch: expected Int, got string at x)
+Ok(#{"a": 1})
+Err(json type mismatch: expected Int, got string at a)
+Ok(Object(#{"a": Array([Int(2)])}))
+Ok([P {x: 2, y: Some(s)}])
