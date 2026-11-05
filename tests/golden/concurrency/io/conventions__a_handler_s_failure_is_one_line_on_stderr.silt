@@ -1,0 +1,37 @@
+-- timeout: 30
+-- requires-feature: http
+-- stderr-contains: http.serve: handler returned malformed Response: Response.status out of range: 1000
+-- stderr-contains: http.serve: handler error: panic: boom
+-- stderr-not-contains: error[runtime]
+-- A handler that fails, or returns a response that is none, is answered
+-- 500, and the failure is written to stderr as one line: its message
+-- only, with no diagnostic header nested in it.
+import bytes
+import http
+import task
+import tcp
+
+fn answer(req: http.Request) -> http.Response {
+  match http.segments(req.path) {
+    ["status"] -> http.Response { status: 1000, body: bytes.empty(), headers: #{} }
+    ["fail"] -> panic("boom")
+    _ -> http.Response { status: 200, body: bytes.from_string("ok"), headers: #{} }
+  }
+}
+
+fn show(label: String, answered: Result(http.Response, http.HttpError)) {
+  match answered {
+    Ok(response) -> println("{label}: {response.status}")
+    Err(e) -> println("{label}: {e}")
+  }
+}
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let base = "http://127.0.0.1:{tcp.local_port(listener)}"
+  let server = task.spawn { -> http.serve(listener, answer) }
+  show("status", http.get("{base}/status"))
+  show("fail", http.get("{base}/fail"))
+  show("after", http.get("{base}/"))
+  task.cancel(server)
+}

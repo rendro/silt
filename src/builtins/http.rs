@@ -955,7 +955,8 @@ fn handler_response(vm: &Vm, returned: &Value, reply: Reply) -> Vec<u8> {
             // payloads) over the HTTP wire (MED-1). Log internally,
             // respond generically.
             vm.runtime.io.err(&format!(
-                "http.serve: handler returned malformed Response: {e}\n"
+                "http.serve: handler returned malformed Response: {}\n",
+                e.message
             ));
             plain_response(vm, 500, wire::reason(500), reply)
         }
@@ -1423,7 +1424,7 @@ impl crate::vm::Native for Conn {
                     // boundary (MED-1). Log to the host's stderr instead.
                     vm.runtime
                         .io
-                        .err(&format!("http.serve: handler error: {e}\n"));
+                        .err(&format!("http.serve: handler error: {}\n", e.message));
                 }
                 if !self.go_on_in_a_new_task(vm, reply) && !self.handed_on {
                     let bytes = plain_response(vm, 500, wire::reason(500), unavailable);
