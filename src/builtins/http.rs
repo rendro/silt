@@ -129,6 +129,31 @@ fn body_within(
     Ok((body.len() <= limit).then_some(body))
 }
 
+/// The headers `headers`, of a request or a response, as the map a
+/// program gets: the values of a header that came more than once are
+/// joined with ", ", in the order they came, as HTTP lets a list be
+/// written in one header.
+#[cfg(feature = "http")]
+fn header_map(headers: impl IntoIterator<Item = (String, String)>) -> crate::value::Map {
+    use std::collections::btree_map::Entry;
+    let mut joined: BTreeMap<String, String> = BTreeMap::new();
+    for (name, value) in headers {
+        match joined.entry(name) {
+            Entry::Vacant(entry) => {
+                entry.insert(value);
+            }
+            Entry::Occupied(mut entry) => {
+                let joined = entry.get_mut();
+                joined.push_str(", ");
+                joined.push_str(&value);
+            }
+        }
+    }
+    (joined.into_iter())
+        .map(|(name, value)| (Value::String(name.into()), Value::String(value.into())))
+        .collect()
+}
+
 /// The `Response` of a response of the transport library, or `None`
 /// if its body is larger than a body may be ([`wire::BODY_MAX`]).
 /// `head` says that the request was `HEAD`.
@@ -142,12 +167,9 @@ fn ureq_response_to_value(
     // headers are (`http::HeaderName` holds them so).
     let headers = response.headers().iter().filter_map(|(name, value)| {
         let value = value.to_str().ok()?;
-        Some((
-            Value::String(name.as_str().into()),
-            Value::String(value.into()),
-        ))
+        Some((name.as_str().to_string(), value.to_string()))
     });
-    let headers = headers.collect();
+    let headers = header_map(headers);
     // An answer to `HEAD`, and one whose status says so, has no body,
     // whatever its headers say of one (they describe what a `GET`
     // would get): nothing is read, and so nothing is unpacked that is
@@ -856,14 +878,10 @@ impl Got {
         };
         // A header's name is in lower case, however the client wrote
         // it: a name is not case-sensitive, and a lookup has one
-        // spelling to ask for. (Of a header sent twice the last stays.)
-        let headers = request.headers.into_iter().map(|(name, value)| {
-            (
-                Value::String(name.to_ascii_lowercase().into()),
-                Value::String(value.into()),
-            )
-        });
-        let headers = headers.collect();
+        // spelling to ask for.
+        let headers =
+            (request.headers.into_iter()).map(|(name, value)| (name.to_ascii_lowercase(), value));
+        let headers = header_map(headers);
         // The body is the bytes that arrived.
         Got::Request(
             make_http_request_value(method, path, query, headers, request.body),
