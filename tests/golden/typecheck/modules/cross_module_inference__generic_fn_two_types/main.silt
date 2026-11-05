@@ -7,5 +7,5 @@ import a
 fn main() {
   let n = a.id(42)
   let s = a.id("hello")
-  s
+  let _ = s
 }

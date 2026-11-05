@@ -3,4 +3,4 @@
 -- MAX_COLLECTION_LEN is 10_000_000.
 -- "x" (1 byte) repeated 10_000_001 times exceeds the limit.
 import string
-fn main() { string.repeat("x", 10000001) }
+fn main() { let _ = string.repeat("x", 10000001) }

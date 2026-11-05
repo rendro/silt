@@ -3,5 +3,5 @@
 -- stderr-contains: error[type]
 import encoding
 fn main() {
-  encoding.url_encode(42)
+  let _ = encoding.url_encode(42)
 }

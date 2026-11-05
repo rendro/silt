@@ -12,7 +12,7 @@ fn step() -> Result(Int, String) {
   Err("no luck")
 }
 
-fn main() -> Result(Int, String) {
+fn main() -> Result((), String) {
   let ticker = task.spawn { ->
     loop {
       time.sleep(time.ms(1))
@@ -20,7 +20,7 @@ fn main() -> Result(Int, String) {
     }
   }
   println("before")
-  let v = step()?
+  let _ = step()?
   task.cancel(ticker)
-  Ok(v)
+  Ok(())
 }

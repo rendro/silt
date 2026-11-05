@@ -4,5 +4,5 @@
 -- stderr-contains: expected Bytes, got String
 import crypto
 fn main() {
-  crypto.sha256("not bytes")
+  let _ = crypto.sha256("not bytes")
 }

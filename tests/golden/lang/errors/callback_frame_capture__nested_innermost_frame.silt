@@ -3,5 +3,5 @@ import list
 fn innermost(x) { 1 / 0 }
 fn outer(inner) { list.map(inner, innermost) }
 fn main() {
-  list.map([[1], [2]], outer)
+  let _ = list.map([[1], [2]], outer)
 }

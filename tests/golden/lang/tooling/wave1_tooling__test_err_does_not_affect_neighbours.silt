@@ -8,7 +8,7 @@ import test
 fn test_first() {
   test.assert_eq(1, 1)
 }
-fn test_gives_up() -> Result(Int, String) {
+fn test_gives_up() -> Result((), String) {
   Err("gave up")
 }
 fn test_last() {

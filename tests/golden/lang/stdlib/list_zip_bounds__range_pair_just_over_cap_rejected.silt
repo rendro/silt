@@ -2,5 +2,5 @@
 -- stderr-contains: list.zip: list exceeds maximum size of 10000000 elements
 import list
 fn main() {
-  list.zip(0..10000000, 0..10000000)
+  let _ = list.zip(0..10000000, 0..10000000)
 }

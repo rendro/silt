@@ -4,5 +4,5 @@
 import a
 
 fn main() {
-  42
+  let _ = 42
 }

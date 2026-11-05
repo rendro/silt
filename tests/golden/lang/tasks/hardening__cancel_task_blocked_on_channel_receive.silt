@@ -6,5 +6,5 @@ fn main() {
   let ch = channel.new(0)
   let h = task.spawn({ -> channel.receive(ch) })
   task.cancel(h)
-  task.join(h)
+  let _ = task.join(h)
 }

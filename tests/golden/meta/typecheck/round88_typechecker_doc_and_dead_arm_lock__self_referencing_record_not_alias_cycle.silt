@@ -5,4 +5,4 @@ type Node {
   next: Node,
   value: Int,
 }
-fn main() -> Int { 0 }
+fn main() { let _ = 0 }

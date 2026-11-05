@@ -7,5 +7,5 @@ fn helper(x) { x }
 
 fn main() {
   println(helper(1))
-  util.boom(0)
+  let _ = util.boom(0)
 }

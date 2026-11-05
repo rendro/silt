@@ -7,4 +7,4 @@ trait Foo {
   fn b(self) -> Int
 }
 trait Foo for Int { }
-fn main() { 42 }
+fn main() { let _ = 42 }

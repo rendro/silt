@@ -6,5 +6,5 @@ import a
 fn announce(x: a) -> String where a: a.Greet { a.Greet.greet(x) }
 
 fn main() {
-  announce(7)
+  let _ = announce(7)
 }

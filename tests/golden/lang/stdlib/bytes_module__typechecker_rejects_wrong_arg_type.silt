@@ -3,5 +3,5 @@
 -- stderr-contains: type mismatch: expected Bytes, got String
 import bytes
 fn main() {
-  bytes.length("not bytes")
+  let _ = bytes.length("not bytes")
 }

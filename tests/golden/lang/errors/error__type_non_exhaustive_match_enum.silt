@@ -8,4 +8,4 @@ fn name(c: Color) {
     Green -> "green"
   }
 }
-fn main() { name(Red) }
+fn main() { let _ = name(Red) }

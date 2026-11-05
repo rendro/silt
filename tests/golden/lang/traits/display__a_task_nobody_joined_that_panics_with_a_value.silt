@@ -16,5 +16,5 @@ trait Display for Code {
 }
 
 fn main() {
-  task.spawn({ -> panic([Code { n: 4 }]) })
+  let _ = task.spawn({ -> panic([Code { n: 4 }]) })
 }

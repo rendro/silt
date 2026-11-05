@@ -5,5 +5,5 @@ import r93_mathdep
 fn main() {
   let ok = r93_mathdep.divide(4, 2)
   println(ok)
-  1 / 0
+  let _ = 1 / 0
 }

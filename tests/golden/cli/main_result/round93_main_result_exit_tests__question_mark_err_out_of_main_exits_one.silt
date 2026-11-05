@@ -4,7 +4,7 @@ fn fail() -> Result(Int, String) {
   Err("kaput")
 }
 
-fn main() -> Result(Int, String) {
-  let v = fail()?
-  Ok(v)
+fn main() -> Result((), String) {
+  let _ = fail()?
+  Ok(())
 }

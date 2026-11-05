@@ -16,5 +16,5 @@ fn main() {
   let h = task.spawn({ ->
     list.map([1, 2, 0], wrapper)
   })
-  task.join(h)
+  let _ = task.join(h)
 }

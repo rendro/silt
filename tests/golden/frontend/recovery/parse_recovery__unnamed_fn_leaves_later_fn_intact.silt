@@ -11,5 +11,5 @@ fn g() -> Int {
 }
 
 fn main() {
-  g()
+  let _ = g()
 }

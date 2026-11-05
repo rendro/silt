@@ -4,5 +4,5 @@
 import a
 
 fn main() {
-  a.show(21)
+  let _ = a.show(21)
 }

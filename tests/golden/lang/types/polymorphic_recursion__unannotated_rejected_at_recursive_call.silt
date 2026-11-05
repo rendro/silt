@@ -8,5 +8,5 @@ fn myfn(p) {
 }
 
 fn main() {
-  myfn(42)
+  let _ = myfn(42)
 }

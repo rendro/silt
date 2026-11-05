@@ -6,5 +6,5 @@ fn id(x: a) -> a { x }
 fn main() {
   let n = id(0)
   let s = id("hello")
-  n
+  let _ = n
 }

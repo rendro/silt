@@ -10,4 +10,4 @@ trait Greetable for Int {
   fn greet(self) { "hello" }
 }
 
-fn main() { 42 }
+fn main() { let _ = 42 }

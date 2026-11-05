@@ -4,4 +4,4 @@ fn bad_pred(x) {
   let _ = 1 / 0
   true
 }
-fn main() { list.filter([1, 2, 3], bad_pred) }
+fn main() { let _ = list.filter([1, 2, 3], bad_pred) }

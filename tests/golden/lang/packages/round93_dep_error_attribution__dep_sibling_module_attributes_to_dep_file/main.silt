@@ -3,5 +3,5 @@
 import r93_mathdep
 
 fn main() {
-  r93_mathdep.divide_deep(1, 0)
+  let _ = r93_mathdep.divide_deep(1, 0)
 }

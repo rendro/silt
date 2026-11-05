@@ -7,5 +7,5 @@ fn add(a: Int, b: Int) -> String {
 }
 
 fn main() {
-  add(1, 2)
+  let _ = add(1, 2)
 }

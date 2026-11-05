@@ -6,4 +6,4 @@ fn foo(x: Bool) {
     true -> "yes"
   }
 }
-fn main() { foo(true) }
+fn main() { let _ = foo(true) }

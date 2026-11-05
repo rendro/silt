@@ -6,4 +6,4 @@ error[runtime]: division by zero
 
 call stack:
   -> divider  at callback_frame_capture__list_map.silt:3:17
-  -> main  at callback_frame_capture__list_map.silt:4:13
+  -> main  at callback_frame_capture__list_map.silt:4:21

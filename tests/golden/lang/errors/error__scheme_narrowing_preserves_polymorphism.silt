@@ -2,4 +2,4 @@
 fn id(x) { x }
 fn main() { let a = id(1)
 let b = id("hello")
-a }
+let _ = a }

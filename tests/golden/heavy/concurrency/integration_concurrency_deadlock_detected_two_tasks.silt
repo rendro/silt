@@ -13,5 +13,5 @@ fn main() {
   let t2 = task.spawn({ ->
     channel.receive(ch2)
   })
-  task.join(t1)
+  let _ = task.join(t1)
 }

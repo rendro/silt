@@ -4,5 +4,5 @@
 fn main() {
   let n = 0.0
   let _ = n + 1.5
-  n
+  let _ = n
 }

@@ -2,4 +2,4 @@
 -- exit: 1
 -- stderr-contains: type mismatch: expected Int, got String
 fn sum(x, y) { x + y + 1 }
-fn main() { sum("hello", "world") }
+fn main() { let _ = sum("hello", "world") }

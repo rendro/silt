@@ -3,5 +3,5 @@
 -- stderr-contains: silt test
 fn test_example() {
   let x = 1
-  x + 1
+  let _ = x + 1
 }

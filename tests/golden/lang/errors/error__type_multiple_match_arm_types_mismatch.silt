@@ -8,4 +8,4 @@ fn check(x: Int) -> String {
     _ -> "other"
   }
 }
-fn main() { check(0) }
+fn main() { let _ = check(0) }

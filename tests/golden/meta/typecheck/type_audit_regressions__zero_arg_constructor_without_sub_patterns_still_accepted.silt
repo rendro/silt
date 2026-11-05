@@ -3,7 +3,7 @@
 type Color { Red, Green, Blue }
 fn main() {
   let x: Color = Red
-  match x {
+  let _ = match x {
     Red -> "red"
     Green -> "green"
     Blue -> "blue"

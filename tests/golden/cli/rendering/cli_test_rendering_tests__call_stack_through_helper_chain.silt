@@ -14,5 +14,5 @@ fn inner(x) {
 }
 fn test_fails_in_helper() {
   let r = helper(5)
-  r
+  let _ = r
 }

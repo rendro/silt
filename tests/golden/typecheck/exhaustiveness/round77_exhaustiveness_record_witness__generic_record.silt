@@ -6,4 +6,4 @@
 -- stderr-not-contains: not all patterns are covered
 type Pair(a, b) { first: a, second: b }
 fn check(p: Pair(Bool, Int)) -> Int { match p { Pair{first: true, second} -> second } }
-fn main() { check(Pair{first: true, second: 1}) }
+fn main() { let _ = check(Pair{first: true, second: 1}) }

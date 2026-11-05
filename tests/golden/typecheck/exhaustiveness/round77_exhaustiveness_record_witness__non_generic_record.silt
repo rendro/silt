@@ -5,4 +5,4 @@
 -- stderr-contains: `Box { flag: false }` is not covered
 type Box { flag: Bool }
 fn check(b: Box) -> Int { match b { Box{flag: true} -> 1 } }
-fn main() { check(Box{flag: true}) }
+fn main() { let _ = check(Box{flag: true}) }

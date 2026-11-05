@@ -4,4 +4,4 @@
 -- stderr-contains: forms a cycle
 type A = B
 type B = A
-fn main() -> Int { 0 }
+fn main() { let _ = 0 }

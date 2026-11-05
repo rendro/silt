@@ -2,7 +2,7 @@
 pub fn helper(x: Int) -> Int {
   x / 0
 }
-pub fn main() -> Int { helper(1) }
+pub fn main() { let _ = helper(1) }
 
 
 

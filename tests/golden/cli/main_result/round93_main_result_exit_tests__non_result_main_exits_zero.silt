@@ -1,4 +1,4 @@
 -- stderr-not-contains: error[
-fn main() -> Int {
-  42
+fn main() {
+  let _ = 42
 }

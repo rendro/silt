@@ -3,5 +3,5 @@
 -- stderr-contains: negative width
 import string
 fn main() {
-  string.pad_left("hi", -1, " ")
+  let _ = string.pad_left("hi", -1, " ")
 }

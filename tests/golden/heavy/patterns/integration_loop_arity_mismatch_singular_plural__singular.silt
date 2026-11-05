@@ -3,7 +3,7 @@
 -- Singular: 1 binding, called with 0 args → "1 binding", "0 arguments"
 -- Plural: 2 bindings, called with 1 arg → "2 bindings", "1 argument"
 fn main() {
-  loop x = 0 {
+  let _ = loop x = 0 {
     match x > 5 {
       true -> x
       _ -> loop()

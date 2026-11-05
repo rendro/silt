@@ -5,4 +5,4 @@ fn count(n) {
     false -> count(n - 1)
   }
 }
-fn main() { count(100) }
+fn main() { let _ = count(100) }

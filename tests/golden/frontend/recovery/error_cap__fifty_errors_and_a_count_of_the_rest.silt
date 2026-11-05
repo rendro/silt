@@ -64,5 +64,5 @@ let v59 = )
 let v60 = )
 
 fn main() {
-  1
+  let _ = 1
 }

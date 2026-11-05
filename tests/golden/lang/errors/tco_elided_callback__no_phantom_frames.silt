@@ -7,4 +7,4 @@ fn helper(x) {
   }
 }
 fn wrapper(x) { helper(x) }
-fn main() { list.map([1, 2, 0], wrapper) }
+fn main() { let _ = list.map([1, 2, 0], wrapper) }

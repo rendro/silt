@@ -4,5 +4,5 @@
 fn main() {
   let xs = [1, 2, 3]
   let _ = -xs
-  0
+  let _ = 0
 }

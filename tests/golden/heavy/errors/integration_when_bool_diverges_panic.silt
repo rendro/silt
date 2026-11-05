@@ -6,5 +6,5 @@ fn check(n) {
 }
 
 fn main() {
-  check(-1)
+  let _ = check(-1)
 }

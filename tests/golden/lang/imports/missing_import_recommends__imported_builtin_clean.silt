@@ -2,6 +2,6 @@
 -- exit: 0
 -- stderr-not-contains: error
 import list
-fn main() -> Int {
-    list.sum([1, 2, 3])
+fn main() {
+    let _ = list.sum([1, 2, 3])
 }

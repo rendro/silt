@@ -5,5 +5,5 @@
 import a
 
 fn main() {
-  a.fa()
+  let _ = a.fa()
 }

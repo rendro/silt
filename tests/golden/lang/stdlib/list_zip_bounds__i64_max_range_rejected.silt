@@ -3,5 +3,5 @@
 -- stderr-not-contains: panic
 import list
 fn main() {
-  list.zip(0..9223372036854775807, 0..9223372036854775807)
+  let _ = list.zip(0..9223372036854775807, 0..9223372036854775807)
 }

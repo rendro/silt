@@ -3,4 +3,4 @@
 -- stderr-contains: list.take: negative count
 -- stderr-not-contains: negative index
 import list
-fn main() { list.take([1, 2, 3], -1) }
+fn main() { let _ = list.take([1, 2, 3], -1) }

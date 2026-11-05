@@ -6,4 +6,4 @@ error[runtime]: division by zero
 
 call stack:
   -> divide  at r93_mathdep/src/lib.silt:4:3
-  -> main  at main.silt:6:3
+  -> main  at main.silt:6:11

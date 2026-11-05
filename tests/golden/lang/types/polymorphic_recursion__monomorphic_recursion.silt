@@ -9,5 +9,5 @@ fn fact(n: Int) -> Int {
 }
 
 fn main() {
-  fact(5)
+  let _ = fact(5)
 }

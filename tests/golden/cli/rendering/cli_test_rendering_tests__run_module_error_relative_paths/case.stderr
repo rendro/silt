@@ -6,4 +6,4 @@ error[runtime]: division by zero
 
 call stack:
   -> kaboom  at helper.silt:1:19
-  -> main  at main.silt:5:13
+  -> main  at main.silt:5:21

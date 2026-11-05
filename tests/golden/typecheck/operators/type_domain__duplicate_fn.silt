@@ -3,4 +3,4 @@
 -- stderr-contains: is bound twice at the top level
 fn greet() { "hi" }
 fn greet() { "bye" }
-fn main() { greet() }
+fn main() { let _ = greet() }

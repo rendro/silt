@@ -4,5 +4,5 @@
 fn add(a: Int, b: Int) -> Int { a + b }
 fn main() {
   let r = 5 |> add
-  r + 1
+  let _ = r + 1
 }

@@ -4,4 +4,4 @@ type P { x: Int }
 trait Show for P {
   fn show(self) -> String { "p" }
 }
-fn main() { 1 }
+fn main() { let _ = 1 }

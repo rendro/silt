@@ -3,4 +3,4 @@
 -- stderr-contains: list.drop: negative count
 -- stderr-not-contains: negative index
 import list
-fn main() { list.drop([1, 2, 3], -1) }
+fn main() { let _ = list.drop([1, 2, 3], -1) }
