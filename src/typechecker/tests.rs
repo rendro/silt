@@ -2473,3 +2473,35 @@ fn test_more_than_65535_variant_fields_or_65536_type_params_refused() {
         errors.iter().map(|e| &e.message).collect::<Vec<_>>()
     );
 }
+
+/// A decoder numbers an impl header's type variables as a type's
+/// parameters, with a `u16`; a header may hold any number in tuples.
+/// An impl of more than 65,536 is refused at the impl, and its use is
+/// no internal error (the generator of the R7 verifier).
+#[test]
+fn test_impl_of_more_than_65536_type_variables_refused() {
+    let n = 65_600;
+    let tuple = |xs: &[String]| format!("({})", xs.join(", "));
+    let groups = |of: &dyn Fn(usize) -> String| {
+        let all: Vec<String> = (0..n).map(of).collect();
+        tuple(&all.chunks(255).map(tuple).collect::<Vec<_>>())
+    };
+    let header = groups(&|k| format!("a{k}"));
+    let given = groups(&|_| "Int".to_string());
+    let source = format!(
+        "import json\ntype Box(a) {{ v: a }}\n\
+         trait json.Decode for Box({header}) {{\n\
+         \x20 fn decode(value: json.Value) -> Result(Self, json.JsonError) {{ Err(json.Other(\"inst\")) }}\n\
+         }}\n\
+         fn main() {{ println(json.parse(\"null\", Box({given}))) }}\n"
+    );
+    let errors = check_errors(&source);
+    let messages: Vec<&str> = (errors.iter())
+        .filter(|e| e.is_error())
+        .map(|e| e.message.as_str())
+        .collect();
+    assert_eq!(
+        messages,
+        ["too many type variables of an impl: 65600 (the limit is 65536)"]
+    );
+}

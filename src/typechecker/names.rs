@@ -471,10 +471,19 @@ const VARIANTS: (&str, usize) = ("variants of a type", u16::MAX as usize + 1);
 const VARIANT_FIELDS: (&str, usize) = ("fields of a variant", u16::MAX as usize);
 /// A type has at most 65,536 parameters: the index of one is a `u16`.
 const TYPE_PARAMS: (&str, usize) = ("parameters of a type", u16::MAX as usize + 1);
+/// An impl's header has at most 65,536 type variables: a decoder
+/// numbers them as a type's parameters.
+pub(super) const IMPL_TYPE_VARS: (&str, usize) =
+    ("type variables of an impl", u16::MAX as usize + 1);
+/// An impl's header has at most 65,536 bounds, a definition (with its
+/// impl's header, for a method) as many: the place of one is a `u16`.
+pub(super) const IMPL_BOUNDS: (&str, usize) = ("bounds of an impl", u16::MAX as usize + 1);
+pub(super) const DEFINITION_BOUNDS: (&str, usize) =
+    ("bounds of a definition", u16::MAX as usize + 1);
 
 /// Refuse `count` of `what` past `max`, with the wording of every
 /// compile limit, at `span`.
-fn refuse_past_limit(
+pub(super) fn refuse_past_limit(
     count: usize,
     (what, max): (&'static str, usize),
     span: Span,

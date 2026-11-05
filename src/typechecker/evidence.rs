@@ -6,6 +6,7 @@
 //! [`crate::evidence::Site`] of each place that passes evidence on: the
 //! uses of definitions with bounds and the calls of trait methods.
 
+use super::names::DEFINITION_BOUNDS;
 use super::*;
 use crate::evidence::{Evidence, Site};
 
@@ -82,6 +83,9 @@ pub(crate) struct Ledger {
     /// method's, and for an impl for every function or tuple the trait
     /// of `self`.
     pub(super) methods: HashMap<Span, Vec<BoundKey>>,
+    /// The definitions with more bounds than a `u16` numbers (by the
+    /// span of the body, with the count), for `write_evidence` to refuse.
+    pub(super) too_many_bounds: std::cell::RefCell<Vec<(Span, usize)>>,
     /// The predicates of earlier REPL inputs this one solved: each with
     /// the node of its evidence here.
     pub(super) late: Vec<(crate::evidence::Late, EvId)>,
@@ -560,6 +564,11 @@ impl TypeChecker {
             .collect();
         self.ev.tops = tops;
         self.write_evidence_of(program, env);
+        // (Their places past the limit were clamped: the program does
+        // not run.)
+        for (tag, count) in self.ev.too_many_bounds.take() {
+            self.refuse_past_limit(count, DEFINITION_BOUNDS, tag);
+        }
     }
 
     /// `write_evidence`, the module's top-level bounds being known.
@@ -746,6 +755,12 @@ impl TypeChecker {
         tag: Span,
         bounds: Vec<BoundKey>,
     ) {
+        if bounds.len() > DEFINITION_BOUNDS.1 {
+            self.ev
+                .too_many_bounds
+                .borrow_mut()
+                .push((tag, bounds.len()));
+        }
         let owns = !bounds.is_empty();
         if owns {
             owners.push(Owner { tag, bounds });
