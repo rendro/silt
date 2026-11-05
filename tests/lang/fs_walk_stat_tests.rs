@@ -136,8 +136,9 @@ fn test_fs_stat_on_file_reports_size_and_is_file() {
         r#"
 import fs
 fn main() {{
-    fs.stat("{file_str}")
+    host.give(fs.stat("{file_str}"))
 }}
+import host
 "#
     );
     let result = run(&input);
@@ -431,8 +432,9 @@ fn test_fs_read_link_returns_target() {
         r#"
 import fs
 fn main() {{
-    fs.read_link("{link_str}")
+    host.give(fs.read_link("{link_str}"))
 }}
+import host
 "#
     );
     let inner = ok_inner(run(&input));
@@ -462,8 +464,9 @@ fn test_fs_is_symlink_distinguishes_symlink_and_file() {
         r#"
 import fs
 fn main() {{
-    (fs.is_symlink("{plain_str}"), fs.is_symlink("{link_str}"))
+    host.give((fs.is_symlink("{plain_str}"), fs.is_symlink("{link_str}")))
 }}
+import host
 "#
     );
     let result = run(&input);
@@ -485,8 +488,9 @@ fn test_fs_read_link_on_non_symlink_errs() {
         r#"
 import fs
 fn main() {{
-    fs.read_link("{file_str}")
+    host.give(fs.read_link("{file_str}"))
 }}
+import host
 "#
     );
     let msg = err_msg(run(&input));
@@ -575,7 +579,7 @@ fn stat_gives_a_time_before_1970() {
     drop(opened);
     let path = file.to_str().unwrap().replace('\\', "/");
     let stat = ok_inner(run(&format!(
-        "import fs\nfn main() {{\n  fs.stat(\"{path}\")\n}}\n"
+        "import fs\nfn main() {{\n  host.give(fs.stat(\"{path}\"))\n}}\nimport host\n"
     )));
     let (_, fields) = record_fields(stat);
     assert_eq!(

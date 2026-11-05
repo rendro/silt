@@ -26,8 +26,9 @@ fn test_list_unfold_over_cap_rejected() {
         r#"
 import list
 fn main() {
-  list.unfold(0) { n -> Some((n, n + 1)) }
+  host.give(list.unfold(0) { n -> Some((n, n + 1)) })
 }
+import host
         "#,
     );
     assert!(

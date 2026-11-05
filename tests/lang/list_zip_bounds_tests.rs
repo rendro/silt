@@ -30,8 +30,9 @@ fn test_list_zip_range_range_at_cap_ok() {
     let result = run(r#"
 import list
 fn main() {
-  list.length(list.zip(0..9999999, 0..9999999))
+  host.give(list.length(list.zip(0..9999999, 0..9999999)))
 }
+import host
         "#);
     assert_eq!(result, Value::Int(10_000_000));
 }

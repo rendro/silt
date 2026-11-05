@@ -127,7 +127,7 @@ fn main() {{
   time.sleep(time.ms(100))
   when let Ok(text) = io.read_file("{path}") else {{ panic("cannot read the file") }}
   println(text)
-  readers |> list.each {{ h -> task.cancel(h) }}
+  let _ = readers |> list.each {{ h -> task.cancel(h) }}
 }}
 "#
     );

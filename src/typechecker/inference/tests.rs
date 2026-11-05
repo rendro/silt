@@ -8,7 +8,7 @@ fn test_unary_negate_int() {
         r#"
 fn main() {
   let x = -42
-  x
+  let _ = x
 }
         "#,
     );
@@ -20,7 +20,7 @@ fn test_unary_negate_float() {
         r#"
 fn main() {
   let x = -3.14
-  x
+  let _ = x
 }
         "#,
     );
@@ -32,7 +32,7 @@ fn test_unary_not_bool() {
         r#"
 fn main() {
   let x = !true
-  x
+  let _ = x
 }
         "#,
     );
@@ -43,7 +43,7 @@ fn test_unary_not_non_bool() {
     assert_has_error(
         r#"
 fn main() {
-  !42
+  let _ = !42
 }
         "#,
         "type mismatch",
@@ -62,7 +62,7 @@ fn classify(x) {
     _ -> "big"
   }
 }
-fn main() { classify(2) }
+fn main() { let _ = classify(2) }
         "#,
     );
 }
@@ -76,7 +76,7 @@ fn extract(x) {
     Ok(v) | Err(v) -> v
   }
 }
-fn main() { extract(Ok(42)) }
+fn main() { let _ = extract(Ok(42)) }
         "#,
     );
 }
@@ -89,7 +89,7 @@ fn test_map_pattern_in_match() {
         r#"
 fn main() {
   let m = #{ "x": 1, "y": 2 }
-  match m {
+  let _ = match m {
     #{ "x": val } -> val
     _ -> 0
   }
@@ -106,7 +106,7 @@ fn test_pin_pattern_matches_value() {
         r#"
 fn main() {
   let expected = 42
-  match 42 {
+  let _ = match 42 {
     ^expected -> "matched"
     _ -> "no match"
   }
@@ -125,7 +125,7 @@ fn early(x) {
   when x > 0 else { return 0 }
   x * 2
 }
-fn main() { early(5) }
+fn main() { let _ = early(5) }
         "#,
     );
 }
@@ -152,7 +152,7 @@ fn test_string_interp_with_int_and_bool() {
 fn main() {
   let n = 42
   let b = true
-  "n={n}, b={b}"
+  let _ = "n={n}, b={b}"
 }
         "#,
     );
@@ -166,7 +166,7 @@ fn test_ascription_correct_type() {
         r#"
 fn main() {
   let x = 42 as Int
-  x
+  let _ = x
 }
         "#,
     );
@@ -177,7 +177,7 @@ fn test_ascription_mismatch() {
     assert_has_error(
         r#"
 fn main() {
-  "hello" as Int
+  let _ = "hello" as Int
 }
         "#,
         "type mismatch",
@@ -193,7 +193,7 @@ fn test_pipe_chains_types() {
 fn double(x) { x * 2 }
 fn add_one(x) { x + 1 }
 fn main() {
-  5 |> double |> add_one
+  let _ = 5 |> double |> add_one
 }
         "#,
     );
@@ -209,7 +209,7 @@ type Point { x: Int, y: Int }
 fn main() {
   let p = Point { x: 1, y: 2 }
   let q = p.{ x: 10 }
-  q.y
+  let _ = q.y
 }
         "#,
     );
@@ -221,7 +221,7 @@ fn test_record_create_wrong_field_type() {
         r#"
 type Point { x: Int, y: Int }
 fn main() {
-  Point { x: "hello", y: 2 }
+  let _ = Point { x: "hello", y: 2 }
 }
         "#,
         "field `x` expects Int, got String",
@@ -235,7 +235,7 @@ fn test_check_pattern_wrong_type() {
     assert_has_error(
         r#"
 fn main() {
-  match 42 {
+  let _ = match 42 {
     true -> "yes"
     false -> "no"
   }
@@ -255,7 +255,7 @@ fn sum_list(xs) {
     [head, ..tail] -> head + sum_list(tail)
   }
 }
-fn main() { sum_list([1, 2, 3]) }
+fn main() { let _ = sum_list([1, 2, 3]) }
         "#,
     );
 }
@@ -272,7 +272,7 @@ fn classify(n) {
     _ -> "big"
   }
 }
-fn main() { classify(5) }
+fn main() { let _ = classify(5) }
         "#,
     );
 }
@@ -287,7 +287,7 @@ fn check(x) {
   when 42 else { return 0 }
   x
 }
-fn main() { check(1) }
+fn main() { let _ = check(1) }
         "#,
         "type mismatch",
     );
@@ -307,7 +307,7 @@ fn factorial(n) {
     }
   }
 }
-fn main() { factorial(5) }
+fn main() { let _ = factorial(5) }
         "#,
     );
 }
@@ -328,7 +328,7 @@ trait Shown for Int {
 fn show(x: a) -> String where a: Shown {
   Shown.shown(x)
 }
-fn main() { show(42) }
+fn main() { let _ = show(42) }
         "#,
     );
 }
@@ -341,7 +341,7 @@ fn test_trait_constraint_unknown_method_errors() {
 fn show(x: a) -> String where a: Display {
   x.nonexistent()
 }
-fn main() { show(42) }
+fn main() { let _ = show(42) }
         "#,
         "type 'a' has no field 'nonexistent'",
     );
@@ -425,7 +425,7 @@ fn main() {
   let int_box = Box { value: 42 }
   let str_box = Box { value: "hello" }
   let _ = int_box.value + 1
-  str_box.value == "hello"
+  let _ = str_box.value == "hello"
 }
         "#,
     );
@@ -443,7 +443,7 @@ type Maybe(a) {
 }
 fn main() {
   let Some(x, y) = Some(42)
-  0
+  let _ = 0
 }
         "#,
         "constructor 'Some' expects 1 field, but pattern has 2",
@@ -463,7 +463,7 @@ type Pair(a, b) {
 }
 fn main() {
   let P(Some(x, y), b) = P(Some(42), 1)
-  0
+  let _ = 0
 }
         "#,
         "constructor 'Some' expects 1 field, but pattern has 2",

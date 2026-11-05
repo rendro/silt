@@ -31,7 +31,7 @@ import list
 fn main() {
   let x = []
   let y = list.append(x, 1)
-  y
+  let _ = y
 }
         "#,
     );
@@ -43,7 +43,7 @@ fn test_annotated_let_not_flagged() {
         r#"
 fn main() {
   let x: Int = 42
-  x
+  let _ = x
 }
         "#,
     );
@@ -59,7 +59,7 @@ fn test_stmt_references_name_in_let() {
 fn identity(x) { x }
 fn main() {
   let x = identity(42)
-  x + 1
+  let _ = x + 1
 }
         "#,
     );
@@ -71,7 +71,7 @@ fn test_expr_references_in_nested_block() {
         r#"
 fn main() {
   let f = { x -> x + 1 }
-  f(42)
+  let _ = f(42)
 }
         "#,
     );
@@ -83,7 +83,7 @@ fn main() {
 fn test_type_annotations_resolved_after_check() {
     let input = r#"
 fn double(x) { x * 2 }
-fn main() { double(5) }
+fn main() { let _ = double(5) }
         "#;
     let (program, errors) = crate::session::testing::analyze_str(input);
     assert!(
@@ -116,7 +116,7 @@ fn test_generic_call_resolved_by_context() {
 fn id(x) { x }
 fn main() {
   let n = id(42)
-  n + 1
+  let _ = n + 1
 }
         "#,
     );

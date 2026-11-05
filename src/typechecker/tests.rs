@@ -9,7 +9,7 @@ fn test_int_literal() {
         r#"
 fn main() {
   let x = 42
-  x
+  let _ = x
 }
         "#,
     );
@@ -21,7 +21,7 @@ fn test_float_literal() {
         r#"
 fn main() {
   let x = 3.14
-  x
+  let _ = x
 }
         "#,
     );
@@ -33,7 +33,7 @@ fn test_string_literal() {
         r#"
 fn main() {
   let x = "hello"
-  x
+  let _ = x
 }
         "#,
     );
@@ -45,7 +45,7 @@ fn test_bool_literal() {
         r#"
 fn main() {
   let x = true
-  x
+  let _ = x
 }
         "#,
     );
@@ -58,7 +58,7 @@ fn test_arithmetic() {
 fn main() {
   let x = 1 + 2
   let y = x * 3
-  y
+  let _ = y
 }
         "#,
     );
@@ -70,7 +70,7 @@ fn test_comparison() {
         r#"
 fn main() {
   let x = 1 < 2
-  x
+  let _ = x
 }
         "#,
     );
@@ -85,7 +85,7 @@ fn add(a, b) {
 }
 
 fn main() {
-  add(1, 2)
+  let _ = add(1, 2)
 }
         "#,
     );
@@ -99,7 +99,7 @@ fn main() {
   let x = 1
   let x = x + 1
   let x = x * 3
-  x
+  let _ = x
 }
         "#,
     );
@@ -113,7 +113,7 @@ fn test_list_inference() {
         r#"
 fn main() {
   let xs = [1, 2, 3]
-  xs
+  let _ = xs
 }
         "#,
     );
@@ -125,7 +125,7 @@ fn test_empty_list() {
         r#"
 fn main() {
   let xs = []
-  xs
+  let _ = xs
 }
         "#,
     );
@@ -139,7 +139,7 @@ fn test_tuple_inference() {
         r#"
 fn main() {
   let pair = (1, "hello")
-  pair
+  let _ = pair
 }
         "#,
     );
@@ -153,7 +153,7 @@ fn test_lambda() {
         r#"
 fn main() {
   let double = { x -> x * 2 }
-  double(5)
+  let _ = double(5)
 }
         "#,
     );
@@ -178,7 +178,7 @@ fn area(shape) {
 }
 
 fn main() {
-  area(Circle(5.0))
+  let _ = area(Circle(5.0))
 }
         "#,
     );
@@ -198,7 +198,7 @@ type User {
 
 fn main() {
   let u = User { name: "Alice", age: 30, active: true }
-  u.name
+  let _ = u.name
 }
         "#,
     );
@@ -221,7 +221,7 @@ fn birthday(user: User) -> User {
 fn main() {
   let u = User { name: "Alice", age: 30, active: true }
   let u2 = birthday(u)
-  u2.age
+  let _ = u2.age
 }
         "#,
     );
@@ -246,7 +246,7 @@ fn describe(shape) {
 }
 
 fn main() {
-  describe(Circle(1.0))
+  let _ = describe(Circle(1.0))
 }
         "#,
     );
@@ -269,7 +269,7 @@ fn describe(shape) {
 }
 
 fn main() {
-  describe(Circle(1.0))
+  let _ = describe(Circle(1.0))
 }
         "#,
     );
@@ -293,7 +293,7 @@ fn name(c) {
 }
 
 fn main() {
-  name(Red)
+  let _ = name(Red)
 }
             "#,
         "non-exhaustive",
@@ -312,7 +312,7 @@ fn handle(r) {
     Err(e) -> 0
   }
 }
-fn main() { handle(Ok(Some(1))) }
+fn main() { let _ = handle(Ok(Some(1))) }
             "#,
         "non-exhaustive",
     );
@@ -330,7 +330,7 @@ fn handle(r) {
     Err(e) -> 0
   }
 }
-fn main() { handle(Ok(Some(1))) }
+fn main() { let _ = handle(Ok(Some(1))) }
         "#,
     );
 }
@@ -346,7 +346,7 @@ fn check(pair) {
     (false, false) -> "neither"
   }
 }
-fn main() { check((true, true)) }
+fn main() { let _ = check((true, true)) }
             "#,
         "non-exhaustive",
     );
@@ -363,7 +363,7 @@ fn check(pair) {
     (false, _) -> "first false"
   }
 }
-fn main() { check((true, true)) }
+fn main() { let _ = check((true, true)) }
         "#,
     );
 }
@@ -377,7 +377,7 @@ fn test_option_some_none() {
 fn main() {
   let x = Some(42)
   let y = None
-  match x {
+  let _ = match x {
     Some(n) -> n
     None -> 0
   }
@@ -392,7 +392,7 @@ fn test_result_ok_err() {
         r#"
 fn main() {
   let x = Ok(42)
-  match x {
+  let _ = match x {
     Ok(n) -> n
     Err(e) -> 0
   }
@@ -413,7 +413,7 @@ fn process(x) {
 }
 
 fn main() {
-  match process(21) {
+  let _ = match process(21) {
     Ok(n) -> n
     Err(_) -> 0
   }
@@ -436,7 +436,7 @@ fn process(x) {
 }
 
 fn main() {
-  match process(21) {
+  let _ = match process(21) {
     Ok(n) -> n
     Err(_) -> 0
   }
@@ -459,7 +459,7 @@ fn check(n) {
 }
 
 fn main() {
-  check(5)
+  let _ = check(5)
 }
         "#,
     );
@@ -480,7 +480,7 @@ fn process(x) {
 }
 
 fn main() {
-  match process(21) {
+  let _ = match process(21) {
     Ok(n) -> n
     Err(_) -> 0
   }
@@ -497,7 +497,7 @@ fn test_pipe_operator() {
         r#"
 import list
 fn main() {
-  [1, 2, 3, 4, 5]
+  let _ = [1, 2, 3, 4, 5]
   |> list.filter { x -> x > 2 }
   |> list.map { x -> x * 10 }
   |> list.fold(0) { acc, x -> acc + x }
@@ -515,7 +515,7 @@ fn test_string_interpolation() {
 fn main() {
   let name = "world"
   let n = 42
-  "hello {name}, the answer is {n}"
+  let _ = "hello {name}, the answer is {n}"
 }
         "#,
     );
@@ -543,7 +543,7 @@ trait Display for Shape {
 
 fn main() {
   let s = Circle(5.0)
-  "{s}"
+  let _ = "{s}"
 }
         "#,
     );
@@ -557,7 +557,7 @@ fn test_map_literal() {
         r#"
 fn main() {
   let m = #{ "name": "Alice", "age": "30" }
-  m
+  let _ = m
 }
         "#,
     );
@@ -585,7 +585,7 @@ fn main() {
     fizzbuzz(5),
     fizzbuzz(15),
   ]
-  results
+  let _ = results
 }
         "#,
     );
@@ -601,7 +601,7 @@ fn make_adder(n) {
 
 fn main() {
   let add5 = make_adder(5)
-  add5(10)
+  let _ = add5(10)
 }
         "#,
     );
@@ -662,7 +662,7 @@ fn classify(n) {
 }
 
 fn main() {
-  [classify(-5), classify(0), classify(42)]
+  let _ = [classify(-5), classify(0), classify(42)]
 }
         "#,
     );
@@ -681,7 +681,7 @@ fn identity(x) {
 fn main() {
   let a = identity(42)
   let b = identity("hello")
-  a
+  let _ = a
 }
         "#,
     );
@@ -708,7 +708,7 @@ fn test_bool_op_type_mismatch() {
         r#"
 fn main() {
   let x = 42 && true
-  x
+  let _ = x
 }
             "#,
         "type mismatch",
@@ -723,7 +723,7 @@ fn test_range_expression() {
         r#"
 fn main() {
   let r = 1..10
-  r
+  let _ = r
 }
         "#,
     );
@@ -744,7 +744,7 @@ fn classify(n) {
 }
 
 fn main() {
-  classify(5)
+  let _ = classify(5)
 }
         "#,
     );
@@ -765,7 +765,7 @@ fn test_type_error_has_error_severity() {
         r#"
             fn main() {
                 let x: Int = "hello"
-                x
+                let _ = x
             }
         "#,
     );
@@ -794,7 +794,7 @@ fn test_valid_program_no_errors() {
         r#"
             fn main() {
                 let x = 42
-                x + 1
+                let _ = x + 1
             }
         "#,
     );
@@ -821,7 +821,7 @@ fn test_trait_impl_validates_methods() {
                 }
             }
             type User { name: String }
-            fn main() { 0 }
+            fn main() { let _ = 0 }
         "#,
     );
     let trait_errors: Vec<_> = errors
@@ -851,7 +851,7 @@ fn test_trait_impl_missing_method() {
                 fn show(self) -> String { "item" }
             }
             type Item { name: String }
-            fn main() { 0 }
+            fn main() { let _ = 0 }
         "#,
     );
     assert!(
@@ -869,7 +869,7 @@ fn test_trait_impl_unknown_trait() {
                 fn foo(self) -> Int { 0 }
             }
             type Thing { x: Int }
-            fn main() { 0 }
+            fn main() { let _ = 0 }
         "#,
     );
     assert!(errors.iter().any(|e| e.message.contains("not declared")));
@@ -889,7 +889,7 @@ fn test_builtin_display_trait_exists() {
                     }
                 }
             }
-            fn main() { 0 }
+            fn main() { let _ = 0 }
         "#,
     );
     let undeclared: Vec<_> = errors
@@ -910,7 +910,7 @@ fn test_where_unknown_trait_warning() {
             fn show(x) where x: Nonexistent {
                 x
             }
-            fn main() { 0 }
+            fn main() { let _ = 0 }
         "#,
     );
     assert!(errors.iter().any(|e| e.message.contains("Nonexistent")));
@@ -932,7 +932,7 @@ fn test_where_constraint_satisfied() {
                 x
             }
             fn main() {
-                display(Red)
+                let _ = display(Red)
             }
         "#,
     );
@@ -961,7 +961,7 @@ fn test_where_constraint_violated() {
             trait Showable { fn show(self) -> String }
             trait Showable for Int { fn show(self) -> String { "int" } }
             fn display(x: a) -> String where a: Showable { x.show() }
-            fn main() { display("text") }
+            fn main() { let _ = display("text") }
         "#,
     );
     assert!(
@@ -985,7 +985,7 @@ type Bag {
 
 fn main() {
   let b = Bag { items: [1, 2, 3], name: "test" }
-  b.name
+  let _ = b.name
 }
         "#,
     );
@@ -1001,7 +1001,7 @@ type Config {
 
 fn main() {
   let c = Config { data: #{ "key": "value" } }
-  c.data
+  let _ = c.data
 }
         "#,
     );
@@ -1018,7 +1018,7 @@ type Config {
 
 fn main() {
   let c = Config { values: #{ "a": 1 }, errors: ["err1", "err2"] }
-  c.values
+  let _ = c.values
 }
         "#,
     );
@@ -1034,7 +1034,7 @@ type Bag {
 
 fn main() {
   let b = Bag { items: [1, 2, 3] }
-  b.items
+  let _ = b.items
 }
         "#,
     );
@@ -1062,7 +1062,7 @@ fn main() {
   let dropped = list.drop(xs, 1)
   let got = list.get(xs, 0)
   let pairs = list.enumerate(xs)
-  n
+  let _ = n
 }
         "#,
     );
@@ -1085,7 +1085,7 @@ fn main() {
   let idx = string.index_of(s, "world")
   let sliced = string.slice(s, 0, 5)
   let replaced = string.replace(s, "world", "there")
-  n
+  let _ = n
 }
         "#,
     );
@@ -1106,7 +1106,7 @@ fn main() {
   let ceiled = float.ceil(a)
   let floored = float.floor(a)
   let abs = float.abs(a)
-  rounded
+  let _ = rounded
 }
         "#,
     );
@@ -1123,7 +1123,7 @@ fn main() {
   let mn = int.min(a, b)
   let mx = int.max(a, b)
   let f = int.to_float(a)
-  f
+  let _ = f
 }
         "#,
     );
@@ -1142,7 +1142,7 @@ fn main() {
   let ks = map.keys(m)
   let vs = map.values(m)
   let merged = map.merge(m, #{ "c": 3 })
-  ks
+  let _ = ks
 }
         "#,
     );
@@ -1156,7 +1156,7 @@ import io
 fn main() {
   let result = io.read_file("test.txt")
   let args = io.args()
-  args
+  let _ = args
 }
         "#,
     );
@@ -1174,7 +1174,7 @@ fn main() {
   let val = option.unwrap_or(opt, 0)
   let mapped = option.map(opt, { x -> x + 1 })
   let res = option.to_result(opt, "no value")
-  val
+  let _ = val
 }
         "#,
     );
@@ -1189,7 +1189,7 @@ fn main() {
   let r = Ok(42)
   let is_ok = result.is_ok(r)
   let is_err = result.is_err(r)
-  is_ok
+  let _ = is_ok
 }
         "#,
     );
@@ -1205,7 +1205,7 @@ fn main() {
   let flat = list.flatten(xs)
   let zipped = list.zip([1, 2, 3], ["a", "b", "c"])
   let sorted = list.sort_by([3, 1, 2], { x -> x })
-  flat
+  let _ = flat
 }
         "#,
     );
@@ -1222,7 +1222,7 @@ fn main() {
   let list_len = list.length([1, 2, 3])
   let str_len = string.length("hello")
   let map_len = map.length(#{ "a": 1 })
-  list_len + str_len + map_len
+  let _ = list_len + str_len + map_len
 }
         "#,
     );
@@ -1249,7 +1249,7 @@ fn main() {
   let ch = channel.new(10)
   channel.send(ch, 42)
   channel.close(ch)
-  ch
+  let _ = ch
 }
         "#,
     );
@@ -1279,7 +1279,7 @@ fn main() {
   let ch = channel.new(10)
   channel.send(ch, 42)
   let result = channel.receive(ch)
-  result
+  let _ = result
 }
             "#,
     );
@@ -1293,7 +1293,7 @@ import task
 fn main() {
   let h = task.spawn({ -> 42 })
   let result = task.join(h)
-  result
+  let _ = result
 }
         "#,
     );
@@ -1307,7 +1307,7 @@ import map
 fn main() {
   let m = #{ "a": 1, "b": 2 }
   let n = map.length(m)
-  n
+  let _ = n
 }
         "#,
     );
@@ -1328,7 +1328,7 @@ fn get_value(opt) {
 }
 
 fn main() {
-  get_value(Some(42))
+  let _ = get_value(Some(42))
 }
             "#,
     );
@@ -1347,7 +1347,7 @@ fn process(result) {
 }
 
 fn main() {
-  process(Ok(5))
+  let _ = process(Ok(5))
 }
             "#,
     );
@@ -1365,7 +1365,7 @@ fn double_or_zero(opt) {
 }
 
 fn main() {
-  double_or_zero(Some(21))
+  let _ = double_or_zero(Some(21))
 }
             "#,
     );
@@ -1386,7 +1386,7 @@ fn main() {
   let a = identity(42)
   let b = identity("hello")
   let c = identity(true)
-  a + 1
+  let _ = a + 1
 }
             "#,
     );
@@ -1399,7 +1399,7 @@ fn test_nested_generic_list_of_options() {
         r#"
 fn main() {
   let xs = [Some(1), Some(2), None]
-  xs
+  let _ = xs
 }
             "#,
     );
@@ -1416,7 +1416,7 @@ fn wrap(x) {
 fn main() {
   let a = wrap(42)
   let b = wrap("hello")
-  match a {
+  let _ = match a {
     Some(n) -> n
     None -> 0
   }
@@ -1436,7 +1436,7 @@ fn make_pair(a, b) {
 fn main() {
   let p1 = make_pair(1, "hello")
   let p2 = make_pair(true, 3.14)
-  p1
+  let _ = p1
 }
             "#,
     );
@@ -1456,7 +1456,7 @@ fn factorial(n) {
 }
 
 fn main() {
-  factorial(5)
+  let _ = factorial(5)
 }
             "#,
     );
@@ -1475,7 +1475,7 @@ fn sum(xs) {
 }
 
 fn main() {
-  sum([1, 2, 3])
+  let _ = sum([1, 2, 3])
 }
             "#,
     );
@@ -1496,7 +1496,7 @@ fn describe(n) {
 }
 
 fn main() {
-  describe(2)
+  let _ = describe(2)
 }
             "#,
         "non-exhaustive",
@@ -1516,7 +1516,7 @@ fn greet(name) {
 }
 
 fn main() {
-  greet("carol")
+  let _ = greet("carol")
 }
             "#,
         "non-exhaustive",
@@ -1541,7 +1541,7 @@ fn area(s) {
 }
 
 fn main() {
-  area(Circle(5.0))
+  let _ = area(Circle(5.0))
 }
             "#,
         "non-exhaustive",
@@ -1562,7 +1562,7 @@ fn classify(n) {
 }
 
 fn main() {
-  classify(5)
+  let _ = classify(5)
 }
             "#,
         "non-exhaustive",
@@ -1583,7 +1583,7 @@ fn describe(n) {
 }
 
 fn main() {
-  describe(2)
+  let _ = describe(2)
 }
             "#,
     );
@@ -1602,7 +1602,7 @@ fn greet(name) {
 }
 
 fn main() {
-  greet("carol")
+  let _ = greet("carol")
 }
             "#,
     );
@@ -1619,7 +1619,7 @@ fn add(a, b) {
 }
 
 fn main() {
-  add(1, 2, 3)
+  let _ = add(1, 2, 3)
 }
             "#,
         "argument",
@@ -1635,7 +1635,7 @@ fn add(a, b) {
 }
 
 fn main() {
-  add(1)
+  let _ = add(1)
 }
             "#,
         "argument",
@@ -1689,7 +1689,7 @@ fn test_boolean_and_with_non_bool() {
         r#"
 fn main() {
   let x = "hello" && true
-  x
+  let _ = x
 }
             "#,
         "type mismatch",
@@ -1716,7 +1716,7 @@ fn test_set_literal_inference() {
         r#"
 fn main() {
   let s = #[1, 2, 3]
-  s
+  let _ = s
 }
             "#,
     );
@@ -1728,7 +1728,7 @@ fn test_empty_set_literal() {
         r#"
 fn main() {
   let s = #[]
-  s
+  let _ = s
 }
             "#,
     );
@@ -1740,7 +1740,7 @@ fn test_set_of_strings() {
         r#"
 fn main() {
   let s = #["hello", "world"]
-  s
+  let _ = s
 }
             "#,
     );
@@ -1753,7 +1753,7 @@ fn test_loop_basic() {
     assert_no_errors(
         r#"
 fn main() {
-  loop n = 0 {
+  let _ = loop n = 0 {
     match n > 10 {
       true -> n
       false -> loop(n + 1)
@@ -1769,7 +1769,7 @@ fn test_loop_with_accumulator() {
     assert_no_errors(
         r#"
 fn main() {
-  loop i = 0, acc = 0 {
+  let _ = loop i = 0, acc = 0 {
     match i >= 10 {
       true -> acc
       false -> loop(i + 1, acc + i)
@@ -1793,7 +1793,7 @@ fn test_loop_recur_arity_mismatch() {
     let errors = check_errors(
         r#"
 fn main() {
-  loop i = 0, acc = 0 {
+  let _ = loop i = 0, acc = 0 {
     match i >= 10 {
       true -> acc
       false -> loop(i + 1)
@@ -1841,7 +1841,7 @@ trait Describable for Widget {
   fn describe(self) -> String { "widget" }
 }
 
-fn main() { 0 }
+fn main() { let _ = 0 }
             "#,
     );
     assert!(
@@ -1861,7 +1861,7 @@ trait DoesNotExist for Foo {
   fn bar(self) -> Int { 0 }
 }
 
-fn main() { 0 }
+fn main() { let _ = 0 }
             "#,
         "not declared",
     );
@@ -1875,7 +1875,7 @@ fn do_thing(x) where x: FakeTrait {
   x
 }
 
-fn main() { 0 }
+fn main() { let _ = 0 }
             "#,
     );
     assert!(
@@ -1908,7 +1908,7 @@ trait Serializable for Item {
   fn serialize(self) -> String { "serialized" }
 }
 
-fn main() { 0 }
+fn main() { let _ = 0 }
             "#,
     );
     // Should not produce "not declared" or "missing method" errors
@@ -1931,7 +1931,7 @@ fn test_valid_ascription() {
         r#"
 fn main() {
   let x = 42 as Int
-  x
+  let _ = x
 }
             "#,
     );
@@ -1943,7 +1943,7 @@ fn test_ascription_string() {
         r#"
 fn main() {
   let s = "hello" as String
-  s
+  let _ = s
 }
             "#,
     );
@@ -1955,7 +1955,7 @@ fn test_ascription_incompatible_type() {
         r#"
 fn main() {
   let x = 42 as String
-  x
+  let _ = x
 }
             "#,
         "type mismatch",
@@ -1971,7 +1971,7 @@ fn test_string_module_split() {
 import string
 fn main() {
   let parts = string.split("a,b,c", ",")
-  parts
+  let _ = parts
 }
             "#,
     );
@@ -1986,7 +1986,7 @@ fn main() {
   let xs = [1, 2, 3, 4, 5]
   let doubled = list.map(xs, { x -> x * 2 })
   let evens = list.filter(xs, { x -> x > 2 })
-  doubled
+  let _ = doubled
 }
             "#,
     );
@@ -2000,7 +2000,7 @@ import map
 fn main() {
   let m = #{ "a": 1, "b": 2 }
   let result = map.get(m, "a")
-  match result {
+  let _ = match result {
     Some(v) -> v
     None -> 0
   }
@@ -2021,7 +2021,7 @@ fn main() {
     |> string.to_lower
     |> string.split(" ")
     |> list.length
-  result
+  let _ = result
 }
             "#,
     );
@@ -2043,7 +2043,7 @@ fn process(r) {
 }
 
 fn main() {
-  process(Ok(Some(42)))
+  let _ = process(Ok(Some(42)))
 }
             "#,
     );
@@ -2070,7 +2070,7 @@ fn to_string(d) {
 }
 
 fn main() {
-  to_string(North)
+  let _ = to_string(North)
 }
             "#,
     );
@@ -2088,7 +2088,7 @@ type Config {
 fn main() {
   let c = Config { host: "localhost", port: 8080 }
   let c2 = c.{ port: 9090 }
-  c2.host
+  let _ = c2.host
 }
             "#,
     );
@@ -2237,7 +2237,7 @@ import json
 type Bag { items: Set(Int) }
 fn main() {
   let n: Int = "x"
-  json.parse("x", Bag)
+  let _ = json.parse("x", Bag)
 }
 "#;
     let errors = check_errors(source);

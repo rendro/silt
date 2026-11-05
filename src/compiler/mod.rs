@@ -3773,7 +3773,7 @@ mod tests {
 
     #[test]
     fn test_compile_int_literal() {
-        let fns = compile("fn main() { 42 }");
+        let fns = compile("fn main() { let _ = 42 }");
         let main = find_fn(&fns, "main");
         assert!(has_int_constant(main.chunk(), 42));
         assert!(has_op(main.chunk(), Op::Constant));
@@ -3782,7 +3782,7 @@ mod tests {
 
     #[test]
     fn test_compile_float_literal() {
-        let fns = compile("fn main() { 4.25 }");
+        let fns = compile("fn main() { let _ = 4.25 }");
         let main = find_fn(&fns, "main");
         assert!(
             main.chunk()
@@ -3794,18 +3794,18 @@ mod tests {
 
     #[test]
     fn test_compile_bool_literals() {
-        let fns = compile("fn main() { true }");
+        let fns = compile("fn main() { let _ = true }");
         let main = find_fn(&fns, "main");
         assert!(has_op(main.chunk(), Op::True));
 
-        let fns = compile("fn main() { false }");
+        let fns = compile("fn main() { let _ = false }");
         let main = find_fn(&fns, "main");
         assert!(has_op(main.chunk(), Op::False));
     }
 
     #[test]
     fn test_compile_string_literal() {
-        let fns = compile(r#"fn main() { "hello" }"#);
+        let fns = compile(r#"fn main() { let _ = "hello" }"#);
         let main = find_fn(&fns, "main");
         assert!(has_string_constant(main.chunk(), "hello"));
     }
@@ -3903,7 +3903,7 @@ mod tests {
 
     #[test]
     fn test_compile_global_let() {
-        let fns = compile("let x = 10\nfn main() { x }");
+        let fns = compile("let x = 10\nfn main() { let _ = x }");
         let script = &fns[0]; // script is first
         assert_eq!(script.name(), "<script>");
         assert!(has_op(script.chunk(), Op::SetGlobal));
@@ -3927,8 +3927,9 @@ mod tests {
 
     #[test]
     fn test_compile_multiple_functions() {
-        let fns =
-            compile("fn add(a, b) { a + b }\nfn sub(a, b) { a - b }\nfn main() { add(1, 2) }");
+        let fns = compile(
+            "fn add(a, b) { a + b }\nfn sub(a, b) { a - b }\nfn main() { let _ = add(1, 2) }",
+        );
         // Script + 3 functions (as closures in the script's constant pool)
         assert_eq!(fns[0].name(), "<script>");
         for name in ["add", "sub", "main"] {
@@ -3936,7 +3937,7 @@ mod tests {
         }
         // Each function is installed in a global slot named after it.
         let program = crate::session::testing::compile_decls_str(
-            "fn add(a, b) { a + b }\nfn sub(a, b) { a - b }\nfn main() { add(1, 2) }",
+            "fn add(a, b) { a + b }\nfn sub(a, b) { a - b }\nfn main() { let _ = add(1, 2) }",
         )
         .unwrap();
         let names = global_names(&program);
@@ -4003,28 +4004,28 @@ fn make_adder(n) {
 
     #[test]
     fn test_compile_tuple() {
-        let fns = compile("fn main() { (1, 2) }");
+        let fns = compile("fn main() { let _ = (1, 2) }");
         let main = find_fn(&fns, "main");
         assert!(has_op(main.chunk(), Op::MakeTuple));
     }
 
     #[test]
     fn test_compile_map() {
-        let fns = compile(r#"fn main() { #{ "a": 1, "b": 2 } }"#);
+        let fns = compile(r#"fn main() { let _ = #{ "a": 1, "b": 2 } }"#);
         let main = find_fn(&fns, "main");
         assert!(has_op(main.chunk(), Op::MakeMap));
     }
 
     #[test]
     fn test_compile_set() {
-        let fns = compile(r#"fn main() { #[1, 2, 3] }"#);
+        let fns = compile(r#"fn main() { let _ = #[1, 2, 3] }"#);
         let main = find_fn(&fns, "main");
         assert!(has_op(main.chunk(), Op::MakeSet));
     }
 
     #[test]
     fn test_compile_range() {
-        let fns = compile("fn main() { 1..10 }");
+        let fns = compile("fn main() { let _ = 1..10 }");
         let main = find_fn(&fns, "main");
         assert!(has_op(main.chunk(), Op::MakeRange));
     }
@@ -4055,7 +4056,7 @@ fn make_adder(n) {
         let fns = compile(
             r#"
 type User { name: String, age: Int }
-fn main() { User { name: "Alice", age: 30 } }
+fn main() { let _ = User { name: "Alice", age: 30 } }
 "#,
         );
         let main = find_fn(&fns, "main");
@@ -4069,7 +4070,7 @@ fn main() { User { name: "Alice", age: 30 } }
 type User { name: String, age: Int }
 fn main() {
     let u = User { name: "Alice", age: 30 }
-    u.{ age: 31 }
+    let _ = u.{ age: 31 }
 }
 "#,
         );
@@ -4084,7 +4085,7 @@ fn main() {
 type User { name: String, age: Int }
 fn main() {
     let u = User { name: "Alice", age: 30 }
-    u.name
+    let _ = u.name
 }
 "#,
         );
@@ -4164,7 +4165,7 @@ fn rest(r: {name: String, age: Int}) -> Int {
         let fns = compile(
             r#"
 type Color { Red, Green, Blue }
-fn main() { Red }
+fn main() { let _ = Red }
 "#,
         );
         let main = find_fn(&fns, "main");
@@ -4190,7 +4191,7 @@ fn main() { Red }
         let fns = compile(
             r#"
 type Shape { Circle(Float), Rect(Float, Float) }
-fn main() { Circle(1.0) }
+fn main() { let _ = Circle(1.0) }
 "#,
         );
         let main = find_fn(&fns, "main");
@@ -4366,10 +4367,11 @@ fn f(x) {
 
     #[test]
     fn test_compile_pipe_to_function() {
-        let fns = compile("fn double(x) { x * 2 }\nfn main() { 5 |> double }");
-        let main = find_fn(&fns, "main");
+        let fns =
+            compile("fn double(x) { x * 2 }\nfn go() { 5 |> double }\nfn main() { let _ = go() }");
+        let go = find_fn(&fns, "go");
         // Pipe in tail position emits TailCall
-        assert!(has_op(main.chunk(), Op::TailCall));
+        assert!(has_op(go.chunk(), Op::TailCall));
     }
 
     #[test]
@@ -4377,7 +4379,7 @@ fn f(x) {
         let fns = compile(
             r#"
 import list
-fn main() { [3, 1, 2] |> list.length() }
+fn main() { let _ = [3, 1, 2] |> list.length() }
 "#,
         );
         let main = find_fn(&fns, "main");
@@ -4391,7 +4393,7 @@ fn main() { [3, 1, 2] |> list.length() }
         let fns = compile(
             r#"
 fn main() {
-    loop i = 0 {
+    let _ = loop i = 0 {
         match i >= 10 {
             true -> i
             false -> loop(i + 1)
@@ -4503,7 +4505,7 @@ trait Display for Color {
             r#"
 import list
 fn main() {
-    list.length([1, 2])
+    let _ = list.length([1, 2])
 }
 "#,
         );
@@ -4516,7 +4518,7 @@ fn main() {
         let fns = compile(
             r#"
 import list
-fn main() { list.length([1, 2, 3]) }
+fn main() { let _ = list.length([1, 2, 3]) }
 "#,
         );
         let main = find_fn(&fns, "main");
@@ -4536,18 +4538,21 @@ trait Show for Foo {
 }
 fn shown(x: a) -> String where a: Show { Show.show(x) }
 fn field(r: {f: Fn(Int) -> Int}) -> Int { r.f(1) }
-fn main() {
+fn go() -> String {
     let f = Foo { x: 1 }
     Show.show(f)
+}
+fn main() {
+    let _ = go()
 }
 "#,
         );
         // A method of a program's trait where the checker knows the impl,
         // whose header asks nothing: the impl's method is called, its
         // receiver checked, a tail call here.
-        let main = find_fn(&fns, "main");
-        assert!(!has_op(main.chunk(), Op::CallMethod));
-        assert!(has_op(main.chunk(), Op::TailCallChecked));
+        let go = find_fn(&fns, "go");
+        assert!(!has_op(go.chunk(), Op::CallMethod));
+        assert!(has_op(go.chunk(), Op::TailCallChecked));
         // On a bounded variable, through the dictionary the function is
         // given: in tail position, to run in the caller's frame.
         let shown = find_fn(&fns, "shown");
@@ -4563,7 +4568,7 @@ fn main() {
 
     #[test]
     fn test_compile_program_calls_main() {
-        let fns = crate::session::testing::compile_str("fn main() { 42 }")
+        let fns = crate::session::testing::compile_str("fn main() { let _ = 42 }")
             .unwrap()
             .functions;
         let script = &fns[0];
@@ -4574,7 +4579,7 @@ fn main() {
 
     #[test]
     fn test_compile_declarations_returns_unit() {
-        let fns = compile("fn main() { 42 }");
+        let fns = compile("fn main() { let _ = 42 }");
         let script = &fns[0];
         // compile_declarations emits Unit, Return (no main call)
         assert!(has_op(script.chunk(), Op::Unit));
@@ -4588,7 +4593,7 @@ fn main() {
         let fns = compile(
             r#"
 import list.{ length, map }
-fn main() { length([1, 2]) }
+fn main() { let _ = length([1, 2]) }
 "#,
         );
         assert!(!find_fn(&fns, "main").chunk().code().is_empty());
@@ -4599,7 +4604,7 @@ fn main() { length([1, 2]) }
         let fns = compile(
             r#"
 import list as l
-fn main() { l.length([1]) }
+fn main() { let _ = l.length([1]) }
 "#,
         );
         let main = find_fn(&fns, "main");
@@ -4615,7 +4620,7 @@ fn main() { l.length([1]) }
 import list
 fn main() {
     let pairs = [(1, 2)]
-    list.map(pairs) { (a, b) -> a + b }
+    let _ = list.map(pairs) { (a, b) -> a + b }
 }
 "#,
         );
@@ -4801,7 +4806,7 @@ fn f(expected, actual) {
     /// earlier REPL entry would have taken them.
     #[test]
     fn test_more_than_65536_globals_rejected() {
-        let source = "fn main() { helper() }\nfn helper() { 1 }\n";
+        let source = "fn main() { let _ = helper() }\nfn helper() { 1 }\n";
         let (mut session, file) = crate::session::testing::session_with(&[("main.silt", source)]);
         assert!(!session.analyze(file).has_errors());
         let mut units = session.program_units(session.module_of(file), false);

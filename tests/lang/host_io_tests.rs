@@ -277,7 +277,7 @@ impl Output for Closed {
 
 #[test]
 fn a_failed_write_to_stdout_is_a_runtime_error() {
-    let source = "fn main() {\n  println(\"hello\")\n  1\n}";
+    let source = "fn main() {\n  println(\"hello\")\n  let _ = 1\n}";
     let result = run(source, HostIo::new(Closed, Buffer::new()));
     assert_eq!(
         result,
@@ -331,7 +331,7 @@ import task
 fn main() {
   let h = task.spawn({ -> println("x") })
   task.join(h)
-  task.join(task.spawn({ -> 2 }))
+  let _ = task.join(task.spawn({ -> 2 }))
 }
 "#;
     let ran = run_on_thread(source, HostIo::new(Panics, Buffer::new()));
@@ -887,12 +887,11 @@ fn a_clock_that_panics_in_a_builtin_is_a_runtime_error() {
         HostIo::buffer(&Buffer::new()).clock(clock)
     };
     let failure = Err("the clock panicked: the clock broke".to_string());
-    let now = "import time\nfn main() { time.now() }";
+    let now = "import time\nfn main() { let _ = time.now() }";
     assert_eq!(run_bounded(now, broken()), failure);
     let sleep = "import time\nfn main() { time.sleep(time.ms(5)) }";
     assert_eq!(run_bounded(sleep, broken()), failure);
-    let timeout =
-        "import channel\nimport time\nfn main() { channel.receive(channel.timeout(time.ms(5))) }";
+    let timeout = "import channel\nimport time\nfn main() { let _ = channel.receive(channel.timeout(time.ms(5))) }";
     assert_eq!(run_bounded(timeout, broken()), failure);
 }
 
@@ -936,7 +935,7 @@ fn main() {
   let quiet = channel.new(1)
   channel.send(quiet, 0)
   let _ = channel.receive(quiet)
-  channel.receive_timeout(quiet, time.hours(1))
+  let _ = channel.receive_timeout(quiet, time.hours(1))
 }
 "#;
     let ran = run_on_thread(source, HostIo::buffer(&Buffer::new()).clock(clock.clone()));

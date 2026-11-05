@@ -1273,7 +1273,7 @@ mod tests {
 
     #[test]
     fn a_result_that_does_not_parse_is_refused() {
-        let message = refusal("fn main() {\n  1\n}\n", "fn main() {\n  (1\n}\n");
+        let message = refusal("fn main() {\n  let _ = 1\n}\n", "fn main() {\n  (1\n}\n");
         assert!(message.contains("would not parse"), "{message}");
         assert!(message.contains("line 3 of the result"), "{message}");
     }
@@ -1281,8 +1281,8 @@ mod tests {
     #[test]
     fn a_result_with_another_tree_is_refused() {
         let message = refusal(
-            "fn main() {\n  (1 + 2) * 3\n}\n",
-            "fn main() {\n  1 + 2 * 3\n}\n",
+            "fn main() {\n  let _ = (1 + 2) * 3\n}\n",
+            "fn main() {\n  let _ = 1 + 2 * 3\n}\n",
         );
         assert!(
             message.contains("function `main` would not stay as written"),
@@ -1301,18 +1301,21 @@ mod tests {
 
     #[test]
     fn a_lost_or_new_comment_is_refused() {
-        let message = refusal("fn main() {\n  1 -- one\n}\n", "fn main() {\n  1\n}\n");
+        let message = refusal(
+            "fn main() {\n  let _ = 1 -- one\n}\n",
+            "fn main() {\n  let _ = 1\n}\n",
+        );
         assert!(message.contains("lose the comment `-- one`"), "{message}");
         let message = refusal(
-            "fn main() {\n  1 {- a -}\n}\n",
-            "fn main() {\n  1 {- a -} {- a -}\n}\n",
+            "fn main() {\n  let _ = 1 {- a -}\n}\n",
+            "fn main() {\n  let _ = 1 {- a -} {- a -}\n}\n",
         );
         assert!(message.contains("hold the comment `{- a -}`"), "{message}");
         // The white space in a comment and around it is not compared.
         assert_eq!(
             judge(
-                "fn main() {\n  1 --   one   \n}\n",
-                "fn main() {\n  1 -- one\n}\n"
+                "fn main() {\n  let _ = 1 --   one   \n}\n",
+                "fn main() {\n  let _ = 1 -- one\n}\n"
             ),
             Ok(())
         );
@@ -1321,8 +1324,8 @@ mod tests {
     #[test]
     fn comments_that_change_their_order_or_their_declaration_are_refused() {
         let message = refusal(
-            "fn main() {\n  -- a\n  1 -- b\n}\n",
-            "fn main() {\n  1 -- b\n  -- a\n}\n",
+            "fn main() {\n  -- a\n  let _ = 1 -- b\n}\n",
+            "fn main() {\n  let _ = 1 -- b\n  -- a\n}\n",
         );
         assert!(
             message.contains("move the comment `-- a` of function `main`"),

@@ -62,7 +62,7 @@ import task
 import time
 
 fn main() {
-  match tcp.listen("127.0.0.1:0") {
+  host.give(match tcp.listen("127.0.0.1:0") {
     Ok(listener) -> {
       let server = task.spawn({ ->
         match tcp.accept(listener) {
@@ -97,8 +97,9 @@ fn main() {
       }
     }
     Err(e) -> Error.message(e)
-  }
+  })
 }
+import host
 "#
     .to_string();
     let v = run(&src);
@@ -114,7 +115,7 @@ import task
 import time
 
 fn main() {
-  match tcp.listen("127.0.0.1:0") {
+  host.give(match tcp.listen("127.0.0.1:0") {
     Ok(listener) -> {
       let server = task.spawn({ ->
         match tcp.accept(listener) {
@@ -146,8 +147,9 @@ fn main() {
       }
     }
     Err(e) -> Error.message(e)
-  }
+  })
 }
+import host
 "#
     .to_string();
     let v = run(&src);
@@ -163,7 +165,7 @@ import task
 import time
 
 fn main() {
-  match tcp.listen("127.0.0.1:0") {
+  host.give(match tcp.listen("127.0.0.1:0") {
     Ok(listener) -> {
       let server = task.spawn({ ->
         match tcp.accept(listener) {
@@ -186,8 +188,9 @@ fn main() {
       }
     }
     Err(e) -> Error.message(e)
-  }
+  })
 }
+import host
 "#
     .to_string();
     let v = run(&src);
@@ -208,7 +211,7 @@ import task
 import time
 
 fn main() {
-  match tcp.listen("127.0.0.1:0") {
+  host.give(match tcp.listen("127.0.0.1:0") {
     Ok(listener) -> {
       let server = task.spawn({ ->
         match tcp.accept(listener) {
@@ -231,8 +234,9 @@ fn main() {
       }
     }
     Err(e) -> Error.message(e)
-  }
+  })
 }
+import host
 "#
     .to_string();
     let v = run(&src);

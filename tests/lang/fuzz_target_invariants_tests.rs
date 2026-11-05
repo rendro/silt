@@ -23,7 +23,7 @@ use silt::source::Span;
 
 #[test]
 fn lexer_invariants_accept_real_tokenization() {
-    let src = "let x = 1 + 2\nfn main() { x }\n";
+    let src = "let x = 1 + 2\nfn main() { let _ = x }\n";
     let tokens = Lexer::new(silt::source::FileId::default(), src)
         .tokenize()
         .checked()
@@ -244,7 +244,7 @@ fn formatter_invariants_reject_a_second_pass_that_differs() {
 
 #[test]
 fn parser_invariants_accept_real_parse() {
-    let src = "let x = 1\nfn main() { x }\n";
+    let src = "let x = 1\nfn main() { let _ = x }\n";
     let tokens = Lexer::new(silt::source::FileId::default(), src)
         .tokenize()
         .checked()

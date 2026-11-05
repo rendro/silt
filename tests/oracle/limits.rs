@@ -2,17 +2,19 @@
 //! slice (`Vm::set_time_slice`) and the step budget
 //! (`Vm::set_step_budget`).
 
-use silt::session::testing::compile_str;
+use silt::session::testing::compile_given;
 use silt::{Buffer, HostIo, Value, Vm, VmError};
 
-/// The value or the error of `main`, and what the program and the
+/// The value the program gave (`host.give`) or its error, and what the program and the
 /// runtime wrote, on a VM that `prepare` has set up.
 fn run_whole(source: &str, prepare: impl FnOnce(&mut Vm)) -> (Result<Value, VmError>, String) {
-    let program = compile_str(source).unwrap_or_else(|errors| panic!("{errors:?}"));
+    let (program, given) = compile_given(source).unwrap_or_else(|errors| panic!("{errors:?}"));
     let out = Buffer::new();
     let mut vm = Vm::new(HostIo::buffer(&out));
     prepare(&mut vm);
-    let result = vm.run_program(&program);
+    let result = vm
+        .run_program(&program)
+        .map(|value| given.last().unwrap_or(value));
     if result.is_ok() {
         vm.settle();
     }
@@ -72,11 +74,12 @@ fn main() {
   })
   channel.each(ch, { text -> println(string.to_upper(text)) })
   println(task.join(worker))
-  match sorted {
+  host.give(match sorted {
     [first, ..rest] -> first.x + list.length(rest)
     [] -> 0
-  }
+  })
 }
+import host
 "#;
 
 /// What a program computes and writes is the same whatever the slice,
@@ -109,7 +112,7 @@ fn a_step_budget_ends_a_program_that_does_not_end() {
     assert!(!error.type_confusion);
     assert_eq!(error.message, "the step budget is used up");
     // A runtime error of the program is not that.
-    let (result, _) = run_whole("fn main() {\n  1 / 0\n}\n", |vm| {
+    let (result, _) = run_whole("fn main() {\n  host.give(1 / 0)\n}\nimport host\n", |vm| {
         vm.set_step_budget(100_000)
     });
     assert!(!result.unwrap_err().out_of_steps);
@@ -330,10 +333,11 @@ fn main() {
     }
   }
   task.join(producer)
-  match r {
+  host.give(match r {
     (got, sum) -> "received {got}, sum {sum}"
-  }
+  })
 }
+import host
 "#;
     // A send: a number arrives once for each send that was `Ok`.
     let send = r#"
@@ -358,10 +362,11 @@ fn main() {
     }
   }
   channel.close(ch)
-  match task.join(consumer) {
+  host.give(match task.join(consumer) {
     (got, sum) -> "received {got}, sum {sum}"
-  }
+  })
 }
+import host
 "#;
     // A value that is there: received with `Ok`, or left with `Err`.
     let held = r#"
@@ -389,8 +394,9 @@ fn wrong(dur, before) {
 }
 
 fn main() {
-  "wrong {wrong(time.micros(300), time.micros(300))} and {wrong(time.ms(0), time.ms(0))}"
+  host.give("wrong {wrong(time.micros(300), time.micros(300))} and {wrong(time.ms(0), time.ms(0))}")
 }
+import host
 "#;
     // A function that sleeps to just before its time, sends and
     // returns: `Ok` and sent, or `Err` and not sent.
@@ -418,8 +424,9 @@ fn main() {
       }
     }
   }
-  "wrong {wrong}"
+  host.give("wrong {wrong}")
 }
+import host
 "#;
     // A select with a `Recv` arm and one with a `Send` arm.
     let select = r#"
@@ -478,10 +485,11 @@ fn main() {
     }
   }
   task.join(producer)
-  match task.join(consumer) {
+  host.give(match task.join(consumer) {
     (got, sum) -> "arrived {got}, sum {sum}"
-  }
+  })
 }
+import host
 "#;
     // A deadline inside a deadline whose outer time comes first.
     let nested = r#"
@@ -511,10 +519,11 @@ fn main() {
     }
   }
   task.join(producer)
-  match r {
+  host.give(match r {
     (got, sum, inner) -> "received {got}, sum {sum}, inner timeouts {inner}"
-  }
+  })
 }
+import host
 "#;
     let cases = [
         ("a receive", receive, "received 60, sum 1770"),
@@ -688,8 +697,9 @@ fn main() {
     inner_hour, inner_none, reads, still_full, send_arm, send, try_send, computing,
     sent_by_arm - send_arm, sent - send,
   ]
-  counts |> list.map { n -> string.from(n) } |> string.join(" ")
+  host.give(counts |> list.map { n -> string.from(n) } |> string.join(" "))
 }
+import host
 "#;
     let mut first: Option<String> = None;
     for slice in [None, Some(2000), Some(7), Some(1)] {
@@ -774,7 +784,7 @@ fn fill(ch, n) {
 }
 
 fn main() {
-  loop k = 0, lost = 0 {
+  host.give(loop k = 0, lost = 0 {
     match k >= 10 {
       true -> lost
       false -> {
@@ -787,8 +797,9 @@ fn main() {
         loop(k + 1, lost + 20000 - count(input) - count(out))
       }
     }
-  }
+  })
 }
+import host
 "#;
     for slice in FOUR_SLICES {
         let (result, _) = run_with(source, |vm| {
@@ -848,8 +859,9 @@ fn main() {
       }
     }
   }
-  task.join(client) - given
+  host.give(task.join(client) - given)
 }
+import host
 "#;
     for slice in SLICES {
         let (result, _) = run_with(source, |vm| {
@@ -910,13 +922,14 @@ fn round(i, capacity) {
 }
 
 fn main() {
-  loop i = 0, all = true {
+  host.give(loop i = 0, all = true {
     match i >= 120 {
       true -> all
       false -> loop(i + 1, all && round(i, 0) && round(i, 1))
     }
-  }
+  })
 }
+import host
 "#;
     // A send that waited, as the `Send` arm of a select: whenever a
     // receiver has the number, the sender's own record of the send
@@ -953,13 +966,14 @@ fn round(i) {
 }
 
 fn main() {
-  loop i = 0, all = true {
+  host.give(loop i = 0, all = true {
     match i >= 200 {
       true -> all
       false -> loop(i + 1, all && round(i))
     }
-  }
+  })
 }
+import host
 "#;
     // The same receiver with a `select` of one arm for its receive: a
     // cancelled task that comes to the select with the number there
@@ -1397,8 +1411,9 @@ fn main() {
   }
   -- The worker took no fifth: the next item is still the input's.
   when let Some(next) = channel.receive(input) else { panic("no item") }
-  "put out {put_out}, the input's next {next}, {count(input)} more"
+  host.give("put out {put_out}, the input's next {next}, {count(input)} more")
 }
+import host
 "#;
     let rendezvous = r#"
 import channel
@@ -1406,7 +1421,7 @@ import task
 import time
 
 fn main() {
-  loop k = 0, all = true {
+  host.give(loop k = 0, all = true {
     match k >= 30 {
       true -> all
       false -> {
@@ -1439,8 +1454,9 @@ fn main() {
         loop(k + 1, all && ok)
       }
     }
-  }
+  })
 }
+import host
 "#;
     for slice in FOUR_SLICES {
         let run = |source: &str| {
@@ -1532,14 +1548,15 @@ fn main() {
   channel.send(own, t)
   let _ = channel.receive(said)
   when let Ok(_second) = tcp.connect("127.0.0.1:{port}") else { panic("cannot connect") }
-  match tcp.accept(listener) {
+  host.give(match tcp.accept(listener) {
     Ok(c) -> {
       tcp.close(c)
       "accepted"
     }
     Err(e) -> panic("accept failed: {e}")
-  }
+  })
 }
+import host
 "#;
         for slice in SLICES {
             let (result, output) = run_with(accept, |vm| {
@@ -1641,8 +1658,9 @@ fn main() {
       }
     }
   }
-  made - left - drained(passed_on)
+  host.give(made - left - drained(passed_on))
 }
+import host
 "#;
     for slice in SLICES {
         let (result, _) = run_with(source, |vm| {
@@ -1892,7 +1910,7 @@ fn a_budget_of_no_steps_runs_nothing() {
 /// step, and at slice 1 it does not.
 #[test]
 fn a_program_may_run_one_slice_more_than_its_budget() {
-    let source = "fn main() {\n  println(\"ran\")\n  loop i = 0 {\n    match i >= 100 {\n      true -> i\n      false -> loop(i + 1)\n    }\n  }\n}\n";
+    let source = "fn main() {\n  println(\"ran\")\n  host.give(loop i = 0 {\n    match i >= 100 {\n      true -> i\n      false -> loop(i + 1)\n    }\n  })\n}\nimport host\n";
     let (result, output) = run_whole(source, |vm| vm.set_step_budget(1));
     assert_eq!(result.unwrap(), Value::Int(100));
     assert_eq!(output, "ran\n");

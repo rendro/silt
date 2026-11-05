@@ -2852,10 +2852,11 @@ mod tests {
     }
 
     fn run(source: &str) -> (Result<Value, VmError>, Timed, Instant) {
-        let program = crate::session::testing::compile_str(source).expect("the program compiles");
+        let (program, given) =
+            crate::session::testing::compile_given(source).expect("the program compiles");
         let out = Timed::default();
         let mut vm = Vm::new(HostIo::new(out.clone(), out.clone()));
-        let result = vm.run_program(&program);
+        let result = vm.run_program(&program).map(|v| given.last().unwrap_or(v));
         (result, out, Instant::now())
     }
 
@@ -2914,7 +2915,7 @@ import task
 fn main() {
   let never = channel.new(0)
   let _waits = task.spawn({ -> channel.receive(never) })
-  channel.receive(never)
+  let _ = channel.receive(never)
 }
 "#,
         );
@@ -3020,8 +3021,9 @@ fn main() {
     println("last")
     channel.receive(b)
   })
-  channel.receive(a)
+  host.give(channel.receive(a))
 }
+import host
 "#);
         assert_deadlock(result, "channel receive with no counterparty");
         let after = end.duration_since(out.at("last"));
@@ -3061,8 +3063,9 @@ fn main() {
   let timer = channel.timeout(time.ms(150))
   let _waits = task.spawn({ -> channel.receive(timer) })
   let other = task.spawn({ -> channel.receive(ch) })
-  task.join(other)
+  host.give(task.join(other))
 }
+import host
 "#);
         assert_deadlock(result, "task.join with no progress possible");
         // Not before the timer: while it is pending, a wait can end.
@@ -3080,8 +3083,9 @@ import channel
 fn main() {
   let a = channel.new(0)
   let b = channel.new(0)
-  channel.select([channel.Recv(a), channel.Send(b, 1)])
+  host.give(channel.select([channel.Recv(a), channel.Send(b, 1)]))
 }
+import host
 "#);
         assert_deadlock(result, "channel select with no counterparty");
     }
@@ -3092,7 +3096,7 @@ fn main() {
     /// use a processor or to keep a thread.
     #[test]
     fn a_truncated_pipeline_leaves_no_task() {
-        let program = crate::session::testing::compile_str(
+        let (program, given) = crate::session::testing::compile_given(
             r#"
 import list
 import stream
@@ -3101,14 +3105,16 @@ fn main() {
     stream.repeat(i) |> stream.map({ x -> x + 1 }) |> stream.take(3) |> stream.collect
   }
   let _ = stream.from_range(1, 1000000) |> stream.map({ x -> x }) |> stream.first
-  list.length(all)
+  host.give(list.length(all))
 }
+import host
 "#,
         )
         .expect("the program compiles");
         let mut vm = Vm::new(HostIo::buffer(&crate::Buffer::new()));
         let result = vm.run_program(&program);
-        assert!(matches!(result, Ok(Value::Int(20))), "got {result:?}");
+        assert!(result.is_ok(), "got {result:?}");
+        assert_eq!(given.last(), Some(Value::Int(20)));
         // The stages end on the workers, a moment after the sinks.
         let limit = Instant::now() + Duration::from_secs(10);
         let spawned = || vm.scheduler().inner.spawned.load(Ordering::SeqCst);
@@ -3135,8 +3141,9 @@ fn main() {
   let ch = channel.new(0)
   let _sends = task.spawn({ -> channel.send(ch, spin(300000, 0)) })
   when let Some(n) = channel.receive(ch) else { panic("closed") }
-  n
+  host.give(n)
 }
+import host
 "#);
         assert!(matches!(result, Ok(Value::Int(300000))), "got {result:?}");
     }
@@ -3215,8 +3222,9 @@ fn main() {
   let computes = task.spawn { -> forever(0) }
   time.sleep(time.ms(5))
   task.cancel(computes)
-  channel.receive(channel.new(0))
+  host.give(channel.receive(channel.new(0)))
 }
+import host
 "#);
         assert_deadlock(result, "channel receive with no counterparty");
     }
@@ -3238,8 +3246,9 @@ fn main() {
     Ok(_) -> println("returned")
     Err(_) -> println("over")
   }
-  channel.receive(channel.new(0))
+  host.give(channel.receive(channel.new(0)))
 }
+import host
 "#);
         assert_deadlock(result, "channel receive with no counterparty");
         out.at("over");

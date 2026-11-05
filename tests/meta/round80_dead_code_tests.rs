@@ -35,12 +35,13 @@ fn tcp_tls_wrappers_observable_behavior_identical() {
         r#"
 import tcp
 
-fn main() -> String {{
-  match tcp.connect_tls("{unused_port}", "localhost") {{
+fn main() {{
+  host.give(match tcp.connect_tls("{unused_port}", "localhost") {{
     Ok(_) -> "unexpected ok"
     Err(e) -> Error.message(e)
-  }}
+  }})
 }}
+import host
 "#
     );
     let client_v = run(&client_src);
@@ -62,8 +63,8 @@ import tcp
 import task
 import time
 
-fn main() -> String {
-  match tcp.listen("127.0.0.1:0") {
+fn main() {
+  host.give(match tcp.listen("127.0.0.1:0") {
     Ok(listener) -> {
       let server = task.spawn({ ->
         let bad_cert = bytes.from_string("not a real cert")
@@ -81,8 +82,9 @@ fn main() -> String {
       task.join(server)
     }
     Err(e) -> Error.message(e)
-  }
+  })
 }
+import host
 "#
     .to_string();
     let server_v = run(&server_src);

@@ -17,11 +17,19 @@ typechecked against the signature the embedder declared.
 ```rust
 use std::path::Path;
 
-use silt::session::{Config, Entry, HostModule, LockPolicy, ProjectSetup, Session};
-use silt::{Buffer, HostIo, Value, Vm};
+use std::sync::{Arc, Mutex};
 
-// 1. Declare the host module: each function by its silt signature.
-let mylib = HostModule::new("mylib").fn1("fn double(x: Int) -> Int", |x: i64| x * 2);
+use silt::session::{Config, Entry, HostModule, LockPolicy, ProjectSetup, Session};
+use silt::{Buffer, HostIo, Vm};
+
+// 1. Declare the host module: each function by its silt signature. A
+//    program's `main` returns nothing: it hands its result to the host
+//    through a function of the host's, `mylib.give` here.
+let given = Arc::new(Mutex::new(0));
+let slot = given.clone();
+let mylib = HostModule::new("mylib")
+    .fn1("fn double(x: Int) -> Int", |x: i64| x * 2)
+    .fn1("fn give(x: Int) -> ()", move |x: i64| *slot.lock().unwrap() = x);
 
 // 2. Open the program in a session that knows the module.
 let mut session = Session::new(Config {
@@ -29,7 +37,7 @@ let mut session = Session::new(Config {
     lock: LockPolicy::ReadOnly,
     host: vec![mylib],
 });
-let source = "import mylib\nfn main() { mylib.double(21) }";
+let source = "import mylib\nfn main() { mylib.give(mylib.double(21)) }";
 let file = session.set_overlay(Path::new("main.silt"), source.to_string());
 
 // 3. Check it. Every static error is in the analysis.
@@ -42,8 +50,8 @@ assert!(!analysis.has_errors());
 // 4. Compile it and run it. What the program prints is collected in `out`.
 let program = session.compile(file, Entry::Main).expect("compiles");
 let out = Buffer::new();
-let result = Vm::new(HostIo::buffer(&out)).run_program(&program).unwrap();
-assert_eq!(result, Value::Int(42));
+Vm::new(HostIo::buffer(&out)).run_program(&program).unwrap();
+assert_eq!(*given.lock().unwrap(), 42);
 ```
 
 ## Declaring a host module

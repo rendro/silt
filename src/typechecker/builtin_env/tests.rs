@@ -162,7 +162,7 @@ fn test_math_sqrt() {
 import math
 fn main() {
   let x = math.sqrt(4.0)
-  x
+  let _ = x
 }
         "#,
     );
@@ -177,7 +177,7 @@ fn main() {
   let a = math.sin(1.0)
   let b = math.cos(1.0)
   let c = math.tan(1.0)
-  a + b + c
+  let _ = a + b + c
 }
         "#,
     );
@@ -189,7 +189,7 @@ fn test_math_pow() {
         r#"
 import math
 fn main() {
-  math.pow(2.0, 10.0)
+  let _ = math.pow(2.0, 10.0)
 }
         "#,
     );
@@ -203,7 +203,7 @@ fn test_time_now() {
         r#"
 import time
 fn main() {
-  time.now()
+  let _ = time.now()
 }
         "#,
     );
@@ -230,7 +230,7 @@ fn test_http_get_type() {
         r#"
 import http
 fn main() {
-  http.get("http://example.com")
+  let _ = http.get("http://example.com")
 }
         "#,
     );
@@ -244,7 +244,7 @@ fn test_fs_exists_type_check() {
         r#"
 import fs
 fn main() {
-  fs.exists("file.txt")
+  let _ = fs.exists("file.txt")
 }
         "#,
     );
@@ -272,7 +272,7 @@ fn test_math_sqrt_wrong_type() {
         r#"
 import math
 fn main() {
-  math.sqrt("hello")
+  let _ = math.sqrt("hello")
 }
         "#,
         "type mismatch",

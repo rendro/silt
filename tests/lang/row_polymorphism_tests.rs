@@ -14,7 +14,7 @@ fn anon_record_round_trip_format() {
 
 fn main() {
     let q = { name: "A", age: 30 }
-    match q {
+    let _ = match q {
         { name: n, ...rest } -> n
     }
 }

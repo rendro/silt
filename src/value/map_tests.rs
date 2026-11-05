@@ -555,22 +555,25 @@ proptest::proptest! {
 /// collections/collection_builtin_fn_gate__*.
 #[test]
 fn a_fold_of_set_union_walks_the_set_it_grows_once() {
-    let program = crate::session::testing::compile_str(
+    let (program, given) = crate::session::testing::compile_given(
         r#"
 import list
 import set
 fn main() {
   let big = set.from_list(list.map(1..20000) { x -> x })
   let grown = list.fold(1..1000, big) { acc, i -> set.union(acc, set.from_list([0 - i])) }
-  set.length(grown)
+  host.give(set.length(grown))
 }
+import host
 "#,
     )
     .unwrap_or_else(|e| panic!("{e:?}"));
     let before = super::map::walks::count();
-    let result = crate::vm::Vm::new(crate::HostIo::process()).run_program(&program);
+    crate::vm::Vm::new(crate::HostIo::process())
+        .run_program(&program)
+        .expect("it runs");
     let walked = super::map::walks::count() - before;
-    assert_eq!(result.expect("it runs"), int(21_000));
+    assert_eq!(given.last(), Some(int(21_000)));
     assert!(walked < 25_000, "{walked} members walked");
 }
 

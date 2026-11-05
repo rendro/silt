@@ -245,7 +245,7 @@ mod tests {
     #[test]
     fn test_functions_are_found_whatever_the_spacing() {
         let program = parse(
-            "fn  test_spaced() { 1 }\nfn skip_test_later() { 2 }\nfn helper() { 3 }\npub fn test_pub() { 4 }",
+            "fn  test_spaced() { 1 }\nfn skip_test_later() { let _ = 2 }\nfn helper() { 3 }\npub fn test_pub() { let _ = 4 }",
         );
         assert_eq!(
             test_functions(&program),
@@ -259,7 +259,7 @@ mod tests {
 
     #[test]
     fn test_file() {
-        assert!(looks_like_test_file(&parse("fn test_a() { 1 }")));
+        assert!(looks_like_test_file(&parse("fn test_a() { let _ = 1 }")));
         assert!(looks_like_test_file(&parse(
             "import test\nfn helper() { 1 }"
         )));

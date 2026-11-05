@@ -418,12 +418,10 @@ proptest! {
             .map(|decimals| format!("float.format({number:e}, {decimals})"))
             .collect();
         let source = format!(
-            "import float\nimport string\nfn main() {{ string.join([{}], \"|\") }}",
+            "import float\nimport host\nimport string\nfn main() {{ host.give(string.join([{}], \"|\")) }}",
             calls.join(", ")
         );
-        let program = silt::session::testing::compile_str(&source)
-            .map_err(|errors| TestCaseError::fail(format!("{source}: {errors:?}")))?;
-        let joined = match silt::vm::Vm::new(silt::HostIo::process()).run_program(&program) {
+        let joined = match silt::session::testing::run_given(&source) {
             Ok(silt::value::Value::String(joined)) => joined.to_string(),
             other => return Err(TestCaseError::fail(format!("{source}: {other:?}"))),
         };

@@ -39,7 +39,7 @@ fn program_importing_a_host_module_runs() {
 
 #[test]
 fn host_functions_imported_by_name_and_through_an_alias() {
-    let source = "import mylib.{ shout }\nimport mylib as m\nfn main() { \"{shout(\"hi\")} {m.double(4)}\" }";
+    let source = "import mylib.{ shout }\nimport mylib as m\nfn main() { host.give(\"{shout(\"hi\")} {m.double(4)}\") }\nimport host";
     assert_eq!(run(source, mylib()), Ok(Value::String("HI 8".into())));
 }
 
@@ -52,7 +52,7 @@ fn two_host_modules_with_functions_of_one_name() {
     let files = [
         (
             "main.silt",
-            "import twice\nimport helper\nfn main() { \"{twice.apply(1)} {helper.via_thrice(1)}\" }",
+            "import twice\nimport helper\nfn main() { host.give(\"{twice.apply(1)} {helper.via_thrice(1)}\") }\nimport host",
         ),
         (
             "helper.silt",
@@ -153,8 +153,9 @@ fn main() {
     Some(s) -> s
     None -> ""
   }
-  (a, b, c, d)
+  host.give((a, b, c, d))
 }
+import host
 "#;
     assert_eq!(
         run(source, host.clone()),
@@ -242,7 +243,7 @@ fn bad_signatures_are_reported() {
     for (signature, expected) in cases {
         let host = HostModule::new("h").function(signature, |_: &[Value]| Ok(Value::Unit));
         // Reported whether or not the program imports the module.
-        let errors = errors("fn main() { 1 }", host);
+        let errors = errors("fn main() { let _ = 1 }", host);
         assert!(
             errors.iter().any(|e| e.message.contains(expected)),
             "{signature}: {errors:?}"
@@ -253,7 +254,7 @@ fn bad_signatures_are_reported() {
 #[test]
 fn a_signature_that_does_not_parse_is_reported_once() {
     let host = HostModule::new("h").function("fn (", |_: &[Value]| Ok(Value::Unit));
-    let errors = errors("fn main() { 1 }", host);
+    let errors = errors("fn main() { let _ = 1 }", host);
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert!(!errors[0].message.contains("no body"), "{errors:?}");
 }
@@ -340,7 +341,7 @@ fn compile_without_analyze_returns_the_analysis_errors() {
 fn host_module_name_must_be_an_identifier() {
     for name in ["my-lib", "", "fn", "a b"] {
         let host = HostModule::new(name).fn0("fn answer() -> Int", || 42_i64);
-        let errors = errors("fn main() { 1 }", host);
+        let errors = errors("fn main() { let _ = 1 }", host);
         assert!(
             errors
                 .iter()
@@ -404,7 +405,7 @@ fn host_module_named_like_a_dependency_key_is_rejected_at_the_import() {
 #[test]
 fn host_module_named_like_a_builtin_module_is_rejected() {
     let host = HostModule::new("list").fn0("fn answer() -> Int", || 42_i64);
-    let errors = errors("fn main() { 1 }", host);
+    let errors = errors("fn main() { let _ = 1 }", host);
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert_eq!(errors[0].code, Code::HostModuleCollision, "{errors:?}");
 }
@@ -429,11 +430,20 @@ fn host_module_named_like_a_module_file_is_rejected_at_the_import() {
 #[test]
 fn docs_ffi_quick_start() {
     use silt::session::{Config, Entry, LockPolicy, ProjectSetup, Session};
-    use silt::{Buffer, HostIo, Value, Vm};
+    use silt::{Buffer, HostIo, Vm};
     use std::path::Path;
+    use std::sync::{Arc, Mutex};
 
-    // 1. Declare the host module: each function by its silt signature.
-    let mylib = HostModule::new("mylib").fn1("fn double(x: Int) -> Int", |x: i64| x * 2);
+    // 1. Declare the host module: each function by its silt signature. A
+    //    program's `main` returns nothing: it hands its result to the host
+    //    through a function of the host's, `mylib.give` here.
+    let given = Arc::new(Mutex::new(0));
+    let slot = given.clone();
+    let mylib = HostModule::new("mylib")
+        .fn1("fn double(x: Int) -> Int", |x: i64| x * 2)
+        .fn1("fn give(x: Int) -> ()", move |x: i64| {
+            *slot.lock().unwrap() = x
+        });
 
     // 2. Open the program in a session that knows the module.
     let mut session = Session::new(Config {
@@ -441,7 +451,7 @@ fn docs_ffi_quick_start() {
         lock: LockPolicy::ReadOnly,
         host: vec![mylib],
     });
-    let source = "import mylib\nfn main() { mylib.double(21) }";
+    let source = "import mylib\nfn main() { mylib.give(mylib.double(21)) }";
     let file = session.set_overlay(Path::new("main.silt"), source.to_string());
 
     // 3. Check it. Every static error is in the analysis.
@@ -454,6 +464,6 @@ fn docs_ffi_quick_start() {
     // 4. Compile it and run it. What the program prints is collected in `out`.
     let program = session.compile(file, Entry::Main).expect("compiles");
     let out = Buffer::new();
-    let result = Vm::new(HostIo::buffer(&out)).run_program(&program).unwrap();
-    assert_eq!(result, Value::Int(42));
+    Vm::new(HostIo::buffer(&out)).run_program(&program).unwrap();
+    assert_eq!(*given.lock().unwrap(), 42);
 }
