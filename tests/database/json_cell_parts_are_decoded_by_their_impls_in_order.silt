@@ -1,0 +1,61 @@
+-- The parts of json and jsonb cells that a written impl decodes are
+-- decoded by it, in the order of the walk of each document (fields as
+-- the record declares them, keys sorted), cell after cell and row
+-- after row, up to the first error; an impl's Err is its column's.
+import env
+import json
+import list
+import postgres
+
+type P { s: String }
+
+trait json.Decode for P {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    println("  impl P {value}")
+    match value {
+      json.String("bad") -> Err(json.Other("P refuses bad"))
+      json.String(s) -> Ok(P { s: s })
+      _ -> Err(json.TypeMismatch("string", "other"))
+    }
+  }
+}
+
+type Inner { z: P, a: P, m: Map(String, P), l: List(P), n: Int }
+type Row { x: Inner, y: Inner }
+type RowL { xs: List(Inner) }
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+fn show(r: Result(List(a), postgres.PostgresError)) where a: Display {
+  match r {
+    Ok(rows) -> println(rows)
+    Err(e) -> println(Error.message(e))
+  }
+}
+
+fn main() {
+  let good = """{"n": 1, "l": ["l0"], "m": {"b": "mb", "a": "ma"}, "a": "a", "z": "z"}"""
+  let docs = [
+    (good, good),
+    ("""{"n": "x", "l": ["l0", "bad"], "m": {"b": "mb", "a": "ma"}, "a": "a", "z": "z"}""", good),
+    (good, """{"n": 1, "l": [], "m": {"b": "bad", "a": "ma"}, "a": "a", "z": "z"}"""),
+    ("""{"n": 1, "l": [], "m": {}, "z": "z"}""", good),
+  ]
+  match postgres.connect(url()) {
+    Ok(db) -> {
+      list.each(docs) { (x, y) ->
+        println("== {x} / {y}")
+        show(postgres.query(db, "SELECT $1::jsonb AS x, $2::json AS y", (x, y), Row))
+        show(postgres.query(db, "SELECT ARRAY[$1::jsonb, $2::jsonb] AS xs", (x, y), RowL))
+        show(postgres.query(db, "SELECT $1::jsonb AS x, $2::jsonb AS y UNION ALL SELECT $2::jsonb, $1::jsonb", (x, y), Row))
+      }
+      postgres.close(db)
+    }
+    Err(e) -> println("connect: {Error.message(e)}")
+  }
+}

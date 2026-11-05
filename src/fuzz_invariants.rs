@@ -304,9 +304,9 @@ pub fn check_formatter_invariants(source: &str) -> Result<(), String> {
     })
 }
 
-// ── json.parse: the reading of the text against the walk of its tree ──
+// ── The decoders: json.parse, json.decode and toml.parse on any text ──
 
-/// The types [`check_json_decoders_agree`] decodes a text into: the
+/// The types [`check_json_decoding`] decodes a text into: the
 /// fields of `Targets`.
 const JSON_TYPES: &str = "import json
 import time
@@ -412,37 +412,6 @@ fn impl_calls<'h>(
     (calls, given)
 }
 
-/// A decoding by the walk of a tree as the VM's frame ran it (two
-/// walks, with the impls between them): the impls' calls and the
-/// result. `walk` walks the tree with a reader, or gives the call's
-/// result where there is no document.
-fn walked_decoding(
-    rt: &crate::vm::Runtime,
-    written: &dyn Fn(crate::defs::TypeId, &[crate::typeinfo::FieldType]) -> Option<u16>,
-    rules: &crate::builtins::decode::Rules,
-    walk: impl Fn(
-        &crate::builtins::decode::Reader,
-    ) -> Result<crate::builtins::decode::seed::Outcome, crate::value::Value>,
-) -> (Vec<String>, crate::value::Value) {
-    use crate::builtins::decode::{self, Holes, Reader};
-    let first = Reader::with_impls(rt, written, Holes::Collect(Vec::new()));
-    let decoded = match walk(&first) {
-        Ok(decoded) => decoded,
-        Err(result) => return (Vec::new(), result),
-    };
-    let holes = first.into_holes();
-    if holes.is_empty() {
-        return (Vec::new(), decode::result(rules, decoded));
-    }
-    let (calls, given) = impl_calls(&holes);
-    if let (Ok(_), Err(e)) = (given.last().expect("a call").as_ref(), decoded) {
-        return (calls, decode::result(rules, Err(e)));
-    }
-    let second = Reader::with_impls(rt, written, Holes::Supply(given.into_iter()));
-    let decoded = walk(&second).expect("a document");
-    (calls, decode::result(rules, decoded))
-}
-
 /// A decoding by the reading of a document as the VM's frame runs it
 /// (two readings, with the impls between them; the first only finding
 /// the parts where `only_finding`): the impls' calls and the result.
@@ -490,42 +459,59 @@ fn read_decoding(
     (calls, decode::result(rules, decoded))
 }
 
-/// `Err` where the walk's decoding and the reading's differ: in the
-/// impls they call, or in their result, its text or as a value.
-fn agree_with_calls(
+/// `Err` where two decodings of `what` differ, `how` they were made: in
+/// the impls they call, or in their result, its text or as a value.
+fn same(
     name: &str,
-    walked: &(Vec<String>, crate::value::Value),
-    read: &(Vec<String>, crate::value::Value),
+    how: &str,
+    first: &(Vec<String>, crate::value::Value),
+    second: &(Vec<String>, crate::value::Value),
     what: &str,
 ) -> Result<(), String> {
-    if walked.0 != read.0 {
+    if first.0 != second.0 {
         return Err(format!(
-            "{name}: the walk calls {:?}, the reading {:?}, of {what}",
-            walked.0, read.0
+            "{name}: the impls called {:?}, {how} {:?}, of {what}",
+            first.0, second.0
         ));
     }
-    agree(name, &walked.1, &read.1, what)
+    match first.1.to_string() == second.1.to_string() && first.1 == second.1 {
+        true => Ok(()),
+        false => Err(format!(
+            "{name}: the decoding gives {}, {how} {}, of {what}",
+            first.1, second.1
+        )),
+    }
 }
 
 /// `json.parse` of the text `text` into a value of each of a set of
 /// types (records, enums and generic types of them, lists, maps,
 /// tuples, options, dates and times, `json.Value`), with and without
-/// written impls of some of them (`IMPLS`, `fake_impl`): the
-/// reading of the text (`decode::seed`) gives what the walk of the
-/// document's tree gives, value or error, to the byte, and calls the
-/// impls with the same parts in the same order; and so does the reading
-/// of the document read (`json.decode`'s, a postgres cell's).
-pub fn check_json_decoders_agree(text: &[u8]) -> Result<(), String> {
-    use crate::builtins::decode::{self, At, seed};
+/// written impls of some of them (`IMPLS`, `fake_impl`), as the VM's
+/// frame runs it: it ends (no panic), and ends alike when it runs again
+/// (no reading leaves anything behind); and where the text is a
+/// document, `json.decode` of the `json.Value` it holds decodes alike:
+/// the same value or error, the impls called with the same parts in the
+/// same order.
+pub fn check_json_decoding(text: &[u8]) -> Result<(), String> {
+    use crate::builtins::decode::{Holes, Reader, seed};
     use crate::builtins::json;
+    use crate::typeinfo::FieldType;
     thread_local! {
         static TARGETS: JsonTargets = JsonTargets::new();
     }
     TARGETS.with(|targets| {
         let rt = &targets.vm.runtime;
-        let none = |_, _: &[crate::typeinfo::FieldType]| None;
-        let impls = |id, args: &[crate::typeinfo::FieldType]| targets.written(id, args);
-        let tree = json::parse_document(text);
+        let none = |_, _: &[FieldType]| None;
+        let impls = |id, args: &[FieldType]| targets.written(id, args);
+        let plain = Reader::with_impls(rt, &none, Holes::Collect(Vec::new()));
+        let finding = seed::Parts::finding();
+        // (A float that a text holds as no Int but is whole in Int's
+        // range, `0.99999999999999999999` or `1e-400`, is an Int to
+        // json.decode, which has the float and not the text.)
+        let value = match seed::json_text(&plain, &FieldType::JsonValue, text, &finding) {
+            Ok(Ok(value)) if !holds_a_whole_float(&value) => Some(value),
+            _ => None,
+        };
         let shown = String::from_utf8_lossy(text);
         for (name, expected) in &targets.targets {
             for (with_impls, written) in [&none as &dyn Fn(_, &[_]) -> _, &impls]
@@ -533,21 +519,20 @@ pub fn check_json_decoders_agree(text: &[u8]) -> Result<(), String> {
                 .enumerate()
             {
                 let only_finding = with_impls == 1;
-                let walked = walked_decoding(rt, written, &json::RULES, |r| match &tree {
-                    Ok(doc) => Ok(decode::value(r, doc, expected, &At::Top)),
-                    Err(e) => Err(json::json_result_err(e, text)),
-                });
-                let read = read_decoding(only_finding, rt, written, &json::RULES, |r, parts| {
+                let from_text = |r: &Reader, parts: &seed::Parts| {
                     seed::json_text(r, expected, text, parts)
                         .map_err(|e| json::json_result_err(&e, text))
-                });
-                agree_with_calls(name, &walked, &read, &shown)?;
-                if let Ok(doc) = &tree {
+                };
+                let first = read_decoding(only_finding, rt, written, &json::RULES, from_text);
+                let again = read_decoding(only_finding, rt, written, &json::RULES, from_text);
+                same(name, "again", &first, &again, &shown)?;
+                if let Some(value) = &value {
                     let read =
                         read_decoding(only_finding, rt, written, &json::RULES, |r, parts| {
-                            Ok(seed::json_document(r, expected, doc, parts))
+                            seed::json_value(r, expected, value, parts)
+                                .map_err(json::json_unknown_err)
                         });
-                    agree_with_calls(name, &walked, &read, &format!("the document {doc}"))?;
+                    same(name, "its json.Value", &first, &read, &shown)?;
                 }
             }
         }
@@ -555,29 +540,32 @@ pub fn check_json_decoders_agree(text: &[u8]) -> Result<(), String> {
     })
 }
 
-/// `Err` where the walk's result `walked` and the reading's `read` of
-/// `what` differ, in their text or as values.
-fn agree(
-    name: &str,
-    walked: &crate::value::Value,
-    read: &crate::value::Value,
-    what: &str,
-) -> Result<(), String> {
-    match walked.to_string() == read.to_string() && walked == read {
-        true => Ok(()),
-        false => Err(format!(
-            "{name}: the walk gives {walked}, the reading {read}, of {what}"
-        )),
+/// Whether the `json.Value` `value` holds a `json.Float` of a whole
+/// number in `Int`'s range.
+fn holds_a_whole_float(value: &crate::value::Value) -> bool {
+    use crate::value::Value;
+    let Value::Variant(json) = value else {
+        return false;
+    };
+    match json.fields() {
+        [Value::Float(f)] => {
+            const INT_RANGE: std::ops::Range<f64> =
+                -9_223_372_036_854_775_808.0..9_223_372_036_854_775_808.0;
+            f.get().fract() == 0.0 && INT_RANGE.contains(&f.get())
+        }
+        [Value::List(items)] => items.iter().any(|item| holds_a_whole_float(&item)),
+        [Value::Map(members)] => members
+            .iter()
+            .any(|(_, member)| holds_a_whole_float(member)),
+        _ => false,
     }
 }
 
 /// `toml.parse`, `toml.parse_map` and `toml.parse_list` of the text
-/// `text` into a value of each of the types of
-/// [`check_json_decoders_agree`], with and without written impls: the
-/// reading of the text (`decode::seed`) gives what the walk of the
-/// document's tree gives, value or error, to the byte, and calls the
-/// impls with the same parts in the same order.
-pub fn check_toml_decoders_agree(text: &str) -> Result<(), String> {
+/// `text` into a value of each of the types of [`check_json_decoding`],
+/// with and without written impls, as the VM's frame runs them: each
+/// ends (no panic), and ends alike when it runs again.
+pub fn check_toml_decoding(text: &str) -> Result<(), String> {
     use crate::builtins::decode::seed;
     use crate::builtins::toml;
     thread_local! {
@@ -588,7 +576,6 @@ pub fn check_toml_decoders_agree(text: &str) -> Result<(), String> {
         let none = |_, _: &[crate::typeinfo::FieldType]| None;
         let impls = |id, args: &[crate::typeinfo::FieldType]| targets.written(id, args);
         let keys = |n: usize| format!("{n} keys");
-        let doc = toml::document(text);
         for (name, expected) in &targets.targets {
             for top in [
                 seed::Top::One(expected),
@@ -600,13 +587,12 @@ pub fn check_toml_decoders_agree(text: &str) -> Result<(), String> {
                     .enumerate()
                 {
                     let only_finding = with_impls == 1;
-                    let walked =
-                        walked_decoding(rt, written, &toml::RULES, |r| toml::walked(r, &top, &doc));
-                    let read =
-                        read_decoding(only_finding, rt, written, &toml::RULES, |r, parts| {
-                            toml::read_text(r, &top, text, parts)
-                        });
-                    agree_with_calls(name, &walked, &read, text)?;
+                    let read = |r: &crate::builtins::decode::Reader, parts: &seed::Parts| {
+                        toml::read_text(r, &top, text, parts)
+                    };
+                    let first = read_decoding(only_finding, rt, written, &toml::RULES, read);
+                    let again = read_decoding(only_finding, rt, written, &toml::RULES, read);
+                    same(name, "again", &first, &again, text)?;
                 }
             }
         }
@@ -615,7 +601,7 @@ pub fn check_toml_decoders_agree(text: &str) -> Result<(), String> {
 }
 
 /// A TOML text made of `bytes`, which choose each part of it: keys and
-/// tables of the shapes of the types [`check_toml_decoders_agree`]
+/// tables of the shapes of the types [`check_toml_decoding`]
 /// decodes, arrays of tables, inline tables, quoted keys, keys written
 /// twice, every kind of date and time literal and ones that are no day
 /// or time, integers and floats at their edges (`nan`, `inf`), and now
@@ -824,7 +810,7 @@ impl TomlMaker<'_> {
 }
 
 /// A JSON text made of `bytes`, which choose each part of it: values of
-/// the shapes of the types [`check_json_decoders_agree`] decodes, with
+/// the shapes of the types [`check_json_decoding`] decodes, with
 /// their keys, variant names, dates and numbers at the edges of `Int`,
 /// keys written twice, nesting past the parser's limit, and now and
 /// then broken text.

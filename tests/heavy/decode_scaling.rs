@@ -5,7 +5,7 @@
 //! the name says how to decode them. Each variant nested in them kept
 //! its own fields again, a copy of the copy: a document of one list of
 //! 300,000 numbers inside 60 variants took 0.9 s and 640 MB where the
-//! walk of its tree took 45 ms and 46 MB. Now the fields are decoded as
+//! decoder before had taken 45 ms and 46 MB. Now the fields are decoded as
 //! they are read where the name comes first, and kept once where it
 //! comes after them: a variant in what is kept is read from it, shared.
 

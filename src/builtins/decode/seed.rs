@@ -1,14 +1,12 @@
-//! Decoding a document as its parser reads it: a value of the type is
-//! made of the text, part by part, with no tree of the document in
-//! between (a `DeserializeSeed` of the type, over the parser of the
-//! text). One decoder for every format: JSON text (`json.parse`), TOML
-//! text (`toml.parse`, `toml.parse_list`, `toml.parse_map`), and a JSON
-//! document already read (`json.decode` of a `json.Value`, a postgres
-//! `json` or `jsonb` cell).
+//! The decoder: a document decoded as its parser reads it, a value of
+//! the type made of the text part by part, with no tree of the document
+//! in between (a `DeserializeSeed` of the type, over the parser of the
+//! text). One decoder for every format: JSON text (`json.parse`, a
+//! postgres `json` or `jsonb` cell), TOML text (`toml.parse`,
+//! `toml.parse_list`, `toml.parse_map`), and a `json.Value`
+//! (`json.decode`, `T.decode`).
 //!
-//! What a program sees is what the walk of the tree ([`value`]) gives
-//! of the same document, and that walk stays the referee until every
-//! decoder reads this way:
+//! What a program sees:
 //!
 //! - broken text anywhere wins over a value of the wrong type before
 //!   it: the error of a part is kept, and the text is read to its end;
@@ -16,21 +14,19 @@
 //!   error with it: an earlier one's error is dropped;
 //! - a record's error is that of the first field it declares that has
 //!   one, a map's that of the first key in sorted order, a list's that
-//!   of the first element that has one;
-//! - a JSON number is an `Int` by its digits, as [`parse_document`]
-//!   reads it; a TOML number by its kind;
+//!   of the first element that has one (the decoder's order: fields as
+//!   the type declares them, keys sorted, elements in order);
+//! - a JSON number is an `Int` by its digits, whatever its form; a TOML
+//!   number by its kind;
 //! - a TOML date or time literal is a datetime, which the date and time
 //!   types read from its text (the parser gives it as a table of one
 //!   key, its mark, [`DATETIME`]).
 //!
 //! A part of a type with a written `json.Decode` impl is the impl's: a
 //! document with such parts is read twice ([`Parts`], `vm::decode`),
-//! first to find them, the json.Value of each, in the order the walk
-//! comes to them; then, once the impls gave their values, to put those
-//! in their places.
-//!
-//! [`value`]: super::value
-//! [`parse_document`]: crate::builtins::json::parse_document
+//! first to find them, the json.Value of each, in the decoder's order;
+//! then, once the impls gave their values, to put those in their
+//! places.
 
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
@@ -64,9 +60,9 @@ pub(crate) struct Parts {
     /// How many parts the reading met.
     met: Cell<usize>,
     /// Finding (the first reading): each part found, with its number,
-    /// in the order the walk of the tree comes to them (each record,
-    /// map, tuple and variant puts its own parts in that order when it
-    /// ends), up to the first error of the document.
+    /// in the decoder's order (each record, map, tuple and variant puts
+    /// its own parts in that order when it ends), up to the first error
+    /// of the document.
     found: RefCell<Vec<Found>>,
     /// Supplying (the second reading): what the impls gave, by number;
     /// `None` for a part no impl was called for.
@@ -116,7 +112,7 @@ impl Parts {
     }
 
     /// The second reading's: supplying, in the places of the parts
-    /// `numbers` (in the walk's order, as found), what the impls gave
+    /// `numbers` (in the decoder's order, as found), what the impls gave
     /// for them, `given`, in that order (up to the first `Err`).
     /// `keep_fields`: as the first reading kept the variants' fields.
     pub(crate) fn supplying(
@@ -135,7 +131,7 @@ impl Parts {
         }
     }
 
-    /// The parts found, in the walk's order, and whether the variants'
+    /// The parts found, in the decoder's order, and whether the variants'
     /// fields were kept.
     pub(crate) fn into_found(self) -> (Vec<Found>, bool) {
         (self.found.into_inner(), self.keep_fields.get())
@@ -227,7 +223,7 @@ pub(crate) fn json_text(
             r,
             rules: &json::RULES,
             format: Format::Json,
-            digits: Digits::Text(json::Node::new(text, &at)),
+            digits: Digits::Text(json::Numerals::new(text, &at)),
             marked: None,
             parts,
             restart: &restart,
@@ -251,17 +247,61 @@ pub(crate) fn json_text(
     }
 }
 
-/// The JSON document `doc`, already read (as [`parse_document`] reads
-/// one), decoded into a value of `expected` by `r`, its parts of a type
-/// with a written impl as `parts` says.
-///
-/// [`parse_document`]: crate::builtins::json::parse_document
-pub(crate) fn json_document(
+/// The JSON text `text` of a postgres cell decoded into a value of
+/// `expected` by `r`, which does at the parts of a type with a written
+/// impl what the reader of the row says: finding them, after the parts
+/// of the cells before (`Holes::Collect`), or putting in the next of
+/// what the impls gave (`Holes::Supply`), taking one at each part in
+/// the decoder's order up to an impl's `Err`. `Err` of the parser's
+/// error where the text is no document.
+#[cfg(feature = "postgres")]
+pub(crate) fn json_cell(
     r: &Reader,
     expected: &FieldType,
-    doc: &serde_json::Value,
+    text: &[u8],
+) -> Result<Outcome, serde_json::Error> {
+    use super::Holes;
+    let Some(impls) = &r.impls else {
+        return json_text(r, expected, text, &Parts::finding());
+    };
+    let finding = Parts::finding();
+    let decoded = json_text(r, expected, text, &finding)?;
+    let (found, keep_fields) = finding.into_found();
+    let mut holes = impls.holes.borrow_mut();
+    match &mut *holes {
+        Holes::Collect(holes) => {
+            holes.extend(found.into_iter().map(|found| found.hole));
+            Ok(decoded)
+        }
+        Holes::Supply(values) => {
+            let numbers: Vec<usize> = found.iter().map(|found| found.number).collect();
+            let mut given = Vec::new();
+            for _ in &numbers {
+                let Some(value) = values.next() else { break };
+                let failed = value.is_err();
+                given.push(value);
+                if failed {
+                    break;
+                }
+            }
+            drop(holes);
+            let supplying = Parts::supplying(&numbers, given, keep_fields);
+            json_text(r, expected, text, &supplying)
+        }
+    }
+}
+
+/// The `json.Value` `v` decoded into a value of `expected` by `r`, its
+/// parts of a type with a written impl as `parts` says (`json.decode`,
+/// `T.decode`): read as the JSON document `json.stringify` writes of it
+/// would be, a whole number held as a `json.Float` an `Int`; or `Err` of
+/// the message of a value nested past the encoder's limit.
+pub(crate) fn json_value(
+    r: &Reader,
+    expected: &FieldType,
+    v: &Value,
     parts: &Parts,
-) -> Outcome {
+) -> Result<Outcome, String> {
     let restart = Cell::new(false);
     let kept = Cell::new(None);
     let cx = Cx {
@@ -279,97 +319,91 @@ pub(crate) fn json_document(
         expected,
         at: &At::Top,
     }
-    .deserialize(ValueDe(doc));
-    // (A document read has each key of an object once, and no other
-    // error of a reading.)
-    read.expect("a document read is read")
+    .deserialize(JsonValueDe {
+        value: v.clone(),
+        level: 0,
+    });
+    // (A `json.Value` has each key of an object once: the one error of
+    // its reading is its depth.)
+    read.map_err(|e| e.to_string())
 }
 
-/// The JSON document `doc` of a postgres cell decoded into a value of
-/// `expected` by `r`, which does at the parts of a type with a written
-/// impl what the reader of the row says: finding them, after the parts
-/// of the cells before (`Holes::Collect`), or putting in the next of
-/// what the impls gave (`Holes::Supply`), as the walk takes them.
-#[cfg(feature = "postgres")]
-pub(crate) fn json_cell(r: &Reader, expected: &FieldType, doc: &serde_json::Value) -> Outcome {
-    use super::Holes;
-    let Some(impls) = &r.impls else {
-        return json_document(r, expected, doc, &Parts::finding());
-    };
-    let finding = Parts::finding();
-    let decoded = json_document(r, expected, doc, &finding);
-    let (found, keep_fields) = finding.into_found();
-    let mut holes = impls.holes.borrow_mut();
-    match &mut *holes {
-        Holes::Collect(holes) => {
-            holes.extend(found.into_iter().map(|found| found.hole));
-            decoded
-        }
-        // The walk takes the next value at each part it comes to, up to
-        // an impl's `Err`.
-        Holes::Supply(values) => {
-            let numbers: Vec<usize> = found.iter().map(|found| found.number).collect();
-            let mut given = Vec::new();
-            for _ in &numbers {
-                let Some(value) = values.next() else { break };
-                let failed = value.is_err();
-                given.push(value);
-                if failed {
-                    break;
-                }
-            }
-            drop(holes);
-            json_document(
-                r,
-                expected,
-                doc,
-                &Parts::supplying(&numbers, given, keep_fields),
-            )
-        }
-    }
-}
-/// A JSON document already read, read as serde_json reads it, but for
-/// the order of an object's members: its `variant` comes first, so that
-/// a variant's fields are decoded as they are read, not kept. (No other
+/// A `json.Value` `level` levels deep in the one decoded, read as the
+/// JSON of it: `json.Int(n)` and a `json.Float` of a whole number in
+/// `Int`'s range as an integer, an object's `variant` first (so that a
+/// variant's fields are decoded as they are read, not kept: no other
 /// part of a decoding depends on the order of the members of an object
-/// that has each key once.)
-#[derive(Clone, Copy)]
-struct ValueDe<'d>(&'d serde_json::Value);
+/// that has each key once). A value nested more than the encoder
+/// writes is an error, of its message.
+struct JsonValueDe {
+    value: Value,
+    level: usize,
+}
 
-impl<'de> de::Deserializer<'de> for ValueDe<'de> {
+impl<'de> de::Deserializer<'de> for JsonValueDe {
     type Error = de::value::Error;
 
     fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        use serde_json::Value as J;
-        match self.0 {
-            J::Null => visitor.visit_unit(),
-            J::Bool(b) => visitor.visit_bool(*b),
-            J::Number(n) => match (n.as_u64(), n.as_i64(), n.as_f64()) {
-                (Some(n), _, _) => visitor.visit_u64(n),
-                (None, Some(n), _) => visitor.visit_i64(n),
-                (None, None, Some(f)) => visitor.visit_f64(f),
-                // (A number serde_json holds is an `i64`, a `u64` or an
-                // `f64`.)
-                (None, None, None) => visitor.visit_f64(f64::NAN),
-            },
-            J::String(s) => visitor.visit_borrowed_str(s),
-            J::Array(items) => {
-                let mut seq = SeqDeserializer::new(items.iter().map(ValueDe));
+        use crate::builtins::data::MAX_ENCODE_DEPTH;
+        if self.level > MAX_ENCODE_DEPTH {
+            return Err(de::Error::custom(format_args!(
+                "json.decode: the value is nested more than {MAX_ENCODE_DEPTH} levels deep"
+            )));
+        }
+        let level = self.level + 1;
+        let Value::Variant(json) = &self.value else {
+            return Err(de::Error::custom(
+                "json.decode: a value that is no json.Value",
+            ));
+        };
+        match json.fields() {
+            [] => visitor.visit_unit(),
+            [Value::Bool(b)] => visitor.visit_bool(*b),
+            [Value::Int(n)] => visitor.visit_i64(*n),
+            [Value::Float(f)] => {
+                let f = f.get();
+                match f.fract() == 0.0 && (-I64_MAX_PLUS_ONE..I64_MAX_PLUS_ONE).contains(&f) {
+                    true => visitor.visit_i64(f as i64),
+                    false => visitor.visit_f64(f),
+                }
+            }
+            [Value::String(s)] => visitor.visit_str(s),
+            [Value::List(items)] => {
+                let items = items.iter().map(|value| JsonValueDe { value, level });
+                let mut seq = SeqDeserializer::new(items);
                 let read = visitor.visit_seq(&mut seq)?;
                 seq.end()?;
                 Ok(read)
             }
-            J::Object(members) => {
-                let name = members.get_key_value("variant");
-                let rest = members.iter().filter(|(key, _)| *key != "variant");
-                let entries = name.into_iter().chain(rest);
-                let mut map = MapDeserializer::new(
-                    entries.map(|(key, value)| (key.as_str(), ValueDe(value))),
-                );
+            [Value::Map(members)] => {
+                fn key(key: &Value) -> Cow<'_, str> {
+                    match key {
+                        Value::String(key) => Cow::Borrowed(key),
+                        other => Cow::Owned(other.to_string()),
+                    }
+                }
+                let mut entries: Vec<(Cow<str>, JsonValueDe)> = Vec::with_capacity(members.len());
+                for (name, value) in members.iter() {
+                    let member = (
+                        key(name),
+                        JsonValueDe {
+                            value: value.clone(),
+                            level,
+                        },
+                    );
+                    match member.0 == "variant" {
+                        true => entries.insert(0, member),
+                        false => entries.push(member),
+                    }
+                }
+                let mut map = MapDeserializer::new(entries.into_iter());
                 let read = visitor.visit_map(&mut map)?;
                 map.end()?;
                 Ok(read)
             }
+            _ => Err(de::Error::custom(
+                "json.decode: a value that is no json.Value",
+            )),
         }
     }
 
@@ -380,7 +414,7 @@ impl<'de> de::Deserializer<'de> for ValueDe<'de> {
     }
 }
 
-impl<'de> IntoDeserializer<'de, de::value::Error> for ValueDe<'de> {
+impl<'de> IntoDeserializer<'de, de::value::Error> for JsonValueDe {
     type Deserializer = Self;
 
     fn into_deserializer(self) -> Self {
@@ -540,10 +574,11 @@ enum Digits<'t> {
     /// From the JSON text: the parser gives every number that is no
     /// integer literal of 64 bits as an `f64`, so each number's digits
     /// are read again, in the order the parser gives the numbers.
-    Text(json::Node<'t>),
+    Text(json::Numerals<'t>),
     /// From the parser as it gives them: a TOML document, whose numbers
-    /// are an integer or a float by their kind, or a document already
-    /// read, whose numbers are held as they decode.
+    /// are an integer or a float by their kind, or a `json.Value` or
+    /// what was kept of a document, whose numbers are held as they
+    /// decode.
     Read,
 }
 
@@ -557,8 +592,7 @@ impl Digits<'_> {
 
     /// The number the parser gave as the `f64` `f`: of a JSON text, an
     /// `Int` when its digits are a whole number in `Int`'s range, and
-    /// one that is no finite `f64` is held as no number, as
-    /// `parse_document` holds it.
+    /// one that is no finite `f64` is held as no number.
     fn float(self, f: f64) -> Scalar<'static> {
         let Digits::Text(node) = self else {
             return Scalar::Float(f);
@@ -1257,7 +1291,7 @@ impl<'s> Seed<'s> {
             match &*key {
                 "variant" if !keep && name.is_some() => return Err(cx.for_a_restart()),
                 "fields" if !keep && fields.is_some() => return Err(cx.for_a_restart()),
-                "variant" => name = Some(entries.value(Capture(*cx))?),
+                "variant" => name = Some(entries.value(Capture::kept(*cx))?),
                 "fields" => {
                     fields = Some(match (keep, named(cx, ty, name.as_ref(), at)) {
                         (false, Ok(tag)) => Fields::Read(entries.value(self.fields(&tag, args))?),
@@ -1266,7 +1300,7 @@ impl<'s> Seed<'s> {
                             entries.value(self.skip())?;
                             Fields::Passed
                         }
-                        _ => Fields::Kept(entries.value(Capture(*cx))?),
+                        _ => Fields::Kept(entries.value(Capture::kept(*cx))?),
                     })
                 }
                 _ => entries.value(self.skip())?,
@@ -1320,7 +1354,7 @@ enum Fields {
 
 /// The variant of the enum type `ty` that the kept `variant` of its
 /// table names (`at` a path), one with fields; or the error of the
-/// name, as the walk takes it: missing, no string, no variant's, or one
+/// name, in this order: missing, no string, no variant's, or one
 /// of no fields.
 fn named(cx: &Cx, ty: &Arc<TypeInfo>, name: Option<&Content>, at: &At) -> Result<Tag, Error> {
     let at_name = at.key("variant");
@@ -1639,10 +1673,7 @@ impl<'de> Visitor<'de> for ListUnderItsKey<'_> {
 
 /// The decoding of a part that is an array, or a `table`, into the
 /// list or map type of its seed: anything else is the type mismatch of
-/// no such part, as the walk's [`list`] and [`map`] say it.
-///
-/// [`list`]: super::list
-/// [`map`]: super::map
+/// no such part, an `array` or the format's table.
 struct Only<'s> {
     seed: Seed<'s>,
     table: bool,
@@ -1820,9 +1851,9 @@ enum Content {
     String(String),
     /// A TOML date or time literal, as its text.
     Datetime(String),
-    Array(Rc<[Content]>),
+    Array(Rc<Vec<Content>>),
     /// A table's entries in the order read, a key written twice too.
-    Table(Rc<[(String, Content)]>),
+    Table(Rc<Vec<(String, Content)>>),
 }
 
 impl Content {
@@ -1867,7 +1898,27 @@ const KEPT: &str = "$__silt_kept";
 
 /// The reading of a part into the [`Content`] that keeps it.
 #[derive(Clone, Copy)]
-struct Capture<'t>(Cx<'t>);
+struct Capture<'t> {
+    cx: Cx<'t>,
+    /// Whether it is the part kept, not a part of it: only the part kept
+    /// is asked for under [`KEPT`] (what was kept is handed over whole).
+    whole: bool,
+}
+
+impl<'t> Capture<'t> {
+    /// The reading of the part `cx` reads, kept.
+    fn kept(cx: Cx<'t>) -> Capture<'t> {
+        Capture { cx, whole: true }
+    }
+
+    /// The reading of a part of what is kept.
+    fn inner(self) -> Capture<'t> {
+        Capture {
+            whole: false,
+            ..self
+        }
+    }
+}
 
 impl<'de> DeserializeSeed<'de> for Capture<'_> {
     type Value = Content;
@@ -1875,7 +1926,10 @@ impl<'de> DeserializeSeed<'de> for Capture<'_> {
     fn deserialize<D: de::Deserializer<'de>>(self, d: D) -> Result<Content, D::Error> {
         #[cfg(test)]
         tests::CAPTURED.with(|captured| captured.set(captured.get() + 1));
-        d.deserialize_newtype_struct(KEPT, self)
+        match self.whole {
+            true => d.deserialize_newtype_struct(KEPT, self),
+            false => d.deserialize_any(self),
+        }
     }
 }
 
@@ -1895,17 +1949,17 @@ impl<'de> Visitor<'de> for Capture<'_> {
     }
 
     fn visit_i64<E: de::Error>(self, n: i64) -> Result<Content, E> {
-        self.0.digits.integer();
+        self.cx.digits.integer();
         Ok(Content::Int(n))
     }
 
     fn visit_u64<E: de::Error>(self, n: u64) -> Result<Content, E> {
-        self.0.digits.integer();
+        self.cx.digits.integer();
         Ok(Content::of(Scalar::unsigned(n)))
     }
 
     fn visit_f64<E: de::Error>(self, f: f64) -> Result<Content, E> {
-        Ok(Content::of(self.0.digits.float(f)))
+        Ok(Content::of(self.cx.digits.float(f)))
     }
 
     // (A marked string is kept as it is: its reading decides.)
@@ -1919,28 +1973,28 @@ impl<'de> Visitor<'de> for Capture<'_> {
 
     // (Or what was kept, handed over.)
     fn visit_unit<E: de::Error>(self) -> Result<Content, E> {
-        Ok(self.0.kept.take().unwrap_or(Content::Null))
+        Ok(self.cx.kept.take().unwrap_or(Content::Null))
     }
 
     fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Content, A::Error> {
         let mut items = Vec::with_capacity(room(&seq));
-        while let Some(item) = seq.next_element_seed(self)? {
+        while let Some(item) = seq.next_element_seed(self.inner())? {
             items.push(item);
         }
-        Ok(Content::Array(items.into()))
+        Ok(Content::Array(Rc::new(items)))
     }
 
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Content, A::Error> {
-        let first = match open(&self.0, &mut map)? {
+        let first = match open(&self.cx, &mut map)? {
             Opened::Datetime(text) => return Ok(Content::Datetime(text)),
             Opened::Table(first) => first,
         };
         let mut entries = Entries { first, map };
         let mut members = Vec::new();
         while let Some(key) = entries.key()? {
-            members.push((key.into_owned(), entries.value(self)?));
+            members.push((key.into_owned(), entries.value(self.inner())?));
         }
-        Ok(Content::Table(members.into()))
+        Ok(Content::Table(Rc::new(members)))
     }
 }
 
@@ -2020,7 +2074,7 @@ impl<'de> IntoDeserializer<'de, de::value::Error> for ContentDe<'de> {
 /// The reading of a part, `at` a path, into the `json.Value` that holds
 /// it: a written impl's part, or a part of type `json.Value`. A TOML
 /// float that is no number has none: a type mismatch at its own path
-/// (the first, as the walk comes to them: a table's keys sorted).
+/// (the first in the decoder's order: a table's keys sorted).
 #[derive(Clone, Copy)]
 struct JsonSeed<'s> {
     cx: &'s Cx<'s>,
@@ -2220,7 +2274,7 @@ mod tests {
     /// A variant's fields that come before its name are kept once: a
     /// variant nested in them is handed its part of what is kept, not
     /// kept again (the parts kept grew with the depth times the size of
-    /// the document); a document already read keeps only the names.
+    /// the document); a `json.Value` keeps only the names.
     #[test]
     fn nested_variants_are_kept_once() {
         let (vm, e, r) = runtime();
@@ -2234,10 +2288,12 @@ mod tests {
                 from_text <= NUMBERS + 10 * levels,
                 "{levels} levels: {from_text} parts kept"
             );
-            let doc: serde_json::Value = serde_json::from_str(&text).expect("JSON");
-            let from_doc = kept(|| json_document(&reader, &e, &doc, &parts));
+            let value = json_text(&reader, &FieldType::JsonValue, text.as_bytes(), &parts)
+                .expect("JSON")
+                .expect("a json.Value");
+            let from_value = kept(|| json_value(&reader, &e, &value, &parts).expect("not deep"));
             // (Each variant's name alone.)
-            assert_eq!(from_doc, levels + 1, "{levels} levels of a document read");
+            assert_eq!(from_value, levels + 1, "{levels} levels of a json.Value");
             let toml = format!("e = {}\n", nested(NUMBERS, levels.min(10), true));
             let top = Top::One(&r);
             let from_toml =

@@ -282,7 +282,7 @@ impl Decoding {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::builtins::decode::{self, At, Error};
+    use crate::builtins::decode::{self, Error};
     use crate::builtins::registry::{Row, registry};
     use crate::builtins::typed::Type;
     use crate::typeinfo::{TypeInfo, ty};
@@ -531,13 +531,22 @@ mod tests {
                     if refusal.is_some() {
                         return refusal;
                     }
+                    let parts = decode::seed::Parts::finding();
+                    let json = |doc: &serde_json::Value, expected| {
+                        let text = doc.to_string();
+                        decode::seed::json_text(rt, expected, text.as_bytes(), &parts)
+                            .expect("JSON")
+                    };
                     let decoded = match family {
-                        Family::Json => decode::value(rt, doc, &target.element(), &At::Top),
+                        Family::Json => json(doc, &target.element()),
                         Family::Toml => {
-                            decode::value(rt, &toml_of(doc), &target.element(), &At::Top)
+                            let text = ::toml::to_string(&toml_of(doc)).expect("TOML");
+                            let element = target.element();
+                            let top = decode::seed::Top::One(&element);
+                            crate::builtins::toml::read_text(rt, &top, &text, &parts).expect("TOML")
                         }
                         Family::Postgres => match doc.get("f") {
-                            Some(cell) => decode::value(rt, cell, f, &At::Top),
+                            Some(cell) => json(cell, f),
                             None => Ok(crate::value::Value::Unit),
                         },
                     };

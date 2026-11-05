@@ -1,0 +1,65 @@
+-- json and jsonb cells, and a jsonb[] array, decoded into records with
+-- every kind of field, lists, json.Value, maps of records and options:
+-- numbers at the edges of Int, variants in both key orders, a date
+-- that is none, missing and null fields, and documents of the wrong
+-- kind, each a type mismatch of its column.
+import env
+import json
+import list
+import postgres
+import time
+
+type Status { Active, Paused(Int), At(time.Date) }
+type Inner { n: Int, f: Float, s: Option(String), st: Status, m: Map(String, Int), t: (Int, Bool), d: time.Date }
+type Row { doc: Inner }
+type RowL { doc: List(Int) }
+type RowV { doc: json.Value }
+type RowM { doc: Map(String, Inner) }
+type RowO { doc: Option(Inner) }
+type RowLA { docs: List(Inner) }
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+fn show(r: Result(List(a), postgres.PostgresError)) where a: Display {
+  match r {
+    Ok(rows) -> println(rows)
+    Err(e) -> println(Error.message(e))
+  }
+}
+
+fn main() {
+  let good = """{"n": 1.0, "f": 2, "st": "Active", "m": {"b": 1, "a": 2}, "t": [1, true], "d": "1979-05-27"}"""
+  let docs = [
+    good,
+    """{"n": 1.5, "f": 2, "st": "Active", "m": {}, "t": [1, true], "d": "1979-05-27"}""",
+    """{"n": 9223372036854775807, "f": 1e300, "st": {"variant": "Paused", "fields": [3]}, "m": {"b": "x", "a": "y"}, "t": [1, true], "d": "1979-05-27"}""",
+    """{"n": 9223372036854775808, "f": 1, "st": {"fields": ["1979-05-27"], "variant": "At"}, "m": {}, "t": [1, true, 3], "d": "1979-02-30"}""",
+    """{"n": 1e3, "f": 1, "st": "Paused", "m": {}, "t": [1, true], "d": "1979-05-27", "s": null}""",
+    """{"n": 1, "f": 1, "st": {"variant": "Nope"}, "m": {}, "t": [1, true], "d": "1979-05-27", "s": 3}""",
+    """{"f": 1, "st": "Active", "m": {}, "t": [1, true], "d": "1979-05-27"}""",
+    """[1, 2.0, 3]""",
+    """null""",
+  ]
+  match postgres.connect(url()) {
+    Ok(db) -> {
+      list.each(docs) { d ->
+        println("== {d}")
+        show(postgres.query(db, "SELECT $1::jsonb AS doc", (d,), Row))
+        show(postgres.query(db, "SELECT $1::json AS doc", (d,), Row))
+        show(postgres.query(db, "SELECT $1::jsonb AS doc", (d,), RowL))
+        show(postgres.query(db, "SELECT $1::jsonb AS doc", (d,), RowV))
+        show(postgres.query(db, "SELECT $1::json AS doc", (d,), RowV))
+        show(postgres.query(db, "SELECT jsonb_build_object('k', $1::jsonb) AS doc", (d,), RowM))
+        show(postgres.query(db, "SELECT $1::jsonb AS doc", (d,), RowO))
+        show(postgres.query(db, "SELECT ARRAY[$1::jsonb, $1::jsonb] AS docs", (d,), RowLA))
+      }
+      postgres.close(db)
+    }
+    Err(e) -> println("connect: {Error.message(e)}")
+  }
+}

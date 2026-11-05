@@ -1,0 +1,42 @@
+-- Each of TOML's date and time literals, ones that are no day or time
+-- of the calendar, and their texts in quotes, decoded into a Date, a
+-- Time, a DateTime, a String, an Int, a Float, an Option, a List and
+-- a Map, and by parse_map and parse_list: what each reads as, or the
+-- error, with its path.
+import list
+import time
+import toml
+
+type D { v: time.Date }
+type T { v: time.Time }
+type DT { v: time.DateTime }
+type S { v: String }
+type I { v: Int }
+type F { v: Float }
+type OD { v: Option(time.Date) }
+type LD { v: List(time.Date) }
+type MD { v: Map(String, time.DateTime) }
+
+fn main() {
+  let literals = [
+    "1979-05-27T07:32:00Z", "1979-05-27T00:32:00.999999-07:00", "1979-05-27 07:32:00Z",
+    "1979-05-27T07:32:00", "1979-05-27T07:32:00.5", "1979-05-27", "07:32:00", "00:32:00.999999",
+    "1979-02-30", "24:00:00", "1979-02-29T25:00:00", "1979-05-27T07:32", "\"1979-05-27\"",
+    "\"07:32:00\"", "\"1979-05-27T07:32:00\"", "\"nope\"", "12:60:00", "2016-12-31T23:59:60Z",
+  ]
+  list.each(literals) { lit ->
+    let text = "v = {lit}"
+    println("== {lit}")
+    println(toml.parse(text, D))
+    println(toml.parse(text, T))
+    println(toml.parse(text, DT))
+    println(toml.parse(text, S))
+    println(toml.parse(text, I))
+    println(toml.parse(text, F))
+    println(toml.parse(text, OD))
+    println(toml.parse("v = [{lit}, 1979-05-28]", LD))
+    println(toml.parse("v = \{ a = {lit}, b = 1979-05-28T00:00:00 }", MD))
+    println(toml.parse_map("a = \{ v = {lit} }\nb = \{ v = 1979-02-30 }", D))
+    println(toml.parse_list("xs = [\{ v = {lit} }]", T))
+  }
+}

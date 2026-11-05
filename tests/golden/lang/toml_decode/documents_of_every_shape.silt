@@ -1,0 +1,93 @@
+-- TOML documents of every shape decoded by toml.parse, parse_map and
+-- parse_list into records, enums, a generic type, maps and lists:
+-- keys and tables given twice, arrays of tables, inline tables,
+-- quoted keys, tuples, integers and floats at their edges (nan, inf),
+-- variants in both key orders and broken, tables written with the
+-- parser's datetime key; and json.Values through json.decode.
+import json
+import list
+import time
+import toml
+
+type Item { name: String, n: Int, note: Option(String) }
+type R { items: List(Item), p: Option(Item), t: (Int, String), m: Map(String, Int) }
+type Shape { Dot, Circle(Float), Rect(Int, Int), At(time.Date) }
+type HS { s: Shape, ss: List(Shape) }
+type N { i: Int, f: Float }
+type Box(a) { v: a, more: List(a) }
+type B { b: Box(Shape) }
+
+fn main() {
+  let docs = [
+    "a = 1\na = 2",
+    "[x]\na = 1\n[x]\nb = 2",
+    "[[items]]\nname = \"a\"\nn = 1\n[[items]]\nname = \"b\"\nn = \"two\"",
+    "items = []\np = \{ name = \"p\", n = 1 }\nt = [1, \"a\"]\nm = \{ \"a b\" = 1, \"\" = \"x\", \"é\" = 2 }",
+    "items = []\nt = [1, \"a\", 3]\nm = \{}",
+    "items = []\nt = [1]\nm = \{ b = \"x\", a = \"y\" }",
+    "items = [\{ name = 1, n = 1 }]\nt = [1, 2]\nm = \{}",
+    "items = []\nt = [1, \"a\"]",
+    "items = 3\nt = 1979-05-27\nm = 2.5\np = \"x\"",
+    "s = \"Dot\"\nss = [\"Dot\", \{ variant = \"Rect\", fields = [1, 2] }, \{ fields = [2.5], variant = \"Circle\" }]",
+    "s = \{ variant = \"Rect\", fields = [1, \"x\"] }\nss = []",
+    "s = \{ variant = \"Rect\", fields = [1] }\nss = []",
+    "s = \{ fields = [1, 2] }\nss = []",
+    "s = \{ variant = 1979-05-27, fields = [1, 2] }\nss = []",
+    "s = \{ variant = \"Rect\", fields = 1979-05-27 }\nss = []",
+    "s = \{ variant = \"Dot\" }\nss = []",
+    "s = \"Rect\"\nss = []",
+    "s = \"Nope\"\nss = [1]",
+    "s = \{ variant = \"At\", fields = [1979-05-27] }\nss = [\{ variant = \"At\", fields = [1979-02-30] }]",
+    "s = \{ variant = \"At\", fields = [\"1979-05-27\"] }\nss = [\{ variant = \"At\", fields = [12:00:00] }]",
+    "s = 1979-05-27\nss = []",
+    "s = [1]\nss = \{ a = 1 }",
+    "i = 9223372036854775807\nf = 1.0",
+    "i = -9223372036854775808\nf = -0.0",
+    "i = 1.0\nf = 1",
+    "i = 1e3\nf = 1e3",
+    "i = nan\nf = nan",
+    "i = inf\nf = inf",
+    "i = 1\nf = -inf",
+    "i = 1\nf = +inf",
+    "i = 0x10\nf = 0.5",
+    "i = 1_000\nf = 6.626e-34",
+    "i = 9223372036854775808\nf = 1",
+    "b = \{ v = \"Dot\", more = [\"Dot\", \{ variant = \"Circle\", fields = [1] }] }",
+    "b = \{ v = 1, more = [] }",
+    "x = \{ \"$__toml_private_datetime\" = \"1979-05-27\" }\ni = 1\nf = 1.0",
+    "x = \{ \"$__toml_private_datetime\" = \"nope\" }\ni = 1\nf = 1.0",
+    "x = \{ \"$__toml_private_datetime\" = \"1979-05-27\", y = 1 }\ni = 1\nf = 1.0",
+    "i = \{ \"$__toml_private_datetime\" = \"1979-05-27\" }\nf = 1.0",
+    "x = \{ a = 1, \"$__toml_private_datetime\" = 1 }\ni = 1\nf = 1.0",
+  ]
+  list.each(docs) { d ->
+    println("== {d}")
+    println(toml.parse(d, R))
+    println(toml.parse(d, HS))
+    println(toml.parse(d, N))
+    println(toml.parse(d, B))
+    println(toml.parse_map(d, Int))
+    println(toml.parse_map(d, List(Item)))
+    println(toml.parse_list(d, Item))
+    println(toml.parse_list(d, Int))
+    println(toml.parse_list(d, Shape))
+  }
+  let decoded = [
+    json.Object(#{"name": json.String("a"), "n": json.Float(1.0)}),
+    json.Object(#{"name": json.String("a"), "n": json.Float(1.5), "note": json.Null}),
+    json.Object(#{"b": json.String("x"), "a": json.String("y")}),
+    json.Array([json.Int(1), json.Float(2.0), json.Float(1e300)]),
+    json.Object(#{"variant": json.String("Rect"), "fields": json.Array([json.Int(1), json.Float(2.0)])}),
+    json.String("1979-05-27"),
+  ]
+  list.each(decoded) { v ->
+    println("== {v}")
+    println(json.decode(v, Item))
+    println(json.decode(v, Map(String, Int)))
+    println(json.decode(v, List(Int)))
+    println(json.decode(v, Shape))
+    println(json.decode(v, Shape))
+    println(json.decode(v, json.Value))
+    println(Item.decode(v))
+  }
+}
