@@ -1310,14 +1310,6 @@ impl TypeChecker {
         self.decoder_uses.extend(uses);
     }
 
-    /// Refuse, once the module's bodies are checked, each decoder use
-    /// (`decoder_uses`) given a type with a generic type or alias written
-    /// alone in it (`Box`, `List(L)`) whose type arguments nothing decides,
-    /// no name holding a type gives where the code runs, or a scope's end
-    /// fixed to `()`: the compiler builds the decoder from the type the
-    /// checker decided, and that is no one type. The one check behind the
-    /// routes that refuse such a use with a text of their own, which come
-    /// first: a use with an error at its place is not judged again.
     /// Drop each refusal of a use as one whose type nothing decides
     /// (`json.parse(s, Box(Box(Unit)))`) with another error inside it, an
     /// undefined name: that error is the one, and left nothing to decide.
@@ -1334,6 +1326,14 @@ impl TypeChecker {
         });
     }
 
+    /// Refuse, once the module's bodies are checked, each decoder use
+    /// (`decoder_uses`) given a type with a generic type or alias written
+    /// alone in it (`Box`, `List(L)`) whose type arguments nothing decides,
+    /// no name holding a type gives where the code runs, or a scope's end
+    /// fixed to `()`: the compiler builds the decoder from the type the
+    /// checker decided, and that is no one type. The one check behind the
+    /// routes that refuse such a use with a text of their own, which come
+    /// first: a use with an error at its place is not judged again.
     pub(super) fn refuse_undecided_decoder_types(&mut self) {
         for use_ in std::mem::take(&mut self.decoder_uses) {
             let DecoderUse {
