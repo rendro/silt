@@ -1,0 +1,19 @@
+-- A number is an Int when its digits are a whole number in Int's
+-- range, whatever its form; one with a fraction, or out of range, is
+-- no Int and is not cut off. A number broken off by the text is the
+-- parser's error.
+import json
+
+fn main() {
+  println(json.parse("[1.0, 1e3, 9223372036854775807, -9223372036854775808, 0.5e1]", List(Int)))
+  println(json.parse("1.5", Int))
+  println(json.parse("9223372036854775808", Int))
+  println(json.parse("9223372036854775807.0", Int))
+  println(json.parse("-9223372036854775809", Int))
+  println(json.parse("1e19", Int))
+  println(json.parse("[1, 1.5, 1e3]", List(Float)))
+  println(json.parse("[1.0, 1e3, 1.5, 9223372036854775808]", json.Value))
+  println(json.parse("[1e3-]", List(Int)))
+  println(json.parse("[1-2]", List(Int)))
+  println(json.parse("[1.5e+-3]", List(Float)))
+}

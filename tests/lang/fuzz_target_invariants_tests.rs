@@ -9,8 +9,8 @@
 
 use silt::ast::{Decl, ImportTarget, Program};
 use silt::fuzz_invariants::{
-    check_formatter_invariants, check_formatter_invariants_of, check_lexer_invariants,
-    check_parser_invariants,
+    check_formatter_invariants, check_formatter_invariants_of, check_json_decoders_agree,
+    check_lexer_invariants, check_parser_invariants, json_text_of,
 };
 use silt::lexer::{Lexed, Lexer, Tok, Token};
 use silt::parser::Parser;
@@ -343,4 +343,36 @@ fn parser_invariants_reject_decls_from_empty_source() {
     };
     let err = check_parser_invariants(src, &tokens, &bogus_program).unwrap_err();
     assert!(err.contains("empty-of-tokens"), "unexpected error: {err}");
+}
+
+// --------------------------------------------------------------------
+// json.parse: the reading of the text against the walk of its tree
+// --------------------------------------------------------------------
+
+/// What `fuzz_json_decode` does with an input, on the texts a fixed
+/// stream of bytes makes and on its corpus: the reading of a JSON text
+/// gives what the walk of its tree gives, for each type.
+#[test]
+fn the_json_decoders_agree() {
+    let mut state: u64 = 0x2545_f491_4f6c_dd1d;
+    let mut byte = || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        (state >> 24) as u8
+    };
+    for _ in 0..3000 {
+        let bytes: Vec<u8> = (0..96).map(|_| byte()).collect();
+        check_json_decoders_agree(&json_text_of(&bytes)).unwrap_or_else(|e| panic!("{e}"));
+    }
+    let corpus =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fuzz/corpus/fuzz_json_decode");
+    let mut read = 0;
+    for file in std::fs::read_dir(&corpus).expect("fuzz/corpus/fuzz_json_decode") {
+        let data = std::fs::read(file.unwrap().path()).unwrap();
+        check_json_decoders_agree(&data).unwrap_or_else(|e| panic!("{e}"));
+        check_json_decoders_agree(&json_text_of(&data)).unwrap_or_else(|e| panic!("{e}"));
+        read += 1;
+    }
+    assert!(read > 0, "no corpus of fuzz_json_decode");
 }

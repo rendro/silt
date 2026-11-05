@@ -206,11 +206,7 @@ pub(crate) fn text(caller: &str, data: &Data, pretty: bool) -> Result<String, Vm
 pub(crate) fn parse_document(text: &[u8]) -> Result<serde_json::Value, serde_json::Error> {
     use serde::de::DeserializeSeed;
     let mut de = serde_json::Deserializer::from_slice(text);
-    let read = Node {
-        text,
-        at: &std::cell::Cell::new(0),
-    }
-    .deserialize(&mut de)?;
+    let read = Node::new(text, &std::cell::Cell::new(0)).deserialize(&mut de)?;
     de.end()?;
     Ok(read)
 }
@@ -220,14 +216,19 @@ pub(crate) fn parse_document(text: &[u8]) -> Result<serde_json::Value, serde_jso
 /// order the text has them, so the next number it gives is the next
 /// number token after `at`.
 #[derive(Clone, Copy)]
-struct Node<'t> {
+pub(crate) struct Node<'t> {
     text: &'t [u8],
     at: &'t std::cell::Cell<usize>,
 }
 
 impl<'t> Node<'t> {
+    /// The reader of the text `text`, whose numbers are read up to `at`.
+    pub(crate) fn new(text: &'t [u8], at: &'t std::cell::Cell<usize>) -> Node<'t> {
+        Node { text, at }
+    }
+
     /// The text of the next number of the document.
-    fn next_number(self) -> &'t [u8] {
+    pub(crate) fn next_number(self) -> &'t [u8] {
         let text = self.text;
         let mut i = self.at.get();
         let mut in_string = false;
@@ -320,7 +321,7 @@ impl<'de> serde::de::Visitor<'de> for Node<'_> {
 
 /// The `Int` the JSON number `text` is, decided on its digits: `None`
 /// when it has a fraction or is out of `Int`'s range.
-fn exact_int(text: &[u8]) -> Option<i64> {
+pub(crate) fn exact_int(text: &[u8]) -> Option<i64> {
     let (negative, text) = match text.split_first() {
         Some((b'-', rest)) => (true, rest),
         _ => (false, text),
@@ -333,8 +334,15 @@ fn exact_int(text: &[u8]) -> Option<i64> {
         Some(dot) => (&mantissa[..dot], &mantissa[dot + 1..]),
         None => (mantissa, &b""[..]),
     };
+    // (A text the parser broke off in, as `1e3-` of `[1e3-]`, is no
+    // number: the parser's error follows.)
+    let digit = |b: &u8| b.checked_sub(b'0').filter(|d| *d < 10);
     // The digits, and the power of ten they are multiplied by.
-    let digits: Vec<u8> = whole.iter().chain(fraction).map(|b| b - b'0').collect();
+    let digits: Vec<u8> = whole
+        .iter()
+        .chain(fraction)
+        .map(digit)
+        .collect::<Option<_>>()?;
     let first = digits.iter().position(|&d| d != 0);
     let last = digits.iter().rposition(|&d| d != 0);
     let (Some(first), Some(last)) = (first, last) else {
@@ -348,8 +356,8 @@ fn exact_int(text: &[u8]) -> Option<i64> {
         Some((b'+', rest)) => (1, rest),
         _ => (1, exponent),
     };
-    for &b in exponent {
-        power = (power * 10 + i64::from(b - b'0')).min(1 << 40);
+    for b in exponent {
+        power = (power * 10 + i64::from(digit(b)?)).min(1 << 40);
     }
     let power = sign * power - fraction.len() as i64 + (digits.len() - 1 - last) as i64;
     let significant = &digits[first..=last];
@@ -484,6 +492,16 @@ pub(crate) fn decode_value(vm: &mut Vm, value: &Value, ty: Type) -> Result<Step,
     decoded(vm, &DECODE, ty, || document)
 }
 
+/// `json.parse` of the text `text` into values of `expected` by the walk
+/// of its tree: what a document a written `json.Decode` impl decodes a
+/// part of is decoded by, and the referee of the reading of the text
+/// (`decode::seed`), which gives what it gives.
+pub(crate) fn parse_tree(vm: &mut Vm, expected: FieldType, text: &[u8]) -> Result<Step, VmError> {
+    vm.decode_document("json.decode", expected, one, || {
+        parse_document(text).map_err(|e| json_result_err(&e, text))
+    })
+}
+
 /// A document read as one value.
 fn one(
     r: &decode::Reader,
@@ -517,9 +535,8 @@ builtins! {
     }
 
     fn parse(vm, s: &str, ty: Type) -> Result<Step, VmError> {
-        decoded(vm, &PARSE, ty, || {
-            parse_document(s.as_bytes()).map_err(|e| json_result_err(&e, s.as_bytes()))
-        })
+        let expected = decode::target(&PARSE, ty)?.element();
+        vm.decode_json_text(expected, s.as_bytes())
     }
 
     // (A part of a type with a written `json.Encode` impl is written

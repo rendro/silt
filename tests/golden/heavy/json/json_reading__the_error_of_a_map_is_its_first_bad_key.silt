@@ -1,0 +1,14 @@
+-- Of the entries of an object read as a map that are of the wrong
+-- type, the error names the first key in sorted order, wherever it is
+-- in the text; of the fields of a record, the first the type declares.
+import json
+
+type P { b: Int, a: Int }
+
+fn main() {
+  println(json.parse("\{\"b\": \"x\", \"a\": \"y\"}", Map(String, Int)))
+  println(json.parse("\{\"c\": 1, \"b\": true, \"a b\": null}", Map(String, Int)))
+  println(json.parse("\{\"a\": \"y\", \"b\": \"x\"}", P))
+  println(json.parse("\{\"a\": \"y\"}", P))
+  println(json.parse("[1, \"two\", \"three\"]", List(Int)))
+}

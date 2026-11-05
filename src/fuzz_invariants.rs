@@ -12,9 +12,9 @@
 //! trigger a libFuzzer-visible panic, while the regression tests match on
 //! the `Err` to verify that synthetic corruption is detected.
 //!
-//! This module has no external dependencies beyond `crate::lexer`,
-//! `crate::parser`, and `crate::format`, and is deliberately kept
-//! side-effect-free so it stays safe to call from `no_main` fuzz drivers.
+//! This module is deliberately kept side-effect-free so it stays safe to
+//! call from `no_main` fuzz drivers. Its checks use the lexer, the
+//! parser and the formatter, and, for `json.parse`, the decoder.
 
 use crate::ast::{Decl, Program};
 use crate::diagnostic::{Code, Diagnostic};
@@ -302,6 +302,301 @@ pub fn check_formatter_invariants(source: &str) -> Result<(), String> {
     check_formatter_invariants_of(source, |text| {
         crate::format::format(crate::source::FileId::default(), text)
     })
+}
+
+// ── json.parse: the reading of the text against the walk of its tree ──
+
+/// The types [`check_json_decoders_agree`] decodes a text into: the
+/// fields of `Targets`.
+const JSON_TYPES: &str = "import json
+import time
+type Tag { name: String, weight: Int }
+type Rec { id: Int, name: String, score: Float, tags: List(Tag), note: Option(String), ok: Bool }
+type Box(t) { value: t, more: Option(Box(t)), extra: List(t) }
+type Shape { Dot, Circle(Float), Rect(Int, Int), Named(String, Option(Tag)) }
+type Either(a, b) { Left(a), Right(b) }
+type Node { value: Int, children: List(Node) }
+type When { day: time.Date, at: time.Time, stamp: time.DateTime }
+type Targets {
+  int: Int, float: Float, string: String, bool: Bool,
+  maybe: Option(Int), maybe2: Option(Option(Float)),
+  ints: List(Int), floats: List(Float), pair: (Int, String), triple: (Bool, Float, Option(Int)),
+  map: Map(String, Int), maps: Map(String, List(Tag)),
+  value: json.Value, values: Map(String, json.Value),
+  tag: Tag, recs: List(Rec), boxed: Box(Int), boxes: Map(String, Box(Shape)),
+  shape: Shape, shapes: List(Shape), either: Either(Int, Tag), eithers: List(Either(Shape, Box(Int))),
+  node: Node, moment: When, moments: List(When), mix: Map(String, Option(Rec)),
+}
+";
+
+/// A runtime that knows [`JSON_TYPES`], and the field types of
+/// `Targets`.
+struct JsonTargets {
+    vm: crate::vm::Vm,
+    targets: Vec<(String, crate::typeinfo::FieldType)>,
+}
+
+impl JsonTargets {
+    fn new() -> JsonTargets {
+        let program = crate::session::testing::compile_decls_str(JSON_TYPES)
+            .unwrap_or_else(|e| panic!("the types compile: {}", e[0].message));
+        let vm = crate::vm::Vm::new(crate::vm::HostIo::process());
+        for info in program.types.iter() {
+            vm.runtime.types.lock().insert(info.clone());
+        }
+        let targets = (program.types.iter())
+            .find(|info| info.name == "Targets")
+            .expect("Targets is described")
+            .fields()
+            .to_vec();
+        JsonTargets { vm, targets }
+    }
+}
+
+/// `json.parse` of the text `text` into a value of each of a set of
+/// types (records, enums and generic types of them, lists, maps,
+/// tuples, options, dates and times, `json.Value`): the reading of the
+/// text (`decode::seed`) gives what the walk of the document's tree
+/// gives, value or error, to the byte.
+pub fn check_json_decoders_agree(text: &[u8]) -> Result<(), String> {
+    use crate::builtins::decode::{self, At, Holes, Reader, seed};
+    use crate::builtins::json;
+    thread_local! {
+        static TARGETS: JsonTargets = JsonTargets::new();
+    }
+    TARGETS.with(|targets| {
+        let none = |_, _: &[crate::typeinfo::FieldType]| None;
+        let reader = Reader::with_impls(&targets.vm.runtime, &none, Holes::Collect(Vec::new()));
+        let tree = json::parse_document(text);
+        for (name, expected) in &targets.targets {
+            let walked = match &tree {
+                Ok(doc) => decode::result(
+                    &json::RULES,
+                    decode::value(&reader, doc, expected, &At::Top),
+                ),
+                Err(e) => json::json_result_err(e, text),
+            };
+            let read = match seed::json_text(&reader, expected, text) {
+                seed::Read::Decoded(decoded) => decode::result(&json::RULES, decoded),
+                seed::Read::Text(e) => json::json_result_err(&e, text),
+                // (A variant object that gives a key twice: the walk decodes
+                // it, as the program sees.)
+                seed::Read::Written => continue,
+            };
+            if walked.to_string() != read.to_string() || walked != read {
+                return Err(format!(
+                    "{name}: the walk gives {walked}, the reading {read}, of {}",
+                    String::from_utf8_lossy(text)
+                ));
+            }
+        }
+        Ok(())
+    })
+}
+
+/// A JSON text made of `bytes`, which choose each part of it: values of
+/// the shapes of the types [`check_json_decoders_agree`] decodes, with
+/// their keys, variant names, dates and numbers at the edges of `Int`,
+/// keys written twice, nesting past the parser's limit, and now and
+/// then broken text.
+pub fn json_text_of(bytes: &[u8]) -> Vec<u8> {
+    let mut maker = JsonMaker {
+        bytes,
+        at: 0,
+        out: Vec::new(),
+    };
+    maker.value(0);
+    maker.out
+}
+
+/// What [`json_text_of`] makes a text with.
+struct JsonMaker<'b> {
+    bytes: &'b [u8],
+    at: usize,
+    out: Vec<u8>,
+}
+
+impl JsonMaker<'_> {
+    const NUMBERS: &'static [&'static str] = &[
+        "0",
+        "-0",
+        "1",
+        "-1",
+        "7",
+        "1.0",
+        "1e3",
+        "1E+2",
+        "-1.5e-3",
+        "1.5",
+        "0.1e1",
+        "50e-1",
+        "9223372036854775807",
+        "-9223372036854775808",
+        "9223372036854775808",
+        "-9223372036854775809",
+        "18446744073709551615",
+        "18446744073709551616",
+        "9223372036854775807.0",
+        "9223372036854775808.0",
+        "1e19",
+        "-0.0",
+        "1e400",
+        "2.5e-400",
+        "9007199254740993",
+        "9007199254740993.0",
+        "123456789012345678901234567890",
+        "3.25",
+        "92233720368547758070e-1",
+        "0.5e1",
+        "1e-7",
+    ];
+    const STRINGS: &'static [&'static str] = &[
+        "",
+        "a",
+        "t",
+        "Dot",
+        "Circle",
+        "Rect",
+        "Named",
+        "Left",
+        "Right",
+        "Nope",
+        "2026-01-02",
+        "12026-01-02",
+        "2026-02-30",
+        "13:14:15.5",
+        "23:59:60",
+        "12:30",
+        "2026-10-19T13:14:15.5",
+        "2026-10-19 13:14:15+02:00",
+        "2026-10-19",
+        "a b",
+        "\u{e9}",
+        "\\u00e9",
+        "\\\"q\\\"",
+        "x\\ny",
+        "\\ud83d\\ude00",
+    ];
+    const KEYS: &'static [&'static str] = &[
+        "id", "name", "score", "tags", "note", "ok", "weight", "value", "more", "extra",
+        "children", "day", "at", "stamp", "variant", "fields", "a", "b", "a b", "", "x", "int",
+        "\\u0069d",
+    ];
+
+    fn next(&mut self) -> u8 {
+        let byte = self.bytes.get(self.at).copied().unwrap_or(0);
+        self.at += 1;
+        byte
+    }
+
+    fn pick(&mut self, from: &[&str]) -> String {
+        let k = usize::from(self.next()) % from.len();
+        from[k].to_string()
+    }
+
+    fn string(&mut self, from: &[&str]) {
+        let s = self.pick(from);
+        self.out.push(b'"');
+        self.out.extend_from_slice(s.as_bytes());
+        self.out.push(b'"');
+    }
+
+    fn value(&mut self, depth: usize) {
+        let spaced = self.next().is_multiple_of(8);
+        if spaced {
+            self.out.extend_from_slice(b" \n\t");
+        }
+        let exhausted = self.at >= self.bytes.len();
+        match self.next() % 16 {
+            _ if exhausted && depth > 0 => self.out.extend_from_slice(b"1"),
+            0 => self.out.extend_from_slice(b"null"),
+            1 => self.out.extend_from_slice(b"true"),
+            2 => self.out.extend_from_slice(b"false"),
+            3 | 4 => {
+                let n = self.pick(Self::NUMBERS);
+                self.out.extend_from_slice(n.as_bytes());
+            }
+            5 | 6 => self.string(Self::STRINGS),
+            7 | 8 if depth < 6 => {
+                let n = self.next() % 5;
+                self.out.push(b'[');
+                for k in 0..n {
+                    if k > 0 {
+                        self.out.push(b',');
+                    }
+                    self.value(depth + 1);
+                }
+                self.out.push(b']');
+            }
+            9..=11 if depth < 6 => {
+                let n = self.next() % 6;
+                self.out.push(b'{');
+                for k in 0..n {
+                    if k > 0 {
+                        self.out.push(b',');
+                    }
+                    self.string(Self::KEYS);
+                    self.out.push(b':');
+                    self.value(depth + 1);
+                }
+                self.out.push(b'}');
+            }
+            // A variant with fields, its two keys in either order.
+            12 if depth < 6 => {
+                let fields_first = self.next().is_multiple_of(2);
+                self.out.push(b'{');
+                for k in 0..2 {
+                    if k > 0 {
+                        self.out.push(b',');
+                    }
+                    match (k == 0) == fields_first {
+                        true => {
+                            self.out.extend_from_slice(b"\"fields\":[");
+                            let n = self.next() % 4;
+                            for i in 0..n {
+                                if i > 0 {
+                                    self.out.push(b',');
+                                }
+                                self.value(depth + 1);
+                            }
+                            self.out.push(b']');
+                        }
+                        false => {
+                            self.out.extend_from_slice(b"\"variant\":");
+                            self.string(Self::STRINGS);
+                        }
+                    }
+                }
+                self.out.push(b'}');
+            }
+            // Nesting near the parser's limit.
+            13 if depth == 0 => {
+                let levels = 120 + usize::from(self.next() % 16);
+                self.out.extend(std::iter::repeat_n(b'[', levels));
+                self.value(depth + 1);
+                self.out.extend(std::iter::repeat_n(b']', levels));
+            }
+            // Broken text.
+            14 => {
+                let broken: &[u8] = match self.next() % 6 {
+                    0 => b"[1,]",
+                    1 => b"{\"a\":}",
+                    2 => b"[1 2]",
+                    3 => b"\"open",
+                    4 => b"tru",
+                    _ => b"{\"a\" 1}",
+                };
+                self.out.extend_from_slice(broken);
+            }
+            _ => {
+                let n = self.pick(Self::NUMBERS);
+                self.out.extend_from_slice(n.as_bytes());
+            }
+        }
+        if spaced {
+            self.out.push(b' ');
+        }
+    }
 }
 
 #[cfg(test)]

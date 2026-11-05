@@ -24,7 +24,7 @@ seconds="${2:-600}"
 
 if [ -z "$target" ]; then
   echo "usage: fuzz/local.sh <target|all> [seconds]" >&2
-  echo "targets: fuzz_lexer fuzz_parser fuzz_formatter fuzz_roundtrip fuzz_typechecker fuzz_compiler fuzz_http_request fuzz_run" >&2
+  echo "targets: fuzz_lexer fuzz_parser fuzz_formatter fuzz_roundtrip fuzz_typechecker fuzz_compiler fuzz_http_request fuzz_run fuzz_json_decode" >&2
   exit 1
 fi
 
@@ -38,9 +38,9 @@ run_one() {
 if [ "$target" = "all" ]; then
   # Each target gets its own background process; wait for all.
   # libfuzzer defaults to one worker per invocation; it saturates one
-  # core. Running eight in parallel saturates eight cores, which is the
+  # core. Running nine in parallel saturates nine cores, which is the
   # intended "use the whole machine" behaviour.
-  for t in fuzz_lexer fuzz_parser fuzz_formatter fuzz_roundtrip fuzz_typechecker fuzz_compiler fuzz_http_request fuzz_run; do
+  for t in fuzz_lexer fuzz_parser fuzz_formatter fuzz_roundtrip fuzz_typechecker fuzz_compiler fuzz_http_request fuzz_run fuzz_json_decode; do
     run_one "$t" "$seconds" &
   done
   wait
