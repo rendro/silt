@@ -3756,6 +3756,28 @@ impl TypeChecker {
                     {
                         Type::Error
                     }
+                    // A type given a value (`List(())`): the argument is
+                    // the error, not the call.
+                    (Type::Generic(name, _), CallForm::Call)
+                        if name.is_builtin(crate::defs::TYPE_OF)
+                            && let Some((arg, ty)) = (args.iter().zip(&arg_types))
+                                .map(|(arg, ty)| (arg, self.apply(ty)))
+                                .find(|(_, ty)| match ty {
+                                    Type::Generic(name, _) => {
+                                        !name.is_builtin(crate::defs::TYPE_OF)
+                                    }
+                                    Type::Var(_) | Type::Error | Type::Never => false,
+                                    _ => true,
+                                }) =>
+                    {
+                        let message = format!(
+                            "`{}` is given a value of type `{}`, not a type",
+                            self.show_type(other),
+                            self.show_type(&ty)
+                        );
+                        self.error(Code::TypeMismatch, message, arg.span);
+                        Type::Error
+                    }
                     (_, CallForm::Call) => {
                         // A parameter that holds a type, given type
                         // arguments (`m(Int)`): the whole type is passed.

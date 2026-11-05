@@ -2395,3 +2395,47 @@ fn main() {
     let judged = super::json_decode::JUDGED_UNDECIDED.with(|judged| judged.borrow().clone());
     assert_eq!(judged, ["postgres.query"], "the uses judged undecided");
 }
+
+// ── A decoder's type argument that is no type ───────────────────
+
+/// An undefined name in the type a decoder is given is the error; the
+/// type it left undecided is not asked about as well, through a
+/// function that passes the type on neither.
+#[test]
+fn test_undefined_name_in_a_decoder_type_is_the_one_error() {
+    let errors = check_errors(
+        "import json\n\
+         type Box(a) { v: a }\n\
+         fn load(text: String, type a) -> Result(a, json.JsonError) where a: json.Decode {\n\
+         \x20 json.parse(text, a)\n\
+         }\n\
+         fn main() {\n\
+         \x20 println(json.parse(\"null\", Box(Box(Unit))))\n\
+         \x20 println(load(\"null\", Box(Box(Unit))))\n\
+         }\n",
+    );
+    let messages: Vec<&str> = (errors.iter())
+        .filter(|e| e.is_error())
+        .map(|e| e.message.as_str())
+        .collect();
+    assert_eq!(
+        messages,
+        ["undefined variable 'Unit'", "undefined variable 'Unit'"]
+    );
+}
+
+/// A type given a value (`List(())`) says the argument is a value, at
+/// the argument, not that the type is not callable.
+#[test]
+fn test_a_type_given_a_value_says_the_argument_is_a_value() {
+    let source = "import json\nfn main() {\n  println(json.parse(\"null\", List(())))\n}\n";
+    let errors = check_errors(source);
+    let errors: Vec<_> = errors.iter().filter(|e| e.is_error()).collect();
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert_eq!(
+        errors[0].message,
+        "`type List(_)` is given a value of type `()`, not a type"
+    );
+    let span = errors[0].span;
+    assert_eq!(&source[span.start as usize..span.end as usize], "()");
+}

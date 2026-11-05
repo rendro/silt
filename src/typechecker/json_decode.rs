@@ -1318,6 +1318,22 @@ impl TypeChecker {
     /// checker decided, and that is no one type. The one check behind the
     /// routes that refuse such a use with a text of their own, which come
     /// first: a use with an error at its place is not judged again.
+    /// Drop each refusal of a use as one whose type nothing decides
+    /// (`json.parse(s, Box(Box(Unit)))`) with another error inside it, an
+    /// undefined name: that error is the one, and left nothing to decide.
+    pub(super) fn drop_ambiguities_over_errors(&mut self) {
+        let inner: Vec<Span> = (self.errors.iter())
+            .filter(|e| e.is_error() && e.code != Code::AmbiguousType)
+            .map(|e| e.span)
+            .collect();
+        self.errors.retain(|e| {
+            e.code != Code::AmbiguousType
+                || !(inner.iter()).any(|at| {
+                    at.file == e.span.file && e.span.start <= at.start && at.end <= e.span.end
+                })
+        });
+    }
+
     pub(super) fn refuse_undecided_decoder_types(&mut self) {
         for use_ in std::mem::take(&mut self.decoder_uses) {
             let DecoderUse {
