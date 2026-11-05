@@ -8,10 +8,10 @@
 //! decoded by the impl's `decode`, wherever it is in the document. The
 //! impl is silt code, so decoding such a document is a frame
 //! ([`Reading`]): the decoder reads the document once, finding each such
-//! part (its `json.Value`), in the order the walk of the document comes
-//! to them; the frame calls the impl for each, in that order; then the
-//! decoder reads the document again and puts what the impls gave in
-//! their places. An impl's `Err` is the result, with the place of its
+//! part (its `json.Value`), in the decoder's order (fields as declared,
+//! keys sorted, elements in order); the frame calls the impl for each,
+//! in that order; then the decoder reads the document again and puts
+//! what the impls gave in their places. An impl's `Err` is the result, with the place of its
 //! part appended as a decoder's own errors have it, as the format's
 //! error (`Rules::from_impl`). A program with no written `json.Decode`
 //! impl, and a document with no such part, takes no frame.

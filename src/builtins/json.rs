@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use super::data::{self, Data, Format};
-use super::decode::{self, Decoder, Document, I64_MAX_PLUS_ONE, Numbers, Rules};
+use super::decode::{self, Decoder, I64_MAX_PLUS_ONE, Numbers, Rules};
 use super::registry::decoding::Family;
 use super::typed::{Type, builtins};
 use crate::typeinfo::FieldType;
@@ -105,10 +105,9 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     })
 }
 
-/// `json`, which is made of a `json.Value`, with every number that is a
-/// whole number in `Int`'s range held as an `i64`, as
-/// [`parse_document`] holds one of a text: `json.Float(1.0)` decodes
-/// into an `Int` as the text `1.0` does.
+/// `json`, which is made of data, with every number that is a whole
+/// number in `Int`'s range held as an `i64`, as `json.parse` reads one
+/// of a text.
 fn whole_numbers(json: &mut serde_json::Value) {
     match json {
         serde_json::Value::Number(n) => {
@@ -174,7 +173,34 @@ pub(crate) fn json_value_of(caller: &str, data: &Data) -> Result<Value, VmError>
     let mut json =
         serde_json::to_value(Json(data)).map_err(|e| VmError::new(format!("{caller}: {e}")))?;
     whole_numbers(&mut json);
-    Ok(decode::json_value(&json))
+    Ok(json_value(&json))
+}
+
+/// The `json.Value` that holds the JSON document `json`: a number an
+/// `Int` where it is held as an `i64`, else a `Float`.
+fn json_value(json: &serde_json::Value) -> Value {
+    use serde_json::Value as J;
+    match json {
+        J::Null => Value::variant(bv::JSON_NULL, []),
+        J::Bool(b) => Value::variant(bv::JSON_BOOL, [Value::Bool(*b)]),
+        J::Number(n) => match (n.as_i64(), n.as_f64().and_then(crate::value::Float::new)) {
+            (Some(n), _) => Value::variant(bv::JSON_INT, [Value::Int(n)]),
+            (None, Some(f)) => Value::variant(bv::JSON_FLOAT, [Value::Float(f)]),
+            // (JSON has no number that is no finite float.)
+            (None, None) => Value::variant(bv::JSON_NULL, []),
+        },
+        J::String(s) => Value::variant(bv::JSON_STRING, [Value::String(s.as_str().into())]),
+        J::Array(items) => Value::variant(
+            bv::JSON_ARRAY,
+            [Value::list(items.iter().map(json_value).collect())],
+        ),
+        J::Object(members) => Value::variant(
+            bv::JSON_OBJECT,
+            [Value::map(members.iter().map(|(key, member)| {
+                (Value::String(key.as_str().into()), json_value(member))
+            }))],
+        ),
+    }
 }
 
 /// `data` as the JSON text of `caller`, compact or `pretty`: an object
@@ -195,36 +221,25 @@ pub(crate) fn text(caller: &str, data: &Data, pretty: bool) -> Result<String, Vm
 
 // ── Reading a document ──────────────────────────────────────────────
 
-/// The document the JSON text `text` is, with serde_json's errors. A
-/// number whose text is a whole number in `Int`'s range (`1`, `1.0`,
-/// `1e3`, `9223372036854775807.0`) is held as an `i64`, decided on its
-/// text: serde_json alone reads every number that is no integer
+/// The numbers of the JSON text `text`, read again from their digits
+/// (`decode::seed`): serde_json reads every number that is no integer
 /// literal of 64 bits as an `f64`, which rounds (`9007199254740993.0`)
 /// and hides a fraction or a number out of range
-/// (`-9223372036854775809`). Every other number keeps serde_json's
-/// reading, so a number held as no `i64` is no `Int`.
-pub(crate) fn parse_document(text: &[u8]) -> Result<serde_json::Value, serde_json::Error> {
-    use serde::de::DeserializeSeed;
-    let mut de = serde_json::Deserializer::from_slice(text);
-    let read = Node::new(text, &std::cell::Cell::new(0)).deserialize(&mut de)?;
-    de.end()?;
-    Ok(read)
-}
-
-/// The reader of one value of the document `text`. `at` is how far the
-/// numbers of the text are read: serde_json gives the values in the
-/// order the text has them, so the next number it gives is the next
-/// number token after `at`.
+/// (`-9223372036854775809`); a number whose text is a whole number in
+/// `Int`'s range (`1`, `1.0`, `1e3`, `9223372036854775807.0`) is an
+/// `Int`. `at` is how far the numbers of the text are read: serde_json
+/// gives the values in the order the text has them, so the next number
+/// it gives is the next number token after `at`.
 #[derive(Clone, Copy)]
-pub(crate) struct Node<'t> {
+pub(crate) struct Numerals<'t> {
     text: &'t [u8],
     at: &'t std::cell::Cell<usize>,
 }
 
-impl<'t> Node<'t> {
-    /// The reader of the text `text`, whose numbers are read up to `at`.
-    pub(crate) fn new(text: &'t [u8], at: &'t std::cell::Cell<usize>) -> Node<'t> {
-        Node { text, at }
+impl<'t> Numerals<'t> {
+    /// The numbers of the text `text`, read up to `at`.
+    pub(crate) fn new(text: &'t [u8], at: &'t std::cell::Cell<usize>) -> Numerals<'t> {
+        Numerals { text, at }
     }
 
     /// The text of the next number of the document.
@@ -250,72 +265,6 @@ impl<'t> Node<'t> {
         }
         self.at.set(i);
         &text[start..i]
-    }
-}
-
-impl<'de> serde::de::DeserializeSeed<'de> for Node<'_> {
-    type Value = serde_json::Value;
-
-    fn deserialize<D: serde::Deserializer<'de>>(self, d: D) -> Result<Self::Value, D::Error> {
-        d.deserialize_any(self)
-    }
-}
-
-impl<'de> serde::de::Visitor<'de> for Node<'_> {
-    type Value = serde_json::Value;
-
-    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        f.write_str("a JSON value")
-    }
-
-    fn visit_bool<E>(self, b: bool) -> Result<Self::Value, E> {
-        Ok(serde_json::Value::Bool(b))
-    }
-
-    fn visit_i64<E>(self, n: i64) -> Result<Self::Value, E> {
-        self.next_number();
-        Ok(serde_json::Value::Number(n.into()))
-    }
-
-    fn visit_u64<E>(self, n: u64) -> Result<Self::Value, E> {
-        self.next_number();
-        Ok(serde_json::Value::Number(n.into()))
-    }
-
-    fn visit_f64<E>(self, f: f64) -> Result<Self::Value, E> {
-        Ok(match exact_int(self.next_number()) {
-            Some(n) => serde_json::Value::Number(n.into()),
-            None => serde_json::Number::from_f64(f).map_or(serde_json::Value::Null, Into::into),
-        })
-    }
-
-    fn visit_str<E>(self, s: &str) -> Result<Self::Value, E> {
-        Ok(serde_json::Value::String(s.to_owned()))
-    }
-
-    fn visit_string<E>(self, s: std::string::String) -> Result<Self::Value, E> {
-        Ok(serde_json::Value::String(s))
-    }
-
-    fn visit_unit<E>(self) -> Result<Self::Value, E> {
-        Ok(serde_json::Value::Null)
-    }
-
-    fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
-        let mut items = Vec::new();
-        while let Some(item) = seq.next_element_seed(self)? {
-            items.push(item);
-        }
-        Ok(serde_json::Value::Array(items))
-    }
-
-    fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
-        // (Of a key written twice the last value counts.)
-        let mut object = serde_json::Map::new();
-        while let Some(key) = map.next_key::<std::string::String>()? {
-            object.insert(key, map.next_value_seed(self)?);
-        }
-        Ok(serde_json::Value::Object(object))
     }
 }
 
@@ -375,8 +324,8 @@ pub(crate) fn exact_int(text: &[u8]) -> Option<i64> {
 // ── Decoding a document ─────────────────────────────────────────────
 
 /// How a JSON document decodes: a number is an `Int` by its value (a
-/// whole number in range, as [`parse_document`] reads it), a date and a
-/// time are strings, and a `json.Value` is decoded.
+/// whole number in range, read from its digits), a date and a time are
+/// strings, and a `json.Value` is decoded.
 pub(crate) const RULES: Rules = Rules {
     caller: "json.parse",
     table: "object",
@@ -391,60 +340,20 @@ pub(crate) const RULES: Rules = Rules {
     from_impl: decode::at_part,
 };
 
-impl Document for serde_json::Value {
-    type Table = serde_json::Map<std::string::String, serde_json::Value>;
-    const RULES: &'static Rules = &RULES;
-
-    fn node(&self) -> decode::Node<'_, Self> {
-        use decode::Node;
-        match self {
-            serde_json::Value::Null => Node::Null,
-            serde_json::Value::Bool(b) => Node::Bool(*b),
-            serde_json::Value::Number(n) => match (n.as_i64(), n.as_f64()) {
-                (Some(i), _) => Node::Int(i),
-                (None, Some(f)) => Node::Float(f),
-                // (A number serde_json holds is an `i64`, a `u64` or an
-                // `f64`.)
-                (None, None) => Node::Float(f64::NAN),
-            },
-            serde_json::Value::String(s) => Node::String(s),
-            serde_json::Value::Array(items) => Node::Array(items),
-            serde_json::Value::Object(members) => Node::Table(members),
-        }
-    }
-
-    fn kind(&self) -> &'static str {
-        match self {
-            serde_json::Value::Null => "null",
-            serde_json::Value::Bool(_) => "boolean",
-            serde_json::Value::Number(_) => "number",
-            serde_json::Value::String(_) => "string",
-            serde_json::Value::Array(_) => "array",
-            serde_json::Value::Object(_) => "object",
-        }
-    }
-
-    fn get<'d>(table: &'d Self::Table, key: &str) -> Option<&'d Self> {
-        table.get(key)
-    }
-
-    fn entries(table: &Self::Table) -> impl ExactSizeIterator<Item = (&str, &Self)> {
-        table.iter().map(|(key, value)| (key.as_str(), value))
-    }
-}
-
-/// The value of the field type `expected` that the document `json` is,
+/// The value of the field type `expected` that the JSON text `text` is,
 /// for a decoder of a format that holds JSON documents (postgres's
 /// `json` and `jsonb` columns), read by `r` (a part of a type with a
 /// written `json.Decode` impl is its hole): `Err` of what `JsonError`'s
-/// `message` says of why there is none.
+/// `message` says of why there is none, or `None` where the text is no
+/// document.
 #[cfg(feature = "postgres")]
 pub(crate) fn decode_field(
     r: &decode::Reader,
-    json: &serde_json::Value,
+    text: &[u8],
     expected: &FieldType,
-) -> Result<Value, std::string::String> {
-    decode::seed::json_cell(r, expected, json).map_err(|e| message(&e.variant(&RULES)))
+) -> Result<Result<Value, std::string::String>, serde_json::Error> {
+    let decoded = decode::seed::json_cell(r, expected, text)?;
+    Ok(decoded.map_err(|e| message(&e.variant(&RULES))))
 }
 
 /// What `JsonError`'s `message` says of `error`.
@@ -469,20 +378,6 @@ pub(crate) fn decode_value(vm: &mut Vm, value: &Value, ty: Type) -> Result<Step,
     };
     let source = || -> Box<dyn Source> { Box::new(Read(value.clone())) };
     vm.decode_read("json.decode", &RULES, expected, read, source)
-}
-
-/// The JSON document of the `json.Value` `value` as `json.decode` read
-/// it before it read the value itself ([`decode::seed::json_value`]):
-/// the referee of that reading in the fuzz checks, until the walk goes.
-pub(crate) fn document_of(value: &Value) -> Result<serde_json::Value, Value> {
-    match data::data("json.decode", Format::Json, value) {
-        Ok(data) => {
-            let mut json = serde_json::to_value(Json(&data)).expect("JSON data");
-            whole_numbers(&mut json);
-            Ok(json)
-        }
-        Err(e) => Err(json_unknown_err(e.message)),
-    }
 }
 
 /// A `json.Value` decoded, read again.
@@ -566,7 +461,7 @@ builtins! {
 mod tests {
     use super::*;
     use crate::builtins::data::MAX_ENCODE_DEPTH;
-    use crate::builtins::decode::{At, shown};
+    use crate::builtins::decode::shown;
     use crate::typeinfo::{FieldType, TypeInfo};
 
     /// A field whose type holds `Bytes` has no decoder, whatever the
@@ -597,22 +492,11 @@ mod tests {
             let fields = vec![("b".to_string(), field)];
             // (An id of its own: a runtime decides a type's decoder once.)
             let ty = TypeInfo::new_record(TypeId(DefId(9000 + k as u32)), "B", fields.clone());
-            let json: serde_json::Value = serde_json::from_str(text).expect("a document");
             // As json.parse decodes it: the type is refused before the
-            // document is read.
+            // document (`text`) is read.
             let target = decode::Target::Record(&ty);
             let decoded = decode::refused(&decode::Reader::new(&vm.runtime), &RULES, &target)
-                .unwrap_or_else(|| {
-                    decode::result(
-                        &RULES,
-                        decode::value(
-                            &decode::Reader::new(&vm.runtime),
-                            &json,
-                            &target.element(),
-                            &At::Top,
-                        ),
-                    )
-                });
+                .unwrap_or_else(|| panic!("{text} is read"));
             assert_eq!(
                 decoded.to_string(),
                 format!(

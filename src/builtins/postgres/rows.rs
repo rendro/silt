@@ -617,25 +617,13 @@ impl Plan {
                         Err(error) => return failed(values, cells, error),
                     };
                     let r = Reader::with_impls(rt, &written, Holes::Collect(Vec::new()));
-                    // (A document is kept as it was read, for the cell's
-                    // second reading.)
-                    let (value, doc) = match (&c.col, raw) {
-                        (Col::Json | Col::Jsonb, Some(raw)) => match document(&c.col, raw) {
-                            Ok(doc) => (of_document(&r, c, field, &doc), Some(doc)),
-                            Err(_) => (Err(malformed_document(&r, c, field)), None),
-                        },
-                        _ => (cell(&r, c, &c.col, field, raw), None),
-                    };
+                    let value = cell(&r, c, &c.col, field, raw);
                     let holes = r.into_holes();
                     if !holes.is_empty() {
-                        let read = match doc {
-                            Some(doc) => Read::Document(doc),
-                            None => Read::Raw(raw.unwrap_or_default().to_vec()),
-                        };
                         cells.push(Deferred {
                             at,
                             fields: fields.clone(),
-                            read,
+                            raw: raw.unwrap_or_default().to_vec(),
                             holes,
                         });
                     }
@@ -799,17 +787,11 @@ pub(super) struct Deferred {
     /// fields, `fields`).
     at: usize,
     fields: Arc<[(FieldType, ColumnPlan)]>,
-    read: Read,
+    /// The cell as the server sent it, to be read again (never NULL: a
+    /// NULL is no document).
+    raw: Vec<u8>,
     /// The parts, in the order the decoder came to them.
     holes: Vec<Hole>,
-}
-
-/// A deferred cell as it is read again: its document as it was read
-/// (a `json` or `jsonb` column's), or the cell as the server sent it
-/// (an array of documents; never NULL: a NULL is no document).
-enum Read {
-    Document(serde_json::Value),
-    Raw(Vec<u8>),
 }
 
 impl Partial {
@@ -868,10 +850,7 @@ impl Partial {
             let parts: Vec<_> = given.by_ref().take(cell.holes.len()).collect();
             let r = Reader::with_impls(rt, &written, Holes::Supply(parts.into_iter()));
             let (field, c) = &cell.fields[cell.at];
-            let value = match &cell.read {
-                Read::Document(doc) => of_document(&r, c, field, doc),
-                Read::Raw(raw) => self::cell(&r, c, &c.col, field, Some(raw)),
-            };
+            let value = self::cell(&r, c, &c.col, field, Some(&cell.raw));
             let value = value.map_err(|m| type_mismatch(&c.name, &m.expected, &m.actual))?;
             if let Some(place) = values.get_mut(cell.at) {
                 *place = value;
@@ -971,17 +950,19 @@ impl Filling {
     }
 }
 
-/// The value of the type `field` that `doc` is, the document of a cell
-/// of the column `c` (`json` or `jsonb`, or an array of them), as
-/// json.parse decodes it: `null` is an `Option`'s `None`.
+/// The value of the type `field` that the JSON text `text` is, the
+/// document of a cell of the column `c` (`json` or `jsonb`, or an array
+/// of them), as json.parse decodes it: `null` is an `Option`'s `None`.
 fn of_document(
     rt: &Reader,
     c: &ColumnPlan,
     field: &FieldType,
-    doc: &serde_json::Value,
+    text: &[u8],
 ) -> Result<Value, Mismatch> {
-    json::decode_field(rt, doc, field)
-        .map_err(|why| Mismatch::new(rt, field, of_a_document(c, why)))
+    match json::decode_field(rt, text, field) {
+        Ok(decoded) => decoded.map_err(|why| Mismatch::new(rt, field, of_a_document(c, why))),
+        Err(_) => Err(malformed_document(rt, c, field)),
+    }
 }
 
 /// The mismatch of a cell of the column `c` whose document the server
@@ -1035,8 +1016,8 @@ fn cell(
         // A document is the field's as json.parse decodes it: `null` is
         // an `Option`'s `None`.
         (Col::Json | Col::Jsonb, _) => {
-            let document = document(col, raw).map_err(|_| malformed_document(rt, c, field))?;
-            of_document(rt, c, field, &document)?
+            let text = document(col, raw).map_err(|_| malformed_document(rt, c, field))?;
+            of_document(rt, c, field, text)?
         }
         (_, F::Option(inner)) => Value::variant(bv::SOME, [cell(rt, c, col, inner, Some(raw))?]),
         (_, F::JsonValue) => dynamic(rt, c, col, raw)?,
@@ -1153,8 +1134,14 @@ fn dynamic(rt: &Runtime, c: &ColumnPlan, col: &Col, raw: &[u8]) -> Result<Value,
                 .to_string(),
         ),
         Col::Json | Col::Jsonb => {
-            let in_document = |_| Mismatch::new(rt, &field, of_a_document(c, MALFORMED.into()));
-            decode::json_value(&document(col, raw).map_err(in_document)?)
+            let malformed = || Mismatch::new(rt, &field, of_a_document(c, MALFORMED.into()));
+            let text = document(col, raw).map_err(|_| malformed())?;
+            let none = |_, _: &[FieldType]| None;
+            let reader = Reader::with_impls(rt, &none, Holes::Collect(Vec::new()));
+            let finding = decode::seed::Parts::finding();
+            let decoded = decode::seed::json_text(&reader, &FieldType::JsonValue, text, &finding);
+            // (A document is a json.Value.)
+            decoded.map_err(|_| malformed())?.expect("a json.Value")
         }
         Col::Void => Value::variant(bv::JSON_NULL, []),
         Col::Array(element) => {
@@ -1243,15 +1230,14 @@ fn array(raw: &[u8]) -> Result<(Vec<usize>, Vec<Option<&[u8]>>), WireError> {
     }
 }
 
-/// The JSON document of a `json` or `jsonb` cell.
-fn document(col: &Col, raw: &[u8]) -> Result<serde_json::Value, WireError> {
-    let text = match (col, raw) {
+/// The JSON text of a `json` or `jsonb` cell.
+fn document<'r>(col: &Col, raw: &'r [u8]) -> Result<&'r [u8], WireError> {
+    Ok(match (col, raw) {
         // A `jsonb` cell begins with the version of its format, 1.
         (Col::Jsonb, [1, text @ ..]) => text,
         (Col::Jsonb, _) => return Err("a jsonb cell of an unknown version".into()),
         _ => raw,
-    };
-    Ok(json::parse_document(text)?)
+    })
 }
 
 /// The text of a text, `"char"` or uuid cell.
@@ -1448,7 +1434,12 @@ mod tests {
                     false => Vec::new(),
                 };
                 raw.extend_from_slice(text.as_bytes());
-                decode::json_value(&document(&col, &raw).expect("a document")).to_string()
+                let vm = crate::vm::Vm::new(crate::vm::HostIo::process());
+                let r = Reader::new(&vm.runtime);
+                let text = document(&col, &raw).expect("a document");
+                let finding = decode::seed::Parts::finding();
+                let decoded = decode::seed::json_text(&r, &FieldType::JsonValue, text, &finding);
+                decoded.expect("JSON").expect("a json.Value").to_string()
             };
             assert_eq!(cell("9007199254740993.0"), "Int(9007199254740993)");
             assert_eq!(

@@ -50,7 +50,7 @@ use crate::value::Value;
 use crate::vm::{Source, Step, Vm, VmError};
 
 use super::data::{self, Data, Format};
-use super::decode::{self, At, Decoder, Document, Node, Numbers, Rules, seed, shown};
+use super::decode::{self, Decoder, Numbers, Rules, seed, shown};
 use super::typed::{Type, builtins};
 use crate::typeinfo::FieldType;
 
@@ -277,47 +277,6 @@ fn from_impl(error: &Value, at: &str) -> Value {
     Value::variant(tag, fields)
 }
 
-impl Document for ::toml::Value {
-    type Table = ::toml::Table;
-    const RULES: &'static Rules = &RULES;
-
-    fn node(&self) -> Node<'_, Self> {
-        match self {
-            ::toml::Value::String(s) => match s.strip_prefix(marked()) {
-                Some(literal) => Node::Datetime(literal.to_string()),
-                None => Node::String(s),
-            },
-            ::toml::Value::Integer(n) => Node::Int(*n),
-            ::toml::Value::Float(f) => Node::Float(*f),
-            ::toml::Value::Boolean(b) => Node::Bool(*b),
-            ::toml::Value::Datetime(dt) => Node::Datetime(dt.to_string()),
-            ::toml::Value::Array(items) => Node::Array(items),
-            ::toml::Value::Table(table) => Node::Table(table),
-        }
-    }
-
-    fn kind(&self) -> &'static str {
-        match self {
-            ::toml::Value::String(s) if s.starts_with(marked()) => "datetime",
-            ::toml::Value::String(_) => "string",
-            ::toml::Value::Integer(_) => "integer",
-            ::toml::Value::Float(_) => "float",
-            ::toml::Value::Boolean(_) => "boolean",
-            ::toml::Value::Datetime(_) => "datetime",
-            ::toml::Value::Array(_) => "array",
-            ::toml::Value::Table(_) => "table",
-        }
-    }
-
-    fn get<'d>(table: &'d ::toml::Table, key: &str) -> Option<&'d Self> {
-        table.get(key)
-    }
-
-    fn entries(table: &::toml::Table) -> impl ExactSizeIterator<Item = (&str, &Self)> {
-        table.iter().map(|(key, value)| (key.as_str(), value))
-    }
-}
-
 // ── The functions ───────────────────────────────────────────────────
 
 static PARSE: Decoder = Decoder::new("toml.parse");
@@ -381,30 +340,22 @@ fn text(caller: &str, data: Result<Data, VmError>, pretty: bool) -> Result<Value
     }
 }
 
-/// The TOML document `s`, or the result of a text that is none.
+/// The TOML text `s` decoded by `r` as `top` says, read once
+/// (`decode::seed`), its parts of a type with a written impl as `parts`
+/// says: what the document decodes into, or `Err` of the call's result
+/// where the text is no document.
 ///
 /// A date or time literal that is no day or time of the calendar
 /// (`1979-02-29`, `24:00:00`) is valid TOML in its form, but the `toml`
 /// crate refuses it while parsing. So that it reads as such a text does
 /// in quotes, with the one message of a date or time that is none
 /// (and as a literal: a datetime, for a `String`), the literal is
-/// written as a marked string ([`marked`]) and the document parsed
+/// written as a marked string ([`marked`]) and the document read
 /// again; the marked string decodes as the literal would. Only a text
 /// silt's own reader refuses too is marked, and only so many: what is
 /// left is the crate's error, at its place in `s`. (A document whose
 /// marked strings are more than the ones written here, which no
 /// document can be, is refused with the first error.)
-pub(crate) fn document(s: &str) -> Result<::toml::Value, Value> {
-    marking(s, ::toml::from_str::<::toml::Value>, |doc, _| {
-        marked_strings(doc)
-    })
-}
-
-/// The TOML text `s` decoded by `r` as `top` says, read once
-/// (`decode::seed`), its date and time literals that are none marked as
-/// [`document`] marks them, its parts of a type with a written impl as
-/// `parts` says: what the document decodes into, or `Err` of the call's
-/// result where the text is no document.
 pub(crate) fn read_text(
     r: &decode::Reader,
     top: &seed::Top,
@@ -592,73 +543,6 @@ fn none_literal_at(text: &str, at: usize) -> Option<std::ops::Range<usize>> {
     (at <= end && ends && none).then_some(start..end)
 }
 
-/// A document read as one value.
-fn one(
-    r: &decode::Reader,
-    doc: &::toml::Value,
-    expected: &FieldType,
-) -> Result<Value, decode::Error> {
-    decode::value(r, doc, expected, &At::Top)
-}
-
-/// A document read as the list under its one key (which `parse_list`
-/// has checked it has), each element `<key>[i]`.
-fn list_under_its_key(
-    r: &decode::Reader,
-    doc: &::toml::Value,
-    element: &FieldType,
-) -> Result<Value, decode::Error> {
-    let only = doc.as_table().and_then(|table| table.iter().next());
-    let Some((key, only)) = only else {
-        return Err(decode::Error::mismatch("table", doc.kind(), &At::Top));
-    };
-    decode::list(r, element, only, &At::Top.key(key))
-}
-
-/// A document read as a map of values.
-fn map_of(
-    r: &decode::Reader,
-    doc: &::toml::Value,
-    element: &FieldType,
-) -> Result<Value, decode::Error> {
-    decode::map(r, element, doc, &At::Top)
-}
-
-/// `Err` of `toml.parse_list`'s result where the document `tv` is no
-/// table of one key.
-fn one_key(tv: &::toml::Value, keys: &dyn Fn(usize) -> String) -> Result<(), Value> {
-    // TOML's top level is always a table: the list is the array under
-    // its one key (`[[points]]` for records, `xs = [1, 2]`).
-    let ::toml::Value::Table(table) = tv else {
-        let error = decode::Error::mismatch("table", tv.kind(), &At::Top);
-        return Err(decode::result(&RULES, Err(error)));
-    };
-    match table.len() {
-        1 => Ok(()),
-        n => Err(toml_unknown_err(keys(n))),
-    }
-}
-
-/// What the walk of the tree of the TOML document `doc` (`document`'s
-/// reading of a text) gives decoded by `r` as `top` says: the decoder's
-/// outcome, or the call's result where there is no document of the
-/// shape. The referee of [`read_text`].
-pub(crate) fn walked(
-    r: &decode::Reader,
-    top: &seed::Top,
-    doc: &Result<::toml::Value, Value>,
-) -> Result<seed::Outcome, Value> {
-    let doc = doc.as_ref().map_err(Clone::clone)?;
-    if let seed::Top::List(_, keys) = top {
-        one_key(doc, *keys)?;
-    }
-    Ok(match top {
-        seed::Top::One(expected) => one(r, doc, expected),
-        seed::Top::List(element, _) => list_under_its_key(r, doc, element),
-        seed::Top::Map(element) => map_of(r, doc, element),
-    })
-}
-
 /// The message of `toml.parse_list` of a document of `keys` top-level
 /// keys, not one; `shown` is its element type.
 fn not_one_key(shown: &str, keys: usize) -> String {
@@ -727,22 +611,18 @@ mod tests {
         let fields = vec![("b".to_string(), FieldType::List(Box::new(FieldType::Bytes)))];
         let ty = crate::typeinfo::TypeInfo::new_record(TypeId(DefId(9000)), "B", fields.clone());
         for text in ["b = []", "b = [1]", ""] {
-            let doc: ::toml::Value = ::toml::from_str(text).expect("a document");
             // As toml.parse decodes it: the type is refused before the
             // document is read.
             let target = decode::Target::Record(&ty);
-            let decoded = decode::refused(&decode::Reader::new(&vm.runtime), &RULES, &target)
-                .unwrap_or_else(|| {
-                    decode::result(
-                        &RULES,
-                        decode::value(
-                            &decode::Reader::new(&vm.runtime),
-                            &doc,
-                            &target.element(),
-                            &At::Top,
-                        ),
-                    )
-                });
+            let reader = decode::Reader::new(&vm.runtime);
+            let decoded = decode::refused(&reader, &RULES, &target).unwrap_or_else(|| {
+                let element = target.element();
+                let top = seed::Top::One(&element);
+                match read_text(&reader, &top, text, &seed::Parts::finding()) {
+                    Ok(decoded) => decode::result(&RULES, decoded),
+                    Err(result) => result,
+                }
+            });
             assert_eq!(
                 decoded.to_string(),
                 "Err(cannot decode field `b` of `B`: a value of type List(Bytes) cannot be decoded)",
