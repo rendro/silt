@@ -1,0 +1,26 @@
+-- A tuple of types before a dot is the tuple type, as `Box(Int)` is
+-- that type: `(Int, Int).empty()` calls the impl for `Tuple(a, b)`,
+-- nested tuples and generic types among the types too.
+trait Monoid {
+  fn empty() -> Self
+}
+
+trait Monoid for Int {
+  fn empty() -> Self { 0 }
+}
+
+trait Monoid for Option(a) {
+  fn empty() -> Self { None }
+}
+
+trait Monoid for Tuple(a, b) where a: Monoid, b: Monoid {
+  fn empty() -> Self { (a.empty(), b.empty()) }
+}
+
+fn main() {
+  let e: (Int, Int) = (Int, Int).empty()
+  println(e)
+  println((Int, Option(String)).empty())
+  println(((Int, Int), Option(Int)).empty())
+  println((Int, Int).empty() == (0, 0))
+}
