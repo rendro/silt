@@ -1,0 +1,8 @@
+Err(json type mismatch: expected Int, got string at a)
+Err(json type mismatch: expected Int, got string at j)
+Err(json syntax error at byte 19: trailing characters at line 1 column 20)
+Err(json syntax error at byte 37: trailing comma at line 1 column 38)
+Err(toml type mismatch: expected Int, got string at a)
+Err(toml type mismatch: expected Int, got string at j)
+Err(toml syntax error at byte 18: invalid string
+expected `"`, `'`)
