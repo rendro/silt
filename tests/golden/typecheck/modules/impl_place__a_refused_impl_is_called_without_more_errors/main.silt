@@ -1,0 +1,23 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: the impl of trait 'traits.Describe' for type 'shapes.Pt' is written in module 'main', which declares neither the trait nor the type
+-- stderr-not-contains: does not implement trait
+-- An impl written where it may not be is that one error: a call of its
+-- method, through the trait or in a bound, is not refused as well.
+import shapes
+import traits
+
+trait traits.Describe for shapes.Pt {
+  fn describe(self) -> String {
+    "pt"
+  }
+}
+
+fn twice(x: a) -> String where a: traits.Describe {
+  "{traits.Describe.describe(x)}{traits.Describe.describe(x)}"
+}
+
+fn main() {
+  println(traits.Describe.describe(shapes.Pt { x: 1, y: 2 }))
+  println(twice(shapes.Pt { x: 1, y: 2 }))
+}

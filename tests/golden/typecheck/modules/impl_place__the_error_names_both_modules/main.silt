@@ -1,8 +1,9 @@
 -- cmd: check
 -- exit: 1
 -- stderr-contains: the impl of trait 'traits.Area' for type 'shapes.Square' is written in module 'main', which declares neither the trait nor the type; it may be written in module 'traits', which declares the trait, or in module 'shapes', which declares the type
--- stderr-contains: type 'shapes.Square' does not implement trait 'traits.Area'
--- An impl written elsewhere is no impl: nothing is called through it.
+-- stderr-not-contains: does not implement trait
+-- The impl's place is the one error: the call through it is not refused
+-- as well.
 import shapes.{ Square }
 import traits.{ Area }
 

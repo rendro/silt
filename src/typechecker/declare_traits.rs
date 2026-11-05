@@ -1477,8 +1477,10 @@ impl TypeChecker {
 
     /// Whether the impl `ti`, for the type `target_type`, is written
     /// where it may be: in the module of its trait or of its type (the
-    /// rule `impl_in_its_module` reports). An impl elsewhere is no impl:
-    /// nothing of it is registered, and nothing may count on it.
+    /// rule `impl_in_its_module` reports). An impl elsewhere is that
+    /// error; it is registered all the same, so its callers are not
+    /// refused too, but it decides no structural trait
+    /// (`settle_structural_traits`).
     pub(super) fn impl_is_here(&self, ti: &TraitImpl, target_type: TypeRef) -> bool {
         let Some(defs) = &self.defs else {
             return true;
@@ -1623,11 +1625,11 @@ impl TypeChecker {
             }
         }
 
-        // Nothing of an impl written elsewhere is registered: no call
-        // goes through it.
-        if !self.impl_in_its_module(ti, target_type) {
-            return;
-        }
+        // An impl written elsewhere is that error, and registered all
+        // the same: the code that calls it is sound, and is not to be
+        // told that the type lacks the trait. (No program with the
+        // error runs.)
+        self.impl_in_its_module(ti, target_type);
         // Build the impl-level parameter map. For a parameterized target
         // like `trait X for Box(a)`, each lowercase binder in
         // `target_param_names` becomes a fresh type variable that is

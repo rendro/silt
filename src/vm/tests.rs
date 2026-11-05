@@ -3067,13 +3067,13 @@ mod error_places {
             float(f64::MAX),
             Asm::Add,
             float(f64::MAX),
-            &format!("float overflow: {0}.0 + {0}.0", f64::MAX),
+            "float overflow: 1.7976931348623157e308 + 1.7976931348623157e308",
         );
         binary(
             float(f64::MAX),
             Asm::Mul,
             float(2.0),
-            &format!("float overflow: {}.0 * 2.0", f64::MAX),
+            "float overflow: 1.7976931348623157e308 * 2.0",
         );
     }
 
