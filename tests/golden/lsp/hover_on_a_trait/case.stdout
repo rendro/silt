@@ -322,8 +322,10 @@ posts[1].tags")`, a `MissingField("name")` there is
 `MissingField("posts[1].tags.name")`. A message is the impl's text, and the
 path is appended to it as it is: an error the impl got from `json.decode` of
 a part of its value, `TypeMismatch("Int", "string at k")`, ends with `at k at
-posts[1].tags`. The first error in the document counts, the impl's or the
-decoder's. The toml decoders and a postgres row honour the impl too (see
+posts[1].tags`. The first error counts, the impl's or the decoder's: a
+record's errors in the order its type declares the fields, a map's in the
+sorted order of its keys; a syntax error anywhere in the text wins. The toml
+decoders and a postgres row honour the impl too (see
 [toml](toml.md#types-with-a-jsondecode-impl) and
 [postgres](postgres.md#types-with-a-jsondecode-impl)).
 
