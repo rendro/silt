@@ -3948,7 +3948,7 @@ mod tests {
 
     #[test]
     fn test_compile_function_call() {
-        let fns = compile("fn id(x) { x }\nfn main() { let r = id(42)\n r }");
+        let fns = compile("fn id(x) { x }\nfn main() { let r = id(42)\n let _ = r }");
         let main = find_fn(&fns, "main");
         assert!(has_op(main.chunk(), Op::Call));
     }
@@ -3965,7 +3965,7 @@ mod tests {
 
     #[test]
     fn test_compile_lambda() {
-        let fns = compile("fn main() { let f = { x -> x + 1 }\n f(5) }");
+        let fns = compile("fn main() { let f = { x -> x + 1 }\n let _ = f(5) }");
         let main = find_fn(&fns, "main");
         // The lambda's function is a constant, and a closure of it is
         // made where the lambda is evaluated, though it captures
@@ -3997,7 +3997,7 @@ fn make_adder(n) {
 
     #[test]
     fn test_compile_list() {
-        let fns = compile("fn main() { [1, 2, 3] }");
+        let fns = compile("fn main() { let _ = [1, 2, 3] }");
         let main = find_fn(&fns, "main");
         assert!(has_op(main.chunk(), Op::MakeList));
     }
@@ -4032,7 +4032,7 @@ fn make_adder(n) {
 
     #[test]
     fn test_compile_list_spread() {
-        let fns = compile("fn main() { let a = [1, 2]\n [..a, 3] }");
+        let fns = compile("fn main() { let a = [1, 2]\n let _ = [..a, 3] }");
         let main = find_fn(&fns, "main");
         assert!(has_op(main.chunk(), Op::ListConcat));
     }

@@ -5,7 +5,7 @@
 -- stderr-contains: error[runtime]: main returned Err: boom
 -- stderr-contains: src/main.silt:1:1
 -- stderr-not-contains: silt.toml
-fn real() -> Result(Int, String) {
+fn real() -> Result((), String) {
   Err("boom")
 }
 

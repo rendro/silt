@@ -30,7 +30,8 @@ fn test_option_map_some_applies_callback() {
     // closure and rewraps the result as Some(new_val).
     let result = run(r#"
 import option
-fn main() { option.map(Some(5), { n -> n * 2 }) }
+fn main() { host.give(option.map(Some(5), { n -> n * 2 })) }
+import host
     "#);
     assert_eq!(result, Value::variant(bv::SOME, [Value::Int(10)]));
 }

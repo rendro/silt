@@ -99,7 +99,10 @@ fn main_is_found_by_type_however_it_is_bound() {
         run_str("fn main() { host.give(1) }\nimport host"),
         Ok(Value::Int(1))
     );
-    assert_eq!(run_str("let main = { -> 2 }"), Ok(Value::Int(2)));
+    assert_eq!(
+        run_str("let main = { -> host.give(2) }\nimport host"),
+        Ok(Value::Int(2))
+    );
     assert_eq!(
         run_files(&[
             ("main.silt", "import entry.{ main }"),

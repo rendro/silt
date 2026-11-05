@@ -1710,11 +1710,12 @@ fn test_match_range() {
     let result = run_vm(
         r#"
             fn main() {
-                match 5 {
+                host.give(match 5 {
                   1..10 -> "in range"
                   _ -> "out"
-                }
+                })
             }
+import host
         "#,
     );
     assert_eq!(result, Value::String("in range".into()));
@@ -1794,8 +1795,9 @@ fn test_let_tuple_destructure_nested() {
         r#"
             fn main() {
                 let (a, (b, c)) = (1, (2, 3))
-                a + b + c
+                host.give(a + b + c)
             }
+import host
         "#,
     );
     assert_eq!(result, Value::Int(6));
@@ -4114,7 +4116,7 @@ import int
 fn main() {
   let nobody = channel.new(0)
   let n = int.abs(-1) + int.abs(-2)
-  channel.receive(nobody)
+  let _ = channel.receive(nobody)
 }
 ",
         )
@@ -4146,10 +4148,12 @@ fn main() {
     /// Run `main`'s code and give the VM back with what the run came
     /// to.
     fn ran(source: &str) -> (Vm, Result<Value, VmError>) {
-        let program =
-            crate::session::testing::compile_str(source).unwrap_or_else(|e| panic!("{e:?}"));
+        let (program, given) =
+            crate::session::testing::compile_given(source).unwrap_or_else(|e| panic!("{e:?}"));
         let mut vm = Vm::new(crate::HostIo::buffer(&crate::Buffer::new()));
-        let result = vm.run_program(&program);
+        let result = vm
+            .run_program(&program)
+            .map(|value| given.last().unwrap_or(value));
         (vm, result)
     }
 
@@ -4170,8 +4174,9 @@ fn main() {
   let callback = list.map([-1, -2], int.abs)
   let nested = list.fold([1, 2, 3], 0) { acc, x -> acc + int.max(x, string.length(\"ab\")) }
   println(callback)
-  direct + as_value + list.length(callback) + nested
+  host.give(direct + as_value + list.length(callback) + nested)
 }
+import host
 ");
         assert_eq!(result.unwrap(), Value::Int(7 + 5 + 2 + 7));
         assert!(vm.builtin_args.is_empty());
@@ -4184,7 +4189,7 @@ fn main() {
 import list
 fn main() {
   let xs = list.map(1..4) { x -> 10 / (x - 2) }
-  list.length(xs)
+  let _ = list.length(xs)
 }
 ");
         assert_eq!(result.unwrap_err().message, "division by zero");

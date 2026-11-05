@@ -1,0 +1,39 @@
+-- cmd: test
+-- exit: 1
+-- stderr-contains: error[compile]: the test function 'test_ok' must return () or Result((), e), but it returns Result(Int, String)
+-- stderr-contains: end the test with `Ok(())` once the value is checked; the Ok of a test carries nothing
+-- stderr-contains: error[compile]: the test function 'test_int' must return () or Result((), e), but it returns Int
+-- stderr-contains: check the value with an assertion (`test.assert_eq(x, expected)`), or drop it with `let _ = ...`
+-- stderr-contains: error[compile]: the test function 'test_some' must return () or Result((), e), but it returns Option(Int)
+-- stderr-contains: to fail the test when there is none, make the test return a Result and write `option.ok_or(x, "why")?`
+-- stderr-contains: error[compile]: the test function 'test_user_variant' must return () or Result((), e), but it returns Outcome
+-- stderr-contains: error[compile]: the test function 'skip_test_later' must return () or Result((), e), but it returns Int
+-- stderr-not-contains: test_unit
+-- stderr-not-contains: test_nothing_ok
+-- A test function returns () or Result((), e): a value it returned
+-- would go nowhere, and a test that returned None would pass without
+-- a word. Each one that returns a value is an error before any test
+-- runs, a skipped one too.
+import test
+type Outcome { Fine, Bad(String) }
+fn test_ok() -> Result(Int, String) {
+  Ok(1)
+}
+fn test_unit() {
+  test.assert_eq(1, 1)
+}
+fn test_nothing_ok() -> Result((), String) {
+  Ok(())
+}
+fn test_int() {
+  42
+}
+fn test_some() {
+  Some(1)
+}
+fn test_user_variant() {
+  Bad("not a Result")
+}
+fn skip_test_later() {
+  7
+}

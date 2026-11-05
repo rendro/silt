@@ -11,5 +11,5 @@ fn main() {
   let first = channel.receive_timeout(ch, time.seconds(2))
   println(first)
   task.join(sleeper)
-  task.deadline(time.seconds(1), { -> 1 + 1 })
+  let _ = task.deadline(time.seconds(1), { -> 1 + 1 })
 }

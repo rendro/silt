@@ -248,11 +248,12 @@ fn test_fs_walk_lists_all_entries_and_tolerates_inner_symlink() {
 import fs
 import list
 fn main() {{
-    match fs.walk("{root_str}") {{
+    host.give(match fs.walk("{root_str}") {{
         Ok(paths) -> list.length(paths)
         Err(_) -> -1
-    }}
+    }})
 }}
+import host
 "#
     );
     let result = run(&input);
@@ -276,11 +277,12 @@ import fs
 import list
 import string
 fn main() {{
-    match {call} {{
+    host.give(match {call} {{
         Ok(paths) -> string.join(list.sort(paths), "\n")
         Err(e) -> "Err: {{Error.message(e)}}"
-    }}
+    }})
 }}
+import host
 "#
     );
     match run(&input) {
@@ -611,7 +613,7 @@ fn test_fs_errors_name_the_path_they_are_about() {
     );
     let call = |expr: &str| {
         err_msg(run(&format!(
-            "import fs\nimport io\nfn main() {{\n  {expr}\n}}\n"
+            "import fs\nimport io\nfn main() {{\n  host.give({expr})\n}}\nimport host\n"
         )))
     };
     assert_eq!(

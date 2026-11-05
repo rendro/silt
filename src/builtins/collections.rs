@@ -1180,8 +1180,8 @@ mod cap_tests {
     /// its error.
     fn run_capped(body: &str) -> String {
         let source = format!(
-            "import list\nimport map\nimport set\nimport stream\nimport channel\n\
-             fn main() {{\n  {body}\n}}\n"
+            "import list\nimport map\nimport set\nimport stream\nimport channel\nimport host\n\
+             fn main() {{\n  host.give({body})\n}}\n"
         );
         CAP.with(|cap| cap.set(3));
         let result = run_str(&source);

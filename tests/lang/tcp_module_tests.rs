@@ -42,11 +42,12 @@ fn test_listen_returns_listener_handle() {
     let v = run(r#"
 import tcp
 fn main() {
-  match tcp.listen("127.0.0.1:0") {
+  host.give(match tcp.listen("127.0.0.1:0") {
     Ok(_) -> "ok"
     Err(e) -> Error.message(e)
-  }
+  })
 }
+import host
 "#);
     assert_eq!(v, Value::String("ok".into()));
 }
@@ -250,11 +251,12 @@ fn test_connect_to_unbound_port_errors() {
         r#"
 import tcp
 fn main() {{
-  match tcp.connect("{addr}") {{
+  host.give(match tcp.connect("{addr}") {{
     Ok(_) -> "wrong: should error"
     Err(_) -> "errored"
-  }}
+  }})
 }}
+import host
 "#
     );
     let v = run(&src);

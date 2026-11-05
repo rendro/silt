@@ -91,7 +91,7 @@ import task
 import time
 
 fn main() {{
-  match tcp.listen("127.0.0.1:0") {{
+  host.give(match tcp.listen("127.0.0.1:0") {{
     Ok(listener) -> {{
       let server = task.spawn({{ ->
         match bytes.from_hex("{cert_hex}") {{
@@ -120,8 +120,9 @@ fn main() {{
       task.join(server)
     }}
     Err(e) -> Error.message(e)
-  }}
+  }})
 }}
+import host
 "#,
         cert_hex = hex::encode(cert_pem.as_bytes()),
         key_hex = hex::encode(key_pem.as_bytes()),

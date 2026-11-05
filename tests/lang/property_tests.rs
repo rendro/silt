@@ -262,8 +262,8 @@ proptest! {
         b in -1000i64..1000,
         op in prop_oneof![Just("+"), Just("-"), Just("*")],
     ) {
-        let source = format!("fn main() {{ {a} {op} {b} }}");
-        let program = match silt::session::testing::compile_str(&source) {
+        let source = format!("import host\nfn main() {{ host.give({a} {op} {b}) }}");
+        let (program, given) = match silt::session::testing::compile_given(&source) {
             Ok(p) => p,
             Err(errors) => {
                 return Err(TestCaseError::Fail(
@@ -271,7 +271,9 @@ proptest! {
                 ));
             }
         };
-        let vm_result = silt::vm::Vm::new(silt::HostIo::process()).run_program(&program);
+        let vm_result = silt::vm::Vm::new(silt::HostIo::process())
+            .run_program(&program)
+            .map(|value| given.last().unwrap_or(value));
 
         // Reference semantics via Rust's checked arithmetic.
         let expected = match op {

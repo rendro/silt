@@ -176,8 +176,8 @@ fn listen_and_tell(port_file) {{
   }}
 }}
 
-fn main() -> String {{
-  match listen_and_tell("{port_path}") {{
+fn main() {{
+  host.give(match listen_and_tell("{port_path}") {{
     Ok(listener) -> match bytes.from_hex("{cert_hex}") {{
       Ok(cert) -> match bytes.from_hex("{key_hex}") {{
         Ok(key) -> match bytes.from_hex("{ca_hex}") {{
@@ -195,8 +195,9 @@ fn main() -> String {{
       Err(e) -> "cert-parse:{{Error.message(e)}}"
     }}
     Err(e) -> "listen:{{Error.message(e)}}"
-  }}
+  }})
 }}
+import host
 "#,
             cert_hex = hex_encode(server_cert_pem.as_bytes()),
             key_hex = hex_encode(server_key_pem.as_bytes()),
@@ -367,7 +368,7 @@ fn serve(conn, cert, key, done) {{
   }}
 }}
 
-fn main() -> String {{
+fn main() {{
   when let Ok(listener) = tcp.listen("127.0.0.1:0") else {{ panic("cannot listen") }}
   when let Ok(_) = io.write_file("{port_path}", "{{tcp.local_port(listener)}}\n") else {{
     panic("cannot write the port")
@@ -386,8 +387,9 @@ fn main() -> String {{
     None -> "closed"
   }}
   task.cancel(first)
-  outcome
+  host.give(outcome)
 }}
+import host
 "#,
             cert_hex = hex_encode(pki.server_cert_pem.as_bytes()),
             key_hex = hex_encode(pki.server_key_pem.as_bytes()),

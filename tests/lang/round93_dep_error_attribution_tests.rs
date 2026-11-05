@@ -111,7 +111,10 @@ fn locator_line(stderr: &str) -> &str {
 #[test]
 fn sibling_module_attribution_still_correct() {
     let ws = temp_workspace("sibling_control");
-    let main_path = build_workspace(&ws, "import util\n\nfn main() {\n  util.boom(1, 0)\n}\n");
+    let main_path = build_workspace(
+        &ws,
+        "import util\n\nfn main() {\n  let _ = util.boom(1, 0)\n}\n",
+    );
     // Add the sibling module next to main.silt.
     std::fs::write(
         ws.join("app/src/util.silt"),

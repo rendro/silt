@@ -211,9 +211,12 @@ fn render(expr: &Expr, indent: usize) -> String {
     }
 }
 
-/// The program whose `main` is `expr`.
+/// The program whose `main` prints the value of `expr`.
 fn program(expr: &Expr) -> String {
-    format!("import list\n\nfn main() {{\n  {}\n}}\n", render(expr, 1))
+    format!(
+        "import list\n\nfn main() {{\n  let value = {}\n  println(value)\n}}\n",
+        render(expr, 1)
+    )
 }
 
 // ── The generator ───────────────────────────────────────────────────
@@ -347,15 +350,20 @@ fn generate(seed: u64, number: usize) -> Expr {
 // ── The inputs ──────────────────────────────────────────────────────
 
 /// The input whose program is `expr`: it must end as the reference
-/// evaluator says.
+/// evaluator says, and print the value it gives.
 fn input(name: String, expr: &Expr) -> Input {
-    let end = eval(expr, &mut Vec::new()).map(Value::Int);
+    let end = eval(expr, &mut Vec::new());
+    let stdout = match &end {
+        Ok(value) => format!("{value}\n"),
+        Err(_) => String::new(),
+    };
     Input {
         name,
         source: Source::Memory(vec![("main.silt".to_string(), program(expr))]),
         real_time: false,
         expect: Expect {
-            end: Some(end),
+            end: Some(end.map(|_| Value::Unit)),
+            stdout: Some(stdout),
             ..Expect::default()
         },
     }
@@ -637,15 +645,11 @@ fn a_program_that_ends_otherwise_than_expected_is_a_finding_and_is_minimised() {
         Box::new(Expr::Binary(lit(6), '-', Box::new(Expr::ListLength(2)))),
     );
     let mut wrong = input("selfcheck".to_string(), &expr);
-    wrong.expect.end = Some(Ok(Value::Int(35)));
+    wrong.expect.stdout = Some("35\n".to_string());
     match examine_within(&wrong) {
         Verdict::Finding(finding) => {
             assert_eq!(finding.kind.name(), "expectation");
-            assert!(
-                finding.detail.contains("main returned 36"),
-                "{}",
-                finding.detail
-            );
+            assert!(finding.detail.contains("36"), "{}", finding.detail);
         }
         other => panic!("{other:?}"),
     }

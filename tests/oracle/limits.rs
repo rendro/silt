@@ -173,10 +173,9 @@ fn the_budget_ends_the_tasks_of_a_program_too() {
 
     // `main` returns at once; `settle` waits for the task, which the
     // budget ends, and the runtime reports its failure.
-    let unjoined =
-        format!("import task\n{spin}fn main() {{\n  let h = task.spawn(spin)\n  7\n}}\n");
+    let unjoined = format!("import task\n{spin}fn main() {{\n  let h = task.spawn(spin)\n}}\n");
     let (result, report) = run_whole(&unjoined, |vm| vm.set_step_budget(100_000));
-    assert_eq!(result.unwrap(), Value::Int(7));
+    assert_eq!(result.unwrap(), Value::Unit);
     assert!(report.contains("the step budget is used up"), "{report}");
 }
 
@@ -256,8 +255,8 @@ fn a_deadline_ends_its_function_at_every_slice() {
              fn recv(ch) {{\n  match channel.receive(ch) {{\n    Some(v) -> v\n    _ -> 0\n  }}\n}}\n\n\
              fn count(n, acc) {{\n  match n {{\n    0 -> acc\n    _ -> count(n - 1, acc + 1)\n  }}\n}}\n\n\
              fn main() {{\n  let never: Channel(Int) = channel.new(0)\n  \
-             match task.deadline({dur}, {{ -> {door} }}) {{\n    \
-             Ok(_) -> \"returned\"\n    Err(task.Timeout) -> \"timeout\"\n    Err(_) -> \"other\"\n  }}\n}}\n"
+             host.give(match task.deadline({dur}, {{ -> {door} }}) {{\n    \
+             Ok(_) -> \"returned\"\n    Err(task.Timeout) -> \"timeout\"\n    Err(_) -> \"other\"\n  }})\n}}\nimport host\n"
         )
     };
     let at_each = |slices: &[Option<usize>], what: &str, source: &str, expected: &str| {
@@ -1088,8 +1087,9 @@ fn main() {{
   channel.send(own, t)
   let _ = channel.receive(said)
   time.sleep(time.ms(2))
-  channel.receive(src)
+  host.give(channel.receive(src))
 }}
+import host
 "#
         );
         for slice in FOUR_SLICES {
@@ -1147,7 +1147,7 @@ import task
 import time
 
 fn main() {{
-  loop i = 0 {{
+  host.give(loop i = 0 {{
     match i >= 60 {{
       true -> i
       false -> {{
@@ -1173,8 +1173,9 @@ fn main() {{
         }}
       }}
     }}
-  }}
+  }})
 }}
+import host
 "#
         );
         for slice in FOUR_SLICES {
@@ -1323,23 +1324,23 @@ fn by_itself(worker, items, steps) {
     let programs = [
         (
             "each, cancelled from outside",
-            "fn main() {\n  from_outside(each_worker, 20000, 8)\n}\n",
+            "fn main() {\n  host.give(from_outside(each_worker, 20000, 8))\n}\nimport host\n",
         ),
         (
             "receive in a loop, cancelled from outside",
-            "fn main() {\n  from_outside(receive_worker, 20000, 8)\n}\n",
+            "fn main() {\n  host.give(from_outside(receive_worker, 20000, 8))\n}\nimport host\n",
         ),
         (
             "each, cancelled by itself",
-            "fn main() {\n  by_itself(each_worker, 700, 0)\n}\n",
+            "fn main() {\n  host.give(by_itself(each_worker, 700, 0))\n}\nimport host\n",
         ),
         (
             "receive in a loop, cancelled by itself",
-            "fn main() {\n  by_itself(receive_worker, 700, 0)\n}\n",
+            "fn main() {\n  host.give(by_itself(receive_worker, 700, 0))\n}\nimport host\n",
         ),
         (
             "each, five items of 500 steps, cancelled by itself",
-            "fn main() {\n  by_itself(each_worker, 5, 60)\n}\n",
+            "fn main() {\n  host.give(by_itself(each_worker, 5, 60))\n}\nimport host\n",
         ),
     ];
     for (what, main) in programs {
@@ -1939,7 +1940,7 @@ fn a_fault_of_the_program_is_not_the_budgets() {
         ),
     ] {
         let source = format!(
-            "{spin}\nfn main() {{\n  let _ = task.spawn(spin)\n  time.sleep(time.ms(500))\n  println(\"before the fault\")\n  {fault}\n}}\n"
+            "{spin}\nfn main() {{\n  let _ = task.spawn(spin)\n  time.sleep(time.ms(500))\n  println(\"before the fault\")\n  host.give({fault})\n}}\nimport host\n"
         );
         let (result, output) = run_whole(&source, |vm| vm.set_step_budget(20_000));
         let error = result.unwrap_err();

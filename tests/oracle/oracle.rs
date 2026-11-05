@@ -365,7 +365,10 @@ impl End {
     /// The end in a few words, for a report.
     fn shown(&self) -> String {
         match self {
-            End::Value { shown, .. } => format!("main returned {shown}"),
+            // (What `main` returns is () or a Result of (): only an
+            // `Err` says more.)
+            End::Value { shown, failed } if *failed => format!("main returned {shown}"),
+            End::Value { .. } => "main returned".to_string(),
             End::Error { message, .. } => format!("runtime error: {message}"),
             End::Panic(text) => format!("panic: {text}"),
             End::Hang => "no end".to_string(),

@@ -6,5 +6,5 @@ fn main() {
     |> stream.map { n -> n * n }
     |> stream.take(4)
   println(stream.collect(evens))
-  stream.from_list([1, 2, 3]) |> stream.fold(0) { acc, n -> acc + n }
+  let _ = stream.from_list([1, 2, 3]) |> stream.fold(0) { acc, n -> acc + n }
 }
