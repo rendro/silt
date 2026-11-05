@@ -879,8 +879,8 @@ impl Got {
         // A header's name is in lower case, however the client wrote
         // it: a name is not case-sensitive, and a lookup has one
         // spelling to ask for.
-        let headers = (request.headers.into_iter())
-            .map(|(name, value)| (name.to_ascii_lowercase(), value));
+        let headers =
+            (request.headers.into_iter()).map(|(name, value)| (name.to_ascii_lowercase(), value));
         let headers = header_map(headers);
         // The body is the bytes that arrived.
         Got::Request(
