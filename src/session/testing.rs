@@ -60,9 +60,37 @@ pub fn check_with_host(files: &[(&str, &str)], host: Vec<HostModule>) -> Vec<Dia
     diagnostics
 }
 
+/// The host module `host` of a test program: its one function
+/// `host.give(x)` hands the value `x` to the test, which reads the last
+/// one given from [`Given`]. A program's `main` returns nothing, so a
+/// test that wants a value of the program has it given so.
+pub fn give_module() -> (HostModule, Given) {
+    let given = Given::default();
+    let slot = given.clone();
+    let module =
+        HostModule::new("host").function("fn give(x: a) -> ()", move |args: &[Value]| {
+            *slot.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(args[0].clone());
+            Ok(Value::Unit)
+        });
+    (module, given)
+}
+
+/// Where the values a program gives through `host.give` are kept: the
+/// last one.
+#[derive(Clone, Default)]
+pub struct Given(Arc<std::sync::Mutex<Option<Value>>>);
+
+impl Given {
+    /// The last value the program gave, if it gave one.
+    pub fn last(&self) -> Option<Value> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+}
+
 /// Compile `source` as a program that starts at `main`, run it, and give
-/// `main`'s value. `Err` holds the message of the first static error,
-/// or of the runtime error.
+/// the last value it gave through `host.give` (see [`give_module`]),
+/// `()` if none. `Err` holds the message of the first static error, or
+/// of the runtime error.
 pub fn run_str(source: &str) -> Result<Value, String> {
     run_files(&[("main.silt", source)])
 }
@@ -74,16 +102,27 @@ pub fn run_files(files: &[(&str, &str)]) -> Result<Value, String> {
 
 /// [`run_files`] with the host modules `host`.
 pub fn run_with_host(files: &[(&str, &str)], host: Vec<HostModule>) -> Result<Value, String> {
-    let (mut session, entry) = session(files, host);
+    let (give, given) = give_module();
+    let (mut session, entry) = session(files, [vec![give], host].concat());
     let program = compile_in(&mut session, entry, Entry::Main).map_err(|errors| {
         errors
             .first()
             .map(|d| d.message.clone())
             .unwrap_or_default()
     })?;
-    Vm::new(crate::HostIo::process())
+    let value = Vm::new(crate::HostIo::process())
         .run_program(&program)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    Ok(given.last().unwrap_or(value))
+}
+
+/// Compile `source` as a program that starts at `main` with the host
+/// module `host` ([`give_module`]), run it, and give the last value it
+/// gave, `()` if none, or the runtime error.
+pub fn run_given(source: &str) -> Result<Value, crate::vm::VmError> {
+    let (program, given) = compile_given(source).unwrap_or_else(|e| panic!("{e:?}"));
+    let value = Vm::new(crate::HostIo::process()).run_program(&program)?;
+    Ok(given.last().unwrap_or(value))
 }
 
 /// Compile `source` as a program that starts at `main`. `Err` holds the
@@ -91,6 +130,14 @@ pub fn run_with_host(files: &[(&str, &str)], host: Vec<HostModule>) -> Result<Va
 pub fn compile_str(source: &str) -> Result<Program, Vec<Diagnostic>> {
     let (mut session, entry) = session(&[("main.silt", source)], Vec::new());
     compile_in(&mut session, entry, Entry::Main)
+}
+
+/// [`compile_str`] with the host module `host` ([`give_module`]): the
+/// program, and where the values it gives are kept.
+pub fn compile_given(source: &str) -> Result<(Program, Given), Vec<Diagnostic>> {
+    let (give, given) = give_module();
+    let (mut session, entry) = session(&[("main.silt", source)], vec![give]);
+    compile_in(&mut session, entry, Entry::Main).map(|program| (program, given))
 }
 
 /// Compile the declarations of `source`, which needs no `main`, as
