@@ -44,9 +44,9 @@ if [ ! -x "$bin" ]; then
 fi
 
 # The committed seeds: silt sources, for the target that reads HTTP
-# requests, requests, and for the one that reads JSON, JSON texts.
+# requests, requests, and for the one that reads JSON and TOML, such texts.
 seeds() {
-  find "$corpus_dir" -type f \( -name '*.silt' -o -name '*.http' -o -name '*.json' \) "$@"
+  find "$corpus_dir" -type f \( -name '*.silt' -o -name '*.http' -o -name '*.json' -o -name '*.toml' \) "$@"
 }
 
 count=$(seeds | wc -l)

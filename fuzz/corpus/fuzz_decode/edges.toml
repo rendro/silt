@@ -1,0 +1,8 @@
+int = 9223372036854775807
+float = nan
+ints = [1, -0, 0x10, 1_000]
+floats = [inf, -inf, 1e3, 1.0]
+"a b" = 1
+"" = 2
+shape = { fields = [1, 2], variant = "Rect" }
+shapes = ["Dot", { variant = "Circle", fields = [2.5] }]

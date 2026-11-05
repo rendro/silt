@@ -26,7 +26,7 @@ use std::sync::Arc;
 
 use super::runtime::{Native, Step};
 use super::{Vm, VmError};
-use crate::builtins::decode::{self, Document, Error, Hole, Holes, Reader, seed};
+use crate::builtins::decode::{self, Document, Error, Hole, Holes, Reader, Rules, seed};
 use crate::bytecode::Globals;
 use crate::typeinfo::{FieldType, bv};
 use crate::value::Value;
@@ -143,31 +143,35 @@ impl Vm {
         })))
     }
 
-    /// `json.parse` of the text `text` into values of `expected`: read
-    /// once, the value made as the text is read (`decode::seed`). A type
-    /// a field of which no decoder fills is refused before the text is
-    /// read, and a document with a part a written `json.Decode` impl
-    /// decodes is decoded as [`Vm::decode_document`] decodes one.
-    pub(crate) fn decode_json_text(
+    /// A document decoded into values of `expected` by the rules
+    /// `rules`, read once, the value made as it is read
+    /// (`decode::seed`): `read` reads it, giving what it decodes into,
+    /// `None` where the document is the walk's, or `Err` of the call's
+    /// result where there is no document. A type a field of which no
+    /// decoder fills is refused before the document is read, and a
+    /// document that is the walk's is decoded by `walk`, as
+    /// [`Vm::decode_document`] decodes one.
+    pub(crate) fn decode_read(
         &mut self,
+        rules: &'static Rules,
         expected: FieldType,
-        text: &[u8],
+        read: impl FnOnce(&Reader, &FieldType) -> Result<Option<seed::Outcome>, Value>,
+        walk: impl FnOnce(&mut Vm, FieldType) -> Result<Step, VmError>,
     ) -> Result<Step, VmError> {
-        use crate::builtins::json;
         let read = {
             let table = self.decoding_table();
             let written = |id, args: &[FieldType]| table.decoded(id, args);
             let reader = Reader::with_impls(&self.runtime, &written, Holes::Collect(Vec::new()));
             let target = decode::Target::Value(expected.clone());
-            if let Some(refused) = decode::refused(&reader, &json::RULES, &target) {
+            if let Some(refused) = decode::refused(&reader, rules, &target) {
                 return Ok(Step::Done(refused));
             }
-            decode::seed::json_text(&reader, &expected, text)
+            read(&reader, &expected)
         };
         Ok(Step::Done(match read {
-            seed::Read::Decoded(decoded) => decode::result(&json::RULES, decoded),
-            seed::Read::Text(e) => json::json_result_err(&e, text),
-            seed::Read::Written => return json::parse_tree(self, expected, text),
+            Ok(Some(decoded)) => decode::result(rules, decoded),
+            Ok(None) => return walk(self, expected),
+            Err(result) => result,
         }))
     }
 

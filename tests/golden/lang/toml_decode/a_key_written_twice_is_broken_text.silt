@@ -1,0 +1,15 @@
+-- TOML has no key written twice: a key, a table or a key of an inline
+-- table given again is the parser's error, whatever the type; and a
+-- key that is no bare key is quoted in an error's path.
+import toml
+
+type P { a: Int }
+
+fn main() {
+  println(toml.parse("a = 1\na = 2", P))
+  println(toml.parse("[x]\na = 1\n[x]\nb = 2", P))
+  println(toml.parse("a = 1\np = \{ b = 1, b = 2 }", P))
+  println(toml.parse_map("a = 1\n\"a\" = 2", Int))
+  println(toml.parse_map("\"a b\" = \"x\"\n\"\" = 1\nc = 2", Int))
+  println(toml.parse_map("\"\" = \"x\"\nc = 2", Int))
+}

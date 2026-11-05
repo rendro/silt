@@ -439,8 +439,8 @@ jobs:
       - name: Replay fuzz_run corpus
         run: ./fuzz/replay.sh fuzz_run
 
-      - name: Replay fuzz_json_decode corpus
-        run: ./fuzz/replay.sh fuzz_json_decode
+      - name: Replay fuzz_decode corpus
+        run: ./fuzz/replay.sh fuzz_decode
 
       - name: Upload reproducers on failure
         if: failure()

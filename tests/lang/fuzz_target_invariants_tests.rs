@@ -10,7 +10,8 @@
 use silt::ast::{Decl, ImportTarget, Program};
 use silt::fuzz_invariants::{
     check_formatter_invariants, check_formatter_invariants_of, check_json_decoders_agree,
-    check_lexer_invariants, check_parser_invariants, json_text_of,
+    check_lexer_invariants, check_parser_invariants, check_toml_decoders_agree, json_text_of,
+    toml_text_of,
 };
 use silt::lexer::{Lexed, Lexer, Tok, Token};
 use silt::parser::Parser;
@@ -346,14 +347,14 @@ fn parser_invariants_reject_decls_from_empty_source() {
 }
 
 // --------------------------------------------------------------------
-// json.parse: the reading of the text against the walk of its tree
+// The decoders: the reading of the text against the walk of its tree
 // --------------------------------------------------------------------
 
-/// What `fuzz_json_decode` does with an input, on the texts a fixed
-/// stream of bytes makes and on its corpus: the reading of a JSON text
+/// What `fuzz_decode` does with an input, on the texts a fixed stream
+/// of bytes makes and on its corpus: the reading of a JSON or TOML text
 /// gives what the walk of its tree gives, for each type.
 #[test]
-fn the_json_decoders_agree() {
+fn the_decoders_agree() {
     let mut state: u64 = 0x2545_f491_4f6c_dd1d;
     let mut byte = || {
         state ^= state << 13;
@@ -361,18 +362,25 @@ fn the_json_decoders_agree() {
         state ^= state << 17;
         (state >> 24) as u8
     };
-    for _ in 0..3000 {
+    for k in 0..3000 {
         let bytes: Vec<u8> = (0..96).map(|_| byte()).collect();
         check_json_decoders_agree(&json_text_of(&bytes)).unwrap_or_else(|e| panic!("{e}"));
+        // (A TOML text is read three ways for each type: one in four.)
+        if k % 4 == 0 {
+            check_toml_decoders_agree(&toml_text_of(&bytes)).unwrap_or_else(|e| panic!("{e}"));
+        }
     }
-    let corpus =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fuzz/corpus/fuzz_json_decode");
+    let corpus = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fuzz/corpus/fuzz_decode");
     let mut read = 0;
-    for file in std::fs::read_dir(&corpus).expect("fuzz/corpus/fuzz_json_decode") {
+    for file in std::fs::read_dir(&corpus).expect("fuzz/corpus/fuzz_decode") {
         let data = std::fs::read(file.unwrap().path()).unwrap();
         check_json_decoders_agree(&data).unwrap_or_else(|e| panic!("{e}"));
         check_json_decoders_agree(&json_text_of(&data)).unwrap_or_else(|e| panic!("{e}"));
+        check_toml_decoders_agree(&toml_text_of(&data)).unwrap_or_else(|e| panic!("{e}"));
+        if let Ok(text) = std::str::from_utf8(&data) {
+            check_toml_decoders_agree(text).unwrap_or_else(|e| panic!("{e}"));
+        }
         read += 1;
     }
-    assert!(read > 0, "no corpus of fuzz_json_decode");
+    assert!(read > 0, "no corpus of fuzz_decode");
 }

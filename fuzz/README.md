@@ -11,7 +11,7 @@ silt ships nine libfuzzer targets:
 | `fuzz_typechecker` | the session's analysis + diagnostic well-formedness |
 | `fuzz_compiler`    | `Compiler::compile_program` on clean programs + disassembly decode |
 | `fuzz_http_request` | the reader of `http.serve`'s requests (`src/http_wire.rs`): no panic, no request beyond a limit, the same requests however the bytes arrive |
-| `fuzz_json_decode` | `json.parse` read two ways (`src/fuzz_invariants.rs`): the reading of the text gives the value or the error the walk of the document's tree gives, for each of a set of types, on the input and on the JSON text its bytes choose (kept while the walk is the referee) |
+| `fuzz_decode`      | the decoders read two ways (`src/fuzz_invariants.rs`): `json.parse`, `json.decode` of the document read, `toml.parse`, `toml.parse_map` and `toml.parse_list`; the reading of the text gives the value or the error the walk of the document's tree gives, for each of a set of types, on the input and on the JSON and TOML text its bytes choose (kept while the walk is the referee) |
 | `fuzz_run`         | the differential oracle (`tests/oracle/oracle.rs`): a program that checks clean and stays inside the VM is run in slices of 2000 steps and of one step under a step budget; the runs agree, and none ends in a type confusion, an internal error or a panic |
 
 Invariant helpers live in `src/fuzz_invariants.rs` and are exercised

@@ -357,7 +357,8 @@ impl JsonTargets {
 /// types (records, enums and generic types of them, lists, maps,
 /// tuples, options, dates and times, `json.Value`): the reading of the
 /// text (`decode::seed`) gives what the walk of the document's tree
-/// gives, value or error, to the byte.
+/// gives, value or error, to the byte; and so does the reading of the
+/// document read (`json.decode`'s, a postgres cell's).
 pub fn check_json_decoders_agree(text: &[u8]) -> Result<(), String> {
     use crate::builtins::decode::{self, At, Holes, Reader, seed};
     use crate::builtins::json;
@@ -377,21 +378,284 @@ pub fn check_json_decoders_agree(text: &[u8]) -> Result<(), String> {
                 Err(e) => json::json_result_err(e, text),
             };
             let read = match seed::json_text(&reader, expected, text) {
-                seed::Read::Decoded(decoded) => decode::result(&json::RULES, decoded),
-                seed::Read::Text(e) => json::json_result_err(&e, text),
-                // (A variant object that gives a key twice: the walk decodes
+                Ok(Some(decoded)) => decode::result(&json::RULES, decoded),
+                Err(e) => json::json_result_err(&e, text),
+                // (A variant table that gives a key twice: the walk decodes
                 // it, as the program sees.)
-                seed::Read::Written => continue,
+                Ok(None) => continue,
             };
-            if walked.to_string() != read.to_string() || walked != read {
-                return Err(format!(
-                    "{name}: the walk gives {walked}, the reading {read}, of {}",
-                    String::from_utf8_lossy(text)
-                ));
+            agree(name, &walked, &read, &String::from_utf8_lossy(text))?;
+            if let Ok(doc) = &tree {
+                let read = match seed::json_document(&reader, expected, doc) {
+                    Some(decoded) => decode::result(&json::RULES, decoded),
+                    None => continue,
+                };
+                agree(name, &walked, &read, &format!("the document {doc}"))?;
             }
         }
         Ok(())
     })
+}
+
+/// `Err` where the walk's result `walked` and the reading's `read` of
+/// `what` differ, in their text or as values.
+fn agree(
+    name: &str,
+    walked: &crate::value::Value,
+    read: &crate::value::Value,
+    what: &str,
+) -> Result<(), String> {
+    match walked.to_string() == read.to_string() && walked == read {
+        true => Ok(()),
+        false => Err(format!(
+            "{name}: the walk gives {walked}, the reading {read}, of {what}"
+        )),
+    }
+}
+
+/// `toml.parse`, `toml.parse_map` and `toml.parse_list` of the text
+/// `text` into a value of each of the types of
+/// [`check_json_decoders_agree`]: the reading of the text
+/// (`decode::seed`) gives what the walk of the document's tree gives,
+/// value or error, to the byte.
+pub fn check_toml_decoders_agree(text: &str) -> Result<(), String> {
+    use crate::builtins::decode::{Holes, Reader, seed};
+    use crate::builtins::toml;
+    thread_local! {
+        static TARGETS: JsonTargets = JsonTargets::new();
+    }
+    TARGETS.with(|targets| {
+        let none = |_, _: &[crate::typeinfo::FieldType]| None;
+        let reader = Reader::with_impls(&targets.vm.runtime, &none, Holes::Collect(Vec::new()));
+        let keys = |n: usize| format!("{n} keys");
+        let doc = toml::document(text);
+        for (name, expected) in &targets.targets {
+            for top in [
+                seed::Top::One(expected),
+                seed::Top::Map(expected),
+                seed::Top::List(expected, &keys),
+            ] {
+                let walked = toml::walked(&reader, &top, &doc);
+                let read = match toml::read_text(&reader, &top, text) {
+                    Ok(Some(decoded)) => crate::builtins::decode::result(&toml::RULES, decoded),
+                    Err(result) => result,
+                    // (A table the walk reads as no table of the text.)
+                    Ok(None) => continue,
+                };
+                agree(name, &walked, &read, text)?;
+            }
+        }
+        Ok(())
+    })
+}
+
+/// A TOML text made of `bytes`, which choose each part of it: keys and
+/// tables of the shapes of the types [`check_toml_decoders_agree`]
+/// decodes, arrays of tables, inline tables, quoted keys, keys written
+/// twice, every kind of date and time literal and ones that are no day
+/// or time, integers and floats at their edges (`nan`, `inf`), and now
+/// and then broken text.
+pub fn toml_text_of(bytes: &[u8]) -> String {
+    let mut maker = TomlMaker {
+        bytes,
+        at: 0,
+        out: String::new(),
+    };
+    let lines = 1 + usize::from(maker.next() % 8);
+    for _ in 0..lines {
+        maker.line();
+    }
+    maker.out
+}
+
+/// What [`toml_text_of`] makes a text with.
+struct TomlMaker<'b> {
+    bytes: &'b [u8],
+    at: usize,
+    out: String,
+}
+
+impl TomlMaker<'_> {
+    const KEYS: &'static [&'static str] = &[
+        "id",
+        "name",
+        "score",
+        "tags",
+        "note",
+        "ok",
+        "weight",
+        "value",
+        "more",
+        "extra",
+        "children",
+        "day",
+        "at",
+        "stamp",
+        "variant",
+        "fields",
+        "a",
+        "b",
+        "\"a b\"",
+        "\"\"",
+        "int",
+        "float",
+        "string",
+        "bool",
+        "maybe",
+        "ints",
+        "pair",
+        "map",
+        "tag",
+        "recs",
+        "boxed",
+        "shape",
+        "shapes",
+        "node",
+        "moment",
+        "mix",
+        "\"$__toml_private_datetime\"",
+    ];
+    const VALUES: &'static [&'static str] = &[
+        "0",
+        "-1",
+        "+7",
+        "9223372036854775807",
+        "-9223372036854775808",
+        "0x10",
+        "1_000",
+        "1.0",
+        "1e3",
+        "-0.0",
+        "6.626e-34",
+        "nan",
+        "inf",
+        "-inf",
+        "+inf",
+        "true",
+        "false",
+        "\"a\"",
+        "'lit'",
+        "\"Dot\"",
+        "\"Rect\"",
+        "\"Circle\"",
+        "\"1979-05-27\"",
+        "\"07:32:00\"",
+        "\"\"\"multi\nline\"\"\"",
+        "1979-05-27T07:32:00Z",
+        "1979-05-27T00:32:00.999999-07:00",
+        "1979-05-27 07:32:00Z",
+        "1979-05-27T07:32:00",
+        "1979-05-27",
+        "07:32:00",
+        "00:32:00.5",
+        "1979-02-30",
+        "24:00:00",
+        "1979-02-29T25:00:00",
+        "2016-12-31T23:59:60Z",
+        "[]",
+        "{}",
+    ];
+
+    fn next(&mut self) -> u8 {
+        let byte = self.bytes.get(self.at).copied().unwrap_or(0);
+        self.at += 1;
+        byte
+    }
+
+    fn pick(&mut self, from: &[&'static str]) -> &'static str {
+        from[usize::from(self.next()) % from.len()]
+    }
+
+    fn line(&mut self) {
+        match self.next() % 10 {
+            0 => {
+                let key = self.pick(Self::KEYS);
+                self.out.push_str(&format!("[{key}]\n"));
+            }
+            1 => {
+                let key = self.pick(Self::KEYS);
+                self.out.push_str(&format!("[[{key}]]\n"));
+            }
+            2 => {
+                let (a, b) = (self.pick(Self::KEYS), self.pick(Self::KEYS));
+                self.out.push_str(&format!("{a}.{b} = "));
+                self.value(0);
+                self.out.push('\n');
+            }
+            3 => {
+                let broken = self.pick(&["= 1", "a = ", "[x", "a = [1,", "a = {b = 1", "a = 1 2"]);
+                self.out.push_str(broken);
+                self.out.push('\n');
+            }
+            _ => {
+                let key = self.pick(Self::KEYS);
+                self.out.push_str(&format!("{key} = "));
+                self.value(0);
+                self.out.push('\n');
+            }
+        }
+    }
+
+    fn value(&mut self, depth: usize) {
+        match self.next() % 8 {
+            0 | 1 if depth < 4 => {
+                let n = self.next() % 4;
+                self.out.push('[');
+                for k in 0..n {
+                    if k > 0 {
+                        self.out.push_str(", ");
+                    }
+                    self.value(depth + 1);
+                }
+                self.out.push(']');
+            }
+            2 if depth < 4 => {
+                let n = self.next() % 4;
+                self.out.push('{');
+                for k in 0..n {
+                    if k > 0 {
+                        self.out.push(',');
+                    }
+                    let key = self.pick(Self::KEYS);
+                    self.out.push_str(&format!(" {key} = "));
+                    self.value(depth + 1);
+                }
+                self.out.push_str(" }");
+            }
+            // A variant with fields, its two keys in either order.
+            3 if depth < 4 => {
+                let name = self.pick(&[
+                    "\"Rect\"",
+                    "\"Circle\"",
+                    "\"Named\"",
+                    "\"Dot\"",
+                    "1979-05-27",
+                ]);
+                let n = self.next() % 3;
+                let mut fields = String::from("[");
+                for k in 0..n {
+                    if k > 0 {
+                        fields.push_str(", ");
+                    }
+                    let value = self.pick(Self::VALUES);
+                    fields.push_str(value);
+                }
+                fields.push(']');
+                match self.next() % 2 {
+                    0 => self
+                        .out
+                        .push_str(&format!("{{ variant = {name}, fields = {fields} }}")),
+                    _ => self
+                        .out
+                        .push_str(&format!("{{ fields = {fields}, variant = {name} }}")),
+                }
+            }
+            _ => {
+                let value = self.pick(Self::VALUES);
+                self.out.push_str(value);
+            }
+        }
+    }
 }
 
 /// A JSON text made of `bytes`, which choose each part of it: values of
