@@ -34,6 +34,7 @@ use std::borrow::Cow;
 use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use serde::de::value::{MapDeserializer, SeqDeserializer};
@@ -67,6 +68,7 @@ pub(crate) type Read<E> = Result<Option<Outcome>, E>;
 pub(crate) fn json_text(r: &Reader, expected: &FieldType, text: &[u8]) -> Read<serde_json::Error> {
     let at = Cell::new(0);
     let walk = Cell::new(false);
+    let kept = Cell::new(None);
     let cx = Cx {
         r,
         rules: &json::RULES,
@@ -74,6 +76,7 @@ pub(crate) fn json_text(r: &Reader, expected: &FieldType, text: &[u8]) -> Read<s
         digits: Digits::Text(json::Node::new(text, &at)),
         marked: None,
         walk: &walk,
+        kept: &kept,
     };
     let mut de = serde_json::Deserializer::from_slice(text);
     let read = Seed {
@@ -101,6 +104,7 @@ pub(crate) fn json_document(
     doc: &serde_json::Value,
 ) -> Option<Outcome> {
     let walk = Cell::new(false);
+    let kept = Cell::new(None);
     let cx = Cx {
         r,
         rules: &json::RULES,
@@ -108,16 +112,77 @@ pub(crate) fn json_document(
         digits: Digits::Read,
         marked: None,
         walk: &walk,
+        kept: &kept,
     };
     let read = Seed {
         cx: &cx,
         expected,
         at: &At::Top,
     }
-    .deserialize(doc);
+    .deserialize(ValueDe(doc));
     match read {
         Ok(decoded) if !walk.get() => Some(decoded),
         _ => None,
+    }
+}
+
+/// A JSON document already read, read as serde_json reads it, but for
+/// the order of an object's members: its `variant` comes first, so that
+/// a variant's fields are decoded as they are read, not kept. (No other
+/// part of a decoding depends on the order of the members of an object
+/// that has each key once.)
+#[derive(Clone, Copy)]
+struct ValueDe<'d>(&'d serde_json::Value);
+
+impl<'de> de::Deserializer<'de> for ValueDe<'de> {
+    type Error = de::value::Error;
+
+    fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        use serde_json::Value as J;
+        match self.0 {
+            J::Null => visitor.visit_unit(),
+            J::Bool(b) => visitor.visit_bool(*b),
+            J::Number(n) => match (n.as_u64(), n.as_i64(), n.as_f64()) {
+                (Some(n), _, _) => visitor.visit_u64(n),
+                (None, Some(n), _) => visitor.visit_i64(n),
+                (None, None, Some(f)) => visitor.visit_f64(f),
+                // (A number serde_json holds is an `i64`, a `u64` or an
+                // `f64`.)
+                (None, None, None) => visitor.visit_f64(f64::NAN),
+            },
+            J::String(s) => visitor.visit_borrowed_str(s),
+            J::Array(items) => {
+                let mut seq = SeqDeserializer::new(items.iter().map(ValueDe));
+                let read = visitor.visit_seq(&mut seq)?;
+                seq.end()?;
+                Ok(read)
+            }
+            J::Object(members) => {
+                let name = members.get_key_value("variant");
+                let rest = members.iter().filter(|(key, _)| *key != "variant");
+                let entries = name.into_iter().chain(rest);
+                let mut map = MapDeserializer::new(
+                    entries.map(|(key, value)| (key.as_str(), ValueDe(value))),
+                );
+                let read = visitor.visit_map(&mut map)?;
+                map.end()?;
+                Ok(read)
+            }
+        }
+    }
+
+    serde::forward_to_deserialize_any! {
+        bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
+        bytes byte_buf option unit unit_struct newtype_struct seq tuple
+        tuple_struct map struct enum identifier ignored_any
+    }
+}
+
+impl<'de> IntoDeserializer<'de, de::value::Error> for ValueDe<'de> {
+    type Deserializer = Self;
+
+    fn into_deserializer(self) -> Self {
+        self
     }
 }
 
@@ -143,6 +208,7 @@ pub(crate) fn toml_text(
     marked: &'static str,
 ) -> Read<::toml::de::Error> {
     let walk = Cell::new(false);
+    let kept = Cell::new(None);
     let cx = Cx {
         r,
         rules: &toml::RULES,
@@ -150,6 +216,7 @@ pub(crate) fn toml_text(
         digits: Digits::Read,
         marked: Some(marked),
         walk: &walk,
+        kept: &kept,
     };
     let de = ::toml::Deserializer::new(text);
     let map;
@@ -195,6 +262,9 @@ struct Cx<'c> {
     marked: Option<&'static str>,
     /// Set where the document is found to be the walk's.
     walk: &'c Cell<bool>,
+    /// What was kept of a part that is read again ([`Capture`]), handed
+    /// over as it is.
+    kept: &'c Cell<Option<Content>>,
 }
 
 impl Cx<'_> {
@@ -504,6 +574,17 @@ impl<'s> Seed<'s> {
 
     /// The value of the part that is `scalar`.
     fn scalar<E: de::Error>(self, scalar: Scalar) -> Result<Outcome, E> {
+        // (The most of a document: no type to look up.)
+        if let FieldType::String
+        | FieldType::Int
+        | FieldType::Float
+        | FieldType::Bool
+        | FieldType::Date
+        | FieldType::Time
+        | FieldType::DateTime = self.expected
+        {
+            return Ok(self.primitive(scalar));
+        }
         let rules = self.cx.rules;
         let at = self.at;
         let kind = self.cx.format.kind(scalar);
@@ -611,7 +692,7 @@ impl<'s> Seed<'s> {
             // The elements in order, up to the first that is no value of
             // the type.
             Want::List(inner) => {
-                let mut values = Vec::new();
+                let mut values = Vec::with_capacity(room(&seq));
                 let mut index = 0;
                 while let Some(decoded) = seq.next_element_seed(self.of(inner, &at.index(index)))? {
                     match decoded {
@@ -783,8 +864,11 @@ impl<'s> Seed<'s> {
     /// The variant of the enum type `ty` at its type arguments `args`
     /// that the table of `entries` is, as `json.stringify` writes one
     /// with fields: `{"fields":[...],"variant":"Name"}`, other keys
-    /// ignored. The two may come in either order: they are kept as they
-    /// are read, and decoded once the table ends.
+    /// ignored. The fields are decoded as they are read where the name
+    /// came before them; where they come first they are kept as read
+    /// (once: a variant in them is read from what is kept, which it
+    /// shares) and decoded once the name is read. A table that gives
+    /// either key twice is the walk's.
     fn variant<'de, A: MapAccess<'de>>(
         self,
         mut entries: Entries<'de, A>,
@@ -794,74 +878,227 @@ impl<'s> Seed<'s> {
         let cx = self.cx;
         let at = self.at;
         let mut name = None;
-        let mut items = None;
+        let mut fields = None;
         while let Some(key) = entries.key()? {
             match &*key {
+                "variant" if name.is_some() => return Err(cx.for_the_walk()),
+                "fields" if fields.is_some() => return Err(cx.for_the_walk()),
                 "variant" => name = Some(entries.value(Capture(*cx))?),
-                "fields" => items = Some(entries.value(Capture(*cx))?),
+                "fields" => {
+                    fields = Some(match named(cx, ty, name.as_ref(), at) {
+                        Ok(tag) => Fields::Read(entries.value(self.fields(&tag, args))?),
+                        // (The name's error is the variant's.)
+                        Err(_) if name.is_some() => {
+                            entries.value(self.skip())?;
+                            Fields::Passed
+                        }
+                        Err(_) => Fields::Kept(entries.value(Capture(*cx))?),
+                    })
+                }
                 _ => entries.value(self.skip())?,
             }
         }
-        let at_name = at.key("variant");
-        let name = match &name {
-            Some(name) => match name.scalar(cx) {
-                Some(Scalar::String(name)) => name,
-                _ => return Ok(Err(Error::mismatch("String", name.kind(cx), &at_name))),
-            },
-            None => return Ok(Err(Error::MissingField(at_name.to_string()))),
+        let tag = match named(cx, ty, name.as_ref(), at) {
+            Ok(tag) => tag,
+            Err(e) => return Ok(Err(e)),
         };
-        let Some(tag) = Tag::named(ty, name) else {
-            return Ok(Err(no_variant(ty, name, &at_name)));
-        };
-        let declared = &ty.variants()[tag.ordinal() as usize].fields;
-        // (A variant without fields is its name, never a table.)
-        if declared.is_empty() {
-            return Ok(Err(Error::mismatch("String", cx.format.table(), at)));
-        }
-        let at_fields = at.key("fields");
-        let items = match &items {
-            Some(Content::Array(items)) => &items[..],
-            Some(items) => return Ok(Err(Error::mismatch("array", items.kind(cx), &at_fields))),
-            None => &[],
-        };
-        if items.len() != declared.len() {
-            let message = format_args!(
-                "variant `{name}` of `{}` has {}, got {}",
-                ty.name,
-                count(declared.len()),
-                items.len()
-            );
-            return Ok(Err(Error::other(message, &at_fields)));
-        }
-        // The fields, read again from what was kept.
-        let cx = Cx {
-            digits: Digits::Read,
-            ..*cx
-        };
-        let mut fields = Vec::with_capacity(items.len());
-        for (index, (item, field)) in items.iter().zip(declared).enumerate() {
-            let field = field.instantiated(args);
-            let seed = Seed {
-                cx: &cx,
-                expected: &field,
-                at: &at_fields.index(index),
-            };
-            match seed
-                .deserialize(item)
-                .map_err(<A::Error as de::Error>::custom)?
-            {
-                Ok(value) => fields.push(value),
-                // (A field no decoder fills was refused before the
-                // document was read; this is the fallback.)
-                Err(Error::Unsupported(declared)) => {
-                    let message = variant_field_message(&ty.name, name, &declared);
-                    return Ok(Err(Error::Other(message)));
-                }
-                Err(e) => return Ok(Err(e)),
+        Ok(match fields {
+            Some(Fields::Read(decoded)) => decoded,
+            Some(Fields::Kept(kept)) => {
+                // The fields, read again from what was kept.
+                let cx = Cx {
+                    digits: Digits::Read,
+                    ..*cx
+                };
+                let seed = Seed { cx: &cx, ..self };
+                let kept = ContentDe {
+                    content: &kept,
+                    kept: cx.kept,
+                };
+                (seed.fields(&tag, args).deserialize(kept))
+                    .map_err(<A::Error as de::Error>::custom)?
             }
-        }
-        Ok(Ok(Value::variant(tag, fields)))
+            Some(Fields::Passed) => unreachable!("a name that is no variant's is the error"),
+            None => self.fields(&tag, args).count(0, Vec::new(), None),
+        })
     }
+
+    /// The decoding of the `fields` of the variant `tag` at the type
+    /// arguments `args`.
+    fn fields<'f>(&'f self, tag: &'f Tag, args: &'f [FieldType]) -> FieldsSeed<'f> {
+        FieldsSeed {
+            seed: *self,
+            tag,
+            args,
+        }
+    }
+}
+
+/// What a variant's `fields` are while its table is read.
+enum Fields {
+    /// Decoded as they were read, the name before them.
+    Read(Outcome),
+    /// Kept as read, the name after them.
+    Kept(Content),
+    /// Passed by: the name before them is no variant's.
+    Passed,
+}
+
+/// The variant of the enum type `ty` that the kept `variant` of its
+/// table names (`at` a path), one with fields; or the error of the
+/// name, as the walk takes it: missing, no string, no variant's, or one
+/// of no fields.
+fn named(cx: &Cx, ty: &Arc<TypeInfo>, name: Option<&Content>, at: &At) -> Result<Tag, Error> {
+    let at_name = at.key("variant");
+    let name = match name {
+        Some(name) => match name.scalar(cx) {
+            Some(Scalar::String(name)) => name,
+            _ => return Err(Error::mismatch("String", name.kind(cx), &at_name)),
+        },
+        None => return Err(Error::MissingField(at_name.to_string())),
+    };
+    let tag = Tag::named(ty, name).ok_or_else(|| no_variant(ty, name, &at_name))?;
+    // (A variant without fields is its name, never a table.)
+    match ty.variants()[tag.ordinal() as usize].fields.is_empty() {
+        true => Err(Error::mismatch("String", cx.format.table(), at)),
+        false => Ok(tag),
+    }
+}
+
+/// The decoding of the `fields` of the variant `tag` of a table `at` a
+/// path of its seed, at the type arguments `args`: an array of as many
+/// elements as the variant has fields, which it takes before any
+/// element is decoded, each decoded as the variant declares it.
+struct FieldsSeed<'f> {
+    seed: Seed<'f>,
+    tag: &'f Tag,
+    args: &'f [FieldType],
+}
+
+impl FieldsSeed<'_> {
+    /// What `count` elements, of which `values` were decoded up to the
+    /// first `error`, give.
+    fn count(&self, count: usize, values: Vec<Value>, error: Option<Error>) -> Outcome {
+        let ty = self.tag.ty();
+        let variant = &ty.variants()[self.tag.ordinal() as usize];
+        let declared = variant.fields.len();
+        let at_fields = self.seed.at.key("fields");
+        if count != declared {
+            let message = format_args!(
+                "variant `{}` of `{}` has {}, got {count}",
+                variant.name,
+                ty.name,
+                self::count(declared),
+            );
+            return Err(Error::other(message, &at_fields));
+        }
+        match error {
+            // (A field no decoder fills was refused before the document
+            // was read; this is the fallback.)
+            Some(Error::Unsupported(declared)) => Err(Error::Other(variant_field_message(
+                &ty.name,
+                &variant.name,
+                &declared,
+            ))),
+            Some(e) => Err(e),
+            None => Ok(Value::variant(self.tag.clone(), values)),
+        }
+    }
+
+    fn not(&self, kind: &'static str) -> Outcome {
+        Err(Error::mismatch("array", kind, &self.seed.at.key("fields")))
+    }
+
+    fn scalar<E>(&self, scalar: Scalar) -> Result<Outcome, E> {
+        Ok(self.not(self.seed.cx.format.kind(scalar)))
+    }
+}
+
+impl<'de> DeserializeSeed<'de> for FieldsSeed<'_> {
+    type Value = Outcome;
+
+    fn deserialize<D: de::Deserializer<'de>>(self, d: D) -> Result<Outcome, D::Error> {
+        d.deserialize_any(self)
+    }
+}
+
+impl<'de> Visitor<'de> for FieldsSeed<'_> {
+    type Value = Outcome;
+
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("a variant's fields")
+    }
+
+    fn visit_bool<E: de::Error>(self, b: bool) -> Result<Outcome, E> {
+        self.scalar(Scalar::Bool(b))
+    }
+
+    fn visit_i64<E: de::Error>(self, n: i64) -> Result<Outcome, E> {
+        self.seed.cx.digits.integer();
+        self.scalar(Scalar::Int(n))
+    }
+
+    fn visit_u64<E: de::Error>(self, n: u64) -> Result<Outcome, E> {
+        self.seed.cx.digits.integer();
+        self.scalar(Scalar::unsigned(n))
+    }
+
+    fn visit_f64<E: de::Error>(self, f: f64) -> Result<Outcome, E> {
+        self.scalar(self.seed.cx.digits.float(f))
+    }
+
+    fn visit_str<E: de::Error>(self, s: &str) -> Result<Outcome, E> {
+        self.scalar(self.seed.cx.string(s))
+    }
+
+    fn visit_unit<E: de::Error>(self) -> Result<Outcome, E> {
+        self.scalar(Scalar::Null)
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Outcome, A::Error> {
+        let declared = &self.tag.ty().variants()[self.tag.ordinal() as usize].fields;
+        let at_fields = self.seed.at.key("fields");
+        let mut values = Vec::with_capacity(declared.len());
+        let mut error = None;
+        let mut count = 0;
+        loop {
+            let read = match declared.get(count) {
+                Some(field) if error.is_none() => {
+                    let field = field.instantiated(self.args);
+                    seq.next_element_seed(self.seed.of(&field, &at_fields.index(count)))?
+                }
+                _ => seq
+                    .next_element_seed(self.seed.skip())?
+                    .map(|()| Ok(Value::Unit)),
+            };
+            match read {
+                Some(Ok(value)) if error.is_none() => values.push(value),
+                Some(Ok(_)) => {}
+                Some(Err(e)) => error = Some(e),
+                None => break,
+            }
+            count += 1;
+        }
+        Ok(self.count(count, values, error))
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Outcome, A::Error> {
+        let cx = self.seed.cx;
+        let first = match open(cx, &mut map)? {
+            Opened::Datetime(text) => return self.scalar(Scalar::Datetime(&text)),
+            Opened::Table(first) => first,
+        };
+        Entries { first, map }.skip(self.seed.skip())?;
+        Ok(self.not(cx.format.table()))
+    }
+}
+
+/// The room to make for the elements of the array `seq` reads: as many
+/// as it says it has. (Only a document already read says: the parser of
+/// a JSON text does not, and TOML's and a parsed document's say how
+/// many they hold.)
+fn room<'de, A: SeqAccess<'de>>(seq: &A) -> usize {
+    seq.size_hint().unwrap_or(0)
 }
 
 /// The variant of the enum type `ty` whose name is the string `name`,
@@ -1188,8 +1425,11 @@ impl<'de> Visitor<'de> for Skip<'_> {
     }
 }
 
-/// A part of a document kept as it is read, to be decoded later (the
-/// `variant` and `fields` of a variant, which may come in either order).
+/// A part of a document kept as it is read, to be decoded later (a
+/// variant's `variant`, and its `fields` where they come first). An
+/// array or a table is shared: a part of it is kept again without a
+/// copy ([`ContentDe`]).
+#[derive(Clone)]
 enum Content {
     Null,
     Bool(bool),
@@ -1198,9 +1438,9 @@ enum Content {
     String(String),
     /// A TOML date or time literal, as its text.
     Datetime(String),
-    Array(Vec<Content>),
+    Array(Rc<[Content]>),
     /// A table's entries in the order read, a key written twice too.
-    Table(Vec<(String, Content)>),
+    Table(Rc<[(String, Content)]>),
 }
 
 impl Content {
@@ -1238,6 +1478,11 @@ impl Content {
     }
 }
 
+/// The name under which [`Capture`] asks for a part: of what was kept,
+/// the part itself is handed over ([`Cx::kept`]), of a parser's text the
+/// part is read.
+const KEPT: &str = "$__silt_kept";
+
 /// The reading of a part into the [`Content`] that keeps it.
 #[derive(Clone, Copy)]
 struct Capture<'t>(Cx<'t>);
@@ -1246,7 +1491,9 @@ impl<'de> DeserializeSeed<'de> for Capture<'_> {
     type Value = Content;
 
     fn deserialize<D: de::Deserializer<'de>>(self, d: D) -> Result<Content, D::Error> {
-        d.deserialize_any(self)
+        #[cfg(test)]
+        tests::CAPTURED.with(|captured| captured.set(captured.get() + 1));
+        d.deserialize_newtype_struct(KEPT, self)
     }
 }
 
@@ -1255,6 +1502,10 @@ impl<'de> Visitor<'de> for Capture<'_> {
 
     fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         f.write_str("a document")
+    }
+
+    fn visit_newtype_struct<D: de::Deserializer<'de>>(self, d: D) -> Result<Content, D::Error> {
+        d.deserialize_any(self)
     }
 
     fn visit_bool<E: de::Error>(self, b: bool) -> Result<Content, E> {
@@ -1284,16 +1535,17 @@ impl<'de> Visitor<'de> for Capture<'_> {
         Ok(Content::String(s))
     }
 
+    // (Or what was kept, handed over.)
     fn visit_unit<E: de::Error>(self) -> Result<Content, E> {
-        Ok(Content::Null)
+        Ok(self.0.kept.take().unwrap_or(Content::Null))
     }
 
     fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Content, A::Error> {
-        let mut items = Vec::new();
+        let mut items = Vec::with_capacity(room(&seq));
         while let Some(item) = seq.next_element_seed(self)? {
             items.push(item);
         }
-        Ok(Content::Array(items))
+        Ok(Content::Array(items.into()))
     }
 
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Content, A::Error> {
@@ -1306,17 +1558,25 @@ impl<'de> Visitor<'de> for Capture<'_> {
         while let Some(key) = entries.key()? {
             members.push((key.into_owned(), entries.value(self)?));
         }
-        Ok(Content::Table(members))
+        Ok(Content::Table(members.into()))
     }
 }
 
-/// What was kept is read as its parser gave it: a TOML date or time
-/// literal as the table of its mark.
-impl<'de> de::Deserializer<'de> for &'de Content {
+/// What was kept, read as its parser gave it: a TOML date or time
+/// literal as the table of its mark. A part [`Capture`] asks for is
+/// handed over in `kept`, shared, not read.
+#[derive(Clone, Copy)]
+struct ContentDe<'a> {
+    content: &'a Content,
+    kept: &'a Cell<Option<Content>>,
+}
+
+impl<'de> de::Deserializer<'de> for ContentDe<'de> {
     type Error = de::value::Error;
 
     fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        match self {
+        let kept = self.kept;
+        match self.content {
             Content::Null => visitor.visit_unit(),
             Content::Bool(b) => visitor.visit_bool(*b),
             Content::Int(n) => visitor.visit_i64(*n),
@@ -1329,13 +1589,15 @@ impl<'de> de::Deserializer<'de> for &'de Content {
                 Ok(read)
             }
             Content::Array(items) => {
-                let mut seq = SeqDeserializer::new(items.iter());
+                let items = items.iter().map(|content| ContentDe { content, kept });
+                let mut seq = SeqDeserializer::new(items);
                 let read = visitor.visit_seq(&mut seq)?;
                 seq.end()?;
                 Ok(read)
             }
             Content::Table(members) => {
-                let entries = members.iter().map(|(key, value)| (key.as_str(), value));
+                let entries = (members.iter())
+                    .map(|(key, content)| (key.as_str(), ContentDe { content, kept }));
                 let mut map = MapDeserializer::new(entries);
                 let read = visitor.visit_map(&mut map)?;
                 map.end()?;
@@ -1344,14 +1606,28 @@ impl<'de> de::Deserializer<'de> for &'de Content {
         }
     }
 
+    fn deserialize_newtype_struct<V: Visitor<'de>>(
+        self,
+        name: &'static str,
+        visitor: V,
+    ) -> Result<V::Value, Self::Error> {
+        match name {
+            KEPT => {
+                self.kept.set(Some(self.content.clone()));
+                visitor.visit_unit()
+            }
+            _ => visitor.visit_newtype_struct(self),
+        }
+    }
+
     serde::forward_to_deserialize_any! {
         bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
-        bytes byte_buf option unit unit_struct newtype_struct seq tuple
+        bytes byte_buf option unit unit_struct seq tuple
         tuple_struct map struct enum identifier ignored_any
     }
 }
 
-impl<'de> IntoDeserializer<'de, de::value::Error> for &'de Content {
+impl<'de> IntoDeserializer<'de, de::value::Error> for ContentDe<'de> {
     type Deserializer = Self;
 
     fn into_deserializer(self) -> Self {
@@ -1366,7 +1642,7 @@ struct JsonSeed<'t>(Cx<'t>);
 impl JsonSeed<'_> {
     /// The `json.Array` of the array `seq` reads.
     fn array<'de, A: SeqAccess<'de>>(self, mut seq: A) -> Result<Value, A::Error> {
-        let mut items = Vec::new();
+        let mut items = Vec::with_capacity(room(&seq));
         while let Some(item) = seq.next_element_seed(self)? {
             items.push(item);
         }
@@ -1438,5 +1714,96 @@ impl<'de> Visitor<'de> for JsonSeed<'_> {
             Opened::Table(first) => first,
         };
         self.table(Entries { first, map })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::typeinfo::FieldType;
+
+    thread_local! {
+        /// How many parts the readings of this thread kept.
+        pub(super) static CAPTURED: Cell<usize> = const { Cell::new(0) };
+    }
+
+    /// A runtime that knows `type E { Wrap(E), Leaf(List(Int)) }` and
+    /// `type R { e: E }`, and the field types of the two.
+    fn runtime() -> (crate::vm::Vm, FieldType, FieldType) {
+        let source = "type E { Wrap(E), Leaf(List(Int)) }\ntype R { e: E }\n";
+        let program = crate::session::testing::compile_decls_str(source)
+            .unwrap_or_else(|e| panic!("the types compile: {}", e[0].message));
+        let vm = crate::vm::Vm::new(crate::vm::HostIo::process());
+        for info in program.types.iter() {
+            vm.runtime.types.lock().insert(info.clone());
+        }
+        let id = |name: &str| {
+            (program.types.iter())
+                .find(|info| info.name == name)
+                .expect("the type is described")
+                .id
+        };
+        (vm, FieldType::Enum(id("E")), FieldType::Record(id("R")))
+    }
+
+    /// The variant `Leaf` of `numbers` numbers in `levels` `Wrap`s, each
+    /// variant's name after its fields (`toml`: as an inline table).
+    fn nested(numbers: usize, levels: usize, toml: bool) -> String {
+        let (eq, comma) = match toml {
+            true => (" = ", ", "),
+            false => (":", ","),
+        };
+        let key = |key: &str| match toml {
+            true => key.to_string(),
+            false => format!("\"{key}\""),
+        };
+        let variant = |name: &str, fields: String| {
+            let (fields_key, variant_key) = (key("fields"), key("variant"));
+            format!("{{{fields_key}{eq}[{fields}]{comma}{variant_key}{eq}\"{name}\"}}")
+        };
+        let list: Vec<String> = (0..numbers).map(|n| n.to_string()).collect();
+        let mut doc = variant("Leaf", format!("[{}]", list.join(comma)));
+        for _ in 0..levels {
+            doc = variant("Wrap", doc);
+        }
+        doc
+    }
+
+    /// How many parts `read` kept, and that it decoded a variant.
+    fn kept(read: impl FnOnce() -> Option<Outcome>) -> usize {
+        CAPTURED.with(|captured| captured.set(0));
+        let decoded = read().expect("the reading decodes the document");
+        assert!(decoded.is_ok(), "{:?}", decoded.err());
+        CAPTURED.with(Cell::get)
+    }
+
+    /// A variant's fields that come before its name are kept once: a
+    /// variant nested in them is handed its part of what is kept, not
+    /// kept again (the parts kept grew with the depth times the size of
+    /// the document); a document already read keeps only the names.
+    #[test]
+    fn nested_variants_are_kept_once() {
+        let (vm, e, r) = runtime();
+        let reader = Reader::new(&vm.runtime);
+        const NUMBERS: usize = 1_000;
+        for levels in [1, 10, 20] {
+            let text = nested(NUMBERS, levels, false);
+            let from_text = kept(|| json_text(&reader, &e, text.as_bytes()).expect("JSON"));
+            assert!(
+                from_text <= NUMBERS + 10 * levels,
+                "{levels} levels: {from_text} parts kept"
+            );
+            let doc: serde_json::Value = serde_json::from_str(&text).expect("JSON");
+            let from_doc = kept(|| json_document(&reader, &e, &doc));
+            // (Each variant's name alone.)
+            assert_eq!(from_doc, levels + 1, "{levels} levels of a document read");
+            let toml = format!("e = {}\n", nested(NUMBERS, levels.min(10), true));
+            let top = Top::One(&r);
+            let from_toml = kept(|| toml_text(&reader, &top, &toml, "\u{0}").expect("TOML"));
+            assert!(
+                from_toml <= NUMBERS + 10 * levels,
+                "{levels} levels of TOML: {from_toml} parts kept"
+            );
+        }
     }
 }

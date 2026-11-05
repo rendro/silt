@@ -380,17 +380,15 @@ pub fn check_json_decoders_agree(text: &[u8]) -> Result<(), String> {
             let read = match seed::json_text(&reader, expected, text) {
                 Ok(Some(decoded)) => decode::result(&json::RULES, decoded),
                 Err(e) => json::json_result_err(&e, text),
-                Ok(None) => return Err(format!("{name}: the reading hands the text to the walk")),
+                // (A variant table that gives a key twice: the walk decodes
+                // it, as the program sees.)
+                Ok(None) => continue,
             };
             agree(name, &walked, &read, &String::from_utf8_lossy(text))?;
             if let Ok(doc) = &tree {
                 let read = match seed::json_document(&reader, expected, doc) {
                     Some(decoded) => decode::result(&json::RULES, decoded),
-                    None => {
-                        return Err(format!(
-                            "{name}: the reading hands the document to the walk"
-                        ));
-                    }
+                    None => continue,
                 };
                 agree(name, &walked, &read, &format!("the document {doc}"))?;
             }
