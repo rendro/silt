@@ -847,6 +847,9 @@ impl Printer<'_> {
         docs.push(self.where_clauses(&f.where_clauses));
         if !f.is_signature_only {
             docs.push(space());
+            // (A comment between the signature and its `{` belongs to
+            // the signature, indented as a `where` clause is.)
+            docs.push(Doc::nest(self.dangling()));
             docs.push(self.block(&f.body));
         }
         Doc::concat(docs)
