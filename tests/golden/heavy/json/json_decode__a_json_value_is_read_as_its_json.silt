@@ -1,7 +1,7 @@
--- json.decode reads a json.Value as the JSON json.stringify writes of
--- it: a json.Float of a whole number in Int's range is an Int, an
--- object's keys in any order; a value nested more than 1,000 levels
--- is the encoder's error, whatever the type.
+-- json.decode reads a json.Value as json.parse read the text it holds:
+-- a json.Int is an Int and a json.Float no Int, whatever its value; an
+-- object's keys in any order; a value nested more than 1,000 levels is
+-- the encoder's error, whatever the type.
 import json
 import list
 

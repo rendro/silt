@@ -293,9 +293,10 @@ pub(crate) fn json_cell(
 
 /// The `json.Value` `v` decoded into a value of `expected` by `r`, its
 /// parts of a type with a written impl as `parts` says (`json.decode`,
-/// `T.decode`): read as the JSON document `json.stringify` writes of it
-/// would be, a whole number held as a `json.Float` an `Int`; or `Err` of
-/// the message of a value nested past the encoder's limit.
+/// `T.decode`): read as the JSON document `json.parse` read it from, a
+/// `json.Int` an integer and a `json.Float` a float whatever its value
+/// (so no `Int`); or `Err` of the message of a value nested past the
+/// encoder's limit.
 pub(crate) fn json_value(
     r: &Reader,
     expected: &FieldType,
@@ -329,12 +330,12 @@ pub(crate) fn json_value(
 }
 
 /// A `json.Value` `level` levels deep in the one decoded, read as the
-/// JSON of it: `json.Int(n)` and a `json.Float` of a whole number in
-/// `Int`'s range as an integer, an object's `variant` first (so that a
-/// variant's fields are decoded as they are read, not kept: no other
-/// part of a decoding depends on the order of the members of an object
-/// that has each key once). A value nested more than the encoder
-/// writes is an error, of its message.
+/// JSON of it: `json.Int(n)` as an integer, a `json.Float` as a float
+/// (as `json.parse` holds a number of a text), an object's `variant`
+/// first (so that a variant's fields are decoded as they are read, not
+/// kept: no other part of a decoding depends on the order of the
+/// members of an object that has each key once). A value nested more
+/// than the encoder writes is an error, of its message.
 struct JsonValueDe {
     value: Value,
     level: usize,
@@ -360,13 +361,7 @@ impl<'de> de::Deserializer<'de> for JsonValueDe {
             [] => visitor.visit_unit(),
             [Value::Bool(b)] => visitor.visit_bool(*b),
             [Value::Int(n)] => visitor.visit_i64(*n),
-            [Value::Float(f)] => {
-                let f = f.get();
-                match f.fract() == 0.0 && (-I64_MAX_PLUS_ONE..I64_MAX_PLUS_ONE).contains(&f) {
-                    true => visitor.visit_i64(f as i64),
-                    false => visitor.visit_f64(f),
-                }
-            }
+            [Value::Float(f)] => visitor.visit_f64(f.get()),
             [Value::String(s)] => visitor.visit_str(s),
             [Value::List(items)] => {
                 let items = items.iter().map(|value| JsonValueDe { value, level });

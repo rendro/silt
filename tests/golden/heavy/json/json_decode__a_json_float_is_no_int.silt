@@ -1,0 +1,47 @@
+-- json.decode reads a json.Value's numbers as json.parse holds them: a
+-- json.Int is an Int, a json.Float is no Int whatever its value (a
+-- whole one too: 2.0 built in code, 0.0 read from 2.5e-400, -2^63 read
+-- from -9223372036854775809), wherever the Int is: a field, an element,
+-- a map's value, a tuple's part, a variant's field. A Float takes
+-- either. json.parse of the same texts is as before, and json.decode of
+-- the json.Value a text reads into gives what json.parse gives.
+import json
+import list
+
+type R { x: Int, f: Float }
+type E { One(Int), Two(Float) }
+
+fn show(text: String) {
+  println("text {text}")
+  println("  parse Int:    {json.parse(text, Int)}")
+  println("  parse Float:  {json.parse(text, Float)}")
+  match json.parse(text, json.Value) {
+    Ok(v) -> {
+      println("  value:        {v}")
+      println("  decode Int:   {json.decode(v, Int)}")
+      println("  decode Float: {json.decode(v, Float)}")
+    }
+    Err(e) -> println("  value error: {e}")
+  }
+}
+
+fn main() {
+  list.each(["2.5e-400", "-9223372036854775809", "9223372036854775808", "1.0", "1e3", "1.5", "-0.0"]) { text ->
+    show(text)
+  }
+  println(json.decode(json.Float(2.0), Int))
+  println(json.decode(json.Float(-0.0), Int))
+  println(json.decode(json.Float(1.5), Int))
+  println(json.decode(json.Float(1e19), Int))
+  println(json.decode(json.Float(2.0), Float))
+  println(json.decode(json.Int(2), Float))
+  println(json.decode(json.Float(2.0), json.Value))
+  println(json.decode(json.Object(#{"x": json.Float(3.0), "f": json.Int(1)}), R))
+  println(json.decode(json.Object(#{"x": json.Int(3), "f": json.Float(1.0)}), R))
+  println(json.decode(json.Array([json.Int(1), json.Float(2.0)]), List(Int)))
+  println(json.decode(json.Object(#{"a": json.Float(2.0)}), Map(String, Int)))
+  println(json.decode(json.Array([json.Float(1.0), json.String("s")]), (Int, String)))
+  println(json.decode(json.Object(#{"variant": json.String("One"), "fields": json.Array([json.Float(4.0)])}), E))
+  println(json.decode(json.Object(#{"variant": json.String("Two"), "fields": json.Array([json.Int(4)])}), E))
+  println(R.decode(json.Object(#{"x": json.Float(3.0), "f": json.Int(1)})))
+}

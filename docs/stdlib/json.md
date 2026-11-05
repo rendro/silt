@@ -83,6 +83,10 @@ whose key is not `String`, a type parameter) has no decoder.
 A number of the document goes into an `Int` when it is a whole number in
 `Int`'s range (`1`, `1.0`, `1e3`). A number with a fraction (`1.5`), or one out of
 that range, is `Err(TypeMismatch("Int", ...))`: nothing is cut off or rounded.
+`json.decode` reads a `json.Value`'s numbers as `json.parse` holds them: a
+`json.Int` goes into an `Int`, and a `json.Float` into no `Int`, whatever its
+value (`json.decode(json.Float(2.0), Int)` is an `Err`), so a value decodes as
+the text it was read from does.
 
 These are the types that have [`json.Decode`](#jsondecode), which
 the four functions need of their type argument. A type is checked where it
