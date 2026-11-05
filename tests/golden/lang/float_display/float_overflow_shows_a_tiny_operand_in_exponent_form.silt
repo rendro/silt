@@ -1,0 +1,7 @@
+-- exit: 1
+-- stderr-contains: float overflow: -1.5e300 / 2.5e-10
+-- A tiny divisor is written in short exponent form too, not as
+-- hundreds of zeros.
+fn main() {
+  println(-1.5e300 / 2.5e-10)
+}

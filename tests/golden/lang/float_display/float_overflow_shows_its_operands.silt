@@ -1,8 +1,8 @@
 -- exit: 1
--- stderr-contains: float overflow: 1000000000000000000000000000000000000000000000000000000000000000000000
--- stderr-contains: 000000.0 * 10.0
--- An overflow names both operands as `println` shows them: every digit
--- of the large one, and `10.0`.
+-- stderr-contains: float overflow: 1e308 * 10.0
+-- An overflow names both operands as `println` shows them, but a very
+-- large or very small one in short exponent form: `1e308`, not its
+-- 309 digits.
 fn main() {
   println(1.0e308 * 10.0)
 }

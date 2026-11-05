@@ -92,7 +92,20 @@ fn int_overflow(op: Op, a: i64, b: i64) -> VmError {
 /// The error of `a op b` that is no Float: a NaN or an infinity.
 #[cold]
 fn float_overflow(op: Op, a: Float, b: Float) -> VmError {
+    let (a, b) = (operand(a), operand(b));
     VmError::new(format!("float overflow: {a} {} {b}", symbol(op)))
+}
+
+/// An operand of a float overflow as the message writes it: as
+/// `println` does, but in short exponent form (`1e300`) from 1e21 up
+/// and below 1e-6, where the digits would run to hundreds.
+fn operand(x: Float) -> String {
+    let v = x.get().abs();
+    if v != 0.0 && !(1e-6..1e21).contains(&v) {
+        format!("{:e}", x.get())
+    } else {
+        x.to_string()
+    }
 }
 
 /// `a op b` of operands that are not two Ints: two Floats give a
