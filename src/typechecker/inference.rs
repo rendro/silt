@@ -3756,6 +3756,49 @@ impl TypeChecker {
                     {
                         Type::Error
                     }
+                    // A type given a value (`List(())`): the argument is
+                    // the error, not the call.
+                    (Type::Generic(name, _), CallForm::Call)
+                        if name.is_builtin(crate::defs::TYPE_OF)
+                            && let Some((arg, ty)) = (args.iter().zip(&arg_types))
+                                .map(|(arg, ty)| (arg, self.apply(ty)))
+                                .find(|(_, ty)| match ty {
+                                    Type::Generic(name, _) => {
+                                        !name.is_builtin(crate::defs::TYPE_OF)
+                                    }
+                                    Type::Var(_) | Type::Error | Type::Never => false,
+                                    _ => true,
+                                }) =>
+                    {
+                        let name = match Self::callee_label(callee) {
+                            Some(name) => resolve(name).to_string(),
+                            None => self.show_type(other),
+                        };
+                        // (The value by its text when that is short.)
+                        let text = match &arg.kind {
+                            ExprKind::Unit => Some("()".to_string()),
+                            ExprKind::Int(n) => Some(n.to_string()),
+                            ExprKind::Float(x) => Some(x.to_string()),
+                            ExprKind::Bool(b) => Some(b.to_string()),
+                            ExprKind::StringLit(s)
+                                if s.len() <= 20 && !s.contains(['"', '\\', '\n', '`']) =>
+                            {
+                                Some(format!("\"{s}\""))
+                            }
+                            _ => None,
+                        };
+                        let message = match text {
+                            Some(text) => {
+                                format!("`{name}` takes a type here, and `{text}` is a value")
+                            }
+                            None => format!(
+                                "`{name}` takes a type here, and a value of type `{}` is given",
+                                self.show_type(&ty)
+                            ),
+                        };
+                        self.error(Code::TypeMismatch, message, arg.span);
+                        Type::Error
+                    }
                     (_, CallForm::Call) => {
                         // A parameter that holds a type, given type
                         // arguments (`m(Int)`): the whole type is passed.

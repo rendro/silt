@@ -1322,7 +1322,9 @@ impl<'s> Seed<'s> {
                     .map_err(<A::Error as de::Error>::custom)?
             }
             Some(Fields::Passed) => unreachable!("a name that is no variant's is the error"),
-            None => self.fields(&tag, args).count(0, Vec::new(), None),
+            // (The name is a variant's with fields: `named` refuses
+            // one without.)
+            None => Err(Error::MissingField(at.key("fields").to_string())),
         })
     }
 

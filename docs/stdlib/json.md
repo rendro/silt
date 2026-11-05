@@ -140,6 +140,7 @@ the error of a record does (here of an enum at the top):
 | no string and no object (a number, an array) | `TypeMismatch("String or object", "number")` |
 | an object that names a variant without fields | `TypeMismatch("String", "object")` |
 | an object without a `"variant"` key | `MissingField("variant")` |
+| an object without a `"fields"` key | `MissingField("fields")` |
 | a `"variant"` that is no string | `TypeMismatch("String", "number at variant")` |
 | a `"variant"` the enum has no variant of | ``Other("`Status` has no variant `Gone` at variant")`` |
 | `"fields"` that is no array | `TypeMismatch("array", "number at fields")` |
@@ -407,8 +408,10 @@ posts[1].tags")`, a `MissingField("name")` there is
 `MissingField("posts[1].tags.name")`. A message is the impl's text, and the
 path is appended to it as it is: an error the impl got from `json.decode` of
 a part of its value, `TypeMismatch("Int", "string at k")`, ends with `at k at
-posts[1].tags`. The first error in the document counts, the impl's or the
-decoder's. The toml decoders and a postgres row honour the impl too (see
+posts[1].tags`. The first error counts, the impl's or the decoder's: a
+record's errors in the order its type declares the fields, a map's in the
+sorted order of its keys; a syntax error anywhere in the text wins. The toml
+decoders and a postgres row honour the impl too (see
 [toml](toml.md#types-with-a-jsondecode-impl) and
 [postgres](postgres.md#types-with-a-jsondecode-impl)).
 
