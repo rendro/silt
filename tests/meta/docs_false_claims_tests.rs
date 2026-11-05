@@ -91,3 +91,15 @@ fn no_doc_places_a_joined_failure_at_the_join() {
         "a doc says a joined failure is reported at the join",
     );
 }
+
+/// `import x` never picks one of a builtin module, a dependency and a
+/// module of the package by an order: a dependency key named like
+/// either of the others is an error, as a module named like a builtin
+/// module is.
+#[test]
+fn no_doc_resolves_an_import_by_an_order() {
+    assert_no_doc_says(
+        &["`import x` in a module of a package means, in this order"],
+        "a doc says an import picks among same-named modules by an order",
+    );
+}
