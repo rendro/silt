@@ -1,0 +1,512 @@
+== a = 1
+a = 2
+Err(toml syntax error at byte 6: duplicate key `a` in document root)
+Err(toml syntax error at byte 6: duplicate key `a` in document root)
+Err(toml syntax error at byte 6: duplicate key `a` in document root)
+Err(toml syntax error at byte 6: duplicate key `a` in document root)
+Err(toml syntax error at byte 6: duplicate key `a` in document root)
+Err(toml syntax error at byte 6: duplicate key `a` in document root)
+Err(toml syntax error at byte 6: duplicate key `a` in document root)
+Err(toml syntax error at byte 6: duplicate key `a` in document root)
+Err(toml syntax error at byte 6: duplicate key `a` in document root)
+== [x]
+a = 1
+[x]
+b = 2
+Err(toml syntax error at byte 10: invalid table header
+duplicate key `x` in document root)
+Err(toml syntax error at byte 10: invalid table header
+duplicate key `x` in document root)
+Err(toml syntax error at byte 10: invalid table header
+duplicate key `x` in document root)
+Err(toml syntax error at byte 10: invalid table header
+duplicate key `x` in document root)
+Err(toml syntax error at byte 10: invalid table header
+duplicate key `x` in document root)
+Err(toml syntax error at byte 10: invalid table header
+duplicate key `x` in document root)
+Err(toml syntax error at byte 10: invalid table header
+duplicate key `x` in document root)
+Err(toml syntax error at byte 10: invalid table header
+duplicate key `x` in document root)
+Err(toml syntax error at byte 10: invalid table header
+duplicate key `x` in document root)
+== [[items]]
+name = "a"
+n = 1
+[[items]]
+name = "b"
+n = "two"
+Err(toml type mismatch: expected Int, got string at items[1].n)
+Err(toml missing field: s)
+Err(toml missing field: i)
+Err(toml missing field: b)
+Err(toml type mismatch: expected Int, got array at items)
+Err(toml type mismatch: expected Int, got string at items[1].n)
+Err(toml type mismatch: expected Int, got string at items[1].n)
+Err(toml type mismatch: expected Int, got table at items[0])
+Err(toml missing field: items[0].variant)
+== items = []
+p = { name = "p", n = 1 }
+t = [1, "a"]
+m = { "a b" = 1, "" = "x", "é" = 2 }
+Err(toml type mismatch: expected Int, got string at m[""])
+Err(toml missing field: s)
+Err(toml missing field: i)
+Err(toml missing field: b)
+Err(toml type mismatch: expected Int, got array at items)
+Err(toml type mismatch: expected List, got table at m)
+Err(toml.parse_list(Item): expected a document with exactly one top-level key, an array, found 4 keys)
+Err(toml.parse_list(Int): expected a document with exactly one top-level key, an array, found 4 keys)
+Err(toml.parse_list(Shape): expected a document with exactly one top-level key, an array, found 4 keys)
+== items = []
+t = [1, "a", 3]
+m = {}
+Err(expected an array of 2 elements for a tuple, got 3 at t)
+Err(toml missing field: s)
+Err(toml missing field: i)
+Err(toml missing field: b)
+Err(toml type mismatch: expected Int, got array at items)
+Err(toml type mismatch: expected List, got table at m)
+Err(toml.parse_list(Item): expected a document with exactly one top-level key, an array, found 3 keys)
+Err(toml.parse_list(Int): expected a document with exactly one top-level key, an array, found 3 keys)
+Err(toml.parse_list(Shape): expected a document with exactly one top-level key, an array, found 3 keys)
+== items = []
+t = [1]
+m = { b = "x", a = "y" }
+Err(expected an array of 2 elements for a tuple, got 1 at t)
+Err(toml missing field: s)
+Err(toml missing field: i)
+Err(toml missing field: b)
+Err(toml type mismatch: expected Int, got array at items)
+Err(toml type mismatch: expected List, got table at m)
+Err(toml.parse_list(Item): expected a document with exactly one top-level key, an array, found 3 keys)
+Err(toml.parse_list(Int): expected a document with exactly one top-level key, an array, found 3 keys)
+Err(toml.parse_list(Shape): expected a document with exactly one top-level key, an array, found 3 keys)
+== items = [{ name = 1, n = 1 }]
+t = [1, 2]
+m = {}
+Err(toml type mismatch: expected String, got integer at items[0].name)
+Err(toml missing field: s)
+Err(toml missing field: i)
+Err(toml missing field: b)
+Err(toml type mismatch: expected Int, got array at items)
+Err(toml type mismatch: expected String, got integer at items[0].name)
+Err(toml.parse_list(Item): expected a document with exactly one top-level key, an array, found 3 keys)
+Err(toml.parse_list(Int): expected a document with exactly one top-level key, an array, found 3 keys)
+Err(toml.parse_list(Shape): expected a document with exactly one top-level key, an array, found 3 keys)
+== items = []
+t = [1, "a"]
+Err(toml missing field: m)
+Err(toml missing field: s)
+Err(toml missing field: i)
+Err(toml missing field: b)
+Err(toml type mismatch: expected Int, got array at items)
+Err(toml type mismatch: expected table, got integer at t[0])
+Err(toml.parse_list(Item): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Int): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Shape): expected a document with exactly one top-level key, an array, found 2 keys)
+== items = 3
+t = 1979-05-27
+m = 2.5
+p = "x"
+Err(toml type mismatch: expected List, got integer at items)
+Err(toml missing field: s)
+Err(toml missing field: i)
+Err(toml missing field: b)
+Err(toml type mismatch: expected Int, got float at m)
+Err(toml type mismatch: expected List, got integer at items)
+Err(toml.parse_list(Item): expected a document with exactly one top-level key, an array, found 4 keys)
+Err(toml.parse_list(Int): expected a document with exactly one top-level key, an array, found 4 keys)
+Err(toml.parse_list(Shape): expected a document with exactly one top-level key, an array, found 4 keys)
+== s = "Dot"
+ss = ["Dot", { variant = "Rect", fields = [1, 2] }, { fields = [2.5], variant = "Circle" }]
+Err(toml missing field: items)
+Ok(HS {s: Dot, ss: [Dot, Rect(1, 2), Circle(2.5)]})
+Err(toml missing field: i)
+Err(toml missing field: b)
+Err(toml type mismatch: expected Int, got string at s)
+Err(toml type mismatch: expected List, got string at s)
+Err(toml.parse_list(Item): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Int): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Shape): expected a document with exactly one top-level key, an array, found 2 keys)
+== s = { variant = "Rect", fields = [1, "x"] }
+ss = []
+Err(toml missing field: items)
+Err(toml type mismatch: expected Int, got string at s.fields[1])
+Err(toml missing field: i)
+Err(toml missing field: b)
+Err(toml type mismatch: expected Int, got table at s)
+Err(toml type mismatch: expected List, got table at s)
+Err(toml.parse_list(Item): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Int): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Shape): expected a document with exactly one top-level key, an array, found 2 keys)
+== s = { variant = "Rect", fields = [1] }
+ss = []
+Err(toml missing field: items)
+Err(variant `Rect` of `Shape` has 2 fields, got 1 at s.fields)
+Err(toml missing field: i)
+Err(toml missing field: b)
+Err(toml type mismatch: expected Int, got table at s)
+Err(toml type mismatch: expected List, got table at s)
+Err(toml.parse_list(Item): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Int): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Shape): expected a document with exactly one top-level key, an array, found 2 keys)
+== s = { fields = [1, 2] }
+ss = []
+Err(toml missing field: items)
+Err(toml missing field: s.variant)
+Err(toml missing field: i)
+Err(toml missing field: b)
+Err(toml type mismatch: expected Int, got table at s)
+Err(toml type mismatch: expected List, got table at s)
+Err(toml.parse_list(Item): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Int): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Shape): expected a document with exactly one top-level key, an array, found 2 keys)
+== s = { variant = 1979-05-27, fields = [1, 2] }
+ss = []
+Err(toml missing field: items)
+Err(toml type mismatch: expected String, got datetime at s.variant)
+Err(toml missing field: i)
+Err(toml missing field: b)
+Err(toml type mismatch: expected Int, got table at s)
+Err(toml type mismatch: expected List, got table at s)
+Err(toml.parse_list(Item): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Int): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Shape): expected a document with exactly one top-level key, an array, found 2 keys)
+== s = { variant = "Rect", fields = 1979-05-27 }
+ss = []
+Err(toml missing field: items)
+Err(toml type mismatch: expected array, got datetime at s.fields)
+Err(toml missing field: i)
+Err(toml missing field: b)
+Err(toml type mismatch: expected Int, got table at s)
+Err(toml type mismatch: expected List, got table at s)
+Err(toml.parse_list(Item): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Int): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Shape): expected a document with exactly one top-level key, an array, found 2 keys)
+== s = { variant = "Dot" }
+ss = []
+Err(toml missing field: items)
+Err(toml type mismatch: expected String, got table at s)
+Err(toml missing field: i)
+Err(toml missing field: b)
+Err(toml type mismatch: expected Int, got table at s)
+Err(toml type mismatch: expected List, got table at s)
+Err(toml.parse_list(Item): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Int): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Shape): expected a document with exactly one top-level key, an array, found 2 keys)
+== s = "Rect"
+ss = []
+Err(toml missing field: items)
+Err(variant `Rect` of `Shape` has 2 fields, got 0 at s)
+Err(toml missing field: i)
+Err(toml missing field: b)
+Err(toml type mismatch: expected Int, got string at s)
+Err(toml type mismatch: expected List, got string at s)
+Err(toml.parse_list(Item): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Int): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Shape): expected a document with exactly one top-level key, an array, found 2 keys)
+== s = "Nope"
+ss = [1]
+Err(toml missing field: items)
+Err(`Shape` has no variant `Nope` at s)
+Err(toml missing field: i)
+Err(toml missing field: b)
+Err(toml type mismatch: expected Int, got string at s)
+Err(toml type mismatch: expected List, got string at s)
+Err(toml.parse_list(Item): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Int): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Shape): expected a document with exactly one top-level key, an array, found 2 keys)
+== s = { variant = "At", fields = [1979-05-27] }
+ss = [{ variant = "At", fields = [1979-02-30] }]
+Err(toml missing field: items)
+Err(invalid date '1979-02-30' (expected YYYY-MM-DD): input is out of range at ss[0].fields[0])
+Err(toml missing field: i)
+Err(toml missing field: b)
+Err(toml type mismatch: expected Int, got table at s)
+Err(toml type mismatch: expected List, got table at s)
+Err(toml.parse_list(Item): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Int): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Shape): expected a document with exactly one top-level key, an array, found 2 keys)
+== s = { variant = "At", fields = ["1979-05-27"] }
+ss = [{ variant = "At", fields = [12:00:00] }]
+Err(toml missing field: items)
+Err(invalid date '12:00:00' (expected YYYY-MM-DD): input contains invalid characters at ss[0].fields[0])
+Err(toml missing field: i)
+Err(toml missing field: b)
+Err(toml type mismatch: expected Int, got table at s)
+Err(toml type mismatch: expected List, got table at s)
+Err(toml.parse_list(Item): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Int): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Shape): expected a document with exactly one top-level key, an array, found 2 keys)
+== s = 1979-05-27
+ss = []
+Err(toml missing field: items)
+Err(toml type mismatch: expected String or table, got datetime at s)
+Err(toml missing field: i)
+Err(toml missing field: b)
+Err(toml type mismatch: expected Int, got datetime at s)
+Err(toml type mismatch: expected List, got datetime at s)
+Err(toml.parse_list(Item): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Int): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Shape): expected a document with exactly one top-level key, an array, found 2 keys)
+== s = [1]
+ss = { a = 1 }
+Err(toml missing field: items)
+Err(toml type mismatch: expected String or table, got array at s)
+Err(toml missing field: i)
+Err(toml missing field: b)
+Err(toml type mismatch: expected Int, got array at s)
+Err(toml type mismatch: expected table, got integer at s[0])
+Err(toml.parse_list(Item): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Int): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Shape): expected a document with exactly one top-level key, an array, found 2 keys)
+== i = 9223372036854775807
+f = 1.0
+Err(toml missing field: items)
+Err(toml missing field: s)
+Ok(N {i: 9223372036854775807, f: 1.0})
+Err(toml missing field: b)
+Err(toml type mismatch: expected Int, got float at f)
+Err(toml type mismatch: expected List, got float at f)
+Err(toml.parse_list(Item): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Int): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Shape): expected a document with exactly one top-level key, an array, found 2 keys)
+== i = -9223372036854775808
+f = -0.0
+Err(toml missing field: items)
+Err(toml missing field: s)
+Ok(N {i: -9223372036854775808, f: 0.0})
+Err(toml missing field: b)
+Err(toml type mismatch: expected Int, got float at f)
+Err(toml type mismatch: expected List, got float at f)
+Err(toml.parse_list(Item): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Int): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Shape): expected a document with exactly one top-level key, an array, found 2 keys)
+== i = 1.0
+f = 1
+Err(toml missing field: items)
+Err(toml missing field: s)
+Err(toml type mismatch: expected Int, got float at i)
+Err(toml missing field: b)
+Err(toml type mismatch: expected Int, got float at i)
+Err(toml type mismatch: expected List, got integer at f)
+Err(toml.parse_list(Item): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Int): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Shape): expected a document with exactly one top-level key, an array, found 2 keys)
+== i = 1e3
+f = 1e3
+Err(toml missing field: items)
+Err(toml missing field: s)
+Err(toml type mismatch: expected Int, got float at i)
+Err(toml missing field: b)
+Err(toml type mismatch: expected Int, got float at f)
+Err(toml type mismatch: expected List, got float at f)
+Err(toml.parse_list(Item): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Int): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Shape): expected a document with exactly one top-level key, an array, found 2 keys)
+== i = nan
+f = nan
+Err(toml missing field: items)
+Err(toml missing field: s)
+Err(toml type mismatch: expected Int, got float at i)
+Err(toml missing field: b)
+Err(toml type mismatch: expected Int, got float at f)
+Err(toml type mismatch: expected List, got float at f)
+Err(toml.parse_list(Item): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Int): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Shape): expected a document with exactly one top-level key, an array, found 2 keys)
+== i = inf
+f = inf
+Err(toml missing field: items)
+Err(toml missing field: s)
+Err(toml type mismatch: expected Int, got float at i)
+Err(toml missing field: b)
+Err(toml type mismatch: expected Int, got float at f)
+Err(toml type mismatch: expected List, got float at f)
+Err(toml.parse_list(Item): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Int): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Shape): expected a document with exactly one top-level key, an array, found 2 keys)
+== i = 1
+f = -inf
+Err(toml missing field: items)
+Err(toml missing field: s)
+Err(toml type mismatch: expected Float, got a non-finite float at f)
+Err(toml missing field: b)
+Err(toml type mismatch: expected Int, got float at f)
+Err(toml type mismatch: expected List, got float at f)
+Err(toml.parse_list(Item): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Int): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Shape): expected a document with exactly one top-level key, an array, found 2 keys)
+== i = 1
+f = +inf
+Err(toml missing field: items)
+Err(toml missing field: s)
+Err(toml type mismatch: expected Float, got a non-finite float at f)
+Err(toml missing field: b)
+Err(toml type mismatch: expected Int, got float at f)
+Err(toml type mismatch: expected List, got float at f)
+Err(toml.parse_list(Item): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Int): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Shape): expected a document with exactly one top-level key, an array, found 2 keys)
+== i = 0x10
+f = 0.5
+Err(toml missing field: items)
+Err(toml missing field: s)
+Ok(N {i: 16, f: 0.5})
+Err(toml missing field: b)
+Err(toml type mismatch: expected Int, got float at f)
+Err(toml type mismatch: expected List, got float at f)
+Err(toml.parse_list(Item): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Int): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Shape): expected a document with exactly one top-level key, an array, found 2 keys)
+== i = 1_000
+f = 6.626e-34
+Err(toml missing field: items)
+Err(toml missing field: s)
+Ok(N {i: 1000, f: 0.0000000000000000000000000000000006626})
+Err(toml missing field: b)
+Err(toml type mismatch: expected Int, got float at f)
+Err(toml type mismatch: expected List, got float at f)
+Err(toml.parse_list(Item): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Int): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Shape): expected a document with exactly one top-level key, an array, found 2 keys)
+== i = 9223372036854775808
+f = 1
+Err(toml syntax error at byte 4: number too large to fit in target type)
+Err(toml syntax error at byte 4: number too large to fit in target type)
+Err(toml syntax error at byte 4: number too large to fit in target type)
+Err(toml syntax error at byte 4: number too large to fit in target type)
+Err(toml syntax error at byte 4: number too large to fit in target type)
+Err(toml syntax error at byte 4: number too large to fit in target type)
+Err(toml syntax error at byte 4: number too large to fit in target type)
+Err(toml syntax error at byte 4: number too large to fit in target type)
+Err(toml syntax error at byte 4: number too large to fit in target type)
+== b = { v = "Dot", more = ["Dot", { variant = "Circle", fields = [1] }] }
+Err(toml missing field: items)
+Err(toml missing field: s)
+Err(toml missing field: i)
+Ok(B {b: Box {v: Dot, more: [Dot, Circle(1.0)]}})
+Err(toml type mismatch: expected Int, got table at b)
+Err(toml type mismatch: expected List, got table at b)
+Err(toml type mismatch: expected array, got table at b)
+Err(toml type mismatch: expected array, got table at b)
+Err(toml type mismatch: expected array, got table at b)
+== b = { v = 1, more = [] }
+Err(toml missing field: items)
+Err(toml missing field: s)
+Err(toml missing field: i)
+Err(toml type mismatch: expected String or table, got integer at b.v)
+Err(toml type mismatch: expected Int, got table at b)
+Err(toml type mismatch: expected List, got table at b)
+Err(toml type mismatch: expected array, got table at b)
+Err(toml type mismatch: expected array, got table at b)
+Err(toml type mismatch: expected array, got table at b)
+== x = { "$__toml_private_datetime" = "1979-05-27" }
+i = 1
+f = 1.0
+Err(toml missing field: items)
+Err(toml missing field: s)
+Ok(N {i: 1, f: 1.0})
+Err(toml missing field: b)
+Err(toml type mismatch: expected Int, got float at f)
+Err(toml type mismatch: expected List, got float at f)
+Err(toml.parse_list(Item): expected a document with exactly one top-level key, an array, found 3 keys)
+Err(toml.parse_list(Int): expected a document with exactly one top-level key, an array, found 3 keys)
+Err(toml.parse_list(Shape): expected a document with exactly one top-level key, an array, found 3 keys)
+== x = { "$__toml_private_datetime" = "nope" }
+i = 1
+f = 1.0
+Err(toml syntax error at byte 35: invalid datetime, expected year or hour)
+Err(toml syntax error at byte 35: invalid datetime, expected year or hour)
+Err(toml syntax error at byte 35: invalid datetime, expected year or hour)
+Err(toml syntax error at byte 35: invalid datetime, expected year or hour)
+Err(toml syntax error at byte 35: invalid datetime, expected year or hour)
+Err(toml syntax error at byte 35: invalid datetime, expected year or hour)
+Err(toml syntax error at byte 35: invalid datetime, expected year or hour)
+Err(toml syntax error at byte 35: invalid datetime, expected year or hour)
+Err(toml syntax error at byte 35: invalid datetime, expected year or hour)
+== x = { "$__toml_private_datetime" = "1979-05-27", y = 1 }
+i = 1
+f = 1.0
+Err(toml missing field: items)
+Err(toml missing field: s)
+Ok(N {i: 1, f: 1.0})
+Err(toml missing field: b)
+Err(toml type mismatch: expected Int, got float at f)
+Err(toml type mismatch: expected List, got float at f)
+Err(toml.parse_list(Item): expected a document with exactly one top-level key, an array, found 3 keys)
+Err(toml.parse_list(Int): expected a document with exactly one top-level key, an array, found 3 keys)
+Err(toml.parse_list(Shape): expected a document with exactly one top-level key, an array, found 3 keys)
+== i = { "$__toml_private_datetime" = "1979-05-27" }
+f = 1.0
+Err(toml missing field: items)
+Err(toml missing field: s)
+Err(toml type mismatch: expected Int, got datetime at i)
+Err(toml missing field: b)
+Err(toml type mismatch: expected Int, got float at f)
+Err(toml type mismatch: expected List, got float at f)
+Err(toml.parse_list(Item): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Int): expected a document with exactly one top-level key, an array, found 2 keys)
+Err(toml.parse_list(Shape): expected a document with exactly one top-level key, an array, found 2 keys)
+== x = { a = 1, "$__toml_private_datetime" = 1 }
+i = 1
+f = 1.0
+Err(toml missing field: items)
+Err(toml missing field: s)
+Ok(N {i: 1, f: 1.0})
+Err(toml missing field: b)
+Err(toml type mismatch: expected Int, got float at f)
+Err(toml type mismatch: expected List, got float at f)
+Err(toml.parse_list(Item): expected a document with exactly one top-level key, an array, found 3 keys)
+Err(toml.parse_list(Int): expected a document with exactly one top-level key, an array, found 3 keys)
+Err(toml.parse_list(Shape): expected a document with exactly one top-level key, an array, found 3 keys)
+== Object(#{"n": Float(1.0), "name": String(a)})
+Ok(Item {name: a, n: 1, note: None})
+Err(json type mismatch: expected Int, got string at name)
+Err(json type mismatch: expected List, got object)
+Err(json missing field: variant)
+Err(json missing field: variant)
+Ok(Object(#{"n": Int(1), "name": String(a)}))
+Ok(Item {name: a, n: 1, note: None})
+== Object(#{"n": Float(1.5), "name": String(a), "note": Null})
+Err(json type mismatch: expected Int, got a number with a fraction at n)
+Err(json type mismatch: expected Int, got a number with a fraction at n)
+Err(json type mismatch: expected List, got object)
+Err(json missing field: variant)
+Err(json missing field: variant)
+Ok(Object(#{"n": Float(1.5), "name": String(a), "note": Null}))
+Err(json type mismatch: expected Int, got a number with a fraction at n)
+== Object(#{"a": String(y), "b": String(x)})
+Err(json missing field: name)
+Err(json type mismatch: expected Int, got string at a)
+Err(json type mismatch: expected List, got object)
+Err(json missing field: variant)
+Err(json missing field: variant)
+Ok(Object(#{"a": String(y), "b": String(x)}))
+Err(json missing field: name)
+== Array([Int(1), Float(2.0), Float(1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000.0)])
+Err(json type mismatch: expected object, got array)
+Err(json type mismatch: expected Map, got array)
+Err(json type mismatch: expected Int, got a number out of Int's range at [2])
+Err(json type mismatch: expected String or object, got array)
+Err(json type mismatch: expected String or object, got array)
+Ok(Array([Int(1), Int(2), Float(1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000.0)]))
+Err(json type mismatch: expected object, got array)
+== Object(#{"fields": Array([Int(1), Float(2.0)]), "variant": String(Rect)})
+Err(json missing field: name)
+Err(json type mismatch: expected Int, got array at fields)
+Err(json type mismatch: expected List, got object)
+Ok(Rect(1, 2))
+Ok(Rect(1, 2))
+Ok(Object(#{"fields": Array([Int(1), Int(2)]), "variant": String(Rect)}))
+Err(json missing field: name)
+== String(1979-05-27)
+Err(json type mismatch: expected object, got string)
+Err(json type mismatch: expected Map, got string)
+Err(json type mismatch: expected List, got string)
+Err(`Shape` has no variant `1979-05-27`)
+Err(`Shape` has no variant `1979-05-27`)
+Ok(String(1979-05-27))
+Err(json type mismatch: expected object, got string)

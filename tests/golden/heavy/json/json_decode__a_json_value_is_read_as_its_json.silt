@@ -1,0 +1,36 @@
+-- json.decode reads a json.Value as the JSON json.stringify writes of
+-- it: a json.Float of a whole number in Int's range is an Int, an
+-- object's keys in any order; a value nested more than 1,000 levels
+-- is the encoder's error, whatever the type.
+import json
+import list
+
+type R { x: Int }
+
+fn nest(v: json.Value, n: Int) -> json.Value {
+  match n {
+    0 -> v
+    _ -> nest(json.Array([v]), n - 1)
+  }
+}
+
+fn main() {
+  list.each([999, 1000, 1001, 1500]) { n ->
+    let v = nest(json.Int(1), n)
+    let shown = match json.decode(v, json.Value) {
+      Ok(_) -> "ok"
+      Err(e) -> "{e}"
+    }
+    println("{n} json.Value: {shown}")
+    println("{n} R: {json.decode(v, R)}")
+    println("{n} Int: {json.decode(v, Int)}")
+    let o = json.Object(#{"x": nest(json.Float(2.0), n)})
+    println("{n} R in object: {json.decode(o, R)}")
+  }
+  println(json.decode(json.Object(#{"x": json.Float(2.0)}), R))
+  println(json.decode(json.Object(#{"x": json.Float(-0.0)}), R))
+  println(json.decode(json.Object(#{"x": json.Float(2.5)}), R))
+  println(json.decode(json.Object(#{"x": json.Float(9223372036854775807.0)}), R))
+  println(json.decode(json.Array([json.Float(1.0), json.Float(1e300), json.Int(-3)]), json.Value))
+  println(json.decode(json.Object(#{"b": json.String("x"), "a": json.Null, "variant": json.Int(1)}), json.Value))
+}

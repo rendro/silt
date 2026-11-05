@@ -263,4 +263,6 @@ cases!(
     a_streams_impl_that_calls_env_set_fails_its_reader,
     a_stream_whose_impl_waits_forever_is_a_deadlock,
     a_statement_behind_its_own_unread_stream_of_impls_fails,
+    json_cells_of_every_shape,
+    json_cell_parts_are_decoded_by_their_impls_in_order,
 );
