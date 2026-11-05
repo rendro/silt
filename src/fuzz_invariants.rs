@@ -505,11 +505,8 @@ pub fn check_json_decoding(text: &[u8]) -> Result<(), String> {
         let impls = |id, args: &[FieldType]| targets.written(id, args);
         let plain = Reader::with_impls(rt, &none, Holes::Collect(Vec::new()));
         let finding = seed::Parts::finding();
-        // (A float that a text holds as no Int but is whole in Int's
-        // range, `0.99999999999999999999` or `1e-400`, is an Int to
-        // json.decode, which has the float and not the text.)
         let value = match seed::json_text(&plain, &FieldType::JsonValue, text, &finding) {
-            Ok(Ok(value)) if !holds_a_whole_float(&value) => Some(value),
+            Ok(Ok(value)) => Some(value),
             _ => None,
         };
         let shown = String::from_utf8_lossy(text);
@@ -538,27 +535,6 @@ pub fn check_json_decoding(text: &[u8]) -> Result<(), String> {
         }
         Ok(())
     })
-}
-
-/// Whether the `json.Value` `value` holds a `json.Float` of a whole
-/// number in `Int`'s range.
-fn holds_a_whole_float(value: &crate::value::Value) -> bool {
-    use crate::value::Value;
-    let Value::Variant(json) = value else {
-        return false;
-    };
-    match json.fields() {
-        [Value::Float(f)] => {
-            const INT_RANGE: std::ops::Range<f64> =
-                -9_223_372_036_854_775_808.0..9_223_372_036_854_775_808.0;
-            f.get().fract() == 0.0 && INT_RANGE.contains(&f.get())
-        }
-        [Value::List(items)] => items.iter().any(|item| holds_a_whole_float(&item)),
-        [Value::Map(members)] => members
-            .iter()
-            .any(|(_, member)| holds_a_whole_float(member)),
-        _ => false,
-    }
 }
 
 /// `toml.parse`, `toml.parse_map` and `toml.parse_list` of the text

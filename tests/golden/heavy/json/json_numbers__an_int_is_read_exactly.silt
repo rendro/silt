@@ -2,6 +2,7 @@ import json
 -- A number goes into an Int when its text is a whole number in Int's
 -- range, decided on the text: nothing is rounded, and a number out of
 -- range or with a fraction is refused, however close to an Int it is.
+-- json.decode reads a json.Float as no Int, whatever its value.
 fn main() {
   println(json.parse("-9223372036854775809", Int))
   println(json.parse("9007199254740993.0", Int))
