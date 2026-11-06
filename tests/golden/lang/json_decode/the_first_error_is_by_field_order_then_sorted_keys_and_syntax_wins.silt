@@ -1,0 +1,19 @@
+-- Of a record, the error of the field its type declares first counts,
+-- wherever the text has it; of a map, the error of the first key in
+-- sorted order; and a syntax error anywhere in the text wins over them
+-- (docs/stdlib/json.md and toml.md say so).
+import json
+import toml
+type R {
+  a: Int,
+  b: Int,
+}
+fn main() {
+  println(json.parse("""{"b": "x", "a": "y"}""", R))
+  println(json.parse("""{"k": "x", "j": "z"}""", Map(String, Int)))
+  println(json.parse("""{"a": "x", "b": 1} junk""", R))
+  println(json.parse("""[{"a": "x", "b": 1}, {"a": 1, "b": 2,}]""", List(R)))
+  println(toml.parse("b = \"x\"\na = \"y\"", R))
+  println(toml.parse_map("k = \"x\"\nj = \"z\"", Int))
+  println(toml.parse("a = \"x\"\nb = 1\nb = = 2", R))
+}

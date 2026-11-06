@@ -702,6 +702,11 @@ concrete type passed in. See
 [Generics — Trait methods on types](generics.md#trait-methods-on-types) for
 the full rules.
 
+A type with its arguments is called on the same way, `List(Int).empty()`,
+and a tuple of types is the tuple type: `(Int, Int).empty()` calls the
+impl for `Tuple(a, b)` at `(Int, Int)`. `Tuple(Int, Int)` is no spelling
+of the type before a dot.
+
 A trait of type constructors has them too. `Applicative`'s `pure` makes
 a value: it is called on a type constructor, `Option.pure(1)` (which is
 `Some(1)`), or in generic code on a constructor variable with the bound,

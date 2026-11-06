@@ -1310,6 +1310,22 @@ impl TypeChecker {
         self.decoder_uses.extend(uses);
     }
 
+    /// Drop each refusal of a use as one whose type nothing decides
+    /// (`json.parse(s, Box(Box(Unit)))`) with another error inside it, an
+    /// undefined name: that error is the one, and left nothing to decide.
+    pub(super) fn drop_ambiguities_over_errors(&mut self) {
+        let inner: Vec<Span> = (self.errors.iter())
+            .filter(|e| e.is_error() && e.code != Code::AmbiguousType)
+            .map(|e| e.span)
+            .collect();
+        self.errors.retain(|e| {
+            e.code != Code::AmbiguousType
+                || !(inner.iter()).any(|at| {
+                    at.file == e.span.file && e.span.start <= at.start && at.end <= e.span.end
+                })
+        });
+    }
+
     /// Refuse, once the module's bodies are checked, each decoder use
     /// (`decoder_uses`) given a type with a generic type or alias written
     /// alone in it (`Box`, `List(L)`) whose type arguments nothing decides,

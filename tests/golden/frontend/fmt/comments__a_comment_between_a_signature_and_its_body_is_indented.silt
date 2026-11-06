@@ -1,0 +1,32 @@
+-- cmd: fmt
+-- A comment between a function's signature and the `{` of its body is
+-- indented one step, as a `where` clause is, not moved to the left edge.
+fn h(x: Int) -> Int
+  -- between sig and body
+{
+  x
+}
+
+fn g(x: a) -> a
+  where a: Show
+  -- c1
+
+  -- c2
+{ x }
+
+trait T {
+  fn m(self) -> Int
+  -- in trait
+  {
+    1
+  }
+}
+
+fn k() -- end of line
+{
+  1
+}
+
+fn main() {
+  println(h(2))
+}

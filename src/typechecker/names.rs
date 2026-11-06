@@ -299,8 +299,8 @@ fn build_builtins() -> (BuiltinDefs, BuiltinScopes) {
                 variant,
                 DefKind::Variant {
                     ty: TypeId(id),
-                    ordinal: ordinal as u16,
-                    arity: *arity as u16,
+                    ordinal: u16::try_from(ordinal).expect("a builtin enum's ordinal fits"),
+                    arity: u16::try_from(*arity).expect("a builtin variant's arity fits"),
                 },
             );
             exports.values.insert(variant, Binding::Def(v));
@@ -358,7 +358,7 @@ pub fn resolve_module(
     let (_, builtins) = builtins();
     let mut scope = ModuleScope::default();
     let mut diagnostics = Vec::new();
-    declare(program, module, kind, defs, &mut scope);
+    declare(program, module, kind, defs, &mut scope, &mut diagnostics);
     bind_imports(
         program,
         kind,
@@ -465,13 +465,46 @@ pub fn resolve_module(
     }
 }
 
-/// Enter the definitions of `program` and bind them in `scope`.
+/// A type has at most 65,536 variants: an ordinal is a `u16`.
+const VARIANTS: (&str, usize) = ("variants of a type", u16::MAX as usize + 1);
+/// A variant has at most 65,535 fields: its arity is a `u16`.
+const VARIANT_FIELDS: (&str, usize) = ("fields of a variant", u16::MAX as usize);
+/// A type has at most 65,536 parameters: the index of one is a `u16`.
+const TYPE_PARAMS: (&str, usize) = ("parameters of a type", u16::MAX as usize + 1);
+/// An impl's header has at most 65,536 type variables: a decoder
+/// numbers them as a type's parameters.
+pub(super) const IMPL_TYPE_VARS: (&str, usize) =
+    ("type variables of an impl", u16::MAX as usize + 1);
+/// An impl's header has at most 65,536 bounds, a definition (with its
+/// impl's header, for a method) as many: the place of one is a `u16`.
+pub(super) const IMPL_BOUNDS: (&str, usize) = ("bounds of an impl", u16::MAX as usize + 1);
+pub(super) const DEFINITION_BOUNDS: (&str, usize) =
+    ("bounds of a definition", u16::MAX as usize + 1);
+
+/// Refuse `count` of `what` past `max`, with the wording of every
+/// compile limit, at `span`.
+pub(super) fn refuse_past_limit(
+    count: usize,
+    (what, max): (&'static str, usize),
+    span: Span,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    if count > max {
+        let limit = crate::bytecode::ops::Limit { what, count, max };
+        diagnostics.push(crate::bytecode::emit::limit_diagnostic(limit, span));
+    }
+}
+
+/// Enter the definitions of `program` and bind them in `scope`. A type
+/// with more variants, variant fields or parameters than their numbers
+/// can say is refused here, into `diagnostics`.
 fn declare(
     program: &Program,
     module: ModuleId,
     kind: ModuleKind,
     defs: &mut DefTable,
     scope: &mut ModuleScope,
+    diagnostics: &mut Vec<Diagnostic>,
 ) {
     let vis = |is_pub: bool| {
         if is_pub || kind != ModuleKind::File {
@@ -529,12 +562,23 @@ fn declare(
                     kind: placeholder,
                 });
                 let ty = TypeId(id);
+                refuse_past_limit(td.params.len(), TYPE_PARAMS, td.name_span, diagnostics);
                 match &td.body {
                     TypeBody::Alias(_) => {}
                     TypeBody::Record(_) => set_kind(defs, id, DefKind::Type(ty)),
                     TypeBody::Enum(variants) => {
                         set_kind(defs, id, DefKind::Type(ty));
+                        refuse_past_limit(variants.len(), VARIANTS, td.name_span, diagnostics);
                         for (ordinal, variant) in variants.iter().enumerate() {
+                            let arity = variant.fields.len();
+                            refuse_past_limit(
+                                arity,
+                                VARIANT_FIELDS,
+                                variant.name_span,
+                                diagnostics,
+                            );
+                            // (A refused type's numbers past the limit
+                            // are never read: the program does not run.)
                             let v = defs.add(Def {
                                 module,
                                 name: variant.name,
@@ -542,8 +586,8 @@ fn declare(
                                 vis: vis(td.is_pub),
                                 kind: DefKind::Variant {
                                     ty,
-                                    ordinal: ordinal as u16,
-                                    arity: variant.fields.len() as u16,
+                                    ordinal: u16::try_from(ordinal).unwrap_or(u16::MAX),
+                                    arity: u16::try_from(arity).unwrap_or(u16::MAX),
                                 },
                             });
                             defs.add_variant(id, v);

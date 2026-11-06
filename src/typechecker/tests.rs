@@ -2395,3 +2395,107 @@ fn main() {
     let judged = super::json_decode::JUDGED_UNDECIDED.with(|judged| judged.borrow().clone());
     assert_eq!(judged, ["postgres.query"], "the uses judged undecided");
 }
+
+// ── The numbers of a type's variants, fields and parameters ─────
+
+/// `type Big { V0, V1, … }` with `variants` variants, and a `main` that
+/// tells the last one from the first.
+fn enum_of(variants: usize) -> String {
+    let names: Vec<String> = (0..variants).map(|k| format!("V{k}")).collect();
+    let last = variants - 1;
+    format!(
+        "type Big {{ {} }}\n\
+         fn name(b: Big) -> String {{\n  match b {{\n    V0 -> \"first\"\n    V{last} -> \"last\"\n    _ -> \"other\"\n  }}\n}}\n\
+         fn main() {{ [name(V0), name(V{last})] }}\n",
+        names.join(", ")
+    )
+}
+
+/// The ordinal of a variant is a `u16`: an enum of 65,537 variants
+/// would number its last one 0, its first. It is refused at its name
+/// with the wording of every compile limit.
+#[test]
+fn test_more_than_65536_variants_refused() {
+    let source = enum_of(65_537);
+    let errors = check_errors(&source);
+    let limit: Vec<_> = errors
+        .iter()
+        .filter(|e| e.code == Code::CompileLimit)
+        .collect();
+    assert_eq!(
+        limit.len(),
+        1,
+        "{:?}",
+        errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        limit[0].message,
+        "too many variants of a type: 65537 (the limit is 65536)"
+    );
+    let span = limit[0].span;
+    assert_eq!(&source[span.start as usize..span.end as usize], "Big");
+}
+
+// ── A decoder's type argument that is no type ───────────────────
+
+/// An undefined name in the type a decoder is given is the error; the
+/// type it left undecided is not asked about as well, through a
+/// function that passes the type on neither.
+#[test]
+fn test_undefined_name_in_a_decoder_type_is_the_one_error() {
+    let errors = check_errors(
+        "import json\n\
+         type Box(a) { v: a }\n\
+         fn load(text: String, type a) -> Result(a, json.JsonError) where a: json.Decode {\n\
+         \x20 json.parse(text, a)\n\
+         }\n\
+         fn main() {\n\
+         \x20 println(json.parse(\"null\", Box(Box(Unit))))\n\
+         \x20 println(load(\"null\", Box(Box(Unit))))\n\
+         }\n",
+    );
+    let messages: Vec<&str> = (errors.iter())
+        .filter(|e| e.is_error())
+        .map(|e| e.message.as_str())
+        .collect();
+    assert_eq!(
+        messages,
+        ["undefined variable 'Unit'", "undefined variable 'Unit'"]
+    );
+}
+
+/// A type given a value (`List(())`) says the argument is a value, at
+/// the argument, not that the type is not callable.
+#[test]
+fn test_a_type_given_a_value_says_the_argument_is_a_value() {
+    let source = "import json\nfn main() {\n  println(json.parse(\"null\", List(())))\n}\n";
+    let errors = check_errors(source);
+    let errors: Vec<_> = errors.iter().filter(|e| e.is_error()).collect();
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert_eq!(
+        errors[0].message,
+        "`List` takes a type here, and `()` is a value"
+    );
+    let span = errors[0].span;
+    assert_eq!(&source[span.start as usize..span.end as usize], "()");
+}
+
+/// Any generic type given a value says so, by the value's text when it
+/// is a short literal, else by its type.
+#[test]
+fn test_a_generic_type_given_a_value_names_the_value() {
+    let errors = check_errors(
+        "import json\ntype Box(a) { v: a }\nfn main() {\n  let n = 1\n  println(json.parse(\"null\", Box(1)))\n  println(json.parse(\"null\", Box(n)))\n}\n",
+    );
+    let messages: Vec<&str> = (errors.iter())
+        .filter(|e| e.is_error())
+        .map(|e| e.message.as_str())
+        .collect();
+    assert_eq!(
+        messages,
+        [
+            "`Box` takes a type here, and `1` is a value",
+            "`Box` takes a type here, and a value of type `Int` is given",
+        ]
+    );
+}
