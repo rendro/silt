@@ -230,10 +230,9 @@ enum EntryFn {
 /// returns.
 fn value_returned(code: Code, span: Span, who: &str, entry: EntryFn, ret: &Type) -> Diagnostic {
     // A type of the program's that is named like the builtin `Result`.
-    if let Type::Generic(name, _) = ret
-        && !name.is_builtin("Result")
-        && ret.to_string().starts_with("Result(")
-    {
+    let shown = ret.to_string();
+    let builtin_result = matches!(ret, Type::Generic(name, _) if name.is_builtin("Result"));
+    if !builtin_result && shown.split('(').next() == Some("Result") {
         return Diagnostic::error(
             code,
             span,
@@ -279,9 +278,10 @@ fn value_returned(code: Code, span: Span, who: &str, entry: EntryFn, ret: &Type)
     .with_help(help);
     match entry {
         EntryFn::Main => error,
-        // (Every `test_*` function of the file is a test.)
+        // (Every `test_*` and `skip_test_*` function of the file is a test.)
         EntryFn::Test => error.with_help(
-            "a function that is not a test needs a name that does not start with `test_`",
+            "a function that is not a test needs a name that starts with neither `test_` nor \
+             `skip_test_`",
         ),
     }
 }
