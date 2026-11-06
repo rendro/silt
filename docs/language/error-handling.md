@@ -111,14 +111,16 @@ infix expression, parenthesise it: `(a + b)?`.
 
 ### `Err` escaping `main`
 
-`main` may itself return a `Result`, so `?` works at the top level too.
-When the program ends with an `Err(..)` — whether returned directly or
-propagated out of `main` by `?` — `silt run` treats it as a failed
-program: it prints an `error[runtime]: main returned Err: ...` diagnostic
-(with the payload rendered the same way `println` would print it) to
-stderr and exits with status 1, the same exit code as any other runtime
-error. `Ok(..)` returns, and `main` functions that don't return a
-`Result` at all, exit 0 as usual.
+`main` returns `()` or `Result((), e)`, so `?` works at the top level too.
+A program ends in one of two ways:
+
+| How `main` ends | What `silt run` does |
+|---|---|
+| it returns `()` or `Ok(())` | exit status 0 |
+| it returns `Err(e)`, or a runtime error | `error[runtime]: main returned Err: e` (or the error) on stderr, exit status 1 |
+
+The payload is shown as `println` shows it. A test function follows the
+same rule (see [Testing](testing.md)).
 
 `process.exit` is the one way to end with another code. A tool that wants
 its own message and code says so:

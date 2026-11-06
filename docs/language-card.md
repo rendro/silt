@@ -35,8 +35,9 @@ fn main() {
 }
 ```
 
-A file is a module. `silt run main.silt` runs its `fn main()`; a `main`
-that returns `Err(e)` ends the program with status 1. `silt run main.silt
+A file is a module. `silt run main.silt` runs its `fn main()`, which
+returns `()` or `Result((), e)`; a `main` that returns `Err(e)` ends the
+program with status 1. `silt run main.silt
 -- a b` gives the program its arguments (`io.args()`).
 
 ## Lexical
@@ -249,7 +250,8 @@ status 1.
 ## Tests
 
 A file named `*_test.silt` holds tests: each `fn test_*()` runs, and
-`skip_test_*` is skipped. Assertions are in the `test` module
+`skip_test_*` is skipped. A test function returns `()` or `Result((), e)`,
+as `main` does. Assertions are in the `test` module
 (`test.assert_eq(actual, expected)`). `silt test` runs them all.
 
 ## Operators, loosest first
