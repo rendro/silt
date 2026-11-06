@@ -240,7 +240,7 @@ is a panic inside it; for a write to stderr both are dropped.
 
 The report of tasks that failed and that nobody joined is written when
 `run_program` returns, for the tasks that have failed by then. It does
-not change the result: `run_program` still returns `main`'s value. A
+not change the result: `run_program` still says how `main` ended. A
 task that fails later is reported when the `Vm` is dropped, if it has
 failed by then; `vm.settle()` waits for every task first (see "The end
 of a program" below). With `HostIo::process()`, a program
@@ -367,9 +367,14 @@ silt-lang.com.
 A `Vm` is a single interpreter instance. `vm.run_program(&program)` runs
 a compiled program: it takes in the types of the program's values and
 its global slots (one per top-level function, `let`, host function and
-trait method), then runs the program's script and returns `main`'s
-value. The program carries its host functions, and the `Vm` its output
-and clock: there is no other set-up.
+trait method), then runs the program's script, which calls `main`. It
+returns `Ok(())` when `main` returned, and `Err(VmError)` when the
+program failed (see "Error Surfacing" below). No value of the program
+comes back this way: `main` returns `()` or `Result((), e)`, and a
+program hands its values to you through a host function it calls, as
+`mylib.give` does in the Quick Start, or through what it prints. The
+program carries its host functions, and the `Vm` its output and clock:
+there is no other set-up.
 
 **The end of a program.** `run_program` returns when `main` has
 returned; tasks that the program spawned may still be at work.
@@ -405,7 +410,7 @@ a runtime error, as under `silt test`.
 match vm.run_program(&program) {
     Err(e) if e.exit.is_some() => println!("exit code {:?}", e.exit),
     Err(e) => eprintln!("silt error: {}", e.message),
-    Ok(_) => {}
+    Ok(()) => {}
 }
 ```
 
@@ -460,8 +465,12 @@ fault of the program itself, a division by zero or a `panic`, keeps it
 - **Static errors** (type errors, unknown names, bad host signatures)
   are the diagnostics of `session.analyze(file)`. `session.compile`
   returns them as its `Err` for a program that has them.
-- **Runtime errors** (overflow, out-of-bounds, an `Err` or `None` that
-  bubbled to the top) return as `Err(VmError)` from `vm.run_program`.
+- **Runtime errors** (overflow, out-of-bounds, a failed assertion)
+  return as `Err(VmError)` from `vm.run_program`.
+- **A `main` that returns `Err(e)`** (often from a `?`) has failed: an
+  `Err(VmError)` too, with `returned_err` set, the message
+  `main returned Err: <e as println writes it>`, and its place at
+  `main`'s name. `call_test` says the same of a test function.
 - **`panic(...)` in silt code** reaches Rust as an `Err(VmError)` whose
   message carries the panicked string.
 - **An `Err` from a host function** becomes a runtime error whose message
@@ -490,7 +499,7 @@ fault of the program itself, a division by zero or a `panic`, keeps it
 
 ```rust
 match vm.run_program(&program) {
-    Ok(value) => println!("result: {:?}", value),
+    Ok(()) => println!("the program ran to its end"),
     Err(e) => eprintln!("silt error: {}", e.message),
 }
 ```

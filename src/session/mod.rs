@@ -132,7 +132,11 @@ pub struct Program {
 /// What a [`Program`] was compiled for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EntryPoint {
-    Main,
+    /// `main`, bound at `span` (its name): where a `main` that returns
+    /// `Err` is reported.
+    Main {
+        span: crate::source::Span,
+    },
     /// The selected tests, in source order.
     Tests(Vec<TestFn>),
     Cell,
@@ -784,7 +788,9 @@ impl Session {
                     )),
                     Some(ty) => entry::check_main(&analysis.ast, ty),
                 });
-                EntryPoint::Main
+                EntryPoint::Main {
+                    span: entry::main_span(&analysis.ast),
+                }
             }
             Entry::Tests { filter } => {
                 // A file checked or run for its tests that binds `main`

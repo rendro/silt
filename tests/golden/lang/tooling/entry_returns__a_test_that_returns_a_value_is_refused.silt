@@ -5,7 +5,7 @@
 -- stderr-contains: error[compile]: the test function 'test_int' must return () or Result((), e), but it returns Int
 -- stderr-contains: check the value with an assertion (`test.assert_eq(x, expected)`), or drop it with `let _ = ...`
 -- stderr-contains: error[compile]: the test function 'test_some' must return () or Result((), e), but it returns Option(Int)
--- stderr-contains: to fail the test when there is none, make the test return a Result and write `option.ok_or(x, "why")?`
+-- stderr-contains: to fail the test when there is none, make the test return a Result and write `option.to_result(x, "why")?`
 -- stderr-contains: error[compile]: the test function 'test_user_variant' must return () or Result((), e), but it returns Outcome
 -- stderr-contains: error[compile]: the test function 'skip_test_later' must return () or Result((), e), but it returns Int
 -- stderr-not-contains: test_unit

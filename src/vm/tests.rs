@@ -4153,7 +4153,7 @@ fn main() {
         let mut vm = Vm::new(crate::HostIo::buffer(&crate::Buffer::new()));
         let result = vm
             .run_program(&program)
-            .map(|value| given.last().unwrap_or(value));
+            .map(|()| given.last().unwrap_or(Value::Unit));
         (vm, result)
     }
 

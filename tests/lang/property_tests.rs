@@ -273,7 +273,7 @@ proptest! {
         };
         let vm_result = silt::vm::Vm::new(silt::HostIo::process())
             .run_program(&program)
-            .map(|value| given.last().unwrap_or(value));
+            .map(|()| given.last().unwrap_or(silt::Value::Unit));
 
         // Reference semantics via Rust's checked arithmetic.
         let expected = match op {

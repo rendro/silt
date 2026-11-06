@@ -23,7 +23,7 @@ use silt::http_wire::{
     BODIES_MAX, BODY_MAX, HEAD_MAX, HEADERS_MAX, REFUSAL_TIME, REQUEST_TIME, TRANSFER_TIME,
 };
 use silt::session::testing::compile_str;
-use silt::{Buffer, Clock, HostIo, Value, Vm};
+use silt::{Buffer, Clock, HostIo, Vm};
 
 /// How long a test waits for what must come before it calls it lost.
 const PATIENCE: Duration = Duration::from_secs(60);
@@ -97,7 +97,7 @@ struct Server {
     control: u16,
     out: Buffer,
     err: Buffer,
-    running: Option<thread::JoinHandle<Result<Value, String>>>,
+    running: Option<thread::JoinHandle<Result<(), String>>>,
 }
 
 impl Server {
@@ -223,7 +223,7 @@ impl Drop for Server {
         if let Some(running) = self.running.take() {
             let result = running.join();
             if !thread::panicking() {
-                assert_eq!(result.expect("the program ran"), Ok(Value::Unit));
+                assert_eq!(result.expect("the program ran"), Ok(()));
             }
         }
     }

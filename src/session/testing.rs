@@ -110,10 +110,10 @@ pub fn run_with_host(files: &[(&str, &str)], host: Vec<HostModule>) -> Result<Va
             .map(|d| d.message.clone())
             .unwrap_or_default()
     })?;
-    let value = Vm::new(crate::HostIo::process())
+    Vm::new(crate::HostIo::process())
         .run_program(&program)
         .map_err(|e| e.to_string())?;
-    Ok(given.last().unwrap_or(value))
+    Ok(given.last().unwrap_or(Value::Unit))
 }
 
 /// Compile `source` as a program that starts at `main` with the host
@@ -121,8 +121,8 @@ pub fn run_with_host(files: &[(&str, &str)], host: Vec<HostModule>) -> Result<Va
 /// gave, `()` if none, or the runtime error.
 pub fn run_given(source: &str) -> Result<Value, crate::vm::VmError> {
     let (program, given) = compile_given(source).unwrap_or_else(|e| panic!("{e:?}"));
-    let value = Vm::new(crate::HostIo::process()).run_program(&program)?;
-    Ok(given.last().unwrap_or(value))
+    Vm::new(crate::HostIo::process()).run_program(&program)?;
+    Ok(given.last().unwrap_or(Value::Unit))
 }
 
 /// Compile `source` as a program that starts at `main`. `Err` holds the

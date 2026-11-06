@@ -14,7 +14,7 @@ fn run_whole(source: &str, prepare: impl FnOnce(&mut Vm)) -> (Result<Value, VmEr
     prepare(&mut vm);
     let result = vm
         .run_program(&program)
-        .map(|value| given.last().unwrap_or(value));
+        .map(|()| given.last().unwrap_or(Value::Unit));
     if result.is_ok() {
         vm.settle();
     }

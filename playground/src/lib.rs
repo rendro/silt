@@ -17,12 +17,12 @@ use std::time::Duration;
 
 use serde::Serialize;
 use silt::ast::{Decl, PatternKind, TypeBody};
-use silt::diagnostic::{Code, Diagnostic, Severity, render_human};
+use silt::diagnostic::{Diagnostic, Severity, render_human};
 use silt::intern::resolve;
 use silt::lexer::{KEYWORD_LITERALS, KEYWORDS, Lexer, Tok, Token};
 use silt::session::{Config, Entry, LockPolicy, Program, ProjectSetup, Session};
 use silt::source::{FileId, SourceMap, SourceName, Span};
-use silt::{Buffer, Clock, HostIo, Value, Vm, module};
+use silt::{Buffer, Clock, HostIo, Vm, module};
 
 #[cfg(target_arch = "wasm32")]
 mod wasm;
@@ -95,18 +95,6 @@ pub struct Run {
     pub ok: bool,
 }
 
-/// The payload of `value` when it is the `Err(..)` of a `Result`: a
-/// `main` that returns it has failed, as under `silt run`.
-fn returned_err(value: &Value) -> Option<&Value> {
-    let Value::Variant(variant) = value else {
-        return None;
-    };
-    if !variant.is(silt::typeinfo::bv::ERR) {
-        return None;
-    }
-    Some(variant.fields().first().unwrap_or(value))
-}
-
 /// Run `source` as `silt run` does, with `clock` as its clock and at
 /// most `steps` steps (see [`STEP_BUDGET`]).
 pub fn run(source: &str, clock: impl Clock + 'static, steps: u64) -> Run {
@@ -125,17 +113,6 @@ pub fn run(source: &str, clock: impl Clock + 'static, steps: u64) -> Run {
             };
         }
     };
-    // Where a `main` that returns `Err` is reported: at its name.
-    let main_span = session
-        .module_analysis(session.module_of(file))
-        .and_then(|analysis| {
-            analysis.ast.decls.iter().find_map(|decl| match decl {
-                Decl::Fn(f) if resolve(f.name) == "main" => Some(f.name_span),
-                _ => None,
-            })
-        })
-        .unwrap_or(Span::point(file, 0));
-
     let out = Buffer::new();
     let mut vm = Vm::new(HostIo::buffer(&out).clock(clock));
     vm.set_step_budget(steps);
@@ -143,19 +120,12 @@ pub fn run(source: &str, clock: impl Clock + 'static, steps: u64) -> Run {
     // ended well, any other code one that failed.
     let mut exited = None;
     let failure = match vm.run_program(&program) {
-        Ok(value) => match returned_err(&value) {
-            Some(payload) => Some(Diagnostic::error(
-                Code::MainReturnedErr,
-                main_span,
-                format!("main returned Err: {}", vm.show_text(payload)),
-            )),
-            // `main` has returned; the program ends when its tasks can
-            // do no more.
-            None => {
-                vm.settle();
-                None
-            }
-        },
+        // `main` has returned; the program ends when its tasks can do
+        // no more.
+        Ok(()) => {
+            vm.settle();
+            None
+        }
         Err(silt::VmError {
             exit: Some(code), ..
         }) => {

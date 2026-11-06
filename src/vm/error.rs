@@ -33,6 +33,11 @@ pub struct VmError {
     // `http`, nowhere.)
     #[cfg_attr(not(feature = "http"), allow(dead_code))]
     pub(crate) exit_in_a_test: bool,
+    /// If true, the program's own code ran to its end and returned
+    /// `Err(..)`: `main` ([`Vm::run_program`](super::Vm::run_program)), or a
+    /// test function ([`Vm::call_test`](super::Vm::call_test)). The span is
+    /// the function's name, and there is no call stack.
+    pub returned_err: bool,
     /// Source span where the error occurred (if available).
     pub span: Option<Span>,
     /// Call stack at the time of the error: (function_name, span).
@@ -49,6 +54,7 @@ impl VmError {
             out_of_steps: false,
             exit: None,
             exit_in_a_test: false,
+            returned_err: false,
             span: None,
             call_stack: Vec::new(),
         }
@@ -109,6 +115,16 @@ impl VmError {
         }
     }
 
+    /// `function` (`main`, a test function), named at `at`, returned
+    /// `Err(payload)`; `shown` is the payload as `println` writes it.
+    pub(crate) fn returned(function: &str, shown: &str, at: Span) -> Self {
+        VmError {
+            returned_err: true,
+            span: Some(at),
+            ..VmError::new(format!("{function} returned Err: {shown}"))
+        }
+    }
+
     /// The error with `help` as a help line.
     pub fn with_help(mut self, help: impl Into<String>) -> Self {
         self.help.push(help.into());
@@ -129,14 +145,19 @@ impl VmError {
     /// The labels are the call stack, innermost frame first. An error
     /// with no span is about no place of the program, and has
     /// [`Span::BUILTIN`].
+    ///
+    /// The `Err` that a function returned is its message whole.
     pub fn to_diagnostic(&self) -> Diagnostic {
         let (head, rest) = match self.message.split_once('\n') {
-            Some((head, rest)) => (head, Some(rest)),
-            None => (self.message.as_str(), None),
+            Some((head, rest)) if !self.returned_err => (head, Some(rest)),
+            _ => (self.message.as_str(), None),
         };
-        let code = match self.type_confusion {
-            true => Code::TypeConfusion,
-            false => Code::RuntimeError,
+        let code = if self.type_confusion {
+            Code::TypeConfusion
+        } else if self.returned_err {
+            Code::MainReturnedErr
+        } else {
+            Code::RuntimeError
         };
         let mut d = Diagnostic::error(code, self.span.unwrap_or(Span::BUILTIN), head);
         d.notes.extend(rest.map(str::to_string));

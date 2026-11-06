@@ -414,14 +414,41 @@ impl Vm {
     }
 
     /// Run a compiled program: take in its tables, then run its script.
-    /// The value is the script's: `main`'s for a program compiled for
-    /// `Entry::Main`. This is the one way to start a [`Program`]; the
-    /// test functions of a program compiled for its tests are called
-    /// with [`Vm::call_test`] afterwards. A REPL session runs each entry's program
-    /// on one `Vm`.
+    /// For a program compiled for `Entry::Main`, that runs `main`; for
+    /// one compiled for its tests, the file's top-level code, and the
+    /// test functions are called with [`Vm::call_test`] afterwards.
+    /// This is the one way to start a [`Program`].
+    ///
+    /// The result says whether the program ran to its end. A `main`
+    /// that returns `Err(e)` has failed: that is an error here, with
+    /// [`VmError::returned_err`] set and `e` in the message as `println`
+    /// writes it. No value leaves the program this way: a program gives
+    /// its values to its host through a host function it calls (see
+    /// `docs/ffi.md`).
     ///
     /// [`Program`]: crate::session::Program
-    pub fn run_program(&mut self, program: &crate::session::Program) -> Result<Value, VmError> {
+    pub fn run_program(&mut self, program: &crate::session::Program) -> Result<(), VmError> {
+        use crate::session::EntryPoint;
+        debug_assert!(
+            program.entry != EntryPoint::Cell,
+            "a REPL entry runs through Vm::run_cell"
+        );
+        let value = self.run_loaded(program)?;
+        match &program.entry {
+            EntryPoint::Main { span } => self.ended(value, "main", *span),
+            _ => Ok(()),
+        }
+    }
+
+    /// Run the program of a REPL entry, as [`Vm::run_program`] does, and
+    /// give the entry's value. A session runs each entry's program on
+    /// one `Vm`.
+    #[cfg(feature = "repl")]
+    pub(crate) fn run_cell(&mut self, program: &crate::session::Program) -> Result<Value, VmError> {
+        self.run_loaded(program)
+    }
+
+    fn run_loaded(&mut self, program: &crate::session::Program) -> Result<Value, VmError> {
         self.load(program);
         let script =
             program.functions.first().cloned().ok_or_else(|| {
@@ -430,6 +457,26 @@ impl Vm {
         let result = self.run(Arc::new(script));
         self.report_unjoined_failures();
         result
+    }
+
+    /// What the value that `function` (named at `at`) returned says:
+    /// `Err(e)` is its failure, any other value (`()`, `Ok(())`) that
+    /// it ran to its end. The checker allows no other values there.
+    fn ended(
+        &mut self,
+        value: Value,
+        function: &str,
+        at: crate::source::Span,
+    ) -> Result<(), VmError> {
+        if let Value::Variant(variant) = &value
+            && variant.is(crate::typeinfo::bv::ERR)
+        {
+            // (Result's Err carries exactly one payload.)
+            let payload = variant.fields().first().unwrap_or(&value).clone();
+            let shown = self.show_text(&payload);
+            return Err(VmError::returned(function, &shown, at));
+        }
+        Ok(())
     }
 
     /// Wait until the program has ended. [`Vm::run_program`] and
@@ -504,13 +551,14 @@ impl Vm {
 
     /// Call the test function `test` of the program this VM ran with
     /// [`Vm::run_program`] (compiled for `Entry::Tests`), with no
-    /// arguments, and give its value.
-    pub fn call_test(&mut self, test: &crate::session::TestFn) -> Result<Value, VmError> {
-        let result = self.run(Arc::new(crate::bytecode::call_global_script(
+    /// arguments. As for `main`, a test function that returns `Err(e)`
+    /// has failed: an error with [`VmError::returned_err`] set.
+    pub fn call_test(&mut self, test: &crate::session::TestFn) -> Result<(), VmError> {
+        let value = self.run(Arc::new(crate::bytecode::call_global_script(
             test.slot, &test.name,
         )));
         self.report_unjoined_failures();
-        result
+        self.ended(value?, &test.name, test.span)
     }
 
     /// Take in a program about to run: the descriptions its values'

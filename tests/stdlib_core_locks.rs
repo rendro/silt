@@ -70,7 +70,8 @@ fn test_option_to_result_none_becomes_err_with_value() {
     // Err(err_value), propagating the user-supplied error payload.
     let result = run(r#"
 import option
-fn main() { option.to_result(None, "missing") }
+import host
+fn main() { host.give(option.to_result(None, "missing")) }
     "#);
     assert_eq!(
         result,
@@ -166,7 +167,8 @@ fn test_result_map_err_on_err_applies_callback() {
     // already covered by test_result_map_err_on_ok in integration.rs.
     let result = run(r#"
 import result
-fn main() { result.map_err(Err(3), { e -> e + 100 }) }
+import host
+fn main() { host.give(result.map_err(Err(3), { e -> e + 100 })) }
     "#);
     assert_eq!(result, Value::variant(bv::ERR, [Value::Int(103)]));
 }

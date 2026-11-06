@@ -232,11 +232,11 @@ fn value_returned(code: Code, span: Span, who: &str, entry: EntryFn, ret: &Type)
     let help = match (ret, entry) {
         (Type::Generic(name, _), EntryFn::Main) if name.is_builtin("Option") => {
             "to end the program with a failure when there is none, make main return a \
-             Result and write `option.ok_or(x, \"why\")?`"
+             Result and write `option.to_result(x, \"why\")?`"
         }
         (Type::Generic(name, _), EntryFn::Test) if name.is_builtin("Option") => {
             "to fail the test when there is none, make the test return a Result and write \
-             `option.ok_or(x, \"why\")?`"
+             `option.to_result(x, \"why\")?`"
         }
         (Type::Generic(name, _), EntryFn::Main) if name.is_builtin("Result") => {
             "end main with `Ok(())` once the value is handed on; the Ok of main carries nothing"
@@ -286,6 +286,12 @@ fn returned_span(f: &FnDecl) -> Span {
 
 /// The span of what binds the top-level name `name` in `program`: a
 /// function's name, a `let`'s pattern, an imported item.
+/// Where `main` is bound: the name of its `fn`, the pattern of its
+/// `let`, its name in an import. [`Span::BUILTIN`] when nothing binds it.
+pub(super) fn main_span(program: &Program) -> Span {
+    binder_span(program, intern(ENTRY_POINT))
+}
+
 fn binder_span(program: &Program, name: Symbol) -> Span {
     program
         .decls

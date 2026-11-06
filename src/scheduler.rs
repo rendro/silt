@@ -2856,7 +2856,9 @@ mod tests {
             crate::session::testing::compile_given(source).expect("the program compiles");
         let out = Timed::default();
         let mut vm = Vm::new(HostIo::new(out.clone(), out.clone()));
-        let result = vm.run_program(&program).map(|v| given.last().unwrap_or(v));
+        let result = vm
+            .run_program(&program)
+            .map(|()| given.last().unwrap_or(Value::Unit));
         (result, out, Instant::now())
     }
 
@@ -2927,7 +2929,7 @@ fn main() {
         let before = Instant::now();
         let second = vm.run_program(&deadlocked);
         let took = before.elapsed();
-        assert_eq!(first.map_err(|e| e.message), Ok(Value::Unit));
+        assert_eq!(first.map_err(|e| e.message), Ok(()));
         let error = second.expect_err("the second program is deadlocked");
         assert_eq!(
             error.message,
@@ -2997,7 +2999,7 @@ fn main() {
         *vm.scheduler().inner.timer_lock.lock() = super::TimerThread::Unavailable;
         let result = vm.run_program(&program);
         vm.settle();
-        assert_eq!(result.map_err(|e| e.message), Ok(Value::Unit));
+        assert_eq!(result.map_err(|e| e.message), Ok(()));
         let printed: Vec<String> = out.0.lock().iter().map(|(text, _)| text.clone()).collect();
         assert_eq!(
             printed.concat(),
@@ -3276,7 +3278,7 @@ fn main() {
         let program = crate::session::testing::compile_str(COMPUTES_ALONE).expect("compiles");
         let mut vm = Vm::new(HostIo::buffer(&crate::vm::Buffer::new()));
         let result = vm.run_program(&program);
-        assert_eq!(result.map_err(|e| e.message), Ok(Value::Unit));
+        assert_eq!(result.map_err(|e| e.message), Ok(()));
         let inner = Arc::downgrade(&vm.scheduler().inner);
         drop(vm);
         wait_for_the_end(inner);

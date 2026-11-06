@@ -14,8 +14,6 @@
 //! name, and `SILT_ORACLE_SEED=<n>` draws other programs. A finding is
 //! shown with the smallest program that still has it ([`minimise`]).
 
-use silt::Value;
-
 use crate::oracle::{Expect, Finding, Input, Source, Verdict, examine};
 use crate::sweep::{check_listed, chosen, conclude, full, run, skips, steps};
 
@@ -362,7 +360,7 @@ fn input(name: String, expr: &Expr) -> Input {
         source: Source::Memory(vec![("main.silt".to_string(), program(expr))]),
         real_time: false,
         expect: Expect {
-            end: Some(end.map(|_| Value::Unit)),
+            end: Some(end.map(|_| ())),
             stdout: Some(stdout),
             ..Expect::default()
         },

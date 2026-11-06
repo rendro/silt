@@ -10,18 +10,18 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use silt::session::testing::compile_str;
-use silt::{Buffer, Clock, HostIo, Output, Value, Vm};
+use silt::{Buffer, Clock, HostIo, Output, Vm};
 
 /// Run `source` on a VM with `io`, and give `main`'s value or the
 /// message of the runtime error.
-fn run(source: &str, io: HostIo) -> Result<Value, String> {
+fn run(source: &str, io: HostIo) -> Result<(), String> {
     let program = compile_str(source).unwrap_or_else(|errors| panic!("{errors:?}"));
     Vm::new(io).run_program(&program).map_err(|e| e.message)
 }
 
 /// [`run`] on a thread of its own, for a program the test watches
 /// while it runs.
-fn run_on_thread(source: &'static str, io: HostIo) -> thread::JoinHandle<Result<Value, String>> {
+fn run_on_thread(source: &'static str, io: HostIo) -> thread::JoinHandle<Result<(), String>> {
     thread::spawn(move || run(source, io))
 }
 
@@ -41,7 +41,7 @@ fn print_and_println_write_to_the_buffer() {
     let out = Buffer::new();
     let source =
         "fn main() {\n  print(\"a\")\n  print(\"b\")\n  println(\"c\")\n  println(1 + 1)\n}";
-    assert_eq!(run(source, HostIo::buffer(&out)), Ok(Value::Unit));
+    assert_eq!(run(source, HostIo::buffer(&out)), Ok(()));
     assert_eq!(out.contents(), "abc\n2\n");
     // `take` gives the text and empties the buffer.
     assert_eq!(out.take(), "abc\n2\n");
@@ -63,7 +63,7 @@ fn main() {
   println("total {total}")
 }
 "#;
-    assert_eq!(run(source, HostIo::buffer(&out)), Ok(Value::Unit));
+    assert_eq!(run(source, HostIo::buffer(&out)), Ok(()));
     let text = out.contents();
     let mut lines: Vec<&str> = text.lines().collect();
     // The tasks run in any order; main's line comes after their joins.
@@ -106,10 +106,7 @@ fn main() {{
         );
         let program = compile_str(&source).unwrap_or_else(|errors| panic!("{errors:?}"));
         let mut vm = Vm::new(HostIo::new(out.clone(), err.clone()));
-        assert_eq!(
-            vm.run_program(&program).map_err(|e| e.message),
-            Ok(Value::Unit)
-        );
+        assert_eq!(vm.run_program(&program).map_err(|e| e.message), Ok(()));
         assert_eq!(out.contents(), "main done\n");
         let at_return = err.take();
         drop(vm);
@@ -154,10 +151,7 @@ fn main() {
     let out = Buffer::new();
     let err = Buffer::new();
     let mut vm = Vm::new(HostIo::new(out.clone(), err.clone()));
-    assert_eq!(
-        vm.run_program(&program).map_err(|e| e.message),
-        Ok(Value::Unit)
-    );
+    assert_eq!(vm.run_program(&program).map_err(|e| e.message), Ok(()));
     vm.settle();
     assert_eq!(out.contents(), "about to fail\n");
     let report = err.contents();
@@ -203,7 +197,7 @@ fn main() {
                     vm.set_task_owner(tag);
                     let result = vm.run_program(&program).map_err(|e| e.message);
                     vm.settle();
-                    assert_eq!(result, Ok(Value::Unit), "tag {tag}, run {run}");
+                    assert_eq!(result, Ok(()), "tag {tag}, run {run}");
                     assert_eq!(out.contents(), "main\nslept\n", "tag {tag}, run {run}");
                 }
             })
@@ -239,10 +233,7 @@ fn main() {
         let err = Buffer::new();
         let clock = FakeClock::default();
         let mut vm = Vm::new(HostIo::new(out.clone(), err.clone()).clock(clock.clone()));
-        assert_eq!(
-            vm.run_program(&program).map_err(|e| e.message),
-            Ok(Value::Unit)
-        );
+        assert_eq!(vm.run_program(&program).map_err(|e| e.message), Ok(()));
         assert_eq!(err.contents(), "");
 
         // The task may not have started its sleep yet: the clock is
@@ -299,10 +290,7 @@ fn docs_ffi_output_of_ones_own() {
 
     let (tx, rx) = std::sync::mpsc::channel();
     let source = "fn main() {\n  print(\"a\")\n  println(\"b\")\n}";
-    assert_eq!(
-        run(source, HostIo::new(Lines(tx), Buffer::new())),
-        Ok(Value::Unit)
-    );
+    assert_eq!(run(source, HostIo::new(Lines(tx), Buffer::new())), Ok(()));
     assert_eq!(rx.try_iter().collect::<Vec<_>>(), ["a", "b\n"]);
 }
 
@@ -365,10 +353,7 @@ fn main() {
   println("main done")
 }
 "#;
-    assert_eq!(
-        run(source, HostIo::new(out.clone(), Panics)),
-        Ok(Value::Unit)
-    );
+    assert_eq!(run(source, HostIo::new(out.clone(), Panics)), Ok(()));
     assert_eq!(out.contents(), "main done\n");
 }
 
@@ -398,10 +383,7 @@ fn main() {
   println("c")
 }
 "#;
-    assert_eq!(
-        run(source, HostIo::new(out.clone(), Lines(tx))),
-        Ok(Value::Unit)
-    );
+    assert_eq!(run(source, HostIo::new(out.clone(), Lines(tx))), Ok(()));
     assert_eq!(out.contents(), "ac\n");
     assert_eq!(
         rx.try_iter().collect::<Vec<_>>(),
@@ -415,16 +397,10 @@ fn main() {
 fn a_failed_write_to_stderr_is_ignored() {
     let source = "import io\nfn main() {\n  io.eprintln(\"lost\")\n  println(\"on\")\n}";
     let out = Buffer::new();
-    assert_eq!(
-        run(source, HostIo::new(out.clone(), Closed)),
-        Ok(Value::Unit)
-    );
+    assert_eq!(run(source, HostIo::new(out.clone(), Closed)), Ok(()));
     assert_eq!(out.contents(), "on\n");
     let out = Buffer::new();
-    assert_eq!(
-        run(source, HostIo::new(out.clone(), Panics)),
-        Ok(Value::Unit)
-    );
+    assert_eq!(run(source, HostIo::new(out.clone(), Panics)), Ok(()));
     assert_eq!(out.contents(), "on\n");
 }
 
@@ -643,7 +619,7 @@ fn main() {
 }
 "#;
     let io = HostIo::buffer(&out).clock(FakeClock::default());
-    assert_eq!(run(source, io), Ok(Value::Unit));
+    assert_eq!(run(source, io), Ok(()));
     assert_eq!(out.contents(), "2026-10-05 12:00:00\n");
 }
 
@@ -652,7 +628,7 @@ fn time_today_is_the_date_of_the_clock() {
     let out = Buffer::new();
     let source = "import time\nfn main() { println(time.today()) }";
     let io = HostIo::buffer(&out).clock(FakeClock::default());
-    assert_eq!(run(source, io), Ok(Value::Unit));
+    assert_eq!(run(source, io), Ok(()));
     // With the `local-clock` feature the date is the local one, which
     // is the day before or after in time zones far from UTC.
     #[cfg(feature = "local-clock")]
@@ -685,7 +661,7 @@ fn main() {
 "#;
     let started = Instant::now();
     let io = HostIo::buffer(&out).clock(clock.clone());
-    assert_eq!(run(source, io), Ok(Value::Unit));
+    assert_eq!(run(source, io), Ok(()));
     assert_eq!(out.contents(), "true\n");
     assert_eq!(clock.passed(), Duration::from_secs(3600));
     assert!(started.elapsed() < Duration::from_secs(60));
@@ -710,7 +686,7 @@ fn main() {
 "#;
     let _ticking = keep_advancing(&clock);
     let io = HostIo::buffer(&out).clock(clock.clone());
-    assert_eq!(run(source, io), Ok(Value::Unit));
+    assert_eq!(run(source, io), Ok(()));
     assert_eq!(out.contents(), "true\n");
 }
 
@@ -736,7 +712,7 @@ fn main() {
 "#;
     let _ticking = keep_advancing(&clock);
     let io = HostIo::buffer(&out).clock(clock.clone());
-    assert_eq!(run(source, io), Ok(Value::Unit));
+    assert_eq!(run(source, io), Ok(()));
     assert_eq!(out.contents(), "None\nEmpty\nEmpty\n");
     assert!(clock.passed() >= Duration::from_secs(3 * 3600));
 }
@@ -762,7 +738,7 @@ fn main() {
     assert_eq!(out.contents(), "waiting\n");
 
     clock.advance(Duration::from_millis(20));
-    assert_eq!(ran.join().unwrap(), Ok(Value::Unit));
+    assert_eq!(ran.join().unwrap(), Ok(()));
     assert_eq!(out.contents(), "waiting\nNone\n");
 }
 
@@ -789,7 +765,7 @@ fn main() {
 "#;
     let _ticking = keep_advancing(&clock);
     let io = HostIo::buffer(&out).clock(clock.clone());
-    assert_eq!(run(source, io), Ok(Value::Unit));
+    assert_eq!(run(source, io), Ok(()));
     assert_eq!(
         out.contents(),
         "Ok(Err(file not found: /no/such/file))\nErr(the function was ended by its deadline)\n"
@@ -826,7 +802,7 @@ fn main() {
 "#;
     let _ticking = keep_advancing(&clock);
     let io = HostIo::buffer(&out).clock(clock.clone());
-    assert_eq!(run(source, io), Ok(Value::Unit));
+    assert_eq!(run(source, io), Ok(()));
     assert_eq!(
         out.contents(),
         "Err(the function was ended by its deadline)\n"
@@ -871,7 +847,7 @@ impl Clock for BreakingClock {
 
 /// [`run`] on a thread of its own, with ten seconds to end: a program
 /// that hangs fails the test instead of hanging it.
-fn run_bounded(source: &'static str, io: HostIo) -> Result<Value, String> {
+fn run_bounded(source: &'static str, io: HostIo) -> Result<(), String> {
     let ran = run_on_thread(source, io);
     wait_until("the program ends", || ran.is_finished());
     ran.join().unwrap()

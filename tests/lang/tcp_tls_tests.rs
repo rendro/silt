@@ -245,7 +245,7 @@ fn main() {{
     let mut vm = silt::Vm::new(silt::HostIo::buffer(&out));
     let result = vm.run_program(&program).map_err(|e| e.message);
     vm.settle();
-    assert_eq!(result, Ok(Value::Unit), "{:?}", out.contents());
+    assert_eq!(result, Ok(()), "{:?}", out.contents());
     assert_eq!(out.contents(), "given up\nthe client reads 0 bytes\n");
     // Every thread of the pool that exists is one that is free: none
     // is still in the handshake.

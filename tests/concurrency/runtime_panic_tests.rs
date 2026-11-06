@@ -99,7 +99,7 @@ fn a_panic_of_a_worker_reaches_the_thread_that_waits_for_the_lost_task() {
         silt::session::testing::compile_given("import host\nfn main() { host.give(6 * 7) }")
             .expect("the program compiles");
     let answer = Vm::new(HostIo::buffer(&other)).run_program(&program);
-    assert_eq!(answer.map_err(|e| e.message), Ok(Value::Unit));
+    assert_eq!(answer.map_err(|e| e.message), Ok(()));
     assert_eq!(given.last(), Some(Value::Int(42)));
 }
 

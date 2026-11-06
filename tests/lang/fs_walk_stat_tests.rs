@@ -557,7 +557,9 @@ fn copy_and_rename_name_the_path_of_a_directory_fault() {
             format!("directory not empty: {d}/full"),
         ),
     ] {
-        let got = err_msg(run(&format!("import fs\nfn main() {{\n  {call}\n}}\n")));
+        let got = err_msg(run(&format!(
+            "import fs\nimport host\nfn main() {{\n  host.give({call})\n}}\n"
+        )));
         assert_eq!(got, message, "{call}");
     }
     // Nothing moved, nothing written.

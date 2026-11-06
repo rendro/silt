@@ -622,7 +622,7 @@ impl Repl {
                 return evaluation;
             }
         };
-        match self.vm.run_program(&program) {
+        match self.vm.run_cell(&program) {
             Ok(value) => {
                 self.session.commit_cell(file);
                 self.committed = Some(self.session.module_of(file));

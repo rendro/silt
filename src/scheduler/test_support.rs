@@ -227,7 +227,7 @@ fn compile_and_run(source: &str) -> (String, Result<Value, crate::vm::VmError>) 
     };
     let result = crate::vm::Vm::new(crate::HostIo::process())
         .run_program(&program)
-        .map(|v| given.last().unwrap_or(v));
+        .map(|()| given.last().unwrap_or(crate::Value::Unit));
     (stdout, result)
 }
 
