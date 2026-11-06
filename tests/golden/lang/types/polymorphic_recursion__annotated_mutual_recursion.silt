@@ -12,5 +12,5 @@ fn pong(x: b) -> Int where b: Display {
 }
 
 fn main() {
-  ping(true)
+  let _ = ping(true)
 }

@@ -5,5 +5,5 @@
 import m_top
 
 fn main() {
-  m_top.top()
+  let _ = m_top.top()
 }

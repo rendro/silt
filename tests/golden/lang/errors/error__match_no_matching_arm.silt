@@ -3,7 +3,7 @@
 -- stderr-contains: non-exhaustive match: `(0, _, _)` is not covered
 fn main() {
   let x = (1, 2, 3)
-  match x {
+  let _ = match x {
     (1, 2, 4) -> "a"
     (1, 3, 3) -> "b"
   }

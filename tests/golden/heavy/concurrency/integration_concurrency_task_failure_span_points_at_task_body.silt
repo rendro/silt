@@ -14,5 +14,5 @@ fn main() {
     let x = y / 0
     x
   })
-  task.join(h)
+  let _ = task.join(h)
 }

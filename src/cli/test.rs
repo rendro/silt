@@ -13,7 +13,7 @@ use silt::vm::{Exit, Vm};
 
 use crate::cli::help::test_usage_banner;
 use crate::cli::paths::{ProgramFiles, door_diagnostics, open_entry, package_test_files};
-use crate::cli::run::{render_runtime_error, returned_err};
+use crate::cli::run::render_runtime_error;
 
 /// Dispatch `silt test [--filter <pat>] [path]`.
 pub(crate) fn dispatch(args: &[String]) {
@@ -309,9 +309,9 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             // error of the test function nothing is waited for: its
             // tasks are stopped where they are.
             match &outcome {
-                Ok(value) if returned_err(value).is_none() => vm.settle(),
+                Ok(()) => vm.settle(),
                 // Raised, or returned as `Err`.
-                _ => vm.stop_tasks(),
+                Err(_) => vm.stop_tasks(),
             }
             // The failures of the test's tasks are reported under its
             // result line: the line and what stands under it are one
@@ -319,35 +319,19 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             let task_failures = owners.take_task_failures(owner, &mut counts);
             let mut said = String::new();
             let test_failed = match outcome {
-                Ok(value) => match returned_err(&value) {
-                    // `Ok(..)`, Unit and every other value: the test ran
-                    // to its end.
-                    None if task_failures.is_empty() => {
-                        said += &format!("  PASS {path}::{name}\n");
-                        false
-                    }
-                    // The test ran to its end, but a task it spawned
-                    // failed and was neither joined nor cancelled.
-                    None => {
-                        said += &format!("  FAIL {path}::{name}\n");
-                        true
-                    }
-                    // `Err(..)`: the test gave up, typically at a `?`, and
-                    // the assertions after that point never ran. Same
-                    // rule as for `main` under `silt run`; the error is
-                    // at the test's name.
-                    Some(payload) => {
-                        said += &format!("  FAIL {path}::{name}\n");
-                        let d = Diagnostic::error(
-                            Code::MainReturnedErr,
-                            test.span,
-                            format!("{name} returned Err: {}", vm.show_text(payload)),
-                        );
-                        let files = ProgramFiles::new(shown, &owners.files[file_index].sources);
-                        said += &indented(&render_human(&files, &d));
-                        true
-                    }
-                },
+                // The test ran to its end.
+                Ok(()) if task_failures.is_empty() => {
+                    said += &format!("  PASS {path}::{name}\n");
+                    false
+                }
+                // The test ran to its end, but a task it spawned failed
+                // and was neither joined nor cancelled.
+                Ok(()) => {
+                    said += &format!("  FAIL {path}::{name}\n");
+                    true
+                }
+                // Raised, or returned as `Err` (typically at a `?`; the
+                // assertions after it never ran), at the test's name.
                 Err(e) => {
                     said += &format!("  FAIL {path}::{name}\n");
                     // The location is in the file the error's span

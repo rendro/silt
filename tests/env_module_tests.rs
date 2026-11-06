@@ -30,11 +30,12 @@ fn test_env_remove_nonexistent_is_idempotent() {
 import env
 fn main() {
   env.remove("SILT_TEST_ENV_NEVER_EXISTED_XYZ")
-  match env.get("SILT_TEST_ENV_NEVER_EXISTED_XYZ") {
+  host.give(match env.get("SILT_TEST_ENV_NEVER_EXISTED_XYZ") {
     Some(_) -> "unexpected: still set"
     None -> "ok"
-  }
+  })
 }
+import host
 "#);
     assert_eq!(expect_string(v), "ok");
 }
@@ -47,11 +48,12 @@ import env
 fn main() {
   env.set("SILT_TEST_ENV_ROUND_TRIP", "hello")
   env.remove("SILT_TEST_ENV_ROUND_TRIP")
-  match env.get("SILT_TEST_ENV_ROUND_TRIP") {
+  host.give(match env.get("SILT_TEST_ENV_ROUND_TRIP") {
     Some(_) -> "fail"
     None -> "ok"
-  }
+  })
 }
+import host
 "#);
     assert_eq!(expect_string(v), "ok");
 }
@@ -68,13 +70,14 @@ import list
 fn main() {
   env.set("SILT_TEST_ENV_VARS_PROBE", "42")
   let all = env.vars()
-  list.fold(all, "missing") { acc, pair -> match pair {
+  host.give(list.fold(all, "missing") { acc, pair -> match pair {
     (k, v) -> match k == "SILT_TEST_ENV_VARS_PROBE" {
       true -> v
       false -> acc
     }
-  } }
+  } })
 }
+import host
 "#);
     assert_eq!(expect_string(v), "42");
     // Clean up so a later test doesn't see it.
@@ -93,13 +96,14 @@ import list
 fn main() {
   env.remove("SILT_TEST_ENV_VARS_REMOVED")
   let all = env.vars()
-  list.fold(all, "missing") { acc, pair -> match pair {
+  host.give(list.fold(all, "missing") { acc, pair -> match pair {
     (k, _) -> match k == "SILT_TEST_ENV_VARS_REMOVED" {
       true -> "still-there"
       false -> acc
     }
-  } }
+  } })
 }
+import host
 "#);
     assert_eq!(expect_string(v), "missing");
 }
@@ -115,13 +119,14 @@ import list
 import string
 fn main() {
   let all = env.vars()
-  list.fold(all, 0) { acc, pair -> match pair {
+  host.give(list.fold(all, 0) { acc, pair -> match pair {
     (k, v) -> match k == "SILT_TEST_ENV_SHAPE_PROBE" {
       true -> string.length(v)
       false -> acc
     }
-  } }
+  } })
 }
+import host
 "#);
     // "xy" is two characters.
     assert_eq!(v, Value::Int(2));

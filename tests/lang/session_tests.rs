@@ -95,12 +95,18 @@ fn analyze_is_cached_and_each_file_is_registered_once() {
 /// The entry point is found by its type, however `main` is bound.
 #[test]
 fn main_is_found_by_type_however_it_is_bound() {
-    assert_eq!(run_str("fn main() { 1 }"), Ok(Value::Int(1)));
-    assert_eq!(run_str("let main = { -> 2 }"), Ok(Value::Int(2)));
+    assert_eq!(
+        run_str("fn main() { host.give(1) }\nimport host"),
+        Ok(Value::Int(1))
+    );
+    assert_eq!(
+        run_str("let main = { -> host.give(2) }\nimport host"),
+        Ok(Value::Int(2))
+    );
     assert_eq!(
         run_files(&[
             ("main.silt", "import entry.{ main }"),
-            ("entry.silt", "pub fn main() { 3 }"),
+            ("entry.silt", "pub fn main() { host.give(3) }\nimport host"),
         ]),
         Ok(Value::Int(3))
     );

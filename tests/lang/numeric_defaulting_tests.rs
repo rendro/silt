@@ -83,7 +83,7 @@ fn main() {
   let plus = add
   let n = plus(1, 2)
   let f = plus(1.5, 2.5)
-  n
+  let _ = n
 }
 "#;
     let errs = typecheck(source);

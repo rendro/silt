@@ -4,5 +4,5 @@
 fn main() {
   let x = 42
   let _ = x.foo
-  0
+  let _ = 0
 }

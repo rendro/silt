@@ -30,10 +30,10 @@ fn run_vm(source: &str) -> Value {
     run_vm_result(source).unwrap()
 }
 
-/// Helper: compile a silt program through a session and run it.
+/// Helper: compile a silt program through a session and run it: the
+/// value it gave through `host.give`.
 fn run_vm_result(source: &str) -> Result<Value, VmError> {
-    let program = crate::session::testing::compile_str(source).unwrap_or_else(|e| panic!("{e:?}"));
-    Vm::new(crate::HostIo::process()).run_program(&program)
+    crate::session::testing::run_given(source)
 }
 
 // ── Phase 1 bytecode-level tests ──────────────────────────────
@@ -879,7 +879,10 @@ fn test_e2e_hello_world() {
 
 #[test]
 fn test_e2e_arithmetic() {
-    let result = run_vm(r#"fn main() { 2 + 3 * 4 }"#);
+    let result = run_vm(
+        r#"fn main() { host.give(2 + 3 * 4) }
+import host"#,
+    );
     assert_eq!(result, Value::Int(14));
 }
 
@@ -888,7 +891,8 @@ fn test_e2e_function_call() {
     let result = run_vm(
         r#"
             fn add(a, b) { a + b }
-            fn main() { add(10, 20) }
+            fn main() { host.give(add(10, 20)) }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(30));
@@ -900,8 +904,9 @@ fn test_e2e_let_binding() {
         r#"
             fn main() {
                 let x = 42
-                x
+                host.give(x)
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(42));
@@ -925,7 +930,8 @@ fn test_e2e_multiple_functions() {
         r#"
             fn double(n) { n * 2 }
             fn add_one(n) { n + 1 }
-            fn main() { add_one(double(5)) }
+            fn main() { host.give(add_one(double(5))) }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(11));
@@ -941,7 +947,8 @@ fn test_e2e_recursion() {
                     _ -> n * factorial(n - 1)
                 }
             }
-            fn main() { factorial(5) }
+            fn main() { host.give(factorial(5)) }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(120));
@@ -955,8 +962,9 @@ fn test_e2e_string_operations() {
 
             fn main() {
                 let s = "hello, world"
-                string.length(s)
+                host.give(string.length(s))
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(12));
@@ -970,8 +978,9 @@ fn test_e2e_list_operations() {
 
             fn main() {
                 let xs = [1, 2, 3, 4, 5]
-                list.length(xs)
+                host.give(list.length(xs))
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(5));
@@ -996,7 +1005,8 @@ fn test_e2e_nested_calls() {
         r#"
             fn f(x) { x + 1 }
             fn g(x) { f(x) * 2 }
-            fn main() { g(10) }
+            fn main() { host.give(g(10)) }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(22));
@@ -1013,7 +1023,8 @@ fn test_e2e_match_int() {
                     _ -> "other"
                 }
             }
-            fn main() { classify(1) }
+            fn main() { host.give(classify(1)) }
+            import host
         "#,
     );
     assert_eq!(result, Value::String("one".into()));
@@ -1026,8 +1037,9 @@ fn test_e2e_boolean_logic() {
             fn main() {
                 let a = true
                 let b = false
-                a && !b
+                host.give(a && !b)
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Bool(true));
@@ -1051,8 +1063,9 @@ fn test_e2e_variant_constructor() {
         r#"
             fn main() {
                 let x = Some(42)
-                x
+                host.give(x)
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::variant(bv::SOME, [Value::Int(42)]));
@@ -1065,8 +1078,9 @@ fn test_e2e_string_from_int() {
             import string
 
             fn main() {
-                string.from(42)
+                host.give(string.from(42))
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::String("42".into()));
@@ -1080,8 +1094,9 @@ fn test_e2e_list_append() {
 
             fn main() {
                 let xs = [1, 2, 3]
-                list.append(xs, 4)
+                host.give(list.append(xs, 4))
             }
+            import host
         "#,
     );
     assert_eq!(
@@ -1106,8 +1121,9 @@ fn test_closure_capture() {
             }
             fn main() {
                 let add5 = make_adder(5)
-                add5(10)
+                host.give(add5(10))
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(15));
@@ -1121,8 +1137,9 @@ fn test_closure_in_map() {
 
             fn main() {
                 let factor = 10
-                [1, 2, 3] |> list.map({ x -> x * factor })
+                host.give([1, 2, 3] |> list.map({ x -> x * factor }))
             }
+            import host
         "#,
     );
     assert_eq!(
@@ -1140,8 +1157,9 @@ fn test_higher_order() {
             }
             fn main() {
                 let double = { x -> x * 2 }
-                apply_twice(double, 3)
+                host.give(apply_twice(double, 3))
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(12));
@@ -1158,8 +1176,9 @@ fn test_closure_counter() {
                 let fns = [1, 2, 3] |> list.map({ n ->
                     { -> n * 10 }
                 })
-                fns |> list.map({ f -> f() })
+                host.give(fns |> list.map({ f -> f() }))
             }
+            import host
         "#,
     );
     assert_eq!(
@@ -1177,8 +1196,9 @@ fn test_closure_multiple_captures() {
             }
             fn main() {
                 let f = make_linear(3, 7)
-                f(10)
+                host.give(f(10))
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(37));
@@ -1197,8 +1217,9 @@ fn test_closure_transitive_capture() {
             }
             fn main() {
                 let f = outer(42)
-                f()
+                host.give(f())
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(42));
@@ -1211,8 +1232,9 @@ fn test_closure_no_capture() {
         r#"
             fn main() {
                 let f = { x -> x + 1 }
-                f(10)
+                host.give(f(10))
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(11));
@@ -1226,8 +1248,9 @@ fn test_closure_with_filter() {
 
             fn main() {
                 let threshold = 3
-                [1, 2, 3, 4, 5] |> list.filter({ x -> x > threshold })
+                host.give([1, 2, 3, 4, 5] |> list.filter({ x -> x > threshold }))
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::list(vec![Value::Int(4), Value::Int(5)]));
@@ -1241,8 +1264,9 @@ fn test_closure_with_fold() {
 
             fn main() {
                 let offset = 100
-                [1, 2, 3] |> list.fold(offset, { acc, x -> acc + x })
+                host.give([1, 2, 3] |> list.fold(offset, { acc, x -> acc + x }))
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(106));
@@ -1254,8 +1278,9 @@ fn test_let_tuple_destructure() {
         r#"
             fn main() {
                 let (a, b) = (10, 20)
-                a + b
+                host.give(a + b)
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(30));
@@ -1267,8 +1292,9 @@ fn test_let_tuple_destructure_three() {
         r#"
             fn main() {
                 let (a, b, c) = (1, 2, 3)
-                a * 100 + b * 10 + c
+                host.give(a * 100 + b * 10 + c)
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(123));
@@ -1285,8 +1311,9 @@ fn test_closure_returned_from_fn() {
             fn main() {
                 let times3 = multiplier(3)
                 let times7 = multiplier(7)
-                times3(10) + times7(5)
+                host.give(times3(10) + times7(5))
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(65));
@@ -1301,8 +1328,9 @@ fn test_trailing_closure_with_capture() {
 
             fn main() {
                 let factor = 10
-                [1, 2, 3] |> list.map { x -> x * factor }
+                host.give([1, 2, 3] |> list.map { x -> x * factor })
             }
+            import host
         "#,
     );
     assert_eq!(
@@ -1319,8 +1347,9 @@ fn test_trailing_closure_filter_with_capture() {
 
             fn main() {
                 let limit = 3
-                [1, 2, 3, 4, 5] |> list.filter { x -> x > limit }
+                host.give([1, 2, 3, 4, 5] |> list.filter { x -> x > limit })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::list(vec![Value::Int(4), Value::Int(5)]));
@@ -1335,10 +1364,11 @@ fn test_chained_pipes_with_closures() {
             fn main() {
                 let offset = 10
                 let cutoff = 13
-                [1, 2, 3, 4, 5]
+                host.give([1, 2, 3, 4, 5]
                     |> list.map({ x -> x + offset })
-                    |> list.filter({ x -> x > cutoff })
+                    |> list.filter({ x -> x > cutoff }))
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::list(vec![Value::Int(14), Value::Int(15)]));
@@ -1350,10 +1380,11 @@ fn test_chained_pipes_with_closures() {
 fn test_match_int_literal() {
     let result = run_vm(
         r#"
-            fn main() { match 42 {
+            fn main() { host.give(match 42 {
               42 -> "yes"
               _ -> "no"
-            } }
+            }) }
+            import host
         "#,
     );
     assert_eq!(result, Value::String("yes".into()));
@@ -1363,10 +1394,11 @@ fn test_match_int_literal() {
 fn test_match_int_fallthrough() {
     let result = run_vm(
         r#"
-            fn main() { match 99 {
+            fn main() { host.give(match 99 {
               42 -> "yes"
               _ -> "no"
-            } }
+            }) }
+            import host
         "#,
     );
     assert_eq!(result, Value::String("no".into()));
@@ -1376,10 +1408,11 @@ fn test_match_int_fallthrough() {
 fn test_match_string_literal() {
     let result = run_vm(
         r#"
-            fn main() { match "hello" {
+            fn main() { host.give(match "hello" {
               "hello" -> 1
               _ -> 0
-            } }
+            }) }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(1));
@@ -1389,10 +1422,11 @@ fn test_match_string_literal() {
 fn test_match_bool_literal() {
     let result = run_vm(
         r#"
-            fn main() { match true {
+            fn main() { host.give(match true {
               true -> "yes"
               false -> "no"
-            } }
+            }) }
+            import host
         "#,
     );
     assert_eq!(result, Value::String("yes".into()));
@@ -1402,10 +1436,11 @@ fn test_match_bool_literal() {
 fn test_match_float_literal() {
     let result = run_vm(
         r#"
-            fn main() { match 3.14 {
+            fn main() { host.give(match 3.14 {
               3.14 -> "pi"
               _ -> "other"
-            } }
+            }) }
+            import host
         "#,
     );
     assert_eq!(result, Value::String("pi".into()));
@@ -1416,11 +1451,12 @@ fn test_match_tuple() {
     let result = run_vm(
         r#"
             fn main() {
-                match (1, 2) {
+                host.give(match (1, 2) {
                   (1, y) -> y * 10
                   _ -> 0
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(20));
@@ -1431,11 +1467,12 @@ fn test_match_tuple_wildcard() {
     let result = run_vm(
         r#"
             fn main() {
-                match (1, 2) {
+                host.give(match (1, 2) {
                   (_, y) -> y + 100
                   _ -> 0
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(102));
@@ -1446,11 +1483,12 @@ fn test_match_list_exact() {
     let result = run_vm(
         r#"
             fn main() {
-                match [1, 2, 3] {
+                host.give(match [1, 2, 3] {
                   [a, b, c] -> a + b + c
                   _ -> 0
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(6));
@@ -1461,11 +1499,12 @@ fn test_match_list_exact_mismatch() {
     let result = run_vm(
         r#"
             fn main() {
-                match [1, 2] {
+                host.give(match [1, 2] {
                   [a, b, c] -> a + b + c
                   _ -> 99
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(99));
@@ -1476,11 +1515,12 @@ fn test_match_list_head_rest() {
     let result = run_vm(
         r#"
             fn main() {
-                match [10, 20, 30] {
+                host.give(match [10, 20, 30] {
                   [h, ..t] -> h
                   _ -> 0
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(10));
@@ -1491,11 +1531,12 @@ fn test_match_list_rest_value() {
     let result = run_vm(
         r#"
             fn main() {
-                match [10, 20, 30] {
+                host.give(match [10, 20, 30] {
                   [_, ..t] -> t
                   _ -> []
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::list(vec![Value::Int(20), Value::Int(30)]));
@@ -1506,11 +1547,12 @@ fn test_match_list_empty_rest() {
     let result = run_vm(
         r#"
             fn main() {
-                match [10] {
+                host.give(match [10] {
                   [h, ..t] -> t
                   _ -> [99]
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::list(vec![]));
@@ -1521,11 +1563,12 @@ fn test_match_constructor_simple() {
     let result = run_vm(
         r#"
             fn main() {
-                match Some(42) {
+                host.give(match Some(42) {
                   Some(n) -> n
                   None -> 0
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(42));
@@ -1536,11 +1579,12 @@ fn test_match_constructor_none() {
     let result = run_vm(
         r#"
             fn main() {
-                match None {
+                host.give(match None {
                   Some(n) -> n
                   None -> 0
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(0));
@@ -1552,11 +1596,12 @@ fn test_match_constructor_ok_err() {
         r#"
             fn main() {
                 let v = Ok(42)
-                match v {
+                host.give(match v {
                   Ok(n) -> n
                   Err(_) -> -1
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(42));
@@ -1567,11 +1612,12 @@ fn test_match_nested_constructor_tuple() {
     let result = run_vm(
         r#"
             fn main() {
-                match Some((1, 2)) {
+                host.give(match Some((1, 2)) {
                   Some((a, b)) -> a + b
                   None -> 0
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(3));
@@ -1582,11 +1628,12 @@ fn test_match_nested_constructor_list() {
     let result = run_vm(
         r#"
             fn main() {
-                match Some([10, 20]) {
+                host.give(match Some([10, 20]) {
                     Some([h, ..t]) -> h
                     _ -> 0
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(10));
@@ -1597,11 +1644,12 @@ fn test_match_or_pattern() {
     let result = run_vm(
         r#"
             fn main() {
-                match 2 {
+                host.give(match 2 {
                   1 | 2 | 3 -> "small"
                   _ -> "big"
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::String("small".into()));
@@ -1612,11 +1660,12 @@ fn test_match_or_pattern_no_match() {
     let result = run_vm(
         r#"
             fn main() {
-                match 5 {
+                host.give(match 5 {
                   1 | 2 | 3 -> "small"
                   _ -> "big"
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::String("big".into()));
@@ -1627,12 +1676,13 @@ fn test_match_guard() {
     let result = run_vm(
         r#"
             fn main() {
-                match 42 {
+                host.give(match 42 {
                     n when n > 100 -> "big"
                     n when n > 0 -> "positive"
                     _ -> "other"
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::String("positive".into()));
@@ -1643,12 +1693,13 @@ fn test_match_guard_all_fail() {
     let result = run_vm(
         r#"
             fn main() {
-                match -5 {
+                host.give(match -5 {
                     n when n > 100 -> "big"
                     n when n > 0 -> "positive"
                     _ -> "other"
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::String("other".into()));
@@ -1659,11 +1710,12 @@ fn test_match_range() {
     let result = run_vm(
         r#"
             fn main() {
-                match 5 {
+                host.give(match 5 {
                   1..10 -> "in range"
                   _ -> "out"
-                }
+                })
             }
+import host
         "#,
     );
     assert_eq!(result, Value::String("in range".into()));
@@ -1674,11 +1726,12 @@ fn test_match_range_boundary() {
     let result = run_vm(
         r#"
             fn main() {
-                match 10 {
+                host.give(match 10 {
                   1..10 -> "in range"
                   _ -> "out"
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::String("in range".into()));
@@ -1689,11 +1742,12 @@ fn test_match_range_out() {
     let result = run_vm(
         r#"
             fn main() {
-                match 11 {
+                host.give(match 11 {
                   1..10 -> "in range"
                   _ -> "out"
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::String("out".into()));
@@ -1705,12 +1759,13 @@ fn test_guardless_match() {
         r#"
             fn main() {
                 let x = 5
-                match {
+                host.give(match {
                   x > 10 -> "big"
                   x > 0 -> "positive"
                   _ -> "other"
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::String("positive".into()));
@@ -1722,12 +1777,13 @@ fn test_guardless_match_default() {
         r#"
             fn main() {
                 let x = -5
-                match {
+                host.give(match {
                   x > 10 -> "big"
                   x > 0 -> "positive"
                   _ -> "other"
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::String("other".into()));
@@ -1739,8 +1795,9 @@ fn test_let_tuple_destructure_nested() {
         r#"
             fn main() {
                 let (a, (b, c)) = (1, (2, 3))
-                a + b + c
+                host.give(a + b + c)
             }
+import host
         "#,
     );
     assert_eq!(result, Value::Int(6));
@@ -1759,8 +1816,9 @@ fn test_match_multiple_arms() {
                 }
             }
             fn main() {
-                classify(2)
+                host.give(classify(2))
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::String("two".into()));
@@ -1771,8 +1829,9 @@ fn test_match_ident_binding() {
     let result = run_vm(
         r#"
             fn main() {
-                match 42 { x -> x + 1 }
+                host.give(match 42 { x -> x + 1 })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(43));
@@ -1783,8 +1842,9 @@ fn test_match_wildcard() {
     let result = run_vm(
         r#"
             fn main() {
-                match 42 { _ -> "matched" }
+                host.give(match 42 { _ -> "matched" })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::String("matched".into()));
@@ -1795,12 +1855,13 @@ fn test_match_constructor_with_guard() {
     let result = run_vm(
         r#"
             fn main() {
-                match Some(5) {
+                host.give(match Some(5) {
                     Some(n) when n > 10 -> 0
                     Some(n) -> n * 2
                     None -> 0
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(10));
@@ -1815,11 +1876,12 @@ fn test_when_bool_guard() {
                 Ok(a / b)
             }
             fn main() {
-                match safe_div(10, 2) {
+                host.give(match safe_div(10, 2) {
                   Ok(n) -> n
                   Err(_) -> -1
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(5));
@@ -1834,11 +1896,12 @@ fn test_when_bool_guard_fails() {
                 Ok(a / b)
             }
             fn main() {
-                match safe_div(10, 0) {
+                host.give(match safe_div(10, 0) {
                   Ok(n) -> n
                   Err(_) -> -1
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(-1));
@@ -1849,11 +1912,12 @@ fn test_match_list_two_elems_with_rest() {
     let result = run_vm(
         r#"
             fn main() {
-                match [1, 2, 3, 4, 5] {
+                host.give(match [1, 2, 3, 4, 5] {
                     [a, b, ..rest] -> a + b
                     _ -> 0
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(3));
@@ -1864,11 +1928,12 @@ fn test_match_tuple_three() {
     let result = run_vm(
         r#"
             fn main() {
-                match (10, 20, 30) {
+                host.give(match (10, 20, 30) {
                     (a, b, c) -> a + b + c
                     _ -> 0
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(60));
@@ -1880,11 +1945,12 @@ fn test_match_nested_tuple_in_list() {
     let result = run_vm(
         r#"
             fn main() {
-                match [1, 2] {
+                host.give(match [1, 2] {
                     [a, b] -> a * 100 + b
                     _ -> 0
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(102));
@@ -1895,11 +1961,12 @@ fn test_match_constructor_wildcard_field() {
     let result = run_vm(
         r#"
             fn main() {
-                match Ok(42) {
+                host.give(match Ok(42) {
                   Ok(_) -> "is ok"
                   Err(_) -> "is err"
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::String("is ok".into()));
@@ -1910,11 +1977,12 @@ fn test_match_or_pattern_constructor() {
     let result = run_vm(
         r#"
             fn main() {
-                match None {
+                host.give(match None {
                   Some(_) -> "has value"
                   None -> "empty"
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::String("empty".into()));
@@ -1926,11 +1994,12 @@ fn test_match_deeply_nested() {
     let result = run_vm(
         r#"
             fn main() {
-                match Some((1, [10, 20, 30])) {
+                host.give(match Some((1, [10, 20, 30])) {
                     Some((a, [h, ..t])) -> a + h
                     _ -> 0
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(11));
@@ -1942,12 +2011,13 @@ fn test_guardless_match_first_branch() {
         r#"
             fn main() {
                 let x = 50
-                match {
+                host.give(match {
                   x > 10 -> "big"
                   x > 0 -> "positive"
                   _ -> "other"
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::String("big".into()));
@@ -1966,8 +2036,9 @@ fn test_match_in_function() {
                 }
             }
             fn main() {
-                describe(Some(0))
+                host.give(describe(Some(0)))
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::String("zero".into()));
@@ -1978,12 +2049,13 @@ fn test_match_float_range() {
     let result = run_vm(
         r#"
             fn main() {
-                match 3.14 {
+                host.give(match 3.14 {
                     0.0..1.0 -> "small"
                     1.0..5.0 -> "medium"
                     _ -> "large"
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::String("medium".into()));
@@ -1994,12 +2066,13 @@ fn test_match_float_range_out() {
     let result = run_vm(
         r#"
             fn main() {
-                match 10.0 {
+                host.give(match 10.0 {
                     0.0..1.0 -> "small"
                     1.0..5.0 -> "medium"
                     _ -> "large"
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::String("large".into()));
@@ -2017,8 +2090,9 @@ fn test_match_recursive_list_sum() {
                 }
             }
             fn main() {
-                sum([1, 2, 3, 4, 5])
+                host.give(sum([1, 2, 3, 4, 5]))
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(15));
@@ -2030,11 +2104,12 @@ fn test_match_map_pattern() {
         r#"
             fn main() {
                 let m = #{"name": "Alice", "age": "30"}
-                match m {
+                host.give(match m {
                     #{"name": n} -> n
                     _ -> "unknown"
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::String("Alice".into()));
@@ -2045,12 +2120,13 @@ fn test_match_constructor_nested_or() {
     let result = run_vm(
         r#"
             fn main() {
-                match 42 {
+                host.give(match 42 {
                     1 | 2 | 3 -> "tiny"
                     n when n > 40 -> "big"
                     _ -> "other"
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::String("big".into()));
@@ -2061,11 +2137,12 @@ fn test_match_tuple_nested_wildcard() {
     let result = run_vm(
         r#"
             fn main() {
-                match (1, (2, 3)) {
+                host.give(match (1, (2, 3)) {
                     (1, (_, c)) -> c * 10
                     _ -> 0
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(30));
@@ -2076,11 +2153,12 @@ fn test_match_list_empty() {
     let result = run_vm(
         r#"
             fn main() {
-                match [] {
+                host.give(match [] {
                     [] -> "empty"
                     _ -> "not empty"
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::String("empty".into()));
@@ -2092,11 +2170,12 @@ fn test_let_constructor_destructure() {
         r#"
             fn main() {
                 let x = Ok(42)
-                match x {
+                host.give(match x {
                   Ok(n) -> n
                   Err(_) -> 0
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(42));
@@ -2113,8 +2192,9 @@ fn test_match_multiple_constructors_sequence() {
                 }
             }
             fn main() {
-                process([10, 20, 30])
+                host.give(process([10, 20, 30]))
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(60));
@@ -2126,11 +2206,12 @@ fn test_match_pin_pattern() {
         r#"
             fn main() {
                 let expected = 42
-                match 42 {
+                host.give(match 42 {
                     ^expected -> "matched"
                     _ -> "nope"
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::String("matched".into()));
@@ -2142,11 +2223,12 @@ fn test_match_pin_pattern_no_match() {
         r#"
             fn main() {
                 let expected = 42
-                match 99 {
+                host.give(match 99 {
                     ^expected -> "matched"
                     _ -> "nope"
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::String("nope".into()));
@@ -2161,8 +2243,9 @@ fn test_when_pattern_match() {
                 n
             }
             fn main() {
-                extract(Some(42))
+                host.give(extract(Some(42)))
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(42));
@@ -2177,8 +2260,9 @@ fn test_when_pattern_match_fails() {
                 n
             }
             fn main() {
-                extract(None)
+                host.give(extract(None))
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(-1));
@@ -2190,11 +2274,12 @@ fn test_match_or_pattern_with_binding() {
     let result = run_vm(
         r#"
             fn main() {
-                match Some(5) {
+                host.give(match Some(5) {
                     Some(n) -> n * 2
                     None -> 0
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(10));
@@ -2205,11 +2290,12 @@ fn test_match_guard_with_tuple() {
     let result = run_vm(
         r#"
             fn main() {
-                match (3, 4) {
+                host.give(match (3, 4) {
                     (a, b) when a + b > 10 -> 0
                     (a, b) -> a + b
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(7));
@@ -2222,13 +2308,14 @@ fn test_loop_sum() {
     let result = run_vm(
         r#"
             fn main() {
-                loop x = 0, sum = 0 {
+                host.give(loop x = 0, sum = 0 {
                     match x >= 10 {
                         true -> sum
                         _ -> loop(x + 1, sum + x)
                     }
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(45));
@@ -2239,13 +2326,14 @@ fn test_loop_factorial() {
     let result = run_vm(
         r#"
             fn main() {
-                loop n = 10, acc = 1 {
+                host.give(loop n = 10, acc = 1 {
                     match n <= 1 {
                         true -> acc
                         _ -> loop(n - 1, acc * n)
                     }
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(3628800));
@@ -2258,8 +2346,9 @@ fn test_record_create_and_access() {
             type User { name: String, age: Int }
             fn main() {
                 let u = User { name: "Alice", age: 30 }
-                u.age
+                host.give(u.age)
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(30));
@@ -2273,8 +2362,9 @@ fn test_record_update() {
             fn main() {
                 let u = User { name: "Alice", age: 30 }
                 let u2 = u.{ age: 31 }
-                u2.age
+                host.give(u2.age)
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(31));
@@ -2289,8 +2379,9 @@ fn test_range_expression() {
 
             fn main() {
                 let nums = 1..5
-                nums |> list.fold(0) { acc, n -> acc + n }
+                host.give(nums |> list.fold(0) { acc, n -> acc + n })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(15));
@@ -2304,8 +2395,9 @@ fn test_set_literal() {
 
             fn main() {
                 let s = #[1, 2, 3, 2, 1]
-                set.length(s)
+                host.give(set.length(s))
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(3));
@@ -2323,11 +2415,12 @@ fn test_question_mark_ok() {
                 Ok(x + y)
             }
             fn main() {
-                match parse_add("10", "20") {
+                host.give(match parse_add("10", "20") {
                     Ok(n) -> n
                     Err(_) -> -1
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(30));
@@ -2345,11 +2438,12 @@ fn test_question_mark_err() {
                 Ok(x + y)
             }
             fn main() {
-                match parse_add("10", "abc") {
+                host.give(match parse_add("10", "abc") {
                     Ok(n) -> n
                     Err(_) -> -1
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(-1));
@@ -2362,12 +2456,13 @@ fn test_type_decl_variant_constructors() {
             type Color { Red, Green, Blue }
             fn main() {
                 let c = Red
-                match c {
+                host.give(match c {
                   Red -> 1
                   Green -> 2
                   Blue -> 3
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(1));
@@ -2380,11 +2475,12 @@ fn test_type_decl_variant_with_fields() {
             type Shape { Circle(Float), Rect(Float, Float) }
             fn main() {
                 let s = Circle(5.0)
-                match s {
+                host.give(match s {
                     Circle(r) -> r
                     Rect(w, h) -> w + h
-                }
+                })
             }
+            import host
         "#,
     );
     assert_eq!(result, float(5.0));
@@ -2405,8 +2501,9 @@ fn test_custom_display_trait() {
             }
             fn main() {
                 let s = Circle(5.0)
-                "{s}"
+                host.give("{s}")
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::String("Circle".into()));
@@ -2424,8 +2521,9 @@ fn test_recursive_variant_eval() {
                 }
             }
             fn main() {
-                eval(Add(Num(3), Num(5)))
+                host.give(eval(Add(Num(3), Num(5))))
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(8));
@@ -2444,8 +2542,9 @@ fn test_loop_in_function() {
                 }
             }
             fn main() {
-                sum_to(100)
+                host.give(sum_to(100))
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(5050));
@@ -2461,8 +2560,9 @@ fn test_spawn_join() {
 
             fn main() {
                 let t = task.spawn({ -> 42 })
-                task.join(t)
+                host.give(task.join(t))
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(42));
@@ -2486,8 +2586,9 @@ fn test_spawn_join_already_completed() {
                 -- Wait for the message, ensuring the fiber runs to completion
                 let _ = channel.receive(ch)
                 -- Now the fiber should already be completed
-                task.join(t)
+                host.give(task.join(t))
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(99));
@@ -2523,8 +2624,9 @@ fn test_spawn_join_multiple_completed() {
                 let a = task.join(t1)
                 let b = task.join(t2)
                 let c = task.join(t3)
-                a + b + c
+                host.give(a + b + c)
             }
+            import host
         "#,
     );
     assert_eq!(result, Value::Int(60));
@@ -2540,8 +2642,9 @@ fn test_scheduler_task_completes() {
             import task
             fn main() {
                 let t = task.spawn({ -> 42 })
-                task.join(t)
+                host.give(task.join(t))
             }
+            import host
             "#,
     );
     assert_eq!(result, Value::Int(42));
@@ -2555,8 +2658,9 @@ fn test_scheduler_multiple_tasks() {
             import list
             fn main() {
                 let tasks = [1, 2, 3] |> list.map({ n -> task.spawn({ -> n * 10 }) })
-                tasks |> list.map({ t -> task.join(t) })
+                host.give(tasks |> list.map({ t -> task.join(t) }))
             }
+            import host
             "#,
     );
     if let Value::List(items) = &result {
@@ -2586,8 +2690,9 @@ fn test_scheduler_channel_communication() {
             fn main() {
                 let ch = channel.new(0)
                 let _ = task.spawn({ -> channel.send(ch, 99) })
-                channel.receive(ch)
+                host.give(channel.receive(ch))
             }
+            import host
             "#,
     );
     assert_eq!(result, Value::variant(bv::SOME, [Value::Int(99)]));
@@ -2603,8 +2708,9 @@ fn test_scheduler_deadlock_detection() {
             fn main() {
                 let ch = channel.new(0)
                 let t = task.spawn({ -> channel.receive(ch) })
-                task.join(t)
+                host.give(task.join(t))
             }
+            import host
             "#,
     )
     .unwrap_err();
@@ -2623,8 +2729,9 @@ fn test_scheduler_task_failure_propagates() {
             import task
             fn main() {
                 let t = task.spawn({ -> 1 / 0 })
-                task.join(t)
+                host.give(task.join(t))
             }
+            import host
             "#,
     )
     .unwrap_err();
@@ -2654,10 +2761,11 @@ fn test_scheduler_list_fold_with_yielding_callback() {
             import task
             import list
             fn main() {
-                [1, 2, 3, 4, 5] |> list.fold(0, { acc, n ->
+                host.give([1, 2, 3, 4, 5] |> list.fold(0, { acc, n ->
                     task.join(task.spawn({ -> acc + n }))
-                })
+                }))
             }
+            import host
             "#,
     );
     assert_eq!(result, Value::Int(15));
@@ -2673,10 +2781,11 @@ fn test_scheduler_list_fold_with_yielding_callback_string_acc() {
             import task
             import list
             fn main() {
-                ["a", "b", "c"] |> list.fold("", { acc, s ->
+                host.give(["a", "b", "c"] |> list.fold("", { acc, s ->
                     task.join(task.spawn({ -> "{acc}{s}" }))
-                })
+                }))
             }
+            import host
             "#,
     );
     assert_eq!(result, Value::String("abc".into()));
@@ -2692,10 +2801,11 @@ fn test_scheduler_list_filter_with_yielding_predicate() {
             import task
             import list
             fn main() {
-                [1, 2, 3, 4, 5, 6] |> list.filter({ n ->
+                host.give([1, 2, 3, 4, 5, 6] |> list.filter({ n ->
                     task.join(task.spawn({ -> n % 2 == 0 }))
-                })
+                }))
             }
+            import host
             "#,
     );
     assert_eq!(
@@ -2825,8 +2935,9 @@ fn test_regex_cache_eviction_correctness() {
                 let mid_ok = regex.is_match("pat130", "pat130") == Ok(true)
                 let late_ok = regex.is_match("pat259", "pat259") == Ok(true)
                 let no_match = regex.is_match("pat2", "pat1") == Ok(true)
-                [early_ok, mid_ok, late_ok, no_match]
+                host.give([early_ok, mid_ok, late_ok, no_match])
             }
+            import host
             "#,
     );
     assert_eq!(
@@ -4005,7 +4116,7 @@ import int
 fn main() {
   let nobody = channel.new(0)
   let n = int.abs(-1) + int.abs(-2)
-  channel.receive(nobody)
+  let _ = channel.receive(nobody)
 }
 ",
         )
@@ -4037,10 +4148,12 @@ fn main() {
     /// Run `main`'s code and give the VM back with what the run came
     /// to.
     fn ran(source: &str) -> (Vm, Result<Value, VmError>) {
-        let program =
-            crate::session::testing::compile_str(source).unwrap_or_else(|e| panic!("{e:?}"));
+        let (program, given) =
+            crate::session::testing::compile_given(source).unwrap_or_else(|e| panic!("{e:?}"));
         let mut vm = Vm::new(crate::HostIo::buffer(&crate::Buffer::new()));
-        let result = vm.run_program(&program);
+        let result = vm
+            .run_program(&program)
+            .map(|()| given.last().unwrap_or(Value::Unit));
         (vm, result)
     }
 
@@ -4061,8 +4174,9 @@ fn main() {
   let callback = list.map([-1, -2], int.abs)
   let nested = list.fold([1, 2, 3], 0) { acc, x -> acc + int.max(x, string.length(\"ab\")) }
   println(callback)
-  direct + as_value + list.length(callback) + nested
+  host.give(direct + as_value + list.length(callback) + nested)
 }
+import host
 ");
         assert_eq!(result.unwrap(), Value::Int(7 + 5 + 2 + 7));
         assert!(vm.builtin_args.is_empty());
@@ -4075,7 +4189,7 @@ fn main() {
 import list
 fn main() {
   let xs = list.map(1..4) { x -> 10 / (x - 2) }
-  list.length(xs)
+  let _ = list.length(xs)
 }
 ");
         assert_eq!(result.unwrap_err().message, "division by zero");
@@ -5790,7 +5904,7 @@ mod calls_and_returns {
                 "depth(3000)"
             };
             let source = format!(
-                "import string\nfn step() {{ {step} }}\nfn depth(n) {{\n  match n {{\n    0 -> {base}\n    _ -> {sum}\n  }}\n}}\nfn main() {{ \"{{{shown}}}\" }}"
+                "import string\nfn step() {{ {step} }}\nfn depth(n) {{\n  match n {{\n    0 -> {base}\n    _ -> {sum}\n  }}\n}}\nfn main() {{ host.give(\"{{{shown}}}\") }}\nimport host"
             );
             assert_eq!(run_vm(&source), Value::String(expected.into()), "{source}");
         }
@@ -6802,8 +6916,9 @@ mod interpolation {
                     let between = "a{x}b{y}c"
                     let adjacent = "{x}{y}{x}"
                     let unicode = "é{y}✓{x}ß"
-                    "{first}|{last}|{alone}|{between}|{adjacent}|{unicode}"
+                    host.give("{first}|{last}|{alone}|{between}|{adjacent}|{unicode}")
                 }
+                import host
             "#,
         );
         assert_eq!(text(result), "v7|7v|7|a7bbc|7b7|éb✓7ß");
@@ -6904,7 +7019,9 @@ mod interpolation {
             interpolation.push_str(&format!("<{k}>{{x}}"));
             expected.push_str(&format!("<{k}>7"));
         }
-        let source = format!("fn main() {{\n  let x = 7\n  \"{interpolation}\"\n}}\n");
+        let source = format!(
+            "fn main() {{\n  let x = 7\n  host.give(\"{interpolation}\")\n}}\nimport host\n"
+        );
         assert_eq!(text(run_vm(&source)), expected);
     }
 
@@ -6927,8 +7044,9 @@ mod interpolation {
                 fn main() {
                     let t = Celsius { c: 20.5 }
                     let n = 3
-                    "t={t}, n={n}, again {t}!"
+                    host.give("t={t}, n={n}, again {t}!")
                 }
+                import host
             "#,
         );
         assert_eq!(text(result), "t=20.5°C, n=3, again 20.5°C!");
@@ -6948,8 +7066,9 @@ mod interpolation {
                         })
                     }
                     let results = list.map(tasks) { t -> task.join(t) }
-                    list.fold(results, "") { acc, r -> "{acc}[{r}]" }
+                    host.give(list.fold(results, "") { acc, r -> "{acc}[{r}]" })
                 }
+                import host
             "#,
         );
         let mut expected = String::new();

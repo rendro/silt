@@ -1,4 +1,4 @@
 -- verdict: same
-fn main() -> Result(Int, String) {
+fn main() -> Result((), String) {
   Err("boom")
 }

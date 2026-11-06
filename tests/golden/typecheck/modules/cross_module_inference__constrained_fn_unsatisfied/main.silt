@@ -7,5 +7,5 @@
 import a
 
 fn main() {
-  a.announce("foo")
+  let _ = a.announce("foo")
 }

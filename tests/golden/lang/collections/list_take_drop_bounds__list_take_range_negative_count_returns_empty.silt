@@ -2,7 +2,7 @@
 -- stderr-contains: list.take
 -- stderr-contains: negative
 import list
-fn main() -> Int {
+fn main() {
   let r = 1..10
-  list.length(list.take(r, -1))
+  let _ = list.length(list.take(r, -1))
 }

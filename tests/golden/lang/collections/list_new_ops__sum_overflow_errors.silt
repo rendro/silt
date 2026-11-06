@@ -4,5 +4,5 @@
 import list
 fn main() {
   let big = 9223372036854775807  -- i64::MAX
-  list.sum([big, 1])
+  let _ = list.sum([big, 1])
 }

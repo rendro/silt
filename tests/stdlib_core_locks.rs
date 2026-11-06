@@ -30,7 +30,8 @@ fn test_option_map_some_applies_callback() {
     // closure and rewraps the result as Some(new_val).
     let result = run(r#"
 import option
-fn main() { option.map(Some(5), { n -> n * 2 }) }
+fn main() { host.give(option.map(Some(5), { n -> n * 2 })) }
+import host
     "#);
     assert_eq!(result, Value::variant(bv::SOME, [Value::Int(10)]));
 }
@@ -41,7 +42,8 @@ fn test_option_map_none_propagates() {
     // invoking the callback.
     let result = run(r#"
 import option
-fn main() { option.map(None, { n -> n * 2 }) }
+fn main() { host.give(option.map(None, { n -> n * 2 })) }
+import host
     "#);
     assert_eq!(result, Value::variant(bv::NONE, []));
 }
@@ -56,7 +58,8 @@ fn test_option_to_result_some_becomes_ok() {
     // discarding the provided err value.
     let result = run(r#"
 import option
-fn main() { option.to_result(Some(42), "missing") }
+fn main() { host.give(option.to_result(Some(42), "missing")) }
+import host
     "#);
     assert_eq!(result, Value::variant(bv::OK, [Value::Int(42)]));
 }
@@ -67,7 +70,8 @@ fn test_option_to_result_none_becomes_err_with_value() {
     // Err(err_value), propagating the user-supplied error payload.
     let result = run(r#"
 import option
-fn main() { option.to_result(None, "missing") }
+import host
+fn main() { host.give(option.to_result(None, "missing")) }
     "#);
     assert_eq!(
         result,
@@ -87,7 +91,8 @@ fn test_option_flat_map_some_applies_callback() {
     // test_option_flat_map_none in tests/heavy/integration.rs.
     let result = run(r#"
 import option
-fn main() { option.flat_map(Some(3), { n -> Some(n + 10) }) }
+fn main() { host.give(option.flat_map(Some(3), { n -> Some(n + 10) })) }
+import host
     "#);
     assert_eq!(result, Value::variant(bv::SOME, [Value::Int(13)]));
 }
@@ -102,7 +107,8 @@ fn test_result_unwrap_or_ok_returns_value() {
     // inner value and ignores the default.
     let result = run(r#"
 import result
-fn main() { result.unwrap_or(Ok(7), 99) }
+fn main() { host.give(result.unwrap_or(Ok(7), 99)) }
+import host
     "#);
     assert_eq!(result, Value::Int(7));
 }
@@ -113,7 +119,8 @@ fn test_result_unwrap_or_err_returns_default() {
     // user-supplied default, dropping the error payload.
     let result = run(r#"
 import result
-fn main() { result.unwrap_or(Err("boom"), 99) }
+fn main() { host.give(result.unwrap_or(Err("boom"), 99)) }
+import host
     "#);
     assert_eq!(result, Value::Int(99));
 }
@@ -128,7 +135,8 @@ fn test_result_flat_map_ok_applies_callback() {
     // v; callback's Result is returned directly (no extra wrapping).
     let result = run(r#"
 import result
-fn main() { result.flat_map(Ok(4), { n -> Ok(n * n) }) }
+fn main() { host.give(result.flat_map(Ok(4), { n -> Ok(n * n) })) }
+import host
     "#);
     assert_eq!(result, Value::variant(bv::OK, [Value::Int(16)]));
 }
@@ -139,7 +147,8 @@ fn test_result_flat_map_err_propagates() {
     // and the callback is never invoked.
     let result = run(r#"
 import result
-fn main() -> Result(Int, String) { result.flat_map(Err("fail"), { n -> Ok(n * n) }) }
+fn main() { host.give(result.flat_map(Err("fail"), { n: Int -> Ok(n * n) })) }
+import host
     "#);
     assert_eq!(
         result,
@@ -158,7 +167,8 @@ fn test_result_map_err_on_err_applies_callback() {
     // already covered by test_result_map_err_on_ok in integration.rs.
     let result = run(r#"
 import result
-fn main() { result.map_err(Err(3), { e -> e + 100 }) }
+import host
+fn main() { host.give(result.map_err(Err(3), { e -> e + 100 })) }
     "#);
     assert_eq!(result, Value::variant(bv::ERR, [Value::Int(103)]));
 }
@@ -174,7 +184,8 @@ fn test_result_map_on_ok_applies_callback() {
     // covered by tests/golden/heavy/maps_sets/integration_result_map_on_err.silt.
     let result = run(r#"
 import result
-fn main() { result.map(Ok(6), { v -> v * 7 }) }
+fn main() { host.give(result.map(Ok(6), { v -> v * 7 })) }
+import host
     "#);
     assert_eq!(result, Value::variant(bv::OK, [Value::Int(42)]));
 }
@@ -222,7 +233,8 @@ fn test_channel_new_negative_capacity_rejected() {
     let err = run_err(
         r#"
 import channel
-fn main() { channel.new(-1) }
+fn main() { host.give(channel.new(-1)) }
+import host
     "#,
     );
     assert!(
@@ -244,7 +256,8 @@ fn test_channel_timeout_negative_duration_is_no_time() {
     let result = run(r#"
 import channel
 import time
-fn main() { channel.receive(channel.timeout(time.ms(-1))) }
+fn main() { host.give(channel.receive(channel.timeout(time.ms(-1)))) }
+import host
     "#);
     assert_eq!(result, Value::variant(bv::NONE, []));
 }

@@ -5,5 +5,5 @@
 type PhDBytErr = List(Int)
 fn main() {
     let x: PhDBytErr = "hello"
-    x
+    let _ = x
 }

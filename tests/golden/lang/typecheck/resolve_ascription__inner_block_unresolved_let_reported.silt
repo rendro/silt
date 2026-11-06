@@ -7,5 +7,5 @@ fn main() {
     let x = default()
     42
   }) as Int
-  y
+  let _ = y
 }

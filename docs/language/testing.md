@@ -45,6 +45,11 @@ Within a test file, functions are recognized by their name prefix:
 - `skip_test_*` -- shown as skipped, not executed
 - Any other function name -- ignored by the test runner (available as helpers)
 
+A test function takes no arguments and returns `()` or `Result((), e)`, as
+`main` does (see [What `main` Returns](design-decisions.md#what-main-returns)).
+One that returns `Err(e)`, typically from a `?`, fails; a value it computes
+is checked with an assertion, not returned.
+
 ```silt
 import string
 import test

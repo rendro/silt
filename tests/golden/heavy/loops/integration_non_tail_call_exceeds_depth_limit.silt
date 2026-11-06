@@ -9,5 +9,5 @@ fn deep(n) {
   }
 }
 fn main() {
-  deep(200000)
+  let _ = deep(200000)
 }

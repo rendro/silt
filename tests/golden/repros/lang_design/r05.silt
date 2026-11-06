@@ -7,5 +7,5 @@ fn head_plus(xs: List(Int)) -> Option(Int) {
 fn main() {
   let x = list.head([1])?
   println(head_plus([]))
-  println(x)
+  let _ = println(x)
 }

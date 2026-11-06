@@ -177,9 +177,10 @@ pub struct Expect {
     pub succeeds: bool,
     /// The program's exact stdout: a golden case's `.stdout` file.
     pub stdout: Option<String>,
-    /// The value `main` returns, or the message of the runtime error
-    /// the program stops at: a reference evaluator's.
-    pub end: Option<Result<Value, String>>,
+    /// That `main` returns, or the message of the runtime error the
+    /// program stops at (a `main` that returns `Err` is one): a
+    /// reference evaluator's.
+    pub end: Option<Result<(), String>>,
 }
 
 /// One input of the oracle.
@@ -344,12 +345,9 @@ pub enum Verdict {
 /// How a run ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum End {
-    /// `main` returned this value; `failed` when it is an `Err(..)`.
-    Value {
-        shown: String,
-        failed: bool,
-    },
-    /// A runtime error.
+    /// `main` returned (`()`, `Ok(())`).
+    Returned,
+    /// A runtime error, or a `main` that returned `Err`.
     Error {
         message: String,
         type_confusion: bool,
@@ -365,7 +363,7 @@ impl End {
     /// The end in a few words, for a report.
     fn shown(&self) -> String {
         match self {
-            End::Value { shown, .. } => format!("main returned {shown}"),
+            End::Returned => "main returned".to_string(),
             End::Error { message, .. } => format!("runtime error: {message}"),
             End::Panic(text) => format!("panic: {text}"),
             End::Hang => "no end".to_string(),
@@ -741,8 +739,7 @@ fn examine_here(input: &Input, steps: Steps) -> Verdict {
         // used the budget up, is judged by the fault.
         let fault = runs.iter().find(|run| match &run.end {
             End::Error { out_of_steps, .. } => !out_of_steps,
-            End::Value { failed, .. } => *failed,
-            End::Panic(_) | End::Hang => false,
+            End::Returned | End::Panic(_) | End::Hang => false,
         });
         return match fault {
             Some(run) if input.expect.succeeds => {
@@ -923,10 +920,7 @@ fn run(program: &Arc<Program>, time: Time, slice: usize, steps: u64) -> Run {
                 vm.set_time_slice(slice);
                 vm.set_step_budget(steps);
                 let end = match vm.run_program(&program) {
-                    Ok(value) => End::Value {
-                        shown: format!("{value:?}"),
-                        failed: is_err(&value),
-                    },
+                    Ok(()) => End::Returned,
                     Err(error) => End::Error {
                         message: error.message.clone(),
                         type_confusion: error.type_confusion,
@@ -935,7 +929,7 @@ fn run(program: &Arc<Program>, time: Time, slice: usize, steps: u64) -> Run {
                     },
                 };
                 match end {
-                    End::Value { failed: false, .. } => vm.settle(),
+                    End::Returned => vm.settle(),
                     _ => vm.stop_tasks(),
                 }
                 end
@@ -1006,12 +1000,6 @@ impl Run {
     }
 }
 
-/// Whether `value` is the `Err(..)` of a `Result`: a `main` that
-/// returns one has failed.
-fn is_err(value: &Value) -> bool {
-    matches!(value, Value::Variant(variant) if variant.is(silt::typeinfo::bv::ERR))
-}
-
 /// Step 5, but for a run that did not end, which the caller judges:
 /// what no run may end in.
 fn broken(run: &Run) -> Option<Finding> {
@@ -1031,7 +1019,7 @@ fn broken(run: &Run) -> Option<Finding> {
         End::Error { message, .. } if message.starts_with("internal") => {
             return finding(Kind::InternalError, message);
         }
-        End::Error { .. } | End::Value { .. } | End::Hang => {}
+        End::Error { .. } | End::Returned | End::Hang => {}
     }
     for failure in &run.failures {
         let detail = format!("in a task: {}", failure.message);
@@ -1055,8 +1043,8 @@ fn unexpected(expect: &Expect, runs: &[Run], output: bool) -> Option<Finding> {
         };
         if expect.succeeds {
             match &run.end {
-                End::Value { failed: false, .. } => {}
-                End::Value { .. } | End::Error { .. } => return wrong("success", run.end.shown()),
+                End::Returned => {}
+                End::Error { .. } => return wrong("success", run.end.shown()),
                 End::Panic(_) | End::Hang => {}
             }
             if let Some(failure) = run.failures.first() {
@@ -1069,22 +1057,20 @@ fn unexpected(expect: &Expect, runs: &[Run], output: bool) -> Option<Finding> {
         }
         // What of the end is not the expected one.
         let what = match (&expect.end, &run.end) {
-            (Some(Ok(value)), End::Value { shown, .. }) => {
-                (*shown != format!("{value:?}")).then_some("main's value")
-            }
+            (Some(Ok(())), End::Returned) => None,
             (
                 Some(Err(message)),
                 End::Error {
                     message: actual, ..
                 },
             ) => (message != actual).then_some("the runtime error"),
-            (Some(Ok(_)), End::Error { .. }) => Some("a runtime error for a value"),
-            (Some(Err(_)), End::Value { .. }) => Some("a value for a runtime error"),
+            (Some(Ok(())), End::Error { .. }) => Some("a runtime error for a return"),
+            (Some(Err(_)), End::Returned) => Some("a return for a runtime error"),
             (None, _) | (_, End::Panic(_) | End::Hang) => None,
         };
         if let Some(what) = what {
             let expected = match &expect.end {
-                Some(Ok(value)) => format!("main returns {value:?}"),
+                Some(Ok(())) => "main returns".to_string(),
                 Some(Err(message)) => format!("runtime error: {message}"),
                 None => unreachable!("an end is expected"),
             };
@@ -1163,34 +1149,31 @@ fn panic_text(payload: &Box<dyn std::any::Any + Send>) -> String {
 mod tests {
     use super::{End, Kind, PANICS, Panics, Run, TaskFailure, broken, difference, record_panics};
 
-    fn run(stdout: &str, stderr: &str, value: &str) -> Run {
+    fn run(stdout: &str, stderr: &str) -> Run {
         Run {
             stdout: stdout.to_string(),
             stderr: stderr.to_string(),
             failures: Vec::new(),
             panics: Vec::new(),
-            end: End::Value {
-                shown: value.to_string(),
-                failed: false,
-            },
+            end: End::Returned,
         }
     }
 
     #[test]
     fn two_runs_agree_only_in_everything() {
-        let base = run("a\nb\n", "", "1");
+        let base = run("a\nb\n", "");
         assert_eq!(difference(&base, &base.clone()), None);
-        let (what, stdout) = difference(&base, &run("a\nc\n", "", "1")).unwrap();
+        let (what, stdout) = difference(&base, &run("a\nc\n", "")).unwrap();
         assert_eq!(what, "stdout");
         assert!(
             stdout.contains("stdout differs") && stdout.contains("line 2"),
             "{stdout}"
         );
-        let (_, shorter) = difference(&base, &run("a\n", "", "1")).unwrap();
+        let (_, shorter) = difference(&base, &run("a\n", "")).unwrap();
         assert!(shorter.contains("(no line)"), "{shorter}");
-        let (_, newline) = difference(&base, &run("a\nb", "", "1")).unwrap();
+        let (_, newline) = difference(&base, &run("a\nb", "")).unwrap();
         assert!(newline.contains("the line ends differ"), "{newline}");
-        let (what, _) = difference(&base, &run("a\nb\n", "task 1 failed\n", "1")).unwrap();
+        let (what, _) = difference(&base, &run("a\nb\n", "task 1 failed\n")).unwrap();
         assert_eq!(what, "stderr");
         let mut with_failure = base.clone();
         with_failure.failures.push(TaskFailure {
@@ -1200,8 +1183,6 @@ mod tests {
         });
         let (what, _) = difference(&base, &with_failure).unwrap();
         assert_eq!(what, "the unjoined failures");
-        let (what, _) = difference(&base, &run("a\nb\n", "", "2")).unwrap();
-        assert_eq!(what, "the end");
         let mut failed = base.clone();
         failed.end = End::Error {
             message: "division by zero".to_string(),
@@ -1209,7 +1190,8 @@ mod tests {
             out_of_steps: false,
             whole: String::new(),
         };
-        assert!(difference(&base, &failed).is_some());
+        let (what, _) = difference(&base, &failed).unwrap();
+        assert_eq!(what, "the end");
     }
 
     /// A panic belongs to the run on whose thread it happened, and to
@@ -1239,7 +1221,7 @@ mod tests {
     /// end: one that ended well, and one that did not end.
     #[test]
     fn a_run_with_a_recorded_panic_is_judged_by_it() {
-        let mut ended = run("out\n", "", "1");
+        let mut ended = run("out\n", "");
         assert!(broken(&ended).is_none());
         ended.panics.push("on a thread of the runtime: boom".into());
         let finding = broken(&ended).unwrap();

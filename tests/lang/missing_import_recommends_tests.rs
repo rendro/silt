@@ -23,8 +23,8 @@ fn aliased_import_does_not_expose_original_name() {
     let errs = type_errors(
         r#"
         import list as l
-        fn main() -> Int {
-            list.length([1, 2, 3])
+        fn main() {
+            let _ = list.length([1, 2, 3])
         }
         "#,
     );

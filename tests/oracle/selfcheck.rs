@@ -76,7 +76,8 @@ fn assert_finding(verdict: Verdict, kind: Kind, detail: &str) {
 
 #[test]
 fn a_program_that_checks_clean_is_run_and_compared() {
-    let passed = verdict("import list\nfn main() {\n  println(list.length([1, 2]))\n  7\n}\n");
+    let passed =
+        verdict("import list\nfn main() {\n  println(list.length([1, 2]))\n  let _ = 7\n}\n");
     assert!(
         matches!(passed, Verdict::Passed(Compared::Everything)),
         "{passed:?}"
@@ -86,7 +87,7 @@ fn a_program_that_checks_clean_is_run_and_compared() {
 /// A runtime error of the program is no finding: both runs end in it.
 #[test]
 fn a_runtime_error_that_both_runs_share_passes() {
-    let passed = verdict("fn main() {\n  println(\"before\")\n  1 / 0\n}\n");
+    let passed = verdict("fn main() {\n  println(\"before\")\n  let _ = 1 / 0\n}\n");
     assert!(
         matches!(passed, Verdict::Passed(Compared::Everything)),
         "{passed:?}"
@@ -117,15 +118,15 @@ fn a_program_without_main_is_not_run() {
 fn a_program_that_names_a_builtin_that_reaches_outside_is_not_run() {
     for (text, module) in [
         (
-            "import io\nfn main() {\n  io.read_file(\"/nonexistent\")\n}\n",
+            "import io\nfn main() {\n  let _ = io.read_file(\"/nonexistent\")\n}\n",
             "io",
         ),
         (
-            "import fs\nfn main() {\n  let exists = fs.exists\n  exists(\"/nonexistent\")\n}\n",
+            "import fs\nfn main() {\n  let exists = fs.exists\n  let _ = exists(\"/nonexistent\")\n}\n",
             "fs",
         ),
         (
-            "import stream\nfn unused() {\n  stream.file_lines(\"/nonexistent\")\n}\nfn main() {\n  1\n}\n",
+            "import stream\nfn unused() {\n  stream.file_lines(\"/nonexistent\")\n}\nfn main() {\n  let _ = 1\n}\n",
             "stream",
         ),
     ] {
@@ -182,7 +183,7 @@ fn a_program_with_tasks_is_compared_when_its_output_is_given() {
 #[test]
 fn a_run_that_fails_where_success_is_expected_is_a_finding() {
     assert_finding(
-        verdict_with("fn main() {\n  1 / 0\n}\n", succeeds()),
+        verdict_with("fn main() {\n  let _ = 1 / 0\n}\n", succeeds()),
         Kind::Expectation,
         "runtime error: division by zero",
     );
@@ -235,8 +236,8 @@ fn a_program_that_does_not_end_is_cut_short() {
     // So is one whose task does not end, joined or not.
     let spin = "import task\nfn spin() {\n  loop {\n    loop()\n  }\n}\n";
     for main in [
-        "fn main() {\n  task.join(task.spawn(spin))\n}\n",
-        "fn main() {\n  let h = task.spawn(spin)\n  1\n}\n",
+        "fn main() {\n  let _ = task.join(task.spawn(spin))\n}\n",
+        "fn main() {\n  let h = task.spawn(spin)\n  let _ = 1\n}\n",
     ] {
         let cut = verdict(&format!("{spin}{main}"));
         assert!(
@@ -263,13 +264,13 @@ fn what_a_program_wrote_before_it_was_cut_short_is_not_compared() {
 /// at where a slice ends) and slice 1 does not.
 #[test]
 fn a_program_that_ends_at_one_slice_only_is_a_finding() {
-    let text = "fn main() {\n  println(\"ran\")\n  41 + 1\n}\n";
+    let text = "fn main() {\n  println(\"ran\")\n  let _ = 41 + 1\n}\n";
     let source = || Source::Memory(vec![("main.silt".to_string(), text.to_string())]);
     let one_step = Steps { each: 1, again: 1 };
     assert_finding(
         verdict_of(source(), Expect::default(), one_step),
         Kind::OneSlice,
-        "ends at slice 2000 (main returned 42) and not at slice 1: out of steps (1 steps)",
+        "ends at slice 2000 (main returned) and not at slice 1: out of steps (1 steps)",
     );
     // The run that was cut short is repeated with the larger budget
     // first: a program that then ends is compared as usual.
@@ -283,13 +284,13 @@ fn a_program_that_ends_at_one_slice_only_is_a_finding() {
         "{passed:?}"
     );
     // And one that is still cut short then is the finding.
-    let longer = "fn main() {\n  loop i = 0 {\n    match i >= 100 {\n      true -> i\n      false -> loop(i + 1)\n    }\n  }\n}\n";
+    let longer = "fn main() {\n  let _ = loop i = 0 {\n    match i >= 100 {\n      true -> i\n      false -> loop(i + 1)\n    }\n  }\n}\n";
     let source = Source::Memory(vec![("main.silt".to_string(), longer.to_string())]);
     let short = Steps { each: 1, again: 50 };
     assert_finding(
         verdict_of(source, Expect::default(), short),
         Kind::OneSlice,
-        "ends at slice 2000 (main returned 100) and not at slice 1: out of steps (50 steps)",
+        "ends at slice 2000 (main returned) and not at slice 1: out of steps (50 steps)",
     );
 }
 
@@ -309,7 +310,10 @@ fn a_program_that_is_to_run_and_does_not_check_is_a_finding() {
         "the oracle has: not compiled for main",
     );
     // A builtin that reaches outside is the oracle's own reason.
-    let outside = verdict_with("import io\nfn main() {\n  io.args()\n}\n", succeeds());
+    let outside = verdict_with(
+        "import io\nfn main() {\n  let _ = io.args()\n}\n",
+        succeeds(),
+    );
     assert!(
         matches!(outside, Verdict::NotRun(NotRun::Outside(_))),
         "{outside:?}"
@@ -407,7 +411,7 @@ fn a_program_that_reads_the_time_is_not_compared_by_its_output() {
         "{passed:?}"
     );
     // It still has to end well.
-    let failing = "import time\nfn main() {\n  let start = time.now()\n  println(time.since(start, time.now()).ns)\n  1 / 0\n}\n";
+    let failing = "import time\nfn main() {\n  let start = time.now()\n  println(time.since(start, time.now()).ns)\n  let _ = 1 / 0\n}\n";
     assert_finding(
         verdict_with(failing, expect()),
         Kind::Expectation,

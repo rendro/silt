@@ -17,7 +17,7 @@ fn run(input: &str) -> Value {
 #[test]
 fn test_typed_ast_int_literal() {
     let input = r#"
-fn main() {
+fn answer() {
   42
 }
     "#;
@@ -34,7 +34,7 @@ fn main() {
 #[test]
 fn test_typed_ast_string_expr() {
     let input = r#"
-fn main() {
+fn answer() {
   "hello"
 }
     "#;
@@ -50,7 +50,7 @@ fn main() {
 #[test]
 fn test_typed_ast_list() {
     let input = r#"
-fn main() {
+fn answer() {
   [1, 2, 3]
 }
     "#;
@@ -70,7 +70,7 @@ fn main() {
 #[test]
 fn test_typed_ast_binary_expr() {
     let input = r#"
-fn main() {
+fn answer() {
   let x = 10
   x + 32
 }
@@ -96,7 +96,7 @@ fn double(x) {
 }
 
 fn main() {
-  double(21)
+  let _ = double(21)
 }
     "#;
     let (program, _) = silt::session::testing::analyze_str(input);
@@ -120,8 +120,9 @@ import int
 fn main() {
   let total = 100
   let ratio = int.to_float(total) / 3.0
-  float.format(ratio, 2)
+  host.give(float.format(ratio, 2))
 }
+import host
     "#);
     assert_eq!(result, Value::String("33.33".into()));
 }
@@ -161,11 +162,12 @@ fn main() {
     channel.send(done, "ready")
   })
   let result = channel.receive(done)
-  match result {
+  host.give(match result {
     Some(v) -> v
     None -> "failed"
-  }
+  })
 }
+import host
 "#;
     let result = run(input);
     assert_eq!(result, Value::String("ready".into()));
@@ -822,11 +824,12 @@ fn main() {
     channel.send(result_ch, body)
   })
 
-  match channel.receive(result_ch) {
+  host.give(match channel.receive(result_ch) {
     Some(body) -> body
     None -> "the channel closed"
-  }
+  })
 }
+import host
 "#;
         run(input)
     });
@@ -842,8 +845,9 @@ fn test_lambda_iife() {
     let result = run(r#"
 fn main() {
   let result = ({ x, y -> x + y })(3, 4)
-  result
+  host.give(result)
 }
+import host
     "#);
     assert_eq!(result, Value::Int(7));
 }
@@ -856,28 +860,32 @@ fn test_float_named_constants() {
     assert_eq!(
         run(r#"
 import float
-fn main() { float.max_value }
+fn main() { host.give(float.max_value) }
+import host
     "#),
         float(f64::MAX)
     );
     assert_eq!(
         run(r#"
 import float
-fn main() { float.min_value }
+fn main() { host.give(float.min_value) }
+import host
     "#),
         float(f64::MIN)
     );
     assert_eq!(
         run(r#"
 import float
-fn main() { float.epsilon }
+fn main() { host.give(float.epsilon) }
+import host
     "#),
         float(f64::EPSILON)
     );
     assert_eq!(
         run(r#"
 import float
-fn main() { float.min_positive }
+fn main() { host.give(float.min_positive) }
+import host
     "#),
         float(f64::MIN_POSITIVE)
     );
@@ -888,14 +896,16 @@ fn test_math_sin_cos() {
     assert_eq!(
         run(r#"
 import math
-fn main() { math.sin(0.0) }
+fn main() { host.give(math.sin(0.0)) }
+import host
     "#),
         float(0.0)
     );
     assert_eq!(
         run(r#"
 import math
-fn main() { math.cos(0.0) }
+fn main() { host.give(math.cos(0.0)) }
+import host
     "#),
         float(1.0)
     );
@@ -906,7 +916,8 @@ fn test_math_atan() {
     assert_eq!(
         run(r#"
 import math
-fn main() { math.atan(0.0) }
+fn main() { host.give(math.atan(0.0)) }
+import host
     "#),
         float(0.0)
     );
@@ -917,7 +928,8 @@ fn test_math_atan2() {
     assert_eq!(
         run(r#"
 import math
-fn main() { math.atan2(0.0, 1.0) }
+fn main() { host.give(math.atan2(0.0, 1.0)) }
+import host
     "#),
         float(0.0)
     );
@@ -928,7 +940,8 @@ fn test_math_tan() {
     assert_eq!(
         run(r#"
 import math
-fn main() { math.tan(0.0) }
+fn main() { host.give(math.tan(0.0)) }
+import host
     "#),
         float(0.0)
     );

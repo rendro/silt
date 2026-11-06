@@ -8,5 +8,5 @@ fn announce(x: a) -> String where a: Display {
 }
 
 fn main() {
-  announce(42)
+  let _ = announce(42)
 }

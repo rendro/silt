@@ -7,4 +7,4 @@ error[runtime]: division by zero
 call stack:
   -> helper  at tco_elided_callback__no_phantom_frames.silt:5:13
   -> wrapper  at tco_elided_callback__no_phantom_frames.silt:9:17
-  -> main  at tco_elided_callback__no_phantom_frames.silt:10:13
+  -> main  at tco_elided_callback__no_phantom_frames.silt:10:21

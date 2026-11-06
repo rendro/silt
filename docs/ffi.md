@@ -16,12 +16,19 @@ typechecked against the signature the embedder declared.
 
 ```rust
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use silt::session::{Config, Entry, HostModule, LockPolicy, ProjectSetup, Session};
-use silt::{Buffer, HostIo, Value, Vm};
+use silt::{Buffer, HostIo, Vm};
 
-// 1. Declare the host module: each function by its silt signature.
-let mylib = HostModule::new("mylib").fn1("fn double(x: Int) -> Int", |x: i64| x * 2);
+// 1. Declare the host module: each function by its silt signature. A
+//    program's `main` returns nothing: it hands its result to the host
+//    through a function of the host's, `mylib.give` here.
+let given = Arc::new(Mutex::new(0));
+let slot = given.clone();
+let mylib = HostModule::new("mylib")
+    .fn1("fn double(x: Int) -> Int", |x: i64| x * 2)
+    .fn1("fn give(x: Int) -> ()", move |x: i64| *slot.lock().unwrap() = x);
 
 // 2. Open the program in a session that knows the module.
 let mut session = Session::new(Config {
@@ -29,7 +36,7 @@ let mut session = Session::new(Config {
     lock: LockPolicy::ReadOnly,
     host: vec![mylib],
 });
-let source = "import mylib\nfn main() { mylib.double(21) }";
+let source = "import mylib\nfn main() { mylib.give(mylib.double(21)) }";
 let file = session.set_overlay(Path::new("main.silt"), source.to_string());
 
 // 3. Check it. Every static error is in the analysis.
@@ -42,8 +49,8 @@ assert!(!analysis.has_errors());
 // 4. Compile it and run it. What the program prints is collected in `out`.
 let program = session.compile(file, Entry::Main).expect("compiles");
 let out = Buffer::new();
-let result = Vm::new(HostIo::buffer(&out)).run_program(&program).unwrap();
-assert_eq!(result, Value::Int(42));
+Vm::new(HostIo::buffer(&out)).run_program(&program).unwrap();
+assert_eq!(*given.lock().unwrap(), 42);
 ```
 
 ## Declaring a host module
@@ -232,7 +239,7 @@ is a panic inside it; for a write to stderr both are dropped.
 
 The report of tasks that failed and that nobody joined is written when
 `run_program` returns, for the tasks that have failed by then. It does
-not change the result: `run_program` still returns `main`'s value. A
+not change the result: `run_program` still says how `main` ended. A
 task that fails later is reported when the `Vm` is dropped, if it has
 failed by then; `vm.settle()` waits for every task first (see "The end
 of a program" below). With `HostIo::process()`, a program
@@ -359,9 +366,14 @@ silt-lang.com.
 A `Vm` is a single interpreter instance. `vm.run_program(&program)` runs
 a compiled program: it takes in the types of the program's values and
 its global slots (one per top-level function, `let`, host function and
-trait method), then runs the program's script and returns `main`'s
-value. The program carries its host functions, and the `Vm` its output
-and clock: there is no other set-up.
+trait method), then runs the program's script, which calls `main`. It
+returns `Ok(())` when `main` returned, and `Err(VmError)` when the
+program failed (see "Error Surfacing" below). No value of the program
+comes back this way: `main` returns `()` or `Result((), e)`, and a
+program hands its values to you through a host function it calls, as
+`mylib.give` does in the Quick Start, or through what it prints. The
+program carries its host functions, and the `Vm` its output and clock:
+there is no other set-up.
 
 **The end of a program.** `run_program` returns when `main` has
 returned; tasks that the program spawned may still be at work.
@@ -397,7 +409,7 @@ a runtime error, as under `silt test`.
 match vm.run_program(&program) {
     Err(e) if e.exit.is_some() => println!("exit code {:?}", e.exit),
     Err(e) => eprintln!("silt error: {}", e.message),
-    Ok(_) => {}
+    Ok(()) => {}
 }
 ```
 
@@ -452,8 +464,16 @@ fault of the program itself, a division by zero or a `panic`, keeps it
 - **Static errors** (type errors, unknown names, bad host signatures)
   are the diagnostics of `session.analyze(file)`. `session.compile`
   returns them as its `Err` for a program that has them.
-- **Runtime errors** (overflow, out-of-bounds, an `Err` or `None` that
-  bubbled to the top) return as `Err(VmError)` from `vm.run_program`.
+- **Runtime errors** (overflow, out-of-bounds, a failed assertion)
+  return as `Err(VmError)` from `vm.run_program`.
+- **A `main` that returns `Err(e)`** (often from a `?`) has failed: an
+  `Err(VmError)` too, with `returned_err` set, the message
+  `main returned Err: <e as println writes it>`, and its place where
+  `main` is bound (the name of its `fn`, its name in a `let` or an
+  import). `call_test` says the same of a test function, at its name.
+  The payload is shown by its `Display`, which is code of the program:
+  a `process.exit` there (or the step budget used up) is the error
+  instead; if it fails otherwise, the payload is shown by its structure.
 - **`panic(...)` in silt code** reaches Rust as an `Err(VmError)` whose
   message carries the panicked string.
 - **An `Err` from a host function** becomes a runtime error whose message
@@ -482,7 +502,7 @@ fault of the program itself, a division by zero or a `panic`, keeps it
 
 ```rust
 match vm.run_program(&program) {
-    Ok(value) => println!("result: {:?}", value),
+    Ok(()) => println!("the program ran to its end"),
     Err(e) => eprintln!("silt error: {}", e.message),
 }
 ```

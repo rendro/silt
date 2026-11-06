@@ -14,5 +14,5 @@ trait a.Describe for Box(t) where t: Display {
 }
 
 fn main() {
-  a.Describe.describe(Wrap(42))
+  let _ = a.Describe.describe(Wrap(42))
 }

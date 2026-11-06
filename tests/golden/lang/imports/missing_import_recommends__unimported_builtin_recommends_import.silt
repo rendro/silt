@@ -2,6 +2,6 @@
 -- exit: 1
 -- stderr-contains: module 'list' is not imported
 -- stderr-contains: add `import list`
-fn main() -> Int {
-    list.sum([1, 2, 3])
+fn main() {
+    let _ = list.sum([1, 2, 3])
 }

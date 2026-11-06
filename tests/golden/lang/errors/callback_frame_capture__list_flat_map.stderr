@@ -6,4 +6,4 @@ error[runtime]: division by zero
 
 call stack:
   -> bad_flat  at callback_frame_capture__list_flat_map.silt:4:11
-  -> main  at callback_frame_capture__list_flat_map.silt:7:13
+  -> main  at callback_frame_capture__list_flat_map.silt:7:21

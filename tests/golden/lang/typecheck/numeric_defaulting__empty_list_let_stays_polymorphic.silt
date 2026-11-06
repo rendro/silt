@@ -5,5 +5,5 @@ import list
 fn main() {
   let xs = []
   let n = list.length(xs)
-  n
+  let _ = n
 }

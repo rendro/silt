@@ -11,7 +11,7 @@ fn main() {
   println(set.contains(seen, 2))
   println(set.length(seen))
   println(string.join(["x", "y"], "-") |> string.repeat(2))
-  map.length(counts)
+  let _ = map.length(counts)
 }
 
 fn list_count(words) {

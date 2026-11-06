@@ -8,5 +8,5 @@ fn f(x: a) -> Int {
 }
 
 fn main() {
-  f(1)
+  let _ = f(1)
 }

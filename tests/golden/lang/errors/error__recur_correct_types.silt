@@ -1,4 +1,4 @@
 -- cmd: check
 -- exit: 0
-fn main() { loop i = 0 { match i > 5 { true -> i
+fn main() { let _ = loop i = 0 { match i > 5 { true -> i
  false -> loop(i + 1) } } }

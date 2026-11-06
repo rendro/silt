@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[compile]: the entry point 'main' must return () or Result((), e), but it returns Int
+-- stderr-contains: entry_returns__a_main_that_returns_a_value_is_refused.silt:11:3
+-- stderr-contains: hand the value on (println, a file, a host function), or drop it with `let _ = ...`
+-- `main` returns () or Result((), e). The value at the end of its body
+-- would go nowhere: it is no exit code, and nothing prints it. The error
+-- is at that value.
+fn main() {
+  let x = 6
+  x * 7
+}

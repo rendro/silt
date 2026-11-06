@@ -371,7 +371,7 @@ mod tests {
             fmt("fn main() {\n  \"a\r\nb{1}c\r\nd\"\n}\n"),
             "fn main() {\n  \"a\nb{1}c\nd\"\n}\n"
         );
-        let text = "fn main() {\n  \"a\rb\"\n}\n";
+        let text = "fn main() {\n  let _ = \"a\rb\"\n}\n";
         assert_eq!(fmt(text), text);
     }
 
@@ -484,7 +484,7 @@ mod tests {
 
     #[test]
     fn a_panic_of_the_printer_is_the_caller_s_and_the_next_text_is_formatted() {
-        let source = "fn main() {\n  1\n}\n";
+        let source = "fn main() {\n  let _ = 1\n}\n";
         let panicked = std::panic::catch_unwind(|| {
             format_with(FileId::default(), source, |_| panic!("a defect"))
         });

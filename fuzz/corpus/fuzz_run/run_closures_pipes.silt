@@ -16,5 +16,5 @@ fn main() {
     |> list.fold(0) { acc, x -> acc + x }
   println(total)
   println(({ v -> v + 1 }(41)))
-  (5 |> { v -> v + 10 })
+  let _ = (5 |> { v -> v + 10 })
 }

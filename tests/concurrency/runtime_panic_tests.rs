@@ -95,8 +95,12 @@ fn a_panic_of_a_worker_reaches_the_thread_that_waits_for_the_lost_task() {
     drop(vm);
 
     let other = Buffer::new();
-    let answer = Vm::new(HostIo::buffer(&other)).run_program(&compiled("fn main() { 6 * 7 }"));
-    assert_eq!(answer.map_err(|e| e.message), Ok(Value::Int(42)));
+    let (program, given) =
+        silt::session::testing::compile_given("import host\nfn main() { host.give(6 * 7) }")
+            .expect("the program compiles");
+    let answer = Vm::new(HostIo::buffer(&other)).run_program(&program);
+    assert_eq!(answer.map_err(|e| e.message), Ok(()));
+    assert_eq!(given.last(), Some(Value::Int(42)));
 }
 
 /// The program's own code has returned and its thread waits for the

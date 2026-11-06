@@ -16,7 +16,7 @@ use std::thread;
 use std::time::Duration;
 
 use silt::session::testing::compile_str;
-use silt::{Buffer, HostIo, Value, Vm};
+use silt::{Buffer, HostIo, Vm};
 
 /// How long a program may take before the test calls it hung.
 const BUDGET: Duration = Duration::from_secs(30);
@@ -32,7 +32,7 @@ fn run(source: &str) -> Option<(Vm, String)> {
         let mut vm = Vm::new(HostIo::buffer(&out));
         let result = vm.run_program(&program).map_err(|e| e.message);
         vm.settle();
-        assert_eq!(result, Ok(Value::Unit), "output: {:?}", out.contents());
+        assert_eq!(result, Ok(()), "output: {:?}", out.contents());
         let _ = tx.send((vm, out.contents()));
     });
     rx.recv_timeout(BUDGET).ok()
@@ -127,7 +127,7 @@ fn main() {{
   time.sleep(time.ms(100))
   when let Ok(text) = io.read_file("{path}") else {{ panic("cannot read the file") }}
   println(text)
-  readers |> list.each {{ h -> task.cancel(h) }}
+  let _ = readers |> list.each {{ h -> task.cancel(h) }}
 }}
 "#
     );

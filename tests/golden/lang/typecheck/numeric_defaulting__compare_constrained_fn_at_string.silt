@@ -10,5 +10,5 @@ fn pick(a: a, b: a) -> a where a: Compare {
 
 fn main() {
   let s = pick("foo", "bar")
-  s
+  let _ = s
 }

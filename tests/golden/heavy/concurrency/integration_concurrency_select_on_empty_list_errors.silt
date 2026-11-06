@@ -4,5 +4,5 @@
 -- Select on an empty list should produce an error.
 import channel
 fn main() {
-  channel.select([])
+  let _ = channel.select([])
 }

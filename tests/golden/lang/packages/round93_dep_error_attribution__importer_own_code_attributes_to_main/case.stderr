@@ -1,5 +1,5 @@
 error[runtime]: division by zero
- --> main.silt:8:3
+ --> main.silt:8:11
    |
- 8 |   1 / 0
-   |   ^^^^^ division by zero
+ 8 |   let _ = 1 / 0
+   |           ^^^^^ division by zero

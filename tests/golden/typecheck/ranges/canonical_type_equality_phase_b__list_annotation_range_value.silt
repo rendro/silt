@@ -3,5 +3,5 @@
 -- A `List(Int)` annotation accepts a range value.
 fn main() {
   let xs: List(Int) = 1..5
-  xs
+  let _ = xs
 }

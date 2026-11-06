@@ -4,5 +4,5 @@
 -- stderr-contains: type mismatch: expected String, got List(Int)
 fn main() {
     let s: String = 1..10
-    s
+    let _ = s
 }

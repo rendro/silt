@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[compile]: the entry point 'main' must return () or Result((), e), but it returns String
+-- stderr-contains: entry_returns__a_written_return_type_is_the_place.silt:7:14
+-- A `main` that writes the type of a value it returns is refused at
+-- that type.
+fn main() -> String {
+  "done"
+}

@@ -5,5 +5,5 @@ import a
 
 fn main() {
   let c = a.Red
-  c
+  let _ = c
 }

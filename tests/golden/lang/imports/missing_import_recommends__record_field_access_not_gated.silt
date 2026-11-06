@@ -2,7 +2,7 @@
 -- exit: 0
 -- stderr-not-contains: error
 type Point { x: Int, y: Int }
-fn main() -> Int {
+fn main() {
     let p = Point { x: 1, y: 2 }
-    p.x
+    let _ = p.x
 }

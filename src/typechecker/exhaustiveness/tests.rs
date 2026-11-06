@@ -14,7 +14,7 @@ fn describe(c) {
     Blue -> "cool"
   }
 }
-fn main() { describe(Red) }
+fn main() { let _ = describe(Red) }
         "#,
     );
 }
@@ -29,7 +29,7 @@ fn describe(c) {
     Red | Green -> "warm-ish"
   }
 }
-fn main() { describe(Red) }
+fn main() { let _ = describe(Red) }
         "#,
         "non-exhaustive",
     );
@@ -48,7 +48,7 @@ fn process(x) {
     None -> 0
   }
 }
-fn main() { process(Some(Some(1))) }
+fn main() { let _ = process(Some(Some(1))) }
         "#,
     );
 }
@@ -63,7 +63,7 @@ fn process(x) {
     None -> 0
   }
 }
-fn main() { process(Some(Some(1))) }
+fn main() { let _ = process(Some(Some(1))) }
         "#,
         "non-exhaustive",
     );
@@ -83,7 +83,7 @@ fn check(pair) {
     (false, false) -> 4
   }
 }
-fn main() { check((true, false)) }
+fn main() { let _ = check((true, false)) }
         "#,
     );
 }
@@ -99,7 +99,7 @@ fn check(pair) {
     (false, true) -> 3
   }
 }
-fn main() { check((true, false)) }
+fn main() { let _ = check((true, false)) }
         "#,
         "non-exhaustive",
     );
@@ -117,7 +117,7 @@ fn head(xs) {
     [x, ..rest] -> x
   }
 }
-fn main() { head([1, 2, 3]) }
+fn main() { let _ = head([1, 2, 3]) }
         "#,
     );
 }
@@ -131,7 +131,7 @@ fn head(xs) {
     [x, ..rest] -> x
   }
 }
-fn main() { head([1, 2, 3]) }
+fn main() { let _ = head([1, 2, 3]) }
         "#,
         "non-exhaustive",
     );
@@ -165,7 +165,7 @@ fn check(x) {
     n when n < 0 -> "negative"
   }
 }
-fn main() { check(1) }
+fn main() { let _ = check(1) }
         "#,
         "non-exhaustive",
     );
@@ -182,7 +182,7 @@ fn id(x) {
     _ -> x
   }
 }
-fn main() { id(42) }
+fn main() { let _ = id(42) }
         "#,
     );
 }
@@ -198,7 +198,7 @@ fn check(b) {
     true | false -> "done"
   }
 }
-fn main() { check(true) }
+fn main() { let _ = check(true) }
         "#,
     );
 }
@@ -219,7 +219,7 @@ fn area(s) {
     Rect(w, h) -> w * h
   }
 }
-fn main() { area(Circle(1.0)) }
+fn main() { let _ = area(Circle(1.0)) }
         "#,
     );
 }
@@ -237,7 +237,7 @@ fn area(s) {
     Circle(r) -> 3.14 * r * r
   }
 }
-fn main() { area(Circle(1.0)) }
+fn main() { let _ = area(Circle(1.0)) }
         "#,
         "non-exhaustive",
     );

@@ -7,4 +7,4 @@ error[runtime]: division by zero
 call stack:
   -> helper  at util.silt:6:3
   -> boom  at util.silt:2:3
-  -> main  at main.silt:10:3
+  -> main  at main.silt:10:11

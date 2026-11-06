@@ -4,5 +4,5 @@
 fn main() {
   let s = "hello"
   let _ = -s
-  0
+  let _ = 0
 }

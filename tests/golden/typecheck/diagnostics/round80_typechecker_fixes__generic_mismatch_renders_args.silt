@@ -7,7 +7,7 @@
 type Bag(a) { Wrap(a) }
 type Box(a) { Pack(a) }
 fn want_box(b: Box(Int)) -> Int { 0 }
-fn main() -> Int {
+fn main() {
   let b: Bag(String) = Wrap("x")
-  want_box(b)
+  let _ = want_box(b)
 }

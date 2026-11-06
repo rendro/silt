@@ -3,5 +3,5 @@
 import c_a
 
 fn main() {
-  c_a.fa()
+  let _ = c_a.fa()
 }

@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: error[compile]: the entry point 'main' must return () or Result((), e), but it returns Result(Int, String)
+-- stderr-contains: end main with `Ok(())` once the value is handed on; the Ok of main carries nothing
+-- The Ok of a `main` that returns a Result carries nothing.
+fn main() -> Result(Int, String) {
+  Ok(42)
+}

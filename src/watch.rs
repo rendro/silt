@@ -828,7 +828,7 @@ mod tests {
         .unwrap();
         let src = dir.join("src");
         std::fs::create_dir_all(&src).unwrap();
-        std::fs::write(src.join("main.silt"), "fn main() { 1 }\n").unwrap();
+        std::fs::write(src.join("main.silt"), "fn main() { let _ = 1 }\n").unwrap();
         let lock = dir.join("silt.lock");
         assert!(!lock.exists());
         // Under the policy of `run`, the watcher's analysis writes the

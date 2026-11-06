@@ -16,5 +16,5 @@ fn main() {
       None -> 2
     }
   })
-  task.join(h)
+  let _ = task.join(h)
 }

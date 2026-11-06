@@ -3,5 +3,5 @@
 -- stderr-contains: exceeds maximum
 import string
 fn main() {
-  string.pad_right("hi", 9223372036854775800, " ")
+  let _ = string.pad_right("hi", 9223372036854775800, " ")
 }

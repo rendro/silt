@@ -4,5 +4,5 @@
 -- stderr-not-contains: negative index
 import string
 fn main() {
-  string.pad_right("hi", -1, " ")
+  let _ = string.pad_right("hi", -1, " ")
 }

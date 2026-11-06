@@ -15,16 +15,16 @@ fn step() -> Result(Int, String) {
   Err("no luck")
 }
 
-fn test_a_gives_up() -> Result(Int, String) {
+fn test_a_gives_up() -> Result((), String) {
   let ticker = task.spawn { ->
     loop {
       time.sleep(time.ms(1))
       loop()
     }
   }
-  let v = step()?
+  let _ = step()?
   task.cancel(ticker)
-  Ok(v)
+  Ok(())
 }
 
 fn test_b_runs() {

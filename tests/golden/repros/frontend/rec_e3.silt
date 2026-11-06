@@ -14,5 +14,5 @@ fn third() { 3 }
 
 fn main() {
   first()
-  third()
+  let _ = third()
 }

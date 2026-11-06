@@ -8,5 +8,5 @@ fn helper() {
 
 fn main() {
   let r = helper()
-  r
+  let _ = r
 }

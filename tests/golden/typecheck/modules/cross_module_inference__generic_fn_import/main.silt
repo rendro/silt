@@ -9,5 +9,5 @@ import a
 fn main() {
   let n = a.id(42)
   let s = a.id("foo")
-  n
+  let _ = n
 }

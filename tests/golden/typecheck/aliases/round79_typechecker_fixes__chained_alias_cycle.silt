@@ -6,7 +6,7 @@
 -- stderr-not-contains: expected A, got Int
 type A = B
 type B = A
-fn main() -> Int {
+fn main() {
   let v: A = 42
-  v
+  let _ = v
 }

@@ -3,9 +3,7 @@
 
 use std::process;
 
-use silt::ast::{Decl, Program};
 use silt::diagnostic::{Code, Diagnostic, render_human};
-use silt::intern::resolve;
 use silt::session::{Entry, LockPolicy};
 use silt::source::{FileId, SourceMap, Span};
 use silt::vm::{Exit, Vm, VmError};
@@ -86,32 +84,6 @@ pub(crate) fn dispatch(args: &[String]) {
     vm_run_file(&file);
 }
 
-/// The payload of `value` when it is the `Err(..)` of a `Result`; `None`
-/// for every other value.
-///
-/// A `main` or a test function that returns `Err(..)` has failed. This is
-/// the one place that says what "returned `Err`" means, for `silt run`
-/// and `silt test` alike. The payload is shown with [`silt::Vm::show_text`],
-/// as `println` would write it.
-pub(crate) fn returned_err(value: &silt::Value) -> Option<&silt::Value> {
-    let silt::Value::Variant(variant) = value else {
-        return None;
-    };
-    if !variant.is(silt::typeinfo::bv::ERR) {
-        return None;
-    }
-    // (Result's Err carries exactly one payload.)
-    Some(variant.fields().first().unwrap_or(value))
-}
-
-/// The span of the name of the top-level function `name` of `program`.
-pub(crate) fn fn_name_span(program: &Program, name: &str) -> Option<Span> {
-    program.decls.iter().find_map(|decl| match decl {
-        Decl::Fn(f) if resolve(f.name) == name => Some(f.name_span),
-        _ => None,
-    })
-}
-
 /// Run a file using the bytecode VM (default path): the session analyses
 /// it and compiles it for `main`, and the VM runs what it compiled.
 pub(crate) fn vm_run_file(path: &str) {
@@ -133,12 +105,6 @@ pub(crate) fn vm_run_file(path: &str) {
     if !diagnostics.is_empty() {
         eprintln!();
     }
-    // Where a `main` that returns `Err` is reported: at its name, or at
-    // the start of the entry file when no function is named `main`.
-    let main_span = session
-        .module_analysis(session.module_of(file))
-        .and_then(|analysis| fn_name_span(&analysis.ast, "main"))
-        .unwrap_or(Span::point(file, 0));
     let sources = session.into_sources();
 
     // Run via VM. The failures of tasks that nobody joins are taken and
@@ -157,40 +123,21 @@ pub(crate) fn vm_run_file(path: &str) {
     // `main` has returned; the program ends when its tasks can do no
     // more. After an error of `main`, raised or returned as `Err`,
     // nothing is waited for: the program has failed.
-    if matches!(&run_result, Ok(value) if returned_err(value).is_none()) {
+    if run_result.is_ok() {
         vm.settle();
     }
     // The program has ended. What failed is rendered first: the tasks
     // that failed and that nobody joined or cancelled, and `main`'s
-    // error or `Err`. Rendering can run code of the program (a
-    // `Display` of `main`'s `Err`), and a `process.exit` there, or in a
-    // task that still runs, ends the process with its code and nothing
-    // is reported. Then the failure claims the end
+    // error or `Err`. (The `Display` of `main`'s `Err` ran in
+    // `run_program`: a `process.exit` there ended the process.) A
+    // `process.exit` in a task that still runs ends the process with
+    // its code, and nothing is reported. Then the failure claims the end
     // (`claim_program_failure`): from here an exit is ignored, and the
     // report is written whole, and the run fails.
     let (task_texts, tasks_failed) = task_failure_texts(path, &sources, file);
-    // A `fn main() -> Result(..)` that evaluates to `Err(..)`
-    // is a failed program — surface it. Previously the Ok value of
-    // `vm.run` (main's return value) was discarded wholesale, so
-    // `fn main() -> Result(Int, String) { Err("boom") }` (or a `?`
-    // propagating an Err out of main) exited 0 with no diagnostic and
-    // CI/shell callers saw success on failure. Render through the
-    // canonical `error[runtime]:` header, at `main`'s name, and exit 1,
-    // matching the exit code every other runtime error uses.
-    // `Ok(..)` and non-Result returns (Unit, Int, ...) are unchanged.
-    // `silt test` applies the same rule to a test function, through the
-    // same `returned_err`; the REPL has its own `vm.run` handling.
-    let main_text = match &run_result {
-        Ok(value) => returned_err(value).map(|payload| {
-            let d = Diagnostic::error(
-                Code::MainReturnedErr,
-                main_span,
-                format!("main returned Err: {}", vm.show_text(payload)),
-            );
-            render_human(&ProgramFiles::new(path, &sources), &d)
-        }),
-        Err(e) => Some(render_runtime_error(e, path, &sources)),
-    };
+    // `main`'s error: raised, or returned as `Err` (at `main`'s name;
+    // see `Vm::run_program`).
+    let main_text = (run_result.as_ref().err()).map(|e| render_runtime_error(e, path, &sources));
     let failed = tasks_failed || main_text.is_some();
     if failed {
         silt::scheduler::claim_program_failure();

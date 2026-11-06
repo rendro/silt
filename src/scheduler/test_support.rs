@@ -215,7 +215,7 @@ impl InProcessRunner {
 /// the latter approach.
 fn compile_and_run(source: &str) -> (String, Result<Value, crate::vm::VmError>) {
     let stdout = String::new();
-    let program = match crate::session::testing::compile_str(source) {
+    let (program, given) = match crate::session::testing::compile_given(source) {
         Ok(p) => p,
         Err(errors) => {
             let message = errors
@@ -225,7 +225,9 @@ fn compile_and_run(source: &str) -> (String, Result<Value, crate::vm::VmError>) 
             return (stdout, Err(crate::vm::VmError::new(message)));
         }
     };
-    let result = crate::vm::Vm::new(crate::HostIo::process()).run_program(&program);
+    let result = crate::vm::Vm::new(crate::HostIo::process())
+        .run_program(&program)
+        .map(|()| given.last().unwrap_or(crate::Value::Unit));
     (stdout, result)
 }
 
@@ -337,7 +339,8 @@ mod tests {
     /// regression that pushes past 10s would still trip this lock.
     #[test]
     fn run_trial_returns_main_value() {
-        let runner = InProcessRunner::new("fn main() { 42 }").with_budget(Duration::from_secs(10));
+        let runner = InProcessRunner::new("fn main() { host.give(42) }\nimport host")
+            .with_budget(Duration::from_secs(10));
         let outcome = runner.run_trial();
         assert!(outcome.ok(), "outcome should be ok: {outcome:?}");
         assert_eq!(outcome.result, Some(Value::Int(42)));
@@ -355,11 +358,12 @@ mod tests {
 import channel
 fn main() {
   let ch = channel.new(0)
-  match channel.receive(ch) {
+  host.give(match channel.receive(ch) {
     Some(_) -> 0
     None -> 0
-  }
+  })
 }
+import host
 "#;
         let runner = InProcessRunner::new(src).with_budget(Duration::from_secs(10));
         let outcome = runner.run_trial();
@@ -381,13 +385,14 @@ fn main() {
     fn run_trial_enforces_budget() {
         let src = r#"
 fn main() {
-  loop k = 0 {
+  host.give(loop k = 0 {
     match k >= 100000000 {
       true -> 0
       _ -> loop(k + 1)
     }
-  }
+  })
 }
+import host
 "#;
         let runner = InProcessRunner::new(src).with_budget(Duration::from_millis(200));
         let outcome = runner.run_trial();
@@ -409,7 +414,7 @@ fn main() {
   let ch = channel.new(0)
   let _senders = 1..16
     |> list.map { i -> task.spawn({ -> channel.send(ch, i) }) }
-  loop c = 0, acc = 0 {
+  host.give(loop c = 0, acc = 0 {
     match c >= 16 {
       true -> acc
       _ -> match channel.receive(ch) {
@@ -417,8 +422,9 @@ fn main() {
         None -> acc
       }
     }
-  }
+  })
 }
+import host
 "#;
         let runner = InProcessRunner::new(src).with_budget(Duration::from_secs(10));
         let outcome = runner.run_trial();

@@ -4,4 +4,4 @@ fn bad_folder(acc, x) {
   let _ = 1 / 0
   acc
 }
-fn main() { list.fold([1, 2, 3], 0, bad_folder) }
+fn main() { let _ = list.fold([1, 2, 3], 0, bad_folder) }

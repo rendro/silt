@@ -3,5 +3,5 @@
 -- stderr-contains: not introduced in the function signature
 fn show(x) where x: Display { "{x}" }
 fn main() {
-  show({ -> 1 })
+  let _ = show({ -> 1 })
 }

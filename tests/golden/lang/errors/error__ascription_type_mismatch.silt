@@ -2,5 +2,5 @@
 -- exit: 1
 -- stderr-contains: type mismatch
 fn main() {
-  42 as String
+  let _ = 42 as String
 }

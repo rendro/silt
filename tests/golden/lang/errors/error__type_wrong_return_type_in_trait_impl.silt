@@ -9,4 +9,4 @@ trait Numeric for Int {
   fn double(self) -> String { "wrong" }
 }
 
-fn main() { 42 }
+fn main() { let _ = 42 }

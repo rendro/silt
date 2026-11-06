@@ -1,2 +1,2 @@
 -- verdict: same
-fn main() { 1 }
+fn main() { let _ = 1 }

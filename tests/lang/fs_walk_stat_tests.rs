@@ -136,8 +136,9 @@ fn test_fs_stat_on_file_reports_size_and_is_file() {
         r#"
 import fs
 fn main() {{
-    fs.stat("{file_str}")
+    host.give(fs.stat("{file_str}"))
 }}
+import host
 "#
     );
     let result = run(&input);
@@ -247,11 +248,12 @@ fn test_fs_walk_lists_all_entries_and_tolerates_inner_symlink() {
 import fs
 import list
 fn main() {{
-    match fs.walk("{root_str}") {{
+    host.give(match fs.walk("{root_str}") {{
         Ok(paths) -> list.length(paths)
         Err(_) -> -1
-    }}
+    }})
 }}
+import host
 "#
     );
     let result = run(&input);
@@ -275,11 +277,12 @@ import fs
 import list
 import string
 fn main() {{
-    match {call} {{
+    host.give(match {call} {{
         Ok(paths) -> string.join(list.sort(paths), "\n")
         Err(e) -> "Err: {{Error.message(e)}}"
-    }}
+    }})
 }}
+import host
 "#
     );
     match run(&input) {
@@ -431,8 +434,9 @@ fn test_fs_read_link_returns_target() {
         r#"
 import fs
 fn main() {{
-    fs.read_link("{link_str}")
+    host.give(fs.read_link("{link_str}"))
 }}
+import host
 "#
     );
     let inner = ok_inner(run(&input));
@@ -462,8 +466,9 @@ fn test_fs_is_symlink_distinguishes_symlink_and_file() {
         r#"
 import fs
 fn main() {{
-    (fs.is_symlink("{plain_str}"), fs.is_symlink("{link_str}"))
+    host.give((fs.is_symlink("{plain_str}"), fs.is_symlink("{link_str}")))
 }}
+import host
 "#
     );
     let result = run(&input);
@@ -485,8 +490,9 @@ fn test_fs_read_link_on_non_symlink_errs() {
         r#"
 import fs
 fn main() {{
-    fs.read_link("{file_str}")
+    host.give(fs.read_link("{file_str}"))
 }}
+import host
 "#
     );
     let msg = err_msg(run(&input));
@@ -551,7 +557,9 @@ fn copy_and_rename_name_the_path_of_a_directory_fault() {
             format!("directory not empty: {d}/full"),
         ),
     ] {
-        let got = err_msg(run(&format!("import fs\nfn main() {{\n  {call}\n}}\n")));
+        let got = err_msg(run(&format!(
+            "import fs\nimport host\nfn main() {{\n  host.give({call})\n}}\n"
+        )));
         assert_eq!(got, message, "{call}");
     }
     // Nothing moved, nothing written.
@@ -575,7 +583,7 @@ fn stat_gives_a_time_before_1970() {
     drop(opened);
     let path = file.to_str().unwrap().replace('\\', "/");
     let stat = ok_inner(run(&format!(
-        "import fs\nfn main() {{\n  fs.stat(\"{path}\")\n}}\n"
+        "import fs\nfn main() {{\n  host.give(fs.stat(\"{path}\"))\n}}\nimport host\n"
     )));
     let (_, fields) = record_fields(stat);
     assert_eq!(
@@ -607,7 +615,7 @@ fn test_fs_errors_name_the_path_they_are_about() {
     );
     let call = |expr: &str| {
         err_msg(run(&format!(
-            "import fs\nimport io\nfn main() {{\n  {expr}\n}}\n"
+            "import fs\nimport io\nfn main() {{\n  host.give({expr})\n}}\nimport host\n"
         )))
     };
     assert_eq!(

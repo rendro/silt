@@ -15,7 +15,7 @@ fn main() {
   }
   println(classify(x))
   println(classify(15))
-  (match (x > 0) {
+  let _ = (match (x > 0) {
     true -> (x + 1)
     false -> (0 - x)
   })

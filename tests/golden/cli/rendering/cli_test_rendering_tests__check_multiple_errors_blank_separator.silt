@@ -4,5 +4,5 @@ fn main() {
   let a: Int = "foo"
   let b: Int = true
   let c: Int = [1]
-  a
+  let _ = a
 }

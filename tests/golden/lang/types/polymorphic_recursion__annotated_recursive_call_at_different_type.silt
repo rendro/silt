@@ -9,5 +9,5 @@ fn myfn(p: a) -> Int where a: Display {
 }
 
 fn main() {
-  myfn(("a", "b"))
+  let _ = myfn(("a", "b"))
 }

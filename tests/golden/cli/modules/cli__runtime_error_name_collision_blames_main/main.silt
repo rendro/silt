@@ -11,4 +11,4 @@ fn run() {
   y / 0
 }
 
-fn main() { run() }
+fn main() { let _ = run() }

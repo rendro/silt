@@ -7,6 +7,6 @@ fn f(a, b) -> Int {
   let bad = 1 +
 }
 
-fn main() -> Int {
-  f(1, 2)
+fn main() {
+  let _ = f(1, 2)
 }

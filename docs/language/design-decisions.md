@@ -52,6 +52,21 @@ are worse than crashes. `int.abs` also errors on the single unrepresentable
 value: `int.abs(-9223372036854775808)` raises
 `integer overflow: abs(-9223372036854775808)`.
 
+## What `main` Returns
+
+A program's `main`, and a test function, returns `()` or `Result((), e)`:
+nothing else. A program ends well or it fails, and the shell sees exactly
+that: status 0 when `main` returns (or returns `Ok(())`), status 1 when it
+returns `Err(e)` (written as `main returned Err: e`) or fails, and any other
+status only through `process.exit`. A value at the end of `main` would have
+nowhere to go: it is not printed, not an exit code, and an `Option` that is
+`None` would end the program "well" without a word. So it is an error at
+check, with the way out in its help: print it, give it to a host function,
+or turn a missing value into an `Err` with `option.to_result(x, "why")?`. A
+program that runs inside another (see the [embedding guide](../ffi.md))
+hands its values to the host through a host function it calls;
+`run_program` says only whether the program ended well.
+
 ## Float Safety
 
 Silt has one float type, `Float`, and a `Float` is always finite: never NaN,

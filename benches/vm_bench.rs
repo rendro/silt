@@ -6,7 +6,6 @@
 //! and reports the average. This measures VM execution, not compilation.
 
 use silt::session::Program;
-use silt::value::Value;
 use std::time::{Duration, Instant};
 
 const ITERATIONS: u32 = 100;
@@ -17,7 +16,7 @@ fn compile(source: &str) -> Program {
     silt::session::testing::compile_str(source).expect("compile error")
 }
 
-fn run_once(program: &Program) -> Value {
+fn run_once(program: &Program) {
     silt::vm::Vm::new(silt::HostIo::process())
         .run_program(program)
         .expect("runtime error")

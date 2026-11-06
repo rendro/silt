@@ -1,4 +1,4 @@
 -- exit: 1
 -- stderr-contains: decimals must be non-negative
 import float
-fn main() { float.format(3.14159, -1) }
+fn main() { let _ = float.format(3.14159, -1) }

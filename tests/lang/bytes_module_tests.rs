@@ -32,8 +32,9 @@ fn main() {
   }
   -- Map literal evaluation order: later entries overwrite earlier;
   -- the "a" entry should be a single slot now holding 2.
-  m
+  host.give(m)
 }
+import host
 "#);
     let Value::Map(m) = v else {
         panic!("expected Map, got {v:?}")

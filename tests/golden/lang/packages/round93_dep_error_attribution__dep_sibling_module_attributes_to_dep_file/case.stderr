@@ -7,4 +7,4 @@ error[runtime]: division by zero
 call stack:
   -> deep_div  at r93_mathdep/src/inner.silt:2:3
   -> divide_deep  at r93_mathdep/src/lib.silt:8:3
-  -> main  at main.silt:6:3
+  -> main  at main.silt:6:11

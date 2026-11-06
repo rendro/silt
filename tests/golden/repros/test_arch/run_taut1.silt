@@ -1,5 +1,5 @@
 -- verdict: same
 fn main() {
   let _x = []
-  0
+  let _ = 0
 }

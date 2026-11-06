@@ -12,5 +12,5 @@ fn describe(c) {
 }
 
 fn main() {
-  describe(a.Red)
+  let _ = describe(a.Red)
 }

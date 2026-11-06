@@ -14,6 +14,6 @@ trait Display for Code {
   }
 }
 
-fn main() -> Result(Int, Code) {
+fn main() -> Result((), Code) {
   Err(Code { n: 0 })
 }

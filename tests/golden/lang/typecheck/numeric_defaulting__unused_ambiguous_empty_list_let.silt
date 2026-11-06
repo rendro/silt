@@ -3,5 +3,5 @@
 -- the typechecker must not crash on an unused, unannotated empty-list let
 fn main() {
   let _x = []
-  0
+  let _ = 0
 }

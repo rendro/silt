@@ -2,6 +2,6 @@
 -- stderr-contains: error[runtime]
 -- stderr-contains: main returned Err
 -- stderr-contains: boom
-fn main() -> Result(Int, String) {
+fn main() -> Result((), String) {
   Err("boom")
 }

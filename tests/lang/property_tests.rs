@@ -262,8 +262,8 @@ proptest! {
         b in -1000i64..1000,
         op in prop_oneof![Just("+"), Just("-"), Just("*")],
     ) {
-        let source = format!("fn main() {{ {a} {op} {b} }}");
-        let program = match silt::session::testing::compile_str(&source) {
+        let source = format!("import host\nfn main() {{ host.give({a} {op} {b}) }}");
+        let (program, given) = match silt::session::testing::compile_given(&source) {
             Ok(p) => p,
             Err(errors) => {
                 return Err(TestCaseError::Fail(
@@ -271,7 +271,9 @@ proptest! {
                 ));
             }
         };
-        let vm_result = silt::vm::Vm::new(silt::HostIo::process()).run_program(&program);
+        let vm_result = silt::vm::Vm::new(silt::HostIo::process())
+            .run_program(&program)
+            .map(|()| given.last().unwrap_or(silt::Value::Unit));
 
         // Reference semantics via Rust's checked arithmetic.
         let expected = match op {
@@ -418,12 +420,10 @@ proptest! {
             .map(|decimals| format!("float.format({number:e}, {decimals})"))
             .collect();
         let source = format!(
-            "import float\nimport string\nfn main() {{ string.join([{}], \"|\") }}",
+            "import float\nimport host\nimport string\nfn main() {{ host.give(string.join([{}], \"|\")) }}",
             calls.join(", ")
         );
-        let program = silt::session::testing::compile_str(&source)
-            .map_err(|errors| TestCaseError::fail(format!("{source}: {errors:?}")))?;
-        let joined = match silt::vm::Vm::new(silt::HostIo::process()).run_program(&program) {
+        let joined = match silt::session::testing::run_given(&source) {
             Ok(silt::value::Value::String(joined)) => joined.to_string(),
             other => return Err(TestCaseError::fail(format!("{source}: {other:?}"))),
         };

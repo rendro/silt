@@ -9,5 +9,5 @@ fn main() {
       42
     }) as Int
   }
-  r
+  let _ = r
 }

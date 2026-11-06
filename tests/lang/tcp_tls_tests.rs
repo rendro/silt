@@ -37,7 +37,7 @@ import task
 import time
 
 fn main() {
-  match tcp.listen("127.0.0.1:0") {
+  host.give(match tcp.listen("127.0.0.1:0") {
     Ok(listener) -> {
       let server = task.spawn({ ->
         let bad_cert = bytes.from_string("not a real cert")
@@ -56,8 +56,9 @@ fn main() {
       task.join(server)
     }
     Err(e) -> Error.message(e)
-  }
+  })
 }
+import host
 "#
     .to_string();
     let v = run(&src);
@@ -90,7 +91,7 @@ import task
 import time
 
 fn main() {{
-  match tcp.listen("127.0.0.1:0") {{
+  host.give(match tcp.listen("127.0.0.1:0") {{
     Ok(listener) -> {{
       let server = task.spawn({{ ->
         match bytes.from_hex("{cert_hex}") {{
@@ -119,8 +120,9 @@ fn main() {{
       task.join(server)
     }}
     Err(e) -> Error.message(e)
-  }}
+  }})
 }}
+import host
 "#,
         cert_hex = hex::encode(cert_pem.as_bytes()),
         key_hex = hex::encode(key_pem.as_bytes()),
@@ -243,7 +245,7 @@ fn main() {{
     let mut vm = silt::Vm::new(silt::HostIo::buffer(&out));
     let result = vm.run_program(&program).map_err(|e| e.message);
     vm.settle();
-    assert_eq!(result, Ok(Value::Unit), "{:?}", out.contents());
+    assert_eq!(result, Ok(()), "{:?}", out.contents());
     assert_eq!(out.contents(), "given up\nthe client reads 0 bytes\n");
     // Every thread of the pool that exists is one that is free: none
     // is still in the handshake.

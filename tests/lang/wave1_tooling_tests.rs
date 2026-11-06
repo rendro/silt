@@ -464,7 +464,7 @@ fn assert_survives_rejected_character(label: &str, text: &str, rejected: char) {
     let mut lsp = Lsp::start(label);
     let uri = format!("file:///wave1_tooling/{label}.silt");
 
-    let diagnostics = lsp.open(&uri, "fn main() { 1 }\n");
+    let diagnostics = lsp.open(&uri, "fn main() { let _ = 1 }\n");
     assert!(
         diagnostics.is_empty(),
         "{label}: a valid document has no diagnostics, got {diagnostics:?}"
@@ -558,7 +558,7 @@ fn lsp_survives_rejected_characters_inside_expressions() {
 #[test]
 fn lsp_survives_rejected_characters_at_the_ends_of_the_document() {
     assert_survives_rejected_character("first_character", "日本\n", '日');
-    assert_survives_rejected_character("last_character", "fn main() { 1 }\n“", '“');
+    assert_survives_rejected_character("last_character", "fn main() { let _ = 1 }\n“", '“');
 }
 
 /// The rejected character behind text that shifts byte offsets, UTF-16
@@ -592,7 +592,7 @@ fn lsp_survives_rejected_characters_behind_other_non_ascii_text() {
 fn lsp_guard_valid_non_ascii_text_has_no_diagnostics() {
     let mut lsp = Lsp::start("valid_non_ascii");
     let uri = "file:///wave1_tooling/valid_non_ascii.silt";
-    let text = "-- “quoted” 😀\nfn main() {\n  let cafe = \"“café” 😀\"\n  cafe\n}\n";
+    let text = "-- “quoted” 😀\nfn greeting() {\n  let cafe = \"“café” 😀\"\n  cafe\n}\nfn main() {\n  println(greeting())\n}\n";
     let diagnostics = lsp.open(uri, text);
     assert!(
         diagnostics.is_empty(),
@@ -605,7 +605,7 @@ fn lsp_guard_valid_non_ascii_text_has_no_diagnostics() {
         .unwrap_or_default();
     assert!(
         shown.contains("String"),
-        "hover on `main` must show its type, got {answer}"
+        "hover on `greeting` must show its type, got {answer}"
     );
     assert_eq!(lsp.shut_down(), Some(0));
 }
@@ -628,7 +628,7 @@ fn lsp_guard_rejected_ascii_character_keeps_its_range() {
 fn lsp_answers_requests_for_a_position_behind_the_last_line() {
     let mut lsp = Lsp::start("behind_last_line");
     let uri = "file:///wave1_tooling/behind_last_line.silt";
-    let diagnostics = lsp.open(uri, "fn main() { 1 }");
+    let diagnostics = lsp.open(uri, "fn main() { let _ = 1 }");
     assert!(
         diagnostics.is_empty(),
         "a valid document has no diagnostics, got {diagnostics:?}"

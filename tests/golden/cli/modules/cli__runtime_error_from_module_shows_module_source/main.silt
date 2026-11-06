@@ -5,5 +5,5 @@
 import foo
 
 fn main() {
-  foo.bad()
+  let _ = foo.bad()
 }

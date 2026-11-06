@@ -64,7 +64,7 @@ import task
 import time
 
 fn main() {
-  match tcp.listen("127.0.0.1:0") {
+  host.give(match tcp.listen("127.0.0.1:0") {
     Ok(listener) -> {
       let server = task.spawn({ ->
         match tcp.accept(listener) {
@@ -103,8 +103,9 @@ fn main() {
       }
     }
     Err(e) -> "listen-err:{e}"
-  }
+  })
 }
+import host
 "#
     .to_string();
 
@@ -145,7 +146,7 @@ import task
 import time
 
 fn main() {
-  match tcp.listen("127.0.0.1:0") {
+  host.give(match tcp.listen("127.0.0.1:0") {
     Ok(listener) -> {
       let server = task.spawn({ ->
         match tcp.accept(listener) {
@@ -168,8 +169,9 @@ fn main() {
       }
     }
     Err(e) -> "listen-err:{e}"
-  }
+  })
 }
+import host
 "#
     .to_string();
     assert_eq!(run(&src), Value::String("errored".into()));
@@ -188,7 +190,7 @@ import task
 import time
 
 fn main() {
-  match tcp.listen("127.0.0.1:0") {
+  host.give(match tcp.listen("127.0.0.1:0") {
     Ok(listener) -> {
       let server = task.spawn({ ->
         match tcp.accept(listener) {
@@ -208,8 +210,9 @@ fn main() {
       }
     }
     Err(e) -> "listen-err:{e}"
-  }
+  })
 }
+import host
 "#
     .to_string();
     assert_eq!(run(&src), Value::String("ok".into()));
@@ -244,7 +247,7 @@ import task
 import time
 
 fn main() {
-  match tcp.listen("127.0.0.1:0") {
+  host.give(match tcp.listen("127.0.0.1:0") {
     Ok(listener) -> {
       let server = task.spawn({ ->
         let bad_cert = bytes.from_string("-----BEGIN CERTIFICATE-----\nnotacert\n-----END CERTIFICATE-----\n")
@@ -267,8 +270,9 @@ fn main() {
       }
     }
     Err(e) -> "listen-err:{e}"
-  }
+  })
 }
+import host
 "#
     .to_string();
     let v = run_with_timeout(src, Duration::from_secs(5))
