@@ -54,16 +54,20 @@ pub struct Config {
 /// What a program is compiled for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Entry {
-    /// A program that starts at `main`, which must have the type `() -> a`.
+    /// A program that starts at `main`, which must have the type
+    /// `() -> ()` or `() -> Result((), e)` (a `main` that never returns
+    /// is one too).
     Main,
     /// The test functions (`test_*`, `skip_test_*`) whose names contain
-    /// `filter`, each of the type `() -> a`. The program calls nothing;
-    /// the test runner calls each test.
+    /// `filter`, each of the type `() -> ()` or `() -> Result((), e)`.
+    /// The program calls nothing; the test runner calls each test.
     Tests { filter: Option<String> },
     /// A REPL cell, added by [`Session::add_cell`]: its declarations are
     /// installed, and a cell of statements runs them; the script returns
     /// their value. Any other file: its declarations, with nothing
-    /// called.
+    /// called. Such a program is run by the REPL
+    /// (`repl::Repl`, in a build with `repl`), not by
+    /// [`crate::vm::Vm::run_program`].
     Cell,
 }
 

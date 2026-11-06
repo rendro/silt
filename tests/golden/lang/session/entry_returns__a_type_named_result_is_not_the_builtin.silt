@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: but it returns Result((), _), a type of this program that is not the builtin Result
+-- stderr-contains: give the type another name
+type Result(a, e) {
+  Ok(a),
+  Err(e),
+}
+
+fn main() {
+  Ok(())
+}

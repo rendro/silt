@@ -938,7 +938,7 @@ fn test_c_loses_a_worker() {
 fn a_panic_of_a_worker_ends_a_test_run() {
     let tests = LOST_WHILE_ALL_WAIT.replace(
         "fn main() {",
-        "fn test_a_passes() {\n  let _ = println(\"the first test runs\")\n}\n\nfn test_b_loses_a_worker() {",
+        "fn test_a_passes() {\n  println(\"the first test runs\")\n}\n\nfn test_b_loses_a_worker() {",
     );
     let (status, stdout, stderr) = Run {
         name: "test",

@@ -145,12 +145,10 @@ impl VmError {
     /// The labels are the call stack, innermost frame first. An error
     /// with no span is about no place of the program, and has
     /// [`Span::BUILTIN`].
-    ///
-    /// The `Err` that a function returned is its message whole.
     pub fn to_diagnostic(&self) -> Diagnostic {
         let (head, rest) = match self.message.split_once('\n') {
-            Some((head, rest)) if !self.returned_err => (head, Some(rest)),
-            _ => (self.message.as_str(), None),
+            Some((head, rest)) => (head, Some(rest)),
+            None => (self.message.as_str(), None),
         };
         let code = if self.type_confusion {
             Code::TypeConfusion

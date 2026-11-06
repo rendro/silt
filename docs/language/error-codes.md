@@ -112,8 +112,8 @@ missing belong to codes that are gone.
 | `E0411` | A host module an embedder declared that a builtin module, a dependency or a module file of the same name hides or is hidden by. |
 | `E0412` | A host function whose signature is not one `fn` header. |
 | `E0501` | `silt run` of a program without a `main` function. |
-| `E0502` | A `main` that takes parameters, or returns something other than () or Result((), e). |
-| `E0503` | A test function that cannot be called with no arguments, or returns something other than () or Result((), e). |
+| `E0502` | A `main` that takes parameters, or returns something other than `()` or `Result((), e)`. |
+| `E0503` | A test function that cannot be called with no arguments, or returns something other than `()` or `Result((), e)`. |
 
 ## Packages (6xx)
 
@@ -137,7 +137,7 @@ missing belong to codes that are gone.
 | Code | Meaning |
 |------|---------|
 | `E0701` | A runtime error: a panic, a division by zero, an out-of-range conversion, ... |
-| `E0702` | `main` returned `Err(..)`. |
+| `E0702` | `main`, or a test function, returned `Err(..)`. |
 | `E0703` | Tasks failed and nobody joined them. |
 | `E0704` | An instruction met a value of a kind it cannot work on: the typechecker let through a program it should have rejected. |
 

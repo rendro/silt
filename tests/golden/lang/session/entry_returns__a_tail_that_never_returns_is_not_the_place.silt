@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- The value comes from the `return`; the `panic` at the end returns
+-- nothing, so the error is at main's name.
+-- stderr-contains: but it returns Int
+-- stderr-contains: entry_returns__a_tail_that_never_returns_is_not_the_place.silt:7:4
+fn main() {
+  match {
+    true -> return 5
+    _ -> ()
+  }
+  panic("x")
+}

@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use crate::ast::{Decl, ExprKind, FnDecl, ImportTarget, PatternKind, Program, Stmt};
+use crate::ast::{Decl, ExprKind, FnDecl, PatternKind, Program, Stmt};
 use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{Symbol, intern, resolve};
 use crate::source::{FileId, Span};
@@ -229,6 +229,21 @@ enum EntryFn {
 /// or a test function, named by `who`, with the way out for what it
 /// returns.
 fn value_returned(code: Code, span: Span, who: &str, entry: EntryFn, ret: &Type) -> Diagnostic {
+    // A type of the program's that is named like the builtin `Result`.
+    if let Type::Generic(name, _) = ret
+        && !name.is_builtin("Result")
+        && ret.to_string().starts_with("Result(")
+    {
+        return Diagnostic::error(
+            code,
+            span,
+            format!(
+                "{who} must return () or Result((), e), but it returns {ret}, a type of this \
+                 program that is not the builtin Result"
+            ),
+        )
+        .with_help("give the type another name");
+    }
     let help = match (ret, entry) {
         (Type::Generic(name, _), EntryFn::Main) if name.is_builtin("Option") => {
             "to end the program with a failure when there is none, make main return a \
@@ -248,17 +263,27 @@ fn value_returned(code: Code, span: Span, who: &str, entry: EntryFn, ret: &Type)
         (_, EntryFn::Main) => {
             "hand the value on (println, a file, a host function), or drop it with `let _ = ...`"
         }
+        (Type::Bool, EntryFn::Test) => {
+            "check the value with an assertion (`test.assert(x)`), or drop it with `let _ = ...`"
+        }
         (_, EntryFn::Test) => {
             "check the value with an assertion (`test.assert_eq(x, expected)`), or drop it \
              with `let _ = ...`"
         }
     };
-    Diagnostic::error(
+    let error = Diagnostic::error(
         code,
         span,
         format!("{who} must return () or Result((), e), but it returns {ret}"),
     )
-    .with_help(help)
+    .with_help(help);
+    match entry {
+        EntryFn::Main => error,
+        // (Every `test_*` function of the file is a test.)
+        EntryFn::Test => error.with_help(
+            "a function that is not a test needs a name that does not start with `test_`",
+        ),
+    }
 }
 
 /// The function `name` declares in `program`, if it is a `fn`.
@@ -270,44 +295,39 @@ fn fn_decl(program: &Program, name: Symbol) -> Option<&FnDecl> {
 }
 
 /// Where the value that `f` returns is written: its return type, else
-/// the last expression of its body, else its name.
+/// the last expression of its body, else its name. A last expression
+/// that returns nothing (`panic(..)`, a `return`) is not where the
+/// value is: the name is then.
 fn returned_span(f: &FnDecl) -> Span {
     if let Some(written) = &f.return_type {
         return written.span;
     }
-    match &f.body.kind {
+    let last = match &f.body.kind {
         ExprKind::Block(stmts) => match stmts.last() {
-            Some(Stmt::Expr(last)) => last.span,
-            _ => f.name_span,
+            Some(Stmt::Expr(last)) => last,
+            _ => return f.name_span,
         },
-        _ => f.body.span,
+        _ => &f.body,
+    };
+    match last.ty {
+        Some(Type::Never) => f.name_span,
+        _ => last.span,
     }
 }
 
-/// The span of what binds the top-level name `name` in `program`: a
-/// function's name, a `let`'s pattern, an imported item.
-/// Where `main` is bound: the name of its `fn`, the pattern of its
-/// `let`, its name in an import. [`Span::BUILTIN`] when nothing binds it.
+/// Where `main` is bound: the name of its `fn`, its name in the pattern
+/// of its `let`, its name in an import. [`Span::BUILTIN`] when nothing
+/// binds it.
 pub(super) fn main_span(program: &Program) -> Span {
     binder_span(program, intern(ENTRY_POINT))
 }
 
+/// The span of what binds the top-level name `name` in `program`: a
+/// function's name, the name in a `let`'s pattern, an imported item.
 fn binder_span(program: &Program, name: Symbol) -> Span {
-    program
-        .decls
-        .iter()
-        .find_map(|decl| match decl {
-            Decl::Fn(f) if f.name == name => Some(f.name_span),
-            Decl::Let { pattern, .. } => match &pattern.kind {
-                PatternKind::Ident(n) if *n == name => Some(pattern.span),
-                _ => None,
-            },
-            Decl::Import(ImportTarget::Items(_, items), _) => items
-                .iter()
-                .find(|(item, _)| *item == name)
-                .map(|(_, span)| *span),
-            _ => None,
-        })
+    (program.decls.iter())
+        .flat_map(crate::parser::top_level_binders)
+        .find_map(|(bound, span, _)| (bound == name).then_some(span))
         .unwrap_or(Span::BUILTIN)
 }
 

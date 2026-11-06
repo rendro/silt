@@ -1,0 +1,18 @@
+-- exit: 7
+-- The Err is shown by its Display, code of the program: a
+-- process.exit there ends the program with its code, and nothing
+-- is reported.
+-- stderr-not-contains: main returned Err
+import process
+
+type E { code: Int }
+
+trait Display for E {
+  fn display(self) -> String {
+    process.exit(7)
+  }
+}
+
+fn main() -> Result((), E) {
+  Err(E { code: 2 })
+}

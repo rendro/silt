@@ -16,7 +16,6 @@ typechecked against the signature the embedder declared.
 
 ```rust
 use std::path::Path;
-
 use std::sync::{Arc, Mutex};
 
 use silt::session::{Config, Entry, HostModule, LockPolicy, ProjectSetup, Session};
@@ -469,8 +468,12 @@ fault of the program itself, a division by zero or a `panic`, keeps it
   return as `Err(VmError)` from `vm.run_program`.
 - **A `main` that returns `Err(e)`** (often from a `?`) has failed: an
   `Err(VmError)` too, with `returned_err` set, the message
-  `main returned Err: <e as println writes it>`, and its place at
-  `main`'s name. `call_test` says the same of a test function.
+  `main returned Err: <e as println writes it>`, and its place where
+  `main` is bound (the name of its `fn`, its name in a `let` or an
+  import). `call_test` says the same of a test function, at its name.
+  The payload is shown by its `Display`, which is code of the program:
+  a `process.exit` there (or the step budget used up) is the error
+  instead; if it fails otherwise, the payload is shown by its structure.
 - **`panic(...)` in silt code** reaches Rust as an `Err(VmError)` whose
   message carries the panicked string.
 - **An `Err` from a host function** becomes a runtime error whose message

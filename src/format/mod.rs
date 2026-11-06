@@ -368,8 +368,8 @@ mod tests {
             "\u{feff}fn main() {\n  1 -- one\n}\n"
         );
         assert_eq!(
-            fmt("fn main() {\n  \"a\r\nb{1}c\r\nlet _ = d\"\n}\n"),
-            "fn main() {\n  \"a\nb{1}c\nlet _ = d\"\n}\n"
+            fmt("fn main() {\n  \"a\r\nb{1}c\r\nd\"\n}\n"),
+            "fn main() {\n  \"a\nb{1}c\nd\"\n}\n"
         );
         let text = "fn main() {\n  let _ = \"a\rb\"\n}\n";
         assert_eq!(fmt(text), text);

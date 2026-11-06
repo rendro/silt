@@ -429,10 +429,11 @@ impl Vm {
     /// [`Program`]: crate::session::Program
     pub fn run_program(&mut self, program: &crate::session::Program) -> Result<(), VmError> {
         use crate::session::EntryPoint;
-        debug_assert!(
-            program.entry != EntryPoint::Cell,
-            "a REPL entry runs through Vm::run_cell"
-        );
+        if program.entry == EntryPoint::Cell {
+            return Err(VmError::new(
+                "a program compiled for Entry::Cell is run by the REPL, not by run_program".into(),
+            ));
+        }
         let value = self.run_loaded(program)?;
         match &program.entry {
             EntryPoint::Main { span } => self.ended(value, "main", *span),
@@ -473,7 +474,9 @@ impl Vm {
         {
             // (Result's Err carries exactly one payload.)
             let payload = variant.fields().first().unwrap_or(&value).clone();
-            let shown = self.show_text(&payload);
+            // (A `process.exit` in a `Display` of the payload ends the
+            // run there.)
+            let shown = self.show_text_of_err(&payload)?;
             return Err(VmError::returned(function, &shown, at));
         }
         Ok(())

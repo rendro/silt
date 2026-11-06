@@ -306,26 +306,44 @@ impl Vm {
     }
 
     /// The text `value` is shown with, for a host that has a value in
-    /// hand after the code that made it has returned (the `Err` a
-    /// `main` or a test returned, a REPL entry's value): as `println`
-    /// would write it, written `Display` impls included. The impls run
-    /// here, on this thread, as a call of the VM's own. If one of them
-    /// fails, or cannot run to its end (it waits for something that
-    /// never comes), the text is the value's plain structure.
+    /// hand after the code that made it has returned (a REPL entry's
+    /// value): as `println` would write it, written `Display` impls
+    /// included. The impls run here, on this thread, as a call of the
+    /// VM's own. If one of them fails, or cannot run to its end (it
+    /// waits for something that never comes), the text is the value's
+    /// plain structure.
     pub fn show_text(&mut self, value: &Value) -> String {
+        self.show_or_fail(value)
+            .unwrap_or_else(|_| value.to_string())
+    }
+
+    /// [`Vm::show_text`] for the `Err` that `main` or a test returned,
+    /// but what ends the run in a `Display` impl (a `process.exit`, the
+    /// step budget used up) is the result: that impl is code of the
+    /// program. Any other failure of it shows the value's structure,
+    /// as [`Vm::show_text`] does.
+    pub(crate) fn show_text_of_err(&mut self, value: &Value) -> Result<String, VmError> {
+        match self.show_or_fail(value) {
+            Err(e) if e.exit.is_some() || e.exit_in_a_test || e.out_of_steps => Err(e),
+            Err(_) => Ok(value.to_string()),
+            Ok(text) => Ok(text),
+        }
+    }
+
+    fn show_or_fail(&mut self, value: &Value) -> Result<String, VmError> {
         let floor = self.frames.len();
         let stack_floor = self.stack.len();
-        match self.shown(value) {
-            Ok(Step::Done(Value::String(text))) => text.to_string(),
-            Ok(Step::Run(showing)) => {
+        match self.shown(value)? {
+            Step::Done(Value::String(text)) => Ok(text.to_string()),
+            Step::Run(showing) => {
                 self.push_native_frame(showing);
                 let run = self.run_thread(floor, |vm| vm.run_frames(floor, vm.own_slice()));
-                match self.finish_run(run, floor, stack_floor) {
-                    Ok(Value::String(text)) => text.to_string(),
-                    _ => value.to_string(),
+                match self.finish_run(run, floor, stack_floor)? {
+                    Value::String(text) => Ok(text.to_string()),
+                    _ => Ok(value.to_string()),
                 }
             }
-            _ => value.to_string(),
+            _ => Ok(value.to_string()),
         }
     }
 
