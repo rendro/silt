@@ -1,0 +1,24 @@
+-- exit: 1
+-- An impl's method of one parameter more than the trait declares is no
+-- method of the trait: that is its error. The bound it restates is the
+-- trait's, and is not reported as one it adds.
+-- stderr-not-contains: adds the bound
+trait Tr {
+  fn tr(self) -> Int
+}
+
+trait Go {
+  fn go(self, x: a) -> Int where a: Tr
+}
+
+type Box { n: Int }
+
+trait Go for Box {
+  fn go(self, x: a, y: Int) -> Int where a: Tr {
+    y
+  }
+}
+
+fn main() {
+  println(1)
+}

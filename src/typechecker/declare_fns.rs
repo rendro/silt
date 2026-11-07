@@ -126,6 +126,33 @@ impl TypeChecker {
             .find(|id| defs.get(*id).name == name && defs.get(*id).kind == crate::defs::DefKind::Fn)
     }
 
+    /// The error of the `where` clause `type_param: trait_name` of the
+    /// function or method `f` whose signature does not write the
+    /// variable. (The example names the first parameter but `self`.)
+    pub(super) fn where_not_introduced(
+        &mut self,
+        f: &FnDecl,
+        type_param: Symbol,
+        trait_name: Symbol,
+    ) {
+        let first_param_name = (f.params.iter())
+            .map(|p| match &p.pattern.kind {
+                PatternKind::Ident(n) => resolve(*n),
+                _ => "_".to_string(),
+            })
+            .find(|name| name != "self")
+            .unwrap_or_else(|| "_".to_string());
+        self.error(
+            Code::InvalidTypeAnnotation,
+            format!(
+                "type variable '{}' in where clause is not introduced in the function signature; \
+                 use an explicit type annotation, e.g.: fn {}({}: {}) where {}: {}",
+                type_param, f.name, first_param_name, type_param, type_param, trait_name
+            ),
+            f.span,
+        );
+    }
+
     /// The bounds of `f` that pass a dictionary, as its `where` clauses
     /// write them: of a trait that has dictionaries, on a variable its
     /// parameters or its result write. (A bound on another variable is
@@ -364,24 +391,7 @@ impl TypeChecker {
                     f.span,
                 );
             } else {
-                let first_param_name = f
-                    .params
-                    .first()
-                    .map(|p| match &p.pattern.kind {
-                        PatternKind::Ident(n) => resolve(*n),
-                        _ => "_".to_string(),
-                    })
-                    .unwrap_or_else(|| "_".to_string());
-                self.error(Code::InvalidTypeAnnotation,
-                    format!(
-                        "type variable '{}' in where clause is not introduced in the function signature; \
-                         use an explicit type annotation, e.g.: fn {}({}: {}) where {}: {}",
-                        type_param, f.name,
-                        first_param_name,
-                        type_param, type_param, trait_name
-                    ),
-                    f.span,
-                );
+                self.where_not_introduced(f, *type_param, *trait_name);
             }
         }
 

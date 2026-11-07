@@ -1,0 +1,21 @@
+-- exit: 1
+-- A trait method without a body bounds a variable its signature
+-- writes, as a function does: one nothing introduces is an error at the
+-- trait, whether or not an impl writes the method.
+trait Tr {
+  fn tr(self) -> Int
+}
+
+trait Go {
+  fn go(self, x: Int) -> Int where a: Tr
+}
+
+type Box { n: Int }
+
+trait Go for Box {
+  fn go(self, x: Int) -> Int { x }
+}
+
+fn main() {
+  println(Go.go(Box { n: 1 }, 1))
+}
