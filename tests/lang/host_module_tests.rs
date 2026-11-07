@@ -372,7 +372,7 @@ fn a_result_of_the_wrong_type_names_the_host_function() {
     )
     .unwrap_err();
     assert!(
-        err.contains("mylib.count: its signature returns Int, but it returned String"),
+        err.contains("mylib.count: its signature returns Int, but it returned String \"three\""),
         "got: {err}"
     );
     let err = run(
@@ -461,8 +461,8 @@ fn an_element_of_a_list_argument_shows_the_variable() {
     let err = returned_error(host, "h.first([1, 2])");
     assert!(
         err.contains(
-            "h.first: its signature returns Option(a), with a here Int (from its argument \
-             `xs`), but it returned Variant Some(s)"
+            "h.first: its signature returns Option(a), where a is Int (from its argument \
+             `xs`), but it returned Variant Some(\"s\")"
         ),
         "got: {err}"
     );
@@ -490,7 +490,7 @@ fn a_type_parameter_shows_the_variable() {
     let err = returned_error(host.clone(), r#"h.pick("x", String)"#);
     assert!(
         err.contains(
-            "h.pick: its signature returns Option(a), with a here String (its type argument \
+            "h.pick: its signature returns Option(a), where a is String (its type argument \
              `a`), but it returned Variant Some(1)"
         ),
         "got: {err}"
@@ -536,8 +536,8 @@ fn a_record_result_is_checked_by_its_fields() {
         ),
         (
             r#"h.keep({name: "a", age: 3})"#,
-            "h.keep: its signature returns {name: String, ...r}, with r here the rest of \
-             {age: Int, name: String} (the type of its argument `p`), but it returned Record",
+            "h.keep: its signature returns {name: String, ...r}, where r is the rest of \
+             {age: Int, name: String} (the type of its argument `p`), but it returned Record {name: \"b\"}",
         ),
     ] {
         let err = returned_error(host.clone(), call);

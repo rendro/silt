@@ -22,7 +22,7 @@ pub(super) fn invoke_host_fn(host: &HostFn, args: &[Value]) -> Result<Value, VmE
             let Err(fault) = host.returns.check(&value, &witnesses) else {
                 return Ok(value);
             };
-            let mut shown = value.to_string();
+            let mut shown = value.format_silt();
             if shown.chars().count() > 80 {
                 shown = shown.chars().take(77).collect::<String>() + "...";
             }
@@ -39,8 +39,8 @@ pub(super) fn invoke_host_fn(host: &HostFn, args: &[Value]) -> Result<Value, VmE
                     let ty = witness_type(&witness.value);
                     match (&host.returns, source.written.is_empty()) {
                         (HostShape::Var(..), _) => format!(", here {ty} ({from})"),
-                        (_, true) => format!(", with {var} here {ty} ({from})"),
-                        (_, false) => format!(", with {var} here the rest of {ty} ({from})"),
+                        (_, true) => format!(", where {var} is {ty} ({from})"),
+                        (_, false) => format!(", where {var} is the rest of {ty} ({from})"),
                     }
                 }),
                 HostFault::Shape => None,
