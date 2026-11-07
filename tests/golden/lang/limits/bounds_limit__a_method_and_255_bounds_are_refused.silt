@@ -1,0 +1,28 @@
+-- exit: 1
+-- A method's bounds are parameters too, hidden: `self`, `x` and 255
+-- bounds are 257.
+-- stderr-contains: error[compile]: too many parameters and bounds of a function: 257 (the limit is 255)
+-- stderr-contains: = help: each bound on a trait the program declares takes one of the 255 places
+trait Tr {
+  fn tr(self) -> Int
+}
+
+trait Tr for Int {
+  fn tr(self) -> Int { self + 1 }
+}
+
+trait Go {
+  fn go(self, x: a) -> Int where a: Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr
+}
+
+type Box { n: Int }
+
+trait Go for Box {
+  fn go(self, x: a) -> Int where a: Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr {
+    Tr.tr(x)
+  }
+}
+
+fn main() {
+  println(Go.go(Box { n: 1 }, 1))
+}

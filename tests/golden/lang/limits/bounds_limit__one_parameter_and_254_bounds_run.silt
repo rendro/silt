@@ -1,0 +1,17 @@
+-- One parameter and 254 bounds are the 255 parameters a function has;
+-- bounds on a builtin trait take none.
+trait Tr {
+  fn tr(self) -> Int
+}
+
+trait Tr for Int {
+  fn tr(self) -> Int { self + 1 }
+}
+
+fn go(x: a) -> Int where a: Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Display + Equal {
+  Tr.tr(x)
+}
+
+fn main() {
+  println(go(1))
+}

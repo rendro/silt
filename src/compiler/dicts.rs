@@ -1129,9 +1129,9 @@ impl Compiler<'_> {
 
 impl Compiler<'_> {
     /// `begin_function` for a function the program wrote with `written`
-    /// parameters, after `hidden` dictionaries: the limit of parameters
-    /// is the VM's less the hidden ones, and a function over it is
-    /// reported with the parameters the program wrote.
+    /// parameters, after `hidden` dictionaries: the VM's limit of
+    /// parameters holds both, and a function over it is reported with
+    /// both counted (`bounds_past_limit`).
     pub(super) fn begin_function_after(
         &mut self,
         name: String,
@@ -1139,19 +1139,27 @@ impl Compiler<'_> {
         hidden: usize,
         span: Span,
     ) -> Result<(), Diagnostic> {
-        let max = usize::from(u8::MAX).saturating_sub(hidden);
-        if hidden > 0 && written > max {
-            let limit = crate::bytecode::ops::Limit {
-                what: "parameters of a function",
-                count: written,
-                max,
-            };
-            return Err(
-                crate::bytecode::emit::limit_diagnostic(limit, span).with_help(
-                    "each bound on a trait the program declares takes one of the 255 places",
-                ),
-            );
+        if let Some(refusal) = bounds_past_limit(written, hidden, span) {
+            return Err(refusal);
         }
         self.begin_function(name, hidden + written, span)
     }
+}
+
+/// The refusal of a function of `params` parameters and `bounds` bounds
+/// that pass a dictionary, when the two are more than the 255 parameters
+/// of a function the VM has: each bound is a parameter, hidden. `None`
+/// when they fit, or when there is no bound (the plain limit of
+/// parameters then says it).
+pub(crate) fn bounds_past_limit(params: usize, bounds: usize, span: Span) -> Option<Diagnostic> {
+    let (count, max) = (params + bounds, usize::from(u8::MAX));
+    (bounds > 0 && count > max).then(|| {
+        let limit = crate::bytecode::ops::Limit {
+            what: "parameters and bounds of a function",
+            count,
+            max,
+        };
+        crate::bytecode::emit::limit_diagnostic(limit, span)
+            .with_help("each bound on a trait the program declares takes one of the 255 places")
+    })
 }
