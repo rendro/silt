@@ -210,6 +210,57 @@ fn a_signature_of_65537_type_variables_is_read_in_linear_time() {
     );
 }
 
+/// The names of a type's, a trait's and an impl head's type variables are
+/// told apart in a set, in time in proportion to them: a type of 65,537
+/// parameters took 10.9 s in a debug build to be refused, comparing each
+/// with all before it, and an impl head of 65,537 binders and one
+/// written twice 35.5 s; each takes under a second now. (The limits of
+/// 10 s and 1 GB are far from both.)
+#[test]
+#[cfg(target_os = "linux")]
+fn the_type_variables_of_a_declaration_are_told_apart_in_linear_time() {
+    let (vars, ty) = many_variables(65_537);
+    let twice = format!("{}, a0", vars.join(", "));
+    let cases = [
+        (
+            "type_parameters",
+            format!("type Many({}) {{ x: a0 }}\nfn main() {{}}\n", vars.join(", ")),
+            "too many parameters of a type: 65537 (the limit is 65536)",
+        ),
+        (
+            "type_parameter_twice",
+            format!("type Many({twice}) {{ x: a0 }}\nfn main() {{}}\n"),
+            "duplicate type variable 'a0' in type declaration",
+        ),
+        (
+            "trait_parameter_twice",
+            format!("trait Many({twice}) {{ fn m(self) -> Int }}\nfn main() {{}}\n"),
+            "duplicate type variable 'a0' in trait declaration",
+        ),
+        (
+            "impl_binder_twice",
+            format!(
+                "trait Tr {{ fn tr(self) -> Int }}\ntype Box(a) {{ v: a }}\n\
+                 trait Tr for Box(({ty}, a0)) {{ fn tr(self) -> Int {{ 1 }} }}\nfn main() {{}}\n"
+            ),
+            "duplicate type variable 'a0' in impl target",
+        ),
+    ];
+    for (name, source, message) in cases {
+        let (code, stderr, resident, took) = check_measured(name, &source);
+        assert_eq!(code, 1, "{name}: {stderr}");
+        assert!(stderr.contains(message), "{name}: {stderr}");
+        assert!(
+            resident < 1024 * 1024,
+            "{name} took {resident} kB to refuse"
+        );
+        assert!(
+            took < std::time::Duration::from_secs(10),
+            "{name} took {took:?} to refuse"
+        );
+    }
+}
+
 /// The source of a trait `Go` whose method `go` takes `x: {ty}` with the
 /// bounds `bounds`, with a default body or an impl for `Box` that writes
 /// the same.
