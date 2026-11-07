@@ -182,56 +182,144 @@ fn found_at(value: &Value, path: &[HostStep]) -> Option<Value> {
     }
 }
 
+/// How many pairs of parts `same_type` compares at most. A check costs
+/// at most this many steps whatever the size of the values, and the
+/// first parts of a result are where a function that returns the wrong
+/// type shows it: a result of another kind, record or enum shows it at
+/// the first pair, a list of another element type at its first
+/// elements. 64 pairs cover a small record, tuple or list whole and two
+/// or three levels of a nested one, at a cost of a few hundred
+/// nanoseconds a call.
+pub const SAME_TYPE_PARTS: usize = 64;
+
 /// Whether `value` could be of the type of `witness`: they differ in
-/// nothing both show. A part that only one of them shows (the elements
-/// of an empty list, the payload of another variant) is not compared.
+/// nothing both show, among the first `SAME_TYPE_PARTS` pairs of their
+/// parts compared. Past those, and for a part that only one of them
+/// shows (the elements of an empty list, the payload of another
+/// variant), nothing shows a difference: the value passes. A value that
+/// is the witness itself, or shares its parts, passes at once.
 pub fn same_type(witness: &Value, value: &Value) -> bool {
-    let firsts = |a: Option<Value>, b: Option<Value>| match (a, b) {
-        (Some(a), Some(b)) => same_type(&a, &b),
-        _ => true,
-    };
+    let mut budget = SAME_TYPE_PARTS;
+    let mut work: Vec<(Value, Value)> = vec![(witness.clone(), value.clone())];
+    // (What may still be added to the work, within the budget.)
+    let room = |budget: usize, work: &Vec<(Value, Value)>| budget.saturating_sub(work.len());
     let descriptor =
         |v: &Value| matches!(v, Value::TypeDescriptor(_) | Value::PrimitiveDescriptor(_));
-    match (witness, value) {
-        (Value::Int(_), Value::Int(_))
-        | (Value::Float(_), Value::Float(_))
-        | (Value::Bool(_), Value::Bool(_))
-        | (Value::String(_), Value::String(_))
-        | (Value::Bytes(_), Value::Bytes(_))
-        | (Value::Unit, Value::Unit)
-        | (Value::Channel(_), Value::Channel(_))
-        | (Value::Handle(_), Value::Handle(_))
-        | (Value::TcpListener(_), Value::TcpListener(_))
-        | (Value::TcpStream(_), Value::TcpStream(_)) => true,
-        (Value::Unit, Value::Tuple(parts)) | (Value::Tuple(parts), Value::Unit) => parts.is_empty(),
-        (Value::List(a), Value::List(b)) => firsts(a.first(), b.first()),
-        (Value::Set(a), Value::Set(b)) => {
-            firsts(a.iter().next().cloned(), b.iter().next().cloned())
+    while let Some((witness, value)) = work.pop() {
+        if budget == 0 {
+            return true;
         }
-        (Value::Map(a), Value::Map(b)) => match (a.iter().next(), b.iter().next()) {
-            (Some((ak, av)), Some((bk, bv))) => same_type(ak, bk) && same_type(av, bv),
-            _ => true,
-        },
-        (Value::Tuple(a), Value::Tuple(b)) => {
-            a.len() == b.len() && (a.iter().zip(b.iter())).all(|(a, b)| same_type(a, b))
+        budget -= 1;
+        match (&witness, &value) {
+            (Value::Int(_), Value::Int(_))
+            | (Value::Float(_), Value::Float(_))
+            | (Value::Bool(_), Value::Bool(_))
+            | (Value::String(_), Value::String(_))
+            | (Value::Bytes(_), Value::Bytes(_))
+            | (Value::Unit, Value::Unit)
+            | (Value::Channel(_), Value::Channel(_))
+            | (Value::Handle(_), Value::Handle(_))
+            | (Value::TcpListener(_), Value::TcpListener(_))
+            | (Value::TcpStream(_), Value::TcpStream(_)) => {}
+            (Value::Unit, Value::Tuple(parts)) | (Value::Tuple(parts), Value::Unit) => {
+                if !parts.is_empty() {
+                    return false;
+                }
+            }
+            (Value::List(a), Value::List(b)) => {
+                if a.shares(b) {
+                    continue;
+                }
+                if let (Some(a), Some(b)) = (a.first(), b.first()) {
+                    work.push((a, b));
+                }
+            }
+            (Value::Set(a), Value::Set(b)) => {
+                if a.shares(b) {
+                    continue;
+                }
+                if let (Some(a), Some(b)) = (a.iter().next(), b.iter().next()) {
+                    work.push((a.clone(), b.clone()));
+                }
+            }
+            (Value::Map(a), Value::Map(b)) => {
+                if a.shares(b) {
+                    continue;
+                }
+                if let (Some((ak, av)), Some((bk, bv))) = (a.iter().next(), b.iter().next()) {
+                    work.push((ak.clone(), bk.clone()));
+                    work.push((av.clone(), bv.clone()));
+                }
+            }
+            (Value::Tuple(a), Value::Tuple(b)) => {
+                if a.len() != b.len() {
+                    return false;
+                }
+                if shares(a, b) {
+                    continue;
+                }
+                let room = room(budget, &work);
+                work.extend(
+                    (a.iter().zip(b.iter()).take(room)).map(|(a, b)| (a.clone(), b.clone())),
+                );
+            }
+            (Value::Record(a), Value::Record(b)) => {
+                if a.type_id() != b.type_id() {
+                    return false;
+                }
+                if shares(a.fields(), b.fields()) {
+                    continue;
+                }
+                // (Anonymous records share one id: their fields are
+                // their type, each name counted as a part compared.)
+                if !std::sync::Arc::ptr_eq(a.ty(), b.ty())
+                    && a.type_id() == crate::typeinfo::ty::ANON_RECORD
+                {
+                    let names = a.fields().len().max(b.fields().len());
+                    if names > budget {
+                        return true;
+                    }
+                    budget -= names;
+                    if !a
+                        .named()
+                        .map(|(name, _)| name)
+                        .eq(b.named().map(|(name, _)| name))
+                    {
+                        return false;
+                    }
+                }
+                let room = room(budget, &work);
+                work.extend(
+                    (a.fields().iter().zip(b.fields()).take(room))
+                        .map(|(a, b)| (a.clone(), b.clone())),
+                );
+            }
+            (Value::Variant(a), Value::Variant(b)) => {
+                if a.type_id() != b.type_id() {
+                    return false;
+                }
+                // (The fields of another variant are not compared.)
+                if a.ordinal() != b.ordinal() || shares(a.fields(), b.fields()) {
+                    continue;
+                }
+                let room = room(budget, &work);
+                work.extend(
+                    (a.fields().iter().zip(b.fields()).take(room))
+                        .map(|(a, b)| (a.clone(), b.clone())),
+                );
+            }
+            (a, b) if a.is_fn() && b.is_fn() => {}
+            (a, b) if descriptor(a) && descriptor(b) => {}
+            (Value::Dict(_), _) | (_, Value::Dict(_)) => {}
+            _ => return false,
         }
-        (Value::Record(a), Value::Record(b)) => {
-            a.type_id() == b.type_id()
-                && a.named()
-                    .map(|(name, _)| name)
-                    .eq(b.named().map(|(name, _)| name))
-                && (a.fields().iter().zip(b.fields())).all(|(a, b)| same_type(a, b))
-        }
-        (Value::Variant(a), Value::Variant(b)) => {
-            a.type_id() == b.type_id()
-                && (a.ordinal() != b.ordinal()
-                    || (a.fields().iter().zip(b.fields())).all(|(a, b)| same_type(a, b)))
-        }
-        (a, b) if a.is_fn() && b.is_fn() => true,
-        (a, b) if descriptor(a) && descriptor(b) => true,
-        (Value::Dict(_), _) | (_, Value::Dict(_)) => true,
-        _ => false,
     }
+    true
+}
+
+/// Whether the parts `a` and `b` are one, shared: those of one value.
+fn shares(a: &[Value], b: &[Value]) -> bool {
+    !a.is_empty() && std::ptr::eq(a.as_ptr(), b.as_ptr()) && a.len() == b.len()
 }
 
 /// Whether `value` could be of the type `ty`, the value of a `type a`

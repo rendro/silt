@@ -558,6 +558,61 @@ fn a_channel_result_is_a_channel() {
     );
 }
 
+/// A host function that gives back a deep value of a variable's type
+/// runs, whatever the depth: the check compares a bounded part of the
+/// value, and none of it on the stack. (It walked the whole value by
+/// recursion: a list of 10,000 cells overflowed a debug build's stack
+/// and aborted the process.) In a thread of the default stack of a
+/// spawned thread, as an embedder's may be.
+#[test]
+fn a_deep_result_of_a_variable_s_type_is_checked_in_bounded_steps() {
+    for cells in [30_000, 1_000_000] {
+        let outcome = std::thread::spawn(move || {
+            let host = HostModule::new("h")
+                .function("fn same(x: a) -> a", |args: &[Value]| Ok(args[0].clone()))
+                // (Two lists of the type, not one shared: their parts are
+                // compared.)
+                .function("fn second(x: a, y: a) -> a", |args: &[Value]| {
+                    Ok(args[1].clone())
+                });
+            let source = format!(
+                "import h\ntype L {{ Nil, Cons(Int, L) }}\n\
+                 fn build(n: Int, acc: L) -> L {{\n  match n {{\n    0 -> acc\n    _ -> build(n - 1, Cons(n, acc))\n  }}\n}}\n\
+                 fn main() {{\n  let l = build({cells}, Nil)\n  let _m = h.same(l)\n  let _r = h.second(l, build({cells}, Nil))\n  host.give(1)\n}}\nimport host"
+            );
+            run(&source, host)
+        })
+        .join()
+        .expect("the check does not overflow the stack");
+        assert_eq!(outcome, Ok(Value::Int(1)), "{cells} cells");
+    }
+}
+
+/// Within the parts the check compares, a result of another
+/// instantiation of the argument's type is refused: `Box(String)` for a
+/// `Box(Int)`.
+#[test]
+fn a_wrong_part_within_the_bound_is_refused() {
+    let host = HostModule::new("h").function("fn same(x: a) -> a", |args: &[Value]| {
+        let Value::Record(record) = &args[0] else {
+            return Err(VmError::new("expected a record".into()));
+        };
+        Ok(Value::record(
+            record.ty().clone(),
+            vec![Value::String("s".into())],
+        ))
+    });
+    let source = "import h\ntype Box(t) { v: t }\nfn main() {\n  let b = h.same(Box { v: 1 })\n  host.give(b.v)\n}\nimport host";
+    let err = run(source, host).expect_err("a Box(String) for a Box(Int)");
+    assert!(
+        err.contains(
+            "h.same: its signature returns a, here Box (the type of its argument `x`), but it \
+             returned Record Box {v: \"s\"}"
+        ),
+        "got: {err}"
+    );
+}
+
 /// Host functions that return what their signatures say keep running,
 /// of every shape that is checked: variables shown by an argument, its
 /// element, a key or a value of a map, an option's value, a tuple's
