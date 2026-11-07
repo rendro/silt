@@ -1,0 +1,42 @@
+-- cmd: check
+-- exit: 1
+-- An impl is compared with the impls before it whose first trait
+-- argument could be its own by its outer type, or is a variable, and the
+-- first of them it overlaps is named: past impls of other outer types
+-- (`Conv(Bool)`, `Conv(List(Int))`), a variable on either side
+-- (`Conv(a)`, `Pair((Int, a), String)`), an alias (`Num` is `Int`), and of a
+-- trait without arguments the first part of the type (`Box(String)`).
+-- Of two it overlaps, the one written first is named (`Box(String)`,
+-- `Conv(Int)`).
+-- stderr-contains: error[type]: duplicate implementation of trait 'Conv' for type 'String': the impls of 'Conv(Int)' and 'Conv(a)' overlap: both are for 'Conv(Int)'
+-- stderr-contains: error[type]: duplicate implementation of trait 'Conv' for type 'Bool': the impls of 'Conv(a)' and 'Conv(Bool)' overlap: both are for 'Conv(Bool)'
+-- stderr-contains: error[type]: duplicate implementation of trait 'Conv' for type 'Bool': the impls of 'Conv(a)' and 'Conv(Int)' overlap: both are for 'Conv(Int)'
+-- stderr-contains: error[type]: duplicate implementation of trait 'Conv' for type 'Int': the impls of 'Conv(List(Int))' and 'Conv(List(a))' overlap: both are for 'Conv(List(Int))'
+-- stderr-contains: error[type]: duplicate implementation of trait 'Conv(Int)' for type 'Float'
+-- stderr-contains: error[type]: duplicate implementation of trait 'Pair' for type 'Bool': the impls of 'Pair((Int, Int), a)' and 'Pair((Int, a), String)' overlap: both are for 'Pair((Int, Int), String)'
+-- stderr-contains: error[type]: duplicate implementation of trait 'Name' for type 'Box': the impls for 'Box(String)' and 'Box(a)' overlap: both are for 'Box(String)'
+type Num = Int
+type Box(a) { v: a }
+trait Conv(b) { fn conv(self) -> b }
+trait Conv(Int) for String { fn conv(self) -> Int { 1 } }
+trait Conv(Bool) for String { fn conv(self) -> Bool { true } }
+trait Conv(List(Int)) for String { fn conv(self) -> List(Int) { [] } }
+trait Conv(a) for String { fn conv(self) -> a { panic("x") } }
+trait Conv(a) for Bool { fn conv(self) -> a { panic("x") } }
+trait Conv(Bool) for Bool { fn conv(self) -> Bool { true } }
+trait Conv(Int) for Bool { fn conv(self) -> Int { 1 } }
+trait Conv(Int) for Int { fn conv(self) -> Int { 1 } }
+trait Conv(List(Int)) for Int { fn conv(self) -> List(Int) { [] } }
+trait Conv(List(a)) for Int { fn conv(self) -> List(a) { [] } }
+trait Conv(Int) for Float { fn conv(self) -> Int { 1 } }
+trait Conv(Num) for Float { fn conv(self) -> Num { 1 } }
+trait Pair(a, b) { fn p(self) -> (a, b) }
+trait Pair(Int, String) for Bool { fn p(self) -> (Int, String) { (1, "") } }
+trait Pair((Int, Int), a) for Bool { fn p(self) -> ((Int, Int), a) { panic("x") } }
+trait Pair((Int, Int, Int), a) for Bool { fn p(self) -> ((Int, Int, Int), a) { panic("x") } }
+trait Pair((Int, a), String) for Bool { fn p(self) -> ((Int, a), String) { panic("x") } }
+trait Name { fn name(self) -> Int }
+trait Name for Box(String) { fn name(self) -> Int { 2 } }
+trait Name for Box(Int) { fn name(self) -> Int { 1 } }
+trait Name for Box(a) { fn name(self) -> Int { 3 } }
+fn main() { }
