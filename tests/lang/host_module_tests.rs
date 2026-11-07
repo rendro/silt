@@ -251,6 +251,24 @@ fn bad_signatures_are_reported() {
             "fn f() -> Fn(Int) -> Int",
             "cannot take or return a function",
         ),
+        (
+            "fn any() -> a",
+            "type variable 'a' in the return type of the host function `any` is not introduced \
+             by any parameter; anchor it on a parameter's type",
+        ),
+        ("fn f() -> List(a)", "type variable 'a' in the return type"),
+        (
+            "fn f(x: a) -> (a, b)",
+            "type variable 'b' in the return type",
+        ),
+        (
+            "fn f() -> Result(a, String) where a: Display",
+            "type variable 'a' in the return type",
+        ),
+        (
+            "fn f(p: {name: String}) -> {name: String, ...r}",
+            "row variable 'r' in the return type of the host function `f`",
+        ),
     ];
     for (signature, expected) in cases {
         let host = HostModule::new("h").function(signature, |_: &[Value]| Ok(Value::Unit));
@@ -260,6 +278,44 @@ fn bad_signatures_are_reported() {
             errors.iter().any(|e| e.message.contains(expected)),
             "{signature}: {errors:?}"
         );
+    }
+}
+
+/// A host function's result is not checked to be of the type a call
+/// asks of a type variable: one that only its return type has is an
+/// error, so that no program is checked against it.
+#[test]
+fn a_return_only_type_variable_is_refused() {
+    let any = HostModule::new("h").function("fn any() -> a", |_: &[Value]| Ok(Value::Int(5)));
+    let errors = errors(
+        "import h\nfn main() { let s: String = h.any()\n let _ = s }",
+        any,
+    );
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert_eq!(errors[0].code, Code::HostSignature, "{errors:?}");
+    assert!(
+        errors[0]
+            .message
+            .contains("type variable 'a' in the return type of the host function `any`"),
+        "{errors:?}"
+    );
+}
+
+/// A variable that a parameter introduces stays a host function's to
+/// return, by its type or as a `type a` parameter.
+#[test]
+fn type_variables_a_parameter_introduces_are_accepted() {
+    for signature in [
+        "fn give(x: a) -> ()",
+        "fn first(xs: List(a)) -> Option(a)",
+        "fn same(x: a) -> a",
+        "fn pair(x: a, y: b) -> (b, a)",
+        "fn keep(p: {name: String, ...r}) -> {name: String, ...r}",
+        "fn pick(s: String, type a) -> Option(a)",
+    ] {
+        let host = HostModule::new("h").function(signature, |_: &[Value]| Ok(Value::Unit));
+        let errors = errors("fn main() { let _ = 1 }", host);
+        assert!(errors.is_empty(), "{signature}: {errors:?}");
     }
 }
 

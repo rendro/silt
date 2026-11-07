@@ -106,6 +106,10 @@ let lists = HostModule::new("lists").function(
 );
 ```
 
+A type variable of the return type must be one that a parameter's type
+has, as `a` is in `first`: `fn any() -> a` is an error. Nothing could
+check that the result is the type each call asks for.
+
 The checker has already made sure the arguments have the declared types
 and number, so a function can rely on its signature. The result is
 checked against the signature's return type when the function returns:

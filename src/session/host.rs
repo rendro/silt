@@ -19,8 +19,9 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::ast::{TypeExpr, TypeExprKind};
-use crate::intern::resolve;
+use crate::ast::{FnDecl, ParamKind, PatternKind, TypeExpr, TypeExprKind};
+use crate::intern::{Symbol, resolve};
+use crate::typechecker::names::type_vars_of;
 use crate::value::{FromValue, HostImpl, HostShape, IntoValue, Value};
 use crate::vm::VmError;
 
@@ -175,6 +176,61 @@ pub(super) fn mentions_function(ty: &TypeExpr) -> bool {
         }
         TypeExprKind::AssocProj { receiver, .. } => mentions_function(receiver),
         TypeExprKind::Named { .. } | TypeExprKind::SelfType => false,
+    }
+}
+
+/// The variables of the return type of the host function `f` that no
+/// parameter introduces (by its type, or as a `type a` parameter), each
+/// with whether it is a row variable (`{name: String, ...r}`). Nothing
+/// could check that the function's result is of the type each call
+/// asks for of one, as a silt function's body is checked.
+pub(super) fn return_only_variables(f: &FnDecl) -> Vec<(Symbol, bool)> {
+    let mut given = Vec::new();
+    let mut given_rows = Vec::new();
+    for param in &f.params {
+        if param.kind == ParamKind::Type
+            && let PatternKind::Ident(name) = param.pattern.kind
+        {
+            given.push(name);
+        }
+        if let Some(ty) = &param.ty {
+            type_vars_of(ty, &mut given);
+            row_vars_of(ty, &mut given_rows);
+        }
+    }
+    let (mut written, mut rows) = (Vec::new(), Vec::new());
+    if let Some(ty) = &f.return_type {
+        type_vars_of(ty, &mut written);
+        row_vars_of(ty, &mut rows);
+    }
+    let vars = written.into_iter().filter(|v| !given.contains(v));
+    let rows = rows.into_iter().filter(|r| !given_rows.contains(r));
+    vars.map(|v| (v, false))
+        .chain(rows.map(|r| (r, true)))
+        .collect()
+}
+
+/// The row variables of the open records `ty` writes (`...r`), into
+/// `out`.
+fn row_vars_of(ty: &TypeExpr, out: &mut Vec<Symbol>) {
+    match &ty.kind {
+        TypeExprKind::AnonRecord { fields, tail } => {
+            if let Some((name, _)) = tail
+                && !out.contains(name)
+            {
+                out.push(*name);
+            }
+            fields.iter().for_each(|(_, ty)| row_vars_of(ty, out));
+        }
+        TypeExprKind::Generic { args, .. } | TypeExprKind::Tuple(args) => {
+            args.iter().for_each(|ty| row_vars_of(ty, out));
+        }
+        TypeExprKind::Function(params, ret) => {
+            params.iter().for_each(|ty| row_vars_of(ty, out));
+            row_vars_of(ret, out);
+        }
+        TypeExprKind::AssocProj { receiver, .. } => row_vars_of(receiver, out),
+        TypeExprKind::Named { .. } | TypeExprKind::SelfType => {}
     }
 }
 
