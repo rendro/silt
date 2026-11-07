@@ -1229,6 +1229,28 @@ impl Printer<'_> {
 
     // ── Expressions ──────────────────────────────────────────────────
 
+    /// The token in front of a value that is written in parentheses
+    /// (`parens`: one that ends in a bare stage, behind `match` or the
+    /// `=` of a loop's last binding), and the comments that go behind
+    /// the `(` written. Comments behind the token, on its line, that
+    /// start with a `{- -}` one go inside the parentheses, as a second
+    /// pass finds them there: in front of the value (left to it here),
+    /// or, when a `--` comment among them ends the line, behind the `(`.
+    fn tok_before_parens(&mut self, kind: &Token, parens: bool) -> (Doc, Doc) {
+        if !parens {
+            return (self.tok(kind.clone()), Doc::Nil);
+        }
+        let token = self.cur.token_without_trailing(kind);
+        match (
+            self.cur.block_comments_behind(),
+            self.cur.block_then_line_comment_behind(),
+        ) {
+            (true, _) => (token, Doc::Nil),
+            (false, true) => (token, self.cur.trailing()),
+            (false, false) => (Doc::concat(vec![token, self.cur.trailing()]), Doc::Nil),
+        }
+    }
+
     fn expr(&mut self, expr: &Expr, ctx: Ctx) -> Doc {
         // The source's parentheses around this expression: one pair is
         // kept if the expression needs it here, the rest is dropped.
@@ -1445,20 +1467,8 @@ impl Printer<'_> {
                 expr: scrutinee,
                 arms,
             } => {
-                // A `{- -}` comment behind the `match` of a scrutinee
-                // that is written in parentheses (a bare stage, below)
-                // goes inside them, in front of the scrutinee, as one
-                // there would: a second pass finds it there.
-                let match_token = match scrutinee.as_deref().is_some_and(ends_in_bare_stage) {
-                    true => {
-                        let token = self.cur.token_without_trailing(&Token::Match);
-                        match self.cur.block_comments_behind() {
-                            true => token,
-                            false => Doc::concat(vec![token, self.cur.trailing()]),
-                        }
-                    }
-                    false => self.tok(Token::Match),
-                };
+                let bare = scrutinee.as_deref().is_some_and(ends_in_bare_stage);
+                let (match_token, behind_open) = self.tok_before_parens(&Token::Match, bare);
                 let mut docs = vec![match_token, space()];
                 if let Some(scrutinee) = scrutinee {
                     // Behind a pipeline, braces that look like a closure
@@ -1489,7 +1499,7 @@ impl Printer<'_> {
                     // parentheses written: they are written as the
                     // source's would be then, so that a second pass,
                     // which finds them there, agrees.
-                    let comment_first = self.cur.comment_ahead();
+                    let comment_first = !behind_open.is_nil() || self.cur.comment_ahead();
                     // (Inside those parentheses the scrutinee is in no
                     // header, as a second pass reads it there: a closure
                     // in it trails its call.)
@@ -1501,7 +1511,10 @@ impl Printer<'_> {
                         false => ctx,
                     };
                     let doc = self.expr(scrutinee, ctx);
-                    let (open, close) = (Doc::text("("), Doc::text(")"));
+                    let (open, close) = (
+                        Doc::concat(vec![Doc::text("("), behind_open]),
+                        Doc::text(")"),
+                    );
                     match (bare && !commented, comment_first) {
                         (true, false) => docs.push(Doc::concat(vec![open, doc, close])),
                         (true, true) => docs.push(parenthesized(open, doc, close)),
@@ -1536,20 +1549,34 @@ impl Printer<'_> {
             ExprKind::Loop { bindings, body } => {
                 let mut docs = vec![self.tok(Token::Loop), space()];
                 for (i, (_, _, init)) in bindings.iter().enumerate() {
-                    docs.push(self.name());
-                    docs.push(space());
-                    docs.push(self.tok(Token::Eq));
-                    docs.push(space());
                     // The last value, which the body's `{` follows, is
                     // written in parentheses when it ends in a stage
                     // written as a bare name, as a match's scrutinee is.
                     let bare = i + 1 == bindings.len() && ends_in_bare_stage(init);
+                    docs.push(self.name());
+                    docs.push(space());
+                    let (eq, behind_open) = self.tok_before_parens(&Token::Eq, bare);
+                    docs.push(eq);
+                    docs.push(space());
                     let commented = self
                         .cur
                         .comments_inside_parens(self.cur.wrappers(init.span.end));
-                    let comment_first = self.cur.comment_ahead();
-                    let doc = self.expr(init, Ctx::in_header(Header::Loop));
-                    let (open, close) = (Doc::text("("), Doc::text(")"));
+                    let comment_first = !behind_open.is_nil() || self.cur.comment_ahead();
+                    // (Inside parentheses written with a comment in front
+                    // of the value, it is in no header, as a second pass
+                    // reads it there: a closure in it trails its call.)
+                    let ctx = match bare && !commented && comment_first {
+                        true => Ctx {
+                            header: None,
+                            ..Ctx::in_header(Header::Loop)
+                        },
+                        false => Ctx::in_header(Header::Loop),
+                    };
+                    let doc = self.expr(init, ctx);
+                    let (open, close) = (
+                        Doc::concat(vec![Doc::text("("), behind_open]),
+                        Doc::text(")"),
+                    );
                     docs.push(match (bare && !commented, comment_first) {
                         (true, false) => Doc::concat(vec![open, doc, close]),
                         (true, true) => parenthesized(open, doc, close),

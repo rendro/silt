@@ -1,0 +1,19 @@
+-- cmd: fmt
+-- A `{- -}` comment and a `--` comment behind the `=` of a loop's last
+-- binding, in front of a value that ends in a bare stage of a pipeline,
+-- go behind the `(` written around the value, where a second pass
+-- finds them and leaves them: the output is formatted already.
+import list
+
+fn main() {
+  let items = [1, 2, 3]
+  let n = loop xs = ({- a -} -- c
+    items |> list.reverse
+  ) {
+    match xs {
+      [] -> 0
+      _ -> 1
+    }
+  }
+  println(n)
+}

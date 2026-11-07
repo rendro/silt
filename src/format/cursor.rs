@@ -400,6 +400,21 @@ impl<'a> Cursor<'a> {
                 .all(|index| self.comments[index as usize].kind != CommentKind::Line)
     }
 
+    /// Whether comments stand behind the token written last, on its
+    /// line, the first a `{- -}` comment and a `--` comment among them:
+    /// comments that `trailing` gives, the line ending behind them.
+    pub fn block_then_line_comment_behind(&self) -> bool {
+        let gap = self.gap();
+        let start = gap.start;
+        !gap.is_empty()
+            && self.pos > 0
+            && self.newlines_before_comment(start) == 0
+            && self.comments[start as usize].kind != CommentKind::Line
+            && gap
+                .take_while(|&index| self.newlines_before_comment(index) == 0)
+                .any(|index| self.comments[index as usize].kind == CommentKind::Line)
+    }
+
     /// The comments behind the token written last, on its line.
     pub fn trailing(&mut self) -> Doc {
         let tok = self.tok();
