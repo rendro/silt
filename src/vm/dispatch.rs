@@ -4,7 +4,7 @@ use std::panic::AssertUnwindSafe;
 
 use super::runtime::{Native, Step};
 use super::{Vm, VmError};
-use crate::value::{HostFn, Value};
+use crate::value::{HostFault, HostFn, HostShape, Value, witness_type};
 
 /// Call the host function `host` while catching panics that escape it.
 ///
@@ -12,20 +12,43 @@ use crate::value::{HostFn, Value};
 /// worker thread (or the main thread), leaving other tasks unable to
 /// progress. A caught panic becomes a [`VmError`] whose message preserves
 /// the panic payload when it is a `&str` or `String`. A result that is
-/// not of the type the signature returns is an error too. Every error
-/// names the function.
+/// not of the type the signature returns is an error too, of the type a
+/// variable of it has at the call where the arguments show it. Every
+/// error names the function.
 pub(super) fn invoke_host_fn(host: &HostFn, args: &[Value]) -> Result<Value, VmError> {
     match crate::scheduler::catch_as_error(AssertUnwindSafe(|| (host.call)(args))) {
-        Ok(Ok(value)) if host.returns.admits(&value) => Ok(value),
         Ok(Ok(value)) => {
-            let mut shown = value.to_string();
+            let witnesses = host.witnesses(args);
+            let Err(fault) = host.returns.check(&value, &witnesses) else {
+                return Ok(value);
+            };
+            let mut shown = value.format_silt();
             if shown.chars().count() > 80 {
                 shown = shown.chars().take(77).collect::<String>() + "...";
             }
+            let returns = host.returns.to_string();
+            let here = match fault {
+                HostFault::Var(at) => witnesses[at].as_ref().map(|witness| {
+                    let var = &host.vars[at].name;
+                    let source = &witness.source;
+                    let from = match (source.of_type, source.path.is_empty()) {
+                        (true, _) => format!("its type argument `{var}`"),
+                        (false, true) => format!("the type of its argument `{}`", source.name),
+                        (false, false) => format!("from its argument `{}`", source.name),
+                    };
+                    let ty = witness_type(&witness.value);
+                    match (&host.returns, source.written.is_empty()) {
+                        (HostShape::Var(..), _) => format!(", here {ty} ({from})"),
+                        (_, true) => format!(", where {var} is {ty} ({from})"),
+                        (_, false) => format!(", where {var} is the rest of {ty} ({from})"),
+                    }
+                }),
+                HostFault::Shape => None,
+            };
             Err(VmError::new(format!(
-                "{}: its signature returns {}, but it returned {} {shown}",
+                "{}: its signature returns {returns}{}, but it returned {} {shown}",
                 host.name,
-                host.returns,
+                here.unwrap_or_default(),
                 value.kind()
             )))
         }

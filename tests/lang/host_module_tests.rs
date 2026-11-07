@@ -372,7 +372,7 @@ fn a_result_of_the_wrong_type_names_the_host_function() {
     )
     .unwrap_err();
     assert!(
-        err.contains("mylib.count: its signature returns Int, but it returned String"),
+        err.contains("mylib.count: its signature returns Int, but it returned String \"three\""),
         "got: {err}"
     );
     let err = run(
@@ -426,6 +426,342 @@ fn a_host_function_returning_never_can_only_fail() {
     )
     .unwrap_err();
     assert!(err.contains("h.fail: failed: no"), "got: {err}");
+}
+
+/// The error of a program that gives what `call` returns to the host.
+fn returned_error(host: HostModule, call: &str) -> String {
+    let source =
+        format!("import h\nimport channel\nfn main() {{ host.give({call}) }}\nimport host");
+    run(&source, host).expect_err(call)
+}
+
+/// A host function whose result is of a type variable gives back a value
+/// of the type its argument has at the call; another is an error.
+#[test]
+fn a_result_of_a_type_variable_is_of_its_argument_s_type() {
+    let host = HostModule::new("h").function("fn same(x: a) -> a", |_: &[Value]| Ok(Value::Int(5)));
+    let err = returned_error(host, r#"h.same("x")"#);
+    assert!(
+        err.contains(
+            "h.same: its signature returns a, here String (the type of its argument `x`), \
+             but it returned Int 5"
+        ),
+        "got: {err}"
+    );
+}
+
+/// An element of a list argument shows the variable, for a result that
+/// holds it.
+#[test]
+fn an_element_of_a_list_argument_shows_the_variable() {
+    let host = HostModule::new("h")
+        .function("fn first(xs: List(a)) -> Option(a)", |_: &[Value]| {
+            Ok(Value::variant(bv::SOME, [Value::String("s".into())]))
+        });
+    let err = returned_error(host, "h.first([1, 2])");
+    assert!(
+        err.contains(
+            "h.first: its signature returns Option(a), where a is Int (from its argument \
+             `xs`), but it returned Variant Some(\"s\")"
+        ),
+        "got: {err}"
+    );
+}
+
+/// An empty list shows no type: what the function returns of it is not
+/// checked (no value could tell what the call gives the variable).
+#[test]
+fn a_variable_no_argument_shows_stays_unchecked() {
+    let host = HostModule::new("h")
+        .function("fn first(xs: List(a)) -> Option(a)", |_: &[Value]| {
+            Ok(Value::variant(bv::SOME, [Value::String("s".into())]))
+        });
+    let source = "import h\nfn main() {\n  let xs: List(Int) = []\n  let _ = h.first(xs)\n  host.give(1)\n}\nimport host";
+    assert_eq!(run(source, host), Ok(Value::Int(1)));
+}
+
+/// A `type a` parameter shows the variable as the type itself.
+#[test]
+fn a_type_parameter_shows_the_variable() {
+    let host = HostModule::new("h").function(
+        "fn pick(s: String, type a) -> Option(a)",
+        |_: &[Value]| Ok(Value::variant(bv::SOME, [Value::Int(1)])),
+    );
+    let err = returned_error(host.clone(), r#"h.pick("x", String)"#);
+    assert!(
+        err.contains(
+            "h.pick: its signature returns Option(a), where a is String (its type argument \
+             `a`), but it returned Variant Some(1)"
+        ),
+        "got: {err}"
+    );
+    let source = "import h\nfn main() {\n  match h.pick(\"x\", Int) {\n    Some(n) -> host.give(n)\n    None -> host.give(0)\n  }\n}\nimport host";
+    assert_eq!(run(source, host), Ok(Value::Int(1)));
+}
+
+/// A closed record result has the fields its type writes, no more and
+/// no fewer; an open one gives back the rest of the record it is given.
+#[test]
+fn a_record_result_is_checked_by_its_fields() {
+    let host = HostModule::new("h")
+        .function(
+            "fn missing(n: Int) -> {name: String, age: Int}",
+            |_: &[Value]| Ok(Value::anon_record([("name", Value::String("a".into()))])),
+        )
+        .function("fn extra(n: Int) -> {name: String}", |_: &[Value]| {
+            Ok(Value::anon_record([
+                ("name", Value::String("a".into())),
+                ("age", Value::Int(3)),
+            ]))
+        })
+        .function("fn wrong(n: Int) -> {name: String}", |_: &[Value]| {
+            Ok(Value::anon_record([("name", Value::Int(1))]))
+        })
+        .function(
+            "fn keep(p: {name: String, ...r}) -> {name: String, ...r}",
+            |_: &[Value]| Ok(Value::anon_record([("name", Value::String("b".into()))])),
+        );
+    for (call, expected) in [
+        (
+            "h.missing(1)",
+            "h.missing: its signature returns {name: String, age: Int}, but it returned Record",
+        ),
+        (
+            "h.extra(1)",
+            "h.extra: its signature returns {name: String}, but it returned Record",
+        ),
+        (
+            "h.wrong(1)",
+            "h.wrong: its signature returns {name: String}, but it returned Record",
+        ),
+        (
+            r#"h.keep({name: "a", age: 3})"#,
+            "h.keep: its signature returns {name: String, ...r}, where r is the rest of \
+             {age: Int, name: String} (the type of its argument `p`), but it returned Record {name: \"b\"}",
+        ),
+    ] {
+        let err = returned_error(host.clone(), call);
+        assert!(err.contains(expected), "{call}: {err}");
+    }
+}
+
+/// A Channel result is a channel; what it carries is not shown.
+#[test]
+fn a_channel_result_is_a_channel() {
+    let host = HostModule::new("h").function("fn open(n: Int) -> Channel(Int)", |_: &[Value]| {
+        Ok(Value::Int(1))
+    });
+    let err = returned_error(host, "h.open(1)");
+    assert!(
+        err.contains("h.open: its signature returns Channel(Int), but it returned Int 1"),
+        "got: {err}"
+    );
+}
+
+/// A host function that gives back a deep value of a variable's type
+/// runs, whatever the depth: the check compares a bounded part of the
+/// value, and none of it on the stack. (It walked the whole value by
+/// recursion: a list of 10,000 cells overflowed a debug build's stack
+/// and aborted the process.) In a thread of the default stack of a
+/// spawned thread, as an embedder's may be.
+#[test]
+fn a_deep_result_of_a_variable_s_type_is_checked_in_bounded_steps() {
+    for cells in [30_000, 1_000_000] {
+        let outcome = std::thread::spawn(move || {
+            let host = HostModule::new("h")
+                .function("fn same(x: a) -> a", |args: &[Value]| Ok(args[0].clone()))
+                // (Two lists of the type, not one shared: their parts are
+                // compared.)
+                .function("fn second(x: a, y: a) -> a", |args: &[Value]| {
+                    Ok(args[1].clone())
+                });
+            let source = format!(
+                "import h\ntype L {{ Nil, Cons(Int, L) }}\n\
+                 fn build(n: Int, acc: L) -> L {{\n  match n {{\n    0 -> acc\n    _ -> build(n - 1, Cons(n, acc))\n  }}\n}}\n\
+                 fn main() {{\n  let l = build({cells}, Nil)\n  let _m = h.same(l)\n  let _r = h.second(l, build({cells}, Nil))\n  host.give(1)\n}}\nimport host"
+            );
+            run(&source, host)
+        })
+        .join()
+        .expect("the check does not overflow the stack");
+        assert_eq!(outcome, Ok(Value::Int(1)), "{cells} cells");
+    }
+}
+
+/// Each element of a list or a map that a variable stands for is
+/// compared with the first one of the argument's, within the bound: a
+/// list of Ints given back with a String after the first element is
+/// refused.
+#[test]
+fn later_elements_of_a_collection_are_compared() {
+    let host = HostModule::new("h")
+        .function("fn hetero(x: a) -> a", |_: &[Value]| {
+            Ok(Value::list(vec![Value::Int(1), Value::String("x".into())]))
+        })
+        .function("fn same(x: a) -> a", |args: &[Value]| Ok(args[0].clone()));
+    let err = returned_error(host.clone(), "h.hetero([7])");
+    assert!(
+        err.contains(
+            "h.hetero: its signature returns a, here List (the type of its argument `x`), but \
+             it returned List [1, \"x\"]"
+        ),
+        "got: {err}"
+    );
+    // (A list of the type, longer than the argument, passes.)
+    let source =
+        "import h\nfn main() {\n  let xs = h.same([1, 2, 3])\n  host.give(xs)\n}\nimport host";
+    assert_eq!(
+        run(source, host),
+        Ok(Value::list(vec![
+            Value::Int(1),
+            Value::Int(2),
+            Value::Int(3)
+        ]))
+    );
+}
+
+/// The field names of an anonymous record are its type, compared whole
+/// however many fields it has, as a declared type's id is: a record of
+/// 100 fields with other names is refused, one with the same names
+/// passes.
+#[test]
+fn the_field_names_of_a_wide_anonymous_record_are_compared_whole() {
+    let fields = |prefix: &str| -> Vec<(String, Value)> {
+        (0..100)
+            .map(|i| (format!("{prefix}{i:02}"), Value::Int(i)))
+            .collect()
+    };
+    let record = move |prefix: &str| {
+        let fields = fields(prefix);
+        Value::anon_record(fields.iter().map(|(name, v)| (name.as_str(), v.clone())))
+    };
+    let host = HostModule::new("h")
+        .function("fn renamed(x: a) -> a", move |_: &[Value]| Ok(record("g")))
+        .function("fn rebuilt(x: a) -> a", move |_: &[Value]| Ok(record("f")));
+    let literal: Vec<String> = (0..100).map(|i| format!("f{i:02}: {i}")).collect();
+    let literal = format!("{{{}}}", literal.join(", "));
+    let err = returned_error(host.clone(), &format!("h.renamed({literal})"));
+    assert!(
+        err.contains("h.renamed: its signature returns a, here {f00: Int, f01: Int"),
+        "got: {err}"
+    );
+    let source = format!(
+        "import h\nfn main() {{\n  let r = h.rebuilt({literal})\n  host.give(r.f99)\n}}\nimport host"
+    );
+    assert_eq!(run(&source, host), Ok(Value::Int(99)));
+}
+
+/// Within the parts the check compares, a result of another
+/// instantiation of the argument's type is refused: `Box(String)` for a
+/// `Box(Int)`.
+#[test]
+fn a_wrong_part_within_the_bound_is_refused() {
+    let host = HostModule::new("h").function("fn same(x: a) -> a", |args: &[Value]| {
+        let Value::Record(record) = &args[0] else {
+            return Err(VmError::new("expected a record".into()));
+        };
+        Ok(Value::record(
+            record.ty().clone(),
+            vec![Value::String("s".into())],
+        ))
+    });
+    let source = "import h\ntype Box(t) { v: t }\nfn main() {\n  let b = h.same(Box { v: 1 })\n  host.give(b.v)\n}\nimport host";
+    let err = run(source, host).expect_err("a Box(String) for a Box(Int)");
+    assert!(
+        err.contains(
+            "h.same: its signature returns a, here Box (the type of its argument `x`), but it \
+             returned Record Box {v: \"s\"}"
+        ),
+        "got: {err}"
+    );
+}
+
+/// Host functions that return what their signatures say keep running,
+/// of every shape that is checked: variables shown by an argument, its
+/// element, a key or a value of a map, an option's value, a tuple's
+/// part, a record's field and row, a `type a` parameter, records,
+/// channels, and a variable bound to a record of a declared type.
+#[test]
+fn results_of_the_type_the_signature_returns_pass() {
+    let host = HostModule::new("h")
+        .function("fn same(x: a) -> a", |args: &[Value]| Ok(args[0].clone()))
+        .function("fn first(xs: List(a)) -> Option(a)", |args: &[Value]| {
+            let Value::List(xs) = &args[0] else {
+                return Err(VmError::new("expected a list".into()));
+            };
+            xs.first().into_value().map_err(VmError::new)
+        })
+        .function("fn swap(p: (a, b)) -> (b, a)", |args: &[Value]| {
+            let Value::Tuple(parts) = &args[0] else {
+                return Err(VmError::new("expected a tuple".into()));
+            };
+            Ok(Value::tuple(vec![parts[1].clone(), parts[0].clone()]))
+        })
+        .function("fn keys(m: Map(k, v)) -> List(k)", |args: &[Value]| {
+            let Value::Map(m) = &args[0] else {
+                return Err(VmError::new("expected a map".into()));
+            };
+            Ok(Value::list(m.iter().map(|(k, _)| k.clone()).collect()))
+        })
+        .function("fn get(o: Option(a), d: a) -> a", |args: &[Value]| {
+            Ok(match &args[0] {
+                Value::Variant(v) if v.is(bv::SOME) => v.fields()[0].clone(),
+                _ => args[1].clone(),
+            })
+        })
+        .function("fn name(p: {name: a}) -> a", |args: &[Value]| {
+            let Value::Record(r) = &args[0] else {
+                return Err(VmError::new("expected a record".into()));
+            };
+            Ok(r.get("name").cloned().unwrap_or(Value::Unit))
+        })
+        .function(
+            "fn keep(p: {name: String, ...r}) -> {name: String, ...r}",
+            |args: &[Value]| Ok(args[0].clone()),
+        )
+        .function("fn pick(s: String, type a) -> List(a)", |_: &[Value]| {
+            Ok(Value::list(Vec::new()))
+        })
+        .function(
+            "fn user(n: Int) -> {name: String, age: Int}",
+            |args: &[Value]| {
+                Ok(Value::anon_record([
+                    ("age", args[0].clone()),
+                    ("name", Value::String("a".into())),
+                ]))
+            },
+        )
+        .function(
+            "fn pass(c: Channel(Int)) -> Channel(Int)",
+            |args: &[Value]| Ok(args[0].clone()),
+        );
+    let source = r#"
+import h
+import channel
+type Person { name: String, age: Int }
+fn main() {
+  let a = h.same([1, 2])
+  let b = h.first(["x", "y"])
+  let c = h.swap((1, "s"))
+  let d = h.keys(#{"k": 1})
+  let e = h.get(None, 3)
+  let f = h.name({name: true})
+  let g = h.keep({name: "a", age: 3})
+  let p = h.keep(Person { name: "b", age: 4 })
+  let q: List(Int) = h.pick("x", Int)
+  let u = h.user(7)
+  let ch = h.pass(channel.new(1))
+  channel.close(ch)
+  host.give("{a} {b} {c} {d} {e} {f} {g.age} {p.age} {q} {u.age}")
+}
+import host
+"#;
+    assert_eq!(
+        run(source, host),
+        Ok(Value::String(
+            "[1, 2] Some(x) (s, 1) [k] 3 true 3 4 [] 7".into()
+        ))
+    );
 }
 
 #[test]

@@ -1,0 +1,16 @@
+-- cmd: fmt
+-- A comment in front of a scrutinee that ends in a bare stage of a
+-- pipeline holding a closure stays inside the parentheses written
+-- around the scrutinee, and the closure trails its call there, as a
+-- second pass, which reads the parentheses, writes it: the output is
+-- formatted already.
+import list
+
+fn main() {
+  let items = [1, 2, 3]
+  let t = match ({- -} items |> list.filter { x -> x > 1 } |> list.length) {
+    2 -> "two"
+    _ -> "other"
+  }
+  println(t)
+}

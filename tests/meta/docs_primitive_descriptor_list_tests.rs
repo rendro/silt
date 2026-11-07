@@ -1,5 +1,5 @@
 //! Regression lock for GAP(round 59): the globals page
-//! (`docs/stdlib/globals.md`, which an editor shows for `println`) and
+//! (`docs/stdlib/globals.md`) and
 //! `docs/language/bindings-and-functions.md` both enumerate the
 //! primitive type descriptors available in the global namespace
 //! (`Int`, `Float`, `String`, `Bool`, …). A descriptor once went
@@ -23,16 +23,11 @@ fn read_doc(rel: &str) -> String {
     fs::read_to_string(&path).unwrap_or_else(|e| panic!("{rel}: {e}"))
 }
 
-/// Every primitive descriptor is listed in the globals page, which an
-/// editor shows on hover of `println`.
+/// Every primitive descriptor is listed in the globals page.
 #[test]
 fn globals_md_lists_every_primitive_descriptor() {
     let names = primitive_descriptor_names();
-    let docs = silt::builtins::registry::docs::builtin_docs();
-    let doc = docs.get("println").cloned().expect(
-        "the globals page is the doc of `println` (and of the rest of the \
-         prelude's names)",
-    );
+    let doc = read_doc("docs/stdlib/globals.md");
     for name in &names {
         let token = format!("`{name}`");
         assert!(

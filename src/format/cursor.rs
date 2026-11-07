@@ -387,6 +387,19 @@ impl<'a> Cursor<'a> {
         Doc::concat(docs)
     }
 
+    /// Whether comments stand behind the token written last, the first
+    /// on its line, and none of them is a `--` comment: `{- -}`
+    /// comments that `trailing` would keep behind the token.
+    pub fn block_comments_behind(&self) -> bool {
+        let gap = self.gap();
+        !gap.is_empty()
+            && self.pos > 0
+            && self.newlines_before_comment(gap.start) == 0
+            && gap
+                .into_iter()
+                .all(|index| self.comments[index as usize].kind != CommentKind::Line)
+    }
+
     /// The comments behind the token written last, on its line.
     pub fn trailing(&mut self) -> Doc {
         let tok = self.tok();

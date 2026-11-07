@@ -3282,20 +3282,89 @@ impl TypeChecker {
         args: ImplArgs,
     ) -> Option<ImplArgs> {
         let written = self.impl_written_args(ti, false);
-        (self.tables.impl_args_of(tr, ty).iter())
-            .copied()
-            .find(|earlier| {
-                let key = (tr, ty, *earlier);
-                let theirs = (self.tables.impl_trait_args.get(&key)).map_or(&[][..], Vec::as_slice);
-                let (mine, theirs) = match (&written.head, self.tables.impl_self_types.get(&key)) {
-                    (Some(_), Some(head)) => (
-                        written.full(),
-                        theirs.iter().chain([head]).cloned().collect(),
-                    ),
-                    _ => (written.args.clone(), theirs.to_vec()),
-                };
-                *earlier == args || self.could_unify(&mine, &theirs).is_some()
-            })
+        // (Only the earlier impls whose trait arguments, or type, could be
+        // the new one's by their outer types are unified with it, in the
+        // order they were written.)
+        let at = self.impls_met_could_be(tr, ty, args, &written);
+        let impls = self.tables.impl_args_of(tr, ty);
+        let earlier: Vec<ImplArgs> = at.into_iter().map(|i| impls[i]).collect();
+        (earlier.into_iter()).find(|earlier| {
+            let key = (tr, ty, *earlier);
+            let theirs = (self.tables.impl_trait_args.get(&key)).map_or(&[][..], Vec::as_slice);
+            let (mine, theirs) = match (&written.head, self.tables.impl_self_types.get(&key)) {
+                (Some(_), Some(head)) => (
+                    written.full(),
+                    theirs.iter().chain([head]).cloned().collect(),
+                ),
+                _ => (written.args.clone(), theirs.to_vec()),
+            };
+            *earlier == args || self.could_unify(&mine, &theirs).is_some()
+        })
+    }
+
+    /// The positions, among the impls of `tr` for `ty`, of those that
+    /// `impl_met` unifies with the new impl at the trait arguments `args`,
+    /// which writes `written`, in order: the impl at `args` itself, and
+    /// each whose outer type where their comparison starts is the new
+    /// one's or a variable (`MetIndex`). Each impl is entered once, so
+    /// a type with many impls of a trait costs what its impls do, not
+    /// their pairs.
+    fn impls_met_could_be(
+        &mut self,
+        tr: TraitKey,
+        ty: TypeRef,
+        args: ImplArgs,
+        written: &WrittenImpl,
+    ) -> Vec<usize> {
+        let impls = self.tables.impl_args_of(tr, ty).len();
+        let removed = self.tables.impl_stamp(tr, ty).removed;
+        let mut index = self.impl_met_index.remove(&(tr, ty)).unwrap_or_default();
+        // (Impls are added after those there are; one forgotten since the
+        // index was built makes it another list.)
+        if index.removed != removed || index.seen > impls {
+            index = MetIndex {
+                removed,
+                ..MetIndex::default()
+            };
+        }
+        for at in index.seen..impls {
+            let earlier = self.tables.impl_args_of(tr, ty)[at];
+            let key = (tr, ty, earlier);
+            let theirs = (self.tables.impl_trait_args.get(&key)).map_or(&[][..], Vec::as_slice);
+            let key = match theirs.first() {
+                Some(first) => MetKey::Arg(self.outer_of(first)),
+                None => MetKey::Head(
+                    (self.tables.impl_self_types.get(&key).cloned())
+                        .and_then(|head| self.outer_of_first_part(&head)),
+                ),
+            };
+            index.enter(at, earlier, key);
+        }
+        index.seen = impls;
+        let mine = match written.args.first() {
+            Some(first) => MetKey::Arg(self.outer_of(first)),
+            None => MetKey::Head(
+                (written.head.as_ref()).and_then(|head| self.outer_of_first_part(head)),
+            ),
+        };
+        let at = index.could_be(args, mine);
+        self.impl_met_index.insert((tr, ty), index);
+        at
+    }
+
+    /// The outer type of `ty` as `could_unify` reads it (canonical, its
+    /// variables followed): none for what meets anything.
+    fn outer_of(&self, ty: &Type) -> Option<super::solve::OuterHead> {
+        let ty = crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(ty));
+        super::solve::outer_head(&ty)
+    }
+
+    /// The outer type of the first part of the type `head` an impl is for
+    /// (`Int` of `Box(Int)`), which `could_unify` compares first of two
+    /// impls without trait arguments: none for what meets anything.
+    fn outer_of_first_part(&self, head: &Type) -> Option<super::solve::OuterHead> {
+        let head = crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(head));
+        super::solve::first_part(&head).and_then(super::solve::outer_head)
     }
 
     /// Report the impl `ti` of `tr` for `ty` at the trait arguments
@@ -3548,6 +3617,73 @@ impl WrittenImpl {
     /// Its trait arguments, then the type it is for.
     fn full(&self) -> Vec<Type> {
         self.args.iter().chain(&self.head).cloned().collect()
+    }
+}
+
+/// Where `impl_met`'s comparison of two impls of a trait for a type
+/// starts: the outer type of the first trait argument (`Arg`), or, of an
+/// impl without trait arguments, of the first part of the type it is for
+/// (`Head`: `Int` of `Box(Int)`). `None` for a variable, or what else
+/// meets anything. Two impls whose outer types there differ are two that
+/// no use could mean both of.
+#[derive(PartialEq, Eq, Hash, Clone, Copy)]
+enum MetKey {
+    Arg(Option<super::solve::OuterHead>),
+    Head(Option<super::solve::OuterHead>),
+}
+
+/// The impls of a trait for a type that `impl_met` has seen, by their
+/// `MetKey`, as their positions among the impls (`impl_args_of`).
+#[derive(Default, Clone)]
+pub(crate) struct MetIndex {
+    /// How many of the impls are entered, and the stamp of the last
+    /// removal of one before they were (`Tables::impl_stamp`).
+    seen: usize,
+    removed: u64,
+    /// The position of each impl, by its trait arguments.
+    at_args: HashMap<ImplArgs, usize>,
+    /// The impls by their key, where it names an outer type.
+    keyed: HashMap<MetKey, Vec<usize>>,
+    /// The impls whose key names none: every impl could be one of them.
+    open: Vec<usize>,
+    /// The impls with trait arguments, and those without.
+    with_args: Vec<usize>,
+    without_args: Vec<usize>,
+}
+
+impl MetIndex {
+    /// Enter the impl at `args`, at the position `at`, by its `key`.
+    fn enter(&mut self, at: usize, args: ImplArgs, key: MetKey) {
+        self.at_args.entry(args).or_insert(at);
+        match key {
+            MetKey::Arg(_) => self.with_args.push(at),
+            MetKey::Head(_) => self.without_args.push(at),
+        }
+        match key {
+            MetKey::Arg(None) | MetKey::Head(None) => self.open.push(at),
+            key => self.keyed.entry(key).or_default().push(at),
+        }
+    }
+
+    /// The positions, in order, of the impls a new impl at `args` whose
+    /// key is `mine` could be one of.
+    fn could_be(&self, args: ImplArgs, mine: MetKey) -> Vec<usize> {
+        let mut at: Vec<usize> = match mine {
+            MetKey::Arg(None) | MetKey::Head(None) => return (0..self.seen).collect(),
+            MetKey::Arg(Some(_)) => (self.keyed.get(&mine).into_iter().flatten())
+                .chain(&self.without_args)
+                .copied()
+                .collect(),
+            MetKey::Head(Some(_)) => (self.keyed.get(&mine).into_iter().flatten())
+                .chain(&self.with_args)
+                .copied()
+                .collect(),
+        };
+        at.extend(&self.open);
+        at.extend(self.at_args.get(&args));
+        at.sort_unstable();
+        at.dedup();
+        at
     }
 }
 

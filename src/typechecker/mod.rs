@@ -740,6 +740,10 @@ pub struct TypeChecker {
     /// module's other uses (`impls_fitting`).
     pub(super) impl_index:
         std::cell::RefCell<HashMap<(TraitKey, TypeRef), std::rc::Rc<solve::ImplIndex>>>,
+    /// The impls of each trait for each type that a new impl of the
+    /// module was compared with, by where the comparison starts
+    /// (`declare_traits::MetIndex`).
+    pub(super) impl_met_index: HashMap<(TraitKey, TypeRef), declare_traits::MetIndex>,
     /// Whether the module is a REPL cell: its `let`s are offered to the
     /// next cell, which may fix what is unknown of their types.
     pub(super) is_cell: bool,
@@ -960,6 +964,7 @@ impl TypeChecker {
             duplicated_impls: std::collections::HashSet::new(),
             impl_written: HashMap::new(),
             impl_index: Default::default(),
+            impl_met_index: HashMap::new(),
             is_cell: false,
             named_types: std::collections::HashSet::new(),
             signatures_only: false,

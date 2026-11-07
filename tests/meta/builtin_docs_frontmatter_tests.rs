@@ -4,11 +4,11 @@
 //!
 //! Every page of `docs/stdlib/` begins with frontmatter for the docs
 //! website (`title:` / `section:` / `order:`). A name's own section
-//! never includes it, but a name that shows a whole page would: the
-//! prelude's names show the globals page, and a function with no
-//! section of its own shows its module's page. Hover on `println` once
-//! rendered a stray horizontal rule followed by raw `title: "Globals"`
-//! text; `registry::docs::builtin_docs` strips it.
+//! never includes it, but a name that shows a whole page would: a
+//! function with no section of its own shows its module's page. Hover on
+//! `println` once rendered a stray horizontal rule followed by raw
+//! `title: "Globals"` text, when the prelude's names showed the whole
+//! globals page; `registry::docs::builtin_docs` strips it.
 //!
 //! This walks every builtin doc.
 
@@ -34,26 +34,29 @@ fn no_builtin_doc_leaks_yaml_frontmatter() {
     }
 }
 
-/// The repro from the finding: hover on `println` surfaces the whole
-/// Globals page (round-62 design decision), but it must begin with the
-/// page prose, not `---\ntitle: "Globals"…` metadata.
+/// The doc of a name of the prelude (`println`, `Some`) is its own
+/// section of the globals page, which hover, completion and signature
+/// help show alike: not the whole page, and no frontmatter.
 #[test]
-fn println_doc_starts_with_prose_not_frontmatter() {
+fn a_prelude_name_s_doc_is_its_own_section() {
     let docs = silt::builtins::registry::docs::builtin_docs();
-    let doc = docs
-        .get("println")
-        .expect("`println` has a builtin doc: the globals page");
-    assert!(
-        !doc.starts_with("---"),
-        "println's hover doc still starts with frontmatter:\n{}",
-        doc.chars().take(120).collect::<String>()
-    );
-    assert!(
-        doc.contains("`println`"),
-        "println's hover doc lost the Globals prose entirely — \
-         strip_frontmatter over-stripped? got:\n{}",
-        doc.chars().take(120).collect::<String>()
-    );
+    for (name, own) in [
+        ("println", "println(value: a) -> () where a: Display"),
+        ("Some", "Some(value: a) -> Option(a)"),
+    ] {
+        let doc = docs
+            .get(name)
+            .unwrap_or_else(|| panic!("`{name}` has a builtin doc"));
+        assert!(
+            doc.starts_with(&format!("```\n{own}\n```")),
+            "{name}'s doc is not its own section:\n{}",
+            doc.chars().take(120).collect::<String>()
+        );
+        assert!(
+            !doc.contains("# Globals") && !doc.contains("Always Available"),
+            "{name}'s doc is the whole globals page"
+        );
+    }
 }
 
 /// Same for a function with no section of its own: it shows its

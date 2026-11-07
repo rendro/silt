@@ -5176,12 +5176,16 @@ mod seen_drops {
                     Ok(Value::Unit)
                 }),
                 returns: HostShape::Any,
+                vars: Vec::new(),
+                arity: 0,
             })))
         };
         let maker = Value::HostFn(Arc::new(HostFn {
             name: "maker".to_string(),
             call: Arc::new(make),
             returns: HostShape::Any,
+            vars: Vec::new(),
+            arity: 0,
         }));
         (maker, log)
     }
@@ -5204,6 +5208,8 @@ mod seen_drops {
                         Ok(Value::Unit)
                     }),
                     returns: HostShape::Any,
+                    vars: Vec::new(),
+                    arity: 0,
                 }))
             }
         };
@@ -5212,6 +5218,8 @@ mod seen_drops {
                 name: name.to_string(),
                 call,
                 returns: HostShape::Any,
+                vars: Vec::new(),
+                arity: 0,
             }))
         };
         let probes = {
@@ -5246,6 +5254,8 @@ mod seen_drops {
             name: "channels".to_string(),
             call: Arc::new(make),
             returns: HostShape::Any,
+            vars: Vec::new(),
+            arity: 0,
         }));
         (maker, given)
     }
@@ -5864,6 +5874,8 @@ mod calls_and_returns {
             name: "same".to_string(),
             call: Arc::new(|args| Ok(args[0].clone())),
             returns: HostShape::Any,
+            vars: Vec::new(),
+            arity: 0,
         }));
         for callee in [closure, host] {
             for argument in results() {
@@ -6073,6 +6085,8 @@ mod parts_in_place {
             name: name.to_string(),
             call: Arc::new(move |parts| Ok(make(parts))),
             returns: HostShape::Any,
+            vars: Vec::new(),
+            arity: 0,
         }))
     }
 
@@ -6292,6 +6306,8 @@ mod methods_in_place {
             name: "lister".to_string(),
             call: Arc::new(|args| Ok(Value::list(args.to_vec()))),
             returns: HostShape::Any,
+            vars: Vec::new(),
+            arity: 0,
         }))
     }
 
@@ -7099,6 +7115,8 @@ mod interpolation {
                     Ok(Value::String("x".into()))
                 }),
                 returns: HostShape::Any,
+                vars: Vec::new(),
+                arity: 0,
             }))
         };
         let script = make_function(|e| {

@@ -326,6 +326,26 @@ impl List {
         self.get(0)
     }
 
+    /// Whether the two lists are one: they share their elements.
+    pub fn shares(&self, other: &List) -> bool {
+        match (&self.0, &other.0) {
+            (
+                Stored::Items { buf, start, len },
+                Stored::Items {
+                    buf: theirs,
+                    start: their_start,
+                    len: their_len,
+                },
+            ) => {
+                *len > 0
+                    && std::ptr::eq(buf.as_ptr(), theirs.as_ptr())
+                    && (start, len) == (their_start, their_len)
+            }
+            (Stored::Other(a), Stored::Other(b)) => Arc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
+
     pub fn last(&self) -> Option<Value> {
         self.get(self.len().checked_sub(1)?)
     }

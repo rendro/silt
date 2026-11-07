@@ -11,11 +11,9 @@ fn main() {
   }
   let long = match (
     {- first -} [1, 2]
-      |> list.filter(
-        {- keep -} { x -> -- the large ones
-          x > 1
-        },
-      )
+      |> list.filter {- keep -} { x -> -- the large ones
+        x > 1
+      }
       |> list.length
   ) {
     _ -> "long"

@@ -34,7 +34,7 @@ use crate::source::{FileId, SourceMap, SourceName};
 use crate::typechecker::names::{self, Imported, ModuleKind, ModuleScope};
 use crate::typechecker::{self, ModuleContext, Tables};
 use crate::types::Type;
-use crate::value::{HostFn, HostShape};
+use crate::value::HostFn;
 
 pub use entry::{ENTRY_POINT, TestFn, TestKind, selected_tests, test_functions, test_kind};
 pub(crate) use graph::is_cell_name;
@@ -953,17 +953,19 @@ impl Session {
             .iter()
             .zip(&self.config.host[host].fns)
             .filter_map(|(decl, f)| match decl {
-                ast::Decl::Fn(decl) => Some((
-                    decl.name,
-                    Arc::new(HostFn {
-                        name: format!("{}.{}", module.name, decl.name),
-                        call: f.call.clone(),
-                        returns: decl
-                            .return_type
-                            .as_ref()
-                            .map_or(HostShape::Any, host::shape),
-                    }),
-                )),
+                ast::Decl::Fn(decl) => {
+                    let (returns, vars) = host::returns(decl);
+                    Some((
+                        decl.name,
+                        Arc::new(HostFn {
+                            name: format!("{}.{}", module.name, decl.name),
+                            call: f.call.clone(),
+                            returns,
+                            vars,
+                            arity: decl.params.len(),
+                        }),
+                    ))
+                }
                 _ => None,
             })
             .collect()

@@ -173,6 +173,11 @@ fn without_at<T: Clone>(items: &[T], at: usize) -> Vec<T> {
 }
 
 impl Map {
+    /// Whether the two maps are one: they share their entries.
+    pub fn shares(&self, other: &Map) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+
     /// The map of no entries.
     pub fn new() -> Map {
         Map::default()
@@ -514,6 +519,11 @@ impl IntoIterator for Map {
 }
 
 impl Set {
+    /// Whether the two sets are one: they share their members.
+    pub fn shares(&self, other: &Set) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+
     /// The set of no members.
     pub fn new() -> Set {
         Set::default()
