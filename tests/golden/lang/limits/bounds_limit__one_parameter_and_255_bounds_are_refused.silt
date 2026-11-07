@@ -1,0 +1,22 @@
+-- exit: 1
+-- Each bound on a trait of the program is a parameter, hidden: one
+-- parameter and 255 bounds are 256 of the 255 a function has. (A bound
+-- written twice is two.)
+-- stderr-contains: error[compile]: too many parameters and bounds of a function: 256 (the limit is 255)
+-- stderr-contains: = help: each bound on a trait the program declares takes one of the 255 places
+-- stderr-not-contains: (the limit is 0)
+trait Tr {
+  fn tr(self) -> Int
+}
+
+trait Tr for Int {
+  fn tr(self) -> Int { self + 1 }
+}
+
+fn go(x: a) -> Int where a: Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr {
+  Tr.tr(x)
+}
+
+fn main() {
+  println(go(1))
+}

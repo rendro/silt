@@ -1129,9 +1129,9 @@ impl Compiler<'_> {
 
 impl Compiler<'_> {
     /// `begin_function` for a function the program wrote with `written`
-    /// parameters, after `hidden` dictionaries: the limit of parameters
-    /// is the VM's less the hidden ones, and a function over it is
-    /// reported with the parameters the program wrote.
+    /// parameters, after `hidden` dictionaries: the VM's limit of
+    /// parameters holds both, and a function over it is reported with
+    /// both counted (`bounds_past_limit`).
     pub(super) fn begin_function_after(
         &mut self,
         name: String,
@@ -1139,18 +1139,8 @@ impl Compiler<'_> {
         hidden: usize,
         span: Span,
     ) -> Result<(), Diagnostic> {
-        let max = usize::from(u8::MAX).saturating_sub(hidden);
-        if hidden > 0 && written > max {
-            let limit = crate::bytecode::ops::Limit {
-                what: "parameters of a function",
-                count: written,
-                max,
-            };
-            return Err(
-                crate::bytecode::emit::limit_diagnostic(limit, span).with_help(
-                    "each bound on a trait the program declares takes one of the 255 places",
-                ),
-            );
+        if let Some(refusal) = crate::bytecode::emit::bounds_past_limit(written, hidden, span) {
+            return Err(refusal);
         }
         self.begin_function(name, hidden + written, span)
     }

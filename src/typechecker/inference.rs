@@ -183,14 +183,26 @@ impl TypeChecker {
     }
 
     pub(super) fn declare_bound(&mut self, var: TyVar, trait_name: TraitKey, args: Vec<Type>) {
+        let mut in_scope = self.bounds.remove(&var).unwrap_or_default();
+        self.bound_closure(&mut in_scope, trait_name, args);
+        self.bounds.insert(var, in_scope);
+    }
+
+    /// Add the bound `trait_name(args)` to the bounds `in_scope` of one
+    /// variable, with its supertraits.
+    pub(super) fn bound_closure(
+        &self,
+        in_scope: &mut Vec<(TraitKey, Vec<Type>)>,
+        trait_name: TraitKey,
+        args: Vec<Type>,
+    ) {
         // (Two bounds of one trait at different arguments are two
         // bounds: `where a: Conv(Int) + Conv(String)`.)
-        let in_scope = self.bounds.entry(var).or_default();
         if in_scope.iter().any(|(t, a)| *t == trait_name && *a == args) {
             return;
         }
         in_scope.push((trait_name, args.clone()));
-        let Some(info) = self.tables.traits.get(&trait_name).cloned() else {
+        let Some(info) = self.tables.traits.get(&trait_name) else {
             return;
         };
         for (i, super_name) in info.supertraits.iter().enumerate() {
@@ -200,12 +212,12 @@ impl TypeChecker {
                     // where the trait is declared.)
                     exprs
                         .iter()
-                        .map(|te| resolve_supertrait_arg(te, &info, &args))
+                        .map(|te| resolve_supertrait_arg(te, info, &args))
                         .collect()
                 }
                 _ => Vec::new(),
             };
-            self.declare_bound(var, *super_name, super_args);
+            self.bound_closure(in_scope, *super_name, super_args);
         }
     }
 
@@ -1451,8 +1463,15 @@ impl TypeChecker {
         fields: &[(Symbol, Type)],
         span: Span,
     ) {
-        let shown = self.show_type(ty);
-        let base = format!("type '{shown}' has no field '{field}'");
+        // (A tuple that holds a type is not named by a type: `(type Int,
+        // type Int)` is no type a program writes, and `(Int, Int)` before
+        // the dot is the tuple type, which may have the method.)
+        let base = match ty {
+            Type::Tuple(_) if holds_held_type(&self.apply(ty)) => {
+                format!("a tuple that holds a type has no field '{field}'")
+            }
+            _ => format!("type '{}' has no field '{field}'", self.show_type(ty)),
+        };
         let placeholder = match ty {
             Type::List(_) => "xs",
             _ => "x",
@@ -6401,6 +6420,21 @@ pub(super) fn rigid_vars(ty: &Type) -> Vec<RigidId> {
     let mut out = Vec::new();
     walk(ty, &mut out);
     out
+}
+
+/// Whether `ty` has a type held as a value (`type Int`) in it, at any
+/// depth: `(1, [Int])` does.
+fn holds_held_type(ty: &Type) -> bool {
+    match ty {
+        Type::Generic(name, _) if name.is_builtin(crate::defs::TYPE_OF) => true,
+        Type::Generic(_, ts) | Type::Tuple(ts) | Type::Con(_, ts) => ts.iter().any(holds_held_type),
+        Type::Fun(params, ret) => params.iter().any(holds_held_type) || holds_held_type(ret),
+        Type::List(t) | Type::Set(t) | Type::Channel(t) => holds_held_type(t),
+        Type::Map(k, v) => holds_held_type(k) || holds_held_type(v),
+        Type::AnonRecord { fields, .. } => fields.values().any(holds_held_type),
+        Type::App(head, arg) => holds_held_type(head) || holds_held_type(arg),
+        _ => false,
+    }
 }
 
 /// `ty` with each type held as a value in its arguments (`type Int`)

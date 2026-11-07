@@ -1867,8 +1867,9 @@ impl<'src> Parser<'src> {
             // `where {`: the first clause is missing.
             self.expect_ident()?;
         }
-        for (k, (param, span, ..)) in clauses.iter().enumerate() {
-            if !clauses[..k].iter().any(|(earlier, ..)| earlier == param) {
+        let mut seen = std::collections::HashSet::new();
+        for (param, span, ..) in &clauses {
+            if seen.insert(*param) {
                 continue;
             }
             let mut all: Vec<&str> = Vec::new();

@@ -501,11 +501,15 @@ pub struct TypeChecker {
     /// Where a signature first writes each of its type constructor
     /// variables applied (`xs: m(Int)`), for the error of an annotation
     /// in its body that writes one without a type argument.
-    pub(super) constructor_labels: HashMap<TyVar, String>,
+    pub(super) constructor_labels: HashMap<TyVar, Rc<str>>,
     /// Where a signature first writes each of its type variables without
     /// a type argument (`y: m`), for the error of an annotation in its
     /// body that applies one.
-    pub(super) bare_labels: HashMap<TyVar, String>,
+    pub(super) bare_labels: HashMap<TyVar, Rc<str>>,
+    /// The functions and methods of more parameters and bounds than a
+    /// function has (`refuse_past_bounds`), by the span of their body:
+    /// the bodies are not checked.
+    pub(super) refused_bodies: std::collections::HashSet<Span>,
     /// While a signature's annotations are resolved: its own check
     /// reports a variable written both ways (`check_signature_kinds`).
     pub(super) resolving_signature: bool,
@@ -889,6 +893,7 @@ impl TypeChecker {
             declaring_type: None,
             constructor_labels: HashMap::new(),
             bare_labels: HashMap::new(),
+            refused_bodies: std::collections::HashSet::new(),
             resolving_signature: false,
             descriptor_var: None,
             decode_params: Vec::new(),
@@ -1623,7 +1628,10 @@ impl TypeChecker {
                 // not user code and must not produce diagnostics. A host
                 // module's functions have no bodies.
                 (Decl::Fn(f), Some(sig)) => {
-                    if !f.is_recovery_stub && !self.signatures_only {
+                    if !f.is_recovery_stub
+                        && !self.signatures_only
+                        && !self.refused_bodies.contains(&f.body.span)
+                    {
                         self.frame_owner = Some(unused::FrameOwner::TopLevel(f.name));
                         self.check_body(f, sig, env);
                     }
@@ -1908,8 +1916,11 @@ impl TypeChecker {
                             continue;
                         };
                         // (A parser-recovery stub's empty body is not
-                        // user code, here as for a function.)
-                        if !method.is_recovery_stub {
+                        // user code, here as for a function; a refused
+                        // method's does not run.)
+                        if !method.is_recovery_stub
+                            && !self.refused_bodies.contains(&method.body.span)
+                        {
                             let owner = impl_owner((trait_key, target, args));
                             self.body_owner =
                                 Some(builtin_needs::body_key(trait_key, &owner, method.name));
@@ -1950,6 +1961,10 @@ impl TypeChecker {
                         .iter_mut()
                         .filter(|m| !m.is_signature_only && !m.is_recovery_stub)
                     {
+                        // (A refused default method does not run.)
+                        if self.refused_bodies.contains(&method.body.span) {
+                            continue;
+                        }
                         let Some(sig) = self.default_method_sig(t.name, method.name) else {
                             continue;
                         };

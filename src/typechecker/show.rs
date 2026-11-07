@@ -13,12 +13,15 @@ impl TypeChecker {
         let Type::Fun(params, ret) = &ty else {
             return None;
         };
-        let generic = free_vars_in(&ty).iter().any(|v| scheme.vars.contains(v));
+        // (Sets: a signature may have thousands of variables.)
+        let quantified: Distinct<TyVar> = scheme.vars.iter().copied().collect();
+        let free = free_vars_in(&ty);
+        let generic = free.iter().any(|v| quantified.contains(v));
         if !generic || params.len() != f.params.len() {
             return None;
         }
-        let heads: Vec<TyVar> = (crate::types::constructor_heads(&ty).into_iter())
-            .filter(|v| scheme.vars.contains(v))
+        let heads: Distinct<TyVar> = (crate::types::constructor_heads(&ty).into_iter())
+            .filter(|v| quantified.contains(v))
             .collect();
         // (A letter is no name of a parameter: `fn pair(a: c, b: d)`.)
         let mut taken: Vec<String> = (f.params.iter())
@@ -30,8 +33,8 @@ impl TypeChecker {
         let mut mapping: HashMap<TyVar, Type> = HashMap::new();
         let mut constructors = ["m", "n", "o", "p", "q", "r"].into_iter().map(String::from);
         let mut letters = ('a'..='z').map(|c| c.to_string());
-        for v in free_vars_in(&ty) {
-            if !scheme.vars.contains(&v) {
+        for v in free {
+            if !quantified.contains(&v) {
                 continue;
             }
             let written = (self.tables.constructor_names.get(&v))

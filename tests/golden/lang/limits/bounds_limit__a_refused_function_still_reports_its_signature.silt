@@ -1,0 +1,25 @@
+-- exit: 1
+-- A function of too many parameters and bounds does not run, but its
+-- signature is read: an unknown type in it is reported as in any other.
+-- Bounds on a variable no parameter writes are no dictionaries: the
+-- error of those is that the variable is not introduced.
+-- stderr-contains: error[compile]: too many parameters and bounds of a function: 257 (the limit is 255)
+-- stderr-contains: unknown type 'Nope'
+-- stderr-contains: unknown type 'Strin'
+-- stderr-contains: type variable 'b' in where clause is not introduced in the function signature
+-- stderr-not-contains: of a function: 256
+trait Tr {
+  fn tr(self) -> Int
+}
+
+fn go(x: a, y: Nope) -> Strin where a: Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr {
+  ""
+}
+
+fn other(x: Int) -> Int where b: Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr {
+  x
+}
+
+fn main() {
+  println(other(1))
+}

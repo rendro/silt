@@ -126,6 +126,68 @@ impl TypeChecker {
             .find(|id| defs.get(*id).name == name && defs.get(*id).kind == crate::defs::DefKind::Fn)
     }
 
+    /// The bounds of `f` that pass a dictionary, as its `where` clauses
+    /// write them: of a trait that has dictionaries, on a variable its
+    /// parameters or its result write. (A bound on another variable is
+    /// an error of its own.)
+    pub(super) fn written_bounds(&self, f: &FnDecl) -> usize {
+        let mut vars = Vec::new();
+        for te in (f.params.iter().filter_map(|p| p.ty.as_ref())).chain(f.return_type.as_ref()) {
+            super::names::type_vars_of(te, &mut vars);
+        }
+        let mut vars: std::collections::HashSet<Symbol> = vars.into_iter().collect();
+        vars.extend(
+            f.params
+                .iter()
+                .filter_map(|p| match (&p.kind, &p.pattern.kind) {
+                    (ParamKind::Type, PatternKind::Ident(name)) => Some(*name),
+                    _ => None,
+                }),
+        );
+        (f.where_clauses.iter())
+            .filter(|wc| vars.contains(&wc.type_param))
+            .filter(|wc| {
+                (self.named_trait(wc.trait_res, wc.trait_name))
+                    .is_some_and(super::evidence::has_dictionary)
+            })
+            .count()
+    }
+
+    /// Refuse the function or method `f` of `params` parameters and
+    /// `bounds` bounds that pass a dictionary when they are more than a
+    /// function has, with the compiler's text: it does not run, so its
+    /// body is not checked (`refused_bodies`). Whether it was refused.
+    pub(super) fn refuse_past_bounds(&mut self, f: &FnDecl, params: usize, bounds: usize) -> bool {
+        let Some(refusal) = crate::bytecode::emit::bounds_past_limit(params, bounds, f.span) else {
+            return false;
+        };
+        self.errors.push(refusal);
+        self.refused_bodies.insert(f.body.span);
+        true
+    }
+
+    /// The signature of the refused function `f` as its callers see it:
+    /// of its parameters, each of an unknown type, to an unknown type.
+    fn refused_signature(&mut self, f: &FnDecl, env: &mut TypeEnv) -> FnSig {
+        let sig = FnSig {
+            params: vec![Type::Error; f.params.len()],
+            ret: Type::Error,
+            names: HashMap::new(),
+            rigid: Vec::new(),
+            bounds: Vec::new(),
+            complete: true,
+        };
+        env.define(
+            f.name,
+            Scheme {
+                vars: Vec::new(),
+                preds: Vec::new(),
+                ty: sig.ty(),
+            },
+        );
+        sig
+    }
+
     /// Read the signature of `f`. A function with a complete signature
     /// (see [`FnSig::complete`]) is bound in `env` with its scheme; any
     /// other is bound when its body is checked, in the order the
@@ -137,6 +199,10 @@ impl TypeChecker {
         if f.is_recovery_stub {
             self.recovery_stub_names.insert(f.name);
         }
+        // A function of more parameters and bounds than a function can
+        // have does not run: its signature is read for its own errors,
+        // and its body is not checked (`refuse_past_bounds`).
+        let refused = self.refuse_past_bounds(f, f.params.len(), self.written_bounds(f));
         let applied = self.check_signature_kinds(f);
         if let Some(id) = self.fn_def_id(f.name) {
             let type_params = (f.params.iter().enumerate())
@@ -386,17 +452,19 @@ impl TypeChecker {
         // leave out is never decided, so it is general.
         let bodiless = f.is_recovery_stub || self.signatures_only;
         let complete = bodiless || (annotated && free.iter().all(|v| body_view.contains_key(v)));
+        if refused {
+            return self.refused_signature(f, env);
+        }
         if complete {
             // A variable only a bound's trait arguments name
             // (`where a: TryInto(b)`) is the scheme's as well.
-            let mut scheme_vars = free;
+            let mut scheme_vars: Distinct<TyVar> = free.into_iter().collect();
             for pred in &bounds {
                 for v in pred.args().iter().flat_map(free_vars_in) {
-                    if !scheme_vars.contains(&v) {
-                        scheme_vars.push(v);
-                    }
+                    scheme_vars.push(v);
                 }
             }
+            let scheme_vars = scheme_vars.items;
             env.define(
                 f.name,
                 Scheme {
@@ -426,10 +494,13 @@ impl TypeChecker {
 /// (`a` of `Fn(String) -> Fn(List(a)) -> List(String)` is the returned
 /// closure's caller's to give).
 pub(super) fn return_only(params: &[Type], ret: &Type) -> Vec<TyVar> {
-    fn results(ty: &Type, given: &mut Vec<TyVar>, out: &mut Vec<TyVar>) {
+    // (Sets: a signature may have thousands of variables.)
+    fn results(ty: &Type, given: &mut Distinct<TyVar>, out: &mut Vec<TyVar>) {
         match ty {
             Type::Fun(params, ret) => {
-                given.extend(params.iter().flat_map(free_vars_in));
+                (params.iter().flat_map(free_vars_in)).for_each(|v| {
+                    given.push(v);
+                });
                 results(ret, given, out);
             }
             Type::List(t) | Type::Set(t) | Type::Channel(t) => results(t, given, out),
@@ -443,14 +514,14 @@ pub(super) fn return_only(params: &[Type], ret: &Type) -> Vec<TyVar> {
             other => out.extend(free_vars_in(other)),
         }
     }
-    let mut given: Vec<TyVar> = params.iter().flat_map(free_vars_in).collect();
+    let mut given: Distinct<TyVar> = params.iter().flat_map(free_vars_in).collect();
     let mut out = Vec::new();
     results(ret, &mut given, &mut out);
-    let mut only: Vec<TyVar> = Vec::new();
+    let mut only: Distinct<TyVar> = Distinct::default();
     for var in out {
-        if !given.contains(&var) && !only.contains(&var) {
+        if !given.contains(&var) {
             only.push(var);
         }
     }
-    only
+    only.items
 }

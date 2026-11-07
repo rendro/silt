@@ -1,8 +1,8 @@
 -- exit: 1
 -- stderr-contains: error[compile]
--- A function with a bound takes its dictionary first, hidden: its
--- limit is one parameter less, and the error counts what was written.
--- stderr-contains: too many parameters of a function: 255 (the limit is 254)
+-- A function with a bound takes its dictionary first, hidden: the
+-- limit of 255 parameters holds it too, and the error counts both.
+-- stderr-contains: too many parameters and bounds of a function: 256 (the limit is 255)
 -- stderr-contains: = help: each bound on a trait the program declares takes one of the 255 places
 trait Tr {
   fn tr(self) -> Int

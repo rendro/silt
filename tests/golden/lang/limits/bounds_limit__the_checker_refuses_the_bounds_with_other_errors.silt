@@ -1,0 +1,21 @@
+-- exit: 1
+-- The checker refuses a function of too many parameters and bounds
+-- before it reads its signature: the refusal comes with the other
+-- errors of the module, and the function's body and its callers say
+-- nothing more of it.
+-- stderr-contains: error[compile]: too many parameters and bounds of a function: 256 (the limit is 255)
+-- stderr-contains: error[type]: type mismatch
+-- stderr-not-contains: .silt:15:
+-- stderr-not-contains: .silt:20:
+trait Tr {
+  fn tr(self) -> Int
+}
+
+fn go(x: a) -> Int where a: Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr + Tr {
+  Tr.tr(x) + "one"
+}
+
+fn main() {
+  let n: Int = "two"
+  println(go(1).length())
+}
