@@ -429,14 +429,13 @@ impl TypeChecker {
         if complete {
             // A variable only a bound's trait arguments name
             // (`where a: TryInto(b)`) is the scheme's as well.
-            let mut scheme_vars = free;
+            let mut scheme_vars: Distinct<TyVar> = free.into_iter().collect();
             for pred in &bounds {
                 for v in pred.args().iter().flat_map(free_vars_in) {
-                    if !scheme_vars.contains(&v) {
-                        scheme_vars.push(v);
-                    }
+                    scheme_vars.push(v);
                 }
             }
+            let scheme_vars = scheme_vars.items;
             env.define(
                 f.name,
                 Scheme {
@@ -466,10 +465,13 @@ impl TypeChecker {
 /// (`a` of `Fn(String) -> Fn(List(a)) -> List(String)` is the returned
 /// closure's caller's to give).
 pub(super) fn return_only(params: &[Type], ret: &Type) -> Vec<TyVar> {
-    fn results(ty: &Type, given: &mut Vec<TyVar>, out: &mut Vec<TyVar>) {
+    // (Sets: a signature may have thousands of variables.)
+    fn results(ty: &Type, given: &mut Distinct<TyVar>, out: &mut Vec<TyVar>) {
         match ty {
             Type::Fun(params, ret) => {
-                given.extend(params.iter().flat_map(free_vars_in));
+                (params.iter().flat_map(free_vars_in)).for_each(|v| {
+                    given.push(v);
+                });
                 results(ret, given, out);
             }
             Type::List(t) | Type::Set(t) | Type::Channel(t) => results(t, given, out),
@@ -483,14 +485,14 @@ pub(super) fn return_only(params: &[Type], ret: &Type) -> Vec<TyVar> {
             other => out.extend(free_vars_in(other)),
         }
     }
-    let mut given: Vec<TyVar> = params.iter().flat_map(free_vars_in).collect();
+    let mut given: Distinct<TyVar> = params.iter().flat_map(free_vars_in).collect();
     let mut out = Vec::new();
     results(ret, &mut given, &mut out);
-    let mut only: Vec<TyVar> = Vec::new();
+    let mut only: Distinct<TyVar> = Distinct::default();
     for var in out {
-        if !given.contains(&var) && !only.contains(&var) {
+        if !given.contains(&var) {
             only.push(var);
         }
     }
-    only
+    only.items
 }

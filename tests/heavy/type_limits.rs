@@ -111,34 +111,19 @@ fn an_impl_of_65600_type_variables_is_refused() {
     );
 }
 
-/// A bound on a trait of the program is a parameter of the function,
-/// hidden: 65,537 of them, each on a type variable of its own, are far
-/// past the 255 a function has, and the checker refuses the function
-/// before it reads the signature. Reading it cost memory as the square
-/// of its type variables (16,000 took 1.9 GB, 65,537 more than 4 GB);
-/// refused, it takes some 120 MB in a debug build, under the limit of
-/// 1 GB here.
-#[test]
+/// `silt check` of `source`, written to a file of its own: its exit
+/// status, its errors, the most memory it had resident (kB) and how long
+/// it took.
 #[cfg(target_os = "linux")]
-fn a_function_of_65537_bounds_is_refused_at_little_memory() {
+fn check_measured(name: &str, source: &str) -> (i32, String, i64, std::time::Duration) {
     use std::io::Read;
     use std::process::Stdio;
 
-    let n = 65_537;
-    let vars: Vec<String> = (0..n).map(|k| format!("a{k}")).collect();
-    let tuple = |xs: &[String]| format!("({})", xs.join(", "));
-    let ty = tuple(&vars.chunks(255).map(tuple).collect::<Vec<_>>());
-    let bounds: Vec<String> = vars.iter().map(|v| format!("{v}: Tr")).collect();
-    let source = format!(
-        "trait Tr {{ fn tr(self) -> Int }}\n\
-         fn f(x: {ty}) -> Int where {} {{ 1 }}\n\
-         fn main() {{}}\n",
-        bounds.join(", ")
-    );
     let dir = std::env::temp_dir().join(format!("silt_type_limits_{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("a temporary directory");
-    let file = dir.join("bounds.silt");
+    let file = dir.join(format!("{name}.silt"));
     std::fs::write(&file, source).expect("the module is written");
+    let started = std::time::Instant::now();
     // (`wait4` below reaps it, for the memory it had.)
     #[allow(clippy::zombie_processes)]
     let mut child = Command::new(env!("CARGO_BIN_EXE_silt"))
@@ -152,25 +137,76 @@ fn a_function_of_65537_bounds_is_refused_at_little_memory() {
     (child.stderr.take().expect("silt's errors"))
         .read_to_string(&mut stderr)
         .expect("silt's errors are text");
-    // (`wait4`: the most memory the process had resident, in kB.)
     let mut status = 0;
     // SAFETY: an all-zero `rusage` is a valid value of it.
     let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
     // SAFETY: the pid is of our child, not waited for yet; `status` and
     // `usage` are valid for writes.
     let waited = unsafe { libc::wait4(child.id() as libc::pid_t, &mut status, 0, &mut usage) };
+    let took = started.elapsed();
     let _ = std::fs::remove_file(&file);
     assert_eq!(waited, child.id() as libc::pid_t, "{stderr}");
     assert!(libc::WIFEXITED(status), "{stderr}");
-    assert_eq!(libc::WEXITSTATUS(status), 1, "{stderr}");
+    assert!(!stderr.contains("internal error"), "{stderr}");
+    (libc::WEXITSTATUS(status), stderr, usage.ru_maxrss, took)
+}
+
+/// The parameter `x: ((a0, .., a254), ..)` of `n` type variables.
+#[cfg(target_os = "linux")]
+fn many_variables(n: usize) -> (Vec<String>, String) {
+    let vars: Vec<String> = (0..n).map(|k| format!("a{k}")).collect();
+    let tuple = |xs: &[String]| format!("({})", xs.join(", "));
+    let ty = tuple(&vars.chunks(255).map(tuple).collect::<Vec<_>>());
+    (vars, ty)
+}
+
+/// A bound on a trait of the program is a parameter of the function,
+/// hidden: 65,537 of them, each on a type variable of its own, are far
+/// past the 255 a function has, and the checker refuses the function
+/// before it reads the signature. Reading it cost memory as the square
+/// of its type variables (16,000 took 1.9 GB, 65,537 more than 4 GB);
+/// refused, it takes some 120 MB in a debug build, under the limit of
+/// 1 GB here.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_function_of_65537_bounds_is_refused_at_little_memory() {
+    let (vars, ty) = many_variables(65_537);
+    let bounds: Vec<String> = vars.iter().map(|v| format!("{v}: Tr")).collect();
+    let source = format!(
+        "trait Tr {{ fn tr(self) -> Int }}\n\
+         fn f(x: {ty}) -> Int where {} {{ 1 }}\n\
+         fn main() {{}}\n",
+        bounds.join(", ")
+    );
+    let (code, stderr, resident, _) = check_measured("bounds", &source);
+    assert_eq!(code, 1, "{stderr}");
     assert!(
         stderr.contains("too many parameters and bounds of a function: 65538 (the limit is 255)"),
         "{stderr}"
     );
-    assert!(!stderr.contains("internal error"), "{stderr}");
-    let resident = usage.ru_maxrss;
     assert!(
         resident < 1024 * 1024,
         "a function of 65,537 bounds took {resident} kB to refuse"
+    );
+}
+
+/// A signature of 65,537 type variables and no bound is read in time
+/// and memory in proportion to them: it took 147 s in a debug build,
+/// comparing each variable with all, and takes some 2.5 s and 150 MB.
+/// (The limit of 60 s is far from both.)
+#[test]
+#[cfg(target_os = "linux")]
+fn a_signature_of_65537_type_variables_is_read_in_linear_time() {
+    let (_, ty) = many_variables(65_537);
+    let source = format!("fn f(x: {ty}) -> Int {{ 1 }}\nfn main() {{}}\n");
+    let (code, stderr, resident, took) = check_measured("variables", &source);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        resident < 1024 * 1024,
+        "a signature of 65,537 type variables took {resident} kB"
+    );
+    assert!(
+        took < std::time::Duration::from_secs(60),
+        "a signature of 65,537 type variables took {took:?}"
     );
 }

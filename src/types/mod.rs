@@ -1002,105 +1002,104 @@ pub fn constructor_heads(ty: &Type) -> Vec<TyVar> {
     out
 }
 
-/// Collect free type variables in a type.
+/// Collect free type variables in a type: each once, in the order they
+/// first appear.
 pub fn free_vars_in(ty: &Type) -> Vec<TyVar> {
-    match ty {
-        Type::Var(v) => vec![*v],
-        Type::Fun(params, ret) => {
-            let mut fvs = Vec::new();
-            for p in params {
-                for v in free_vars_in(p) {
-                    if !fvs.contains(&v) {
-                        fvs.push(v);
-                    }
+    fn walk(ty: &Type, out: &mut Distinct<TyVar>) {
+        match ty {
+            Type::Var(v) => {
+                out.push(*v);
+            }
+            Type::Fun(params, ret) => {
+                params.iter().for_each(|t| walk(t, out));
+                walk(ret, out);
+            }
+            Type::List(t) | Type::Set(t) | Type::Channel(t) => walk(t, out),
+            Type::Map(k, v) => {
+                walk(k, out);
+                walk(v, out);
+            }
+            Type::Tuple(ts) | Type::Generic(_, ts) | Type::Con(_, ts) => {
+                ts.iter().for_each(|t| walk(t, out))
+            }
+            Type::AssocProj { receiver, .. } => walk(receiver, out),
+            Type::AnonRecord { fields, tail } => {
+                fields.values().for_each(|t| walk(t, out));
+                if let RowTail::Var(v) = tail {
+                    out.push(*v);
                 }
             }
-            for v in free_vars_in(ret) {
-                if !fvs.contains(&v) {
-                    fvs.push(v);
-                }
+            Type::App(head, arg) => {
+                walk(head, out);
+                walk(arg, out);
             }
-            fvs
+            Type::Int
+            | Type::Float
+            | Type::Bool
+            | Type::String
+            | Type::Unit
+            | Type::Rigid(_)
+            | Type::Error
+            | Type::Never => {}
         }
-        Type::List(inner) => free_vars_in(inner),
-        Type::Tuple(elems) => {
-            let mut fvs = Vec::new();
-            for e in elems {
-                for v in free_vars_in(e) {
-                    if !fvs.contains(&v) {
-                        fvs.push(v);
-                    }
-                }
-            }
-            fvs
+    }
+    let mut out = Distinct::default();
+    walk(ty, &mut out);
+    out.items
+}
+
+/// Items each kept once, in the order first pushed. Past a few, a set
+/// says which are kept: a type of many variables is not compared with
+/// itself pair by pair.
+pub struct Distinct<T> {
+    pub items: Vec<T>,
+    seen: Option<std::collections::HashSet<T>>,
+}
+
+impl<T> Default for Distinct<T> {
+    fn default() -> Self {
+        Distinct {
+            items: Vec::new(),
+            seen: None,
         }
-        Type::Generic(_, args) => {
-            let mut fvs = Vec::new();
-            for a in args {
-                for v in free_vars_in(a) {
-                    if !fvs.contains(&v) {
-                        fvs.push(v);
-                    }
-                }
+    }
+}
+
+impl<T: Copy + Eq + std::hash::Hash> Distinct<T> {
+    /// The few that are compared one by one.
+    const FEW: usize = 32;
+
+    /// Keep `item` unless it is kept already; whether it was new.
+    pub fn push(&mut self, item: T) -> bool {
+        let new = match &mut self.seen {
+            Some(seen) => seen.insert(item),
+            None => !self.items.contains(&item),
+        };
+        if new {
+            self.items.push(item);
+            if self.seen.is_none() && self.items.len() > Self::FEW {
+                self.seen = Some(self.items.iter().copied().collect());
             }
-            fvs
         }
-        Type::Map(k, v) => {
-            let mut fvs = free_vars_in(k);
-            for fv in free_vars_in(v) {
-                if !fvs.contains(&fv) {
-                    fvs.push(fv);
-                }
-            }
-            fvs
+        new
+    }
+
+    /// Whether `item` is kept.
+    pub fn contains(&self, item: &T) -> bool {
+        match &self.seen {
+            Some(seen) => seen.contains(item),
+            None => self.items.contains(item),
         }
-        Type::Set(inner) => free_vars_in(inner),
-        Type::Channel(inner) => free_vars_in(inner),
-        Type::AssocProj { receiver, .. } => free_vars_in(receiver),
-        Type::AnonRecord { fields, tail } => {
-            let mut fvs = Vec::new();
-            for t in fields.values() {
-                for v in free_vars_in(t) {
-                    if !fvs.contains(&v) {
-                        fvs.push(v);
-                    }
-                }
-            }
-            if let RowTail::Var(v) = tail
-                && !fvs.contains(v)
-            {
-                fvs.push(*v);
-            }
-            fvs
-        }
-        Type::App(head, arg) => {
-            let mut fvs = free_vars_in(head);
-            for v in free_vars_in(arg) {
-                if !fvs.contains(&v) {
-                    fvs.push(v);
-                }
-            }
-            fvs
-        }
-        Type::Con(_, rest) => {
-            let mut fvs = Vec::new();
-            for t in rest {
-                for v in free_vars_in(t) {
-                    if !fvs.contains(&v) {
-                        fvs.push(v);
-                    }
-                }
-            }
-            fvs
-        }
-        Type::Int
-        | Type::Float
-        | Type::Bool
-        | Type::String
-        | Type::Unit
-        | Type::Rigid(_)
-        | Type::Error
-        | Type::Never => Vec::new(),
+    }
+}
+
+impl<T: Copy + Eq + std::hash::Hash> FromIterator<T> for Distinct<T> {
+    fn from_iter<I: IntoIterator<Item = T>>(items: I) -> Self {
+        let mut out = Distinct::default();
+        items.into_iter().for_each(|item| {
+            out.push(item);
+        });
+        out
     }
 }
 
