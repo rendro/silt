@@ -183,14 +183,26 @@ impl TypeChecker {
     }
 
     pub(super) fn declare_bound(&mut self, var: TyVar, trait_name: TraitKey, args: Vec<Type>) {
+        let mut in_scope = self.bounds.remove(&var).unwrap_or_default();
+        self.bound_closure(&mut in_scope, trait_name, args);
+        self.bounds.insert(var, in_scope);
+    }
+
+    /// Add the bound `trait_name(args)` to the bounds `in_scope` of one
+    /// variable, with its supertraits.
+    pub(super) fn bound_closure(
+        &self,
+        in_scope: &mut Vec<(TraitKey, Vec<Type>)>,
+        trait_name: TraitKey,
+        args: Vec<Type>,
+    ) {
         // (Two bounds of one trait at different arguments are two
         // bounds: `where a: Conv(Int) + Conv(String)`.)
-        let in_scope = self.bounds.entry(var).or_default();
         if in_scope.iter().any(|(t, a)| *t == trait_name && *a == args) {
             return;
         }
         in_scope.push((trait_name, args.clone()));
-        let Some(info) = self.tables.traits.get(&trait_name).cloned() else {
+        let Some(info) = self.tables.traits.get(&trait_name) else {
             return;
         };
         for (i, super_name) in info.supertraits.iter().enumerate() {
@@ -200,12 +212,12 @@ impl TypeChecker {
                     // where the trait is declared.)
                     exprs
                         .iter()
-                        .map(|te| resolve_supertrait_arg(te, &info, &args))
+                        .map(|te| resolve_supertrait_arg(te, info, &args))
                         .collect()
                 }
                 _ => Vec::new(),
             };
-            self.declare_bound(var, *super_name, super_args);
+            self.bound_closure(in_scope, *super_name, super_args);
         }
     }
 

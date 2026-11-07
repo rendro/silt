@@ -870,6 +870,12 @@ impl TypeChecker {
             for (name, ty) in &trait_param_vars {
                 param_map.insert(*name, ty.clone());
             }
+            // (A default method of more parameters and bounds than a
+            // function has does not run; a method without a body is
+            // refused in the impls that write it.)
+            if !m.is_signature_only {
+                self.refuse_past_bounds(m, m.params.len(), self.written_bounds(m));
+            }
             let applied = self.check_signature_kinds(m);
             let outer_signature = std::mem::replace(&mut self.resolving_signature, true);
             let mut param_types = Vec::new();
@@ -2232,13 +2238,18 @@ impl TypeChecker {
             let mut declared_bounds: Vec<Pred> = Vec::new();
             let seeded: Option<Type> = declared.map(|(info, ty)| {
                 let mut mapping = seed.clone();
+                // (By a map: a method may have thousands of variables.)
+                let mut names: HashMap<TyVar, Symbol> = HashMap::new();
+                for (known, name) in info.var_names.iter().rev() {
+                    names.insert(*known, *name);
+                }
                 for v in free_vars_in(ty) {
                     if mapping.contains_key(&v) {
                         continue;
                     }
                     let (fresh, fresh_id) = self.fresh_tv();
                     mapping.insert(v, fresh);
-                    if let Some((_, name)) = info.var_names.iter().find(|(known, _)| *known == v) {
+                    if let Some(name) = names.get(&v) {
                         method_rigid.push(RigidId {
                             var: fresh_id,
                             name: *name,
@@ -2275,6 +2286,14 @@ impl TypeChecker {
                 Some(Type::Fun(params, ret)) => (params.clone(), Some((**ret).clone())),
                 _ => (Vec::new(), None),
             };
+
+            // An impl's method takes the dictionaries of the bounds the
+            // trait declares for it: past what a function has, it does
+            // not run.
+            let passed = (declared_bounds.iter())
+                .filter(|pred| super::evidence::passes_dictionary(pred))
+                .count();
+            self.refuse_past_bounds(method, method.params.len(), passed);
 
             // What the impl writes. A part it leaves out is the declared
             // one.
@@ -2372,6 +2391,22 @@ impl TypeChecker {
             let mut method_constraints =
                 Self::header_passed_to(&impl_level_constraints, impl_trait, passer);
             method_constraints.extend(declared_bounds);
+            // What the declared bounds say of each variable, supertraits
+            // included: made once, not once for each bound the method
+            // writes.
+            let mut declared_of: HashMap<TyVar, Vec<(TraitKey, Vec<Type>)>> = HashMap::new();
+            for pred in &method_constraints {
+                if let Pred::Trait {
+                    tr,
+                    args,
+                    subject: Type::Var(var),
+                    ..
+                } = pred
+                {
+                    let said = declared_of.entry(*var).or_default();
+                    self.bound_closure(said, *tr, args.clone());
+                }
+            }
             for wc in &method.where_clauses {
                 // A bound the resolver resolved to nothing: it reported why.
                 if wc.trait_res == Some(crate::defs::Res::Error) {
@@ -2434,7 +2469,7 @@ impl TypeChecker {
                             // may restate a bound the trait or the impl's
                             // header declares, not add one.
                             let declared = self.bound_follows(
-                                &method_constraints,
+                                &declared_of,
                                 tv,
                                 *trait_name,
                                 &resolved_bound_args,
@@ -2492,6 +2527,8 @@ impl TypeChecker {
                                 *trait_name,
                                 resolved_bound_args.clone(),
                             ));
+                            let said = declared_of.entry(tv).or_default();
+                            self.bound_closure(said, *trait_name, resolved_bound_args.clone());
                         }
                     }
                     None => {
@@ -2678,30 +2715,17 @@ impl TypeChecker {
             .push(Diagnostic::error(Code::ArityMismatch, method.span, message).with_help(help));
     }
 
-    /// Whether `var: tr(args)` follows from the bounds `declared`: it is
-    /// one of them, or a supertrait of one, at the same trait arguments.
+    /// Whether `var: tr(args)` follows from the bounds `declared` says
+    /// of each variable, supertraits included: it is one of them at the
+    /// same trait arguments.
     fn bound_follows(
-        &mut self,
-        declared: &[Pred],
+        &self,
+        declared: &HashMap<TyVar, Vec<(TraitKey, Vec<Type>)>>,
         var: TyVar,
         tr: TraitKey,
         args: &[Type],
     ) -> bool {
-        // What the declared bounds say of `var`, supertraits included.
-        let outer = self.bounds.remove(&var);
-        for pred in declared {
-            if let Pred::Trait {
-                tr, args, subject, ..
-            } = pred
-                && *subject == Type::Var(var)
-            {
-                self.declare_bound(var, *tr, args.clone());
-            }
-        }
-        let said = self.bounds.remove(&var).unwrap_or_default();
-        if let Some(outer) = outer {
-            self.bounds.insert(var, outer);
-        }
+        let said = declared.get(&var).map_or(&[][..], Vec::as_slice);
         said.iter().any(|(said_tr, said_args)| {
             *said_tr == tr
                 && said_args.len() == args.len()

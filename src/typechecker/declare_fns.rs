@@ -136,10 +136,14 @@ impl TypeChecker {
             super::names::type_vars_of(te, &mut vars);
         }
         let mut vars: std::collections::HashSet<Symbol> = vars.into_iter().collect();
-        vars.extend(f.params.iter().filter_map(|p| match (&p.kind, &p.pattern.kind) {
-            (ParamKind::Type, PatternKind::Ident(name)) => Some(*name),
-            _ => None,
-        }));
+        vars.extend(
+            f.params
+                .iter()
+                .filter_map(|p| match (&p.kind, &p.pattern.kind) {
+                    (ParamKind::Type, PatternKind::Ident(name)) => Some(*name),
+                    _ => None,
+                }),
+        );
         (f.where_clauses.iter())
             .filter(|wc| vars.contains(&wc.type_param))
             .filter(|wc| {

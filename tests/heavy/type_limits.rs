@@ -162,11 +162,10 @@ fn many_variables(n: usize) -> (Vec<String>, String) {
 
 /// A bound on a trait of the program is a parameter of the function,
 /// hidden: 65,537 of them, each on a type variable of its own, are far
-/// past the 255 a function has, and the checker refuses the function
-/// before it reads the signature. Reading it cost memory as the square
-/// of its type variables (16,000 took 1.9 GB, 65,537 more than 4 GB);
-/// refused, it takes some 120 MB in a debug build, under the limit of
-/// 1 GB here.
+/// past the 255 a function has, and the checker refuses the function.
+/// Reading its signature cost memory as the square of its type
+/// variables (16,000 took 1.9 GB, 65,537 more than 4 GB); it takes some
+/// 160 MB in a debug build now, under the limit of 1 GB here.
 #[test]
 #[cfg(target_os = "linux")]
 fn a_function_of_65537_bounds_is_refused_at_little_memory() {
@@ -209,4 +208,68 @@ fn a_signature_of_65537_type_variables_is_read_in_linear_time() {
         took < std::time::Duration::from_secs(60),
         "a signature of 65,537 type variables took {took:?}"
     );
+}
+
+/// The source of a trait `Go` whose method `go` takes `x: {ty}` with the
+/// bounds `bounds`, with a default body or an impl for `Box` that writes
+/// the same.
+#[cfg(target_os = "linux")]
+fn method_of_bounds(ty: &str, bounds: &str, default: bool) -> String {
+    let tr = "trait Tr {\n  fn tr(self) -> Int\n}\n\ntrait Tr for Int {\n  fn tr(self) -> Int { self + 1 }\n}\n";
+    let main = "fn main() {\n  println(1)\n}\n";
+    match default {
+        true => format!(
+            "{tr}\ntrait Go {{\n  fn go(self, x: {ty}) -> Int where {bounds} {{ 0 }}\n}}\n\n{main}"
+        ),
+        false => format!(
+            "{tr}\ntrait Go {{\n  fn go(self, x: {ty}) -> Int where {bounds}\n}}\n\n\
+             type Box {{ n: Int }}\n\n\
+             trait Go for Box {{\n  fn go(self, x: {ty}) -> Int where {bounds} {{ 0 }}\n}}\n\n{main}"
+        ),
+    }
+}
+
+/// A method's bounds are its parameters too: an impl's method and a
+/// trait's default method of 65,537 bounds are refused by the checker,
+/// with the 255 of a function, before it compares each bound the impl
+/// writes with all the trait declares (16,384 on one variable took
+/// 129 s), in seconds and at little memory.
+#[test]
+#[cfg(target_os = "linux")]
+fn methods_of_65537_bounds_are_refused_at_little_memory() {
+    let (vars, ty) = many_variables(65_537);
+    let distinct: Vec<String> = vars.iter().map(|v| format!("{v}: Tr")).collect();
+    let one = format!("a: {}", vec!["Tr"; 65_537].join(" + "));
+    let cases = [
+        ("impl_one_variable", method_of_bounds("a", &one, false)),
+        (
+            "impl_variables",
+            method_of_bounds(&ty, &distinct.join(", "), false),
+        ),
+        (
+            "default_variables",
+            method_of_bounds(&ty, &distinct.join(", "), true),
+        ),
+    ];
+    for (name, source) in cases {
+        let (code, stderr, resident, took) = check_measured(name, &source);
+        assert_eq!(code, 1, "{name}: {stderr}");
+        assert!(
+            stderr
+                .contains("too many parameters and bounds of a function: 65539 (the limit is 255)"),
+            "{name}: {stderr}"
+        );
+        assert!(
+            !stderr.contains("too many bounds of a definition"),
+            "{name}: {stderr}"
+        );
+        assert!(
+            resident < 1024 * 1024,
+            "{name} took {resident} kB to refuse"
+        );
+        assert!(
+            took < std::time::Duration::from_secs(60),
+            "{name} took {took:?} to refuse"
+        );
+    }
 }

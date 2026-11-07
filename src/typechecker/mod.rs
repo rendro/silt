@@ -1916,8 +1916,11 @@ impl TypeChecker {
                             continue;
                         };
                         // (A parser-recovery stub's empty body is not
-                        // user code, here as for a function.)
-                        if !method.is_recovery_stub {
+                        // user code, here as for a function; a refused
+                        // method's does not run.)
+                        if !method.is_recovery_stub
+                            && !self.refused_bodies.contains(&method.body.span)
+                        {
                             let owner = impl_owner((trait_key, target, args));
                             self.body_owner =
                                 Some(builtin_needs::body_key(trait_key, &owner, method.name));
@@ -1958,6 +1961,10 @@ impl TypeChecker {
                         .iter_mut()
                         .filter(|m| !m.is_signature_only && !m.is_recovery_stub)
                     {
+                        // (A refused default method does not run.)
+                        if self.refused_bodies.contains(&method.body.span) {
+                            continue;
+                        }
                         let Some(sig) = self.default_method_sig(t.name, method.name) else {
                             continue;
                         };

@@ -565,9 +565,12 @@ impl TypeChecker {
         self.ev.tops = tops;
         self.write_evidence_of(program, env);
         // (Their places past the limit were clamped: the program does
-        // not run.)
+        // not run. A definition refused for the 255 a function has is
+        // not refused again.)
         for (tag, count) in self.ev.too_many_bounds.take() {
-            self.refuse_past_limit(count, DEFINITION_BOUNDS, tag);
+            if !self.refused_bodies.contains(&tag) {
+                self.refuse_past_limit(count, DEFINITION_BOUNDS, tag);
+            }
         }
     }
 
