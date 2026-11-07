@@ -19,11 +19,77 @@ pub struct HostFn {
     /// What its signature says it returns: each result is checked
     /// against it.
     pub returns: HostShape,
+    /// The type and row variables of the return type, by their index in
+    /// `HostShape::Var` and `HostShape::Record::row`, with where the
+    /// arguments of a call show each.
+    pub vars: Vec<HostVar>,
+    /// The number of parameters its signature declares: a call with
+    /// another number of arguments shows no variable.
+    pub arity: usize,
+}
+
+/// A type variable (`a`) or row variable (`...r`) of a host function's
+/// return type, with the places among its parameters where an argument
+/// shows the type a call gives it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostVar {
+    pub name: String,
+    /// The places, in the order the parameters are written.
+    pub sources: Vec<HostSource>,
+}
+
+/// A place among a host function's parameters where the type of a
+/// variable shows: the parameter `param` (its name `name`), then the
+/// parts `path` of its value. A `type a` parameter is the type itself
+/// (`of_type`). For a row variable, the place is a record, and `written`
+/// are the fields its type writes: the others are the row's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostSource {
+    pub param: usize,
+    pub name: String,
+    pub path: Vec<HostStep>,
+    pub of_type: bool,
+    pub written: Vec<String>,
+}
+
+/// One step into a value, toward the place of a variable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HostStep {
+    /// An element of a list or a set.
+    Element,
+    /// A key, or a value, of a map.
+    Key,
+    Value,
+    /// The value of a `Some`, an `Ok`, an `Err`.
+    Some,
+    Ok,
+    Err,
+    /// The `n`th part of a tuple.
+    Part(usize),
+    /// The field of a record.
+    Field(String),
+}
+
+/// What a call's arguments show of a variable: a value of the type, or
+/// the type itself (the value of a `type a` parameter), and where.
+#[derive(Debug, Clone)]
+pub struct Witness<'a> {
+    pub value: Value,
+    pub source: &'a HostSource,
+}
+
+/// Why a result is not of the type a host function's signature returns:
+/// its shape, or the type a variable has at the call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostFault {
+    Shape,
+    Var(usize),
 }
 
 /// The shape of the values of a type a host function's signature
-/// names, as far as a value shows it: a type variable, or a type whose
-/// values are not told apart here, admits anything.
+/// names, as far as a value shows it: a type whose values are not told
+/// apart here admits anything, and so does a variable that the call's
+/// arguments do not show.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HostShape {
     Any,
@@ -42,11 +108,202 @@ pub enum HostShape {
     Option(Box<HostShape>),
     Result(Box<HostShape>, Box<HostShape>),
     Tuple(Vec<HostShape>),
+    /// A channel; what it carries is not shown by the value.
+    Channel(Box<HostShape>),
+    /// An anonymous record, its fields as written, open where it has a
+    /// row variable (`{name: String, ...r}`): the index of `r` among the
+    /// function's variables, and its name.
+    Record {
+        fields: Vec<(String, HostShape)>,
+        row: Option<(usize, String)>,
+    },
+    /// The type variable of that index among the function's variables,
+    /// and its name.
+    Var(usize, String),
+}
+
+impl HostFn {
+    /// What the arguments `args` of a call show of each of the
+    /// function's variables: the first value found at one of its places,
+    /// if any.
+    pub fn witnesses(&self, args: &[Value]) -> Vec<Option<Witness<'_>>> {
+        if args.len() != self.arity {
+            return vec![None; self.vars.len()];
+        }
+        (self.vars.iter())
+            .map(|var| {
+                var.sources.iter().find_map(|source| {
+                    let arg = args.get(source.param)?;
+                    let value = match source.of_type {
+                        true => matches!(
+                            arg,
+                            Value::TypeDescriptor(_) | Value::PrimitiveDescriptor(_)
+                        )
+                        .then(|| arg.clone())?,
+                        false => found_at(arg, &source.path)?,
+                    };
+                    Some(Witness { value, source })
+                })
+            })
+            .collect()
+    }
+}
+
+/// The first value at the place `path` of `value`.
+fn found_at(value: &Value, path: &[HostStep]) -> Option<Value> {
+    let Some((step, rest)) = path.split_first() else {
+        return Some(value.clone());
+    };
+    match (step, value) {
+        (HostStep::Element, Value::List(items)) => {
+            items.iter().find_map(|item| found_at(&item, rest))
+        }
+        (HostStep::Element, Value::Set(items)) => {
+            items.iter().find_map(|item| found_at(item, rest))
+        }
+        (HostStep::Key, Value::Map(entries)) => {
+            entries.iter().find_map(|(key, _)| found_at(key, rest))
+        }
+        (HostStep::Value, Value::Map(entries)) => {
+            entries.iter().find_map(|(_, value)| found_at(value, rest))
+        }
+        (HostStep::Some, Value::Variant(variant)) if variant.is(bv::SOME) => {
+            found_at(variant.fields().first()?, rest)
+        }
+        (HostStep::Ok, Value::Variant(variant)) if variant.is(bv::OK) => {
+            found_at(variant.fields().first()?, rest)
+        }
+        (HostStep::Err, Value::Variant(variant)) if variant.is(bv::ERR) => {
+            found_at(variant.fields().first()?, rest)
+        }
+        (HostStep::Part(n), Value::Tuple(parts)) => found_at(parts.get(*n)?, rest),
+        (HostStep::Field(name), Value::Record(record)) => found_at(record.get(name)?, rest),
+        _ => None,
+    }
+}
+
+/// Whether `value` could be of the type of `witness`: they differ in
+/// nothing both show. A part that only one of them shows (the elements
+/// of an empty list, the payload of another variant) is not compared.
+pub fn same_type(witness: &Value, value: &Value) -> bool {
+    let firsts = |a: Option<Value>, b: Option<Value>| match (a, b) {
+        (Some(a), Some(b)) => same_type(&a, &b),
+        _ => true,
+    };
+    let descriptor =
+        |v: &Value| matches!(v, Value::TypeDescriptor(_) | Value::PrimitiveDescriptor(_));
+    match (witness, value) {
+        (Value::Int(_), Value::Int(_))
+        | (Value::Float(_), Value::Float(_))
+        | (Value::Bool(_), Value::Bool(_))
+        | (Value::String(_), Value::String(_))
+        | (Value::Bytes(_), Value::Bytes(_))
+        | (Value::Unit, Value::Unit)
+        | (Value::Channel(_), Value::Channel(_))
+        | (Value::Handle(_), Value::Handle(_))
+        | (Value::TcpListener(_), Value::TcpListener(_))
+        | (Value::TcpStream(_), Value::TcpStream(_)) => true,
+        (Value::Unit, Value::Tuple(parts)) | (Value::Tuple(parts), Value::Unit) => parts.is_empty(),
+        (Value::List(a), Value::List(b)) => firsts(a.first(), b.first()),
+        (Value::Set(a), Value::Set(b)) => {
+            firsts(a.iter().next().cloned(), b.iter().next().cloned())
+        }
+        (Value::Map(a), Value::Map(b)) => match (a.iter().next(), b.iter().next()) {
+            (Some((ak, av)), Some((bk, bv))) => same_type(ak, bk) && same_type(av, bv),
+            _ => true,
+        },
+        (Value::Tuple(a), Value::Tuple(b)) => {
+            a.len() == b.len() && (a.iter().zip(b.iter())).all(|(a, b)| same_type(a, b))
+        }
+        (Value::Record(a), Value::Record(b)) => {
+            a.type_id() == b.type_id()
+                && a.named()
+                    .map(|(name, _)| name)
+                    .eq(b.named().map(|(name, _)| name))
+                && (a.fields().iter().zip(b.fields())).all(|(a, b)| same_type(a, b))
+        }
+        (Value::Variant(a), Value::Variant(b)) => {
+            a.type_id() == b.type_id()
+                && (a.ordinal() != b.ordinal()
+                    || (a.fields().iter().zip(b.fields())).all(|(a, b)| same_type(a, b)))
+        }
+        (a, b) if a.is_fn() && b.is_fn() => true,
+        (a, b) if descriptor(a) && descriptor(b) => true,
+        (Value::Dict(_), _) | (_, Value::Dict(_)) => true,
+        _ => false,
+    }
+}
+
+/// Whether `value` could be of the type `ty`, the value of a `type a`
+/// parameter: by the type's head (`Int`, `List`, a type of the program),
+/// as far as the value shows it.
+pub fn of_type(ty: &Value, value: &Value) -> bool {
+    match ty {
+        Value::PrimitiveDescriptor(name) => match (*name, value) {
+            ("Int", Value::Int(_))
+            | ("Float", Value::Float(_))
+            | ("String", Value::String(_))
+            | ("Bool", Value::Bool(_)) => true,
+            ("Int" | "Float" | "String" | "Bool", _) => false,
+            _ => true,
+        },
+        Value::TypeDescriptor(info) => {
+            let head = |name: &str| crate::defs::builtin_type_id(name);
+            let id = match value {
+                Value::Record(record) => Some(record.type_id()),
+                Value::Variant(variant) => Some(variant.type_id()),
+                Value::Int(_) => head("Int"),
+                Value::Float(_) => head("Float"),
+                Value::Bool(_) => head("Bool"),
+                Value::String(_) => head("String"),
+                Value::Bytes(_) => head("Bytes"),
+                Value::List(_) => head("List"),
+                Value::Set(_) => head("Set"),
+                Value::Map(_) => head("Map"),
+                Value::Tuple(_) => head("Tuple"),
+                Value::Channel(_) => head("Channel"),
+                _ => None,
+            };
+            id.is_none_or(|id| id == info.id)
+        }
+        _ => true,
+    }
+}
+
+/// The type of the value `witness` shows, as a message names it: the
+/// name of a record's or a variant's type, else the kind of the value.
+pub fn witness_type(witness: &Value) -> String {
+    match witness {
+        Value::Record(record) if record.type_id() == crate::typeinfo::ty::ANON_RECORD => {
+            let fields: Vec<String> = (record.named())
+                .map(|(name, value)| format!("{name}: {}", witness_type(value)))
+                .collect();
+            format!("{{{}}}", fields.join(", "))
+        }
+        Value::Record(record) => record.ty().name.clone(),
+        Value::Variant(variant) => variant.ty().name.clone(),
+        Value::TypeDescriptor(info) => info.name.clone(),
+        Value::PrimitiveDescriptor(name) => (*name).to_string(),
+        Value::Unit => "()".to_string(),
+        other => other.kind().to_string(),
+    }
 }
 
 impl HostShape {
-    /// Whether `value` is a value of the shape.
-    pub fn admits(&self, value: &Value) -> bool {
+    /// Whether `value` is a value of the shape, its variables as the
+    /// call's arguments show them (`witnesses`, by the variables'
+    /// indexes): the first part it is not of, if any.
+    pub fn check(&self, value: &Value, witnesses: &[Option<Witness<'_>>]) -> Result<(), HostFault> {
+        fn all<'v>(
+            mut shapes: impl Iterator<Item = (&'v HostShape, &'v Value)>,
+            witnesses: &[Option<Witness<'_>>],
+        ) -> Result<(), HostFault> {
+            shapes.try_for_each(|(shape, v)| shape.check(v, witnesses))
+        }
+        let yes = |admits: bool| match admits {
+            true => Ok(()),
+            false => Err(HostFault::Shape),
+        };
         match (self, value) {
             (HostShape::Any, _)
             | (HostShape::Int, Value::Int(_))
@@ -54,33 +311,98 @@ impl HostShape {
             | (HostShape::Bool, Value::Bool(_))
             | (HostShape::String, Value::String(_))
             | (HostShape::Bytes, Value::Bytes(_))
-            | (HostShape::Unit, Value::Unit) => true,
+            | (HostShape::Unit, Value::Unit)
+            | (HostShape::Channel(_), Value::Channel(_)) => Ok(()),
             (HostShape::List(item), Value::List(items)) => match items.range_ends() {
-                None => items.runs().flatten().all(|v| item.admits(v)),
-                Some((lo, _)) => item.admits(&Value::Int(lo)),
+                None => all(items.runs().flatten().map(|v| (&**item, v)), witnesses),
+                Some((lo, _)) => item.check(&Value::Int(lo), witnesses),
             },
-            (HostShape::Set(item), Value::Set(items)) => items.iter().all(|v| item.admits(v)),
-            (HostShape::Map(k, v), Value::Map(entries)) => entries
-                .iter()
-                .all(|(key, value)| k.admits(key) && v.admits(value)),
+            (HostShape::Set(item), Value::Set(items)) => {
+                all(items.iter().map(|v| (&**item, v)), witnesses)
+            }
+            (HostShape::Map(k, v), Value::Map(entries)) => all(
+                entries
+                    .iter()
+                    .flat_map(|(key, value)| [(&**k, key), (&**v, value)]),
+                witnesses,
+            ),
             (HostShape::Option(item), Value::Variant(variant)) => match variant.fields() {
-                [v] if variant.is(bv::SOME) => item.admits(v),
-                [] => variant.is(bv::NONE),
-                _ => false,
+                [v] if variant.is(bv::SOME) => item.check(v, witnesses),
+                [] => yes(variant.is(bv::NONE)),
+                _ => Err(HostFault::Shape),
             },
             (HostShape::Result(ok, err), Value::Variant(variant)) => match variant.fields() {
-                [v] if variant.is(bv::OK) => ok.admits(v),
-                [v] if variant.is(bv::ERR) => err.admits(v),
-                _ => false,
+                [v] if variant.is(bv::OK) => ok.check(v, witnesses),
+                [v] if variant.is(bv::ERR) => err.check(v, witnesses),
+                _ => Err(HostFault::Shape),
             },
             (HostShape::Tuple(items), Value::Tuple(values)) => {
-                items.len() == values.len()
-                    && items
-                        .iter()
-                        .zip(values.iter())
-                        .all(|(item, v)| item.admits(v))
+                yes(items.len() == values.len())?;
+                all(items.iter().zip(values.iter()), witnesses)
             }
-            _ => false,
+            (HostShape::Record { fields, row }, Value::Record(record)) => {
+                let anonymous = record.type_id() == crate::typeinfo::ty::ANON_RECORD;
+                for (name, shape) in fields {
+                    match record.get(name) {
+                        Some(v) => shape.check(v, witnesses)?,
+                        None => return Err(HostFault::Shape),
+                    }
+                }
+                let written = |name: &str| fields.iter().any(|(field, _)| field == name);
+                let Some((at, _)) = row else {
+                    // (A closed record is anonymous, of its fields alone.)
+                    return yes(anonymous && record.named().all(|(name, _)| written(name)));
+                };
+                let Some(Some(witness)) = witnesses.get(*at) else {
+                    return Ok(());
+                };
+                let Value::Record(given) = &witness.value else {
+                    return Ok(());
+                };
+                let rest = |name: &str| !witness.source.written.iter().any(|w| w == name);
+                let same_written = (fields.iter().map(|(name, _)| name.as_str())).eq(witness
+                    .source
+                    .written
+                    .iter()
+                    .map(String::as_str));
+                let row_fits = match given.type_id() == crate::typeinfo::ty::ANON_RECORD {
+                    // The row's fields are the given record's that its
+                    // parameter does not write; nothing else is added.
+                    true => {
+                        anonymous
+                            && (given.named().filter(|(name, _)| rest(name)))
+                                .all(|(name, w)| record.get(name).is_some_and(|v| same_type(w, v)))
+                            && (record.named().filter(|(name, _)| !written(name)))
+                                .all(|(name, _)| given.get(name).is_some() && rest(name))
+                    }
+                    // A record of a declared type the row stands for is
+                    // given back as a record of that type.
+                    false if same_written => {
+                        record.type_id() == given.type_id()
+                            && (given.named().filter(|(name, _)| rest(name)))
+                                .all(|(name, w)| record.get(name).is_some_and(|v| same_type(w, v)))
+                    }
+                    false => true,
+                };
+                match row_fits {
+                    true => Ok(()),
+                    false => Err(HostFault::Var(*at)),
+                }
+            }
+            (HostShape::Var(at, _), value) => match witnesses.get(*at) {
+                Some(Some(witness)) => {
+                    let fits = match witness.source.of_type {
+                        true => of_type(&witness.value, value),
+                        false => same_type(&witness.value, value),
+                    };
+                    match fits {
+                        true => Ok(()),
+                        false => Err(HostFault::Var(*at)),
+                    }
+                }
+                _ => Ok(()),
+            },
+            _ => Err(HostFault::Shape),
         }
     }
 }
@@ -112,6 +434,24 @@ impl fmt::Display for HostShape {
             HostShape::Option(item) => list(f, "Option", &[item]),
             HostShape::Result(ok, err) => list(f, "Result", &[ok, err]),
             HostShape::Tuple(items) => list(f, "", &items.iter().collect::<Vec<_>>()),
+            HostShape::Channel(item) => list(f, "Channel", &[item]),
+            HostShape::Record { fields, row } => {
+                write!(f, "{{")?;
+                for (i, (name, shape)) in fields.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{name}: {shape}")?;
+                }
+                if let Some((_, name)) = row {
+                    if !fields.is_empty() {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "...{name}")?;
+                }
+                write!(f, "}}")
+            }
+            HostShape::Var(_, name) => write!(f, "{name}"),
         }
     }
 }

@@ -115,19 +115,33 @@ call asks for.
 
 The checker has already made sure the arguments have the declared types
 and number, so a function can rely on its signature. When the function
-returns, its result is checked against the parts of the return type
-that a value shows: `Int`, `Float`, `Bool`, `String`, `Bytes` and `()`,
-and `List`, `Set`, `Map`, `Option`, `Result` and tuples of them. A
-`-> Int` function that returns a `String` is a runtime error that names
-it (`mylib.count: its signature returns Int, but it returned String
-"three"`). No value is of `Never`: a `-> Never` function that returns a
-value is that error too, and it can only fail (return `Err`).
+returns, its result is checked against its return type, as far as a
+value shows it: `Int`, `Float`, `Bool`, `String`, `Bytes` and `()`;
+`List`, `Set`, `Map`, `Option`, `Result` and tuples of them; a
+`Channel`; and an anonymous record, which has the fields its type
+writes and, closed, no others. A `-> Int` function that returns a
+`String` is a runtime error that names it (`mylib.count: its signature
+returns Int, but it returned String "three"`). No value is of `Never`:
+a `-> Never` function that returns a value is that error too, and it
+can only fail (return `Err`).
 
-The other parts of a return type are not checked: a type variable, a
-record, and any other type (`Channel(Int)`). Returning a value of the
-right type there is the function's duty. A `fn same(x: a)
--> a` must return a value of its argument's type, and one that returns
-anything else breaks the program's types where the value goes.
+A type variable of the result is checked against the type the call's
+arguments show it has: the argument of that type, the first element
+of a list of it, the value in an option of it, the type a `type a`
+parameter is given, and so on, the first one a parameter shows. A
+`fn same(x: a) -> a` that returns `5` for `same("x")` is that error:
+``mylib.same: its signature returns a, here String (the type of its
+argument `x`), but it returned Int 5``. The row variable of an open
+record is checked so too: `fn keep(p: {name: String, ...r}) -> {name:
+String, ...r}` gives back the fields of the record it is given, and a
+record of a declared type (`Person`) as a record of that type.
+
+What no argument shows stays the function's to get right: a variable
+whose arguments hold no value of it (`first([])`), the parts of two
+values that only one of them shows (the elements of an empty list, the
+payload of another variant), and what a `Channel` carries. Of the type
+a `type a` parameter is given, the head is checked (`List`, not
+`List(Int)`).
 
 A host function cannot take or return a function (`fn f(g: Fn(Int) ->
 Int) -> Int` is an error): a host function has no way to call one.
