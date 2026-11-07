@@ -3480,7 +3480,7 @@ pub(crate) enum OuterHead {
     Record,
 }
 
-fn outer_head(ty: &Type) -> Option<OuterHead> {
+pub(super) fn outer_head(ty: &Type) -> Option<OuterHead> {
     Some(match ty {
         Type::Generic(name, _) => OuterHead::Named(*name),
         Type::Int => OuterHead::Prim(0),
