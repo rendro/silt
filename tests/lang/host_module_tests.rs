@@ -239,6 +239,8 @@ fn bad_signatures_are_reported() {
             "has 1 function but its signatures declare 2",
         ),
         ("fn f(x: Int) -> Nope", "Nope"),
+        ("fn f(x: Int) -> _", "unknown type '_'"),
+        ("fn f(x: Int) -> Option(_a)", "unknown type '_a'"),
         (
             "fn f(g: Fn(Int) -> Int) -> Int",
             "cannot take or return a function",
@@ -278,6 +280,11 @@ fn bad_signatures_are_reported() {
             errors.iter().any(|e| e.message.contains(expected)),
             "{signature}: {errors:?}"
         );
+        // `_` is no type variable, in the return type as in a parameter.
+        if signature.contains("_") {
+            let variable = errors.iter().any(|e| e.message.contains("variable '_"));
+            assert!(!variable, "{signature}: {errors:?}");
+        }
     }
 }
 

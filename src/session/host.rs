@@ -204,7 +204,10 @@ pub(super) fn return_only_variables(f: &FnDecl) -> Vec<(Symbol, bool)> {
         type_vars_of(ty, &mut written);
         row_vars_of(ty, &mut rows);
     }
-    let vars = written.into_iter().filter(|v| !given.contains(v));
+    // (A name that starts with `_` is no variable: the checker says it
+    // is an unknown type, wherever it is written.)
+    let vars =
+        (written.into_iter()).filter(|v| !given.contains(v) && !resolve(*v).starts_with('_'));
     let rows = rows.into_iter().filter(|r| !given_rows.contains(r));
     vars.map(|v| (v, false))
         .chain(rows.map(|r| (r, true)))
