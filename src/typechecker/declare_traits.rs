@@ -854,6 +854,13 @@ impl TypeChecker {
             self.tables.constructor_names.insert(self_var_id, self_sym);
         }
         var_names.extend(param_var_ids.iter().copied().zip(t.params.iter().copied()));
+        // (The variables of `var_names` and the trait's parameters, in
+        // sets: a trait may have many parameters, which each method's
+        // annotations would be compared with one by one.)
+        let mut known_vars: std::collections::HashSet<TyVar> =
+            var_names.iter().map(|(v, _)| *v).collect();
+        let param_var_set: std::collections::HashSet<TyVar> =
+            param_var_ids.iter().copied().collect();
         // A trait declares complete signatures: each parameter but `self`
         // is annotated, and a method without a return type returns `()`.
         // An impl's method has the declared type whatever the impl
@@ -939,7 +946,7 @@ impl TypeChecker {
                 .filter_map(|(name, ty)| match ty {
                     // (A row variable, `{x: Int, ...r}`, is kept under
                     // `__row__r`: it is named `r`.)
-                    Type::Var(v) if !var_names.iter().any(|(known, _)| known == v) => {
+                    Type::Var(v) if !known_vars.contains(v) => {
                         let name = match resolve(*name).strip_prefix("__row__") {
                             Some(row) => intern(row),
                             None => *name,
@@ -950,6 +957,7 @@ impl TypeChecker {
                 })
                 .collect();
             own.sort_by_key(|(v, _)| *v);
+            known_vars.extend(own.iter().map(|(v, _)| *v));
             var_names.extend(own);
             // The method's own bounds. (An unknown trait in one is
             // reported where a body is checked against the method.)
@@ -996,7 +1004,7 @@ impl TypeChecker {
             let result_only = super::declare_fns::return_only(&param_types, &ret_type);
             let mut written: Vec<(TyVar, Symbol)> = (param_map.iter())
                 .filter_map(|(name, ty)| match ty {
-                    Type::Var(v) if *v != self_var_id && !param_var_ids.contains(v) => {
+                    Type::Var(v) if *v != self_var_id && !param_var_set.contains(v) => {
                         Some((*v, *name))
                     }
                     _ => None,
