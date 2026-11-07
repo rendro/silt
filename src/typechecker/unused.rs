@@ -283,15 +283,13 @@ impl TypeChecker {
             FrameOwner::Local(name) => Some(Callee::Local(name)),
             FrameOwner::TopLevel(name) => {
                 let defs = self.defs.as_ref()?;
-                defs.of_module(self.module)
+                defs.named(self.module, name)
                     .iter()
                     .find(|id| {
-                        let def = defs.get(**id);
-                        def.name == name
-                            && matches!(
-                                def.kind,
-                                crate::defs::DefKind::Fn | crate::defs::DefKind::Let
-                            )
+                        matches!(
+                            defs.get(**id).kind,
+                            crate::defs::DefKind::Fn | crate::defs::DefKind::Let
+                        )
                     })
                     .map(|id| Callee::Def(*id))
             }
