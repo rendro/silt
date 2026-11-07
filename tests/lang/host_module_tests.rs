@@ -620,6 +620,37 @@ fn later_elements_of_a_collection_are_compared() {
     );
 }
 
+/// The field names of an anonymous record are its type, compared whole
+/// however many fields it has, as a declared type's id is: a record of
+/// 100 fields with other names is refused, one with the same names
+/// passes.
+#[test]
+fn the_field_names_of_a_wide_anonymous_record_are_compared_whole() {
+    let fields = |prefix: &str| -> Vec<(String, Value)> {
+        (0..100)
+            .map(|i| (format!("{prefix}{i:02}"), Value::Int(i)))
+            .collect()
+    };
+    let record = move |prefix: &str| {
+        let fields = fields(prefix);
+        Value::anon_record(fields.iter().map(|(name, v)| (name.as_str(), v.clone())))
+    };
+    let host = HostModule::new("h")
+        .function("fn renamed(x: a) -> a", move |_: &[Value]| Ok(record("g")))
+        .function("fn rebuilt(x: a) -> a", move |_: &[Value]| Ok(record("f")));
+    let literal: Vec<String> = (0..100).map(|i| format!("f{i:02}: {i}")).collect();
+    let literal = format!("{{{}}}", literal.join(", "));
+    let err = returned_error(host.clone(), &format!("h.renamed({literal})"));
+    assert!(
+        err.contains("h.renamed: its signature returns a, here {f00: Int, f01: Int"),
+        "got: {err}"
+    );
+    let source = format!(
+        "import h\nfn main() {{\n  let r = h.rebuilt({literal})\n  host.give(r.f99)\n}}\nimport host"
+    );
+    assert_eq!(run(&source, host), Ok(Value::Int(99)));
+}
+
 /// Within the parts the check compares, a result of another
 /// instantiation of the argument's type is refused: `Box(String)` for a
 /// `Box(Int)`.

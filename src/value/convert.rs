@@ -278,23 +278,14 @@ pub fn same_type(witness: &Value, value: &Value) -> bool {
                 if shares(a.fields(), b.fields()) {
                     continue;
                 }
-                // (Anonymous records share one id: their fields are
-                // their type, each name counted as a part compared.)
+                // (Anonymous records share one id: their field names
+                // are their type, compared whole as an id is, outside
+                // the bound; their values within it.)
                 if !std::sync::Arc::ptr_eq(a.ty(), b.ty())
                     && a.type_id() == crate::typeinfo::ty::ANON_RECORD
+                    && !(a.named().map(|(name, _)| name)).eq(b.named().map(|(name, _)| name))
                 {
-                    let names = a.fields().len().max(b.fields().len());
-                    if names > budget {
-                        return true;
-                    }
-                    budget -= names;
-                    if !a
-                        .named()
-                        .map(|(name, _)| name)
-                        .eq(b.named().map(|(name, _)| name))
-                    {
-                        return false;
-                    }
+                    return false;
                 }
                 let room = room(budget, &work);
                 work.extend(
