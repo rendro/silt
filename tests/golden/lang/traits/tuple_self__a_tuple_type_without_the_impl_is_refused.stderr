@@ -1,25 +1,32 @@
 error[type]: type 'String' does not implement trait 'Monoid'
- --> tuple_self__a_tuple_type_without_the_impl_is_refused.silt:23:11
+ --> tuple_self__a_tuple_type_without_the_impl_is_refused.silt:24:11
     |
- 23 |   println((Int, String).empty())
+ 24 |   println((Int, String).empty())
     |           ^^^^^^^^^^^^^^^^^^^ type 'String' does not implement trait 'Monoid'
   = note: the impl of 'Monoid' for '(a, b)' asks `b: Monoid`
 
 error[type]: undefined variable 'Tuple'
- --> tuple_self__a_tuple_type_without_the_impl_is_refused.silt:24:11
+ --> tuple_self__a_tuple_type_without_the_impl_is_refused.silt:25:11
     |
- 24 |   println(Tuple(Int, Int).empty())
+ 25 |   println(Tuple(Int, Int).empty())
     |           ^^^^^ undefined variable 'Tuple'
 
 error[type]: type '(Int, String)' has no method 'zero'
- --> tuple_self__a_tuple_type_without_the_impl_is_refused.silt:25:11
+ --> tuple_self__a_tuple_type_without_the_impl_is_refused.silt:26:11
     |
- 25 |   println((Int, String).zero())
+ 26 |   println((Int, String).zero())
     |           ^^^^^^^^^^^^^^^^^^ type '(Int, String)' has no method 'zero'
 
-error[type]: type '(type Int, type Int)' has no field 'empty'
- --> tuple_self__a_tuple_type_without_the_impl_is_refused.silt:27:11
+error[type]: type '(Int, Int)' has no field 'empty'
+ --> tuple_self__a_tuple_type_without_the_impl_is_refused.silt:28:11
     |
- 27 |   println(t.empty())
-    |           ^^^^^^^ type '(type Int, type Int)' has no field 'empty'
+ 28 |   println(t.empty())
+    |           ^^^^^^^ type '(Int, Int)' has no field 'empty'
+  = help: `empty` is a method of trait `Monoid` that makes a value: call it on the type, `(Int, Int).empty()`
+
+error[type]: type '(Int, Int)' has no field 'empty'
+ --> tuple_self__a_tuple_type_without_the_impl_is_refused.silt:29:11
+    |
+ 29 |   println((Int, 1).empty())
+    |           ^^^^^^^^^^^^^^ type '(Int, Int)' has no field 'empty'
   = help: `empty` is a method of trait `Monoid` that makes a value: call it on the type, `(Int, Int).empty()`
