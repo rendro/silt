@@ -93,7 +93,7 @@ always yields a rendered string.
 | `Tls(msg)` | `String` | TLS handshake / cert failure |
 | `Timeout` | — | one of the request's times passed (10 s to connect, 60 s in all), or `SILT_IO_TIMEOUT` |
 | `InvalidUrl(url)` | `String` | the URL, as it was written, cannot be read as one, has no host, has a scheme other than `http` and `https`, or names a port that is none (not a number in 1..65535); no connection is made |
-| `InvalidResponse(msg)` | `String` | what the server sent is no HTTP (a status line that is none, a chunk length that is no number, a head that is too large, a body that says it is packed and, though all of it arrived, does not unpack: no bytes at all among them), or its body is larger than 10,000,000 bytes |
+| `InvalidResponse(msg)` | `String` | what the server sent is no HTTP (a status line that is none, a chunk length that is no number, `content-length` headers that disagree or a length that is no number, a head that is too large, a body that says it is packed and, though all of it arrived, does not unpack: no bytes at all among them), or its body is larger than 10,000,000 bytes |
 | `ClosedEarly` | — | the server went away before the response was complete, head or body, packed or not |
 | `Other(msg)` | `String` | any other failure: a header name or value of the request that is none, too many redirects |
 

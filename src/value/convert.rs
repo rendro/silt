@@ -27,6 +27,9 @@ pub struct HostFn {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HostShape {
     Any,
+    /// `Never`, which no value is of: a function that returns it can
+    /// only fail.
+    Never,
     Int,
     Float,
     Bool,
@@ -96,6 +99,7 @@ impl fmt::Display for HostShape {
         };
         match self {
             HostShape::Any => write!(f, "_"),
+            HostShape::Never => write!(f, "Never"),
             HostShape::Int => write!(f, "Int"),
             HostShape::Float => write!(f, "Float"),
             HostShape::Bool => write!(f, "Bool"),
