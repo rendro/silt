@@ -1,0 +1,24 @@
+-- A use of a trait without arguments reaches the impl for its
+-- instantiation among impls whose first part has other outer types
+-- (`Int`, `String`, `List(Int)`, a record, a tuple, a map), and one for
+-- every instantiation (`Pair(a)`) is reached by each use.
+trait Name { fn name(self) -> Int }
+type Box(a) { v: a }
+type Pair(a) { v: a }
+type P { x: Int }
+trait Name for Box(Int) { fn name(self) -> Int { 1 } }
+trait Name for Box(String) { fn name(self) -> Int { 2 } }
+trait Name for Box(List(Int)) { fn name(self) -> Int { 3 } }
+trait Name for Box(P) { fn name(self) -> Int { 4 } }
+trait Name for Box((Int, String)) { fn name(self) -> Int { 5 } }
+trait Name for Box(Map(Int, Int)) { fn name(self) -> Int { 6 } }
+trait Name for Pair(a) { fn name(self) -> Int { 7 } }
+fn main() {
+  println(Name.name(Box { v: 1 }))
+  println(Name.name(Box { v: "s" }))
+  println(Name.name(Box { v: [1] }))
+  println(Name.name(Box { v: P { x: 1 } }))
+  println(Name.name(Box { v: (1, "a") }))
+  println(Name.name(Box { v: #{1: 2} }))
+  println(Name.name(Pair { v: [true] }))
+}

@@ -3356,12 +3356,7 @@ impl TypeChecker {
     /// impls without trait arguments: none for what meets anything.
     fn outer_of_first_part(&self, head: &Type) -> Option<super::solve::OuterHead> {
         let head = crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(head));
-        let first = match &head {
-            Type::Generic(_, parts) | Type::Tuple(parts) => parts.first()?,
-            Type::List(part) | Type::Set(part) | Type::Channel(part) | Type::Map(part, _) => part,
-            _ => return None,
-        };
-        super::solve::outer_head(first)
+        super::solve::first_part(&head).and_then(super::solve::outer_head)
     }
 
     /// Report the impl `ti` of `tr` for `ty` at the trait arguments

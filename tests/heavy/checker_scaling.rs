@@ -30,7 +30,8 @@
 //! walked: 8,000 functions that read one channel took eleven times as
 //! long as 2,000). And in the number of warnings, each kept once by a
 //! set beside the list of them. And in the number of impls of one trait
-//! for one type: each new impl was unified with every one before it.
+//! for one type: each new impl was unified with every one before it, and
+//! each use of a trait without arguments with every impl.
 
 use std::path::Path;
 use std::process::Command;
@@ -344,26 +345,55 @@ fn impls_by_trait_argument(n: usize) -> String {
     source
 }
 
-/// Four times the impls of one trait for one type, told apart by their
-/// trait arguments, take about four times as long: at most six times.
+/// A module of `n` record types and `n` impls of a trait without
+/// arguments, each for an instantiation of one type (`trait Name for
+/// Box(T5)`), with a use of each.
+fn impls_by_instantiation(n: usize) -> String {
+    let mut source =
+        String::from("trait Name {\n  fn name(self) -> Int\n}\n\ntype Box(a) { v: a }\n\n");
+    for i in 0..n {
+        source.push_str(&format!("type T{i} {{ v: Int }}\n"));
+    }
+    for i in 0..n {
+        source.push_str(&format!(
+            "\ntrait Name for Box(T{i}) {{\n  fn name(self) -> Int {{\n    {i}\n  }}\n}}\n"
+        ));
+    }
+    source.push_str("\nfn main() {\n  let total = 0\n");
+    for i in 0..n {
+        source.push_str(&format!(
+            "  let total = total + Name.name(Box {{ v: T{i} {{ v: 1 }} }})\n"
+        ));
+    }
+    source.push_str("  println(total)\n}\n");
+    source
+}
+
+/// Four times the impls of one trait for one type take about four times
+/// as long: at most six times. Impls told apart by their trait arguments
+/// (`Conv(T5)`), and impls for instantiations of the type (`Box(T5)`).
 /// (Each impl was unified with every impl written before it, to find one
-/// that a use could mean as well: 2,048 of them took 7.6 s in a debug
-/// build where 1,024 took 2.0 s. Now each is unified only with those
-/// whose first trait argument could be its own by its outer type.)
+/// that a use could mean as well: 2,048 of the first kind took 7.6 s in
+/// a debug build where 1,024 took 2.1 s. And each use of the second kind
+/// was unified with every impl: 2,048 took 24 s where 1,024 took 5.7 s.
+/// Now an impl, and a use, is unified only with the impls whose first
+/// trait argument, or first part of the type, could be its own by its
+/// outer type.)
 #[test]
 fn four_times_the_impls_of_a_trait_for_a_type_take_about_four_times_as_long() {
-    if let Err(over) = grows_within(
-        "impls",
-        impls_by_trait_argument(512),
-        impls_by_trait_argument(2_048),
-        6.0,
-    ) {
-        panic!(
-            "`silt check` of 2,048 impls of one trait for one type took more than six times \
-             as long as that of 512 in each of three measurements ({}): a new impl is \
-             compared with every impl before it",
-            shown(&over)
-        );
+    let shapes: [(&str, fn(usize) -> String); 2] = [
+        ("trait arguments", impls_by_trait_argument),
+        ("instantiations", impls_by_instantiation),
+    ];
+    for (name, module) in shapes {
+        if let Err(over) = grows_within("impls", module(512), module(2_048), 6.0) {
+            panic!(
+                "`silt check` of 2,048 impls of one trait for one type, told apart by their \
+                 {name}, took more than six times as long as that of 512 in each of three \
+                 measurements ({}): an impl or a use is compared with every impl",
+                shown(&over)
+            );
+        }
     }
 }
 

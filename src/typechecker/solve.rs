@@ -510,8 +510,24 @@ impl TypeChecker {
             _ => true,
         };
         if args.is_empty() {
-            return (impls.iter())
-                .map(|key| (tr, head, *key))
+            let Some(first) = subject.as_ref().and_then(first_part).and_then(outer_head) else {
+                return (impls.iter())
+                    .map(|key| (tr, head, *key))
+                    .filter(for_subject)
+                    .collect();
+            };
+            // (Of the impls for some instantiations of the type, only
+            // those whose first part has the outer type of the subject's,
+            // or is a variable, are unified with the subject.)
+            let index = self.impl_index(tr, head);
+            let mut at: Vec<usize> = (index.by_instance.get(&Some(first)).into_iter().flatten())
+                .chain(index.by_instance.get(&None).into_iter().flatten())
+                .chain(&index.for_every_instance)
+                .copied()
+                .collect();
+            at.sort_unstable();
+            return (at.into_iter())
+                .map(|i| index.impls[i].0)
                 .filter(for_subject)
                 .collect();
         }
@@ -574,13 +590,22 @@ impl TypeChecker {
                         )
                     })
                     .collect(),
+                // (A trait without parameters has no trait arguments to
+                // know.)
                 None => {
-                    known = false;
+                    known &= (self.tables.traits.get(&tr)).is_some_and(|t| t.params.is_empty());
                     std::rc::Rc::from([])
                 }
             };
             let first = canon.first().and_then(outer_head);
             index.by_first.entry(first).or_default().push(i);
+            match self.impl_instance(&key) {
+                Some(instance) => (index.by_instance)
+                    .entry(first_part(&instance).and_then(outer_head))
+                    .or_default()
+                    .push(i),
+                None => index.for_every_instance.push(i),
+            }
             index.impls.push((key, canon));
         }
         let index = std::rc::Rc::new(index);
@@ -3501,9 +3526,25 @@ pub(super) fn outer_head(ty: &Type) -> Option<OuterHead> {
 
 /// The impls of a trait for a type as `impls_fitting` reads them: each
 /// with its trait arguments, canonical, and by the outer type of its
-/// first trait argument (`None`: a variable, which every use meets).
+/// first trait argument (`None`: a variable, which every use meets). An
+/// impl for some instantiations of the type (`Box(Int)`) is also there
+/// by the outer type of the first part of its type (`by_instance`), and
+/// one for every instantiation in `for_every_instance`.
 #[derive(Default)]
 pub(crate) struct ImplIndex {
     impls: Vec<(ImplKey, std::rc::Rc<[Type]>)>,
     by_first: HashMap<Option<OuterHead>, Vec<usize>>,
+    by_instance: HashMap<Option<OuterHead>, Vec<usize>>,
+    for_every_instance: Vec<usize>,
+}
+
+/// The first part of the type `ty` (`Int` of `Box(Int)`, of `List(Int)`,
+/// of `(Int, String)`, the key of `Map(Int, String)`): what unifying it
+/// with a type of the same outer type compares first.
+pub(super) fn first_part(ty: &Type) -> Option<&Type> {
+    match ty {
+        Type::Generic(_, parts) | Type::Tuple(parts) => parts.first(),
+        Type::List(part) | Type::Set(part) | Type::Channel(part) | Type::Map(part, _) => Some(part),
+        _ => None,
+    }
 }
