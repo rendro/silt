@@ -122,8 +122,8 @@ impl TypeChecker {
     /// The definition of the module's function `name`.
     fn fn_def_id(&self, name: Symbol) -> Option<crate::defs::DefId> {
         let defs = self.defs.as_ref()?;
-        (defs.of_module(self.module).iter().copied())
-            .find(|id| defs.get(*id).name == name && defs.get(*id).kind == crate::defs::DefKind::Fn)
+        (defs.named(self.module, name).iter().copied())
+            .find(|id| defs.get(*id).kind == crate::defs::DefKind::Fn)
     }
 
     /// The error of the `where` clause `type_param: trait_name` of the
