@@ -2353,12 +2353,17 @@ impl TypeChecker {
             let written = Type::Fun(param_types, Box::new(ret_type));
             // Where the two disagree, the body is checked against what
             // the impl wrote, so the disagreement is reported once.
+            // (Whether the impl's method is no method of the trait's
+            // shape: its variables are then not the trait's, and its
+            // bounds are not compared with the trait's.)
+            let mut misshapen = false;
             let body_type = match &expected {
                 // The impl writes the parameters the trait declares, the
                 // receiver among them: one more or one less is not a
                 // method of the trait.
                 Some(Type::Fun(declared, _)) if declared.len() != method.params.len() => {
                     self.impl_method_arity(ti, method, declared.len());
+                    misshapen = true;
                     written
                 }
                 // And the receiver where the trait declares one, there
@@ -2366,6 +2371,7 @@ impl TypeChecker {
                 // that is called on the type.
                 Some(_) if declared_receiver.is_some_and(|takes| takes != writes_self(method)) => {
                     self.impl_method_receiver(ti, method);
+                    misshapen = true;
                     written
                 }
                 Some(expected) => {
@@ -2483,7 +2489,7 @@ impl TypeChecker {
                                 *trait_name,
                                 &resolved_bound_args,
                             );
-                            if !declared && has_declared_type {
+                            if !declared && has_declared_type && !misshapen {
                                 let of_trait_arg = (ti.trait_args.iter()).any(|te| {
                                     let mut vars = Vec::new();
                                     super::names::type_vars_of(te, &mut vars);

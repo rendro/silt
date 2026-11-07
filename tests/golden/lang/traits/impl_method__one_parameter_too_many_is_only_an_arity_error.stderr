@@ -1,0 +1,5 @@
+error[type]: method `go` takes 3 parameters in this impl, but trait `Go` declares it with 2
+ --> impl_method__one_parameter_too_many_is_only_an_arity_error.silt:17:3
+    |
+ 17 |   fn go(self, x: a, y: Int) -> Int where a: Tr {
+    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ method `go` takes 3 parameters in this impl, but trait `Go` declares it with 2
