@@ -1145,4 +1145,3 @@ impl Compiler<'_> {
         self.begin_function(name, hidden + written, span)
     }
 }
-

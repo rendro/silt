@@ -139,6 +139,8 @@ fn a_function_of_65537_bounds_is_refused_at_little_memory() {
     std::fs::create_dir_all(&dir).expect("a temporary directory");
     let file = dir.join("bounds.silt");
     std::fs::write(&file, source).expect("the module is written");
+    // (`wait4` below reaps it, for the memory it had.)
+    #[allow(clippy::zombie_processes)]
     let mut child = Command::new(env!("CARGO_BIN_EXE_silt"))
         .arg("check")
         .arg(&file)
@@ -162,9 +164,7 @@ fn a_function_of_65537_bounds_is_refused_at_little_memory() {
     assert!(libc::WIFEXITED(status), "{stderr}");
     assert_eq!(libc::WEXITSTATUS(status), 1, "{stderr}");
     assert!(
-        stderr.contains(
-            "too many parameters and bounds of a function: 65538 (the limit is 255)"
-        ),
+        stderr.contains("too many parameters and bounds of a function: 65538 (the limit is 255)"),
         "{stderr}"
     );
     assert!(!stderr.contains("internal error"), "{stderr}");
