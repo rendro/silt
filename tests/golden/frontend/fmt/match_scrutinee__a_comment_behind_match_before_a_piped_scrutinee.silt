@@ -1,0 +1,19 @@
+-- cmd: fmt
+-- A `{- -}` comment behind `match`, at the end of its line, in front of
+-- a scrutinee that ends in a bare stage of a pipeline goes inside the
+-- parentheses written around the scrutinee, where a second pass finds
+-- it and leaves it: the output is formatted already.
+import list
+
+fn main() {
+  let items = [1, 2, 3]
+  let t = match {- -}
+    items
+    |> list.filter { x -> x > 1 }
+    |> list.length
+  {
+    2 -> "two"
+    _ -> "other"
+  }
+  println(t)
+}

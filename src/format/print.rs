@@ -1445,7 +1445,21 @@ impl Printer<'_> {
                 expr: scrutinee,
                 arms,
             } => {
-                let mut docs = vec![self.tok(Token::Match), space()];
+                // A `{- -}` comment behind the `match` of a scrutinee
+                // that is written in parentheses (a bare stage, below)
+                // goes inside them, in front of the scrutinee, as one
+                // there would: a second pass finds it there.
+                let match_token = match scrutinee.as_deref().is_some_and(ends_in_bare_stage) {
+                    true => {
+                        let token = self.cur.token_without_trailing(&Token::Match);
+                        match self.cur.block_comments_behind() {
+                            true => token,
+                            false => Doc::concat(vec![token, self.cur.trailing()]),
+                        }
+                    }
+                    false => self.tok(Token::Match),
+                };
+                let mut docs = vec![match_token, space()];
                 if let Some(scrutinee) = scrutinee {
                     // Behind a pipeline, braces that look like a closure
                     // are one if the expression goes on behind them, and
