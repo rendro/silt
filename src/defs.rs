@@ -347,6 +347,10 @@ pub struct DefTable {
     defs: Vec<Option<Def>>,
     /// The definitions of each module, in the order they were entered.
     by_module: HashMap<ModuleId, Vec<DefId>>,
+    /// The definitions of each module by name, each name's in the order
+    /// they were entered: [`DefTable::named`], so that finding one name
+    /// does not read the whole module.
+    by_name: HashMap<(ModuleId, Symbol), Vec<DefId>>,
     /// The variants of each enum of the session, in declaration order.
     variants: HashMap<DefId, Vec<DefId>>,
     /// The slots of each module that was cleared, to be reused.
@@ -366,6 +370,7 @@ impl DefTable {
             builtins,
             defs: Vec::new(),
             by_module: HashMap::new(),
+            by_name: HashMap::new(),
             variants: HashMap::new(),
             free: HashMap::new(),
             alias_types: HashMap::new(),
@@ -434,12 +439,22 @@ impl DefTable {
         self.by_module.get(&module).map_or(&[], Vec::as_slice)
     }
 
+    /// The definitions of module `module` named `name`, in the order
+    /// they were entered: those of [`DefTable::of_module`] with that
+    /// name.
+    pub fn named(&self, module: ModuleId, name: Symbol) -> &[DefId] {
+        self.by_name.get(&(module, name)).map_or(&[], Vec::as_slice)
+    }
+
     /// Forget the definitions of `module` before it is entered again:
     /// its slots are reused by [`DefTable::add`].
     pub fn clear_module(&mut self, module: ModuleId) {
         let builtin = self.builtins.defs.len();
         let ids = self.by_module.remove(&module).unwrap_or_default();
         for id in &ids {
+            if let Some(def) = &self.defs[id.0 as usize - builtin] {
+                self.by_name.remove(&(module, def.name));
+            }
             self.defs[id.0 as usize - builtin] = None;
             self.variants.remove(id);
             self.alias_types.remove(id);
@@ -452,6 +467,7 @@ impl DefTable {
     pub fn add(&mut self, def: Def) -> DefId {
         let builtin = self.builtins.defs.len();
         let module = def.module;
+        let name = def.name;
         let id = match self.free.get_mut(&module).and_then(|free| free.pop_front()) {
             Some(id) => {
                 self.defs[id.0 as usize - builtin] = Some(def);
@@ -463,6 +479,7 @@ impl DefTable {
             }
         };
         self.by_module.entry(module).or_default().push(id);
+        self.by_name.entry((module, name)).or_default().push(id);
         id
     }
 
@@ -477,5 +494,63 @@ impl DefTable {
     /// Record `variant` as the next variant of the enum `ty`.
     pub fn add_variant(&mut self, ty: DefId, variant: DefId) {
         self.variants.entry(ty).or_default().push(variant);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::intern::intern;
+
+    fn def(module: u32, name: &str, kind: DefKind) -> Def {
+        Def {
+            module: ModuleId(module),
+            name: intern(name),
+            span: Span::BUILTIN,
+            vis: Vis::Private,
+            kind,
+        }
+    }
+
+    /// The definitions of one name, as `named` gives them: those of
+    /// `of_module` with that name, in the same order.
+    fn by_reading(defs: &DefTable, module: u32, name: &str) -> Vec<DefId> {
+        (defs.of_module(ModuleId(module)).iter().copied())
+            .filter(|id| defs.get(*id).name == intern(name))
+            .collect()
+    }
+
+    /// `named` finds what reading the whole module finds, in the order
+    /// the definitions were entered, after a module is entered again
+    /// in fewer and reused slots too.
+    #[test]
+    fn named_is_the_module_read_for_one_name() {
+        let mut defs = crate::typechecker::names::new_def_table();
+        let f = defs.add(def(1, "f", DefKind::Fn));
+        let g = defs.add(def(1, "g", DefKind::Fn));
+        let f_let = defs.add(def(1, "f", DefKind::Let));
+        let other = defs.add(def(2, "f", DefKind::Fn));
+        assert_eq!(defs.named(ModuleId(1), intern("f")), [f, f_let]);
+        assert_eq!(defs.named(ModuleId(1), intern("g")), [g]);
+        assert_eq!(defs.named(ModuleId(2), intern("f")), [other]);
+        assert!(defs.named(ModuleId(1), intern("h")).is_empty());
+
+        defs.clear_module(ModuleId(1));
+        assert!(defs.named(ModuleId(1), intern("f")).is_empty());
+        assert!(defs.named(ModuleId(1), intern("g")).is_empty());
+        assert_eq!(defs.named(ModuleId(2), intern("f")), [other]);
+
+        let h = defs.add(def(1, "h", DefKind::Fn));
+        let f_again = defs.add(def(1, "f", DefKind::Fn));
+        assert_eq!(defs.named(ModuleId(1), intern("h")), [h]);
+        assert_eq!(defs.named(ModuleId(1), intern("f")), [f_again]);
+        assert!(defs.named(ModuleId(1), intern("g")).is_empty());
+        for (module, name) in [(1, "f"), (1, "g"), (1, "h"), (2, "f")] {
+            assert_eq!(
+                defs.named(ModuleId(module), intern(name)),
+                by_reading(&defs, module, name),
+                "{module} {name}"
+            );
+        }
     }
 }

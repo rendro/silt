@@ -715,17 +715,12 @@ impl<'a> Compiler<'a> {
         module: crate::session::ModuleId,
         name: Symbol,
     ) -> Option<crate::defs::TraitId> {
-        self.units
-            .defs
-            .of_module(module)
-            .iter()
-            .find_map(|&id| match self.units.defs.get(id) {
-                def if def.name == name => match def.kind {
-                    crate::defs::DefKind::Trait(t) => Some(t),
-                    _ => None,
-                },
+        self.units.defs.named(module, name).iter().find_map(|&id| {
+            match self.units.defs.get(id).kind {
+                crate::defs::DefKind::Trait(t) => Some(t),
                 _ => None,
-            })
+            }
+        })
     }
 
     /// The alias registries the program was checked with: read via
@@ -3108,13 +3103,10 @@ impl<'a> Compiler<'a> {
         let current = self.unit_stack.last().copied().unwrap_or(self.units.entry);
         let defs = &self.units.defs;
         let unit = self.units.modules.get(current)?;
-        defs.of_module(unit.id)
+        defs.named(unit.id, name)
             .iter()
             .copied()
-            .find(|id| {
-                let def = defs.get(*id);
-                def.name == name && matches!(def.kind, crate::defs::DefKind::Type(_))
-            })
+            .find(|id| matches!(defs.get(*id).kind, crate::defs::DefKind::Type(_)))
             .map(crate::defs::TypeId)
     }
 

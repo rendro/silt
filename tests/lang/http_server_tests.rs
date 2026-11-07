@@ -557,12 +557,24 @@ fn a_status_that_is_none_is_500() {
 /// some 500 requests; if a connection kept its worker until the VM
 /// took it away (after about 160 requests), it would run after
 /// 10,000.
+///
+/// What is counted is what is served after the other task is queued:
+/// main writes a mark to the log just before it spawns the task. (The
+/// count began at the close, so the time main's thread took from the
+/// close to the spawn counted too: on a busy macOS runner the OS kept
+/// that thread off its core while the workers served 2,876 and 5,262
+/// requests.) A thread held up between the mark and the spawn is
+/// measured again, up to three times: a connection that keeps its
+/// worker is over the bound every time.
 #[test]
 fn a_connection_gives_way_after_a_few_requests() {
     /// The turn of a connection (`Conn::TURN`).
     const TURN: usize = 8;
     const CONNECTIONS: usize = 64;
     const REQUESTS: usize = 200;
+    // A turn each for the connections ahead of it, and room for the
+    // turns that other workers take meanwhile.
+    const BOUND: usize = CONNECTIONS * TURN * 5;
     let source = format!(
         r#"
 import bytes
@@ -596,10 +608,17 @@ fn main() {{
     let _ = channel.receive(at_the_gate)
   }}
   channel.close(gate)
+  -- What is served from here on counts, however long this thread
+  -- took to get here.
+  channel.send(log, "queued")
   let _ = task.spawn {{ -> channel.send(log, "the other task") }}
-  let before = loop served = 0 {{
+  let before = loop served = 0, counting = false {{
     match channel.receive(log) {{
-      Some("served") -> loop(served + 1)
+      Some("queued") -> loop(served, true)
+      Some("served") -> match counting {{
+        true -> loop(served + 1, counting)
+        false -> loop(served, counting)
+      }}
       _ -> served
     }}
   }}
@@ -609,15 +628,31 @@ fn main() {{
 }}
 "#
     );
-    let server = Server::program(&source, None);
-    let mut requests = b"GET /gate HTTP/1.1\r\nHost: x\r\n\r\n".to_vec();
-    for _ in 0..REQUESTS {
-        requests.extend_from_slice(b"GET /next HTTP/1.1\r\nHost: x\r\n\r\n");
+    let mut counts = Vec::new();
+    for _ in 0..3 {
+        let served_before = served_before_the_other_task(&source, CONNECTIONS, REQUESTS);
+        eprintln!("{served_before} requests were served before the other task ran");
+        counts.push(served_before);
+        if served_before <= BOUND {
+            return;
+        }
     }
-    let clients: Vec<Client> = (0..CONNECTIONS)
+    panic!("{counts:?} requests were served before another task ran, in each of three runs");
+}
+
+/// Run the program of `a_connection_gives_way_after_a_few_requests`
+/// with `connections` connections of `requests` requests behind the
+/// gate, and read how many were served before the other task ran.
+fn served_before_the_other_task(source: &str, connections: usize, requests: usize) -> usize {
+    let server = Server::program(source, None);
+    let mut all = b"GET /gate HTTP/1.1\r\nHost: x\r\n\r\n".to_vec();
+    for _ in 0..requests {
+        all.extend_from_slice(b"GET /next HTTP/1.1\r\nHost: x\r\n\r\n");
+    }
+    let clients: Vec<Client> = (0..connections)
         .map(|_| {
             let mut client = server.connect();
-            client.send(&requests);
+            client.send(&all);
             client
         })
         .collect();
@@ -632,13 +667,7 @@ fn main() {{
         thread::sleep(Duration::from_millis(2));
     };
     drop(clients);
-    eprintln!("{served_before} requests were served before the other task ran");
-    // A turn each for the connections ahead of it, and room for the
-    // turns that other workers take meanwhile.
-    assert!(
-        served_before <= CONNECTIONS * TURN * 5,
-        "{served_before} requests were served before another task ran"
-    );
+    served_before
 }
 
 // ── Limits ──────────────────────────────────────────────────────────

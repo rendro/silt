@@ -609,10 +609,8 @@ impl TypeChecker {
         }
         let own_type = |name: &str| {
             (self.defs.as_ref()).is_some_and(|defs| {
-                (defs.of_module(self.module).iter()).any(|id| {
-                    let def = defs.get(*id);
-                    matches!(def.kind, crate::defs::DefKind::Type(_)) && resolve(def.name) == name
-                })
+                (defs.named(self.module, intern(name)).iter())
+                    .any(|id| matches!(defs.get(*id).kind, crate::defs::DefKind::Type(_)))
             })
         };
         match resolve(link).split_once('.') {

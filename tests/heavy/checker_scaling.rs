@@ -128,20 +128,26 @@ fn shown(over: &[(Duration, Duration)]) -> String {
     each.join(", ")
 }
 
+/// 8,000 functions against 4,000, not 4,000 against 2,000: the time a
+/// check takes to start is the same at both sizes and hides some of
+/// what grows. A lookup that read the whole module once per function
+/// made 4,000 take 2.07-2.16 times as long as 2,000 in a debug build on
+/// Linux, under the cap, and 8,000 take 2.43-2.55 times as long as
+/// 4,000; read by name, the second ratio is 1.86-2.00.
 #[test]
-fn checking_4000_functions_takes_about_twice_as_long_as_2000() {
+fn checking_8000_functions_takes_about_twice_as_long_as_4000() {
     let dir = std::env::temp_dir().join(format!("silt_checker_scaling_{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("a temporary directory");
     let small = dir.join("small.silt");
     let large = dir.join("large.silt");
-    std::fs::write(&small, module_of(2_000)).expect("the small module is written");
-    std::fs::write(&large, module_of(4_000)).expect("the large module is written");
+    std::fs::write(&small, module_of(4_000)).expect("the small module is written");
+    std::fs::write(&large, module_of(8_000)).expect("the large module is written");
     let measured = within(2.3, || best_times(&large, &small, 5));
     let _ = std::fs::remove_dir_all(&dir);
     if let Err(over) = measured {
         panic!(
-            "`silt check` of 4,000 functions took more than 2.3 times as long as that of \
-             2,000 functions in each of three measurements ({}): it is no longer linear in \
+            "`silt check` of 8,000 functions took more than 2.3 times as long as that of \
+             4,000 functions in each of three measurements ({}): it is no longer linear in \
              the number of definitions",
             shown(&over)
         );
