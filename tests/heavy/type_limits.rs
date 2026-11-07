@@ -224,7 +224,10 @@ fn the_type_variables_of_a_declaration_are_told_apart_in_linear_time() {
     let cases = [
         (
             "type_parameters",
-            format!("type Many({}) {{ x: a0 }}\nfn main() {{}}\n", vars.join(", ")),
+            format!(
+                "type Many({}) {{ x: a0 }}\nfn main() {{}}\n",
+                vars.join(", ")
+            ),
             "too many parameters of a type: 65537 (the limit is 65536)",
         ),
         (
