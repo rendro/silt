@@ -110,3 +110,67 @@ fn an_impl_of_65600_type_variables_is_refused() {
         "too many type variables of an impl: 65600 (the limit is 65536)",
     );
 }
+
+/// A bound on a trait of the program is a parameter of the function,
+/// hidden: 65,537 of them, each on a type variable of its own, are far
+/// past the 255 a function has, and the checker refuses the function
+/// before it reads the signature. Reading it cost memory as the square
+/// of its type variables (16,000 took 1.9 GB, 65,537 more than 4 GB);
+/// refused, it takes some 120 MB in a debug build, under the limit of
+/// 1 GB here.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_function_of_65537_bounds_is_refused_at_little_memory() {
+    use std::io::Read;
+    use std::process::Stdio;
+
+    let n = 65_537;
+    let vars: Vec<String> = (0..n).map(|k| format!("a{k}")).collect();
+    let tuple = |xs: &[String]| format!("({})", xs.join(", "));
+    let ty = tuple(&vars.chunks(255).map(tuple).collect::<Vec<_>>());
+    let bounds: Vec<String> = vars.iter().map(|v| format!("{v}: Tr")).collect();
+    let source = format!(
+        "trait Tr {{ fn tr(self) -> Int }}\n\
+         fn f(x: {ty}) -> Int where {} {{ 1 }}\n\
+         fn main() {{}}\n",
+        bounds.join(", ")
+    );
+    let dir = std::env::temp_dir().join(format!("silt_type_limits_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a temporary directory");
+    let file = dir.join("bounds.silt");
+    std::fs::write(&file, source).expect("the module is written");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_silt"))
+        .arg("check")
+        .arg(&file)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("silt runs");
+    let mut stderr = String::new();
+    (child.stderr.take().expect("silt's errors"))
+        .read_to_string(&mut stderr)
+        .expect("silt's errors are text");
+    // (`wait4`: the most memory the process had resident, in kB.)
+    let mut status = 0;
+    // SAFETY: an all-zero `rusage` is a valid value of it.
+    let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+    // SAFETY: the pid is of our child, not waited for yet; `status` and
+    // `usage` are valid for writes.
+    let waited = unsafe { libc::wait4(child.id() as libc::pid_t, &mut status, 0, &mut usage) };
+    let _ = std::fs::remove_file(&file);
+    assert_eq!(waited, child.id() as libc::pid_t, "{stderr}");
+    assert!(libc::WIFEXITED(status), "{stderr}");
+    assert_eq!(libc::WEXITSTATUS(status), 1, "{stderr}");
+    assert!(
+        stderr.contains(
+            "too many parameters and bounds of a function: 65538 (the limit is 255)"
+        ),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("internal error"), "{stderr}");
+    let resident = usage.ru_maxrss;
+    assert!(
+        resident < 1024 * 1024,
+        "a function of 65,537 bounds took {resident} kB to refuse"
+    );
+}

@@ -126,6 +126,30 @@ impl TypeChecker {
             .find(|id| defs.get(*id).name == name && defs.get(*id).kind == crate::defs::DefKind::Fn)
     }
 
+    /// The signature of the function `f` refused before it was read:
+    /// of its parameters, each of an unknown type, to an unknown type.
+    /// Its body is not checked.
+    fn refused_signature(&mut self, f: &FnDecl, env: &mut TypeEnv) -> FnSig {
+        self.refused_fns.insert(f.span);
+        let sig = FnSig {
+            params: vec![Type::Error; f.params.len()],
+            ret: Type::Error,
+            names: HashMap::new(),
+            rigid: Vec::new(),
+            bounds: Vec::new(),
+            complete: true,
+        };
+        env.define(
+            f.name,
+            Scheme {
+                vars: Vec::new(),
+                preds: Vec::new(),
+                ty: sig.ty(),
+            },
+        );
+        sig
+    }
+
     /// Read the signature of `f`. A function with a complete signature
     /// (see [`FnSig::complete`]) is bound in `env` with its scheme; any
     /// other is bound when its body is checked, in the order the
@@ -136,6 +160,22 @@ impl TypeChecker {
         // unrelated code do not cascade into "undefined variable" errors.
         if f.is_recovery_stub {
             self.recovery_stub_names.insert(f.name);
+        }
+        // A function of more parameters and bounds than a function can
+        // have is refused before its signature is read: it does not run,
+        // and a signature of that many type variables would cost as much
+        // more to read.
+        let bounds = (f.where_clauses.iter())
+            .filter(|wc| {
+                (self.named_trait(wc.trait_res, wc.trait_name))
+                    .is_some_and(super::evidence::has_dictionary)
+            })
+            .count();
+        if let Some(refusal) =
+            crate::bytecode::emit::bounds_past_limit(f.params.len(), bounds, f.span)
+        {
+            self.errors.push(refusal);
+            return self.refused_signature(f, env);
         }
         let applied = self.check_signature_kinds(f);
         if let Some(id) = self.fn_def_id(f.name) {

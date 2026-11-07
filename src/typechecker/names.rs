@@ -1334,37 +1334,48 @@ fn lines_of(text: &str, span: Span) -> Range<u32> {
 
 /// The type variables `te` writes (lowercase bare names), into `out`.
 pub(super) fn type_vars_of(te: &TypeExpr, out: &mut Vec<Symbol>) {
-    match &te.kind {
-        TypeExprKind::Named {
-            module: None, name, ..
-        } if resolve(*name).starts_with(|c: char| c.is_lowercase() || c == '_') => {
-            if !out.contains(name) {
+    // (Each once, in the order first written: past a few, a set keeps a
+    // signature of many of them from comparing each with all.)
+    fn walk(te: &TypeExpr, out: &mut Vec<Symbol>) {
+        match &te.kind {
+            TypeExprKind::Named {
+                module: None, name, ..
+            } if resolve(*name).starts_with(|c: char| c.is_lowercase() || c == '_') => {
                 out.push(*name);
             }
-        }
-        TypeExprKind::Named { .. } | TypeExprKind::SelfType => {}
-        TypeExprKind::Generic {
-            module, name, args, ..
-        } => {
-            // A type constructor variable applied, `m(Int)`.
-            if module.is_none()
-                && resolve(*name).starts_with(char::is_lowercase)
-                && !out.contains(name)
-            {
-                out.push(*name);
+            TypeExprKind::Named { .. } | TypeExprKind::SelfType => {}
+            TypeExprKind::Generic {
+                module, name, args, ..
+            } => {
+                // A type constructor variable applied, `m(Int)`.
+                if module.is_none() && resolve(*name).starts_with(char::is_lowercase) {
+                    out.push(*name);
+                }
+                args.iter().for_each(|t| walk(t, out));
             }
-            args.iter().for_each(|t| type_vars_of(t, out));
-        }
-        TypeExprKind::Tuple(parts) => parts.iter().for_each(|t| type_vars_of(t, out)),
-        TypeExprKind::Function(params, ret) => {
-            params.iter().for_each(|t| type_vars_of(t, out));
-            type_vars_of(ret, out);
-        }
-        TypeExprKind::AssocProj { receiver, .. } => type_vars_of(receiver, out),
-        TypeExprKind::AnonRecord { fields, .. } => {
-            fields.iter().for_each(|(_, t)| type_vars_of(t, out));
+            TypeExprKind::Tuple(parts) => parts.iter().for_each(|t| walk(t, out)),
+            TypeExprKind::Function(params, ret) => {
+                params.iter().for_each(|t| walk(t, out));
+                walk(ret, out);
+            }
+            TypeExprKind::AssocProj { receiver, .. } => walk(receiver, out),
+            TypeExprKind::AnonRecord { fields, .. } => {
+                fields.iter().for_each(|(_, t)| walk(t, out));
+            }
         }
     }
+    let mut written = Vec::new();
+    walk(te, &mut written);
+    if out.len() + written.len() <= 32 {
+        for name in written {
+            if !out.contains(&name) {
+                out.push(name);
+            }
+        }
+        return;
+    }
+    let mut seen: std::collections::HashSet<Symbol> = out.iter().copied().collect();
+    out.extend(written.into_iter().filter(|name| seen.insert(*name)));
 }
 
 /// The closure of a local `let f = { … }`, whose own name is a local of

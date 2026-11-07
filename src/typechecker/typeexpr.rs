@@ -379,8 +379,8 @@ impl TypeChecker {
                         Type::Var(v) => Some(*v),
                         _ => None,
                     };
-                    let without = (var.and_then(|v| self.bare_labels.get(&v).cloned()))
-                        .unwrap_or_else(|| name.to_string());
+                    let without = (var.and_then(|v| self.bare_labels.get(&v)))
+                        .map_or_else(|| name.to_string(), |label| label.to_string());
                     let message = format!(
                         "'{name}' is written with a type argument in `{}` and without one in \
                          `{without}`: a type variable is a type or a type constructor, not both",
@@ -480,44 +480,44 @@ impl TypeChecker {
     /// constructor, not both.
     pub(super) fn check_signature_kinds(&mut self, f: &FnDecl) -> KindLabels {
         // (Each variable: where it is first written applied and where
-        // bare, as the parameter or the result writes it.)
-        let mut applied: Vec<(Symbol, String)> = Vec::new();
-        let mut bare: Vec<(Symbol, String, Span)> = Vec::new();
-        let mut places: Vec<(String, &TypeExpr)> = Vec::new();
+        // bare, as the parameter or the result writes it. The variables
+        // of one place share its label: a parameter of many of them is
+        // no copy of its text each.)
+        let mut uses = KindUses::default();
+        let mut places: Vec<(Rc<str>, &TypeExpr)> = Vec::new();
         for param in &f.params {
             if let (ParamKind::Data, Some(te)) = (&param.kind, &param.ty) {
                 let label = match &param.pattern.kind {
                     PatternKind::Ident(n) => format!("{n}: {}", type_expr_text(te)),
                     _ => format!("_: {}", type_expr_text(te)),
                 };
-                places.push((label, te));
+                places.push((label.into(), te));
             }
         }
         if let Some(te) = &f.return_type {
-            places.push((format!("-> {}", type_expr_text(te)), te));
+            places.push((format!("-> {}", type_expr_text(te)).into(), te));
         }
         for (label, te) in &places {
-            self.kind_uses(te, label, &mut applied, &mut bare);
+            self.kind_uses(te, label, &mut uses);
         }
-        let mut reported: Vec<Symbol> = Vec::new();
-        for (name, without, span) in &bare {
-            let Some((_, with)) = applied.iter().find(|(n, _)| n == name) else {
+        let with_of: HashMap<Symbol, &Rc<str>> = (uses.applied.iter())
+            .map(|(name, with)| (*name, with))
+            .collect();
+        // (A variable is bare at one place: `uses` keeps its first.)
+        for (name, without, span) in &uses.bare {
+            let Some(with) = with_of.get(name) else {
                 continue;
             };
-            if reported.contains(name) {
-                continue;
-            }
-            reported.push(*name);
             let message = format!(
                 "'{name}' is written with a type argument in `{with}` and without one in \
                  `{without}`: a type variable is a type or a type constructor, not both"
             );
             self.error(Code::KindMismatch, message, *span);
         }
-        let bare = (bare.into_iter())
+        let bare = (uses.bare.into_iter())
             .map(|(name, label, _)| (name, label))
             .collect();
-        (applied, bare)
+        (uses.applied, bare)
     }
 
     /// Keep where the signature that resolved `param_map` first wrote
@@ -546,15 +546,9 @@ impl TypeChecker {
         }
     }
 
-    /// The type variables `te` writes with a type argument (into
-    /// `applied`) and without one (into `bare`), each first at `label`.
-    fn kind_uses(
-        &self,
-        te: &TypeExpr,
-        label: &str,
-        applied: &mut Vec<(Symbol, String)>,
-        bare: &mut Vec<(Symbol, String, Span)>,
-    ) {
+    /// The type variables `te` writes with a type argument and without
+    /// one, into `uses`, each first at `label`.
+    fn kind_uses(&self, te: &TypeExpr, label: &Rc<str>, uses: &mut KindUses) {
         let is_variable = |this: &Self, name: Symbol| {
             let text = resolve(name);
             this.named_type(te.res, name).is_none()
@@ -564,36 +558,33 @@ impl TypeChecker {
             TypeExprKind::Named {
                 module: None, name, ..
             } => {
-                if is_variable(self, *name) && !bare.iter().any(|(n, ..)| n == name) {
-                    bare.push((*name, label.to_string(), te.span));
+                if is_variable(self, *name) && uses.seen_bare.insert(*name) {
+                    uses.bare.push((*name, Rc::clone(label), te.span));
                 }
             }
             TypeExprKind::Generic {
                 module, name, args, ..
             } => {
-                if module.is_none()
-                    && is_variable(self, *name)
-                    && !applied.iter().any(|(n, _)| n == name)
-                {
-                    applied.push((*name, label.to_string()));
+                if module.is_none() && is_variable(self, *name) && uses.seen_applied.insert(*name) {
+                    uses.applied.push((*name, Rc::clone(label)));
                 }
                 for arg in args {
-                    self.kind_uses(arg, label, applied, bare);
+                    self.kind_uses(arg, label, uses);
                 }
             }
             TypeExprKind::Tuple(parts) => {
                 for part in parts {
-                    self.kind_uses(part, label, applied, bare);
+                    self.kind_uses(part, label, uses);
                 }
             }
             TypeExprKind::Function(params, ret) => {
                 for part in params.iter().chain([&**ret]) {
-                    self.kind_uses(part, label, applied, bare);
+                    self.kind_uses(part, label, uses);
                 }
             }
             TypeExprKind::AnonRecord { fields, .. } => {
                 for (_, part) in fields {
-                    self.kind_uses(part, label, applied, bare);
+                    self.kind_uses(part, label, uses);
                 }
             }
             _ => {}
@@ -647,8 +638,8 @@ impl TypeChecker {
                                 Type::Var(v) => *v,
                                 _ => unreachable!("a constructor variable is a variable"),
                             };
-                            let with = (self.constructor_labels.get(&var).cloned())
-                                .unwrap_or_else(|| format!("{name}(a)"));
+                            let with = (self.constructor_labels.get(&var))
+                                .map_or_else(|| format!("{name}(a)"), |label| label.to_string());
                             let message = format!(
                                 "'{name}' is written with a type argument in `{with}` and without \
                                  one in `{name}`: a type variable is a type or a type constructor, \
@@ -1022,7 +1013,17 @@ fn opaque_arity(name: &str) -> Option<usize> {
 /// `te` as a program writes it, for a message that quotes it.
 /// Where a signature writes each type variable with a type argument and
 /// where without one (`check_signature_kinds`): `xs: m(Int)`, `-> m`.
-pub(super) type KindLabels = (Vec<(Symbol, String)>, Vec<(Symbol, String)>);
+pub(super) type KindLabels = (Vec<(Symbol, Rc<str>)>, Vec<(Symbol, Rc<str>)>);
+
+/// The type variables a signature writes with a type argument and
+/// without one, each at the first place that does (`kind_uses`).
+#[derive(Default)]
+struct KindUses {
+    applied: Vec<(Symbol, Rc<str>)>,
+    bare: Vec<(Symbol, Rc<str>, Span)>,
+    seen_applied: std::collections::HashSet<Symbol>,
+    seen_bare: std::collections::HashSet<Symbol>,
+}
 
 pub(crate) fn type_expr_text(te: &TypeExpr) -> String {
     let all = |types: &[TypeExpr]| {

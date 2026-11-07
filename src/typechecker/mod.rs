@@ -501,11 +501,15 @@ pub struct TypeChecker {
     /// Where a signature first writes each of its type constructor
     /// variables applied (`xs: m(Int)`), for the error of an annotation
     /// in its body that writes one without a type argument.
-    pub(super) constructor_labels: HashMap<TyVar, String>,
+    pub(super) constructor_labels: HashMap<TyVar, Rc<str>>,
     /// Where a signature first writes each of its type variables without
     /// a type argument (`y: m`), for the error of an annotation in its
     /// body that applies one.
-    pub(super) bare_labels: HashMap<TyVar, String>,
+    pub(super) bare_labels: HashMap<TyVar, Rc<str>>,
+    /// The functions refused before their signature was read
+    /// (`register_fn_decl`), by their span: their bodies are not
+    /// checked.
+    pub(super) refused_fns: std::collections::HashSet<Span>,
     /// While a signature's annotations are resolved: its own check
     /// reports a variable written both ways (`check_signature_kinds`).
     pub(super) resolving_signature: bool,
@@ -889,6 +893,7 @@ impl TypeChecker {
             declaring_type: None,
             constructor_labels: HashMap::new(),
             bare_labels: HashMap::new(),
+            refused_fns: std::collections::HashSet::new(),
             resolving_signature: false,
             descriptor_var: None,
             decode_params: Vec::new(),
@@ -1623,7 +1628,10 @@ impl TypeChecker {
                 // not user code and must not produce diagnostics. A host
                 // module's functions have no bodies.
                 (Decl::Fn(f), Some(sig)) => {
-                    if !f.is_recovery_stub && !self.signatures_only {
+                    if !f.is_recovery_stub
+                        && !self.signatures_only
+                        && !self.refused_fns.contains(&f.span)
+                    {
                         self.frame_owner = Some(unused::FrameOwner::TopLevel(f.name));
                         self.check_body(f, sig, env);
                     }
