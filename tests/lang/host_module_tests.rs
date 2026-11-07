@@ -396,6 +396,31 @@ fn a_result_of_the_wrong_type_names_the_host_function() {
     );
 }
 
+/// No value is of `Never`: a host function that says it returns it and
+/// returns a value is an error, and failing is what it may do.
+#[test]
+fn a_host_function_returning_never_can_only_fail() {
+    let host = HostModule::new("h")
+        .function("fn f() -> Never", |_: &[Value]| {
+            Ok(Value::String("x".into()))
+        })
+        .function("fn fail(msg: String) -> Never", |args: &[Value]| {
+            Err(VmError::new(format!("failed: {}", args[0])))
+        });
+    let program = "import h\nfn main() { let b: Bool = h.f()\n match b { true -> host.give(1)\n false -> host.give(2) } }\nimport host";
+    let err = run(program, host.clone()).unwrap_err();
+    assert!(
+        err.contains("h.f: its signature returns Never, but it returned String"),
+        "got: {err}"
+    );
+    let err = run(
+        "import h\nfn main() { let s: String = h.fail(\"no\")\n host.give(s) }\nimport host",
+        host,
+    )
+    .unwrap_err();
+    assert!(err.contains("h.fail: failed: no"), "got: {err}");
+}
+
 #[test]
 fn compile_without_analyze_returns_the_analysis_errors() {
     use silt::session::{Config, Entry, LockPolicy, ProjectSetup, Session};

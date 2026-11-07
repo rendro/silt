@@ -141,6 +141,7 @@ pub(super) fn shape(ty: &TypeExpr) -> HostShape {
             "Bool" => HostShape::Bool,
             "String" => HostShape::String,
             "Bytes" => HostShape::Bytes,
+            "Never" => HostShape::Never,
             _ => HostShape::Any,
         },
         TypeExprKind::Generic {
