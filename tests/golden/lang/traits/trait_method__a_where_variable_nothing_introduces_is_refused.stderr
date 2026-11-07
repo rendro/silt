@@ -1,0 +1,5 @@
+error[type]: type variable 'a' in where clause is not introduced in the function signature; use an explicit type annotation, e.g.: fn go(x: a) where a: Tr
+ --> trait_method__a_where_variable_nothing_introduces_is_refused.silt:10:3
+    |
+ 10 |   fn go(self, x: Int) -> Int where a: Tr
+    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type variable 'a' in where clause is not introduced in the function signature; use an explicit type annotation, e.g.: fn go(x: a) where a: Tr
