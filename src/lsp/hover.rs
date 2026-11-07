@@ -17,14 +17,6 @@ use super::workspace::Named;
 impl Server {
     // ── Hover ──────────────────────────────────────────────────────
 
-    /// What documents silt's own name `key` (`println`, `list.map`): for
-    /// one of the prelude, its own section of the globals page, as
-    /// signature help shows it, not the whole page; else its builtin doc.
-    fn builtin_doc(&self, key: &str) -> Option<String> {
-        crate::builtins::registry::docs::prelude_section(key)
-            .or_else(|| self.builtin_docs.get(key).cloned())
-    }
-
     pub(super) fn hover(&self, params: lsp_types::HoverParams) -> Option<Hover> {
         let uri = &params.text_document_position_params.text_document.uri;
         let pos = params.text_document_position_params.position;
@@ -191,13 +183,16 @@ impl Server {
             // One of silt's own definitions is documented as it is
             // reached: `println`, `list.map`, `io.NotFound`. A variant
             // that an import binds bare is its module's all the same.
-            if let Some(d) = (self.builtin_at(uri, cursor)).and_then(|key| self.builtin_doc(&key)) {
-                return Some(d);
+            if let Some(d) = self
+                .builtin_at(uri, cursor)
+                .and_then(|key| self.builtin_docs.get(&key))
+            {
+                return Some(d.clone());
             }
             if let Some(name) = ident_at_cursor
-                && let Some(d) = self.builtin_doc(&resolve(name))
+                && let Some(d) = self.builtin_docs.get(&resolve(name))
             {
-                return Some(d);
+                return Some(d.clone());
             }
             let (module, member) = qualified?;
             let (module, member) = (resolve(module), resolve(member));

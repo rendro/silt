@@ -112,6 +112,40 @@ fn hover_on_math_cos_includes_signature_and_doc() {
     client.shutdown();
 }
 
+/// Completion of a name of the prelude documents it by its own section
+/// of the globals page, as hover and signature help do, not by the
+/// whole page.
+#[test]
+fn completion_of_a_prelude_name_documents_its_own_section() {
+    let mut client = LspClient::spawn();
+    let uri = unique_uri();
+    let source = "fn main() {\n    printl\n}\n";
+    client.did_open_and_wait(&uri, source);
+
+    let resp = client.completion(&uri, 1, 10);
+    let items = resp
+        .pointer("/result/items")
+        .or_else(|| resp.pointer("/result"))
+        .and_then(|v| v.as_array())
+        .expect("expected completion items array");
+    let println = (items.iter())
+        .find(|it| it["label"] == "println")
+        .unwrap_or_else(|| panic!("no `println` among {items:?}"));
+    let doc = println
+        .pointer("/documentation/value")
+        .and_then(|v| v.as_str())
+        .expect("`println` is documented");
+    assert!(
+        doc.contains("println(value: a) -> () where a: Display"),
+        "completion of println: its section; got:\n{doc}"
+    );
+    assert!(
+        !doc.contains("# Globals") && !doc.contains("Always Available"),
+        "completion of println: not the whole globals page; got:\n{doc}"
+    );
+    client.shutdown();
+}
+
 /// Hover on a name of the prelude (`println`, `Some`) shows its own
 /// section of the globals page, as signature help does, not the whole
 /// page with every other name of the prelude.

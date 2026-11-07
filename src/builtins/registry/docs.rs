@@ -31,7 +31,7 @@ use super::{Module, Row, registry};
 const ERRORS_PAGE: &str = include_str!("../../../docs/stdlib/errors.md");
 const GLOBALS_PAGE: &str = include_str!("../../../docs/stdlib/globals.md");
 
-/// The prelude's names, which the globals page documents as a whole.
+/// The prelude's variants, which the globals page documents.
 const PRELUDE_VARIANTS: &[&str] = &["Ok", "Err", "Some", "None"];
 
 /// Every reference page, by its file name under `docs/stdlib/`, in the
@@ -118,12 +118,15 @@ pub fn builtin_docs() -> &'static HashMap<String, String> {
                 }
             }
         }
+        // A name of the prelude shows its own section of the globals
+        // page (the page as a whole, for one without a section).
         let globals = strip_frontmatter(GLOBALS_PAGE);
         for name in crate::module::builtin_free_function_names()
             .iter()
             .chain(PRELUDE_VARIANTS)
         {
-            docs.insert(name.to_string(), globals.to_string());
+            let doc = prelude_section(name).unwrap_or_else(|| globals.to_string());
+            docs.insert(name.to_string(), doc);
         }
         // A function of a feature that is not built (its module's, or
         // its own): what it is, and what it needs. The checker does not
@@ -146,9 +149,8 @@ pub fn builtin_docs() -> &'static HashMap<String, String> {
 }
 
 /// The section of the globals page on the prelude's name `name`
-/// (`println`, `Some`): what hover and signature help show of it, where
-/// completion shows the whole page.
-pub fn prelude_section(name: &str) -> Option<String> {
+/// (`println`, `Some`), its builtin doc.
+fn prelude_section(name: &str) -> Option<String> {
     (iter_sections(strip_frontmatter(GLOBALS_PAGE)).into_iter())
         .find(|(keys, _)| keys.iter().any(|key| key == name))
         .map(|(_, body)| body)

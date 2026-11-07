@@ -78,8 +78,7 @@ impl Server {
                 // (of the globals page, for one of the prelude).
                 let row = crate::builtins::registry::registry().named(&fn_name)?;
                 let (label, ranges) = row.qualified_signature(row.module)?;
-                let doc_text = crate::builtins::registry::docs::prelude_section(&fn_name)
-                    .or_else(|| self.builtin_docs.get(&fn_name).cloned());
+                let doc_text = self.builtin_docs.get(&fn_name).cloned();
                 let params_info = ranges
                     .into_iter()
                     .map(|range| ParameterInformation {
