@@ -506,10 +506,10 @@ pub struct TypeChecker {
     /// a type argument (`y: m`), for the error of an annotation in its
     /// body that applies one.
     pub(super) bare_labels: HashMap<TyVar, Rc<str>>,
-    /// The functions refused before their signature was read
-    /// (`register_fn_decl`), by their span: their bodies are not
-    /// checked.
-    pub(super) refused_fns: std::collections::HashSet<Span>,
+    /// The functions and methods of more parameters and bounds than a
+    /// function has (`refuse_past_bounds`), by the span of their body:
+    /// the bodies are not checked.
+    pub(super) refused_bodies: std::collections::HashSet<Span>,
     /// While a signature's annotations are resolved: its own check
     /// reports a variable written both ways (`check_signature_kinds`).
     pub(super) resolving_signature: bool,
@@ -893,7 +893,7 @@ impl TypeChecker {
             declaring_type: None,
             constructor_labels: HashMap::new(),
             bare_labels: HashMap::new(),
-            refused_fns: std::collections::HashSet::new(),
+            refused_bodies: std::collections::HashSet::new(),
             resolving_signature: false,
             descriptor_var: None,
             decode_params: Vec::new(),
@@ -1630,7 +1630,7 @@ impl TypeChecker {
                 (Decl::Fn(f), Some(sig)) => {
                     if !f.is_recovery_stub
                         && !self.signatures_only
-                        && !self.refused_fns.contains(&f.span)
+                        && !self.refused_bodies.contains(&f.body.span)
                     {
                         self.frame_owner = Some(unused::FrameOwner::TopLevel(f.name));
                         self.check_body(f, sig, env);

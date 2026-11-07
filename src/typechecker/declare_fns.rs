@@ -126,11 +126,45 @@ impl TypeChecker {
             .find(|id| defs.get(*id).name == name && defs.get(*id).kind == crate::defs::DefKind::Fn)
     }
 
-    /// The signature of the function `f` refused before it was read:
+    /// The bounds of `f` that pass a dictionary, as its `where` clauses
+    /// write them: of a trait that has dictionaries, on a variable its
+    /// parameters or its result write. (A bound on another variable is
+    /// an error of its own.)
+    pub(super) fn written_bounds(&self, f: &FnDecl) -> usize {
+        let mut vars = Vec::new();
+        for te in (f.params.iter().filter_map(|p| p.ty.as_ref())).chain(f.return_type.as_ref()) {
+            super::names::type_vars_of(te, &mut vars);
+        }
+        let mut vars: std::collections::HashSet<Symbol> = vars.into_iter().collect();
+        vars.extend(f.params.iter().filter_map(|p| match (&p.kind, &p.pattern.kind) {
+            (ParamKind::Type, PatternKind::Ident(name)) => Some(*name),
+            _ => None,
+        }));
+        (f.where_clauses.iter())
+            .filter(|wc| vars.contains(&wc.type_param))
+            .filter(|wc| {
+                (self.named_trait(wc.trait_res, wc.trait_name))
+                    .is_some_and(super::evidence::has_dictionary)
+            })
+            .count()
+    }
+
+    /// Refuse the function or method `f` of `params` parameters and
+    /// `bounds` bounds that pass a dictionary when they are more than a
+    /// function has, with the compiler's text: it does not run, so its
+    /// body is not checked (`refused_bodies`). Whether it was refused.
+    pub(super) fn refuse_past_bounds(&mut self, f: &FnDecl, params: usize, bounds: usize) -> bool {
+        let Some(refusal) = crate::bytecode::emit::bounds_past_limit(params, bounds, f.span) else {
+            return false;
+        };
+        self.errors.push(refusal);
+        self.refused_bodies.insert(f.body.span);
+        true
+    }
+
+    /// The signature of the refused function `f` as its callers see it:
     /// of its parameters, each of an unknown type, to an unknown type.
-    /// Its body is not checked.
     fn refused_signature(&mut self, f: &FnDecl, env: &mut TypeEnv) -> FnSig {
-        self.refused_fns.insert(f.span);
         let sig = FnSig {
             params: vec![Type::Error; f.params.len()],
             ret: Type::Error,
@@ -162,21 +196,9 @@ impl TypeChecker {
             self.recovery_stub_names.insert(f.name);
         }
         // A function of more parameters and bounds than a function can
-        // have is refused before its signature is read: it does not run,
-        // and a signature of that many type variables would cost as much
-        // more to read.
-        let bounds = (f.where_clauses.iter())
-            .filter(|wc| {
-                (self.named_trait(wc.trait_res, wc.trait_name))
-                    .is_some_and(super::evidence::has_dictionary)
-            })
-            .count();
-        if let Some(refusal) =
-            crate::bytecode::emit::bounds_past_limit(f.params.len(), bounds, f.span)
-        {
-            self.errors.push(refusal);
-            return self.refused_signature(f, env);
-        }
+        // have does not run: its signature is read for its own errors,
+        // and its body is not checked (`refuse_past_bounds`).
+        let refused = self.refuse_past_bounds(f, f.params.len(), self.written_bounds(f));
         let applied = self.check_signature_kinds(f);
         if let Some(id) = self.fn_def_id(f.name) {
             let type_params = (f.params.iter().enumerate())
@@ -426,6 +448,9 @@ impl TypeChecker {
         // leave out is never decided, so it is general.
         let bodiless = f.is_recovery_stub || self.signatures_only;
         let complete = bodiless || (annotated && free.iter().all(|v| body_view.contains_key(v)));
+        if refused {
+            return self.refused_signature(f, env);
+        }
         if complete {
             // A variable only a bound's trait arguments name
             // (`where a: TryInto(b)`) is the scheme's as well.
