@@ -264,6 +264,48 @@ fn the_type_variables_of_a_declaration_are_told_apart_in_linear_time() {
     }
 }
 
+/// The checker keeps a trait's parameters and an impl head's type
+/// variables in sets too: a trait of 65,537 parameters took 48.8 s in a
+/// debug build to check, comparing each method's variables with all of
+/// them, and an impl head of 65,537 refused by the limit 39.3 s,
+/// numbering each variable by a search of those before it; each takes
+/// about a second now.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_trait_and_an_impl_of_65537_type_variables_are_checked_in_linear_time() {
+    let (vars, ty) = many_variables(65_537);
+    let cases = [
+        (
+            "trait_parameters",
+            format!(
+                "trait Many({}) {{ fn m(self) -> Int }}\nfn main() {{}}\n",
+                vars.join(", ")
+            ),
+            0,
+            "",
+        ),
+        (
+            "impl_variables",
+            format!(
+                "trait Tr {{ fn tr(self) -> Int }}\ntype Box(a) {{ v: a }}\n\
+                 trait Tr for Box({ty}) {{ fn tr(self) -> Int {{ 1 }} }}\nfn main() {{}}\n"
+            ),
+            1,
+            "too many type variables of an impl: 65537 (the limit is 65536)",
+        ),
+    ];
+    for (name, source, exit, message) in cases {
+        let (code, stderr, resident, took) = check_measured(name, &source);
+        assert_eq!(code, exit, "{name}: {stderr}");
+        assert!(stderr.contains(message), "{name}: {stderr}");
+        assert!(resident < 1024 * 1024, "{name} took {resident} kB");
+        assert!(
+            took < std::time::Duration::from_secs(10),
+            "{name} took {took:?}"
+        );
+    }
+}
+
 /// The source of a trait `Go` whose method `go` takes `x: {ty}` with the
 /// bounds `bounds`, with a default body or an impl for `Box` that writes
 /// the same.
