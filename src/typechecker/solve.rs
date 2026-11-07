@@ -423,7 +423,7 @@ impl TypeChecker {
         if args.is_empty() && instance.is_none() {
             return ImplArgs::none();
         }
-        let mut vars: Vec<TyVar> = Vec::new();
+        let mut vars: HashMap<TyVar, usize> = HashMap::new();
         let mut text = |ty: &Type| {
             let ty = crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(ty));
             key_text(&ty, &mut vars)
@@ -3323,17 +3323,15 @@ impl TypeChecker {
 
 /// The canonical text of the type `ty` in an impl's key: type
 /// constructors by their definitions, each type variable by the place it
-/// first appears in `vars`.
-fn key_text(ty: &Type, vars: &mut Vec<TyVar>) -> String {
-    let all = |tys: &[Type], vars: &mut Vec<TyVar>| -> String {
+/// first appears, which `vars` keeps.
+fn key_text(ty: &Type, vars: &mut HashMap<TyVar, usize>) -> String {
+    let all = |tys: &[Type], vars: &mut HashMap<TyVar, usize>| -> String {
         let parts: Vec<String> = tys.iter().map(|ty| key_text(ty, vars)).collect();
         parts.join(",")
     };
-    let var = |v: TyVar, vars: &mut Vec<TyVar>| -> String {
-        let at = vars.iter().position(|seen| *seen == v).unwrap_or_else(|| {
-            vars.push(v);
-            vars.len() - 1
-        });
+    let var = |v: TyVar, vars: &mut HashMap<TyVar, usize>| -> String {
+        let next = vars.len();
+        let at = *vars.entry(v).or_insert(next);
         format!("_{at}")
     };
     match ty {

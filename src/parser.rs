@@ -3,6 +3,7 @@ use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{self, Symbol};
 use crate::lexer::{Comment, CommentKind, Lexed, MAX_SYNTAX_ERRORS, Tok, Token};
 use crate::source::Span;
+use std::collections::HashSet;
 
 type Result<T> = std::result::Result<T, Diagnostic>;
 
@@ -1681,6 +1682,8 @@ impl<'src> Parser<'src> {
 
         // Optional type parameters: type Result(a, e) { ... } or type Pair(a) = (a, a)
         let mut params: Vec<Symbol> = Vec::new();
+        // (The names seen, in a set: a type may have many parameters.)
+        let mut seen: HashSet<Symbol> = HashSet::new();
         if self.peek() == &Token::LParen {
             let open = self.advance().span;
             let written = self.comma_list(
@@ -1698,7 +1701,7 @@ impl<'src> Parser<'src> {
                         format!("type parameter '{text}' must be a lowercase type variable"),
                     ));
                 }
-                if params.contains(&param) {
+                if !seen.insert(param) {
                     return Err(Diagnostic::error(
                         Code::InvalidDeclaration,
                         param_span,
@@ -2035,6 +2038,7 @@ impl<'src> Parser<'src> {
                 )
             });
             let mut params: Vec<Symbol> = Vec::new();
+            let mut seen: HashSet<Symbol> = HashSet::new();
             for arg in &trait_args {
                 // Point the caret at the
                 // offending argument's own span, not the enclosing
@@ -2062,7 +2066,7 @@ impl<'src> Parser<'src> {
                         format!("trait parameter '{arg_str}' must be a lowercase type variable"),
                     ));
                 }
-                if params.contains(arg_sym) {
+                if !seen.insert(*arg_sym) {
                     return Err(Diagnostic::error(
                         Code::InvalidDeclaration,
                         arg_span,
@@ -2176,11 +2180,12 @@ impl<'src> Parser<'src> {
             // where it may stand the checker says. Binders must be distinct
             // (no `Pair(a, a)`).
             let mut target_param_names: Vec<Symbol> = Vec::new();
+            let mut seen: HashSet<Symbol> = HashSet::new();
             for arg in &target_type_args {
                 let mut binders = Vec::new();
                 head_binders(arg, &mut binders);
                 for arg_sym in binders {
-                    if target_param_names.contains(&arg_sym) {
+                    if !seen.insert(arg_sym) {
                         return Err(Diagnostic::error(
                             Code::InvalidDeclaration,
                             target_span,
