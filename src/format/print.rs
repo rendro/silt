@@ -1476,6 +1476,16 @@ impl Printer<'_> {
                     // source's would be then, so that a second pass,
                     // which finds them there, agrees.
                     let comment_first = self.cur.comment_ahead();
+                    // (Inside those parentheses the scrutinee is in no
+                    // header, as a second pass reads it there: a closure
+                    // in it trails its call.)
+                    let ctx = match bare && !commented && comment_first {
+                        true => Ctx {
+                            header: None,
+                            ..ctx
+                        },
+                        false => ctx,
+                    };
                     let doc = self.expr(scrutinee, ctx);
                     let (open, close) = (Doc::text("("), Doc::text(")"));
                     match (bare && !commented, comment_first) {
