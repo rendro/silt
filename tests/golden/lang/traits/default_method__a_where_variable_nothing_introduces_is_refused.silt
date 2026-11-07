@@ -1,0 +1,20 @@
+-- exit: 1
+-- A default method's `where` clause bounds a variable its signature
+-- writes, as a function's does: one nothing introduces is an error.
+trait Tr {
+  fn tr(self) -> Int
+}
+
+trait Go {
+  fn go(self, x: Int) -> Int where a: Tr {
+    0
+  }
+}
+
+type Box { n: Int }
+
+trait Go for Box {}
+
+fn main() {
+  println(Go.go(Box { n: 1 }, 1))
+}

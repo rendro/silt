@@ -955,6 +955,15 @@ impl TypeChecker {
             // reported where a body is checked against the method.)
             let mut bounds: Vec<Pred> = Vec::new();
             for wc in &m.where_clauses {
+                // (A default method's bound on a variable its signature
+                // does not write is an error, as a function's is.)
+                if !m.is_signature_only
+                    && !param_map.contains_key(&wc.type_param)
+                    && resolve(wc.type_param).starts_with(char::is_lowercase)
+                {
+                    self.where_not_introduced(m, wc.type_param, wc.trait_name);
+                    continue;
+                }
                 let (Some(Type::Var(tv)), Some(bound)) = (
                     param_map.get(&wc.type_param).cloned(),
                     self.named_trait(wc.trait_res, wc.trait_name)
