@@ -3,8 +3,9 @@
 -- missing: of a part (`String` has no `Monoid`), or of the tuple type
 -- itself. `Tuple(Int, Int)` is no spelling of it before a dot. The help
 -- of a value of types calls it on the tuple type, `(Int, Int).empty()`;
--- its message names no type, as `(Int, Int)` there is one. A tuple of
--- values is named by its type.
+-- its message names no type, as `(Int, Int)` there is one, nor does it
+-- for a type held deeper, `(1, [Int])`. A tuple of values is named by
+-- its type.
 trait Monoid {
   fn empty() -> Self
 }
@@ -29,4 +30,5 @@ fn main() {
   println(t.empty())
   println((Int, 1).empty())
   println((1, 2).zap)
+  println((1, [Int]).zap)
 }

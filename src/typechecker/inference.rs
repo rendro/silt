@@ -1455,7 +1455,7 @@ impl TypeChecker {
         // type Int)` is no type a program writes, and `(Int, Int)` before
         // the dot is the tuple type, which may have the method.)
         let base = match ty {
-            Type::Tuple(_) if without_held(ty) != *ty => {
+            Type::Tuple(_) if holds_held_type(&self.apply(ty)) => {
                 format!("a tuple that holds a type has no field '{field}'")
             }
             _ => format!("type '{}' has no field '{field}'", self.show_type(ty)),
@@ -6408,6 +6408,21 @@ pub(super) fn rigid_vars(ty: &Type) -> Vec<RigidId> {
     let mut out = Vec::new();
     walk(ty, &mut out);
     out
+}
+
+/// Whether `ty` has a type held as a value (`type Int`) in it, at any
+/// depth: `(1, [Int])` does.
+fn holds_held_type(ty: &Type) -> bool {
+    match ty {
+        Type::Generic(name, _) if name.is_builtin(crate::defs::TYPE_OF) => true,
+        Type::Generic(_, ts) | Type::Tuple(ts) | Type::Con(_, ts) => ts.iter().any(holds_held_type),
+        Type::Fun(params, ret) => params.iter().any(holds_held_type) || holds_held_type(ret),
+        Type::List(t) | Type::Set(t) | Type::Channel(t) => holds_held_type(t),
+        Type::Map(k, v) => holds_held_type(k) || holds_held_type(v),
+        Type::AnonRecord { fields, .. } => fields.values().any(holds_held_type),
+        Type::App(head, arg) => holds_held_type(head) || holds_held_type(arg),
+        _ => false,
+    }
 }
 
 /// `ty` with each type held as a value in its arguments (`type Int`)

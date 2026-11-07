@@ -1,38 +1,44 @@
 error[type]: type 'String' does not implement trait 'Monoid'
- --> tuple_self__a_tuple_type_without_the_impl_is_refused.silt:25:11
+ --> tuple_self__a_tuple_type_without_the_impl_is_refused.silt:26:11
     |
- 25 |   println((Int, String).empty())
+ 26 |   println((Int, String).empty())
     |           ^^^^^^^^^^^^^^^^^^^ type 'String' does not implement trait 'Monoid'
   = note: the impl of 'Monoid' for '(a, b)' asks `b: Monoid`
 
 error[type]: undefined variable 'Tuple'
- --> tuple_self__a_tuple_type_without_the_impl_is_refused.silt:26:11
+ --> tuple_self__a_tuple_type_without_the_impl_is_refused.silt:27:11
     |
- 26 |   println(Tuple(Int, Int).empty())
+ 27 |   println(Tuple(Int, Int).empty())
     |           ^^^^^ undefined variable 'Tuple'
 
 error[type]: type '(Int, String)' has no method 'zero'
- --> tuple_self__a_tuple_type_without_the_impl_is_refused.silt:27:11
+ --> tuple_self__a_tuple_type_without_the_impl_is_refused.silt:28:11
     |
- 27 |   println((Int, String).zero())
+ 28 |   println((Int, String).zero())
     |           ^^^^^^^^^^^^^^^^^^ type '(Int, String)' has no method 'zero'
-
-error[type]: a tuple that holds a type has no field 'empty'
- --> tuple_self__a_tuple_type_without_the_impl_is_refused.silt:29:11
-    |
- 29 |   println(t.empty())
-    |           ^^^^^^^ a tuple that holds a type has no field 'empty'
-  = help: `empty` is a method of trait `Monoid` that makes a value: call it on the type, `(Int, Int).empty()`
 
 error[type]: a tuple that holds a type has no field 'empty'
  --> tuple_self__a_tuple_type_without_the_impl_is_refused.silt:30:11
     |
- 30 |   println((Int, 1).empty())
+ 30 |   println(t.empty())
+    |           ^^^^^^^ a tuple that holds a type has no field 'empty'
+  = help: `empty` is a method of trait `Monoid` that makes a value: call it on the type, `(Int, Int).empty()`
+
+error[type]: a tuple that holds a type has no field 'empty'
+ --> tuple_self__a_tuple_type_without_the_impl_is_refused.silt:31:11
+    |
+ 31 |   println((Int, 1).empty())
     |           ^^^^^^^^^^^^^^ a tuple that holds a type has no field 'empty'
   = help: `empty` is a method of trait `Monoid` that makes a value: call it on the type, `(Int, Int).empty()`
 
 error[type]: type '(Int, Int)' has no field 'zap'
- --> tuple_self__a_tuple_type_without_the_impl_is_refused.silt:31:11
+ --> tuple_self__a_tuple_type_without_the_impl_is_refused.silt:32:11
     |
- 31 |   println((1, 2).zap)
+ 32 |   println((1, 2).zap)
     |           ^^^^^^^^^^ type '(Int, Int)' has no field 'zap'
+
+error[type]: a tuple that holds a type has no field 'zap'
+ --> tuple_self__a_tuple_type_without_the_impl_is_refused.silt:33:11
+    |
+ 33 |   println((1, [Int]).zap)
+    |           ^^^^^^^^^^^^^^ a tuple that holds a type has no field 'zap'
