@@ -194,7 +194,8 @@ pub const SAME_TYPE_PARTS: usize = 64;
 
 /// Whether `value` could be of the type of `witness`: they differ in
 /// nothing both show, among the first `SAME_TYPE_PARTS` pairs of their
-/// parts compared. Past those, and for a part that only one of them
+/// parts compared. Each element of a list, a set or a map is compared
+/// with the witness's first. Past those, and for a part that only one of them
 /// shows (the elements of an empty list, the payload of another
 /// variant), nothing shows a difference: the value passes. A value that
 /// is the witness itself, or shares its parts, passes at once.
@@ -230,25 +231,32 @@ pub fn same_type(witness: &Value, value: &Value) -> bool {
                 if a.shares(b) {
                     continue;
                 }
-                if let (Some(a), Some(b)) = (a.first(), b.first()) {
-                    work.push((a, b));
+                // (Each element of the value, as far as the bound goes,
+                // against the witness's first.)
+                if let Some(first) = a.first() {
+                    let room = room(budget, &work);
+                    work.extend(b.iter().take(room).map(|b| (first.clone(), b)));
                 }
             }
             (Value::Set(a), Value::Set(b)) => {
                 if a.shares(b) {
                     continue;
                 }
-                if let (Some(a), Some(b)) = (a.iter().next(), b.iter().next()) {
-                    work.push((a.clone(), b.clone()));
+                if let Some(first) = a.iter().next() {
+                    let room = room(budget, &work);
+                    work.extend(b.iter().take(room).map(|b| (first.clone(), b.clone())));
                 }
             }
             (Value::Map(a), Value::Map(b)) => {
                 if a.shares(b) {
                     continue;
                 }
-                if let (Some((ak, av)), Some((bk, bv))) = (a.iter().next(), b.iter().next()) {
-                    work.push((ak.clone(), bk.clone()));
-                    work.push((av.clone(), bv.clone()));
+                if let Some((key, value)) = a.iter().next() {
+                    let room = room(budget, &work) / 2;
+                    for (k, v) in b.iter().take(room.max(1)) {
+                        work.push((key.clone(), k.clone()));
+                        work.push((value.clone(), v.clone()));
+                    }
                 }
             }
             (Value::Tuple(a), Value::Tuple(b)) => {

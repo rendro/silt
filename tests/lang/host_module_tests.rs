@@ -588,6 +588,38 @@ fn a_deep_result_of_a_variable_s_type_is_checked_in_bounded_steps() {
     }
 }
 
+/// Each element of a list or a map that a variable stands for is
+/// compared with the first one of the argument's, within the bound: a
+/// list of Ints given back with a String after the first element is
+/// refused.
+#[test]
+fn later_elements_of_a_collection_are_compared() {
+    let host = HostModule::new("h")
+        .function("fn hetero(x: a) -> a", |_: &[Value]| {
+            Ok(Value::list(vec![Value::Int(1), Value::String("x".into())]))
+        })
+        .function("fn same(x: a) -> a", |args: &[Value]| Ok(args[0].clone()));
+    let err = returned_error(host.clone(), "h.hetero([7])");
+    assert!(
+        err.contains(
+            "h.hetero: its signature returns a, here List (the type of its argument `x`), but \
+             it returned List [1, \"x\"]"
+        ),
+        "got: {err}"
+    );
+    // (A list of the type, longer than the argument, passes.)
+    let source =
+        "import h\nfn main() {\n  let xs = h.same([1, 2, 3])\n  host.give(xs)\n}\nimport host";
+    assert_eq!(
+        run(source, host),
+        Ok(Value::list(vec![
+            Value::Int(1),
+            Value::Int(2),
+            Value::Int(3)
+        ]))
+    );
+}
+
 /// Within the parts the check compares, a result of another
 /// instantiation of the argument's type is refused: `Box(String)` for a
 /// `Box(Int)`.

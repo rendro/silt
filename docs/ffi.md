@@ -141,7 +141,10 @@ whose arguments hold no value of it (`first([])`), the parts of two
 values that only one of them shows (the elements of an empty list, the
 payload of another variant), and what a `Channel` carries. Of the type
 a `type a` parameter is given, the head is checked (`List`, not
-`List(Int)`).
+`List(Int)`). The check looks at a bounded part of the result: the
+first 64 parts it compares (fields, elements, payloads), each element
+of a list, a set or a map against the first one of the argument's.
+What lies beyond them is the function's to get right.
 
 A host function cannot take or return a function (`fn f(g: Fn(Int) ->
 Int) -> Int` is an error): a host function has no way to call one.
