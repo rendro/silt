@@ -254,7 +254,7 @@ fn bad_signatures_are_reported() {
         (
             "fn any() -> a",
             "type variable 'a' in the return type of the host function `any` is not introduced \
-             by any parameter; anchor it on a parameter's type",
+             by any parameter: name it in a parameter's type, or return a concrete type",
         ),
         ("fn f() -> List(a)", "type variable 'a' in the return type"),
         (

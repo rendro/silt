@@ -388,7 +388,8 @@ impl ModuleGraph {
                         f.span,
                         format!(
                             "{what} variable '{var}' in the return type of the host function `{}` \
-                             is not introduced by any parameter; anchor it on a parameter's type",
+                             is not introduced by any parameter: name it in a parameter's type, \
+                             or return a concrete type",
                             f.name
                         ),
                     ));
