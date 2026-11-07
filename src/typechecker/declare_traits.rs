@@ -3317,12 +3317,15 @@ impl TypeChecker {
         written: &WrittenImpl,
     ) -> Vec<usize> {
         let impls = self.tables.impl_args_of(tr, ty).len();
+        let removed = self.tables.impl_stamp(tr, ty).removed;
         let mut index = self.impl_met_index.remove(&(tr, ty)).unwrap_or_default();
-        if index.seen > impls
-            || (index.seen > 0
-                && index.last != Some(self.tables.impl_args_of(tr, ty)[index.seen - 1]))
-        {
-            index = MetIndex::default();
+        // (Impls are added after those there are; one forgotten since the
+        // index was built makes it another list.)
+        if index.removed != removed || index.seen > impls {
+            index = MetIndex {
+                removed,
+                ..MetIndex::default()
+            };
         }
         for at in index.seen..impls {
             let earlier = self.tables.impl_args_of(tr, ty)[at];
@@ -3338,9 +3341,6 @@ impl TypeChecker {
             index.enter(at, earlier, key);
         }
         index.seen = impls;
-        index.last = impls
-            .checked_sub(1)
-            .map(|last| self.tables.impl_args_of(tr, ty)[last]);
         let mine = match written.args.first() {
             Some(first) => MetKey::Arg(self.outer_of(first)),
             None => MetKey::Head(
@@ -3636,9 +3636,10 @@ enum MetKey {
 /// `MetKey`, as their positions among the impls (`impl_args_of`).
 #[derive(Default, Clone)]
 pub(crate) struct MetIndex {
-    /// How many of the impls are entered, and the last of them.
+    /// How many of the impls are entered, and the stamp of the last
+    /// removal of one before they were (`Tables::impl_stamp`).
     seen: usize,
-    last: Option<ImplArgs>,
+    removed: u64,
     /// The position of each impl, by its trait arguments.
     at_args: HashMap<ImplArgs, usize>,
     /// The impls by their key, where it names an outer type.

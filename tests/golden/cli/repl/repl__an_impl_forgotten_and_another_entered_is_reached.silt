@@ -1,0 +1,7 @@
+-- cmd: repl
+-- stderr-contains: type 'Box(String)' does not implement trait 'Name'
+-- stdin: type Box(a) { v: a }\ntrait Name { fn name(self) -> Int }\ntrait Name for Box(Int) { fn name(self) -> Int { 1 } }\ntrait Name for Box(String) { fn name(self) -> Int { 2 } }; let z: Int = "s"\ntrait Name for Box(Bool) { fn name(self) -> Int { 3 } }\nName.name(Box { v: true })\nName.name(Box { v: 1 })\nName.name(Box { v: "s" })\ntrait Name for Box(String) { fn name(self) -> Int { 4 } }\nName.name(Box { v: "s" })\n:quit\n
+-- An entry whose impl checked but which failed leaves no impl; the impl
+-- entered after it is reached, with as many impls of the trait for the
+-- type as before, and the one forgotten is not (each use reads the impls
+-- there are, not an index of those there were).

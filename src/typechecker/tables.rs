@@ -423,6 +423,9 @@ pub struct Tables {
     /// For a trait and the head of a type, the trait arguments of the
     /// impls written (`impl_keys`).
     pub(super) impl_args: HashMap<(TraitKey, TypeRef), Vec<ImplArgs>>,
+    /// For a trait and the head of a type, the stamps of the last change
+    /// of its impls (`impl_args`): what an index of them is built at.
+    pub(super) impl_stamps: HashMap<(TraitKey, TypeRef), ImplStamp>,
     /// The span of each impl's `trait T for U { ... }` declaration, so
     /// the missing-method diagnostic in `validate_trait_impls` can point
     /// at the impl block's real source location.
@@ -722,7 +725,13 @@ impl Tables {
                 .entry((key.0, key.1))
                 .or_default()
                 .push(key.2);
+            self.impl_stamps.entry((key.0, key.1)).or_default().changed = next_stamp();
         }
+    }
+
+    /// The stamps of the last change of the impls of `tr` for `ty`.
+    pub(super) fn impl_stamp(&self, tr: TraitKey, ty: TypeRef) -> ImplStamp {
+        self.impl_stamps.get(&(tr, ty)).copied().unwrap_or_default()
     }
 
     /// The trait arguments of the impls of `tr` for the type `ty`.
@@ -794,6 +803,9 @@ impl Tables {
                 if args.is_empty() {
                     self.impl_args.remove(&(key.0, key.1));
                 }
+                let stamp = next_stamp();
+                let stamps = self.impl_stamps.entry((key.0, key.1)).or_default();
+                (stamps.changed, stamps.removed) = (stamp, stamp);
             }
         }
         for key in rows.impls {
@@ -809,6 +821,24 @@ impl Tables {
             self.statement_units.remove(&id);
         }
     }
+}
+
+/// The stamps of the last change of the impls of a trait for a type
+/// (`Tables::impl_stamps`): of any (`changed`), and of the last removal
+/// of one (`removed`; impls are otherwise only added, after those there
+/// were). No stamp is taken twice in a process, so an index built at a
+/// stamp is of the impls there are as long as the stamp is the same,
+/// whatever the session forgot and entered between.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub(crate) struct ImplStamp {
+    pub(super) changed: u64,
+    pub(super) removed: u64,
+}
+
+/// A stamp no other change took.
+fn next_stamp() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 impl Tables {
@@ -830,5 +860,38 @@ pub(super) fn impl_owner(key: ImplKey) -> String {
     match args == ImplArgs::none() {
         true => ty.to_string(),
         false => format!("{ty}{args:?}"),
+    }
+}
+
+#[cfg(test)]
+mod stamp_tests {
+    use super::*;
+
+    /// An impl forgotten and another entered gives the impls of the
+    /// trait for the type another stamp, though there are as many as
+    /// before: an index built before is not taken for them.
+    #[test]
+    fn impls_forgotten_and_entered_have_another_stamp() {
+        let mut tables = Tables::default();
+        let (tr, ty) = (TraitKey::builtin("Display"), TypeRef::builtin("Int"));
+        let module = crate::session::ModuleId(1);
+        tables.begin_rows();
+        tables.add_impl((tr, ty, ImplArgs::none()));
+        let rows = tables.take_rows();
+        tables.rows.insert(module, rows);
+        let before = tables.impl_stamp(tr, ty);
+        tables.forget(module);
+        assert!(tables.impl_args_of(tr, ty).is_empty());
+        let forgotten = tables.impl_stamp(tr, ty);
+        assert_ne!(forgotten, before);
+        assert_ne!(forgotten.removed, before.removed);
+        tables.add_impl((tr, ty, ImplArgs::none()));
+        assert_eq!(tables.impl_args_of(tr, ty).len(), 1);
+        let entered = tables.impl_stamp(tr, ty);
+        assert_ne!(entered, before);
+        assert_ne!(entered, forgotten);
+        // (An impl added keeps the stamp of the last removal: the impls
+        // before it are the same list.)
+        assert_eq!(entered.removed, forgotten.removed);
     }
 }

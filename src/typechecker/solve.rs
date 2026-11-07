@@ -569,15 +569,20 @@ impl TypeChecker {
 
     /// The impls of `tr` for the type `head`, as `impls_fitting` reads
     /// them (`ImplIndex`), kept for the module's other uses while no impl
-    /// is added: not while an impl's trait arguments are not known yet.
+    /// of them is added or forgotten (their stamp): not while an impl's
+    /// trait arguments are not known yet.
     fn impl_index(&self, tr: TraitKey, head: TypeRef) -> std::rc::Rc<ImplIndex> {
         let impls = self.tables.impl_args_of(tr, head);
+        let stamp = self.tables.impl_stamp(tr, head);
         if let Some(found) = self.impl_index.borrow().get(&(tr, head))
-            && found.impls.len() == impls.len()
+            && found.stamp == stamp
         {
             return found.clone();
         }
-        let mut index = ImplIndex::default();
+        let mut index = ImplIndex {
+            stamp,
+            ..ImplIndex::default()
+        };
         let mut known = true;
         for (i, args) in impls.iter().enumerate() {
             let key = (tr, head, *args);
@@ -3530,6 +3535,8 @@ pub(super) fn outer_head(ty: &Type) -> Option<OuterHead> {
 /// one for every instantiation in `for_every_instance`.
 #[derive(Default)]
 pub(crate) struct ImplIndex {
+    /// The stamp of the impls it was built of (`Tables::impl_stamp`).
+    stamp: super::tables::ImplStamp,
     impls: Vec<(ImplKey, std::rc::Rc<[Type]>)>,
     by_first: HashMap<Option<OuterHead>, Vec<usize>>,
     by_instance: HashMap<Option<OuterHead>, Vec<usize>>,
