@@ -1,0 +1,35 @@
+-- cmd: check
+-- exit: 1
+-- The decode of another module's type, called through the type
+-- (`mail.Box(t).decode(v)`), is named with that module in the note and
+-- in the refusal (`mail.Box.decode`), beside this module's own `Box`,
+-- which keeps its bare name (`Box.decode`).
+import json
+import mail
+
+type Box(a) {
+  v: a,
+}
+
+type Holder {
+  s: Set(Int),
+}
+
+fn theirs(t) {
+  mail.Box(t).decode(json.Null)
+}
+
+fn outer(t) {
+  theirs(t)
+}
+
+fn own(t) {
+  Box(t).decode(json.Null)
+}
+
+fn main() {
+  println(outer(mail.Email))
+  println(own(mail.Email))
+  println(mail.Box(Holder).decode(json.Null))
+  println(Box(Holder).decode(json.Null))
+}

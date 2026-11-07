@@ -1,0 +1,29 @@
+error[type]: type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+ --> main.silt:31:17
+    |
+ 31 |   println(outer(mail.Email))
+    |                 ^^^^^^^^^^ type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+  = note: `outer` passes it to `theirs`, which passes it to `mail.Box.decode`
+  = help: decode it inside module 'mail', or write `trait json.Decode for Email` there
+
+error[type]: type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+ --> main.silt:32:15
+    |
+ 32 |   println(own(mail.Email))
+    |               ^^^^^^^^^^ type 'mail.Email' cannot be decoded outside module 'mail': it is opaque, and 'mail' writes no 'json.Decode' impl for it
+  = note: `own` passes it to `Box.decode`
+  = help: decode it inside module 'mail', or write `trait json.Decode for Email` there
+
+error[type]: `mail.Box.decode` cannot decode `mail.Box(Holder)`: field `s` of `Holder`, a record type nested in it, has type `Set(Int)`, which has no decoder
+ --> main.silt:33:11
+    |
+ 33 |   println(mail.Box(Holder).decode(json.Null))
+    |           ^^^^^^^^^^^^^^^^^^^^^^^ `mail.Box.decode` cannot decode `mail.Box(Holder)`: field `s` of `Holder`, a record type nested in it, has type `Set(Int)`, which has no decoder
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+
+error[type]: `Box.decode` cannot decode `Box(Holder)`: field `s` of `Holder`, a record type nested in it, has type `Set(Int)`, which has no decoder
+ --> main.silt:34:11
+    |
+ 34 |   println(Box(Holder).decode(json.Null))
+    |           ^^^^^^^^^^^^^^^^^^ `Box.decode` cannot decode `Box(Holder)`: field `s` of `Holder`, a record type nested in it, has type `Set(Int)`, which has no decoder
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
