@@ -91,6 +91,12 @@ fn lexed(text: &str) -> (Duration, usize, usize) {
     (best, kept.0, kept.1)
 }
 
+/// How many times as long two megabytes may take as one. A rule that
+/// costs the square of the text takes about 4 times as long; a linear
+/// one on a busy CI runner has reached 2.65 (control characters apart,
+/// macOS, 2026-11-05), past the 2.6 this cap was.
+const CAP: f64 = 3.0;
+
 #[test]
 fn twice_the_hostile_text_takes_about_twice_as_long() {
     const MEGABYTE: usize = 1 << 20;
@@ -105,7 +111,7 @@ fn twice_the_hostile_text_takes_about_twice_as_long() {
             let (small, ..) = lexed(&one);
             let (large, ..) = lexed(&two);
             let ratio = large.as_secs_f64() / small.as_secs_f64();
-            if ratio <= 2.6 {
+            if ratio <= CAP {
                 over.clear();
                 break;
             }
@@ -117,7 +123,7 @@ fn twice_the_hostile_text_takes_about_twice_as_long() {
     }
     assert!(
         slow.is_empty(),
-        "two megabytes took more than 2.6 times as long to lex as one, in each of three \
+        "two megabytes took more than {CAP} times as long to lex as one, in each of three \
          measurements:\n{}",
         slow.join("\n")
     );
