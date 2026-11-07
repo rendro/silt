@@ -24,7 +24,7 @@ fn read_doc(rel: &str) -> String {
 }
 
 /// Every primitive descriptor is listed in the globals page, which an
-/// editor shows on hover of `println`.
+/// editor shows in the completion of `println`.
 #[test]
 fn globals_md_lists_every_primitive_descriptor() {
     let names = primitive_descriptor_names();

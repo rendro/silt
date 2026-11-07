@@ -112,22 +112,28 @@ fn hover_on_math_cos_includes_signature_and_doc() {
     client.shutdown();
 }
 
+/// Hover on a name of the prelude (`println`, `Some`) shows its own
+/// section of the globals page, as signature help does, not the whole
+/// page with every other name of the prelude.
 #[test]
-fn hover_on_println_returns_globals_doc() {
+fn hover_on_a_prelude_name_returns_its_own_section() {
     let mut client = LspClient::spawn();
     let uri = unique_uri();
-    let source = "fn main() {\n    println(\"hi\")\n}\n";
+    let source = "fn main() {\n    println(\"hi\")\n    let _o = Some(1)\n}\n";
     client.did_open_and_wait(&uri, source);
 
-    // Cursor on `println` line 1 col 6.
-    let resp = client.hover(&uri, 1, 6);
-    let md = hover_markdown(&resp).expect("expected hover markdown for println");
-    // The globals.md `## \`println\`` section talks about printing
-    // a value followed by a newline.
-    assert!(
-        md.contains("newline") || md.contains("Display"),
-        "hover on println should include the globals.md prose; got:\n{md}"
-    );
+    for (line, col, name, own) in [
+        (1, 6, "println", "println(value: a) -> () where a: Display"),
+        (2, 14, "Some", "Some(value: a) -> Option(a)"),
+    ] {
+        let resp = client.hover(&uri, line, col);
+        let md = hover_markdown(&resp).unwrap_or_else(|| panic!("hover markdown for {name}"));
+        assert!(md.contains(own), "hover on {name}: its section; got:\n{md}");
+        assert!(
+            !md.contains("# Globals") && !md.contains("Always Available"),
+            "hover on {name}: not the whole globals page; got:\n{md}"
+        );
+    }
     client.shutdown();
 }
 

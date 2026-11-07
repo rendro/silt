@@ -145,9 +145,9 @@ pub fn builtin_docs() -> &'static HashMap<String, String> {
     })
 }
 
-/// The section of the globals page on the prelude's function `name`
-/// (`println`): what signature help shows of it, where hover shows the
-/// whole page.
+/// The section of the globals page on the prelude's name `name`
+/// (`println`, `Some`): what hover and signature help show of it, where
+/// completion shows the whole page.
 pub fn prelude_section(name: &str) -> Option<String> {
     (iter_sections(strip_frontmatter(GLOBALS_PAGE)).into_iter())
         .find(|(keys, _)| keys.iter().any(|key| key == name))

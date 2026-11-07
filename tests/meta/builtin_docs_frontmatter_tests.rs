@@ -34,7 +34,7 @@ fn no_builtin_doc_leaks_yaml_frontmatter() {
     }
 }
 
-/// The repro from the finding: hover on `println` surfaces the whole
+/// The repro from the finding: completion of `println` shows the whole
 /// Globals page (round-62 design decision), but it must begin with the
 /// page prose, not `---\ntitle: "Globals"…` metadata.
 #[test]
@@ -45,12 +45,12 @@ fn println_doc_starts_with_prose_not_frontmatter() {
         .expect("`println` has a builtin doc: the globals page");
     assert!(
         !doc.starts_with("---"),
-        "println's hover doc still starts with frontmatter:\n{}",
+        "println's completion doc still starts with frontmatter:\n{}",
         doc.chars().take(120).collect::<String>()
     );
     assert!(
         doc.contains("`println`"),
-        "println's hover doc lost the Globals prose entirely — \
+        "println's completion doc lost the Globals prose entirely — \
          strip_frontmatter over-stripped? got:\n{}",
         doc.chars().take(120).collect::<String>()
     );
