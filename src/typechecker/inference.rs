@@ -1451,13 +1451,15 @@ impl TypeChecker {
         fields: &[(Symbol, Type)],
         span: Span,
     ) {
-        // (A tuple that holds types is named as its help names it:
-        // `(Int, Int)`, not `(type Int, type Int)`.)
-        let shown = match ty {
-            Type::Tuple(_) => self.show_type(&without_held(ty)),
-            _ => self.show_type(ty),
+        // (A tuple that holds a type is not named by a type: `(type Int,
+        // type Int)` is no type a program writes, and `(Int, Int)` before
+        // the dot is the tuple type, which may have the method.)
+        let base = match ty {
+            Type::Tuple(_) if without_held(ty) != *ty => {
+                format!("a tuple that holds a type has no field '{field}'")
+            }
+            _ => format!("type '{}' has no field '{field}'", self.show_type(ty)),
         };
-        let base = format!("type '{shown}' has no field '{field}'");
         let placeholder = match ty {
             Type::List(_) => "xs",
             _ => "x",
