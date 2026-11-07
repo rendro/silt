@@ -106,12 +106,28 @@ let lists = HostModule::new("lists").function(
 );
 ```
 
+A type variable of the return type must be one that a parameter
+introduces: by its type, as `a` is in `first`, or as a `type a`
+parameter (`fn pick(s: String, type a) -> Option(a)`). The same holds
+for the row variable of an open record (`{name: String, ...r}`).
+`fn any() -> a` is an error: no value it returns could be the type each
+call asks for.
+
 The checker has already made sure the arguments have the declared types
-and number, so a function can rely on its signature. The result is
-checked against the signature's return type when the function returns:
-a `-> Int` function that returns a `String` is a runtime error that
-names it (`mylib.count: its signature returns Int, but it returned
-String "three"`).
+and number, so a function can rely on its signature. When the function
+returns, its result is checked against the parts of the return type
+that a value shows: `Int`, `Float`, `Bool`, `String`, `Bytes` and `()`,
+and `List`, `Set`, `Map`, `Option`, `Result` and tuples of them. A
+`-> Int` function that returns a `String` is a runtime error that names
+it (`mylib.count: its signature returns Int, but it returned String
+"three"`). No value is of `Never`: a `-> Never` function that returns a
+value is that error too, and it can only fail (return `Err`).
+
+The other parts of a return type are not checked: a type variable, a
+record, and any other type (`Channel(Int)`). Returning a value of the
+right type there is the function's duty. A `fn same(x: a)
+-> a` must return a value of its argument's type, and one that returns
+anything else breaks the program's types where the value goes.
 
 A host function cannot take or return a function (`fn f(g: Fn(Int) ->
 Int) -> Int` is an error): a host function has no way to call one.
@@ -132,6 +148,8 @@ whether or not the program imports it, at `<host:mylib>`:
 - a signature that is not one `fn` header without a body, or that
   leaves a parameter or the return type untyped;
 - a signature that takes or returns a function;
+- a signature whose return type has a type variable or row variable that
+  no parameter introduces (`fn any() -> a`);
 - a typed function (`fn0`, `fn1`, `fn2`) whose signature declares another
   number of parameters;
 - a type the signature names that does not exist;
@@ -478,7 +496,8 @@ fault of the program itself, a division by zero or a `panic`, keeps it
   message carries the panicked string.
 - **An `Err` from a host function** becomes a runtime error whose message
   starts with the function's name: `mylib.parse: bad input`. So does a
-  result that is not of the type its signature returns.
+  result whose checked parts (see "Functions on values") are not of the
+  type its signature returns.
 - **A panic inside a host function** is caught and becomes a runtime
   error (`host function 'mylib.parse' panicked: ...`). The scheduler
   worker survives and other tasks keep running. Returning `Err` is still

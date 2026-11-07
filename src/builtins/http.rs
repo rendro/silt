@@ -2219,6 +2219,65 @@ mod http_body_tests {
         assert!(got.starts_with("InvalidResponse("), "{got}");
     }
 
+    /// A response whose `Content-Length` headers disagree is refused,
+    /// packed or not, as one whose length is no number: which of them
+    /// frames its body would be a guess (RFC 9112 6.3). The same length
+    /// twice is one length (RFC 9110 8.6).
+    #[test]
+    fn content_lengths_that_disagree_are_an_invalid_response() {
+        let says_lengths = |lengths: &str, method: &str| {
+            let message = format!("HTTP/1.1 200 OK\r\n{lengths}\r\n\r\nabc").into_bytes();
+            do_http_request(method, &says(message), b"", &[])
+        };
+        let disagree = "InvalidResponse(protocol: conflicting content-length headers)";
+        let no_number = "InvalidResponse(protocol: content-length header not a number)";
+        for (lengths, expected) in [
+            ("Content-Length: 2\r\nContent-Length: 3", disagree),
+            ("Content-Length: 2\r\nContent-Length: 2, 3", disagree),
+            ("Content-Length: 2, 3", disagree),
+            ("Content-Length: 2\r\nContent-Length: x", no_number),
+        ] {
+            for method in ["GET", "HEAD"] {
+                let got = failure(&says_lengths(lengths, method));
+                assert_eq!(got, expected, "{lengths} {method}");
+            }
+        }
+        for lengths in [
+            "Content-Length: 2\r\nContent-Length: 2",
+            "Content-Length: 2, 2",
+        ] {
+            let (body, names) = response(&says_lengths(lengths, "GET"));
+            let names = (body, names);
+            assert_eq!(names, (b"ab".to_vec(), vec!["content-length".to_string()]));
+        }
+        // A packed body: the lengths are not in what the library hands
+        // on, and are looked at all the same.
+        let body = packed(1, b"abc");
+        let mut message = format!(
+            "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\n\
+             Content-Length: {}\r\n\r\n",
+            body.len(),
+            body.len() + 1
+        )
+        .into_bytes();
+        message.extend_from_slice(&body);
+        message.push(b'x');
+        assert_eq!(failure(&do_http_get(&says(message))), disagree);
+        // A chunked body is framed by its chunks, and one length beside
+        // them is not looked at; two that disagree are refused all the
+        // same, as the RFC lets a recipient refuse a message with both.
+        let chunked = |lengths: &str| {
+            let message = format!(
+                "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n{lengths}\r\n\r\n\
+                 3\r\nabc\r\n0\r\n\r\n"
+            );
+            do_http_get(&says(message.into_bytes()))
+        };
+        assert_eq!(response(&chunked("Content-Length: 2")).0, b"abc");
+        let got = failure(&chunked("Content-Length: 2\r\nContent-Length: 3"));
+        assert_eq!(got, disagree);
+    }
+
     /// An answer that has no body by its nature has none, whatever it
     /// says of one: a server that packs what it answers to `GET` says
     /// so in these too. The library takes the two headers that

@@ -1333,7 +1333,7 @@ fn lines_of(text: &str, span: Span) -> Range<u32> {
 }
 
 /// The type variables `te` writes (lowercase bare names), into `out`.
-pub(super) fn type_vars_of(te: &TypeExpr, out: &mut Vec<Symbol>) {
+pub(crate) fn type_vars_of(te: &TypeExpr, out: &mut Vec<Symbol>) {
     // (Each once, in the order first written: past a few, a set keeps a
     // signature of many of them from comparing each with all.)
     fn walk(te: &TypeExpr, out: &mut Vec<Symbol>) {

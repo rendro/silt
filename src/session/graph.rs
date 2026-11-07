@@ -381,6 +381,19 @@ impl ModuleGraph {
                         ),
                     ));
                 }
+                for (var, row) in super::host::return_only_variables(f) {
+                    let what = if row { "row" } else { "type" };
+                    signature_problems.push(Diagnostic::error(
+                        Code::HostSignature,
+                        f.span,
+                        format!(
+                            "{what} variable '{var}' in the return type of the host function `{}` \
+                             is not introduced by any parameter: name it in a parameter's type, \
+                             or return a concrete type",
+                            f.name
+                        ),
+                    ));
+                }
             }
             let declared = ast.decls.len();
             if declared != host.fns.len() {

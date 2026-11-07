@@ -239,6 +239,8 @@ fn bad_signatures_are_reported() {
             "has 1 function but its signatures declare 2",
         ),
         ("fn f(x: Int) -> Nope", "Nope"),
+        ("fn f(x: Int) -> _", "unknown type '_'"),
+        ("fn f(x: Int) -> Option(_a)", "unknown type '_a'"),
         (
             "fn f(g: Fn(Int) -> Int) -> Int",
             "cannot take or return a function",
@@ -251,6 +253,24 @@ fn bad_signatures_are_reported() {
             "fn f() -> Fn(Int) -> Int",
             "cannot take or return a function",
         ),
+        (
+            "fn any() -> a",
+            "type variable 'a' in the return type of the host function `any` is not introduced \
+             by any parameter: name it in a parameter's type, or return a concrete type",
+        ),
+        ("fn f() -> List(a)", "type variable 'a' in the return type"),
+        (
+            "fn f(x: a) -> (a, b)",
+            "type variable 'b' in the return type",
+        ),
+        (
+            "fn f() -> Result(a, String) where a: Display",
+            "type variable 'a' in the return type",
+        ),
+        (
+            "fn f(p: {name: String}) -> {name: String, ...r}",
+            "row variable 'r' in the return type of the host function `f`",
+        ),
     ];
     for (signature, expected) in cases {
         let host = HostModule::new("h").function(signature, |_: &[Value]| Ok(Value::Unit));
@@ -260,6 +280,49 @@ fn bad_signatures_are_reported() {
             errors.iter().any(|e| e.message.contains(expected)),
             "{signature}: {errors:?}"
         );
+        // `_` is no type variable, in the return type as in a parameter.
+        if signature.contains("_") {
+            let variable = errors.iter().any(|e| e.message.contains("variable '_"));
+            assert!(!variable, "{signature}: {errors:?}");
+        }
+    }
+}
+
+/// A host function's result is not checked to be of the type a call
+/// asks of a type variable: one that only its return type has is an
+/// error, so that no program is checked against it.
+#[test]
+fn a_return_only_type_variable_is_refused() {
+    let any = HostModule::new("h").function("fn any() -> a", |_: &[Value]| Ok(Value::Int(5)));
+    let errors = errors(
+        "import h\nfn main() { let s: String = h.any()\n let _ = s }",
+        any,
+    );
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert_eq!(errors[0].code, Code::HostSignature, "{errors:?}");
+    assert!(
+        errors[0]
+            .message
+            .contains("type variable 'a' in the return type of the host function `any`"),
+        "{errors:?}"
+    );
+}
+
+/// A variable that a parameter introduces stays a host function's to
+/// return, by its type or as a `type a` parameter.
+#[test]
+fn type_variables_a_parameter_introduces_are_accepted() {
+    for signature in [
+        "fn give(x: a) -> ()",
+        "fn first(xs: List(a)) -> Option(a)",
+        "fn same(x: a) -> a",
+        "fn pair(x: a, y: b) -> (b, a)",
+        "fn keep(p: {name: String, ...r}) -> {name: String, ...r}",
+        "fn pick(s: String, type a) -> Option(a)",
+    ] {
+        let host = HostModule::new("h").function(signature, |_: &[Value]| Ok(Value::Unit));
+        let errors = errors("fn main() { let _ = 1 }", host);
+        assert!(errors.is_empty(), "{signature}: {errors:?}");
     }
 }
 
@@ -338,6 +401,31 @@ fn a_result_of_the_wrong_type_names_the_host_function() {
         ),
         Ok(Value::tuple(vec![Value::Int(1), Value::Bool(true)]))
     );
+}
+
+/// No value is of `Never`: a host function that says it returns it and
+/// returns a value is an error, and failing is what it may do.
+#[test]
+fn a_host_function_returning_never_can_only_fail() {
+    let host = HostModule::new("h")
+        .function("fn f() -> Never", |_: &[Value]| {
+            Ok(Value::String("x".into()))
+        })
+        .function("fn fail(msg: String) -> Never", |args: &[Value]| {
+            Err(VmError::new(format!("failed: {}", args[0])))
+        });
+    let program = "import h\nfn main() { let b: Bool = h.f()\n match b { true -> host.give(1)\n false -> host.give(2) } }\nimport host";
+    let err = run(program, host.clone()).unwrap_err();
+    assert!(
+        err.contains("h.f: its signature returns Never, but it returned String"),
+        "got: {err}"
+    );
+    let err = run(
+        "import h\nfn main() { let s: String = h.fail(\"no\")\n host.give(s) }\nimport host",
+        host,
+    )
+    .unwrap_err();
+    assert!(err.contains("h.fail: failed: no"), "got: {err}");
 }
 
 #[test]
