@@ -1,0 +1,19 @@
+-- cmd: fmt
+-- A `{- -}` comment behind `match` and a `--` comment behind it, in
+-- front of a scrutinee that ends in a bare stage of a pipeline, go
+-- behind the `(` written around the scrutinee, where a second pass
+-- finds them and leaves them: the output is formatted already.
+import list
+
+fn main() {
+  let items = [1, 2, 3]
+  let t = match {- a -} -- c
+    items
+    |> list.filter { x -> x > 1 }
+    |> list.length
+  {
+    2 -> "two"
+    _ -> "other"
+  }
+  println(t)
+}

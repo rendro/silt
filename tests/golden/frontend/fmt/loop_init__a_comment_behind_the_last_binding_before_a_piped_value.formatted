@@ -1,0 +1,17 @@
+-- cmd: fmt
+-- A `{- -}` comment behind the `=` of a loop's last binding, in front
+-- of a value that ends in a bare stage of a pipeline, goes inside the
+-- parentheses written around the value, and a closure in it trails its
+-- call, as a second pass finds them: the output is formatted already.
+import list
+
+fn main() {
+  let items = [1, 2, 3]
+  let n = loop xs = ({- a -} items |> list.map { x -> x } |> list.reverse) {
+    match xs {
+      [] -> 0
+      _ -> 1
+    }
+  }
+  println(n)
+}
