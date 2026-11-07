@@ -256,8 +256,13 @@ impl TypeChecker {
             let mapping = HashMap::from([(info.self_var, recv.clone())]);
             substitute_vars(declared, &mapping)
         };
-        // (A refusal of `T.decode` names it so.)
-        let callee = intern(&format!("{head}.{method}"));
+        // (A refusal of `T.decode` names it so, a type of another module
+        // with its module: `mail.Box.decode` beside a `Box` of the
+        // module's own.)
+        let callee = match self.other_module(head) {
+            Some(module) => intern(&format!("{module}.{}.{method}", head.name)),
+            None => intern(&format!("{head}.{method}")),
+        };
         // (The decoder a note names, through a function that hands its
         // type on: `bm` passes it to `Box.decode`.)
         let asker = Asker {
