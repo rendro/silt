@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- A lone shorthand literal before another `loop` binding gets the header
+-- help.
+type Q { x: Int }
+fn main() {
+  let x = 0
+  let r = loop q = Q { x }, n = 0 {
+    q
+  }
+  println("{r.x}")
+}

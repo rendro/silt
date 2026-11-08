@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- A lone shorthand literal that does not end the `match` header gets the
+-- header help.
+type Q { x: Int }
+fn main() {
+  let x = 1
+  match Q { x } == Q { x: 1 } {
+    true -> println("eq")
+    false -> println("ne")
+  }
+}
