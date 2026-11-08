@@ -421,7 +421,9 @@ fn hello(_req: http.Request) -> http.Response {
 }
 
 fn main() {
-  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
   let port = tcp.local_port(listener)
   let server = task.spawn { -> http.serve(listener, hello) }
   match http.get("http://127.0.0.1:{port}/") {

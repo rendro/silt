@@ -334,9 +334,7 @@ import list
 import result
 
 fn main() {
-  let first = list.find_map(["x", "12", "7"]) { s ->
-    int.parse(s) |> result.to_option
-  }
+  let first = list.find_map(["x", "12", "7"]) { s -> int.parse(s) |> result.to_option }
   println(first) -- Some(12)
 }
 ```
