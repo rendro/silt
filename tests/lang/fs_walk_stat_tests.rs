@@ -680,7 +680,7 @@ fn test_stream_file_errors_name_the_path_they_are_about() {
     );
     assert_eq!(
         last(&format!("stream.file_lines(\"{bad}\")")),
-        format!("line 3 of {bad} is not UTF-8")
+        format!("invalid input: line 3 of {bad} is not UTF-8")
     );
     let write = err_msg(run(&format!(
         "import stream\nimport host\nfn main() {{\n  \

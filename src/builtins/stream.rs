@@ -917,13 +917,16 @@ builtins! {
                         }
                         lines.push(ok(Value::String(line.into())));
                     }
-                    // A line that is no UTF-8 is named by its number.
+                    // A line that is no UTF-8 is `InvalidInput`, named by
+                    // its number and the path.
                     Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
                         ended = true;
                         let number = read_lines + 1;
-                        lines.push(err_io_unknown(format!(
-                            "line {number} of {path} is not UTF-8"
-                        )));
+                        let why = format!("line {number} of {path} is not UTF-8");
+                        lines.push(Value::variant(
+                            bv::ERR,
+                            [Value::variant(bv::IO_INVALID_INPUT, [Value::String(why.into())])],
+                        ));
                         break;
                     }
                     Err(e) => {
