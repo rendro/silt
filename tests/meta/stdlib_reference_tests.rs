@@ -195,7 +195,7 @@ fn the_decodable_field_types_of_a_page_are_the_registry_s() {
         };
         for container in containers {
             assert!(
-                named.contains(&container),
+                named.contains(container),
                 "{}: its list names no {container}",
                 module.page_file
             );
