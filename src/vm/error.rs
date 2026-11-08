@@ -138,7 +138,7 @@ impl VmError {
 
     /// `function` (`main`, a test function), named at `at`, returned
     /// `Err(payload)`; `shown` is the payload as `println` writes it.
-    pub(crate) fn returned(function: &str, shown: &str, at: Span) -> Self {
+    pub(crate) fn of_a_returned_err(function: &str, shown: &str, at: Span) -> Self {
         VmError {
             returned: Some(shown.to_string()),
             span: Some(at),

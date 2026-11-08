@@ -477,7 +477,7 @@ impl Vm {
             // (A `process.exit` in a `Display` of the payload ends the
             // run there.)
             let shown = self.show_text_of_err(&payload)?;
-            return Err(VmError::returned(function, &shown, at));
+            return Err(VmError::of_a_returned_err(function, &shown, at));
         }
         Ok(())
     }
