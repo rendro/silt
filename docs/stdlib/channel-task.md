@@ -369,7 +369,7 @@ task that has already failed also dismisses that failure: it is not
 reported as unjoined, does not make `silt run` exit 1 and does not fail
 the test that spawned it. A failure the task took with a `task.join` is
 not its own: the cancel hands it back to the task that failed, which is
-then reported as never joined. The cancel does not wait for the task to stop.
+then reported as never joined, unless that task was cancelled too. The cancel does not wait for the task to stop.
 Its effect on the task depends on where the task is at that moment:
 
 - **The task is waiting** (parked in a channel receive or send, a

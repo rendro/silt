@@ -417,7 +417,8 @@ the task took with a `task.join` (`joined task failed: ...`) is not its
 own: the cancel hands it back to the task that failed, which is then
 reported as never joined. So a failure is never lost to a cancel of the
 task that joins, whether the cancel comes before the join takes it or
-after. A later
+after. A task that was cancelled itself has nothing handed back: its
+cancellation is no failure, and a cancel of it dismissed what it had. A later
 `task.join(h)` still raises the task's own error, because the handle keeps
 the result that came first. Its effect on the task
 depends on where that task is at the moment of cancellation:
@@ -623,7 +624,8 @@ so when the task that spawned it was cancelled. The rules:
   failed dismisses the failure: no report, no exit status 1. A failure
   that `h` took with a join goes back to the task it joined, which is
   reported as never joined: the cancel of a task that joins never hides
-  the failure of the task it joins, whenever the cancel comes.
+  the failure of the task it joins, whenever the cancel comes. (Unless
+  that task was cancelled too: then nothing is reported.)
 - **Every failure counts.** The report is made when the program has ended
   (see [When a program ends](#when-a-program-ends)): a task that fails
   after `main` has returned still makes the run fail, every time. The

@@ -1,0 +1,15 @@
+-- repeat: 5
+-- J joins C; C is cancelled, so J's join fails with "joined task failed:
+-- cancelled", J's own failure. Then J is cancelled: the cancel dismisses
+-- J's failure. C was cancelled, not failed: nothing is to be reported.
+import task
+import time
+fn main() {
+  let c = task.spawn { -> time.sleep(time.ms(1000)) }
+  let j = task.spawn { -> task.join(c) }
+  time.sleep(time.ms(10))
+  task.cancel(c)
+  time.sleep(time.ms(30))
+  task.cancel(j)
+  println("done")
+}

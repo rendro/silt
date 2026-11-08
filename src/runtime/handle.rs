@@ -1383,7 +1383,7 @@ impl TaskHandle {
         let _ = self
             .result
             .complete(Ended(Err(VmError::new("cancelled".to_string()))), wake);
-        if !self.unjoined_failure.swap(false, AtomicOrdering::AcqRel) {
+        if !self.unjoined_failure.swap(false, AtomicOrdering::SeqCst) {
             return None;
         }
         match self.result.get() {
@@ -1395,11 +1395,33 @@ impl TaskHandle {
     /// A join took the failure of this task, and the task that joined
     /// was cancelled before it could fail with it, or had its failure
     /// dismissed: the failure is unhandled again, and is reported as
-    /// never joined unless a join receives it.
+    /// never joined unless a join receives it. A task that has been
+    /// cancelled has none to take back: its cancellation is no failure,
+    /// and a cancel of it dismissed a failure it had, whenever that
+    /// cancel came.
     pub fn hand_back(&self) {
-        if matches!(self.result.get(), Some(Ended(Err(_)))) {
-            self.unjoined_failure.store(true, AtomicOrdering::Release);
+        if !self.can_be_handed_back() {
+            return;
         }
+        self.unjoined_failure.store(true, AtomicOrdering::SeqCst);
+        // (A cancel that comes meanwhile clears the mark itself, or is
+        // seen here.)
+        if self.is_cancelled() {
+            self.unjoined_failure.store(false, AtomicOrdering::SeqCst);
+        }
+    }
+
+    /// Whether this task's result is a failure that a join can hand back:
+    /// it failed, and was neither cancelled nor ended by its deadline.
+    pub(crate) fn can_be_handed_back(&self) -> bool {
+        matches!(self.result.get(), Some(Ended(Err(_))))
+            && !self.is_cancelled()
+            && !self.is_expired()
+    }
+
+    /// Whether the task has its result.
+    pub(crate) fn has_result(&self) -> bool {
+        self.result.get().is_some()
     }
 
     /// A cancel of a task that spawned this one, or of one of their

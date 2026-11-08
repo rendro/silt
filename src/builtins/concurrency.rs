@@ -607,8 +607,12 @@ fn joined(
         // is placed at the join. The failure remembers the task it was
         // taken from: a cancel that comes after the take hands it back
         // (`Scheduler::cancel`).
+        // (A task that was cancelled, or ended by its deadline, has
+        // nothing to be given back: its end is no failure.)
         Err(mut inner) => {
-            inner.taken_from = Some(TakenFrom(handle.clone()));
+            if handle.can_be_handed_back() {
+                inner.taken_from = Some(TakenFrom(handle.clone()));
+            }
             inner.message = format!("joined task failed: {}", inner.message);
             let here = vm.enrich_error(VmError::new(String::new()));
             if inner.span.is_none() {
