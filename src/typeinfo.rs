@@ -984,7 +984,7 @@ mod tests {
         assert_eq!(fields(ty::RESPONSE), ["status", "body", "headers"]);
         assert_eq!(
             fields(ty::REQUEST),
-            ["method", "path", "query", "headers", "body"]
+            ["method", "path", "query", "headers", "body", "peer"]
         );
         assert_eq!(fields(ty::NOTIFICATION), ["channel", "payload", "pid"]);
         assert_eq!(fields(ty::FILE_STAT).len(), 9);
