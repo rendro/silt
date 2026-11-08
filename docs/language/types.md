@@ -166,6 +166,26 @@ let alice2 = alice.{ age: 31 }
 The shorthand works here too: `alice.{ age }` sets `age` to the value of
 the name `age`.
 
+A keyword may name a field, where only a field name can stand: in the
+record type's body, before `:` in a literal or an update, in a record
+pattern and after a dot. So a JSON document's `"type"` key has a field
+of its name:
+
+```silt
+type Event { type: String, id: Int }
+
+fn main() {
+  let e = Event { type: "click", id: 1 }
+  match e {
+    Event { type: t, .. } -> println(t) -- click
+  }
+  println(e.type) -- click
+}
+```
+
+Such a field is never written alone (`Event { type }`): the shorthand
+binds or reads a variable, and a keyword names none.
+
 Read as "alice, but with age 31." Compare to Elm `{ u | age = 31 }`, Rust
 `User { age: 31, ..u }`. Silt's `.{ }` syntax avoids new keywords or sigils.
 

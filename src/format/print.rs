@@ -662,6 +662,15 @@ impl Printer<'_> {
         self.cur.token(&ident())
     }
 
+    /// The name of a field, which may be a keyword (`e.type`).
+    fn field_name(&mut self) -> Doc {
+        let token = self.cur.peek();
+        match token.keyword() {
+            Some(_) => self.cur.token(token),
+            None => self.name(),
+        }
+    }
+
     /// `name` or `module.name`.
     fn qualified(&mut self, qualified: bool) -> Doc {
         if qualified {
@@ -1098,7 +1107,7 @@ impl Printer<'_> {
                     fields,
                     |p, field| {
                         Doc::concat(vec![
-                            p.name(),
+                            p.field_name(),
                             p.tok(Token::Colon),
                             space(),
                             p.type_expr(&field.ty),
@@ -1704,7 +1713,7 @@ impl Printer<'_> {
 
     fn field(&mut self, value: &Expr) -> Doc {
         Doc::concat(vec![
-            self.name(),
+            self.field_name(),
             self.tok(Token::Colon),
             space(),
             self.expr(value, Ctx::top()),
@@ -1993,7 +2002,7 @@ impl Printer<'_> {
                         docs.push(self.tok(Token::Dot));
                         match &link.kind {
                             ExprKind::RecordUpdate { fields, .. } => docs.push(self.fields(fields)),
-                            _ => docs.push(self.name()),
+                            _ => docs.push(self.field_name()),
                         }
                     }
                     ExprKind::Call(callee, args) => {
@@ -2026,7 +2035,7 @@ impl Printer<'_> {
                     docs.push(self.tok(Token::Dot));
                     match &link.kind {
                         ExprKind::RecordUpdate { fields, .. } => docs.push(self.fields(fields)),
-                        _ => docs.push(self.name()),
+                        _ => docs.push(self.field_name()),
                     }
                 }
                 ExprKind::Call(callee, args) => {
@@ -2559,7 +2568,7 @@ impl Printer<'_> {
             &items,
             |p, item| match (item, &rest) {
                 (Some(sub), _) => {
-                    let name = p.name();
+                    let name = p.field_name();
                     match sub {
                         Some(sub) => {
                             Doc::concat(vec![name, p.tok(Token::Colon), space(), p.pattern(sub)])
@@ -2771,7 +2780,7 @@ impl Printer<'_> {
                     &items,
                     |p, item| match item {
                         Some(ty) => Doc::concat(vec![
-                            p.name(),
+                            p.field_name(),
                             p.tok(Token::Colon),
                             space(),
                             p.type_expr(ty),

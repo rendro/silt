@@ -1,0 +1,42 @@
+-- A field may be named by a keyword, so a JSON or TOML key such as
+-- "type" decodes into a record by its name, and encodes under it.
+import json
+import toml
+
+type Event { type: String, match: Int, id: Int }
+
+type Page { when: String, events: List(Event) }
+
+fn main() {
+  let text = """{"when": "today", "events": [{"type": "click", "match": 1, "id": 2}]}"""
+  match json.parse(text, Page) {
+    Ok(page) -> {
+      println(page.when)
+      match page.events {
+        [Event { type: t, match: m, .. }] -> println("{t} {m}")
+        _ -> println("other")
+      }
+      println(json.stringify(page))
+    }
+    Err(e) -> println("json error: {e}")
+  }
+  match json.parse("""{"match": 1, "id": 2}""", Event) {
+    Ok(_) -> println("decoded")
+    Err(e) -> println("json error: {e}")
+  }
+  let toml_text = """
+type = "key"
+match = 3
+id = 4
+"""
+  match toml.parse(toml_text, Event) {
+    Ok(event) -> {
+      println(event.type)
+      when let Ok(written) = toml.stringify(event) else {
+        return
+      }
+      print(written)
+    }
+    Err(e) -> println("toml error: {e}")
+  }
+}

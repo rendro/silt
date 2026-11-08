@@ -96,6 +96,30 @@ pub enum Token {
     Eof,
 }
 
+impl Token {
+    /// The keyword the token is, as it is written (one of `KEYWORDS`);
+    /// `None` for any other token.
+    pub fn keyword(&self) -> Option<&'static str> {
+        Some(match self {
+            Token::Let => "let",
+            Token::Fn => "fn",
+            Token::Type => "type",
+            Token::Trait => "trait",
+            Token::Match => "match",
+            Token::When => "when",
+            Token::Return => "return",
+            Token::Pub => "pub",
+            Token::Opaque => "opaque",
+            Token::Import => "import",
+            Token::As => "as",
+            Token::Else => "else",
+            Token::Where => "where",
+            Token::Loop => "loop",
+            _ => return None,
+        })
+    }
+}
+
 impl fmt::Display for Token {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

@@ -773,6 +773,40 @@ impl<'src> Parser<'src> {
         }
     }
 
+    /// The name of a field: an identifier, or a keyword, which names a
+    /// field where only a field name can stand (`type Event { type:
+    /// String }`, `Event { type: t }`, `e.type`). A keyword cannot name
+    /// a variable, so a field named by one is never written alone.
+    fn expect_field_name(&mut self) -> Result<(Symbol, Span)> {
+        match self.peek().keyword() {
+            Some(keyword) => {
+                let span = self.advance().span;
+                Ok((intern::intern(keyword), span))
+            }
+            None => self.expect_ident(),
+        }
+    }
+
+    /// Whether the token at `i` is a field name followed by `:`.
+    fn field_name_and_colon_at(&self, i: usize) -> bool {
+        let kind = |i: usize| self.tokens.get(i).map(|t| &t.kind);
+        matches!(kind(i), Some(t) if matches!(t, Token::Ident(_)) || t.keyword().is_some())
+            && matches!(kind(i + 1), Some(Token::Colon))
+    }
+
+    /// The error for a field named by the keyword at `span`, written
+    /// alone, where `what` (a value or a pattern) belongs behind it.
+    fn keyword_field_alone(span: Span, keyword: &str, what: &str, example: &str) -> Diagnostic {
+        Diagnostic::error(
+            Code::ExpectedToken,
+            span,
+            format!(
+                "a field named `{keyword}` is written with {what}, `{keyword}: {example}`: \
+                 `{keyword}` is a keyword and cannot name a variable"
+            ),
+        )
+    }
+
     fn expect_ident(&mut self) -> Result<(Symbol, Span)> {
         match self.peek().clone() {
             Token::Ident(name) => {
@@ -905,9 +939,11 @@ impl<'src> Parser<'src> {
 
     /// True at a `fn` that starts a declaration (`fn name`), which no
     /// list element does: the list before it was not closed. `fn(` is
-    /// left to the element parser, which has a hint for it in a type.
+    /// left to the element parser, which has a hint for it in a type,
+    /// and `fn:` is a field named `fn`.
     fn at_fn_decl(&self) -> bool {
-        self.at(&Token::Fn) && !matches!(self.next_on_line(), Some(Token::LParen))
+        self.at(&Token::Fn)
+            && !matches!(self.next_on_line(), Some(Token::LParen | Token::Colon))
     }
 
     /// The error for a function type written `(A -> B)`, at its `->`,
@@ -1772,6 +1808,10 @@ impl<'src> Parser<'src> {
         if self.tokens[self.pos].kind == Token::RBrace {
             return true;
         }
+        // A keyword names no variant, only a field.
+        if self.tokens[self.pos].kind.keyword().is_some() {
+            return true;
+        }
         if let Token::Ident(ref name) = self.tokens[self.pos].kind {
             // lowercase first char → likely record field
             intern::resolve(*name).starts_with(|c: char| c.is_lowercase())
@@ -1785,7 +1825,7 @@ impl<'src> Parser<'src> {
     fn parse_record_body(&mut self, open: Span) -> Result<TypeBody> {
         let mut first = true;
         let fields = self.comma_list("record type", open, ListEnd::Close(&Token::RBrace), |p| {
-            let (name, name_span) = p.expect_ident()?;
+            let (name, name_span) = p.expect_field_name()?;
             // The body was taken for a record because its first name is
             // lower case. A first name without `:` that looks like an
             // enum variant may be a variant spelled in lower case.
@@ -2508,7 +2548,7 @@ impl<'src> Parser<'src> {
                         tail = Some((row, dots.to(row_span)));
                         return Ok(None);
                     }
-                    let (fname, fname_span) = p.expect_ident()?;
+                    let (fname, fname_span) = p.expect_field_name()?;
                     p.expect(&Token::Colon)?;
                     let fty = p.parse_type_expr()?;
                     if !seen.insert(fname) {
@@ -3116,7 +3156,7 @@ impl<'src> Parser<'src> {
                         )
                         .with_help(TUPLE_INDEX_HELP));
                     } else {
-                        let (field, field_span) = self.expect_ident()?;
+                        let (field, field_span) = self.expect_field_name()?;
                         // Qualified record construction —
                         // `util.Pt { x: 1, y: 2 }` builds the same value as
                         // bare `Pt { x: 1, y: 2 }`, with the qualifier
@@ -3718,15 +3758,12 @@ impl<'src> Parser<'src> {
         if self.peek() != &Token::LBrace {
             return false;
         }
-        let mut i = self.pos + 1;
-        if !matches!(self.tokens.get(i).map(|t| &t.kind), Some(Token::Ident(_))) {
-            return false;
+        let i = self.pos + 1;
+        if self.field_name_and_colon_at(i) {
+            return true;
         }
-        i += 1;
-        matches!(
-            self.tokens.get(i).map(|t| &t.kind),
-            Some(Token::Colon | Token::Comma)
-        )
+        matches!(self.tokens.get(i).map(|t| &t.kind), Some(Token::Ident(_)))
+            && matches!(self.tokens.get(i + 1).map(|t| &t.kind), Some(Token::Comma))
     }
 
     /// Render an `Ident` / dotted `FieldAccess` chain (`util`,
@@ -3972,17 +4009,13 @@ impl<'src> Parser<'src> {
         if self.peek() != &Token::LBrace {
             return false;
         }
-        let mut i = self.pos + 1;
+        let i = self.pos + 1;
         // Spread head is unambiguous.
         if matches!(self.tokens.get(i).map(|t| &t.kind), Some(Token::DotDotDot)) {
             return true;
         }
-        // `Ident COLON`: an anonymous record.
-        if !matches!(self.tokens.get(i).map(|t| &t.kind), Some(Token::Ident(_))) {
-            return false;
-        }
-        i += 1;
-        matches!(self.tokens.get(i).map(|t| &t.kind), Some(Token::Colon))
+        // `name COLON`, the name maybe a keyword: an anonymous record.
+        self.field_name_and_colon_at(i)
     }
 
     /// Parse `{name: expr, ...}` or `{...spread, name: expr, ...}` after
@@ -4013,7 +4046,7 @@ impl<'src> Parser<'src> {
                     spread = Some(Box::new(p.parse_expr()?));
                     return Ok(None);
                 }
-                let (name, name_span) = p.expect_ident()?;
+                let (name, name_span) = p.expect_field_name()?;
                 p.expect(&Token::Colon)?;
                 let value = p.parse_expr()?;
                 if !seen.insert(name) {
@@ -4048,8 +4081,14 @@ impl<'src> Parser<'src> {
                         "spread syntax is not supported; use `value.{ field: expr }` for record updates",
                     ));
                 }
-                let (name, name_span) = p.expect_ident()?;
+                let keyword = p.peek().keyword();
+                let (name, name_span) = p.expect_field_name()?;
                 if !p.at(&Token::Colon) {
+                    if let Some(keyword) = keyword {
+                        return Err(Self::keyword_field_alone(
+                            name_span, keyword, "its value", "value",
+                        ));
+                    }
                     // The shorthand: the field takes the value of the
                     // name in scope.
                     let value = p.mk_expr(ExprKind::Ident(name), name_span);
@@ -4297,10 +4336,16 @@ impl<'src> Parser<'src> {
 
     /// A field of a record pattern: `name` or `name: pattern`.
     fn parse_field_pattern(&mut self) -> Result<(Symbol, Span, Option<Pattern>)> {
-        let (field_name, field_span) = self.expect_ident()?;
+        let keyword = self.peek().keyword();
+        let (field_name, field_span) = self.expect_field_name()?;
         let sub = if self.peek() == &Token::Colon {
             self.advance();
             Some(self.parse_pattern()?)
+        } else if let Some(keyword) = keyword {
+            let example = &keyword[..1];
+            return Err(Self::keyword_field_alone(
+                field_span, keyword, "a pattern", example,
+            ));
         } else {
             None
         };

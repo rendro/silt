@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- A field named by a keyword is never written alone in a pattern: the
+-- shorthand would bind a variable, and a keyword names none.
+type Event { type: String }
+
+fn main() {
+  let e = Event { type: "a" }
+  match e {
+    Event { type } -> println("matched")
+  }
+}
