@@ -1,0 +1,15 @@
+-- cmd: fmt
+-- A `{- -}` and a `--` comment behind `match`, in front of a scrutinee
+-- in parentheses that hold a comment of their own, stay behind `match`:
+-- those parentheses are kept, and nothing is lost.
+import list
+
+fn main() {
+  let items = [1, 2, 3]
+  let t = match {- q -} -- r
+    ({- a -} items |> list.length) {
+    3 -> "three"
+    _ -> "other"
+  }
+  println(t)
+}

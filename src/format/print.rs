@@ -547,6 +547,17 @@ fn parenthesized(open: Doc, inner: Doc, close: Doc) -> Doc {
     Doc::concat(vec![leading, group])
 }
 
+/// The comments `behind` that `tok_before_parens` took from behind its
+/// token, in front of `doc`, when the value keeps its source's
+/// parentheses after all: behind the token again, as `trailing` writes
+/// them.
+fn behind_token(behind: Doc, doc: Doc) -> Doc {
+    match behind.is_nil() {
+        true => doc,
+        false => Doc::concat(vec![behind, space(), doc]),
+    }
+}
+
 fn ident() -> Token {
     Token::Ident(intern::intern("_"))
 }
@@ -1511,14 +1522,15 @@ impl Printer<'_> {
                         false => ctx,
                     };
                     let doc = self.expr(scrutinee, ctx);
-                    let (open, close) = (
-                        Doc::concat(vec![Doc::text("("), behind_open]),
-                        Doc::text(")"),
-                    );
+                    let open = Doc::concat(vec![Doc::text("("), behind_open.clone()]);
+                    let close = Doc::text(")");
                     match (bare && !commented, comment_first) {
                         (true, false) => docs.push(Doc::concat(vec![open, doc, close])),
                         (true, true) => docs.push(parenthesized(open, doc, close)),
-                        (false, _) => docs.push(doc),
+                        // (The source's parentheses, which hold a comment,
+                        // are kept: the comments behind `match` stay
+                        // behind it.)
+                        (false, _) => docs.push(behind_token(behind_open, doc)),
                     }
                     if piped && !in_parens && !bare && self.cur.line_break_before() {
                         docs.push(Doc::HardLine);
@@ -1573,14 +1585,12 @@ impl Printer<'_> {
                         false => Ctx::in_header(Header::Loop),
                     };
                     let doc = self.expr(init, ctx);
-                    let (open, close) = (
-                        Doc::concat(vec![Doc::text("("), behind_open]),
-                        Doc::text(")"),
-                    );
+                    let open = Doc::concat(vec![Doc::text("("), behind_open.clone()]);
+                    let close = Doc::text(")");
                     docs.push(match (bare && !commented, comment_first) {
                         (true, false) => Doc::concat(vec![open, doc, close]),
                         (true, true) => parenthesized(open, doc, close),
-                        (false, _) => doc,
+                        (false, _) => behind_token(behind_open, doc),
                     });
                     if i + 1 < bindings.len() {
                         docs.push(self.tok(Token::Comma));
@@ -2135,7 +2145,11 @@ impl Printer<'_> {
     fn lambda(&mut self, expr: &Expr, params: &[Param], body: &Expr) -> Doc {
         // The parameters may break behind their commas; they stand
         // under the first one then.
-        let mut head = vec![self.tok(Token::LBrace), space()];
+        // (A `{- -}` comment behind the brace is written behind a space,
+        // as a second pass, which finds it in front of the parameters,
+        // writes it.)
+        let brace = self.cur.token_without_trailing(&Token::LBrace);
+        let mut head = vec![brace, space(), self.cur.trailing()];
         let mut list = Vec::new();
         for (i, param) in params.iter().enumerate() {
             list.push(self.param(param, true));
