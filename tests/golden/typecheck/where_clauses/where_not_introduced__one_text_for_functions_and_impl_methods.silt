@@ -1,0 +1,23 @@
+-- cmd: check
+-- exit: 1
+-- A where clause on a variable the signature does not write is one
+-- error for a function, a trait method and an impl's method (whose
+-- impl type may introduce it too). The help names a parameter without
+-- a type to write the variable on, else the places it may stand; it
+-- keeps `self` and the written types as they are.
+-- stderr-contains: error[type]: type variable 'z' in the where clause of 'f' is not in its signature
+-- stderr-contains: = help: write it as the type of a parameter (`x: z`), or remove the bound `z: Display`
+-- stderr-contains: error[type]: type variable 'z' in the where clause of 'g' is not in its signature
+-- stderr-contains: = help: write it in the type of a parameter or of the result, or remove the bound `z: Display`
+-- stderr-contains: error[type]: type variable 'z' in the where clause of 'Int.h' is not in its signature or the impl's type
+-- stderr-not-contains: e.g.:
+trait D {
+  fn g(self, n: Int) -> Int where z: Display
+  fn h(self) -> Int
+}
+trait D for Int {
+  fn g(self, n: Int) -> Int { n }
+  fn h(self) -> Int where z: Display { 1 }
+}
+fn f(x, n: Int) -> Int where z: Display { n }
+fn main() { println(f(1, 2)) }

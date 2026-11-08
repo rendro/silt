@@ -128,26 +128,47 @@ impl TypeChecker {
 
     /// The error of the `where` clause `type_param: trait_name` of the
     /// function or method `f` whose signature does not write the
-    /// variable. (The example names the first parameter but `self`.)
+    /// variable. `of_impl` is the type of the impl a method is in: its
+    /// header may introduce the variable too. The help names a parameter
+    /// without a type to write it on, if there is one.
     pub(super) fn where_not_introduced(
         &mut self,
         f: &FnDecl,
         type_param: Symbol,
         trait_name: Symbol,
+        of_impl: Option<Symbol>,
     ) {
-        let first_param_name = (f.params.iter())
-            .map(|p| match &p.pattern.kind {
-                PatternKind::Ident(n) => resolve(*n),
-                _ => "_".to_string(),
-            })
-            .find(|name| name != "self")
-            .unwrap_or_else(|| "_".to_string());
-        self.error(
+        let (shown, place) = match of_impl {
+            Some(target) => (
+                format!("{}.{}", resolve(target), f.name),
+                "its signature or the impl's type",
+            ),
+            None => (resolve(f.name), "its signature"),
+        };
+        let untyped = (f.params.iter())
+            .filter(|p| p.ty.is_none() && !matches!(p.kind, ParamKind::Type))
+            .find_map(|p| match &p.pattern.kind {
+                PatternKind::Ident(n) if resolve(*n) != "self" => Some(resolve(*n)),
+                _ => None,
+            });
+        let help = match untyped {
+            Some(name) => format!(
+                "write it as the type of a parameter (`{name}: {type_param}`), or remove the \
+                 bound `{type_param}: {trait_name}`"
+            ),
+            None => format!(
+                "write it in the type of a parameter or of the result, or remove the bound \
+                 `{type_param}: {trait_name}`"
+            ),
+        };
+        self.error_help(
             Code::InvalidTypeAnnotation,
-            format!(
-                "type variable '{}' in where clause is not introduced in the function signature; \
-                 use an explicit type annotation, e.g.: fn {}({}: {}) where {}: {}",
-                type_param, f.name, first_param_name, type_param, type_param, trait_name
+            (
+                format!(
+                    "type variable '{type_param}' in the where clause of '{shown}' is not in \
+                     {place}"
+                ),
+                Some(help),
             ),
             f.span,
         );
@@ -391,7 +412,7 @@ impl TypeChecker {
                     f.span,
                 );
             } else {
-                self.where_not_introduced(f, *type_param, *trait_name);
+                self.where_not_introduced(f, *type_param, *trait_name, None);
             }
         }
 

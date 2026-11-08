@@ -1,4 +1,4 @@
 Some(1)
 Some(2)
 Some(3)
-Pair {a: 4, e: 0}
+Pair {a: 4, e: []}

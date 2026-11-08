@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: not introduced in the function signature
+-- stderr-contains: type variable 'x' in the where clause of 'show' is not in its signature
 fn show(x) where x: Display { "{x}" }
 fn main() {
   let _ = show({ -> 1 })

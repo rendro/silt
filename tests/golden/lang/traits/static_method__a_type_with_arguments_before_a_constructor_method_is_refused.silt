@@ -11,11 +11,11 @@ trait Pointed {
 
 type Pair(a, e) {
   a: a,
-  e: e,
+  e: List(e),
 }
 
-trait Pointed for Pair(_, Int) {
-  fn point(x: a) -> Self(a) { Pair { a: x, e: 0 } }
+trait Pointed for Pair(_, e) {
+  fn point(x: a) -> Self(a) { Pair { a: x, e: [] } }
 }
 
 type IntOpt = Option(Int)

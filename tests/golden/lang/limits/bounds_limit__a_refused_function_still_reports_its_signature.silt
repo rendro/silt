@@ -6,7 +6,7 @@
 -- stderr-contains: error[compile]: too many parameters and bounds of a function: 257 (the limit is 255)
 -- stderr-contains: unknown type 'Nope'
 -- stderr-contains: unknown type 'Strin'
--- stderr-contains: type variable 'b' in where clause is not introduced in the function signature
+-- stderr-contains: type variable 'b' in the where clause of 'other' is not in its signature
 -- stderr-not-contains: of a function: 256
 trait Tr {
   fn tr(self) -> Int

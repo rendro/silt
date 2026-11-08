@@ -1,5 +1,6 @@
-error[type]: type variable 'a' in where clause is not introduced in the function signature; use an explicit type annotation, e.g.: fn go(x: a) where a: Tr
+error[type]: type variable 'a' in the where clause of 'go' is not in its signature
  --> default_method__a_where_variable_nothing_introduces_is_refused.silt:9:3
    |
  9 |   fn go(self, x: Int) -> Int where a: Tr {
-   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type variable 'a' in where clause is not introduced in the function signature; use an explicit type annotation, e.g.: fn go(x: a) where a: Tr
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type variable 'a' in the where clause of 'go' is not in its signature
+  = help: write it in the type of a parameter or of the result, or remove the bound `a: Tr`
