@@ -172,7 +172,10 @@ pattern and after a dot. So a JSON document's `"type"` key has a field
 of its name:
 
 ```silt
-type Event { type: String, id: Int }
+type Event {
+  type: String,
+  id: Int,
+}
 
 fn main() {
   let e = Event { type: "click", id: 1 }

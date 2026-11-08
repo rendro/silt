@@ -144,9 +144,13 @@ module builds, matches or reads it; its printed form shows the private
 names all the same:
 
 ```silt
-type Secret { Secret(Int) }
+type Secret {
+  Secret(Int),
+}
 
-pub opaque type Vault { Vault(Secret) }
+pub opaque type Vault {
+  Vault(Secret),
+}
 ```
 
 ## Imports
