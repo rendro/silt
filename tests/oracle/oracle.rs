@@ -74,7 +74,7 @@ use silt::{Buffer, Clock, HostIo, Value, Vm};
 const INSIDE_MODULES: &[&str] = &[
     "", "string", "int", "float", "list", "map", "set", "result", "option", "test", "math",
     "regex", "json", "toml", "bytes", "encoding", "crypto", "uuid", "time", "task", "channel",
-    "stream",
+    "stream", "csv",
 ];
 
 /// The functions of [`INSIDE_MODULES`] that read or write a file or a

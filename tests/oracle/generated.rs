@@ -243,7 +243,7 @@ const TAKEN: &[&str] = &[
     "fn", "let", "type", "trait", "impl", "match", "when", "return", "pub", "opaque", "import",
     "as", "else", "where", "loop", "true", "false", "main", "list", "string", "map", "set", "int",
     "float", "io", "fs", "env", "test", "regex", "json", "toml", "math", "channel", "task", "time",
-    "http", "bytes", "tcp", "stream", "result", "option", "uuid",
+    "http", "bytes", "tcp", "stream", "result", "option", "uuid", "csv",
 ];
 
 /// A variable name: one to three letters, and a digit now and then.

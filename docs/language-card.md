@@ -840,3 +840,10 @@ uuid.v7() -> String
 ```
 process.exit(code: Int) -> Never
 ```
+
+### csv
+
+```
+type CsvError { Syntax(String, Int), TypeMismatch(String, String), MissingField(String), Other(String) }
+csv.split_line(line: String) -> Result(List(String), CsvError)
+```

@@ -16,7 +16,7 @@ use crate::builtins::prelude;
 #[cfg(feature = "tcp")]
 use crate::builtins::tcp;
 use crate::builtins::{
-    applicative, bytes, concurrency, core, crypto, encoding, http, io, json, process, regex,
+    applicative, bytes, concurrency, core, crypto, csv, encoding, http, io, json, process, regex,
     stream, string, time, toml, uuid,
 };
 
@@ -675,6 +675,17 @@ pub(super) fn modules() -> Vec<Module> {
             page: "process.md",
             rows: [
                 f("fn exit(code: Int) -> Never", "End the program with an exit code", process::exit),
+            ],
+        },
+        module! {
+            name: "csv",
+            page: "csv.md",
+            types: "\
+                pub type CsvError { Syntax(String, Int), TypeMismatch(String, String), MissingField(String), Other(String) }\n\
+            ",
+            error: "CsvError" => csv::error_text,
+            rows: [
+                f("fn split_line(line: String) -> Result(List(String), CsvError)", "The fields of one line: quoted fields and `\"\"` escapes as RFC 4180 writes them", csv::split_line),
             ],
         },
     ]

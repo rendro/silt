@@ -49,6 +49,7 @@ fn every_builtin_error_enum_has_a_message_row() {
         ("CryptoError", "crypto", "InvalidLength(-1)"),
         ("EncodingError", "encoding", r#"InvalidPercent("x")"#),
         ("UuidError", "uuid", r#"Invalid("x")"#),
+        ("CsvError", "csv", r#"Syntax("x", 0)"#),
         ("TaskError", "task", "Timeout"),
     ];
 
