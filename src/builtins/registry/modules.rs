@@ -78,6 +78,7 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn eprint(value: a) -> () where a: Display", "Print a value to stderr without trailing newline", io::eprint),
                 f("fn eprintln(value: a) -> () where a: Display", "Print a value to stderr with trailing newline", io::eprintln),
                 f("fn inspect(x: a) -> String", "Debug representation of any value", io::inspect),
+                f("fn read_bytes(path: String) -> Result(Bytes, IoError)", "Read entire file as bytes", io::read_bytes),
                 f("fn read_file(path: String) -> Result(String, IoError)", "Read entire file as string", io::read_file),
                 f("fn read_line() -> Result(String, IoError)", "Read one line from stdin", io::read_line),
                 f("fn write_file(path: String, contents: String) -> Result((), IoError)", "Write string to file", io::write_file),
@@ -556,6 +557,7 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn to_hex(b: Bytes) -> String", "Encode as lowercase hex", bytes::to_hex),
                 f("fn to_list(b: Bytes) -> List(Int)", "Materialize as a list of byte values", bytes::to_list),
                 f("fn to_string(b: Bytes) -> Result(String, BytesError)", "UTF-8 decode (errors on invalid UTF-8)", bytes::to_string),
+                f("fn to_string_lossy(b: Bytes) -> String", "UTF-8 decode, each invalid sequence as U+FFFD", bytes::to_string_lossy),
             ],
         },
         module! {

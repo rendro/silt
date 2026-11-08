@@ -17,6 +17,7 @@ inspection.
 | `eprint` | `(a) -> () where a: Display` | Print a value to stderr without trailing newline |
 | `eprintln` | `(a) -> () where a: Display` | Print a value to stderr with trailing newline |
 | `inspect` | `(a) -> String` | Debug representation of any value |
+| `read_bytes` | `(String) -> Result(Bytes, IoError)` | Read entire file as bytes |
 | `read_file` | `(String) -> Result(String, IoError)` | Read entire file as string |
 | `read_line` | `() -> Result(String, IoError)` | Read one line from stdin |
 | `write_file` | `(String, String) -> Result((), IoError)` | Write string to file |
@@ -118,6 +119,31 @@ import io
 fn main() {
   let s = io.inspect((1, "hello", true))
   println(s) -- (1, "hello", true)
+}
+```
+
+
+## `io.read_bytes`
+
+```
+io.read_bytes(path: String) -> Result(Bytes, IoError)
+```
+
+Reads the entire contents of a file as bytes, whatever they are: a file
+that is no UTF-8 (an image, a log with stray bytes) is read too. Its errors
+are those of `io.read_file`. `bytes.to_string_lossy` turns the bytes into
+text, with U+FFFD for what is no UTF-8.
+
+```silt
+import bytes
+import io
+
+fn main() {
+  match io.read_bytes("data.bin") {
+    Ok(raw) -> println(bytes.length(raw))
+    Err(io.NotFound(path)) -> println("no such file: {path}")
+    Err(e) -> println("Error: {Error.message(e)}")
+  }
 }
 ```
 

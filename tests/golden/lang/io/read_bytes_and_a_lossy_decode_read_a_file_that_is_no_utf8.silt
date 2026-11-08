@@ -1,0 +1,28 @@
+-- io.read_bytes reads a file whatever its bytes, and bytes.to_string_lossy
+-- writes U+FFFD for each sequence that is no UTF-8: two stray bytes are
+-- two, a character cut short is one. io.read_file stays strict, and
+-- read_bytes has its errors.
+import bytes
+import io
+import stream
+
+fn main() {
+  -- "ok\nbad \xff\xfe here\ncut \xe2\x82 x\n"
+  let raw = match bytes.from_hex("6f6b0a62616420fffe20686572650a63757420e28220780a") {
+    Ok(b) -> b
+    Err(e) -> panic(e)
+  }
+  println(stream.write_to_file(stream.from_list([raw]), "bad.log"))
+  println(io.read_file("bad.log"))
+  match io.read_bytes("bad.log") {
+    Ok(read) -> {
+      println(read == raw)
+      print(bytes.to_string_lossy(read))
+    }
+    Err(e) -> println(e)
+  }
+  println(bytes.to_string_lossy(bytes.from_string("all fine é")))
+  println(bytes.to_string_lossy(bytes.empty()) == "")
+  println(io.read_bytes("missing.log"))
+  println(io.read_file("missing.log"))
+}

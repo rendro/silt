@@ -1,0 +1,10 @@
+Ok(())
+Err(invalid data: bad.log)
+true
+ok
+bad �� here
+cut � x
+all fine é
+true
+Err(file not found: missing.log)
+Err(file not found: missing.log)

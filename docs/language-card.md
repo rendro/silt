@@ -320,6 +320,7 @@ io.args() -> List(String)
 io.eprint(value: a) -> () where a: Display
 io.eprintln(value: a) -> () where a: Display
 io.inspect(x: a) -> String
+io.read_bytes(path: String) -> Result(Bytes, IoError)
 io.read_file(path: String) -> Result(String, IoError)
 io.read_line() -> Result(String, IoError)
 io.write_file(path: String, contents: String) -> Result((), IoError)
@@ -738,6 +739,7 @@ bytes.to_base64(b: Bytes) -> String
 bytes.to_hex(b: Bytes) -> String
 bytes.to_list(b: Bytes) -> List(Int)
 bytes.to_string(b: Bytes) -> Result(String, BytesError)
+bytes.to_string_lossy(b: Bytes) -> String
 ```
 
 ### crypto
