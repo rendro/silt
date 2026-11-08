@@ -128,6 +128,69 @@ fn main() {
 }
 ```
 
+### Writing a stream of Result rows to a file
+
+`stream.write_to_file` takes a channel of `Bytes`. A source that can fail
+on the way, such as `postgres.stream` (a channel of `Result(Row,
+PostgresError)`), is written by a relay task: it receives the rows, sends
+the text of each `Ok` row on as bytes, and stops at the first `Err`,
+which it returns; the file is written while the relay runs, so the rows
+are never all held. Closing the source at the `Err` stops what feeds it.
+
+```silt
+import bytes
+import channel
+import io
+import result
+import stream
+import string
+import task
+
+type ExportError {
+  BadRow(String),
+  Write(io.IoError),
+}
+
+-- Writes each Ok row to `path` as a line, as the rows come, and stops at
+-- the first Err: Ok of the number of rows written, or the Err.
+fn write_rows(rows: Channel(Result(String, String)), path: String) -> Result(Int, ExportError) {
+  let lines = channel.new(64)
+  let relay = task.spawn { ->
+    let sent = loop n = 0 {
+      match channel.receive(rows) {
+        None -> Ok(n)
+        Some(Err(e)) -> {
+          channel.close(rows)
+          Err(BadRow(e))
+        }
+        Some(Ok(row)) -> {
+          channel.send(lines, bytes.from_string("{row}\n"))
+          loop(n + 1)
+        }
+      }
+    }
+    channel.close(lines)
+    sent
+  }
+  match stream.write_to_file(lines, path) {
+    Ok(()) -> task.join(relay)
+    Err(e) -> {
+      task.cancel(relay)
+      Err(Write(e))
+    }
+  }
+}
+
+fn main() {
+  let good = stream.from_list([Ok("a,1"), Ok("b,2")])
+  println(write_rows(good, "out.csv")) -- Ok(2)
+  let bad = stream.from_list([Ok("a,1"), Err("row 2: no price"), Ok("c,3")])
+  println(write_rows(bad, "out.csv")) -- Err(BadRow(row 2: no price))
+  -- The rows before the Err are in the file.
+  println(io.read_file("out.csv") |> result.map(string.lines)) -- Ok([a,1])
+}
+```
+
 ## Design notes
 
 - **Streams are channels.** No new value type. `stream.collect(ch)` works
