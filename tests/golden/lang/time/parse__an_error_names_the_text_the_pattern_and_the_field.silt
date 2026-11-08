@@ -1,0 +1,26 @@
+-- time.parse and time.parse_date name the text and the pattern of an error,
+-- and say why: the field that is out of range or expected at a byte, the
+-- text left over, or the day the fields make none of. A field of one
+-- digit is read (%m, %d, %H ...).
+import time
+
+fn main() {
+  println(time.parse_date("2025-02-30", "%Y-%m-%d"))
+  println(time.parse_date("2024-02-30", "%Y-%m-%d"))
+  println(time.parse_date("2025-13-01", "%Y-%m-%d"))
+  println(time.parse_date("2025-1-5", "%Y-%m-%d"))
+  println(time.parse_date("2025-01", "%Y-%m-%d"))
+  println(time.parse_date("2025/01/05", "%Y-%m-%d"))
+  println(time.parse_date("2025-01-05x", "%Y-%m-%d"))
+  println(time.parse_date("Mon 2025-01-07", "%a %Y-%m-%d"))
+  println(time.parse_date("Foo 7, 2025", "%b %d, %Y"))
+  println(time.parse_date("2025-400", "%Y-%j"))
+  println(time.parse_date("2025-366", "%Y-%j"))
+  println(time.parse("2025-01-05 25:00", "%Y-%m-%d %H:%M"))
+  println(time.parse("2025-01-05 xx", "%Y-%m-%d %H:%M"))
+  println(time.parse("abc", "%Y-%m-%d %H:%M:%S"))
+  println(time.parse("2025-01-05 10:61:00", "%Y-%m-%d %H:%M:%S"))
+  println(time.parse("2025-01-05 10:00:00 XM", "%Y-%m-%d %I:%M:%S %p"))
+  println(time.parse("2016-12-31 23:59:60", "%Y-%m-%d %H:%M:%S"))
+  println(time.parse("2025-01-05T10:00", "%Y-%m-%dT%H:%M"))
+}
