@@ -119,11 +119,16 @@ impl TypeChecker {
         );
     }
 
-    /// The definition of the module's function `name`.
+    /// The definition of the module's function `name` (of a host
+    /// module, its host function).
     fn fn_def_id(&self, name: Symbol) -> Option<crate::defs::DefId> {
         let defs = self.defs.as_ref()?;
-        (defs.named(self.module, name).iter().copied())
-            .find(|id| defs.get(*id).kind == crate::defs::DefKind::Fn)
+        (defs.named(self.module, name).iter().copied()).find(|id| {
+            matches!(
+                defs.get(*id).kind,
+                crate::defs::DefKind::Fn | crate::defs::DefKind::Host
+            )
+        })
     }
 
     /// The error of the `where` clause `type_param: trait_name` of the

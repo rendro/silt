@@ -1,0 +1,35 @@
+-- exit: 1
+-- An anonymous record type and a function type have no value as a type:
+-- given as a type argument, by an alias, an alias of one, a type written
+-- in full that holds one, or written out, they are refused with one text
+-- (they ended in a compiler error). Of a builtin decoder, an alias says
+-- what it cannot decode.
+import json
+
+type R = {x: Int}
+type R2 = R
+type F = Fn(Int) -> Int
+type G(a) = {x: a}
+type L = List({x: Int})
+type Box(t) { v: t }
+
+fn f(type a) -> Int { 1 }
+
+fn shown(type a) -> Int where a: Display { 2 }
+
+fn main() {
+  let _ = f(R)
+  let _ = f(R2)
+  let _ = f(F)
+  let _ = shown(R)
+  let _ = f(List(R))
+  let _ = f((R, Int))
+  let _ = f(Box(R))
+  let _ = f(G(Int))
+  let _ = f(List(F))
+  let _ = f(List(L))
+  let _ = f({x: Int})
+  let _ = json.parse("1", {x: Int})
+  let _ = json.parse("1", R)
+  let _t = List(R)
+}

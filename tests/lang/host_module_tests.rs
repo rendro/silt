@@ -1250,3 +1250,29 @@ fn a_parameter_written_as_a_pattern_is_named_by_its_place() {
         assert!(err.contains(expected), "{signature}: {err}");
     }
 }
+
+/// An anonymous record type has no value as a type: given to a host
+/// function's `type a` parameter by an alias or written out, it is
+/// refused by the checker (by an alias it reached the compiler).
+#[test]
+fn an_anonymous_record_type_is_no_type_argument_of_a_host_function() {
+    for call in ["h.cast({x: 1}, Rec)", "h.cast({x: 1}, {x: Int})"] {
+        let body = format!("  host.give({call})");
+        let err = run_with_host(
+            &[(
+                "main.silt",
+                &format!(
+                    "{PROBE_PRELUDE}type Rec = {{x: Int}}\nfn main() {{\n{body}\n}}\nimport host"
+                ),
+            )],
+            vec![probe()],
+        )
+        .expect_err(call);
+        assert_eq!(
+            err,
+            "`h.cast` takes a type as `a`, but `{x: Int}` is an anonymous record type, which has \
+             no value as a type",
+            "{call}"
+        );
+    }
+}
