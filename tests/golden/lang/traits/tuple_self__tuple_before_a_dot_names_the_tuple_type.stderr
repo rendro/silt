@@ -1,12 +1,37 @@
 error[type]: undefined variable 'Tuple'
- --> tuple_self__tuple_before_a_dot_names_the_tuple_type.silt:16:11
+ --> tuple_self__tuple_before_a_dot_names_the_tuple_type.silt:18:11
     |
- 16 |   println(Tuple(Int, List(String), json.Value).empty())
+ 18 |   println(Tuple(Int, List(String), json.Value).empty())
     |           ^^^^^ undefined variable 'Tuple'
   = help: a tuple type before a dot is written `(Int, List(String), json.Value)`
 
 error[type]: undefined variable 'Tuple'
- --> tuple_self__tuple_before_a_dot_names_the_tuple_type.silt:17:11
+ --> tuple_self__tuple_before_a_dot_names_the_tuple_type.silt:19:11
     |
- 17 |   let t = Tuple(Int, Int)
+ 19 |   println(Tuple(Int, Tuple(Int, Int)).empty())
+    |           ^^^^^ undefined variable 'Tuple'
+  = help: a tuple type before a dot is written `(Int, (Int, Int))`
+
+error[type]: undefined variable 'Tuple'
+ --> tuple_self__tuple_before_a_dot_names_the_tuple_type.silt:19:22
+    |
+ 19 |   println(Tuple(Int, Tuple(Int, Int)).empty())
+    |                      ^^^^^ undefined variable 'Tuple'
+
+error[type]: undefined variable 'Tuple'
+ --> tuple_self__tuple_before_a_dot_names_the_tuple_type.silt:20:11
+    |
+ 20 |   println(Tuple().empty())
+    |           ^^^^^ undefined variable 'Tuple'
+
+error[type]: undefined variable 'Tuple'
+ --> tuple_self__tuple_before_a_dot_names_the_tuple_type.silt:21:11
+    |
+ 21 |   println(Tuple(1, "a").empty())
+    |           ^^^^^ undefined variable 'Tuple'
+
+error[type]: undefined variable 'Tuple'
+ --> tuple_self__tuple_before_a_dot_names_the_tuple_type.silt:22:11
+    |
+ 22 |   let t = Tuple(Int, Int)
     |           ^^^^^ undefined variable 'Tuple'

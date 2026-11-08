@@ -1,7 +1,9 @@
 -- exit: 1
 -- `Tuple(...)` before a dot is no spelling of the tuple type: its error
--- has the help that writes the type, its parts as written. Anywhere else
--- `Tuple` is only undefined.
+-- has the help that writes the type, its parts as written and a nested
+-- `Tuple(...)` as the tuple it means, on the outer `Tuple` only. No help
+-- where a part is no type or `Tuple` has fewer than two parts. Anywhere
+-- else `Tuple` is only undefined.
 import json
 
 trait Monoid {
@@ -14,6 +16,9 @@ trait Monoid for Int {
 
 fn main() {
   println(Tuple(Int, List(String), json.Value).empty())
+  println(Tuple(Int, Tuple(Int, Int)).empty())
+  println(Tuple().empty())
+  println(Tuple(1, "a").empty())
   let t = Tuple(Int, Int)
   println(t)
 }
