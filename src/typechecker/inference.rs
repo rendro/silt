@@ -1499,12 +1499,45 @@ impl TypeChecker {
                 "`{name}` is also a type variable here, and the value is meant: rename one to \
                  call the method of the type variable's bound"
             )),
+            None if let Some(help) = recv.and_then(|recv| self.variant_hides_trait(recv, field)) => {
+                Some(help)
+            }
             None => match self.method_help(ty, field, &written) {
                 Some(help) => Some(help),
                 None => format_record_field_suggestion(base.clone(), field, fields).1,
             },
         };
         self.error_help(Code::UnknownField, (base, help), span);
+    }
+
+    /// The help for `V.field`, where the name `V` is a variant and a
+    /// trait in sight of the same name has a method `field`: the
+    /// variant hides the trait in an expression (a declaration of the
+    /// module comes before the prelude's).
+    fn variant_hides_trait(&self, recv: &Expr, field: Symbol) -> Option<String> {
+        let ExprKind::Ident(name) = recv.kind else {
+            return None;
+        };
+        let Some(crate::defs::Res::Def(id)) = recv.res else {
+            return None;
+        };
+        let crate::defs::DefKind::Variant { ty, .. } = self.def(id)?.kind else {
+            return None;
+        };
+        let written = resolve(name);
+        let hides = (self.tables.traits.iter())
+            .filter(|(_, info)| info.methods.iter().any(|(n, _)| *n == field))
+            .map(|(t, _)| *t)
+            .filter(|t| self.sees_trait(*t) && self.private_owner(*t).is_none())
+            .any(|t| self.spell_trait(t) == written);
+        if !hides {
+            return None;
+        }
+        let enum_name = (self.spell_def(ty.0)).or_else(|| self.def(ty.0).map(|d| resolve(d.name)))?;
+        Some(format!(
+            "`{written}` here is the variant `{enum_name}.{written}`, which hides the trait \
+             `{written}` in expressions: rename the variant to call `{written}.{field}`"
+        ))
     }
 
     /// The refusal of a record update whose base is of the type `ty`,
