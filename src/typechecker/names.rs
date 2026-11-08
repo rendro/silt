@@ -2429,8 +2429,8 @@ impl Resolver<'_> {
                                 q.name
                             ),
                         );
-                        if let Some(module) = self.items_import_of(q.name) {
-                            d = d.with_help(items_import_help(module));
+                        if let Some(help) = self.items_only_help(q.name) {
+                            d = d.with_help(help);
                         } else {
                             let elsewhere = self.elsewhere(q.name);
                             if !elsewhere.is_empty() {
@@ -2463,8 +2463,8 @@ impl Resolver<'_> {
                             written(&[m.name, e.name, name])
                         ),
                     );
-                    if let Some(module) = self.items_import_of(m.name) {
-                        d = d.with_help(items_import_help(module));
+                    if let Some(help) = self.items_only_help(m.name) {
+                        d = d.with_help(help);
                     }
                     self.error(d);
                     Some(Res::Error)
@@ -3193,9 +3193,7 @@ impl Resolver<'_> {
             )),
             // A module imported for some of its names only: that import
             // is what the name was meant to reach, before any name like it.
-            None if let Some(module) = self.items_import_of(name) => {
-                Some(items_import_help(module))
-            }
+            None if let Some(help) = self.items_only_help(name) => Some(help),
             None => {
                 let elsewhere = self.elsewhere(name);
                 // A trait of a module: it is imported by its name.
@@ -3301,6 +3299,17 @@ impl Resolver<'_> {
     /// does not bind the module itself.
     fn items_import_of(&self, name: Symbol) -> Option<Symbol> {
         self.imports.contains_key(&name).then_some(name)
+    }
+
+    /// The help for the module `name` named where only some of its
+    /// names are imported (`import m.{ a }`, then `m.b`), when it is not
+    /// bound under an alias either (the alias's help says how to reach
+    /// it then).
+    fn items_only_help(&self, name: Symbol) -> Option<String> {
+        if self.alias_of(name).is_some() {
+            return None;
+        }
+        self.items_import_of(name).map(items_import_help)
     }
 
     /// The names a value position can see, for a "did you mean".
