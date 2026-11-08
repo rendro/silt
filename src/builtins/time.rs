@@ -774,13 +774,10 @@ builtins! {
     }
 
     fn now(vm) -> Result<Value, VmError> {
-        // Millisecond resolution.
-        let epoch_ns = i64::try_from(vm.runtime.io.now().as_millis())
-            .ok()
-            .and_then(|ms| ms.checked_mul(1_000_000))
-            .ok_or_else(|| {
-                VmError::new("time.now: epoch milliseconds * 1_000_000 overflows i64".into())
-            })?;
+        // The clock's own resolution, to the nanosecond.
+        let epoch_ns = i64::try_from(vm.runtime.io.now().as_nanos()).map_err(|_| {
+            VmError::new("time.now: the clock's nanoseconds since 1970 overflow Int".into())
+        })?;
         Ok(make_instant(epoch_ns))
     }
 
