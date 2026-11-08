@@ -1,0 +1,62 @@
+-- cmd: fmt
+-- A signature too long for its line breaks its parameters, one per line,
+-- and keeps the return type whole behind them; the return type breaks
+-- only when it alone does not fit. Parameters written one per line are
+-- joined when the signature fits its line.
+type Reply {
+  status: Int,
+}
+
+type Failure {
+  Http(String),
+}
+
+fn send_json(
+  server_port: Int,
+  method: String,
+  path: String,
+  body: String,
+) -> Result(Reply, Failure) {
+  Err(Http("{server_port} {method} {path} {body}"))
+}
+
+fn send_written(
+  server_port: Int,
+  method: String,
+  path: String,
+  body: String,
+) -> Result(Reply, Failure) {
+  send_json(server_port, method, path, body)
+}
+
+fn joined(a: Int, b: Int) -> Result(Reply, Failure) {
+  Err(Http("{a} {b}"))
+}
+
+fn commented(server_port: Int, method: String, path: String) -> Result(Reply, Failure) { -- the reply
+  Err(Http("{server_port} {method} {path}"))
+}
+
+fn no_parameters() -> Result(
+  List(Result(Reply, Failure)),
+  Map(String, List(Result(List(Reply), Int))),
+) {
+  Ok([])
+}
+
+trait Sender {
+  fn send(
+    self,
+    server_port: Int,
+    method: String,
+    path: String,
+    body: String,
+  ) -> Result(Reply, Failure)
+}
+
+fn main() {
+  println(send_written(1, "GET", "/", ""))
+  println(joined(1, 2))
+  println(commented(1, "GET", "/"))
+  println(no_parameters())
+}

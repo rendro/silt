@@ -535,6 +535,62 @@ fn list_layout(open: Doc, items: Vec<Item>, tail: Doc, close: Doc, style: ListSt
     Doc::concat(vec![leading, list])
 }
 
+/// The list `list` (what [`list_layout`] makes) with `behind` behind its
+/// closing bracket, in the list's group: the list is on one line only if
+/// what is behind it fits that line too, so the list breaks first. What
+/// `behind` holds keeps its own groups, which break after the list's, if
+/// the list broken still leaves them too long. (A function's parameters
+/// and its return type: `) -> Result(Reply, Failure) {` stays whole.)
+fn with_behind(list: Doc, behind: Doc) -> Doc {
+    if behind.is_nil() {
+        return list;
+    }
+    // The group's flag stays the list's: a forced break behind it does
+    // not break the list.
+    let joined = |inner: Box<Doc>, forced, behind| {
+        Doc::Group(Box::new(Doc::concat(vec![*inner, behind])), forced)
+    };
+    match list {
+        Doc::Group(inner, forced) => joined(inner, forced, behind),
+        Doc::Concat(mut parts) => {
+            match parts.pop() {
+                Some(Doc::Group(inner, forced)) => parts.push(joined(inner, forced, behind)),
+                last => parts.extend(last.into_iter().chain([behind])),
+            }
+            Doc::concat(parts)
+        }
+        list => Doc::concat(vec![list, behind]),
+    }
+}
+
+/// Whether `doc` holds text that spans lines, a string with a line
+/// break in it: no layout puts it on one line.
+fn spans_lines(doc: &Doc) -> bool {
+    let mut stack = vec![doc];
+    while let Some(doc) = stack.pop() {
+        match doc {
+            Doc::Text(text) => {
+                if text.contains('\n') {
+                    return true;
+                }
+            }
+            Doc::Group(inner, _) | Doc::Nest(inner) => stack.push(inner),
+            Doc::Concat(parts) => stack.extend(parts.iter()),
+            Doc::IfBreak(broken, flat) => stack.extend([&**broken, &**flat]),
+            Doc::Nil
+            | Doc::Comment(_)
+            | Doc::Line
+            | Doc::SoftLine
+            | Doc::HardLine
+            | Doc::BlankLine
+            | Doc::LineSuffix(_)
+            | Doc::OwnLine(_)
+            | Doc::Settle => {}
+        }
+    }
+    false
+}
+
 /// `(inner)`, which may break behind `(` and in front of `)`.
 fn parenthesized(open: Doc, inner: Doc, close: Doc) -> Doc {
     let (leading, open) = above(open);
@@ -842,19 +898,23 @@ impl Printer<'_> {
         docs.push(self.tok(Token::Fn));
         docs.push(space());
         docs.push(self.name());
-        docs.push(self.delimited(
+        let params = self.delimited(
             Token::LParen,
             Token::RParen,
             TIGHT,
             &f.params,
             |p, param| p.param(param, false),
-        ));
-        if let Some(ty) = &f.return_type {
-            docs.push(space());
-            docs.push(self.tok(Token::Arrow));
-            docs.push(space());
-            docs.push(self.type_expr(ty));
-        }
+        );
+        let returns = match &f.return_type {
+            Some(ty) => Doc::concat(vec![
+                space(),
+                self.tok(Token::Arrow),
+                space(),
+                self.type_expr(ty),
+            ]),
+            None => Doc::Nil,
+        };
+        docs.push(with_behind(params, returns));
         docs.push(self.where_clauses(&f.where_clauses));
         if !f.is_signature_only {
             docs.push(space());
@@ -2111,6 +2171,12 @@ impl Printer<'_> {
             if hug {
                 let item = items.pop().map_or(Doc::Nil, |item| item.doc);
                 Doc::concat(vec![open, item, tail, close])
+            } else if items.len() > 1 && items.iter().any(|item| spans_lines(&item.doc)) {
+                // An argument whose text spans lines (a string with a
+                // line break) hides the arguments on its first and its
+                // last line: every argument stands on a line of its own.
+                // (One argument alone hides none, and stays as it is.)
+                list_layout(open, items, tail, close, LINES)
             } else {
                 list_layout(open, items, tail, close, TIGHT)
             }
