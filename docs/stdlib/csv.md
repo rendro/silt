@@ -124,6 +124,13 @@ a file may keep) is not part of it. A line break outside quotes anywhere
 else is a `Syntax` error, as are a quoted field that is not closed and text
 after a closing quote before the next comma (`"a"b`).
 
+A carriage return is part of a line break only before a `\n`. A lone one
+at the end of a line is text: `a,b\r` gives `a` and `b\r`, and `"a","b"\r`
+is a `Syntax` error (text after a closing quote). That is what a line of a
+file with CRLF line ends holds when the text is cut with
+`string.split(text, "\n")`: cut it with `string.lines`, which takes `\r\n`
+as one line end, or give the whole text to `csv.parse`.
+
 ```silt
 import csv
 

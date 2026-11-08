@@ -126,9 +126,10 @@ indices to the length, as `string.slice` does, and returns `Bytes` (empty if
 - `bytes.index_of` returns `Some(0)` for an empty `needle`. `bytes.starts_with`
   and `bytes.ends_with` return `true` for an empty prefix / suffix.
 - `bytes.to_string_lossy` decodes as `bytes.to_string` does, but never
-  fails: each sequence that is no UTF-8 (a byte that starts no character,
-  or a character cut short) becomes one U+FFFD (`�`), as Unicode
-  recommends. It replaces only where a program asks for it: `to_string`,
+  fails: each maximal sequence that is no UTF-8 (a byte that starts no
+  character, or a character cut short) becomes one U+FFFD (`�`), as
+  Unicode recommends: the two stray bytes `ff fe` are two, the cut
+  character `e2 82` is one. It replaces only where a program asks for it: `to_string`,
   `io.read_file` and `stream.file_lines` stay strict. With `io.read_bytes`
   it reads a log file that has stray bytes in it:
 
