@@ -47,13 +47,20 @@ fn days_in(year: i64, month: u32) -> u32 {
 }
 
 /// `Err(TimeError)` of a chrono `ParseError` of reading the text `s` by
-/// `pattern` as a value of the type `of`: `InvalidFormat` for a pattern
+/// `pattern`, whose items ([`ready`]) are `items`, as a value of the type
+/// `of`: `InvalidFormat` for a pattern
 /// that is no format or whose fields are not enough for the value (what
 /// [`fits`] and [`enough`] have said before the text was read, in nearly
 /// every case), `OutOfRange` for a field that is out of its range,
 /// `ParseFormat` for text that does not match the pattern. The message
 /// names the text and the pattern, and says why as [`why_unread`] finds.
-fn time_parse_err(s: &str, pattern: &str, of: Of, err: chrono::ParseError) -> Value {
+fn time_parse_err(
+    s: &str,
+    pattern: &str,
+    items: &[chrono::format::Item<'static>],
+    of: Of,
+    err: chrono::ParseError,
+) -> Value {
     use chrono::format::ParseErrorKind;
     let (variant, msg) = match err.kind() {
         ParseErrorKind::BadFormat | ParseErrorKind::NotEnough => {
@@ -68,7 +75,7 @@ fn time_parse_err(s: &str, pattern: &str, of: Of, err: chrono::ParseError) -> Va
                 Of::Date => "date",
                 Of::DateTime => "datetime",
             };
-            let why = why_unread(s, pattern, what, err);
+            let why = why_unread(s, items, what, err);
             (
                 variant,
                 format!("invalid {what} '{s}' for '{pattern}': {why}"),
@@ -86,24 +93,29 @@ fn time_parse_err(s: &str, pattern: &str, of: Of, err: chrono::ParseError) -> Va
 /// refused is known (`the month is out of range`, `expected '-' at byte
 /// 4`); if every part reads, the text goes on behind them or the fields
 /// make no value of `what` (`February 2025 has 28 days`).
-fn why_unread(s: &str, pattern: &str, what: &str, err: chrono::ParseError) -> String {
-    use chrono::format::{ParseErrorKind, Parsed, StrftimeItems, parse_and_remainder};
+fn why_unread(
+    s: &str,
+    items: &[chrono::format::Item<'static>],
+    what: &str,
+    err: chrono::ParseError,
+) -> String {
+    use chrono::format::{ParseErrorKind, parse_and_remainder};
     let mut parsed = Parsed::new();
     let mut rest = s;
-    for item in StrftimeItems::new(pattern) {
+    for item in items {
         let at = s.len() - rest.len();
-        match parse_and_remainder(&mut parsed, rest, std::iter::once(&item)) {
+        match parse_and_remainder(&mut parsed, rest, std::iter::once(item)) {
             Ok(behind) => rest = behind,
             Err(e) => {
                 return match e.kind() {
-                    ParseErrorKind::OutOfRange => format!("{} is out of range", part_name(&item)),
+                    ParseErrorKind::OutOfRange => format!("{} is out of range", part_name(item)),
                     ParseErrorKind::TooShort => {
                         format!(
                             "expected {} at byte {at}, the end of the text",
-                            part_name(&item)
+                            part_name(item)
                         )
                     }
-                    _ => format!("expected {} at byte {at}", part_name(&item)),
+                    _ => format!("expected {} at byte {at}", part_name(item)),
                 };
             }
         }
@@ -903,7 +915,7 @@ builtins! {
                 time_out_of_range_err(leap_datetime_message(s))
             }
             Ok(datetime) => ok(make_datetime(datetime)),
-            Err(e) => time_parse_err(s, pattern, Of::DateTime, e),
+            Err(e) => time_parse_err(s, pattern, &ready.items, Of::DateTime, e),
         }
     }
 
@@ -920,7 +932,7 @@ builtins! {
             // Fallback: try direct NaiveDate parse (works on native)
             Err(_) => match read_date(s, &ready.items) {
                 Ok(date) => ok(make_date(date)),
-                Err(e) => time_parse_err(s, pattern, Of::Date, e),
+                Err(e) => time_parse_err(s, pattern, &ready.items, Of::Date, e),
             },
         }
     }
