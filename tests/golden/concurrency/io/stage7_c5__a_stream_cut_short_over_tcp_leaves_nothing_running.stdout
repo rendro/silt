@@ -1,2 +1,2 @@
-Some(Ok(hello))
+Some(Ok("hello"))
 main returns

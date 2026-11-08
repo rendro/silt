@@ -6,7 +6,10 @@
 //! and a record or variant of a type with a `Display` impl the program
 //! wrote is what the impl gave), and as it is inspected (`io.inspect`,
 //! `assert_eq`'s message, Rust's `{:?}`: the value as a program would
-//! write it, a string in quotes).
+//! write it). A string inside a structure is in quotes and escaped as a
+//! program writes it, `["a", "b, c"]`, however the value is written
+//! ([`crate::lexer::escape_string`]); only a string shown by itself is
+//! its bare text.
 //!
 //! The formatter goes through a value with a stack of its own for what
 //! it has begun and not yet closed: a value nested a million levels
@@ -205,7 +208,7 @@ fn write<'a>(value: &'a Value, f: &mut fmt::Formatter<'_>, mode: Mode<'_>) -> fm
     // What is begun and not closed, the innermost last. (No memory is
     // asked for a value without parts.)
     let mut open: Vec<Open<'a>> = Vec::new();
-    if let Some(begun) = begin(value, f, mode)? {
+    if let Some(begun) = begin(value, f, mode, false)? {
         open.push(begun);
     }
     while let Some(innermost) = open.last_mut() {
@@ -224,19 +227,13 @@ fn write<'a>(value: &'a Value, f: &mut fmt::Formatter<'_>, mode: Mode<'_>) -> fm
                 f.write_str(": ")?;
                 value
             }
-            // (A key that is a string is in quotes however the map is
-            // written: `#{"a": 1}`.)
-            Part::Key(Value::String(key)) => {
-                write!(f, "\"{key}\"")?;
-                continue;
-            }
             Part::Key(key) => key,
             Part::OfKey(value) => {
                 f.write_str(": ")?;
                 value
             }
         };
-        if let Some(begun) = begin(value, f, mode)? {
+        if let Some(begun) = begin(value, f, mode, true)? {
             open.push(begun);
         }
     }
@@ -245,10 +242,12 @@ fn write<'a>(value: &'a Value, f: &mut fmt::Formatter<'_>, mode: Mode<'_>) -> fm
 
 /// Write `value` if it has no parts, and what a value with parts
 /// begins with: its parts are then to be written, and what closes it.
+/// `inside` says the value is a part of another.
 fn begin<'a>(
     value: &'a Value,
     f: &mut fmt::Formatter<'_>,
     mode: Mode<'_>,
+    inside: bool,
 ) -> Result<Option<Open<'a>>, fmt::Error> {
     let shown = match mode {
         Mode::Shown(written) => {
@@ -267,9 +266,9 @@ fn begin<'a>(
         Value::Bool(b) => return write!(f, "{b}").map(|()| None),
         Value::Unit => return f.write_str("()").map(|()| None),
         Value::String(s) => {
-            return match shown {
+            return match shown && !inside {
                 true => f.write_str(s),
-                false => write!(f, "\"{s}\""),
+                false => write!(f, "\"{}\"", crate::lexer::escape_string(s)),
             }
             .map(|()| None);
         }

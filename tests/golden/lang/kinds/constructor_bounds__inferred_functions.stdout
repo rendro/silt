@@ -1,5 +1,5 @@
 Some(6)
 6
 Some(4)
-Some(x)
+Some("x")
 true

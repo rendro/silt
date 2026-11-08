@@ -38,7 +38,7 @@ fn main() {
   let b: Result(Int, String) = Err("no b")
   let c: Result(Int, String) = Err("no c")
   println(Applicative.map2(a, a) { x, y -> x + y }) -- Ok(2)
-  println(Applicative.map2(b, c) { x, y -> x + y }) -- Err(no b)
+  println(Applicative.map2(b, c) { x, y -> x + y }) -- Err("no b")
   println(Result.pure(1) |> Functor.map { x -> x + 1 }) -- Ok(2)
 }
 ```
@@ -80,7 +80,7 @@ import result
 
 fn main() {
   println(result.flatten(Ok(Ok(42)))) -- Ok(42)
-  println(result.flatten(Ok(Err("oops")))) -- Err(oops)
+  println(result.flatten(Ok(Err("oops")))) -- Err("oops")
 }
 ```
 
@@ -152,7 +152,7 @@ import result
 
 fn main() {
   let r = Err("not found") |> result.map_err { e -> "Error: {e}" }
-  println(r) -- Err(Error: not found)
+  println(r) -- Err("Error: not found")
 }
 ```
 
@@ -356,7 +356,7 @@ fn main() {
   println(r) -- Ok(42)
 
   let r2 = option.to_result(None, "missing")
-  println(r2) -- Err(missing)
+  println(r2) -- Err("missing")
 }
 ```
 

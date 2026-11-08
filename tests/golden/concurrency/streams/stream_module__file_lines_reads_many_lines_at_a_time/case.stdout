@@ -1,6 +1,6 @@
 6001
 true
-Some(Ok(line 4999 of the file, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx))
+Some(Ok("line 4999 of the file, xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"))
 ok a
 ok b
 err invalid input: line 3 of bad.txt is not UTF-8

@@ -1,4 +1,4 @@
-Ok(Email(a@x.io))
+Ok(Email("a@x.io"))
 Err(not an address)
 ann
 bo

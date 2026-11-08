@@ -100,7 +100,7 @@ import map
 fn main() {
   let m = #{ "a": 1, "b": 2 }
   let pairs = map.entries(m)
-  println(pairs) -- [(a, 1), (b, 2)]
+  println(pairs) -- [("a", 1), ("b", 2)]
 }
 ```
 
@@ -195,7 +195,7 @@ import map
 
 fn main() {
   let ks = map.keys(#{ "b": 2, "a": 1 })
-  println(ks) -- [a, b]
+  println(ks) -- ["a", "b"]
 }
 ```
 

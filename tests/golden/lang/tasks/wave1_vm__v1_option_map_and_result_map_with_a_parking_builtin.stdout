@@ -1,2 +1,2 @@
-(option, Some(Some(1)))
-(result, Ok(Some(2)))
+("option", Some(Some(1)))
+("result", Ok(Some(2)))

@@ -67,7 +67,7 @@ fn swap(p: (m(a), m(b))) -> (m(b), m(a)) {
 
 fn main() {
   println(keep([1, 2])) -- [1, 2]
-  println(swap((Some(1), Some("a")))) -- (Some(a), Some(1))
+  println(swap((Some(1), Some("a")))) -- (Some("a"), Some(1))
 }
 ```
 
@@ -129,7 +129,7 @@ fn main() {
   println(Functor.map([1, 2]) { x -> x + 1 }) -- [2, 3]
   println(Some(2) |> Functor.map { x -> x * 10 }) -- Some(20)
   println(Applicative.map2(Some(1), Some(2)) { a, b -> a + b }) -- Some(3)
-  println(Monad.flat_map(["a b", "c"]) { s -> string.split(s, " ") }) -- [a, b, c]
+  println(Monad.flat_map(["a b", "c"]) { s -> string.split(s, " ") }) -- ["a", "b", "c"]
   println(Option.pure(1)) -- Some(1)
 }
 ```
@@ -159,7 +159,7 @@ fn main() {
   println(Applicative.map2([1, 2], [10, 20]) { a, b -> a + b }) -- [11, 21, 12, 22]
   let bad: Result(Int, String) = Err("left")
   let worse: Result(Int, String) = Err("right")
-  println(Applicative.map2(bad, worse) { a, b -> a + b }) -- Err(left)
+  println(Applicative.map2(bad, worse) { a, b -> a + b }) -- Err("left")
 }
 ```
 
@@ -189,8 +189,8 @@ fn step(xs: m(Int)) -> m(Int) where m: Monad {
 }
 
 fn main() {
-  println(pair_up(Some(1), Some("a"))) -- Some((1, a))
-  println(pair_up([1, 2], ["x"])) -- [(1, x), (2, x)]
+  println(pair_up(Some(1), Some("a"))) -- Some((1, "a"))
+  println(pair_up([1, 2], ["x"])) -- [(1, "x"), (2, "x")]
   println(step(Some(1))) -- Some(2)
   println(step([1, 10])) -- [2, 11]
 }

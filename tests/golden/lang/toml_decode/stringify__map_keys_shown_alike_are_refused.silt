@@ -1,9 +1,18 @@
+import bytes
+import string
 import toml
 
 -- Two keys that show as one text would be one key of the table, and a
 -- value would be lost: toml.stringify and toml.pretty refuse the map.
+-- Strings in a key are quoted, so `["a, b"]` and `["a", "b"]` stay
+-- apart; two long Bytes whose shown text is cut after the same first
+-- bytes do not.
 fn main() {
+  let a = string.repeat("a", 39)
+  let one = bytes.from_string("{a}b")
+  let two = bytes.from_string("{a}c")
+  println(toml.stringify(#{one: 1, two: 2}))
+  println(toml.pretty(#{"m": #{one: 1, two: 2}}))
   println(toml.stringify(#{["a, b"]: 1, ["a", "b"]: 2}))
-  println(toml.pretty(#{"m": #{["a, b"]: 1, ["a", "b"]: 2}}))
   println(toml.stringify(#{[1]: "one", [2]: "two"}))
 }

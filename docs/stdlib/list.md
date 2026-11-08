@@ -79,7 +79,7 @@ of `xs` each element of `ys`, in that order:
 fn main() {
   println(Functor.map([1, 2]) { x -> x * 10 }) -- [10, 20]
   println(List.pure(1)) -- [1]
-  println(Applicative.map2([1, 2], ["a", "b"]) { n, s -> "{n}{s}" }) -- [1a, 1b, 2a, 2b]
+  println(Applicative.map2([1, 2], ["a", "b"]) { n, s -> "{n}{s}" }) -- ["1a", "1b", "2a", "2b"]
 }
 ```
 
@@ -608,7 +608,7 @@ import string
 fn main() {
   let words = ["fig", "banana", "apple"]
   let longest = list.max_by(words) { w -> string.length(w) }
-  println(longest) -- Some(banana)
+  println(longest) -- Some("banana")
   println(list.max_by([]) { x -> x }) -- None
 }
 ```
@@ -631,7 +631,7 @@ import string
 fn main() {
   let words = ["banana", "fig", "apple"]
   let shortest = list.min_by(words) { w -> string.length(w) }
-  println(shortest) -- Some(fig)
+  println(shortest) -- Some("fig")
   println(list.min_by([]) { x -> x }) -- None
 }
 ```
@@ -844,7 +844,7 @@ type Player {
 fn main() {
   let words = ["banana", "fig", "apple"]
   let sorted = words |> list.sort_by { w -> string.length(w) }
-  println(sorted) -- [fig, apple, banana]
+  println(sorted) -- ["fig", "apple", "banana"]
   let players = [
     Player { name: "Bo", score: 7 },
     Player { name: "Al", score: 9 },
@@ -852,7 +852,7 @@ fn main() {
   ]
   -- By score, highest first, then by name.
   let ranked = players |> list.sort_by { p -> (-p.score, p.name) }
-  println(list.map(ranked) { p -> p.name }) -- [Al, Bo, Cy]
+  println(list.map(ranked) { p -> p.name }) -- ["Al", "Bo", "Cy"]
 }
 ```
 
@@ -875,7 +875,7 @@ fn main() {
   println(list.sort_with([3, 1, 2]) { a, b -> Compare.compare(b, a) }) -- [3, 2, 1]
   -- By the first of each pair only: (1, b) stays before (1, a).
   let pairs = [(2, "c"), (1, "b"), (1, "a")]
-  println(list.sort_with(pairs) { (x, _), (y, _) -> Compare.compare(x, y) }) -- [(1, b), (1, a), (2, c)]
+  println(list.sort_with(pairs) { (x, _), (y, _) -> Compare.compare(x, y) }) -- [(1, "b"), (1, "a"), (2, "c")]
 }
 ```
 
@@ -1038,7 +1038,7 @@ import string
 
 fn main() {
   let words = ["apple", "avocado", "banana", "blueberry", "cherry"]
-  println(list.unique_by(words) { w -> string.slice(w, 0, 1) }) -- [apple, banana, cherry]
+  println(list.unique_by(words) { w -> string.slice(w, 0, 1) }) -- ["apple", "banana", "cherry"]
 }
 ```
 
@@ -1056,6 +1056,6 @@ import list
 
 fn main() {
   let pairs = list.zip([1, 2, 3], ["a", "b", "c"])
-  println(pairs) -- [(1, a), (2, b), (3, c)]
+  println(pairs) -- [(1, "a"), (2, "b"), (3, "c")]
 }
 ```

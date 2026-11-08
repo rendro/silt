@@ -2124,7 +2124,7 @@ mod http_response_tests {
         let response = make_http_response(204, headers(), vec![0, 0xff, b'd']);
         assert_eq!(
             response.to_string(),
-            "Response {status: 204, body: bytes(00 ff 64, length: 3), headers: #{\"accept\": */*}}"
+            "Response {status: 204, body: bytes(00 ff 64, length: 3), headers: #{\"accept\": \"*/*\"}}"
         );
         let (status, body, record) = extract_http_response(&response).expect("a Response");
         assert_eq!((status, body), (204, &[0, 0xff, b'd'][..]));
@@ -2140,7 +2140,7 @@ mod http_response_tests {
         );
         assert_eq!(
             request.to_string(),
-            "Request {method: POST, path: /jobs, query: n=1, headers: #{\"accept\": */*}, body: bytes(67 6f, length: 2), peer: [::1]:5000}"
+            "Request {method: POST, path: \"/jobs\", query: \"n=1\", headers: #{\"accept\": \"*/*\"}, body: bytes(67 6f, length: 2), peer: \"[::1]:5000\"}"
         );
         let Value::Record(record) = &request else {
             panic!("a record");

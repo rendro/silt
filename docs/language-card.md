@@ -219,7 +219,7 @@ fn all(xs: List(a)) -> List(String) where a: Describe {
 fn main() {
   let t = Temp { degrees: 21 }
   println(Describe.describe(t)) -- 21 degrees
-  println(all([t])) -- [21 degrees]
+  println(all([t])) -- ["21 degrees"]
   println(t) -- 21C
 }
 ```

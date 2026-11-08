@@ -9,4 +9,4 @@ None
 Some(13)
 None
 Ok(5)
-Err(err)
+Err("err")

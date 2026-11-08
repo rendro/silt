@@ -1,6 +1,6 @@
 hi Bob 42
-{age: 42, name: Bob}
+{age: 42, name: "Bob"}
 true
 x
-[{age: 42, k: 1, name: Bob}]
+[{age: 42, k: 1, name: "Bob"}]
 Bob 42

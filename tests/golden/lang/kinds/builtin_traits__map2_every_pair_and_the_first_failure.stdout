@@ -5,5 +5,5 @@ Some(3)
 None
 None
 Ok(2)
-Err(a)
-Err(b)
+Err("a")
+Err("b")

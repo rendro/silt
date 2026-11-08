@@ -28,7 +28,7 @@
 0043  GetLocal             2
 0046  AddConst             2     ; 1
 0049  Recur                2  slot 1  -51   -> 0006
-0057  TestEqual            3     ; """
+0057  TestEqual            3     ; "\""
 0060  JumpIfFalse          8     -> 0071
 0063  GetLocal             2
 0066  Jump                 23    -> 0094

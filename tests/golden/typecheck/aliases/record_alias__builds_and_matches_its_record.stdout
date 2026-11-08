@@ -1,4 +1,4 @@
 1
 3
-Box {value: s}
+Box {value: "s"}
 true

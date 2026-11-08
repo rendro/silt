@@ -994,10 +994,10 @@ mod tests {
         let records = [
             (
                 with("{}"),
-                "Cfg {name: x, inner: Inner {n: 2, tag: None}, xs: [1, 2], \
-                 m: #{\"a\": 1.0, \"b c\": 2.5}, t: (1, s), d: 2026-10-19, \
+                "Cfg {name: \"x\", inner: Inner {n: 2, tag: None}, xs: [1, 2], \
+                 m: #{\"a\": 1.0, \"b c\": 2.5}, t: (1, \"s\"), d: 2026-10-19, \
                  tm: 12:30:00.250000000, at: 2026-10-19T10:30:00, o: None, \
-                 rows: [Inner {n: 1, tag: Some(a)}, Inner {n: 2, tag: None}]}",
+                 rows: [Inner {n: 1, tag: Some(\"a\")}, Inner {n: 2, tag: None}]}",
             ),
             (with(r#"{"o": true}"#), "o: Some(true)"),
             (
@@ -1097,7 +1097,7 @@ mod tests {
         );
         assert_eq!(
             shown(&F::String, r#""2026-10-19""#, "v = 2026-10-19"),
-            ["V {v: 2026-10-19}", "TypeMismatch at v"]
+            ["V {v: \"2026-10-19\"}", "TypeMismatch at v"]
         );
         // A null: JSON's is a `None` and no `String`; TOML leaves it out.
         assert_eq!(

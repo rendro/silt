@@ -1,4 +1,4 @@
-Ok(Wrap(Pair(1, a)))
+Ok(Wrap(Pair(1, "a")))
 Ok(Wrap(Wrap(Leaf([1, 2]))))
 Ok(Leaf([3]))
 Ok(Leaf([4]))

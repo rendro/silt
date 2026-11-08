@@ -109,7 +109,7 @@ fn main() {
     assert!(out.status.success(), "{stderr}");
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "[(SILT_UNICODE, plain)]\nNone\n",
+        "[(\"SILT_UNICODE\", \"plain\")]\nNone\n",
         "{stderr}"
     );
 }

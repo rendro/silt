@@ -790,7 +790,7 @@ import host
     assert_eq!(
         run(source, host),
         Ok(Value::String(
-            "[1, 2] Some(x) (s, 1) [k] 3 true 3 4 [] 7".into()
+            "[1, 2] Some(\"x\") (\"s\", 1) [\"k\"] 3 true 3 4 [] 7".into()
         ))
     );
 }

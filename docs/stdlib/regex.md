@@ -83,8 +83,8 @@ import regex
 fn main() {
   match regex.captures("user@host", "(\\w+)@(\\w+)") {
     Ok(Some(groups)) -> {
-      println(list.get(groups, 1)) -- Some(user)
-      println(list.get(groups, 2)) -- Some(host)
+      println(list.get(groups, 1)) -- Some("user")
+      println(list.get(groups, 2)) -- Some("host")
     }
     Ok(None) -> println("no match")
     Err(e) -> println(Error.message(e))
@@ -135,8 +135,8 @@ import regex
 fn main() {
   match regex.captures_named("alice@example", "(?P<user>\\w+)@(?P<host>\\w+)") {
     Ok(Some(groups)) -> {
-      println(map.get(groups, "user")) -- Some(alice)
-      println(map.get(groups, "host")) -- Some(example)
+      println(map.get(groups, "user")) -- Some("alice")
+      println(map.get(groups, "host")) -- Some("example")
     }
     Ok(None) -> println("no match")
     Err(e) -> println(Error.message(e))
@@ -157,7 +157,7 @@ Returns `Some(matched_text)` for the first match, or `None`.
 import regex
 
 fn main() {
-  println(regex.find("abc 123 def", "\\d+")) -- Ok(Some(123))
+  println(regex.find("abc 123 def", "\\d+")) -- Ok(Some("123"))
   println(regex.find("abc", "\\d+")) -- Ok(None)
 }
 ```
@@ -175,7 +175,7 @@ Returns all non-overlapping matches as a list of strings.
 import regex
 
 fn main() {
-  println(regex.find_all("a1 b22 c333", "\\d+")) -- Ok([1, 22, 333])
+  println(regex.find_all("a1 b22 c333", "\\d+")) -- Ok(["1", "22", "333"])
 }
 ```
 
@@ -217,7 +217,7 @@ part in the match stands for nothing:
 import regex
 
 fn main() {
-  println(regex.replace("abc 123 def 456", "\\d+", "NUM")) -- Ok(abc NUM def 456)
+  println(regex.replace("abc 123 def 456", "\\d+", "NUM")) -- Ok("abc NUM def 456")
 }
 ```
 
@@ -235,7 +235,7 @@ Replaces all matches with the replacement string, which reads `$1`,
 import regex
 
 fn main() {
-  println(regex.replace_all("abc 123 def 456", "\\d+", "NUM")) -- Ok(abc NUM def NUM)
+  println(regex.replace_all("abc 123 def 456", "\\d+", "NUM")) -- Ok("abc NUM def NUM")
 }
 ```
 
@@ -260,7 +260,7 @@ fn main() {
     let n = int.parse(m) |> result.unwrap_or(0)
     string.from(n * 2)
   }
-  println(doubled) -- Ok(a2 b44 c666)
+  println(doubled) -- Ok("a2 b44 c666")
 }
 ```
 
@@ -283,6 +283,6 @@ import result
 
 fn main() {
   let parts = "hello   world   silt" |> regex.split("\\s+") |> result.unwrap_or([])
-  println(parts) -- [hello, world, silt]
+  println(parts) -- ["hello", "world", "silt"]
 }
 ```

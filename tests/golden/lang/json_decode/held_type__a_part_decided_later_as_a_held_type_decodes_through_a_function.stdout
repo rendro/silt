@@ -1,5 +1,5 @@
 Ok(Box {v: [1, 2]})
-Ok(Box {v: Some(Box {v: x})})
+Ok(Box {v: Some(Box {v: "x"})})
 Ok([(true, 1)])
 Ok(Box {v: Some(3.5)})
 Err(json type mismatch: expected Int, got string at v[0])

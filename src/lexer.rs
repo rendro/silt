@@ -141,10 +141,10 @@ impl fmt::Display for Token {
             // (As a Float is shown.)
             Token::Float(n) => crate::value::Float::write_text(*n, f),
             Token::Bool(b) => write!(f, "{b}"),
-            Token::StringLit(s) => write!(f, "\"{}\"", escape_control_chars(s)),
-            Token::StringStart(s) => write!(f, "\"{}{{", escape_control_chars(s)),
-            Token::StringMiddle(s) => write!(f, "}}{}{{", escape_control_chars(s)),
-            Token::StringEnd(s) => write!(f, "}}{}\"", escape_control_chars(s)),
+            Token::StringLit(s) => write!(f, "\"{}\"", escape_string(s)),
+            Token::StringStart(s) => write!(f, "\"{}{{", escape_string(s)),
+            Token::StringMiddle(s) => write!(f, "}}{}{{", escape_string(s)),
+            Token::StringEnd(s) => write!(f, "}}{}\"", escape_string(s)),
             Token::Ident(s) => write!(f, "{s}"),
             Token::Plus => write!(f, "+"),
             Token::Minus => write!(f, "-"),
@@ -1605,16 +1605,29 @@ fn int_magnitude(digits: &str, radix: u32) -> Option<i64> {
     }
 }
 
-fn escape_control_chars(s: &str) -> std::borrow::Cow<'_, str> {
-    if !s.chars().any(char::is_control) {
+/// The text `s` as a string literal writes it between its quotes: what
+/// the lexer reads back as `s`. A backslash, a quote and a `{` (which
+/// opens an interpolation) are escaped, `\n`, `\r`, `\t` and `\0` are
+/// written so, and any other control character as `\u{..}`. A string
+/// shown inside a structure (`["a", "b, c"]`) and a string token in a
+/// message are written by it.
+pub fn escape_string(s: &str) -> std::borrow::Cow<'_, str> {
+    let escaped = |c: char| matches!(c, '\\' | '"' | '{') || c.is_control();
+    if !s.chars().any(escaped) {
         return std::borrow::Cow::Borrowed(s);
     }
     let mut out = String::with_capacity(s.len() + 8);
-    for ch in s.chars() {
-        if ch.is_control() {
-            out.extend(ch.escape_default());
-        } else {
-            out.push(ch);
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '{' => out.push_str("\\{"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\0' => out.push_str("\\0"),
+            c if c.is_control() => out.push_str(&format!("\\u{{{:x}}}", u32::from(c))),
+            c => out.push(c),
         }
     }
     std::borrow::Cow::Owned(out)

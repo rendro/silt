@@ -908,7 +908,11 @@ known: `fn step(x) -> Result(Int, String) { Ok(x? + 1) }`.
 The structural `Display` formats in constructor syntax: `Circle(5.0)`
 for a variant, `Point {x: 1, y: 2}` for a record, its fields in the
 order the type declares them (`{x: 1, y: 2}` for an anonymous record,
-its fields in the order of their names). Write your own
+its fields in the order of their names). A string inside a structure
+is written as a program writes it, in quotes and escaped:
+`["a", "b, c"]`, `Some("x")`, `(1, "a\nb")`, `#{"k": "v"}`, so the
+parts can be told apart. A string shown by itself (`println(s)`,
+`"{s}"`) is its text. Write your own
 `trait Display for T` to replace it, in the module that declares `T`
 (see [Where an Impl Is Written](#where-an-impl-is-written)): a
 `Display` impl for a type of another module, or for a built-in type, is
@@ -939,8 +943,9 @@ fn main() {
 
 `io.inspect` and the texts of failed assertions (`test.assert_eq` and
 the like) are for the person debugging: they write the structure of a
-value in silt syntax, strings quoted, and do not call written `Display`
-impls (`io.inspect(t)` is `Temp {degrees: 21}`). They write a record's
+value in silt syntax, every string quoted and escaped as inside a
+structure (`io.inspect("a\"b")` is `"a\"b"`), and do not call written
+`Display` impls (`io.inspect(t)` is `Temp {degrees: 21}`). They write a record's
 fields in the same order as `println`.
 
 `Equal`, `Hash` and `Compare` are **sealed**: they always come
@@ -1085,9 +1090,9 @@ fn main() {
 
   let words = ["Apple", "avocado", "Banana", "apple"]
   let firsts = list.unique_by(words) { w -> string.to_lower(string.slice(w, 0, 1)) }
-  println(firsts) -- [Apple, Banana]
+  println(firsts) -- ["Apple", "Banana"]
   let ranked = list.sort_by(words) { w -> (string.length(w), w) } |> list.reverse
-  println(ranked) -- [avocado, Banana, apple, Apple]
+  println(ranked) -- ["avocado", "Banana", "apple", "Apple"]
 }
 ```
 
