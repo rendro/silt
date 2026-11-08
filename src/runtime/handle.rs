@@ -1191,6 +1191,9 @@ pub struct TaskHandle {
     /// spawned it, if a task did: the report of a failure that nobody
     /// joined names them, since nobody holds the handle's id.
     spawned: Option<(Span, Option<Arc<AtomicBool>>)>,
+    /// The task's place among the tasks that spawned it and that it
+    /// spawned, for a cancel to reach them (`runtime::family`).
+    family: super::family::Member,
 }
 
 impl TaskHandle {
@@ -1213,6 +1216,7 @@ impl TaskHandle {
             stage: None,
             failed_with_input: AtomicBool::new(false),
             spawned: None,
+            family: Default::default(),
         }
     }
 
@@ -1370,16 +1374,80 @@ impl TaskHandle {
     /// or fails with later changes nothing). A failure it had is
     /// dismissed. The caller ends the task's wait, if it waits
     /// (`Scheduler::cancel`).
-    pub fn cancel(&self, wake: &dyn Wake) {
+    ///
+    /// A failure the task had taken from a task it joined is not its
+    /// own: that task is returned, for the caller to hand the failure
+    /// back to ([`TaskHandle::hand_back`]).
+    pub fn cancel(&self, wake: &dyn Wake) -> Option<Arc<TaskHandle>> {
         self.cancelled.store(true, AtomicOrdering::SeqCst);
         let _ = self
             .result
             .complete(Ended(Err(VmError::new("cancelled".to_string()))), wake);
-        self.mark_joined();
+        if !self.unjoined_failure.swap(false, AtomicOrdering::SeqCst) {
+            return None;
+        }
+        match self.result.get() {
+            Some(Ended(Err(error))) => error.taken_from.as_ref().map(|from| from.0.clone()),
+            _ => None,
+        }
+    }
+
+    /// A join took the failure of this task, and the task that joined
+    /// was cancelled before it could fail with it, or had its failure
+    /// dismissed: the failure is unhandled again, and is reported as
+    /// never joined unless a join receives it. A task that has been
+    /// cancelled has none to take back: its cancellation is no failure,
+    /// and a cancel of it dismissed a failure it had, whenever that
+    /// cancel came.
+    pub fn hand_back(&self) {
+        if !self.can_be_handed_back() {
+            return;
+        }
+        self.unjoined_failure.store(true, AtomicOrdering::SeqCst);
+        // (A cancel that comes meanwhile clears the mark itself, or is
+        // seen here.)
+        if self.is_cancelled() {
+            self.unjoined_failure.store(false, AtomicOrdering::SeqCst);
+        }
+    }
+
+    /// Whether this task's result is a failure that a join can hand back:
+    /// it failed, and was neither cancelled nor ended by its deadline.
+    pub(crate) fn can_be_handed_back(&self) -> bool {
+        matches!(self.result.get(), Some(Ended(Err(_))))
+            && !self.is_cancelled()
+            && !self.is_expired()
+    }
+
+    /// Whether the task has its result.
+    pub(crate) fn has_result(&self) -> bool {
+        self.result.get().is_some()
+    }
+
+    /// A cancel of a task that spawned this one, or of one of their
+    /// spawners, reaches it while it runs: as `task.cancel`, except that
+    /// a failure that comes first stands and is not dismissed (a task
+    /// that has ended is not cancelled so: `runtime::family`).
+    pub fn cancel_spawned(&self, wake: &dyn Wake) {
+        self.mark_cancelled();
+        let _ = self
+            .result
+            .complete(Ended(Err(VmError::new("cancelled".to_string()))), wake);
+    }
+
+    /// The flag of [`TaskHandle::cancel`], set alone: the rest of the
+    /// cancel follows ([`TaskHandle::cancel_spawned`]).
+    pub(crate) fn mark_cancelled(&self) {
+        self.cancelled.store(true, AtomicOrdering::SeqCst);
     }
 
     pub fn is_cancelled(&self) -> bool {
         self.cancelled.load(AtomicOrdering::SeqCst)
+    }
+
+    /// The task's place in the tree of who spawned whom.
+    pub(crate) fn family(&self) -> &super::family::Member {
+        &self.family
     }
 
     /// The flag that says so, for the waits of the task

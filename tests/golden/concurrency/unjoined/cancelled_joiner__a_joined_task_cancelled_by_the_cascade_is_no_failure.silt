@@ -1,0 +1,21 @@
+-- repeat: 5
+-- C is spawned by W; J (spawned by main) joins C. The cancel of W reaches
+-- C, so J fails with "joined task failed: cancelled". At shutdown J is
+-- cancelled too. Nothing failed: C was cancelled, J's failure dismissed.
+import channel
+import task
+import time
+fn main() {
+  let hs = channel.new(1)
+  let w = task.spawn { ->
+    channel.send(hs, task.spawn { -> time.sleep(time.ms(1000)) })
+    time.sleep(time.ms(1000))
+  }
+  when let Some(c) = channel.receive(hs) else { panic("no child") }
+  let j = task.spawn { -> task.join(c) }
+  time.sleep(time.ms(10))
+  task.cancel(w)
+  time.sleep(time.ms(30))
+  task.cancel(j)
+  println("done")
+}

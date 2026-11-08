@@ -1,0 +1,48 @@
+-- Arms that take a list apart by its head, one after the other, look at
+-- the head once; what they match is what each arm alone would match:
+-- a guard that fails goes on to the next arm with the head, a name of
+-- the head or of the rest is bound, an arm after the group sees the
+-- whole list, and so does an arm whose guard reads the names.
+import list
+import string
+
+fn kind(cs: List(String), quoted: Bool) -> String {
+  match cs {
+    [] -> "end"
+    ["\"", "\"", ..rest] when quoted -> "doubled quote, then {list.length(rest)}"
+    ["\"", ..rest] -> "quote, then {list.length(rest)}"
+    [",", ..rest] when !quoted -> "comma, then {list.length(rest)}"
+    [c, ..rest] when c == "x" && list.length(rest) > 1 -> "an x with more"
+    [c, ..] when quoted -> "quoted {c}"
+    [c, ..] -> "plain {c}"
+  }
+}
+
+fn digits(xs: List(Int)) -> String {
+  match xs {
+    [0, ..] -> "zero first"
+    [1..9, ..rest] -> "a digit, {list.length(rest)} more"
+    [n, ..rest] when n < 0 -> "negative, then {rest}"
+    [_, _, ..] -> "two or more"
+    [n] -> "just {n}"
+    [] -> "none"
+  }
+}
+
+fn main() {
+  let cases = [
+    ([], false),
+    (["\"", "\"", "a"], true),
+    (["\"", "\"", "a"], false),
+    ([",", "a"], false),
+    ([",", "a"], true),
+    (["x", "y", "z"], false),
+    (["x", "y"], false),
+    (["y"], true),
+    (["y"], false),
+  ]
+  list.each(cases) { (cs, quoted) ->
+    println("{string.join(cs, "")} {quoted}: {kind(cs, quoted)}")
+  }
+  list.each([[0, 5], [7, 1, 2], [-3, 4], [12, 13], [12], []]) { xs -> println(digits(xs)) }
+}

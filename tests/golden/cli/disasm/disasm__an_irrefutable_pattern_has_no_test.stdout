@@ -17,77 +17,39 @@
 
 == area (arity=2, upvalues=0) ==
 0000  GetLocal             0
-0003  SetLocal             2
-0006  Dup
-0007  SetLocal             3
-0010  GetLocal             3
-0013  DestructVariant      0
-0015  Dup
-0016  SetLocal             6
-0019  GetLocal             1
-0022  SetLocal             7
-0025  Dup
-0026  SetLocal             8
-0029  GetLocal             8
-0032  DestructRecordField  0
-0035  Dup
-0036  SetLocal             11
-0039  GetLocal             8
-0042  DestructRecordField  1
-0045  Dup
-0046  SetLocal             14
-0049  GetLocal             6
-0052  GetLocal             11
-0055  Mul
-0056  GetLocal             14
-0059  Mul
-0060  Return
+0003  DestructVariant      0
+0005  GetLocal             1
+0008  DestructRecordField  0
+0011  GetLocal             4
+0014  DestructRecordField  1
+0017  GetLocal             3
+0020  GetLocal             5
+0023  Mul
+0024  GetLocal             7
+0027  Mul
+0028  Return
 
 == first (arity=1, upvalues=0) ==
 0000  GetLocal             0
-0003  SetLocal             1
-0006  Dup
-0007  SetLocal             2
-0010  GetLocal             2
-0013  DestructTuple        0
-0015  Dup
-0016  SetLocal             5
-0019  GetLocal             5
-0022  DestructVariant      0
-0024  Dup
-0025  SetLocal             8
-0028  GetLocal             2
-0031  DestructTuple        1
-0033  Dup
-0034  SetLocal             11
-0037  GetLocal             11
-0040  DestructRecordField  0
-0043  Dup
-0044  SetLocal             14
-0047  GetLocal             8
-0050  GetLocal             14
-0053  Add
-0054  Return
+0003  DestructTuple        0
+0005  DestructVariant      0
+0007  GetLocal             1
+0010  DestructTuple        1
+0012  DestructRecordField  0
+0015  GetLocal             3
+0018  GetLocal             6
+0021  Add
+0022  Return
 
 == only (arity=1, upvalues=0) ==
 0000  GetLocal             0
-0003  SetLocal             1
-0006  GetLocal             1
-0009  Pop
-0010  GetLocal             1
-0013  SetLocal             2
-0016  Dup
-0017  SetLocal             3
-0020  GetLocal             3
-0023  DestructVariant      0
-0025  Dup
-0026  SetLocal             6
-0029  GetLocal             6
-0032  AddConst             0     ; 1
-0035  Jump                 4     -> 0044
-0040  Constant             1     ; "non-exhaustive match: no arm matched"
-0043  Panic
-0044  Return
+0003  DestructVariant      0
+0005  GetLocal             2
+0008  AddConst             0     ; 1
+0011  Jump                 4     -> 0020
+0016  Constant             1     ; "non-exhaustive match: no arm matched"
+0019  Panic
+0020  Return
 
 == main (arity=0, upvalues=0) ==
 0000  Constant             0     ; <builtin:println>

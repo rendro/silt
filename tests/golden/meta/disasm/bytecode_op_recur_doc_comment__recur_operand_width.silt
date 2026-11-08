@@ -1,6 +1,6 @@
 -- cmd: disasm
--- stdout-contains: 0048  Recur                2  slot 2  -38   -> 0018
--- stdout-contains: 0056  Slide
+-- stdout-contains: 0042  Recur                2  slot 2  -38   -> 0012
+-- stdout-contains: 0050  Slide
 -- Recur carries a u8 count of bindings, a u16 first slot and the i32
 -- distance of its jump back to the start of the loop, which is
 -- negative (7 operand bytes): the next instruction starts 8 bytes

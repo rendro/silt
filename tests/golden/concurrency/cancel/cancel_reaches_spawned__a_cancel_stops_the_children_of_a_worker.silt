@@ -1,0 +1,31 @@
+-- repeat: 10
+-- task.cancel of a worker also cancels the tasks it spawned that still
+-- run: the dogfooded link checker's shutdown. The children wait until
+-- the channel they send on is closed; cancelled with their worker, none
+-- of them sends on the closed channel, and nothing fails.
+import channel
+import list
+import task
+
+fn main() {
+  let cmds = channel.new(16)
+  let gate = channel.new(0)
+  let ready = channel.new(1)
+  let store = task.spawn { -> channel.each(cmds) { n -> println("got {n}") } }
+  let worker = task.spawn { ->
+    let kids = list.map(1..3) { i ->
+      task.spawn { ->
+        let _ = channel.receive(gate)
+        channel.send(cmds, i)
+      }
+    }
+    channel.send(ready, ())
+    list.each(kids, task.join)
+  }
+  let _ = channel.receive(ready)
+  task.cancel(worker)
+  channel.close(cmds)
+  channel.close(gate)
+  task.join(store)
+  println("stopped")
+}

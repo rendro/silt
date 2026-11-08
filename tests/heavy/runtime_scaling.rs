@@ -584,17 +584,27 @@ fn five_thousand_waiting_tasks_share_the_programs_globals() {
 }
 
 /// A program that calls host functions `calls` times with an argument
-/// of `size` elements: a lookup whose list holds no value to show the
-/// variable but at its end (`List(Option(a))` of `None`s), and a
-/// function that gives back a list of `size` empty lists.
-fn host_calls_program(size: usize, calls: usize) -> String {
+/// of `size` elements, 2 or `big`: a lookup whose list holds no value to
+/// show the variable but at its end (`List(Option(a))` of `None`s), and
+/// a function that gives back a list of `size` empty lists. The program
+/// makes the lists of both sizes whichever it passes, and the loops
+/// around the calls are the same: two runs differ in the size of the
+/// arguments alone, and their ratio does not hang on what the rest of
+/// the program costs (a faster `match` made the run over 2 elements
+/// faster by more than the other, and the ratio went from 2.8 to 3.1).
+fn host_calls_program(size: usize, big: usize, calls: usize) -> String {
+    let picked = match size == big {
+        true => "big",
+        false => "small",
+    };
     format!(
         "import h
 import list
 
 fn main() {{
-  let xs = list.append((1..{size}) |> list.map({{ _ -> None }}), Some(1))
-  let ls = (1..{size}) |> list.map({{ _ -> [] }})
+  let small = (list.append((1..2) |> list.map({{ _ -> None }}), Some(1)), (1..2) |> list.map({{ _ -> [] }}))
+  let big = (list.append((1..{big}) |> list.map({{ _ -> None }}), Some(1)), (1..{big}) |> list.map({{ _ -> [] }}))
+  let (xs, ls) = {picked}
   let hits = (1..{calls}) |> list.fold(0) {{ acc, _ ->
     match h.getopt(xs, {size}) {{
       Some(n) -> acc + n
@@ -647,8 +657,8 @@ fn host_run_time(source: &str, expected: usize) -> Duration {
 #[test]
 fn a_host_function_call_costs_the_same_whatever_the_size_of_its_argument() {
     let (calls, size, cap) = (2_000, 2_000, 3.0);
-    let big = host_calls_program(size, calls);
-    let small = host_calls_program(2, calls);
+    let big = host_calls_program(size, size, calls);
+    let small = host_calls_program(2, size, calls);
     let mut over = Vec::new();
     for _ in 0..3 {
         let mut best = (Duration::MAX, Duration::MAX);

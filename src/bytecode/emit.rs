@@ -275,7 +275,17 @@ impl Emitter {
     /// comparison and a conditional jump after it are one jump that
     /// compares (`Lt; JumpIfFalse` is `JumpIfNotLt`), blamed on the
     /// comparison's span.
+    ///
+    /// A `SetLocal` of the slot the value on top is in is no instruction
+    /// at all: the value is there already (it would be copied over
+    /// itself, a count up and down of a list or a string).
     pub fn emit(&mut self, asm: Asm<'_>, span: Span) -> Result<(), Diagnostic> {
+        if let Asm::SetLocal { slot } = asm
+            && self.reachable
+            && slot + 1 == self.height
+        {
+            return Ok(());
+        }
         let fused = self
             .last
             .and_then(|last| Some((last, last.first.fused(&asm)?)));
@@ -303,6 +313,15 @@ impl Emitter {
                 ),
             ));
         }
+        // (Unreachable code too: its height is what the code before it
+        // left, and an instruction there that takes more than that is
+        // code compiled with a height it does not have.)
+        debug_assert!(
+            effect.pops <= self.height,
+            "`{op}` takes {} values off a frame of {} in unreachable code",
+            effect.pops,
+            self.height
+        );
         let popped = self.height.saturating_sub(effect.pops);
         if let Some(cut) = effect.cut
             && self.reachable
@@ -702,10 +721,25 @@ mod tests {
         let mut e = Emitter::new("f".into(), 0, span()).unwrap();
         e.emit(Asm::Unit, span()).unwrap();
         e.emit(Asm::Return, span()).unwrap();
-        e.assume_height(1);
+        e.assume_height(2);
         e.emit(Asm::Add, span()).unwrap();
         e.emit(Asm::Return, span()).unwrap();
         e.finish(0).unwrap();
+    }
+
+    /// Unreachable code is not checked against the jumps to it, but an
+    /// instruction there that takes more values than the frame has is
+    /// code compiled with a height it does not have: a debug build
+    /// stops at it.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "in unreachable code")]
+    fn unreachable_code_takes_no_more_values_than_the_frame_has() {
+        let mut e = Emitter::new("f".into(), 0, span()).unwrap();
+        e.emit(Asm::Unit, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
+        e.assume_height(1);
+        let _ = e.emit(Asm::Add, span());
     }
 
     #[test]

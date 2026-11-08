@@ -1,0 +1,56 @@
+== <script> (arity=0, upvalues=0) ==
+0000  Constant             0     ; <fn:count>
+0003  SetGlobal            0     ; count
+0006  Pop
+0007  Constant             1     ; <fn:main>
+0010  SetGlobal            1     ; main
+0013  Pop
+0014  GetGlobal            1     ; main
+0017  Call                 0
+0019  Return
+
+== count (arity=1, upvalues=0) ==
+0000  GetLocal             0
+0003  Constant             0     ; 0
+0006  GetLocal             1
+0009  TestListExact        0
+0011  JumpIfFalse          8     -> 0022
+0014  GetLocal             2
+0017  Jump                 72    -> 0094
+0022  TestListMin          1
+0024  JumpIfFalse          63    -> 0090
+0027  DestructList         0
+0029  TestEqual            1     ; ","
+0032  JumpIfFalse          22    -> 0057
+0035  GetLocal             3
+0038  DestructListRest     1
+0040  GetLocal             6
+0043  GetLocal             2
+0046  AddConst             2     ; 1
+0049  Recur                2  slot 1  -51   -> 0006
+0057  TestEqual            3     ; """
+0060  JumpIfFalse          8     -> 0071
+0063  GetLocal             2
+0066  Jump                 23    -> 0094
+0071  GetLocal             3
+0074  DestructListRest     1
+0076  GetLocal             6
+0079  GetLocal             2
+0082  Recur                2  slot 1  -84   -> 0006
+0090  Constant             4     ; "non-exhaustive match: no arm matched"
+0093  Panic
+0094  Slide                3
+0097  Slide                1
+0100  Return
+
+== main (arity=0, upvalues=0) ==
+0000  Constant             0     ; <builtin:println>
+0003  GetGlobal            0     ; count
+0006  Constant             1     ; "a"
+0009  Constant             2     ; ","
+0012  Constant             3     ; "b"
+0015  MakeList             3
+0018  Call                 1
+0020  TailCall             1
+0022  Return
+

@@ -2065,8 +2065,10 @@ fn programs_with_trait_bounds_take_the_steps_of_their_instructions() {
                 let shout = { x -> \"{Nm.nm(x)}!\" }\nfn main() {\n  println(shout(1))\n  \
                 println(shout(\"a\"))\n  let twice = { x -> \"{Nm.nm(x)}{Nm.nm(x)}\" }\n  \
                 println(\"{twice(1)} {twice(\"b\")}\")\n}\n";
-    // (0.25.0: 3428, 1530 and 79.)
+    // (0.25.0: 3428, 1530 and 79. A match binds from its scrutinee
+    // with no copies, 10 steps fewer for each `Bx(x)` taken apart, and a
+    // `let` is no step of its own: its value is its local where it lies.)
     assert_eq!(steps_to_end(bounded), 3629);
-    assert_eq!(steps_to_end(polyrec), 1732);
-    assert_eq!(steps_to_end(lets), 101);
+    assert_eq!(steps_to_end(polyrec), 1232);
+    assert_eq!(steps_to_end(lets), 100);
 }

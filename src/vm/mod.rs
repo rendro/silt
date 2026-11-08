@@ -421,7 +421,7 @@ impl Vm {
     ///
     /// The result says whether the program ran to its end. A `main`
     /// that returns `Err(e)` has failed: that is an error here, with
-    /// [`VmError::returned_err`] set and `e` in the message as `println`
+    /// [`VmError::returned`] set to `e` as `println`
     /// writes it. No value leaves the program this way: a program gives
     /// its values to its host through a host function it calls (see
     /// `docs/ffi.md`).
@@ -477,7 +477,7 @@ impl Vm {
             // (A `process.exit` in a `Display` of the payload ends the
             // run there.)
             let shown = self.show_text_of_err(&payload)?;
-            return Err(VmError::returned(function, &shown, at));
+            return Err(VmError::of_a_returned_err(function, &shown, at));
         }
         Ok(())
     }
@@ -555,7 +555,7 @@ impl Vm {
     /// Call the test function `test` of the program this VM ran with
     /// [`Vm::run_program`] (compiled for `Entry::Tests`), with no
     /// arguments. As for `main`, a test function that returns `Err(e)`
-    /// has failed: an error with [`VmError::returned_err`] set.
+    /// has failed: an error with [`VmError::returned`] set.
     pub fn call_test(&mut self, test: &crate::session::TestFn) -> Result<(), VmError> {
         let value = self.run(Arc::new(crate::bytecode::call_global_script(
             test.slot, &test.name,

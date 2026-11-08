@@ -1,0 +1,14 @@
+-- repeat: 5
+-- C fails; J's join takes it and J fails with it. main then cancels C
+-- (a cancel of a task that failed dismisses its failure) and J. Both
+-- failures were dismissed by a cancel: is anything to be reported?
+import task
+import time
+fn main() {
+  let c = task.spawn { -> panic("c failed") }
+  let j = task.spawn { -> task.join(c) }
+  time.sleep(time.ms(30))
+  task.cancel(c)
+  task.cancel(j)
+  println("done")
+}

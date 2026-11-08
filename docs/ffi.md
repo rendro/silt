@@ -506,13 +506,13 @@ fault of the program itself, a division by zero or a `panic`, keeps it
 - **Runtime errors** (overflow, out-of-bounds, a failed assertion)
   return as `Err(VmError)` from `vm.run_program`.
 - **A `main` that returns `Err(e)`** (often from a `?`) has failed: an
-  `Err(VmError)` too, with `returned_err` set, the message
-  `main returned Err: <e as println writes it>`, and its place where
-  `main` is bound (the name of its `fn`, its name in a `let` or an
-  import). `call_test` says the same of a test function, at its name.
-  `VmError::returned_text` gives the payload's text alone: `silt run`
-  writes such an error as the one line `error: <text>`, the program's
-  message to its user, and a host may do the same.
+  `Err(VmError)` too, with `returned` set to the payload's text (`e`
+  as `println` writes it), the message `main returned Err: <that
+  text>`, and its place where `main` is bound (the name of its `fn`,
+  its name in a `let` or an import). `call_test` says the same of a
+  test function, at its name. `silt run` writes such an error as the
+  one line `error: <text>`, the program's message to its user, and a
+  host may do the same.
   The payload is shown by its `Display`, which is code of the program:
   a `process.exit` there (or the step budget used up) is the error
   instead; if it fails otherwise, the payload is shown by its structure.

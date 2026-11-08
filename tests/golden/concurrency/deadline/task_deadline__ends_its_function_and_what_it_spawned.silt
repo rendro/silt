@@ -1,0 +1,34 @@
+-- timeout: 60
+-- A deadline ends its function and the tasks the function spawned that
+-- still run, as a cancel of the function would. A task the function
+-- was joining, and did not spawn, goes on, and its result is there for
+-- a later join. Each of the two waits for a message that is sent only
+-- after the deadline has given `Err(Timeout)`, so the order does not
+-- depend on the clock.
+import channel
+import task
+import time
+
+fn main() {
+  let go: Channel(Int) = channel.new(2)
+  let done: Channel(String) = channel.new(2)
+  let joined = task.spawn { ->
+    let _ = channel.receive(go)
+    "the task that was being joined returned"
+  }
+  let out = task.deadline(time.ms(20), { ->
+    let _ = task.spawn { ->
+      let _ = channel.receive(go)
+      channel.send(done, "the task that the function spawned went on")
+    }
+    task.join(joined)
+  })
+  println(out)
+  channel.send(go, 1)
+  channel.send(go, 2)
+  println(task.join(joined))
+  -- A task the function spawned that went on would have sent by now.
+  time.sleep(time.ms(20))
+  println(channel.try_receive(done))
+  println("one message is left for nobody: {channel.try_receive(go)}")
+}

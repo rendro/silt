@@ -1,0 +1,33 @@
+-- repeat: 10
+-- The card's worker: it starts its children and returns. task.cancel of
+-- it, after it has returned, still cancels the children that run, and
+-- the tasks they spawned in turn, also below a child that has returned.
+import channel
+import list
+import task
+
+fn main() {
+  let cmds = channel.new(16)
+  let gate = channel.new(0)
+  let worker = task.spawn { ->
+    list.each([1, 2, 3]) { i ->
+      let _ = task.spawn { ->
+        let _ = channel.receive(gate)
+        channel.send(cmds, i)
+      }
+    }
+    -- A child that spawns a grandchild and returns.
+    let middle = task.spawn { ->
+      let _ = task.spawn { ->
+        let _ = channel.receive(gate)
+        channel.send(cmds, 4)
+      }
+    }
+    task.join(middle)
+  }
+  task.join(worker)
+  task.cancel(worker)
+  channel.close(cmds)
+  channel.close(gate)
+  println("stopped: {channel.try_receive(cmds)}")
+}

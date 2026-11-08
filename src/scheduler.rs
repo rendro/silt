@@ -439,6 +439,10 @@ thread_local! {
     static COUNTED: Cell<bool> = const { Cell::new(false) };
     /// The spawned task whose slice the thread is running.
     static RUNNING_TASK: Cell<Option<usize>> = const { Cell::new(None) };
+    /// Its handle: the spawner of a task the slice starts
+    /// (`runtime::family`).
+    static RUNNING_HANDLE: std::cell::RefCell<Option<Arc<TaskHandle>>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 /// A thread that is running silt code of its own, from
@@ -624,6 +628,15 @@ impl Scheduler {
                     .push(Arc::downgrade(&self.inner));
             });
         }
+        // A task spawned in the slice of another is that one's: a cancel
+        // of the spawner reaches it. One spawned by a task that has been
+        // cancelled is cancelled at once, and never runs.
+        let spawner = RUNNING_HANDLE.with(|running| running.borrow().clone());
+        if let Some(spawner) = spawner
+            && crate::runtime::family::spawned(&spawner, &handle)
+        {
+            handle.cancel_spawned(self.wake());
+        }
         let group = self.inner.group(handle.owner());
         self.inner.spawned.fetch_add(1, Ordering::SeqCst);
         group.live.fetch_add(1, Ordering::SeqCst);
@@ -658,10 +671,26 @@ impl Scheduler {
     ///   wait that cannot end at once (`Inner::run_once`). It takes
     ///   nothing new in them: an operation that would ends it too
     ///   (`Vm::takes_nothing_new`).
+    ///
+    /// A failure that the task took from a task it joined, and that
+    /// the cancel dismisses, goes back to that task: it is reported as
+    /// never joined ([`Inner::hand_back`]).
+    ///
+    /// The cancel also reaches every task that `handle`'s task spawned
+    /// and that still runs, and every one that those spawned, also
+    /// below a task that has returned ([`Inner::cancel_below`]). All of
+    /// them have their result when this returns.
     pub(crate) fn cancel(&self, handle: &TaskHandle) {
-        // The flag first: a task that is about to park reads it.
-        handle.cancel(self.wake());
+        // The flag first: a task that is about to park reads it, and a
+        // task it spawns from now on is cancelled at once. Then what it
+        // spawned, before whoever waits for it learns of the cancel.
+        handle.mark_cancelled();
+        self.inner.cancel_below(handle);
+        let taken_from = handle.cancel(self.wake());
         self.inner.parking.cancel(TaskId(handle.id as u64));
+        if let Some(joined) = taken_from {
+            self.inner.hand_back(&joined);
+        }
     }
 
     /// Close `channel` when the clock reads `deadline`. Until then a
@@ -1748,6 +1777,10 @@ impl Inner {
             vm, handle, group, ..
         } = task;
         drop(vm);
+        // What the function spawned and still runs ends with it, as on
+        // a cancel, before whoever waits for the function learns of its
+        // end. (The task is in hand here: it spawns nothing meanwhile.)
+        self.cancel_below(&handle);
         handle.expire(&self.parking);
         drop(handle);
         self.ended(&group);
@@ -1800,6 +1833,30 @@ impl Inner {
                 SliceResult::Yielded if !spent && ran < slice => {}
                 result => return (result, spent),
             }
+        }
+    }
+
+    /// A join took the failure of `joined`, and the task that joined
+    /// was cancelled before it failed with it, or had that failure
+    /// dismissed by a cancel: the failure is the joined task's again,
+    /// reported as never joined. (A cancelled task never takes a
+    /// failure: its join ends without taking. This is for the cancel
+    /// that comes after the take.)
+    fn hand_back(&self, joined: &Arc<TaskHandle>) {
+        joined.hand_back();
+        if joined.has_unjoined_failure() {
+            record_failed_task(self, joined);
+        }
+    }
+
+    /// Cancel the tasks below `handle` in the tree of who spawned whom
+    /// that still run (`runtime::family`): a cancel of the task, or its
+    /// end by its deadline, reaches them. One that has ended keeps its
+    /// result, and a failure of it is still reported.
+    fn cancel_below(&self, handle: &TaskHandle) {
+        for task in crate::runtime::family::running_below(handle) {
+            task.cancel_spawned(&self.parking);
+            self.parking.cancel(TaskId(task.id as u64));
         }
     }
 
@@ -2053,6 +2110,7 @@ impl Inner {
         let outer = RUNNING_TASK_OWNER.with(|owner| owner.replace(Some(task.handle.owner())));
         let counted = COUNTED.with(|counted| counted.replace(true));
         let running = RUNNING_TASK.with(|running| running.replace(Some(task.id)));
+        let spawner = RUNNING_HANDLE.with(|running| running.replace(Some(task.handle.clone())));
         let slice = task.vm.time_slice().unwrap_or_else(time_slice);
         // A task whose time is over runs on for a counted number of
         // steps and is ended, by its deadline, where they are used up:
@@ -2077,6 +2135,8 @@ impl Inner {
         };
         task.ran = true;
         RUNNING_TASK.with(|was| was.set(running));
+        // (The handle this gives back is dropped out of the borrow.)
+        let _ = RUNNING_HANDLE.with(|was| was.replace(spawner));
         COUNTED.with(|was| was.set(counted));
         RUNNING_TASK_OWNER.with(|owner| owner.set(outer));
 
@@ -2099,9 +2159,14 @@ impl Inner {
                 // program ends, so it is recorded here. `fail` returns
                 // false if the task had been cancelled before: its
                 // handle keeps the cancellation as its result then.
+                // A failure it took from a task it joined then goes back
+                // to that task.
                 let error = task.vm.enrich_error(error);
+                let taken_from = error.taken_from.clone();
                 if task.handle.fail(error, &self.parking) {
                     record_failed_task(self, &task.handle);
+                } else if let Some(joined) = taken_from {
+                    self.hand_back(&joined.0);
                 }
                 self.end_task(task);
             }

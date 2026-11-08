@@ -1,12 +1,12 @@
 error[runtime]: a task failed and was never joined: send on closed channel 0
- --> unjoined_failure__names_the_spawn_and_a_cancelled_spawner.silt:21:9
+ --> unjoined_failure__names_the_spawn_and_a_cancelled_spawner.silt:23:9
     |
- 21 |         channel.send(cmds, i)
+ 23 |         channel.send(cmds, i)
     |         ^^^^^^^^^^^^^^^^^^^^^ a task failed and was never joined: send on closed channel 0
-  = help: the task was spawned at unjoined_failure__names_the_spawn_and_a_cancelled_spawner.silt:19:7 by a task that was cancelled: join it with task.join to stop where you wait for it, or cancel it with task.cancel if you don't need its result
+  = help: the task was spawned at unjoined_failure__names_the_spawn_and_a_cancelled_spawner.silt:21:7 by a task that was cancelled: join it with task.join to stop where you wait for it, or cancel it with task.cancel if you don't need its result
 error[runtime]: a task failed and was never joined: send on closed channel 0
- --> unjoined_failure__names_the_spawn_and_a_cancelled_spawner.silt:21:9
+ --> unjoined_failure__names_the_spawn_and_a_cancelled_spawner.silt:23:9
     |
- 21 |         channel.send(cmds, i)
+ 23 |         channel.send(cmds, i)
     |         ^^^^^^^^^^^^^^^^^^^^^ a task failed and was never joined: send on closed channel 0
-  = help: the task was spawned at unjoined_failure__names_the_spawn_and_a_cancelled_spawner.silt:19:7 by a task that was cancelled: join it with task.join to stop where you wait for it, or cancel it with task.cancel if you don't need its result
+  = help: the task was spawned at unjoined_failure__names_the_spawn_and_a_cancelled_spawner.silt:21:7 by a task that was cancelled: join it with task.join to stop where you wait for it, or cancel it with task.cancel if you don't need its result

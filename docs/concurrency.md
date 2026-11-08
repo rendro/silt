@@ -371,13 +371,54 @@ task.cancel(h)
 -- "task is settled" signal.
 ```
 
+**A cancel reaches the tasks the task spawned.** `task.cancel(h)` also
+cancels every task that `h`'s task spawned and that still runs, and every
+one that those spawned, however deep: "stop this work" includes the work
+it started. That holds also when `h`'s task has already returned, and
+below a task between them that has returned: a worker that starts
+children and returns is cancelled with its children. Each of them is
+cancelled as `h` is, and all have their result when `task.cancel`
+returns. A task that has already ended keeps its result: a failure of it
+is still reported. A task that is spawned by a task that has been
+cancelled is cancelled at once and never runs. The tasks the runtime
+starts in a task's place count as spawned by it: the function of a
+`task.deadline`, the stages of a stream, the connections of an
+`http.serve`. A task meant to outlive the task that starts it is spawned
+by one that is not cancelled: `main`, or a long-lived supervisor that
+hands its children's work on.
+
+```silt
+import channel
+import list
+import task
+
+fn main() {
+  let cmds = channel.new(16)
+  let worker = task.spawn { ->
+    list.each([1, 2, 3]) { i ->
+      let _ = task.spawn { -> channel.send(cmds, i) }
+    }
+  }
+  task.cancel(worker)
+  -- The worker's children are cancelled too: none of them sends on
+  -- the closed channel, and nothing fails.
+  channel.close(cmds)
+}
+```
+
 `task.cancel(h)` sets the handle's result to `Err("cancelled")` using
 first-writer-wins semantics: if the task has already completed with some other
 result, `task.cancel` leaves that result on the handle. Cancelling counts as
 handling the task, though: if the task had already failed, the cancel
 dismisses the failure, so it is not reported as a failure that nobody joined
 and does not make the program exit with status 1 (see
-[Failures that nobody joins](#failures-that-nobody-joins)). A later
+[Failures that nobody joins](#failures-that-nobody-joins)). A failure
+the task took with a `task.join` (`joined task failed: ...`) is not its
+own: the cancel hands it back to the task that failed, which is then
+reported as never joined. So a failure is never lost to a cancel of the
+task that joins, whether the cancel comes before the join takes it or
+after. A task that was cancelled itself has nothing handed back: its
+cancellation is no failure, and a cancel of it dismissed what it had. A later
 `task.join(h)` still raises the task's own error, because the handle keeps
 the result that came first. Its effect on the task
 depends on where that task is at the moment of cancellation:
@@ -399,9 +440,11 @@ depends on where that task is at the moment of cancellation:
     the thing is there: a `channel.receive`, `channel.try_receive` or
     `channel.receive_timeout`, the next message of a `channel.each`,
     the next element of a stream, `tcp.accept` (the connection stays
-    with the listener), and a `channel.select` of which no `Send` arm
-    can be done at once (its `Recv` arms, timeouts among them, are not
-    tried);
+    with the listener), a `task.join`, also of a task that has ended
+    (what that task returned or failed with stays with it: a failure
+    of it is reported as never joined), and a `channel.select` of which
+    no `Send` arm can be done at once (its `Recv` arms, timeouts among
+    them, are not tried);
   - at its next operation that would have to wait, with nothing sent;
     and at one that would start something which waits for the outside:
     reading or writing a file's contents, the network, a database,
@@ -422,8 +465,8 @@ depends on where that task is at the moment of cancellation:
   What is done in those steps is what gives: a `channel.send` into a
   channel with room or to a receiver that waits, `channel.try_send`, a
   `Send` arm of a `channel.select` that can be done at once,
-  `channel.close`; and the `task.join` of a task that has ended. It can
-  still start a task with `task.spawn`. A `time.sleep` of no time is
+  and `channel.close`. A task it starts with `task.spawn` is cancelled
+  at once and never runs. A `time.sleep` of no time is
   done, since it waits for nothing; any longer one is a wait. (The `fs`
   functions, which never wait, are done too: `fs.exists`, `fs.remove`,
   `fs.rename` and the others.) The side effects of those steps happen.
@@ -575,9 +618,14 @@ so when the task that spawned it was cancelled. The rules:
 
 - **A join handles the failure.** `task.join(h)` raises the task's error in
   the joiner (`joined task failed: <msg>`), and the failure is not reported
-  a second time.
+  a second time. A join in a task that has been cancelled takes nothing,
+  so the failure stays unhandled.
 - **A cancel handles the failure.** `task.cancel(h)` on a task that has
-  failed dismisses the failure: no report, no exit status 1.
+  failed dismisses the failure: no report, no exit status 1. A failure
+  that `h` took with a join goes back to the task it joined, which is
+  reported as never joined: the cancel of a task that joins never hides
+  the failure of the task it joins, whenever the cancel comes. (Unless
+  that task was cancelled too: then nothing is reported.)
 - **Every failure counts.** The report is made when the program has ended
   (see [When a program ends](#when-a-program-ends)): a task that fails
   after `main` has returned still makes the run fail, every time. The
@@ -701,14 +749,15 @@ what gives.
   over and the outer `task.deadline` gives `Err(Timeout)`. The steps
   past that time are one count for the two. (A function whose time is
   already over cannot begin an inner deadline: the call ends it.)
-- **A deadline ends its function and nothing else.** A task that the
-  function started with `task.spawn` goes on when the function is ended,
-  and so does a task the function was joining: the join is ended, the
-  task is not. Who wants them ended keeps their handles and cancels them
-  with `task.cancel`. A task that goes on and fails later, with nobody
-  left to join it, is a failure that nobody joined (see
-  [Failures that nobody joins](#failures-that-nobody-joins)). The stages
-  of a stream the function built go on until nobody reads them.
+- **A deadline ends its function and what it spawned.** The tasks that
+  the function started and that still run, with `task.spawn` or as the
+  stages of a stream it built, are cancelled when the function is ended,
+  and the tasks those spawned, as `task.cancel` cancels the tasks a task
+  spawned (see [Cancelling](#cancelling-taskcancelhandle)). A task the
+  function was joining and did not spawn goes on: the join is ended, the
+  task is not. A task that goes on and fails later, with nobody left to
+  join it, is a failure that nobody joined (see
+  [Failures that nobody joins](#failures-that-nobody-joins)).
 - The value of `f` is inside the `Ok`, so a function that returns a
   `Result` gives two layers: `Ok(Err(io.NotFound(path)))` is a read that
   failed in time, `Err(task.Timeout)` one that did not finish.
@@ -1294,9 +1343,9 @@ Key points:
 - **Supervisors are just tasks.** There is no built-in supervision
   tree. Compose the policy you need (restart, circuit-break, escalate)
   in ordinary silt — here, bounded restarts via recursion.
-- **Cancel children on shutdown.** If the supervisor is cancelled
-  (`task.cancel`), cancel each child it spawned to avoid leaks. Track
-  handles in a list and cancel them when the outcome channel closes.
+- **A cancel of the supervisor stops its children.** `task.cancel` of
+  the supervisor also cancels the workers it spawned that still run, and
+  theirs: nothing is left behind.
 - **`task.join` re-raises runtime errors.** If a spawned task's body
   panics with an unhandled runtime error, `task.join` on its handle
   re-raises that error in the joining task. That is the "safety net"

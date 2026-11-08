@@ -179,7 +179,7 @@ pub(crate) fn vm_run_file(path: &str) {
     // `main`'s error: raised, with its full diagnostic, or returned as
     // `Err(e)`, which is the program's message to its user: the one line
     // `error: <e>`, with no place of silt's (see `Vm::run_program`).
-    let main_text = (run_result.as_ref().err()).map(|e| match e.returned_text() {
+    let main_text = (run_result.as_ref().err()).map(|e| match &e.returned {
         Some(text) => format!("error: {text}"),
         None => render_runtime_error(e, path, &sources),
     });

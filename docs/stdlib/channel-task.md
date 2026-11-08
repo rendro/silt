@@ -353,13 +353,23 @@ fixed thread pool and run in parallel. They communicate through channels.
 task.cancel(handle: Handle(a)) -> ()
 ```
 
+It also cancels every task that the task spawned and that still runs,
+and every one that those spawned, also when the task has already
+returned; a task that has ended keeps its result, and one spawned by a
+cancelled task never runs. The tasks the runtime starts in a task's
+place (a `task.deadline`'s function, a stream's stages, an
+`http.serve`'s connections) count as spawned by it. See
+[Concurrency: Cancelling](../concurrency.md#cancelling-taskcancelhandle).
+
 Flips the handle's result slot to `Err("cancelled")` using first-writer-wins
 semantics: if the task has already completed with some other result,
 the result is kept: a later `task.join` still returns it, or raises it if the
 task failed. Cancelling a
 task that has already failed also dismisses that failure: it is not
 reported as unjoined, does not make `silt run` exit 1 and does not fail
-the test that spawned it. The cancel does not wait for the task to stop.
+the test that spawned it. A failure the task took with a `task.join` is
+not its own: the cancel hands it back to the task that failed, which is
+then reported as never joined, unless that task was cancelled too. The cancel does not wait for the task to stop.
 Its effect on the task depends on where the task is at that moment:
 
 - **The task is waiting** (parked in a channel receive or send, a
@@ -379,9 +389,11 @@ Its effect on the task depends on where the task is at that moment:
     the thing is there: a `channel.receive`, `channel.try_receive` or
     `channel.receive_timeout`, the next message of a `channel.each`,
     the next element of a stream, `tcp.accept` (the connection stays
-    with the listener), and a `channel.select` of which no `Send` arm
-    can be done at once (its `Recv` arms, timeouts among them, are not
-    tried);
+    with the listener), a `task.join`, also of a task that has ended
+    (what that task returned or failed with stays with it: a failure
+    of it is reported as never joined), and a `channel.select` of which
+    no `Send` arm can be done at once (its `Recv` arms, timeouts among
+    them, are not tried);
   - at its next operation that would have to wait, with nothing sent;
     and at one that would start something which waits for the outside:
     reading or writing a file's contents, the network, a database,
@@ -402,8 +414,8 @@ Its effect on the task depends on where the task is at that moment:
   What is done in those steps is what gives: a `channel.send` into a
   channel with room or to a receiver that waits, `channel.try_send`, a
   `Send` arm of a `channel.select` that can be done at once,
-  `channel.close`; and the `task.join` of a task that has ended. It can
-  still start a task with `task.spawn`. A `time.sleep` of no time is
+  and `channel.close`. A task it starts with `task.spawn` is cancelled
+  at once and never runs. A `time.sleep` of no time is
   done, since it waits for nothing; any longer one is a wait. (The `fs`
   functions, which never wait, are done too: `fs.exists`, `fs.remove`,
   `fs.rename` and the others.) The side effects of those steps happen.
@@ -563,9 +575,9 @@ neither is ended after a fixed amount of further work.
 - Deadlines nest: an inner function has the outer time too, if that is
   earlier. When the outer time passes first, the outer `task.deadline`
   gives `Err(Timeout)`.
-- A deadline ends its function and nothing else: a task that `f` spawned,
-  and a task that `f` was joining, go on. Cancel them with `task.cancel`
-  if they are to end too.
+- A deadline that ends its function also cancels what `f` spawned and
+  still runs, and what those spawned, as `task.cancel` does. A task that
+  `f` was joining and did not spawn goes on.
 
 See [Deadlines](../concurrency.md#deadlines-taskdeadlinedur-fn) for the
 whole rule.
