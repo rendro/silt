@@ -1,0 +1,7 @@
+pub type Q {
+  Q(Int),
+}
+
+pub fn everything() -> Int {
+  1
+}

@@ -1,0 +1,8 @@
+pub type Command {
+  Count,
+  Show,
+}
+
+pub type Kind {
+  Kind(Int),
+}
