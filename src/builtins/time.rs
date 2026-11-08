@@ -113,7 +113,7 @@ fn why_unread(
                     // A field read a second time with another value, or
                     // one that another rules out (an hour 13 and `AM`).
                     ParseErrorKind::Impossible => format!(
-                        "the fields do not agree: {part} at byte {at} does not agree with \
+                        "{part} at byte {at} does not agree with \
                          what was read before it"
                     ),
                     // Too short is also a field of fewer digits than it
