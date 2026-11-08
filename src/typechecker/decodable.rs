@@ -209,6 +209,12 @@ impl Tables {
             id if id == bt::DATE_TIME => Ok(FieldType::DateTime),
             id if id == bt::JSON_VALUE => Ok(FieldType::JsonValue),
             id if id == TypeRef::builtin("Bytes").id => Ok(FieldType::Bytes),
+            // The records of time that json.stringify writes as records
+            // (`{"epoch_ns": n}`, `{"ns": n}`) are read back as records.
+            id if id == bt::INSTANT || id == bt::DURATION => {
+                records.push((t, Vec::new()));
+                Ok(FieldType::Record(id))
+            }
             // A non-generic record or enum type of the program.
             id if crate::defs::builtin_types().get(id.0.0 as usize).is_none()
                 && self.declares_non_generic(t) =>

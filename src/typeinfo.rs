@@ -392,6 +392,10 @@ fn type_value_parts(value: &Value) -> (&str, FieldType) {
                 // checker gives a decoder a generic one only at its
                 // arguments (`Applied`, above).
                 (Shape::Record(_), id) if !info.is_builtin() => FieldType::Record(id),
+                // (The records of time a decoder reads back as records.)
+                (Shape::Record(_), id) if id == ty::INSTANT || id == ty::DURATION => {
+                    FieldType::Record(id)
+                }
                 (Shape::Enum(_), id) if !info.is_builtin() => FieldType::Enum(id),
                 _ => FieldType::Unsupported(info.name.clone()),
             };
@@ -820,6 +824,19 @@ fn builtin_types() -> &'static [Arc<TypeInfo>] {
                             .collect(),
                     ),
                     None => match records.get(name) {
+                        // An Instant and a Duration are decoded as the
+                        // records of one Int they are written as.
+                        Some(fields)
+                            if [ty::INSTANT, ty::DURATION]
+                                .iter()
+                                .any(|id| id.0.0 as usize == k) =>
+                        {
+                            Shape::Record(
+                                (fields.iter())
+                                    .map(|field| ((*field).to_string(), FieldType::Int))
+                                    .collect(),
+                            )
+                        }
                         Some(fields) => Shape::Record(
                             fields
                                 .iter()

@@ -587,7 +587,8 @@ impl TypeChecker {
         // them as the type of a record's field.
         if !is_primitive {
             let accepted = decoding.type_arguments(str::to_string);
-            let decoded = (family.leaves().iter()).any(|leaf| leaf.name() == type_name);
+            let decoded = (family.leaves().iter()).any(|leaf| leaf.name() == type_name)
+                || [crate::typeinfo::ty::INSTANT, crate::typeinfo::ty::DURATION].contains(&head.id);
             let help = match decoded {
                 true => format!(
                     "a decoder decodes a `{type_name}` as the type of a record's field: \
@@ -695,6 +696,12 @@ impl TypeChecker {
         };
         match (leaf, decoded_parts(part), part) {
             (Some(leaf), ..) if family.decodes(leaf) => None,
+            // The records of time a decoder reads back as records.
+            (None, None, Type::Generic(t, args))
+                if args.is_empty() && (t.id == bt::INSTANT || t.id == bt::DURATION) =>
+            {
+                None
+            }
             (None, Some(parts), _) => (parts.into_iter())
                 .find_map(|inner| self.part_refusal(builtin, decoding, whole, inner, owner, span)),
             // A record or enum type of the program.

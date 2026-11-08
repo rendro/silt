@@ -68,6 +68,7 @@ record and enum type nested in them), may have these types:
 
 - `Int`, `Float`, `String`, `Bool`
 - `time.Date`, `time.Time`, `time.DateTime`
+- `time.Instant` and `time.Duration`, as `toml.stringify` writes them: `{ epoch_ns = n }`, `{ ns = n }`
 - `List(T)`, `Option(T)`, `Map(String, T)`
 - tuples, such as `(Int, String)`
 - record types, a generic one with its type arguments (`Box(Int)`)
@@ -388,7 +389,8 @@ follows:
 The keys of a map are written in sorted order, the fields of a record in the
 order its type declares them; either way the plain keys of a table come
 before its sub-tables (`[name]`, `[[name]]`), as TOML requires. `toml.parse`
-reads a `Date`, a `Time` and a `DateTime` back into a field of the same type.
+reads a `Date`, a `Time`, a `DateTime`, an `Instant` and a `Duration` back
+into a field of the same type.
 A date whose year has no literal (one before the year 0 or past 9999) is
 written as a string of the text silt shows of it, which `toml.parse` reads
 back as well. A variant is read back into its enum type when the program
