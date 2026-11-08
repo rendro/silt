@@ -833,10 +833,7 @@ impl Server {
                 for id in &ids {
                     let def = session.defs().get(*id);
                     if def.module == module.module && def.span.is_in_source() {
-                        places.push(place(
-                            def.span,
-                            module.punned.contains(&def.span),
-                        ));
+                        places.push(place(def.span, module.punned.contains(&def.span)));
                     }
                 }
             }

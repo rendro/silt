@@ -6290,9 +6290,7 @@ pub(super) fn written_type(te: &TypeExpr, name: Symbol) -> Option<TypeRef> {
             name,
         }),
         Some(_) => None,
-        None => {
-            crate::defs::builtin_type_id(&resolve(name)).map(|id| TypeRef { id, name })
-        }
+        None => crate::defs::builtin_type_id(&resolve(name)).map(|id| TypeRef { id, name }),
     }
 }
 

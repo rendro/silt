@@ -942,8 +942,7 @@ impl<'src> Parser<'src> {
     /// left to the element parser, which has a hint for it in a type,
     /// and `fn:` is a field named `fn`.
     fn at_fn_decl(&self) -> bool {
-        self.at(&Token::Fn)
-            && !matches!(self.next_on_line(), Some(Token::LParen | Token::Colon))
+        self.at(&Token::Fn) && !matches!(self.next_on_line(), Some(Token::LParen | Token::Colon))
     }
 
     /// The error for a function type written `(A -> B)`, at its `->`,
@@ -4348,7 +4347,10 @@ impl<'src> Parser<'src> {
         } else if let Some(keyword) = keyword {
             let example = &keyword[..1];
             return Err(Self::keyword_field_alone(
-                field_span, keyword, "a pattern", example,
+                field_span,
+                keyword,
+                "a pattern",
+                example,
             ));
         } else {
             None

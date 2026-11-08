@@ -2056,9 +2056,7 @@ impl<'a> Compiler<'a> {
 
             // The literal's type is the one the resolver resolved it to,
             // written `Pt { .. }` or `util.Pt { .. }`.
-            ExprKind::RecordCreate {
-                name, fields, ..
-            } => {
+            ExprKind::RecordCreate { name, fields, .. } => {
                 // Push field values in order
                 let field_names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
                 self.compile_operands(fields.iter().map(|(_, val)| val))?;
