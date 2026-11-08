@@ -142,8 +142,8 @@ Inside quotes a carriage return is text, as a line break is.
 import csv
 
 fn main() {
-  println(csv.split_line("1,\"Smith, John\",\"say \"\"hi\"\"\"")) -- Ok([1, Smith, John, say "hi"])
-  println(csv.split_line("a,,c")) -- Ok([a, , c])
+  println(csv.split_line("1,\"Smith, John\",\"say \"\"hi\"\"\"")) -- Ok(["1", "Smith, John", "say \"hi\""])
+  println(csv.split_line("a,,c")) -- Ok(["a", "", "c"])
   match csv.split_line("a,\"bc") {
     Ok(fields) -> println(fields)
     Err(e) -> println(Error.message(e)) -- csv syntax error at byte 2: a quoted field is not closed
