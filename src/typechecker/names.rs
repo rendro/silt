@@ -1187,6 +1187,21 @@ pub(super) fn shown_arg(e: &Expr) -> String {
     }
 }
 
+/// A type given as a value, as written: `Int`, `json.Value`,
+/// `List(Int)`, `(Int, String)`; `...` for anything else.
+pub(super) fn shown_type(e: &Expr) -> String {
+    let all = |es: &[Expr]| es.iter().map(shown_type).collect::<Vec<_>>().join(", ");
+    match &e.kind {
+        ExprKind::Call(callee, args) => match shown_path(callee) {
+            Some(callee) => format!("{callee}({})", all(args)),
+            None => "...".to_string(),
+        },
+        ExprKind::Tuple(elems) => format!("({})", all(elems)),
+        ExprKind::Unit => "()".to_string(),
+        _ => shown_path(e).unwrap_or_else(|| "...".to_string()),
+    }
+}
+
 struct Resolver<'a> {
     defs: &'a DefTable,
     kind: ModuleKind,

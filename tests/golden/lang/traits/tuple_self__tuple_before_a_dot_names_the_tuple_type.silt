@@ -1,0 +1,19 @@
+-- exit: 1
+-- `Tuple(...)` before a dot is no spelling of the tuple type: its error
+-- has the help that writes the type, its parts as written. Anywhere else
+-- `Tuple` is only undefined.
+import json
+
+trait Monoid {
+  fn empty() -> Self
+}
+
+trait Monoid for Int {
+  fn empty() -> Self { 0 }
+}
+
+fn main() {
+  println(Tuple(Int, List(String), json.Value).empty())
+  let t = Tuple(Int, Int)
+  println(t)
+}
