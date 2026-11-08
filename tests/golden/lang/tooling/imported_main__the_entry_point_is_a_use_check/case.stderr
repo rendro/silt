@@ -1,0 +1,6 @@
+warning[type]: unused import 'helper' from module 'other'
+ --> main.silt:4:22
+   |
+ 4 | import other.{ main, helper }
+   |                      ^^^^^^ unused import 'helper' from module 'other'
+  = help: remove `helper` from the import

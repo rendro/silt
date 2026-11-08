@@ -1661,6 +1661,34 @@ impl TypeChecker {
         let mut message =
             format!("`{who}` takes a type as `{param_name}`, not a value of type `{shown}`");
         let mut help = None;
+        // (An anonymous record type written out, `{x: Int}`: a record of
+        // types, said as its alias is.)
+        if let (ExprKind::AnonRecord { spread: None, .. }, Type::AnonRecord { fields, tail }) =
+            (&arg.kind, &given)
+        {
+            let types: Option<std::collections::BTreeMap<Symbol, Type>> = (fields.iter())
+                .map(|(name, ty)| match self.apply(ty) {
+                    Type::Generic(head, args) if head.is_builtin(crate::defs::TYPE_OF) => {
+                        Some((*name, args.first()?.clone()))
+                    }
+                    _ => None,
+                })
+                .collect();
+            if let Some(types) = types.filter(|types| !types.is_empty()) {
+                let written = self.show_type(&Type::AnonRecord {
+                    fields: types,
+                    tail: tail.clone(),
+                });
+                let fields = written.trim_start_matches('{').trim_end_matches('}');
+                message = format!(
+                    "`{who}` takes a type as `{param_name}`, but `{written}` is an anonymous \
+                     record type, which has no value as a type"
+                );
+                help = Some(format!(
+                    "declare a record type for it: `type Name {{ {fields} }}`"
+                ));
+            }
+        }
         if let Some(variant) = made_by {
             message.push_str(&format!(": `{variant}` is a variant of `{shown}`"));
             help = Some(format!("give the type, `{shown}`"));
@@ -2932,6 +2960,65 @@ impl TypeChecker {
         Some(ty)
     }
 
+    /// Report `ty`, the type `arg` writes as a value, if a part of it
+    /// that the value of the type is made of has no value as a type:
+    /// an anonymous record type or a function type (of an alias written
+    /// alone, the type it stands for; of a type written in full, any of
+    /// its parts). `takes` names the function and its type parameter
+    /// when `arg` is a type argument. Whether it was reported.
+    fn valueless_type(&mut self, arg: &Expr, ty: &Type, takes: Option<(Symbol, Symbol)>) -> bool {
+        fn part(ty: &Type, whole: bool) -> Option<&Type> {
+            match ty {
+                Type::AnonRecord { .. } | Type::Fun(..) => Some(ty),
+                _ if !whole => None,
+                Type::List(t) | Type::Set(t) | Type::Channel(t) => part(t, true),
+                Type::Map(k, v) => part(k, true).or_else(|| part(v, true)),
+                Type::Tuple(ts) | Type::Generic(_, ts) => ts.iter().find_map(|t| part(t, true)),
+                _ => None,
+            }
+        }
+        let alone = matches!(arg.kind, ExprKind::Ident(_) | ExprKind::FieldAccess(..));
+        let Some(part) = part(ty, !alone) else {
+            return false;
+        };
+        let shown = self.show_type(part);
+        let what = match part {
+            Type::Fun(..) => "a function type",
+            _ => "an anonymous record type",
+        };
+        let message = match takes {
+            Some((who, param)) => format!(
+                "`{who}` takes a type as `{param}`, but `{shown}` is {what}, which has no value \
+                 as a type"
+            ),
+            None => format!("`{shown}` is {what}, which has no value as a type"),
+        };
+        let help = matches!(part, Type::AnonRecord { .. }).then(|| {
+            let fields = shown.trim_start_matches('{').trim_end_matches('}');
+            match self.plain_alias(arg) {
+                Some(alias) => format!(
+                    "declare `{0}` as a record type: `type {0} {{ {fields} }}`",
+                    alias.name
+                ),
+                None => format!("declare a record type for it: `type Name {{ {fields} }}`"),
+            }
+        });
+        self.error_help(Code::TypeMismatch, (message, help), arg.span);
+        true
+    }
+
+    /// The name `callee` is called by and the name of its type parameter
+    /// at the argument `i`, if it declares one there.
+    fn type_param_of(&self, callee: &Expr, i: usize) -> Option<(Symbol, Symbol)> {
+        let who = Self::callee_label(callee)?;
+        let Some(crate::defs::Res::Def(id)) = callee.res else {
+            return None;
+        };
+        let params = self.tables.fn_type_params.get(&id)?;
+        let (_, name) = params.iter().find(|(at, _)| *at == i)?;
+        Some((who, *name))
+    }
+
     /// Keep `e`, a generic type or alias written alone, as written, for a
     /// decoder's refusal at the argument `at` (`bare_written`).
     fn note_bare_written(&mut self, e: &Expr, at: Span) {
@@ -3554,7 +3641,20 @@ impl TypeChecker {
                             if matches!(self.apply(param),
                                 Type::Generic(name, _) if name.is_builtin(crate::defs::TYPE_OF)) =>
                         {
-                            self.spelled_type(arg, env)
+                            // (json's and toml's decoders say what they
+                            // cannot decode themselves; postgres's rows
+                            // would reach the compiler.)
+                            let builtin = (self.res_def(callee.res)).is_some_and(|def| {
+                                matches!(def.module.builtin_name(), Some("json" | "toml"))
+                            });
+                            let takes = self.type_param_of(callee, i);
+                            match self.spelled_type(arg, env) {
+                                Some(ty) if !builtin && self.valueless_type(arg, &ty, takes) => {
+                                    arg.ty = Some(Type::Error);
+                                    Some(Type::Error)
+                                }
+                                spelled => spelled,
+                            }
                         }
                         _ => None,
                     };
@@ -3938,6 +4038,7 @@ impl TypeChecker {
         {
             let ty = match ty {
                 Type::Error => Type::Error,
+                ty if self.valueless_type(expr, &ty, None) => Type::Error,
                 ty => Type::type_of(ty),
             };
             expr.ty = Some(ty.clone());

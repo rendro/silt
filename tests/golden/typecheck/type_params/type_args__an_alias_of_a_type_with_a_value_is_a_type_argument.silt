@@ -1,0 +1,15 @@
+-- An alias given as a type argument is the type it stands for, when that
+-- type has a value as a type: a tuple, a list of anonymous records, `()`,
+-- a tuple that holds an anonymous record (the value of a type written
+-- alone is its head).
+type R = {x: Int}
+type P = (Int, String)
+type L = List({x: Int})
+type U = ()
+type T = (R, Int)
+
+fn f(type a) -> Int { 1 }
+
+fn main() {
+  println(f(P) + f(L) + f(U) + f(T) + f(List(P)))
+}

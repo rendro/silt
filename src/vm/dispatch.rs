@@ -4,7 +4,7 @@ use std::panic::AssertUnwindSafe;
 
 use super::runtime::{Native, Step};
 use super::{Vm, VmError};
-use crate::value::{HostFault, HostFn, HostShape, Value, witness_type};
+use crate::value::{HostFault, HostFn, HostShape, Value, given_type, witness_type};
 
 /// Call the host function `host` while catching panics that escape it.
 ///
@@ -28,15 +28,27 @@ pub(super) fn invoke_host_fn(host: &HostFn, args: &[Value]) -> Result<Value, VmE
             }
             let returns = host.returns.to_string();
             let here = match fault {
-                HostFault::Var(at) => witnesses[at].as_ref().map(|witness| {
+                HostFault::Var(at) => witnesses.get(at).map(|witness| {
                     let var = &host.vars[at].name;
                     let source = &witness.source;
+                    // (A parameter written as a pattern is named by its
+                    // place.)
+                    let argument = match &source.name {
+                        Some(name) => format!("its argument `{name}`"),
+                        None => match ORDINALS.get(source.param) {
+                            Some(nth) => format!("its {nth} argument"),
+                            None => format!("its argument {}", source.param + 1),
+                        },
+                    };
                     let from = match (source.of_type, source.path.is_empty()) {
                         (true, _) => format!("its type argument `{var}`"),
-                        (false, true) => format!("the type of its argument `{}`", source.name),
-                        (false, false) => format!("from its argument `{}`", source.name),
+                        (false, true) => format!("the type of {argument}"),
+                        (false, false) => format!("from {argument}"),
                     };
-                    let ty = witness_type(&witness.value);
+                    let ty = match source.of_type {
+                        true => given_type(&witness.value),
+                        false => witness_type(&witness.value),
+                    };
                     match (&host.returns, source.written.is_empty()) {
                         (HostShape::Var(..), _) => format!(", here {ty} ({from})"),
                         (_, true) => format!(", where {var} is {ty} ({from})"),
@@ -65,6 +77,11 @@ pub(super) fn invoke_host_fn(host: &HostFn, args: &[Value]) -> Result<Value, VmE
         }
     }
 }
+
+/// The places of the first parameters, in words.
+const ORDINALS: [&str; 10] = [
+    "first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth",
+];
 
 /// Decode a panic payload into a human-readable string, preserving the
 /// common `&'static str` and `String` cases and falling back to a

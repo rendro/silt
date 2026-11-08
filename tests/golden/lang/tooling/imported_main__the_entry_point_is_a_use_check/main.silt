@@ -1,0 +1,4 @@
+-- cmd: check
+-- An imported `main` is the entry point, a use of the import; another
+-- item of the import that nothing uses is still warned of.
+import other.{ main, helper }

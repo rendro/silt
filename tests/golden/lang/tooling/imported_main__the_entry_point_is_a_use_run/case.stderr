@@ -1,0 +1,5 @@
+error[runtime]: main returned Err: from other
+ --> main.silt:4:16
+   |
+ 4 | import other.{ main }
+   |                ^^^^ main returned Err: from other
