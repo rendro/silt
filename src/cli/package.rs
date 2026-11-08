@@ -120,7 +120,16 @@ pub(crate) fn resolve_package_entry_point() -> Result<Option<PathBuf>, ()> {
 /// tests/lang/round93_lib_check_tests.rs.
 pub(crate) fn resolve_package_entry_point_for(kind: EntryPointKind) -> Result<Option<PathBuf>, ()> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let (root, _manifest) = match find_project_root(&cwd) {
+    resolve_package_entry_point_in(&cwd, kind)
+}
+
+/// [`resolve_package_entry_point_for`] for the package of the directory
+/// `dir`, not of the current one.
+pub(crate) fn resolve_package_entry_point_in(
+    dir: &Path,
+    kind: EntryPointKind,
+) -> Result<Option<PathBuf>, ()> {
+    let (root, _manifest) = match find_project_root(dir) {
         Ok(Some(pair)) => pair,
         Ok(None) => return Ok(None),
         Err(e) => die_on_manifest_error(e),

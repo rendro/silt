@@ -1499,7 +1499,9 @@ impl TypeChecker {
                 "`{name}` is also a type variable here, and the value is meant: rename one to \
                  call the method of the type variable's bound"
             )),
-            None if let Some(help) = recv.and_then(|recv| self.variant_hides_trait(recv, field)) => {
+            None if let Some(help) =
+                recv.and_then(|recv| self.variant_hides_trait(recv, field)) =>
+            {
                 Some(help)
             }
             None => match self.method_help(ty, field, &written) {
@@ -1533,7 +1535,8 @@ impl TypeChecker {
         if !hides {
             return None;
         }
-        let enum_name = (self.spell_def(ty.0)).or_else(|| self.def(ty.0).map(|d| resolve(d.name)))?;
+        let enum_name =
+            (self.spell_def(ty.0)).or_else(|| self.def(ty.0).map(|d| resolve(d.name)))?;
         Some(format!(
             "`{written}` here is the variant `{enum_name}.{written}`, which hides the trait \
              `{written}` in expressions: rename the variant to call `{written}.{field}`"

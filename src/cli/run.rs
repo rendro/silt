@@ -9,7 +9,9 @@ use silt::source::{FileId, SourceMap, Span};
 use silt::vm::{Exit, Vm, VmError};
 
 use crate::cli::help::{asks_for_help, run_help_text, run_usage_banner};
-use crate::cli::package::resolve_package_entry_point;
+use crate::cli::package::{
+    EntryPointKind, find_project_root, resolve_package_entry_point, resolve_package_entry_point_in,
+};
 use crate::cli::paths::{ProgramFiles, door_diagnostics, open_entry_or_exit};
 
 /// Dispatch `silt run [<file>] [-- <program-args>...]`.
@@ -70,6 +72,34 @@ pub(crate) fn dispatch(args: &[String]) {
     // its `src/main.silt`. Outside a package, the usage line says that
     // a file is needed.
     let file = match file {
+        // A package's directory runs its `main`, as `silt run` in it does.
+        Some(dir)
+            if std::path::Path::new(&dir).is_dir()
+                && std::path::Path::new(&dir).join("silt.toml").is_file() =>
+        {
+            match resolve_package_entry_point_in(
+                std::path::Path::new(&dir),
+                EntryPointKind::RequireMain,
+            ) {
+                Ok(Some(p)) => p.to_string_lossy().into_owned(),
+                // (Not found: it is read as the directory it is.)
+                Ok(None) => dir,
+                Err(()) => process::exit(1),
+            }
+        }
+        // Any other file is no program: most likely it is meant for the
+        // program, as its argument.
+        Some(f) if !f.ends_with(".silt") && !std::path::Path::new(&f).is_dir() => {
+            let cwd = std::env::current_dir().unwrap_or_else(|_| ".".into());
+            let in_package = matches!(find_project_root(&cwd), Ok(Some(_)));
+            let program = if in_package { "" } else { " <file>.silt" };
+            eprintln!(
+                "error: silt run: {f} is not a .silt file; to give it to the program write \
+                 `silt run{program} -- {}`",
+                crate::cli::help::shell_word(&f)
+            );
+            process::exit(1);
+        }
         Some(f) => f,
         None => match resolve_package_entry_point() {
             Ok(Some(p)) => p.to_string_lossy().into_owned(),

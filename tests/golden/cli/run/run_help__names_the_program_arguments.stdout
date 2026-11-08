@@ -6,6 +6,7 @@ Options:
 
 Examples:
   silt run                      (inside a package, runs src/main.silt)
+  silt run ../app               (a package's directory, runs its src/main.silt)
   silt run main.silt
   silt run main.silt -- input.txt
   silt run --watch main.silt

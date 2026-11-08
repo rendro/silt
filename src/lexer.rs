@@ -803,7 +803,8 @@ impl Lexer {
                     let brace = self.span();
                     self.interpolations.push((opened.start, brace.start));
                     self.advance_char(); // consume `{`
-                    self.interp_stack.push((self.brace_depth, opened, self.since(brace)));
+                    self.interp_stack
+                        .push((self.brace_depth, opened, self.since(brace)));
                     self.brace_depth += 1; // track interpolation brace
                     let tok = if is_continuation {
                         Token::StringMiddle(text)

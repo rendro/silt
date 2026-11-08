@@ -121,7 +121,7 @@ pub(crate) fn file_is_no_command(file: &str, args: &[String]) -> ! {
 /// `arg` as a shell reads it back: as it is when it holds only
 /// characters a shell takes literally, else in double quotes, with `"`,
 /// `\`, `$` and `` ` `` escaped.
-fn shell_word(arg: &str) -> String {
+pub(crate) fn shell_word(arg: &str) -> String {
     let plain =
         !arg.is_empty() && (arg.chars()).all(|c| c.is_alphanumeric() || "-_./=:,+@%^".contains(c));
     if plain {
@@ -208,6 +208,7 @@ pub(crate) fn run_help_text() -> String {
     s.push('\n');
     s.push_str("Examples:\n");
     s.push_str("  silt run                      (inside a package, runs src/main.silt)\n");
+    s.push_str("  silt run ../app               (a package's directory, runs its src/main.silt)\n");
     s.push_str("  silt run main.silt\n");
     s.push_str("  silt run main.silt -- input.txt\n");
     s.push_str("  silt run --watch main.silt\n");

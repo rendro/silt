@@ -159,7 +159,10 @@ pub(crate) fn dispatch(args: &[String]) {
             }
         }
         if walked {
-            eprintln!("{}", count_line(files.len(), unformatted, "not formatted", infra_errors));
+            eprintln!(
+                "{}",
+                count_line(files.len(), unformatted, "not formatted", infra_errors)
+            );
         }
         if infra_errors > 0 {
             process::exit(2);
