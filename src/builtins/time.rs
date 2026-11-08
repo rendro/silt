@@ -74,6 +74,7 @@ fn time_parse_err(
             let what = match of {
                 Of::Date => "date",
                 Of::DateTime => "datetime",
+                Of::Instant => "instant",
             };
             let why = why_unread(s, items, what, err);
             (
@@ -158,6 +159,13 @@ fn why_unread(
             if parsed.timestamp().is_some() {
                 return "the timestamp is out of range".to_string();
             }
+            // (chrono reads an offset of up to 99 hours.)
+            if parsed
+                .offset()
+                .is_some_and(|offset| offset.abs() >= 24 * 3600)
+            {
+                return "the UTC offset is out of range".to_string();
+            }
             format!("the fields make no {what}")
         }
         _ => {
@@ -230,9 +238,18 @@ fn part_name(item: &chrono::format::Item<'_>) -> String {
             Fixed::ShortMonthName | Fixed::LongMonthName => "month name",
             Fixed::ShortWeekdayName | Fixed::LongWeekdayName => "weekday name",
             Fixed::LowerAmPm | Fixed::UpperAmPm => return "AM or PM".to_string(),
+            // (Only a parse of an Instant reads one.)
+            Fixed::TimezoneOffset
+            | Fixed::TimezoneOffsetColon
+            | Fixed::TimezoneOffsetDoubleColon
+            | Fixed::TimezoneOffsetTripleColon
+            | Fixed::TimezoneOffsetZ
+            | Fixed::TimezoneOffsetColonZ => "UTC offset",
+            Fixed::RFC3339 => return "an RFC 3339 date and time".to_string(),
             // `%.f`, `%.3f` ... and `%3f` ... (chrono's internal
-            // items, of which a pattern of a parse has no other: a time
-            // zone is refused before).
+            // items, of which a pattern of a parse has no other: `%#z`
+            // is refused before, as chrono reads it and does not write
+            // it).
             Fixed::Nanosecond
             | Fixed::Nanosecond3
             | Fixed::Nanosecond6
@@ -525,6 +542,9 @@ fn ok(value: Value) -> Value {
 enum Of {
     Date,
     DateTime,
+    /// Read only (`time.parse_instant`): a date and a time of day with
+    /// their UTC offset.
+    Instant,
 }
 
 impl Of {
@@ -532,6 +552,7 @@ impl Of {
         match self {
             Of::Date => "time.Date",
             Of::DateTime => "time.DateTime",
+            Of::Instant => "time.Instant",
         }
     }
 }
@@ -545,7 +566,9 @@ fn moment() -> Option<NaiveDateTime> {
 /// Whether `pattern` is a pattern of the type `of`: every specifier in
 /// it is one chrono knows, and one a value of the type has. `Err` with
 /// the reason: an unknown specifier, one of a time of day for a `Date`,
-/// one of a time zone (no value of silt has one). An unknown specifier
+/// one of a time zone for a `Date` or a `DateTime` (neither has one), a
+/// time zone's name for an `Instant` (it is read with its offset, and
+/// chrono reads no name). An unknown specifier
 /// is said first, wherever in the pattern it stands: such a pattern is
 /// one of no type.
 ///
@@ -579,8 +602,14 @@ fn fits(pattern: &str, of: Of) -> Result<(), String> {
         let of_a_time = writes(moment.format_with_items(one()));
         let of_a_zone = !of_a_time && writes(moment.and_utc().format_with_items(one()));
         let what = of.name();
+        let a_name = matches!(item, Item::Fixed(chrono::format::Fixed::TimezoneName));
         return Err(match (of, of_a_time, of_a_zone) {
-            (Of::DateTime, true, _) => continue,
+            (Of::DateTime | Of::Instant, true, _) => continue,
+            (Of::Instant, false, true) if a_name => format!(
+                "a time zone name (%Z) in '{pattern}' is not read: \
+                 a {what} is read with its UTC offset (%z or %:z)"
+            ),
+            (Of::Instant, false, true) => continue,
             (Of::Date, true, _) => {
                 format!("a specifier of a time of day in '{pattern}' is not valid for a {what}")
             }
@@ -623,9 +652,14 @@ fn enough(pattern: &str, of: Of) -> Result<(), String> {
         return Ok(());
     };
     let mut text = String::new();
-    let written = match of {
-        Of::Date => write!(text, "{}", moment.date().format(pattern)),
-        Of::DateTime => write!(text, "{}", moment.format(pattern)),
+    let written = match (of, chrono::FixedOffset::east_opt(2 * 3600)) {
+        (Of::Date, _) => write!(text, "{}", moment.date().format(pattern)),
+        (Of::DateTime, _) => write!(text, "{}", moment.format(pattern)),
+        (Of::Instant, Some(offset)) => match moment.and_local_timezone(offset).single() {
+            Some(at) => write!(text, "{}", at.format(pattern)),
+            None => return Ok(()),
+        },
+        (Of::Instant, None) => return Ok(()),
     };
     if written.is_err() {
         return Ok(());
@@ -639,9 +673,19 @@ fn enough(pattern: &str, of: Of) -> Result<(), String> {
             "the fields of '{pattern}' do not make a date: no text read by it is a {what}"
         )),
         Of::Date => Ok(()),
-        Of::DateTime => {
+        Of::DateTime | Of::Instant => {
             if !lacks(NaiveDateTime::parse_from_str(&text, pattern).err()) {
-                return Ok(());
+                return match of {
+                    Of::Instant
+                        if lacks(chrono::DateTime::parse_from_str(&text, pattern).err()) =>
+                    {
+                        Err(format!(
+                            "the fields of '{pattern}' do not make a UTC offset (%z or %:z): \
+                             no text read by it is a {what}"
+                        ))
+                    }
+                    _ => Ok(()),
+                };
             }
             let missing = match no_date {
                 true => "a date",
@@ -683,6 +727,9 @@ impl Use {
             Use::Format(Of::DateTime) => 1,
             Use::Parse(Of::Date) => 2,
             Use::Parse(Of::DateTime) => 3,
+            // (Nothing formats an Instant by a pattern.)
+            Use::Format(Of::Instant) => 4,
+            Use::Parse(Of::Instant) => 5,
         }
     }
 }
@@ -698,7 +745,7 @@ struct Ready {
 
 /// What a pattern is for each use it was put to: ready, or `Err` with
 /// why it is no pattern for it.
-type Seen = [Option<Rc<Result<Ready, String>>>; 4];
+type Seen = [Option<Rc<Result<Ready, String>>>; 6];
 
 /// The most patterns a thread keeps; when it has that many, the oldest
 /// quarter of them goes. (As the compiled regexes of a VM do,
@@ -745,7 +792,11 @@ fn ready(pattern: &str, use_: Use) -> Rc<Result<Ready, String>> {
                     let items = owned(pattern).map_err(|_| invalid())?;
                     let padded = match of {
                         Of::Date => owned(&format!("{pattern}T%H:%M:%S")).map_err(|_| invalid())?,
-                        Of::DateTime => Vec::new(),
+                        Of::DateTime | Of::Instant => Vec::new(),
+                    };
+                    let items = match of {
+                        Of::Instant => items.into_iter().map(zulu).collect(),
+                        Of::Date | Of::DateTime => items,
                     };
                     Ok(Ready { items, padded })
                 }),
@@ -765,6 +816,27 @@ fn ready(pattern: &str, use_: Use) -> Rc<Result<Ready, String>> {
         seen.entry(pattern.to_string()).or_default()[use_.index()] = Some(made.clone());
         made
     })
+}
+
+/// An offset's item that also reads `Z` (UTC), as RFC 3339 writes it:
+/// `%z` and `%:z` of a parse of an Instant.
+fn zulu(item: chrono::format::Item<'static>) -> chrono::format::Item<'static> {
+    use chrono::format::{Fixed, Item};
+    match item {
+        Item::Fixed(Fixed::TimezoneOffset) => Item::Fixed(Fixed::TimezoneOffsetZ),
+        Item::Fixed(Fixed::TimezoneOffsetColon) => Item::Fixed(Fixed::TimezoneOffsetColonZ),
+        other => other,
+    }
+}
+
+/// `DateTime::parse_from_str` by the items of a pattern [`ready`].
+fn read_instant(
+    s: &str,
+    items: &[chrono::format::Item<'static>],
+) -> chrono::ParseResult<chrono::DateTime<chrono::FixedOffset>> {
+    let mut parsed = Parsed::new();
+    chrono::format::parse(&mut parsed, s, items.iter())?;
+    parsed.to_datetime()
 }
 
 /// `NaiveDateTime::parse_from_str` by the items of a pattern [`ready`].
@@ -940,6 +1012,30 @@ builtins! {
             }
             Ok(datetime) => ok(make_datetime(datetime)),
             Err(e) => time_parse_err(s, pattern, &ready.items, Of::DateTime, e),
+        }
+    }
+
+    // The text names an instant by its UTC offset (`%z`, `%:z`, which
+    // also read `Z`); a pattern without one is refused as one without
+    // enough fields is.
+    fn parse_instant(s: &str, pattern: &str) -> Value {
+        let ready = ready(pattern, Use::Parse(Of::Instant));
+        let ready = match &*ready {
+            Ok(ready) => ready,
+            Err(why) => return invalid_format_err(why.clone()),
+        };
+        match read_instant(s, &ready.items) {
+            Ok(at) if is_leap_second(at.time()) => {
+                time_out_of_range_err(format!("invalid instant '{s}': {LEAP_SECOND}"))
+            }
+            Ok(at) => match at.timestamp_nanos_opt() {
+                Some(ns) => ok(make_instant(ns)),
+                None => time_out_of_range_err(format!(
+                    "invalid instant '{s}' for '{pattern}': it is out of the range of a time.Instant \
+                     (years 1677 to 2262)"
+                )),
+            },
+            Err(e) => time_parse_err(s, pattern, &ready.items, Of::Instant, e),
         }
     }
 
@@ -1327,14 +1423,28 @@ mod tests {
                 call(parse_date, &[text("2001-02-03"), text(pattern)]),
                 call(parse, &[text("2001-02-03 16:05:06"), text(pattern)]),
                 call(parse, &[text("not a moment"), text(pattern)]),
+                call(
+                    parse_instant,
+                    &[text("2001-02-03 16:05:06Z"), text(pattern)],
+                ),
             ]
         };
         // Written and read; written by a type and not the other; written
-        // and too few to read; of no type.
-        let patterns = ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%H", "%Y", "%Y-%Q", ""];
+        // and too few to read; of no type; read as an Instant alone.
+        let patterns = [
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%d",
+            "%H",
+            "%Y",
+            "%Y-%Q",
+            "",
+            "%Y-%m-%d %H:%M:%S%:z",
+        ];
         let first: Vec<_> = patterns.iter().map(|pattern| uses(pattern)).collect();
         assert!(ok_text(&first[0][1]).is_some() && invalid_format(&first[0][0]));
         assert!(invalid_format(&first[3][2]) && ok_text(&first[3][0]).is_some());
+        assert!(invalid_format(&first[0][5]) && invalid_format(&first[6][3]));
+        assert!(matches!(&first[6][5], Value::Variant(v) if v.is(bv::OK)));
         for (pattern, first) in patterns.iter().zip(&first) {
             assert_eq!(&uses(pattern), first, "'{pattern}' a second time");
         }

@@ -438,6 +438,7 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn format_date(date: Date, pattern: String) -> Result(String, TimeError)", "Format date with strftime pattern", time::format_date),
                 f("fn parse(s: String, pattern: String) -> Result(DateTime, TimeError)", "Parse string into datetime with strftime pattern", time::parse),
                 f("fn parse_date(s: String, pattern: String) -> Result(Date, TimeError)", "Parse string into date with strftime pattern", time::parse_date),
+                f("fn parse_instant(s: String, pattern: String) -> Result(Instant, TimeError)", "Parse string with a UTC offset (`%z`, `%:z`, or `Z`) into the instant it names", time::parse_instant),
                 f("fn add_days(date: Date, days: Int) -> Date", "Add/subtract days from a date", time::add_days),
                 f("fn add_months(date: Date, months: Int) -> Date", "Add/subtract months, clamping to end-of-month", time::add_months),
                 f("fn add(instant: Instant, duration: Duration) -> Instant", "Add duration to an instant", time::add),

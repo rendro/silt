@@ -1,0 +1,36 @@
+-- time.parse_instant reads a date and time with its UTC offset (%z, %:z,
+-- each also reading Z) into the exact Instant; a pattern without an offset,
+-- or with a zone name, is refused whatever the text; time.parse still
+-- refuses an offset.
+import time
+fn main() {
+  let p = "%Y-%m-%dT%H:%M:%S%:z"
+  println(time.parse_instant("2026-11-01T08:00:00+02:00", p))
+  println(time.parse_instant("2026-11-01T06:00:00Z", p))
+  println(time.parse_instant("2026-11-01T06:00:00z", p))
+  println(time.parse_instant("2026-11-01T06:00:00+0000", p))
+  println(time.parse_instant("2026-11-01T06:00:00Z", "%Y-%m-%dT%H:%M:%S%z"))
+  println(time.parse_instant("2026-11-01T06:00:00.5-05:30", "%Y-%m-%dT%H:%M:%S%.f%:z"))
+  println(time.parse_instant("2026-11-01T06:00:00Z", "%+"))
+  println(time.parse_instant("1762000000", "%s"))
+  match time.parse_instant("2026-11-01T08:00:00+02:00", p) {
+    Ok(i) -> println(time.to_datetime(i, 0))
+    Err(e) -> println(e)
+  }
+  println(time.parse_instant("2026-11-01T08:00:00", "%Y-%m-%dT%H:%M:%S"))
+  println(time.parse_instant("2026-11-01T08:00:00 UTC", "%Y-%m-%dT%H:%M:%S %Z"))
+  println(time.parse_instant("2026-11-01T08:00:00 UTC +00:00", "%Y-%m-%dT%H:%M:%S %Z %:z"))
+  println(time.parse_instant("2026-11-01T08:00:00", p))
+  println(time.parse_instant("2026-11-01T08:00:00+25:00", p))
+  println(time.parse_instant("2026-02-30T08:00:00+01:00", p))
+  println(time.parse_instant("2026-11-01T23:59:60Z", p))
+  println(time.parse_instant("3000-11-01T23:59:00Z", p))
+  println(time.parse_instant("2026-11-01", "%Y-%m-%d%z"))
+  println(time.parse_instant("x", "%Q"))
+  println(time.parse_instant("x", ""))
+  println(time.parse_instant("2026-11-01T08:00:00+0x", "%Y-%m-%dT%H:%M:%S%z"))
+  println(time.parse_instant("2026-11-01T08:00:00", "%+"))
+  println(time.parse_instant("2026-11-01T08:00:00+02", "%Y-%m-%dT%H:%M:%S%#z"))
+  println(time.parse_instant("2026-11-01T08:00:00+02:00 extra", "%Y-%m-%dT%H:%M:%S%:z"))
+  println(time.parse("2026-11-01T08:00:00+02:00", p))
+}

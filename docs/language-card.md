@@ -643,6 +643,7 @@ time.nanos(n: Int) -> Duration
 time.now() -> Instant
 time.parse(s: String, pattern: String) -> Result(DateTime, TimeError)
 time.parse_date(s: String, pattern: String) -> Result(Date, TimeError)
+time.parse_instant(s: String, pattern: String) -> Result(Instant, TimeError)
 time.seconds(n: Int) -> Duration
 time.since(from: Instant, to: Instant) -> Duration
 time.sleep(duration: Duration) -> ()
