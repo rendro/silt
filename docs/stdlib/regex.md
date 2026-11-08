@@ -13,6 +13,19 @@ into them (`line |> regex.split("\\s+")`), and returns a `Result`: a pattern
 is text like any other, and one that is no pattern is `Err(RegexError)`, not
 a failure of the program.
 
+Write a pattern as a raw string, `"""\d{2,5}"""`, when it holds a `{` or a
+`\`: in a `"..."` string a `{` starts an interpolation and a `\` an escape,
+so the same pattern there is `"\\d\{2,5}"`. A raw string has neither, and
+holds the pattern as the regex reads it.
+
+```silt
+import regex
+
+fn main() {
+  println(regex.is_match("port 8080", """\d{2,5}""")) -- Ok(true)
+}
+```
+
 ```silt
 import regex
 

@@ -1,0 +1,25 @@
+-- cmd: fmt
+-- A call with an argument whose text spans lines (a string with a line
+-- break) writes every argument on a line of its own: none stands behind
+-- the string's first or last line. An argument that spans lines alone
+-- stays between the parentheses.
+import string
+
+fn run(conn: Int, sql: String, n: Int) -> Result(Int, String) {
+  Ok(conn + n + string.length(sql))
+}
+
+
+fn main() -> Result((), String) {
+  let a = run(1, "SELECT a, b
+     FROM t
+     WHERE a > 1", 2)?
+  let b = run(1, """
+    SELECT a
+    """, 2)?
+  let c = run(1, "one line", 2)?
+  println("alone
+on two lines")
+  println("{a} {b} {c}")
+  Ok(())
+}

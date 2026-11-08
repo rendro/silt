@@ -205,10 +205,12 @@ fn main() {
 - **Errors flow through the stream.** File sources emit
   `Channel(Result(_, IoError))`; TCP sources emit
   `Channel(Result(_, TcpError))`. Each chunk can fail independently;
-  consumers pattern-match. A line that is not UTF-8 is an error of
-  `file_lines` and `tcp_lines` alike, and their last item: the source
-  ends there, and `tcp_lines` shuts its connection down. No byte is
-  replaced. To change only the `Ok` values and pass each `Err(_)`
+  consumers pattern-match. A file's error names its path, as `io`'s
+  do (`file not found: app.log`). A line that is
+  not UTF-8 is an error of `file_lines` and `tcp_lines` alike, and their
+  last item: the source ends there, and `tcp_lines` shuts its connection
+  down. `file_lines` names the line and the path
+  (`InvalidInput("line 3 of app.log is not UTF-8")`). No byte is replaced. To change only the `Ok` values and pass each `Err(_)`
   through, map with `result.map`:
   `ch |> stream.map { r -> result.map(r, f) }`.
 - **No async/await.** Stages are tasks of the silt scheduler; file and

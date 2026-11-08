@@ -2,6 +2,7 @@
 -- exit: 1
 -- stderr-contains: tuple indexing ('t.0') is not supported
 -- stderr-contains: destructure instead: 'let (a, b) = t'
+-- stderr-contains: help: or take the tuple apart where it is bound, as in a closure's parameter: `{ (a, b) -> ... }`
 -- stderr-not-contains: has no field '0'
 fn main() {
   let t = (1, 2)

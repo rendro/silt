@@ -34,6 +34,7 @@ use parking_lot::Mutex;
 
 use super::collections::{Kind, fits};
 use super::common::{READ_AT_ONCE, ok};
+use super::io::path_err;
 #[cfg(feature = "tcp")]
 use super::typed::TcpStream;
 use super::typed::{Arg, Chan, List, builtins, unsound};
@@ -604,30 +605,6 @@ fn unexpected() -> Result<Next, VmError> {
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
-/// Wrap an `io::Error` into `Err(IoError)` — used by file-backed stream
-/// sources (`file_lines`, `file_chunks`, `write_to_file`).
-fn err_io(e: &std::io::Error) -> Value {
-    use std::io::ErrorKind;
-    let msg = e.to_string();
-    let inner = match e.kind() {
-        ErrorKind::NotFound => Value::variant(bv::IO_NOT_FOUND, [Value::String(msg.into())]),
-        ErrorKind::PermissionDenied => {
-            Value::variant(bv::IO_PERMISSION_DENIED, [Value::String(msg.into())])
-        }
-        ErrorKind::AlreadyExists => {
-            Value::variant(bv::IO_ALREADY_EXISTS, [Value::String(msg.into())])
-        }
-        ErrorKind::InvalidInput | ErrorKind::InvalidData => {
-            Value::variant(bv::IO_INVALID_INPUT, [Value::String(msg.into())])
-        }
-        ErrorKind::Interrupted => Value::variant(bv::IO_INTERRUPTED, []),
-        ErrorKind::UnexpectedEof => Value::variant(bv::IO_UNEXPECTED_EOF, []),
-        ErrorKind::WriteZero => Value::variant(bv::IO_WRITE_ZERO, []),
-        _ => Value::variant(bv::IO_OTHER, [Value::String(msg.into())]),
-    };
-    Value::variant(bv::ERR, [inner])
-}
-
 /// Build an `Err(Other(msg))` for string-only failures.
 fn err_io_unknown(s: impl Into<Arc<str>>) -> Value {
     Value::variant(
@@ -866,7 +843,7 @@ builtins! {
             if file.is_none() {
                 match std::fs::File::open(&path) {
                     Ok(opened) => file = Some(opened),
-                    Err(e) => return Some(err_io(&e)),
+                    Err(e) => return Some(path_err(&e, &path)),
                 }
             }
             let file = file.as_mut()?;
@@ -889,7 +866,7 @@ builtins! {
                     buf.truncate(read);
                     Some(ok(Value::Bytes(Arc::new(buf))))
                 }
-                Err(e) => Some(err_io(&e)),
+                Err(e) => Some(path_err(&e, &path)),
             }
         }))
     }
@@ -898,6 +875,8 @@ builtins! {
         let path = path.to_string();
         let mut file: Option<std::io::BufReader<std::fs::File>> = None;
         let mut ended = false;
+        // How many lines were read.
+        let mut read_lines: u64 = 0;
         // The lines of up to READ_AT_ONCE bytes a read, each without its
         // `\n` or `\r\n` (as `BufRead::lines` gives them).
         reading(vm, "stream.file_lines", ON_A_FILE, move || {
@@ -911,7 +890,7 @@ builtins! {
                     Ok(opened) => file = Some(std::io::BufReader::new(opened)),
                     Err(e) => {
                         ended = true;
-                        lines.push(err_io(&e));
+                        lines.push(path_err(&e, &path));
                         return lines;
                     }
                 }
@@ -929,6 +908,7 @@ builtins! {
                     }
                     Ok(read) => {
                         bytes += read;
+                        read_lines += 1;
                         if line.ends_with('\n') {
                             line.pop();
                             if line.ends_with('\r') {
@@ -937,9 +917,21 @@ builtins! {
                         }
                         lines.push(ok(Value::String(line.into())));
                     }
+                    // A line that is no UTF-8 is `InvalidInput`, named by
+                    // its number and the path.
+                    Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+                        ended = true;
+                        let number = read_lines + 1;
+                        let why = format!("line {number} of {path} is not UTF-8");
+                        lines.push(Value::variant(
+                            bv::ERR,
+                            [Value::variant(bv::IO_INVALID_INPUT, [Value::String(why.into())])],
+                        ));
+                        break;
+                    }
                     Err(e) => {
                         ended = true;
-                        lines.push(err_io(&e));
+                        lines.push(path_err(&e, &path));
                         break;
                     }
                 }
@@ -1485,14 +1477,14 @@ builtins! {
         writing("stream.write_to_file", ch, ON_A_FILE, move |bytes| {
             use std::io::Write;
             if file.is_none() {
-                file = Some(std::fs::File::create(&path).map_err(|e| err_io(&e))?);
+                file = Some(std::fs::File::create(&path).map_err(|e| path_err(&e, &path))?);
             }
             let Some(file) = file.as_mut() else {
                 return Ok(());
             };
             match bytes {
-                Some(bytes) => file.write_all(bytes).map_err(|e| err_io(&e)),
-                None => file.flush().map_err(|e| err_io(&e)),
+                Some(bytes) => file.write_all(bytes).map_err(|e| path_err(&e, &path)),
+                None => file.flush().map_err(|e| path_err(&e, &path)),
             }
         })
     }

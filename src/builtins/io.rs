@@ -129,7 +129,7 @@ fn moves_into_itself(from: &str, to: &str) -> bool {
 /// that says what the fault is and names the path (`is a directory:
 /// dir`), in the words the kind of fault has, or in the system's where
 /// it has no kind of its own.
-fn path_err(err: &std::io::Error, path: &str) -> Value {
+pub(crate) fn path_err(err: &std::io::Error, path: &str) -> Value {
     use std::io::ErrorKind;
     if is_link_loop(err) {
         return path_err_text("symlink loop", path);

@@ -623,6 +623,36 @@ fn main() {
     assert_eq!(out.contents(), "2026-10-05 12:00:00\n");
 }
 
+/// A clock that reads noon and a fraction of a millisecond.
+struct FineClock;
+
+impl Clock for FineClock {
+    fn now(&self) -> Duration {
+        Duration::from_millis(NOON_MS) + Duration::from_nanos(123_456)
+    }
+
+    fn monotonic(&self) -> Duration {
+        Duration::ZERO
+    }
+
+    fn sleep(&self, _duration: Duration) {}
+}
+
+/// `time.now` has the clock's whole resolution, to the nanosecond, as
+/// time.md says: a reading between two milliseconds is not cut to the
+/// one before.
+#[test]
+fn time_now_keeps_the_clocks_nanoseconds() {
+    let out = Buffer::new();
+    let source = "import time\nfn main() { println(time.now().epoch_ns) }";
+    let io = HostIo::buffer(&out).clock(FineClock);
+    assert_eq!(run(source, io), Ok(()));
+    assert_eq!(
+        out.contents(),
+        format!("{}\n", NOON_MS * 1_000_000 + 123_456)
+    );
+}
+
 #[test]
 fn time_today_is_the_date_of_the_clock() {
     let out = Buffer::new();

@@ -1,1 +1,1 @@
-Err(ParseFormat("input contains invalid characters"))
+Err(ParseFormat("invalid datetime 'not-a-date' for '%Y-%m-%d %H:%M:%S': expected the year at byte 0"))

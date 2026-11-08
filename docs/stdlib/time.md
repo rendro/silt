@@ -192,7 +192,7 @@ Combines a `Date` and `Time` into a `DateTime`. Infallible since both inputs are
 ```silt
 import time
 
-fn main() -> Result(Unit, time.TimeError) {
+fn main() -> Result((), time.TimeError) {
   let d = time.date(2024, 6, 15)?
   let t = time.time(9, 30, 0)?
   println(time.datetime(d, t)) -- 2024-06-15T09:30:00
@@ -235,7 +235,7 @@ Converts a local `DateTime` to an `Instant` by subtracting the UTC offset.
 ```silt
 import time
 
-fn main() -> Result(Unit, time.TimeError) {
+fn main() -> Result((), time.TimeError) {
   let dt = time.datetime(time.date(2024, 1, 1)?, time.time(0, 0, 0)?)
   let instant = time.to_instant(dt, 0)
   println(instant.epoch_ns)
@@ -261,7 +261,7 @@ the program. `time.parse` refuses the same patterns.
 ```silt
 import time
 
-fn main() -> Result(Unit, time.TimeError) {
+fn main() -> Result((), time.TimeError) {
   let dt = time.datetime(time.date(2024, 12, 25)?, time.time(18, 0, 0)?)
   println(time.format(dt, "%A, %B %d, %Y at %H:%M")?)
   -- Wednesday, December 25, 2024 at 18:00
@@ -286,7 +286,7 @@ same patterns.
 ```silt
 import time
 
-fn main() -> Result(Unit, time.TimeError) {
+fn main() -> Result((), time.TimeError) {
   let d = time.date(2024, 6, 15)?
   println(time.format_date(d, "%d/%m/%Y")?) -- 15/06/2024
   Ok(())
@@ -310,10 +310,21 @@ pattern without a time of day (`"%Y-%m-%d"`: use `time.parse_date`),
 without a date, with a 12-hour clock and no `%p`, or an empty one. That
 is decided from the pattern alone. A text that does not match a pattern
 that could give a `DateTime` is `Err(ParseFormat(msg))`, and one that
-matches with a field that is no such day or time `Err(OutOfRange(msg))`. A
-second 60, a leap second, is one:
+matches with a field that is no such day or time `Err(OutOfRange(msg))`. The
+message names the text and the pattern, and says why: the field that is out
+of range, what was expected at which byte, the text left over behind the
+pattern, or the day that does not exist:
+`time.parse("2025-01-05 25:00", "%Y-%m-%d %H:%M")` is
+`Err(OutOfRange("invalid datetime '2025-01-05 25:00' for '%Y-%m-%d %H:%M': the hour is out of range"))`,
+and `time.parse("abc", "%Y-%m-%d %H:%M")` is
+`Err(ParseFormat("invalid datetime 'abc' for '%Y-%m-%d %H:%M': expected the year at byte 0"))`.
+A second 60, a leap second, is out of range too:
 `time.parse("2016-12-31 23:59:60", "%Y-%m-%d %H:%M:%S")` is
 `Err(OutOfRange("invalid datetime '2016-12-31 23:59:60': a leap second (second 60) is not read"))`.
+
+A numeric field also reads fewer digits than it writes: `%m`, `%d`, `%H`,
+`%M` and `%S` take one digit as well as two (`"2025-1-5"` by `"%Y-%m-%d"`
+is 2025-01-05), and `%Y` takes a year of fewer than four digits.
 
 ```silt
 import time
@@ -336,7 +347,9 @@ Parses a string into a `Date` using a strftime pattern. A pattern that
 specifier of a time of day (`"%Y-%m-%d %H:%M"`: use `time.parse`, no time is
 read and dropped) or of a time zone is `Err(InvalidFormat(why))`. So is a
 pattern whose fields do not make a date (`"%m.%Y"`, an empty one), whatever
-the text, as in `time.parse`.
+the text, as in `time.parse`. Its errors name the text as `time.parse`'s do:
+`time.parse_date("2025-02-30", "%Y-%m-%d")` is
+`Err(OutOfRange("invalid date '2025-02-30' for '%Y-%m-%d': the day is out of range: February 2025 has 28 days"))`.
 
 ```silt
 import time
@@ -359,7 +372,7 @@ Adds (or subtracts, if negative) days from a date.
 ```silt
 import time
 
-fn main() -> Result(Unit, time.TimeError) {
+fn main() -> Result((), time.TimeError) {
   let d = time.date(2024, 1, 1)?
   println(d |> time.add_days(90)) -- 2024-03-31
   println(d |> time.add_days(-1)) -- 2023-12-31
@@ -379,7 +392,7 @@ Adds (or subtracts) months from a date. Clamps to the last valid day of the targ
 ```silt
 import time
 
-fn main() -> Result(Unit, time.TimeError) {
+fn main() -> Result((), time.TimeError) {
   let d = time.date(2024, 1, 31)?
   println(d |> time.add_months(1)) -- 2024-02-29 (leap year, clamped)
   println(d |> time.add_months(2)) -- 2024-03-31
@@ -492,7 +505,7 @@ Returns the signed number of days between two dates.
 ```silt
 import time
 
-fn main() -> Result(Unit, time.TimeError) {
+fn main() -> Result((), time.TimeError) {
   let a = time.date(2024, 1, 1)?
   let b = time.date(2024, 12, 31)?
   println(time.days_between(a, b)) -- 365

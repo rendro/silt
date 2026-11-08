@@ -40,9 +40,14 @@ pub(crate) fn json_error_to_variant(err: &serde_json::Error, text: &[u8]) -> Val
     match err.classify() {
         Category::Syntax | Category::Eof => {
             let offset = syntax_offset(err, text) as i64;
+            // serde's text ends with where it stopped, as a line and a
+            // column; the offset says where, once.
+            let full = err.to_string();
+            let place = format!(" at line {} column {}", err.line(), err.column());
+            let message = full.strip_suffix(&place).unwrap_or(&full);
             Value::variant(
                 bv::JSON_SYNTAX,
-                [Value::String(err.to_string().into()), Value::Int(offset)],
+                [Value::String(message.into()), Value::Int(offset)],
             )
         }
         _ => Value::variant(bv::JSON_OTHER, [Value::String(err.to_string().into())]),

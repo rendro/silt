@@ -46,24 +46,203 @@ fn days_in(year: i64, month: u32) -> u32 {
     }
 }
 
-/// `Err(TimeError)` of a chrono `ParseError`: `InvalidFormat` for a
-/// pattern that is no format or whose fields are not enough for the
-/// value (what [`fits`] and [`enough`] have said before the text was
-/// read, in nearly every case), `OutOfRange` for a field that is out
-/// of its range, `ParseFormat` for text that does not match the
-/// pattern.
-fn time_parse_err(err: chrono::ParseError) -> Value {
+/// `Err(TimeError)` of a chrono `ParseError` of reading the text `s` by
+/// `pattern`, whose items ([`ready`]) are `items`, as a value of the type
+/// `of`: `InvalidFormat` for a pattern
+/// that is no format or whose fields are not enough for the value (what
+/// [`fits`] and [`enough`] have said before the text was read, in nearly
+/// every case), `OutOfRange` for a field that is out of its range,
+/// `ParseFormat` for text that does not match the pattern. The message
+/// names the text and the pattern, and says why as [`why_unread`] finds.
+fn time_parse_err(
+    s: &str,
+    pattern: &str,
+    items: &[chrono::format::Item<'static>],
+    of: Of,
+    err: chrono::ParseError,
+) -> Value {
     use chrono::format::ParseErrorKind;
-    let msg = err.to_string();
-    let variant = match err.kind() {
-        ParseErrorKind::BadFormat | ParseErrorKind::NotEnough => bv::TIME_INVALID_FORMAT,
-        ParseErrorKind::OutOfRange => bv::TIME_OUT_OF_RANGE,
-        _ => bv::TIME_PARSE_FORMAT,
+    let (variant, msg) = match err.kind() {
+        ParseErrorKind::BadFormat | ParseErrorKind::NotEnough => {
+            (bv::TIME_INVALID_FORMAT, err.to_string())
+        }
+        kind => {
+            let variant = match kind {
+                ParseErrorKind::OutOfRange => bv::TIME_OUT_OF_RANGE,
+                _ => bv::TIME_PARSE_FORMAT,
+            };
+            let what = match of {
+                Of::Date => "date",
+                Of::DateTime => "datetime",
+            };
+            let why = why_unread(s, items, what, err);
+            (
+                variant,
+                format!("invalid {what} '{s}' for '{pattern}': {why}"),
+            )
+        }
     };
     Value::variant(
         bv::ERR,
         [Value::variant(variant, [Value::String(msg.into())])],
     )
+}
+
+/// Why `pattern` does not read `s`, which chrono refused with `err`:
+/// the pattern is read again one part at a time, so the part that
+/// refused is known (`the month is out of range`, `expected '-' at byte
+/// 4`); if every part reads, the text goes on behind them or the fields
+/// make no value of `what` (`February 2025 has 28 days`).
+fn why_unread(
+    s: &str,
+    items: &[chrono::format::Item<'static>],
+    what: &str,
+    err: chrono::ParseError,
+) -> String {
+    use chrono::format::{ParseErrorKind, parse_and_remainder};
+    let mut parsed = Parsed::new();
+    let mut rest = s;
+    for item in items {
+        let at = s.len() - rest.len();
+        match parse_and_remainder(&mut parsed, rest, std::iter::once(item)) {
+            Ok(behind) => rest = behind,
+            Err(e) => {
+                let part = part_name(item);
+                return match e.kind() {
+                    ParseErrorKind::OutOfRange => format!("{part} is out of range"),
+                    // A field read a second time with another value, or
+                    // one that another rules out (an hour 13 and `AM`).
+                    ParseErrorKind::Impossible => format!(
+                        "{part} at byte {at} does not agree with \
+                         what was read before it"
+                    ),
+                    // Too short is also a field of fewer digits than it
+                    // takes (`%.3f` of `.12`): the end only if nothing is
+                    // left.
+                    ParseErrorKind::TooShort if rest.is_empty() => {
+                        format!("expected {part} at byte {at}, the end of the text")
+                    }
+                    _ => format!("expected {part} at byte {at}"),
+                };
+            }
+        }
+    }
+    if !rest.is_empty() {
+        let at = s.len() - rest.len();
+        return format!("unexpected text at byte {at}: '{rest}'");
+    }
+    // The year as chrono makes it of a century and a year of it
+    // (`%C%y`), or of a year of a century alone (`%y`: 1970 to 2069).
+    let year = match (parsed.year(), parsed.year_div_100(), parsed.year_mod_100()) {
+        (Some(year), _, _) => Some(year),
+        (None, Some(century), Some(of)) => century.checked_mul(100).and_then(|c| c.checked_add(of)),
+        (None, None, Some(of)) => Some(of + if of < 70 { 2000 } else { 1900 }),
+        _ => None,
+    };
+    let date = year.zip(parsed.month()).zip(parsed.day());
+    match err.kind() {
+        ParseErrorKind::OutOfRange => {
+            if let Some(((year, month), day)) = date
+                && day > days_in(i64::from(year), month)
+            {
+                let name = MONTH_NAMES[month as usize - 1];
+                let days = days_in(i64::from(year), month);
+                return format!("the day is out of range: {name} {year} has {days} days");
+            }
+            if let (Some(year), Some(ordinal)) = (year, parsed.ordinal()) {
+                let days = if leap(i64::from(year)) { 366 } else { 365 };
+                if ordinal > days {
+                    return format!("the day of the year is out of range: {year} has {days} days");
+                }
+            }
+            if parsed.timestamp().is_some() {
+                return "the timestamp is out of range".to_string();
+            }
+            format!("the fields make no {what}")
+        }
+        _ => {
+            let read =
+                date.and_then(|((year, month), day)| NaiveDate::from_ymd_opt(year, month, day));
+            match (read, parsed.weekday()) {
+                (Some(date), Some(weekday)) if date.weekday() != weekday => {
+                    let name = WEEKDAY_NAMES[date.weekday().num_days_from_monday() as usize];
+                    format!("the weekday is not the date's: {date} is a {name}")
+                }
+                _ => "the fields do not agree".to_string(),
+            }
+        }
+    }
+}
+
+/// The weekdays' names, Monday first.
+const WEEKDAY_NAMES: [&str; 7] = [
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+];
+
+/// The months' names, January first.
+const MONTH_NAMES: [&str; 12] = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+];
+
+/// What a part of a pattern reads, as a message names it: `the month`,
+/// `'-'`, `a space`.
+fn part_name(item: &chrono::format::Item<'_>) -> String {
+    use chrono::format::{Fixed, Item, Numeric};
+    let field = match item {
+        Item::Literal(text) => return format!("'{text}'"),
+        Item::OwnedLiteral(text) => return format!("'{text}'"),
+        Item::Space(_) | Item::OwnedSpace(_) => return "a space".to_string(),
+        Item::Numeric(numeric, _) => match numeric {
+            Numeric::Year | Numeric::IsoYear => "year",
+            Numeric::YearDiv100 | Numeric::IsoYearDiv100 => "century",
+            Numeric::YearMod100 | Numeric::IsoYearMod100 => "year of the century",
+            Numeric::Quarter => "quarter",
+            Numeric::Month => "month",
+            Numeric::Day => "day",
+            Numeric::WeekFromSun | Numeric::WeekFromMon | Numeric::IsoWeek => "week",
+            Numeric::NumDaysFromSun | Numeric::WeekdayFromMon => "weekday",
+            Numeric::Ordinal => "day of the year",
+            Numeric::Hour | Numeric::Hour12 => "hour",
+            Numeric::Minute => "minute",
+            Numeric::Second => "second",
+            Numeric::Nanosecond => "fraction of a second",
+            Numeric::Timestamp => "timestamp",
+            _ => "field",
+        },
+        Item::Fixed(fixed) => match fixed {
+            Fixed::ShortMonthName | Fixed::LongMonthName => "month name",
+            Fixed::ShortWeekdayName | Fixed::LongWeekdayName => "weekday name",
+            Fixed::LowerAmPm | Fixed::UpperAmPm => return "AM or PM".to_string(),
+            // `%.f`, `%.3f` ... and `%3f` ... (chrono's internal
+            // items, of which a pattern of a parse has no other: a time
+            // zone is refused before).
+            Fixed::Nanosecond
+            | Fixed::Nanosecond3
+            | Fixed::Nanosecond6
+            | Fixed::Nanosecond9
+            | Fixed::Internal(_) => "fraction of a second",
+            _ => "field",
+        },
+        Item::Error => "field",
+    };
+    format!("the {field}")
 }
 
 /// `Err(InvalidFormat(why))`: the pattern of a format is none.
@@ -631,13 +810,10 @@ builtins! {
     }
 
     fn now(vm) -> Result<Value, VmError> {
-        // Millisecond resolution.
-        let epoch_ns = i64::try_from(vm.runtime.io.now().as_millis())
-            .ok()
-            .and_then(|ms| ms.checked_mul(1_000_000))
-            .ok_or_else(|| {
-                VmError::new("time.now: epoch milliseconds * 1_000_000 overflows i64".into())
-            })?;
+        // The clock's own resolution, to the nanosecond.
+        let epoch_ns = i64::try_from(vm.runtime.io.now().as_nanos()).map_err(|_| {
+            VmError::new("time.now: the clock's nanoseconds since 1970 overflow Int".into())
+        })?;
         Ok(make_instant(epoch_ns))
     }
 
@@ -763,7 +939,7 @@ builtins! {
                 time_out_of_range_err(leap_datetime_message(s))
             }
             Ok(datetime) => ok(make_datetime(datetime)),
-            Err(e) => time_parse_err(e),
+            Err(e) => time_parse_err(s, pattern, &ready.items, Of::DateTime, e),
         }
     }
 
@@ -780,7 +956,7 @@ builtins! {
             // Fallback: try direct NaiveDate parse (works on native)
             Err(_) => match read_date(s, &ready.items) {
                 Ok(date) => ok(make_date(date)),
-                Err(e) => time_parse_err(e),
+                Err(e) => time_parse_err(s, pattern, &ready.items, Of::Date, e),
             },
         }
     }

@@ -34,8 +34,37 @@ the module of its trait or of its type, see
 the impl beside the type, or declare the trait in the test file and
 implement it there, or wrap the value in a type the test file declares.
 
-In a package, `silt check` checks every module of the package and its test
-files, without running them.
+### Tests of a package
+
+In a package, a test file goes in `tests/`, or beside the code it tests
+in `src/`. Either way it imports the package's modules by their names,
+as `src/main.silt` does, and sees only their `pub` items:
+
+```
+logq/
+  silt.toml
+  src/
+    main.silt
+    entry.silt          -- pub type Entry, pub fn parse
+    entry_test.silt     -- a test beside the module
+  tests/
+    entry_test.silt     -- a test of the package from outside
+```
+
+```
+-- tests/entry_test.silt
+import entry
+import entry.{ Entry }
+import test
+
+fn test_parse() {
+  test.assert_eq(entry.parse("info hi"), Some(Entry { level: "info", text: "hi" }))
+}
+```
+
+`silt test` in the package's directory runs both files. In a package,
+`silt check` checks every module of the package and its test files,
+without running them.
 
 ## Function Conventions
 
