@@ -1,0 +1,23 @@
+-- cmd: check
+-- exit: 1
+-- A supertrait's arguments are types and the trait's own parameters.
+-- `Self`, an associated type or an anonymous record type there was read
+-- as no type at all, which every impl's type met: `Holds.get(x)` of a
+-- `t: Sub` was then an Int that held a String. Each is an error at the
+-- argument. `Self::Item` outside a trait is one error, not two.
+-- stderr-contains: error[type]: 'Self' is no argument of a supertrait: write a type or one of the parameters of 'Sub'
+-- stderr-contains: no_argument_of_a_supertrait.silt:16:18
+-- stderr-contains: error[type]: an anonymous record type is no argument of a supertrait: write a type or one of the parameters of 'Rec'
+-- stderr-contains: error[type]: `Self::Item` is only valid inside a trait or trait-impl body; use the qualified form `<T as Trait>::Item` here
+-- stderr-not-contains: 'Self' stands only
+trait Holds(a) {
+  fn get(self) -> a
+}
+trait Sub: Holds(Self) {
+  fn sub(self) -> Int
+}
+trait Rec: Holds({x: Int}) {
+  fn rec(self) -> Int
+}
+fn b(x: Self::Item) -> Int { 1 }
+fn main() { println(1) }

@@ -13,7 +13,7 @@
 -- stderr-contains: methods_of_an_impl.silt:25:22
 -- stderr-contains: methods_of_an_impl.silt:26:18
 -- stderr-contains: methods_of_an_impl.silt:27:13
--- stderr-contains: methods_of_an_impl.silt:28:1
+-- stderr-contains: methods_of_an_impl.silt:28:12
 -- stderr-contains: methods_of_an_impl.silt:32:10
 trait C(b) {
   fn c(self) -> b
@@ -25,7 +25,7 @@ type Box(a) { v: a }
 fn twice(x: Self) -> Self { x }
 type Holder { h: Self }
 type Same = Self
-enum E { V(Self) }
+type E { V(Self), W }
 trait Show2 { fn show2(self) -> String }
 trait Show2 for Box(a) { fn show2(self) -> String { "box" } }
 fn main() {

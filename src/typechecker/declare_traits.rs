@@ -726,6 +726,19 @@ impl TypeChecker {
                 let message = trait_arguments_message(r.name, &params);
                 self.error(Code::ArityMismatch, message, r.span);
             }
+            // (A supertrait's arguments are types and the trait's own
+            // parameters: what else they wrote was read as no type at all,
+            // which every impl's type then met.)
+            for arg in &r.args {
+                if let Some((what, span)) = no_supertrait_argument(arg) {
+                    let message = format!(
+                        "{what} is no argument of a supertrait: write a type or one of the \
+                         parameters of '{}'",
+                        t.name
+                    );
+                    self.error(Code::InvalidTypeAnnotation, message, span);
+                }
+            }
         }
     }
 
@@ -3740,4 +3753,23 @@ fn trait_arguments_message(name: Symbol, params: &[Symbol]) -> String {
         inference::plural(params.len(), "type argument", "type arguments"),
         names.join(", ")
     )
+}
+
+/// The first part of the supertrait argument `te` that is no type there
+/// (`Self`, an associated type, an anonymous record), as the error names
+/// it, with its span.
+fn no_supertrait_argument(te: &TypeExpr) -> Option<(&'static str, Span)> {
+    match &te.kind {
+        TypeExprKind::SelfType => Some(("'Self'", te.span)),
+        TypeExprKind::AssocProj { .. } => Some(("an associated type", te.span)),
+        TypeExprKind::AnonRecord { .. } => Some(("an anonymous record type", te.span)),
+        TypeExprKind::Generic { args, .. } | TypeExprKind::Tuple(args) => {
+            args.iter().find_map(no_supertrait_argument)
+        }
+        TypeExprKind::Function(params, ret) => params
+            .iter()
+            .chain(std::iter::once(ret.as_ref()))
+            .find_map(no_supertrait_argument),
+        _ => None,
+    }
 }

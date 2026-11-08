@@ -898,17 +898,20 @@ impl TypeChecker {
                 // outside a trait/impl body. Surface a clear
                 // diagnostic at use-site so the user understands the
                 // syntax requires an enclosing trait.
-                let recv_ty = self.resolve_type_expr_inner(receiver, param_vars);
+                // (Before the receiver, whose `Self` would be a second
+                // error at the same place.)
                 if resolve(*trait_name) == "__no_enclosing_trait__" {
                     self.error(
                         Code::InvalidTypeAnnotation,
-                        "`Self::Item` is only valid inside a trait or trait-impl body; \
-                         use the qualified form `<T as Trait>::Item` here"
-                            .to_string(),
+                        format!(
+                            "`Self::{assoc_name}` is only valid inside a trait or trait-impl \
+                             body; use the qualified form `<T as Trait>::{assoc_name}` here"
+                        ),
                         te.span,
                     );
                     return Type::Error;
                 }
+                let recv_ty = self.resolve_type_expr_inner(receiver, param_vars);
                 // Resolve the assoc-type name to its declaring trait.
                 // `Self::Item` inside `trait Sub: Super` may reference
                 // `Item` declared on `Super`; in that case the AssocProj
