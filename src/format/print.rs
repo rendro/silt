@@ -1176,8 +1176,14 @@ impl Printer<'_> {
             // `for` is an identifier to the lexer.
             self.name(),
             space(),
-            self.qualified(t.target_module.is_some()),
         ];
+        // The unit type is written `()`.
+        if intern::resolve(t.target_type) == "()" {
+            docs.push(self.tok(Token::LParen));
+            docs.push(self.tok(Token::RParen));
+        } else {
+            docs.push(self.qualified(t.target_module.is_some()));
+        }
         if !t.target_type_args.is_empty() {
             docs.push(self.delimited(
                 Token::LParen,

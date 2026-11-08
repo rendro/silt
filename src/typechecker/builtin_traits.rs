@@ -344,11 +344,9 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
     // Primitives + List: all four.
     register_structural_traits_for(
         checker,
-        // The canonical key for the unit type is
-        // "Unit" (matches canonical_name(Type::Unit) and
-        // dispatch_type_for_value(Value::Unit)); an impl target `()`
-        // names it too.
-        &["Int", "Float", "Bool", "String", "Unit"],
+        // The unit type's name is `()` (canonical_name(Type::Unit),
+        // dispatch_type_for_value(Value::Unit), an impl target `()`).
+        &["Int", "Float", "Bool", "String", "()"],
         all_auto_traits,
     );
     register_structural_traits_for(checker, &["List"], all_auto_traits);
@@ -476,7 +474,7 @@ fn register_constructor_impls(checker: &mut TypeChecker) {
 /// The builtin types that are no record or enum and have a json form,
 /// so `json.Encode` by their structure.
 pub(super) const JSON_FORMS: &[&str] = &[
-    "Int", "Float", "Bool", "String", "Unit", "List", "Tuple", "Map",
+    "Int", "Float", "Bool", "String", "()", "List", "Tuple", "Map",
 ];
 
 /// The builtin types besides `json.Value` that are `json.Decode` by

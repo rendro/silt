@@ -2943,7 +2943,7 @@ impl<'a> Compiler<'a> {
             Type::Float => primitive("Float"),
             Type::String => primitive("String"),
             Type::Bool => primitive("Bool"),
-            Type::Unit => primitive("Unit"),
+            Type::Unit => primitive("()"),
             Type::Generic(t, args) if args.is_empty() => Some(self.type_descriptor(*t)),
             _ => {
                 let (head, parts) = self.type_parts(ty)?;
@@ -3119,8 +3119,7 @@ impl<'a> Compiler<'a> {
             }),
             _ => {
                 let name = resolve(ti.target_type);
-                let name = if name == "()" { "Unit" } else { name.as_str() };
-                crate::defs::builtin_type_id(name).map(|id| TypeRef {
+                crate::defs::builtin_type_id(&name).map(|id| TypeRef {
                     id,
                     name: ti.target_type,
                 })

@@ -67,7 +67,7 @@ let result = {
 }
 ```
 
-The trade-off: functions that exist only for side effects return `()` (Unit).
+The trade-off: functions that exist only for side effects return `()`, the unit type, whose one value is `()`.
 
 Only the last expression of a block is the block's value. An expression that
 stands before it has no one to give its value to, so it must have none: its

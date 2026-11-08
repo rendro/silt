@@ -4489,7 +4489,7 @@ mod type_confusion {
             push(e, string("a"));
             e.emit(Asm::Eq, span()).unwrap();
         });
-        confused("cannot compare Bool and Unit", |e| {
+        confused("cannot compare Bool and ()", |e| {
             e.emit(Asm::True, span()).unwrap();
             e.emit(Asm::Unit, span()).unwrap();
             e.emit(Asm::Neq, span()).unwrap();
@@ -6664,7 +6664,7 @@ mod results_in_place {
         for (operand, op, message) in [
             (string("a"), Asm::Negate, "cannot negate String"),
             (Value::Bool(true), Asm::Negate, "cannot negate Bool"),
-            (Value::Unit, Asm::Negate, "cannot negate Unit"),
+            (Value::Unit, Asm::Negate, "cannot negate ()"),
             (Value::Int(1), Asm::Not, "cannot apply 'not' to Int"),
             (float(0.5), Asm::Not, "cannot apply 'not' to Float"),
             (string("a"), Asm::Not, "cannot apply 'not' to String"),

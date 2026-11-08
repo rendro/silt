@@ -2194,10 +2194,11 @@ impl<'src> Parser<'src> {
                 ..span
             };
 
-            // Accept only `Named(head)` or `Generic(head, args)` as the
-            // impl target. Reject tuple/fn/Unit targets — those have no
-            // stable "head symbol" for method_table keying or for the
-            // compiler's `TypeName.method_name` qualified-name form.
+            // Accept only `Named(head)`, `Generic(head, args)` or the
+            // unit type `()` (whose name is `()`) as the impl target.
+            // Reject tuple/fn targets — those have no stable "head
+            // symbol" for method_table keying or for the compiler's
+            // `TypeName.method_name` qualified-name form.
             // The head-name span: for `for Int` it's `Int`'s span; for
             // `for m.Box(a)` it's `Box`'s span.
             let (target_module, target, target_type_span, target_type_args) = match target_te.kind {
@@ -2212,6 +2213,9 @@ impl<'src> Parser<'src> {
                     name_span,
                     args,
                 } => (module, name, name_span, args),
+                TypeExprKind::Tuple(elems) if elems.is_empty() => {
+                    (None, intern::intern("()"), target_te.span, Vec::new())
+                }
                 _ => {
                     return Err(Diagnostic::error(
                         Code::InvalidDeclaration,

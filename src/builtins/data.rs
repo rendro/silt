@@ -448,7 +448,7 @@ impl<'c> Writer<'c> {
             }
             Value::Unit if self.format == Format::Toml => {
                 return Err(VmError::new(format!(
-                    "{}: TOML cannot represent Unit",
+                    "{}: TOML cannot represent ()",
                     self.caller
                 )));
             }
@@ -481,7 +481,7 @@ mod tests {
             ("Float", Value::Float(Float::new(1.5).expect("finite"))),
             ("Bool", Value::Bool(true)),
             ("String", Value::String("s".into())),
-            ("Unit", Value::Unit),
+            ("()", Value::Unit),
             ("List", Value::list(vec![Value::Int(1)])),
             ("Tuple", Value::tuple(vec![Value::Int(1)])),
             ("Map", Value::map([(Value::Int(1), Value::Int(2))])),

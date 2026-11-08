@@ -1,4 +1,4 @@
--- `match u { () -> ... }` on a Unit scrutinee is exhaustive.
+-- `match u { () -> ... }` on a `()` scrutinee is exhaustive.
 -- cmd: check
 -- exit: 0
 -- stderr-not-contains: error

@@ -253,7 +253,9 @@ fn build_builtins() -> (BuiltinDefs, BuiltinScopes) {
         let name = intern(name);
         let id = add(&mut defs, module_id, name, DefKind::Type(ty));
         debug_assert_eq!(id, ty.0);
-        if resolve(name) != ANON_RECORD {
+        // (The unit type `()` is written as punctuation, never as a
+        // name a scope binds.)
+        if resolve(name) != ANON_RECORD && resolve(name) != "()" {
             let exports = match module {
                 None => &mut prelude_exports,
                 Some(_) => module_exports.entry(module_id).or_default(),

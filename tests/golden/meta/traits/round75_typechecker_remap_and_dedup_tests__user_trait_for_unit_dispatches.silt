@@ -1,7 +1,7 @@
--- A user trait implemented for Unit dispatches at runtime (the compiler's
--- canonical dispatch key for `()` is `Unit`).
+-- A user trait implemented for the unit type `()` dispatches at runtime
+-- (the compiler's dispatch key for it is `()`).
 trait Greet { fn greet(self) -> String }
-trait Greet for Unit { fn greet(self) -> String { "hi" } }
+trait Greet for () { fn greet(self) -> String { "hi" } }
 fn main() {
   let u = ()
   println(Greet.greet(u))

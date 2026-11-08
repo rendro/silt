@@ -5,6 +5,6 @@
 -- exit: 1
 -- stderr-contains: expected declaration, found !
 -- stderr-not-contains: expected a newline
-fn main() -> Unit !{io} {
+fn main() -> () !{io} {
   println(1)
 }

@@ -1,0 +1,33 @@
+-- The unit type has one name, `()`: an impl is written `for ()`, and a
+-- type argument, a parameter and a result write it the same way.
+trait Describe {
+  fn describe(self) -> String
+}
+
+trait Describe for () {
+  fn describe(self) -> String {
+    "nothing"
+  }
+}
+
+type Box(a) { Wrap(a) }
+
+fn done(ok: Bool) -> Result((), String) {
+  match ok {
+    true -> Ok(())
+    false -> Err("failed")
+  }
+}
+
+fn show(u: ()) -> String {
+  Describe.describe(u)
+}
+
+fn main() {
+  println(Describe.describe(()))
+  println(show(()))
+  println(done(true))
+  println(done(false))
+  let b: Box(()) = Wrap(())
+  println(b)
+}

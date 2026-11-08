@@ -1,0 +1,11 @@
+-- cmd: fmt
+-- An impl for the unit type is written `for ()`.
+trait Describe {
+  fn describe(self) -> String
+}
+
+trait Describe for () {
+  fn describe(self) -> String {
+    "nothing"
+  }
+}

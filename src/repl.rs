@@ -516,7 +516,7 @@ pub fn doc_text(name: &str) -> Option<String> {
         return Some(with_summary(line, summary));
     }
     let builtin = (crate::types::builtins::BUILTIN_TYPES.iter())
-        .find(|t| t.name == name && t.name != "Unit" && t.name.chars().all(char::is_alphabetic))?;
+        .find(|t| t.name == name && t.name.chars().all(char::is_alphabetic))?;
     let params: Vec<String> = (b'a'..)
         .take(builtin.arity? as usize)
         .map(|c| char::from(c).to_string())

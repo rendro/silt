@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- `Unit` is no name of the unit type, whose one name is `()`; messages
+-- write the type `()`.
+fn f() -> Unit {
+  ()
+}
+
+fn main() {
+  let x: Int = ()
+  let y = ().size
+  println("{x} {y}")
+}

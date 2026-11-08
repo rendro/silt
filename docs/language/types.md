@@ -14,7 +14,7 @@ order: 2
 | `Float`  | 64-bit floating-point, guaranteed finite | `3.14`, `-0.5`, `1e5`, `2.5e-3` |
 | `Bool`   | Boolean                           | `true`, `false`           |
 | `String` | UTF-8 string with interpolation   | `"hello"`, `"age: {n}"`  |
-| `Unit`   | No meaningful value               | (returned by `println`)   |
+| `()`     | The unit type: no meaningful value | `()` (returned by `println`) |
 
 No implicit conversions. Use `int.to_float()` or `float.to_int()` explicitly.
 

@@ -48,9 +48,9 @@ type Result(a, e) {
 ```silt
 type Channel(a)
 ```
-> hover 30:67
+> hover 30:64
 ```silt
-type Unit = ()
+()
 ```
 > hover 32:16
 ```silt

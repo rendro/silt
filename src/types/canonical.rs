@@ -575,7 +575,7 @@ pub fn canonical_name(ty: &Type) -> String {
         Type::Float => "Float".to_string(),
         Type::Bool => "Bool".to_string(),
         Type::String => "String".to_string(),
-        Type::Unit => "Unit".to_string(),
+        Type::Unit => "()".to_string(),
 
         // ── Containers ─────────────────────────────────────────────
         Type::List(_) => "List".to_string(),
@@ -631,8 +631,7 @@ pub fn canonical_name(ty: &Type) -> String {
 ///   target: `type Bytes = List(Int)` collapses to `List`; chained
 ///   aliases collapse fully via recursion.
 ///
-/// Any other type is its own head. (`()` is not a type name: it is
-/// written `Unit` in an impl target.)
+/// Any other type is its own head.
 pub fn canonical_head(resolver: &Resolver, ty: TypeRef) -> TypeRef {
     if ty.is_builtin("Fun") {
         return TypeRef::builtin("Fn");
@@ -660,7 +659,7 @@ pub fn head_of_canon(ty: &Type) -> Option<TypeRef> {
         Type::Float => "Float",
         Type::Bool => "Bool",
         Type::String => "String",
-        Type::Unit => "Unit",
+        Type::Unit => "()",
         Type::List(_) => "List",
         Type::Map(_, _) => "Map",
         Type::Set(_) => "Set",
@@ -814,7 +813,7 @@ mod tests {
             "Float" => Some(Type::Float),
             "Bool" => Some(Type::Bool),
             "String" => Some(Type::String),
-            "Unit" | "()" => Some(Type::Unit),
+            "()" => Some(Type::Unit),
             "List" => Some(Type::List(Box::new(Type::Int))),
             "Map" => Some(Type::Map(Box::new(Type::Int), Box::new(Type::Int))),
             "Set" => Some(Type::Set(Box::new(Type::Int))),
@@ -943,7 +942,7 @@ mod tests {
         assert_eq!(canonical_name(&Type::Float), "Float");
         assert_eq!(canonical_name(&Type::Bool), "Bool");
         assert_eq!(canonical_name(&Type::String), "String");
-        assert_eq!(canonical_name(&Type::Unit), "Unit");
+        assert_eq!(canonical_name(&Type::Unit), "()");
     }
 
     #[test]
@@ -1006,16 +1005,13 @@ mod tests {
     fn canonical_name_covers_every_builtin_with_a_type_variant() {
         // For every entry in BUILTIN_TYPES that maps onto a Type
         // variant, canonical_name on that variant must equal the
-        // builtin's surface name (with one documented exception: `()`
-        // is the surface alias for `Unit` and shares the `"Unit"`
-        // canonical form).
+        // builtin's surface name.
         for b in BUILTIN_TYPES {
             let Some(t) = type_for_builtin(b.name) else {
                 continue; // e.g. Handle: no Type variant
             };
             let got = canonical_name(&t);
             let expected = match b.name {
-                "()" => "Unit",
                 "Fun" => "Fn", // Fn and Fun are surface aliases for Type::Fun
                 other => other,
             };
@@ -1031,7 +1027,7 @@ mod tests {
     fn canonical_name_primitive_parity_with_builtin_kind() {
         // Every BUILTIN_TYPES entry tagged as Primitive that maps
         // onto a Type variant produces a canonical_name equal to
-        // its surface name (modulo the `()`/`Unit` alias).
+        // its surface name.
         for b in BUILTIN_TYPES
             .iter()
             .filter(|b| b.kind == BuiltinKind::Primitive)
@@ -1040,8 +1036,7 @@ mod tests {
                 continue;
             };
             let got = canonical_name(&t);
-            let expected = if b.name == "()" { "Unit" } else { b.name };
-            assert_eq!(got, expected, "primitive parity failed for {}", b.name);
+            assert_eq!(got, b.name, "primitive parity failed for {}", b.name);
         }
     }
 
@@ -1086,7 +1081,7 @@ mod tests {
             dispatch_type_for_value(&Value::String(String::new().into())),
             builtin_id("String")
         );
-        assert_eq!(dispatch_type_for_value(&Value::Unit), builtin_id("Unit"));
+        assert_eq!(dispatch_type_for_value(&Value::Unit), builtin_id("()"));
     }
 
     #[test]

@@ -1,0 +1,17 @@
+error[type]: unknown type 'Unit'
+ --> unit__unit_is_no_type_name.silt:5:11
+   |
+ 5 | fn f() -> Unit {
+   |           ^^^^ unknown type 'Unit'
+
+error[type]: type mismatch: expected Int, got ()
+ --> unit__unit_is_no_type_name.silt:10:16
+    |
+ 10 |   let x: Int = ()
+    |                ^^ type mismatch: expected Int, got ()
+
+error[type]: type '()' has no field 'size'
+ --> unit__unit_is_no_type_name.silt:11:11
+    |
+ 11 |   let y = ().size
+    |           ^^^^^^^ type '()' has no field 'size'

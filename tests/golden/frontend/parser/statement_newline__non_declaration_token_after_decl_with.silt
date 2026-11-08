@@ -5,6 +5,6 @@
 -- exit: 1
 -- stderr-contains: expected declaration, found with
 -- stderr-not-contains: expected a newline
-fn main() -> Unit with Io {
+fn main() -> () with Io {
   println(1)
 }

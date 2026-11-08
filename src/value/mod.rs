@@ -210,7 +210,7 @@ impl Value {
             Value::TcpListener(_) => "TcpListener",
             Value::TcpStream(_) => "TcpStream",
             Value::Dict(_) => "Dict",
-            Value::Unit => "Unit",
+            Value::Unit => "()",
         }
     }
 }
