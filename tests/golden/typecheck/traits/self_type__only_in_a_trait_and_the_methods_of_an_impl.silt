@@ -1,0 +1,34 @@
+-- cmd: check
+-- exit: 1
+-- `Self` is the type an impl is for: it stands in a trait's declaration
+-- and in an impl's methods, nowhere else. In an impl's header (its
+-- trait arguments or its type), a function's signature, a type's
+-- field, an alias, a variant or an annotation it is an error: there it
+-- once was a fresh type each use could pick, and in an impl's trait
+-- arguments that let `C.c(1)` be a String that holds an Int.
+-- stderr-contains: error[type]: 'Self' stands only in a trait and in the methods of an impl, where it is the impl's type
+-- stderr-contains: = help: write the type itself here
+-- stderr-contains: methods_of_an_impl.silt:21:9
+-- stderr-contains: methods_of_an_impl.silt:25:13
+-- stderr-contains: methods_of_an_impl.silt:25:22
+-- stderr-contains: methods_of_an_impl.silt:26:18
+-- stderr-contains: methods_of_an_impl.silt:27:13
+-- stderr-contains: methods_of_an_impl.silt:28:1
+-- stderr-contains: methods_of_an_impl.silt:32:10
+trait C(b) {
+  fn c(self) -> b
+}
+trait C(Self) for Int {
+  fn c(self) -> Int { self }
+}
+type Box(a) { v: a }
+fn twice(x: Self) -> Self { x }
+type Holder { h: Self }
+type Same = Self
+enum E { V(Self) }
+trait Show2 { fn show2(self) -> String }
+trait Show2 for Box(a) { fn show2(self) -> String { "box" } }
+fn main() {
+  let s: Self = 1
+  println(s)
+}

@@ -471,8 +471,23 @@ impl TypeChecker {
                 Type::Error
             }
             // (Outside a trait, as a bare `Self` there.)
-            None => self.fresh_var(),
+            None => self.self_outside_a_trait(te.span),
         }
+    }
+
+    /// The error of a `Self` written where it means nothing: outside a
+    /// trait's declaration and an impl's methods, where it is the type
+    /// the impl is for. (An impl's header writes that type itself.)
+    fn self_outside_a_trait(&mut self, span: Span) -> Type {
+        let message = "'Self' stands only in a trait and in the methods of an impl, where it is \
+                       the impl's type";
+        let help = "write the type itself here".to_string();
+        self.error_help(
+            Code::InvalidTypeAnnotation,
+            (message.to_string(), Some(help)),
+            span,
+        );
+        Type::Error
     }
 
     /// Report a type variable that the signature of `f` writes both with
@@ -858,14 +873,10 @@ impl TypeChecker {
                 let ret_type = self.resolve_type_expr(ret, param_vars);
                 Type::Fun(param_types, Box::new(ret_type))
             }
-            TypeExprKind::SelfType => {
-                if let Some(ty) = param_vars.get(&intern("Self")) {
-                    ty.clone()
-                } else {
-                    // Self used outside of a trait context
-                    self.fresh_var()
-                }
-            }
+            TypeExprKind::SelfType => match param_vars.get(&intern("Self")) {
+                Some(ty) => ty.clone(),
+                None => self.self_outside_a_trait(te.span),
+            },
             TypeExprKind::AssocProj {
                 receiver,
                 trait_name,

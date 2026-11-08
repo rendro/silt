@@ -1,0 +1,26 @@
+-- cmd: check
+-- exit: 1
+-- The arguments after the `_` of an impl of a trait of type
+-- constructors are type variables: a type there (`Int`, `List(e)`) is
+-- an error at that argument, with the header that has a variable in
+-- its place. A `where` on the impl may bound the variable.
+-- stderr-contains: error[type]: the type arguments after '_' in an impl of 'Mapping' are type variables, not types: 'Int' is a type
+-- stderr-contains: = help: write `trait Mapping for Two(_, b)`; a `where` on the impl may bound a variable
+-- stderr-contains: error[type]: the type arguments after '_' in an impl of 'Mapping' are type variables, not types: 'List(e)' is a type
+-- stderr-contains: = help: write `trait Mapping for Three(_, b, c)`
+-- stderr-not-contains: duplicate implementation
+trait Mapping {
+  fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b)
+}
+type Two(a, b) { a: a, b: b }
+type Three(a, b, c) { a: a, b: b, c: c }
+trait Mapping for Two(_, Int) {
+  fn map(xs, f) { Two { a: f(xs.a), b: xs.b } }
+}
+trait Mapping for Two(_, String) {
+  fn map(xs, f) { Two { a: f(xs.a), b: xs.b } }
+}
+trait Mapping for Three(_, List(e), c) {
+  fn map(xs, f) { Three { a: f(xs.a), b: xs.b, c: xs.c } }
+}
+fn main() { println(1) }

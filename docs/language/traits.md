@@ -329,6 +329,11 @@ trait Monoid for Int {
 }
 ```
 
+`Self` stands only there: in a trait's declaration and in the methods of
+an impl. Anywhere else (an impl's header, a function's signature, a
+type's field, an alias, an annotation) it is an error; write the type
+itself, as an impl's header does: `trait Conv(Int) for Int`.
+
 ## Parameterized Implementation Targets
 
 An impl on a parameterized record or enum can bind the target's type

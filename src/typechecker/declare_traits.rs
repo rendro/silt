@@ -969,7 +969,7 @@ impl TypeChecker {
                 if !param_map.contains_key(&wc.type_param)
                     && resolve(wc.type_param).starts_with(char::is_lowercase)
                 {
-                    self.where_not_introduced(m, wc.type_param, wc.trait_name);
+                    self.where_not_introduced(m, wc.type_param, wc.trait_name, None);
                     continue;
                 }
                 let (Some(Type::Var(tv)), Some(bound)) = (
@@ -1356,6 +1356,50 @@ impl TypeChecker {
         preds
     }
 
+    /// Whether the arguments after the `_` of an impl of a trait of type
+    /// constructors are type variables (`trait Functor for Result(_, e)`).
+    /// A type there (`Two(_, Int)`) is reported, with the header that has
+    /// a variable in its place.
+    fn header_rest_are_variables(&mut self, ti: &TraitImpl, trait_name: &str, head: &str) -> bool {
+        let is_variable = |arg: &TypeExpr| {
+            matches!(&arg.kind, TypeExprKind::Named { module: None, name, .. }
+                if resolve(*name).starts_with(char::is_lowercase))
+        };
+        let Some(typed) = ti
+            .target_type_args
+            .iter()
+            .skip(1)
+            .find(|arg| !is_variable(arg))
+        else {
+            return true;
+        };
+        let mut fresh = ('b'..='z')
+            .map(|c| c.to_string())
+            .filter(|name| !ti.target_param_names.iter().any(|p| resolve(*p) == *name));
+        let args: Vec<String> = std::iter::once("_".to_string())
+            .chain(
+                ti.target_type_args
+                    .iter()
+                    .skip(1)
+                    .map(|arg| match is_variable(arg) {
+                        true => type_expr_text(arg),
+                        false => fresh.next().unwrap_or_else(|| "_".to_string()),
+                    }),
+            )
+            .collect();
+        let message = format!(
+            "the type arguments after '_' in an impl of '{trait_name}' are type variables, \
+             not types: '{}' is a type",
+            type_expr_text(typed)
+        );
+        let help = format!(
+            "write `trait {trait_name} for {head}({})`; a `where` on the impl may bound a variable",
+            args.join(", ")
+        );
+        self.error_help(Code::KindMismatch, (message, Some(help)), typed.span);
+        false
+    }
+
     /// Whether the header of the impl `ti` of `tr`, for the type
     /// `written`, fits the trait's kind: an impl of a trait of type
     /// constructors writes `_` for its type's first type argument
@@ -1440,7 +1484,7 @@ impl TypeChecker {
             return false;
         }
         match holes.as_slice() {
-            [0] => true,
+            [0] => self.header_rest_are_variables(ti, &trait_name, &head),
             // No `_`, or one more after the first: the header with `_`
             // first and names after it.
             [] | [0, ..] => {
@@ -2555,18 +2599,11 @@ impl TypeChecker {
                         }
                     }
                     None => {
-                        // Give the user the full "declare it in the sig or
-                        // target" hint — this is the same spirit as the
-                        // register_fn_decl error at mod.rs:5276.
-                        self.error(Code::InvalidTypeAnnotation,
-                            format!(
-                                "type variable '{}' in where clause on '{}.{}' is not declared in the impl target \
-                                 arguments or in the method's parameter annotations",
-                                resolve(*type_param),
-                                resolve(ti.target_type),
-                                resolve(method.name)
-                            ),
-                            method.span,
+                        self.where_not_introduced(
+                            method,
+                            *type_param,
+                            wc.trait_name,
+                            Some(ti.target_type),
                         );
                     }
                 }

@@ -1,4 +1,8 @@
 -- cmd: check
--- exit: 0
+-- exit: 1
+-- `Self` outside a trait and an impl's methods is an error, in a
+-- parameter's type and in the result's alike.
+-- stderr-contains: error__self_type_outside_trait.silt:7:11
+-- stderr-contains: error__self_type_outside_trait.silt:7:20
 fn foo(x: Self) -> Self { x }
 fn main() { let _ = 42 }
