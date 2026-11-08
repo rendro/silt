@@ -194,7 +194,7 @@ impl Compiler<'_> {
     // from an outer compound pattern. Each Destruct in a compound
     // pattern increments the depth; each Pop decrements it.
 
-    fn compile_pattern_test_tracked(
+    pub(super) fn compile_pattern_test_tracked(
         &mut self,
         pattern: &Pattern,
         span: Span,
@@ -501,7 +501,7 @@ impl Compiler<'_> {
     /// and runs the ones after it too, so every failure arrives after
     /// the trampolines with only the `base_depth` sub-values left. A
     /// jump no deeper than `base_depth` lands after them.
-    fn emit_trampolines(
+    pub(super) fn emit_trampolines(
         &mut self,
         fails: &[(Label, usize)],
         base_depth: usize,
@@ -630,8 +630,7 @@ impl Compiler<'_> {
             PatternKind::Ident(name) => {
                 // Dup the value, the dup'd copy becomes the local's stack slot.
                 self.emit(Asm::Dup, span)?;
-                let slot = self.add_local(*name, span)?;
-                self.emit(Asm::SetLocal { slot }, span)?;
+                self.add_local(*name, span)?;
             }
 
             PatternKind::Constructor { args: fields, .. } => {
@@ -906,12 +905,13 @@ impl Compiler<'_> {
 
     /// Compile bindings for a compound pattern (tuple, constructor, list, record, map).
     ///
-    /// The parent value is on TOS. For each sub-pattern that has bindings,
-    /// we GetLocal the parent, Destruct the sub-value, leave both in the
-    /// frame, and recurse.
+    /// The parent value is on TOS, and stays in its slot. The part of the
+    /// first sub-pattern that has bindings is taken from it there; for
+    /// each other one we GetLocal the parent from its slot first. Each
+    /// part stays in the frame. A part whose sub-pattern is a name is
+    /// that name's local; for any other the bind recurses.
     ///
-    /// This approach "wastes" stack slots for intermediate copies but ensures
-    /// local slot numbers always match actual stack positions.
+    /// Local slot numbers always match actual stack positions.
     fn compile_compound_bind(
         &mut self,
         items: Vec<(BindDestructKind, Pattern)>,
@@ -921,15 +921,16 @@ impl Compiler<'_> {
             return Ok(());
         }
 
-        // The parent is on TOS. A copy of it becomes a hidden local, read
-        // once for every sub-pattern.
-        self.emit(Asm::Dup, span)?;
-        let parent_slot = self.add_local(intern("__bind_parent__"), span)?;
-        self.emit(Asm::SetLocal { slot: parent_slot }, span)?;
+        // The parent is on TOS, where it stays: its slot is read for
+        // every sub-pattern after the first.
+        let parent_slot = self.emitter().height().saturating_sub(1);
 
-        for (kind, sub_pat) in &items {
-            // Push the parent value from the known slot
-            self.emit(Asm::GetLocal { slot: parent_slot }, span)?;
+        for (i, (kind, sub_pat)) in items.iter().enumerate() {
+            // The parent on top: itself for the first part, then a copy
+            // from its slot.
+            if i > 0 {
+                self.emit(Asm::GetLocal { slot: parent_slot }, span)?;
+            }
 
             // Destruct to get the sub-value
             match kind {
@@ -969,12 +970,16 @@ impl Compiler<'_> {
                 }
             }
 
-            // Stack: [..., parent_copy_from_GetLocal, sub_value]
+            // Stack: [..., parent (or its copy), sub_value]
             // Both stay in the frame; the sub-value is on TOS, as the
-            // nested pattern's bind expects.
-
-            // Recurse into the sub-pattern for binding
-            self.compile_pattern_bind(sub_pat, span)?;
+            // nested pattern's bind expects. A name is the sub-value's
+            // slot itself.
+            match sub_pat.kind {
+                PatternKind::Ident(name) => {
+                    self.add_local(name, span)?;
+                }
+                _ => self.compile_pattern_bind(sub_pat, span)?,
+            }
         }
 
         Ok(())
@@ -1163,8 +1168,6 @@ impl Compiler<'_> {
             .guard
             .as_deref()
             .ok_or_else(|| checker_missed(span, "an or-pattern split for a guard it has not"))?;
-        // Each way tests a copy of its own.
-        self.emit(Asm::Pop, span)?;
         self.begin_scope();
         // The names of the arm, in one slot each. (A pin means a name
         // from before them.)
@@ -1221,7 +1224,11 @@ impl Compiler<'_> {
             }
             self.bind_over(guard_failed, MATCH_ARM, span)?;
         }
-        // No way matched with its guard: the next arm.
+        // No way matched with its guard: the next arm, with the
+        // scrutinee on top again.
+        for _ in &slots {
+            self.emit(Asm::Pop, span)?;
+        }
         let next_arm = self.jump(span)?;
 
         for jump in body_jumps {
@@ -1234,6 +1241,117 @@ impl Compiler<'_> {
         self.end_scope();
         let end = self.jump(span)?;
         Ok((end, vec![next_arm]))
+    }
+
+    // ── Arms that look at the head of a list ─────────────────────
+
+    /// How many arms from the first of `arms` on are `[h, ..rest]`, each
+    /// with one element whose pattern makes at most one test of the
+    /// value it stands for (a literal, a range, `_` or a name) and a
+    /// rest that makes none (`..rest`, `.._`): the arms of a scanner
+    /// (`[",", ..rest]`, `["\"", ..rest]`, `[c, ..rest]`). 0 when fewer
+    /// than two are: one such arm is compiled as any other.
+    pub(super) fn head_group(arms: &[MatchArm]) -> usize {
+        let fits = |arm: &MatchArm| match &arm.pattern.kind {
+            PatternKind::List(elements, Some(rest)) => {
+                let head = match elements.as_slice() {
+                    [head] => head,
+                    _ => return false,
+                };
+                let simple = matches!(
+                    head.kind,
+                    PatternKind::Int(_)
+                        | PatternKind::Float(_)
+                        | PatternKind::Bool(_)
+                        | PatternKind::StringLit(..)
+                        | PatternKind::Range(..)
+                        | PatternKind::FloatRange(..)
+                        | PatternKind::Wildcard
+                        | PatternKind::Ident(_)
+                );
+                simple && matches!(rest.kind, PatternKind::Ident(_) | PatternKind::Wildcard)
+            }
+            _ => false,
+        };
+        let count = arms.iter().take_while(|arm| fits(arm)).count();
+        if count >= 2 { count } else { 0 }
+    }
+
+    /// Compile `arms`, a group that [`Compiler::head_group`] found: the
+    /// list is tested once for a head, the head is taken out once and
+    /// stays above the scrutinee while each arm tests it, and an arm
+    /// that matches takes the rest from the scrutinee only if it binds
+    /// it. The scrutinee is on top on entry, and again where the group's
+    /// last arm did not match. The jumps to the end of the match go to
+    /// `end_jumps`.
+    pub(super) fn compile_head_group(
+        &mut self,
+        arms: &[MatchArm],
+        scrutinee_slot: usize,
+        tail: bool,
+        end_jumps: &mut Vec<Label>,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        self.emit(Asm::TestListMin { len: 1 }, span)?;
+        let no_head = self.jump_if_false(span)?;
+        self.emit(Asm::DestructList { index: 0 }, span)?;
+        let head_height = self.emitter().height();
+        for arm in arms {
+            let PatternKind::List(elements, Some(rest)) = &arm.pattern.kind else {
+                return Err(checker_missed(
+                    span,
+                    "an arm of a head group that is no list pattern",
+                ));
+            };
+            let head = &elements[0];
+            // The head's test looks at the head on top.
+            let fails = self.compile_pattern_test(head, span)?;
+            self.begin_scope();
+            if let PatternKind::Ident(name) = head.kind {
+                // The head, on top, is the name.s local.
+                self.add_local(name, span)?;
+            }
+            if let PatternKind::Ident(name) = rest.kind {
+                self.emit(
+                    Asm::GetLocal {
+                        slot: scrutinee_slot,
+                    },
+                    span,
+                )?;
+                self.emit(Asm::DestructListRest { start: 1 }, span)?;
+                self.add_local(name, span)?;
+            }
+            let guard_jump = match &arm.guard {
+                Some(guard) => {
+                    self.compile_expr(guard)?;
+                    let jump = self.jump_if_false(span)?;
+                    Some((jump, self.emitter().height() - head_height))
+                }
+                None => None,
+            };
+            self.in_tail_position = tail;
+            self.compile_expr(&arm.body)?;
+            self.end_scope();
+            end_jumps.push(self.jump(span)?);
+            // Not this arm: the head is on top again for the next.
+            if let Some((jump, bound)) = guard_jump {
+                self.bind_over(jump, MATCH_ARM, span)?;
+                for _ in 0..bound {
+                    self.emit(Asm::Pop, span)?;
+                }
+            }
+            for fail in fails {
+                self.bind_over(fail, MATCH_ARM, span)?;
+            }
+        }
+        // No arm of the group: the head goes, and the arms after the
+        // group see the scrutinee on top. (Not after an arm that
+        // matches every list with a head.)
+        if self.emitter().reachable() {
+            self.emit(Asm::Pop, span)?;
+        }
+        self.bind_over(no_head, MATCH_ARM, span)?;
+        Ok(())
     }
 
     // ── Pattern analysis helpers ─────────────────────────────────
@@ -1435,8 +1553,7 @@ mod tests {
                 "f"
             ),
             [
-                GetLocal, JumpIfTrue, Constant, Jump, Constant, SetLocal, GetLocal, AddConst,
-                Return
+                GetLocal, JumpIfTrue, Constant, Jump, Constant, GetLocal, AddConst, Return
             ]
         );
         // A name for the rest is the one value that comes there, and is
@@ -1454,7 +1571,6 @@ mod tests {
                 False,
                 GetLocal,
                 Slide,
-                SetLocal,
                 GetLocal,
                 Return
             ]
@@ -1504,7 +1620,6 @@ mod tests {
                 GetLocal,
                 AddConst,
                 Slide,
-                SetLocal,
                 GetLocal,
                 AddConst,
                 Return

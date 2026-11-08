@@ -275,7 +275,17 @@ impl Emitter {
     /// comparison and a conditional jump after it are one jump that
     /// compares (`Lt; JumpIfFalse` is `JumpIfNotLt`), blamed on the
     /// comparison's span.
+    ///
+    /// A `SetLocal` of the slot the value on top is in is no instruction
+    /// at all: the value is there already (it would be copied over
+    /// itself, a count up and down of a list or a string).
     pub fn emit(&mut self, asm: Asm<'_>, span: Span) -> Result<(), Diagnostic> {
+        if let Asm::SetLocal { slot } = asm
+            && self.reachable
+            && slot + 1 == self.height
+        {
+            return Ok(());
+        }
         let fused = self
             .last
             .and_then(|last| Some((last, last.first.fused(&asm)?)));

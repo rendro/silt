@@ -1,0 +1,76 @@
+== <script> (arity=0, upvalues=0) ==
+0000  Constant             0     ; <fn:walk>
+0003  SetGlobal            0     ; walk
+0006  Pop
+0007  Constant             1     ; <fn:pairs>
+0010  SetGlobal            1     ; pairs
+0013  Pop
+0014  Constant             2     ; <fn:main>
+0017  SetGlobal            2     ; main
+0020  Pop
+0021  GetGlobal            2     ; main
+0024  Call                 0
+0026  Return
+
+== walk (arity=1, upvalues=0) ==
+0000  GetLocal             0
+0003  Constant             0     ; 0
+0006  GetLocal             1
+0009  TestListExact        0
+0011  JumpIfFalse          8     -> 0022
+0014  GetLocal             2
+0017  Jump                 28    -> 0050
+0022  TestListMin          1
+0024  JumpIfFalse          19    -> 0046
+0027  DestructListRest     1
+0029  GetLocal             4
+0032  GetLocal             2
+0035  AddConst             1     ; 1
+0038  Recur                2  slot 1  -40   -> 0006
+0046  Constant             2     ; "non-exhaustive match: no arm matched"
+0049  Panic
+0050  Slide                3
+0053  Slide                1
+0056  Return
+
+== pairs (arity=1, upvalues=0) ==
+0000  GetLocal             0
+0003  TestListMin          1
+0005  JumpIfFalse          35    -> 0043
+0008  DestructList         0
+0010  DestructTuple        0
+0012  GetLocal             2
+0015  DestructTuple        1
+0017  GetLocal             1
+0020  DestructListRest     1
+0022  GetLocal             3
+0025  GetLocal             5
+0028  Add
+0029  GetGlobal            1     ; pairs
+0032  GetLocal             7
+0035  Call                 1
+0037  Add
+0038  Jump                 12    -> 0055
+0043  Constant             0     ; 0
+0046  Jump                 4     -> 0055
+0051  Constant             1     ; "non-exhaustive match: no arm matched"
+0054  Panic
+0055  Return
+
+== main (arity=0, upvalues=0) ==
+0000  Constant             0     ; <builtin:println>
+0003  GetGlobal            0     ; walk
+0006  Constant             1     ; "a"
+0009  Constant             2     ; "b"
+0012  MakeList             2
+0015  Call                 1
+0017  GetGlobal            1     ; pairs
+0020  Constant             3     ; 1
+0023  Constant             4     ; 2
+0026  MakeTuple            2
+0028  MakeList             1
+0031  Call                 1
+0033  Add
+0034  TailCall             1
+0036  Return
+

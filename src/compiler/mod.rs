@@ -2170,38 +2170,29 @@ impl<'a> Compiler<'a> {
             return Ok(());
         }
 
-        // Keep the scrutinee in the frame as a hidden local. This lets us
-        // GetLocal it for each arm's test and binding.
+        // The scrutinee stays in the frame as a hidden local, on top of
+        // it at the start of every arm: each arm tests the scrutinee
+        // itself and binds from it, with no copy of it made.
         self.begin_scope_with_top();
         let scrutinee_slot = self.add_local(intern("__scrutinee__"), span)?;
-        self.emit(
-            Asm::SetLocal {
-                slot: scrutinee_slot,
-            },
-            span,
-        )?;
         // Frame height at the start of every arm: everything up to and
         // including the scrutinee.
         let arm_height = self.emitter().height();
 
         let mut end_jumps = Vec::new();
 
-        for (i, arm) in arms.iter().enumerate() {
-            // 1. Push scrutinee for testing. An arm that did not match
-            //    lands here with values still above the scrutinee: the
-            //    copy its test looked at, sub-values of a nested pattern,
-            //    or the names it bound before its guard failed. The slide
-            //    drops them and keeps the fresh copy.
-            self.emit(
-                Asm::GetLocal {
-                    slot: scrutinee_slot,
-                },
-                span,
-            )?;
-            if i > 0 {
-                self.emit_slide(arm_height, span)?;
+        let mut next = 0;
+        while let Some(arm) = arms.get(next) {
+            // (Arms that take a list apart by its head, one after the
+            // other, look at the head once.)
+            let group = Self::head_group(&arms[next..]);
+            if group > 0 {
+                let group = &arms[next..next + group];
+                next += group.len();
+                self.compile_head_group(group, scrutinee_slot, tail, &mut end_jumps, span)?;
+                continue;
             }
-
+            next += 1;
             // (A guard on an or-pattern that binds names is tried with
             // each alternative that matches.)
             if let Some(ways) = self.guarded_or_ways(arm)? {
@@ -2214,37 +2205,28 @@ impl<'a> Compiler<'a> {
                 continue;
             }
 
-            // 2. Test the pattern (value is on TOS, tests peek it)
-            let fail_jumps = self.compile_pattern_test(&arm.pattern, span)?;
+            // 1. Test the pattern: the tests look at the scrutinee on
+            //    top, and a failed one jumps with the sub-values it was
+            //    looking at still above it (their number with each jump).
+            let fail_jumps = self.compile_pattern_test_tracked(&arm.pattern, span, 0)?;
 
-            // 3. Pop the test copy
-            self.emit(Asm::Pop, span)?;
-
-            // 4. Begin a scope for this arm's bindings
+            // 2. Bind the pattern's names from the scrutinee, in a scope
+            //    of the arm.
             self.begin_scope();
-
-            // 5. Push scrutinee again and bind pattern variables
-            self.emit(
-                Asm::GetLocal {
-                    slot: scrutinee_slot,
-                },
-                span,
-            )?;
-            // Register this GetLocal'd copy as a hidden local
-            let bind_copy = self.add_local(intern("__bind_src__"), span)?;
-            self.emit(Asm::SetLocal { slot: bind_copy }, span)?;
             self.compile_pattern_bind(&arm.pattern, span)?;
 
-            // 6. Guard (if present)
+            // 3. Guard (if present): when it fails, the arm's bindings
+            //    are dropped (`bound` values above the scrutinee).
             let guard_jump = if let Some(guard) = &arm.guard {
                 self.compile_expr(guard)?;
                 let j = self.jump_if_false(span)?;
-                Some(j)
+                let bound = self.emitter().height() - arm_height;
+                Some((j, bound))
             } else {
                 None
             };
 
-            // 7. Compile the arm body (in tail position if the match is)
+            // 4. Compile the arm body (in tail position if the match is)
             self.in_tail_position = tail;
             self.compile_expr(&arm.body)?;
 
@@ -2252,16 +2234,24 @@ impl<'a> Compiler<'a> {
             // the match, where one slide serves every arm.
             self.end_scope();
 
-            // 8. Jump to end of match
+            // 5. Jump to end of match
             let end_jump = self.jump(span)?;
             end_jumps.push(end_jump);
 
-            // 9. Patch failure / guard jumps to here (next arm)
-            if let Some(gj) = guard_jump {
+            // 6. The arm did not match: what it left above the
+            //    scrutinee goes, and the next arm starts with the
+            //    scrutinee on top again.
+            let mut next_arm = None;
+            if let Some((gj, bound)) = guard_jump {
                 self.bind_over(gj, MATCH_ARM, span)?;
+                for _ in 0..bound {
+                    self.emit(Asm::Pop, span)?;
+                }
+                next_arm = Some(self.jump(span)?);
             }
-            for fj in fail_jumps {
-                self.bind_over(fj, MATCH_ARM, span)?;
+            self.emit_trampolines(&fail_jumps, 0, span)?;
+            if let Some(next_arm) = next_arm {
+                self.bind_over(next_arm, MATCH_ARM, span)?;
             }
         }
 
@@ -3883,7 +3873,9 @@ mod tests {
     fn test_compile_local_variable() {
         let fns = compile("fn f() { let x = 42\n x }");
         let f = find_fn(&fns, "f");
-        assert!(has_op(f.chunk(), Op::SetLocal));
+        // The value of the `let` is its local where it lies: it is not
+        // written over itself.
+        assert!(!has_op(f.chunk(), Op::SetLocal));
         assert!(has_op(f.chunk(), Op::GetLocal));
     }
 
@@ -4443,7 +4435,7 @@ fn f() {
 "#,
         );
         let f = find_fn(&fns, "f");
-        assert!(has_op(f.chunk(), Op::SetLocal));
+        assert!(!has_op(f.chunk(), Op::SetLocal));
         assert!(has_op(f.chunk(), Op::GetLocal));
         assert!(has_op(f.chunk(), Op::Add));
     }

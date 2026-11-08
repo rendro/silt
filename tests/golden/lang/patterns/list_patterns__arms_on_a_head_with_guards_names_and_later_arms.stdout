@@ -1,0 +1,15 @@
+ false: end
+""a true: doubled quote, then 1
+""a false: quote, then 2
+,a false: comma, then 1
+,a true: quoted ,
+xyz false: an x with more
+xy false: plain x
+y true: quoted y
+y false: plain y
+zero first
+a digit, 2 more
+negative, then [4]
+two or more
+just 12
+none
