@@ -10,7 +10,7 @@
 -- lsp: hover 30:9
 -- lsp: hover 30:25
 -- lsp: hover 30:50
--- lsp: hover 30:67
+-- lsp: hover 30:64
 -- lsp: hover 32:16
 -- lsp: hover 37:61
 -- Hover on a type of the prelude in a type position shows its
@@ -27,7 +27,7 @@ type Row { name: String, score: Float, tags: Set(String) }
 
 type Cell { Full(Bool), Many(Map(String, Bytes)) }
 
-fn f(o: Option(Int), r: Result(Int, String), ch: Channel(Int), u: Unit) -> Int {
+fn f(o: Option(Int), r: Result(Int, String), ch: Channel(Int), u: ()) -> Int {
   let n: Int = 1
   let g = { x: Int -> x + n }
   g(0)

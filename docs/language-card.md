@@ -69,8 +69,9 @@ in `main`) writes `error: <e>` on stderr and ends the program with status
 | list | `[1, 2, 3]`, `[0, ..xs]`, the range `1..10` (inclusive) |
 | map, ordered by key | `#{ "a": 1, "b": 2 }` |
 | set, ordered | `#[1, 2, 3]` |
-| record | `User { name: "A", age: 3 }`, anonymous `{ x: 1, y: 2 }` |
-| record update | `user.{ age: 4 }` |
+| record | `User { name: "A", age: 3 }`, `User { name, age }` (= `name: name`), anonymous `{ x: 1, y: 2 }`; a keyword may name a field: `e.type`, `Event { type: t }` |
+| record update | `user.{ age: 4 }`, `user.{ age }` |
+| in a `match`/`loop` header | a lone field written alone in parentheses: `match (P { x }) { ... }` |
 | variant | `Some(1)`, `None`, `Ok(x)`, `Err(e)`, `Circle(2)` |
 | closure | `{ x -> x * 2 }`, `{ a, b -> a + b }`, `{ (k, v) -> v }`, `{ -> 42 }` |
 

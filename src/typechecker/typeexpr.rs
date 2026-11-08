@@ -88,13 +88,7 @@ impl TypeChecker {
         if let Some(ty) = self.own_types.get(&name) {
             return Some(*ty);
         }
-        let name_str = resolve(name);
-        let name_str = if name_str == "()" {
-            "Unit"
-        } else {
-            name_str.as_str()
-        };
-        crate::defs::builtin_type_id(name_str).map(|id| TypeRef { id, name })
+        crate::defs::builtin_type_id(&resolve(name)).map(|id| TypeRef { id, name })
     }
 
     /// Whether a type name, or a variant's resolution, names a type
@@ -120,7 +114,7 @@ impl TypeChecker {
                 "Float" => return Some(Type::Float),
                 "Bool" => return Some(Type::Bool),
                 "String" => return Some(Type::String),
-                "Unit" => return Some(Type::Unit),
+                "()" => return Some(Type::Unit),
                 "List" => return Some(Type::List(Box::new(self.fresh_var()))),
                 "Map" => {
                     return Some(Type::Map(

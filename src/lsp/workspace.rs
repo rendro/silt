@@ -165,7 +165,7 @@ struct ModuleUses {
     /// The URI of the module's file.
     uri: Option<Uri>,
     uses: Vec<(Span, DefId)>,
-    punned_declarations: Vec<Span>,
+    punned: Vec<Span>,
 }
 
 /// A place that names a target.
@@ -784,7 +784,7 @@ impl Server {
                         .map(|uri| (*uri).clone())
                         .or_else(|| super::path_to_file_uri(&module.path)),
                     uses: names.defs.iter().map(|used| (used.span, used.id)).collect(),
-                    punned_declarations: names.punned_declarations,
+                    punned: names.punned,
                 });
             }
             projects.push((dir.clone(), modules));
@@ -825,7 +825,7 @@ impl Server {
                     punned,
                 };
                 for (span, _) in module.uses.iter().filter(|(_, id)| ids.contains(id)) {
-                    places.push(place(*span, false));
+                    places.push(place(*span, module.punned.contains(span)));
                 }
                 if !include_definition {
                     continue;
@@ -833,10 +833,7 @@ impl Server {
                 for id in &ids {
                     let def = session.defs().get(*id);
                     if def.module == module.module && def.span.is_in_source() {
-                        places.push(place(
-                            def.span,
-                            module.punned_declarations.contains(&def.span),
-                        ));
+                        places.push(place(def.span, module.punned.contains(&def.span)));
                     }
                 }
             }

@@ -2450,8 +2450,8 @@ fn test_undefined_name_in_a_decoder_type_is_the_one_error() {
          \x20 json.parse(text, a)\n\
          }\n\
          fn main() {\n\
-         \x20 println(json.parse(\"null\", Box(Box(Unit))))\n\
-         \x20 println(load(\"null\", Box(Box(Unit))))\n\
+         \x20 println(json.parse(\"null\", Box(Box(Nope))))\n\
+         \x20 println(load(\"null\", Box(Box(Nope))))\n\
          }\n",
     );
     let messages: Vec<&str> = (errors.iter())
@@ -2460,7 +2460,7 @@ fn test_undefined_name_in_a_decoder_type_is_the_one_error() {
         .collect();
     assert_eq!(
         messages,
-        ["undefined variable 'Unit'", "undefined variable 'Unit'"]
+        ["undefined variable 'Nope'", "undefined variable 'Nope'"]
     );
 }
 

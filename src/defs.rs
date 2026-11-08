@@ -200,7 +200,7 @@ pub fn builtin_types() -> &'static [(&'static str, Option<&'static str>)] {
             }
         };
         for ty in crate::types::builtins::BUILTIN_TYPES {
-            if ty.name == "()" || module_of(ty.name).is_some() {
+            if module_of(ty.name).is_some() {
                 continue;
             }
             add(ty.name, None);

@@ -3,9 +3,9 @@
 -- stderr-contains: error[type]
 -- stderr-contains: does not implement trait 'T(Int)': the matched impl is 'T(String)'
 -- An impl's `where a: T(Int)` bound is validated when `a` resolves
--- to Unit, which only implements T(String).
+-- to `()`, which only implements T(String).
 trait T(c) { fn m(self) -> c }
-trait T(String) for Unit { fn m(self) -> String { "u" } }
+trait T(String) for () { fn m(self) -> String { "u" } }
 type Box(a) { Wrap(a) }
 trait Foo { fn do_it(self) -> Int }
 trait Foo for Box(a) where a: T(Int) {
@@ -16,7 +16,7 @@ trait Foo for Box(a) where a: T(Int) {
     }
 }
 fn main() {
-    let b: Box(Unit) = Wrap(())
+    let b: Box(()) = Wrap(())
     let r: Int = Foo.do_it(b)
     println(r)
 }

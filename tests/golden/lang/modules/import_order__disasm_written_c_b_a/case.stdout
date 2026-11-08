@@ -23,7 +23,7 @@
 0009  Constant             2     ; 1
 0012  SetGlobal            0     ; a.va
 0015  Pop
-0016  Unit
+0016  ()
 0017  Return
 
 == <module:b> (arity=0, upvalues=0) ==
@@ -34,7 +34,7 @@
 0009  Constant             2     ; 1
 0012  SetGlobal            1     ; b.vb
 0015  Pop
-0016  Unit
+0016  ()
 0017  Return
 
 == <module:c> (arity=0, upvalues=0) ==
@@ -45,7 +45,7 @@
 0009  Constant             2     ; 1
 0012  SetGlobal            2     ; c.vc
 0015  Pop
-0016  Unit
+0016  ()
 0017  Return
 
 == main (arity=0, upvalues=0) ==

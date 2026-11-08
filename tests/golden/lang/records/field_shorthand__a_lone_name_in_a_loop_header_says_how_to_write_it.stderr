@@ -1,0 +1,5 @@
+error[parse]: in a `loop`'s header, the braces of `Q { x }` are read as its body: write `Q { x: x }`, or the literal in parentheses, `(Q { x })`
+ --> field_shorthand__a_lone_name_in_a_loop_header_says_how_to_write_it.silt:10:22
+    |
+ 10 |   let r = loop q = Q { x } {
+    |                      ^ in a `loop`'s header, the braces of `Q { x }` are read as its body: write `Q { x: x }`, or the literal in parentheses, `(Q { x })`

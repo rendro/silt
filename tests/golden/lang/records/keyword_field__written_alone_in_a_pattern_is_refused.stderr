@@ -1,0 +1,5 @@
+error[parse]: a field named `type` is written with a pattern, `type: t`: `type` is a keyword and cannot name a variable
+ --> keyword_field__written_alone_in_a_pattern_is_refused.silt:10:13
+    |
+ 10 |     Event { type } -> println("matched")
+    |             ^^^^ a field named `type` is written with a pattern, `type: t`: `type` is a keyword and cannot name a variable

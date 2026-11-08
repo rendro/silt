@@ -1,8 +1,8 @@
--- A `Carry(Unit)` supertrait arg is accepted.
+-- A `Carry(())` supertrait arg is accepted.
 type Bag { n: Int }
 trait Carry(c) { fn carry(self) -> c }
-trait Holds(b): Carry(Unit) { fn hold(self) -> b }
-trait Carry(Unit) for Bag { fn carry(self) -> Unit { () } }
+trait Holds(b): Carry(()) { fn hold(self) -> b }
+trait Carry(()) for Bag { fn carry(self) -> () { () } }
 trait Holds(Int) for Bag { fn hold(self) -> Int { 1 } }
 fn main() {
   let h: Int = Holds.hold(Bag { n: 1 })

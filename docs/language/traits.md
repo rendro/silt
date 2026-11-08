@@ -48,6 +48,9 @@ are: `shapes.Area.area(s)` after `import shapes`, or `Area.area(s)` after
 one case of an unannotated parameter that
 [A dot after a value](#a-dot-after-a-value) gives.
 
+An impl is for a named type (`Int`, `Shape`, `Box(a)`) or for the unit
+type, written as everywhere else: `trait Greet for () { ... }`.
+
 A trait declares complete signatures: every parameter but `self` has a
 type annotation, and a method declared without a return type returns
 `()`. An impl's method has the types its trait declares, with the impl's

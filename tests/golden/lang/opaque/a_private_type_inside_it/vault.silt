@@ -1,0 +1,19 @@
+type Secret { Secret(Int) }
+
+type Code { digits: String }
+
+pub opaque type Vault { Vault(Secret) }
+
+pub opaque type Lock { code: Code, tries: Int }
+
+pub fn vault(n: Int) -> Vault {
+  Vault(Secret(n))
+}
+
+pub fn lock(digits: String) -> Lock {
+  Lock { code: Code { digits }, tries: 0 }
+}
+
+pub fn opens(l: Lock, digits: String) -> Bool {
+  l.code.digits == digits
+}

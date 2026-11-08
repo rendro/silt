@@ -421,9 +421,7 @@ pub fn witness_type(witness: &Value) -> String {
 /// the value `Int`, `List(Int)` of `List(Int)`.
 pub fn given_type(ty: &Value) -> String {
     match ty {
-        Value::PrimitiveDescriptor("Unit") => "()".to_string(),
         Value::PrimitiveDescriptor(name) => (*name).to_string(),
-        Value::TypeDescriptor(info) if info.name == "Unit" => "()".to_string(),
         Value::TypeDescriptor(info) => info.name.clone(),
         other => witness_type(other),
     }
@@ -912,7 +910,7 @@ impl FromValue for () {
     fn from_value(value: &Value) -> Result<Self, String> {
         match value {
             Value::Unit => Ok(()),
-            other => Err(format!("expected Unit, got {}", other.kind())),
+            other => Err(format!("expected (), got {}", other.kind())),
         }
     }
 }

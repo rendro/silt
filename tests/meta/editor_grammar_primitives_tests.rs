@@ -6,7 +6,7 @@
 //! variable".
 //!
 //! Round-60 GAP G5 lock: the 8 primitive type names
-//! (Int, Float, Bool, String, Unit, List, Map, Set) were
+//! (Int, Float, Bool, String, List, Map, Set, and the unit type) were
 //! absent from both grammars until this test was introduced. The
 //! authoritative source is `src/types.rs` — adding a new primitive
 //! there without updating both grammars would regress editor

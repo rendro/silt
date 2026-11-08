@@ -143,7 +143,7 @@ fn for_each_variant<F: FnMut(&Value, &'static str)>(av: &AllVariants, mut f: F) 
     f(&av.bytes, "Bytes");
     f(&av.tcp_listener, "TcpListener");
     f(&av.tcp_stream, "TcpStream");
-    f(&av.unit, "Unit");
+    f(&av.unit, "()");
 }
 
 // ── Test 1: the kind of every variant ───────────────────────────────
@@ -191,10 +191,10 @@ fn user_facing_type_name_titlecase_aligned_with_kind() {
         );
         // No lowercase head (catches "tuple"). The very first
         // character must be uppercase or a backtick (descriptor form
-        // begins with TitleCase head).
+        // begins with TitleCase head), or be the unit type's `()`.
         let first = ufn.chars().next().unwrap_or(' ');
         assert!(
-            first.is_uppercase() || first == '`',
+            first.is_uppercase() || first == '`' || ufn == "()",
             "user_facing_type_name regressed to lowercase head for \
              {v:?}: {ufn:?}"
         );

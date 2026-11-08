@@ -84,7 +84,8 @@ module: a `pub fn` whose parameter, return type or `where` bound, or a
 `pub type` whose field or variant, names one is an error, since an
 importer could use the declaration but never name what it uses. A
 private type alias may appear there: an alias is only another name for
-its type.
+its type. A `pub opaque type` may hold a private type: nothing outside
+its module sees what it holds (see below).
 
 An impl is never exported or imported: `trait Describe for Point { ... }`
 applies wherever the trait and the type are used.
@@ -137,6 +138,20 @@ Equality, order and hashing still compare what is inside, and
 printing a value shows it, as for any type; a module that wants to
 hide it writes its own `Display`. `opaque` needs `pub`, and an alias
 cannot be opaque.
+
+What an opaque type holds may be private to its module, since no other
+module builds, matches or reads it; its printed form shows the private
+names all the same:
+
+```silt
+type Secret {
+  Secret(Int),
+}
+
+pub opaque type Vault {
+  Vault(Secret),
+}
+```
 
 ## Imports
 

@@ -604,8 +604,8 @@ mod tests {
 
     #[test]
     fn bad_10_paths_with_different_heights_into_an_ordinary_instruction() {
-        // 0000 True; 0001 JumpIfFalse -> 0006; 0004 Unit; 0005 Unit;
-        // 0006 Unit: reached with 0 values (the jump) and with 2.
+        // 0000 True; 0001 JumpIfFalse -> 0006; 0004 (); 0005 ();
+        // 0006 (): reached with 0 values (the jump) and with 2.
         let code = vec![
             op(Op::True),
             op(Op::JumpIfFalse),
@@ -618,7 +618,7 @@ mod tests {
         ];
         assert_eq!(
             rejected(code, vec![]),
-            "at offset 6: `Unit` runs where the paths into it leave different heights"
+            "at offset 6: `()` runs where the paths into it leave different heights"
         );
     }
 
@@ -626,8 +626,8 @@ mod tests {
     fn paths_with_different_heights_into_a_slide_are_accepted() {
         // The same join, followed by what the compiler emits there: a
         // push and a `Slide` that cuts the frame to one height.
-        // 0000 Unit; 0001 True; 0002 JumpIfFalse -> 0007; 0005 Unit;
-        // 0006 Unit; 0007 GetLocal 0; 0010 Slide 0; 0013 Return.
+        // 0000 (); 0001 True; 0002 JumpIfFalse -> 0007; 0005 ();
+        // 0006 (); 0007 GetLocal 0; 0010 Slide 0; 0013 Return.
         let code = vec![
             op(Op::Unit),
             op(Op::True),

@@ -276,6 +276,10 @@ pub(crate) const NO_IF_HELP: &str = "write `match {`, then one `condition -> val
 pub(crate) const TUPLE_INDEX_HELP: &str =
     "or take the tuple apart where it is bound, as in a closure's parameter: `{ (a, b) -> ... }`";
 
+/// The fields of a record literal or update, and those of them written
+/// without a value (see `ExprKind::RecordCreate`).
+type RecordFields = (Vec<(Symbol, Expr)>, Vec<Symbol>);
+
 /// The construct whose block follows a header expression.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HeaderKind {
@@ -769,6 +773,55 @@ impl<'src> Parser<'src> {
         }
     }
 
+    /// The name of a field: an identifier, or a keyword, which names a
+    /// field where only a field name can stand (`type Event { type:
+    /// String }`, `Event { type: t }`, `e.type`). A keyword cannot name
+    /// a variable, so a field named by one is never written alone.
+    fn expect_field_name(&mut self) -> Result<(Symbol, Span)> {
+        match self.peek().keyword() {
+            Some(keyword) => {
+                let span = self.advance().span;
+                Ok((intern::intern(keyword), span))
+            }
+            None => self.expect_ident(),
+        }
+    }
+
+    /// Whether the token at `i` is a field name followed by `:`.
+    fn field_name_and_colon_at(&self, i: usize) -> bool {
+        let kind = |i: usize| self.tokens.get(i).map(|t| &t.kind);
+        matches!(kind(i), Some(t) if matches!(t, Token::Ident(_)) || t.keyword().is_some())
+            && matches!(kind(i + 1), Some(Token::Colon))
+    }
+
+    /// The error for a field named by the keyword at `span`, written
+    /// alone, where `what` (a value or a pattern) belongs behind it.
+    fn keyword_field_alone(span: Span, keyword: &str, what: &str, example: &str) -> Diagnostic {
+        Diagnostic::error(
+            Code::ExpectedToken,
+            span,
+            format!(
+                "a field named `{keyword}` is written with {what}, `{keyword}: {example}`: \
+                 `{keyword}` is a keyword and cannot name a variable"
+            ),
+        )
+    }
+
+    /// The error for the field `name` of an anonymous record literal,
+    /// at `span`, written without its value.
+    fn anon_field_alone(span: Span, name: Symbol) -> Diagnostic {
+        let name = intern::resolve(name);
+        Diagnostic::error(
+            Code::UnsupportedSyntax,
+            span,
+            format!(
+                "an anonymous record writes each field as `name: value`: write `{name}: {name}`; \
+                 only a record literal with a type name takes a field written alone \
+                 (`P {{ {name} }}`)"
+            ),
+        )
+    }
+
     fn expect_ident(&mut self) -> Result<(Symbol, Span)> {
         match self.peek().clone() {
             Token::Ident(name) => {
@@ -901,9 +954,10 @@ impl<'src> Parser<'src> {
 
     /// True at a `fn` that starts a declaration (`fn name`), which no
     /// list element does: the list before it was not closed. `fn(` is
-    /// left to the element parser, which has a hint for it in a type.
+    /// left to the element parser, which has a hint for it in a type,
+    /// and `fn:` is a field named `fn`.
     fn at_fn_decl(&self) -> bool {
-        self.at(&Token::Fn) && !matches!(self.next_on_line(), Some(Token::LParen))
+        self.at(&Token::Fn) && !matches!(self.next_on_line(), Some(Token::LParen | Token::Colon))
     }
 
     /// The error for a function type written `(A -> B)`, at its `->`,
@@ -1768,6 +1822,10 @@ impl<'src> Parser<'src> {
         if self.tokens[self.pos].kind == Token::RBrace {
             return true;
         }
+        // A keyword names no variant, only a field.
+        if self.tokens[self.pos].kind.keyword().is_some() {
+            return true;
+        }
         if let Token::Ident(ref name) = self.tokens[self.pos].kind {
             // lowercase first char → likely record field
             intern::resolve(*name).starts_with(|c: char| c.is_lowercase())
@@ -1781,7 +1839,7 @@ impl<'src> Parser<'src> {
     fn parse_record_body(&mut self, open: Span) -> Result<TypeBody> {
         let mut first = true;
         let fields = self.comma_list("record type", open, ListEnd::Close(&Token::RBrace), |p| {
-            let (name, name_span) = p.expect_ident()?;
+            let (name, name_span) = p.expect_field_name()?;
             // The body was taken for a record because its first name is
             // lower case. A first name without `:` that looks like an
             // enum variant may be a variant spelled in lower case.
@@ -2150,10 +2208,11 @@ impl<'src> Parser<'src> {
                 ..span
             };
 
-            // Accept only `Named(head)` or `Generic(head, args)` as the
-            // impl target. Reject tuple/fn/Unit targets — those have no
-            // stable "head symbol" for method_table keying or for the
-            // compiler's `TypeName.method_name` qualified-name form.
+            // Accept only `Named(head)`, `Generic(head, args)` or the
+            // unit type `()` (whose name is `()`) as the impl target.
+            // Reject tuple/fn targets — those have no stable "head
+            // symbol" for method_table keying or for the compiler's
+            // `TypeName.method_name` qualified-name form.
             // The head-name span: for `for Int` it's `Int`'s span; for
             // `for m.Box(a)` it's `Box`'s span.
             let (target_module, target, target_type_span, target_type_args) = match target_te.kind {
@@ -2168,6 +2227,9 @@ impl<'src> Parser<'src> {
                     name_span,
                     args,
                 } => (module, name, name_span, args),
+                TypeExprKind::Tuple(elems) if elems.is_empty() => {
+                    (None, intern::intern("()"), target_te.span, Vec::new())
+                }
                 _ => {
                     return Err(Diagnostic::error(
                         Code::InvalidDeclaration,
@@ -2504,7 +2566,7 @@ impl<'src> Parser<'src> {
                         tail = Some((row, dots.to(row_span)));
                         return Ok(None);
                     }
-                    let (fname, fname_span) = p.expect_ident()?;
+                    let (fname, fname_span) = p.expect_field_name()?;
                     p.expect(&Token::Colon)?;
                     let fty = p.parse_type_expr()?;
                     if !seen.insert(fname) {
@@ -3089,11 +3151,12 @@ impl<'src> Parser<'src> {
                     if self.at(&Token::LBrace) {
                         // Record update: expr.{ field: value }
                         let span = left.span;
-                        let fields = self.parse_record_fields()?;
+                        let (fields, punned) = self.parse_record_fields()?;
                         left = self.mk_expr(
                             ExprKind::RecordUpdate {
                                 expr: Box::new(left),
                                 fields,
+                                punned,
                             },
                             span,
                         );
@@ -3111,7 +3174,7 @@ impl<'src> Parser<'src> {
                         )
                         .with_help(TUPLE_INDEX_HELP));
                     } else {
-                        let (field, field_span) = self.expect_ident()?;
+                        let (field, field_span) = self.expect_field_name()?;
                         // Qualified record construction —
                         // `util.Pt { x: 1, y: 2 }` builds the same value as
                         // bare `Pt { x: 1, y: 2 }`, with the qualifier
@@ -3143,7 +3206,7 @@ impl<'src> Parser<'src> {
                                     name: *module,
                                     span: left.span,
                                 };
-                                let fields = self.parse_record_fields()?;
+                                let (fields, punned) = self.parse_record_fields()?;
                                 let span = left.span;
                                 left = self.mk_expr(
                                     ExprKind::RecordCreate {
@@ -3151,10 +3214,21 @@ impl<'src> Parser<'src> {
                                         name: field,
                                         name_span: field_span,
                                         fields,
+                                        punned,
                                     },
                                     span,
                                 );
                                 continue;
+                            }
+                            if let ExprKind::Ident(module) = &left.kind
+                                && self.header_lone_shorthand()
+                            {
+                                let ty = format!(
+                                    "{}.{}",
+                                    intern::resolve(*module),
+                                    intern::resolve(field)
+                                );
+                                return Err(self.header_lone_shorthand_error(&ty));
                             }
                             // Imports take a single module ident, so only a
                             // one-segment qualifier can ever resolve. A
@@ -3311,16 +3385,19 @@ impl<'src> Parser<'src> {
                     && !self.is_trailing_closure()
                 {
                     // Record creation: User { name: "Alice", ... }
-                    let fields = self.parse_record_fields()?;
+                    let (fields, punned) = self.parse_record_fields()?;
                     Ok(self.mk_expr(
                         ExprKind::RecordCreate {
                             module: None,
                             name,
                             name_span: span,
                             fields,
+                            punned,
                         },
                         span,
                     ))
+                } else if !self.nl_before() && self.header_lone_shorthand() {
+                    Err(self.header_lone_shorthand_error(&intern::resolve(name)))
                 } else {
                     Ok(self.mk_expr(ExprKind::Ident(name), span))
                 }
@@ -3413,6 +3490,19 @@ impl<'src> Parser<'src> {
                     self.parse_trailing_closure_as_lambda()
                 } else if self.is_anon_record_literal() {
                     self.parse_anon_record_literal()
+                } else if let Some(Token::Ident(name)) =
+                    self.tokens.get(self.pos + 1).map(|t| &t.kind)
+                    && matches!(
+                        self.tokens.get(self.pos + 2).map(|t| &t.kind),
+                        Some(Token::Comma)
+                    )
+                {
+                    // `{ x, ...` starts no block and no closure: an
+                    // anonymous record with a field written alone.
+                    Err(Self::anon_field_alone(
+                        self.tokens[self.pos + 1].span,
+                        *name,
+                    ))
                 } else {
                     self.parse_block()
                 }
@@ -3700,20 +3790,61 @@ impl<'src> Parser<'src> {
     /// normally suppressed so the match-body `{` isn't consumed as part
     /// of the scrutinee expression. But a record literal
     /// `Ctor { field: v, ... }` is syntactically distinct from a match
-    /// body `{ pattern -> body }`: the former has `Ident Colon`
-    /// immediately after `{`; the latter has `Pattern Arrow`. This
-    /// bounded lookahead lets a record literal through inside scrutinee
-    /// position without breaking match-body suppression.
+    /// body `{ pattern -> body }`: the former has `Ident Colon`, or
+    /// `Ident Comma` (a shorthand field and more), immediately after
+    /// `{`; the latter has `Pattern Arrow`, and a block never starts
+    /// with either. This bounded lookahead lets a record literal through
+    /// inside scrutinee position without breaking match-body
+    /// suppression. A lone shorthand field (`P { x }`) is not let
+    /// through: braces holding one name are also a `loop`'s body.
     fn scrutinee_lbrace_is_record_literal(&self) -> bool {
         if self.peek() != &Token::LBrace {
             return false;
         }
-        let mut i = self.pos + 1;
-        if !matches!(self.tokens.get(i).map(|t| &t.kind), Some(Token::Ident(_))) {
-            return false;
+        let i = self.pos + 1;
+        if self.field_name_and_colon_at(i) {
+            return true;
         }
-        i += 1;
-        matches!(self.tokens.get(i).map(|t| &t.kind), Some(Token::Colon))
+        matches!(self.tokens.get(i).map(|t| &t.kind), Some(Token::Ident(_)))
+            && matches!(self.tokens.get(i + 1).map(|t| &t.kind), Some(Token::Comma))
+    }
+
+    /// In a header, at braces behind a type name that hold one name
+    /// alone and are followed on their line by another `{`: `match Q {
+    /// x } {`, `loop q = Q { x } {`. The braces were meant as the
+    /// literal `Q { x }`, but in a header they are its block (see
+    /// `scrutinee_lbrace_is_record_literal`), and the `{` behind them
+    /// is the real one.
+    fn header_lone_shorthand(&self) -> bool {
+        let kind = |i: usize| self.tokens.get(self.pos + i).map(|t| &t.kind);
+        self.lbrace_may_be_header_block()
+            && matches!(kind(0), Some(Token::LBrace))
+            && matches!(kind(1), Some(Token::Ident(name)) if !is_constructor(*name))
+            && matches!(kind(2), Some(Token::RBrace))
+            && matches!(kind(3), Some(Token::LBrace))
+            && !self.starts_line.get(self.pos + 3).copied().unwrap_or(true)
+    }
+
+    /// The error at `header_lone_shorthand`, for the type `ty` as
+    /// written (`Q`, `util.Q`).
+    fn header_lone_shorthand_error(&self, ty: &str) -> Diagnostic {
+        let field = match self.tokens.get(self.pos + 1).map(|t| &t.kind) {
+            Some(Token::Ident(name)) => intern::resolve(*name),
+            _ => String::new(),
+        };
+        let what = match self.header_here().map(|h| h.kind) {
+            Some(HeaderKind::LoopInit) => "a `loop`'s",
+            _ => "a `match`'s",
+        };
+        Diagnostic::error(
+            Code::ExpectedToken,
+            self.span(),
+            format!(
+                "in {what} header, the braces of `{ty} {{ {field} }}` are read as its body: \
+                 write `{ty} {{ {field}: {field} }}`, or the literal in parentheses, \
+                 `({ty} {{ {field} }})`"
+            ),
+        )
     }
 
     /// Render an `Ident` / dotted `FieldAccess` chain (`util`,
@@ -3959,17 +4090,13 @@ impl<'src> Parser<'src> {
         if self.peek() != &Token::LBrace {
             return false;
         }
-        let mut i = self.pos + 1;
+        let i = self.pos + 1;
         // Spread head is unambiguous.
         if matches!(self.tokens.get(i).map(|t| &t.kind), Some(Token::DotDotDot)) {
             return true;
         }
-        // `Ident COLON`: an anonymous record.
-        if !matches!(self.tokens.get(i).map(|t| &t.kind), Some(Token::Ident(_))) {
-            return false;
-        }
-        i += 1;
-        matches!(self.tokens.get(i).map(|t| &t.kind), Some(Token::Colon))
+        // `name COLON`, the name maybe a keyword: an anonymous record.
+        self.field_name_and_colon_at(i)
     }
 
     /// Parse `{name: expr, ...}` or `{...spread, name: expr, ...}` after
@@ -4000,8 +4127,17 @@ impl<'src> Parser<'src> {
                     spread = Some(Box::new(p.parse_expr()?));
                     return Ok(None);
                 }
-                let (name, name_span) = p.expect_ident()?;
-                p.expect(&Token::Colon)?;
+                let keyword = p.peek().keyword();
+                let (name, name_span) = p.expect_field_name()?;
+                if !p.at(&Token::Colon) {
+                    return Err(match keyword {
+                        Some(keyword) => {
+                            Self::keyword_field_alone(name_span, keyword, "its value", "value")
+                        }
+                        None => Self::anon_field_alone(name_span, name),
+                    });
+                }
+                p.advance();
                 let value = p.parse_expr()?;
                 if !seen.insert(name) {
                     return Err(Diagnostic::error(
@@ -4018,10 +4154,12 @@ impl<'src> Parser<'src> {
     }
 
     /// The braces of a record literal or a record update, at the `{`:
-    /// `{ name: expr, ... }`.
-    fn parse_record_fields(&mut self) -> Result<Vec<(Symbol, Expr)>> {
+    /// `{ name: expr, ... }`, where a field written `name` alone is
+    /// `name: name` (the shorthand of record patterns).
+    fn parse_record_fields(&mut self) -> Result<RecordFields> {
         let open = self.expect(&Token::LBrace)?.span;
-        self.comma_list(
+        let mut punned = Vec::new();
+        let fields = self.comma_list(
             "record literal",
             open,
             ListEnd::Close(&Token::RBrace),
@@ -4033,11 +4171,25 @@ impl<'src> Parser<'src> {
                         "spread syntax is not supported; use `value.{ field: expr }` for record updates",
                     ));
                 }
-                let (name, _) = p.expect_ident()?;
-                p.expect(&Token::Colon)?;
+                let keyword = p.peek().keyword();
+                let (name, name_span) = p.expect_field_name()?;
+                if !p.at(&Token::Colon) {
+                    if let Some(keyword) = keyword {
+                        return Err(Self::keyword_field_alone(
+                            name_span, keyword, "its value", "value",
+                        ));
+                    }
+                    // The shorthand: the field takes the value of the
+                    // name in scope.
+                    let value = p.mk_expr(ExprKind::Ident(name), name_span);
+                    punned.push(name);
+                    return Ok((name, value));
+                }
+                p.advance();
                 Ok((name, p.parse_expr()?))
             },
-        )
+        )?;
+        Ok((fields, punned))
     }
 
     /// The error for an element behind the rest of a pattern (`..`,
@@ -4274,10 +4426,19 @@ impl<'src> Parser<'src> {
 
     /// A field of a record pattern: `name` or `name: pattern`.
     fn parse_field_pattern(&mut self) -> Result<(Symbol, Span, Option<Pattern>)> {
-        let (field_name, field_span) = self.expect_ident()?;
+        let keyword = self.peek().keyword();
+        let (field_name, field_span) = self.expect_field_name()?;
         let sub = if self.peek() == &Token::Colon {
             self.advance();
             Some(self.parse_pattern()?)
+        } else if let Some(keyword) = keyword {
+            let example = &keyword[..1];
+            return Err(Self::keyword_field_alone(
+                field_span,
+                keyword,
+                "a pattern",
+                example,
+            ));
         } else {
             None
         };

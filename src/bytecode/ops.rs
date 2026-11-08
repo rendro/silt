@@ -731,6 +731,17 @@ macro_rules! flow {
     };
 }
 
+/// The name disassembly shows for the opcode `name`: its own, but `()`
+/// for the one that pushes the unit value, as `True` pushes `true`.
+macro_rules! op_name {
+    (Unit) => {
+        "()"
+    };
+    ($name:ident) => {
+        stringify!($name)
+    };
+}
+
 // ── The generator ──────────────────────────────────────────────────
 
 macro_rules! ops {
@@ -758,7 +769,7 @@ macro_rules! ops {
             /// The opcode's name, as disassembly shows it.
             pub fn name(self) -> &'static str {
                 match self {
-                    $( Op::$name => stringify!($name), )*
+                    $( Op::$name => op_name!($name), )*
                 }
             }
         }
@@ -872,7 +883,7 @@ ops! {
     // ── Constants & literals ────────────────────────────────────
     /// Push the constant.
     Constant { k: Const } => pops 0, pushes 1;
-    /// Push Unit.
+    /// Push `()`, the unit value.
     Unit => pops 0, pushes 1;
     /// Push true.
     True => pops 0, pushes 1;

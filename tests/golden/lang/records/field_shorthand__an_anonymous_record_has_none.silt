@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- An anonymous record has no shorthand: each field is `name: value`, and
+-- the error says so.
+fn main() {
+  let x = 1
+  let r = { x, y: 2 }
+  println("{r.x}")
+}

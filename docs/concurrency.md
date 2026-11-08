@@ -102,7 +102,7 @@ the current task is parked until space opens up. The OS thread is not blocked --
 it runs other tasks in the meantime. If the channel is closed, sending is an
 error.
 
-Returns `Unit`.
+Returns `()`.
 
 ### Receiving: `channel.receive(ch)`
 
@@ -144,7 +144,7 @@ Signals that no more values will be sent on this channel. After closing:
   empty, `channel.receive` returns `None` (and `channel.try_receive`
   `Closed`).
 
-Returns `Unit`.
+Returns `()`.
 
 ### Non-blocking send: `channel.try_send(ch, value)`
 
@@ -198,7 +198,7 @@ channel.each(ch) { msg -> println("got: {msg}") }
 ```
 
 `channel.each` calls a function for each value received from the channel and
-returns `Unit` when the channel closes. It is the channel equivalent of
+returns `()` when the channel closes. It is the channel equivalent of
 `list.each`. When the channel is empty, the task is parked until new data
 arrives.
 
@@ -476,7 +476,7 @@ typically want one of two patterns when cancellation is an expected outcome:
    the call site and scope the surrounding code so that failure is the
    expected exit path.
 
-Returns `Unit`.
+Returns `()`.
 
 ### When a program ends
 
@@ -1551,18 +1551,18 @@ for a task that waits for an I/O operation. Only `main` gets a deadlock verdict;
 | Operation | Syntax | Returns |
 |---|---|---|
 | Create channel | `channel.new(0)` / `channel.new(n)` | `Channel` |
-| Send (blocking) | `channel.send(ch, val)` | `Unit` |
+| Send (blocking) | `channel.send(ch, val)` | `()` |
 | Receive (blocking) | `channel.receive(ch)` | `Option(a)` -- `Some(val)`, or `None` once the channel is closed and empty |
-| Close | `channel.close(ch)` | `Unit` |
+| Close | `channel.close(ch)` | `()` |
 | Try send | `channel.try_send(ch, val)` | `true` or `false` |
 | Try receive | `channel.try_receive(ch)` | `channel.ChannelResult(a)` -- `channel.Message(val)`, `channel.Empty`, or `channel.Closed` |
-| Iterate | `channel.each(ch) { val -> ... }` | `Unit` (when closed) |
+| Iterate | `channel.each(ch) { val -> ... }` | `()` (when closed) |
 | Select | `channel.select([channel.Recv(ch1), channel.Send(ch2, v)])` | `channel.Selected(a)` -- `channel.Received(channel, Some(val))`, `channel.Received(channel, None)`, or `channel.Sent(channel)` |
 | Timeout channel | `channel.timeout(dur)` | `Channel` (closes after the `Duration`) |
 | Receive with timeout | `channel.receive_timeout(ch, dur)` | `channel.Message(val)`, `channel.Empty` (nothing came in time), or `channel.Closed`; a buffered value wins over an expired timer |
 | Spawn task | `task.spawn({ -> ... })` | `task.Handle(a)` |
 | Join task | `task.join(handle)` | Task's return value (raises `joined task failed: <msg>` if the task errored or was cancelled) |
-| Cancel task | `task.cancel(handle)` | `Unit` (a failure of the task is then not reported) |
+| Cancel task | `task.cancel(handle)` | `()` (a failure of the task is then not reported) |
 | Deadline | `task.deadline(dur, { -> ... })` | `Ok(value)` of the function, or `Err(task.Timeout)` if it was ended because its time was over |
 
 The mental model: tasks are independent workers, channels are the pipes between

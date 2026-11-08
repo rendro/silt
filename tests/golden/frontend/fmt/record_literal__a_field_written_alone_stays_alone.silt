@@ -1,0 +1,13 @@
+-- cmd: fmt
+-- A field written without its value stays so, beside one with a value,
+-- in a literal and in an update.
+type P { x: Int, y: Int }
+
+fn main() {
+  let x = 1
+  let y = 2
+  let p = P {x,   y: y}
+  let q = p.{   y }
+  println(P {  x ,y })
+  println(q)
+}

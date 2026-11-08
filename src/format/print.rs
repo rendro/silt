@@ -252,14 +252,17 @@ fn needs_parens(expr: &Expr, ctx: Ctx) -> bool {
 /// Whether `expr`, printed in a `match` or `loop` header without
 /// parentheses around it, would show a `{` that is not in brackets: a
 /// block, a closure that is not an argument, a record without a name, or
-/// a record literal without fields. The parser takes such a `{` for the
-/// block of the header (or the `match` for one without a scrutinee), so
-/// parentheses around `expr` stay. (A closure argument is no danger: in
-/// a header it is written between the call's parentheses.)
+/// a record literal without fields or with one field written alone
+/// (`Q { x }`). The parser takes such a `{` for the block of the header
+/// (or the `match` for one without a scrutinee), so parentheses around
+/// `expr` stay. (A closure argument is no danger: in a header it is
+/// written between the call's parentheses.)
 fn opens_brace_in_header(expr: &Expr) -> bool {
     match &expr.kind {
         ExprKind::Lambda { .. } | ExprKind::Block(_) | ExprKind::AnonRecord { .. } => true,
-        ExprKind::RecordCreate { fields, .. } => fields.is_empty(),
+        ExprKind::RecordCreate { fields, punned, .. } => {
+            fields.is_empty() || (fields.len() == 1 && !punned.is_empty())
+        }
         ExprKind::Binary(left, _, right)
         | ExprKind::Pipe(left, right)
         | ExprKind::Range(left, right) => {
@@ -660,6 +663,15 @@ impl Printer<'_> {
 
     fn name(&mut self) -> Doc {
         self.cur.token(&ident())
+    }
+
+    /// The name of a field, which may be a keyword (`e.type`).
+    fn field_name(&mut self) -> Doc {
+        let token = self.cur.peek();
+        match token.keyword() {
+            Some(_) => self.cur.token(token),
+            None => self.name(),
+        }
     }
 
     /// `name` or `module.name`.
@@ -1098,7 +1110,7 @@ impl Printer<'_> {
                     fields,
                     |p, field| {
                         Doc::concat(vec![
-                            p.name(),
+                            p.field_name(),
                             p.tok(Token::Colon),
                             space(),
                             p.type_expr(&field.ty),
@@ -1167,8 +1179,14 @@ impl Printer<'_> {
             // `for` is an identifier to the lexer.
             self.name(),
             space(),
-            self.qualified(t.target_module.is_some()),
         ];
+        // The unit type is written `()`.
+        if intern::resolve(t.target_type) == "()" {
+            docs.push(self.tok(Token::LParen));
+            docs.push(self.tok(Token::RParen));
+        } else {
+            docs.push(self.qualified(t.target_module.is_some()));
+        }
         if !t.target_type_args.is_empty() {
             docs.push(self.delimited(
                 Token::LParen,
@@ -1687,20 +1705,24 @@ impl Printer<'_> {
         list_layout(open, items, tail, close, TIGHT)
     }
 
-    /// `{ name: value, ... }`.
+    /// `{ name: value, ... }`, where a field written `name` alone (its
+    /// value is the name itself) stays so.
     fn fields(&mut self, fields: &[(intern::Symbol, Expr)]) -> Doc {
         self.delimited(
             Token::LBrace,
             Token::RBrace,
             SPACED,
             fields,
-            |p, (_, value)| p.field(value),
+            |p, (_, value)| match value.span.start == p.cur.offset() {
+                true => p.name(),
+                false => p.field(value),
+            },
         )
     }
 
     fn field(&mut self, value: &Expr) -> Doc {
         Doc::concat(vec![
-            self.name(),
+            self.field_name(),
             self.tok(Token::Colon),
             space(),
             self.expr(value, Ctx::top()),
@@ -1989,7 +2011,7 @@ impl Printer<'_> {
                         docs.push(self.tok(Token::Dot));
                         match &link.kind {
                             ExprKind::RecordUpdate { fields, .. } => docs.push(self.fields(fields)),
-                            _ => docs.push(self.name()),
+                            _ => docs.push(self.field_name()),
                         }
                     }
                     ExprKind::Call(callee, args) => {
@@ -2022,7 +2044,7 @@ impl Printer<'_> {
                     docs.push(self.tok(Token::Dot));
                     match &link.kind {
                         ExprKind::RecordUpdate { fields, .. } => docs.push(self.fields(fields)),
-                        _ => docs.push(self.name()),
+                        _ => docs.push(self.field_name()),
                     }
                 }
                 ExprKind::Call(callee, args) => {
@@ -2555,7 +2577,7 @@ impl Printer<'_> {
             &items,
             |p, item| match (item, &rest) {
                 (Some(sub), _) => {
-                    let name = p.name();
+                    let name = p.field_name();
                     match sub {
                         Some(sub) => {
                             Doc::concat(vec![name, p.tok(Token::Colon), space(), p.pattern(sub)])
@@ -2767,7 +2789,7 @@ impl Printer<'_> {
                     &items,
                     |p, item| match item {
                         Some(ty) => Doc::concat(vec![
-                            p.name(),
+                            p.field_name(),
                             p.tok(Token::Colon),
                             space(),
                             p.type_expr(ty),

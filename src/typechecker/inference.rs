@@ -5279,7 +5279,9 @@ impl TypeChecker {
                 }
             }
 
-            ExprKind::RecordUpdate { expr: base, fields } => {
+            ExprKind::RecordUpdate {
+                expr: base, fields, ..
+            } => {
                 let base_span = base.span;
                 let base_ty = self.infer_expr(base, env);
                 let resolved = self.apply(&base_ty);
@@ -5913,7 +5915,9 @@ impl TypeChecker {
                     self.check_recur_tail_positions(e, inner);
                 }
             }
-            ExprKind::RecordUpdate { expr: base, fields } => {
+            ExprKind::RecordUpdate {
+                expr: base, fields, ..
+            } => {
                 self.check_recur_tail_positions(base, inner);
                 for (_, e) in fields {
                     self.check_recur_tail_positions(e, inner);
@@ -6286,15 +6290,7 @@ pub(super) fn written_type(te: &TypeExpr, name: Symbol) -> Option<TypeRef> {
             name,
         }),
         Some(_) => None,
-        None => {
-            let name_str = resolve(name);
-            let name_str = if name_str == "()" {
-                "Unit"
-            } else {
-                name_str.as_str()
-            };
-            crate::defs::builtin_type_id(name_str).map(|id| TypeRef { id, name })
-        }
+        None => crate::defs::builtin_type_id(&resolve(name)).map(|id| TypeRef { id, name }),
     }
 }
 
@@ -6342,7 +6338,7 @@ pub(super) fn resolve_supertrait_arg(
                 Some("Float") => Type::Float,
                 Some("Bool") => Type::Bool,
                 Some("String") => Type::String,
-                Some("Unit") => Type::Unit,
+                Some("()") => Type::Unit,
                 _ => Type::Generic(ty, Vec::new()),
             }
         }
@@ -6380,6 +6376,8 @@ pub(super) fn resolve_supertrait_arg(
                 _ => Type::Generic(ty, resolved),
             }
         }
+        // `()` is the unit type, as `resolve_type_expr` reads it.
+        TypeExprKind::Tuple(elems) if elems.is_empty() => Type::Unit,
         TypeExprKind::Tuple(elems) => Type::Tuple(
             elems
                 .iter()

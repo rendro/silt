@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- In a `loop` header, braces holding one name alone are the loop's body;
+-- the literal `Q { x }` meant there is written `Q { x: x }` or in
+-- parentheses, and the error says so.
+type Q { x: Int }
+
+fn main() {
+  let x = 0
+  let r = loop q = Q { x } {
+    q
+  }
+  println("{r.x}")
+}

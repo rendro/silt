@@ -694,7 +694,7 @@ impl TypeChecker {
                                     let whole = Type::Generic(ty, Vec::new());
                                     let of = matches!(
                                         builtin_type_name(ty),
-                                        Some("Int" | "Float" | "Bool" | "String" | "Unit")
+                                        Some("Int" | "Float" | "Bool" | "String" | "()")
                                     )
                                     .then_some(&whole);
                                     one_impl(tr.id, ty.id, of)

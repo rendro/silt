@@ -1,0 +1,7 @@
+P {x: 1, y: 2}
+P {x: 7, y: 2}
+P {x: 1, y: 2}
+P {x: 0, y: 9}
+10
+[P {x: 1, y: 10}, P {x: 2, y: 20}]
+Named {name: n, tags: [a]}

@@ -1,0 +1,33 @@
+-- A field written alone in a record literal or update takes the value
+-- of the name in scope: `P { x, y }` is `P { x: x, y: y }`, as the
+-- pattern `P { x, y }` binds `x` and `y`. It mixes with `name: value`
+-- fields, works behind a module qualifier, and in a `match` scrutinee
+-- whose braces hold more than one name.
+import list
+
+type P { x: Int, y: Int }
+
+type Named { name: String, tags: List(String) }
+
+fn make(name: String) -> Named {
+  let tags = ["a"]
+  Named { name, tags }
+}
+
+fn main() {
+  let x = 1
+  let y = 2
+  let p = P { x, y }
+  println(p)
+  println(P { y, x: 7 })
+  let q = p.{ y }
+  println(q)
+  let y = 9
+  println(p.{ y, x: 0 })
+  match P { x, y } {
+    P { x, y } -> println(x + y)
+  }
+  let pts = [1, 2] |> list.map { x -> P { x, y: x * 10 } }
+  println(pts)
+  println(make("n"))
+}

@@ -280,7 +280,7 @@ pub(super) fn any_expr(expr: &Expr, found: &mut impl FnMut(&Expr) -> bool) -> bo
         ExprKind::Call(callee, args) => inner(callee) || args.iter().any(&mut inner),
         ExprKind::Lambda { body, .. } => inner(body),
         ExprKind::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| inner(e)),
-        ExprKind::RecordUpdate { expr, fields } => {
+        ExprKind::RecordUpdate { expr, fields, .. } => {
             inner(expr) || fields.iter().any(|(_, e)| inner(e))
         }
         ExprKind::AnonRecord { spread, fields } => {
@@ -2056,12 +2056,7 @@ impl<'a> Compiler<'a> {
 
             // The literal's type is the one the resolver resolved it to,
             // written `Pt { .. }` or `util.Pt { .. }`.
-            ExprKind::RecordCreate {
-                module: _,
-                name_span: _,
-                name,
-                fields,
-            } => {
+            ExprKind::RecordCreate { name, fields, .. } => {
                 // Push field values in order
                 let field_names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
                 self.compile_operands(fields.iter().map(|(_, val)| val))?;
@@ -2077,7 +2072,7 @@ impl<'a> Compiler<'a> {
                 )?;
             }
 
-            ExprKind::RecordUpdate { expr, fields } => {
+            ExprKind::RecordUpdate { expr, fields, .. } => {
                 let field_names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
                 self.compile_operands(
                     std::iter::once(&**expr).chain(fields.iter().map(|(_, val)| val)),
@@ -2946,7 +2941,7 @@ impl<'a> Compiler<'a> {
             Type::Float => primitive("Float"),
             Type::String => primitive("String"),
             Type::Bool => primitive("Bool"),
-            Type::Unit => primitive("Unit"),
+            Type::Unit => primitive("()"),
             Type::Generic(t, args) if args.is_empty() => Some(self.type_descriptor(*t)),
             _ => {
                 let (head, parts) = self.type_parts(ty)?;
@@ -3122,8 +3117,7 @@ impl<'a> Compiler<'a> {
             }),
             _ => {
                 let name = resolve(ti.target_type);
-                let name = if name == "()" { "Unit" } else { name.as_str() };
-                crate::defs::builtin_type_id(name).map(|id| TypeRef {
+                crate::defs::builtin_type_id(&name).map(|id| TypeRef {
                     id,
                     name: ti.target_type,
                 })

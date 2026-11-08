@@ -1164,17 +1164,17 @@ impl TypeChecker {
 
     /// Convert a type name Symbol to a Type.
     ///
-    /// The `Unit`/`()` arm gives a user-declared
-    /// `trait T for Unit { ... }` impl a `Type::Unit` self_type
-    /// rather than the `Type::Generic("Unit", [])` fallback, which never
-    /// unifies with the canonical `Type::Unit` receiver.
+    /// The `()` arm gives a user-declared `trait T for () { ... }`
+    /// impl a `Type::Unit` self_type rather than the
+    /// `Type::Generic("()", [])` fallback, which never unifies with the
+    /// canonical `Type::Unit` receiver.
     fn type_from_name(ty: TypeRef) -> Type {
         match builtin_type_name(ty) {
             Some("Int") => Type::Int,
             Some("Float") => Type::Float,
             Some("Bool") => Type::Bool,
             Some("String") => Type::String,
-            Some("Unit") => Type::Unit,
+            Some("()") => Type::Unit,
             _ => Type::Generic(ty, vec![]),
         }
     }

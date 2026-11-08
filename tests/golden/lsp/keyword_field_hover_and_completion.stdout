@@ -1,0 +1,25 @@
+> completion 16:13
+type
+when
+> completion 16:15
+type
+> hover 16:14
+```silt
+type: String
+```
+> hover 17:14
+```silt
+when: Int
+```
+> hover 12:14
+(nothing)
+> hover 15:35
+```silt
+Event
+```
+> hover 15:20
+```silt
+Event
+```
+> definition 16:14
+keyword_field_hover_and_completion.silt:12:14-12:18

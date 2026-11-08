@@ -253,7 +253,9 @@ fn build_builtins() -> (BuiltinDefs, BuiltinScopes) {
         let name = intern(name);
         let id = add(&mut defs, module_id, name, DefKind::Type(ty));
         debug_assert_eq!(id, ty.0);
-        if resolve(name) != ANON_RECORD {
+        // (The unit type `()` is written as punctuation, never as a
+        // name a scope binds.)
+        if resolve(name) != ANON_RECORD && resolve(name) != "()" {
             let exports = match module {
                 None => &mut prelude_exports,
                 Some(_) => module_exports.entry(module_id).or_default(),
@@ -819,7 +821,8 @@ fn bind_imported(
 
 /// Report each private record, enum or trait of `module` that a public
 /// declaration names: a `pub fn`'s parameter and return types and its
-/// where-bounds, a `pub type`'s fields, variants and alias target. An
+/// where-bounds, a `pub type`'s fields, variants and alias target (not
+/// a `pub opaque type`'s, whose contents nothing outside sees). An
 /// importer could use the public declaration but never name the private
 /// item it leaks.
 fn report_private_in_public(
@@ -903,7 +906,9 @@ fn report_private_in_public(
                 }
                 (format!("public fn '{}'", f.name), f.name)
             }
-            Decl::Type(td) if td.is_pub => {
+            // An opaque type shows nothing of what it holds outside its
+            // module: it may hold a private type.
+            Decl::Type(td) if td.is_pub && !td.is_opaque => {
                 match &td.body {
                     TypeBody::Enum(variants) => variants
                         .iter()
@@ -2954,6 +2959,7 @@ impl Resolver<'_> {
                 name,
                 name_span,
                 fields,
+                ..
             } => {
                 let (module, name, name_span) = (*module, *name, *name_span);
                 for (_, e) in fields.iter_mut() {
@@ -2961,7 +2967,9 @@ impl Resolver<'_> {
                 }
                 expr.res = self.record_name(module, name, name_span, span, false);
             }
-            ExprKind::RecordUpdate { expr: base, fields } => {
+            ExprKind::RecordUpdate {
+                expr: base, fields, ..
+            } => {
                 self.expr(base);
                 for (_, e) in fields {
                     self.expr(e);

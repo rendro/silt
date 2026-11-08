@@ -1,0 +1,28 @@
+-- A keyword may name a field where only a field name stands: in a record
+-- type's body, before `:` in a literal or an update, in a record
+-- pattern, after a dot, and the same in anonymous records.
+type Event { type: String, match: Int, fn: Bool }
+
+fn kind(e: Event) -> String {
+  match e {
+    Event { type: "click", .. } -> "a click"
+    Event { type: t, match: m, .. } -> "{t} {m}"
+  }
+}
+
+fn main() {
+  let e = Event { type: "click", match: 1, fn: true }
+  println(kind(e))
+  let e2 = e.{ type: "key", match: 2 }
+  println(kind(e2))
+  println(e2.type)
+  println(e2.fn)
+  match Event { type: "scroll", match: 3, fn: false } {
+    Event { type: t, .. } -> println(t)
+  }
+  let a = { when: "now", as: 1 }
+  let { when: w, as: n } = a
+  println("{a.when} {w} {n}")
+  let f = { r: { loop: Int } -> r.loop + 1 }
+  println(f({ loop: 41 }))
+}

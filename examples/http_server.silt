@@ -16,7 +16,7 @@ type Todo {
 
 fn json_response(status, data) {
   http.Response {
-    status: status,
+    status,
     body: bytes.from_string(json.stringify(data)),
     headers: #{ "Content-Type": "application/json" },
   }

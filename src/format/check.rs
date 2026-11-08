@@ -1181,7 +1181,7 @@ impl ShapeWriter {
                 self.sym(*name);
                 self.field_values(fields);
             }
-            ExprKind::RecordUpdate { expr, fields } => {
+            ExprKind::RecordUpdate { expr, fields, .. } => {
                 self.open("record-update");
                 self.expr(expr);
                 self.field_values(fields);

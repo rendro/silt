@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- A field named by a keyword is never written alone: the shorthand would
+-- take the value of a variable, and a keyword names none.
+type Event { type: String }
+
+fn main() {
+  let e = Event { type }
+  println(e)
+}

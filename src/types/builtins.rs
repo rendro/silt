@@ -33,7 +33,7 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuiltinKind {
     /// Scalar / nullary type with no parameters: `Int`, `Float`,
-    /// `Bool`, `String`, `Unit`, and the surface alias `()`.
+    /// `Bool`, `String` and the unit type `()`.
     Primitive,
     /// Parameterized container, callable, or resource type: `List`,
     /// `Map`, `Set`, `Channel`, `Tuple`, `Fn`, `Fun`, `Handle`.
@@ -60,9 +60,7 @@ pub struct BuiltinType {
 /// Order: primitives first (matching the typechecker's `is_primitive`
 /// match arm at `src/typechecker/mod.rs::check_trait_impl`), then
 /// containers (matching the `is_builtin_container` match arm at the
-/// same site). The `()` surface alias for `Unit` is kept as a separate
-/// entry with the same arity/kind so a single iterator covers every
-/// surface form a user might write.
+/// same site). The unit type has one name, `()`.
 pub static BUILTIN_TYPES: &[BuiltinType] = &[
     // ── Primitives ─────────────────────────────────────────────────
     BuiltinType {
@@ -82,11 +80,6 @@ pub static BUILTIN_TYPES: &[BuiltinType] = &[
     },
     BuiltinType {
         name: "String",
-        arity: Some(0),
-        kind: BuiltinKind::Primitive,
-    },
-    BuiltinType {
-        name: "Unit",
         arity: Some(0),
         kind: BuiltinKind::Primitive,
     },
@@ -190,7 +183,7 @@ mod tests {
     fn lookup_finds_known_primitives() {
         assert_eq!(lookup("Int").map(|b| b.kind), Some(BuiltinKind::Primitive));
         assert_eq!(lookup("Bool").map(|b| b.kind), Some(BuiltinKind::Primitive));
-        assert_eq!(lookup("Unit").map(|b| b.kind), Some(BuiltinKind::Primitive));
+        assert_eq!(lookup("Unit"), None);
         assert_eq!(lookup("()").map(|b| b.kind), Some(BuiltinKind::Primitive));
     }
 

@@ -1,0 +1,5 @@
+error[parse]: an anonymous record writes each field as `name: value`: write `x: x`; only a record literal with a type name takes a field written alone (`P { x }`)
+ --> field_shorthand__an_anonymous_record_has_none.silt:7:13
+   |
+ 7 |   let r = { x, y: 2 }
+   |             ^ an anonymous record writes each field as `name: value`: write `x: x`; only a record literal with a type name takes a field written alone (`P { x }`)

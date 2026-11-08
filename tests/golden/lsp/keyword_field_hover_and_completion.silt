@@ -1,0 +1,18 @@
+-- cmd: lsp
+-- lsp: completion 16:13
+-- lsp: completion 16:15
+-- lsp: hover 16:14
+-- lsp: hover 17:14
+-- lsp: hover 12:14
+-- lsp: hover 15:35
+-- lsp: hover 15:20
+-- lsp: definition 16:14
+-- A keyword names a field where only a field name stands: hover and
+-- completion after a dot treat it as the field it is.
+type Event { type: String, when: Int }
+
+fn main() {
+  let e = Event { type: "click", when: 3 }
+  println(e.type)
+  println(e.when)
+}

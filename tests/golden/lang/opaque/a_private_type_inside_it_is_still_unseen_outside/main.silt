@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- A private type inside a `pub opaque type` changes nothing outside its
+-- module: the opaque value is not built, taken apart or read there, and
+-- the private type is not named.
+import vault
+
+fn main() {
+  let _v = vault.Vault(vault.Secret(1))
+  let n = match vault.vault(2) {
+    vault.Vault(_s) -> 1
+  }
+  let l = vault.lock("1")
+  println(l.code)
+  println("{n}")
+}

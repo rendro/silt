@@ -14,7 +14,7 @@ order: 2
 | `Float`  | 64-bit floating-point, guaranteed finite | `3.14`, `-0.5`, `1e5`, `2.5e-3` |
 | `Bool`   | Boolean                           | `true`, `false`           |
 | `String` | UTF-8 string with interpolation   | `"hello"`, `"age: {n}"`  |
-| `Unit`   | No meaningful value               | (returned by `println`)   |
+| `()`     | The unit type: no meaningful value | `()` (returned by `println`) |
 
 No implicit conversions. Use `int.to_float()` or `float.to_int()` explicitly.
 
@@ -137,6 +137,19 @@ fn main() {
 }
 ```
 
+A field written alone takes the value of the name in scope: `User { name,
+age, active: true }` is `User { name: name, age: age, active: true }`,
+as the record pattern `User { name, age, .. }` binds `name` and `age`.
+Building and reading a record look alike. An anonymous record has no
+such shorthand: `{ name }` is a block.
+
+In the header of a `match` or a `loop`, braces that hold one name alone
+are the header's block, as `match x { y }` would be: there a literal
+with a single field written alone goes in parentheses,
+`match (User { name }) { ... }`, or writes the field out,
+`match User { name: name } { ... }`. Braces whose first name is
+followed by `:` or `,` are a literal there too.
+
 Records declared in another module can be constructed with a
 **module-qualified path** — no selective import needed. The qualifier is
 explicit naming, not a second construction form: `users.User { ... }`
@@ -156,6 +169,32 @@ let alice = users.User { name: "Alice", age: 30, active: true }
 ```silt
 let alice2 = alice.{ age: 31 }
 ```
+
+The shorthand works here too: `alice.{ age }` sets `age` to the value of
+the name `age`.
+
+A keyword may name a field, where only a field name can stand: in the
+record type's body, before `:` in a literal or an update, in a record
+pattern and after a dot. So a JSON document's `"type"` key has a field
+of its name:
+
+```silt
+type Event {
+  type: String,
+  id: Int,
+}
+
+fn main() {
+  let e = Event { type: "click", id: 1 }
+  match e {
+    Event { type: t, .. } -> println(t) -- click
+  }
+  println(e.type) -- click
+}
+```
+
+Such a field is never written alone (`Event { type }`): the shorthand
+binds or reads a variable, and a keyword names none.
 
 Read as "alice, but with age 31." Compare to Elm `{ u | age = 31 }`, Rust
 `User { age: 31, ..u }`. Silt's `.{ }` syntax avoids new keywords or sigils.
