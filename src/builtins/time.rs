@@ -949,6 +949,10 @@ fn offset_with_seconds(s: &str) -> chrono::ParseResult<(i64, &str)> {
         (Some(h), Some(b':'), Some(m), Some(b':'), Some(sec)) if m < 60 && sec < 60 => {
             Ok((sign * (h * 3600 + m * 60 + sec), &s[9..]))
         }
+        // A minute or a second of 60 or more, as chrono says it of `%:z`.
+        (Some(_), Some(b':'), Some(_), Some(b':'), Some(_)) => Err(Parsed::new()
+            .set_offset(i64::MAX)
+            .expect_err("no offset is that large")),
         _ => Err(chrono_error(b.len() < 9)),
     }
 }
