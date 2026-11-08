@@ -1,0 +1,17 @@
+-- cmd: fmt
+-- A `{- -}` and a `--` comment behind the `=` of a loop's last
+-- binding, in front of a value in parentheses that hold a comment of
+-- their own, stay behind the `=`: those parentheses are kept.
+import list
+
+fn main() {
+  let items = [1, 2, 3]
+  let n = loop xs = {- q -} -- r
+    ({- a -} items |> list.reverse) {
+    match xs {
+      [] -> 0
+      [x, ..rest] -> loop(rest)
+    }
+  }
+  println(n)
+}

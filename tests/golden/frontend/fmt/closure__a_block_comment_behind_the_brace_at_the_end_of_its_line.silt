@@ -1,0 +1,12 @@
+-- cmd: fmt
+-- A `{- -}` comment behind a closure's `{` at the end of its line is
+-- written behind a space, in front of the parameters, as a second pass
+-- writes it; a `--` comment behind it stays at the end of the line.
+import list
+
+fn main() {
+  let ys = list.map([1, 2]) { {- q -} -- r
+    x -> x + 1
+  }
+  println(ys)
+}
