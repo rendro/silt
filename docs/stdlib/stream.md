@@ -60,6 +60,7 @@ once per line.
 | `drop_while` | `(Channel(a), Fn(a) -> Bool) -> Channel(a)` |
 | `chunks` | `(Channel(a), Int) -> Channel(List(a))` |
 | `scan` | `(Channel(a), b, Fn(b, a) -> b) -> Channel(b)` |
+| `enumerate` | `(Channel(a)) -> Channel((Int, a))` |
 | `dedup` | `(Channel(a)) -> Channel(a) where a: Equal` |
 | `buffered` | `(Channel(a), Int) -> Channel(a)` |
 
@@ -67,6 +68,9 @@ once per line.
 takes values before they are asked for, whoever reads it, up to `n` of
 them, so the stages before it can run while its reader is still busy with
 an earlier value. `buffered(ch, 0)` reads nothing ahead.
+
+`enumerate(ch)` pairs each value with its index, counting from 0 as
+`list.enumerate` does: `(0, a)`, `(1, b)`, ...
 
 ### Combinators
 

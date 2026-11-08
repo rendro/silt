@@ -94,6 +94,13 @@ pub(crate) mod result {
             r.inner.unwrap_or(default).clone()
         }
 
+        fn to_option(r: Res) -> Value {
+            match r.inner {
+                Ok(value) => Value::variant(bv::SOME, [value.clone()]),
+                Err(_) => Value::variant(bv::NONE, []),
+            }
+        }
+
         fn is_ok(r: Res) -> bool {
             r.inner.is_ok()
         }

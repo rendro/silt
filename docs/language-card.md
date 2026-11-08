@@ -402,6 +402,7 @@ type Step(a) { Stop(a), Continue(a) }
 list.all(xs: List(a), f: Fn(a) -> Bool) -> Bool
 list.any(xs: List(a), f: Fn(a) -> Bool) -> Bool
 list.append(xs: List(a), elem: a) -> List(a)
+list.chunks(xs: List(a), n: Int) -> List(List(a))
 list.concat(xs: List(a), ys: List(a)) -> List(a)
 list.contains(xs: List(a), elem: a) -> Bool where a: Equal
 list.drop(xs: List(a), n: Int) -> List(a)
@@ -410,6 +411,7 @@ list.enumerate(xs: List(a)) -> List((Int, a))
 list.filter(xs: List(a), f: Fn(a) -> Bool) -> List(a)
 list.filter_map(xs: List(a), f: Fn(a) -> Option(b)) -> List(b)
 list.find(xs: List(a), f: Fn(a) -> Bool) -> Option(a)
+list.find_map(xs: List(a), f: Fn(a) -> Option(b)) -> Option(b)
 list.flat_map(xs: List(a), f: Fn(a) -> List(b)) -> List(b)
 list.flatten(xs: List(List(a))) -> List(a)
 list.fold(xs: List(a), init: b, f: Fn(b, a) -> b) -> b
@@ -476,6 +478,7 @@ result.is_err(r: Result(a, b)) -> Bool
 result.is_ok(r: Result(a, b)) -> Bool
 result.map(r: Result(a, b), f: Fn(a) -> c) -> Result(c, b)
 result.map_err(r: Result(a, b), f: Fn(b) -> c) -> Result(a, c)
+result.to_option(r: Result(a, b)) -> Option(a)
 result.unwrap_or(r: Result(a, b), default: a) -> a
 ```
 
@@ -793,6 +796,7 @@ stream.count(ch: Channel(a)) -> Int
 stream.dedup(ch: Channel(a)) -> Channel(a) where a: Equal
 stream.drop(ch: Channel(a), n: Int) -> Channel(a)
 stream.drop_while(ch: Channel(a), pred: Fn(a) -> Bool) -> Channel(a)
+stream.enumerate(ch: Channel(a)) -> Channel((Int, a))
 stream.file_chunks(path: String, size: Int) -> Channel(Result(Bytes, IoError))
 stream.file_lines(path: String) -> Channel(Result(String, IoError))
 stream.filter(ch: Channel(a), pred: Fn(a) -> Bool) -> Channel(a)

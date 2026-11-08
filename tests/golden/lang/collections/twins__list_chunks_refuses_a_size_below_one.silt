@@ -1,0 +1,9 @@
+-- exit: 1
+-- stderr-contains: error[runtime]: list.chunks: n must be positive
+-- list.chunks takes a size below 1 as stream.chunks does: an error.
+import list
+
+fn main() {
+  println(list.chunks([1, 2], 2))
+  println(list.chunks([1, 2], 0))
+}
