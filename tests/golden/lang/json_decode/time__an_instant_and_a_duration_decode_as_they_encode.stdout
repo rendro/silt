@@ -8,15 +8,7 @@ Err(json missing field: at.epoch_ns)
 Err(json type mismatch: expected object, got string at at)
 Ok(W {at: Instant {epoch_ns: 1}})
 true
-Ok([at]
-epoch_ns = 1762000000123456789
-
-[d]
-ns = 3000000000
-
-[[ds]]
-ns = 5000000
-)
+Ok("[at]\nepoch_ns = 1762000000123456789\n\n[d]\nns = 3000000000\n\n[[ds]]\nns = 5000000\n")
 true
 Ok(W {at: Instant {epoch_ns: 5}})
 Ok([1ns])
