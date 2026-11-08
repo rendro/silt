@@ -99,7 +99,8 @@ impl Server {
     /// What the callee `fn_name`, whose last name starts at byte `at` of
     /// the open document `uri`, is.
     fn callee(&self, uri: &lsp_types::Uri, doc: &Document, fn_name: &str, at: usize) -> Callee {
-        let local = |binding: Option<&LocalBinding>| Callee::Local(binding.and_then(|b| b.ty.clone()));
+        let local =
+            |binding: Option<&LocalBinding>| Callee::Local(binding.and_then(|b| b.ty.clone()));
         match self.target_at(uri, at) {
             Some((_, Target::Local(binding))) => {
                 local(doc.locals.iter().find(|b| b.binding_offset == binding))

@@ -250,5 +250,8 @@ fn a_builtin_variant_has_its_section_and_a_shadowing_local_none() {
     let local = signature_help("shadow_print", source, 5, 17);
     let signature = &local["signatures"][0];
     assert_eq!(signature["label"], "Fn(Int) -> Int");
-    assert!(signature.get("documentation").is_none_or(Value::is_null), "{signature}");
+    assert!(
+        signature.get("documentation").is_none_or(Value::is_null),
+        "{signature}"
+    );
 }

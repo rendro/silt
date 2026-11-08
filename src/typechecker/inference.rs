@@ -4447,16 +4447,14 @@ impl TypeChecker {
                 };
                 // `Tuple(Int, Int).empty()` is no spelling of the tuple
                 // type: the help of its `Tuple` writes the one that is.
-                self.tuple_spelling = match &obj.kind {
-                    ExprKind::Call(callee, args)
-                        if matches!(callee.kind, ExprKind::Ident(name) if resolve(name) == "Tuple") =>
-                    {
-                        let written: Vec<String> =
-                            args.iter().map(super::names::shown_type).collect();
-                        Some(format!("({})", written.join(", ")))
-                    }
-                    _ => None,
-                };
+                self.tuple_spelling = None;
+                if let ExprKind::Call(callee, args) = &obj.kind
+                    && let ExprKind::Ident(name) = callee.kind
+                    && resolve(name) == "Tuple"
+                {
+                    let written: Vec<String> = args.iter().map(super::names::shown_type).collect();
+                    self.tuple_spelling = Some(format!("({})", written.join(", ")));
+                }
                 let obj_ty = match spelled {
                     Some(ty) => Type::type_of(ty),
                     None => self.infer_expr(obj, env),
