@@ -23,4 +23,15 @@ fn main() {
   println(time.parse("2025-01-05 10:00:00 XM", "%Y-%m-%d %I:%M:%S %p"))
   println(time.parse("2016-12-31 23:59:60", "%Y-%m-%d %H:%M:%S"))
   println(time.parse("2025-01-05T10:00", "%Y-%m-%dT%H:%M"))
+  -- A field read twice with another value, or ruled out by one before.
+  println(time.parse_date("2025-01-05 2024", "%Y-%m-%d %Y"))
+  println(time.parse("2025-01-05 13:00 AM", "%Y-%m-%d %H:%M %p"))
+  -- A field of fewer digits than it takes is no end of the text.
+  println(time.parse("2025-01-05 12:00:00.12", "%Y-%m-%d %H:%M:%S%.3f"))
+  println(time.parse("2025-01-05 12:00:00.12", "%Y-%m-%d %H:%M:%S.%3f"))
+  println(time.parse("2025-01-05 12:00:00", "%Y-%m-%d %H:%M:%S%3f"))
+  -- A timestamp out of range; a year of a century and a year of it.
+  println(time.parse("99999999999999999", "%s"))
+  println(time.parse_date("2001-02-30", "%C%y-%m-%d"))
+  println(time.parse_date("01-02-30", "%y-%m-%d"))
 }

@@ -107,15 +107,22 @@ fn why_unread(
         match parse_and_remainder(&mut parsed, rest, std::iter::once(item)) {
             Ok(behind) => rest = behind,
             Err(e) => {
+                let part = part_name(item);
                 return match e.kind() {
-                    ParseErrorKind::OutOfRange => format!("{} is out of range", part_name(item)),
-                    ParseErrorKind::TooShort => {
-                        format!(
-                            "expected {} at byte {at}, the end of the text",
-                            part_name(item)
-                        )
+                    ParseErrorKind::OutOfRange => format!("{part} is out of range"),
+                    // A field read a second time with another value, or
+                    // one that another rules out (an hour 13 and `AM`).
+                    ParseErrorKind::Impossible => format!(
+                        "the fields do not agree: {part} at byte {at} does not agree with \
+                         what was read before it"
+                    ),
+                    // Too short is also a field of fewer digits than it
+                    // takes (`%.3f` of `.12`): the end only if nothing is
+                    // left.
+                    ParseErrorKind::TooShort if rest.is_empty() => {
+                        format!("expected {part} at byte {at}, the end of the text")
                     }
-                    _ => format!("expected {} at byte {at}", part_name(item)),
+                    _ => format!("expected {part} at byte {at}"),
                 };
             }
         }
@@ -124,7 +131,14 @@ fn why_unread(
         let at = s.len() - rest.len();
         return format!("unexpected text at byte {at}: '{rest}'");
     }
-    let year = parsed.year();
+    // The year as chrono makes it of a century and a year of it
+    // (`%C%y`), or of a year of a century alone (`%y`: 1970 to 2069).
+    let year = match (parsed.year(), parsed.year_div_100(), parsed.year_mod_100()) {
+        (Some(year), _, _) => Some(year),
+        (None, Some(century), Some(of)) => century.checked_mul(100).and_then(|c| c.checked_add(of)),
+        (None, None, Some(of)) => Some(of + if of < 70 { 2000 } else { 1900 }),
+        _ => None,
+    };
     let date = year.zip(parsed.month()).zip(parsed.day());
     match err.kind() {
         ParseErrorKind::OutOfRange => {
@@ -140,6 +154,9 @@ fn why_unread(
                 if ordinal > days {
                     return format!("the day of the year is out of range: {year} has {days} days");
                 }
+            }
+            if parsed.timestamp().is_some() {
+                return "the timestamp is out of range".to_string();
             }
             format!("the fields make no {what}")
         }
@@ -213,7 +230,14 @@ fn part_name(item: &chrono::format::Item<'_>) -> String {
             Fixed::ShortMonthName | Fixed::LongMonthName => "month name",
             Fixed::ShortWeekdayName | Fixed::LongWeekdayName => "weekday name",
             Fixed::LowerAmPm | Fixed::UpperAmPm => return "AM or PM".to_string(),
-            Fixed::Nanosecond => "fraction of a second",
+            // `%.f`, `%.3f` ... and `%3f` ... (chrono's internal
+            // items, of which a pattern of a parse has no other: a time
+            // zone is refused before).
+            Fixed::Nanosecond
+            | Fixed::Nanosecond3
+            | Fixed::Nanosecond6
+            | Fixed::Nanosecond9
+            | Fixed::Internal(_) => "fraction of a second",
             _ => "field",
         },
         Item::Error => "field",

@@ -206,7 +206,7 @@ fn main() {
   `Channel(Result(_, IoError))`; TCP sources emit
   `Channel(Result(_, TcpError))`. Each chunk can fail independently;
   consumers pattern-match. A file's error names its path, as `io`'s
-  do (`is a directory: logs`, `file not found: app.log`). A line that is
+  do (`file not found: app.log`). A line that is
   not UTF-8 is an error of `file_lines` and `tcp_lines` alike, and their
   last item: the source ends there, and `tcp_lines` shuts its connection
   down. `file_lines` names the line and the path
