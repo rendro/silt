@@ -778,6 +778,15 @@ struct Server {
     queue: Mutex<std::collections::VecDeque<Arc<Cell<()>>>>,
     /// Who wakes a request that is given a handler.
     scheduler: std::sync::Weak<crate::scheduler::Scheduler>,
+    /// The listener was closed: the server takes no connection more, and
+    /// ends when the requests in flight have been answered
+    /// ([`Server::drain`]).
+    draining: AtomicBool,
+    /// Completed when the drain begins: a connection that waits for its
+    /// next request stops waiting then.
+    drain_begun: Arc<Cell<()>>,
+    /// Completed when the drain is over: the last connection has ended.
+    drained: Arc<Cell<()>>,
     /// How many bytes of bodies the server holds for requests that no
     /// handler has yet ([`wire::BODIES_MAX`]).
     bodies: AtomicUsize,
@@ -816,6 +825,24 @@ impl Server {
         let cell = Cell::new();
         queue.push_back(cell.clone());
         Admitted::Queued(cell)
+    }
+
+    /// Whether the server drains: its listener was closed.
+    fn draining(&self) -> bool {
+        self.draining.load(Ordering::SeqCst)
+    }
+
+    /// Begin the drain: a connection answers the request it has and
+    /// ends, one that waits for a request ends now. `true` if no
+    /// connection is left.
+    fn drain(&self) -> bool {
+        self.draining.store(true, Ordering::SeqCst);
+        self.complete(&self.drain_begun);
+        let left = self.conns.lock().as_ref().map_or(0, HashMap::len);
+        if left == 0 {
+            self.complete(&self.drained);
+        }
+        left == 0
     }
 
     /// Complete `cell`, of a request that waits: `false` if it is
@@ -1378,6 +1405,7 @@ impl Conn {
         );
         let mut wait = op.wait(vm, Limit::Own(wire::REQUEST_TIME));
         wait.arms.push(Arm::Cell(body_follows));
+        wait.arms.push(Arm::Cell(self.server.drain_begun.clone()));
         self.state = ConnState::Reading {
             op,
             got,
@@ -1493,6 +1521,8 @@ impl Conn {
             // A task that was cancelled (the server has ended)
             // serves no further request.
             ConnState::Next if self.handle.is_cancelled() => Conn::END,
+            // The server drains: the request answered was the last one.
+            ConnState::Next if self.server.draining() => Conn::END,
             // Its turn is over: the other tasks have theirs before the
             // next request of this connection.
             ConnState::Next if self.served >= Conn::TURN => {
@@ -1505,6 +1535,24 @@ impl Conn {
                 None => Go::Step(self.read(vm)),
             },
             ConnState::Reading { op, got, in_body } => match vm.woken()? {
+                // The server drains. A connection that waits for a request
+                // ends; one whose request has begun to come reads it on,
+                // and it is answered.
+                Fired::Arm(2, _) => match in_body || self.begun.load(Ordering::SeqCst) {
+                    false => {
+                        drop(op);
+                        Conn::END
+                    }
+                    true => {
+                        let wait = op.wait(vm, Limit::Own(wire::TRANSFER_TIME));
+                        self.state = ConnState::Reading {
+                            op,
+                            got,
+                            in_body: true,
+                        };
+                        Go::Step(Step::Park(wait))
+                    }
+                },
                 // The head is there: the body has its own time.
                 Fired::Arm(1, _) if !in_body => {
                     let wait = op.wait(vm, Limit::Own(wire::TRANSFER_TIME));
@@ -1564,6 +1612,16 @@ impl Conn {
             ConnState::Calling { reply, called } => {
                 // The handler has returned.
                 drop(called);
+                // (A server that drains closes the connection after it,
+                // and tells the client so.)
+                let reply = match self.server.draining() {
+                    true => Reply {
+                        close: true,
+                        keep_alive: false,
+                        ..reply
+                    },
+                    false => reply,
+                };
                 let bytes = handler_response(vm, &input, reply);
                 self.send(vm, bytes, reply.then())
             }
@@ -1677,8 +1735,16 @@ impl Drop for Conn {
         // connection.
         self.state = ConnState::Ended;
         self.stream.shut_down();
-        if let Some(conns) = self.server.conns.lock().as_mut() {
-            conns.remove(&self.handle.id);
+        let left = match self.server.conns.lock().as_mut() {
+            Some(conns) => {
+                conns.remove(&self.handle.id);
+                conns.len()
+            }
+            None => 0,
+        };
+        // The last connection of a server that drains: the drain is over.
+        if left == 0 && self.server.draining() {
+            self.server.complete(&self.server.drained);
         }
     }
 }
@@ -1707,6 +1773,9 @@ enum ServeState {
     /// An accept failed: the next one comes after
     /// [`wire::ACCEPT_RETRY`].
     Retrying,
+    /// The listener was closed: the server waits for the requests in
+    /// flight to be answered, then returns.
+    Draining,
 }
 
 #[cfg(feature = "http")]
@@ -1762,6 +1831,11 @@ impl crate::vm::Native for Serve {
             ServeState::Retrying => {
                 vm.woken()?;
             }
+            // Every connection has ended.
+            ServeState::Draining => {
+                vm.woken()?;
+                return Ok(Step::Done(Value::Unit));
+            }
             ServeState::Accepting(op) => {
                 let fired = vm.woken()?;
                 // A server whose task was cancelled takes no connection
@@ -1786,10 +1860,17 @@ impl crate::vm::Native for Serve {
                     _ => None,
                 };
                 let Some(stream) = stream else {
-                    // The listener was closed: the server ends, as one
-                    // whose task is cancelled ends (see `Drop`).
+                    // The listener was closed: the server takes no
+                    // connection more, and returns when the requests in
+                    // flight have been answered. (A task cancelled
+                    // meanwhile ends it at once, see `Drop`.)
                     if self.listener.is_closed() {
-                        return Ok(Step::Done(Value::Unit));
+                        if self.server.drain() {
+                            return Ok(Step::Done(Value::Unit));
+                        }
+                        self.state = ServeState::Draining;
+                        let wait = Wait::new(vec![Arm::Cell(self.server.drained.clone())]);
+                        return Ok(Step::Park(wait));
                     }
                     // No descriptor left, no thread for the accept: the
                     // server stays, and tries again in a moment.
@@ -1903,6 +1984,9 @@ builtins! {
                 handlers: AtomicUsize::new(0),
                 queue: Mutex::default(),
                 scheduler: Arc::downgrade(vm.scheduler()),
+                draining: AtomicBool::new(false),
+                drain_begun: Cell::new(),
+                drained: Cell::new(),
                 bodies: AtomicUsize::new(0),
                 conns: Mutex::new(Some(HashMap::new())),
             }),
@@ -2094,6 +2178,9 @@ mod serve_tests {
             handlers: AtomicUsize::new(0),
             queue: Mutex::default(),
             scheduler: Arc::downgrade(vm.scheduler()),
+            draining: AtomicBool::new(false),
+            drain_begun: Cell::new(),
+            drained: Cell::new(),
             bodies: AtomicUsize::new(0),
             conns: Mutex::new(Some(HashMap::new())),
         });
@@ -2131,6 +2218,9 @@ mod queue_tests {
             handlers: AtomicUsize::new(0),
             queue: Mutex::default(),
             scheduler: std::sync::Weak::new(),
+            draining: AtomicBool::new(false),
+            drain_begun: Cell::new(),
+            drained: Cell::new(),
             bodies: AtomicUsize::new(0),
             conns: Mutex::new(Some(HashMap::new())),
         })

@@ -20,7 +20,7 @@ default features in your `Cargo.toml`.
 |----------|-----------|-------------|
 | `accept` | `(TcpListener) -> Result(TcpStream, TcpError)` | Wait for an incoming connection (cooperative I/O) |
 | `close` | `(TcpStream) -> ()` | Shut the connection down: operations in flight on it return, later ones give `Err(Closed)` |
-| `close_listener` | `(TcpListener) -> ()` | Stop listening: later connects are refused, a waiting accept gives `Err(Closed)`, `http.serve` on it returns |
+| `close_listener` | `(TcpListener) -> ()` | Stop listening: later connects are refused, a waiting accept gives `Err(Closed)`, `http.serve` on it answers what is in flight and returns |
 | `connect` | `(String) -> Result(TcpStream, TcpError)` | Open a TCP connection to `host:port` (cooperative I/O) |
 | `listen` | `(String) -> Result(TcpListener, TcpError)` | Bind a TCP listener to `host:port` |
 | `local_port` | `(TcpListener) -> Int` | The port the listener is bound to: the one the system chose for port `0` |
@@ -176,7 +176,8 @@ runs to its end, and its connection is then shut down.) (The whole rule, for eve
 
 `tcp.close_listener(listener)` stops listening. A `tcp.accept` that
 waits on the listener returns `Err(Closed)`, and so does every later
-one; an `http.serve` on it ends and returns `()`. Clients that had
+one; an `http.serve` on it answers the requests in flight and returns
+`()` (see [Stopping a server](http.md#stopping-a-server)). Clients that had
 connected but were not yet accepted have their connections closed, and a
 client that connects afterwards is refused at once
 (`Err(Connect(...))`, "connection refused"), instead of waiting for its

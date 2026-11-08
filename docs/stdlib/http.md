@@ -254,10 +254,10 @@ server starts.
 `http.serve` serves until its listener is closed or its task ends. To
 run a server beside other work, call it in a task. There are two ways to
 stop it (see [Stopping a server](#stopping-a-server)):
-`tcp.close_listener(listener)` ends the server and frees the port, and
-`http.serve` returns `()`; `task.cancel` of its task ends the server and
-leaves the listener bound, to be served again (see [When a program
-ends](../concurrency.md#when-a-program-ends)).
+`tcp.close_listener(listener)` frees the port and lets the server finish
+what it has begun, then `http.serve` returns `()`; `task.cancel` of its
+task ends the server at once and leaves the listener bound, to be served
+again (see [When a program ends](../concurrency.md#when-a-program-ends)).
 
 ### Connections and handlers
 
@@ -401,14 +401,26 @@ While `http.serve` serves a listener, the listener is the server's alone:
 
 ### Stopping a server
 
-`tcp.close_listener(listener)` stops a server for good: `http.serve`
-returns `()`, a client that connects afterwards is refused at once
-(rather than waiting for its own timeout, 60 s for `http.request`), and
-the port can be bound again. What is in flight ends as below, as for a
-cancelled server: a request whose handler has not returned is answered
-`503`. `task.cancel` of the serving task stops the server and keeps the
-listener: clients that connect wait in it, and another `http.serve` or a
-`tcp.accept` takes them.
+`tcp.close_listener(listener)` stops a server for good, and lets it
+finish what it has begun (a graceful shutdown):
+
+- A client that connects afterwards is refused at once (rather than
+  waiting for its own timeout, 60 s for `http.request`), and the port can
+  be bound again.
+- Every request already in flight is answered: a handler that runs goes
+  on to its end and its response is written, and so are the requests that
+  wait for a handler and one whose bytes have begun to come. Each of
+  these responses says `Connection: close`, and its connection is closed
+  after it.
+- A kept-alive connection that waits for its next request is closed.
+- `http.serve` returns `()` when the last connection has ended.
+
+`task.cancel` of the serving task stops the server at once and keeps the
+listener: what is in flight ends as below, and clients that connect wait
+in the listener for another `http.serve` or a `tcp.accept`. A
+`task.deadline` around `http.serve` does the same when its time is up,
+also while the server drains: a drain that must not last longer than so
+long is a deadline around `http.serve`.
 
 ```silt
 import bytes
@@ -439,12 +451,11 @@ fn main() {
 }
 ```
 
-When the server ends, because its listener was closed or the task that
-serves was cancelled:
+When the task that serves is cancelled (or its deadline passes):
 
-- Its accept is given up. A client that connects afterwards is refused
-  if the listener was closed, and otherwise waits in the listener for
-  whoever accepts next.
+- Its accept is given up. A client that connects afterwards waits in the
+  listener for whoever accepts next (or is refused, if the listener was
+  closed).
 - A request whose handler has not returned is answered `503`, and its
   connection is closed. A connection between two requests is closed. A
   response that is being sent at that moment is cut off: the client

@@ -550,7 +550,8 @@ keeps going:
   (`tcp.accept`, `io.read_line`): once it is cancelled nobody waits for
   the operation, which then counts for nothing. A server started with
   `http.serve` ends when the task that called it is cancelled, or when
-  its listener is closed (`tcp.close_listener`).
+  its listener is closed (`tcp.close_listener`), once it has answered the
+  requests in flight.
 
 ```silt
 import channel
