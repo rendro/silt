@@ -278,7 +278,7 @@ The handler receives a `Request` and must return a `Response` whose
 | What happens | What the client gets |
 |---|---|
 | The handler fails, or returns a status that is none | `500`. The failure is written to stderr and nothing of it is sent. The connection stays usable. |
-| 128 handlers are being called already | `503` at once. That includes a request that would have released the ones that wait: a server whose handlers wait for each other needs a second server, or a timeout in the handler. |
+| 128 handlers are being called already | The request waits for one to return, in the server's queue, first come first served: a short burst is answered as the handlers free up. A request that has waited 5 s, or one that finds 1,024 waiting already, is answered `503`. A request that would release the handlers that wait is queued like any other: a server whose handlers wait for each other needs a second server, or a timeout in the handler. |
 | The method is none of `Method`'s (e.g. `TRACE`) | `405`, with an `Allow` header that names the seven |
 | The method is `HEAD` | the handler is called; its response is sent without the body, with the length the body has |
 
@@ -288,7 +288,8 @@ client closes its connection while its handler waits (a long poll), the
 handler goes on waiting: it keeps its place among the 128, and the
 connection its descriptor, until the handler returns and the response
 cannot be sent. Clients that come and go without waiting for their
-answers can so fill every place, and every later request gets `503`. A
+answers can so fill every place, and every later request waits its 5 s
+in the queue and gets `503`. A
 handler that waits needs a limit of its own, for example
 `channel.receive_timeout` instead of `channel.receive`.
 
@@ -320,12 +321,14 @@ say `text/plain; charset=UTF-8`.) There is no `Server` header.
 | Headers of a request | 100 | `431`, connection closed |
 | The body of a request | 10,000,000 bytes | `413`, connection closed |
 | The body of a response that `http.get` or `http.request` reads (the client's one limit of size), counted after it is unpacked | 10,000,000 bytes | `Err(InvalidResponse("the body is larger than 10000000 bytes"))`; no more than one byte beyond the limit is read |
-| The bodies, together, of the requests that no handler has yet: those being read (a body counts from when its length is known) and those read and about to be handed over | 256 MiB | `503`, connection closed: the request whose body would not fit is refused before its body is read. With every handler holding a request of the largest size besides, the server holds 128 x 10,000,000 bytes more: about 1.5 GB of bodies is the worst case. |
+| The bodies, together, of the requests that no handler has yet: those being read (a body counts from when its length is known), those that wait in the queue for a handler, and those about to be handed over | 256 MiB | `503`, connection closed: the request whose body would not fit is refused before its body is read. With every handler holding a request of the largest size besides, the server holds 128 x 10,000,000 bytes more: about 1.5 GB of bodies is the worst case. |
 | A method | 32 bytes | `400`, connection closed |
 | A line of a chunked body: a chunk's size and its extensions | 4 KiB | `400`, connection closed |
 | What of a chunked body is not the body: chunk sizes, extensions, line ends | 1 MiB | `400`, connection closed. (A body of 10,000,000 bytes in chunks of 100 bytes is within it; a body cut into single bytes is not.) |
 | The trailers of a chunked body | 64 KiB | `431`, connection closed |
-| Handlers being called | 128 | `503` |
+| Handlers being called | 128 | the request waits in the queue |
+| Requests that wait for a handler | 1,024 | `503` at once |
+| Time a request waits for a handler | 5 s | `503` |
 | Time for the head of a request, from when the server starts to wait for it. This is also how long a kept connection that sends nothing stays open. | 30 s | `408` if part of the request has come, and the connection closed; a connection that sent nothing, or only an empty line, is closed without a word |
 | Time for the body of a request to arrive after its head | 5 min | `408`, connection closed |
 | Time for a response to be taken by the client | 5 min | connection closed |

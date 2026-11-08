@@ -1,0 +1,35 @@
+-- timeout: 60
+-- requires-feature: http
+-- A burst of 300 clients at a server whose handlers take 20 ms: those beyond
+-- its 128 handlers wait in its queue for one, and every request is answered
+-- 200 (before the queue, about half were answered 503 at once).
+import bytes
+import http
+import list
+import task
+import tcp
+import time
+
+fn slow(_req: http.Request) -> http.Response {
+  time.sleep(time.ms(20))
+  http.Response { status: 200, body: bytes.from_string("ok"), headers: #{} }
+}
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let port = tcp.local_port(listener)
+  let server = task.spawn { -> http.serve(listener, slow) }
+  let clients = list.map(1..300) { _ ->
+    task.spawn { ->
+      match http.get("http://127.0.0.1:{port}/") {
+        Ok(r) -> r.status
+        Err(_) -> 0
+      }
+    }
+  }
+  let statuses = list.map(clients) { c -> task.join(c) }
+  let ok = list.filter(statuses) { s -> s == 200 } |> list.length
+  println("{ok} of {list.length(statuses)} answered 200")
+  tcp.close_listener(listener)
+  task.join(server)
+}

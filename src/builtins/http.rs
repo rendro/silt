@@ -17,7 +17,7 @@ use super::typed::{Arg, Bytes, Map, TcpListener, unsound};
 #[cfg(feature = "http")]
 use crate::runtime::handle::{Taken, TaskHandle, TcpListenerHandle, TcpStreamHandle};
 #[cfg(feature = "http")]
-use crate::runtime::sync::{Arm, Cell, Fired, Wait};
+use crate::runtime::sync::{Arm, Cell, Fired, Wait, Wake};
 use crate::typeinfo::bv;
 #[cfg(feature = "http")]
 use crate::typeinfo::{BuiltinVariant, ty};
@@ -769,8 +769,15 @@ struct Server {
     handler: Value,
     /// Whose the tasks of the connections are: whoever serves.
     owner: u64,
-    /// How many handlers are being called.
+    /// How many handlers are being called. (Changed under the lock of
+    /// `queue`: a handler that returns hands its place to the request
+    /// that waits longest.)
     handlers: AtomicUsize,
+    /// The requests that wait for a handler, oldest first: each is
+    /// told by its cell that it has one ([`Waiting`]).
+    queue: Mutex<std::collections::VecDeque<Arc<Cell<()>>>>,
+    /// Who wakes a request that is given a handler.
+    scheduler: std::sync::Weak<crate::scheduler::Scheduler>,
     /// How many bytes of bodies the server holds for requests that no
     /// handler has yet ([`wire::BODIES_MAX`]).
     bodies: AtomicUsize,
@@ -779,26 +786,90 @@ struct Server {
     conns: Mutex<Option<HashMap<usize, Arc<TaskHandle>>>>,
 }
 
+/// What a request is given when it asks for a handler.
+#[cfg(feature = "http")]
+enum Admitted {
+    /// A handler: it is called now.
+    Called(Called),
+    /// A place in the queue: the cell is completed when a handler is
+    /// handed to it.
+    Queued(Arc<Cell<()>>),
+    /// Nothing: the queue is full.
+    Full,
+}
+
 #[cfg(feature = "http")]
 impl Server {
-    /// Count one more handler as being called; `None` at the bound.
-    fn call(self: &Arc<Self>) -> Option<Called> {
-        let mut handlers = self.handlers.load(Ordering::Acquire);
-        loop {
-            if handlers >= wire::HANDLERS_MAX {
-                return None;
-            }
-            let counted = self.handlers.compare_exchange_weak(
-                handlers,
-                handlers + 1,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            );
-            match counted {
-                Ok(_) => return Some(Called(self.clone())),
-                Err(now) => handlers = now,
-            }
+    /// A handler for a request, if one is free and no request waits
+    /// for one; else a place in the queue, if it has one.
+    fn admit(self: &Arc<Self>) -> Admitted {
+        let mut queue = self.queue.lock();
+        // (A request that stopped waiting has left its cell complete.)
+        queue.retain(|waiting| waiting.get().is_none());
+        if queue.is_empty() && self.handlers.load(Ordering::Acquire) < wire::HANDLERS_MAX {
+            self.handlers.fetch_add(1, Ordering::AcqRel);
+            return Admitted::Called(Called(self.clone()));
         }
+        if queue.len() >= wire::QUEUED_MAX {
+            return Admitted::Full;
+        }
+        let cell = Cell::new();
+        queue.push_back(cell.clone());
+        Admitted::Queued(cell)
+    }
+
+    /// Complete `cell`, of a request that waits: `false` if it is
+    /// complete already.
+    fn complete(&self, cell: &Cell<()>) -> bool {
+        match self.scheduler.upgrade() {
+            Some(scheduler) => cell.complete((), scheduler.wake()).is_ok(),
+            None => cell.complete((), &Nobody).is_ok(),
+        }
+    }
+}
+
+/// Who wakes nobody: the program has ended.
+#[cfg(feature = "http")]
+struct Nobody;
+
+#[cfg(feature = "http")]
+impl Wake for Nobody {
+    fn wake(&self, _task: crate::runtime::sync::TaskId) {}
+}
+
+/// A request that waits for a handler, until it is told whether it has
+/// one ([`Waiting::settle`]) or is dropped: then a handler that was
+/// handed to it is handed on.
+#[cfg(feature = "http")]
+struct Waiting {
+    server: Arc<Server>,
+    cell: Option<Arc<Cell<()>>>,
+}
+
+#[cfg(feature = "http")]
+impl Waiting {
+    /// The handler that was handed to the request, if one was: else
+    /// the request stops waiting, and none is handed to it after.
+    ///
+    /// The cell is completed once: by a handler that returns and hands
+    /// its place on, or here. Whoever completes it first decides.
+    fn settle(&mut self) -> Option<Called> {
+        let cell = self.cell.take()?;
+        let _queue = self.server.queue.lock();
+        match self.server.complete(&cell) {
+            // It stops waiting.
+            true => None,
+            // A handler was handed to it.
+            false => Some(Called(self.server.clone())),
+        }
+    }
+}
+
+#[cfg(feature = "http")]
+impl Drop for Waiting {
+    fn drop(&mut self) {
+        // (A handler handed to it is handed on as it is dropped.)
+        drop(self.settle());
     }
 }
 
@@ -850,6 +921,14 @@ struct Called(Arc<Server>);
 #[cfg(feature = "http")]
 impl Drop for Called {
     fn drop(&mut self) {
+        // The place goes to the request that waits longest, if one
+        // does: the count stays.
+        let mut queue = self.0.queue.lock();
+        while let Some(waiting) = queue.pop_front() {
+            if self.0.complete(&waiting) {
+                return;
+            }
+        }
         self.0.handlers.fetch_sub(1, Ordering::AcqRel);
     }
 }
@@ -1102,6 +1181,13 @@ enum ConnState {
         /// Its head is there, and its body is being read.
         in_body: bool,
     },
+    /// The request waits for a handler (see [`wire::QUEUED_MAX`]).
+    Queued {
+        request: Value,
+        reply: Reply,
+        held: Held,
+        waiting: Waiting,
+    },
     /// The handler is being called.
     Calling { reply: Reply, called: Called },
     /// A response is to be sent.
@@ -1174,19 +1260,27 @@ impl Conn {
     fn serve(&mut self, vm: &mut Vm, got: Got) -> Go {
         self.served += 1;
         match got {
-            Got::Request(request, reply, held) => match self.server.call() {
-                Some(called) => {
-                    // The body is the handler's now.
-                    drop(held);
-                    self.state = ConnState::Calling { reply, called };
-                    Go::Step(vm.call(self.server.handler.clone(), [request]))
-                }
+            Got::Request(request, reply, held) => match self.server.admit() {
+                Admitted::Called(called) => self.call(vm, request, reply, held, called),
                 // As many handlers as the server calls at a time are
-                // being called.
-                None => {
-                    let bytes = plain_response(vm, 503, wire::reason(503), reply);
-                    self.send(vm, bytes, reply.then())
+                // being called: the request waits for one, for a while.
+                Admitted::Queued(cell) => {
+                    let waiting = Waiting {
+                        server: self.server.clone(),
+                        cell: Some(cell.clone()),
+                    };
+                    let wait = Wait::new(vec![Arm::Cell(cell)])
+                        .deadline(vm.runtime.io.deadline_after(wire::QUEUED_TIME));
+                    self.state = ConnState::Queued {
+                        request,
+                        reply,
+                        held,
+                        waiting,
+                    };
+                    Go::Step(Step::Park(wait))
                 }
+                // And as many requests wait as may.
+                Admitted::Full => self.unavailable(vm, reply),
             },
             Got::Answered(status, why, reply) => {
                 let bytes = plain_response(vm, status, why, reply);
@@ -1199,6 +1293,27 @@ impl Conn {
             // Nothing more comes.
             Got::End => Conn::END,
         }
+    }
+
+    /// Call the handler with `request`, with the place `called`.
+    fn call(
+        &mut self,
+        vm: &mut Vm,
+        request: Value,
+        reply: Reply,
+        held: Held,
+        called: Called,
+    ) -> Go {
+        // The body is the handler's now.
+        drop(held);
+        self.state = ConnState::Calling { reply, called };
+        Go::Step(vm.call(self.server.handler.clone(), [request]))
+    }
+
+    /// Answer 503: no handler for the request.
+    fn unavailable(&mut self, vm: &mut Vm, reply: Reply) -> Go {
+        let bytes = plain_response(vm, 503, wire::reason(503), reply);
+        self.send(vm, bytes, reply.then())
     }
 
     /// Read the next request: the task waits for it.
@@ -1432,6 +1547,20 @@ impl Conn {
                     }
                 },
             },
+            // A handler was handed to the request, or its time to wait
+            // is over (or both at once: the handler counts).
+            ConnState::Queued {
+                request,
+                reply,
+                held,
+                mut waiting,
+            } => {
+                vm.woken()?;
+                match waiting.settle() {
+                    Some(called) => self.call(vm, request, reply, held, called),
+                    None => self.unavailable(vm, reply),
+                }
+            }
             ConnState::Calling { reply, called } => {
                 // The handler has returned.
                 drop(called);
@@ -1526,7 +1655,7 @@ impl crate::vm::Native for Conn {
             ConnState::Answering { bytes, .. } => {
                 let _ = self.stream.write_in_turn(&bytes);
             }
-            ConnState::Reading { in_body: true, .. } => {
+            ConnState::Reading { in_body: true, .. } | ConnState::Queued { .. } => {
                 let bytes = plain_response(vm, 503, wire::reason(503), unavailable);
                 let _ = self.stream.write_in_turn(&bytes);
             }
@@ -1772,6 +1901,8 @@ builtins! {
                 // The tasks of the connections belong to whoever serves.
                 owner: vm.scheduler().current_owner(),
                 handlers: AtomicUsize::new(0),
+                queue: Mutex::default(),
+                scheduler: Arc::downgrade(vm.scheduler()),
                 bodies: AtomicUsize::new(0),
                 conns: Mutex::new(Some(HashMap::new())),
             }),
@@ -1961,6 +2092,8 @@ mod serve_tests {
             handler: Value::Unit,
             owner: 0,
             handlers: AtomicUsize::new(0),
+            queue: Mutex::default(),
+            scheduler: Arc::downgrade(vm.scheduler()),
             bodies: AtomicUsize::new(0),
             conns: Mutex::new(Some(HashMap::new())),
         });
@@ -1984,6 +2117,88 @@ mod serve_tests {
             listener.take_kept().is_some(),
             "the connection is not the listener's"
         );
+    }
+}
+
+#[cfg(all(test, feature = "http"))]
+mod queue_tests {
+    use super::*;
+
+    fn server() -> Arc<Server> {
+        Arc::new(Server {
+            handler: Value::Unit,
+            owner: 0,
+            handlers: AtomicUsize::new(0),
+            queue: Mutex::default(),
+            scheduler: std::sync::Weak::new(),
+            bodies: AtomicUsize::new(0),
+            conns: Mutex::new(Some(HashMap::new())),
+        })
+    }
+
+    fn waiting(server: &Arc<Server>, admitted: Admitted) -> (Arc<Cell<()>>, Waiting) {
+        let Admitted::Queued(cell) = admitted else {
+            panic!("a place in the queue");
+        };
+        let waiting = Waiting {
+            server: server.clone(),
+            cell: Some(cell.clone()),
+        };
+        (cell, waiting)
+    }
+
+    /// The handlers a server calls at a time are taken first, then the
+    /// places of its queue; a request beyond both is refused. A handler
+    /// that returns is handed to the request that waits longest, which
+    /// has it when it settles; one that stopped waiting is passed over,
+    /// and a request that is dropped with a handler hands it on. With
+    /// nobody waiting, the handler is free again.
+    #[test]
+    fn a_request_beyond_the_handlers_waits_in_order_and_one_beyond_the_queue_is_refused() {
+        let server = server();
+        let mut called: Vec<Called> = (0..wire::HANDLERS_MAX)
+            .map(|_| match server.admit() {
+                Admitted::Called(called) => called,
+                _ => panic!("a free handler"),
+            })
+            .collect();
+        let mut queued: Vec<(Arc<Cell<()>>, Waiting)> = (0..wire::QUEUED_MAX)
+            .map(|_| waiting(&server, server.admit()))
+            .collect();
+        assert!(matches!(server.admit(), Admitted::Full), "a full queue");
+        // The oldest is handed the handler that returns; the count stays.
+        drop(called.pop());
+        assert!(queued[0].0.get().is_some() && queued[1].0.get().is_none());
+        assert_eq!(server.handlers.load(Ordering::SeqCst), wire::HANDLERS_MAX);
+        let (_, mut first) = queued.remove(0);
+        let handed = first.settle().expect("the handler was handed to it");
+        // The next stops waiting (its time is over): passed over.
+        let (_, mut gave_up) = queued.remove(0);
+        assert!(gave_up.settle().is_none(), "it had no handler");
+        drop(handed);
+        assert!(
+            queued[0].0.get().is_some(),
+            "the one after it has the handler"
+        );
+        // Dropped with the handler: it hands it on.
+        let (_, dropped) = queued.remove(0);
+        drop(dropped);
+        assert!(queued[0].0.get().is_some(), "handed on");
+        // A request that comes now waits behind the others: a newcomer
+        // does not jump the queue. The handler goes down the line as
+        // the ones before it are dropped, and reaches it.
+        let newcomer = waiting(&server, server.admit());
+        drop(queued);
+        assert!(
+            newcomer.0.get().is_some(),
+            "the newcomer has the handler last"
+        );
+        // Nobody waits: a handler that returns is free again.
+        let before = server.handlers.load(Ordering::SeqCst);
+        drop(newcomer);
+        drop(called.pop());
+        assert_eq!(server.handlers.load(Ordering::SeqCst), before - 2);
+        assert!(matches!(server.admit(), Admitted::Called(_)));
     }
 }
 
