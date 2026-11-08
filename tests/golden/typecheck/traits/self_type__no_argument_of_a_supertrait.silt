@@ -2,18 +2,20 @@
 -- exit: 1
 -- A supertrait's arguments are types and the trait's own parameters.
 -- `Self`, an associated type, an anonymous record type, a name that is
--- no type and none of the trait's parameters, `_` or `Never` there was
--- read as no type at all, which every impl's type met: `Holds.get(x)` of
--- a `t: Sub` was then an Int that held a String. Each is an error at the
+-- no type and none of the trait's parameters, a parameter with type
+-- arguments, `_` or `Never` there was read as no type at all, which
+-- every impl's type met: `Holds.get(x)` of a `t: Sub` was then an Int
+-- that held a String. Each is an error at the
 -- argument. `Self::Item` outside a trait is one error, not two.
 -- stderr-contains: error[type]: 'Self' is no argument of a supertrait: write a type or one of the parameters of 'Sub'
--- stderr-contains: no_argument_of_a_supertrait.silt:22:18
+-- stderr-contains: no_argument_of_a_supertrait.silt:24:18
 -- stderr-contains: error[type]: an anonymous record type is no argument of a supertrait: write a type or one of the parameters of 'Rec'
 -- stderr-contains: error[type]: `Self::Item` is only valid inside a trait or trait-impl body; use the qualified form `<T as Trait>::Item` here
 -- stderr-contains: error[type]: 'q' is no argument of a supertrait: write a type or one of the parameters of 'Var'
 -- stderr-contains: error[type]: 'Nope' is no argument of a supertrait: write a type or one of the parameters of 'Unknown'
 -- stderr-contains: error[type]: '_' is no argument of a supertrait: write a type or one of the parameters of 'Hole'
 -- stderr-contains: error[type]: `Never` is written only as the whole return type of a function
+-- stderr-contains: error[type]: 'm(Int)' is no argument of a supertrait: write a type or one of the parameters of 'Ctor'
 -- stderr-not-contains: 'Self' stands only
 -- stderr-not-contains: of 'Own'
 trait Holds(a) {
@@ -36,6 +38,9 @@ trait Hole: Holds(_) {
 }
 trait Nothing: Holds(Never) {
   fn nothing(self) -> Int
+}
+trait Ctor(m): Holds(m(Int)) {
+  fn ctor(self) -> Int
 }
 trait Own(b): Holds(List(b)) {
   fn own(self) -> Int

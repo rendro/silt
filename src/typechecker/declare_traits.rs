@@ -3763,8 +3763,11 @@ fn trait_arguments_message(name: Symbol, params: &[Symbol]) -> String {
 /// type and none of the trait's `params`), as the error names it, with
 /// its span: what `resolve_supertrait_arg` would read as no type at all.
 fn no_supertrait_argument(te: &TypeExpr, params: &[Symbol]) -> Option<(String, Span)> {
+    // (A name the resolver refused it reported.)
     let unread = |name: Symbol| {
-        !params.contains(&name) && super::inference::written_type(te, name).is_none()
+        te.res != Some(crate::defs::Res::Error)
+            && !params.contains(&name)
+            && super::inference::written_type(te, name).is_none()
     };
     match &te.kind {
         TypeExprKind::SelfType => Some(("'Self'".to_string(), te.span)),
@@ -3776,6 +3779,10 @@ fn no_supertrait_argument(te: &TypeExpr, params: &[Symbol]) -> Option<(String, S
         TypeExprKind::Generic {
             name, name_span, ..
         } if unread(*name) => Some((format!("'{}'", resolve(*name)), *name_span)),
+        // (A parameter is a type: it takes no type arguments.)
+        TypeExprKind::Generic { name, .. } if params.contains(name) => {
+            Some((format!("'{}'", type_expr_text(te)), te.span))
+        }
         TypeExprKind::Generic { args, .. } | TypeExprKind::Tuple(args) => args
             .iter()
             .find_map(|arg| no_supertrait_argument(arg, params)),
