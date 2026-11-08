@@ -1,0 +1,34 @@
+-- csv is strict where RFC 4180 is: a carriage return outside quotes that ends
+-- no line is a Syntax error (a text with only  line ends fails on line 1);
+-- a blank line is one, with its own text, but the line end of the last row
+-- is no blank line; "a row of 1 field"; a header cell that is a field name
+-- with spaces around it is said before a missing field.
+import csv
+type P { name: String, age: Int, email: Option(String) }
+type One { id: String }
+fn show(r: Result(List(P), csv.CsvError)) -> String {
+  match r {
+    Ok(rows) -> "Ok({rows})"
+    Err(e) -> Error.message(e)
+  }
+}
+fn main() {
+  println(show(csv.parse("name,age,email\rA,1,a\r", P)))
+  println(show(csv.parse("name,age\nA,1\r\nB,2\n", P)))
+  println(show(csv.parse("name,age\nA,1\n\nB,2\n", P)))
+  println(show(csv.parse("name,age\nA,1\n\n", P)))
+  println(show(csv.parse("name,age\nA,1\n", P)))
+  println(show(csv.parse("name,age\nA,1\r\n", P)))
+  println(show(csv.parse("name,age\nA\n", P)))
+  println(show(csv.parse("name, age\nA,1\n", P)))
+  println(show(csv.parse("name,age , email\nA,1,x\n", P)))
+  match csv.parse("id\na\n\nb\n", One) {
+    Ok(rows) -> println(rows)
+    Err(e) -> println(Error.message(e))
+  }
+  println(csv.split_line("a,b\r"))
+  println(csv.split_line("\"a\",\"b\"\r"))
+  println(csv.split_line("a\rb"))
+  println(csv.split_line("\"a\rb\",c"))
+  println(csv.split_line("a,b\r\n"))
+}

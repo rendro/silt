@@ -47,16 +47,28 @@ pub(crate) struct Malformed {
 const UNCLOSED: &str = "a quoted field is not closed";
 /// Text after the quote that closes a field.
 const AFTER_QUOTE: &str = "expected a comma or the end of the line after a quoted field";
+/// A carriage return that is not part of a line end.
+const BARE_CR: &str = "a carriage return (\\r) outside quotes: csv lines end in \\n or \\r\\n";
 
 /// The record that starts at byte `start` of `text`, and the byte after
 /// the line break that ends it (the text's length at its end). A record
 /// ends at a line break outside quotes, `\n` or `\r\n`, or at the end of
 /// the text.
 pub(crate) fn record(text: &str, start: usize) -> Result<(Vec<String>, usize), Malformed> {
+    record_at(text, start).map(|(fields, _, next)| (fields, next))
+}
+
+/// [`record`], with the byte at which each field starts.
+fn record_at(text: &str, start: usize) -> Result<(Vec<String>, Vec<usize>, usize), Malformed> {
     let bytes = text.as_bytes();
     let mut fields = Vec::new();
+    let mut starts = Vec::new();
     let mut at = start;
+    // A carriage return outside quotes is part of a line end, `\r\n`,
+    // or no CSV: RFC 4180's text has none.
+    let bare_cr = |at| Malformed { why: BARE_CR, at };
     loop {
+        starts.push(at);
         if bytes.get(at) == Some(&b'"') {
             let opened = at;
             let mut field = String::new();
@@ -81,9 +93,12 @@ pub(crate) fn record(text: &str, start: usize) -> Result<(Vec<String>, usize), M
             fields.push(field);
             match bytes.get(at) {
                 Some(b',') => at += 1,
-                None => return Ok((fields, at)),
-                Some(b'\n') => return Ok((fields, at + 1)),
-                Some(b'\r') if bytes.get(at + 1) == Some(&b'\n') => return Ok((fields, at + 2)),
+                None => return Ok((fields, starts, at)),
+                Some(b'\n') => return Ok((fields, starts, at + 1)),
+                Some(b'\r') if bytes.get(at + 1) == Some(&b'\n') => {
+                    return Ok((fields, starts, at + 2));
+                }
+                Some(b'\r') => return Err(bare_cr(at)),
                 Some(_) => {
                     return Err(Malformed {
                         why: AFTER_QUOTE,
@@ -94,25 +109,25 @@ pub(crate) fn record(text: &str, start: usize) -> Result<(Vec<String>, usize), M
         } else {
             let end = bytes[at..]
                 .iter()
-                .position(|b| *b == b',' || *b == b'\n')
+                .position(|b| matches!(b, b',' | b'\n' | b'\r'))
                 .map_or(bytes.len(), |n| at + n);
             match bytes.get(end) {
                 Some(b',') => {
                     fields.push(text[at..end].to_string());
                     at = end + 1;
                 }
-                // A line break: `\r\n` ends the record as `\n` does.
-                Some(_) => {
-                    let field_end = match end > at && bytes[end - 1] == b'\r' {
-                        true => end - 1,
-                        false => end,
-                    };
-                    fields.push(text[at..field_end].to_string());
-                    return Ok((fields, end + 1));
+                Some(b'\n') => {
+                    fields.push(text[at..end].to_string());
+                    return Ok((fields, starts, end + 1));
                 }
+                Some(_) if bytes.get(end + 1) == Some(&b'\n') => {
+                    fields.push(text[at..end].to_string());
+                    return Ok((fields, starts, end + 2));
+                }
+                Some(_) => return Err(bare_cr(end)),
                 None => {
                     fields.push(text[at..end].to_string());
-                    return Ok((fields, end));
+                    return Ok((fields, starts, end));
                 }
             }
         }
@@ -164,6 +179,8 @@ pub(crate) const RULES: Rules = Rules {
 /// starts on (the header's is 1).
 pub(crate) struct Table {
     header: Vec<String>,
+    /// The byte at which each column's name starts.
+    header_at: Vec<usize>,
     rows: Vec<Vec<String>>,
     lines: Vec<usize>,
 }
@@ -196,18 +213,21 @@ pub(crate) fn table(text: &str) -> Result<Table, Value> {
     let mut records = Vec::new();
     let (mut at, mut line) = (start, 1);
     while at < text.len() {
-        let (fields, next) = record(text, at).map_err(|m| {
+        let (fields, starts, next) = record_at(text, at).map_err(|m| {
             let line = line + text[at..m.at].matches('\n').count();
             syntax_at(line, m.why, m.at)
         })?;
-        records.push((fields, line, at));
+        // (A line with nothing on it: no field, not even "".)
+        let blank = matches!(&text[at..next], "" | "\n" | "\r\n");
+        records.push((fields, starts, line, at, blank));
         line += text[at..next].matches('\n').count();
         at = next;
     }
     let mut records = records.into_iter();
-    let Some((header, _, _)) = records.next() else {
+    let Some((header, header_at, _, _, _)) = records.next() else {
         return Ok(Table {
             header: Vec::new(),
+            header_at: Vec::new(),
             rows: Vec::new(),
             lines: Vec::new(),
         });
@@ -219,11 +239,24 @@ pub(crate) fn table(text: &str) -> Result<Table, Value> {
         }
     }
     let (mut rows, mut lines) = (Vec::new(), Vec::new());
-    for (fields, line, at) in records {
+    let fields_of = |n: usize| match n {
+        1 => "1 field".to_string(),
+        n => format!("{n} fields"),
+    };
+    for (fields, _, line, at, blank) in records {
+        // (A blank line is a row of one empty field: of a text of one
+        // column, that is a row.)
+        if blank && header.len() > 1 {
+            let why = format!(
+                "a blank line: every row has the header's {}",
+                fields_of(header.len())
+            );
+            return Err(syntax_at(line, why, at));
+        }
         if fields.len() != header.len() {
             let why = format!(
-                "a row of {} fields, and the header has {}",
-                fields.len(),
+                "a row of {}, and the header has {}",
+                fields_of(fields.len()),
                 header.len()
             );
             return Err(syntax_at(line, why, at));
@@ -233,6 +266,7 @@ pub(crate) fn table(text: &str) -> Result<Table, Value> {
     }
     Ok(Table {
         header,
+        header_at,
         rows,
         lines,
     })
@@ -373,23 +407,49 @@ fn other_err(message: String) -> Value {
 
 static PARSE: Decoder = Decoder::new("csv.parse");
 
+/// The fields of the record type `element`, each with its type at the
+/// type's arguments.
+fn record_fields(vm: &Vm, element: &FieldType) -> Vec<(String, FieldType)> {
+    let (id, args) = match element {
+        FieldType::Record(id) => (*id, &[][..]),
+        FieldType::Applied(id, args) => (*id, args.as_slice()),
+        _ => return Vec::new(),
+    };
+    let Some(info) = vm.runtime.type_info(id) else {
+        return Vec::new();
+    };
+    (info.fields().iter())
+        .map(|(name, field)| (name.clone(), field.instantiated(args).into_owned()))
+        .collect()
+}
+
+/// `Err(Syntax(...))` of a column of the header of `table` that is the
+/// name of a field of the record type `element` but for spaces around
+/// it, where no column is the name itself: names are matched exactly.
+fn spaced_column(vm: &Vm, table: &Table, element: &FieldType) -> Option<Value> {
+    record_fields(vm, element)
+        .iter()
+        .filter(|(name, _)| !table.header.contains(name))
+        .find_map(|(name, _)| {
+            let k = (table.header.iter()).position(|cell| cell.trim() == name)?;
+            let why = format!(
+                "the header's column '{}' has spaces around it: column names are matched exactly",
+                table.header[k]
+            );
+            Some(syntax_at(1, why, table.header_at[k]))
+        })
+}
+
 /// The column the header of `table` lacks for a field of the record type
 /// `element` that is no `Option`: a field with no column is missing from
 /// every row, also where there is none.
 fn missing_column(vm: &Vm, table: &Table, element: &FieldType) -> Option<String> {
-    let (id, args) = match element {
-        FieldType::Record(id) => (*id, &[][..]),
-        FieldType::Applied(id, args) => (*id, args.as_slice()),
-        _ => return None,
-    };
-    let info = vm.runtime.type_info(id)?;
-    info.fields()
-        .iter()
+    record_fields(vm, element)
+        .into_iter()
         .find(|(name, field)| {
-            !matches!(&*field.instantiated(args), FieldType::Option(_))
-                && !table.header.contains(name)
+            !matches!(field, FieldType::Option(_)) && !table.header.contains(name)
         })
-        .map(|(name, _)| name.clone())
+        .map(|(name, _)| name)
 }
 
 builtins! {
@@ -404,6 +464,9 @@ builtins! {
         };
         if table.header.is_empty() {
             return Ok(Step::Done(ok(Value::list(Vec::new()))));
+        }
+        if let Some(spaced) = spaced_column(vm, &table, &element) {
+            return Ok(Step::Done(spaced));
         }
         if let Some(name) = missing_column(vm, &table, &element) {
             return Ok(Step::Done(Value::variant(
@@ -441,7 +504,7 @@ builtins! {
 
 #[cfg(test)]
 mod tests {
-    use super::{AFTER_QUOTE, Malformed, UNCLOSED, fields_of_line as split_line, record};
+    use super::{AFTER_QUOTE, BARE_CR, Malformed, UNCLOSED, fields_of_line as split_line, record};
 
     fn fields(line: &str) -> Vec<String> {
         split_line(line).unwrap_or_else(|e| panic!("{line:?}: {e:?}"))
@@ -467,8 +530,8 @@ mod tests {
         assert_eq!(fields("a,b\n"), ["a", "b"]);
         assert_eq!(fields("a,b\r\n"), ["a", "b"]);
         assert_eq!(fields("\"a\"\r\n"), ["a"]);
-        // A lone carriage return is text.
-        assert_eq!(fields("a\rb"), ["a\rb"]);
+        // A carriage return in quotes is text.
+        assert_eq!(fields("\"a\rb\""), ["a\rb"]);
     }
 
     #[test]
@@ -497,6 +560,28 @@ mod tests {
         );
         assert_eq!(refused("a,b\nc").at, 3);
         assert_eq!(refused("a\n\n").at, 1);
+        // A carriage return outside quotes that ends no line.
+        assert_eq!(
+            refused("a\rb"),
+            Malformed {
+                why: BARE_CR,
+                at: 1
+            }
+        );
+        assert_eq!(
+            refused("a,b\r"),
+            Malformed {
+                why: BARE_CR,
+                at: 3
+            }
+        );
+        assert_eq!(
+            refused("\"a\"\r"),
+            Malformed {
+                why: BARE_CR,
+                at: 3
+            }
+        );
     }
 
     #[test]

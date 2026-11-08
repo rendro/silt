@@ -44,9 +44,15 @@ into a list of records of the type, one for each row after it, in order.
 Each field of the record is read from the column of its name: the order of
 the columns does not matter, and a column that no field names is left
 alone. Records end at a line break outside quotes, `\n` or `\r\n`, and a
-quoted field may hold line breaks. A text that ends with a line break has no
-empty row after it; a UTF-8 byte order mark before the header is dropped; an
-empty text is `Ok([])`.
+quoted field may hold line breaks. The one line break that ends the last
+row ends the text: it is no empty row after it. A blank line, between rows
+or at the end, is no row and is a `Syntax` error (`line 4: a blank line:
+every row has the header's 3 fields`); in a text of one column it is a row
+with an empty cell. A UTF-8 byte order mark before the header is dropped;
+an empty text is `Ok([])`. Column names are matched exactly: a header cell
+that is a field's name with spaces around it (` age`) is a `Syntax` error
+that says so, `line 1: the header's column ' age' has spaces around it:
+column names are matched exactly`, before a missing field is.
 
 The rows are read by the decoder of `json.parse` and `toml.parse`, with a
 cell's text read as its field's type:
@@ -78,7 +84,7 @@ column (`csv type mismatch: expected Int, got 'abc' at line 3, column
 age`, and `got an empty cell` for an empty one), a date that is none says
 why as `json.parse` does; a row with another number of fields than the
 header is a `Syntax` error (`line 4: a row of 3 fields, and the header has
-5`), as is any text that `csv.split_line` refuses.
+5`, `a row of 1 field`), as is any text that `csv.split_line` refuses.
 
 ```silt
 import csv
@@ -124,12 +130,13 @@ a file may keep) is not part of it. A line break outside quotes anywhere
 else is a `Syntax` error, as are a quoted field that is not closed and text
 after a closing quote before the next comma (`"a"b`).
 
-A carriage return is part of a line break only before a `\n`. A lone one
-at the end of a line is text: `a,b\r` gives `a` and `b\r`, and `"a","b"\r`
-is a `Syntax` error (text after a closing quote). That is what a line of a
-file with CRLF line ends holds when the text is cut with
-`string.split(text, "\n")`: cut it with `string.lines`, which takes `\r\n`
-as one line end, or give the whole text to `csv.parse`.
+A carriage return outside quotes is part of a line end, `\r\n`, or it is
+a `Syntax` error (RFC 4180's text has none): `a,b\r` and `"a","b"\r` are
+refused, `a carriage return (\r) outside quotes: csv lines end in \n or
+\r\n`. That is what a line of a file with CRLF line ends holds when the
+text is cut with `string.split(text, "\n")`: cut it with `string.lines`,
+which takes `\r\n` as one line end, or give the whole text to `csv.parse`.
+Inside quotes a carriage return is text, as a line break is.
 
 ```silt
 import csv
