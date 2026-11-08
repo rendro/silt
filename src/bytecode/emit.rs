@@ -313,6 +313,15 @@ impl Emitter {
                 ),
             ));
         }
+        // (Unreachable code too: its height is what the code before it
+        // left, and an instruction there that takes more than that is
+        // code compiled with a height it does not have.)
+        debug_assert!(
+            effect.pops <= self.height,
+            "`{op}` takes {} values off a frame of {} in unreachable code",
+            effect.pops,
+            self.height
+        );
         let popped = self.height.saturating_sub(effect.pops);
         if let Some(cut) = effect.cut
             && self.reachable
@@ -712,10 +721,25 @@ mod tests {
         let mut e = Emitter::new("f".into(), 0, span()).unwrap();
         e.emit(Asm::Unit, span()).unwrap();
         e.emit(Asm::Return, span()).unwrap();
-        e.assume_height(1);
+        e.assume_height(2);
         e.emit(Asm::Add, span()).unwrap();
         e.emit(Asm::Return, span()).unwrap();
         e.finish(0).unwrap();
+    }
+
+    /// Unreachable code is not checked against the jumps to it, but an
+    /// instruction there that takes more values than the frame has is
+    /// code compiled with a height it does not have: a debug build
+    /// stops at it.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "in unreachable code")]
+    fn unreachable_code_takes_no_more_values_than_the_frame_has() {
+        let mut e = Emitter::new("f".into(), 0, span()).unwrap();
+        e.emit(Asm::Unit, span()).unwrap();
+        e.emit(Asm::Return, span()).unwrap();
+        e.assume_height(1);
+        let _ = e.emit(Asm::Add, span());
     }
 
     #[test]

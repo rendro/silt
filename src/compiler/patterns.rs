@@ -857,7 +857,7 @@ impl Compiler<'_> {
                     // scrutinee copy plus all bind intermediates), restoring
                     // the stack to the baseline: the temp count is the
                     // growth of the frame's height.
-                    let temps = self.emitter().height().saturating_sub(baseline_height);
+                    let temps = self.height_above(baseline_height, span)?;
                     for _ in 0..temps {
                         self.emit(Asm::Pop, span)?;
                     }
@@ -1206,7 +1206,7 @@ impl Compiler<'_> {
             self.ctx_mut().pattern_floor = None;
             // The copy and what the binding went through go; the names
             // are the arm's slots again.
-            let temps = self.emitter().height().saturating_sub(baseline_height);
+            let temps = self.height_above(baseline_height, span)?;
             for _ in 0..temps {
                 self.emit(Asm::Pop, span)?;
             }
@@ -1297,6 +1297,12 @@ impl Compiler<'_> {
         self.emit(Asm::DestructList { index: 0 }, span)?;
         let head_height = self.emitter().height();
         for arm in arms {
+            // (An arm behind one whose head is a name and that has no
+            // guard is reached by nothing: it, and the ones after it, are
+            // not compiled, as in `Compiler::compile_match`.)
+            if !self.emitter().reachable() {
+                break;
+            }
             let PatternKind::List(elements, Some(rest)) = &arm.pattern.kind else {
                 return Err(checker_missed(
                     span,
@@ -1308,7 +1314,7 @@ impl Compiler<'_> {
             let fails = self.compile_pattern_test(head, span)?;
             self.begin_scope();
             if let PatternKind::Ident(name) = head.kind {
-                // The head, on top, is the name.s local.
+                // The head, on top, is the name's local.
                 self.add_local(name, span)?;
             }
             if let PatternKind::Ident(name) = rest.kind {
@@ -1325,7 +1331,7 @@ impl Compiler<'_> {
                 Some(guard) => {
                     self.compile_expr(guard)?;
                     let jump = self.jump_if_false(span)?;
-                    Some((jump, self.emitter().height() - head_height))
+                    Some((jump, self.height_above(head_height, span)?))
                 }
                 None => None,
             };

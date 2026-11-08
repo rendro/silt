@@ -1,0 +1,60 @@
+-- An arm behind an arm that matches every value, with no guard, is never
+-- reached and never run, whatever it tests and binds; the program
+-- compiles, at once, and the first arm answers. (Nested tests, bindings,
+-- or-patterns and guards behind `_` or a name once made the compiler
+-- run for ever.)
+import list
+
+type P { a: Int, b: List(Int) }
+
+fn nested(v: (Int, Option(Int))) -> String {
+  match v {
+    _ -> "nested: arm0"
+    (x, Some(1 | 2)) when false -> "arm1 {x}"
+    _ when false -> "arm2"
+  }
+}
+
+fn in_a_list(v: (List(Int), Option(Int))) -> String {
+  match v {
+    _ -> "in a list: arm0"
+    ([x], Some(1)) when false -> "arm1 {x}"
+    _ when false -> "arm2"
+  }
+}
+
+fn or_patterns(v: (Int, List(Int))) -> String {
+  match v {
+    _ -> "or-patterns: arm0"
+    (10 | 11, _) when true -> "arm1"
+    (5, [10, 0 | 3]) -> "arm2"
+    (0, []) when true -> "arm3"
+  }
+}
+
+fn behind_a_name(v: P) -> String {
+  match v {
+    v1 -> "behind a name: {v1.a}"
+    P { a: 10 | 10, .. } when true -> "arm1"
+    P { a: 5, b: [10, 0 | 3] } -> "arm2"
+    P { a: 0..0, b: [] } when true -> "arm3"
+  }
+}
+
+fn head_group(cs: List(String)) -> String {
+  match cs {
+    [",", ..] -> "head group: comma"
+    [c, ..rest] -> "head group: {c} and {list.length(rest)} more"
+    ["x", ..rest] when rest == [] -> "arm2"
+    [] -> "none"
+  }
+}
+
+fn main() {
+  println(nested((1, Some(2))))
+  println(in_a_list(([1], Some(1))))
+  println(or_patterns((5, [10, 3])))
+  println(behind_a_name(P { a: 0, b: [] }))
+  println(head_group(["a", "b"]))
+  println(head_group([]))
+}

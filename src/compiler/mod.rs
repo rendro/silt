@@ -2183,6 +2183,14 @@ impl<'a> Compiler<'a> {
 
         let mut next = 0;
         while let Some(arm) = arms.get(next) {
+            // An arm that nothing reaches (it stands behind an arm that
+            // matches every value, with no guard) is not compiled: no
+            // jump arrives at it, so the frame's height there is no
+            // height the code has, and it would never run. The arms
+            // after it are not reached either.
+            if !self.emitter().reachable() {
+                break;
+            }
             // (Arms that take a list apart by its head, one after the
             // other, look at the head once.)
             let group = Self::head_group(&arms[next..]);
@@ -2220,7 +2228,7 @@ impl<'a> Compiler<'a> {
             let guard_jump = if let Some(guard) = &arm.guard {
                 self.compile_expr(guard)?;
                 let j = self.jump_if_false(span)?;
-                let bound = self.emitter().height() - arm_height;
+                let bound = self.height_above(arm_height, span)?;
                 Some((j, bound))
             } else {
                 None
@@ -3497,6 +3505,21 @@ impl<'a> Compiler<'a> {
     /// Afterwards the frame holds `height` values plus that one.
     fn emit_slide(&mut self, height: usize, span: Span) -> Result<(), Diagnostic> {
         self.emit(Asm::Slide { slot: height }, span)
+    }
+
+    /// How many values the frame has above its first `base`: a compiler
+    /// bug when it has fewer.
+    fn height_above(&mut self, base: usize, span: Span) -> Result<usize, Diagnostic> {
+        let height = self.emitter().height();
+        height.checked_sub(base).ok_or_else(|| {
+            Diagnostic::error(
+                Code::CompilerBug,
+                span,
+                format!(
+                    "compiler bug: the frame has {height} values where it was to have at least {base}"
+                ),
+            )
+        })
     }
 
     /// Make the value on top of the stack a local named `name`. Its slot
