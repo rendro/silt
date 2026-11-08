@@ -199,7 +199,7 @@ fn a_task_calls_a_function_and_reads_a_let_of_a_later_entry() {
         "",
         "fn later() -> String { \"fn\" }\nlet g = 5",
         "\"{later()} {g}\"",
-        "fn 5",
+        "\"fn 5\"",
     );
 }
 
@@ -211,7 +211,7 @@ fn a_task_calls_a_method_of_an_impl_of_a_later_entry() {
         "trait N { fn n(self) -> String }",
         "trait N for Int { fn n(self) -> String { \"int\" } }",
         "N.n(5)",
-        "int",
+        "\"int\"",
     );
 }
 
@@ -227,7 +227,7 @@ fn a_task_finds_an_impl_of_a_later_entry_through_an_earlier_generic_function() {
          trait N for Int { fn n(self) -> String { \"int\" } }\n\
          trait N for Q { fn n(self) -> String { \"q{self.q}\" } }",
         "\"{call(5)} {call(Q { q: 1 })}\"",
-        "int q1",
+        "\"int q1\"",
     );
 }
 
@@ -240,7 +240,7 @@ fn a_task_shows_a_value_with_the_display_impl_of_a_later_entry() {
         "import string\nfn sh(v: a) -> String where a: Display { \"{v}|{string.from(v)}\" }",
         "type Q { q: Int }\ntrait Display for Q { fn display(self) -> String { \"Q!\" } }",
         "sh([Q { q: 2 }])",
-        "[Q!]|[Q!]",
+        "\"[Q!]|[Q!]\"",
     );
 }
 
@@ -253,7 +253,7 @@ fn a_task_writes_a_value_with_the_json_encode_impl_of_a_later_entry() {
         "type Q { q: Int }\n\
          trait json.Encode for Q { fn encode(self) -> json.Value { json.String(\"Q!\") } }",
         "js(Q { q: 2 })",
-        "[\"Q!\"]",
+        "\"[\\\"Q!\\\"]\"",
     );
 }
 
@@ -280,7 +280,7 @@ fn a_task_calls_a_method_of_a_trait_of_a_later_entry() {
         "",
         "trait M { fn m(self) -> String }\ntrait M for Int { fn m(self) -> String { \"m{self}\" } }",
         "{\n  let call = { y -> M.m(y) }\n  call(7)\n}",
-        "m7",
+        "\"m7\"",
     );
 }
 
@@ -293,7 +293,7 @@ fn a_task_decodes_into_record_types_of_a_later_entry() {
         "import json",
         "type Inner { n: Int }\ntype Outer { name: String, inner: Inner, all: List(Inner) }",
         r#"json.parse("\{\"name\": \"a\", \"inner\": \{\"n\": 2\}, \"all\": [\{\"n\": 3\}]\}", Outer)"#,
-        "Ok(Outer {name: a, inner: Inner {n: 2}, all: [Inner {n: 3}]})",
+        "Ok(Outer {name: \"a\", inner: Inner {n: 2}, all: [Inner {n: 3}]})",
     );
 }
 
@@ -313,7 +313,7 @@ fn the_function_of_a_deadline_sees_later_entries_in_a_task_of_an_earlier_one() {
          type Q { q: Int }\n\
          trait Display for Q { fn display(self) -> String { \"Q!\" } }",
         "task.deadline(time.ms(60000), { -> \"{later()} {call(5)} {[Q { q: 1 }]}\" })",
-        "Ok(fn int [Q!])",
+        "Ok(\"fn int [Q!]\")",
     );
 }
 
@@ -381,7 +381,7 @@ task.deadline(time.ms(60000), { -> \"{later()} {call(5)}\" })
         assert_eq!(errors, "", "{slice:?}\n{output}");
         let answers: Vec<&str> = output.lines().collect();
         let (swept, rest) = answers.split_at(rounds.clone().count());
-        let in_time = "Some(Ok(fn int))";
+        let in_time = "Some(Ok(\"fn int\"))";
         let ended = "Some(Err(the function was ended by its deadline))";
         // In time first, ended from some amount of work on, and
         // nothing else.
@@ -393,7 +393,7 @@ task.deadline(time.ms(60000), { -> \"{later()} {call(5)}\" })
                 && swept[first_ended..].iter().all(|answer| *answer == ended),
             "{slice:?}: {swept:?}"
         );
-        assert_eq!(rest, [in_time, "Ok(fn int)"], "{slice:?}");
+        assert_eq!(rest, [in_time, "Ok(\"fn int\")"], "{slice:?}");
     }
 }
 
@@ -423,7 +423,7 @@ task.join(shower)
     );
     assert_eq!(
         (output.as_str(), errors.as_str()),
-        ("Some(shown: [Q!])\n", "")
+        ("Some(\"shown: [Q!]\")\n", "")
     );
 }
 
@@ -555,7 +555,10 @@ channel.receive(outs)
 task.join(worker)
 ",
     );
-    assert_eq!(output, "Some(first)\nfirst\nSome(first)\n", "{errors}");
+    assert_eq!(
+        output, "Some(\"first\")\nfirst\nSome(\"first\")\n",
+        "{errors}"
+    );
     let errors: Vec<&str> = (errors.lines())
         .filter(|line| line.starts_with("error"))
         .collect();
@@ -640,9 +643,9 @@ task.join(task.spawn {{ -> \"{{late.stamp}} {{late.tag()}}\" }})
     )
 }
 
-const IMPORTED_TWICE: &str = "Some(poke)
+const IMPORTED_TWICE: &str = "Some(\"poke\")
 two two tag-two [tag-two]
-Some(two two tag-two [tag-two])
+Some(\"two two tag-two [tag-two]\")
 two tag-two
 ";
 
@@ -784,7 +787,7 @@ fn a_session_sets_no_slot_twice() {
         run("channel.send(jobs, { -> \"{N.n(5)} {call(5)}\" })"),
         ok("()")
     );
-    assert_eq!(run("channel.receive(outs)"), ok("Some(second second)"));
+    assert_eq!(run("channel.receive(outs)"), ok("Some(\"second second\")"));
     // A module whose import fails once, and a redefinition of each kind.
     let write = |name: &str, text: &str| format!("io.write_file(\"{at}{name}\", \"{text}\")");
     assert_eq!(run(&write("X2_STAMP", "one")), ok("Ok(())"));
@@ -796,7 +799,7 @@ fn a_session_sets_no_slot_twice() {
         run("channel.send(jobs, { -> \"{late.stamp} {late.tag()}\" })"),
         ok("()")
     );
-    assert_eq!(run("channel.receive(outs)"), ok("Some(two tag-two)"));
+    assert_eq!(run("channel.receive(outs)"), ok("Some(\"two tag-two\")"));
     for entry in [
         "let stamp = \"again\"",
         "fn call(v: a) -> String where a: N { \"again {N.n(v)}\" }",
