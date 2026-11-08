@@ -639,3 +639,52 @@ fn test_fs_errors_name_the_path_they_are_about() {
         format!("invalid input: not a symlink: {file}")
     );
 }
+
+/// The file sources and sink of `stream` name the path as `io` does
+/// (`is a directory: d`, `file not found: f`), not in the system's text
+/// without it, and a line that is no UTF-8 by its number and the path.
+/// Unix only, as above.
+#[cfg(unix)]
+#[test]
+fn test_stream_file_errors_name_the_path_they_are_about() {
+    let dir = TempDir::new("stream-errors");
+    let sub = dir.path().join("d");
+    std::fs::create_dir(&sub).unwrap();
+    let missing = dir.path().join("missing.txt");
+    let bad = dir.path().join("bad.log");
+    std::fs::write(&bad, b"ok\nfine\n\xff\xfe\nafter\n").unwrap();
+    let (sub, missing, bad) = (
+        sub.to_str().unwrap().to_string(),
+        missing.to_str().unwrap().to_string(),
+        bad.to_str().unwrap().to_string(),
+    );
+    // The last element of what a source gives.
+    let last = |source: &str| {
+        err_msg(run(&format!(
+            "import list\nimport stream\nimport host\nfn main() {{\n  \
+             match stream.collect({source}) |> list.last {{\n    \
+             Some(r) -> host.give(r)\n    None -> panic(\"nothing\")\n  }}\n}}\n"
+        )))
+    };
+    assert_eq!(
+        last(&format!("stream.file_lines(\"{sub}\")")),
+        format!("is a directory: {sub}")
+    );
+    assert_eq!(
+        last(&format!("stream.file_chunks(\"{sub}\", 4)")),
+        format!("is a directory: {sub}")
+    );
+    assert_eq!(
+        last(&format!("stream.file_lines(\"{missing}\")")),
+        format!("file not found: {missing}")
+    );
+    assert_eq!(
+        last(&format!("stream.file_lines(\"{bad}\")")),
+        format!("line 3 of {bad} is not UTF-8")
+    );
+    let write = err_msg(run(&format!(
+        "import stream\nimport host\nfn main() {{\n  \
+         host.give(stream.write_to_file(stream.from_list([]), \"{sub}\"))\n}}\n"
+    )));
+    assert_eq!(write, format!("is a directory: {sub}"));
+}
