@@ -53,8 +53,9 @@ fn a_runtime_error_keeps_what_was_printed_before_it() {
 fn a_main_that_returns_err_has_failed() {
     let ran = run_it("fn main() {\n  Err(\"no\")\n}\n");
     assert!(!ran.ok);
-    assert!(ran.error.contains("main returned Err: no"), "{}", ran.error);
-    assert!(ran.error.contains(" --> main.silt:1:4"), "{}", ran.error);
+    // The program's message to its user, as `silt run` writes it: one
+    // line, no place of silt's.
+    assert_eq!(ran.error, "error: no");
 }
 
 #[test]

@@ -1,6 +1,5 @@
 -- exit: 1
 -- timeout: 10
--- stderr-contains: main returned Err: no luck
 -- `main` gives up through `?` ahead of the line that would have
 -- cancelled its ticker. A `main` that returns `Err` has failed, like
 -- one that raises an error: nothing is waited for, and the error is

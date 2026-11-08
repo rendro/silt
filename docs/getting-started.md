@@ -165,6 +165,21 @@ fn read_head(path) {
 }
 ```
 
+`main` may return a `Result` too, and use `?`. An `Err` that reaches the end
+of `main` is the program's message to its user: `silt run` writes it as one
+line, `error: <e>`, and the program exits with status 1.
+
+```silt
+-- noexec
+import io
+
+fn main() -> Result((), io.IoError) {
+  let content = io.read_file("app.json")?
+  println(content)
+  Ok(())
+}
+```
+
 Use `match` to handle the result. Every stdlib error enum (here `IoError`) implements the built-in
 `Error` trait, so you can pattern-match on specific variants and fall back to `Error.message` for
 anything else:

@@ -176,9 +176,13 @@ pub(crate) fn vm_run_file(path: &str) {
     // (`claim_program_failure`): from here an exit is ignored, and the
     // report is written whole, and the run fails.
     let (task_texts, tasks_failed) = task_failure_texts(path, &sources, file);
-    // `main`'s error: raised, or returned as `Err` (at `main`'s name;
-    // see `Vm::run_program`).
-    let main_text = (run_result.as_ref().err()).map(|e| render_runtime_error(e, path, &sources));
+    // `main`'s error: raised, with its full diagnostic, or returned as
+    // `Err(e)`, which is the program's message to its user: the one line
+    // `error: <e>`, with no place of silt's (see `Vm::run_program`).
+    let main_text = (run_result.as_ref().err()).map(|e| match e.returned_text() {
+        Some(text) => format!("error: {text}"),
+        None => render_runtime_error(e, path, &sources),
+    });
     let failed = tasks_failed || main_text.is_some();
     if failed {
         silt::scheduler::claim_program_failure();

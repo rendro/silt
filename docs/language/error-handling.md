@@ -111,16 +111,40 @@ infix expression, parenthesise it: `(a + b)?`.
 
 ### `Err` escaping `main`
 
-`main` returns `()` or `Result((), e)`, so `?` works at the top level too.
-A program ends in one of two ways:
+`main` returns `()` or `Result((), e)`, so `?` works at the top level too,
+and it is how a tool fails: the `Err` is the program's message to its user.
 
 | How `main` ends | What `silt run` does |
 |---|---|
 | it returns `()` or `Ok(())` | exit status 0 |
-| it returns `Err(e)`, or a runtime error | `error[runtime]: main returned Err: e` (or the error) on stderr, exit status 1 |
+| it returns `Err(e)` | the one line `error: e` on stderr, exit status 1 |
+| a runtime error or a `panic` | the error with its place and calls on stderr, exit status 1 |
 
-The payload is shown as `println` shows it. A test function follows the
-same rule (see [Testing](testing.md)).
+The payload is shown as `println` shows it, so a tool's own error type
+with a `Display` impl reads as the tool writes it:
+
+```silt
+-- noexec
+import io
+
+fn main() -> Result((), String) {
+  match io.args() {
+    [] -> Err("logq: no input files")
+    paths -> {
+      println("reading {paths}")
+      Ok(())
+    }
+  }
+}
+```
+
+```
+$ silt run logq.silt
+error: logq: no input files
+```
+
+A test function that returns `Err(e)` fails, and its report names the
+test (see [Testing](testing.md)).
 
 `process.exit` is the one way to end with another code. A tool that wants
 its own message and code says so:
