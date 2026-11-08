@@ -71,7 +71,7 @@ program with status 1. `silt run main.silt
 | record | `User { name: "A", age: 3 }`, anonymous `{ x: 1, y: 2 }` |
 | record update | `user.{ age: 4 }` |
 | variant | `Some(1)`, `None`, `Ok(x)`, `Err(e)`, `Circle(2)` |
-| closure | `{ x -> x * 2 }`, `{ a, b -> a + b }`, `{ -> 42 }` |
+| closure | `{ x -> x * 2 }`, `{ a, b -> a + b }`, `{ (k, v) -> v }`, `{ -> 42 }` |
 
 Every value is immutable. There is no null, no implicit conversion
 (`int.to_float(n)`), and `+` is arithmetic only: strings are built by
@@ -107,6 +107,8 @@ fn main() {
   optional; types are inferred.
 - Functions are top-level only. A local helper is a closure,
   `let f = { n -> ... }`, which may call itself by its name.
+- A closure's parameters are patterns, as a `let`'s are: a pair is taken
+  apart in place, `map.entries(m) |> list.map { (k, v) -> "{k}={v}" }`.
 - A closure in the last argument may follow the call: `list.map(xs) { x ->
   x + 1 }`.
 - `x |> f(y)` is `f(x, y)`.
@@ -238,6 +240,21 @@ fn main() {
   field by field in declared order, an enum by variant order, then
   payload.
 
+## Modules
+
+```
+import entry              -- the module: entry.parse(line), entry.Entry { ... }
+import entry.{ Entry }    -- names alone: Entry { ... }, but no `entry`
+import entry as e         -- the module by another name: e.parse(line)
+```
+
+`import entry.{ Entry }` binds exactly the names it lists, and not
+`entry`: to use the module's functions through `entry.` and its type by
+its name, write both lines. An enum imported by name does not bring its
+variants: list them too, or write `Level.Info`. Only `pub` items are seen
+outside their module. In a package every file directly in `src/` is a
+module, named by its file (see [Modules](language/modules.md)).
+
 ## Concurrency
 
 `task.spawn { -> ... }` starts a task and gives its `Handle(a)`;
@@ -250,7 +267,9 @@ status 1.
 ## Tests
 
 A file named `*_test.silt` holds tests: each `fn test_*()` runs, and
-`skip_test_*` is skipped. A test function returns `()` or `Result((), e)`,
+`skip_test_*` is skipped. In a package, test files go in `tests/` or
+beside the code in `src/`, and import the package's modules by name
+(`import entry`). A test function returns `()` or `Result((), e)`,
 as `main` does. Assertions are in the `test` module
 (`test.assert_eq(actual, expected)`). `silt test` runs them all.
 
