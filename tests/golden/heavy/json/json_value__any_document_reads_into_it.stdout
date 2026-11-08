@@ -2,4 +2,4 @@ Object(#{"a": Object(#{}), "b": Array([Int(1), Int(1), Float(1.5), Int(1000), In
 {"a":{},"b":[1,1,1.5,1000,0,1.2345678901234567e+19,null,true,"s"]}
 Ok(Object(#{"k": Int(2)}))
 Ok(Int(7))
-Err(json syntax error at byte 7: EOF while parsing an object at line 1 column 7)
+Err(json syntax error at byte 7: EOF while parsing an object)
