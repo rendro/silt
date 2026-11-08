@@ -12,7 +12,9 @@ use crate::types::Type;
 
 use super::Server;
 use super::conversions::position_to_offset;
-use super::state::DefInfo;
+use super::local_bindings::nearest_local_binding_for;
+use super::state::{DefInfo, Document, LocalBinding};
+use super::workspace::{Named, Target};
 
 impl Server {
     // ── Signature help ────────────────────────────────────────────
@@ -37,7 +39,7 @@ impl Server {
         let cursor = position_to_offset(&doc.source, &pos);
         let tokens = doc.tokens();
         let before = tokens.partition_point(|tok| (tok.span.start as usize) < cursor);
-        let (fn_name, active_param) = call_site(&tokens[..before])?;
+        let (fn_name, active_param, callee_at) = call_site(&tokens[..before])?;
 
         // `Tr.m(`: the method of the trait, as the trait declares it.
         if let Some((tr, method)) = fn_name.rsplit_once('.')
@@ -54,42 +56,105 @@ impl Server {
             return Some(self.signature(m.label, params_info, m.doc, active_param));
         }
 
-        // Look up in definitions first, then builtins.
-        let fn_sym = intern(&fn_name);
-        // A member of an imported module: `m.f(`, or `f(` with `f` from
-        // `import m.{ f }`.
-        let imported = match fn_name.split_once('.') {
-            Some((module, member)) => self
-                .imported_module(doc, intern(module))
-                .and_then(|mut view| view.definitions.remove(&intern(member))),
-            None => self
-                .item_module(doc, fn_sym)
-                .and_then(|mut view| view.definitions.remove(&fn_sym)),
+        // What the name called means where it is written, as hover finds
+        // it: a local (or a parameter) that is spelled like a function is
+        // not that function, and a definition is the one the name reaches.
+        let (label, params_info, doc_text) = match self.callee(uri, doc, &fn_name, callee_at) {
+            Callee::Local(ty) => {
+                let (label, params_info) = local_signature(&ty?)?;
+                (label, params_info, None)
+            }
+            Callee::Definition(def) => {
+                let (label, params_info) = build_signature_from_def(&fn_name, &def);
+                (label, params_info, def.doc)
+            }
+            Callee::Builtin(name) => self.builtin_signature(&name)?,
+            Callee::Unknown => {
+                // No analysis says it: by the name, in definitions first,
+                // then builtins.
+                let fn_sym = intern(&fn_name);
+                // A member of an imported module: `m.f(`, or `f(` with `f`
+                // from `import m.{ f }`.
+                let imported = match fn_name.split_once('.') {
+                    Some((module, member)) => self
+                        .imported_module(doc, intern(module))
+                        .and_then(|mut view| view.definitions.remove(&intern(member))),
+                    None => self
+                        .item_module(doc, fn_sym)
+                        .and_then(|mut view| view.definitions.remove(&fn_sym)),
+                };
+                match doc.definitions.get(&fn_sym).or(imported.as_ref()) {
+                    Some(def) => {
+                        let (label, params_info) = build_signature_from_def(&fn_name, def);
+                        (label, params_info, def.doc.clone())
+                    }
+                    None => self.builtin_signature(&fn_name)?,
+                }
+            }
         };
-        let (label, params_info, doc_text) =
-            if let Some(def) = doc.definitions.get(&fn_sym).or(imported.as_ref()) {
-                let (label, params_info) = build_signature_from_def(&fn_name, def);
-                (label, params_info, def.doc.clone())
-            } else {
-                // A builtin (`list.map`, or `println` of the prelude):
-                // the signature of its row in the builtin registry, with
-                // each parameter where the signature writes it, and the
-                // stdlib markdown alongside: the function's own section
-                // (of the globals page, for one of the prelude).
-                let row = crate::builtins::registry::registry().named(&fn_name)?;
-                let (label, ranges) = row.qualified_signature(row.module)?;
-                let doc_text = self.builtin_docs.get(&fn_name).cloned();
-                let params_info = ranges
-                    .into_iter()
-                    .map(|range| ParameterInformation {
-                        label: ParameterLabel::LabelOffsets(range),
-                        documentation: None,
-                    })
-                    .collect::<Vec<_>>();
-                (label, params_info, doc_text)
-            };
 
         Some(self.signature(label, params_info, doc_text, active_param))
+    }
+
+    /// What the callee `fn_name`, whose last name starts at byte `at` of
+    /// the open document `uri`, is.
+    fn callee(&self, uri: &lsp_types::Uri, doc: &Document, fn_name: &str, at: usize) -> Callee {
+        let local = |binding: Option<&LocalBinding>| Callee::Local(binding.and_then(|b| b.ty.clone()));
+        match self.target_at(uri, at) {
+            Some((_, Target::Local(binding))) => {
+                local(doc.locals.iter().find(|b| b.binding_offset == binding))
+            }
+            // A method of a value (`x.m(`): no signature here.
+            Some((_, Target::Method { .. })) => Callee::Local(None),
+            Some((_, Target::Defs(_))) => match self.builtin_at(uri, at) {
+                Some(name) => Callee::Builtin(name),
+                None => match self.named_at(uri, at) {
+                    Named::Definition(def) => Callee::Definition(def),
+                    Named::Local | Named::Other => Callee::Unknown,
+                },
+            },
+            // (A text that has no analysis: a local of the name in scope
+            // there is still the local.)
+            None => match (!fn_name.contains('.'))
+                .then(|| nearest_local_binding_for(&doc.locals, intern(fn_name), at))
+                .flatten()
+            {
+                Some(binding) => local(Some(binding)),
+                None => Callee::Unknown,
+            },
+        }
+    }
+
+    /// The signature of silt's own `name` (`list.map`, `println` of the
+    /// prelude, a variant: `Some`, `list.Stop`), with each parameter
+    /// where the signature writes it, and its stdlib markdown: its own
+    /// section (of the globals page, for one of the prelude).
+    fn builtin_signature(
+        &self,
+        name: &str,
+    ) -> Option<(String, Vec<ParameterInformation>, Option<String>)> {
+        let doc_text = self.builtin_docs.get(name).cloned();
+        // A variant: as its enum declares it, `Some(a)`.
+        let Some(row) = crate::builtins::registry::registry().named(name) else {
+            let def = DefInfo {
+                ty: None,
+                signature: None,
+                params: Vec::new(),
+                fields: Some(super::trait_hover::builtin_variant_fields(name)?),
+                doc: None,
+            };
+            let (label, params_info) = build_signature_from_def(name, &def);
+            return Some((label, params_info, doc_text));
+        };
+        let (label, ranges) = row.qualified_signature(row.module)?;
+        let params_info = ranges
+            .into_iter()
+            .map(|range| ParameterInformation {
+                label: ParameterLabel::LabelOffsets(range),
+                documentation: None,
+            })
+            .collect::<Vec<_>>();
+        Some((label, params_info, doc_text))
     }
 
     /// The help of a call of the signature `label`, whose parameters are
@@ -142,6 +207,42 @@ impl Server {
 }
 
 // ── Signature help helpers ─────────────────────────────────────────
+
+/// What a call's callee is.
+enum Callee {
+    /// A local binding (or a parameter), of this type if it is known.
+    Local(Option<Type>),
+    /// A definition of a file.
+    Definition(DefInfo),
+    /// One of silt's own, by its qualified name (`list.map`, `Some`).
+    Builtin(String),
+    /// Nothing the analysis says.
+    Unknown,
+}
+
+/// The signature of a local of the type `ty`, as hover writes the type
+/// (`Fn(Int) -> Int`), each parameter's type a parameter; `None` for a
+/// local that is no function.
+fn local_signature(ty: &Type) -> Option<(String, Vec<ParameterInformation>)> {
+    let Type::Fun(params, ret) = super::ast_walk::written_with_letters(ty) else {
+        return None;
+    };
+    let mut label = "Fn(".to_string();
+    let mut params_info = Vec::new();
+    for (i, param) in params.iter().enumerate() {
+        if i > 0 {
+            label.push_str(", ");
+        }
+        let start = label.len() as u32;
+        label.push_str(&param.to_string());
+        params_info.push(ParameterInformation {
+            label: ParameterLabel::LabelOffsets([start, label.len() as u32]),
+            documentation: None,
+        });
+    }
+    label.push_str(&format!(") -> {ret}"));
+    Some((label, params_info))
+}
 
 pub(super) fn build_signature_from_def(
     name: &str,
@@ -225,11 +326,12 @@ pub(super) fn build_signature_from_def(
 /// The call that the end of `tokens` is in, as the name written in
 /// front of its `(` (`f`, or `m.f`) and the number of its arguments
 /// that are complete (the index of the one being written), the piped
-/// value of `x |> f(` counted as the first: the innermost `(` that is
+/// value of `x |> f(` counted as the first, and the byte its last name
+/// (`f`) starts at: the innermost `(` that is
 /// not closed. A list, a record, a block or a string interpolation that
 /// is open inside it is part of the argument being written, and its
 /// commas are its own.
-fn call_site(tokens: &[Tok]) -> Option<(String, u32)> {
+fn call_site(tokens: &[Tok]) -> Option<(String, u32, usize)> {
     #[derive(PartialEq)]
     enum Open {
         Paren,
@@ -279,6 +381,7 @@ fn call_site(tokens: &[Tok]) -> Option<(String, u32)> {
             .is_some_and(|tok| tok.kind == Token::Dot)
     };
     let name = name_at(paren.checked_sub(1))?;
+    let at = tokens[paren - 1].span.start as usize;
     // The argument a pipe gives the call comes before those written.
     let piped = |path: usize| {
         let at = (paren.checked_sub(path + 1)).and_then(|i| tokens.get(i));
@@ -294,11 +397,11 @@ fn call_site(tokens: &[Tok]) -> Option<(String, u32)> {
             if is_dot(paren.checked_sub(6)) {
                 return None;
             }
-            return Some((format!("{outer}.{module}.{name}"), piped(5)));
+            return Some((format!("{outer}.{module}.{name}"), piped(5), at));
         }
-        return Some((format!("{module}.{name}"), piped(3)));
+        return Some((format!("{module}.{name}"), piped(3), at));
     }
-    Some((name, piped(1)))
+    Some((name, piped(1), at))
 }
 
 // ── Tests ─────────────────────────────────────────────────────────

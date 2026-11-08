@@ -1,0 +1,34 @@
+-- cmd: lsp
+-- lsp: signature 27:17
+-- lsp: signature 28:23
+-- lsp: signature 29:15
+-- lsp: signature 30:18
+-- lsp: signature 31:20
+-- lsp: signature 19:9
+-- lsp: signature 32:17
+-- Signature help is of what the name called means where it is written,
+-- as hover says: a local or a parameter spelled like a function of the
+-- prelude, of the program or of a module is not that function, and has
+-- its own type, a closure's parameters as its parameters. A local that
+-- is no function has none. A name that is not shadowed is the function.
+import list
+
+fn helper(a: Int, b: Int) -> Int { a + b }
+
+fn apply(panic: Fn(Int) -> Int) -> Int {
+  panic(1)
+}
+
+fn main() {
+  let print = { x: Int -> x * 2 }
+  let helper = { s: String, n: Int -> s }
+  let map = { y: String -> y }
+  let length = 3
+  println(print(1))
+  println(helper("x", 2))
+  println(map("a"))
+  println(length(1))
+  println(list.map([1]) { z -> z })
+  println(apply({ x -> x }))
+  let _ = length
+}

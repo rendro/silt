@@ -1,0 +1,23 @@
+-- cmd: lsp
+-- lsp: signature 17:17
+-- lsp: signature 18:36
+-- lsp: signature 19:37
+-- lsp: signature 20:22
+-- lsp: signature 21:21
+-- lsp: signature 22:23
+-- Signature help on a variant of the prelude or of a builtin module
+-- writes it as its enum declares it, as for a variant of the program,
+-- each field a parameter: `Some`, `Ok`, `Err`, `list.Stop`, one that an
+-- import binds bare (`Continue`), and a field of a module's type.
+import json
+import list
+import list.{ Continue }
+
+fn main() {
+  let _a = Some(1)
+  let _b: Result(Int, String) = Ok(2)
+  let _c: Result(Int, String) = Err("no")
+  let _d = list.Stop(3)
+  let _e = Continue(4)
+  let _f = json.Array([json.Null])
+}

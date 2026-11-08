@@ -1,0 +1,21 @@
+30:11 error `Int` is not callable
+> signature 27:17
+Fn(Int) -> Int
+argument 1: Int
+> signature 28:23
+Fn(String, Int) -> String
+argument 2: Int
+> signature 29:15
+Fn(String) -> String
+argument 1: String
+> signature 30:18
+(nothing)
+> signature 31:20
+fn list.map(xs: List(a), f: Fn(a) -> b) -> List(b)
+argument 1: xs: List(a)
+> signature 19:9
+Fn(Int) -> Int
+argument 1: Int
+> signature 32:17
+fn apply(panic: Fn(Int) -> Int) -> Int
+argument 1: panic: Fn(Int) -> Int
