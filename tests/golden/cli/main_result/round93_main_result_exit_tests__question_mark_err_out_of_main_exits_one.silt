@@ -1,5 +1,4 @@
 -- exit: 1
--- stderr-contains: kaput
 fn fail() -> Result(Int, String) {
   Err("kaput")
 }

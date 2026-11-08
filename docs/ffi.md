@@ -510,6 +510,9 @@ fault of the program itself, a division by zero or a `panic`, keeps it
   `main returned Err: <e as println writes it>`, and its place where
   `main` is bound (the name of its `fn`, its name in a `let` or an
   import). `call_test` says the same of a test function, at its name.
+  `VmError::returned_text` gives the payload's text alone: `silt run`
+  writes such an error as the one line `error: <text>`, the program's
+  message to its user, and a host may do the same.
   The payload is shown by its `Display`, which is code of the program:
   a `process.exit` there (or the step budget used up) is the error
   instead; if it fails otherwise, the payload is shown by its structure.

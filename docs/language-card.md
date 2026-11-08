@@ -36,8 +36,9 @@ fn main() {
 ```
 
 A file is a module. `silt run main.silt` runs its `fn main()`, which
-returns `()` or `Result((), e)`; a `main` that returns `Err(e)` ends the
-program with status 1. `silt run main.silt
+returns `()` or `Result((), e)`; a `main` that returns `Err(e)` (a `?`
+in `main`) writes `error: <e>` on stderr and ends the program with status
+1. `silt run main.silt
 -- a b` gives the program its arguments (`io.args()`).
 
 ## Lexical

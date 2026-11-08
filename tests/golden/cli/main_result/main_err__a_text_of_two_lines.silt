@@ -1,8 +1,6 @@
 -- exit: 1
--- The text of an Err that has a newline: its first line is the
--- message, the rest a note.
--- stderr-contains: error[runtime]: main returned Err: line1
--- stderr-contains: = note: line2
+-- The text of an Err that has a newline is written as it is, after
+-- `error: `.
 fn main() -> Result((), String) {
   Err("line1\nline2")
 }

@@ -125,6 +125,21 @@ impl VmError {
         }
     }
 
+    /// The text of the `Err(e)` a function returned (`e` as `println`
+    /// writes it), if that is this error ([`VmError::returned_err`]).
+    /// `silt run` and the playground write a `main` that returned `Err`
+    /// as the one line `error: <text>`: it is the program's message to
+    /// its user, not silt's.
+    pub fn returned_text(&self) -> Option<&str> {
+        if !self.returned_err {
+            return None;
+        }
+        // (A function's name has no space: the first such text is the
+        // one `VmError::returned` wrote.)
+        let (_, text) = self.message.split_once(" returned Err: ")?;
+        Some(text)
+    }
+
     /// The error with `help` as a help line.
     pub fn with_help(mut self, help: impl Into<String>) -> Self {
         self.help.push(help.into());

@@ -1,0 +1,19 @@
+-- exit: 1
+-- A `?` in main is how a tool fails: the Err is the program's message
+-- to its user, written as the one line `error: <e>` on stderr, with no
+-- place of silt's and no source line.
+import io
+import list
+
+fn inputs() -> Result(List(String), String) {
+  match io.args() {
+    [] -> Err("logq: no input files")
+    paths -> Ok(paths)
+  }
+}
+
+fn main() -> Result((), String) {
+  let paths = inputs()?
+  println("{list.length(paths)} files")
+  Ok(())
+}

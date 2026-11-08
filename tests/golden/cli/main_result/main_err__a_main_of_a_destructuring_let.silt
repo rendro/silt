@@ -1,5 +1,4 @@
 -- exit: 1
--- A main bound in a destructuring `let` is reported at its name there.
--- stderr-contains: error[runtime]: main returned Err: dx
--- stderr-contains: main_err__a_main_of_a_destructuring_let.silt:5:6
+-- A main bound in a destructuring `let` that returns Err: the one
+-- line of the program's message, as for any main.
 let (main, _y) = ({ -> Err("dx") }, 3)

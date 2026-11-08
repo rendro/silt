@@ -119,6 +119,7 @@ pub fn run(source: &str, clock: impl Clock + 'static, steps: u64) -> Run {
     // A `process.exit` ends the run with its code: 0 is a program that
     // ended well, any other code one that failed.
     let mut exited = None;
+    let mut returned = None;
     let failure = match vm.run_program(&program) {
         // `main` has returned; the program ends when its tasks can do
         // no more.
@@ -136,15 +137,22 @@ pub fn run(source: &str, clock: impl Clock + 'static, steps: u64) -> Run {
             e.to_diagnostic()
                 .with_note(format!("the playground ends a program after {steps} steps")),
         ),
+        // `main` returned `Err(e)`: the program's message to its user,
+        // the one line `error: <e>`, as `silt run` writes it.
+        Err(e) if e.returned_text().is_some() => {
+            returned = e.returned_text().map(|text| format!("error: {text}"));
+            None
+        }
         Err(e) => Some(e.to_diagnostic()),
     };
     // The tasks that have failed and that nobody joined are reported
     // into `out` here at the latest.
     drop(vm);
-    let (ok, error) = match (exited, failure) {
-        (Some(0), _) | (None, None) => (true, String::new()),
-        (Some(code), _) => (false, format!("the program exited with code {code}")),
-        (None, Some(d)) => (false, render_human(session.sources(), &d)),
+    let (ok, error) = match (exited, failure, returned) {
+        (Some(0), ..) | (None, None, None) => (true, String::new()),
+        (Some(code), ..) => (false, format!("the program exited with code {code}")),
+        (None, Some(d), _) => (false, render_human(session.sources(), &d)),
+        (None, None, Some(line)) => (false, line),
     };
     Run {
         diagnostics: rendered,

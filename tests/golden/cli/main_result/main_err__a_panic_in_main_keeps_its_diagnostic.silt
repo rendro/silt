@@ -1,0 +1,13 @@
+-- exit: 1
+-- A runtime error or a panic of a main that returns Result keeps its
+-- full diagnostic: the place, the source line, the calls.
+-- stderr-contains: error[runtime]: panic: logq: broken
+-- stderr-contains: --> main_err__a_panic_in_main_keeps_its_diagnostic.silt:8:3
+-- stderr-not-contains: error: logq
+fn read() -> Result((), String) {
+  panic("logq: broken")
+}
+
+fn main() -> Result((), String) {
+  read()
+}

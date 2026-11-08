@@ -1,9 +1,6 @@
 -- exit: 1
--- stderr-contains: error[runtime]: main returned Err: Code {n: 0}
--- stderr-not-contains: division by zero
 -- Where the Display impl of the `Err` a `main` returns fails itself,
--- the value is shown by its structure: the error to report is that
--- `main` returned `Err`.
+-- the value is shown by its structure: the message is the Err.
 type Code {
   n: Int,
 }

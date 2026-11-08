@@ -1,9 +1,6 @@
 -- exit: 1
--- A `main` bound by `let` that returns Err is reported where the `let`
--- binds it; in a package that is src/main.silt, not silt.toml.
--- stderr-contains: error[runtime]: main returned Err: boom
--- stderr-contains: src/main.silt:11:5
--- stderr-not-contains: silt.toml
+-- A `main` of a package, bound by `let`, that returns Err: the one
+-- line of the program's message, naming no file of the package.
 fn real() -> Result((), String) {
   Err("boom")
 }

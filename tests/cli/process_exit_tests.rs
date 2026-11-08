@@ -46,7 +46,7 @@ fn a_failure_and_an_exit_that_race_end_the_run_one_way() {
         (
             "err",
             "import process\nimport task\nfn main() -> Result((), String) {\n  let _ = task.spawn { -> process.exit(3) }\n  Err(\"bad input\")\n}\n",
-            "error[runtime]: main returned Err: bad input",
+            "error: bad input\n",
             3,
         ),
     ];
