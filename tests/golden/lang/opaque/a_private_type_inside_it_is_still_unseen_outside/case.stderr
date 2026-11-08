@@ -1,0 +1,27 @@
+error[type]: 'Secret' is private to module 'vault'
+ --> main.silt:9:24
+   |
+ 9 |   let _v = vault.Vault(vault.Secret(1))
+   |                        ^^^^^^^^^^^^ 'Secret' is private to module 'vault'
+  = help: mark it `pub` in module 'vault' to import it from another module
+
+error[type]: cannot build a 'vault.Vault' outside module 'vault': the type is opaque
+ --> main.silt:9:12
+   |
+ 9 |   let _v = vault.Vault(vault.Secret(1))
+   |            ^^^^^^^^^^^ cannot build a 'vault.Vault' outside module 'vault': the type is opaque
+  = help: use the functions of module 'vault'
+
+error[type]: cannot take a 'vault.Vault' apart outside module 'vault': the type is opaque
+ --> main.silt:11:5
+    |
+ 11 |     vault.Vault(_s) -> 1
+    |     ^^^^^^^^^^^^^^^ cannot take a 'vault.Vault' apart outside module 'vault': the type is opaque
+  = help: use the functions of module 'vault'
+
+error[type]: cannot read field 'code' of a 'vault.Lock' outside module 'vault': the type is opaque
+ --> main.silt:14:11
+    |
+ 14 |   println(l.code)
+    |           ^^^^^^ cannot read field 'code' of a 'vault.Lock' outside module 'vault': the type is opaque
+  = help: use the functions of module 'vault'

@@ -1,0 +1,13 @@
+-- A `pub opaque type` may hold a private type of its module: nothing
+-- outside builds, matches or reads what it holds. Its printed form
+-- shows the private names all the same.
+import vault
+
+fn main() {
+  let v = vault.vault(3)
+  println(v)
+  let l = vault.lock("1234")
+  println(vault.opens(l, "1234"))
+  println(vault.opens(l, "0000"))
+  println(v == vault.vault(3))
+}

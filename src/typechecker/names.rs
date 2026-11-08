@@ -819,7 +819,8 @@ fn bind_imported(
 
 /// Report each private record, enum or trait of `module` that a public
 /// declaration names: a `pub fn`'s parameter and return types and its
-/// where-bounds, a `pub type`'s fields, variants and alias target. An
+/// where-bounds, a `pub type`'s fields, variants and alias target (not
+/// a `pub opaque type`'s, whose contents nothing outside sees). An
 /// importer could use the public declaration but never name the private
 /// item it leaks.
 fn report_private_in_public(
@@ -903,7 +904,9 @@ fn report_private_in_public(
                 }
                 (format!("public fn '{}'", f.name), f.name)
             }
-            Decl::Type(td) if td.is_pub => {
+            // An opaque type shows nothing of what it holds outside its
+            // module: it may hold a private type.
+            Decl::Type(td) if td.is_pub && !td.is_opaque => {
                 match &td.body {
                     TypeBody::Enum(variants) => variants
                         .iter()
