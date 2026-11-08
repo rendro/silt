@@ -44,11 +44,15 @@ pub struct VmError {
     // `http`, nowhere.)
     #[cfg_attr(not(feature = "http"), allow(dead_code))]
     pub(crate) exit_in_a_test: bool,
-    /// If true, the program's own code ran to its end and returned
-    /// `Err(..)`: `main` ([`Vm::run_program`](super::Vm::run_program)), or a
-    /// test function ([`Vm::call_test`](super::Vm::call_test)). The span is
-    /// the function's name, and there is no call stack.
-    pub returned_err: bool,
+    /// The text of the `Err(e)` the program's own code returned when it ran
+    /// to its end (`e` as `println` writes it): `main`
+    /// ([`Vm::run_program`](super::Vm::run_program)), or a test function
+    /// ([`Vm::call_test`](super::Vm::call_test)). The span is the
+    /// function's name, and there is no call stack. `silt run` and the
+    /// playground write a `main` that returned `Err` as the one line
+    /// `error: <text>`: it is the program's message to its user, not
+    /// silt's.
+    pub returned: Option<String>,
     /// The task whose failure this is, when a `task.join` took it from
     /// that task: a cancel that dismisses it hands it back to the task,
     /// whose failure is then reported as never joined
@@ -70,7 +74,7 @@ impl VmError {
             out_of_steps: false,
             exit: None,
             exit_in_a_test: false,
-            returned_err: false,
+            returned: None,
             taken_from: None,
             span: None,
             call_stack: Vec::new(),
@@ -136,25 +140,10 @@ impl VmError {
     /// `Err(payload)`; `shown` is the payload as `println` writes it.
     pub(crate) fn returned(function: &str, shown: &str, at: Span) -> Self {
         VmError {
-            returned_err: true,
+            returned: Some(shown.to_string()),
             span: Some(at),
             ..VmError::new(format!("{function} returned Err: {shown}"))
         }
-    }
-
-    /// The text of the `Err(e)` a function returned (`e` as `println`
-    /// writes it), if that is this error ([`VmError::returned_err`]).
-    /// `silt run` and the playground write a `main` that returned `Err`
-    /// as the one line `error: <text>`: it is the program's message to
-    /// its user, not silt's.
-    pub fn returned_text(&self) -> Option<&str> {
-        if !self.returned_err {
-            return None;
-        }
-        // (A function's name has no space: the first such text is the
-        // one `VmError::returned` wrote.)
-        let (_, text) = self.message.split_once(" returned Err: ")?;
-        Some(text)
     }
 
     /// The error with `help` as a help line.
@@ -184,7 +173,7 @@ impl VmError {
         };
         let code = if self.type_confusion {
             Code::TypeConfusion
-        } else if self.returned_err {
+        } else if self.returned.is_some() {
             Code::MainReturnedErr
         } else {
             Code::RuntimeError

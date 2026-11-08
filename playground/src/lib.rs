@@ -139,8 +139,11 @@ pub fn run(source: &str, clock: impl Clock + 'static, steps: u64) -> Run {
         ),
         // `main` returned `Err(e)`: the program's message to its user,
         // the one line `error: <e>`, as `silt run` writes it.
-        Err(e) if e.returned_text().is_some() => {
-            returned = e.returned_text().map(|text| format!("error: {text}"));
+        Err(silt::VmError {
+            returned: Some(text),
+            ..
+        }) => {
+            returned = Some(format!("error: {text}"));
             None
         }
         Err(e) => Some(e.to_diagnostic()),
