@@ -1527,10 +1527,13 @@ impl TypeChecker {
             return None;
         };
         let written = resolve(name);
+        // (A method no program calls, `Equal.equal`, `Display.display`,
+        // is no reason to rename: `method_help` says what to write.)
         let hides = (self.tables.traits.iter())
             .filter(|(_, info)| info.methods.iter().any(|(n, _)| *n == field))
             .map(|(t, _)| *t)
             .filter(|t| self.sees_trait(*t) && self.private_owner(*t).is_none())
+            .filter(|t| uncallable_builtin(*t, field, &written).is_none())
             .any(|t| self.spell_trait(t) == written);
         if !hides {
             return None;
