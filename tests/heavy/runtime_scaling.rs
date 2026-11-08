@@ -668,3 +668,52 @@ fn a_host_function_call_costs_the_same_whatever_the_size_of_its_argument() {
         over.join(", ")
     );
 }
+
+/// `parses` calls of `time.parse`, every `every`-th Int from 1 to
+/// `parses * every` reading a text by a pattern of its own (`fresh`)
+/// or each by the same one.
+fn parses_program(parses: usize, every: usize, fresh: bool) -> String {
+    let tail = match fresh {
+        true => "{i}",
+        false => "7",
+    };
+    format!(
+        "import list
+import time
+
+fn main() {{
+  let n = list.fold(1..{to}, 0) {{ acc, i ->
+    match i % {every} == 0 {{
+      true -> match time.parse(\"2026-10-30T22:01:42 {tail}\", \"%Y-%m-%dT%H:%M:%S {tail}\") {{
+        Ok(_) -> acc + 1
+        Err(_) -> acc
+      }}
+      false -> acc
+    }}
+  }}
+  println(n)
+}}
+",
+        to = parses * every,
+    )
+}
+
+/// A parse of a time by a pattern it was given before reads the text
+/// and does not ask again whether the pattern is one of a `DateTime`
+/// and has fields enough for one, which formats a moment by it item by
+/// item and reads it back: that took three quarters of each parse, so
+/// 200,000 parses by one pattern took five times as long as 20,000 by
+/// a new pattern each, where they take one and a half (debug and
+/// release builds alike; in a release build 2.5 us a parse, now 0.6).
+#[test]
+fn a_parse_by_a_pattern_used_before_does_not_check_it_again() {
+    let programs = Programs::new("parse");
+    let same = programs.file("same.silt", &parses_program(200_000, 1, false));
+    let fresh = programs.file("fresh.silt", &parses_program(20_000, 10, true));
+    assert_within(
+        3.0,
+        (&same, "200000"),
+        (&fresh, "20000"),
+        "200,000 parses of a time by one pattern, against 20,000 by a new pattern each",
+    );
+}

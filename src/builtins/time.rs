@@ -1,5 +1,10 @@
 //! The `time.*` builtin functions.
 
+use std::cell::RefCell;
+use std::collections::{HashMap, VecDeque};
+use std::rc::Rc;
+
+use chrono::format::Parsed;
 use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Weekday};
 
 use super::typed::{Arg, builtins};
@@ -482,6 +487,124 @@ fn written(shown: impl std::fmt::Display, pattern: &str) -> Value {
     }
 }
 
+// ── The patterns a thread has seen ──────────────────────────────────
+
+/// What a pattern is used for: a format or a parse, of a type.
+#[derive(Clone, Copy)]
+enum Use {
+    Format(Of),
+    Parse(Of),
+}
+
+impl Use {
+    /// Its place in [`Seen::uses`].
+    fn index(self) -> usize {
+        match self {
+            Use::Format(Of::Date) => 0,
+            Use::Format(Of::DateTime) => 1,
+            Use::Parse(Of::Date) => 2,
+            Use::Parse(Of::DateTime) => 3,
+        }
+    }
+}
+
+/// A pattern made ready for a use: its items, read once.
+struct Ready {
+    items: Vec<chrono::format::Item<'static>>,
+    /// The items of the pattern with a time of day after it, which a
+    /// parse of a date reads first ([`parse_date`]); empty for the
+    /// other uses.
+    padded: Vec<chrono::format::Item<'static>>,
+}
+
+/// What a pattern is for each use it was put to: ready, or `Err` with
+/// why it is no pattern for it.
+type Seen = [Option<Rc<Result<Ready, String>>>; 4];
+
+/// The most patterns a thread keeps; when it has that many, the oldest
+/// quarter of them goes. (As the compiled regexes of a VM do,
+/// `RegexCache`.)
+const PATTERNS_MOST: usize = 256;
+
+/// The longest pattern a thread keeps, in bytes: a longer one is made
+/// ready on each use, so the patterns kept stay small however long the
+/// patterns a program makes.
+const PATTERN_KEPT_LONGEST: usize = 1024;
+
+thread_local! {
+    /// The patterns of time this thread has formatted or parsed by, and
+    /// the order it first saw them in. Asking whether a pattern fits a
+    /// type ([`fits`], [`enough`]) formats and parses a moment by it,
+    /// which cost a parse of a short text four times over; the answer
+    /// is the pattern's alone, so it is asked once.
+    static PATTERNS: RefCell<(HashMap<String, Seen>, VecDeque<String>)> =
+        RefCell::new((HashMap::new(), VecDeque::new()));
+}
+
+/// `pattern` made ready for `use_`, or why it is no pattern for it: what
+/// [`fits`] (and for a parse [`enough`]) answers, worked out once.
+fn ready(pattern: &str, use_: Use) -> Rc<Result<Ready, String>> {
+    use chrono::format::StrftimeItems;
+
+    PATTERNS.with_borrow_mut(|(seen, order)| {
+        if let Some(Some(known)) = seen.get(pattern).map(|uses| &uses[use_.index()]) {
+            return known.clone();
+        }
+        let owned = |text: &str| StrftimeItems::new(text).parse_to_owned();
+        let invalid = || format!("invalid format specifier in '{pattern}'");
+        let made = match use_ {
+            Use::Format(of) => fits(pattern, of).and_then(|()| {
+                let items = owned(pattern).map_err(|_| invalid())?;
+                Ok(Ready {
+                    items,
+                    padded: Vec::new(),
+                })
+            }),
+            Use::Parse(of) => fits(pattern, of)
+                .and_then(|()| enough(pattern, of))
+                .and_then(|()| {
+                    let items = owned(pattern).map_err(|_| invalid())?;
+                    let padded = match of {
+                        Of::Date => owned(&format!("{pattern}T%H:%M:%S")).map_err(|_| invalid())?,
+                        Of::DateTime => Vec::new(),
+                    };
+                    Ok(Ready { items, padded })
+                }),
+        };
+        let made = Rc::new(made);
+        if pattern.len() > PATTERN_KEPT_LONGEST {
+            return made;
+        }
+        if !seen.contains_key(pattern) {
+            if seen.len() >= PATTERNS_MOST {
+                for old in order.drain(..PATTERNS_MOST / 4) {
+                    seen.remove(&old);
+                }
+            }
+            order.push_back(pattern.to_string());
+        }
+        seen.entry(pattern.to_string()).or_default()[use_.index()] = Some(made.clone());
+        made
+    })
+}
+
+/// `NaiveDateTime::parse_from_str` by the items of a pattern [`ready`].
+fn read_datetime(
+    s: &str,
+    items: &[chrono::format::Item<'static>],
+) -> chrono::ParseResult<NaiveDateTime> {
+    let mut parsed = Parsed::new();
+    chrono::format::parse(&mut parsed, s, items.iter())?;
+    parsed.to_naive_datetime_with_offset(0)
+}
+
+/// `NaiveDate::parse_from_str` by the items of a pattern [`ready`].
+fn read_date(s: &str, items: &[chrono::format::Item<'static>]) -> chrono::ParseResult<NaiveDate> {
+    let mut parsed = Parsed::new();
+    chrono::format::parse(&mut parsed, s, items.iter())?;
+    parsed.to_naive_date()
+}
+
 // ── The functions ───────────────────────────────────────────────────
 
 builtins! {
@@ -611,17 +734,17 @@ builtins! {
     // for its parse alike ([`fits`]).
     fn format(datetime: DateTime, pattern: &str) -> Result<Value, VmError> {
         let datetime = datetime.naive()?;
-        Ok(match fits(pattern, Of::DateTime) {
-            Ok(()) => written(datetime.format(pattern), pattern),
-            Err(why) => invalid_format_err(why),
+        Ok(match &*ready(pattern, Use::Format(Of::DateTime)) {
+            Ok(ready) => written(datetime.format_with_items(ready.items.iter()), pattern),
+            Err(why) => invalid_format_err(why.clone()),
         })
     }
 
     fn format_date(date: Date, pattern: &str) -> Result<Value, VmError> {
         let date = date.naive()?;
-        Ok(match fits(pattern, Of::Date) {
-            Ok(()) => written(date.format(pattern), pattern),
-            Err(why) => invalid_format_err(why),
+        Ok(match &*ready(pattern, Use::Format(Of::Date)) {
+            Ok(ready) => written(date.format_with_items(ready.items.iter()), pattern),
+            Err(why) => invalid_format_err(why.clone()),
         })
     }
 
@@ -630,10 +753,12 @@ builtins! {
     // text. `ParseFormat` is a text that does not match a pattern that
     // could give the value.
     fn parse(s: &str, pattern: &str) -> Value {
-        if let Err(why) = fits(pattern, Of::DateTime).and_then(|()| enough(pattern, Of::DateTime)) {
-            return invalid_format_err(why);
-        }
-        match NaiveDateTime::parse_from_str(s, pattern) {
+        let ready = ready(pattern, Use::Parse(Of::DateTime));
+        let ready = match &*ready {
+            Ok(ready) => ready,
+            Err(why) => return invalid_format_err(why.clone()),
+        };
+        match read_datetime(s, &ready.items) {
             Ok(datetime) if is_leap_second(datetime.time()) => {
                 time_out_of_range_err(leap_datetime_message(s))
             }
@@ -643,16 +768,17 @@ builtins! {
     }
 
     fn parse_date(s: &str, pattern: &str) -> Value {
-        if let Err(why) = fits(pattern, Of::Date).and_then(|()| enough(pattern, Of::Date)) {
-            return invalid_format_err(why);
-        }
+        let ready = ready(pattern, Use::Parse(Of::Date));
+        let ready = match &*ready {
+            Ok(ready) => ready,
+            Err(why) => return invalid_format_err(why.clone()),
+        };
         // Parse as NaiveDateTime with a dummy time appended, then extract the date.
         let padded = format!("{s}T00:00:00");
-        let padded_fmt = format!("{pattern}T%H:%M:%S");
-        match NaiveDateTime::parse_from_str(&padded, &padded_fmt) {
+        match read_datetime(&padded, &ready.padded) {
             Ok(datetime) => ok(make_date(datetime.date())),
             // Fallback: try direct NaiveDate parse (works on native)
-            Err(_) => match NaiveDate::parse_from_str(s, pattern) {
+            Err(_) => match read_date(s, &ready.items) {
                 Ok(date) => ok(make_date(date)),
                 Err(e) => time_parse_err(e),
             },
@@ -1007,6 +1133,49 @@ mod tests {
             let why = reads("%Y-%Q", of).expect_err("an unknown specifier");
             assert_eq!(why, "invalid format specifier in '%Y-%Q'");
         }
+    }
+
+    /// A pattern is made ready once a use and kept ([`ready`]): what a
+    /// format or a parse gives by it is what it gave the first time,
+    /// whichever use the pattern was put to before, and after more
+    /// patterns than are kept pushed it out.
+    #[test]
+    fn a_pattern_gives_what_it_gave_the_first_time() {
+        let moment = moment().expect("a moment");
+        let date = make_date(moment.date());
+        let datetime = make_datetime(moment);
+        let uses = |pattern: &str| {
+            [
+                call(format_date, &[date.clone(), text(pattern)]),
+                call(format, &[datetime.clone(), text(pattern)]),
+                call(parse_date, &[text("2001-02-03"), text(pattern)]),
+                call(parse, &[text("2001-02-03 16:05:06"), text(pattern)]),
+                call(parse, &[text("not a moment"), text(pattern)]),
+            ]
+        };
+        // Written and read; written by a type and not the other; written
+        // and too few to read; of no type.
+        let patterns = ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%H", "%Y", "%Y-%Q", ""];
+        let first: Vec<_> = patterns.iter().map(|pattern| uses(pattern)).collect();
+        assert!(ok_text(&first[0][1]).is_some() && invalid_format(&first[0][0]));
+        assert!(invalid_format(&first[3][2]) && ok_text(&first[3][0]).is_some());
+        for (pattern, first) in patterns.iter().zip(&first) {
+            assert_eq!(&uses(pattern), first, "'{pattern}' a second time");
+        }
+        for n in 0..PATTERNS_MOST + 10 {
+            call(parse, &[text("x"), text(&format!("%Y-%m-%d {n}"))]);
+        }
+        for (pattern, first) in patterns.iter().zip(&first) {
+            assert_eq!(&uses(pattern), first, "'{pattern}' after it was pushed out");
+        }
+        let kept = PATTERNS.with_borrow(|(seen, order)| (seen.len(), order.len()));
+        assert!(kept.0 <= PATTERNS_MOST && kept.0 == kept.1, "{kept:?}");
+        // A long pattern gives what it gives, and is not kept.
+        let long = format!("%Y-%m-%d {}", "x".repeat(PATTERN_KEPT_LONGEST));
+        let once = uses(&long);
+        assert_eq!(uses(&long), once, "a long pattern a second time");
+        assert!(ok_text(&once[0]).is_some(), "{:?}", once[0]);
+        assert!(PATTERNS.with_borrow(|(seen, _)| !seen.contains_key(&long)));
     }
 
     /// The records the module builds have the fields of their types,
