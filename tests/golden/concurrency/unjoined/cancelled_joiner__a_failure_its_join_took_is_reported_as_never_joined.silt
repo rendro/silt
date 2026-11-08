@@ -1,0 +1,24 @@
+-- exit: 1
+-- repeat: 10
+-- A task that took a failure with its join and then was cancelled
+-- (here it had failed with it before the cancel came) does not keep
+-- the failure: the cancel hands it back to the task that failed, which
+-- is reported as never joined. The failed task was spawned by main, so
+-- the cancel of the joiner does not reach it.
+import channel
+import task
+import time
+
+fn main() {
+  let go = channel.new(0)
+  let child = task.spawn { ->
+    let _ = channel.receive(go)
+    panic("the child failed")
+  }
+  let joiner = task.spawn { -> task.join(child) }
+  time.sleep(time.ms(10))
+  channel.send(go, ())
+  time.sleep(time.ms(30))
+  task.cancel(joiner)
+  println("cancelled")
+}

@@ -3,6 +3,17 @@
 use crate::diagnostic::{Code, Diagnostic};
 use crate::source::Span;
 
+/// The handle of the task a join took a failure from
+/// ([`VmError::taken_from`]).
+#[derive(Clone)]
+pub(crate) struct TakenFrom(pub(crate) std::sync::Arc<crate::runtime::handle::TaskHandle>);
+
+impl std::fmt::Debug for TakenFrom {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<handle:{}>", self.0.id)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct VmError {
     pub message: String,
@@ -38,6 +49,11 @@ pub struct VmError {
     /// test function ([`Vm::call_test`](super::Vm::call_test)). The span is
     /// the function's name, and there is no call stack.
     pub returned_err: bool,
+    /// The task whose failure this is, when a `task.join` took it from
+    /// that task: a cancel that dismisses it hands it back to the task,
+    /// whose failure is then reported as never joined
+    /// (`Scheduler::cancel`).
+    pub(crate) taken_from: Option<TakenFrom>,
     /// Source span where the error occurred (if available).
     pub span: Option<Span>,
     /// Call stack at the time of the error: (function_name, span).
@@ -55,6 +71,7 @@ impl VmError {
             exit: None,
             exit_in_a_test: false,
             returned_err: false,
+            taken_from: None,
             span: None,
             call_stack: Vec::new(),
         }

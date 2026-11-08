@@ -658,10 +658,17 @@ impl Scheduler {
     ///   wait that cannot end at once (`Inner::run_once`). It takes
     ///   nothing new in them: an operation that would ends it too
     ///   (`Vm::takes_nothing_new`).
+    ///
+    /// A failure that the task took from a task it joined, and that
+    /// the cancel dismisses, goes back to that task: it is reported as
+    /// never joined ([`Inner::hand_back`]).
     pub(crate) fn cancel(&self, handle: &TaskHandle) {
         // The flag first: a task that is about to park reads it.
-        handle.cancel(self.wake());
+        let taken_from = handle.cancel(self.wake());
         self.inner.parking.cancel(TaskId(handle.id as u64));
+        if let Some(joined) = taken_from {
+            self.inner.hand_back(&joined);
+        }
     }
 
     /// Close `channel` when the clock reads `deadline`. Until then a
@@ -1803,6 +1810,19 @@ impl Inner {
         }
     }
 
+    /// A join took the failure of `joined`, and the task that joined
+    /// was cancelled before it failed with it, or had that failure
+    /// dismissed by a cancel: the failure is the joined task's again,
+    /// reported as never joined. (A cancelled task never takes a
+    /// failure: its join ends without taking. This is for the cancel
+    /// that comes after the take.)
+    fn hand_back(&self, joined: &Arc<TaskHandle>) {
+        joined.hand_back();
+        if joined.has_unjoined_failure() {
+            record_failed_task(self, joined);
+        }
+    }
+
     /// A task has ended: it completed, failed, or was cancelled.
     fn end_task(&self, task: Task) {
         // Its frames are abandoned before it stops counting.
@@ -2099,9 +2119,14 @@ impl Inner {
                 // program ends, so it is recorded here. `fail` returns
                 // false if the task had been cancelled before: its
                 // handle keeps the cancellation as its result then.
+                // A failure it took from a task it joined then goes back
+                // to that task.
                 let error = task.vm.enrich_error(error);
+                let taken_from = error.taken_from.clone();
                 if task.handle.fail(error, &self.parking) {
                     record_failed_task(self, &task.handle);
+                } else if let Some(joined) = taken_from {
+                    self.hand_back(&joined.0);
                 }
                 self.end_task(task);
             }

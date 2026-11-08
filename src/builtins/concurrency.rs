@@ -14,6 +14,7 @@ use crate::runtime::handle::TaskHandle;
 use crate::runtime::sync::{Arm, Channel, Close, Fired, Outcome, TryReceive, TrySend, Wait};
 use crate::typeinfo::bv;
 use crate::value::Value;
+use crate::vm::error::TakenFrom;
 use crate::vm::{Native, Step, Vm, VmError};
 
 /// A send on a closed channel is a runtime error, whichever function
@@ -577,8 +578,23 @@ impl Native for Deadline {
     }
 }
 
-/// The result of a task for the one that joins it.
-fn joined(vm: &Vm, handle: &TaskHandle, result: Result<Value, VmError>) -> Result<Step, VmError> {
+/// The result of a task for the one that joins it. A joiner that was
+/// cancelled takes nothing: its join ends the task where it is, and a
+/// failure of the joined task stays unhandled, to be reported as never
+/// joined. (Whether the cancel or the failure came first decides
+/// nothing.)
+fn joined(
+    vm: &mut Vm,
+    handle: &Arc<TaskHandle>,
+    result: Result<Value, VmError>,
+) -> Result<Step, VmError> {
+    if vm
+        .cancelled
+        .as_ref()
+        .is_some_and(|flag| flag.load(std::sync::atomic::Ordering::SeqCst))
+    {
+        return Ok(vm.end_here("task.join"));
+    }
     // The joiner has the result now. If the task failed, the error is
     // the joiner's to handle and is not reported as an unjoined
     // failure.
@@ -588,8 +604,11 @@ fn joined(vm: &Vm, handle: &TaskHandle, result: Result<Value, VmError>) -> Resul
         // As for `task.deadline`: where the task failed, and below
         // the task's own calls the calls that led to this
         // `task.join`. A failure that has no place (a cancelled task)
-        // is placed at the join.
+        // is placed at the join. The failure remembers the task it was
+        // taken from: a cancel that comes after the take hands it back
+        // (`Scheduler::cancel`).
         Err(mut inner) => {
+            inner.taken_from = Some(TakenFrom(handle.clone()));
             inner.message = format!("joined task failed: {}", inner.message);
             let here = vm.enrich_error(VmError::new(String::new()));
             if inner.span.is_none() {
@@ -689,4 +708,72 @@ fn select_start_index(n: usize) -> usize {
         state.set(s);
         (s as usize) % n
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicBool;
+
+    /// A task that failed, as a join finds it.
+    fn failed(vm: &mut Vm) -> Arc<TaskHandle> {
+        let handle = Arc::new(TaskHandle::new(vm.next_task_id()));
+        assert!(handle.fail(VmError::new("boom".into()), vm.scheduler().wake()));
+        handle
+    }
+
+    /// A join in a task that was cancelled takes nothing, also of a
+    /// task that has failed already (its wait ended before the cancel
+    /// came): the failure stays unhandled, to be reported as never
+    /// joined. A join in a task that was not cancelled takes it, and
+    /// the failure it raises remembers whose it was.
+    #[test]
+    fn a_cancelled_joiner_does_not_take_the_failure() {
+        let mut vm = Vm::new(crate::HostIo::process());
+        let child = failed(&mut vm);
+        vm.cancelled = Some(Arc::new(AtomicBool::new(true)));
+        let result = child.try_get().unwrap();
+        let step = joined(&mut vm, &child, result);
+        assert!(matches!(step, Ok(Step::Run(_))), "the join ends the task");
+        assert!(child.has_unjoined_failure(), "the failure was taken");
+
+        vm.cancelled = Some(Arc::new(AtomicBool::new(false)));
+        let result = child.try_get().unwrap();
+        let Err(raised) = joined(&mut vm, &child, result) else {
+            panic!("the join of a failed task raises");
+        };
+        assert_eq!(raised.message, "joined task failed: boom");
+        assert!(!child.has_unjoined_failure());
+        let from = raised.taken_from.as_ref().map(|from| from.0.id);
+        assert_eq!(from, Some(child.id));
+    }
+
+    /// A cancel that dismisses a failure the task took from a join
+    /// gives back the task it took it from; that task's failure is
+    /// unhandled again. A cancel that dismisses a failure of the
+    /// task's own gives back nothing.
+    #[test]
+    fn a_cancel_hands_back_a_failure_the_task_took_from_a_join() {
+        let mut vm = Vm::new(crate::HostIo::process());
+        let child = failed(&mut vm);
+        let result = child.try_get().unwrap();
+        let Err(raised) = joined(&mut vm, &child, result) else {
+            panic!("the join of a failed task raises");
+        };
+        let joiner = TaskHandle::new(vm.next_task_id());
+        assert!(joiner.fail(raised, vm.scheduler().wake()));
+        let back = joiner.cancel(vm.scheduler().wake());
+        assert_eq!(back.as_ref().map(|back| back.id), Some(child.id));
+        assert!(!joiner.has_unjoined_failure());
+        child.hand_back();
+        assert!(child.has_unjoined_failure());
+
+        let own = failed(&mut vm);
+        assert!(own.cancel(vm.scheduler().wake()).is_none());
+        assert!(!own.has_unjoined_failure());
+        // A task that had not failed has nothing to hand back either.
+        let running = TaskHandle::new(vm.next_task_id());
+        assert!(running.cancel(vm.scheduler().wake()).is_none());
+        assert!(running.is_cancelled());
+    }
 }

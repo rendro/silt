@@ -1370,12 +1370,32 @@ impl TaskHandle {
     /// or fails with later changes nothing). A failure it had is
     /// dismissed. The caller ends the task's wait, if it waits
     /// (`Scheduler::cancel`).
-    pub fn cancel(&self, wake: &dyn Wake) {
+    ///
+    /// A failure the task had taken from a task it joined is not its
+    /// own: that task is returned, for the caller to hand the failure
+    /// back to ([`TaskHandle::hand_back`]).
+    pub fn cancel(&self, wake: &dyn Wake) -> Option<Arc<TaskHandle>> {
         self.cancelled.store(true, AtomicOrdering::SeqCst);
         let _ = self
             .result
             .complete(Ended(Err(VmError::new("cancelled".to_string()))), wake);
-        self.mark_joined();
+        if !self.unjoined_failure.swap(false, AtomicOrdering::AcqRel) {
+            return None;
+        }
+        match self.result.get() {
+            Some(Ended(Err(error))) => error.taken_from.as_ref().map(|from| from.0.clone()),
+            _ => None,
+        }
+    }
+
+    /// A join took the failure of this task, and the task that joined
+    /// was cancelled before it could fail with it, or had its failure
+    /// dismissed: the failure is unhandled again, and is reported as
+    /// never joined unless a join receives it.
+    pub fn hand_back(&self) {
+        if matches!(self.result.get(), Some(Ended(Err(_)))) {
+            self.unjoined_failure.store(true, AtomicOrdering::Release);
+        }
     }
 
     pub fn is_cancelled(&self) -> bool {

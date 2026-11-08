@@ -1,0 +1,29 @@
+-- A join is a take: after a cancel, a task's `task.join` ends the task,
+-- also the join of a task that has ended, and nothing is taken from it
+-- (a failure of the joined task would stay to be reported as never
+-- joined). The task cancels itself, so the cancel comes at a known
+-- place; it gives one value before the join that ends it.
+import channel
+import task
+import time
+
+fn main() {
+  let own: Channel(task.Handle(())) = channel.new(1)
+  let given: Channel(Int) = channel.new(8)
+  let t = task.spawn { ->
+    let helper = task.spawn { -> 7 }
+    let _ = task.join(helper)
+    match channel.receive(own) {
+      Some(me) -> task.cancel(me)
+      None -> ()
+    }
+    channel.send(given, 1)
+    channel.send(given, task.join(helper))
+    println("not reached")
+  }
+  channel.send(own, t)
+  println("given before the join: {channel.receive(given)}")
+  -- A join that took the value would have sent it by now.
+  time.sleep(time.ms(5))
+  println("and nothing after it: {channel.try_receive(given)}")
+}
