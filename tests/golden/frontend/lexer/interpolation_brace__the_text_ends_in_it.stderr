@@ -1,0 +1,6 @@
+error[lex]: unterminated string interpolation
+ --> interpolation_brace__the_text_ends_in_it.silt:7:26
+   |
+ 7 |   println(string_starts("{"))
+   |                          ^ unterminated string interpolation
+  = help: write `\{` for a literal brace, or use a raw string `"""..."""`

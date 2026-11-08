@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- A `{` meant as a literal brace two lines up turns the quotes behind it
+-- inside out, and a raw string later runs to the end of the text: its
+-- error has a label at the `{`.
+fn main() {
+  let cases = [("{", "bad json"), ("[]", "array")]
+  println(cases)
+  let b = """{"url": "x"}"""
+  println(b)
+}

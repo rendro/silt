@@ -1,0 +1,9 @@
+error[lex]: unterminated triple-quoted string
+ --> interpolation_brace__a_triple_quoted_string_in_it.silt:9:26
+   |
+ 9 |   let b = """{"url": "x"}"""
+   |                          ^ unterminated triple-quoted string
+ ::: interpolation_brace__a_triple_quoted_string_in_it.silt:7:18
+   |
+ 7 |   let cases = [("{", "bad json"), ("[]", "array")]
+   |                  - this `{` opens an interpolation: write `\{` for a literal brace, or use a raw string `"""..."""`

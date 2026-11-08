@@ -388,6 +388,15 @@ pub const KEYWORDS: &[&str] = &[
 /// `KEYWORDS` and `KEYWORD_LITERALS` (see `src/lsp/rename.rs`).
 pub const KEYWORD_LITERALS: &[&str] = &["true", "false"];
 
+/// What the label at an interpolation's `{` says, on an error raised in
+/// the interpolation's code (`Lexer::in_interpolation`).
+const LITERAL_BRACE_LABEL: &str = "this `{` opens an interpolation: write `\\{` for a literal brace, \
+     or use a raw string `\"\"\"...\"\"\"`";
+
+/// The help of an interpolation that the text ends in.
+const LITERAL_BRACE_HELP: &str =
+    "write `\\{` for a literal brace, or use a raw string `\"\"\"...\"\"\"`";
+
 pub struct Lexer {
     file: FileId,
     /// Room for this many tokens is made at the start (see `expecting`).
@@ -396,10 +405,10 @@ pub struct Lexer {
     pos: usize,
     byte_offset: usize,
     /// Stack of brace depths at which string interpolations began, each
-    /// with the string's opening quote.
+    /// with the string's opening quote and the interpolation's `{`.
     /// When we encounter `}` and brace_depth matches the top of this stack,
     /// we resume scanning a string instead of emitting RBrace.
-    interp_stack: Vec<(usize, Span)>,
+    interp_stack: Vec<(usize, Span, Span)>,
     /// The `{` of every interpolation read, with its string's opening
     /// quote (byte offsets), for the note of a string not closed.
     interpolations: Vec<(u32, u32)>,
@@ -548,9 +557,24 @@ impl Lexer {
     /// `MAX_SYNTAX_ERRORS`; count it otherwise.
     fn error(&mut self, error: impl FnOnce() -> Diagnostic) {
         if self.errors.len() < MAX_SYNTAX_ERRORS {
-            self.errors.push(error());
+            let error = self.in_interpolation(error());
+            self.errors.push(error);
         } else {
             self.more_errors += 1;
+        }
+    }
+
+    /// `error`, raised in the code of an interpolation, with a label at
+    /// the `{` that opened it (the innermost one): a `{` meant as a
+    /// literal brace makes the code behind it an interpolation's, and
+    /// the error raised there is far from the mistake. An error at that
+    /// `{` itself has no label.
+    fn in_interpolation(&self, error: Diagnostic) -> Diagnostic {
+        match self.interp_stack.last() {
+            Some(&(_, _, brace)) if error.span != brace => {
+                error.with_label(brace, LITERAL_BRACE_LABEL)
+            }
+            _ => error,
         }
     }
 
@@ -564,7 +588,8 @@ impl Lexer {
             *more += 1;
         } else if self.errors.len() < MAX_SYNTAX_ERRORS {
             self.repeats.insert(written, (self.errors.len(), 0));
-            self.errors.push(error());
+            let error = self.in_interpolation(error());
+            self.errors.push(error);
         } else {
             self.more_errors += 1;
         }
@@ -676,11 +701,20 @@ impl Lexer {
         loop {
             match self.peek() {
                 None => {
-                    if !self.interp_stack.is_empty() {
-                        return self.unterminated(
-                            start,
-                            "unterminated string interpolation; use \\{ for a literal brace",
-                        );
+                    // The text ends in the code of an interpolation: the
+                    // error is the `{` that opened it, most likely one
+                    // meant as a literal brace.
+                    if let Some(&(_, _, brace)) = self.interp_stack.last() {
+                        self.cut_short = true;
+                        self.error(|| {
+                            Diagnostic::error(
+                                Code::UnterminatedString,
+                                brace,
+                                "unterminated string interpolation",
+                            )
+                            .with_help(LITERAL_BRACE_HELP)
+                        });
+                        return (Token::Error, start);
                     }
                     // A string not closed is reported at its opening
                     // quote; the rest behind an interpolation runs on
@@ -766,9 +800,10 @@ impl Lexer {
                     }
                 }
                 Some('{') => {
-                    self.interpolations.push((opened.start, self.span().start));
+                    let brace = self.span();
+                    self.interpolations.push((opened.start, brace.start));
                     self.advance_char(); // consume `{`
-                    self.interp_stack.push((self.brace_depth, opened));
+                    self.interp_stack.push((self.brace_depth, opened, self.since(brace)));
                     self.brace_depth += 1; // track interpolation brace
                     let tok = if is_continuation {
                         Token::StringMiddle(text)
@@ -1281,7 +1316,7 @@ impl Lexer {
 
             '}' => {
                 // Check if this closes a string interpolation
-                if let Some(&(interp_depth, opened)) = self.interp_stack.last()
+                if let Some(&(interp_depth, opened, _)) = self.interp_stack.last()
                     && self.brace_depth == interp_depth + 1
                 {
                     self.interp_stack.pop();
