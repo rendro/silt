@@ -369,7 +369,8 @@ An `Expect` header that asks for anything but `100-continue` is answered
   `#fragment` stays where it is.
 - `req.peer` is the address of the client's end of the connection, as
   `ip:port`: `127.0.0.1:53422`, and an IPv6 address in brackets,
-  `[::1]:53422`. It is the connection's, so behind a reverse proxy it is
+  `[::1]:53422`. An IPv4 client of a listener on `[::]` is written by its
+  IPv4 address too, not as `[::ffff:127.0.0.1]:53422`. It is the connection's, so behind a reverse proxy it is
   the proxy's; the client's own address is then in a header the proxy
   sets (such as `x-forwarded-for`). An access log line:
   `io.eprintln("{req.peer} {req.method} {req.path}")`.

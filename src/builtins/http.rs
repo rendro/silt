@@ -1155,6 +1155,14 @@ fn handler_response(vm: &Vm, returned: &Value, reply: Reply) -> Vec<u8> {
     }
 }
 
+/// `addr` as a client's address is written: an IPv4 client of a
+/// dual-stack listener (`[::]`) by its IPv4 address (`127.0.0.1:5000`),
+/// not the IPv6 form the system gives it (`[::ffff:127.0.0.1]:5000`).
+#[cfg(feature = "http")]
+fn canonical(addr: std::net::SocketAddr) -> std::net::SocketAddr {
+    std::net::SocketAddr::new(addr.ip().to_canonical(), addr.port())
+}
+
 /// What a connection that reads a request does when the server begins
 /// to drain.
 #[cfg(feature = "http")]
@@ -1842,7 +1850,7 @@ impl Serve {
         // (A connection whose address cannot be read, already reset by
         // its client, has an empty one: it reads nothing either.)
         let peer: Arc<str> = match stream.peer_addr() {
-            Ok(addr) => addr.to_string().into(),
+            Ok(addr) => canonical(addr).to_string().into(),
             Err(_) => "".into(),
         };
         child.push_native_frame(Box::new(Conn {
@@ -2254,6 +2262,16 @@ mod serve_tests {
 #[cfg(all(test, feature = "http"))]
 mod queue_tests {
     use super::*;
+
+    /// A client's address is written as itself: an IPv4 client of a
+    /// dual-stack listener by its IPv4 address.
+    #[test]
+    fn a_peer_s_address_is_its_canonical_form() {
+        let shown = |s: &str| canonical(s.parse().expect("an address")).to_string();
+        assert_eq!(shown("[::ffff:127.0.0.1]:5000"), "127.0.0.1:5000");
+        assert_eq!(shown("[::1]:5000"), "[::1]:5000");
+        assert_eq!(shown("10.0.0.2:80"), "10.0.0.2:80");
+    }
 
     /// When the server begins to drain, a connection that has nothing of
     /// a request ends, and one whose request has begun reads it on: in
