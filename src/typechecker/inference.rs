@@ -6119,7 +6119,7 @@ pub(super) fn operator_message(tr: &str, op: &str, ty: &Type, shown: &str) -> St
 /// The type a type expression written in a trait declaration names: its
 /// resolution (a type's id is its definition's), else the builtin type
 /// of that name.
-fn written_type(te: &TypeExpr, name: Symbol) -> Option<TypeRef> {
+pub(super) fn written_type(te: &TypeExpr, name: Symbol) -> Option<TypeRef> {
     match te.res {
         Some(crate::defs::Res::Def(id)) => Some(TypeRef {
             id: crate::defs::TypeId(id),

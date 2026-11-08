@@ -730,12 +730,15 @@ impl TypeChecker {
             // parameters: what else they wrote was read as no type at all,
             // which every impl's type then met.)
             for arg in &r.args {
-                if let Some((what, span)) = no_supertrait_argument(arg) {
-                    let message = format!(
-                        "{what} is no argument of a supertrait: write a type or one of the \
-                         parameters of '{}'",
-                        t.name
-                    );
+                if let Some((what, span)) = no_supertrait_argument(arg, &t.params) {
+                    let message = match what.as_str() {
+                        "'Never'" => super::typeexpr::NEVER_ELSEWHERE.to_string(),
+                        _ => format!(
+                            "{what} is no argument of a supertrait: write a type or one of the \
+                             parameters of '{}'",
+                            t.name
+                        ),
+                    };
                     self.error(Code::InvalidTypeAnnotation, message, span);
                 }
             }
@@ -3756,20 +3759,30 @@ fn trait_arguments_message(name: Symbol, params: &[Symbol]) -> String {
 }
 
 /// The first part of the supertrait argument `te` that is no type there
-/// (`Self`, an associated type, an anonymous record), as the error names
-/// it, with its span.
-fn no_supertrait_argument(te: &TypeExpr) -> Option<(&'static str, Span)> {
+/// (`Self`, an associated type, an anonymous record, a name that is no
+/// type and none of the trait's `params`), as the error names it, with
+/// its span: what `resolve_supertrait_arg` would read as no type at all.
+fn no_supertrait_argument(te: &TypeExpr, params: &[Symbol]) -> Option<(String, Span)> {
+    let unread = |name: Symbol| {
+        !params.contains(&name) && super::inference::written_type(te, name).is_none()
+    };
     match &te.kind {
-        TypeExprKind::SelfType => Some(("'Self'", te.span)),
-        TypeExprKind::AssocProj { .. } => Some(("an associated type", te.span)),
-        TypeExprKind::AnonRecord { .. } => Some(("an anonymous record type", te.span)),
-        TypeExprKind::Generic { args, .. } | TypeExprKind::Tuple(args) => {
-            args.iter().find_map(no_supertrait_argument)
+        TypeExprKind::SelfType => Some(("'Self'".to_string(), te.span)),
+        TypeExprKind::AssocProj { .. } => Some(("an associated type".to_string(), te.span)),
+        TypeExprKind::AnonRecord { .. } => Some(("an anonymous record type".to_string(), te.span)),
+        TypeExprKind::Named { name, .. } if unread(*name) => {
+            Some((format!("'{}'", resolve(*name)), te.span))
         }
-        TypeExprKind::Function(params, ret) => params
+        TypeExprKind::Generic {
+            name, name_span, ..
+        } if unread(*name) => Some((format!("'{}'", resolve(*name)), *name_span)),
+        TypeExprKind::Generic { args, .. } | TypeExprKind::Tuple(args) => args
+            .iter()
+            .find_map(|arg| no_supertrait_argument(arg, params)),
+        TypeExprKind::Function(params_te, ret) => params_te
             .iter()
             .chain(std::iter::once(ret.as_ref()))
-            .find_map(no_supertrait_argument),
+            .find_map(|arg| no_supertrait_argument(arg, params)),
         _ => None,
     }
 }

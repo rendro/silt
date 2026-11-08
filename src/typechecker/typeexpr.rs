@@ -3,7 +3,7 @@ use super::*;
 /// The error of `Never` written where a program may not write it: it
 /// is written only as the whole return type of a function declared with
 /// `fn`.
-const NEVER_ELSEWHERE: &str = "`Never` is written only as the whole return type of a function \
+pub(super) const NEVER_ELSEWHERE: &str = "`Never` is written only as the whole return type of a function \
      declared with `fn` (not of a trait's or an impl's method): `fn fail(message: String) -> Never`";
 
 impl TypeChecker {
