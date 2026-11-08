@@ -144,7 +144,11 @@ a `type a` parameter is given, the head is checked (`List`, not
 `List(Int)`). The check looks at a bounded part of the result: the
 first 64 parts it compares (fields, elements, payloads), with each
 element of a list, a set or a map compared with the first element of
-the argument's. What lies beyond them is the function's to get right.
+the argument's. The arguments are searched for the value that shows a
+variable only when the result has a value of it to compare, and as far
+as their first 64 parts: a variable shown only past them (the one
+`Some` at the end of a long list of `None`s) stays unchecked. What
+lies beyond them is the function's to get right.
 
 A host function cannot take or return a function (`fn f(g: Fn(Int) ->
 Int) -> Int` is an error): a host function has no way to call one.

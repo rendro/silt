@@ -24,7 +24,7 @@ mod tests;
 
 pub use convert::{
     FromValue, HostFault, HostFn, HostImpl, HostShape, HostSource, HostStep, HostVar, IntoValue,
-    Witness, witness_type,
+    Witness, Witnesses, given_type, witness_type,
 };
 pub(crate) use deep::drop_held;
 pub use float::Float;

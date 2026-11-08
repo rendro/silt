@@ -582,3 +582,89 @@ fn five_thousand_waiting_tasks_share_the_programs_globals() {
         "5,000 waiting tasks of a program of 2,000 functions held {resident} kB"
     );
 }
+
+/// A program that calls host functions `calls` times with an argument
+/// of `size` elements: a lookup whose list holds no value to show the
+/// variable but at its end (`List(Option(a))` of `None`s), and a
+/// function that gives back a list of `size` empty lists.
+fn host_calls_program(size: usize, calls: usize) -> String {
+    format!(
+        "import h
+import list
+
+fn main() {{
+  let xs = list.append((1..{size}) |> list.map({{ _ -> None }}), Some(1))
+  let ls = (1..{size}) |> list.map({{ _ -> [] }})
+  let hits = (1..{calls}) |> list.fold(0) {{ acc, _ ->
+    match h.getopt(xs, {size}) {{
+      Some(n) -> acc + n
+      None -> acc
+    }}
+  }}
+  let lengths = (1..{calls}) |> list.fold(0) {{ acc, _ -> acc + list.length(h.same(ls)) }}
+  host.give(hits + lengths)
+}}
+import host
+"
+    )
+}
+
+/// How long a run of `source` with the host module of
+/// `host_calls_program` takes; it must give `expected`.
+fn host_run_time(source: &str, expected: usize) -> Duration {
+    use silt::session::HostModule;
+    use silt::value::Value;
+    let host = HostModule::new("h")
+        .function(
+            "fn getopt(xs: List(Option(a)), i: Int) -> Option(a)",
+            |args: &[Value]| {
+                let (Value::List(xs), Value::Int(i)) = (&args[0], &args[1]) else {
+                    return Err(silt::vm::VmError::new(
+                        "expected a list and an index".into(),
+                    ));
+                };
+                Ok(xs.get(*i as usize).unwrap_or(Value::Unit))
+            },
+        )
+        .function(
+            "fn same(xs: List(List(a))) -> List(List(a))",
+            |args: &[Value]| Ok(args[0].clone()),
+        );
+    let started = Instant::now();
+    let given = silt::session::testing::run_with_host(&[("main.silt", source)], vec![host]);
+    let elapsed = started.elapsed();
+    assert_eq!(given, Ok(Value::Int(expected as i64)));
+    elapsed
+}
+
+/// What a call of a host function costs to check does not grow with the
+/// size of its arguments or its result: the search for the value that
+/// shows a variable and the check of the result each look at a bounded
+/// number of parts. Each walked the whole argument and the whole
+/// result, so 16,000 lookups into a list of 16,000 elements took 3.8
+/// seconds where they take 10 ms (release builds), and calls over a
+/// list grew as its square.
+#[test]
+fn a_host_function_call_costs_the_same_whatever_the_size_of_its_argument() {
+    let (calls, size, cap) = (2_000, 2_000, 3.0);
+    let big = host_calls_program(size, calls);
+    let small = host_calls_program(2, calls);
+    let mut over = Vec::new();
+    for _ in 0..3 {
+        let mut best = (Duration::MAX, Duration::MAX);
+        for _ in 0..3 {
+            best.1 = best.1.min(host_run_time(&small, calls * 3));
+            best.0 = best.0.min(host_run_time(&big, calls * (size + 1)));
+        }
+        let ratio = best.0.as_secs_f64() / best.1.as_secs_f64();
+        if ratio <= cap {
+            return;
+        }
+        over.push(format!("{:?} against {:?} ({ratio:.2})", best.0, best.1));
+    }
+    panic!(
+        "{calls} host calls over {size} elements: more than {cap} times as long as over 2 in each \
+         of three measurements ({})",
+        over.join(", ")
+    );
+}

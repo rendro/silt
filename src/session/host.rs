@@ -152,8 +152,8 @@ pub(super) fn returns(f: &FnDecl) -> (HostShape, Vec<HostVar>) {
     let index = |name: Symbol, row: bool| order.iter().position(|var| *var == (name, row));
     for (at, param) in f.params.iter().enumerate() {
         let name = match param.pattern.kind {
-            PatternKind::Ident(name) => resolve(name),
-            _ => format!("#{}", at + 1),
+            PatternKind::Ident(name) => Some(resolve(name)),
+            _ => None,
         };
         let mut source = HostSource {
             param: at,

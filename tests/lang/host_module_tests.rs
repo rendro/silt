@@ -602,7 +602,7 @@ fn later_elements_of_a_collection_are_compared() {
     let err = returned_error(host.clone(), "h.hetero([7])");
     assert!(
         err.contains(
-            "h.hetero: its signature returns a, here List (the type of its argument `x`), but \
+            "h.hetero: its signature returns a, here List(Int) (the type of its argument `x`), but \
              it returned List [1, \"x\"]"
         ),
         "got: {err}"
@@ -669,7 +669,7 @@ fn a_wrong_part_within_the_bound_is_refused() {
     let err = run(source, host).expect_err("a Box(String) for a Box(Int)");
     assert!(
         err.contains(
-            "h.same: its signature returns a, here Box (the type of its argument `x`), but it \
+            "h.same: its signature returns a, here Box(Int) (the type of its argument `x`), but it \
              returned Record Box {v: \"s\"}"
         ),
         "got: {err}"
@@ -913,4 +913,340 @@ fn docs_ffi_quick_start() {
     let out = Buffer::new();
     Vm::new(HostIo::buffer(&out)).run_program(&program).unwrap();
     assert_eq!(*given.lock().unwrap(), 42);
+}
+
+/// The host module the result checks are probed with: functions that
+/// give back an argument (`same`, `second`, `other` its second, of
+/// another type), an element of one (`pick`), or the value of a type
+/// argument (`cast`), and functions of records, maps, sets, channels.
+fn probe() -> HostModule {
+    let at = |i: usize| move |args: &[Value]| Ok(args[i].clone());
+    HostModule::new("h")
+        .function("fn same(x: a) -> a", at(0))
+        .function("fn second(x: a, y: a) -> a", at(1))
+        .function("fn other(x: a, y: b) -> a", at(1))
+        .function("fn pick(xs: List(a), i: Int) -> a", |args: &[Value]| {
+            let (Value::List(xs), Value::Int(i)) = (&args[0], &args[1]) else {
+                return Err(VmError::new("expected a list and an index".into()));
+            };
+            Ok(xs.get(*i as usize).unwrap_or(Value::Unit))
+        })
+        .function("fn cast(v: b, type a) -> a", at(0))
+        .function("fn tyval(x: a, type a) -> a", at(0))
+        .function(
+            "fn keep(p: {name: String, ...r}) -> {name: String, ...r}",
+            at(0),
+        )
+        .function(
+            "fn keep2(p: {name: String, ...r}, q: {name: String, ...r}) -> {name: String, ...r}",
+            at(1),
+        )
+        .function(
+            "fn rename(p: {name: String, ...r}, q: {title: String, ...r}) -> {title: String, ...r}",
+            at(1),
+        )
+        .function("fn open(p: {...r}) -> {...r}", at(0))
+        .function("fn open2(p: {...r}, q: {...r}) -> {...r}", at(1))
+        .function(
+            "fn keepl(ps: List({name: String, ...r})) -> List({name: String, ...r})",
+            at(0),
+        )
+        .function(
+            "fn chan2(c: Channel(a), d: Channel(a)) -> Channel(a)",
+            at(1),
+        )
+        .function("fn swap(p: (a, b)) -> (b, a)", |args: &[Value]| {
+            let Value::Tuple(parts) = &args[0] else {
+                return Err(VmError::new("expected a tuple".into()));
+            };
+            Ok(Value::tuple(vec![parts[1].clone(), parts[0].clone()]))
+        })
+        .function("fn noswap(p: (a, b)) -> (b, a)", at(0))
+        .function(
+            "fn wrapres(x: a) -> Result(a, String)",
+            |args: &[Value]| Ok(Value::variant(bv::OK, [args[0].clone()])),
+        )
+        .function("fn rep(x: a, n: Int) -> List(a)", |args: &[Value]| {
+            let Value::Int(n) = args[1] else {
+                return Err(VmError::new("expected a count".into()));
+            };
+            Ok(Value::list(vec![args[0].clone(); n as usize]))
+        })
+        .function("fn otherl(xs: List(a), ys: List(b)) -> List(a)", at(1))
+        .function("fn vals(m: Map(k, v)) -> List(v)", |args: &[Value]| {
+            let Value::Map(m) = &args[0] else {
+                return Err(VmError::new("expected a map".into()));
+            };
+            Ok(Value::list(m.iter().map(|(_, v)| v.clone()).collect()))
+        })
+        .function("fn keys2(m: Map(k, v), n: Map(k, v)) -> Map(k, v)", at(1))
+        .function("fn sets(s: Set(a), t: Set(a)) -> Set(a)", at(1))
+}
+
+/// The declarations the programs of `probe` calls are written against.
+const PROBE_PRELUDE: &str = "import h
+import channel
+import task
+import json
+import toml
+import list
+import string
+import result
+type Shape { Circle(Float), Rect(Int, Int), Dot }
+type Box(t) { v: t }
+type Person { name: String, age: Int }
+type Pet { name: String, age: Int }
+type Id = Int
+type Pair = (Int, String)
+type B = Box(Int)
+fn inc(x: Int) -> Int { x + 1 }
+";
+
+/// Run `body`, the statements of `main`, against `probe` with the
+/// module `g` of the one function `signature` (which gives back its
+/// argument `ret`): the runtime error, or what `main` gave last.
+fn run_probe(body: &str, g: Option<(&str, usize)>) -> Result<Value, String> {
+    let mut hosts = vec![probe()];
+    if let Some((signature, ret)) = g {
+        hosts.push(
+            HostModule::new("g").function(signature, move |args: &[Value]| Ok(args[ret].clone())),
+        );
+    }
+    let import_g = if g.is_some() { "import g\n" } else { "" };
+    let source = format!(
+        "{import_g}{PROBE_PRELUDE}fn main() -> Result((), String) {{\n{body}\n  Ok(())\n}}\nimport host"
+    );
+    run_with_host(&[("main.silt", &source)], hosts)
+}
+
+/// A correct host function is never refused: each of these gives back a
+/// value of the type its signature returns at the call, though it differs
+/// in shape from the one its arguments show (another variant, an empty
+/// list, fields written in another order, a range for a list, a record
+/// made another way, a function of another kind).
+#[test]
+fn correct_host_results_of_every_shape_pass() {
+    let calls = [
+        "h.second(None, Some(1))",
+        "h.second(Some(1), None)",
+        "h.second([], [1, 2])",
+        "h.second([[]], [[1], [2, 3]])",
+        "h.second(Circle(1.0), Rect(1, 2))",
+        "h.second(Dot, Rect(1, 2))",
+        "h.second(Box { v: [] }, Box { v: [1] })",
+        "h.second(Box { v: None }, Box { v: Some(\"x\") })",
+        "h.second(#{}, #{\"a\": 1})",
+        "h.second(#{\"a\": []}, #{\"b\": [1]})",
+        "h.second(Ok(1), Err(\"e\"))",
+        "h.second((1, []), (2, [\"x\"]))",
+        "h.second({a: 1, b: \"x\"}, {b: \"y\", a: 2})",
+        "h.second({a: [], b: None}, {a: [1], b: Some(2)})",
+        "h.second(1..3, [5, 6])",
+        "h.second((), ())",
+        "h.second(1.5, 2.5)",
+        "h.second(task.spawn({ -> 1 }), task.spawn({ -> 2 }))",
+        "h.second(json.parse(\"1\", json.Value), json.parse(\"[1]\", json.Value))",
+        "h.cast(5, Int)",
+        "h.cast([1], List(Int))",
+        "h.cast((1, \"x\"), (Int, String))",
+        "h.cast(Box { v: 1 }, Box(Int))",
+        "h.cast(None, Option(Int))",
+        "h.cast(1.0, Float)",
+        "h.cast(channel.new(0), Channel(Int))",
+        "h.cast(5, Id)",
+        "h.cast((5, \"x\"), Pair)",
+        "h.cast(#{1: 2}, Map(Int, Int))",
+        "h.cast(Ok(1), Result(Int, String))",
+        "h.cast(Box { v: 1 }, B)",
+        "h.cast(1..4, List(Int))",
+        "h.cast(json.parse(\"[1]\", json.Value), Result(json.Value, json.JsonError))",
+        "h.cast(Dot, Shape)",
+        "h.cast(Person { name: \"a\", age: 1 }, Person)",
+        "h.tyval(5, Id)",
+        "h.tyval((5, \"x\"), Pair)",
+        "h.chan2(channel.new(0), channel.new(5))",
+        "h.keep(Person { name: \"a\", age: 1 })",
+        "h.keep({name: \"a\", age: 1})",
+        "h.keep2({name: \"a\", age: 1, z: [1]}, {name: \"b\", age: 2, z: []})",
+        "h.keep2(Person { name: \"a\", age: 1 }, Person { name: \"b\", age: 2 })",
+        "h.keep({name: \"a\", inner: {name: \"b\", x: 1}})",
+        "h.rename({name: \"a\", age: 1}, {title: \"t\", age: 2})",
+        "h.open({a: 1})",
+        "h.open(Person { name: \"a\", age: 1 })",
+        "h.open2({a: 1, b: None}, {a: 2, b: Some(1)})",
+        "h.keepl([{name: \"a\", age: 1}, {name: \"b\", age: 2}])",
+        "h.keepl([Person { name: \"a\", age: 1 }, Person { name: \"b\", age: 2 }])",
+        "h.vals(#{\"a\": [1], \"b\": []})",
+        "h.keys2(#{\"a\": []}, #{\"b\": [1]})",
+        "h.sets(#[1], #[2, 3])",
+        "h.swap((1, \"x\"))",
+        "h.wrapres([1])",
+        "h.rep(Some(1), 3)",
+        "h.pick([Person { name: \"a\", age: 1 }, Person { name: \"b\", age: 2 }], 1)",
+    ];
+    let refused: Vec<String> = (calls.iter())
+        .filter_map(|call| {
+            let body = format!("  host.give({call})");
+            run_probe(&body, None).err().map(|e| format!("{call}: {e}"))
+        })
+        .collect();
+    assert!(refused.is_empty(), "{refused:#?}");
+    // Function values of every kind, and records made in other ways.
+    let body = r#"
+  let f = h.second({ x -> x + 1 }, inc)
+  let g = h.second(inc, { x -> x * 2 })
+  let k = h.second(Circle, Circle)
+  let s = h.second(string.length, { s -> 0 })
+  let fs = h.second([inc], [{ x -> x }, inc])
+  let (_, p) = h.second((inc, 1), ({ x -> x }, 2))
+  let m = h.second(Some, { x -> Some(x) })
+  let lit = Person { name: "a", age: 1 }
+  let fromjson = json.parse(json.stringify(#{"age": json.Int(2), "name": json.String("b")}), Person) |> result.map_err({ e -> "{e}" })?
+  let fromtoml = toml.parse("age = 3\nname = 'c'", Person) |> result.map_err({ e -> "{e}" })?
+  let anon = {name: "x", age: 1}
+  let rs = [h.second(lit, fromjson), h.second(fromjson, lit), h.second(lit, fromtoml), h.second(lit, lit.{ age: 9 })]
+  let a2 = h.second(anon, anon.{ age: 5 })
+  host.give("{f(1)} {g(1)} {k(1.0)} {s("abc")} {list.length(fs)} {p} {m(3)} {rs |> list.map({ r -> r.age })} {a2.age}")"#;
+    assert_eq!(
+        run_probe(body, None),
+        Ok(Value::String(
+            "2 2 Circle(1.0) 0 2 2 Some(3) [2, 1, 3, 9] 5".into()
+        ))
+    );
+}
+
+/// A host function whose result is an open record (`{name: String,
+/// ...r}`) given a record of a declared type gives back a record of that
+/// type, whatever fields the parameter and the result write and in
+/// whatever order: a record of another declared type (a `Pet` for a
+/// `Person`) or an anonymous one is refused in each shape, and the
+/// record given passes.
+#[test]
+fn an_open_record_result_given_a_declared_record_is_of_its_type() {
+    let shapes = [
+        "fn f(p: {age: Int, name: String, ...r}, q: {...s}) -> {name: String, age: Int, ...r}",
+        "fn f(p: {name: String, age: Int, ...r}, q: {...s}) -> {name: String, age: Int, ...r}",
+        "fn f(p: {name: String, ...r}, q: {...s}) -> {...r}",
+        "fn f(p: {name: String, ...r}, q: {...s}) -> {age: Int, ...r}",
+        "fn f(p: {name: String, age: Int, ...r}, q: {...s}) -> {name: String, ...r}",
+        "fn f(p: {...r}, q: {...s}) -> {...r}",
+    ];
+    let body = |other: &str| {
+        format!(
+            "  let y = g.f(Person {{ name: \"a\", age: 1 }}, {other})\n  let z: Person = y\n  host.give(z.age + 1)"
+        )
+    };
+    for shape in shapes {
+        for other in ["Pet { name: \"rex\", age: 3 }", "{age: 3, name: \"rex\"}"] {
+            let err = run_probe(&body(other), Some((shape, 1))).expect_err(shape);
+            assert!(
+                err.contains("g.f: its signature returns")
+                    && err.contains("Person (the type of its argument `p`)"),
+                "{shape} given {other}: {err}"
+            );
+        }
+        assert_eq!(
+            run_probe(&body("Pet { name: \"rex\", age: 3 }"), Some((shape, 0))),
+            Ok(Value::Int(2)),
+            "{shape}"
+        );
+    }
+}
+
+/// The type a variable has at the call is named in full, as far as the
+/// value that shows it shows it: `List(Int)`, not `List`; `_` for what
+/// it does not show; `Fn` for a function of any kind; `type Int` for a
+/// type given as a value. A `type a` parameter's type is the type it is
+/// given.
+#[test]
+fn the_type_an_argument_shows_is_named_in_full() {
+    let cases = [
+        (
+            "h.other([1], [\"s\"])",
+            "here List(Int) (the type of its argument `x`), but it returned List [\"s\"]",
+        ),
+        (
+            "h.other([[[1]]], [[[\"x\"]]])",
+            "here List(List(List(Int)))",
+        ),
+        ("h.other([None], 1)", "here List(Option(_))"),
+        (
+            "h.other(#{\"a\": 1}, #{\"a\": \"x\"})",
+            "here Map(String, Int)",
+        ),
+        ("h.other(#[1], 1)", "here Set(Int)"),
+        ("h.other(Some(1), Some(\"x\"))", "here Option(Int)"),
+        ("h.other(Ok(1), 1)", "here Result(Int, _)"),
+        ("h.other((1, 2), (1, 2, 3))", "here (Int, Int)"),
+        ("h.other(Box { v: 1 }, Box { v: \"s\" })", "here Box(Int)"),
+        ("h.other(Box { v: [\"s\"] }, 1)", "here Box(List(String))"),
+        ("h.other(Circle(1.0), Some(1))", "here Shape"),
+        ("h.other({a: 1}, {a: \"x\"})", "here {a: Int}"),
+        ("h.other((), 1)", "here ()"),
+        ("h.other(channel.new(0), 1)", "here Channel(_)"),
+        ("h.other(inc, 1)", "here Fn"),
+        ("h.other(string.length, 1)", "here Fn"),
+        ("h.other(Some, 1)", "here Fn"),
+        ("h.other(h.same, 1)", "here Fn"),
+        (
+            "h.other(Int, 1)",
+            "here type Int (the type of its argument `x`), but it returned Int 1",
+        ),
+        (
+            "h.other(Person, Person { name: \"a\", age: 1 })",
+            "here type Person",
+        ),
+        (
+            "h.cast(1, String)",
+            "here String (its type argument `a`), but it returned Int 1",
+        ),
+        (
+            "h.cast([1], Set(Int))",
+            "here Set(Int) (its type argument `a`)",
+        ),
+        (
+            "h.cast([1], Box(Int))",
+            "here Box(Int) (its type argument `a`)",
+        ),
+        (
+            "h.otherl([1], [\"x\"])",
+            "returns List(a), where a is Int (from its argument `xs`)",
+        ),
+    ];
+    let wrong: Vec<String> = (cases.iter())
+        .filter_map(|(call, expected)| {
+            let err = run_probe(&format!("  host.give({call})"), None).expect_err(call);
+            (!err.contains(expected)).then(|| format!("{call}: {err}"))
+        })
+        .collect();
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+/// A parameter written as a pattern is named by its place.
+#[test]
+fn a_parameter_written_as_a_pattern_is_named_by_its_place() {
+    for (signature, ret, call, expected) in [
+        (
+            "fn f((x, y): (a, Int)) -> a",
+            0,
+            "g.f((1, 2))",
+            "here Int (from its first argument)",
+        ),
+        (
+            "fn f(s: String, (x, y): (a, Int)) -> a",
+            1,
+            "g.f(\"s\", (1, 2))",
+            "here Int (from its second argument)",
+        ),
+        (
+            "fn f(s: String, _: a) -> a",
+            0,
+            "g.f(\"s\", 1)",
+            "here Int (the type of its second argument)",
+        ),
+    ] {
+        let err =
+            run_probe(&format!("  host.give({call})"), Some((signature, ret))).expect_err(call);
+        assert!(err.contains(expected), "{signature}: {err}");
+    }
 }
