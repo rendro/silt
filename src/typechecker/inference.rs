@@ -4776,11 +4776,14 @@ impl TypeChecker {
                         if !resolve(field).is_empty()
                             && resolve(field).bytes().all(|b| b.is_ascii_digit()) =>
                     {
-                        self.error(
+                        self.error_help(
                             Code::UnsupportedOperation,
-                            format!(
-                                "tuple indexing ('t.{field}') is not supported; \
-                                 destructure instead: 'let (a, b) = t'"
+                            (
+                                format!(
+                                    "tuple indexing ('t.{field}') is not supported; \
+                                     destructure instead: 'let (a, b) = t'"
+                                ),
+                                Some(crate::parser::TUPLE_INDEX_HELP.to_string()),
                             ),
                             span,
                         );

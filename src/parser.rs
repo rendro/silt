@@ -271,6 +271,11 @@ pub(crate) const NO_IF: &str =
 pub(crate) const NO_IF_HELP: &str = "write `match {`, then one `condition -> value` arm per \
      line, and last `_ -> value` for when no condition is true";
 
+/// The help of the error of `t.0`: a tuple is taken apart where it is
+/// bound, and a closure's parameter is such a place.
+pub(crate) const TUPLE_INDEX_HELP: &str =
+    "or take the tuple apart where it is bound, as in a closure's parameter: `{ (a, b) -> ... }`";
+
 /// The construct whose block follows a header expression.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HeaderKind {
@@ -3103,7 +3108,8 @@ impl<'src> Parser<'src> {
                                 "tuple indexing ('t.{index}') is not supported; \
                                  destructure instead: 'let (a, b) = t'"
                             ),
-                        ));
+                        )
+                        .with_help(TUPLE_INDEX_HELP));
                     } else {
                         let (field, field_span) = self.expect_ident()?;
                         // Qualified record construction —
