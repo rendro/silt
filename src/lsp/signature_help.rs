@@ -64,6 +64,10 @@ impl Server {
                 let (label, params_info) = local_signature(&ty?)?;
                 (label, params_info, None)
             }
+            Callee::Own(def) => {
+                let (label, params_info) = build_signature_from_def(&fn_name, def);
+                (label, params_info, def.doc.clone())
+            }
             Callee::Definition(def) => {
                 let (label, params_info) = build_signature_from_def(&fn_name, &def);
                 (label, params_info, def.doc)
@@ -98,9 +102,29 @@ impl Server {
 
     /// What the callee `fn_name`, whose last name starts at byte `at` of
     /// the open document `uri`, is.
-    fn callee(&self, uri: &lsp_types::Uri, doc: &Document, fn_name: &str, at: usize) -> Callee {
+    fn callee<'a>(
+        &self,
+        uri: &lsp_types::Uri,
+        doc: &'a Document,
+        fn_name: &str,
+        at: usize,
+    ) -> Callee<'a> {
         let local =
             |binding: Option<&LocalBinding>| Callee::Local(binding.and_then(|b| b.ty.clone()));
+        // First what the document keeps: a local of the name in scope,
+        // then one of its own definitions (which no import shadows). Only
+        // a name that is neither (silt's own, an import's, a method) is
+        // looked up in the analysis, whose walk of the whole document a
+        // request would pay each time.
+        if !fn_name.contains('.') {
+            let sym = intern(fn_name);
+            if let Some(binding) = nearest_local_binding_for(&doc.locals, sym, at) {
+                return local(Some(binding));
+            }
+            if let Some(def) = doc.definitions.get(&sym) {
+                return Callee::Own(def);
+            }
+        }
         match self.target_at(uri, at) {
             Some((_, Target::Local(binding))) => {
                 local(doc.locals.iter().find(|b| b.binding_offset == binding))
@@ -210,9 +234,11 @@ impl Server {
 // ── Signature help helpers ─────────────────────────────────────────
 
 /// What a call's callee is.
-enum Callee {
+enum Callee<'a> {
     /// A local binding (or a parameter), of this type if it is known.
     Local(Option<Type>),
+    /// A definition of the document itself, as it keeps it.
+    Own(&'a DefInfo),
     /// A definition of a file.
     Definition(DefInfo),
     /// One of silt's own, by its qualified name (`list.map`, `Some`).
