@@ -1,4 +1,4 @@
-Ok([Names {s: #[a, b, c]}])
+Ok([Names {s: #["a", "b", "c"]}])
 Ok([Small, Big])
 Err: json type mismatch: expected Int, got something else at n
 Err: json missing field: n

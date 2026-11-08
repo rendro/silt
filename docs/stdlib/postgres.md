@@ -481,7 +481,7 @@ It prints:
 inserted: [Id {id: 11}, Id {id: 12}]
 updated: 1
 as json: [{"born":"1990-05-17","id":11}]
-users: [User {id: 11, name: alice, nick: Some(al), born: 1990-05-17}, User {id: 12, name: bob, nick: Some(bobby), born: 2001-02-03}]
+users: [User {id: 11, name: "alice", nick: Some("al"), born: 1990-05-17}, User {id: 12, name: "bob", nick: Some("bobby"), born: 2001-02-03}]
 ```
 
 ## Notes

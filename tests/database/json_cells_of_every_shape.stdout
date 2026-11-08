@@ -2,8 +2,8 @@
 [Row {doc: Inner {n: 1, f: 2.0, s: None, st: Active, m: #{"a": 2, "b": 1}, t: (1, true), d: 1979-05-27}}]
 [Row {doc: Inner {n: 1, f: 2.0, s: None, st: Active, m: #{"a": 2, "b": 1}, t: (1, true), d: 1979-05-27}}]
 postgres type mismatch on column `doc`: expected List(Int), got jsonb: json type mismatch: expected List, got object
-[RowV {doc: Object(#{"d": String(1979-05-27), "f": Int(2), "m": Object(#{"a": Int(2), "b": Int(1)}), "n": Int(1), "st": String(Active), "t": Array([Int(1), Bool(true)])})}]
-[RowV {doc: Object(#{"d": String(1979-05-27), "f": Int(2), "m": Object(#{"a": Int(2), "b": Int(1)}), "n": Int(1), "st": String(Active), "t": Array([Int(1), Bool(true)])})}]
+[RowV {doc: Object(#{"d": String("1979-05-27"), "f": Int(2), "m": Object(#{"a": Int(2), "b": Int(1)}), "n": Int(1), "st": String("Active"), "t": Array([Int(1), Bool(true)])})}]
+[RowV {doc: Object(#{"d": String("1979-05-27"), "f": Int(2), "m": Object(#{"a": Int(2), "b": Int(1)}), "n": Int(1), "st": String("Active"), "t": Array([Int(1), Bool(true)])})}]
 [RowM {doc: #{"k": Inner {n: 1, f: 2.0, s: None, st: Active, m: #{"a": 2, "b": 1}, t: (1, true), d: 1979-05-27}}}]
 [RowO {doc: Some(Inner {n: 1, f: 2.0, s: None, st: Active, m: #{"a": 2, "b": 1}, t: (1, true), d: 1979-05-27})}]
 [RowLA {docs: [Inner {n: 1, f: 2.0, s: None, st: Active, m: #{"a": 2, "b": 1}, t: (1, true), d: 1979-05-27}, Inner {n: 1, f: 2.0, s: None, st: Active, m: #{"a": 2, "b": 1}, t: (1, true), d: 1979-05-27}]}]
@@ -11,8 +11,8 @@ postgres type mismatch on column `doc`: expected List(Int), got jsonb: json type
 postgres type mismatch on column `doc`: expected Inner, got jsonb: json type mismatch: expected Int, got a number with a fraction at n
 postgres type mismatch on column `doc`: expected Inner, got json: json type mismatch: expected Int, got a number with a fraction at n
 postgres type mismatch on column `doc`: expected List(Int), got jsonb: json type mismatch: expected List, got object
-[RowV {doc: Object(#{"d": String(1979-05-27), "f": Int(2), "m": Object(#{}), "n": Float(1.5), "st": String(Active), "t": Array([Int(1), Bool(true)])})}]
-[RowV {doc: Object(#{"d": String(1979-05-27), "f": Int(2), "m": Object(#{}), "n": Float(1.5), "st": String(Active), "t": Array([Int(1), Bool(true)])})}]
+[RowV {doc: Object(#{"d": String("1979-05-27"), "f": Int(2), "m": Object(#{}), "n": Float(1.5), "st": String("Active"), "t": Array([Int(1), Bool(true)])})}]
+[RowV {doc: Object(#{"d": String("1979-05-27"), "f": Int(2), "m": Object(#{}), "n": Float(1.5), "st": String("Active"), "t": Array([Int(1), Bool(true)])})}]
 postgres type mismatch on column `doc`: expected Map(String, Inner), got jsonb: json type mismatch: expected Int, got a number with a fraction at k.n
 postgres type mismatch on column `doc`: expected Option(Inner), got jsonb: json type mismatch: expected Int, got a number with a fraction at n
 postgres type mismatch on column `docs`: expected Inner, got jsonb[]: json type mismatch: expected Int, got a number with a fraction at n
@@ -20,8 +20,8 @@ postgres type mismatch on column `docs`: expected Inner, got jsonb[]: json type 
 postgres type mismatch on column `doc`: expected Inner, got jsonb: json type mismatch: expected Int, got string at m.a
 postgres type mismatch on column `doc`: expected Inner, got json: json type mismatch: expected Int, got string at m.a
 postgres type mismatch on column `doc`: expected List(Int), got jsonb: json type mismatch: expected List, got object
-[RowV {doc: Object(#{"d": String(1979-05-27), "f": Float(1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000.0), "m": Object(#{"a": String(y), "b": String(x)}), "n": Int(9223372036854775807), "st": Object(#{"fields": Array([Int(3)]), "variant": String(Paused)}), "t": Array([Int(1), Bool(true)])})}]
-[RowV {doc: Object(#{"d": String(1979-05-27), "f": Float(1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000.0), "m": Object(#{"a": String(y), "b": String(x)}), "n": Int(9223372036854775807), "st": Object(#{"fields": Array([Int(3)]), "variant": String(Paused)}), "t": Array([Int(1), Bool(true)])})}]
+[RowV {doc: Object(#{"d": String("1979-05-27"), "f": Float(1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000.0), "m": Object(#{"a": String("y"), "b": String("x")}), "n": Int(9223372036854775807), "st": Object(#{"fields": Array([Int(3)]), "variant": String("Paused")}), "t": Array([Int(1), Bool(true)])})}]
+[RowV {doc: Object(#{"d": String("1979-05-27"), "f": Float(1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000.0), "m": Object(#{"a": String("y"), "b": String("x")}), "n": Int(9223372036854775807), "st": Object(#{"fields": Array([Int(3)]), "variant": String("Paused")}), "t": Array([Int(1), Bool(true)])})}]
 postgres type mismatch on column `doc`: expected Map(String, Inner), got jsonb: json type mismatch: expected Int, got string at k.m.a
 postgres type mismatch on column `doc`: expected Option(Inner), got jsonb: json type mismatch: expected Int, got string at m.a
 postgres type mismatch on column `docs`: expected Inner, got jsonb[]: json type mismatch: expected Int, got string at m.a
@@ -29,8 +29,8 @@ postgres type mismatch on column `docs`: expected Inner, got jsonb[]: json type 
 postgres type mismatch on column `doc`: expected Inner, got jsonb: json type mismatch: expected Int, got a number out of Int's range at n
 postgres type mismatch on column `doc`: expected Inner, got json: json type mismatch: expected Int, got a number out of Int's range at n
 postgres type mismatch on column `doc`: expected List(Int), got jsonb: json type mismatch: expected List, got object
-[RowV {doc: Object(#{"d": String(1979-02-30), "f": Int(1), "m": Object(#{}), "n": Float(9223372036854776000.0), "st": Object(#{"fields": Array([String(1979-05-27)]), "variant": String(At)}), "t": Array([Int(1), Bool(true), Int(3)])})}]
-[RowV {doc: Object(#{"d": String(1979-02-30), "f": Int(1), "m": Object(#{}), "n": Float(9223372036854776000.0), "st": Object(#{"fields": Array([String(1979-05-27)]), "variant": String(At)}), "t": Array([Int(1), Bool(true), Int(3)])})}]
+[RowV {doc: Object(#{"d": String("1979-02-30"), "f": Int(1), "m": Object(#{}), "n": Float(9223372036854776000.0), "st": Object(#{"fields": Array([String("1979-05-27")]), "variant": String("At")}), "t": Array([Int(1), Bool(true), Int(3)])})}]
+[RowV {doc: Object(#{"d": String("1979-02-30"), "f": Int(1), "m": Object(#{}), "n": Float(9223372036854776000.0), "st": Object(#{"fields": Array([String("1979-05-27")]), "variant": String("At")}), "t": Array([Int(1), Bool(true), Int(3)])})}]
 postgres type mismatch on column `doc`: expected Map(String, Inner), got jsonb: json type mismatch: expected Int, got a number out of Int's range at k.n
 postgres type mismatch on column `doc`: expected Option(Inner), got jsonb: json type mismatch: expected Int, got a number out of Int's range at n
 postgres type mismatch on column `docs`: expected Inner, got jsonb[]: json type mismatch: expected Int, got a number out of Int's range at n
@@ -38,8 +38,8 @@ postgres type mismatch on column `docs`: expected Inner, got jsonb[]: json type 
 postgres type mismatch on column `doc`: expected Inner, got jsonb: variant `Paused` of `Status` has 1 field, got 0 at st
 postgres type mismatch on column `doc`: expected Inner, got json: variant `Paused` of `Status` has 1 field, got 0 at st
 postgres type mismatch on column `doc`: expected List(Int), got jsonb: json type mismatch: expected List, got object
-[RowV {doc: Object(#{"d": String(1979-05-27), "f": Int(1), "m": Object(#{}), "n": Int(1000), "s": Null, "st": String(Paused), "t": Array([Int(1), Bool(true)])})}]
-[RowV {doc: Object(#{"d": String(1979-05-27), "f": Int(1), "m": Object(#{}), "n": Int(1000), "s": Null, "st": String(Paused), "t": Array([Int(1), Bool(true)])})}]
+[RowV {doc: Object(#{"d": String("1979-05-27"), "f": Int(1), "m": Object(#{}), "n": Int(1000), "s": Null, "st": String("Paused"), "t": Array([Int(1), Bool(true)])})}]
+[RowV {doc: Object(#{"d": String("1979-05-27"), "f": Int(1), "m": Object(#{}), "n": Int(1000), "s": Null, "st": String("Paused"), "t": Array([Int(1), Bool(true)])})}]
 postgres type mismatch on column `doc`: expected Map(String, Inner), got jsonb: variant `Paused` of `Status` has 1 field, got 0 at k.st
 postgres type mismatch on column `doc`: expected Option(Inner), got jsonb: variant `Paused` of `Status` has 1 field, got 0 at st
 postgres type mismatch on column `docs`: expected Inner, got jsonb[]: variant `Paused` of `Status` has 1 field, got 0 at st
@@ -47,8 +47,8 @@ postgres type mismatch on column `docs`: expected Inner, got jsonb[]: variant `P
 postgres type mismatch on column `doc`: expected Inner, got jsonb: json type mismatch: expected String, got number at s
 postgres type mismatch on column `doc`: expected Inner, got json: json type mismatch: expected String, got number at s
 postgres type mismatch on column `doc`: expected List(Int), got jsonb: json type mismatch: expected List, got object
-[RowV {doc: Object(#{"d": String(1979-05-27), "f": Int(1), "m": Object(#{}), "n": Int(1), "s": Int(3), "st": Object(#{"variant": String(Nope)}), "t": Array([Int(1), Bool(true)])})}]
-[RowV {doc: Object(#{"d": String(1979-05-27), "f": Int(1), "m": Object(#{}), "n": Int(1), "s": Int(3), "st": Object(#{"variant": String(Nope)}), "t": Array([Int(1), Bool(true)])})}]
+[RowV {doc: Object(#{"d": String("1979-05-27"), "f": Int(1), "m": Object(#{}), "n": Int(1), "s": Int(3), "st": Object(#{"variant": String("Nope")}), "t": Array([Int(1), Bool(true)])})}]
+[RowV {doc: Object(#{"d": String("1979-05-27"), "f": Int(1), "m": Object(#{}), "n": Int(1), "s": Int(3), "st": Object(#{"variant": String("Nope")}), "t": Array([Int(1), Bool(true)])})}]
 postgres type mismatch on column `doc`: expected Map(String, Inner), got jsonb: json type mismatch: expected String, got number at k.s
 postgres type mismatch on column `doc`: expected Option(Inner), got jsonb: json type mismatch: expected String, got number at s
 postgres type mismatch on column `docs`: expected Inner, got jsonb[]: json type mismatch: expected String, got number at s
@@ -56,8 +56,8 @@ postgres type mismatch on column `docs`: expected Inner, got jsonb[]: json type 
 postgres type mismatch on column `doc`: expected Inner, got jsonb: json missing field: n
 postgres type mismatch on column `doc`: expected Inner, got json: json missing field: n
 postgres type mismatch on column `doc`: expected List(Int), got jsonb: json type mismatch: expected List, got object
-[RowV {doc: Object(#{"d": String(1979-05-27), "f": Int(1), "m": Object(#{}), "st": String(Active), "t": Array([Int(1), Bool(true)])})}]
-[RowV {doc: Object(#{"d": String(1979-05-27), "f": Int(1), "m": Object(#{}), "st": String(Active), "t": Array([Int(1), Bool(true)])})}]
+[RowV {doc: Object(#{"d": String("1979-05-27"), "f": Int(1), "m": Object(#{}), "st": String("Active"), "t": Array([Int(1), Bool(true)])})}]
+[RowV {doc: Object(#{"d": String("1979-05-27"), "f": Int(1), "m": Object(#{}), "st": String("Active"), "t": Array([Int(1), Bool(true)])})}]
 postgres type mismatch on column `doc`: expected Map(String, Inner), got jsonb: json missing field: k.n
 postgres type mismatch on column `doc`: expected Option(Inner), got jsonb: json missing field: n
 postgres type mismatch on column `docs`: expected Inner, got jsonb[]: json missing field: n
