@@ -1687,14 +1687,18 @@ impl Printer<'_> {
         list_layout(open, items, tail, close, TIGHT)
     }
 
-    /// `{ name: value, ... }`.
+    /// `{ name: value, ... }`, where a field written `name` alone (its
+    /// value is the name itself) stays so.
     fn fields(&mut self, fields: &[(intern::Symbol, Expr)]) -> Doc {
         self.delimited(
             Token::LBrace,
             Token::RBrace,
             SPACED,
             fields,
-            |p, (_, value)| p.field(value),
+            |p, (_, value)| match value.span.start == p.cur.offset() {
+                true => p.name(),
+                false => p.field(value),
+            },
         )
     }
 

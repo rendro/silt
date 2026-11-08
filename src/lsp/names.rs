@@ -82,10 +82,10 @@ pub(super) struct Names<'a> {
     pub(super) locals: Vec<LocalName>,
     pub(super) methods: Vec<MethodUse>,
     pub(super) fields: Vec<FieldUse>,
-    /// The names a top-level `let` declares as fields written without a
-    /// pattern (`let P { x } = p`): definitions whose declaration is
-    /// punned.
-    pub(super) punned_declarations: Vec<Span>,
+    /// The names of definitions written as a field without a pattern
+    /// or a value: declared by a top-level `let` (`let P { x } = p`), or
+    /// used in a record literal or update (`P { x }`).
+    pub(super) punned: Vec<Span>,
     /// The pattern being walked is a top-level `let`'s: its names are
     /// definitions.
     declares: bool,
@@ -138,7 +138,7 @@ impl<'a> Names<'a> {
             defs: Vec::new(),
             locals: Vec::new(),
             methods: Vec::new(),
-            punned_declarations: Vec::new(),
+            punned: Vec::new(),
             fields: Vec::new(),
             declares: false,
         };
@@ -165,7 +165,7 @@ impl<'a> Names<'a> {
     fn local(&mut self, span: Span, name: Symbol, binder: bool, punned: bool) {
         if self.declares && binder {
             if punned {
-                self.punned_declarations.push(span);
+                self.punned.push(span);
             }
             return;
         }
@@ -432,22 +432,21 @@ impl<'a> Names<'a> {
                 self.expr(body);
             }
             ExprKind::RecordCreate {
-                name_span, fields, ..
+                name_span,
+                fields,
+                punned,
+                ..
             } => {
                 self.name(*name_span, expr.res);
-                for (_, value) in fields {
-                    self.expr(value);
-                }
+                self.field_values(fields, punned);
             }
             ExprKind::RecordUpdate {
                 expr: record,
                 fields,
-                ..
+                punned,
             } => {
                 self.expr(record);
-                for (_, value) in fields {
-                    self.expr(value);
-                }
+                self.field_values(fields, punned);
             }
             ExprKind::AnonRecord { spread, fields } => {
                 if let Some(spread) = spread {
@@ -606,6 +605,26 @@ impl<'a> Names<'a> {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    /// The fields of a record literal or update: `{ x: e }` is `e`, the
+    /// shorthand `{ x }` uses `x`, and another name for it is written
+    /// behind the field, `{ x: y }`.
+    fn field_values(&mut self, fields: &[(Symbol, Expr)], punned: &[Symbol]) {
+        for (field, value) in fields {
+            match &value.kind {
+                ExprKind::Ident(name) if punned.contains(field) => match value.res {
+                    Some(Res::Local) => self.local(value.span, *name, false, true),
+                    res => {
+                        if matches!(res, Some(Res::Def(_))) {
+                            self.punned.push(value.span);
+                        }
+                        self.name(value.span, res);
+                    }
+                },
+                _ => self.expr(value),
             }
         }
     }

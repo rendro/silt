@@ -2954,6 +2954,7 @@ impl Resolver<'_> {
                 name,
                 name_span,
                 fields,
+                ..
             } => {
                 let (module, name, name_span) = (*module, *name, *name_span);
                 for (_, e) in fields.iter_mut() {
@@ -2961,7 +2962,9 @@ impl Resolver<'_> {
                 }
                 expr.res = self.record_name(module, name, name_span, span, false);
             }
-            ExprKind::RecordUpdate { expr: base, fields } => {
+            ExprKind::RecordUpdate {
+                expr: base, fields, ..
+            } => {
                 self.expr(base);
                 for (_, e) in fields {
                     self.expr(e);

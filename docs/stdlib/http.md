@@ -416,7 +416,7 @@ type User {
 -- A body is bytes: this server answers with text, and says so.
 fn reply(status: Int, text: String) -> http.Response {
   http.Response {
-    status: status,
+    status,
     body: bytes.from_string(text),
     headers: #{ "Content-Type": "text/plain; charset=UTF-8" },
   }

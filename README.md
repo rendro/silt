@@ -107,7 +107,7 @@ type Todo {
 -- A body is bytes: this server answers with JSON, and says so.
 fn reply(status, data) {
   http.Response {
-    status: status,
+    status,
     body: bytes.from_string(json.stringify(data)),
     headers: #{ "Content-Type": "application/json" },
   }

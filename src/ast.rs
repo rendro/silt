@@ -118,10 +118,15 @@ pub enum ExprKind {
         /// Span of the type name itself (the `Pt` of `util.Pt { .. }`).
         name_span: Span,
         fields: Vec<(Symbol, Expr)>,
+        /// The fields written without a value (`Pt { x }` for
+        /// `Pt { x: x }`): the value is the name itself.
+        punned: Vec<Symbol>,
     },
     RecordUpdate {
         expr: Box<Expr>,
         fields: Vec<(Symbol, Expr)>,
+        /// As on `RecordCreate`.
+        punned: Vec<Symbol>,
     },
     /// Anonymous (row-polymorphic) record literal: `{name: "A", age: 30}`
     /// or with a spread head `{...other, age: 30}`. The optional

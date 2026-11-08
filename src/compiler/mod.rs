@@ -280,7 +280,7 @@ pub(super) fn any_expr(expr: &Expr, found: &mut impl FnMut(&Expr) -> bool) -> bo
         ExprKind::Call(callee, args) => inner(callee) || args.iter().any(&mut inner),
         ExprKind::Lambda { body, .. } => inner(body),
         ExprKind::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| inner(e)),
-        ExprKind::RecordUpdate { expr, fields } => {
+        ExprKind::RecordUpdate { expr, fields, .. } => {
             inner(expr) || fields.iter().any(|(_, e)| inner(e))
         }
         ExprKind::AnonRecord { spread, fields } => {
@@ -2057,10 +2057,7 @@ impl<'a> Compiler<'a> {
             // The literal's type is the one the resolver resolved it to,
             // written `Pt { .. }` or `util.Pt { .. }`.
             ExprKind::RecordCreate {
-                module: _,
-                name_span: _,
-                name,
-                fields,
+                name, fields, ..
             } => {
                 // Push field values in order
                 let field_names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
@@ -2077,7 +2074,7 @@ impl<'a> Compiler<'a> {
                 )?;
             }
 
-            ExprKind::RecordUpdate { expr, fields } => {
+            ExprKind::RecordUpdate { expr, fields, .. } => {
                 let field_names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
                 self.compile_operands(
                     std::iter::once(&**expr).chain(fields.iter().map(|(_, val)| val)),

@@ -276,6 +276,10 @@ pub(crate) const NO_IF_HELP: &str = "write `match {`, then one `condition -> val
 pub(crate) const TUPLE_INDEX_HELP: &str =
     "or take the tuple apart where it is bound, as in a closure's parameter: `{ (a, b) -> ... }`";
 
+/// The fields of a record literal or update, and those of them written
+/// without a value (see `ExprKind::RecordCreate`).
+type RecordFields = (Vec<(Symbol, Expr)>, Vec<Symbol>);
+
 /// The construct whose block follows a header expression.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HeaderKind {
@@ -3089,11 +3093,12 @@ impl<'src> Parser<'src> {
                     if self.at(&Token::LBrace) {
                         // Record update: expr.{ field: value }
                         let span = left.span;
-                        let fields = self.parse_record_fields()?;
+                        let (fields, punned) = self.parse_record_fields()?;
                         left = self.mk_expr(
                             ExprKind::RecordUpdate {
                                 expr: Box::new(left),
                                 fields,
+                                punned,
                             },
                             span,
                         );
@@ -3143,7 +3148,7 @@ impl<'src> Parser<'src> {
                                     name: *module,
                                     span: left.span,
                                 };
-                                let fields = self.parse_record_fields()?;
+                                let (fields, punned) = self.parse_record_fields()?;
                                 let span = left.span;
                                 left = self.mk_expr(
                                     ExprKind::RecordCreate {
@@ -3151,6 +3156,7 @@ impl<'src> Parser<'src> {
                                         name: field,
                                         name_span: field_span,
                                         fields,
+                                        punned,
                                     },
                                     span,
                                 );
@@ -3311,13 +3317,14 @@ impl<'src> Parser<'src> {
                     && !self.is_trailing_closure()
                 {
                     // Record creation: User { name: "Alice", ... }
-                    let fields = self.parse_record_fields()?;
+                    let (fields, punned) = self.parse_record_fields()?;
                     Ok(self.mk_expr(
                         ExprKind::RecordCreate {
                             module: None,
                             name,
                             name_span: span,
                             fields,
+                            punned,
                         },
                         span,
                     ))
@@ -3700,10 +3707,13 @@ impl<'src> Parser<'src> {
     /// normally suppressed so the match-body `{` isn't consumed as part
     /// of the scrutinee expression. But a record literal
     /// `Ctor { field: v, ... }` is syntactically distinct from a match
-    /// body `{ pattern -> body }`: the former has `Ident Colon`
-    /// immediately after `{`; the latter has `Pattern Arrow`. This
-    /// bounded lookahead lets a record literal through inside scrutinee
-    /// position without breaking match-body suppression.
+    /// body `{ pattern -> body }`: the former has `Ident Colon`, or
+    /// `Ident Comma` (a shorthand field and more), immediately after
+    /// `{`; the latter has `Pattern Arrow`, and a block never starts
+    /// with either. This bounded lookahead lets a record literal through
+    /// inside scrutinee position without breaking match-body
+    /// suppression. A lone shorthand field (`P { x }`) is not let
+    /// through: braces holding one name are also a `loop`'s body.
     fn scrutinee_lbrace_is_record_literal(&self) -> bool {
         if self.peek() != &Token::LBrace {
             return false;
@@ -3713,7 +3723,10 @@ impl<'src> Parser<'src> {
             return false;
         }
         i += 1;
-        matches!(self.tokens.get(i).map(|t| &t.kind), Some(Token::Colon))
+        matches!(
+            self.tokens.get(i).map(|t| &t.kind),
+            Some(Token::Colon | Token::Comma)
+        )
     }
 
     /// Render an `Ident` / dotted `FieldAccess` chain (`util`,
@@ -4018,10 +4031,12 @@ impl<'src> Parser<'src> {
     }
 
     /// The braces of a record literal or a record update, at the `{`:
-    /// `{ name: expr, ... }`.
-    fn parse_record_fields(&mut self) -> Result<Vec<(Symbol, Expr)>> {
+    /// `{ name: expr, ... }`, where a field written `name` alone is
+    /// `name: name` (the shorthand of record patterns).
+    fn parse_record_fields(&mut self) -> Result<RecordFields> {
         let open = self.expect(&Token::LBrace)?.span;
-        self.comma_list(
+        let mut punned = Vec::new();
+        let fields = self.comma_list(
             "record literal",
             open,
             ListEnd::Close(&Token::RBrace),
@@ -4033,11 +4048,19 @@ impl<'src> Parser<'src> {
                         "spread syntax is not supported; use `value.{ field: expr }` for record updates",
                     ));
                 }
-                let (name, _) = p.expect_ident()?;
-                p.expect(&Token::Colon)?;
+                let (name, name_span) = p.expect_ident()?;
+                if !p.at(&Token::Colon) {
+                    // The shorthand: the field takes the value of the
+                    // name in scope.
+                    let value = p.mk_expr(ExprKind::Ident(name), name_span);
+                    punned.push(name);
+                    return Ok((name, value));
+                }
+                p.advance();
                 Ok((name, p.parse_expr()?))
             },
-        )
+        )?;
+        Ok((fields, punned))
     }
 
     /// The error for an element behind the rest of a pattern (`..`,

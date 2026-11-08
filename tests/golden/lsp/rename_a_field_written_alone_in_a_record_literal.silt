@@ -1,0 +1,17 @@
+-- cmd: lsp
+-- lsp: rename 12:7 count
+-- lsp: rename 9:5 limit
+-- A field of a record literal or update written without its value uses
+-- the name in scope; renaming that name writes the field out, so the
+-- field keeps its name: `P { x }` becomes `P { x: count }`.
+type P { x: Int, y: Int }
+
+let y = 5
+
+fn main() {
+  let x = 1
+  let p = P { x, y }
+  let q = p.{ x }
+  println(p)
+  println(q.{ y, x })
+}

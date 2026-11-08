@@ -5279,7 +5279,9 @@ impl TypeChecker {
                 }
             }
 
-            ExprKind::RecordUpdate { expr: base, fields } => {
+            ExprKind::RecordUpdate {
+                expr: base, fields, ..
+            } => {
                 let base_span = base.span;
                 let base_ty = self.infer_expr(base, env);
                 let resolved = self.apply(&base_ty);
@@ -5913,7 +5915,9 @@ impl TypeChecker {
                     self.check_recur_tail_positions(e, inner);
                 }
             }
-            ExprKind::RecordUpdate { expr: base, fields } => {
+            ExprKind::RecordUpdate {
+                expr: base, fields, ..
+            } => {
                 self.check_recur_tail_positions(base, inner);
                 for (_, e) in fields {
                     self.check_recur_tail_positions(e, inner);

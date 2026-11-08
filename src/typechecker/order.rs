@@ -224,7 +224,9 @@ pub(super) fn references_in_expr<'a>(expr: &'a Expr, note: &mut impl FnMut(Menti
                 references_in_expr(e, note);
             }
         }
-        ExprKind::RecordUpdate { expr: base, fields } => {
+        ExprKind::RecordUpdate {
+                expr: base, fields, ..
+            } => {
             references_in_expr(base, note);
             for (_, e) in fields {
                 references_in_expr(e, note);

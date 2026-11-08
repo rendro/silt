@@ -137,6 +137,12 @@ fn main() {
 }
 ```
 
+A field written alone takes the value of the name in scope: `User { name,
+age, active: true }` is `User { name: name, age: age, active: true }`,
+as the record pattern `User { name, age, .. }` binds `name` and `age`.
+Building and reading a record look alike. An anonymous record has no
+such shorthand: `{ name }` is a block.
+
 Records declared in another module can be constructed with a
 **module-qualified path** — no selective import needed. The qualifier is
 explicit naming, not a second construction form: `users.User { ... }`
@@ -156,6 +162,9 @@ let alice = users.User { name: "Alice", age: 30, active: true }
 ```silt
 let alice2 = alice.{ age: 31 }
 ```
+
+The shorthand works here too: `alice.{ age }` sets `age` to the value of
+the name `age`.
 
 Read as "alice, but with age 31." Compare to Elm `{ u | age = 31 }`, Rust
 `User { age: 31, ..u }`. Silt's `.{ }` syntax avoids new keywords or sigils.

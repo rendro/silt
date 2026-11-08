@@ -216,7 +216,8 @@ Float, got Int`. Convert numbers explicitly with `int.to_float(42)` or
 `.` has the highest precedence of any operator. It is used for:
 
 - **Field access:** `user.name`
-- **Record update:** `user.{ age: 31 }` produces a new record with `age` replaced
+- **Record update:** `user.{ age: 31 }` produces a new record with `age` replaced;
+  `user.{ age }` is `user.{ age: age }`
 
 Tuples have no postfix index operator — destructure them with a `match`
 pattern instead, e.g. `match pair { (a, b) -> ... }`. See

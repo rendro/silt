@@ -1,0 +1,19 @@
+-- In a `loop` or `match` header, braces behind a type name are a record
+-- literal only when their first name is followed by `:` or `,`: braces
+-- holding one name alone are the block of the header. `Start { n }`
+-- here is the variant `Start` and the loop's body `{ n }`.
+type Phase { Start, Done }
+
+fn main() {
+  let n = 3
+  let r = loop _p = Start { n }
+  println(r)
+  println(p_of(Start))
+}
+
+fn p_of(p: Phase) -> Int {
+  match p {
+    Start -> 1
+    Done -> 2
+  }
+}

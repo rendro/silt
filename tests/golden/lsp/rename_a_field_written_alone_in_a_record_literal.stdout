@@ -1,0 +1,9 @@
+> rename 12:7 count
+rename_a_field_written_alone_in_a_record_literal.silt:12:7-12:8 => count
+rename_a_field_written_alone_in_a_record_literal.silt:13:15-13:16 => x: count
+rename_a_field_written_alone_in_a_record_literal.silt:14:15-14:16 => x: count
+rename_a_field_written_alone_in_a_record_literal.silt:16:18-16:19 => x: count
+> rename 9:5 limit
+rename_a_field_written_alone_in_a_record_literal.silt:9:5-9:6 => limit
+rename_a_field_written_alone_in_a_record_literal.silt:13:18-13:19 => y: limit
+rename_a_field_written_alone_in_a_record_literal.silt:16:15-16:16 => y: limit
