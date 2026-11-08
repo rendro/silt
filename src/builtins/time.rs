@@ -526,6 +526,11 @@ type Seen = [Option<Rc<Result<Ready, String>>>; 4];
 /// `RegexCache`.)
 const PATTERNS_MOST: usize = 256;
 
+/// The longest pattern a thread keeps, in bytes: a longer one is made
+/// ready on each use, so the patterns kept stay small however long the
+/// patterns a program makes.
+const PATTERN_KEPT_LONGEST: usize = 1024;
+
 thread_local! {
     /// The patterns of time this thread has formatted or parsed by, and
     /// the order it first saw them in. Asking whether a pattern fits a
@@ -567,6 +572,9 @@ fn ready(pattern: &str, use_: Use) -> Rc<Result<Ready, String>> {
                 }),
         };
         let made = Rc::new(made);
+        if pattern.len() > PATTERN_KEPT_LONGEST {
+            return made;
+        }
         if !seen.contains_key(pattern) {
             if seen.len() >= PATTERNS_MOST {
                 for old in order.drain(..PATTERNS_MOST / 4) {
@@ -1162,6 +1170,12 @@ mod tests {
         }
         let kept = PATTERNS.with_borrow(|(seen, order)| (seen.len(), order.len()));
         assert!(kept.0 <= PATTERNS_MOST && kept.0 == kept.1, "{kept:?}");
+        // A long pattern gives what it gives, and is not kept.
+        let long = format!("%Y-%m-%d {}", "x".repeat(PATTERN_KEPT_LONGEST));
+        let once = uses(&long);
+        assert_eq!(uses(&long), once, "a long pattern a second time");
+        assert!(ok_text(&once[0]).is_some(), "{:?}", once[0]);
+        assert!(PATTERNS.with_borrow(|(seen, _)| !seen.contains_key(&long)));
     }
 
     /// The records the module builds have the fields of their types,
