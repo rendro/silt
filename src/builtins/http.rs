@@ -164,10 +164,11 @@ fn ureq_response_to_value(
 ) -> Result<Option<Value>, ureq::Error> {
     let status = response.status().as_u16();
     // The names are in lower case, as the names of a request's
-    // headers are (`http::HeaderName` holds them so).
-    let headers = response.headers().iter().filter_map(|(name, value)| {
-        let value = value.to_str().ok()?;
-        Some((name.as_str().to_string(), value.to_string()))
+    // headers are (`http::HeaderName` holds them so); a value is text,
+    // a byte that is no UTF-8 in it U+FFFD, as of a request's header.
+    let headers = response.headers().iter().map(|(name, value)| {
+        let value = String::from_utf8_lossy(value.as_bytes());
+        (name.as_str().to_string(), value.into_owned())
     });
     let headers = header_map(headers);
     // An answer to `HEAD`, and one whose status says so, has no body,
