@@ -1,0 +1,4 @@
+-- exit: 1
+-- An imported `main` is the entry point: running it uses the import,
+-- which is not warned of as unused.
+import other.{ main }

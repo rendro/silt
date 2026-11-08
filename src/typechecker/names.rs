@@ -1404,8 +1404,9 @@ impl Resolver<'_> {
 
     /// Warn of each import of `program` whose name nothing looked up
     /// (`used`): an `import m` or `import m as n` by its line, an item
-    /// of `import m.{ a, b }` by itself. An import of a module that
-    /// failed to load is reported as that.
+    /// of `import m.{ a, b }` by itself, but `main`, which the file's
+    /// entry point is. An import of a module that failed to load is
+    /// reported as that.
     fn unused_imports(&mut self, program: &Program, used: &HashSet<Symbol>, text: &str) {
         let span_of = |range: Range<u32>, like: Span| Span {
             file: like.file,
@@ -1463,7 +1464,10 @@ impl Resolver<'_> {
                 }
                 ImportTarget::Items(_, items) => {
                     for (at, (item, item_span)) in items.iter().enumerate() {
-                        if used.contains(item) || erred(*item_span, &self.diagnostics) {
+                        // (An imported `main` is the file's entry point:
+                        // running the file uses it.)
+                        let entry = *item == intern(crate::session::ENTRY_POINT);
+                        if used.contains(item) || entry || erred(*item_span, &self.diagnostics) {
                             continue;
                         }
                         let help = format!("remove `{item}` from the import");
