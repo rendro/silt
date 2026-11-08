@@ -775,6 +775,7 @@ type TcpListener  -- opaque
 type TcpStream  -- opaque
 tcp.accept(listener: TcpListener) -> Result(TcpStream, TcpError)
 tcp.close(stream: TcpStream) -> ()
+tcp.close_listener(listener: TcpListener) -> ()
 tcp.connect(addr: String) -> Result(TcpStream, TcpError)
 tcp.connect_tls(addr: String, hostname: String) -> Result(TcpStream, TcpError)  -- cargo feature `tcp-tls`
 tcp.listen(addr: String) -> Result(TcpListener, TcpError)

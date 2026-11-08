@@ -605,6 +605,7 @@ pub(super) fn modules() -> Vec<Module> {
             rows: [
                 f("fn accept(listener: TcpListener) -> Result(TcpStream, TcpError)", "Wait for an incoming connection (cooperative I/O)", tcp::accept),
                 f("fn close(stream: TcpStream) -> ()", "Shut the connection down: operations in flight on it return, later ones give `Err(Closed)`", tcp::close),
+                f("fn close_listener(listener: TcpListener) -> ()", "Stop listening: later connects are refused, a waiting accept gives `Err(Closed)`, `http.serve` on it returns", tcp::close_listener),
                 f("fn connect(addr: String) -> Result(TcpStream, TcpError)", "Open a TCP connection to `host:port` (cooperative I/O)", tcp::connect),
                 f("fn listen(addr: String) -> Result(TcpListener, TcpError)", "Bind a TCP listener to `host:port`", tcp::listen),
                 f("fn local_port(listener: TcpListener) -> Int", "The port the listener is bound to: the one the system chose for port `0`", tcp::local_port),

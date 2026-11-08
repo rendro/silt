@@ -1555,9 +1555,9 @@ impl Drop for Conn {
 }
 
 /// `http.serve` itself, in the task that called it: accept a
-/// connection, start its task, accept the next. It ends when its task
-/// does (cancelled, or dropped at the end of the program), and the
-/// connections with it.
+/// connection, start its task, accept the next. It ends when its listener
+/// is closed (it returns), or when its task does (cancelled, or dropped at
+/// the end of the program), and the connections with it.
 #[cfg(feature = "http")]
 struct Serve {
     server: Arc<Server>,
@@ -1657,6 +1657,11 @@ impl crate::vm::Native for Serve {
                     _ => None,
                 };
                 let Some(stream) = stream else {
+                    // The listener was closed: the server ends, as one
+                    // whose task is cancelled ends (see `Drop`).
+                    if self.listener.is_closed() {
+                        return Ok(Step::Done(Value::Unit));
+                    }
                     // No descriptor left, no thread for the accept: the
                     // server stays, and tries again in a moment.
                     if !self.failing {
@@ -1750,6 +1755,10 @@ builtins! {
     // was written there.
     #[cfg(feature = "http")]
     fn serve(vm, listener: TcpListener, handler: &Value) -> Result<Step, VmError> {
+        // A closed listener has nothing to serve.
+        if listener.is_closed() {
+            return Ok(Step::Done(Value::Unit));
+        }
         // The listener is this server's alone while it serves: two that
         // accept on one listener would take each other's connections.
         let Some(token) = listener.serve(vm.cancelled.clone()) else {

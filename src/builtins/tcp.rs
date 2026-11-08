@@ -497,6 +497,7 @@ pub(crate) fn accept_op(
             Ok(Accepted::GivenUp) => err_closed(),
             // A server took the listener while the accept waited.
             Ok(Accepted::Served) => err(SERVED),
+            Ok(Accepted::Closed) => err_closed(),
             Err(e) => tcp_io_err(Doing::Using, &e),
         }
     })
@@ -570,6 +571,12 @@ builtins! {
         stream.shut_down();
     }
 
+    // Later connects are refused, a waiting accept (an `http.serve`'s
+    // too) returns `Err(Closed)`; a second close does nothing.
+    fn close_listener(listener: typed::TcpListener) {
+        listener.close();
+    }
+
     fn peer_addr(stream: typed::TcpStream) -> Value {
         if stream.is_closed() {
             return err_closed();
@@ -593,6 +600,9 @@ builtins! {
     // ── Cooperative I/O ────────────────────────────────────────────────
 
     fn accept(vm, listener: typed::TcpListener) -> Result<Step, VmError> {
+        if listener.is_closed() {
+            return Ok(Step::Done(err_closed()));
+        }
         if let Some(served) = served(listener) {
             return Ok(Step::Done(served));
         }

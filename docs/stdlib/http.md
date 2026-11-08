@@ -251,9 +251,13 @@ The listener is bound when `tcp.listen` returns, so a client may connect
 before `http.serve` runs: its request is queued and answered when the
 server starts.
 
-`http.serve` does not return: it serves until its task ends. To run a
-server beside other work, call it in a task; `task.cancel` of that task
-ends the server (see [When a program ends](../concurrency.md#when-a-program-ends)).
+`http.serve` serves until its listener is closed or its task ends. To
+run a server beside other work, call it in a task. There are two ways to
+stop it (see [Stopping a server](#stopping-a-server)):
+`tcp.close_listener(listener)` ends the server and frees the port, and
+`http.serve` returns `()`; `task.cancel` of its task ends the server and
+leaves the listener bound, to be served again (see [When a program
+ends](../concurrency.md#when-a-program-ends)).
 
 ### Connections and handlers
 
@@ -392,17 +396,58 @@ While `http.serve` serves a listener, the listener is the server's alone:
   returns the same error at that moment: the server has every client.
 - A second `http.serve` on it is a runtime error.
 
-When the task that serves has been cancelled, the server ends:
+### Stopping a server
 
-- Its accept is given up. A client that connects afterwards waits in the
-  listener for whoever accepts next.
+`tcp.close_listener(listener)` stops a server for good: `http.serve`
+returns `()`, a client that connects afterwards is refused at once
+(rather than waiting for its own timeout, 60 s for `http.request`), and
+the port can be bound again. What is in flight ends as below, as for a
+cancelled server: a request whose handler has not returned is answered
+`503`. `task.cancel` of the serving task stops the server and keeps the
+listener: clients that connect wait in it, and another `http.serve` or a
+`tcp.accept` takes them.
+
+```silt
+import bytes
+import http
+import task
+import tcp
+
+fn hello(_req: http.Request) -> http.Response {
+  http.Response { status: 200, body: bytes.from_string("hi"), headers: #{} }
+}
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let port = tcp.local_port(listener)
+  let server = task.spawn { -> http.serve(listener, hello) }
+  match http.get("http://127.0.0.1:{port}/") {
+    Ok(r) -> println(r.status) -- 200
+    Err(e) -> println(Error.message(e))
+  }
+  tcp.close_listener(listener)
+  task.join(server)
+  match http.get("http://127.0.0.1:{port}/") {
+    Ok(_) -> println("still served")
+    Err(_) -> println("refused") -- refused
+  }
+}
+```
+
+When the server ends, because its listener was closed or the task that
+serves was cancelled:
+
+- Its accept is given up. A client that connects afterwards is refused
+  if the listener was closed, and otherwise waits in the listener for
+  whoever accepts next.
 - A request whose handler has not returned is answered `503`, and its
   connection is closed. A connection between two requests is closed. A
   response that is being sent at that moment is cut off: the client
   gets less than its `Content-Length` says.
-- The listener is the program's again as soon as `task.cancel` has
-  returned: `tcp.accept` on it gets the next client, and another
-  `http.serve` serves it.
+- After `task.cancel`, the listener is the program's again as soon as
+  `task.cancel` has returned: `tcp.accept` on it gets the next client,
+  and another `http.serve` serves it. A closed listener serves nothing:
+  `http.serve` on it returns `()` at once.
 
 An accept that fails (the process has no file descriptor left) is
 written to stderr once, and the server tries again after 100 ms.
