@@ -68,6 +68,26 @@ fn a_directory_that_is_no_package_is_not_read() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A path that names nothing is a file that cannot be read (a misspelt
+/// name, most likely), whatever it ends in: it is not refused as a file
+/// meant for the program.
+#[test]
+fn a_path_that_does_not_exist_is_no_such_file() {
+    let dir = fresh_dir("no_such");
+    for name in ["nosuch", "nosuch.silt"] {
+        let output = (silt_cmd().args(["run", name]))
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr),
+            format!("error reading {name}: no such file\n")
+        );
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_file_that_is_not_silt_is_refused_with_how_to_give_it_to_the_program() {
     let dir = fresh_dir("not_silt");

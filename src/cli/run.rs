@@ -88,8 +88,13 @@ pub(crate) fn dispatch(args: &[String]) {
             }
         }
         // Any other file is no program: most likely it is meant for the
-        // program, as its argument.
-        Some(f) if !f.ends_with(".silt") && !std::path::Path::new(&f).is_dir() => {
+        // program, as its argument. (A path that names nothing is a file
+        // that cannot be read, a misspelt name more likely.)
+        Some(f)
+            if !f.ends_with(".silt")
+                && std::path::Path::new(&f).exists()
+                && !std::path::Path::new(&f).is_dir() =>
+        {
             let cwd = std::env::current_dir().unwrap_or_else(|_| ".".into());
             let in_package = matches!(find_project_root(&cwd), Ok(Some(_)));
             // (In a package, `silt run` with no file runs the package's
