@@ -131,10 +131,10 @@ line, rendered like any runtime error:
 
 ```text
   FAIL spawn_test.silt::test_worker
-    error[runtime]: task <handle:0> failed and was never joined: division by zero
-     --> spawn_test.silt:5:29
+    error[runtime]: a task failed and was never joined: division by zero
+     --> spawn_test.silt:5:13
     ...
-      = help: join it with task.join to stop where you wait for it, or cancel it with task.cancel if you don't need its result
+      = help: the task was spawned at spawn_test.silt:4:11: join it with task.join to stop where you wait for it, or cancel it with task.cancel if you don't need its result
 ```
 
 A test has ended when its test function has returned **and the tasks it

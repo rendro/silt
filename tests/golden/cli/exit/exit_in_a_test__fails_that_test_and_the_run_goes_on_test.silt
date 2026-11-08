@@ -7,7 +7,7 @@
 -- stderr-contains:   FAIL exit_in_a_test__fails_that_test_and_the_run_goes_on_test.silt::test_in_a_joined_task
 -- stderr-contains: error[runtime]: joined task failed: process.exit(2) was called in a test
 -- stderr-contains:   FAIL exit_in_a_test__fails_that_test_and_the_run_goes_on_test.silt::test_in_an_unjoined_task
--- stderr-contains: error[runtime]: task <handle:1> failed and was never joined: process.exit(2) was called in a test
+-- stderr-contains: error[runtime]: a task failed and was never joined: process.exit(2) was called in a test
 -- stderr-contains:   PASS exit_in_a_test__fails_that_test_and_the_run_goes_on_test.silt::test_after
 -- stderr-contains: 5 tests: 1 passed, 4 failed, 0 skipped
 -- Under silt test a process.exit fails the test it is in, whatever the

@@ -50,7 +50,7 @@ const NEVER_JOINED: &str = "failed and was never joined";
 
 /// The first line of such a report, once per report. (The report shows
 /// the source line of the failure, and repeats its message under it.)
-const REPORT_HEADER: &str = "error[runtime]: task <handle:";
+const REPORT_HEADER: &str = "error[runtime]: a task failed and was never joined";
 
 // The fields are shown in failure messages through `Debug`.
 #[allow(dead_code)]

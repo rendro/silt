@@ -1186,6 +1186,11 @@ pub struct TaskHandle {
     /// Set when the stage failed with the failure of an earlier stage,
     /// read from its input ([`TaskHandle::fails_with_its_input`]).
     failed_with_input: AtomicBool,
+    /// Where the task was spawned (the call of `task.spawn`), when that
+    /// is a place in the program, and the cancel flag of the task that
+    /// spawned it, if a task did: the report of a failure that nobody
+    /// joined names them, since nobody holds the handle's id.
+    spawned: Option<(Span, Option<Arc<AtomicBool>>)>,
 }
 
 impl TaskHandle {
@@ -1207,7 +1212,27 @@ impl TaskHandle {
             late: Arc::default(),
             stage: None,
             failed_with_input: AtomicBool::new(false),
+            spawned: None,
         }
+    }
+
+    /// The handle, for a task spawned at `at` by the task whose cancel
+    /// flag is `by` (none: by the program's `main`, or a front end).
+    pub fn spawned_at(self, at: Option<Span>, by: Option<Arc<AtomicBool>>) -> Self {
+        Self {
+            spawned: at.map(|at| (at, by)),
+            ..self
+        }
+    }
+
+    /// Where the task was spawned, if that is a place in the program,
+    /// and whether the task that spawned it has been cancelled.
+    pub fn spawn_site(&self) -> Option<(Span, bool)> {
+        let (at, by) = self.spawned.as_ref()?;
+        let cancelled = by
+            .as_ref()
+            .is_some_and(|flag| flag.load(AtomicOrdering::SeqCst));
+        Some((*at, cancelled))
     }
 
     /// The handle, for the task of the stream stage `name`, started by
