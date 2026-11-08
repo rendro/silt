@@ -659,7 +659,7 @@ time.weekday(date: Date) -> Weekday
 ```
 type Method { GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS }
 type Response { status: Int, body: Bytes, headers: Map(String, String) }
-type Request { method: Method, path: String, query: String, headers: Map(String, String), body: Bytes }
+type Request { method: Method, path: String, query: String, headers: Map(String, String), body: Bytes, peer: String }
 type HttpError { Connect(String), Tls(String), Timeout, InvalidUrl(String), InvalidResponse(String), ClosedEarly, Other(String) }
 http.get(url: String) -> Result(Response, HttpError)  -- cargo feature `http`
 http.parse_query(query: String) -> Result(Map(String, List(String)), EncodingError)

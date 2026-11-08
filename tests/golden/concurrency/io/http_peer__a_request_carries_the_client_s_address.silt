@@ -1,0 +1,44 @@
+-- timeout: 30
+-- requires-feature: http
+-- A request carries the client's address as `peer`, "ip:port": an IPv4
+-- address as it is, an IPv6 one in brackets ("[::1]:port").
+import bytes
+import http
+import int
+import result
+import string
+import task
+import tcp
+
+fn answer(req: http.Request) -> http.Response {
+  http.Response { status: 200, body: bytes.from_string(req.peer), headers: #{} }
+}
+
+-- The peer the server saw: the address, and whether what follows its
+-- last colon is a port other than the server's.
+fn ask(host: String, bind: String) -> String {
+  when let Ok(listener) = tcp.listen(bind) else { return "cannot listen on {bind}" }
+  let port = tcp.local_port(listener)
+  let server = task.spawn { -> http.serve(listener, answer) }
+  let said = match http.get("http://{host}:{port}/") {
+    Ok(r) -> bytes.to_string(r.body) |> result.unwrap_or("(no text)")
+    Err(e) -> Error.message(e)
+  }
+  task.cancel(server)
+  match string.last_index_of(said, ":") {
+    Some(at) -> {
+      let ip = string.slice(said, 0, at)
+      let is_port = match int.parse(string.slice(said, at + 1, string.length(said))) {
+        Ok(n) -> n > 0 && n != port
+        Err(_) -> false
+      }
+      "{ip}, then a client port: {is_port}"
+    }
+    None -> "no colon in '{said}'"
+  }
+}
+
+fn main() {
+  println(ask("127.0.0.1", "127.0.0.1:0"))
+  println(ask("[::1]", "[::1]:0"))
+}

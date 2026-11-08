@@ -65,6 +65,7 @@ fn make_http_request_value(
     query: &str,
     headers: crate::value::Map,
     body: Vec<u8>,
+    peer: &str,
 ) -> Value {
     Value::builtin_record(
         ty::REQUEST,
@@ -74,6 +75,7 @@ fn make_http_request_value(
             ("query", Value::String(query.into())),
             ("headers", Value::Map(headers)),
             ("body", Value::Bytes(Arc::new(body))),
+            ("peer", Value::String(peer.into())),
         ],
     )
 }
@@ -915,8 +917,9 @@ impl Got {
     /// request with a body of megabytes is not built on a worker of
     /// the scheduler.
     /// `held` is what was counted for the request's body: it goes
-    /// with a request for the handler, and ends here otherwise.
-    fn of(next: wire::Next, held: Held) -> Got {
+    /// with a request for the handler, and ends here otherwise. `peer`
+    /// is the client's address (`ip:port`).
+    fn of(next: wire::Next, held: Held, peer: &str) -> Got {
         let request = match next {
             wire::Next::Request(request) => request,
             wire::Next::Refused(refused) => return Got::Refused(refused.status, refused.why),
@@ -949,7 +952,7 @@ impl Got {
         let headers = header_map(headers);
         // The body is the bytes that arrived.
         Got::Request(
-            make_http_request_value(method, path, query, headers, request.body),
+            make_http_request_value(method, path, query, headers, request.body, peer),
             reply,
             held,
         )
@@ -1067,6 +1070,9 @@ struct Conn {
     /// handler fails.
     handle: Arc<TaskHandle>,
     stream: Arc<TcpStreamHandle>,
+    /// The client's address, `ip:port` (`[::1]:port` for IPv6): the
+    /// `peer` of each request.
+    peer: Arc<str>,
     /// Reads the requests; it holds what was read beyond the end of
     /// one. Locked by the operation that reads.
     reader: Arc<Mutex<wire::Reader<Reads>>>,
@@ -1149,7 +1155,7 @@ impl Conn {
         let mut reader = self.reader.try_lock()?;
         // (A body that is among the bytes read is held already:
         // nothing is counted for it.)
-        let got = |next| Got::of(next, Held(self.server.clone(), 0));
+        let got = |next| Got::of(next, Held(self.server.clone(), 0), &self.peer);
         if let Some(next) = reader.buffered() {
             return Some(got(next));
         }
@@ -1214,6 +1220,7 @@ impl Conn {
         );
         let (result, announced) = (got.clone(), body_follows.clone());
         let (server, pending) = (self.server.clone(), self.pending.clone());
+        let peer = self.peer.clone();
         let scheduler = vm.scheduler().clone();
         let op = vm.io_op(
             not_served,
@@ -1250,7 +1257,7 @@ impl Conn {
                 let next = reader.lock().next(&mut before_body);
                 // What the reader had counted for the body.
                 let held = Held(server, pending.swap(0, Ordering::AcqRel));
-                *result.lock() = Some(Got::of(next, held));
+                *result.lock() = Some(Got::of(next, held, &peer));
                 Value::Unit
             },
         );
@@ -1344,6 +1351,7 @@ impl Conn {
             server: self.server.clone(),
             handle: handle.clone(),
             stream: self.stream.clone(),
+            peer: self.peer.clone(),
             reader: self.reader.clone(),
             begun: self.begun.clone(),
             pending: self.pending.clone(),
@@ -1589,7 +1597,14 @@ impl Serve {
             Held::reserve(&server, &counted, bytes)
         });
         let begun = reader.begun();
+        // (A connection whose address cannot be read, already reset by
+        // its client, has an empty one: it reads nothing either.)
+        let peer: Arc<str> = match stream.peer_addr() {
+            Ok(addr) => addr.to_string().into(),
+            Err(_) => "".into(),
+        };
         child.push_native_frame(Box::new(Conn {
+            peer,
             server: self.server.clone(),
             handle: handle.clone(),
             reader: Arc::new(Mutex::new(reader)),
@@ -1839,10 +1854,17 @@ mod http_response_tests {
         assert_eq!((status, body), (204, &[0, 0xff, b'd'][..]));
         assert_eq!(record.fields()[0], Value::Int(204));
 
-        let request = make_http_request_value(bv::POST, "/jobs", "n=1", headers(), b"go".to_vec());
+        let request = make_http_request_value(
+            bv::POST,
+            "/jobs",
+            "n=1",
+            headers(),
+            b"go".to_vec(),
+            "[::1]:5000",
+        );
         assert_eq!(
             request.to_string(),
-            "Request {method: POST, path: /jobs, query: n=1, headers: #{\"accept\": */*}, body: bytes(67 6f, length: 2)}"
+            "Request {method: POST, path: /jobs, query: n=1, headers: #{\"accept\": */*}, body: bytes(67 6f, length: 2), peer: [::1]:5000}"
         );
         let Value::Record(record) = &request else {
             panic!("a record");

@@ -27,6 +27,7 @@ type Request {
   query: String,
   headers: Map(String, String),
   body: Bytes,
+  peer: String,
 }
 
 type Response {
@@ -359,6 +360,12 @@ An `Expect` header that asks for anything but `100-continue` is answered
   first `?`: nothing is decoded or normalised. A target in absolute form
   (`GET http://other.example/x HTTP/1.1`) is handed over whole, and a
   `#fragment` stays where it is.
+- `req.peer` is the address of the client's end of the connection, as
+  `ip:port`: `127.0.0.1:53422`, and an IPv6 address in brackets,
+  `[::1]:53422`. It is the connection's, so behind a reverse proxy it is
+  the proxy's; the client's own address is then in a header the proxy
+  sets (such as `x-forwarded-for`). An access log line:
+  `io.eprintln("{req.peer} {req.method} {req.path}")`.
 - A handler that cancels its own server still has its response sent.
 - If the program fails while requests are in flight, it ends as a
   process: their connections are closed without an answer.

@@ -319,6 +319,7 @@ type http.Request {
   query: String,
   headers: Map(String, String),
   body: Bytes,
+  peer: String,
 }
 ```
 > hover 78:16
