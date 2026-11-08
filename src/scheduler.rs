@@ -2601,11 +2601,14 @@ fn report_unjoined_failures(inner: &Inner) -> usize {
             continue;
         };
         reported += 1;
+        // (No file to show the place of the spawn in: the task is
+        // named by its id.)
         let failure = UnjoinedFailure {
             task_id: handle.id,
             owner: 0,
             stage: handle.stage(),
             stage_call: handle.stage_call_of_a_failed_input(),
+            spawned: None,
             error,
         };
         let d = failure.report_error().to_diagnostic();
@@ -2685,9 +2688,14 @@ pub(crate) enum Blocks {
 const UNJOINED_FAILURE_HELP: &str = "join it with task.join to stop where you wait for it, or \
      cancel it with task.cancel if you don't need its result";
 
-/// The first line of the report of a failure that nobody joined.
-fn unjoined_failure_headline(task_id: usize, message: &str) -> String {
-    format!("task <handle:{task_id}> failed and was never joined: {message}")
+/// The first line of the report of a failure that nobody joined: the
+/// task is named by its handle's id when where it was spawned is not
+/// known (else the help names that place).
+fn unjoined_failure_headline(task_id: Option<usize>, message: &str) -> String {
+    match task_id {
+        Some(task_id) => format!("task <handle:{task_id}> failed and was never joined: {message}"),
+        None => format!("a task failed and was never joined: {message}"),
+    }
 }
 
 /// What the report of a stream stage's failure that nobody read advises.
@@ -2725,6 +2733,9 @@ pub struct UnjoinedFailure {
     /// The place of the call that started the stage, if it failed with
     /// the failure of an earlier stage, which it read from its input.
     pub stage_call: Option<crate::source::Span>,
+    /// Where the task was spawned, if that is a place in the program,
+    /// and whether the task that spawned it was cancelled.
+    pub spawned: Option<(crate::source::Span, bool)>,
     /// The error the task ended with, as the task raised it.
     pub error: VmError,
 }
@@ -2746,10 +2757,25 @@ impl UnjoinedFailure {
                 error.message = unread_stage_failure_headline(stage, &self.error.message);
                 error.with_help(UNREAD_STAGE_FAILURE_HELP)
             }
-            None => {
-                error.message = unjoined_failure_headline(self.task_id, &self.error.message);
-                error.with_help(UNJOINED_FAILURE_HELP)
-            }
+            None => match self.spawned {
+                Some((at, by_cancelled)) => {
+                    error.message = unjoined_failure_headline(None, &self.error.message);
+                    let by = if by_cancelled {
+                        " by a task that was cancelled"
+                    } else {
+                        ""
+                    };
+                    error.with_help_at(
+                        format!("the task was spawned at {{at}}{by}: {UNJOINED_FAILURE_HELP}"),
+                        at,
+                    )
+                }
+                None => {
+                    error.message =
+                        unjoined_failure_headline(Some(self.task_id), &self.error.message);
+                    error.with_help(UNJOINED_FAILURE_HELP)
+                }
+            },
         }
     }
 }
@@ -2812,6 +2838,7 @@ pub fn take_unjoined_failures() -> UnjoinedFailures {
                 owner: handle.owner(),
                 stage: handle.stage(),
                 stage_call: handle.stage_call_of_a_failed_input(),
+                spawned: handle.spawn_site(),
                 error,
             })
         })

@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- An error raised in the code of an interpolation that a `{` meant as
+-- a literal brace opened has a label at that `{`.
+fn main() {
+  let s = "{\"ts\": 1}"
+  println(s)
+}

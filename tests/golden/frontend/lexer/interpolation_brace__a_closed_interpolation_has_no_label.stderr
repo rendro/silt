@@ -1,0 +1,5 @@
+error[lex]: unexpected character: '@'
+ --> interpolation_brace__a_closed_interpolation_has_no_label.silt:8:11
+   |
+ 8 |   let s = @
+   |           ^ unexpected character: '@'

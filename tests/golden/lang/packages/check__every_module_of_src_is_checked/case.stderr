@@ -1,0 +1,11 @@
+error[type]: operator '+' requires Int or Float, got 'String'; build strings with interpolation, e.g. "{a}{b}"
+ --> src/used.silt:2:3
+   |
+ 2 |   "a" + 1
+   |   ^^^ operator '+' requires Int or Float, got 'String'; build strings with interpolation, e.g. "{a}{b}"
+
+error[parse]: expected identifier, found 1
+ --> src/helper.silt:2:3
+   |
+ 2 |   1 +
+   |   ^ expected identifier, found 1

@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- An error behind an interpolation that is closed has no label at its
+-- `{`: the interpolation is over.
+fn main() {
+  let n = 1
+  println("{n}")
+  let s = @
+}

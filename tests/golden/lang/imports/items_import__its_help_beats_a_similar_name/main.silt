@@ -1,0 +1,22 @@
+-- cmd: check
+-- exit: 1
+-- `import m.{ ... }` binds the names it lists and not `m`: an `m.x`
+-- after it is told so, also when another module has a name like `m`
+-- (`list.filter`), and in a pattern as in an expression.
+import list
+import filter.{ Q }
+import args.{ Command, Kind }
+
+pub fn f(c: Command) -> Int {
+  match c {
+    args.Count -> 1
+    args.Command.Show -> 2
+  }
+}
+
+fn main() {
+  let _ = Q(1)
+  let _ = Kind(1)
+  println(filter.everything())
+  println(list.length([1]))
+}

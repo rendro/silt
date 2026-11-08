@@ -67,8 +67,8 @@ pub(crate) fn dispatch(args: &[String]) {
     // the current directory is formatted. This is risky if the user
     // happens to run `silt fmt` outside a project, so a bare `silt fmt`
     // needs a project anchor (silt.toml), and the recursion is always
-    // announced with a preview of the files. A `.` beside other
-    // positionals is a directory like any other.
+    // announced. A `.` beside other positionals is a directory like any
+    // other.
     let is_dot = |f: &String| f == "." || f == "./";
     let explicit_dot = files.iter().any(is_dot);
     if files.iter().all(is_dot) {
@@ -76,7 +76,10 @@ pub(crate) fn dispatch(args: &[String]) {
     }
     // Each directory positional stands for its `.silt` descendants (as
     // for `silt test <dir>`); a file named twice, by two positionals or
-    // two spellings of its path, is handled once.
+    // two spellings of its path, is handled once. Files found in a
+    // directory are not named by the user: each that is changed (or not
+    // formatted) is named, and a count ends the output.
+    let mut walked = false;
     {
         let mut expanded: Vec<String> = Vec::with_capacity(files.len());
         for f in files.drain(..) {
@@ -87,6 +90,7 @@ pub(crate) fn dispatch(args: &[String]) {
                     eprintln!("error: silt fmt: no .silt files found in {f}");
                     process::exit(1);
                 }
+                walked = true;
                 expanded.extend(found);
             } else {
                 expanded.push(f);
@@ -130,13 +134,7 @@ pub(crate) fn dispatch(args: &[String]) {
             "silt fmt: {unasked}recursively {doing} all .silt files under {}",
             cwd.display()
         );
-        let preview = files.iter().take(5).collect::<Vec<_>>();
-        for f in &preview {
-            eprintln!("  {f}");
-        }
-        if files.len() > preview.len() {
-            eprintln!("  ... ({} more)", files.len() - preview.len());
-        }
+        walked = true;
     }
     if check_mode {
         // Exit-code taxonomy for `silt fmt --check`:
@@ -152,33 +150,62 @@ pub(crate) fn dispatch(args: &[String]) {
         // An infra failure on any file is the dominant outcome — if we
         // hit a parse error we can't *know* whether the file is
         // formatted, so we must not collapse that into exit 1.
-        let mut any_unformatted = false;
-        let mut any_infra_error = false;
+        let (mut unformatted, mut infra_errors) = (0, 0);
         for file in &files {
             match check_format(file, tamper.as_ref()) {
                 CheckOutcome::Formatted => {}
-                CheckOutcome::Unformatted => any_unformatted = true,
-                CheckOutcome::InfraError => any_infra_error = true,
+                CheckOutcome::Unformatted => unformatted += 1,
+                CheckOutcome::InfraError => infra_errors += 1,
             }
         }
-        if any_infra_error {
+        if walked {
+            eprintln!(
+                "{}",
+                count_line(files.len(), unformatted, "not formatted", infra_errors)
+            );
+        }
+        if infra_errors > 0 {
             process::exit(2);
         }
-        if any_unformatted {
+        if unformatted > 0 {
             process::exit(1);
         }
     } else {
-        let mut any_failed = false;
+        let (mut changed, mut failed) = (0, 0);
         for file in &files {
-            if let Err(e) = format_file(file, tamper.as_ref()) {
-                eprintln!("{e}");
-                any_failed = true;
+            match format_file(file, tamper.as_ref()) {
+                Ok(false) => {}
+                Ok(true) => {
+                    changed += 1;
+                    if walked {
+                        eprintln!("{file}: formatted");
+                    }
+                }
+                Err(e) => {
+                    eprintln!("{e}");
+                    failed += 1;
+                }
             }
         }
-        if any_failed {
+        if walked {
+            eprintln!("{}", count_line(files.len(), changed, "changed", failed));
+        }
+        if failed > 0 {
             process::exit(2);
         }
     }
+}
+
+/// The last line of a `silt fmt` over the files of a directory: how many
+/// files, how many of them are `what` ("changed", "not formatted"), and
+/// how many could not be read or formatted, if any.
+fn count_line(files: usize, done: usize, what: &str, failed: usize) -> String {
+    let noun = if files == 1 { "file" } else { "files" };
+    let mut line = format!("{files} {noun}, {done} {what}");
+    if failed > 0 {
+        line += &format!(", {failed} failed");
+    }
+    line
 }
 
 type Tamper = (String, String);
@@ -218,7 +245,8 @@ fn format_source(source: &str, path: &str, tamper: Option<&Tamper>) -> Result<St
     result.map_err(|diagnostic| silt::diagnostic::render_human(&sources, &diagnostic))
 }
 
-fn format_file(path: &str, tamper: Option<&Tamper>) -> Result<(), String> {
+/// Format the file at `path` in place: whether it was changed.
+fn format_file(path: &str, tamper: Option<&Tamper>) -> Result<bool, String> {
     let source = fs::read_to_string(path).map_err(|e| {
         format!(
             "error reading {path}: {}",
@@ -233,14 +261,15 @@ fn format_file(path: &str, tamper: Option<&Tamper>) -> Result<(), String> {
     // format-on-save alongside `silt run --watch`). rustfmt/gofmt skip
     // identical writes for exactly this reason.
     if formatted == source {
-        return Ok(());
+        return Ok(false);
     }
     replace_file(Path::new(path), &formatted).map_err(|e| {
         format!(
             "error writing {path}: {}",
             silt::diagnostic::io_error_text(&e)
         )
-    })
+    })?;
+    Ok(true)
 }
 
 /// Give the file at `path` the contents `text`, all of it or none: the

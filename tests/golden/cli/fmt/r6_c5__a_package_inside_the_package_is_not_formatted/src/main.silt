@@ -1,6 +1,6 @@
 -- cmd: fmt --check
 -- exit: 0
--- stderr-contains: ./src/main.silt
+-- stderr-contains: 1 file, 0 not formatted
 -- stderr-not-contains: sub/src/lib.silt
 fn main() {
   println(1)

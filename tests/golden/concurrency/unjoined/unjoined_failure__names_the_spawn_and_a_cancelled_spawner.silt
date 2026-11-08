@@ -1,0 +1,33 @@
+-- exit: 1
+-- repeat: 5
+-- A task that failed and that nobody joined is named by where it was
+-- spawned, since nobody holds its handle, and the help says when the
+-- task that spawned it was cancelled: here the worker, cancelled while
+-- it waits, whose children fail later. (The worker waits on a channel,
+-- not on a join of its children: a join would take a child's failure.)
+import channel
+import list
+import task
+
+fn main() {
+  let cmds = channel.new(16)
+  let gate = channel.new(0)
+  let ready = channel.new(1)
+  let never = channel.new(0)
+  let worker = task.spawn { ->
+    let kids = list.map(1..2) { i ->
+      task.spawn { ->
+        let _ = channel.receive(gate)
+        channel.send(cmds, i)
+      }
+    }
+    channel.send(ready, ())
+    let _ = channel.receive(never)
+    list.each(kids, task.join)
+  }
+  let _ = channel.receive(ready)
+  task.cancel(worker)
+  channel.close(cmds)
+  channel.close(gate)
+  println("stopped")
+}

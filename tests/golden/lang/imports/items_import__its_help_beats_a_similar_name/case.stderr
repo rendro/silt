@@ -1,0 +1,20 @@
+error[type]: undefined constructor 'args.Count' in pattern — 'args' is neither an imported module nor an enum type
+ --> main.silt:12:5
+    |
+ 12 |     args.Count -> 1
+    |     ^^^^^^^^^^ undefined constructor 'args.Count' in pattern — 'args' is neither an imported module nor an enum type
+  = help: `import args.{ ... }` binds only the names it lists; add `import args` to write `args.<name>`
+
+error[type]: undefined constructor 'args.Command.Show' in pattern — 'args' is not an imported module
+ --> main.silt:13:5
+    |
+ 13 |     args.Command.Show -> 2
+    |     ^^^^^^^^^^^^^^^^^ undefined constructor 'args.Command.Show' in pattern — 'args' is not an imported module
+  = help: `import args.{ ... }` binds only the names it lists; add `import args` to write `args.<name>`
+
+error[type]: undefined variable 'filter'
+ --> main.silt:20:11
+    |
+ 20 |   println(filter.everything())
+    |           ^^^^^^ undefined variable 'filter'
+  = help: `import filter.{ ... }` binds only the names it lists; add `import filter` to write `filter.<name>`

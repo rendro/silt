@@ -285,3 +285,67 @@ fn an_explicit_dot_announces_the_recursion_as_asked_for() {
     );
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// Over the files of a directory, `silt fmt` names only the files it
+/// changes (`--check`: that are not formatted), with no list of the
+/// files it looks at, and ends with one line that counts them. A clean
+/// tree is the announcement and the count.
+#[test]
+fn a_walk_names_only_the_files_changed_and_ends_with_a_count() {
+    let dir = temp_dir("walk_count");
+    fs::write(
+        dir.join("silt.toml"),
+        "[package]\nname = \"walk\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::create_dir_all(dir.join("src")).unwrap();
+    for name in ["a", "b", "c", "d", "e", "f"] {
+        fs::write(dir.join("src").join(format!("{name}.silt")), FORMATTED).unwrap();
+    }
+    fs::write(dir.join("src").join("main.silt"), UNFORMATTED).unwrap();
+    let main = format!(
+        "{}",
+        PathBuf::from(".").join("src").join("main.silt").display()
+    );
+    let after_header = |args: &[&str], code: i32| {
+        let output = silt_cmd().args(args).current_dir(&dir).output().unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        assert_eq!(output.status.code(), Some(code), "stderr:\n{stderr}");
+        let (header, rest) = stderr.split_once('\n').unwrap();
+        assert!(
+            header.starts_with("silt fmt: no files specified; recursively "),
+            "{stderr}"
+        );
+        rest.to_string()
+    };
+    assert_eq!(
+        after_header(&["fmt", "--check"], 1),
+        format!("{main}: not formatted\n7 files, 1 not formatted\n")
+    );
+    assert_eq!(
+        after_header(&["fmt"], 0),
+        format!("{main}: formatted\n7 files, 1 changed\n")
+    );
+    assert_eq!(
+        after_header(&["fmt", "--check"], 0),
+        "7 files, 0 not formatted\n"
+    );
+    assert_eq!(after_header(&["fmt"], 0), "7 files, 0 changed\n");
+    // A directory named is walked as well; a file named keeps its own
+    // output (here: none).
+    let output = silt_cmd()
+        .args(["fmt", "src"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "7 files, 0 changed\n"
+    );
+    let output = (silt_cmd().args(["fmt", "src/main.silt"]))
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8_lossy(&output.stderr), "");
+    let _ = fs::remove_dir_all(&dir);
+}

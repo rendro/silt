@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- A `{` meant as a literal brace starts an interpolation, and the code
+-- behind it runs to the end of the text: the error is that `{`, not
+-- the last `}` of the file, with how to write a literal brace.
+fn main() {
+  println(string_starts("{"))
+}
+
+fn string_starts(s: String) -> String {
+  s
+}

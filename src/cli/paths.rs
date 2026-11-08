@@ -101,10 +101,14 @@ pub(crate) fn open_entry_or_exit(path: &str, lock: LockPolicy) -> (Session, File
     match open_entry(path, lock) {
         Ok(opened) => opened,
         Err(e) => {
-            eprintln!(
-                "error reading {path}: {}",
+            // Windows refuses to open a directory as "access denied":
+            // say what it is, as other systems do.
+            let why = if std::path::Path::new(path).is_dir() {
+                "it is a directory".to_string()
+            } else {
                 silt::diagnostic::io_error_text(&e)
-            );
+            };
+            eprintln!("error reading {path}: {why}");
             std::process::exit(1);
         }
     }

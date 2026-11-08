@@ -2429,9 +2429,13 @@ impl Resolver<'_> {
                                 q.name
                             ),
                         );
-                        let elsewhere = self.elsewhere(q.name);
-                        if !elsewhere.is_empty() {
-                            d = d.with_help(self.elsewhere_help(q.name, &elsewhere));
+                        if let Some(help) = self.items_only_help(q.name) {
+                            d = d.with_help(help);
+                        } else {
+                            let elsewhere = self.elsewhere(q.name);
+                            if !elsewhere.is_empty() {
+                                d = d.with_help(self.elsewhere_help(q.name, &elsewhere));
+                            }
                         }
                         self.error(d);
                         Some(Res::Error)
@@ -2451,14 +2455,18 @@ impl Resolver<'_> {
                     } else {
                         format!("'{}' is not an imported module", m.name)
                     };
-                    self.error(Diagnostic::error(
+                    let mut d = Diagnostic::error(
                         Code::UndefinedConstructor,
                         span,
                         format!(
                             "undefined constructor '{}' in pattern — {why}",
                             written(&[m.name, e.name, name])
                         ),
-                    ));
+                    );
+                    if let Some(help) = self.items_only_help(m.name) {
+                        d = d.with_help(help);
+                    }
+                    self.error(d);
                     Some(Res::Error)
                 }
             },
@@ -3183,6 +3191,9 @@ impl Resolver<'_> {
                 "a `let` binds `{name}` only after its value, unless the value is a closure \
                  written right there: `let {name} = {{ … {name}(…) … }}`"
             )),
+            // A module imported for some of its names only: that import
+            // is what the name was meant to reach, before any name like it.
+            None if let Some(help) = self.items_only_help(name) => Some(help),
             None => {
                 let elsewhere = self.elsewhere(name);
                 // A trait of a module: it is imported by its name.
@@ -3199,11 +3210,6 @@ impl Resolver<'_> {
                     Some(self.elsewhere_help(name, &elsewhere))
                 } else if let Some(help) = self.alias_help(name) {
                     Some(help)
-                } else if let Some(module) = self.items_import_of(name) {
-                    Some(format!(
-                        "`import {module}.{{ ... }}` binds only the names it lists; add \
-                         `import {module}` to write `{module}.<name>`"
-                    ))
                 } else if self.type_vars.contains(&name) {
                     // (A type variable of the signature is no misspelt
                     // value.)
@@ -3293,6 +3299,17 @@ impl Resolver<'_> {
     /// does not bind the module itself.
     fn items_import_of(&self, name: Symbol) -> Option<Symbol> {
         self.imports.contains_key(&name).then_some(name)
+    }
+
+    /// The help for the module `name` named where only some of its
+    /// names are imported (`import m.{ a }`, then `m.b`), when it is not
+    /// bound under an alias either (the alias's help says how to reach
+    /// it then).
+    fn items_only_help(&self, name: Symbol) -> Option<String> {
+        if self.alias_of(name).is_some() {
+            return None;
+        }
+        self.items_import_of(name).map(items_import_help)
     }
 
     /// The names a value position can see, for a "did you mean".
@@ -3529,4 +3546,13 @@ impl Resolver<'_> {
             }
         }
     }
+}
+
+/// The help for a module `module` named where only some of its names
+/// are imported (`import m.{ a }`, then `m.b`).
+fn items_import_help(module: Symbol) -> String {
+    format!(
+        "`import {module}.{{ ... }}` binds only the names it lists; add `import {module}` to \
+         write `{module}.<name>`"
+    )
 }

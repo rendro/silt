@@ -560,17 +560,18 @@ fn main() {
 
 ```text
 main done
-error[runtime]: task <handle:0> failed and was never joined: division by zero
+error[runtime]: a task failed and was never joined: division by zero
  --> main.silt:4:27
    |
  4 |   let _ = task.spawn { -> 1 / 0 }
-   |                           ^^^^^ task <handle:0> failed and was never joined: division by zero
-  = help: join it with task.join to stop where you wait for it, or cancel it with task.cancel if you don't need its result
+   |                           ^^^^^ a task failed and was never joined: division by zero
+  = help: the task was spawned at main.silt:4:11: join it with task.join to stop where you wait for it, or cancel it with task.cancel if you don't need its result
 ```
 
 The report is rendered like every other runtime error: the file and line
 where the task failed, the source line, and the call stack when there is
-more than one frame. The rules:
+more than one frame. Its help names where the task was spawned, and says
+so when the task that spawned it was cancelled. The rules:
 
 - **A join handles the failure.** `task.join(h)` raises the task's error in
   the joiner (`joined task failed: <msg>`), and the failure is not reported

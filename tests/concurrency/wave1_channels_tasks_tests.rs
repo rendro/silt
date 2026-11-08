@@ -62,7 +62,7 @@ const DEADLOCK: &str = "deadlock on main thread";
 
 /// The first line of such a report, once per report. (The report shows
 /// the source line of the failure, and repeats its message under it.)
-const REPORT_HEADER: &str = "error[runtime]: task <handle:";
+const REPORT_HEADER: &str = "error[runtime]: a task failed and was never joined";
 
 #[derive(Debug)]
 struct Outcome {

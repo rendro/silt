@@ -1,17 +1,17 @@
   PASS stage7_c5__a_file_is_failed_once_for_its_top_level_tasks_test.silt::test_a_wakes_the_first
   PASS stage7_c5__a_file_is_failed_once_for_its_top_level_tasks_test.silt::test_b_wakes_the_second
   FAIL stage7_c5__a_file_is_failed_once_for_its_top_level_tasks_test.silt (a task spawned by the file's top-level code failed)
-    error[runtime]: task <handle:0> failed and was never joined: panic: the first top-level task
+    error[runtime]: a task failed and was never joined: panic: the first top-level task
      --> stage7_c5__a_file_is_failed_once_for_its_top_level_tasks_test.silt:17:3
         |
      17 |   panic("the first top-level task")
-        |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ task <handle:0> failed and was never joined: panic: the first top-level task
-      = help: join it with task.join to stop where you wait for it, or cancel it with task.cancel if you don't need its result
-    error[runtime]: task <handle:1> failed and was never joined: panic: the second top-level task
+        |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ a task failed and was never joined: panic: the first top-level task
+      = help: the task was spawned at stage7_c5__a_file_is_failed_once_for_its_top_level_tasks_test.silt:15:36: join it with task.join to stop where you wait for it, or cancel it with task.cancel if you don't need its result
+    error[runtime]: a task failed and was never joined: panic: the second top-level task
      --> stage7_c5__a_file_is_failed_once_for_its_top_level_tasks_test.silt:22:3
         |
      22 |   panic("the second top-level task")
-        |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ task <handle:1> failed and was never joined: panic: the second top-level task
-      = help: join it with task.join to stop where you wait for it, or cancel it with task.cancel if you don't need its result
+        |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ a task failed and was never joined: panic: the second top-level task
+      = help: the task was spawned at stage7_c5__a_file_is_failed_once_for_its_top_level_tasks_test.silt:20:37: join it with task.join to stop where you wait for it, or cancel it with task.cancel if you don't need its result
 
 2 tests: 2 passed, 0 failed, 0 skipped (a top-level task of 1 file failed)

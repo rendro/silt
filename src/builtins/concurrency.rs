@@ -398,7 +398,8 @@ impl Native for Each {
 /// `scheduler.submit` as it is.
 fn start(vm: &mut Vm, f: &Value, deadline: Option<Duration>) -> Result<Arc<TaskHandle>, VmError> {
     let task_id = vm.next_task_id();
-    let handle = TaskHandle::with_owner(task_id, vm.scheduler().current_owner());
+    let handle = TaskHandle::with_owner(task_id, vm.scheduler().current_owner())
+        .spawned_at(vm.place_here(), vm.cancelled.clone());
     let handle = Arc::new(match deadline {
         // A task whose time is its caller's goes on with the caller's
         // count of the steps run past that time: the work past a

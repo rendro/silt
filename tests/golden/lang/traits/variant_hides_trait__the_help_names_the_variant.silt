@@ -1,0 +1,42 @@
+-- cmd: check
+-- exit: 1
+-- A variant `Error` hides the prelude trait `Error` in an expression (a
+-- declaration of the module comes before the prelude's): `Error.message`
+-- is a field of the variant, and the help says which `Error` it is. A
+-- bound and an impl still name the trait. A variant `Equal` hides the
+-- trait `Equal` too, but no program calls `Equal.equal`: its help is
+-- still to compare with `==`, not to rename the variant.
+type Level {
+  Info,
+  Error,
+}
+
+type Kind {
+  Equal,
+  Other,
+}
+
+fn same() -> Bool {
+  Equal.equal(1, 1)
+}
+
+fn show(e: x) -> String where x: Error {
+  Error.message(e)
+}
+
+type Mine {
+  Mine(String),
+}
+
+trait Error for Mine {
+  fn message(self) -> String {
+    "mine"
+  }
+}
+
+fn main() {
+  println(Level.Info)
+  println(Kind.Other)
+  println(same())
+  println(show(Mine("a")))
+}

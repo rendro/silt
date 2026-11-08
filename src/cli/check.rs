@@ -95,17 +95,21 @@ pub(crate) fn dispatch(args: &[String]) {
     if format == OutputFormat::Json {
         crate::cli::package::print_manifest_errors_as_json();
     }
-    let (path, tests) = match file {
-        Some(p) => (p, Vec::new()),
+    let (path, modules, tests) = match file {
+        Some(p) => (p, Vec::new(), Vec::new()),
         // `silt check` accepts a lib-only package
         // (`src/lib.silt` with no `src/main.silt`) — the required shape
         // for dependencies. `silt run`/`silt disasm` keep requiring main.
-        // The package's test files are checked with it, so that one
-        // command sees every warning of the package.
+        // Every module of the package (each `.silt` file directly in
+        // `src/`, imported or not) and its test files are checked with
+        // it, so that one command sees every error and warning of the
+        // package.
         None => match resolve_package_entry_point_for(EntryPointKind::AllowLib) {
             Ok(Some(p)) => {
                 let root = p.parent().and_then(Path::parent).unwrap_or(Path::new("."));
-                (p.to_string_lossy().into_owned(), package_test_files(root))
+                let tests = package_test_files(root);
+                let modules = package_modules(root, &p, &tests);
+                (p.to_string_lossy().into_owned(), modules, tests)
             }
             Ok(None) => {
                 crate::cli::no_file("check");
@@ -115,12 +119,54 @@ pub(crate) fn dispatch(args: &[String]) {
             Err(()) => process::exit(1),
         },
     };
-    check_files(&path, &tests, format, deny_warnings);
+    check_files(&path, &modules, &tests, format, deny_warnings);
 }
 
-/// Check the entry file `path` and the test files `tests` in one
-/// session, and report what was found, each diagnostic once.
-fn check_files(path: &str, tests: &[String], format: OutputFormat, deny_warnings: bool) {
+/// Whether the session has read the file at `path` (as an import of a
+/// file checked before).
+fn is_loaded(session: &silt::session::Session, path: &Path) -> bool {
+    let path = silt::source::canonical_path(path);
+    session.sources().files().any(|file| match &file.path {
+        silt::source::SourceName::Path(p) => silt::source::canonical_path(p) == path,
+        _ => false,
+    })
+}
+
+/// The modules of the package at `root` other than its entry file
+/// `entry`: every `.silt` file directly in `src/`, sorted, but for the
+/// test files `tests` (checked as tests).
+fn package_modules(root: &Path, entry: &Path, tests: &[String]) -> Vec<String> {
+    let Ok(dir) = std::fs::read_dir(root.join("src")) else {
+        return Vec::new();
+    };
+    let same = |a: &Path, b: &Path| match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    };
+    let mut modules: Vec<String> = dir
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "silt") && p.is_file())
+        .filter(|p| !same(p, entry))
+        .filter(|p| !tests.iter().any(|t| same(p, Path::new(t))))
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    modules.sort();
+    modules
+}
+
+/// Check the entry file `path`, the test files `tests` and the modules
+/// `modules` of its package in one session, and report what was found,
+/// each diagnostic once. A module that the entry or a test imports is
+/// checked there, as an import (its errors show where it is imported);
+/// only the others are opened as files of their own.
+fn check_files(
+    path: &str,
+    modules: &[String],
+    tests: &[String],
+    format: OutputFormat,
+    deny_warnings: bool,
+) {
     silt::intern::reset();
     // `silt check` checks each file as a module: the session's analysis
     // and the compile step, as the language server does. A module needs
@@ -134,23 +180,32 @@ fn check_files(path: &str, tests: &[String], format: OutputFormat, deny_warnings
         }
     };
     let mut unreadable = Vec::new();
-    let mut files = vec![file];
-    for test in tests {
-        match session.open(Path::new(test)) {
-            Ok(file) => files.push(file),
-            Err(e) => unreadable.push((test.clone(), e)),
-        }
-    }
     // Each once, in the order found (a set beside the list: a program
     // can have many thousands of warnings).
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
     let mut seen: std::collections::HashSet<Diagnostic> = std::collections::HashSet::new();
-    for file in files {
+    let mut check = |session: &mut silt::session::Session, file| {
         let compiled = session.compile(file, Entry::Tests { filter: None });
-        for d in door_diagnostics(&mut session, file, &compiled) {
+        for d in door_diagnostics(session, file, &compiled) {
             if seen.insert(d.clone()) {
                 diagnostics.push(d);
             }
+        }
+    };
+    check(&mut session, file);
+    for test in tests {
+        match session.open(Path::new(test)) {
+            Ok(file) => check(&mut session, file),
+            Err(e) => unreadable.push((test.clone(), e)),
+        }
+    }
+    for module in modules {
+        if is_loaded(&session, Path::new(module)) {
+            continue;
+        }
+        match session.open(Path::new(module)) {
+            Ok(file) => check(&mut session, file),
+            Err(e) => unreadable.push((module.clone(), e)),
         }
     }
 

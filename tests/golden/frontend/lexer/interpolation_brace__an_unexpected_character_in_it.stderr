@@ -1,0 +1,9 @@
+error[lex]: unexpected character: '\'
+ --> interpolation_brace__an_unexpected_character_in_it.silt:6:13
+   |
+ 6 |   let s = "{\"ts\": 1}"
+   |             ^ unexpected character: '\'
+ ::: interpolation_brace__an_unexpected_character_in_it.silt:6:12
+   |
+ 6 |   let s = "{\"ts\": 1}"
+   |            - this `{` opens an interpolation: write `\{` for a literal brace, or use a raw string `"""..."""`

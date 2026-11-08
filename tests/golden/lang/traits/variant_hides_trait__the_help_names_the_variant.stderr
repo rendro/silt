@@ -1,0 +1,13 @@
+error[type]: type 'Kind' has no field 'equal'
+ --> variant_hides_trait__the_help_names_the_variant.silt:20:3
+    |
+ 20 |   Equal.equal(1, 1)
+    |   ^^^^^^^^^^^ type 'Kind' has no field 'equal'
+  = help: compare with `==`: `Equal == y`
+
+error[type]: type 'Level' has no field 'message'
+ --> variant_hides_trait__the_help_names_the_variant.silt:24:3
+    |
+ 24 |   Error.message(e)
+    |   ^^^^^^^^^^^^^ type 'Level' has no field 'message'
+  = help: `Error` here is the variant `Level.Error`, which hides the trait `Error` in expressions: rename the variant to call `Error.message`

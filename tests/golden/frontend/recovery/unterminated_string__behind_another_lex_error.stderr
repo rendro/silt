@@ -3,3 +3,7 @@ error[lex]: unexpected character: '\'
     |
  14 |   println("{\"a\": 1}")
     |             ^ unexpected character: '\'
+ ::: unterminated_string__behind_another_lex_error.silt:14:12
+    |
+ 14 |   println("{\"a\": 1}")
+    |            - this `{` opens an interpolation: write `\{` for a literal brace, or use a raw string `"""..."""`
