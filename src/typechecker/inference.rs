@@ -3641,10 +3641,12 @@ impl TypeChecker {
                             if matches!(self.apply(param),
                                 Type::Generic(name, _) if name.is_builtin(crate::defs::TYPE_OF)) =>
                         {
-                            // (A builtin's decoders say what they cannot
-                            // decode themselves.)
-                            let builtin = (self.res_def(callee.res))
-                                .is_some_and(|def| def.module.is_builtin());
+                            // (json's and toml's decoders say what they
+                            // cannot decode themselves; postgres's rows
+                            // would reach the compiler.)
+                            let builtin = (self.res_def(callee.res)).is_some_and(|def| {
+                                matches!(def.module.builtin_name(), Some("json" | "toml"))
+                            });
                             let takes = self.type_param_of(callee, i);
                             match self.spelled_type(arg, env) {
                                 Some(ty) if !builtin && self.valueless_type(arg, &ty, takes) => {

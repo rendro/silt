@@ -651,6 +651,37 @@ fn the_field_names_of_a_wide_anonymous_record_are_compared_whole() {
     assert_eq!(run(&source, host), Ok(Value::Int(99)));
 }
 
+/// Each place that may show a variable is searched as far as the bound
+/// on its own: a long argument that shows nothing (200 `None`s) leaves
+/// a later argument that shows the variable its search, so a wrong
+/// result is refused.
+#[test]
+fn a_later_argument_shows_the_variable_past_a_long_one() {
+    let wrong = |_: &[Value]| Ok(Value::String("s".into()));
+    let host = HostModule::new("h")
+        .function("fn f(xs: List(Option(a)), w: a) -> a", wrong)
+        .function(
+            "fn g(xs: List(Option(a)), ys: List(Option(a))) -> Option(a)",
+            |_: &[Value]| Ok(Value::variant(bv::SOME, [Value::String("s".into())])),
+        );
+    let nones = vec!["None"; 200].join(", ");
+    let err = returned_error(host.clone(), &format!("h.f([Some(1), {nones}], 1)"));
+    assert!(
+        err.contains("h.f: its signature returns a, here Int"),
+        "got: {err}"
+    );
+    let err = returned_error(host.clone(), &format!("h.f([{nones}], 1)"));
+    assert!(
+        err.contains("h.f: its signature returns a, here Int (the type of its argument `w`)"),
+        "got: {err}"
+    );
+    let err = returned_error(host, &format!("h.g([{nones}], [Some(1)])"));
+    assert!(
+        err.contains("h.g: its signature returns Option(a), where a is Int"),
+        "got: {err}"
+    );
+}
+
 /// Within the parts the check compares, a result of another
 /// instantiation of the argument's type is refused: `Box(String)` for a
 /// `Box(Int)`.

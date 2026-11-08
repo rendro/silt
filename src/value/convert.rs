@@ -138,7 +138,7 @@ impl HostFn {
 
 /// What the arguments of a call show of each variable of a host
 /// function: the first value found at one of its places, among the
-/// first `SAME_TYPE_PARTS` parts of the arguments looked at. A variable
+/// first `SAME_TYPE_PARTS` parts of the argument at each place. A variable
 /// is looked up only when a check meets it with a value to compare (a
 /// `None` result asks for none), so a call costs no more than that
 /// whatever the size of its arguments.
@@ -161,8 +161,12 @@ impl<'h> Witnesses<'h, '_> {
         if self.args.len() != host.arity {
             return None;
         }
-        let mut budget = SAME_TYPE_PARTS;
+        // (Each place its own budget: a long argument that shows nothing
+        // leaves a later one its search. The places are as many as the
+        // signature writes, so a call still costs no more with the
+        // arguments' size.)
         host.vars.get(at)?.sources.iter().find_map(|source| {
+            let mut budget = SAME_TYPE_PARTS;
             let arg = self.args.get(source.param)?;
             let value = match source.of_type {
                 true => matches!(
