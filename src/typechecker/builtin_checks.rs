@@ -398,6 +398,17 @@ impl TypeChecker {
                 && (args.is_empty()
                     || self.holds_open_vars(ty)
                     || free_vars_in(ty).into_iter().any(|v| !self.held_by_param(v)));
+            // (A CSV row is text: there is no JSON to give an impl.)
+            if !family.honours_impls() && self.has_decode_impl(head) {
+                return refusal(
+                    Code::Undecodable,
+                    format!(
+                        "`{builtin_name}` cannot decode `{type_name}`: its `json.Decode` impl \
+                         reads JSON, and a row of `{builtin_name}` is text"
+                    ),
+                    record_help,
+                );
+            }
             if self.has_decode_impl(head) && !open {
                 // (Of impls for some instantiations, none for this one,
                 // known in full: a parameter holding a type gave it,
@@ -459,6 +470,8 @@ impl TypeChecker {
             if enum_type && !family.decodes_enums() {
                 let help = match self.tables.is_generic(head) {
                     true => generic_help.to_string(),
+                    // (A family that gives no impl a value: a record.)
+                    false if !family.honours_impls() => record_help.to_string(),
                     false => format!(
                         "declare a record type, or write a `json.Decode` impl for `{}`",
                         self.written_type(head)
@@ -503,6 +516,10 @@ impl TypeChecker {
                 "which grows with every level".to_string()
             } else if found.part == found.field_type {
                 "which has no decoder".to_string()
+            } else if found.part.starts_with("a ") || found.part.starts_with("an ") {
+                // (What a family has no form for, said in words: `a list`
+                // in a cell of a CSV row.)
+                format!("and {} has no decoder", found.part)
             } else {
                 format!("and `{}` has no decoder", found.part)
             };

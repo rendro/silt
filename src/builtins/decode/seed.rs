@@ -291,6 +291,36 @@ pub(crate) fn json_cell(
     }
 }
 
+/// The rows of a CSV text that `de` gives (an array of rows, each a map of
+/// its cells by their column's name) decoded into a value of `expected`
+/// by `r`; `Err` of the message of what `de` could not give.
+pub(crate) fn csv_rows<'de, D: de::Deserializer<'de>>(
+    r: &Reader,
+    expected: &FieldType,
+    de: D,
+    parts: &Parts,
+) -> Result<Outcome, String> {
+    let restart = Cell::new(false);
+    let kept = Cell::new(None);
+    let cx = Cx {
+        r,
+        rules: &crate::builtins::csv::RULES,
+        format: Format::Csv,
+        digits: Digits::Read,
+        marked: None,
+        parts,
+        restart: &restart,
+        kept: &kept,
+    };
+    let read = Seed {
+        cx: &cx,
+        expected,
+        at: &At::Top,
+    }
+    .deserialize(de);
+    read.map_err(|e| e.to_string())
+}
+
 /// The `json.Value` `v` decoded into a value of `expected` by `r`, its
 /// parts of a type with a written impl as `parts` says (`json.decode`,
 /// `T.decode`): read as the JSON document `json.parse` read it from, a
@@ -533,6 +563,10 @@ enum Met {
 enum Format {
     Json,
     Toml,
+    /// The rows of a CSV text: every cell is text, read as the type of
+    /// its field ([`Seed::primitive`]), an empty one as `None` where the
+    /// field is an `Option`.
+    Csv,
 }
 
 impl Format {
@@ -544,6 +578,7 @@ impl Format {
             (Format::Json, Scalar::Int(_) | Scalar::Float(_)) => "number",
             (Format::Toml, Scalar::Int(_)) => "integer",
             (Format::Toml, Scalar::Float(_)) => "float",
+            (Format::Csv, Scalar::Int(_) | Scalar::Float(_)) => "number",
             (_, Scalar::String(_)) => "string",
             (_, Scalar::Datetime(_)) => "datetime",
         }
@@ -554,6 +589,7 @@ impl Format {
         match self {
             Format::Json => "object",
             Format::Toml => "table",
+            Format::Csv => "row",
         }
     }
 }
@@ -769,6 +805,11 @@ impl<'s> Seed<'s> {
             FieldType::Applied(id, args) => (id, args.as_slice()),
             _ => return None,
         };
+        // (A CSV cell is text: no impl is given one, the checker refuses
+        // a type with one.)
+        if !self.cx.rules.family.honours_impls() {
+            return None;
+        }
         let impls = self.cx.r.impls.as_ref()?;
         (impls.written)(*id, args)
     }
@@ -909,6 +950,12 @@ impl<'s> Seed<'s> {
         let mismatch = |expected: &'static str| Error::mismatch(expected, kind, at);
         Ok(match self.want() {
             Want::Option(_) if matches!(scalar, Scalar::Null) => Ok(Value::variant(bv::NONE, [])),
+            // (An empty cell of a CSV row is `None`.)
+            Want::Option(_)
+                if self.cx.format == Format::Csv && matches!(scalar, Scalar::String("")) =>
+            {
+                Ok(Value::variant(bv::NONE, []))
+            }
             Want::Option(inner) => self
                 .of(inner, at)
                 .scalar(scalar)?
@@ -932,6 +979,39 @@ impl<'s> Seed<'s> {
     /// part `scalar` is.
     fn primitive(self, scalar: Scalar) -> Outcome {
         let at = self.at;
+        // A cell of a CSV row is text: an `Int`, a `Float` or a `Bool`
+        // is read from it as `int.parse`, `float.parse` and the words
+        // `true` and `false` read them.
+        if self.cx.format == Format::Csv
+            && let Scalar::String(text) = scalar
+        {
+            let got = || match text {
+                "" => "an empty cell".to_string(),
+                _ => format!("'{text}'"),
+            };
+            match self.expected {
+                FieldType::Int => {
+                    return match text.trim().parse::<i64>() {
+                        Ok(n) => Ok(Value::Int(n)),
+                        Err(_) => Err(Error::mismatch("Int", &got(), at)),
+                    };
+                }
+                FieldType::Float => {
+                    return match text.trim().parse::<f64>().ok().and_then(Float::new) {
+                        Some(f) => Ok(Value::Float(f)),
+                        None => Err(Error::mismatch("Float", &got(), at)),
+                    };
+                }
+                FieldType::Bool => {
+                    return match text {
+                        "true" => Ok(Value::Bool(true)),
+                        "false" => Ok(Value::Bool(false)),
+                        _ => Err(Error::mismatch("Bool", &got(), at)),
+                    };
+                }
+                _ => {}
+            }
+        }
         let kind = self.cx.format.kind(scalar);
         let mismatch = |expected: &'static str| Error::mismatch(expected, kind, at);
         match self.expected {

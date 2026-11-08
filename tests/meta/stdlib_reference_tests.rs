@@ -187,7 +187,13 @@ fn the_decodable_field_types_of_a_page_are_the_registry_s() {
             "{}: the field types of its list",
             module.page_file
         );
-        for container in ["List(T)", "Option(T)", "Map(String, T)"] {
+        // (A cell of a CSV row holds one value: of the containers, only
+        // an Option, for an empty cell.)
+        let containers: &[&str] = match family {
+            Family::Csv => &["Option(T)"],
+            _ => &["List(T)", "Option(T)", "Map(String, T)"],
+        };
+        for container in containers {
             assert!(
                 named.contains(&container),
                 "{}: its list names no {container}",
@@ -255,5 +261,5 @@ fn the_decodable_field_types_of_a_page_are_the_registry_s() {
         );
         checked.push(module.name);
     }
-    assert_eq!(checked, ["json", "toml", "postgres"]);
+    assert_eq!(checked, ["json", "toml", "postgres", "csv"]);
 }

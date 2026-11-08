@@ -9,10 +9,16 @@
 //! a quoted field that is not closed, and text after a closing quote
 //! before the next comma or line end.
 
+use serde::de::value::MapDeserializer;
+use serde::de::{self, DeserializeSeed, SeqAccess, Visitor};
+
 use super::common::ok;
-use super::typed::builtins;
-use crate::typeinfo::bv;
+use super::decode::{self, Decoder, Numbers, Rules};
+use super::registry::decoding::Family;
+use super::typed::{Type, builtins};
+use crate::typeinfo::{FieldType, bv};
 use crate::value::Value;
+use crate::vm::{Source, Step, Vm, VmError};
 
 /// What `CsvError`'s `message` says of the variant `tag` with `fields`:
 /// `None` if they are no variant of it.
@@ -139,7 +145,290 @@ pub(crate) fn syntax_err(malformed: &Malformed) -> Value {
     )
 }
 
+// ── A whole text ────────────────────────────────────────────────────
+
+/// How the one decoder reads the rows of a CSV text (`csv.parse`).
+pub(crate) const RULES: Rules = Rules {
+    caller: "csv.parse",
+    table: "row",
+    variant: "String",
+    numbers: Numbers::Values,
+    family: Family::Csv,
+    errors: [bv::CSV_TYPE_MISMATCH, bv::CSV_MISSING_FIELD, bv::CSV_OTHER],
+    // (A CSV cell is given to no impl: the checker refuses a type with
+    // one, and the decoder honours none for csv.)
+    from_impl: |error, _| error.clone(),
+};
+
+/// A CSV text read into its header and rows, each row with the line it
+/// starts on (the header's is 1).
+pub(crate) struct Table {
+    header: Vec<String>,
+    rows: Vec<Vec<String>>,
+    lines: Vec<usize>,
+}
+
+/// `Err(Syntax("line {line}: {why}", at))`.
+fn syntax_at(line: usize, why: impl std::fmt::Display, at: usize) -> Value {
+    let at = i64::try_from(at).unwrap_or(i64::MAX);
+    Value::variant(
+        bv::ERR,
+        [Value::variant(
+            bv::CSV_SYNTAX,
+            [
+                Value::String(format!("line {line}: {why}").into()),
+                Value::Int(at),
+            ],
+        )],
+    )
+}
+
+/// The header and rows of `text`: records end at a line break outside
+/// quotes; a UTF-8 byte order mark before the header is dropped; the
+/// empty line after a final line break is no row. A row with another
+/// number of fields than the header, or a header that names a column
+/// twice, is a `Syntax` error, which names its line.
+pub(crate) fn table(text: &str) -> Result<Table, Value> {
+    let start = match text.starts_with('\u{feff}') {
+        true => '\u{feff}'.len_utf8(),
+        false => 0,
+    };
+    let mut records = Vec::new();
+    let (mut at, mut line) = (start, 1);
+    while at < text.len() {
+        let (fields, next) = record(text, at).map_err(|m| {
+            let line = line + text[at..m.at].matches('\n').count();
+            syntax_at(line, m.why, m.at)
+        })?;
+        records.push((fields, line, at));
+        line += text[at..next].matches('\n').count();
+        at = next;
+    }
+    let mut records = records.into_iter();
+    let Some((header, _, _)) = records.next() else {
+        return Ok(Table {
+            header: Vec::new(),
+            rows: Vec::new(),
+            lines: Vec::new(),
+        });
+    };
+    for (k, name) in header.iter().enumerate() {
+        if header[..k].contains(name) {
+            let why = format!("the header names the column `{name}` twice");
+            return Err(syntax_at(1, why, start));
+        }
+    }
+    let (mut rows, mut lines) = (Vec::new(), Vec::new());
+    for (fields, line, at) in records {
+        if fields.len() != header.len() {
+            let why = format!(
+                "a row of {} fields, and the header has {}",
+                fields.len(),
+                header.len()
+            );
+            return Err(syntax_at(line, why, at));
+        }
+        rows.push(fields);
+        lines.push(line);
+    }
+    Ok(Table {
+        header,
+        rows,
+        lines,
+    })
+}
+
+/// The rows of a [`Table`] as the decoder reads a document: an array of
+/// rows, each a map of its cells by their column's name.
+struct Rows<'t>(&'t Table);
+
+impl<'de> de::Deserializer<'de> for Rows<'_> {
+    type Error = de::value::Error;
+
+    fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        visitor.visit_seq(RowSeq {
+            table: self.0,
+            next: 0,
+        })
+    }
+
+    serde::forward_to_deserialize_any! {
+        bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
+        bytes byte_buf option unit unit_struct newtype_struct seq tuple
+        tuple_struct map struct enum identifier ignored_any
+    }
+}
+
+struct RowSeq<'t> {
+    table: &'t Table,
+    next: usize,
+}
+
+impl<'de> SeqAccess<'de> for RowSeq<'_> {
+    type Error = de::value::Error;
+
+    fn next_element_seed<S: DeserializeSeed<'de>>(
+        &mut self,
+        seed: S,
+    ) -> Result<Option<S::Value>, Self::Error> {
+        let Some(row) = self.table.rows.get(self.next) else {
+            return Ok(None);
+        };
+        self.next += 1;
+        let header = &self.table.header;
+        seed.deserialize(Row(header, row)).map(Some)
+    }
+
+    fn size_hint(&self) -> Option<usize> {
+        Some(self.table.rows.len() - self.next)
+    }
+}
+
+struct Row<'t>(&'t [String], &'t [String]);
+
+impl<'de> de::Deserializer<'de> for Row<'_> {
+    type Error = de::value::Error;
+
+    fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        let cells = (self.0.iter().map(String::as_str)).zip(self.1.iter().map(String::as_str));
+        visitor.visit_map(MapDeserializer::new(cells))
+    }
+
+    serde::forward_to_deserialize_any! {
+        bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
+        bytes byte_buf option unit unit_struct newtype_struct seq tuple
+        tuple_struct map struct enum identifier ignored_any
+    }
+}
+
+/// The text of the decoder's error `message`, which ends with the path of
+/// the value (` at [2].age`), with the line and the column instead
+/// (` at line 4, column age`).
+fn at_line(message: &str, lines: &[usize]) -> String {
+    let Some((before, path)) = message.rsplit_once(" at [") else {
+        return message.to_string();
+    };
+    let Some((index, rest)) = path.split_once(']') else {
+        return message.to_string();
+    };
+    let Some(line) = index.parse::<usize>().ok().and_then(|i| lines.get(i)) else {
+        return message.to_string();
+    };
+    match rest.strip_prefix('.') {
+        Some(column) => format!("{before} at line {line}, column {column}"),
+        None => format!("{before} at line {line}"),
+    }
+}
+
+/// The result `result` of the decoder with each error's path a line and
+/// a column ([`at_line`]).
+fn with_lines(result: Value, lines: &[usize]) -> Value {
+    let Value::Variant(outer) = &result else {
+        return result;
+    };
+    let [Value::Variant(error)] = outer.fields() else {
+        return result;
+    };
+    if !outer.is(bv::ERR) {
+        return result;
+    }
+    let text = |v: &Value| match v {
+        Value::String(s) => Value::String(at_line(s, lines).into()),
+        other => other.clone(),
+    };
+    let fields: Vec<Value> = match error.fields() {
+        [expected, actual] if error.is(bv::CSV_TYPE_MISMATCH) => {
+            vec![expected.clone(), text(actual)]
+        }
+        [message] if error.is(bv::CSV_OTHER) => vec![text(message)],
+        _ => return result,
+    };
+    Value::variant(bv::ERR, [Value::variant(error.tag(), fields)])
+}
+
+/// A CSV text read again, for the decoder.
+struct Text(std::sync::Arc<Table>);
+
+impl Source for Text {
+    fn read(
+        &self,
+        r: &decode::Reader,
+        expected: &FieldType,
+        parts: &decode::seed::Parts,
+    ) -> Result<decode::seed::Outcome, Value> {
+        decode::seed::csv_rows(r, expected, Rows(&self.0), parts).map_err(other_err)
+    }
+}
+
+/// `Err(Other(message))`.
+fn other_err(message: String) -> Value {
+    Value::variant(
+        bv::ERR,
+        [Value::variant(
+            bv::CSV_OTHER,
+            [Value::String(message.into())],
+        )],
+    )
+}
+
+static PARSE: Decoder = Decoder::new("csv.parse");
+
+/// The column the header of `table` lacks for a field of the record type
+/// `element` that is no `Option`: a field with no column is missing from
+/// every row, also where there is none.
+fn missing_column(vm: &Vm, table: &Table, element: &FieldType) -> Option<String> {
+    let (id, args) = match element {
+        FieldType::Record(id) => (*id, &[][..]),
+        FieldType::Applied(id, args) => (*id, args.as_slice()),
+        _ => return None,
+    };
+    let info = vm.runtime.type_info(id)?;
+    info.fields()
+        .iter()
+        .find(|(name, field)| {
+            !matches!(&*field.instantiated(args), FieldType::Option(_))
+                && !table.header.contains(name)
+        })
+        .map(|(name, _)| name.clone())
+}
+
 builtins! {
+    // Every row of the text as a record of the type, its fields read
+    // from the columns of their names by the one decoder (as json's and
+    // toml's are read).
+    fn parse(vm, text: &str, ty: Type) -> Result<Step, VmError> {
+        let element = decode::target(&PARSE, ty)?.element();
+        let table = match table(text) {
+            Ok(table) => std::sync::Arc::new(table),
+            Err(syntax) => return Ok(Step::Done(syntax)),
+        };
+        if table.header.is_empty() {
+            return Ok(Step::Done(ok(Value::list(Vec::new()))));
+        }
+        if let Some(name) = missing_column(vm, &table, &element) {
+            return Ok(Step::Done(Value::variant(
+                bv::ERR,
+                [Value::variant(bv::CSV_MISSING_FIELD, [Value::String(name.into())])],
+            )));
+        }
+        let expected = FieldType::List(Box::new(element));
+        let read = {
+            let table = table.clone();
+            move |r: &decode::Reader, expected: &FieldType, parts: &decode::seed::Parts| {
+                decode::seed::csv_rows(r, expected, Rows(&table), parts).map_err(other_err)
+            }
+        };
+        let source = {
+            let table = table.clone();
+            move || -> Box<dyn Source> { Box::new(Text(table)) }
+        };
+        let step = vm.decode_read("csv.parse", &RULES, expected, read, source)?;
+        Ok(match step {
+            Step::Done(result) => Step::Done(with_lines(result, &table.lines)),
+            other => other,
+        })
+    }
+
     fn split_line(line: &str) -> Value {
         match fields_of_line(line) {
             Ok(fields) => ok(Value::list(

@@ -25,6 +25,9 @@ pub enum Family {
     Toml,
     /// The rows of a result: `postgres.query(db, sql, params, T)`.
     Postgres,
+    /// The rows of a CSV text: `csv.parse(text, T)`. A cell is text: a
+    /// field holds a leaf, or an `Option` of one (an empty cell).
+    Csv,
 }
 
 /// A field type that holds no other: the field types the families tell
@@ -91,7 +94,7 @@ impl Leaf {
 
 impl Family {
     /// Every family, in the order of their numbers (`family as usize`).
-    pub const ALL: [Family; 3] = [Family::Json, Family::Toml, Family::Postgres];
+    pub const ALL: [Family; 4] = [Family::Json, Family::Toml, Family::Postgres, Family::Csv];
 
     /// The leaves the family decodes, in the order of [`Leaf::ALL`].
     /// Every family decodes `List(T)`, `Option(T)`, `Map(String, T)`,
@@ -106,6 +109,7 @@ impl Family {
             Family::Postgres => &[
                 Int, Float, String, Bool, Bytes, Date, Time, DateTime, JsonValue,
             ],
+            Family::Csv => &[Int, Float, String, Bool, Date, Time, DateTime],
         }
     }
 
@@ -120,7 +124,7 @@ impl Family {
     /// with fields): as the type argument, as an element and as a field,
     /// at any depth. A row has no form for one.
     pub fn decodes_enums(self) -> bool {
-        self != Family::Postgres
+        !self.rows()
     }
 
     /// The family of what a map, a tuple or a nested record of a field
@@ -133,9 +137,16 @@ impl Family {
         }
     }
 
-    /// Whether the type argument is the type of a row of a result.
+    /// Whether the type argument is the type of a row: of a result, of
+    /// a CSV text.
     pub fn rows(self) -> bool {
-        self == Family::Postgres
+        matches!(self, Family::Postgres | Family::Csv)
+    }
+
+    /// Whether the family reads a type with a written `json.Decode`
+    /// impl by the impl: CSV has no JSON for one.
+    pub fn honours_impls(self) -> bool {
+        self != Family::Csv
     }
 
     /// What to decode into instead of a type the family has no decoder
@@ -164,6 +175,9 @@ impl Family {
     /// not counting the fields of the record types it names: a leaf it
     /// does not decode, where the field type holds it.
     pub fn lacks(self, field_type: &FieldType) -> Option<&'static str> {
+        if self == Family::Csv {
+            return self.lacks_in_a_cell(field_type);
+        }
         match field_type {
             FieldType::List(t) | FieldType::Option(t) => self.lacks(t),
             FieldType::Map(t) => self.nested().lacks(t),
@@ -174,9 +188,40 @@ impl Family {
         }
     }
 
+    /// What of `field_type` a cell of a CSV text has no form for: a
+    /// cell is one leaf, or empty for an `Option` of one. (An enum type
+    /// is named by the check of enums.)
+    fn lacks_in_a_cell(self, field_type: &FieldType) -> Option<&'static str> {
+        let cell = match field_type {
+            FieldType::Option(inner) if matches!(**inner, FieldType::Option(_)) => {
+                return Some("an Option in an Option");
+            }
+            FieldType::Option(inner) => inner,
+            other => other,
+        };
+        match cell {
+            FieldType::List(_) => Some("a list"),
+            FieldType::Map(_) | FieldType::KeyedMap(..) => Some("a map"),
+            FieldType::Tuple(_) => Some("a tuple"),
+            FieldType::Record(_) => Some("a record type"),
+            FieldType::Applied(..) => Some("a generic type"),
+            FieldType::Enum(_) => None,
+            _ => Leaf::of(cell)
+                .filter(|leaf| !self.decodes(*leaf))
+                .map(Leaf::name),
+        }
+    }
+
     /// The field types it decodes, as shown in compile errors.
     pub fn help(self) -> String {
         let leaves: Vec<&str> = self.leaves().iter().map(|leaf| leaf.name()).collect();
+        if self == Family::Csv {
+            return format!(
+                "decodable field types are {}, Option(T) of these (an empty cell is None), \
+                 and aliases of these",
+                leaves.join(", ")
+            );
+        }
         let named = match self.decodes_enums() {
             true => "record and enum types",
             false => "record types",
@@ -236,6 +281,11 @@ impl Decoding {
         family: Family::Postgres,
         primitives: false,
     };
+    /// `csv.parse`: a row is a record of its columns.
+    pub const CSV: Decoding = Decoding {
+        family: Family::Csv,
+        primitives: false,
+    };
 
     /// Whether the type argument may be `json.Value`.
     pub fn json_value(self) -> bool {
@@ -263,7 +313,9 @@ impl Decoding {
         if self.family.decodes_enums() {
             types.push("an enum type".to_string());
         }
-        types.push("a type with a `json.Decode` impl".to_string());
+        if self.family.honours_impls() {
+            types.push("a type with a `json.Decode` impl".to_string());
+        }
         if self.primitives {
             types.push(format!(
                 "{}, {}, {} or a tuple of decodable types",
@@ -272,7 +324,9 @@ impl Decoding {
                 name("Map(String, T)")
             ));
         }
-        if let Some(last) = types.last_mut() {
+        if types.len() > 1
+            && let Some(last) = types.last_mut()
+        {
             *last = format!("or {last}");
         }
         types.join(", ")
@@ -298,8 +352,8 @@ mod tests {
 
     /// What a program imports: `postgres` where it is built.
     const IMPORTS: &str = match cfg!(feature = "postgres") {
-        true => "import json\nimport postgres\nimport time\nimport toml\n",
-        false => "import json\nimport time\nimport toml\n",
+        true => "import csv\nimport json\nimport postgres\nimport time\nimport toml\n",
+        false => "import csv\nimport json\nimport time\nimport toml\n",
     };
 
     /// A program with the record types `R { f: field }` and `Inner { x:
@@ -403,7 +457,10 @@ mod tests {
     fn helped(help: &str) -> Vec<&str> {
         let list = help
             .strip_prefix("decodable field types are ")
-            .and_then(|rest| rest.split_once(", List(T)"))
+            .and_then(|rest| {
+                rest.split_once(", List(T)")
+                    .or_else(|| rest.split_once(", Option(T)"))
+            })
             .map_or("", |(leaves, _)| leaves);
         list.split(", ").collect()
     }
@@ -525,7 +582,9 @@ mod tests {
                     decode::target(&decoder, Type::Named(r)).expect("a record type is taken");
                 let refused = |doc: &serde_json::Value| {
                     let refusal = match family {
-                        Family::Postgres => decode::record_refusal(rt, family, r, &[]),
+                        Family::Postgres | Family::Csv => {
+                            decode::record_refusal(rt, family, r, &[])
+                        }
                         _ => decode::refusal(rt, family, &target),
                     };
                     if refusal.is_some() {
@@ -549,6 +608,9 @@ mod tests {
                             Some(cell) => json(cell, f),
                             None => Ok(crate::value::Value::Unit),
                         },
+                        // (A cell is text: what a field may be is all
+                        // the plan refuses.)
+                        Family::Csv => Ok(crate::value::Value::Unit),
                     };
                     match decoded {
                         Err(Error::Other(message)) if message.starts_with("cannot decode") => {

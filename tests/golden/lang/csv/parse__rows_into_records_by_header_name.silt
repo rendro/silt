@@ -1,0 +1,33 @@
+-- csv.parse reads the rows of a text with a header into records by column
+-- name, through the one decoder: quotes, CRLF and line breaks in quotes,
+-- Option for an empty cell, columns no field names left alone, a BOM
+-- dropped; the errors name the line (and the column), Syntax keeps the byte.
+import csv
+import time
+type P { name: String, age: Int, score: Float, ok: Bool, born: time.Date, note: Option(String), extra: Option(Int) }
+fn main() {
+  let text = "name,age,score,ok,born,note,unused\r\n\"Smith, John\",42,1.5,true,1984-03-01,,x\nAda,36,2,false,1815-12-10,\"two\nlines\",y\n"
+  match csv.parse(text, P) {
+    Ok(rows) -> {
+      println(rows)
+    }
+    Err(e) -> println(Error.message(e))
+  }
+  println(csv.parse("name,age\nBob,abc\n", P) |> show)
+  println(csv.parse("name,age,score,ok,born\nBob,1,x,true,2020-01-01", P) |> show)
+  println(csv.parse("name,age,score,ok,born\nBob,1,1,yes,2020-01-01", P) |> show)
+  println(csv.parse("name,age,score,ok,born\nBob,1,1,true,2020-13-01", P) |> show)
+  println(csv.parse("name,age,score,ok,born\nBob,,1,true,2020-01-01", P) |> show)
+  println(csv.parse("name,age,score,ok,born\nBob,1,1,true", P) |> show)
+  println(csv.parse("name,name\n", P) |> show)
+  println(csv.parse("name,age,score,ok,born\n\"Bob,1,1,true,2020", P) |> show)
+  println(csv.parse("", P) |> show)
+  println(csv.parse("name,score,ok,born\n", P) |> show)
+  println(csv.parse("\u{feff}name,age,score,ok,born\nB,1,1,true,2020-01-01", P) |> show)
+}
+fn show(r: Result(List(P), csv.CsvError)) -> String {
+  match r {
+    Ok(rows) -> "Ok({rows})"
+    Err(e) -> Error.message(e)
+  }
+}

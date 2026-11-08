@@ -191,13 +191,13 @@ Returned by `uuid.parse`.
 
 ### `CsvError` (requires `import csv`)
 
-Returned by `csv.split_line`.
+Returned by `csv.split_line` and `csv.parse`.
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
-| `Syntax(String, Int)` | message, byte offset | the text is no CSV: a quoted field that is not closed, text after a closing quote |
-| `TypeMismatch(String, String)` | expected, got | reserved for the decoding of a whole text |
-| `MissingField(String)` | name | reserved for the decoding of a whole text |
+| `Syntax(String, Int)` | message, byte offset | the text is no CSV: a quoted field that is not closed, text after a closing quote; a row with another number of fields than the header |
+| `TypeMismatch(String, String)` | expected, got | a cell that is no value of its field's type, with its line and column |
+| `MissingField(String)` | name | the header has no column for a field that is no `Option` |
 | `Other(String)` | message | unclassified failure |
 
 ### `RegexError` (requires `import regex`)
