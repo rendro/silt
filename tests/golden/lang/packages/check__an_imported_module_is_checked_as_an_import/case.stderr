@@ -1,0 +1,15 @@
+error[parse]: expected declaration, found =
+ --> src/helper.silt:1:25
+   |
+ 1 | pub fn name() -> String = "x"
+   |                         ^ expected declaration, found =
+ ::: src/main.silt:7:1
+   |
+ 7 | import helper
+   | ------------- module 'helper' is imported here
+
+error[type]: type mismatch: expected String, got Int
+ --> src/lonely.silt:2:3
+   |
+ 2 |   1
+   |   ^ type mismatch: expected String, got Int

@@ -95,8 +95,8 @@ pub(crate) fn dispatch(args: &[String]) {
     if format == OutputFormat::Json {
         crate::cli::package::print_manifest_errors_as_json();
     }
-    let (path, others) = match file {
-        Some(p) => (p, Vec::new()),
+    let (path, modules, tests) = match file {
+        Some(p) => (p, Vec::new(), Vec::new()),
         // `silt check` accepts a lib-only package
         // (`src/lib.silt` with no `src/main.silt`) — the required shape
         // for dependencies. `silt run`/`silt disasm` keep requiring main.
@@ -108,9 +108,8 @@ pub(crate) fn dispatch(args: &[String]) {
             Ok(Some(p)) => {
                 let root = p.parent().and_then(Path::parent).unwrap_or(Path::new("."));
                 let tests = package_test_files(root);
-                let mut others = package_modules(root, &p, &tests);
-                others.extend(tests);
-                (p.to_string_lossy().into_owned(), others)
+                let modules = package_modules(root, &p, &tests);
+                (p.to_string_lossy().into_owned(), modules, tests)
             }
             Ok(None) => {
                 crate::cli::no_file("check");
@@ -120,7 +119,17 @@ pub(crate) fn dispatch(args: &[String]) {
             Err(()) => process::exit(1),
         },
     };
-    check_files(&path, &others, format, deny_warnings);
+    check_files(&path, &modules, &tests, format, deny_warnings);
+}
+
+/// Whether the session has read the file at `path` (as an import of a
+/// file checked before).
+fn is_loaded(session: &silt::session::Session, path: &Path) -> bool {
+    let path = silt::source::canonical_path(path);
+    session.sources().files().any(|file| match &file.path {
+        silt::source::SourceName::Path(p) => silt::source::canonical_path(p) == path,
+        _ => false,
+    })
 }
 
 /// The modules of the package at `root` other than its entry file
@@ -146,10 +155,18 @@ fn package_modules(root: &Path, entry: &Path, tests: &[String]) -> Vec<String> {
     modules
 }
 
-/// Check the entry file `path` and the files `others` (the package's
-/// other modules and its test files) in one session, and report what
-/// was found, each diagnostic once.
-fn check_files(path: &str, others: &[String], format: OutputFormat, deny_warnings: bool) {
+/// Check the entry file `path`, the test files `tests` and the modules
+/// `modules` of its package in one session, and report what was found,
+/// each diagnostic once. A module that the entry or a test imports is
+/// checked there, as an import (its errors show where it is imported);
+/// only the others are opened as files of their own.
+fn check_files(
+    path: &str,
+    modules: &[String],
+    tests: &[String],
+    format: OutputFormat,
+    deny_warnings: bool,
+) {
     silt::intern::reset();
     // `silt check` checks each file as a module: the session's analysis
     // and the compile step, as the language server does. A module needs
@@ -163,23 +180,32 @@ fn check_files(path: &str, others: &[String], format: OutputFormat, deny_warning
         }
     };
     let mut unreadable = Vec::new();
-    let mut files = vec![file];
-    for other in others {
-        match session.open(Path::new(other)) {
-            Ok(file) => files.push(file),
-            Err(e) => unreadable.push((other.clone(), e)),
-        }
-    }
     // Each once, in the order found (a set beside the list: a program
     // can have many thousands of warnings).
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
     let mut seen: std::collections::HashSet<Diagnostic> = std::collections::HashSet::new();
-    for file in files {
+    let mut check = |session: &mut silt::session::Session, file| {
         let compiled = session.compile(file, Entry::Tests { filter: None });
-        for d in door_diagnostics(&mut session, file, &compiled) {
+        for d in door_diagnostics(session, file, &compiled) {
             if seen.insert(d.clone()) {
                 diagnostics.push(d);
             }
+        }
+    };
+    check(&mut session, file);
+    for test in tests {
+        match session.open(Path::new(test)) {
+            Ok(file) => check(&mut session, file),
+            Err(e) => unreadable.push((test.clone(), e)),
+        }
+    }
+    for module in modules {
+        if is_loaded(&session, Path::new(module)) {
+            continue;
+        }
+        match session.open(Path::new(module)) {
+            Ok(file) => check(&mut session, file),
+            Err(e) => unreadable.push((module.clone(), e)),
         }
     }
 

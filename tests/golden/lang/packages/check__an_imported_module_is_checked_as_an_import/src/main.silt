@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- A bare `silt check` in a package checks a module that the entry
+-- imports as an import, once: its parse error shows where it is
+-- imported, with no error that follows from the recovered text. A
+-- module that nothing imports is checked as a file of its own.
+import helper
+
+fn main() {
+  println(helper.name())
+}

@@ -247,6 +247,11 @@ impl SourceMap {
         self.files.len()
     }
 
+    /// Every file of the map, in the order they were added.
+    pub fn files(&self) -> impl Iterator<Item = &SourceFile> {
+        self.files.iter()
+    }
+
     /// Add a file and return its id.
     pub fn add(&mut self, path: SourceName, text: Arc<str>) -> FileId {
         let id = FileId(self.files.len() as u32);
