@@ -1155,6 +1155,28 @@ fn handler_response(vm: &Vm, returned: &Value, reply: Reply) -> Vec<u8> {
     }
 }
 
+/// What a connection that reads a request does when the server begins
+/// to drain.
+#[cfg(feature = "http")]
+#[derive(Debug, PartialEq, Eq)]
+enum OnDrain {
+    /// Nothing of a request has come: the connection ends.
+    End,
+    /// A request has begun to come: it is read on, in the time its head
+    /// or its body has left (not a new one), and answered.
+    ReadOn,
+}
+
+/// [`OnDrain`] for a connection that is reading a body (`in_body`), or
+/// whose request's head has `begun`.
+#[cfg(feature = "http")]
+fn on_drain(in_body: bool, begun: bool) -> OnDrain {
+    match in_body || begun {
+        true => OnDrain::ReadOn,
+        false => OnDrain::End,
+    }
+}
+
 /// The task of one connection: read a request, call the handler with
 /// it, send what the handler returns, and go on with the next request
 /// while the connection is kept.
@@ -1207,6 +1229,10 @@ enum ConnState {
         got: Arc<Mutex<Option<Got>>>,
         /// Its head is there, and its body is being read.
         in_body: bool,
+        /// Completed when the head is there and a body follows.
+        body_follows: Arc<Cell<()>>,
+        /// When the wait for the head, or for the body, is over.
+        deadline: Option<Duration>,
     },
     /// The request waits for a handler (see [`wire::QUEUED_MAX`]).
     Queued {
@@ -1403,13 +1429,16 @@ impl Conn {
                 Value::Unit
             },
         );
-        let mut wait = op.wait(vm, Limit::Own(wire::REQUEST_TIME));
-        wait.arms.push(Arm::Cell(body_follows));
+        let deadline = vm.runtime.io.deadline_after(wire::REQUEST_TIME);
+        let mut wait = op.wait(vm, Limit::None).deadline(deadline);
+        wait.arms.push(Arm::Cell(body_follows.clone()));
         wait.arms.push(Arm::Cell(self.server.drain_begun.clone()));
         self.state = ConnState::Reading {
             op,
             got,
             in_body: false,
+            body_follows,
+            deadline,
         };
         Step::Park(wait)
     }
@@ -1534,32 +1563,47 @@ impl Conn {
                 Some(got) => self.serve(vm, got),
                 None => Go::Step(self.read(vm)),
             },
-            ConnState::Reading { op, got, in_body } => match vm.woken()? {
+            ConnState::Reading {
+                op,
+                got,
+                in_body,
+                body_follows,
+                deadline,
+            } => match vm.woken()? {
                 // The server drains. A connection that waits for a request
                 // ends; one whose request has begun to come reads it on,
-                // and it is answered.
-                Fired::Arm(2, _) => match in_body || self.begun.load(Ordering::SeqCst) {
-                    false => {
+                // in the time it had (what is left of the head's, or the
+                // body's), and it is answered.
+                Fired::Arm(2, _) => match on_drain(in_body, self.begun.load(Ordering::SeqCst)) {
+                    OnDrain::End => {
                         drop(op);
                         Conn::END
                     }
-                    true => {
-                        let wait = op.wait(vm, Limit::Own(wire::TRANSFER_TIME));
+                    OnDrain::ReadOn => {
+                        let mut wait = op.wait(vm, Limit::None).deadline(deadline);
+                        if !in_body {
+                            wait.arms.push(Arm::Cell(body_follows.clone()));
+                        }
                         self.state = ConnState::Reading {
                             op,
                             got,
-                            in_body: true,
+                            in_body,
+                            body_follows,
+                            deadline,
                         };
                         Go::Step(Step::Park(wait))
                     }
                 },
                 // The head is there: the body has its own time.
                 Fired::Arm(1, _) if !in_body => {
-                    let wait = op.wait(vm, Limit::Own(wire::TRANSFER_TIME));
+                    let deadline = vm.runtime.io.deadline_after(wire::TRANSFER_TIME);
+                    let wait = op.wait(vm, Limit::None).deadline(deadline);
                     self.state = ConnState::Reading {
                         op,
                         got,
                         in_body: true,
+                        body_follows,
+                        deadline,
                     };
                     Go::Step(Step::Park(wait))
                 }
@@ -2210,6 +2254,18 @@ mod serve_tests {
 #[cfg(all(test, feature = "http"))]
 mod queue_tests {
     use super::*;
+
+    /// When the server begins to drain, a connection that has nothing of
+    /// a request ends, and one whose request has begun reads it on: in
+    /// the time it had (the wait keeps its deadline, `Reading`'s
+    /// `deadline`), so a head that trickles still gets its 408 when
+    /// the head's time is over, not a body's time later.
+    #[test]
+    fn a_drain_ends_an_idle_connection_and_reads_a_begun_request_on() {
+        assert_eq!(on_drain(false, false), OnDrain::End);
+        assert_eq!(on_drain(false, true), OnDrain::ReadOn);
+        assert_eq!(on_drain(true, true), OnDrain::ReadOn);
+    }
 
     fn server() -> Arc<Server> {
         Arc::new(Server {
