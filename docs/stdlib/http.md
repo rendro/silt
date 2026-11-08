@@ -123,7 +123,9 @@ the server sent, with one exception:
   `content-length`, which describe the packed bytes, are not in
   `resp.headers`. (Every request says `accept-encoding: gzip`.) A body
   in any other coding, `GZIP` and `x-gzip` among them, is handed over as
-  it came, with its header.
+  it came, with its header. A coding sent in two headers is their values
+  joined, as of any header: two `gzip` headers are `gzip, gzip`, and the
+  body is handed over as it came.
 - An answer to `HEAD`, a `204` and a `304` have no body: `resp.body` is
   empty and nothing is read, whatever the headers say. They may say what
   a `GET` would get; of those, `content-encoding` and `content-length`
