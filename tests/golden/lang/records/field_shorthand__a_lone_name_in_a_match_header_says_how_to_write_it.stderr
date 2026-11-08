@@ -1,0 +1,5 @@
+error[parse]: in a `match`'s header, the braces of `Q { x }` are read as its body: write `Q { x: x }`, or the literal in parentheses, `(Q { x })`
+ --> field_shorthand__a_lone_name_in_a_match_header_says_how_to_write_it.silt:10:11
+    |
+ 10 |   match Q { x } {
+    |           ^ in a `match`'s header, the braces of `Q { x }` are read as its body: write `Q { x: x }`, or the literal in parentheses, `(Q { x })`

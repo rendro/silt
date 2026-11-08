@@ -1309,7 +1309,7 @@ impl TypeChecker {
     }
 
     /// Drop each refusal of a use as one whose type nothing decides
-    /// (`json.parse(s, Box(Box(Unit)))`) with another error inside it, an
+    /// (`json.parse(s, Box(Box(Nope)))`) with another error inside it, an
     /// undefined name: that error is the one, and left nothing to decide.
     pub(super) fn drop_ambiguities_over_errors(&mut self) {
         let inner: Vec<Span> = (self.errors.iter())

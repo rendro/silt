@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- An anonymous record has no shorthand, at any field.
+fn main() {
+  let x = 1
+  let r = { y: 2, x }
+  println("{r.y}")
+}

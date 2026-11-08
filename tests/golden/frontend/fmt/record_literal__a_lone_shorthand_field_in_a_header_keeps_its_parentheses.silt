@@ -1,0 +1,30 @@
+-- cmd: fmt
+-- In a `match` or `loop` header, braces holding one field written alone
+-- are the header's block, so a literal like `Q { x }` there is written
+-- in parentheses, and the formatter keeps them; a literal with `:` or a
+-- second field needs none, nor does an update.
+type Q { x: Int }
+
+fn main() {
+  let x = 0
+  let a = match (Q { x }) {
+    Q { x } -> x
+  }
+  let b = match (Q { x }.x) {
+    0 -> "zero"
+    _ -> "other"
+  }
+  let r = loop q = (Q { x }) {
+    match q.x >= 2 {
+      true -> q
+      false -> loop(Q { x: q.x + 1 })
+    }
+  }
+  let c = match (Q { x: x }) {
+    Q { x } -> x
+  }
+  let d = match (r.{ x }) {
+    Q { x } -> x
+  }
+  println("{a} {b} {r.x} {c} {d}")
+}

@@ -143,6 +143,13 @@ as the record pattern `User { name, age, .. }` binds `name` and `age`.
 Building and reading a record look alike. An anonymous record has no
 such shorthand: `{ name }` is a block.
 
+In the header of a `match` or a `loop`, braces that hold one name alone
+are the header's block, as `match x { y }` would be: there a literal
+with a single field written alone goes in parentheses,
+`match (User { name }) { ... }`, or writes the field out,
+`match User { name: name } { ... }`. Braces whose first name is
+followed by `:` or `,` are a literal there too.
+
 Records declared in another module can be constructed with a
 **module-qualified path** — no selective import needed. The qualifier is
 explicit naming, not a second construction form: `users.User { ... }`

@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- In a `match` header, braces holding one name alone are the match's
+-- body; the literal `Q { x }` meant there is written `Q { x: x }` or in
+-- parentheses, and the error says so.
+type Q { x: Int }
+
+fn main() {
+  let x = 1
+  match Q { x } {
+    Q { x } -> println("{x}")
+  }
+}

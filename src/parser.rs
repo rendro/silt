@@ -807,6 +807,21 @@ impl<'src> Parser<'src> {
         )
     }
 
+    /// The error for the field `name` of an anonymous record literal,
+    /// at `span`, written without its value.
+    fn anon_field_alone(span: Span, name: Symbol) -> Diagnostic {
+        let name = intern::resolve(name);
+        Diagnostic::error(
+            Code::UnsupportedSyntax,
+            span,
+            format!(
+                "an anonymous record writes each field as `name: value`: write `{name}: {name}`; \
+                 only a record literal with a type name takes a field written alone \
+                 (`P {{ {name} }}`)"
+            ),
+        )
+    }
+
     fn expect_ident(&mut self) -> Result<(Symbol, Span)> {
         match self.peek().clone() {
             Token::Ident(name) => {
@@ -3205,6 +3220,16 @@ impl<'src> Parser<'src> {
                                 );
                                 continue;
                             }
+                            if let ExprKind::Ident(module) = &left.kind
+                                && self.header_lone_shorthand()
+                            {
+                                let ty = format!(
+                                    "{}.{}",
+                                    intern::resolve(*module),
+                                    intern::resolve(field)
+                                );
+                                return Err(self.header_lone_shorthand_error(&ty));
+                            }
                             // Imports take a single module ident, so only a
                             // one-segment qualifier can ever resolve. A
                             // deeper dotted path (`a.b.Pt { ... }`) or an
@@ -3371,6 +3396,8 @@ impl<'src> Parser<'src> {
                         },
                         span,
                     ))
+                } else if !self.nl_before() && self.header_lone_shorthand() {
+                    Err(self.header_lone_shorthand_error(&intern::resolve(name)))
                 } else {
                     Ok(self.mk_expr(ExprKind::Ident(name), span))
                 }
@@ -3463,6 +3490,19 @@ impl<'src> Parser<'src> {
                     self.parse_trailing_closure_as_lambda()
                 } else if self.is_anon_record_literal() {
                     self.parse_anon_record_literal()
+                } else if let Some(Token::Ident(name)) =
+                    self.tokens.get(self.pos + 1).map(|t| &t.kind)
+                    && matches!(
+                        self.tokens.get(self.pos + 2).map(|t| &t.kind),
+                        Some(Token::Comma)
+                    )
+                {
+                    // `{ x, ...` starts no block and no closure: an
+                    // anonymous record with a field written alone.
+                    Err(Self::anon_field_alone(
+                        self.tokens[self.pos + 1].span,
+                        *name,
+                    ))
                 } else {
                     self.parse_block()
                 }
@@ -3769,6 +3809,44 @@ impl<'src> Parser<'src> {
             && matches!(self.tokens.get(i + 1).map(|t| &t.kind), Some(Token::Comma))
     }
 
+    /// In a header, at braces behind a type name that hold one name
+    /// alone and are followed on their line by another `{`: `match Q {
+    /// x } {`, `loop q = Q { x } {`. The braces were meant as the
+    /// literal `Q { x }`, but in a header they are its block (see
+    /// `scrutinee_lbrace_is_record_literal`), and the `{` behind them
+    /// is the real one.
+    fn header_lone_shorthand(&self) -> bool {
+        let kind = |i: usize| self.tokens.get(self.pos + i).map(|t| &t.kind);
+        self.lbrace_may_be_header_block()
+            && matches!(kind(0), Some(Token::LBrace))
+            && matches!(kind(1), Some(Token::Ident(name)) if !is_constructor(*name))
+            && matches!(kind(2), Some(Token::RBrace))
+            && matches!(kind(3), Some(Token::LBrace))
+            && !self.starts_line.get(self.pos + 3).copied().unwrap_or(true)
+    }
+
+    /// The error at `header_lone_shorthand`, for the type `ty` as
+    /// written (`Q`, `util.Q`).
+    fn header_lone_shorthand_error(&self, ty: &str) -> Diagnostic {
+        let field = match self.tokens.get(self.pos + 1).map(|t| &t.kind) {
+            Some(Token::Ident(name)) => intern::resolve(*name),
+            _ => String::new(),
+        };
+        let what = match self.header_here().map(|h| h.kind) {
+            Some(HeaderKind::LoopInit) => "a `loop`'s",
+            _ => "a `match`'s",
+        };
+        Diagnostic::error(
+            Code::ExpectedToken,
+            self.span(),
+            format!(
+                "in {what} header, the braces of `{ty} {{ {field} }}` are read as its body: \
+                 write `{ty} {{ {field}: {field} }}`, or the literal in parentheses, \
+                 `({ty} {{ {field} }})`"
+            ),
+        )
+    }
+
     /// Render an `Ident` / dotted `FieldAccess` chain (`util`,
     /// `a.b.util`) back to source text for diagnostics. Returns `None`
     /// for anything that isn't a simple dotted path. Used by the
@@ -4049,8 +4127,17 @@ impl<'src> Parser<'src> {
                     spread = Some(Box::new(p.parse_expr()?));
                     return Ok(None);
                 }
+                let keyword = p.peek().keyword();
                 let (name, name_span) = p.expect_field_name()?;
-                p.expect(&Token::Colon)?;
+                if !p.at(&Token::Colon) {
+                    return Err(match keyword {
+                        Some(keyword) => {
+                            Self::keyword_field_alone(name_span, keyword, "its value", "value")
+                        }
+                        None => Self::anon_field_alone(name_span, name),
+                    });
+                }
+                p.advance();
                 let value = p.parse_expr()?;
                 if !seen.insert(name) {
                     return Err(Diagnostic::error(
