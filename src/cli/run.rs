@@ -92,10 +92,16 @@ pub(crate) fn dispatch(args: &[String]) {
         Some(f) if !f.ends_with(".silt") && !std::path::Path::new(&f).is_dir() => {
             let cwd = std::env::current_dir().unwrap_or_else(|_| ".".into());
             let in_package = matches!(find_project_root(&cwd), Ok(Some(_)));
-            let program = if in_package { "" } else { " <file>.silt" };
+            // (In a package, `silt run` with no file runs the package's
+            // program: the argument goes behind `--` alone.)
+            let (to, program) = if in_package {
+                ("the package's program (src/main.silt)", "")
+            } else {
+                ("a program", " <file>.silt")
+            };
             eprintln!(
-                "error: silt run: {f} is not a .silt file; to give it to the program write \
-                 `silt run{program} -- {}`",
+                "error: silt run: {f} is not a .silt file; to give it to {to}, write it after \
+                 `--`: `silt run{program} -- {}`",
                 crate::cli::help::shell_word(&f)
             );
             process::exit(1);

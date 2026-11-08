@@ -79,8 +79,8 @@ fn a_file_that_is_not_silt_is_refused_with_how_to_give_it_to_the_program() {
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         String::from_utf8_lossy(&output.stderr),
-        "error: silt run: cfg.toml is not a .silt file; to give it to the program write \
-         `silt run <file>.silt -- cfg.toml`\n"
+        "error: silt run: cfg.toml is not a .silt file; to give it to a program, write it \
+         after `--`: `silt run <file>.silt -- cfg.toml`\n"
     );
     // In a package, the program is the package's: no file is named.
     let root = package(&dir);
@@ -92,8 +92,8 @@ fn a_file_that_is_not_silt_is_refused_with_how_to_give_it_to_the_program() {
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         String::from_utf8_lossy(&output.stderr),
-        "error: silt run: cfg.toml is not a .silt file; to give it to the program write \
-         `silt run -- cfg.toml`\n"
+        "error: silt run: cfg.toml is not a .silt file; to give it to the package's program \
+         (src/main.silt), write it after `--`: `silt run -- cfg.toml`\n"
     );
     let _ = fs::remove_dir_all(&dir);
 }
