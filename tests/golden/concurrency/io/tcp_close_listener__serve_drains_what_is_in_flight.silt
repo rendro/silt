@@ -1,0 +1,103 @@
+-- timeout: 30
+-- requires-feature: http
+-- tcp.close_listener drains http.serve: a request in flight is answered
+-- (with Connection: close), a kept-alive connection that waits for its
+-- next request is closed, and serve returns when all are done. A deadline
+-- around serve still cuts a request in flight: 503.
+import bytes
+import http
+import map
+import option
+import result
+import string
+import task
+import tcp
+import time
+
+fn slow(_req: http.Request) -> http.Response {
+  time.sleep(time.ms(500))
+  http.Response { status: 200, body: bytes.from_string("slow done"), headers: #{} }
+}
+
+fn quick(_req: http.Request) -> http.Response {
+  http.Response { status: 200, body: bytes.from_string("quick"), headers: #{} }
+}
+
+-- Read what comes on `conn` until it is closed.
+fn read_all(conn: tcp.TcpStream) -> String {
+  let got = loop got = bytes.empty() {
+    match tcp.read(conn, 4096) {
+      Ok(more) -> match bytes.length(more) {
+        0 -> got
+        _ -> loop(bytes.concat(got, more))
+      }
+      Err(_) -> got
+    }
+  }
+  bytes.to_string(got) |> result.unwrap_or("")
+}
+
+fn main() {
+  -- A slow request in flight is answered after the close.
+  when let Ok(l) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
+  let port = tcp.local_port(l)
+  let server = task.spawn { ->
+    http.serve(l, slow)
+    "serve returned"
+  }
+  let client = task.spawn { ->
+    match http.get("http://127.0.0.1:{port}/") {
+      Ok(r) -> "{r.status} {bytes.to_string(r.body) |> result.unwrap_or("")}, connection {map.get(r.headers, "connection") |> option.unwrap_or("(none)")}"
+      Err(e) -> Error.message(e)
+    }
+  }
+  time.sleep(time.ms(100))
+  tcp.close_listener(l)
+  println(task.join(client))
+  println(task.join(server))
+  match tcp.connect("127.0.0.1:{port}") {
+    Ok(_) -> println("connected after the close")
+    Err(_) -> println("refused after the close")
+  }
+  -- A kept-alive connection that waits for its next request is closed.
+  when let Ok(k) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
+  let kport = tcp.local_port(k)
+  let kserver = task.spawn { ->
+    http.serve(k, quick)
+    "serve returned"
+  }
+  when let Ok(conn) = tcp.connect("127.0.0.1:{kport}") else {
+    panic("cannot connect")
+  }
+  let cr = string.from_char_code(13) |> option.unwrap_or("")
+  let _ = tcp.write(conn, bytes.from_string("GET / HTTP/1.1{cr}\nHost: x{cr}\n{cr}\n"))
+  let first = tcp.read(conn, 4096) |> result.map { b -> bytes.to_string(b) |> result.unwrap_or("") }
+  println("kept alive, answered: {first |> result.map { t -> string.contains(t, "quick") } |> result.unwrap_or(false)}")
+  let started = time.now()
+  tcp.close_listener(k)
+  let rest = read_all(conn)
+  println("then closed by the server, nothing more: {rest == ""}")
+  println(task.join(kserver))
+  println("at once: {time.since(started, time.now()).ns < 5_000_000_000}")
+  -- A deadline around serve cuts a request in flight: 503.
+  when let Ok(d) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
+  let dport = tcp.local_port(d)
+  let cut = task.spawn { -> task.deadline(time.ms(300)) { -> http.serve(d, slow) } }
+  let dclient = task.spawn { ->
+    match http.get("http://127.0.0.1:{dport}/") {
+      Ok(r) -> "{r.status}"
+      Err(e) -> Error.message(e)
+    }
+  }
+  time.sleep(time.ms(100))
+  tcp.close_listener(d)
+  println(task.join(dclient))
+  println(task.join(cut))
+}
+

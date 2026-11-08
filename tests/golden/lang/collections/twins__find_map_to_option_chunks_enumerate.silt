@@ -1,0 +1,25 @@
+-- list.find_map stops at the first Some, result.to_option, list.chunks
+-- and stream.enumerate: each the twin of a function a sibling type has.
+import int
+import list
+import result
+import stream
+
+fn main() {
+  let first = list.find_map(["a", "2", "x", "3"]) { s ->
+    println("called with {s}")
+    int.parse(s) |> result.to_option
+  }
+  println(first)
+  println(list.find_map([1, 2]) { _ -> None })
+  println(list.find_map([]) { x -> Some(x) })
+  println(result.to_option(Ok(5)))
+  println(result.to_option(Err("no")))
+  println(list.chunks([1, 2, 3, 4, 5], 2))
+  println(list.chunks([1, 2, 3], 3))
+  println(list.chunks([1, 2], 5))
+  println(list.chunks([], 3))
+  println(stream.collect(stream.enumerate(stream.from_list(["a", "b", "c"]))))
+  println(stream.collect(stream.enumerate(stream.from_list([]))))
+  println(stream.collect(stream.take(stream.enumerate(stream.repeat(7)), 2)))
+}

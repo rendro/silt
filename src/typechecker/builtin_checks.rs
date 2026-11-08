@@ -398,6 +398,17 @@ impl TypeChecker {
                 && (args.is_empty()
                     || self.holds_open_vars(ty)
                     || free_vars_in(ty).into_iter().any(|v| !self.held_by_param(v)));
+            // (A CSV row is text: there is no JSON to give an impl.)
+            if !family.honours_impls() && self.has_decode_impl(head) {
+                return refusal(
+                    Code::Undecodable,
+                    format!(
+                        "`{builtin_name}` cannot decode `{type_name}`: its `json.Decode` impl \
+                         reads JSON, and a row of `{builtin_name}` is text"
+                    ),
+                    record_help,
+                );
+            }
             if self.has_decode_impl(head) && !open {
                 // (Of impls for some instantiations, none for this one,
                 // known in full: a parameter holding a type gave it,
@@ -459,6 +470,8 @@ impl TypeChecker {
             if enum_type && !family.decodes_enums() {
                 let help = match self.tables.is_generic(head) {
                     true => generic_help.to_string(),
+                    // (A family that gives no impl a value: a record.)
+                    false if !family.honours_impls() => record_help.to_string(),
                     false => format!(
                         "declare a record type, or write a `json.Decode` impl for `{}`",
                         self.written_type(head)
@@ -503,6 +516,10 @@ impl TypeChecker {
                 "which grows with every level".to_string()
             } else if found.part == found.field_type {
                 "which has no decoder".to_string()
+            } else if found.part.starts_with("a ") || found.part.starts_with("an ") {
+                // (What a family has no form for, said in words: `a list`
+                // in a cell of a CSV row.)
+                format!("and {} has no decoder", found.part)
             } else {
                 format!("and `{}` has no decoder", found.part)
             };
@@ -587,12 +604,20 @@ impl TypeChecker {
         // them as the type of a record's field.
         if !is_primitive {
             let accepted = decoding.type_arguments(str::to_string);
-            let decoded = (family.leaves().iter()).any(|leaf| leaf.name() == type_name);
+            let decoded = (family.leaves().iter()).any(|leaf| leaf.name() == type_name)
+                || [crate::typeinfo::ty::INSTANT, crate::typeinfo::ty::DURATION].contains(&head.id);
             let help = match decoded {
-                true => format!(
-                    "a decoder decodes a `{type_name}` as the type of a record's field: \
-                     `type R {{ at: {type_name} }}`"
-                ),
+                true => {
+                    // (A field named as what it holds.)
+                    let field = match head.id == crate::typeinfo::ty::DURATION {
+                        true => "timeout",
+                        false => "at",
+                    };
+                    format!(
+                        "a decoder decodes a `{type_name}` as the type of a record's field: \
+                         `type R {{ {field}: {type_name} }}`"
+                    )
+                }
                 false => family.type_argument_help().to_string(),
             };
             return refusal(
@@ -695,6 +720,12 @@ impl TypeChecker {
         };
         match (leaf, decoded_parts(part), part) {
             (Some(leaf), ..) if family.decodes(leaf) => None,
+            // The records of time a decoder reads back as records.
+            (None, None, Type::Generic(t, args))
+                if args.is_empty() && (t.id == bt::INSTANT || t.id == bt::DURATION) =>
+            {
+                None
+            }
             (None, Some(parts), _) => (parts.into_iter())
                 .find_map(|inner| self.part_refusal(builtin, decoding, whole, inner, owner, span)),
             // A record or enum type of the program.

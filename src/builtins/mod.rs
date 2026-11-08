@@ -11,6 +11,7 @@ pub(crate) mod common;
 pub mod concurrency;
 pub mod core;
 pub mod crypto;
+pub mod csv;
 pub(crate) mod data;
 pub(crate) mod decode;
 pub mod encoding;

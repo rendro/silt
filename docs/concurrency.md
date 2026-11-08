@@ -549,7 +549,9 @@ keeps going:
   `main` returns. That holds for a task that waits in I/O as well
   (`tcp.accept`, `io.read_line`): once it is cancelled nobody waits for
   the operation, which then counts for nothing. A server started with
-  `http.serve` ends when the task that called it is cancelled.
+  `http.serve` ends when the task that called it is cancelled, or when
+  its listener is closed (`tcp.close_listener`), once it has answered the
+  requests in flight.
 
 ```silt
 import channel

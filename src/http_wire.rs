@@ -74,8 +74,17 @@ pub const CHUNK_LINE_MAX: usize = 4 * 1024;
 pub const CHUNK_FRAMING_MAX: usize = 1024 * 1024;
 
 /// The most handlers that are called at a time. A request beyond it
-/// is answered 503.
+/// waits for one to return, in a queue of at most [`QUEUED_MAX`]
+/// requests, for at most [`QUEUED_TIME`].
 pub const HANDLERS_MAX: usize = 128;
+
+/// The most requests that wait for a handler. A request beyond it is
+/// answered 503 at once. (A request that waits holds its connection's
+/// task and the body it brought, which [`BODIES_MAX`] bounds.)
+pub const QUEUED_MAX: usize = 1024;
+
+/// How long a request waits for a handler before it is answered 503.
+pub const QUEUED_TIME: Duration = Duration::from_secs(5);
 
 /// How long the server waits for the head of a request, from when it
 /// starts to wait (the connection was accepted, or the response

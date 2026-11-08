@@ -392,6 +392,10 @@ fn type_value_parts(value: &Value) -> (&str, FieldType) {
                 // checker gives a decoder a generic one only at its
                 // arguments (`Applied`, above).
                 (Shape::Record(_), id) if !info.is_builtin() => FieldType::Record(id),
+                // (The records of time a decoder reads back as records.)
+                (Shape::Record(_), id) if id == ty::INSTANT || id == ty::DURATION => {
+                    FieldType::Record(id)
+                }
                 (Shape::Enum(_), id) if !info.is_builtin() => FieldType::Enum(id),
                 _ => FieldType::Unsupported(info.name.clone()),
             };
@@ -608,6 +612,7 @@ pub mod ty {
     pub const TASK_ERROR: TypeId = TypeId(DefId(34));
     pub const SELECTED: TypeId = TypeId(DefId(35));
     pub const JSON_VALUE: TypeId = TypeId(DefId(36));
+    pub const CSV_ERROR: TypeId = TypeId(DefId(37));
 
     /// The type of the run time's own marker value, which no program
     /// can name: an id past any definition.
@@ -680,6 +685,10 @@ pub mod bv {
     pub const ENCODING_OTHER: BuiltinVariant = BuiltinVariant::new(ty::ENCODING_ERROR, 2);
     pub const UUID_INVALID: BuiltinVariant = BuiltinVariant::new(ty::UUID_ERROR, 0);
     pub const UUID_OTHER: BuiltinVariant = BuiltinVariant::new(ty::UUID_ERROR, 1);
+    pub const CSV_SYNTAX: BuiltinVariant = BuiltinVariant::new(ty::CSV_ERROR, 0);
+    pub const CSV_TYPE_MISMATCH: BuiltinVariant = BuiltinVariant::new(ty::CSV_ERROR, 1);
+    pub const CSV_MISSING_FIELD: BuiltinVariant = BuiltinVariant::new(ty::CSV_ERROR, 2);
+    pub const CSV_OTHER: BuiltinVariant = BuiltinVariant::new(ty::CSV_ERROR, 3);
     pub const TASK_TIMEOUT: BuiltinVariant = BuiltinVariant::new(ty::TASK_ERROR, 0);
     pub const TASK_OTHER: BuiltinVariant = BuiltinVariant::new(ty::TASK_ERROR, 1);
     pub const HTTP_CONNECT: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 0);
@@ -770,6 +779,7 @@ pub const RUNTIME_BUILTIN_TYPES: &[&str] = &[
     "TaskError",
     "Selected",
     "Value",
+    "CsvError",
 ];
 
 /// The variants of the builtin handle types a builtin builds as variants;
@@ -820,6 +830,19 @@ fn builtin_types() -> &'static [Arc<TypeInfo>] {
                             .collect(),
                     ),
                     None => match records.get(name) {
+                        // An Instant and a Duration are decoded as the
+                        // records of one Int they are written as.
+                        Some(fields)
+                            if [ty::INSTANT, ty::DURATION]
+                                .iter()
+                                .any(|id| id.0.0 as usize == k) =>
+                        {
+                            Shape::Record(
+                                (fields.iter())
+                                    .map(|field| ((*field).to_string(), FieldType::Int))
+                                    .collect(),
+                            )
+                        }
                         Some(fields) => Shape::Record(
                             fields
                                 .iter()
@@ -967,7 +990,7 @@ mod tests {
         assert_eq!(fields(ty::RESPONSE), ["status", "body", "headers"]);
         assert_eq!(
             fields(ty::REQUEST),
-            ["method", "path", "query", "headers", "body"]
+            ["method", "path", "query", "headers", "body", "peer"]
         );
         assert_eq!(fields(ty::NOTIFICATION), ["channel", "payload", "pid"]);
         assert_eq!(fields(ty::FILE_STAT).len(), 9);
@@ -1073,6 +1096,10 @@ mod tests {
             (bv::ENCODING_OTHER, "Other"),
             (bv::UUID_INVALID, "Invalid"),
             (bv::UUID_OTHER, "Other"),
+            (bv::CSV_SYNTAX, "Syntax"),
+            (bv::CSV_TYPE_MISMATCH, "TypeMismatch"),
+            (bv::CSV_MISSING_FIELD, "MissingField"),
+            (bv::CSV_OTHER, "Other"),
             (bv::TASK_TIMEOUT, "Timeout"),
             (bv::TASK_OTHER, "Other"),
             (bv::HTTP_CONNECT, "Connect"),

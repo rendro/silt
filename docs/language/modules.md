@@ -361,6 +361,7 @@ your editor. The built-in modules:
 | `stream` | Lazy iterators backed by tasks and channels |
 | `uuid` | UUID generation and parsing |
 | `process` | The running process: `process.exit` |
+| `csv` | Comma-separated values: `csv.parse` into records, `csv.split_line` |
 
 The types and enums of a built-in module are its members like any
 other: `time.Weekday` and `time.Monday`, `channel.Message(v)` and

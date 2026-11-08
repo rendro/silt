@@ -1,0 +1,26 @@
+-- time.parse_instant: %#z reads +hh, +hhmm and +hh:mm; %::z reads +hh:mm:ss;
+-- %:::z reads +hh; each reads Z. %z and %:z say that +hh needs minutes, and
+-- the range of an Instant is said to the nanosecond.
+import time
+fn main() {
+  let b = "%Y-%m-%dT%H:%M:%S"
+  for_each([
+    ("2026-11-01T08:00:00+02", "%#z"), ("2026-11-01T08:00:00+0200", "%#z"), ("2026-11-01T08:00:00+02:00", "%#z"), ("2026-11-01T06:00:00Z", "%#z"),
+    ("2026-11-01T08:00:00+02:00:00", "%::z"), ("2026-11-01T06:00:00Z", "%::z"), ("2026-11-01T08:00:30+02:00:30", "%::z"), ("2026-11-01T08:00:00+02:00", "%::z"),
+    ("2026-11-01T08:00:00+02:60:00", "%::z"), ("2026-11-01T08:00:00+02:60", "%:z"),
+    ("2026-11-01T08:00:00+02", "%:::z"), ("2026-11-01T06:00:00Z", "%:::z"),
+    ("2026-11-01T08:00:00+02", "%z"), ("2026-11-01T08:00:00+02", "%:z"), ("2026-11-01T08:00:00+0x", "%#z"),
+    ("2262-04-11T23:47:17Z", "%:z"), ("1677-09-21T00:12:43Z", "%:z"),
+  ], b)
+  println(time.parse_instant("2026-11-01", "%Y-%m-%d%::z"))
+  println(time.parse_instant("2026-11-01", "%Y-%m-%d%#z"))
+}
+fn for_each(xs: List((String, String)), b: String) -> () {
+  match xs {
+    [] -> ()
+    [(s, z), ..rest] -> {
+      println("{s} {z}: {time.parse_instant(s, "{b}{z}")}")
+      for_each(rest, b)
+    }
+  }
+}

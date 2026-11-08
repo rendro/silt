@@ -129,6 +129,7 @@ type may have these types:
 - `Int`, `Float`, `String`, `Bool`
 - `Bytes`, as the field, in an `Option` or in a `List` (a `bytea` column)
 - `time.Date`, `time.Time`, `time.DateTime`
+- `time.Instant` and `time.Duration`, from a `json` or `jsonb` column as `json.parse` reads them
 - `json.Value`, any column as the table's last column says
 - `List(T)`, `Option(T)`, `Map(String, T)`
 - tuples, such as `(Int, String)`

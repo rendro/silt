@@ -59,8 +59,8 @@ Comparison operators (`<`, `>`, `==`) work correctly on all time types.
 
 ## Errors
 
-`time.date`, `time.time`, `time.parse`, `time.parse_date`, `time.format` and
-`time.format_date` return `Result(T, TimeError)`. The enum is intentionally
+`time.date`, `time.time`, `time.parse`, `time.parse_date`,
+`time.parse_instant`, `time.format` and `time.format_date` return `Result(T, TimeError)`. The enum is intentionally
 small — calendar validation, a text that does not match its pattern and a
 pattern that is no format are the structural failure modes:
 
@@ -89,6 +89,7 @@ yields a rendered string when variant branching isn't needed.
 | `format_date` | `(Date, String) -> Result(String, TimeError)` | Format date with strftime pattern |
 | `parse` | `(String, String) -> Result(DateTime, TimeError)` | Parse string into datetime with strftime pattern |
 | `parse_date` | `(String, String) -> Result(Date, TimeError)` | Parse string into date with strftime pattern |
+| `parse_instant` | `(String, String) -> Result(Instant, TimeError)` | Parse string with a UTC offset (`%z`, `%:z`, or `Z`) into the instant it names |
 | `add_days` | `(Date, Int) -> Date` | Add/subtract days from a date |
 | `add_months` | `(Date, Int) -> Date` | Add/subtract months, clamping to end-of-month |
 | `add` | `(Instant, Duration) -> Instant` | Add duration to an instant |
@@ -304,7 +305,8 @@ Parses a string into a `DateTime` using a strftime pattern.
 
 A pattern that `time.format` refuses, `time.parse` refuses too: an unknown
 specifier, or one of a time zone (`%z`), is `Err(InvalidFormat(why))`; no
-offset is read and dropped. The pattern also has to give a date and a time
+offset is read and dropped (`time.parse_instant` reads a text with an
+offset). The pattern also has to give a date and a time
 of day. One that cannot, whatever the text, is `Err(InvalidFormat(why))`: a
 pattern without a time of day (`"%Y-%m-%d"`: use `time.parse_date`),
 without a date, with a 12-hour clock and no `%p`, or an empty one. That
@@ -357,6 +359,58 @@ import time
 fn main() {
   let d = time.parse_date("2024-07-04", "%Y-%m-%d")
   println(d) -- Ok(2024-07-04)
+}
+```
+
+
+## `time.parse_instant`
+
+```
+time.parse_instant(s: String, pattern: String) -> Result(Instant, TimeError)
+```
+
+Parses a string that names an instant by its UTC offset, such as
+`2026-11-01T08:00:00+02:00` or `2026-11-01T06:00:00Z` in a JSON log, into
+that `Instant`. The pattern has a date, a time of day and an offset, and
+every offset also reads `Z` (or `z`) for UTC:
+
+| Specifier | Reads |
+|-----------|-------|
+| `%z` | `+0200`, and `+02:00` |
+| `%:z` | `+02:00`, and `+0200` |
+| `%::z` | `+02:00:00`, with seconds |
+| `%:::z` | `+02`, and `+0200` or `+02:00` |
+| `%#z` | any of `+02`, `+0200` and `+02:00` (a specifier for reading only) |
+
+`%z` and `%:z` want hours and minutes: `+02` by them is
+`Err(ParseFormat(...))` that says so (`the UTC offset at byte 19 needs hours
+and minutes (+hh:mm or +hhmm)`). `%+` reads RFC 3339 whole, and `%s`
+(seconds since the epoch) names an instant without an offset.
+`time.to_datetime(i, 0)` gives the UTC date and time of the instant.
+
+A pattern without an offset is `Err(InvalidFormat(why))` whatever the
+text, as a pattern without a time of day is for `time.parse`:
+`time.parse_instant(s, "%Y-%m-%dT%H:%M:%S")` is
+`Err(InvalidFormat("the fields of '%Y-%m-%dT%H:%M:%S' do not make a UTC offset (%z or %:z): no text read by it is a time.Instant"))`.
+So is a time zone's name (`%Z`): it is not read, since the name of a zone
+is no offset. Otherwise the errors are those of `time.parse`, naming an
+`instant`: a text that does not match is `Err(ParseFormat(msg))`
+(`expected the UTC offset at byte 19, the end of the text`), and a field,
+an offset of 24 hours or more, a leap second or an instant outside what an
+`Instant` holds (1677-09-21T00:12:43.145224192Z to
+2262-04-11T23:47:16.854775807Z) is `Err(OutOfRange(msg))`.
+
+```silt
+import time
+
+fn main() {
+  let pattern = "%Y-%m-%dT%H:%M:%S%:z"
+  match time.parse_instant("2026-11-01T08:00:00+02:00", pattern) {
+    Ok(at) -> println(time.to_datetime(at, 0)) -- 2026-11-01T06:00:00
+    Err(e) -> println(Error.message(e))
+  }
+  let utc = time.parse_instant("2026-11-01T06:00:00Z", pattern)
+  println(utc == time.parse_instant("2026-11-01T08:00:00+02:00", pattern)) -- true
 }
 ```
 

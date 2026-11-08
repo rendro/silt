@@ -40,6 +40,7 @@ fn module_call(module: &str) -> Option<Option<&'static str>> {
         "encoding" => "encoding.url_encode(\"a b\")",
         "stream" => "stream.from_list([1])",
         "uuid" => "uuid.nil()",
+        "csv" => "csv.split_line(\"a,b\")",
         // The call ends the program: the line that says it ran comes
         // first, and the exit's code 0 is the run's.
         "process" => "{\n    println(\"OK:process\")\n    process.exit(0)\n  }",

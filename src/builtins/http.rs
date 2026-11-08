@@ -17,7 +17,7 @@ use super::typed::{Arg, Bytes, Map, TcpListener, unsound};
 #[cfg(feature = "http")]
 use crate::runtime::handle::{Taken, TaskHandle, TcpListenerHandle, TcpStreamHandle};
 #[cfg(feature = "http")]
-use crate::runtime::sync::{Arm, Cell, Fired, Wait};
+use crate::runtime::sync::{Arm, Cell, Fired, Wait, Wake};
 use crate::typeinfo::bv;
 #[cfg(feature = "http")]
 use crate::typeinfo::{BuiltinVariant, ty};
@@ -65,6 +65,7 @@ fn make_http_request_value(
     query: &str,
     headers: crate::value::Map,
     body: Vec<u8>,
+    peer: &str,
 ) -> Value {
     Value::builtin_record(
         ty::REQUEST,
@@ -74,6 +75,7 @@ fn make_http_request_value(
             ("query", Value::String(query.into())),
             ("headers", Value::Map(headers)),
             ("body", Value::Bytes(Arc::new(body))),
+            ("peer", Value::String(peer.into())),
         ],
     )
 }
@@ -767,8 +769,24 @@ struct Server {
     handler: Value,
     /// Whose the tasks of the connections are: whoever serves.
     owner: u64,
-    /// How many handlers are being called.
+    /// How many handlers are being called. (Changed under the lock of
+    /// `queue`: a handler that returns hands its place to the request
+    /// that waits longest.)
     handlers: AtomicUsize,
+    /// The requests that wait for a handler, oldest first: each is
+    /// told by its cell that it has one ([`Waiting`]).
+    queue: Mutex<std::collections::VecDeque<Arc<Cell<()>>>>,
+    /// Who wakes a request that is given a handler.
+    scheduler: std::sync::Weak<crate::scheduler::Scheduler>,
+    /// The listener was closed: the server takes no connection more, and
+    /// ends when the requests in flight have been answered
+    /// ([`Server::drain`]).
+    draining: AtomicBool,
+    /// Completed when the drain begins: a connection that waits for its
+    /// next request stops waiting then.
+    drain_begun: Arc<Cell<()>>,
+    /// Completed when the drain is over: the last connection has ended.
+    drained: Arc<Cell<()>>,
     /// How many bytes of bodies the server holds for requests that no
     /// handler has yet ([`wire::BODIES_MAX`]).
     bodies: AtomicUsize,
@@ -777,26 +795,108 @@ struct Server {
     conns: Mutex<Option<HashMap<usize, Arc<TaskHandle>>>>,
 }
 
+/// What a request is given when it asks for a handler.
+#[cfg(feature = "http")]
+enum Admitted {
+    /// A handler: it is called now.
+    Called(Called),
+    /// A place in the queue: the cell is completed when a handler is
+    /// handed to it.
+    Queued(Arc<Cell<()>>),
+    /// Nothing: the queue is full.
+    Full,
+}
+
 #[cfg(feature = "http")]
 impl Server {
-    /// Count one more handler as being called; `None` at the bound.
-    fn call(self: &Arc<Self>) -> Option<Called> {
-        let mut handlers = self.handlers.load(Ordering::Acquire);
-        loop {
-            if handlers >= wire::HANDLERS_MAX {
-                return None;
-            }
-            let counted = self.handlers.compare_exchange_weak(
-                handlers,
-                handlers + 1,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            );
-            match counted {
-                Ok(_) => return Some(Called(self.clone())),
-                Err(now) => handlers = now,
-            }
+    /// A handler for a request, if one is free and no request waits
+    /// for one; else a place in the queue, if it has one.
+    fn admit(self: &Arc<Self>) -> Admitted {
+        let mut queue = self.queue.lock();
+        // (A request that stopped waiting has left its cell complete.)
+        queue.retain(|waiting| waiting.get().is_none());
+        if queue.is_empty() && self.handlers.load(Ordering::Acquire) < wire::HANDLERS_MAX {
+            self.handlers.fetch_add(1, Ordering::AcqRel);
+            return Admitted::Called(Called(self.clone()));
         }
+        if queue.len() >= wire::QUEUED_MAX {
+            return Admitted::Full;
+        }
+        let cell = Cell::new();
+        queue.push_back(cell.clone());
+        Admitted::Queued(cell)
+    }
+
+    /// Whether the server drains: its listener was closed.
+    fn draining(&self) -> bool {
+        self.draining.load(Ordering::SeqCst)
+    }
+
+    /// Begin the drain: a connection answers the request it has and
+    /// ends, one that waits for a request ends now. `true` if no
+    /// connection is left.
+    fn drain(&self) -> bool {
+        self.draining.store(true, Ordering::SeqCst);
+        self.complete(&self.drain_begun);
+        let left = self.conns.lock().as_ref().map_or(0, HashMap::len);
+        if left == 0 {
+            self.complete(&self.drained);
+        }
+        left == 0
+    }
+
+    /// Complete `cell`, of a request that waits: `false` if it is
+    /// complete already.
+    fn complete(&self, cell: &Cell<()>) -> bool {
+        match self.scheduler.upgrade() {
+            Some(scheduler) => cell.complete((), scheduler.wake()).is_ok(),
+            None => cell.complete((), &Nobody).is_ok(),
+        }
+    }
+}
+
+/// Who wakes nobody: the program has ended.
+#[cfg(feature = "http")]
+struct Nobody;
+
+#[cfg(feature = "http")]
+impl Wake for Nobody {
+    fn wake(&self, _task: crate::runtime::sync::TaskId) {}
+}
+
+/// A request that waits for a handler, until it is told whether it has
+/// one ([`Waiting::settle`]) or is dropped: then a handler that was
+/// handed to it is handed on.
+#[cfg(feature = "http")]
+struct Waiting {
+    server: Arc<Server>,
+    cell: Option<Arc<Cell<()>>>,
+}
+
+#[cfg(feature = "http")]
+impl Waiting {
+    /// The handler that was handed to the request, if one was: else
+    /// the request stops waiting, and none is handed to it after.
+    ///
+    /// The cell is completed once: by a handler that returns and hands
+    /// its place on, or here. Whoever completes it first decides.
+    fn settle(&mut self) -> Option<Called> {
+        let cell = self.cell.take()?;
+        let _queue = self.server.queue.lock();
+        match self.server.complete(&cell) {
+            // It stops waiting.
+            true => None,
+            // A handler was handed to it.
+            false => Some(Called(self.server.clone())),
+        }
+    }
+}
+
+#[cfg(feature = "http")]
+impl Drop for Waiting {
+    fn drop(&mut self) {
+        // (A handler handed to it is handed on as it is dropped.)
+        drop(self.settle());
     }
 }
 
@@ -848,6 +948,14 @@ struct Called(Arc<Server>);
 #[cfg(feature = "http")]
 impl Drop for Called {
     fn drop(&mut self) {
+        // The place goes to the request that waits longest, if one
+        // does: the count stays.
+        let mut queue = self.0.queue.lock();
+        while let Some(waiting) = queue.pop_front() {
+            if self.0.complete(&waiting) {
+                return;
+            }
+        }
         self.0.handlers.fetch_sub(1, Ordering::AcqRel);
     }
 }
@@ -915,8 +1023,9 @@ impl Got {
     /// request with a body of megabytes is not built on a worker of
     /// the scheduler.
     /// `held` is what was counted for the request's body: it goes
-    /// with a request for the handler, and ends here otherwise.
-    fn of(next: wire::Next, held: Held) -> Got {
+    /// with a request for the handler, and ends here otherwise. `peer`
+    /// is the client's address (`ip:port`).
+    fn of(next: wire::Next, held: Held, peer: &str) -> Got {
         let request = match next {
             wire::Next::Request(request) => request,
             wire::Next::Refused(refused) => return Got::Refused(refused.status, refused.why),
@@ -949,7 +1058,7 @@ impl Got {
         let headers = header_map(headers);
         // The body is the bytes that arrived.
         Got::Request(
-            make_http_request_value(method, path, query, headers, request.body),
+            make_http_request_value(method, path, query, headers, request.body, peer),
             reply,
             held,
         )
@@ -1046,6 +1155,36 @@ fn handler_response(vm: &Vm, returned: &Value, reply: Reply) -> Vec<u8> {
     }
 }
 
+/// `addr` as a client's address is written: an IPv4 client of a
+/// dual-stack listener (`[::]`) by its IPv4 address (`127.0.0.1:5000`),
+/// not the IPv6 form the system gives it (`[::ffff:127.0.0.1]:5000`).
+#[cfg(feature = "http")]
+fn canonical(addr: std::net::SocketAddr) -> std::net::SocketAddr {
+    std::net::SocketAddr::new(addr.ip().to_canonical(), addr.port())
+}
+
+/// What a connection that reads a request does when the server begins
+/// to drain.
+#[cfg(feature = "http")]
+#[derive(Debug, PartialEq, Eq)]
+enum OnDrain {
+    /// Nothing of a request has come: the connection ends.
+    End,
+    /// A request has begun to come: it is read on, in the time its head
+    /// or its body has left (not a new one), and answered.
+    ReadOn,
+}
+
+/// [`OnDrain`] for a connection that is reading a body (`in_body`), or
+/// whose request's head has `begun`.
+#[cfg(feature = "http")]
+fn on_drain(in_body: bool, begun: bool) -> OnDrain {
+    match in_body || begun {
+        true => OnDrain::ReadOn,
+        false => OnDrain::End,
+    }
+}
+
 /// The task of one connection: read a request, call the handler with
 /// it, send what the handler returns, and go on with the next request
 /// while the connection is kept.
@@ -1067,6 +1206,9 @@ struct Conn {
     /// handler fails.
     handle: Arc<TaskHandle>,
     stream: Arc<TcpStreamHandle>,
+    /// The client's address, `ip:port` (`[::1]:port` for IPv6): the
+    /// `peer` of each request.
+    peer: Arc<str>,
     /// Reads the requests; it holds what was read beyond the end of
     /// one. Locked by the operation that reads.
     reader: Arc<Mutex<wire::Reader<Reads>>>,
@@ -1095,6 +1237,17 @@ enum ConnState {
         got: Arc<Mutex<Option<Got>>>,
         /// Its head is there, and its body is being read.
         in_body: bool,
+        /// Completed when the head is there and a body follows.
+        body_follows: Arc<Cell<()>>,
+        /// When the wait for the head, or for the body, is over.
+        deadline: Option<Duration>,
+    },
+    /// The request waits for a handler (see [`wire::QUEUED_MAX`]).
+    Queued {
+        request: Value,
+        reply: Reply,
+        held: Held,
+        waiting: Waiting,
     },
     /// The handler is being called.
     Calling { reply: Reply, called: Called },
@@ -1149,7 +1302,7 @@ impl Conn {
         let mut reader = self.reader.try_lock()?;
         // (A body that is among the bytes read is held already:
         // nothing is counted for it.)
-        let got = |next| Got::of(next, Held(self.server.clone(), 0));
+        let got = |next| Got::of(next, Held(self.server.clone(), 0), &self.peer);
         if let Some(next) = reader.buffered() {
             return Some(got(next));
         }
@@ -1168,19 +1321,27 @@ impl Conn {
     fn serve(&mut self, vm: &mut Vm, got: Got) -> Go {
         self.served += 1;
         match got {
-            Got::Request(request, reply, held) => match self.server.call() {
-                Some(called) => {
-                    // The body is the handler's now.
-                    drop(held);
-                    self.state = ConnState::Calling { reply, called };
-                    Go::Step(vm.call(self.server.handler.clone(), [request]))
-                }
+            Got::Request(request, reply, held) => match self.server.admit() {
+                Admitted::Called(called) => self.call(vm, request, reply, held, called),
                 // As many handlers as the server calls at a time are
-                // being called.
-                None => {
-                    let bytes = plain_response(vm, 503, wire::reason(503), reply);
-                    self.send(vm, bytes, reply.then())
+                // being called: the request waits for one, for a while.
+                Admitted::Queued(cell) => {
+                    let waiting = Waiting {
+                        server: self.server.clone(),
+                        cell: Some(cell.clone()),
+                    };
+                    let wait = Wait::new(vec![Arm::Cell(cell)])
+                        .deadline(vm.runtime.io.deadline_after(wire::QUEUED_TIME));
+                    self.state = ConnState::Queued {
+                        request,
+                        reply,
+                        held,
+                        waiting,
+                    };
+                    Go::Step(Step::Park(wait))
                 }
+                // And as many requests wait as may.
+                Admitted::Full => self.unavailable(vm, reply),
             },
             Got::Answered(status, why, reply) => {
                 let bytes = plain_response(vm, status, why, reply);
@@ -1193,6 +1354,27 @@ impl Conn {
             // Nothing more comes.
             Got::End => Conn::END,
         }
+    }
+
+    /// Call the handler with `request`, with the place `called`.
+    fn call(
+        &mut self,
+        vm: &mut Vm,
+        request: Value,
+        reply: Reply,
+        held: Held,
+        called: Called,
+    ) -> Go {
+        // The body is the handler's now.
+        drop(held);
+        self.state = ConnState::Calling { reply, called };
+        Go::Step(vm.call(self.server.handler.clone(), [request]))
+    }
+
+    /// Answer 503: no handler for the request.
+    fn unavailable(&mut self, vm: &mut Vm, reply: Reply) -> Go {
+        let bytes = plain_response(vm, 503, wire::reason(503), reply);
+        self.send(vm, bytes, reply.then())
     }
 
     /// Read the next request: the task waits for it.
@@ -1214,6 +1396,7 @@ impl Conn {
         );
         let (result, announced) = (got.clone(), body_follows.clone());
         let (server, pending) = (self.server.clone(), self.pending.clone());
+        let peer = self.peer.clone();
         let scheduler = vm.scheduler().clone();
         let op = vm.io_op(
             not_served,
@@ -1250,16 +1433,20 @@ impl Conn {
                 let next = reader.lock().next(&mut before_body);
                 // What the reader had counted for the body.
                 let held = Held(server, pending.swap(0, Ordering::AcqRel));
-                *result.lock() = Some(Got::of(next, held));
+                *result.lock() = Some(Got::of(next, held, &peer));
                 Value::Unit
             },
         );
-        let mut wait = op.wait(vm, Limit::Own(wire::REQUEST_TIME));
-        wait.arms.push(Arm::Cell(body_follows));
+        let deadline = vm.runtime.io.deadline_after(wire::REQUEST_TIME);
+        let mut wait = op.wait(vm, Limit::None).deadline(deadline);
+        wait.arms.push(Arm::Cell(body_follows.clone()));
+        wait.arms.push(Arm::Cell(self.server.drain_begun.clone()));
         self.state = ConnState::Reading {
             op,
             got,
             in_body: false,
+            body_follows,
+            deadline,
         };
         Step::Park(wait)
     }
@@ -1344,6 +1531,7 @@ impl Conn {
             server: self.server.clone(),
             handle: handle.clone(),
             stream: self.stream.clone(),
+            peer: self.peer.clone(),
             reader: self.reader.clone(),
             begun: self.begun.clone(),
             pending: self.pending.clone(),
@@ -1370,6 +1558,8 @@ impl Conn {
             // A task that was cancelled (the server has ended)
             // serves no further request.
             ConnState::Next if self.handle.is_cancelled() => Conn::END,
+            // The server drains: the request answered was the last one.
+            ConnState::Next if self.server.draining() => Conn::END,
             // Its turn is over: the other tasks have theirs before the
             // next request of this connection.
             ConnState::Next if self.served >= Conn::TURN => {
@@ -1381,14 +1571,47 @@ impl Conn {
                 Some(got) => self.serve(vm, got),
                 None => Go::Step(self.read(vm)),
             },
-            ConnState::Reading { op, got, in_body } => match vm.woken()? {
+            ConnState::Reading {
+                op,
+                got,
+                in_body,
+                body_follows,
+                deadline,
+            } => match vm.woken()? {
+                // The server drains. A connection that waits for a request
+                // ends; one whose request has begun to come reads it on,
+                // in the time it had (what is left of the head's, or the
+                // body's), and it is answered.
+                Fired::Arm(2, _) => match on_drain(in_body, self.begun.load(Ordering::SeqCst)) {
+                    OnDrain::End => {
+                        drop(op);
+                        Conn::END
+                    }
+                    OnDrain::ReadOn => {
+                        let mut wait = op.wait(vm, Limit::None).deadline(deadline);
+                        if !in_body {
+                            wait.arms.push(Arm::Cell(body_follows.clone()));
+                        }
+                        self.state = ConnState::Reading {
+                            op,
+                            got,
+                            in_body,
+                            body_follows,
+                            deadline,
+                        };
+                        Go::Step(Step::Park(wait))
+                    }
+                },
                 // The head is there: the body has its own time.
                 Fired::Arm(1, _) if !in_body => {
-                    let wait = op.wait(vm, Limit::Own(wire::TRANSFER_TIME));
+                    let deadline = vm.runtime.io.deadline_after(wire::TRANSFER_TIME);
+                    let wait = op.wait(vm, Limit::None).deadline(deadline);
                     self.state = ConnState::Reading {
                         op,
                         got,
                         in_body: true,
+                        body_follows,
+                        deadline,
                     };
                     Go::Step(Step::Park(wait))
                 }
@@ -1424,9 +1647,33 @@ impl Conn {
                     }
                 },
             },
+            // A handler was handed to the request, or its time to wait
+            // is over (or both at once: the handler counts).
+            ConnState::Queued {
+                request,
+                reply,
+                held,
+                mut waiting,
+            } => {
+                vm.woken()?;
+                match waiting.settle() {
+                    Some(called) => self.call(vm, request, reply, held, called),
+                    None => self.unavailable(vm, reply),
+                }
+            }
             ConnState::Calling { reply, called } => {
                 // The handler has returned.
                 drop(called);
+                // (A server that drains closes the connection after it,
+                // and tells the client so.)
+                let reply = match self.server.draining() {
+                    true => Reply {
+                        close: true,
+                        keep_alive: false,
+                        ..reply
+                    },
+                    false => reply,
+                };
                 let bytes = handler_response(vm, &input, reply);
                 self.send(vm, bytes, reply.then())
             }
@@ -1518,7 +1765,7 @@ impl crate::vm::Native for Conn {
             ConnState::Answering { bytes, .. } => {
                 let _ = self.stream.write_in_turn(&bytes);
             }
-            ConnState::Reading { in_body: true, .. } => {
+            ConnState::Reading { in_body: true, .. } | ConnState::Queued { .. } => {
                 let bytes = plain_response(vm, 503, wire::reason(503), unavailable);
                 let _ = self.stream.write_in_turn(&bytes);
             }
@@ -1540,16 +1787,24 @@ impl Drop for Conn {
         // connection.
         self.state = ConnState::Ended;
         self.stream.shut_down();
-        if let Some(conns) = self.server.conns.lock().as_mut() {
-            conns.remove(&self.handle.id);
+        let left = match self.server.conns.lock().as_mut() {
+            Some(conns) => {
+                conns.remove(&self.handle.id);
+                conns.len()
+            }
+            None => 0,
+        };
+        // The last connection of a server that drains: the drain is over.
+        if left == 0 && self.server.draining() {
+            self.server.complete(&self.server.drained);
         }
     }
 }
 
 /// `http.serve` itself, in the task that called it: accept a
-/// connection, start its task, accept the next. It ends when its task
-/// does (cancelled, or dropped at the end of the program), and the
-/// connections with it.
+/// connection, start its task, accept the next. It ends when its listener
+/// is closed (it returns), or when its task does (cancelled, or dropped at
+/// the end of the program), and the connections with it.
 #[cfg(feature = "http")]
 struct Serve {
     server: Arc<Server>,
@@ -1570,6 +1825,9 @@ enum ServeState {
     /// An accept failed: the next one comes after
     /// [`wire::ACCEPT_RETRY`].
     Retrying,
+    /// The listener was closed: the server waits for the requests in
+    /// flight to be answered, then returns.
+    Draining,
 }
 
 #[cfg(feature = "http")]
@@ -1589,7 +1847,14 @@ impl Serve {
             Held::reserve(&server, &counted, bytes)
         });
         let begun = reader.begun();
+        // (A connection whose address cannot be read, already reset by
+        // its client, has an empty one: it reads nothing either.)
+        let peer: Arc<str> = match stream.peer_addr() {
+            Ok(addr) => canonical(addr).to_string().into(),
+            Err(_) => "".into(),
+        };
         child.push_native_frame(Box::new(Conn {
+            peer,
             server: self.server.clone(),
             handle: handle.clone(),
             reader: Arc::new(Mutex::new(reader)),
@@ -1618,6 +1883,11 @@ impl crate::vm::Native for Serve {
             ServeState::Retrying => {
                 vm.woken()?;
             }
+            // Every connection has ended.
+            ServeState::Draining => {
+                vm.woken()?;
+                return Ok(Step::Done(Value::Unit));
+            }
             ServeState::Accepting(op) => {
                 let fired = vm.woken()?;
                 // A server whose task was cancelled takes no connection
@@ -1642,6 +1912,18 @@ impl crate::vm::Native for Serve {
                     _ => None,
                 };
                 let Some(stream) = stream else {
+                    // The listener was closed: the server takes no
+                    // connection more, and returns when the requests in
+                    // flight have been answered. (A task cancelled
+                    // meanwhile ends it at once, see `Drop`.)
+                    if self.listener.is_closed() {
+                        if self.server.drain() {
+                            return Ok(Step::Done(Value::Unit));
+                        }
+                        self.state = ServeState::Draining;
+                        let wait = Wait::new(vec![Arm::Cell(self.server.drained.clone())]);
+                        return Ok(Step::Park(wait));
+                    }
                     // No descriptor left, no thread for the accept: the
                     // server stays, and tries again in a moment.
                     if !self.failing {
@@ -1735,6 +2017,10 @@ builtins! {
     // was written there.
     #[cfg(feature = "http")]
     fn serve(vm, listener: TcpListener, handler: &Value) -> Result<Step, VmError> {
+        // A closed listener has nothing to serve.
+        if listener.is_closed() {
+            return Ok(Step::Done(Value::Unit));
+        }
         // The listener is this server's alone while it serves: two that
         // accept on one listener would take each other's connections.
         let Some(token) = listener.serve(vm.cancelled.clone()) else {
@@ -1748,6 +2034,11 @@ builtins! {
                 // The tasks of the connections belong to whoever serves.
                 owner: vm.scheduler().current_owner(),
                 handlers: AtomicUsize::new(0),
+                queue: Mutex::default(),
+                scheduler: Arc::downgrade(vm.scheduler()),
+                draining: AtomicBool::new(false),
+                drain_begun: Cell::new(),
+                drained: Cell::new(),
                 bodies: AtomicUsize::new(0),
                 conns: Mutex::new(Some(HashMap::new())),
             }),
@@ -1839,10 +2130,17 @@ mod http_response_tests {
         assert_eq!((status, body), (204, &[0, 0xff, b'd'][..]));
         assert_eq!(record.fields()[0], Value::Int(204));
 
-        let request = make_http_request_value(bv::POST, "/jobs", "n=1", headers(), b"go".to_vec());
+        let request = make_http_request_value(
+            bv::POST,
+            "/jobs",
+            "n=1",
+            headers(),
+            b"go".to_vec(),
+            "[::1]:5000",
+        );
         assert_eq!(
             request.to_string(),
-            "Request {method: POST, path: /jobs, query: n=1, headers: #{\"accept\": */*}, body: bytes(67 6f, length: 2)}"
+            "Request {method: POST, path: /jobs, query: n=1, headers: #{\"accept\": */*}, body: bytes(67 6f, length: 2), peer: [::1]:5000}"
         );
         let Value::Record(record) = &request else {
             panic!("a record");
@@ -1930,6 +2228,11 @@ mod serve_tests {
             handler: Value::Unit,
             owner: 0,
             handlers: AtomicUsize::new(0),
+            queue: Mutex::default(),
+            scheduler: Arc::downgrade(vm.scheduler()),
+            draining: AtomicBool::new(false),
+            drain_begun: Cell::new(),
+            drained: Cell::new(),
             bodies: AtomicUsize::new(0),
             conns: Mutex::new(Some(HashMap::new())),
         });
@@ -1953,6 +2256,113 @@ mod serve_tests {
             listener.take_kept().is_some(),
             "the connection is not the listener's"
         );
+    }
+}
+
+#[cfg(all(test, feature = "http"))]
+mod queue_tests {
+    use super::*;
+
+    /// A client's address is written as itself: an IPv4 client of a
+    /// dual-stack listener by its IPv4 address.
+    #[test]
+    fn a_peer_s_address_is_its_canonical_form() {
+        let shown = |s: &str| canonical(s.parse().expect("an address")).to_string();
+        assert_eq!(shown("[::ffff:127.0.0.1]:5000"), "127.0.0.1:5000");
+        assert_eq!(shown("[::1]:5000"), "[::1]:5000");
+        assert_eq!(shown("10.0.0.2:80"), "10.0.0.2:80");
+    }
+
+    /// When the server begins to drain, a connection that has nothing of
+    /// a request ends, and one whose request has begun reads it on: in
+    /// the time it had (the wait keeps its deadline, `Reading`'s
+    /// `deadline`), so a head that trickles still gets its 408 when
+    /// the head's time is over, not a body's time later.
+    #[test]
+    fn a_drain_ends_an_idle_connection_and_reads_a_begun_request_on() {
+        assert_eq!(on_drain(false, false), OnDrain::End);
+        assert_eq!(on_drain(false, true), OnDrain::ReadOn);
+        assert_eq!(on_drain(true, true), OnDrain::ReadOn);
+    }
+
+    fn server() -> Arc<Server> {
+        Arc::new(Server {
+            handler: Value::Unit,
+            owner: 0,
+            handlers: AtomicUsize::new(0),
+            queue: Mutex::default(),
+            scheduler: std::sync::Weak::new(),
+            draining: AtomicBool::new(false),
+            drain_begun: Cell::new(),
+            drained: Cell::new(),
+            bodies: AtomicUsize::new(0),
+            conns: Mutex::new(Some(HashMap::new())),
+        })
+    }
+
+    fn waiting(server: &Arc<Server>, admitted: Admitted) -> (Arc<Cell<()>>, Waiting) {
+        let Admitted::Queued(cell) = admitted else {
+            panic!("a place in the queue");
+        };
+        let waiting = Waiting {
+            server: server.clone(),
+            cell: Some(cell.clone()),
+        };
+        (cell, waiting)
+    }
+
+    /// The handlers a server calls at a time are taken first, then the
+    /// places of its queue; a request beyond both is refused. A handler
+    /// that returns is handed to the request that waits longest, which
+    /// has it when it settles; one that stopped waiting is passed over,
+    /// and a request that is dropped with a handler hands it on. With
+    /// nobody waiting, the handler is free again.
+    #[test]
+    fn a_request_beyond_the_handlers_waits_in_order_and_one_beyond_the_queue_is_refused() {
+        let server = server();
+        let mut called: Vec<Called> = (0..wire::HANDLERS_MAX)
+            .map(|_| match server.admit() {
+                Admitted::Called(called) => called,
+                _ => panic!("a free handler"),
+            })
+            .collect();
+        let mut queued: Vec<(Arc<Cell<()>>, Waiting)> = (0..wire::QUEUED_MAX)
+            .map(|_| waiting(&server, server.admit()))
+            .collect();
+        assert!(matches!(server.admit(), Admitted::Full), "a full queue");
+        // The oldest is handed the handler that returns; the count stays.
+        drop(called.pop());
+        assert!(queued[0].0.get().is_some() && queued[1].0.get().is_none());
+        assert_eq!(server.handlers.load(Ordering::SeqCst), wire::HANDLERS_MAX);
+        let (_, mut first) = queued.remove(0);
+        let handed = first.settle().expect("the handler was handed to it");
+        // The next stops waiting (its time is over): passed over.
+        let (_, mut gave_up) = queued.remove(0);
+        assert!(gave_up.settle().is_none(), "it had no handler");
+        drop(handed);
+        assert!(
+            queued[0].0.get().is_some(),
+            "the one after it has the handler"
+        );
+        // Dropped with the handler: it hands it on.
+        let (_, dropped) = queued.remove(0);
+        drop(dropped);
+        assert!(queued[0].0.get().is_some(), "handed on");
+        // A request that comes now waits behind the others: a newcomer
+        // does not jump the queue. The handler goes down the line as
+        // the ones before it are dropped, and reaches it.
+        let newcomer = waiting(&server, server.admit());
+        drop(queued);
+        assert!(
+            newcomer.0.get().is_some(),
+            "the newcomer has the handler last"
+        );
+        // Nobody waits: a handler that returns is free again.
+        let before = server.handlers.load(Ordering::SeqCst);
+        drop(newcomer);
+        drop(called.pop());
+        assert_eq!(server.handlers.load(Ordering::SeqCst), before - 2);
+        assert!(matches!(server.admit(), Admitted::Called(_)));
     }
 }
 

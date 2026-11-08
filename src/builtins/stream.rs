@@ -1038,6 +1038,31 @@ builtins! {
         )
     }
 
+    // Each element with its index, counting from 0 as
+    // `list.enumerate` does.
+    fn enumerate(vm, ch: Chan) -> Result<Step, VmError> {
+        let in_ch = ch.clone();
+        let mut index: i64 = 0;
+        stage(
+            vm,
+            "stream.enumerate",
+            vec![in_ch],
+            DRAINS,
+            move |got| {
+                Ok(match got {
+                    Got::Start | Got::Emitted => Next::Take(0),
+                    Got::Value(_, v) => {
+                        let pair = Value::tuple(vec![Value::Int(index), v]);
+                        index = index.saturating_add(1);
+                        Next::Emit(pair)
+                    }
+                    Got::End => Next::Done(Value::Unit),
+                    Got::Returned(_) | Got::Io(_) => return unexpected(),
+                })
+            },
+        )
+    }
+
     fn filter(vm, ch: Chan, pred: &Value) -> Result<Step, VmError> {
         let (in_ch, fn_val) = (ch.clone(), pred.clone());
         let mut held = None;

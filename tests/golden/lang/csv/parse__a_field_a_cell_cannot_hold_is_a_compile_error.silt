@@ -1,0 +1,39 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: field `xs` has type `List(Int)`, and a list has no decoder
+-- stderr-contains: field `i` has type `Inner`, and a record type has no decoder
+-- stderr-contains: field `c` has type `Color`, which has no decoder
+-- stderr-contains: field `v` has type `json.Value`, which has no decoder
+-- stderr-contains: and an Option in an Option has no decoder
+-- stderr-contains: and a map has no decoder
+-- stderr-contains: its `json.Decode` impl reads JSON, and a row of `csv.parse` is text
+-- stderr-contains: `csv.parse` cannot decode `Int`: its type argument must be a record type
+-- stderr-contains: `csv.parse` cannot decode `Color`: it is an enum type
+-- A field of a record given to csv.parse is a leaf or an Option of one; a
+-- type argument is a record type without a json.Decode impl.
+import csv
+import json
+type Inner { x: Int }
+type Color { Red, Green }
+type A { xs: List(Int) }
+type B { i: Inner }
+type C { c: Color }
+type D { v: json.Value }
+type E { o: Option(Option(Int)) }
+type F { m: Map(String, Int) }
+type W { n: Int }
+trait json.Decode for W {
+  fn decode(value: json.Value) -> Result(W, json.JsonError) { Ok(W { n: 1 }) }
+}
+fn main() {
+  let _ = csv.parse("", A)
+  let _ = csv.parse("", B)
+  let _ = csv.parse("", C)
+  let _ = csv.parse("", D)
+  let _ = csv.parse("", E)
+  let _ = csv.parse("", F)
+  let _ = csv.parse("", W)
+  let _ = csv.parse("", Int)
+  let _ = csv.parse("", List(Inner))
+  let _ = csv.parse("", Color)
+}

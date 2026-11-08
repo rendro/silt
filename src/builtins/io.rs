@@ -331,6 +331,17 @@ builtins! {
         })
     }
 
+    // The bytes of the file as they are: a file that is no UTF-8 is
+    // read too (`bytes.to_string_lossy`).
+    fn read_bytes(vm, path: &str) -> Result<Step, VmError> {
+        let path = path.to_string();
+        vm.io("io.read_bytes", io_unknown_err, Leave::RunsOut, move |_| {
+            result(std::fs::read(&path), &path, |bytes| {
+                Value::Bytes(std::sync::Arc::new(bytes))
+            })
+        })
+    }
+
     fn write_file(vm, path: &str, contents: &str) -> Result<Step, VmError> {
         let (path, contents) = (path.to_string(), contents.to_string());
         vm.io("io.write_file", io_unknown_err, Leave::RunsOut, move |_| {

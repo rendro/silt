@@ -1,0 +1,34 @@
+-- csv.split_line splits one line at its commas outside quotes, reads ""
+-- as one quote in a quoted field, keeps a quote inside an unquoted field,
+-- drops one line break at the end, and refuses an unclosed quote, text
+-- after a closing quote and a line break inside the line, with the byte.
+import csv
+import list
+import string
+
+fn show(line: String) -> String {
+  match csv.split_line(line) {
+    Ok(fields) -> "{list.length(fields)}: <{string.join(fields, "|")}>"
+    Err(e) -> Error.message(e)
+  }
+}
+
+fn main() {
+  println(show("a,b,c"))
+  println(show("1,\"Smith, John\",\"say \"\"hi\"\"\""))
+  println(show(""))
+  println(show(",,"))
+  println(show(" a , b "))
+  println(show("\"two\nlines\",x"))
+  println(show("5\" disk,a\"b"))
+  println(show("a,b\n"))
+  println(show("a,b\r\n"))
+  println(show("\"\",\"\""))
+  println(show("a,\"bc"))
+  println(show("\"a\"b,c"))
+  println(show("a,b\nc,d"))
+  match csv.split_line("\"x") {
+    Err(csv.Syntax(why, at)) -> println("Syntax({why}, {at})")
+    _ -> println("not a Syntax error")
+  }
+}

@@ -127,6 +127,12 @@ builtins! {
         }
     }
 
+    // Each sequence that is no UTF-8 (a byte that starts no character,
+    // or a character cut short) is one U+FFFD, as Unicode recommends.
+    fn to_string_lossy(b: Bytes) -> Value {
+        Value::String(String::from_utf8_lossy(b).as_ref().into())
+    }
+
     fn from_hex(s: &str) -> Value {
         if !s.len().is_multiple_of(2) {
             return err_hex(format!(

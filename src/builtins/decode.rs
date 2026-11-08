@@ -172,13 +172,18 @@ pub(crate) fn parse_datetime(s: &str) -> Result<NaiveDateTime, std::string::Stri
 /// The record type `ty` a decoder builds, with its fields. `caller` is
 /// the builtin on whose behalf the type is looked up (`json.parse`,
 /// `toml.parse_list`, ...); it starts the error message. A builtin
-/// record type (`Date`) has no decoder.
+/// record type (`Date`) has no decoder as a record, but for `Instant` and
+/// `Duration`, which are read back as the records they are written as.
 pub(crate) fn decodable_record<'t>(
     caller: &str,
     ty: &'t TypeInfo,
 ) -> Result<&'t [(std::string::String, FieldType)], VmError> {
     match &ty.shape {
-        Shape::Record(fields) if !ty.is_builtin() => Ok(fields),
+        Shape::Record(fields)
+            if !ty.is_builtin() || [ty::INSTANT, ty::DURATION].contains(&ty.id) =>
+        {
+            Ok(fields)
+        }
         _ => Err(VmError::new(format!(
             "{caller}: unknown record type '{}'",
             ty.name

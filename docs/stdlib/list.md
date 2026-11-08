@@ -10,7 +10,7 @@ Functions for working with ordered, immutable lists (`List(a)`). Lists use
 `[...]` literal syntax and support the range operator `1..5`.
 
 See also [result / option](result-option.md) for the return types of
-`find`, `head`, `last`, `get`, and `filter_map`; [stream](stream.md) for
+`find`, `find_map`, `head`, `last`, `get`, and `filter_map`; [stream](stream.md) for
 channel-backed lazy pipelines over the same combinator names.
 
 ## Summary
@@ -20,6 +20,7 @@ channel-backed lazy pipelines over the same combinator names.
 | `all` | `(List(a), Fn(a) -> Bool) -> Bool` | True if predicate holds for every element |
 | `any` | `(List(a), Fn(a) -> Bool) -> Bool` | True if predicate holds for at least one element |
 | `append` | `(List(a), a) -> List(a)` | Add an element to the end |
+| `chunks` | `(List(a), Int) -> List(List(a))` | Group elements into lists of `n` |
 | `concat` | `(List(a), List(a)) -> List(a)` | Concatenate two lists |
 | `contains` | `(List(a), a) -> Bool where a: Equal` | Check if element is in list |
 | `drop` | `(List(a), Int) -> List(a)` | Remove first n elements |
@@ -28,6 +29,7 @@ channel-backed lazy pipelines over the same combinator names.
 | `filter` | `(List(a), Fn(a) -> Bool) -> List(a)` | Keep elements matching predicate |
 | `filter_map` | `(List(a), Fn(a) -> Option(b)) -> List(b)` | Filter and transform in one pass |
 | `find` | `(List(a), Fn(a) -> Bool) -> Option(a)` | First element matching predicate |
+| `find_map` | `(List(a), Fn(a) -> Option(b)) -> Option(b)` | The first Some that f returns; f is not called after it |
 | `flat_map` | `(List(a), Fn(a) -> List(b)) -> List(b)` | Map then flatten |
 | `flatten` | `(List(List(a))) -> List(a)` | Flatten one level of nesting |
 | `fold` | `(List(a), b, Fn(b, a) -> b) -> b` | Reduce to a single value |
@@ -137,6 +139,26 @@ import list
 fn main() {
   let xs = [1, 2, 3] |> list.append(4)
   println(xs) -- [1, 2, 3, 4]
+}
+```
+
+
+## `list.chunks`
+
+```
+list.chunks(xs: List(a), n: Int) -> List(List(a))
+```
+
+Splits the list into lists of `n` elements, in order; the last one is
+shorter when the elements run out. An empty list gives `[]`. An `n` below
+1 is a runtime error (`list.chunks: n must be positive`), as for
+`stream.chunks`.
+
+```silt
+import list
+
+fn main() {
+  println(list.chunks([1, 2, 3, 4, 5], 2)) -- [[1, 2], [3, 4], [5]]
 }
 ```
 
@@ -291,6 +313,29 @@ import list
 fn main() {
   let first_gt_2 = list.find([1, 2, 3, 4]) { x -> x > 2 }
   println(first_gt_2) -- Some(3)
+}
+```
+
+
+## `list.find_map`
+
+```
+list.find_map(xs: List(a), f: Fn(a) -> Option(b)) -> Option(b)
+```
+
+Calls `f` on each element in order and returns the first `Some` it gives,
+or `None` if it gives `None` for every element. `f` is not called on the
+elements after that `Some`, so this is the lazy form of `filter_map` then
+`head`.
+
+```silt
+import int
+import list
+import result
+
+fn main() {
+  let first = list.find_map(["x", "12", "7"]) { s -> int.parse(s) |> result.to_option }
+  println(first) -- Some(12)
 }
 ```
 

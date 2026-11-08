@@ -1,0 +1,13 @@
+[P {name: Smith, John, age: 42, score: 1.5, ok: true, born: 1984-03-01, note: None, extra: None}, P {name: Ada, age: 36, score: 2.0, ok: false, born: 1815-12-10, note: Some(two
+lines), extra: None}]
+csv missing field: score
+csv type mismatch: expected Float, got 'x' at line 2, column score
+csv type mismatch: expected Bool, got 'yes' at line 2, column ok
+invalid date '2020-13-01' (expected YYYY-MM-DD): input is out of range at line 2, column born
+csv type mismatch: expected Int, got an empty cell at line 2, column age
+csv syntax error at byte 23: line 2: a row of 4 fields, and the header has 5
+csv syntax error at byte 0: line 1: the header names the column `name` twice
+csv syntax error at byte 23: line 2: a quoted field is not closed
+Ok([])
+csv missing field: age
+Ok([P {name: B, age: 1, score: 1.0, ok: true, born: 2020-01-01, note: None, extra: None}])

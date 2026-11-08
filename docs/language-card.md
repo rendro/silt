@@ -320,6 +320,7 @@ io.args() -> List(String)
 io.eprint(value: a) -> () where a: Display
 io.eprintln(value: a) -> () where a: Display
 io.inspect(x: a) -> String
+io.read_bytes(path: String) -> Result(Bytes, IoError)
 io.read_file(path: String) -> Result(String, IoError)
 io.read_line() -> Result(String, IoError)
 io.write_file(path: String, contents: String) -> Result((), IoError)
@@ -402,6 +403,7 @@ type Step(a) { Stop(a), Continue(a) }
 list.all(xs: List(a), f: Fn(a) -> Bool) -> Bool
 list.any(xs: List(a), f: Fn(a) -> Bool) -> Bool
 list.append(xs: List(a), elem: a) -> List(a)
+list.chunks(xs: List(a), n: Int) -> List(List(a))
 list.concat(xs: List(a), ys: List(a)) -> List(a)
 list.contains(xs: List(a), elem: a) -> Bool where a: Equal
 list.drop(xs: List(a), n: Int) -> List(a)
@@ -410,6 +412,7 @@ list.enumerate(xs: List(a)) -> List((Int, a))
 list.filter(xs: List(a), f: Fn(a) -> Bool) -> List(a)
 list.filter_map(xs: List(a), f: Fn(a) -> Option(b)) -> List(b)
 list.find(xs: List(a), f: Fn(a) -> Bool) -> Option(a)
+list.find_map(xs: List(a), f: Fn(a) -> Option(b)) -> Option(b)
 list.flat_map(xs: List(a), f: Fn(a) -> List(b)) -> List(b)
 list.flatten(xs: List(List(a))) -> List(a)
 list.fold(xs: List(a), init: b, f: Fn(b, a) -> b) -> b
@@ -476,6 +479,7 @@ result.is_err(r: Result(a, b)) -> Bool
 result.is_ok(r: Result(a, b)) -> Bool
 result.map(r: Result(a, b), f: Fn(a) -> c) -> Result(c, b)
 result.map_err(r: Result(a, b), f: Fn(b) -> c) -> Result(a, c)
+result.to_option(r: Result(a, b)) -> Option(a)
 result.unwrap_or(r: Result(a, b), default: a) -> a
 ```
 
@@ -639,6 +643,7 @@ time.nanos(n: Int) -> Duration
 time.now() -> Instant
 time.parse(s: String, pattern: String) -> Result(DateTime, TimeError)
 time.parse_date(s: String, pattern: String) -> Result(Date, TimeError)
+time.parse_instant(s: String, pattern: String) -> Result(Instant, TimeError)
 time.seconds(n: Int) -> Duration
 time.since(from: Instant, to: Instant) -> Duration
 time.sleep(duration: Duration) -> ()
@@ -654,7 +659,7 @@ time.weekday(date: Date) -> Weekday
 ```
 type Method { GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS }
 type Response { status: Int, body: Bytes, headers: Map(String, String) }
-type Request { method: Method, path: String, query: String, headers: Map(String, String), body: Bytes }
+type Request { method: Method, path: String, query: String, headers: Map(String, String), body: Bytes, peer: String }
 type HttpError { Connect(String), Tls(String), Timeout, InvalidUrl(String), InvalidResponse(String), ClosedEarly, Other(String) }
 http.get(url: String) -> Result(Response, HttpError)  -- cargo feature `http`
 http.parse_query(query: String) -> Result(Map(String, List(String)), EncodingError)
@@ -735,6 +740,7 @@ bytes.to_base64(b: Bytes) -> String
 bytes.to_hex(b: Bytes) -> String
 bytes.to_list(b: Bytes) -> List(Int)
 bytes.to_string(b: Bytes) -> Result(String, BytesError)
+bytes.to_string_lossy(b: Bytes) -> String
 ```
 
 ### crypto
@@ -769,6 +775,7 @@ type TcpListener  -- opaque
 type TcpStream  -- opaque
 tcp.accept(listener: TcpListener) -> Result(TcpStream, TcpError)
 tcp.close(stream: TcpStream) -> ()
+tcp.close_listener(listener: TcpListener) -> ()
 tcp.connect(addr: String) -> Result(TcpStream, TcpError)
 tcp.connect_tls(addr: String, hostname: String) -> Result(TcpStream, TcpError)  -- cargo feature `tcp-tls`
 tcp.listen(addr: String) -> Result(TcpListener, TcpError)
@@ -793,6 +800,7 @@ stream.count(ch: Channel(a)) -> Int
 stream.dedup(ch: Channel(a)) -> Channel(a) where a: Equal
 stream.drop(ch: Channel(a), n: Int) -> Channel(a)
 stream.drop_while(ch: Channel(a), pred: Fn(a) -> Bool) -> Channel(a)
+stream.enumerate(ch: Channel(a)) -> Channel((Int, a))
 stream.file_chunks(path: String, size: Int) -> Channel(Result(Bytes, IoError))
 stream.file_lines(path: String) -> Channel(Result(String, IoError))
 stream.filter(ch: Channel(a), pred: Fn(a) -> Bool) -> Channel(a)
@@ -831,4 +839,12 @@ uuid.v7() -> String
 
 ```
 process.exit(code: Int) -> Never
+```
+
+### csv
+
+```
+type CsvError { Syntax(String, Int), TypeMismatch(String, String), MissingField(String), Other(String) }
+csv.parse(text: String, type a) -> Result(List(a), CsvError)
+csv.split_line(line: String) -> Result(List(String), CsvError)
 ```

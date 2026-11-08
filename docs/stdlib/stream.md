@@ -60,6 +60,7 @@ once per line.
 | `drop_while` | `(Channel(a), Fn(a) -> Bool) -> Channel(a)` |
 | `chunks` | `(Channel(a), Int) -> Channel(List(a))` |
 | `scan` | `(Channel(a), b, Fn(b, a) -> b) -> Channel(b)` |
+| `enumerate` | `(Channel(a)) -> Channel((Int, a))` |
 | `dedup` | `(Channel(a)) -> Channel(a) where a: Equal` |
 | `buffered` | `(Channel(a), Int) -> Channel(a)` |
 
@@ -67,6 +68,9 @@ once per line.
 takes values before they are asked for, whoever reads it, up to `n` of
 them, so the stages before it can run while its reader is still busy with
 an earlier value. `buffered(ch, 0)` reads nothing ahead.
+
+`enumerate(ch)` pairs each value with its index, counting from 0 as
+`list.enumerate` does: `(0, a)`, `(1, b)`, ...
 
 ### Combinators
 
@@ -121,6 +125,69 @@ fn main() {
     },
   )
   println(xs)
+}
+```
+
+### Writing a stream of Result rows to a file
+
+`stream.write_to_file` takes a channel of `Bytes`. A source that can fail
+on the way, such as `postgres.stream` (a channel of `Result(Row,
+PostgresError)`), is written by a relay task: it receives the rows, sends
+the text of each `Ok` row on as bytes, and stops at the first `Err`,
+which it returns; the file is written while the relay runs, so the rows
+are never all held. Closing the source at the `Err` stops what feeds it.
+
+```silt
+import bytes
+import channel
+import io
+import result
+import stream
+import string
+import task
+
+type ExportError {
+  BadRow(String),
+  Write(io.IoError),
+}
+
+-- Writes each Ok row to `path` as a line, as the rows come, and stops at
+-- the first Err: Ok of the number of rows written, or the Err.
+fn write_rows(rows: Channel(Result(String, String)), path: String) -> Result(Int, ExportError) {
+  let lines = channel.new(64)
+  let relay = task.spawn { ->
+    let sent = loop n = 0 {
+      match channel.receive(rows) {
+        None -> Ok(n)
+        Some(Err(e)) -> {
+          channel.close(rows)
+          Err(BadRow(e))
+        }
+        Some(Ok(row)) -> {
+          channel.send(lines, bytes.from_string("{row}\n"))
+          loop(n + 1)
+        }
+      }
+    }
+    channel.close(lines)
+    sent
+  }
+  match stream.write_to_file(lines, path) {
+    Ok(()) -> task.join(relay)
+    Err(e) -> {
+      task.cancel(relay)
+      Err(Write(e))
+    }
+  }
+}
+
+fn main() {
+  let good = stream.from_list([Ok("a,1"), Ok("b,2")])
+  println(write_rows(good, "out.csv")) -- Ok(2)
+  let bad = stream.from_list([Ok("a,1"), Err("row 2: no price"), Ok("c,3")])
+  println(write_rows(bad, "out.csv")) -- Err(BadRow(row 2: no price))
+  -- The rows before the Err are in the file.
+  println(io.read_file("out.csv") |> result.map(string.lines)) -- Ok([a,1])
 }
 ```
 
@@ -210,7 +277,10 @@ fn main() {
   not UTF-8 is an error of `file_lines` and `tcp_lines` alike, and their
   last item: the source ends there, and `tcp_lines` shuts its connection
   down. `file_lines` names the line and the path
-  (`InvalidInput("line 3 of app.log is not UTF-8")`). No byte is replaced. To change only the `Ok` values and pass each `Err(_)`
+  (`InvalidInput("line 3 of app.log is not UTF-8")`). No byte is replaced:
+  a program that wants the other lines of such a file reads it with
+  `io.read_bytes` and decodes it with `bytes.to_string_lossy`, which
+  writes U+FFFD for what is no UTF-8. To change only the `Ok` values and pass each `Err(_)`
   through, map with `result.map`:
   `ch |> stream.map { r -> result.map(r, f) }`.
 - **No async/await.** Stages are tasks of the silt scheduler; file and

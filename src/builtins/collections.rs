@@ -494,6 +494,23 @@ pub(crate) mod list {
             )
         }
 
+        // The first `Some` that f returns: f is not called on the
+        // elements after it.
+        fn find_map(xs: List, f: &Value) -> Step {
+            iterate(
+                "list.find_map",
+                xs.clone(),
+                f.clone(),
+                (),
+                item_arg,
+                |_, _, found| match &found {
+                    Value::Variant(variant) if variant.is(bv::SOME) => stop(found),
+                    _ => next(),
+                },
+                |_| Ok(none()),
+            )
+        }
+
         fn any(xs: List, f: &Value) -> Step {
             iterate(
                 "list.any",
@@ -808,6 +825,21 @@ pub(crate) mod list {
         fn drop(xs: List, n: i64) -> Result<Value, VmError> {
             let count = natural("list.drop", "count", n)?;
             Ok(Value::List(xs.slice(count, xs.len())))
+        }
+
+        // The lists of `n` elements in order, the last one shorter if
+        // the elements run out; `n` below 1 is an error, as for
+        // `stream.chunks`.
+        fn chunks(xs: List, n: i64) -> Result<Vec<Value>, VmError> {
+            let Ok(n @ 1..) = usize::try_from(n) else {
+                return Err(VmError::new("list.chunks: n must be positive".into()));
+            };
+            xs.writable()?;
+            let len = xs.len();
+            let starts = (0..len).step_by(n);
+            Ok(starts
+                .map(|at| Value::List(xs.slice(at, at.saturating_add(n).min(len))))
+                .collect())
         }
 
         fn enumerate(xs: List) -> Result<Vec<Value>, VmError> {

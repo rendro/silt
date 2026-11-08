@@ -16,7 +16,7 @@ use crate::builtins::prelude;
 #[cfg(feature = "tcp")]
 use crate::builtins::tcp;
 use crate::builtins::{
-    applicative, bytes, concurrency, core, crypto, encoding, http, io, json, process, regex,
+    applicative, bytes, concurrency, core, crypto, csv, encoding, http, io, json, process, regex,
     stream, string, time, toml, uuid,
 };
 
@@ -78,6 +78,7 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn eprint(value: a) -> () where a: Display", "Print a value to stderr without trailing newline", io::eprint),
                 f("fn eprintln(value: a) -> () where a: Display", "Print a value to stderr with trailing newline", io::eprintln),
                 f("fn inspect(x: a) -> String", "Debug representation of any value", io::inspect),
+                f("fn read_bytes(path: String) -> Result(Bytes, IoError)", "Read entire file as bytes", io::read_bytes),
                 f("fn read_file(path: String) -> Result(String, IoError)", "Read entire file as string", io::read_file),
                 f("fn read_line() -> Result(String, IoError)", "Read one line from stdin", io::read_line),
                 f("fn write_file(path: String, contents: String) -> Result((), IoError)", "Write string to file", io::write_file),
@@ -172,6 +173,7 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn all(xs: List(a), f: Fn(a) -> Bool) -> Bool", "True if predicate holds for every element", list::all),
                 f("fn any(xs: List(a), f: Fn(a) -> Bool) -> Bool", "True if predicate holds for at least one element", list::any),
                 f("fn append(xs: List(a), elem: a) -> List(a)", "Add an element to the end", list::append),
+                f("fn chunks(xs: List(a), n: Int) -> List(List(a))", "Group elements into lists of `n`", list::chunks),
                 f("fn concat(xs: List(a), ys: List(a)) -> List(a)", "Concatenate two lists", list::concat),
                 f("fn contains(xs: List(a), elem: a) -> Bool where a: Equal", "Check if element is in list", list::contains),
                 f("fn drop(xs: List(a), n: Int) -> List(a)", "Remove first n elements", list::drop),
@@ -180,6 +182,7 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn filter(xs: List(a), f: Fn(a) -> Bool) -> List(a)", "Keep elements matching predicate", list::filter),
                 f("fn filter_map(xs: List(a), f: Fn(a) -> Option(b)) -> List(b)", "Filter and transform in one pass", list::filter_map),
                 f("fn find(xs: List(a), f: Fn(a) -> Bool) -> Option(a)", "First element matching predicate", list::find),
+                f("fn find_map(xs: List(a), f: Fn(a) -> Option(b)) -> Option(b)", "The first Some that f returns; f is not called after it", list::find_map),
                 f("fn flat_map(xs: List(a), f: Fn(a) -> List(b)) -> List(b)", "Map then flatten", list::flat_map),
                 f("fn flatten(xs: List(List(a))) -> List(a)", "Flatten one level of nesting", list::flatten),
                 f("fn fold(xs: List(a), init: b, f: Fn(b, a) -> b) -> b", "Reduce to a single value", list::fold),
@@ -248,6 +251,7 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn is_ok(r: Result(a, b)) -> Bool", "True if Ok", core::result::is_ok),
                 f("fn map(r: Result(a, b), f: Fn(a) -> c) -> Result(c, b)", "Transform the success value", core::result::map),
                 f("fn map_err(r: Result(a, b), f: Fn(b) -> c) -> Result(a, c)", "Transform the error", core::result::map_err),
+                f("fn to_option(r: Result(a, b)) -> Option(a)", "Some of the success value, None for an error", core::result::to_option),
                 f("fn unwrap_or(r: Result(a, b), default: a) -> a", "Extract value or use default", core::result::unwrap_or),
             ],
         },
@@ -434,6 +438,7 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn format_date(date: Date, pattern: String) -> Result(String, TimeError)", "Format date with strftime pattern", time::format_date),
                 f("fn parse(s: String, pattern: String) -> Result(DateTime, TimeError)", "Parse string into datetime with strftime pattern", time::parse),
                 f("fn parse_date(s: String, pattern: String) -> Result(Date, TimeError)", "Parse string into date with strftime pattern", time::parse_date),
+                f("fn parse_instant(s: String, pattern: String) -> Result(Instant, TimeError)", "Parse string with a UTC offset (`%z`, `%:z`, or `Z`) into the instant it names", time::parse_instant),
                 f("fn add_days(date: Date, days: Int) -> Date", "Add/subtract days from a date", time::add_days),
                 f("fn add_months(date: Date, months: Int) -> Date", "Add/subtract months, clamping to end-of-month", time::add_months),
                 f("fn add(instant: Instant, duration: Duration) -> Instant", "Add duration to an instant", time::add),
@@ -457,7 +462,7 @@ pub(super) fn modules() -> Vec<Module> {
             types: "\
                 pub type Method { GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS }\n\
                 pub type Response { status: Int, body: Bytes, headers: Map(String, String) }\n\
-                pub type Request { method: Method, path: String, query: String, headers: Map(String, String), body: Bytes }\n\
+                pub type Request { method: Method, path: String, query: String, headers: Map(String, String), body: Bytes, peer: String }\n\
                 pub type HttpError { Connect(String), Tls(String), Timeout, InvalidUrl(String), InvalidResponse(String), ClosedEarly, Other(String) }\n\
             ",
             derives: [("Response", &["Equal", "Hash", "Display"]), ("Request", &["Equal", "Hash", "Display"])],
@@ -553,6 +558,7 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn to_hex(b: Bytes) -> String", "Encode as lowercase hex", bytes::to_hex),
                 f("fn to_list(b: Bytes) -> List(Int)", "Materialize as a list of byte values", bytes::to_list),
                 f("fn to_string(b: Bytes) -> Result(String, BytesError)", "UTF-8 decode (errors on invalid UTF-8)", bytes::to_string),
+                f("fn to_string_lossy(b: Bytes) -> String", "UTF-8 decode, each invalid sequence as U+FFFD", bytes::to_string_lossy),
             ],
         },
         module! {
@@ -599,6 +605,7 @@ pub(super) fn modules() -> Vec<Module> {
             rows: [
                 f("fn accept(listener: TcpListener) -> Result(TcpStream, TcpError)", "Wait for an incoming connection (cooperative I/O)", tcp::accept),
                 f("fn close(stream: TcpStream) -> ()", "Shut the connection down: operations in flight on it return, later ones give `Err(Closed)`", tcp::close),
+                f("fn close_listener(listener: TcpListener) -> ()", "Stop listening: later connects are refused, a waiting accept gives `Err(Closed)`, `http.serve` on it answers what is in flight and returns", tcp::close_listener),
                 f("fn connect(addr: String) -> Result(TcpStream, TcpError)", "Open a TCP connection to `host:port` (cooperative I/O)", tcp::connect),
                 f("fn listen(addr: String) -> Result(TcpListener, TcpError)", "Bind a TCP listener to `host:port`", tcp::listen),
                 f("fn local_port(listener: TcpListener) -> Int", "The port the listener is bound to: the one the system chose for port `0`", tcp::local_port),
@@ -633,6 +640,7 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn drop_while(ch: Channel(a), pred: Fn(a) -> Bool) -> Channel(a)", "Skip elements until `pred` first rejects one", stream::drop_while),
                 f("fn chunks(ch: Channel(a), n: Int) -> Channel(List(a))", "Group elements into lists of `n`", stream::chunks),
                 f("fn scan(ch: Channel(a), init: b, f: Fn(b, a) -> b) -> Channel(b)", "Running fold: emit each accumulator", stream::scan),
+                f("fn enumerate(ch: Channel(a)) -> Channel((Int, a))", "Pair each element with its index, from 0", stream::enumerate),
                 f("fn dedup(ch: Channel(a)) -> Channel(a) where a: Equal", "Drop consecutive duplicates", stream::dedup),
                 f("fn buffered(ch: Channel(a), n: Int) -> Channel(a)", "Read up to `n` values ahead of the reader", stream::buffered),
                 f("fn merge(chs: List(Channel(a))) -> Channel(a)", "Interleave several streams as elements arrive", stream::merge),
@@ -667,6 +675,18 @@ pub(super) fn modules() -> Vec<Module> {
             page: "process.md",
             rows: [
                 f("fn exit(code: Int) -> Never", "End the program with an exit code", process::exit),
+            ],
+        },
+        module! {
+            name: "csv",
+            page: "csv.md",
+            types: "\
+                pub type CsvError { Syntax(String, Int), TypeMismatch(String, String), MissingField(String), Other(String) }\n\
+            ",
+            error: "CsvError" => csv::error_text,
+            rows: [
+                f("fn parse(text: String, type a) -> Result(List(a), CsvError)", "Every row of a text with a header as a record of the type, its fields by their columns' names", csv::parse).decodes(Decoding::CSV),
+                f("fn split_line(line: String) -> Result(List(String), CsvError)", "The fields of one line: quoted fields and `\"\"` escapes as RFC 4180 writes them", csv::split_line),
             ],
         },
     ]

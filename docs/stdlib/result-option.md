@@ -19,6 +19,7 @@ matching.
 | `is_ok` | `(Result(a, b)) -> Bool` | True if Ok |
 | `map` | `(Result(a, b), Fn(a) -> c) -> Result(c, b)` | Transform the success value |
 | `map_err` | `(Result(a, b), Fn(b) -> c) -> Result(a, c)` | Transform the error |
+| `to_option` | `(Result(a, b)) -> Option(a)` | Some of the success value, None for an error |
 | `unwrap_or` | `(Result(a, b), a) -> a` | Extract value or use default |
 
 
@@ -180,6 +181,26 @@ fn main() {
     Ok(s) -> println(s)
     Err(IoWrap(e)) -> println(Error.message(e))
   }
+}
+```
+
+
+## `result.to_option`
+
+```
+result.to_option(r: Result(a, b)) -> Option(a)
+```
+
+`Some(v)` for `Ok(v)`, `None` for an `Err`: the error is dropped. The
+reverse of `option.to_result`.
+
+```silt
+import int
+import result
+
+fn main() {
+  println(result.to_option(int.parse("42"))) -- Some(42)
+  println(result.to_option(int.parse("x"))) -- None
 }
 ```
 

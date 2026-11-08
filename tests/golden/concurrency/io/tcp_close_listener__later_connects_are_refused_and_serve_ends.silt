@@ -1,0 +1,65 @@
+-- timeout: 30
+-- requires-feature: http
+-- tcp.close_listener: a waiting accept and later ones are Err(Closed), a
+-- client that connects later is refused, close is idempotent, http.serve on
+-- the listener returns (also when it is closed already), and the port can be
+-- bound again.
+import bytes
+import http
+import task
+import tcp
+import time
+
+fn answer(_req: http.Request) -> http.Response {
+  http.Response { status: 200, body: bytes.from_string("hi"), headers: #{} }
+}
+
+fn said(r: Result(tcp.TcpStream, tcp.TcpError)) -> String {
+  match r {
+    Ok(_) -> "accepted"
+    Err(e) -> "Err({e})"
+  }
+}
+
+fn main() {
+  -- A waiting accept ends with Err(Closed).
+  when let Ok(l) = tcp.listen("127.0.0.1:0") else { panic("listen") }
+  let port = tcp.local_port(l)
+  let acceptor = task.spawn { -> tcp.accept(l) }
+  time.sleep(time.ms(100))
+  tcp.close_listener(l)
+  println(said(task.join(acceptor)))
+  println(said(tcp.accept(l)))
+  println(tcp.local_port(l) == port)
+  tcp.close_listener(l)
+  match tcp.connect("127.0.0.1:{port}") {
+    Ok(_) -> println("connected to a closed listener")
+    Err(tcp.Connect(_)) -> println("refused")
+    Err(e) -> println("not refused: {e}")
+  }
+  -- http.serve on it ends.
+  when let Ok(s) = tcp.listen("127.0.0.1:0") else { panic("listen") }
+  let sport = tcp.local_port(s)
+  let server = task.spawn { ->
+    http.serve(s, answer)
+    "serve returned"
+  }
+  match http.get("http://127.0.0.1:{sport}/") {
+    Ok(r) -> println(r.status)
+    Err(e) -> println(e)
+  }
+  tcp.close_listener(s)
+  println(task.join(server))
+  match tcp.connect("127.0.0.1:{sport}") {
+    Ok(_) -> println("connected to a closed listener")
+    Err(tcp.Connect(_)) -> println("refused")
+    Err(e) -> println("not refused: {e}")
+  }
+  println(http.serve(s, answer))
+  -- A new listener can bind the port again (that of the listener that took
+  -- no connection: a closed connection may hold the other one a while).
+  match tcp.listen("127.0.0.1:{port}") {
+    Ok(_) -> println("bound again")
+    Err(e) -> println(e)
+  }
+}

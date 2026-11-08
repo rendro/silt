@@ -65,9 +65,18 @@ impl ReadWrite for std::net::TcpStream {
 ///
 /// `http.serve` accepts in the same way, and has the listener to
 /// itself while it serves ([`TcpListenerHandle::serve`]).
+///
+/// A listener that is closed ([`TcpListenerHandle::close`]) accepts
+/// nothing more: its socket is closed as soon as no accept is in the OS
+/// call, and a client that connects then is refused.
 pub struct TcpListenerHandle {
     pub id: usize,
-    listener: std::net::TcpListener,
+    /// The socket; `None` once the listener is closed. An accept in the
+    /// OS call holds it until it returns.
+    listener: Mutex<Option<Arc<std::net::TcpListener>>>,
+    /// The address it was bound to, which a closed listener still says.
+    addr: std::io::Result<std::net::SocketAddr>,
+    closed: AtomicBool,
     accepting: Mutex<Accepting>,
     /// The accepts that wait their turn wait here.
     turn: parking_lot::Condvar,
@@ -85,6 +94,8 @@ pub enum Accepted {
     /// takes a connection from it, also not one that was waiting when
     /// the server started.
     Served,
+    /// The listener is closed.
+    Closed,
 }
 
 /// The mark of an `http.serve` on its listener.
@@ -113,7 +124,9 @@ impl TcpListenerHandle {
     pub fn new(id: usize, listener: std::net::TcpListener) -> Self {
         TcpListenerHandle {
             id,
-            listener,
+            addr: listener.local_addr(),
+            listener: Mutex::new(Some(Arc::new(listener))),
+            closed: AtomicBool::new(false),
             accepting: Mutex::default(),
             turn: parking_lot::Condvar::new(),
             served: Mutex::new(None),
@@ -122,7 +135,44 @@ impl TcpListenerHandle {
 
     /// The address the listener is bound to.
     pub fn local_addr(&self) -> std::io::Result<std::net::SocketAddr> {
-        self.listener.local_addr()
+        match &self.addr {
+            Ok(addr) => Ok(*addr),
+            Err(e) => Err(std::io::Error::new(e.kind(), e.to_string())),
+        }
+    }
+
+    /// Whether the listener is closed.
+    pub fn is_closed(&self) -> bool {
+        self.closed.load(AtomicOrdering::SeqCst)
+    }
+
+    /// Close the listener: no accept takes a connection from it any
+    /// more. An accept that waits returns [`Accepted::Closed`] (the one
+    /// in the OS call is woken as one that is given up is), the
+    /// connections kept for the next accept are closed, and the socket
+    /// is closed once no accept holds it, so a client that connects
+    /// after that is refused. Closing a closed listener does nothing.
+    pub fn close(&self) {
+        let mut accepting = self.accepting.lock();
+        if self.closed.swap(true, AtomicOrdering::SeqCst) {
+            return;
+        }
+        // (An accept that is in the OS call holds the socket: it is
+        // woken while the socket still listens, and drops it as it
+        // returns.)
+        let socket = self.listener.lock().take();
+        if accepting.current.is_some() {
+            self.wake_the_call(&mut accepting);
+        }
+        accepting.kept.clear();
+        drop(accepting);
+        drop(socket);
+        self.turn.notify_all();
+    }
+
+    /// The socket, for an accept; `None` once the listener is closed.
+    fn socket(&self) -> Option<Arc<std::net::TcpListener>> {
+        self.listener.lock().clone()
     }
 
     /// Whether an `http.serve` has the listener to itself: nothing
@@ -202,9 +252,13 @@ impl TcpListenerHandle {
         let foreign = |listener: &Self| !server && listener.is_served();
         let stopped = Arc::new(AtomicBool::new(false));
         let given_up = || stopped.load(AtomicOrdering::SeqCst) || wanted.gone();
+        let socket;
         {
             let mut accepting = self.accepting.lock();
             loop {
+                if self.is_closed() {
+                    return Ok(Accepted::Closed);
+                }
                 if foreign(self) {
                     return Ok(Accepted::Served);
                 }
@@ -223,18 +277,33 @@ impl TcpListenerHandle {
                 }
                 self.turn.wait(&mut accepting);
             }
+            // (Taken under the lock that `close` takes: a close either
+            // comes before, and the socket is gone, or after, and wakes
+            // this accept.)
+            let Some(taken) = self.socket() else {
+                return Ok(Accepted::Closed);
+            };
+            socket = taken;
             accepting.current = Some(Current {
                 op: wanted.id(),
                 stopped: stopped.clone(),
             });
         }
         let result = loop {
-            match self.listener.accept() {
+            match socket.accept() {
                 Ok((stream, peer)) => {
                     // Whoever wakes an accept holds this lock until the
                     // address of its connection is noted.
                     let mut accepting = self.accepting.lock();
                     let wake = accepting.wakes.iter().position(|addr| *addr == peer);
+                    // A client that came as the listener closed is
+                    // refused: its connection is closed.
+                    if self.is_closed() {
+                        if let Some(wake) = wake {
+                            accepting.wakes.swap_remove(wake);
+                        }
+                        break Ok(None);
+                    }
                     let Some(wake) = wake else {
                         if given_up() || foreign(self) || !wanted.claim() {
                             // A client's, and this accept is not to
@@ -263,11 +332,15 @@ impl TcpListenerHandle {
             }
         };
         if server && matches!(result, Ok(Some(_))) {
-            self.keep_the_ready();
+            self.keep_the_ready(&socket);
         }
         self.accepting.lock().current = None;
         self.turn.notify_all();
+        // The socket of a closed listener is closed here, if this
+        // accept held it last.
+        drop(socket);
         Ok(match result? {
+            None if self.is_closed() => Accepted::Closed,
             Some(stream) => Accepted::Conn(stream),
             // A server took the listener while this accept waited.
             None if foreign(self) => Accepted::Served,
@@ -277,15 +350,15 @@ impl TcpListenerHandle {
 
     /// Accept the connections that are ready, without waiting, and
     /// keep them. Called by the accept that has the turn.
-    fn keep_the_ready(&self) {
+    fn keep_the_ready(&self, socket: &std::net::TcpListener) {
         /// How many at a time: the accept returns with what it has.
         const AT_ONCE: usize = 256;
-        if self.listener.set_nonblocking(true).is_err() {
+        if socket.set_nonblocking(true).is_err() {
             return;
         }
         let mut taken = 0;
         while taken < AT_ONCE {
-            match self.listener.accept() {
+            match socket.accept() {
                 Ok((stream, peer)) => {
                     let mut accepting = self.accepting.lock();
                     match accepting.wakes.iter().position(|addr| *addr == peer) {
@@ -308,7 +381,7 @@ impl TcpListenerHandle {
                 Err(_) => break,
             }
         }
-        let _ = self.listener.set_nonblocking(false);
+        let _ = socket.set_nonblocking(false);
     }
 
     /// A connection that was kept for the next accept, if there is
@@ -330,11 +403,14 @@ impl TcpListenerHandle {
             use std::os::unix::io::AsRawFd;
             /// What Linux allows by default (`net.core.somaxconn`).
             const BACKLOG: libc::c_int = 4096;
+            let Some(socket) = self.socket() else {
+                return;
+            };
             // SAFETY: `listen` on a descriptor that this handle owns
             // and that is listening already changes the length of its
             // queue and nothing else; a failure leaves it as it was.
             unsafe {
-                let _ = libc::listen(self.listener.as_raw_fd(), BACKLOG);
+                let _ = libc::listen(socket.as_raw_fd(), BACKLOG);
             }
         }
     }
@@ -342,6 +418,10 @@ impl TcpListenerHandle {
     /// Keep a client's connection for the next accept: one that an
     /// accept had taken for a task which never received it.
     pub fn keep(&self, stream: std::net::TcpStream) {
+        // (A closed listener keeps nothing: the connection is closed.)
+        if self.is_closed() {
+            return;
+        }
         self.accepting.lock().kept.push_back(stream);
         self.turn.notify_all();
         // An accept in the OS call does not see it: it is woken as
@@ -391,7 +471,7 @@ impl TcpListenerHandle {
 
     /// Where a connection to this listener from this machine goes.
     fn wake_addr(&self) -> std::io::Result<std::net::SocketAddr> {
-        let mut addr = self.listener.local_addr()?;
+        let mut addr = self.local_addr()?;
         if addr.ip().is_unspecified() {
             addr.set_ip(match addr {
                 std::net::SocketAddr::V4(_) => std::net::Ipv4Addr::LOCALHOST.into(),

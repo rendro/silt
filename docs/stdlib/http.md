@@ -27,6 +27,7 @@ type Request {
   query: String,
   headers: Map(String, String),
   body: Bytes,
+  peer: String,
 }
 
 type Response {
@@ -250,9 +251,13 @@ The listener is bound when `tcp.listen` returns, so a client may connect
 before `http.serve` runs: its request is queued and answered when the
 server starts.
 
-`http.serve` does not return: it serves until its task ends. To run a
-server beside other work, call it in a task; `task.cancel` of that task
-ends the server (see [When a program ends](../concurrency.md#when-a-program-ends)).
+`http.serve` serves until its listener is closed or its task ends. To
+run a server beside other work, call it in a task. There are two ways to
+stop it (see [Stopping a server](#stopping-a-server)):
+`tcp.close_listener(listener)` frees the port and lets the server finish
+what it has begun, then `http.serve` returns `()`; `task.cancel` of its
+task ends the server at once and leaves the listener bound, to be served
+again (see [When a program ends](../concurrency.md#when-a-program-ends)).
 
 ### Connections and handlers
 
@@ -273,7 +278,7 @@ The handler receives a `Request` and must return a `Response` whose
 | What happens | What the client gets |
 |---|---|
 | The handler fails, or returns a status that is none | `500`. The failure is written to stderr and nothing of it is sent. The connection stays usable. |
-| 128 handlers are being called already | `503` at once. That includes a request that would have released the ones that wait: a server whose handlers wait for each other needs a second server, or a timeout in the handler. |
+| 128 handlers are being called already | The request waits for one to return, in the server's queue, first come first served: a short burst is answered as the handlers free up. A request that has waited 5 s, or one that finds 1,024 waiting already, is answered `503`. A request that would release the handlers that wait is queued like any other: a server whose handlers wait for each other needs a second server, or a timeout in the handler. |
 | The method is none of `Method`'s (e.g. `TRACE`) | `405`, with an `Allow` header that names the seven |
 | The method is `HEAD` | the handler is called; its response is sent without the body, with the length the body has |
 
@@ -283,7 +288,8 @@ client closes its connection while its handler waits (a long poll), the
 handler goes on waiting: it keeps its place among the 128, and the
 connection its descriptor, until the handler returns and the response
 cannot be sent. Clients that come and go without waiting for their
-answers can so fill every place, and every later request gets `503`. A
+answers can so fill every place, and every later request waits its 5 s
+in the queue and gets `503`. A
 handler that waits needs a limit of its own, for example
 `channel.receive_timeout` instead of `channel.receive`.
 
@@ -315,12 +321,14 @@ say `text/plain; charset=UTF-8`.) There is no `Server` header.
 | Headers of a request | 100 | `431`, connection closed |
 | The body of a request | 10,000,000 bytes | `413`, connection closed |
 | The body of a response that `http.get` or `http.request` reads (the client's one limit of size), counted after it is unpacked | 10,000,000 bytes | `Err(InvalidResponse("the body is larger than 10000000 bytes"))`; no more than one byte beyond the limit is read |
-| The bodies, together, of the requests that no handler has yet: those being read (a body counts from when its length is known) and those read and about to be handed over | 256 MiB | `503`, connection closed: the request whose body would not fit is refused before its body is read. With every handler holding a request of the largest size besides, the server holds 128 x 10,000,000 bytes more: about 1.5 GB of bodies is the worst case. |
+| The bodies, together, of the requests that no handler has yet: those being read (a body counts from when its length is known), those that wait in the queue for a handler, and those about to be handed over | 256 MiB | `503`, connection closed: the request whose body would not fit is refused before its body is read. With every handler holding a request of the largest size besides, the server holds 128 x 10,000,000 bytes more: about 1.5 GB of bodies is the worst case. |
 | A method | 32 bytes | `400`, connection closed |
 | A line of a chunked body: a chunk's size and its extensions | 4 KiB | `400`, connection closed |
 | What of a chunked body is not the body: chunk sizes, extensions, line ends | 1 MiB | `400`, connection closed. (A body of 10,000,000 bytes in chunks of 100 bytes is within it; a body cut into single bytes is not.) |
 | The trailers of a chunked body | 64 KiB | `431`, connection closed |
-| Handlers being called | 128 | `503` |
+| Handlers being called | 128 | the request waits in the queue |
+| Requests that wait for a handler | 1,024 | `503` at once |
+| Time a request waits for a handler | 5 s | `503` |
 | Time for the head of a request, from when the server starts to wait for it. This is also how long a kept connection that sends nothing stays open. | 30 s | `408` if part of the request has come, and the connection closed; a connection that sent nothing, or only an empty line, is closed without a word |
 | Time for the body of a request to arrive after its head | 5 min | `408`, connection closed |
 | Time for a response to be taken by the client | 5 min | connection closed |
@@ -359,6 +367,13 @@ An `Expect` header that asks for anything but `100-continue` is answered
   first `?`: nothing is decoded or normalised. A target in absolute form
   (`GET http://other.example/x HTTP/1.1`) is handed over whole, and a
   `#fragment` stays where it is.
+- `req.peer` is the address of the client's end of the connection, as
+  `ip:port`: `127.0.0.1:53422`, and an IPv6 address in brackets,
+  `[::1]:53422`. An IPv4 client of a listener on `[::]` is written by its
+  IPv4 address too, not as `[::ffff:127.0.0.1]:53422`. It is the connection's, so behind a reverse proxy it is
+  the proxy's; the client's own address is then in a header the proxy
+  sets (such as `x-forwarded-for`). An access log line:
+  `io.eprintln("{req.peer} {req.method} {req.path}")`.
 - A handler that cancels its own server still has its response sent.
 - If the program fails while requests are in flight, it ends as a
   process: their connections are closed without an answer.
@@ -385,17 +400,71 @@ While `http.serve` serves a listener, the listener is the server's alone:
   returns the same error at that moment: the server has every client.
 - A second `http.serve` on it is a runtime error.
 
-When the task that serves has been cancelled, the server ends:
+### Stopping a server
+
+`tcp.close_listener(listener)` stops a server for good, and lets it
+finish what it has begun (a graceful shutdown):
+
+- A client that connects afterwards is refused at once (rather than
+  waiting for its own timeout, 60 s for `http.request`), and the port can
+  be bound again.
+- Every request already in flight is answered: a handler that runs goes
+  on to its end and its response is written, and so are the requests that
+  wait for a handler and one whose bytes have begun to come. Each of
+  these responses says `Connection: close`, and its connection is closed
+  after it.
+- A kept-alive connection that waits for its next request is closed.
+- `http.serve` returns `()` when the last connection has ended.
+
+`task.cancel` of the serving task stops the server at once and keeps the
+listener: what is in flight ends as below, and clients that connect wait
+in the listener for another `http.serve` or a `tcp.accept`. A
+`task.deadline` around `http.serve` does the same when its time is up,
+also while the server drains: a drain that must not last longer than so
+long is a deadline around `http.serve`.
+
+```silt
+import bytes
+import http
+import task
+import tcp
+
+fn hello(_req: http.Request) -> http.Response {
+  http.Response { status: 200, body: bytes.from_string("hi"), headers: #{} }
+}
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {
+    panic("cannot listen")
+  }
+  let port = tcp.local_port(listener)
+  let server = task.spawn { -> http.serve(listener, hello) }
+  match http.get("http://127.0.0.1:{port}/") {
+    Ok(r) -> println(r.status) -- 200
+    Err(e) -> println(Error.message(e))
+  }
+  tcp.close_listener(listener)
+  task.join(server)
+  match http.get("http://127.0.0.1:{port}/") {
+    Ok(_) -> println("still served")
+    Err(_) -> println("refused") -- refused
+  }
+}
+```
+
+When the task that serves is cancelled (or its deadline passes):
 
 - Its accept is given up. A client that connects afterwards waits in the
-  listener for whoever accepts next.
+  listener for whoever accepts next (or is refused, if the listener was
+  closed).
 - A request whose handler has not returned is answered `503`, and its
   connection is closed. A connection between two requests is closed. A
   response that is being sent at that moment is cut off: the client
   gets less than its `Content-Length` says.
-- The listener is the program's again as soon as `task.cancel` has
-  returned: `tcp.accept` on it gets the next client, and another
-  `http.serve` serves it.
+- After `task.cancel`, the listener is the program's again as soon as
+  `task.cancel` has returned: `tcp.accept` on it gets the next client,
+  and another `http.serve` serves it. A closed listener serves nothing:
+  `http.serve` on it returns `()` at once.
 
 An accept that fails (the process has no file descriptor left) is
 written to stderr once, and the server tries again after 100 ms.

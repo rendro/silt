@@ -37,6 +37,7 @@ work as `Map`/`Set` keys and respect the standard `==` operator.
 | `to_hex` | `(Bytes) -> String` | Encode as lowercase hex |
 | `to_list` | `(Bytes) -> List(Int)` | Materialize as a list of byte values |
 | `to_string` | `(Bytes) -> Result(String, BytesError)` | UTF-8 decode (errors on invalid UTF-8) |
+| `to_string_lossy` | `(Bytes) -> String` | UTF-8 decode, each invalid sequence as U+FFFD |
 
 ## Examples
 
@@ -124,6 +125,30 @@ indices to the length, as `string.slice` does, and returns `Bytes` (empty if
   for stable serialization.
 - `bytes.index_of` returns `Some(0)` for an empty `needle`. `bytes.starts_with`
   and `bytes.ends_with` return `true` for an empty prefix / suffix.
+- `bytes.to_string_lossy` decodes as `bytes.to_string` does, but never
+  fails: each maximal sequence that is no UTF-8 (a byte that starts no
+  character, or a character cut short) becomes one U+FFFD (`�`), as
+  Unicode recommends: the two stray bytes `ff fe` are two, the cut
+  character `e2 82` is one. It replaces only where a program asks for it: `to_string`,
+  `io.read_file` and `stream.file_lines` stay strict. With `io.read_bytes`
+  it reads a log file that has stray bytes in it:
+
+  ```silt
+  import bytes
+  import io
+  import list
+  import string
+
+  fn main() {
+    match io.read_bytes("app.log") {
+      Ok(raw) -> {
+        let lines = string.split(bytes.to_string_lossy(raw), "\n")
+        println(list.length(lines))
+      }
+      Err(e) -> println(Error.message(e))
+    }
+  }
+  ```
 - `bytes.split` splits as `string.split` does: a `sep` at the start or the
   end of `b`, or two side by side, gives an empty piece there, and an empty
   `b` is one empty piece. An empty `sep` splits `b` into its single bytes,

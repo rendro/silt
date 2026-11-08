@@ -189,6 +189,17 @@ Returned by `uuid.parse`.
 | `Invalid(String)` | why | not a syntactically valid UUID |
 | `Other(String)` | message | unclassified failure |
 
+### `CsvError` (requires `import csv`)
+
+Returned by `csv.split_line` and `csv.parse`.
+
+| Variant | Fields | Meaning |
+|---------|--------|---------|
+| `Syntax(String, Int)` | message, byte offset | the text is no CSV: a quoted field that is not closed, text after a closing quote; a row with another number of fields than the header |
+| `TypeMismatch(String, String)` | expected, got | a cell that is no value of its field's type, with its line and column |
+| `MissingField(String)` | name | the header has no column for a field that is no `Option` |
+| `Other(String)` | message | unclassified failure |
+
 ### `RegexError` (requires `import regex`)
 
 Returned by every `regex.*` function for a pattern that does not compile.

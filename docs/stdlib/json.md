@@ -69,6 +69,7 @@ record and enum type nested in them), may have these types:
 
 - `Int`, `Float`, `String`, `Bool`
 - `time.Date`, `time.Time`, `time.DateTime`
+- `time.Instant` and `time.Duration`, as `json.stringify` writes them: `{"epoch_ns": n}`, `{"ns": n}`
 - `json.Value`, which keeps that part of the document as it is
 - `List(T)`, `Option(T)`, `Map(String, T)`
 - tuples, such as `(Int, String)`
@@ -657,8 +658,8 @@ written as follows:
 | `Duration`, `Instant` | as the records they are: `{"ns":2000000000}`, `{"epoch_ns":...}` |
 
 The keys of a map, and so of a `json.Object`, are written in sorted order;
-the fields of a record in the order its type declares them. `json.parse` reads a `Date`, a `Time` and a `DateTime` back into a field of
-the same type, a record into its record type, and a variant into its enum
+the fields of a record in the order its type declares them. `json.parse` reads a `Date`, a `Time`, a `DateTime`, an `Instant` and a
+`Duration` back into a field of the same type, a record into its record type, and a variant into its enum
 type when the program declares it (see [Enums](#enums)); a variant of a
 builtin enum and `()` are written but not read back.
 

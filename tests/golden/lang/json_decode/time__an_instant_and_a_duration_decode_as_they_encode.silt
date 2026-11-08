@@ -1,0 +1,38 @@
+-- A time.Instant and a time.Duration decode from JSON and TOML as the records
+-- they encode as ({"epoch_ns": n}, {"ns": n}): a round trip, in a field, a
+-- list, an option, a map and a tuple; the errors are those of a record.
+import json
+import toml
+import time
+type E { at: time.Instant, d: time.Duration, ds: List(time.Duration), maybe: Option(time.Instant) }
+type W { at: time.Instant }
+type D { d: time.Duration }
+fn main() {
+  let e = E { at: time.Instant { epoch_ns: 1762000000123456789 }, d: time.seconds(3), ds: [time.ms(5)], maybe: None }
+  let s = json.stringify(e)
+  println(s)
+  let back = json.parse(s, E)
+  println(back == Ok(e))
+  match back {
+    Ok(b) -> println(time.to_datetime(b.at, 0))
+    Err(err) -> println(err)
+  }
+  println(json.parse("[\{\"ns\": 1}]", List(time.Duration)))
+  println(json.parse("\{\"d\": \{\"ns\": 1.5}}", D))
+  println(json.parse("\{\"d\": \{\"ns\": -7}}", D))
+  println(json.parse("\{\"at\": \{}}", W))
+  println(json.parse("\{\"at\": \"2026-01-01T00:00:00Z\"}", W))
+  println(json.parse("\{\"at\": \{\"epoch_ns\": 1, \"x\": 2}}", W))
+  println(json.decode(json.encode(e), E) == Ok(e))
+  let t = toml.stringify(e)
+  println(t)
+  match t {
+    Ok(text) -> println(toml.parse(text, E) == Ok(e))
+    Err(err) -> println(err)
+  }
+  println(toml.parse("at = \{ epoch_ns = 5 }", W))
+  println(json.parse("[\{\"ns\": 1}]", List(time.Duration)))
+  println(json.parse("[\{\"epoch_ns\": 1}, null]", List(Option(time.Instant))))
+  println(json.parse("\{\"a\": \{\"ns\": 2}}", Map(String, time.Duration)))
+  println(json.parse("[\{\"ns\": 2}, 3]", (time.Duration, Int)))
+}

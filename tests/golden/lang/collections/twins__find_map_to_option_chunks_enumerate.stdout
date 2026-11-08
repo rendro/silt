@@ -1,0 +1,14 @@
+called with a
+called with 2
+Some(2)
+None
+None
+Some(5)
+None
+[[1, 2], [3, 4], [5]]
+[[1, 2, 3]]
+[[1, 2]]
+[]
+[(0, a), (1, b), (2, c)]
+[]
+[(0, 7), (1, 7)]
