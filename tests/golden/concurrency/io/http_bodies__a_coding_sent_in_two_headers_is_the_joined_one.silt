@@ -1,0 +1,52 @@
+-- timeout: 30
+-- requires-feature: http
+-- A `Content-Encoding` sent in two headers is the one header of their
+-- values joined, as any header is: `gzip` twice is `gzip, gzip`, which
+-- is not unpacked, so the body is handed over as it came, with its
+-- `content-encoding` and `content-length`. One header `gzip, gzip` and
+-- two headers `gzip` give the same; so do two that are not both `gzip`.
+import bytes
+import http
+import list
+import map
+import option
+import string
+import task
+import tcp
+
+fn answer(codings: List(String)) -> Bytes {
+  let lines = codings |> list.map { c -> "Content-Encoding: {c}\r\n" }
+  let head = "HTTP/1.1 200 OK\r\n{string.join(lines, "")}Content-Length: 3\r\nConnection: close\r\n\r\nabc"
+  bytes.from_string(head)
+}
+
+fn get(port: Int) -> () {
+  match http.get("http://127.0.0.1:{port}/") {
+    Ok(response) -> {
+      let coding = map.get(response.headers, "content-encoding") |> option.unwrap_or("none")
+      let length = map.get(response.headers, "content-length") |> option.unwrap_or("none")
+      let body = match bytes.to_string(response.body) {
+        Ok(text) -> text
+        Err(_) -> "(no text)"
+      }
+      println("content-encoding: {coding}; content-length: {length}; body: {body}")
+    }
+    Err(e) -> println("error: {e}")
+  }
+}
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let port = tcp.local_port(listener)
+  let answers = [["gzip, gzip"], ["gzip", "gzip"], ["gzip", "identity"]]
+  let peer = task.spawn { ->
+    answers |> list.each { codings ->
+      when let Ok(c) = tcp.accept(listener) else { return () }
+      let _ = tcp.read(c, 65536)
+      let _ = tcp.write(c, answer(codings))
+      tcp.close(c)
+    }
+  }
+  answers |> list.each { _ -> get(port) }
+  task.join(peer)
+}

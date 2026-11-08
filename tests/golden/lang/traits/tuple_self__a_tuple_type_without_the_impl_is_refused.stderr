@@ -10,6 +10,7 @@ error[type]: undefined variable 'Tuple'
     |
  27 |   println(Tuple(Int, Int).empty())
     |           ^^^^^ undefined variable 'Tuple'
+  = help: a tuple type before a dot is written `(Int, Int)`
 
 error[type]: type '(Int, String)' has no method 'zero'
  --> tuple_self__a_tuple_type_without_the_impl_is_refused.silt:28:11

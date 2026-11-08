@@ -123,7 +123,9 @@ the server sent, with one exception:
   `content-length`, which describe the packed bytes, are not in
   `resp.headers`. (Every request says `accept-encoding: gzip`.) A body
   in any other coding, `GZIP` and `x-gzip` among them, is handed over as
-  it came, with its header.
+  it came, with its header. A coding sent in two headers is their values
+  joined, as of any header: two `gzip` headers are `gzip, gzip`, and the
+  body is handed over as it came.
 - An answer to `HEAD`, a `204` and a `304` have no body: `resp.body` is
   empty and nothing is read, whatever the headers say. They may say what
   a `GET` would get; of those, `content-encoding` and `content-length`
@@ -344,11 +346,11 @@ An `Expect` header that asks for anything but `100-continue` is answered
   it: a header's name is not case-sensitive, and a lookup asks for one
   spelling, `map.get(req.headers, "content-type")`. A header sent more
   than once is one entry, its values joined with `", "` in the order
-  they came (`x-a: 1` and `x-a: 2` give `"1, 2"`). (The headers of a
-  `Response` that `http.get` or `http.request` returns are the same: names
-  in lower case, values joined.) A
-  header's value is text: bytes in it that are no UTF-8 reach the handler
-  as U+FFFD, unlike the body, which is exact.
+  they came (`x-a: 1` and `x-a: 2` give `"1, 2"`). A header's value is
+  text: bytes in it that are no UTF-8 reach the handler as U+FFFD, unlike
+  the body, which is exact. (The headers of a `Response` that `http.get`
+  or `http.request` returns are the same: names in lower case, values
+  joined, bytes that are no UTF-8 as U+FFFD.)
 - `req.body` is `Bytes`, exactly what arrived: a binary upload is intact.
   A handler that wants text says so: `bytes.to_string(req.body)` is
   `Err(InvalidUtf8(offset))` for a body that is no UTF-8. The body of the

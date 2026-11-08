@@ -1187,6 +1187,36 @@ pub(super) fn shown_arg(e: &Expr) -> String {
     }
 }
 
+/// A type given as a value, as a program writes it: `Int`, `json.Value`,
+/// `List(Int)`, `(Int, String)`, a `Tuple(Int, Int)` in it as the tuple
+/// type `(Int, Int)`; `None` when a part is no type spelling, or is a
+/// `Tuple(..)` of fewer than two parts, which no tuple type is.
+pub(super) fn shown_type(e: &Expr) -> Option<String> {
+    let all = |es: &[Expr]| -> Option<String> {
+        Some(
+            es.iter()
+                .map(shown_type)
+                .collect::<Option<Vec<_>>>()?
+                .join(", "),
+        )
+    };
+    match &e.kind {
+        ExprKind::Call(callee, args) if is_tuple_name(callee) => match args.len() {
+            0 | 1 => None,
+            _ => Some(format!("({})", all(args)?)),
+        },
+        ExprKind::Call(callee, args) => Some(format!("{}({})", shown_path(callee)?, all(args)?)),
+        ExprKind::Tuple(elems) => Some(format!("({})", all(elems)?)),
+        ExprKind::Unit => Some("()".to_string()),
+        _ => shown_path(e),
+    }
+}
+
+/// Whether `e` is the bare name `Tuple`.
+pub(super) fn is_tuple_name(e: &Expr) -> bool {
+    matches!(e.kind, ExprKind::Ident(name) if resolve(name) == "Tuple")
+}
+
 struct Resolver<'a> {
     defs: &'a DefTable,
     kind: ModuleKind,

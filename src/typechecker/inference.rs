@@ -4191,7 +4191,12 @@ impl TypeChecker {
                     );
                     Type::Error
                 } else {
-                    let (message, help) = format_undefined_variable_message(name, env, "");
+                    let (message, mut help) = format_undefined_variable_message(name, env, "");
+                    if let Some((at, tuple)) = &self.tuple_spelling
+                        && *at == span
+                    {
+                        help = Some(format!("a tuple type before a dot is written `{tuple}`"));
+                    }
                     self.error_help(Code::UndefinedVariable, (message, help), span);
                     self.fresh_var()
                 }
@@ -4440,10 +4445,22 @@ impl TypeChecker {
                     ExprKind::Tuple(_) => self.spelled_type(obj, env),
                     _ => None,
                 };
+                // `Tuple(Int, Int).empty()` is no spelling of the tuple
+                // type: the help of its `Tuple` writes the one that is.
+                // (The help is the outer `Tuple`'s, by its place: one in
+                // its arguments is a part of the type it writes. None when
+                // a part is no type.)
+                self.tuple_spelling = match &obj.kind {
+                    ExprKind::Call(callee, _) if super::names::is_tuple_name(callee) => {
+                        super::names::shown_type(obj).map(|tuple| (callee.span, tuple))
+                    }
+                    _ => None,
+                };
                 let obj_ty = match spelled {
                     Some(ty) => Type::type_of(ty),
                     None => self.infer_expr(obj, env),
                 };
+                self.tuple_spelling = None;
                 self.type_receiver = around;
                 self.receiver_taken = false;
                 let obj_ty = self.apply(&obj_ty);

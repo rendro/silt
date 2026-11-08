@@ -105,29 +105,65 @@ fn extract_http_response(val: &Value) -> Result<(u16, &[u8], &crate::value::Reco
     Ok((status, body, fields))
 }
 
-/// The body of `response` as the program gets it, which is what the
-/// transport library gives: the bytes that arrived, unpacked if the
-/// response says that they are packed (`Content-Encoding: gzip`).
-/// `None` for a body of more than `limit` bytes: no more than
-/// `limit + 1` bytes of it are read.
+/// The body of `response` as the program gets it: the bytes that
+/// arrived, unpacked if `packed` (the response says `Content-Encoding:
+/// gzip`). `None` for a body of more than `limit` bytes: no more than
+/// `limit + 1` bytes of it are read (of a packed body, unpacked).
 #[cfg(feature = "http")]
 fn body_within(
     response: &mut ureq::http::Response<ureq::Body>,
+    packed: bool,
     limit: usize,
 ) -> Result<Option<Vec<u8>>, ureq::Error> {
     use std::io::Read;
-    // The library's own limit counts the bytes on the wire, before it
-    // unpacks them, and is not set (`as_reader` has none): this one
-    // counts what the reader gives, and is the only one.
+    // The library's own limit counts the bytes on the wire and is not
+    // set (`as_reader` has none): this one counts what the program
+    // gets, and is the only one.
     let most = u64::try_from(limit).map_or(u64::MAX, |limit| limit.saturating_add(1));
     let mut body = Vec::new();
-    response
-        .body_mut()
-        .as_reader()
-        .take(most)
-        .read_to_end(&mut body)?;
+    let reader = response.body_mut().as_reader();
+    match packed {
+        true => Unpacked(flate2::read::MultiGzDecoder::new(reader))
+            .take(most)
+            .read_to_end(&mut body)?,
+        false => reader.take(most).read_to_end(&mut body)?,
+    };
     Ok((body.len() <= limit).then_some(body))
 }
+
+/// The unpacker of a gzip body over the reader of the transport
+/// library. A failure of the library (the connection, a time) is given
+/// as it is; any other is the unpacker's, an [`Unpacking`].
+#[cfg(feature = "http")]
+struct Unpacked<R>(flate2::read::MultiGzDecoder<R>);
+
+#[cfg(feature = "http")]
+impl<R: std::io::Read> std::io::Read for Unpacked<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.0.read(buf).map_err(|e| {
+            match e.get_ref().is_some_and(|inner| inner.is::<ureq::Error>()) {
+                true => e,
+                false => std::io::Error::other(Unpacking(e)),
+            }
+        })
+    }
+}
+
+/// A failure while a packed body is unpacked: of the connection under
+/// it, or of the packed bytes.
+#[cfg(feature = "http")]
+#[derive(Debug)]
+struct Unpacking(std::io::Error);
+
+#[cfg(feature = "http")]
+impl std::fmt::Display for Unpacking {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "gzip decompression failed: {}", self.0)
+    }
+}
+
+#[cfg(feature = "http")]
+impl std::error::Error for Unpacking {}
 
 /// The headers `headers`, of a request or a response, as the map a
 /// program gets: the values of a header that came more than once are
@@ -164,19 +200,34 @@ fn ureq_response_to_value(
 ) -> Result<Option<Value>, ureq::Error> {
     let status = response.status().as_u16();
     // The names are in lower case, as the names of a request's
-    // headers are (`http::HeaderName` holds them so).
-    let headers = response.headers().iter().filter_map(|(name, value)| {
-        let value = value.to_str().ok()?;
-        Some((name.as_str().to_string(), value.to_string()))
-    });
-    let headers = header_map(headers);
+    // headers are (`http::HeaderName` holds them so); a value is text,
+    // a byte that is no UTF-8 in it U+FFFD, as of a request's header.
+    let headers: Vec<(String, String)> = (response.headers().iter())
+        .map(|(name, value)| {
+            let value = String::from_utf8_lossy(value.as_bytes());
+            (name.as_str().to_string(), value.into_owned())
+        })
+        .collect();
+    // A body is unpacked when its coding, all `Content-Encoding` headers
+    // joined, is `gzip`, written exactly so (`gzip, gzip` sent as one
+    // header or as two is handed over as it came). The program then
+    // gets the content: `content-encoding` and `content-length`, which
+    // describe the packed bytes, are not among its headers.
+    let codings: Vec<&str> = (headers.iter())
+        .filter(|(name, _)| name == "content-encoding")
+        .map(|(_, value)| value.as_str())
+        .collect();
+    let packed = codings == ["gzip"];
+    let headers = header_map(headers.into_iter().filter(|(name, _)| {
+        !(packed && matches!(name.as_str(), "content-encoding" | "content-length"))
+    }));
     // An answer to `HEAD`, and one whose status says so, has no body,
     // whatever its headers say of one (they describe what a `GET`
     // would get): nothing is read, and so nothing is unpacked that is
     // not there.
     let body = match head || !wire::has_body(status) {
         true => Some(Vec::new()),
-        false => body_within(&mut response, wire::BODY_MAX)?,
+        false => body_within(&mut response, packed, wire::BODY_MAX)?,
     };
     Ok(body.map(|body| make_http_response(status, headers, body)))
 }
@@ -308,6 +359,33 @@ fn http_error(error: &ureq::Error, url: &str) -> Value {
     let https = url
         .get(.."https://".len())
         .is_some_and(|scheme| scheme.eq_ignore_ascii_case("https://"));
+    let unpacking = match error {
+        Error::Io(io) => io.get_ref().and_then(|e| e.downcast_ref::<Unpacking>()),
+        _ => None,
+    };
+    if let Some(unpacking) = unpacking {
+        let under = &unpacking.0;
+        let why = || {
+            vec![Value::String(
+                redact_http_url_userinfo(&unpacking.to_string()).into(),
+            )]
+        };
+        return match under.kind() {
+            ErrorKind::ConnectionReset
+            | ErrorKind::ConnectionAborted
+            | ErrorKind::BrokenPipe
+            | ErrorKind::NotConnected => Value::variant(bv::HTTP_CLOSED_EARLY, []),
+            // Two things end a packed body before its end, and both are
+            // this kind: the connection, which the library reports
+            // with an error of its own inside, and packed bytes that
+            // stop short in a body that is all there, which the
+            // unpacker reports as the bare kind.
+            ErrorKind::UnexpectedEof if under.get_ref().is_some() => {
+                Value::variant(bv::HTTP_CLOSED_EARLY, [])
+            }
+            _ => Value::variant(bv::HTTP_INVALID_RESPONSE, why()),
+        };
+    }
     match error {
         Error::Timeout(_) => Value::variant(bv::HTTP_TIMEOUT, []),
         Error::Io(io) => match io.kind() {
@@ -331,21 +409,6 @@ fn http_error(error: &ureq::Error, url: &str) -> Value {
         Error::BadUri(_) => invalid_url(),
         Error::Http(http) if http.is::<ureq::http::uri::InvalidUri>() => invalid_url(),
         Error::Http(http) if http.is::<ureq::http::uri::InvalidUriParts>() => invalid_url(),
-        Error::Decompress(_, under) => match under.kind() {
-            ErrorKind::ConnectionReset
-            | ErrorKind::ConnectionAborted
-            | ErrorKind::BrokenPipe
-            | ErrorKind::NotConnected => Value::variant(bv::HTTP_CLOSED_EARLY, []),
-            // Two things end a packed body before its end, and both are
-            // this kind: the connection, which the library reports
-            // with an error of its own inside, and packed bytes that
-            // stop short in a body that is all there, which the
-            // unpacker reports as the bare kind.
-            ErrorKind::UnexpectedEof if under.get_ref().is_some() => {
-                Value::variant(bv::HTTP_CLOSED_EARLY, [])
-            }
-            _ => Value::variant(bv::HTTP_INVALID_RESPONSE, why()),
-        },
         Error::Protocol(_) | Error::LargeResponseHeader(..) => {
             Value::variant(bv::HTTP_INVALID_RESPONSE, why())
         }
@@ -423,8 +486,9 @@ fn client() -> ureq::Agent {
 }
 
 /// A client whose times to connect and in all are the given ones. Every
-/// request says `user-agent: silt/<version>`, unless the program sets a
-/// `user-agent` header of its own: ureq sends the request's header then.
+/// request says `user-agent: silt/<version>` and `accept-encoding:
+/// gzip`, unless the program sets that header itself: ureq sends the
+/// request's header then.
 #[cfg(feature = "http")]
 fn client_with_times(connect: Duration, global: Duration) -> ureq::Agent {
     ureq::Agent::config_builder()
@@ -432,6 +496,7 @@ fn client_with_times(connect: Duration, global: Duration) -> ureq::Agent {
         .timeout_connect(Some(connect))
         .timeout_global(Some(global))
         .user_agent(format!("silt/{}", crate::VERSION))
+        .accept_encoding("gzip")
         .build()
         .into()
 }

@@ -292,6 +292,30 @@ fn prelude_type_declaration(name: &str) -> Option<String> {
     Some(format!("type {name}{params}"))
 }
 
+/// The fields of silt's own variant `qualified` (`Some` of the prelude,
+/// `list.Stop` of a module), each type as a program writes it (`a`,
+/// `io.IoError`), as an enum of a program has its variants' fields.
+/// `None` when no builtin enum declares the variant.
+pub(super) fn builtin_variant_fields(qualified: &str) -> Option<Vec<String>> {
+    let (source, q, name) = match qualified.split_once('.') {
+        Some((module, name)) => {
+            let registry = crate::builtins::registry::registry();
+            let of = registry.modules.iter().find(|m| m.name == module)?;
+            (of.types, Some(Qualify::of(of)), name)
+        }
+        None => (crate::builtins::registry::PRELUDE_TYPES, None, qualified),
+    };
+    let program = crate::builtins::registry::parse(source);
+    program.decls.iter().find_map(|decl| match decl {
+        Decl::Type(TypeDecl {
+            body: TypeBody::Enum(variants),
+            ..
+        }) => (variants.iter().find(|v| resolve(v.name) == name))
+            .map(|v| v.fields.iter().map(|f| type_expr(q.as_ref(), f)).collect()),
+        _ => None,
+    })
+}
+
 /// The declaration of a builtin type `td`, one variant or field a line,
 /// its names written as `q` qualifies them (a builtin module's), or as
 /// they are (the prelude's).

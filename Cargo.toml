@@ -22,7 +22,7 @@ repl = ["dep:rustyline"]
 lsp = ["dep:lsp-server", "dep:lsp-types"]
 watch = ["dep:notify"]
 local-clock = ["chrono/clock"]
-http = ["tcp", "dep:ureq", "dep:httparse"]
+http = ["tcp", "dep:ureq", "dep:httparse", "dep:flate2"]
 postgres = ["dep:tokio-postgres", "dep:tokio", "dep:futures-util", "dep:postgres-protocol", "dep:r2d2", "dep:fallible-iterator"]
 postgres-tls = ["postgres", "dep:native-tls", "dep:postgres-native-tls"]
 tcp = []
@@ -62,7 +62,10 @@ percent-encoding = "2"
 toml = { version = "0.8", default-features = false, features = ["parse", "display"] }
 toml_edit = "0.22"
 unicode-width = "0.2"
-ureq = { version = "3.5.1", optional = true }
+# Without its gzip: the client unpacks a body itself, deciding on all of
+# a response's Content-Encoding headers (ureq looks at the first).
+ureq = { version = "3.5.1", optional = true, default-features = false, features = ["rustls"] }
+flate2 = { version = "1", optional = true }
 httparse = { version = "1", optional = true }
 tokio-postgres = { version = "0.7", optional = true }
 # The runtimes the postgres module's connections run on (one each).
@@ -112,9 +115,6 @@ windows-sys = { version = "0.59", features = [
 [dev-dependencies]
 proptest = "1.4"
 rcgen = "0.13"
-# Packs the answers of the client's gzip tests. The version is the one
-# the lock file holds for the transport library, so no crate is added.
-flate2 = "=1.1.9"
 
 # A release binary carries no symbol table: a smaller download. (A
 # panic's backtrace then names no functions.)

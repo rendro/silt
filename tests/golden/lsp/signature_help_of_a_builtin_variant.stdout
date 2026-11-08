@@ -1,0 +1,18 @@
+> signature 17:17
+Some(a)
+argument 1: a
+> signature 18:36
+Ok(a)
+argument 1: a
+> signature 19:37
+Err(e)
+argument 1: e
+> signature 20:22
+list.Stop(a)
+argument 1: a
+> signature 21:21
+list.Continue(a)
+argument 1: a
+> signature 22:23
+json.Array(List(json.Value))
+argument 1: List(json.Value)

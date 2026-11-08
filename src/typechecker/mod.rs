@@ -422,6 +422,10 @@ pub struct TypeChecker {
     /// `Box(a).zero()`) or in one: a type variable of the signature among
     /// its arguments is a type.
     pub(super) type_receiver: bool,
+    /// The tuple type that `Tuple(Int, Int)` before a dot means to
+    /// write, `(Int, Int)`, while its callee `Tuple` (no value) is
+    /// checked: the help of its error names it.
+    pub(super) tuple_spelling: Option<(Span, String)>,
     /// Spans of `?` uses in the current fn/lambda body. When the
     /// body/return-type unify fails on a Result/Option return that `?`
     /// itself demanded, the diagnostic points back at the `?` site instead
@@ -875,6 +879,7 @@ impl TypeChecker {
             held_params: Vec::new(),
             method_call_args: None,
             type_receiver: false,
+            tuple_spelling: None,
             type_holders: HashMap::new(),
             current_qmark_spans: Vec::new(),
             qmark_decided: HashMap::new(),

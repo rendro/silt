@@ -1,0 +1,37 @@
+-- timeout: 30
+-- requires-feature: http
+-- A response header whose value is not plain ASCII is in the headers of
+-- the Response that `http.get` returns, as a request's header reaches a
+-- handler: UTF-8 text as it came, a byte that is no UTF-8 as U+FFFD. Sent
+-- twice, it is one entry with both values joined; none is dropped.
+import bytes
+import http
+import map
+import option
+import task
+import tcp
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let port = tcp.local_port(listener)
+  when let Ok(bad) = bytes.from_list([255]) else { panic("no byte") }
+  let answer = bytes.concat_all([
+    bytes.from_string("HTTP/1.1 200 OK\r\nX-Name: Ren\u{e9}\r\nX-Name: o"),
+    bad,
+    bytes.from_string("k\r\nX-Plain: yes\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"),
+  ])
+  let peer = task.spawn { ->
+    when let Ok(c) = tcp.accept(listener) else { return () }
+    let _ = tcp.read(c, 65536)
+    let _ = tcp.write(c, answer)
+    tcp.close(c)
+  }
+  match http.get("http://127.0.0.1:{port}/") {
+    Ok(response) -> {
+      println("x-name: {map.get(response.headers, "x-name") |> option.unwrap_or("none")}")
+      println("x-plain: {map.get(response.headers, "x-plain") |> option.unwrap_or("none")}")
+    }
+    Err(e) -> println("error: {e}")
+  }
+  task.join(peer)
+}

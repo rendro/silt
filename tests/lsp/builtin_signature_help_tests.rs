@@ -226,3 +226,32 @@ fn a_prelude_function_is_documented_by_its_own_section() {
     assert!(!doc.contains("# Globals"), "{doc}");
     assert!(!doc.contains("panic"), "{doc}");
 }
+
+/// A variant of the prelude or of a module is documented by its own
+/// section, as a function is; a local that shadows a function of the
+/// prelude has the local's type and no documentation, not the
+/// function's.
+#[test]
+fn a_builtin_variant_has_its_section_and_a_shadowing_local_none() {
+    let source = "import list\nfn main() {\n  let _a = Some(1)\n  let _b = list.Stop(2)\n  let print = { x: Int -> x }\n  let _c = print(3)\n}\n";
+    let some = signature_help("some_doc", source, 2, 16);
+    let doc = some["signatures"][0]["documentation"]["value"]
+        .as_str()
+        .expect("documentation");
+    assert!(doc.contains("Some(value: a) -> Option(a)"), "{doc}");
+    assert!(!doc.contains("## `None`"), "{doc}");
+
+    let stop = signature_help("stop_doc", source, 3, 21);
+    let doc = stop["signatures"][0]["documentation"]["value"]
+        .as_str()
+        .expect("documentation");
+    assert!(doc.contains("list.fold_until"), "{doc}");
+
+    let local = signature_help("shadow_print", source, 5, 17);
+    let signature = &local["signatures"][0];
+    assert_eq!(signature["label"], "Fn(Int) -> Int");
+    assert!(
+        signature.get("documentation").is_none_or(Value::is_null),
+        "{signature}"
+    );
+}
