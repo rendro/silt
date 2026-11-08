@@ -590,10 +590,17 @@ impl TypeChecker {
             let decoded = (family.leaves().iter()).any(|leaf| leaf.name() == type_name)
                 || [crate::typeinfo::ty::INSTANT, crate::typeinfo::ty::DURATION].contains(&head.id);
             let help = match decoded {
-                true => format!(
-                    "a decoder decodes a `{type_name}` as the type of a record's field: \
-                     `type R {{ at: {type_name} }}`"
-                ),
+                true => {
+                    // (A field named as what it holds.)
+                    let field = match head.id == crate::typeinfo::ty::DURATION {
+                        true => "timeout",
+                        false => "at",
+                    };
+                    format!(
+                        "a decoder decodes a `{type_name}` as the type of a record's field: \
+                         `type R {{ {field}: {type_name} }}`"
+                    )
+                }
                 false => family.type_argument_help().to_string(),
             };
             return refusal(

@@ -371,10 +371,21 @@ time.parse_instant(s: String, pattern: String) -> Result(Instant, TimeError)
 
 Parses a string that names an instant by its UTC offset, such as
 `2026-11-01T08:00:00+02:00` or `2026-11-01T06:00:00Z` in a JSON log, into
-that `Instant`. The pattern has a date, a time of day and an offset: `%z`
-reads `+0200` and `%:z` reads `+02:00`; each also reads the other's form,
-and `Z` (or `z`) for UTC. `%+` reads RFC 3339 whole, and
-`%s` (seconds since the epoch) names an instant without an offset.
+that `Instant`. The pattern has a date, a time of day and an offset, and
+every offset also reads `Z` (or `z`) for UTC:
+
+| Specifier | Reads |
+|-----------|-------|
+| `%z` | `+0200`, and `+02:00` |
+| `%:z` | `+02:00`, and `+0200` |
+| `%::z` | `+02:00:00`, with seconds |
+| `%:::z` | `+02`, and `+0200` or `+02:00` |
+| `%#z` | any of `+02`, `+0200` and `+02:00` (a specifier for reading only) |
+
+`%z` and `%:z` want hours and minutes: `+02` by them is
+`Err(ParseFormat(...))` that says so (`the UTC offset at byte 19 needs hours
+and minutes (+hh:mm or +hhmm)`). `%+` reads RFC 3339 whole, and `%s`
+(seconds since the epoch) names an instant without an offset.
 `time.to_datetime(i, 0)` gives the UTC date and time of the instant.
 
 A pattern without an offset is `Err(InvalidFormat(why))` whatever the
@@ -385,8 +396,9 @@ So is a time zone's name (`%Z`): it is not read, since the name of a zone
 is no offset. Otherwise the errors are those of `time.parse`, naming an
 `instant`: a text that does not match is `Err(ParseFormat(msg))`
 (`expected the UTC offset at byte 19, the end of the text`), and a field,
-an offset beyond 24 hours, a leap second or an instant outside the years
-1677 to 2262 that an `Instant` holds is `Err(OutOfRange(msg))`.
+an offset of 24 hours or more, a leap second or an instant outside what an
+`Instant` holds (1677-09-21T00:12:43.145224192Z to
+2262-04-11T23:47:16.854775807Z) is `Err(OutOfRange(msg))`.
 
 ```silt
 import time

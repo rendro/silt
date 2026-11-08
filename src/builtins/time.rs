@@ -100,15 +100,22 @@ fn why_unread(
     what: &str,
     err: chrono::ParseError,
 ) -> String {
-    use chrono::format::{ParseErrorKind, parse_and_remainder};
+    use chrono::format::ParseErrorKind;
     let mut parsed = Parsed::new();
     let mut rest = s;
     for item in items {
         let at = s.len() - rest.len();
-        match parse_and_remainder(&mut parsed, rest, std::iter::once(item)) {
+        match read_item(&mut parsed, rest, item) {
             Ok(behind) => rest = behind,
             Err(e) => {
                 let part = part_name(item);
+                // An offset of hours alone (`+02`) where hours and minutes
+                // are read.
+                if is_hours_and_minutes(item) && hours_alone(rest) {
+                    return format!(
+                        "{part} at byte {at} needs hours and minutes (+hh:mm or +hhmm)"
+                    );
+                }
                 return match e.kind() {
                     ParseErrorKind::OutOfRange => format!("{part} is out of range"),
                     // A field read a second time with another value, or
@@ -213,6 +220,10 @@ const MONTH_NAMES: [&str; 12] = [
 /// `'-'`, `a space`.
 fn part_name(item: &chrono::format::Item<'_>) -> String {
     use chrono::format::{Fixed, Item, Numeric};
+    // (`%#z`, an item of chrono's own.)
+    if matches!(item, Item::Fixed(Fixed::Internal(_))) && reads_an_offset(item) {
+        return "the UTC offset".to_string();
+    }
     let field = match item {
         Item::Literal(text) => return format!("'{text}'"),
         Item::OwnedLiteral(text) => return format!("'{text}'"),
@@ -247,9 +258,8 @@ fn part_name(item: &chrono::format::Item<'_>) -> String {
             | Fixed::TimezoneOffsetColonZ => "UTC offset",
             Fixed::RFC3339 => return "an RFC 3339 date and time".to_string(),
             // `%.f`, `%.3f` ... and `%3f` ... (chrono's internal
-            // items, of which a pattern of a parse has no other: `%#z`
-            // is refused before, as chrono reads it and does not write
-            // it).
+            // items, of which a pattern of a parse has no other but
+            // `%#z`, above).
             Fixed::Nanosecond
             | Fixed::Nanosecond3
             | Fixed::Nanosecond6
@@ -600,7 +610,12 @@ fn fits(pattern: &str, of: Of) -> Result<(), String> {
             continue;
         }
         let of_a_time = writes(moment.format_with_items(one()));
-        let of_a_zone = !of_a_time && writes(moment.and_utc().format_with_items(one()));
+        // (`%#z`, an offset chrono reads and does not write, is one of a
+        // zone for a parse of an Instant; for the others it is no
+        // specifier, as before.)
+        let of_a_zone = !of_a_time
+            && (writes(moment.and_utc().format_with_items(one()))
+                || (matches!(of, Of::Instant) && reads_an_offset(&item)));
         let what = of.name();
         let a_name = matches!(item, Item::Fixed(chrono::format::Fixed::TimezoneName));
         return Err(match (of, of_a_time, of_a_zone) {
@@ -651,12 +666,18 @@ fn enough(pattern: &str, of: Of) -> Result<(), String> {
     let Some(moment) = moment() else {
         return Ok(());
     };
+    // (`%#z` is read and not written, and chrono's parse of `%::z` and
+    // `%:::z` does not read what they write: whether the fields are
+    // enough is asked of `%:z`, an offset as they are.)
+    let asked = &["%#z", "%::z", "%:::z"]
+        .iter()
+        .fold(pattern.to_string(), |p, offset| p.replace(offset, "%:z"));
     let mut text = String::new();
     let written = match (of, chrono::FixedOffset::east_opt(2 * 3600)) {
-        (Of::Date, _) => write!(text, "{}", moment.date().format(pattern)),
-        (Of::DateTime, _) => write!(text, "{}", moment.format(pattern)),
+        (Of::Date, _) => write!(text, "{}", moment.date().format(asked)),
+        (Of::DateTime, _) => write!(text, "{}", moment.format(asked)),
         (Of::Instant, Some(offset)) => match moment.and_local_timezone(offset).single() {
-            Some(at) => write!(text, "{}", at.format(pattern)),
+            Some(at) => write!(text, "{}", at.format(asked)),
             None => return Ok(()),
         },
         (Of::Instant, None) => return Ok(()),
@@ -667,18 +688,16 @@ fn enough(pattern: &str, of: Of) -> Result<(), String> {
     let lacks = |result: Option<chrono::ParseError>| {
         result.is_some_and(|error| error.kind() == ParseErrorKind::NotEnough)
     };
-    let no_date = lacks(NaiveDate::parse_from_str(&text, pattern).err());
+    let no_date = lacks(NaiveDate::parse_from_str(&text, asked).err());
     match of {
         Of::Date if no_date => Err(format!(
             "the fields of '{pattern}' do not make a date: no text read by it is a {what}"
         )),
         Of::Date => Ok(()),
         Of::DateTime | Of::Instant => {
-            if !lacks(NaiveDateTime::parse_from_str(&text, pattern).err()) {
+            if !lacks(NaiveDateTime::parse_from_str(&text, asked).err()) {
                 return match of {
-                    Of::Instant
-                        if lacks(chrono::DateTime::parse_from_str(&text, pattern).err()) =>
-                    {
+                    Of::Instant if lacks(chrono::DateTime::parse_from_str(&text, asked).err()) => {
                         Err(format!(
                             "the fields of '{pattern}' do not make a UTC offset (%z or %:z): \
                              no text read by it is a {what}"
@@ -818,14 +837,119 @@ fn ready(pattern: &str, use_: Use) -> Rc<Result<Ready, String>> {
     })
 }
 
-/// An offset's item that also reads `Z` (UTC), as RFC 3339 writes it:
-/// `%z` and `%:z` of a parse of an Instant.
+/// An offset's item that also reads `Z` (UTC), as RFC 3339 writes it,
+/// of a parse of an Instant: `%z` and `%:z` read `+hhmm` and `+hh:mm`;
+/// `%:::z` (`+hh`) and `%#z` read chrono's permissive form (`+hh`,
+/// `+hhmm`, `+hh:mm`); `%::z` (`+hh:mm:ss`) is read by [`read_item`].
 fn zulu(item: chrono::format::Item<'static>) -> chrono::format::Item<'static> {
     use chrono::format::{Fixed, Item};
     match item {
         Item::Fixed(Fixed::TimezoneOffset) => Item::Fixed(Fixed::TimezoneOffsetZ),
         Item::Fixed(Fixed::TimezoneOffsetColon) => Item::Fixed(Fixed::TimezoneOffsetColonZ),
+        Item::Fixed(Fixed::TimezoneOffsetTripleColon) => permissive_offset(),
         other => other,
+    }
+}
+
+/// chrono's permissive offset, the item of `%#z`.
+fn permissive_offset() -> chrono::format::Item<'static> {
+    chrono::format::StrftimeItems::new("%#z")
+        .parse_to_owned()
+        .ok()
+        .and_then(|items| items.into_iter().next())
+        .unwrap_or(chrono::format::Item::Fixed(
+            chrono::format::Fixed::TimezoneOffsetColonZ,
+        ))
+}
+
+/// Whether `item` reads a UTC offset: `+02:00` sets one.
+fn reads_an_offset(item: &chrono::format::Item<'_>) -> bool {
+    let mut parsed = Parsed::new();
+    chrono::format::parse_and_remainder(&mut parsed, "+02:00", std::iter::once(item)).is_ok()
+        && parsed.offset() == Some(2 * 3600)
+}
+
+/// Whether `item` is an offset of hours and minutes: `%z`, `%:z`.
+fn is_hours_and_minutes(item: &chrono::format::Item<'_>) -> bool {
+    use chrono::format::{Fixed, Item};
+    matches!(
+        item,
+        Item::Fixed(
+            Fixed::TimezoneOffsetZ
+                | Fixed::TimezoneOffsetColonZ
+                | Fixed::TimezoneOffset
+                | Fixed::TimezoneOffsetColon
+        )
+    )
+}
+
+/// Whether `rest` starts with an offset of hours alone: `+02`, and no
+/// digit or colon after it.
+fn hours_alone(rest: &str) -> bool {
+    let b = rest.trim_start().as_bytes();
+    b.len() >= 3
+        && matches!(b[0], b'+' | b'-')
+        && b[1].is_ascii_digit()
+        && b[2].is_ascii_digit()
+        && !b.get(3).is_some_and(|c| c.is_ascii_digit() || *c == b':')
+}
+
+/// Read `item` at the start of `rest` into `parsed`: what is behind it.
+/// `%::z` (`+hh:mm:ss`, or `Z`) is read here, as chrono reads only
+/// `+hh:mm` by it; every other item is chrono's.
+fn read_item<'s>(
+    parsed: &mut Parsed,
+    rest: &'s str,
+    item: &chrono::format::Item<'_>,
+) -> chrono::ParseResult<&'s str> {
+    use chrono::format::{Fixed, Item};
+    match item {
+        Item::Fixed(Fixed::TimezoneOffsetDoubleColon) => {
+            let (offset, behind) = offset_with_seconds(rest.trim_start())?;
+            parsed.set_offset(offset)?;
+            Ok(behind)
+        }
+        other => chrono::format::parse_and_remainder(parsed, rest, std::iter::once(other)),
+    }
+}
+
+/// chrono's error of a text that is too short for an item (`short`), or
+/// that is not what the item reads: errors of chrono's own kinds.
+fn chrono_error(short: bool) -> chrono::ParseError {
+    use chrono::format::{Item, parse_and_remainder};
+    let item = [Item::Literal("+")];
+    let text = match short {
+        true => "",
+        false => "x",
+    };
+    match parse_and_remainder(&mut Parsed::new(), text, item.iter()) {
+        Err(e) => e,
+        Ok(_) => unreachable!("'{text}' is no '+'"),
+    }
+}
+
+/// An offset of `%::z` at the start of `s`, in seconds, and what is
+/// behind it: `+hh:mm:ss`, or `Z` (or `z`) for UTC.
+fn offset_with_seconds(s: &str) -> chrono::ParseResult<(i64, &str)> {
+    if let Some(behind) = s.strip_prefix(['Z', 'z']) {
+        return Ok((0, behind));
+    }
+    let b = s.as_bytes();
+    let sign = match b.first() {
+        Some(b'+') => 1,
+        Some(b'-') => -1,
+        _ => return Err(chrono_error(b.is_empty())),
+    };
+    let two = |at: usize| -> Option<i64> {
+        let d = b.get(at..at + 2)?;
+        (d[0].is_ascii_digit() && d[1].is_ascii_digit())
+            .then(|| i64::from(d[0] - b'0') * 10 + i64::from(d[1] - b'0'))
+    };
+    match (two(1), b.get(3), two(4), b.get(6), two(7)) {
+        (Some(h), Some(b':'), Some(m), Some(b':'), Some(sec)) if m < 60 && sec < 60 => {
+            Ok((sign * (h * 3600 + m * 60 + sec), &s[9..]))
+        }
+        _ => Err(chrono_error(b.len() < 9)),
     }
 }
 
@@ -835,7 +959,19 @@ fn read_instant(
     items: &[chrono::format::Item<'static>],
 ) -> chrono::ParseResult<chrono::DateTime<chrono::FixedOffset>> {
     let mut parsed = Parsed::new();
-    chrono::format::parse(&mut parsed, s, items.iter())?;
+    let mut rest = s;
+    for item in items {
+        rest = read_item(&mut parsed, rest, item)?;
+    }
+    if !rest.is_empty() {
+        // (chrono's error of text behind a pattern.)
+        let behind = chrono::format::parse(
+            &mut Parsed::new(),
+            rest,
+            std::iter::empty::<chrono::format::Item>(),
+        );
+        return Err(behind.expect_err("text behind no item"));
+    }
     parsed.to_datetime()
 }
 
@@ -1032,7 +1168,7 @@ builtins! {
                 Some(ns) => ok(make_instant(ns)),
                 None => time_out_of_range_err(format!(
                     "invalid instant '{s}' for '{pattern}': it is out of the range of a time.Instant \
-                     (years 1677 to 2262)"
+                     (1677-09-21T00:12:43.145224192Z to 2262-04-11T23:47:16.854775807Z)"
                 )),
             },
             Err(e) => time_parse_err(s, pattern, &ready.items, Of::Instant, e),
