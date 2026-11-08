@@ -192,7 +192,7 @@ Combines a `Date` and `Time` into a `DateTime`. Infallible since both inputs are
 ```silt
 import time
 
-fn main() -> Result(Unit, time.TimeError) {
+fn main() -> Result((), time.TimeError) {
   let d = time.date(2024, 6, 15)?
   let t = time.time(9, 30, 0)?
   println(time.datetime(d, t)) -- 2024-06-15T09:30:00
@@ -235,7 +235,7 @@ Converts a local `DateTime` to an `Instant` by subtracting the UTC offset.
 ```silt
 import time
 
-fn main() -> Result(Unit, time.TimeError) {
+fn main() -> Result((), time.TimeError) {
   let dt = time.datetime(time.date(2024, 1, 1)?, time.time(0, 0, 0)?)
   let instant = time.to_instant(dt, 0)
   println(instant.epoch_ns)
@@ -261,7 +261,7 @@ the program. `time.parse` refuses the same patterns.
 ```silt
 import time
 
-fn main() -> Result(Unit, time.TimeError) {
+fn main() -> Result((), time.TimeError) {
   let dt = time.datetime(time.date(2024, 12, 25)?, time.time(18, 0, 0)?)
   println(time.format(dt, "%A, %B %d, %Y at %H:%M")?)
   -- Wednesday, December 25, 2024 at 18:00
@@ -286,7 +286,7 @@ same patterns.
 ```silt
 import time
 
-fn main() -> Result(Unit, time.TimeError) {
+fn main() -> Result((), time.TimeError) {
   let d = time.date(2024, 6, 15)?
   println(time.format_date(d, "%d/%m/%Y")?) -- 15/06/2024
   Ok(())
@@ -372,7 +372,7 @@ Adds (or subtracts, if negative) days from a date.
 ```silt
 import time
 
-fn main() -> Result(Unit, time.TimeError) {
+fn main() -> Result((), time.TimeError) {
   let d = time.date(2024, 1, 1)?
   println(d |> time.add_days(90)) -- 2024-03-31
   println(d |> time.add_days(-1)) -- 2023-12-31
@@ -392,7 +392,7 @@ Adds (or subtracts) months from a date. Clamps to the last valid day of the targ
 ```silt
 import time
 
-fn main() -> Result(Unit, time.TimeError) {
+fn main() -> Result((), time.TimeError) {
   let d = time.date(2024, 1, 31)?
   println(d |> time.add_months(1)) -- 2024-02-29 (leap year, clamped)
   println(d |> time.add_months(2)) -- 2024-03-31
@@ -505,7 +505,7 @@ Returns the signed number of days between two dates.
 ```silt
 import time
 
-fn main() -> Result(Unit, time.TimeError) {
+fn main() -> Result((), time.TimeError) {
   let a = time.date(2024, 1, 1)?
   let b = time.date(2024, 12, 31)?
   println(time.days_between(a, b)) -- 365
