@@ -1,0 +1,30 @@
+-- repeat: 10
+-- A task.deadline that ends its function also cancels the tasks the
+-- function spawned that still run, as a cancel does. A task the
+-- function was joining and did not spawn goes on.
+import channel
+import task
+import time
+
+fn main() {
+  let cmds = channel.new(16)
+  let gate = channel.new(0)
+  let other = task.spawn { ->
+    let _ = channel.receive(gate)
+    "the other task went on"
+  }
+  let outcome = task.deadline(time.ms(20)) { ->
+    let _ = task.spawn { ->
+      let _ = channel.receive(gate)
+      channel.send(cmds, 1)
+    }
+    task.join(other)
+  }
+  match outcome {
+    Err(task.Timeout) -> println("timed out")
+    _ -> println("not timed out")
+  }
+  channel.close(cmds)
+  channel.close(gate)
+  println(task.join(other))
+}

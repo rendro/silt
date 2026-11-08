@@ -1,0 +1,25 @@
+-- A task that a cancelled task spawns in the steps it has left is
+-- cancelled at once and never runs. The task cancels itself, so the
+-- cancel comes at a known place.
+import channel
+import task
+import time
+
+fn main() {
+  let own: Channel(task.Handle(())) = channel.new(1)
+  let ran: Channel(String) = channel.new(1)
+  let given: Channel(Int) = channel.new(1)
+  let t = task.spawn { ->
+    match channel.receive(own) {
+      Some(me) -> task.cancel(me)
+      None -> ()
+    }
+    let _ = task.spawn { -> channel.send(ran, "the child ran") }
+    channel.send(given, 1)
+  }
+  channel.send(own, t)
+  println("the task went on: {channel.receive(given)}")
+  -- A child that ran would have sent by now.
+  time.sleep(time.ms(20))
+  println("its child: {channel.try_receive(ran)}")
+}

@@ -1191,6 +1191,9 @@ pub struct TaskHandle {
     /// spawned it, if a task did: the report of a failure that nobody
     /// joined names them, since nobody holds the handle's id.
     spawned: Option<(Span, Option<Arc<AtomicBool>>)>,
+    /// The task's place among the tasks that spawned it and that it
+    /// spawned, for a cancel to reach them (`runtime::family`).
+    family: super::family::Member,
 }
 
 impl TaskHandle {
@@ -1213,6 +1216,7 @@ impl TaskHandle {
             stage: None,
             failed_with_input: AtomicBool::new(false),
             spawned: None,
+            family: Default::default(),
         }
     }
 
@@ -1398,8 +1402,30 @@ impl TaskHandle {
         }
     }
 
+    /// A cancel of a task that spawned this one, or of one of their
+    /// spawners, reaches it while it runs: as `task.cancel`, except that
+    /// a failure that comes first stands and is not dismissed (a task
+    /// that has ended is not cancelled so: `runtime::family`).
+    pub fn cancel_spawned(&self, wake: &dyn Wake) {
+        self.mark_cancelled();
+        let _ = self
+            .result
+            .complete(Ended(Err(VmError::new("cancelled".to_string()))), wake);
+    }
+
+    /// The flag of [`TaskHandle::cancel`], set alone: the rest of the
+    /// cancel follows ([`TaskHandle::cancel_spawned`]).
+    pub(crate) fn mark_cancelled(&self) {
+        self.cancelled.store(true, AtomicOrdering::SeqCst);
+    }
+
     pub fn is_cancelled(&self) -> bool {
         self.cancelled.load(AtomicOrdering::SeqCst)
+    }
+
+    /// The task's place in the tree of who spawned whom.
+    pub(crate) fn family(&self) -> &super::family::Member {
+        &self.family
     }
 
     /// The flag that says so, for the waits of the task
