@@ -1,15 +1,15 @@
 csv syntax error at byte 14: line 1: a carriage return (\r) outside quotes: csv lines end in \n or \r\n
-Ok([P {name: A, age: 1, email: None}, P {name: B, age: 2, email: None}])
+Ok([P {name: "A", age: 1, email: None}, P {name: "B", age: 2, email: None}])
 csv syntax error at byte 13: line 3: a blank line: every row has the header's 2 fields
 csv syntax error at byte 13: line 3: a blank line: every row has the header's 2 fields
-Ok([P {name: A, age: 1, email: None}])
-Ok([P {name: A, age: 1, email: None}])
+Ok([P {name: "A", age: 1, email: None}])
+Ok([P {name: "A", age: 1, email: None}])
 csv syntax error at byte 9: line 2: a row of 1 field, and the header has 2
 csv syntax error at byte 5: line 1: the header's column ' age' has spaces around it: column names are matched exactly
 csv syntax error at byte 5: line 1: the header's column 'age ' has spaces around it: column names are matched exactly
-[One {id: a}, One {id: }, One {id: b}]
+[One {id: "a"}, One {id: ""}, One {id: "b"}]
 Err(csv syntax error at byte 3: a carriage return (\r) outside quotes: csv lines end in \n or \r\n)
 Err(csv syntax error at byte 7: a carriage return (\r) outside quotes: csv lines end in \n or \r\n)
 Err(csv syntax error at byte 1: a carriage return (\r) outside quotes: csv lines end in \n or \r\n)
-Ok([ab, c])
-Ok([a, b])
+Ok(["a\rb", "c"])
+Ok(["a", "b"])
