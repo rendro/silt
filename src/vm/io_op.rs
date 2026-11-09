@@ -51,7 +51,16 @@ impl Vm {
         // The frame owns the operation: when the wait is over, however
         // it ends, the operation has no waiter and no longer counts as
         // pending for the program (`IoOp`'s `Drop`).
-        Ok(self.park(name, wait, move |_, fired| {
+        Ok(self.park(name, wait, move |vm, fired| {
+            // An operation that gave up because the task takes nothing
+            // new (its time is over, it was cancelled) while the task
+            // still waited gives no value of the operation: the task
+            // ends here, as it ends at any wait then. (Its time was
+            // over before the value came: the wait would have ended at
+            // its deadline, had the operation's give-up not come first.)
+            if matches!(fired, Fired::Arm(0, _)) && op.gave_up() && vm.takes_nothing_new() {
+                return Ok(vm.end_here(name));
+            }
             // The value is taken only by a wait that it ended: one
             // that came as the deadline passed stays unheard.
             match (op.outcome(&fired), then.take()) {
@@ -163,6 +172,11 @@ struct OpState {
     /// waiter has gone first ([`Wanted::claim`]): one of
     /// [`WAITING`], [`TOOK`], [`GONE`], decided once.
     claim: std::sync::atomic::AtomicU8,
+    /// Set when the operation was told its value is wanted no longer
+    /// ([`Wanted::gone`]): what it then gives is no value of the
+    /// operation (an accept that gave up says `Closed`), and a waiter
+    /// still there does not take it ([`Vm::io_wait_then`]).
+    gave_up: std::sync::atomic::AtomicBool,
 }
 
 /// Neither the operation has claimed, nor has its waiter gone.
@@ -183,6 +197,7 @@ impl OpState {
             taken: std::sync::atomic::AtomicBool::new(false),
             stopped: std::sync::atomic::AtomicBool::new(false),
             claim: std::sync::atomic::AtomicU8::new(WAITING),
+            gave_up: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -238,9 +253,17 @@ impl Wanted {
 
     /// Whether nobody wants the value: the waiter has gone, or its
     /// task takes nothing new.
+    ///
+    /// An operation told so gives up: that is noted, so that what it
+    /// gives then is not taken for its value (see `OpState::gave_up`).
     pub(crate) fn gone(&self) -> bool {
         use std::sync::atomic::Ordering::SeqCst;
-        self.state.claim.load(SeqCst) == GONE || self.task.iter().any(|flag| flag.load(SeqCst))
+        let gone =
+            self.state.claim.load(SeqCst) == GONE || self.task.iter().any(|flag| flag.load(SeqCst));
+        if gone {
+            self.state.gave_up.store(true, SeqCst);
+        }
+        gone
     }
 
     /// The operation takes what it cannot put back: a client's
@@ -253,17 +276,18 @@ impl Wanted {
     /// exactly one of the two comes first.
     pub(crate) fn claim(&self) -> bool {
         use std::sync::atomic::Ordering::SeqCst;
-        if self.task.iter().any(|flag| flag.load(SeqCst)) {
-            return self.state.claim.load(SeqCst) == TOOK;
+        let claimed = match self.task.iter().any(|flag| flag.load(SeqCst)) {
+            true => self.state.claim.load(SeqCst) == TOOK,
+            false => match (self.state.claim).compare_exchange(WAITING, TOOK, SeqCst, SeqCst) {
+                Ok(_) => true,
+                Err(now) => now == TOOK,
+            },
+        };
+        // (An operation that may not claim gives up, as on `gone`.)
+        if !claimed {
+            self.state.gave_up.store(true, SeqCst);
         }
-        match self
-            .state
-            .claim
-            .compare_exchange(WAITING, TOOK, SeqCst, SeqCst)
-        {
-            Ok(_) => true,
-            Err(now) => now == TOOK,
-        }
+        claimed
     }
 
     /// Whether the operation has claimed ([`Wanted::claim`]).
@@ -837,6 +861,12 @@ impl IoOp {
             Limit::None => None,
         };
         Wait::new(vec![Arm::Cell(self.cell.clone())]).deadline(deadline)
+    }
+
+    /// Whether the operation was told its value is wanted no longer,
+    /// and gave up ([`Wanted::gone`]).
+    pub(crate) fn gave_up(&self) -> bool {
+        self.state.gave_up.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// What the wait for the operation ([`IoOp::wait`]), which ended as
@@ -1420,6 +1450,33 @@ mod tests {
         assert!(!of_task.claim());
         of_task.leave();
         assert!(!of_task.claimed());
+    }
+
+    /// An operation that is told its value is wanted no longer, or may
+    /// not claim, has given up: a waiter that is still there (its task
+    /// takes nothing new) does not take what it gives for its value.
+    /// One that is told nothing has not.
+    #[test]
+    fn an_operation_told_its_value_is_not_wanted_has_given_up() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let wanted = Wanted::of_test(Vec::new());
+        assert!(!wanted.gone() && wanted.claim());
+        assert!(!wanted.state.gave_up.load(SeqCst), "it claimed");
+
+        let over = Arc::new(AtomicBool::new(false));
+        let of_task = Wanted::of_test(vec![over.clone()]);
+        assert!(!of_task.gone());
+        assert!(!of_task.state.gave_up.load(SeqCst));
+        over.store(true, SeqCst);
+        assert!(of_task.gone());
+        assert!(
+            of_task.state.gave_up.load(SeqCst),
+            "told by the task's flag"
+        );
+
+        let refused = Wanted::of_test(vec![Arc::new(AtomicBool::new(true))]);
+        assert!(!refused.claim());
+        assert!(refused.state.gave_up.load(SeqCst), "refused its claim");
     }
 
     /// The waiter of an operation goes in `IoOp`'s `Drop`, wherever
