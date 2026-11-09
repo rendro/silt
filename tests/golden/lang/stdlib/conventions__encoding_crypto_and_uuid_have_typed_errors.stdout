@@ -6,5 +6,5 @@ random_bytes InvalidLength: -1
 crypto.random_bytes: 2000000 bytes exceed the cap of 1048576 (1 MiB)
 parse Invalid: invalid character: found `n` at 1
 invalid uuid: invalid character: found `n` at 1
-Ok(00000000-0000-0000-0000-000000000000)
-Ok(a b)
+Ok("00000000-0000-0000-0000-000000000000")
+Ok("a b")

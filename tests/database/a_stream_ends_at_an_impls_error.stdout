@@ -1,8 +1,8 @@
 an Err:
-  Ok(R {n: 1, code: Code {digits: 1}})
-  Ok(R {n: 2, code: Code {digits: 2}})
+  Ok(R {n: 1, code: Code {digits: "1"}})
+  Ok(R {n: 2, code: Code {digits: "2"}})
   Err(postgres type mismatch on column `code`: expected Code, got jsonb: no code: 7)
   (end)
 closed:
-  Some(Ok(R {n: 1, code: Code {digits: 1}}))
+  Some(Ok(R {n: 1, code: Code {digits: "1"}}))
   closed

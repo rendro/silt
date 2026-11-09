@@ -47,7 +47,7 @@ fn a_package_directory_runs_its_main() {
         .unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(output.status.code(), Some(0), "stderr:\n{stderr}");
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "app [x]\n");
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "app [\"x\"]\n");
     let _ = fs::remove_dir_all(&dir);
 }
 

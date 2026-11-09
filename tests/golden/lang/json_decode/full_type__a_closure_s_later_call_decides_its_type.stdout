@@ -1,4 +1,4 @@
-Ok(Box {v: b})
+Ok(Box {v: "b"})
 Ok(Box {v: 8})
 Ok([Box {v: 1}])
-Ok([Box {v: x}])
+Ok([Box {v: "x"}])

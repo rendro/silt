@@ -1,5 +1,5 @@
 v = "s"
-"a"""
+"a\"\""
 2
 say "hi"
     a "quote"

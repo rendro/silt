@@ -141,10 +141,26 @@ impl fmt::Display for Token {
             // (As a Float is shown.)
             Token::Float(n) => crate::value::Float::write_text(*n, f),
             Token::Bool(b) => write!(f, "{b}"),
-            Token::StringLit(s) => write!(f, "\"{}\"", escape_control_chars(s)),
-            Token::StringStart(s) => write!(f, "\"{}{{", escape_control_chars(s)),
-            Token::StringMiddle(s) => write!(f, "}}{}{{", escape_control_chars(s)),
-            Token::StringEnd(s) => write!(f, "}}{}\"", escape_control_chars(s)),
+            Token::StringLit(s) => {
+                f.write_str("\"")?;
+                escape_into(f, s)?;
+                f.write_str("\"")
+            }
+            Token::StringStart(s) => {
+                f.write_str("\"")?;
+                escape_into(f, s)?;
+                f.write_str("{")
+            }
+            Token::StringMiddle(s) => {
+                f.write_str("}")?;
+                escape_into(f, s)?;
+                f.write_str("{")
+            }
+            Token::StringEnd(s) => {
+                f.write_str("}")?;
+                escape_into(f, s)?;
+                f.write_str("\"")
+            }
             Token::Ident(s) => write!(f, "{s}"),
             Token::Plus => write!(f, "+"),
             Token::Minus => write!(f, "-"),
@@ -1605,24 +1621,104 @@ fn int_magnitude(digits: &str, radix: u32) -> Option<i64> {
     }
 }
 
-fn escape_control_chars(s: &str) -> std::borrow::Cow<'_, str> {
-    if !s.chars().any(char::is_control) {
-        return std::borrow::Cow::Borrowed(s);
+/// Whether a byte of `bytes` is or may begin a character that
+/// [`escape_into`] escapes: an ASCII control, `\`, `"`, `{`, DEL, or
+/// 0xC2, the first byte of the C1 controls (U+0080 to U+009F) and of
+/// other characters, which `escape_into` tells apart. The test of a
+/// chunk has no branch, so that it runs many bytes at a time: a string
+/// shown inside a structure mostly has nothing to escape.
+fn may_need_escape(bytes: &[u8]) -> bool {
+    bytes.chunks(32).any(|chunk| {
+        chunk.iter().fold(false, |found, &b| {
+            found
+                | (b < 0x20)
+                | (b == b'\\')
+                | (b == b'"')
+                | (b == b'{')
+                | (b == 0x7f)
+                | (b == 0xc2)
+        })
+    })
+}
+
+/// Write the text `s` as a string literal writes it between its quotes
+/// to `out`: what the lexer reads back as `s`. A backslash, a quote and
+/// a `{` (which opens an interpolation) are escaped, `\n`, `\r`, `\t`
+/// and `\0` are written so, and any other control character as
+/// `\u{..}`. A string shown inside a structure (`["a", "b, c"]`) and a
+/// string token in a message are written by it. Nothing is allocated: a
+/// text none of whose bytes can need an escape is one write, and any
+/// other is written as the slices between its escapes.
+pub fn escape_into(out: &mut impl fmt::Write, s: &str) -> fmt::Result {
+    if !may_need_escape(s.as_bytes()) {
+        return out.write_str(s);
     }
-    let mut out = String::with_capacity(s.len() + 8);
-    for ch in s.chars() {
-        if ch.is_control() {
-            out.extend(ch.escape_default());
-        } else {
-            out.push(ch);
+    // By bytes: every character escaped is ASCII but the C1 controls,
+    // whose UTF-8 is 0xC2 and the code point itself (0x80 to 0x9F). An
+    // escape starts at a character's first byte, so each slice written
+    // in between is whole characters.
+    let bytes = s.as_bytes();
+    let (mut written, mut at) = (0, 0);
+    while at < bytes.len() {
+        let (escape, len) = match bytes[at] {
+            b'\\' => (Ok("\\\\"), 1),
+            b'"' => (Ok("\\\""), 1),
+            b'{' => (Ok("\\{"), 1),
+            b'\n' => (Ok("\\n"), 1),
+            b'\r' => (Ok("\\r"), 1),
+            b'\t' => (Ok("\\t"), 1),
+            0 => (Ok("\\0"), 1),
+            b @ (0..0x20 | 0x7f) => (Err(b), 1),
+            0xc2 if matches!(bytes.get(at + 1), Some(0x80..=0x9f)) => (Err(bytes[at + 1]), 2),
+            _ => {
+                at += 1;
+                continue;
+            }
+        };
+        out.write_str(&s[written..at])?;
+        match escape {
+            Ok(escape) => out.write_str(escape)?,
+            Err(code) => write!(out, "\\u{{{code:x}}}")?,
         }
+        at += len;
+        written = at;
     }
-    std::borrow::Cow::Owned(out)
+    out.write_str(&s[written..])
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What `escape_into` writes for `s`.
+    fn escaped(s: &str) -> String {
+        let mut out = String::new();
+        escape_into(&mut out, s).expect("a String takes every write");
+        out
+    }
+
+    /// The escapes, by the fast path and the byte walk alike: a C1
+    /// control is escaped, other characters whose UTF-8 starts with
+    /// 0xC2 (U+00A0) and the rest of Unicode are not; and the lexer reads
+    /// every escaped text back as the text.
+    #[test]
+    fn escape_into_writes_what_the_lexer_reads_back() {
+        let cases = [
+            ("plain text", "plain text"),
+            ("", ""),
+            ("é ü 日本", "é ü 日本"),
+            ("a\"b\\c{d}", "a\\\"b\\\\c\\{d}"),
+            ("\n\r\t\0", "\\n\\r\\t\\0"),
+            ("\u{1}\u{1f}\u{7f}", "\\u{1}\\u{1f}\\u{7f}"),
+            ("x\u{85}y\u{9f}", "x\\u{85}y\\u{9f}"),
+            ("\u{a0}\u{bf}é\"", "\u{a0}\u{bf}é\\\""),
+        ];
+        for (text, want) in cases {
+            assert_eq!(escaped(text), want, "{text:?}");
+            let read = lex(&format!("\"{want}\""));
+            assert_eq!(read, [Token::StringLit(text.into())], "{text:?}");
+        }
+    }
 
     fn lex(input: &str) -> Vec<Token> {
         Lexer::new(crate::source::FileId::default(), input)

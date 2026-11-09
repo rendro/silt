@@ -5,8 +5,8 @@ false
 true
 false
 Ok(6)
-Err(e)
-Err(wrapped)
+Err("e")
+Err("wrapped")
 Ok(5)
 Ok(13)
-Err(e)
+Err("e")

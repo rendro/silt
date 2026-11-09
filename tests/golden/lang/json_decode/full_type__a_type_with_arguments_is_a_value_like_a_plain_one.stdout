@@ -1,4 +1,4 @@
-Ok(Box {v: a})
+Ok(Box {v: "a"})
 Ok([1, 2])
 Ok(Box {v: 3})
 Ok(Box {v: 4})

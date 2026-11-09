@@ -1,4 +1,4 @@
 Ok(2)
-Err(e)
+Err("e")
 Some(2)
 Ok(2)

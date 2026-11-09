@@ -79,7 +79,7 @@ Splits the string into a list of single-character strings.
 import string
 
 fn main() {
-  println(string.chars("hi")) -- [h, i]
+  println(string.chars("hi")) -- ["h", "i"]
 }
 ```
 
@@ -153,7 +153,7 @@ Returns `Some` of the single-character string of a Unicode code point, or
 import string
 
 fn main() {
-  println(string.from_char_code(65)) -- Some(A)
+  println(string.from_char_code(65)) -- Some("A")
   println(string.from_char_code(-1)) -- None
 }
 ```
@@ -407,8 +407,8 @@ sources.
 import string
 
 fn main() {
-  println(string.lines("a\nb\nc")) -- [a, b, c]
-  println(string.lines("a\nb\n")) -- [a, b]
+  println(string.lines("a\nb\nc")) -- ["a", "b", "c"]
+  println(string.lines("a\nb\n")) -- ["a", "b"]
   println(string.lines("")) -- []
 }
 ```
@@ -529,7 +529,7 @@ import string
 
 fn main() {
   let parts = string.split("a,b,c", ",")
-  println(parts) -- [a, b, c]
+  println(parts) -- ["a", "b", "c"]
 }
 ```
 
@@ -548,9 +548,9 @@ one past the end of the string is `None`.
 import string
 
 fn main() {
-  println(string.split_at("hello", 2)) -- Some((he, llo))
-  println(string.split_at("hello", 0)) -- Some((, hello))
-  println(string.split_at("hello", 5)) -- Some((hello, ))
+  println(string.split_at("hello", 2)) -- Some(("he", "llo"))
+  println(string.split_at("hello", 0)) -- Some(("", "hello"))
+  println(string.split_at("hello", 5)) -- Some(("hello", ""))
   println(string.split_at("hello", 6)) -- None
 }
 ```

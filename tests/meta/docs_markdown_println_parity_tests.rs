@@ -535,9 +535,10 @@ fn docs_markdown_println_annotations_match_silt_run_stdout() {
         failures.is_empty(),
         "{} println annotation(s) in markdown docs do not match `silt run` \
          stdout. Either the doc comment drifted from reality (common \
-         causes: a whole Float written without its `.0`, double-quoted strings \
-         inside `println` comments, `Some(\"foo\")` instead of \
-         `Some(foo)`) or silt's Display convention changed. Fix the doc \
+         causes: a whole Float written without its `.0`, a string inside a \
+         structure written bare, `Some(foo)` instead of `Some(\"foo\")`, or a \
+         string printed by itself written in quotes) or silt's Display \
+         convention changed. Fix the doc \
          annotation in the corresponding `.md` file to match observed \
          stdout, OR add an `approximately` / `e.g.` qualifier if the \
          value is illustrative.\n\n{}",

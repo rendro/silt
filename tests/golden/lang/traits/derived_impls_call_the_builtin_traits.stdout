@@ -5,4 +5,4 @@ true
 [Pt {x: 1}, Pt {x: 2}]
 true
 false
-Some(a)
+Some("a")

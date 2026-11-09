@@ -1,5 +1,5 @@
-Ok(2024-12-25 18:05)
-Ok(25/12/2024)
+Ok("2024-12-25 18:05")
+Ok("25/12/2024")
 Wednesday, December 25
 Err(time format error: invalid format specifier in '%Q')
 Err(time format error: a specifier of a time zone in '%z' is not valid for a time.DateTime: a time.DateTime has no time zone)

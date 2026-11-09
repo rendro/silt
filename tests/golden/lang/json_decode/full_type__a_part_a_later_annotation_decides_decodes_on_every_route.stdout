@@ -1,4 +1,4 @@
 Ok([1])
-Ok(Box {v: Some(x)})
-Ok(Box {v: Some(z)})
-Ok(Box {v: Some(y)})
+Ok(Box {v: Some("x")})
+Ok(Box {v: Some("z")})
+Ok(Box {v: Some("y")})

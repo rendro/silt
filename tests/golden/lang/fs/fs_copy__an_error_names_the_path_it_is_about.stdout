@@ -4,4 +4,4 @@ Err(file not found: missing/b.txt)
 Err(file not found: gone.txt)
 file not found: missing/b.txt
 false
-Ok(data)
+Ok("data")

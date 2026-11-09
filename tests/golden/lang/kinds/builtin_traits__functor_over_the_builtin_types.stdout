@@ -2,11 +2,11 @@
 Some(8)
 None
 Ok(10)
-Err(no)
+Err("no")
 12
 [14, 16]
 [2, 3]
 Some(20)
 Some(3)
-[a, b, c]
+["a", "b", "c"]
 Some(1)

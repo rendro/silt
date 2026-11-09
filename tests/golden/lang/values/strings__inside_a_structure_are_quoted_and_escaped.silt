@@ -1,0 +1,39 @@
+-- A String inside a structure (a list, a tuple, an option, a record's
+-- field, a variant's field, a map's key and value, a set's member) is
+-- shown as a program writes it, in quotes and escaped, so its parts can
+-- be told apart. Shown by itself or interpolated it is its text, and a
+-- written Display impl is what it writes. io.inspect writes every
+-- string so.
+import io
+
+type P { name: String, n: Int }
+
+type Tag { Tag(String) }
+
+type Named { Named(String) }
+
+trait Display for Named {
+  fn display(self) -> String {
+    match self {
+      Named(s) -> "named {s}"
+    }
+  }
+}
+
+fn main() {
+  let s = "b, c"
+  println(["a", s, "d"])
+  println(("a, b", "c"))
+  println(Some("x"))
+  println(P { name: "q\"uote\n\{x}\\", n: 1 })
+  println(Tag("t"))
+  println(#{ "k": "v" })
+  println(#["s"])
+  println(Ok("\u{1}"))
+  println(s)
+  println("{s}")
+  println("{[s]}")
+  println([Named("w")])
+  println(io.inspect("a\"b"))
+  println(io.inspect(s))
+}

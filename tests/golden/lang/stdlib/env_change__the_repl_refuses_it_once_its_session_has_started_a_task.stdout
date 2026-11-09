@@ -1,4 +1,4 @@
 Silt REPL (type :quit to exit, :help for commands)
-Some(one)
+Some("one")
 7
-Some(one)
+Some("one")

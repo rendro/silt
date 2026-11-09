@@ -3490,8 +3490,8 @@ impl<'src> Parser<'src> {
                     self.parse_trailing_closure_as_lambda()
                 } else if self.is_anon_record_literal() {
                     self.parse_anon_record_literal()
-                } else if let Some(Token::Ident(name)) =
-                    self.tokens.get(self.pos + 1).map(|t| &t.kind)
+                } else if let Some(first) = self.tokens.get(self.pos + 1)
+                    && (matches!(first.kind, Token::Ident(_)) || first.kind.keyword().is_some())
                     && matches!(
                         self.tokens.get(self.pos + 2).map(|t| &t.kind),
                         Some(Token::Comma)
@@ -3499,10 +3499,13 @@ impl<'src> Parser<'src> {
                 {
                     // `{ x, ...` starts no block and no closure: an
                     // anonymous record with a field written alone.
-                    Err(Self::anon_field_alone(
-                        self.tokens[self.pos + 1].span,
-                        *name,
-                    ))
+                    Err(match (&first.kind, first.kind.keyword()) {
+                        (_, Some(keyword)) => {
+                            Self::keyword_field_alone(first.span, keyword, "its value", "value")
+                        }
+                        (Token::Ident(name), None) => Self::anon_field_alone(first.span, *name),
+                        _ => unreachable!("the first token is a name or a keyword"),
+                    })
                 } else {
                     self.parse_block()
                 }
@@ -3817,12 +3820,25 @@ impl<'src> Parser<'src> {
     /// is the real one.
     fn header_lone_shorthand(&self) -> bool {
         let kind = |i: usize| self.tokens.get(self.pos + i).map(|t| &t.kind);
-        self.lbrace_may_be_header_block()
-            && matches!(kind(0), Some(Token::LBrace))
+        let lone = matches!(kind(0), Some(Token::LBrace))
             && matches!(kind(1), Some(Token::Ident(name)) if !is_constructor(*name))
-            && matches!(kind(2), Some(Token::RBrace))
-            && matches!(kind(3), Some(Token::LBrace))
-            && !self.starts_line.get(self.pos + 3).copied().unwrap_or(true)
+            && matches!(kind(2), Some(Token::RBrace));
+        if !lone {
+            return false;
+        }
+        match self.header_here().map(|h| h.kind) {
+            // A match body is never `{ x }`: the braces were meant as
+            // the literal, wherever the header goes on behind them.
+            Some(HeaderKind::MatchScrutinee) => true,
+            // A loop's body may be `{ x }`, so only what cannot follow
+            // a loop on its line says the braces were the literal: the
+            // `,` of another binding, or the real body's `{`.
+            Some(HeaderKind::LoopInit) => {
+                matches!(kind(3), Some(Token::LBrace | Token::Comma))
+                    && !self.starts_line.get(self.pos + 3).copied().unwrap_or(true)
+            }
+            None => false,
+        }
     }
 
     /// The error at `header_lone_shorthand`, for the type `ty` as

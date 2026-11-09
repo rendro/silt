@@ -7,6 +7,6 @@
 a list
 Ok([1, 2])
 Ok([[1], [2, 3]])
-Ok([User {name: ada}])
+Ok([User {name: "ada"}])
 Ok((1, [2, 3]))
-Ok([User {name: bo}])
+Ok([User {name: "bo"}])

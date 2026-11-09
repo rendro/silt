@@ -1,4 +1,4 @@
-[Leaf(a), Empty]
+[Leaf("a"), Empty]
 empty, leaf b
 Leaf < Empty: true
 Continue < Stop: true

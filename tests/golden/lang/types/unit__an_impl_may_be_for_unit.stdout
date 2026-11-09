@@ -1,5 +1,5 @@
 nothing
 nothing
 Ok(())
-Err(failed)
+Err("failed")
 Wrap(())

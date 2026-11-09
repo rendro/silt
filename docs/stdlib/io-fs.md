@@ -110,8 +110,9 @@ warning.
 io.inspect(x: a) -> String
 ```
 
-Returns a debug-style string representation of any value, using silt syntax
-(e.g., strings include quotes, lists show brackets).
+Returns a debug-style string representation of any value, using silt syntax:
+every string is in quotes and escaped as a program writes it (`"a\"b"`),
+lists show brackets.
 
 ```silt
 import io

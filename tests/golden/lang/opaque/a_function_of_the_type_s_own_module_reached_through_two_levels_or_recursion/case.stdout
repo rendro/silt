@@ -1,4 +1,4 @@
-Ok(Email {addr: a})
+Ok(Email {addr: "a"})
 {"addr":"b"}
-Ok(Email {addr: c})
+Ok(Email {addr: "c"})
 {"addr":"d"}

@@ -214,7 +214,7 @@ println(alice.name) -- Alice
 
 An anonymous record is shown as it is written, without a name, its
 fields in the order of their names: `println(alice)` prints
-`{age: 30, name: Alice}`. A closed one has `Equal` (`==`), `Hash` and
+`{age: 30, name: "Alice"}`. A closed one has `Equal` (`==`), `Hash` and
 `Display` when its fields do, and no order (`<`, `Compare.compare`).
 
 The type of `alice` is the structural type `{name: String, age: Int}`,
@@ -356,7 +356,7 @@ fn ident(x: { a: Int, b: String }) -> { a: Int, b: String } {
 }
 
 fn main() {
-  println(ident({ a: 1, b: "hi" })) -- {a: 1, b: hi}
+  println(ident({ a: 1, b: "hi" })) -- {a: 1, b: "hi"}
 }
 ```
 
@@ -437,8 +437,8 @@ fn ext(p) {
 }
 
 fn main() {
-  println(copy({ name: "Bob" })) -- {name: Bob}
-  println(ext({ ...Person { name: "Bob", age: 42 } })) -- {age: 42, city: x, name: Bob}
+  println(copy({ name: "Bob" })) -- {name: "Bob"}
+  println(ext({ ...Person { name: "Bob", age: 42 } })) -- {age: 42, city: "x", name: "Bob"}
 }
 ```
 

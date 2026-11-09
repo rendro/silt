@@ -1,5 +1,4 @@
-Err(toml.stringify: two keys of a map show as the same text: [a, b])
-Err(toml.pretty: two keys of a map show as the same text: [a, b])
-Ok("[1]" = "one"
-"[2]" = "two"
-)
+Err(toml.stringify: two keys of a map show as the same text: bytes(61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 …, length: 40))
+Err(toml.pretty: two keys of a map show as the same text: bytes(61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 …, length: 40))
+Ok("'[\"a\", \"b\"]' = 2\n'[\"a, b\"]' = 1\n")
+Ok("\"[1]\" = \"one\"\n\"[2]\" = \"two\"\n")

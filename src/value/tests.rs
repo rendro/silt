@@ -1076,7 +1076,7 @@ fn display_empty_list() {
 #[test]
 fn display_tuple() {
     let tuple = Value::tuple(vec![Value::Int(1), Value::String("x".into())]);
-    assert_eq!(format!("{}", tuple), "(1, x)");
+    assert_eq!(format!("{}", tuple), "(1, \"x\")");
 }
 
 #[test]
@@ -1131,9 +1131,17 @@ fn a_value_is_shown_and_inspected_by_one_formatter() {
         (float(1.5), "1.5", "1.5"),
         (Value::Bool(true), "true", "true"),
         (text("a b"), "a b", "\"a b\""),
+        // A string shown by itself is its text; inside a structure, and
+        // inspected, it is in quotes and escaped as a program writes it.
+        (text("a\"b{c}\n"), "a\"b{c}\n", "\"a\\\"b\\{c}\\n\""),
+        (
+            Value::list(vec![text("q\"\\\t\r\0\u{1}{")]),
+            "[\"q\\\"\\\\\\t\\r\\0\\u{1}\\{\"]",
+            "[\"q\\\"\\\\\\t\\r\\0\\u{1}\\{\"]",
+        ),
         // A tuple of one item is written as a program writes it.
         (Value::tuple(vec![Value::Int(1)]), "(1,)", "(1,)"),
-        (Value::tuple(vec![text("x")]), "(x,)", "(\"x\",)"),
+        (Value::tuple(vec![text("x")]), "(\"x\",)", "(\"x\",)"),
         (
             Value::tuple(vec![Value::tuple(vec![Value::Int(1)]), Value::Int(2)]),
             "((1,), 2)",
@@ -1141,13 +1149,13 @@ fn a_value_is_shown_and_inspected_by_one_formatter() {
         ),
         (
             Value::tuple(vec![Value::Int(1), text("x")]),
-            "(1, x)",
+            "(1, \"x\")",
             "(1, \"x\")",
         ),
         (Value::list(vec![]), "[]", "[]"),
         (
             Value::list(vec![text("a"), text("b")]),
-            "[a, b]",
+            "[\"a\", \"b\"]",
             "[\"a\", \"b\"]",
         ),
         (Value::List(ints(1, 3)), "[1, 2, 3]", "[1, 2, 3]"),
@@ -1156,37 +1164,37 @@ fn a_value_is_shown_and_inspected_by_one_formatter() {
             "[0, 1, 2, ..., 10000000]",
             "[0, 1, 2, ..., 10000000]",
         ),
-        // A key that is a string is in quotes however the map is
-        // written; a key that has parts is written like any value.
+        // A key or value that is a string is in quotes however the map
+        // is written; a key that has parts is written like any value.
         (
             Value::map([
                 (text("k"), text("v")),
                 (text("l"), Value::list(vec![Value::Int(1)])),
             ]),
-            "#{\"k\": v, \"l\": [1]}",
+            "#{\"k\": \"v\", \"l\": [1]}",
             "#{\"k\": \"v\", \"l\": [1]}",
         ),
         (
             Value::map([(Value::tuple(vec![Value::Int(1), text("a")]), Value::Int(2))]),
-            "#{(1, a): 2}",
+            "#{(1, \"a\"): 2}",
             "#{(1, \"a\"): 2}",
         ),
         (Value::map([]), "#{}", "#{}"),
         (
             Value::set([text("b"), text("a")]),
-            "#[a, b]",
+            "#[\"a\", \"b\"]",
             "#[\"a\", \"b\"]",
         ),
         // A record in the order its type declares its fields; an
         // anonymous one without a name; one without fields.
         (
             Value::record(point.clone(), vec![Value::Int(2), text("one")]),
-            "Point {y: 2, x: one}",
+            "Point {y: 2, x: \"one\"}",
             "Point {y: 2, x: \"one\"}",
         ),
         (
             Value::anon_record([("b", Value::Int(2)), ("a", text("x"))]),
-            "{a: x, b: 2}",
+            "{a: \"x\", b: 2}",
             "{a: \"x\", b: 2}",
         ),
         (
@@ -1214,7 +1222,7 @@ fn a_value_is_shown_and_inspected_by_one_formatter() {
         (Value::variant(bv::NONE, []), "None", "None"),
         (
             Value::variant(bv::SOME, [text("x")]),
-            "Some(x)",
+            "Some(\"x\")",
             "Some(\"x\")",
         ),
         (

@@ -1,4 +1,4 @@
-{a: 1, b: s}
+{a: 1, b: "s"}
 (1, [Some(2), None])
 false
 true
