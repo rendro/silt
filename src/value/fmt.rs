@@ -8,7 +8,7 @@
 //! `assert_eq`'s message, Rust's `{:?}`: the value as a program would
 //! write it). A string inside a structure is in quotes and escaped as a
 //! program writes it, `["a", "b, c"]`, however the value is written
-//! ([`crate::lexer::escape_string`]); only a string shown by itself is
+//! ([`crate::lexer::escape_into`]); only a string shown by itself is
 //! its bare text.
 //!
 //! The formatter goes through a value with a stack of its own for what
@@ -268,7 +268,11 @@ fn begin<'a>(
         Value::String(s) => {
             return match shown && !inside {
                 true => f.write_str(s),
-                false => write!(f, "\"{}\"", crate::lexer::escape_string(s)),
+                false => {
+                    f.write_str("\"")?;
+                    crate::lexer::escape_into(f, s)?;
+                    f.write_str("\"")
+                }
             }
             .map(|()| None);
         }
