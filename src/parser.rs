@@ -2365,7 +2365,22 @@ impl<'src> Parser<'src> {
         }
         let result = self.parse_type_expr_inner();
         self.depth -= 1;
-        result
+        let ty = result?;
+        // `Self::Item`, `Option::Int`: a path silt does not have, said
+        // where the type ends rather than where the next construct
+        // would have started.
+        if !self.nl_before() && self.found() == "::" {
+            return Err(Diagnostic::error(
+                Code::ExpectedToken,
+                self.span(),
+                "expected the end of the type, found ::",
+            )
+            .with_help(
+                "silt has no `::`: a type of a module is written `m.Type`, and a type a trait \
+                 leaves to each impl is a parameter of the trait, `trait Stream(item)`",
+            ));
+        }
+        Ok(ty)
     }
 
     /// The rest of a function type after its `Fn`: `(A, B) -> C`.
