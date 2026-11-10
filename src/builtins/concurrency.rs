@@ -290,7 +290,7 @@ pub(crate) mod channel {
             }
             // Nothing is ever sent on it: the timer closes it.
             let ch = Channel::new(vm.next_channel_id(), 1);
-            vm.scheduler().close_at(deadline, ch.clone());
+            vm.scheduler().close_at(deadline, &ch);
             Ok(Value::Channel(ch))
         }
 

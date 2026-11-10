@@ -711,7 +711,7 @@ impl Scheduler {
 
     /// Close `channel` when the clock reads `deadline`. Until then a
     /// task that waits on the channel has a wait that will end.
-    pub(crate) fn close_at(&self, deadline: Duration, channel: Arc<Channel>) {
+    pub(crate) fn close_at(&self, deadline: Duration, channel: &Arc<Channel>) {
         let timer = self.inner.parking.timer();
         timer.close_at(deadline, channel);
         self.inner.timer_armed();
@@ -3309,6 +3309,43 @@ fn main() {
         assert_eq!(result.map_err(|e| e.message), Ok(()));
         let looks = vm.scheduler().inner.parking.inspections();
         assert!(looks <= 10, "{looks} looks at every waiting task");
+    }
+
+    /// A `channel.timeout` that lost its select is let go with the
+    /// select, not kept in the timer until its time: the documented
+    /// timeout idiom in a message loop held about 400 bytes per message
+    /// for as long as the timeout.
+    #[test]
+    fn a_timeout_that_lost_its_select_leaves_the_timer() {
+        let program = crate::session::testing::compile_str(
+            r#"
+import channel
+import list
+import time
+fn main() {
+  let inbox = channel.new(1)
+  let kept = channel.timeout(time.minutes(10))
+  list.each(1..1000) { i ->
+    channel.send(inbox, i)
+    match channel.select([channel.Recv(inbox), channel.Recv(channel.timeout(time.minutes(10)))]) {
+      channel.Received(_, Some(_)) -> ()
+      _ -> panic("the message wins")
+    }
+  }
+  match channel.try_receive(kept) {
+    channel.Empty -> ()
+    _ -> panic("a timeout that is held stays")
+  }
+}
+"#,
+        )
+        .expect("compiles");
+        let mut vm = Vm::new(HostIo::buffer(&crate::vm::Buffer::new()));
+        let result = vm.run_program(&program);
+        assert_eq!(result.map_err(|e| e.message), Ok(()));
+        // The one that `kept` held, until it was dropped at the end of
+        // `main`.
+        assert_eq!(vm.scheduler().inner.parking.timer().pending(), 0);
     }
 
     /// As many workers as `Scheduler::ensure_workers` starts.
