@@ -1,0 +1,26 @@
+-- exit: 1
+-- stderr-contains: error[runtime]: a task failed and was never joined: panic: task
+-- stderr-contains: error[runtime]: 26 more task(s) failed and were never joined (at most 64 failures are shown)
+-- stderr-contains:  --> many_failures__those_past_64_are_counted_where_the_first_was_spawned.silt:17:11
+-- stderr-contains: = help: the first of them was spawned here: join each task with task.join, or cancel it with task.cancel if you don't need its result
+-- stderr-not-contains: :1:1
+-- stderr-not-contains: panic: task 10.
+-- A hundred tasks fail, ten are cancelled: 64 of the other 90 are shown,
+-- and the 26 past them are counted, at the place where the first of
+-- them was spawned. A cancel dismisses a failure past the 64th as well
+-- as one before it.
+import list
+import task
+import time
+
+fn spawn_one(i) {
+  let h = task.spawn { -> panic("task {i}.") }
+  h
+}
+
+fn main() {
+  let hs = list.map(1..100, spawn_one)
+  time.sleep(time.ms(50))
+  list.each(list.take(hs, 10), task.cancel)
+  println("10 of 100 failures dismissed")
+}

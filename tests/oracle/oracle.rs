@@ -567,7 +567,7 @@ fn failures_of(owner: u64) -> Vec<TaskFailure> {
             out_of_steps: failure.error.out_of_steps,
         });
     }
-    for (owner, count) in taken.not_kept {
+    for silt::scheduler::NotShown { owner, count, .. } in taken.not_shown {
         failed.entry(owner).or_default().push(TaskFailure {
             message: format!("{count} more tasks failed"),
             type_confusion: false,

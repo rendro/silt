@@ -1,0 +1,17 @@
+-- cmd: test
+-- stderr-contains: PASS many_failures__a_test_that_cancels_seventy_failures_passes_test.silt::test_seventy_failures_are_dismissed
+-- stderr-contains: 1 test: 1 passed, 0 failed
+-- stderr-not-contains: more task(s) failed
+-- A test whose seventy failed tasks are all cancelled passes: each
+-- cancel dismisses its failure, past the 64th too.
+import list
+import task
+import test
+import time
+
+fn test_seventy_failures_are_dismissed() {
+  let hs = list.map(1..70) { i -> task.spawn { -> panic("task {i}") } }
+  time.sleep(time.ms(50))
+  list.each(hs, task.cancel)
+  test.assert_eq(list.length(hs), 70)
+}

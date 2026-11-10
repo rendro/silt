@@ -3,7 +3,7 @@
 -- stderr-contains: task(s) failed and were never joined
 -- stderr-contains: failed and was never joined: panic: the one failure of test b
 -- stderr-contains: 2 tests: 0 passed, 2 failed
--- At most 64 failures are kept for a test, and each test has its own
+-- At most 64 failures are shown for a test, and each test has its own
 -- 64: the hundred failures of the first test do not push out the one
 -- of the second.
 import list

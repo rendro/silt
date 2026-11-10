@@ -112,10 +112,14 @@ pub const WORKER_STACK_BYTES: usize = if cfg!(target_pointer_width = "64") {
     16 * 1024 * 1024
 };
 
-/// Upper bound on the failed tasks kept for the report of failures that
-/// nobody joined. A long-running program whose tasks keep failing must
-/// not grow without bound; what goes beyond the bound is counted.
-const MAX_RECORDED_FAILURES: usize = 64;
+/// How many failures that nobody joined are shown for each owner; the
+/// rest are counted. (Every one is kept until the report: a cancel or a
+/// join may still handle it.)
+const MAX_SHOWN_FAILURES: usize = 64;
+
+/// How many failed tasks an owner's record holds before it is first
+/// looked through for those that have been handled since.
+const FIRST_SWEEP: usize = 64;
 
 /// Parse a duration string like `"30s"`, `"500ms"`, `"5m"`, `"2h"`, or
 /// `"none"`/empty. Returns `None` for disabled/invalid input — the caller
@@ -2591,58 +2595,94 @@ fn fire_timers(inner: &Inner) {
     }
 }
 
-/// Failed tasks kept for the report of failures that nobody joined, up
-/// to `MAX_RECORDED_FAILURES` for each owner: the many failures of one
-/// test do not push out the failure of another. Each scheduler has
-/// one; while the failures are collected (`collect_unjoined_failures`),
-/// the one of the process is used instead.
+/// Failed tasks kept for the report of failures that nobody joined,
+/// per owner. Each scheduler has one; while the failures are collected
+/// (`collect_unjoined_failures`), the one of the process is used
+/// instead.
 #[derive(Default)]
 struct FailedTasks {
-    /// Per owner tag, the handles of tasks that ended with an error,
-    /// in the order of their failures. Whether a join has received the
-    /// error since, or a cancel has dismissed it, is read from the
-    /// handle at report time.
-    handles: BTreeMap<u64, Vec<Arc<TaskHandle>>>,
-    /// Per owner tag, the number of failed tasks that were not recorded
-    /// because the owner's handles were full of failures that nobody
-    /// had joined.
-    not_recorded: BTreeMap<u64, usize>,
+    owners: BTreeMap<u64, Failed>,
+}
+
+/// The failed tasks of one owner.
+#[derive(Default)]
+struct Failed {
+    /// The handles of tasks that ended with an error, in the order of
+    /// their failures. Whether a join has received the error since, or
+    /// a cancel has dismissed it, is read from the handle at report
+    /// time; every failure that may still be handled is kept, however
+    /// many there are.
+    handles: Vec<Arc<TaskHandle>>,
+    /// How many handles there may be before they are looked through
+    /// again for those that have been handled: twice as many as were
+    /// left by the last look, so that a look costs little per failure.
+    sweep_at: usize,
 }
 
 impl FailedTasks {
     /// Keep the handle of a task that ended with an error. Returns the
-    /// handles that were let go to make room (failures that have been
-    /// joined or cancelled since they were kept); the caller drops them
-    /// after it has released the lock on the record.
+    /// handles that were let go (failures that have been joined or
+    /// cancelled since they were kept); the caller drops them after it
+    /// has released the lock on the record.
     fn record(&mut self, handle: &Arc<TaskHandle>) -> Vec<Arc<TaskHandle>> {
-        let owner = handle.owner();
-        let kept = self.handles.entry(owner).or_default();
+        let failed = self.owners.entry(handle.owner()).or_default();
         let mut handled_since = Vec::new();
-        if kept.len() >= MAX_RECORDED_FAILURES {
-            let (unhandled, handled): (Vec<_>, Vec<_>) = std::mem::take(kept)
+        if failed.handles.len() >= failed.sweep_at.max(FIRST_SWEEP) {
+            let (unhandled, handled): (Vec<_>, Vec<_>) = std::mem::take(&mut failed.handles)
                 .into_iter()
                 .partition(|h| h.has_unjoined_failure());
-            *kept = unhandled;
+            failed.sweep_at = 2 * unhandled.len();
+            failed.handles = unhandled;
             handled_since = handled;
         }
-        if kept.len() >= MAX_RECORDED_FAILURES {
-            *self.not_recorded.entry(owner).or_insert(0) += 1;
-        } else {
-            kept.push(handle.clone());
-        }
+        failed.handles.push(handle.clone());
         handled_since
     }
 
-    /// Empty the record, and return what it held.
-    fn take(&mut self) -> (Vec<Arc<TaskHandle>>, BTreeMap<u64, usize>) {
-        (
-            std::mem::take(&mut self.handles)
-                .into_values()
-                .flatten()
-                .collect(),
-            std::mem::take(&mut self.not_recorded),
-        )
+    /// Empty the record, and give out each failure it held that no
+    /// join has received and no cancel has dismissed, once: up to
+    /// `MAX_SHOWN_FAILURES` of each owner with their errors, in the
+    /// order of the owners and then of the failures; of the rest, per
+    /// owner, how many there are. The handles are dropped by the
+    /// caller, after it has released the lock on the record.
+    fn take(&mut self) -> Given {
+        let mut given = Given::default();
+        for (owner, failed) in std::mem::take(&mut self.owners) {
+            let mut shown = 0;
+            let mut not_shown: Option<NotShown> = None;
+            for handle in failed.handles {
+                match handle.take_unjoined_failure() {
+                    Some(error) if shown < MAX_SHOWN_FAILURES => {
+                        shown += 1;
+                        given.shown.push((handle, error));
+                    }
+                    Some(_) => {
+                        let first = not_shown.get_or_insert_with(|| NotShown {
+                            owner,
+                            count: 0,
+                            first_spawned: handle.spawn_site().map(|(at, _)| at),
+                        });
+                        first.count += 1;
+                        given.rest.push(handle);
+                    }
+                    None => given.rest.push(handle),
+                }
+            }
+            given.not_shown.extend(not_shown);
+        }
+        given
     }
+}
+
+/// What [`FailedTasks::take`] gives out.
+#[derive(Default)]
+struct Given {
+    /// The failures to show: each task's handle, and its error.
+    shown: Vec<(Arc<TaskHandle>, VmError)>,
+    /// Per owner, how many more failures there were.
+    not_shown: Vec<NotShown>,
+    /// The other handles, to be dropped with the rest.
+    rest: Vec<Arc<TaskHandle>>,
 }
 
 /// Keep the handle of a task that ended with an error, for the report
@@ -2667,7 +2707,7 @@ fn record_failed_task(inner: &Inner, handle: &Arc<TaskHandle>) {
 /// whose error no join has received and that no cancel has dismissed.
 /// A failure is reported once: the record is emptied and each handle
 /// gives its error out once. Returns the number of failures that this
-/// call reported, those that were counted but not kept included.
+/// call reported, those that were counted but not shown included.
 ///
 /// The report has no file name and no source line: the scheduler knows
 /// neither, so it renders through a source map with no files. A front end
@@ -2680,7 +2720,7 @@ fn report_unjoined_failures(inner: &Inner) -> usize {
     if ENDING.load(Ordering::SeqCst) == WITH_INTERNAL_ERROR {
         return 0;
     }
-    let (handles, not_recorded) = inner.failed_tasks.lock().take();
+    let given = inner.failed_tasks.lock().take();
     // (Nor after a `process.exit` that ended the run: what had failed
     // before it is dropped.)
     if inner.exit.get().is_some() {
@@ -2690,10 +2730,7 @@ fn report_unjoined_failures(inner: &Inner) -> usize {
     let no_files = crate::source::SourceMap::new();
     let mut reported = 0;
     let mut report = String::new();
-    for handle in &handles {
-        let Some(error) = handle.take_unjoined_failure() else {
-            continue;
-        };
+    for (handle, error) in given.shown {
         reported += 1;
         // (No file to show the place of the spawn in: the task is
         // named by its id.)
@@ -2709,13 +2746,13 @@ fn report_unjoined_failures(inner: &Inner) -> usize {
         report.push_str(&crate::diagnostic::render_human(&no_files, &d));
         report.push('\n');
     }
-    let not_recorded: usize = not_recorded.values().sum();
-    if not_recorded > 0 {
-        reported += not_recorded;
+    let not_shown: usize = given.not_shown.iter().map(|n| n.count).sum();
+    if not_shown > 0 {
+        reported += not_shown;
         let d = crate::diagnostic::Diagnostic::error(
             crate::diagnostic::Code::UnjoinedTaskFailure,
             crate::source::Span::BUILTIN,
-            UnjoinedFailures::not_kept_message(not_recorded),
+            UnjoinedFailures::not_shown_message(not_shown),
         );
         report.push_str(&crate::diagnostic::render_human(&no_files, &d));
         report.push('\n');
@@ -2878,27 +2915,57 @@ impl UnjoinedFailure {
 /// them out.
 #[derive(Debug, Default)]
 pub struct UnjoinedFailures {
-    /// The failures whose errors were kept, in the order in which the
-    /// tasks failed.
+    /// The failures to show, in the order in which the tasks failed:
+    /// at most `MAX_SHOWN_FAILURES` of each owner.
     pub failures: Vec<UnjoinedFailure>,
-    /// Per owner tag, the number of failed tasks whose errors were not
-    /// kept: at most `MAX_RECORDED_FAILURES` unjoined failures are kept
-    /// at a time.
-    pub not_kept: Vec<(u64, usize)>,
+    /// Per owner, the failed tasks that are not shown.
+    pub not_shown: Vec<NotShown>,
 }
+
+/// The failures of one owner's tasks beyond the `MAX_SHOWN_FAILURES`
+/// that are shown.
+#[derive(Debug, Clone)]
+pub struct NotShown {
+    /// The owner tag the tasks were spawned under.
+    pub owner: u64,
+    /// How many failed.
+    pub count: usize,
+    /// Where the first of them was spawned, if that is a place in the
+    /// program.
+    pub first_spawned: Option<crate::source::Span>,
+}
+
+impl NotShown {
+    /// The report of these failures, at the place where the first of
+    /// them was spawned.
+    pub fn diagnostic(&self) -> crate::diagnostic::Diagnostic {
+        let at = self.first_spawned.unwrap_or(crate::source::Span::BUILTIN);
+        crate::diagnostic::Diagnostic::error(
+            crate::diagnostic::Code::UnjoinedTaskFailure,
+            at,
+            UnjoinedFailures::not_shown_message(self.count),
+        )
+        .with_help(NOT_SHOWN_HELP)
+    }
+}
+
+/// What the report of the failures that are not shown advises.
+const NOT_SHOWN_HELP: &str = "the first of them was spawned here: join each task with \
+     task.join, or cancel it with task.cancel if you don't need its result";
 
 impl UnjoinedFailures {
     /// True if there is nothing to report.
     pub fn is_empty(&self) -> bool {
-        self.failures.is_empty() && self.not_kept.is_empty()
+        self.failures.is_empty() && self.not_shown.is_empty()
     }
 
-    /// The message that reports `count` failed tasks whose errors were
-    /// not kept.
-    pub fn not_kept_message(count: usize) -> String {
+    /// The message that reports `count` more failed tasks, which are
+    /// not shown. It names no place: which tasks they were is not
+    /// told.
+    pub fn not_shown_message(count: usize) -> String {
         format!(
-            "{count} more task(s) failed and were never joined; their errors were not kept \
-             (at most {MAX_RECORDED_FAILURES} are kept at a time)"
+            "{count} more task(s) failed and were never joined (at most \
+             {MAX_SHOWN_FAILURES} failures are shown)"
         )
     }
 }
@@ -2923,23 +2990,22 @@ pub fn collect_unjoined_failures() {
 pub fn take_unjoined_failures() -> UnjoinedFailures {
     // The lock is released at the end of this statement; the handles
     // are dropped after that.
-    let (handles, not_recorded) = collected_failures().lock().take();
-    let failures = handles
-        .iter()
-        .filter_map(|handle| {
-            handle.take_unjoined_failure().map(|error| UnjoinedFailure {
-                task_id: handle.id,
-                owner: handle.owner(),
-                stage: handle.stage(),
-                stage_call: handle.stage_call_of_a_failed_input(),
-                spawned: handle.spawn_site(),
-                error,
-            })
+    let given = collected_failures().lock().take();
+    let failures = given
+        .shown
+        .into_iter()
+        .map(|(handle, error)| UnjoinedFailure {
+            task_id: handle.id,
+            owner: handle.owner(),
+            stage: handle.stage(),
+            stage_call: handle.stage_call_of_a_failed_input(),
+            spawned: handle.spawn_site(),
+            error,
         })
         .collect();
     UnjoinedFailures {
         failures,
-        not_kept: not_recorded.into_iter().collect(),
+        not_shown: given.not_shown,
     }
 }
 
