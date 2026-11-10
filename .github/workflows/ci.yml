@@ -486,6 +486,12 @@ jobs:
       - name: Replay fuzz_decode corpus
         run: ./fuzz/replay.sh fuzz_decode
 
+      - name: Replay fuzz_package_files corpus
+        run: ./fuzz/replay.sh fuzz_package_files
+
+      - name: Replay fuzz_csv corpus
+        run: ./fuzz/replay.sh fuzz_csv
+
       - name: Upload reproducers on failure
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

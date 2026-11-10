@@ -134,6 +134,17 @@ impl Manifest {
                 ));
             }
         };
+        Self::read(absolute, text, sources)
+    }
+
+    /// The manifest `text`, read from the file at `absolute`: what
+    /// [`Manifest::load`] makes of a file it has read.
+    pub(crate) fn read(
+        absolute: PathBuf,
+        text: String,
+        sources: &mut SourceMap,
+    ) -> Result<Manifest, Diagnostic> {
+        let shown = SourceName::Manifest(display_path(&absolute));
         let file = sources.add(shown, text.as_str().into());
         let span_of = |range: (usize, usize)| Span {
             file,
