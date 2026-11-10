@@ -589,10 +589,15 @@ impl TypeChecker {
             self.refuse_opaque(span, refusal);
             return;
         }
+        // (A type not known yet is a bound's to judge, as it waits.)
+        let ty = &self.apply(ty);
         let Some(head) = self.type_name_for_impl(ty) else {
             return;
         };
-        if self.generic_for_decode(head) && !self.type_args_of(ty).is_empty() {
+        if self.generic_for_decode(head)
+            && !self.type_args_of(ty).is_empty()
+            && free_vars_in(ty).is_empty()
+        {
             let origin = Origin {
                 span,
                 callee: Some(intern(&callee)),
@@ -604,7 +609,7 @@ impl TypeChecker {
                 .map(|def| def.module)
                 .into_iter()
                 .collect();
-            self.want_decode(ty, origin, None, owners);
+            self.want_decode_through_call(ty, origin, owners);
         }
     }
 
@@ -1349,10 +1354,8 @@ impl TypeChecker {
             if let Some((head, entry)) = entry {
                 // (What it decodes is the value's type, as a bound of the
                 // trait decodes it.)
-                if let Some((_, at)) = &receiver {
-                    let callee = format!("{}.{field}", self.spell_trait(tr));
-                    self.decoded_through_type(tr, &recv, callee, *at);
-                }
+                let callee = format!("{}.{field}", self.spell_trait(tr));
+                self.decoded_through_type(tr, &recv, callee, span);
                 self.method_trait = Some(tr);
                 self.trait_call_self.insert(span, recv.clone());
                 self.receiver_taken = true;

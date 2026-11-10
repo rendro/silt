@@ -6,10 +6,10 @@ error[type]: `S.make` cannot decode `S(Int)`: field `s` has type `Set(Int)`, whi
   = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: `Dec.again` cannot decode `S(Int)`: field `s` has type `Set(Int)`, which has no decoder
- --> a_generic_type_through_a_supertrait_call_on_the_type_or_the_trait.silt:43:21
+ --> a_generic_type_through_a_supertrait_call_on_the_type_or_the_trait.silt:43:11
     |
  43 |   println(Dec.again(S { s: set.from_list([1]), n: 1 }, """{"s": [1], "n": 1}"""))
-    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Dec.again` cannot decode `S(Int)`: field `s` has type `Set(Int)`, which has no decoder
+    |           ^^^^^^^^^ `Dec.again` cannot decode `S(Int)`: field `s` has type `Set(Int)`, which has no decoder
   = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
 error[type]: type `Bx(String)` does not implement trait `json.Decode`: the only impl is for `Bx(Int)`
@@ -19,7 +19,7 @@ error[type]: type `Bx(String)` does not implement trait `json.Decode`: the only 
     |           ^^^^^^^^^^^^^^^ type `Bx(String)` does not implement trait `json.Decode`: the only impl is for `Bx(Int)`
 
 error[type]: type `Bx(String)` does not implement trait `json.Decode`: the only impl is for `Bx(Int)`
- --> a_generic_type_through_a_supertrait_call_on_the_type_or_the_trait.silt:45:21
+ --> a_generic_type_through_a_supertrait_call_on_the_type_or_the_trait.silt:45:11
     |
  45 |   println(Dec.again(Bx { v: "s" }, """{"v": "t"}"""))
-    |                     ^^^^^^^^^^^^^ type `Bx(String)` does not implement trait `json.Decode`: the only impl is for `Bx(Int)`
+    |           ^^^^^^^^^ type `Bx(String)` does not implement trait `json.Decode`: the only impl is for `Bx(Int)`
