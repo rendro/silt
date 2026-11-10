@@ -680,14 +680,26 @@ fn one_a_read(
     move || read().into_iter().collect()
 }
 
+/// What a read of `stream.tcp_lines` that may wait for the peer asks
+/// for: a source that waits holds no more than this.
+#[cfg(feature = "tcp")]
+const LINES_WAIT_READ: usize = 4 * 1024;
+
 /// The reads of `stream.tcp_lines` on `conn`: each gives the lines,
 /// without their `\n` or `\r\n`, that are complete in what has been
-/// read, reading (up to [`READ_AT_ONCE`] bytes at a time) until one is,
-/// or the peer has closed; then the bytes after the last `\n` are the
-/// last line, if there are any. What one read brings past its last line
-/// waits for the next. A line that is no UTF-8 ends the source with an
-/// error, as `file_lines` ends, after the lines before it; the
-/// connection is shut down then, as for any source on it that stops.
+/// read, reading until one is, or the peer has closed; then the bytes
+/// after the last `\n` are the last line, if there are any. What one
+/// read brings past its last line waits for the next. A line that is no
+/// UTF-8 ends the source with an error, as `file_lines` ends, after the
+/// lines before it; the connection is shut down then, as for any source
+/// on it that stops.
+///
+/// A read that may wait asks for [`LINES_WAIT_READ`] bytes. After a read
+/// that filled what it asked for, more is likely there: what is there
+/// is read without waiting, up to [`READ_AT_ONCE`] bytes, where the
+/// connection can do that (a plain one; a TLS one reads on in small
+/// reads). Between reads only a small buffer is kept, also after a long
+/// line, so that a source waiting on an idle connection holds a few KiB.
 #[cfg(feature = "tcp")]
 fn tcp_line_reads(
     conn: Arc<crate::runtime::handle::TcpStreamHandle>,
@@ -698,6 +710,8 @@ fn tcp_line_reads(
     let mut scanned = 0;
     let mut closed = false;
     let mut ended = false;
+    // The last read filled what it asked for.
+    let mut filled = false;
     let not_utf8 = |conn: &crate::runtime::handle::TcpStreamHandle| {
         conn.shut_down();
         let not_utf8 = std::io::Error::new(
@@ -713,9 +727,20 @@ fn tcp_line_reads(
         }
         while !closed && !pending[scanned..].contains(&b'\n') {
             scanned = pending.len();
-            pending.resize(scanned + READ_AT_ONCE, 0);
-            let read = conn.read(&mut pending[scanned..]);
-            pending.truncate(scanned + *read.as_ref().unwrap_or(&0));
+            let mut now = None;
+            if filled && conn.reads_now() {
+                pending.resize(scanned + READ_AT_ONCE, 0);
+                now = conn.read_now(&mut pending[scanned..]).map(Ok);
+            }
+            let asked = match now {
+                Some(_) => READ_AT_ONCE,
+                None => LINES_WAIT_READ,
+            };
+            pending.resize(scanned + asked, 0);
+            let read = now.unwrap_or_else(|| conn.read(&mut pending[scanned..]));
+            let got = *read.as_ref().unwrap_or(&0);
+            pending.truncate(scanned + got);
+            filled = got == asked;
             match read {
                 Ok(0) => closed = true,
                 Ok(_) => {}
@@ -745,6 +770,11 @@ fn tcp_line_reads(
         }
         pending.drain(..taken);
         scanned = 0;
+        // Back to a small buffer after a long line or a large read.
+        let keep = pending.len().max(LINES_WAIT_READ);
+        if pending.capacity() > 2 * keep {
+            pending.shrink_to(keep);
+        }
         if lines.is_empty() && closed {
             ended = true;
             if !pending.is_empty() {
@@ -1618,7 +1648,7 @@ mod tests {
 
     /// A connection whose bytes are `data`, given at most `most` a
     /// read, then the end or (with `fail`) that error; and how many
-    /// reads it was asked for.
+    /// reads it was asked for, and the most bytes one read asked for.
     #[cfg(feature = "tcp")]
     fn counted(
         data: &[u8],
@@ -1626,7 +1656,7 @@ mod tests {
         fail: Option<std::io::ErrorKind>,
     ) -> (
         Arc<crate::runtime::handle::TcpStreamHandle>,
-        Arc<std::sync::atomic::AtomicUsize>,
+        Arc<[std::sync::atomic::AtomicUsize; 2]>,
     ) {
         use crate::runtime::handle::{ReadWrite, Shutter, TcpStreamHandle};
         use std::sync::atomic::AtomicUsize;
@@ -1634,11 +1664,12 @@ mod tests {
             data: std::io::Cursor<Vec<u8>>,
             most: usize,
             fail: Option<std::io::ErrorKind>,
-            reads: Arc<AtomicUsize>,
+            reads: Arc<[AtomicUsize; 2]>,
         }
         impl std::io::Read for Counted {
             fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-                self.reads.fetch_add(1, Ordering::SeqCst);
+                self.reads[0].fetch_add(1, Ordering::SeqCst);
+                self.reads[1].fetch_max(buf.len(), Ordering::SeqCst);
                 let most = buf.len().min(self.most);
                 match (self.data.read(&mut buf[..most])?, self.fail) {
                     (0, Some(fail)) => Err(fail.into()),
@@ -1661,7 +1692,7 @@ mod tests {
         let (sock, _) = listener.accept().expect("accept");
         let shutter = Shutter::default();
         assert!(shutter.set(&sock));
-        let reads = Arc::new(AtomicUsize::new(0));
+        let reads = Arc::new([AtomicUsize::new(0), AtomicUsize::new(0)]);
         let fake = Counted {
             data: std::io::Cursor::new(data.to_vec()),
             most,
@@ -1705,9 +1736,11 @@ mod tests {
     }
 
     /// `stream.tcp_lines` reads a buffer at a time, not a byte: 10,000
-    /// lines of 40 bytes take a few reads of 64 KiB (they took one read
-    /// a byte, 400,001, and 430 times as long as `tcp_chunks` over
-    /// loopback). The lines of one read come in one read of the source.
+    /// lines of 40 bytes take about a hundred reads of 4 KiB on a
+    /// connection that cannot read without waiting (TLS; they took one
+    /// read a byte, 400,001, and 430 times as long as `tcp_chunks` over
+    /// loopback). No read asks for more than a waiting read may hold.
+    /// The lines of one read come in one read of the source.
     #[test]
     #[cfg(feature = "tcp")]
     fn tcp_lines_reads_a_buffer_at_a_time() {
@@ -1716,12 +1749,37 @@ mod tests {
         let (lines, calls) = lines_of(&conn);
         assert_eq!(lines.len(), 10_000);
         assert!(lines.iter().all(|l| *l == line[..39]));
-        let reads = reads.load(Ordering::SeqCst);
+        let most = reads[1].load(Ordering::SeqCst);
+        let reads = reads[0].load(Ordering::SeqCst);
         assert!(
-            reads <= 400_000 / READ_AT_ONCE + 2,
+            reads <= 400_000 / LINES_WAIT_READ + 3,
             "{reads} reads of the connection"
         );
+        assert!(most <= LINES_WAIT_READ, "a read asked for {most} bytes");
         assert!(calls <= reads + 1, "{calls} reads of the source");
+    }
+
+    /// On a plain connection what is there after a read that filled its
+    /// 4 KiB is read without waiting, up to 64 KiB: 32,000 bytes of lines
+    /// that the peer sent before the source began take a few reads of
+    /// the source (one a line, 801, a byte at a time).
+    #[test]
+    #[cfg(feature = "tcp")]
+    fn tcp_lines_reads_what_is_there_in_one_read_on_a_plain_connection() {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let mut peer =
+            std::net::TcpStream::connect(listener.local_addr().expect("addr")).expect("connect");
+        let (sock, _) = listener.accept().expect("accept");
+        let line = format!("{}\n", "k".repeat(39));
+        peer.write_all(line.repeat(800).as_bytes())
+            .expect("the lines are sent");
+        peer.shutdown(std::net::Shutdown::Write)
+            .expect("the peer is done");
+        let conn = crate::runtime::handle::TcpStreamHandle::plain(0, sock);
+        let (lines, calls) = lines_of(&conn);
+        assert_eq!(lines.len(), 800);
+        assert!(calls <= 10, "{calls} reads of the source");
     }
 
     /// The lines are what they were when they were read a byte at a
