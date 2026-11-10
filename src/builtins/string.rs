@@ -40,12 +40,30 @@ fn padding(name: &str, s: &str, width: i64, pad: &str) -> Result<String, VmError
 }
 
 /// The byte offset of the character at index `chars` of `s`, the end
-/// of `s` included; `None` beyond it.
+/// of `s` included; `None` beyond it. Where the first `chars` bytes are
+/// ASCII, each of them is a character and the index is the offset: no
+/// walk over the characters.
 fn byte_offset(s: &str, chars: usize) -> Option<usize> {
+    let bytes = s.as_bytes();
+    if bytes[..chars.min(bytes.len())].is_ascii() {
+        return (chars <= bytes.len()).then_some(chars);
+    }
     s.char_indices()
         .map(|(at, _)| at)
         .chain(std::iter::once(s.len()))
         .nth(chars)
+}
+
+/// The characters `start..end` of `s`, both indexes clamped to its
+/// length; empty where `start` is not before `end`. What it costs is
+/// the walk to `start` (none over ASCII) and the piece: the rest of
+/// `s` is not looked at, so a scan that takes a few characters at a
+/// time is not quadratic in the length of `s`.
+fn char_range(s: &str, start: usize, end: usize) -> &str {
+    let from = byte_offset(s, start).unwrap_or(s.len());
+    let rest = &s[from..];
+    let to = byte_offset(rest, end.saturating_sub(start)).unwrap_or(rest.len());
+    &rest[..to]
 }
 
 /// The character index of the byte offset `at` of `s`, as `Some`; or
@@ -256,13 +274,8 @@ builtins! {
                 "string.slice: negative index {negative}"
             )));
         }
-        let chars: Vec<char> = s.chars().collect();
-        let start = (start as usize).min(chars.len());
-        let end = (end as usize).min(chars.len());
-        Ok(match start > end {
-            true => String::new(),
-            false => chars[start..end].iter().collect(),
-        })
+        let index = |at: i64| usize::try_from(at).unwrap_or(usize::MAX);
+        Ok(char_range(s, index(start), index(end)).to_string())
     }
 
     fn pad_left(s: &str, width: i64, pad: &str) -> Result<String, VmError> {
@@ -312,5 +325,80 @@ builtins! {
 
     fn is_whitespace(s: &str) -> bool {
         all(s, char::is_whitespace)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `string.slice` as it was first written: every character of `s`
+    /// in a vector, the indexes clamped to its length.
+    fn by_vector(s: &str, start: usize, end: usize) -> String {
+        let chars: Vec<char> = s.chars().collect();
+        let (start, end) = (start.min(chars.len()), end.min(chars.len()));
+        match start > end {
+            true => String::new(),
+            false => chars[start..end].iter().collect(),
+        }
+    }
+
+    const TEXTS: [&str; 7] = ["", "abc", "é", "aé", "éa", "日本語abc", "a😀b\u{301}c"];
+
+    #[test]
+    fn a_byte_offset_is_that_of_the_character_at_the_index() {
+        for s in TEXTS {
+            let mut offsets: Vec<usize> = s.char_indices().map(|(at, _)| at).collect();
+            offsets.push(s.len());
+            for chars in 0..offsets.len() + 3 {
+                assert_eq!(
+                    byte_offset(s, chars),
+                    offsets.get(chars).copied(),
+                    "{s:?} at {chars}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_range_of_characters_is_what_the_vector_of_them_gives() {
+        for s in TEXTS {
+            let most = s.chars().count() + 3;
+            for start in 0..most {
+                for end in 0..most {
+                    assert_eq!(
+                        char_range(s, start, end),
+                        by_vector(s, start, end),
+                        "{s:?} {start}..{end}"
+                    );
+                }
+            }
+            assert_eq!(char_range(s, 0, usize::MAX), s);
+            assert_eq!(char_range(s, usize::MAX, usize::MAX), "");
+        }
+    }
+
+    /// A piece near the start of a long string costs what the piece
+    /// costs, not the length of the string. A million slices of a
+    /// string of four million characters: before, each one copied the
+    /// whole string into a vector of characters (about 4 * 10^12
+    /// characters in all, hours); now each looks at a few dozen bytes.
+    #[test]
+    fn a_piece_near_the_start_does_not_cost_the_length_of_the_string() {
+        let long = 4_000_000;
+        for s in [
+            "a".repeat(long),
+            "é".repeat(long),
+            format!("é{}", "a".repeat(long)),
+        ] {
+            let first = s.chars().next().map(String::from).unwrap_or_default();
+            let tenth: String = s.chars().skip(10).take(10).collect();
+            for _ in 0..1_000_000 {
+                assert_eq!(char_range(&s, 0, 1), first);
+            }
+            for _ in 0..100_000 {
+                assert_eq!(char_range(&s, 10, 20), tenth);
+            }
+        }
     }
 }
