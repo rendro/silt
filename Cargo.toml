@@ -42,6 +42,11 @@ lsp-types = { version = "0.97", optional = true }
 notify = { version = "6", optional = true }
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 regex = "1"
+# The engine under `regex`, for the compiled patterns of the regex
+# module: it reports the memory a compiled pattern takes, which bounds
+# their cache (src/vm/runtime.rs, RegexCache). No feature beyond those
+# `regex` turns on, so the engine is the same.
+regex-automata = { version = "0.4", default-features = false, features = ["meta"] }
 regex-syntax = "0.8"
 # The trees long lists, large maps and large sets are stored in
 # (src/value/list.rs, src/value/map.rs).

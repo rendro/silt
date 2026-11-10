@@ -1667,6 +1667,7 @@ dependencies = [
  "r2d2",
  "rcgen",
  "regex",
+ "regex-automata",
  "regex-syntax",
  "rustls",
  "rustyline",

@@ -44,6 +44,16 @@ fn main() {
 | `TooBig` | — | the compiled pattern exceeds the size budget |
 | `Other(String)` | message | unclassified failure |
 
+A pattern compiles to at most 4 MiB; a larger one is `TooBig`. A class of
+Unicode characters repeated many times is what grows: `\w{100}` is too big
+(about 5.6 MB), `^\w{3,32}$` is not (about 1.8 MB), and `[a-z0-9_]{100}` or
+`(?-u)\w{100}`, ASCII only, are small.
+
+A compiled pattern is kept for the next call with the same pattern, by every
+task of the program: up to 256 patterns and 32 MiB of them. When a new one
+does not fit, the patterns compiled first are dropped, and compiled again if
+they are used again.
+
 With a pattern the program writes itself, the error cannot happen, and
 `result.unwrap_or` says what the call is worth if it did:
 `regex.is_match(name, "^[a-z]+$") |> result.unwrap_or(false)`.

@@ -2951,6 +2951,61 @@ fn test_regex_cache_eviction_correctness() {
     );
 }
 
+#[test]
+fn the_regex_cache_is_bounded_by_the_bytes_its_patterns_take() {
+    // Each `p<n>\w{20}` compiles to about 1.1 MB (the Unicode `\w`):
+    // forty of them are over the cache's bytes, under its count. The
+    // cache keeps what fits, the newest, and drops the oldest; before
+    // the bound in bytes it kept all forty (a short pattern could take
+    // 10 MB, 256 of them 2.6 GB).
+    let mut cache = runtime::RegexCache::new();
+    let mut largest = 0;
+    for n in 0..40 {
+        let pattern = format!(r"p{n}\w{{20}}");
+        let re = runtime::RegexCache::compile(&pattern).expect("the pattern compiles");
+        largest = largest.max(re.memory_usage());
+        cache.insert(&pattern, re);
+        let (_, bytes) = cache.kept();
+        assert!(
+            bytes <= runtime::RegexCache::MOST_BYTES,
+            "{bytes} bytes kept after {n}"
+        );
+    }
+    assert!(largest > 1 << 20, "a pattern took {largest} bytes");
+    let (count, bytes) = cache.kept();
+    assert!(count < 40, "all {count} patterns kept, {bytes} bytes");
+    assert!(cache.lookup(r"p39\w{20}").is_some(), "the newest is kept");
+    assert!(cache.lookup(r"p0\w{20}").is_none(), "the oldest is dropped");
+}
+
+#[test]
+fn a_pattern_compiles_to_at_most_the_size_limit() {
+    // `\w{100}` compiles to about 5.6 MB, past the 4 MiB of a pattern
+    // (it compiled under the regex crate's own 10 MiB); `^\w{3,32}$`, a
+    // pattern a program writes, to about 1.8 MB.
+    let error = runtime::RegexCache::compile(r"\w{100}").expect_err("too big");
+    assert!(error.size_limit().is_some(), "{error}");
+    assert!(runtime::RegexCache::compile(r"^\w{3,32}$").is_ok());
+}
+
+#[test]
+fn the_tasks_of_a_program_share_its_compiled_patterns() {
+    // A pattern a task compiled is kept for the program: its parent and
+    // the other tasks find it, and do not compile it again.
+    let parent = Vm::new(crate::HostIo::process());
+    let child = parent.spawn_child();
+    let compiled = child.regex("shared[0-9]+").expect("the pattern compiles");
+    let found = parent
+        .runtime
+        .regex_cache
+        .lock()
+        .lookup("shared[0-9]+")
+        .expect("the parent finds the task's pattern");
+    assert!(Arc::ptr_eq(&compiled, &found));
+    let again = parent.regex("shared[0-9]+").expect("the pattern compiles");
+    assert!(Arc::ptr_eq(&compiled, &again));
+}
+
 // ── Audit regression: builtin panic is caught (V1) ───────────────────
 
 #[test]
