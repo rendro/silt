@@ -1060,6 +1060,18 @@ fn nothing_is_completed_for_a_waiter_once_its_flag_is_set() {
 /// tasks it has handed back.
 type Ready = Arc<parking_lot::Mutex<Vec<(u64, Resumed)>>>;
 
+/// The tasks of these tests, whatever their number, are of one kind.
+static NUMBERS: Counts = Counts {
+    waiting: std::sync::atomic::AtomicUsize::new(0),
+    ending: std::sync::atomic::AtomicUsize::new(0),
+};
+
+impl Counted for u64 {
+    fn counts(&self) -> &Counts {
+        &NUMBERS
+    }
+}
+
 fn parking(d: &Double) -> (Arc<Parking<u64>>, Ready) {
     let ready = Ready::default();
     let sink = ready.clone();

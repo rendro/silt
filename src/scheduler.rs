@@ -71,7 +71,9 @@ use std::thread;
 use std::time::Duration;
 
 use crate::runtime::handle::{StageOf, TaskHandle};
-use crate::runtime::sync::{self, Channel, Fired, Parking, Resumed, Source, TaskId, Wait, Waiting};
+use crate::runtime::sync::{
+    self, Channel, Counted, Counts, Fired, Parking, Resumed, Source, TaskId, Wait, Waiting,
+};
 use crate::source::Span;
 use crate::value::Value;
 use crate::vm::{HostIo, Vm, VmError};
@@ -183,6 +185,10 @@ struct Group {
     /// fewer than those that wait. A look without a lock that spares
     /// most of the exact ones.
     parking: AtomicUsize,
+    /// Those that wait, as the registry counts them: a second look
+    /// without a lock, which spares the exact one unless every task
+    /// waits and no wait will end ([`Inner::check`]).
+    waits: Counts,
     /// Set while its tasks are being stopped
     /// ([`Scheduler::stop_tasks`]): none of them runs another slice
     /// or enters a wait.
@@ -204,6 +210,16 @@ enum Sleeper {
     Task(Task),
     /// A thread that runs silt code of its own: it is told.
     Thread(Arc<ThreadPark>),
+}
+
+impl Counted for Sleeper {
+    /// A sleeper is counted with the tasks of its owner.
+    fn counts(&self) -> &Counts {
+        match self {
+            Sleeper::Task(task) => &task.group.waits,
+            Sleeper::Thread(park) => &park.group.waits,
+        }
+    }
 }
 
 /// Where a thread that waits finds how its wait ended, and sleeps
@@ -1642,6 +1658,7 @@ impl Inner {
                 live: AtomicUsize::new(0),
                 external: AtomicUsize::new(0),
                 parking: AtomicUsize::new(0),
+                waits: Counts::default(),
                 stopped: AtomicBool::new(false),
             })
         });
@@ -2245,6 +2262,18 @@ impl Inner {
             return;
         }
         if group.external.load(Ordering::SeqCst) > 0 {
+            return;
+        }
+        // A second look without a lock, at what the registry counts:
+        // a stop needs every live task to wait, and no wait that will
+        // end. Most waits end here, while other tasks run or sleep, so
+        // a wait costs the same however many tasks wait besides. (The
+        // counts of a wait are kept before its check is called, so the
+        // check of the last event before a stop sees them all.)
+        let sum = |of: fn(&Group) -> &AtomicUsize| -> usize {
+            main.groups().map(|g| of(g).load(Ordering::SeqCst)).sum()
+        };
+        if sum(|g| &g.waits.waiting) != sum(|g| &g.live) || sum(|g| &g.waits.ending) > 0 {
             return;
         }
         // The exact look: with the registry held, nothing parks or
@@ -3240,6 +3269,46 @@ fn main() {
 import host
 "#);
         assert!(matches!(result, Ok(Value::Int(300000))), "got {result:?}");
+    }
+
+    /// A wait costs the same however many tasks wait besides: the
+    /// look at every task that waits (`Parking::inspect`) comes only
+    /// when the counts say that a stop is there. Before, each of the
+    /// sleeps and ping-pongs here beside idle tasks took such a look,
+    /// at all of them: at tens of thousands of idle tasks a program
+    /// ran 20 to 60 times slower. The looks are counted, not timed.
+    #[test]
+    fn a_wait_beside_idle_tasks_does_not_look_at_them() {
+        let program = crate::session::testing::compile_str(
+            r#"
+import channel
+import list
+import task
+import time
+fn main() {
+  let never: Channel(Int) = channel.new(0)
+  let idle = list.map(1..100) { _ -> task.spawn { -> channel.receive(never) } }
+  let sleeper = task.spawn { -> list.each(1..200) { _ -> time.sleep(time.micros(1)) } }
+  task.join(sleeper)
+  let ping = channel.new(0)
+  let pong = channel.new(0)
+  let partner = task.spawn { -> channel.each(ping) { v -> channel.send(pong, v) } }
+  list.each(1..200) { i ->
+    channel.send(ping, i)
+    let _ = channel.receive(pong)
+  }
+  channel.close(ping)
+  task.join(partner)
+  list.each(idle, task.cancel)
+}
+"#,
+        )
+        .expect("compiles");
+        let mut vm = Vm::new(HostIo::buffer(&crate::vm::Buffer::new()));
+        let result = vm.run_program(&program);
+        assert_eq!(result.map_err(|e| e.message), Ok(()));
+        let looks = vm.scheduler().inner.parking.inspections();
+        assert!(looks <= 10, "{looks} looks at every waiting task");
     }
 
     /// As many workers as `Scheduler::ensure_workers` starts.
