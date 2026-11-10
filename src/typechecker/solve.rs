@@ -581,13 +581,17 @@ impl TypeChecker {
         subject: Option<&Type>,
         subst: &mut HashMap<TyVar, Type>,
     ) -> bool {
+        let written_vars: Vec<TyVar> = written.iter().flat_map(free_vars_in).collect();
+        if written_vars.is_empty() {
+            return true;
+        }
         let (Some(subject), Some(self_ty)) = (subject, self.tables.impl_self_types.get(key)) else {
             return true;
         };
         let self_ty =
             crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(self_ty));
         let shared = free_vars_in(&self_ty);
-        if !(written.iter().flat_map(free_vars_in)).any(|v| shared.contains(&v)) {
+        if !written_vars.iter().any(|v| shared.contains(v)) {
             return true;
         }
         let (subject_args, self_args) = (self.type_args_of(subject), self.type_args_of(&self_ty));
@@ -2855,14 +2859,17 @@ impl TypeChecker {
             let fitted = !fitting.is_empty();
             // (An argument built from a variable of the impl's type is
             // decided by the subject's parts: the message names them.)
+            // (Shown only for an error: naming the subject reads the
+            // type's impls.)
             let self_vars: Vec<TyVar> = impl_self.iter().flat_map(free_vars_in).collect();
-            let subject_shown = match (impl_trait_args.iter().flat_map(free_vars_in)).any(|v| {
+            let whole = (impl_trait_args.iter().flat_map(free_vars_in)).any(|v| {
                 self_vars
                     .iter()
                     .any(|w| fresh.get(w) == Some(&Type::Var(v)))
-            }) {
-                true => self.show_type(&self.apply(&resolved)),
-                false => self.show_subject(&resolved, type_name, trait_name),
+            });
+            let subject_shown = |checker: &Self| match whole {
+                true => checker.show_type(&checker.apply(&resolved)),
+                false => checker.show_subject(&resolved, type_name, trait_name),
             };
             for (bound_arg, impl_arg) in bound_trait_args.iter().zip(&impl_trait_args) {
                 let b = self.apply(bound_arg);
@@ -2874,7 +2881,7 @@ impl TypeChecker {
                         Code::MissingTraitImpl,
                         format!(
                             "type '{}' does not implement trait '{}': the matched impl is '{}'",
-                            subject_shown,
+                            subject_shown(self),
                             self.show_bound(trait_name, bound_trait_args),
                             self.show_bound(trait_name, &impl_trait_args),
                         ),
@@ -2891,7 +2898,7 @@ impl TypeChecker {
                         Code::MissingTraitImpl,
                         format!(
                             "type '{}' does not implement trait '{}': the matched impl is '{}'",
-                            subject_shown,
+                            subject_shown(self),
                             self.show_bound(trait_name, bound_trait_args),
                             self.show_bound(trait_name, &impl_trait_args),
                         ),

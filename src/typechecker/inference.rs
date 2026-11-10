@@ -585,32 +585,32 @@ impl TypeChecker {
         if !self.implies_decode(tr) {
             return;
         }
-        if let Some(refusal) = self.opaque_through_trait(tr, ty, span) {
-            self.refuse_opaque(span, refusal);
-            return;
-        }
-        // (A type not known yet is a bound's to judge, as it waits.)
-        let ty = &self.apply(ty);
-        let Some(head) = self.type_name_for_impl(ty) else {
+        // (A type not known yet is a bound's to judge, as it waits; a
+        // type without arguments is judged where its impl is declared.)
+        let ty = self.apply(ty);
+        let Some(head) = self.type_name_for_impl(&ty) else {
             return;
         };
-        if self.generic_for_decode(head)
-            && !self.type_args_of(ty).is_empty()
-            && free_vars_in(ty).is_empty()
+        if !self.generic_for_decode(head)
+            || self.type_args_of(&ty).is_empty()
+            || !free_vars_in(&ty).is_empty()
         {
-            let origin = Origin {
-                span,
-                callee: Some(intern(&callee)),
-                op: None,
-                header: None,
-            };
-            let owners: Vec<crate::session::ModuleId> = self
-                .def(tr.id.0)
-                .map(|def| def.module)
-                .into_iter()
-                .collect();
-            self.want_decode_through_call(ty, origin, owners);
+            return;
         }
+        let origin = Origin {
+            span,
+            callee: Some(intern(&callee)),
+            op: None,
+            header: None,
+        };
+        // (The trait's methods are definitions of its module, which
+        // decodes its own opaque types.)
+        let owners: Vec<crate::session::ModuleId> = self
+            .def(tr.id.0)
+            .map(|def| def.module)
+            .into_iter()
+            .collect();
+        self.want_decode_through_call(&ty, origin, owners);
     }
 
     /// The evidence of `Type.method` at `span`, the method of an impl
