@@ -661,16 +661,6 @@ impl ShapeWriter {
                 }
                 self.close();
                 self.where_clauses(&t.param_where_clauses);
-                self.open("types");
-                for assoc in &t.assoc_types {
-                    self.open("type");
-                    self.sym(assoc.name);
-                    for r in &assoc.bounds {
-                        self.bound(r.module, r.name, &r.args);
-                    }
-                    self.close();
-                }
-                self.close();
                 self.open("methods");
                 for method in &t.methods {
                     self.fn_decl(method);
@@ -689,14 +679,6 @@ impl ShapeWriter {
                 }
                 self.close();
                 self.where_clauses(&t.where_clauses);
-                self.open("types");
-                for binding in &t.assoc_type_bindings {
-                    self.open("type");
-                    self.sym(binding.name);
-                    self.type_expr(&binding.ty);
-                    self.close();
-                }
-                self.close();
                 self.open("methods");
                 for method in &t.methods {
                     self.fn_decl(method);
@@ -834,19 +816,6 @@ impl ShapeWriter {
                 self.type_expr(ret);
             }
             TypeExprKind::SelfType => self.open("self"),
-            TypeExprKind::AssocProj {
-                receiver,
-                trait_module,
-                trait_name,
-                trait_name_span: _,
-                assoc_name,
-            } => {
-                self.open("projection");
-                self.type_expr(receiver);
-                self.qualifier(*trait_module);
-                self.sym(*trait_name);
-                self.sym(*assoc_name);
-            }
             TypeExprKind::AnonRecord { fields, tail } => {
                 self.open("record");
                 self.opt_sym(tail.map(|(name, _)| name));

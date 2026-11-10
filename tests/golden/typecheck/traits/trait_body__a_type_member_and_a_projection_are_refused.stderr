@@ -1,0 +1,12 @@
+error[parse]: expected fn, found type
+ --> trait_body__a_type_member_and_a_projection_are_refused.silt:6:3
+   |
+ 6 |   type Item
+   |   ^^^^ expected fn, found type
+  = help: the body of a trait or an impl holds only methods, each starting with `fn`
+
+error[parse]: expected fn, found ::
+ --> trait_body__a_type_member_and_a_projection_are_refused.silt:11:24
+    |
+ 11 |   fn next(self) -> Self::Item
+    |                        ^ expected fn, found ::

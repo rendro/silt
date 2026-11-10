@@ -1,0 +1,77 @@
+-- An impl's type variable that is a trait argument (`trait
+-- Container(a) for Box(a)`) stands for the argument of the receiver at
+-- each call, in a method's return type, a parameter, inside a container
+-- type, through a bounded variable, in a default method, through the
+-- type, and nested.
+import list
+
+type Box(a) {
+  item: a,
+}
+
+type Pair(a, b) {
+  left: a,
+  right: b,
+}
+
+trait Container(item) {
+  fn unwrap(self) -> item
+  fn holds(self, x: item) -> Bool
+  fn all(self) -> List(item)
+  fn twice(self) -> (item, item) {
+    (Container.unwrap(self), Container.unwrap(self))
+  }
+}
+
+trait Container(a) for Box(a) where a: Equal {
+  fn unwrap(self) -> a {
+    self.item
+  }
+  fn holds(self, x: a) -> Bool {
+    self.item == x
+  }
+  fn all(self) -> List(a) {
+    [self.item]
+  }
+}
+
+trait Container((b, a)) for Pair(a, b) where a: Equal, b: Equal {
+  fn unwrap(self) -> (b, a) {
+    (self.right, self.left)
+  }
+  fn holds(self, x: (b, a)) -> Bool {
+    Container.unwrap(self) == x
+  }
+  fn all(self) -> List((b, a)) {
+    [Container.unwrap(self)]
+  }
+}
+
+fn first(c: c, type i) -> i where c: Container(i) {
+  Container.unwrap(c)
+}
+
+fn main() {
+  let w = Box { item: 2 }
+  let u: Int = Container.unwrap(w)
+  println(u + 1)
+  println(Container.holds(w, 2))
+  let all: List(Int) = Container.all(w)
+  println(list.map(all, { n -> n * 10 }))
+  let (p, q): (Int, Int) = Container.twice(w)
+  println(p + q)
+  println(first(w, Int) + 5)
+  let s = Box { item: "s" }
+  let t: String = Container.unwrap(s)
+  println("{t}!")
+  println(Container.holds(s, "t"))
+  println(first(s, String))
+  let pr = Pair { left: 1, right: "r" }
+  let (r, l): (String, Int) = Container.unwrap(pr)
+  println("{r} {l + 1}")
+  println(Container.holds(pr, ("r", 1)))
+  let ((r2, l2), _): ((String, Int), (String, Int)) = Container.twice(pr)
+  println("{r2} {l2 + 2}")
+  let inner: Box(Int) = Container.unwrap(Box { item: Box { item: 7 } })
+  println(first(inner, Int) + 1)
+}

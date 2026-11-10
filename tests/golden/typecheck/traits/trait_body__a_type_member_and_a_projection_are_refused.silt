@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- A trait's body holds only methods: `type Item` there is no member,
+-- and `Self::Item` is no type.
+trait Stream {
+  type Item
+  fn next(self) -> Int
+}
+
+trait Source {
+  fn next(self) -> Self::Item
+}
+
+fn main() {
+  println(1)
+}

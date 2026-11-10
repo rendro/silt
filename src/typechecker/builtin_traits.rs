@@ -109,7 +109,6 @@ pub fn builtin_trait_decls() -> Vec<TraitDecl> {
                 "String",
                 dummy_span,
             )],
-            assoc_types: Vec::new(),
             is_pub: true,
             span: dummy_span,
             doc: Some(
@@ -142,7 +141,6 @@ pub fn builtin_trait_decls() -> Vec<TraitDecl> {
                 "Int",
                 dummy_span,
             )],
-            assoc_types: Vec::new(),
             is_pub: true,
             span: dummy_span,
             doc: Some(
@@ -167,7 +165,6 @@ pub fn builtin_trait_decls() -> Vec<TraitDecl> {
                 "Bool",
                 dummy_span,
             )],
-            assoc_types: Vec::new(),
             is_pub: true,
             span: dummy_span,
             doc: Some(
@@ -184,7 +181,6 @@ pub fn builtin_trait_decls() -> Vec<TraitDecl> {
             supertraits: Vec::new(),
             param_where_clauses: Vec::new(),
             methods: Vec::new(),
-            assoc_types: Vec::new(),
             is_pub: true,
             span: dummy_span,
             doc: Some(
@@ -206,7 +202,6 @@ pub fn builtin_trait_decls() -> Vec<TraitDecl> {
                 "Int",
                 dummy_span,
             )],
-            assoc_types: Vec::new(),
             is_pub: true,
             span: dummy_span,
             doc: Some(
@@ -229,7 +224,6 @@ pub fn builtin_trait_decls() -> Vec<TraitDecl> {
             }],
             param_where_clauses: Vec::new(),
             methods: vec![error_message_fn],
-            assoc_types: Vec::new(),
             is_pub: true,
             span: dummy_span,
             doc: Some(

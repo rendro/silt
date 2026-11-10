@@ -278,15 +278,12 @@ fn find_ident_in_decl(decl: &Decl, cursor: usize, best: &mut Option<Symbol>) {
             check_span_match(ti.trait_name, ti.trait_name_span, cursor, best);
             check_span_match(ti.target_type, ti.target_type_span, cursor, best);
             // Type-position references in the impl header
-            // (trait args, target type args) and assoc-type bindings.
+            // (trait args, target type args).
             for a in &ti.trait_args {
                 find_ident_in_type_expr(a, cursor, best);
             }
             for a in &ti.target_type_args {
                 find_ident_in_type_expr(a, cursor, best);
-            }
-            for b in &ti.assoc_type_bindings {
-                find_ident_in_type_expr(&b.ty, cursor, best);
             }
             // Impl-level where-clause trait refs.
             for wc in &ti.where_clauses {
@@ -354,16 +351,6 @@ fn find_ident_in_decl(decl: &Decl, cursor: usize, best: &mut Option<Symbol>) {
                 check_span_match(wc.trait_name, wc.trait_name_span, cursor, best);
                 for a in &wc.trait_args {
                     find_ident_in_type_expr(a, cursor, best);
-                }
-            }
-            // Assoc-type bounds, and their ARGUMENTS, which
-            // are type positions.
-            for at in &t.assoc_types {
-                for bound in &at.bounds {
-                    check_span_match(bound.name, bound.span, cursor, best);
-                    for a in &bound.args {
-                        find_ident_in_type_expr(a, cursor, best);
-                    }
                 }
             }
             // Trait method binders + default method bodies.
@@ -449,9 +436,6 @@ fn find_ident_in_type_expr(te: &TypeExpr, cursor: usize, best: &mut Option<Symbo
             find_ident_in_type_expr(ret, cursor, best);
         }
         TypeExprKind::SelfType => {}
-        TypeExprKind::AssocProj { receiver, .. } => {
-            find_ident_in_type_expr(receiver, cursor, best);
-        }
         TypeExprKind::AnonRecord { fields, .. } => {
             for (_, t) in fields {
                 find_ident_in_type_expr(t, cursor, best);

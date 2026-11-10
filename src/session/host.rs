@@ -314,7 +314,6 @@ pub(super) fn mentions_function(ty: &TypeExpr) -> bool {
         TypeExprKind::AnonRecord { fields, .. } => {
             fields.iter().any(|(_, ty)| mentions_function(ty))
         }
-        TypeExprKind::AssocProj { receiver, .. } => mentions_function(receiver),
         TypeExprKind::Named { .. } | TypeExprKind::SelfType => false,
     }
 }
@@ -372,7 +371,6 @@ fn row_vars_of(ty: &TypeExpr, out: &mut Vec<Symbol>) {
             params.iter().for_each(|ty| row_vars_of(ty, out));
             row_vars_of(ret, out);
         }
-        TypeExprKind::AssocProj { receiver, .. } => row_vars_of(receiver, out),
         TypeExprKind::Named { .. } | TypeExprKind::SelfType => {}
     }
 }

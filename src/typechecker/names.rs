@@ -881,7 +881,6 @@ fn report_private_in_public(
                 params.iter().for_each(|p| type_names(p, out));
                 type_names(ret, out);
             }
-            TypeExprKind::AssocProj { receiver, .. } => type_names(receiver, out),
             TypeExprKind::AnonRecord { fields, .. } => {
                 fields.iter().for_each(|(_, t)| type_names(t, out))
             }
@@ -1393,7 +1392,6 @@ pub(crate) fn type_vars_of(te: &TypeExpr, out: &mut Vec<Symbol>) {
                 params.iter().for_each(|t| walk(t, out));
                 walk(ret, out);
             }
-            TypeExprKind::AssocProj { receiver, .. } => walk(receiver, out),
             TypeExprKind::AnonRecord { fields, .. } => {
                 fields.iter().for_each(|(_, t)| walk(t, out));
             }
@@ -1964,11 +1962,6 @@ impl Resolver<'_> {
                 for sup in &mut t.supertraits {
                     self.trait_ref(sup);
                 }
-                for assoc in &mut t.assoc_types {
-                    for bound in &mut assoc.bounds {
-                        self.trait_ref(bound);
-                    }
-                }
                 for wc in &mut t.param_where_clauses {
                     self.where_clause(wc);
                 }
@@ -1991,9 +1984,6 @@ impl Resolver<'_> {
                 }
                 for wc in &mut ti.where_clauses {
                     self.where_clause(wc);
-                }
-                for binding in &mut ti.assoc_type_bindings {
-                    self.type_expr(&mut binding.ty);
                 }
                 // (The header's type variables are its methods' too.)
                 let mut header = ti.target_param_names.clone();
@@ -2123,18 +2113,6 @@ impl Resolver<'_> {
                 self.type_expr(ret);
             }
             TypeExprKind::SelfType => {}
-            TypeExprKind::AssocProj {
-                receiver,
-                trait_module,
-                trait_name,
-                ..
-            } => {
-                let (module, name) = (*trait_module, *trait_name);
-                self.type_expr(receiver);
-                if resolve(name) != "__no_enclosing_trait__" {
-                    te.res = self.trait_name(module, name, te.span);
-                }
-            }
             TypeExprKind::AnonRecord { fields, .. } => {
                 for (_, t) in fields {
                     self.type_expr(t);

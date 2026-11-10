@@ -35,7 +35,6 @@ impl DeclVars {
                     params.iter().for_each(|param| walk(param, written));
                     walk(ret, written);
                 }
-                TypeExprKind::AssocProj { receiver, .. } => walk(receiver, written),
                 TypeExprKind::AnonRecord { fields, tail } => {
                     fields.iter().for_each(|(_, ty)| walk(ty, written));
                     if let Some((row, span)) = tail {
@@ -615,7 +614,6 @@ impl TypeChecker {
                 }
                 self.find_alias_cycle(ret, visiting)
             }
-            Type::AssocProj { receiver, .. } => self.find_alias_cycle(receiver, visiting),
             Type::App(head, arg) => self
                 .find_alias_cycle(head, visiting)
                 .or_else(|| self.find_alias_cycle(arg, visiting)),

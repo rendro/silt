@@ -18,13 +18,13 @@
 -- lsp: references 77:3
 -- lsp: references 81:8
 -- lsp: references 80:10
--- lsp: rename 94:24 Holder
+-- lsp: rename 94:31 Holder
 -- A rename edits what the name means and nothing else. A method name at
 -- a call is no name of its trait: its rename is the method's, as is its
 -- definition. `self` is not renamed. A field written without its value
 -- is written out. The binders of an or-pattern's alternatives are one
 -- binding. A new name that is taken where the old one is written is
--- refused. A block ends its `let`s. `<T as Trait>::Item` names the trait.
+-- refused. A block ends its `let`s. A `where` clause names the trait.
 -- A loop's initial values are read outside it; its names are its body's.
 type Box {
   w: Int,
@@ -87,11 +87,11 @@ fn loops(n: Int) -> Int {
 }
 
 trait Container {
-  type Item
-  fn first(self) -> Self::Item
+  fn first(self) -> Int
+  fn second(self) -> Int
 }
 
-fn head(c: t) -> <t as Container>::Item where t: Container {
+fn head(c: t) -> Int where t: Container {
   Container.first(c)
 }
 

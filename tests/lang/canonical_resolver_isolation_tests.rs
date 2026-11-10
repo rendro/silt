@@ -1,9 +1,8 @@
 //! Lock tests for the compile-session-scoped `Resolver` (commit
-//! 6364552: scope canonical alias / assoc-binding registries to a
-//! compile session).
+//! 6364552: scope the canonical alias registry to a compile session).
 //!
-//! Pre-refactor the alias and associated-type-binding registries lived
-//! in process-global `RwLock<HashMap>` statics — every `TypeChecker`
+//! Pre-refactor the alias registry lived in a process-global
+//! `RwLock<HashMap>` static — every `TypeChecker`
 //! instance ever constructed in the process shared them. That created a
 //! structural cross-pull contamination hazard for the LSP path
 //! (multi-file pulls would see one another's aliases) and would

@@ -898,7 +898,7 @@ impl TypeChecker {
             Type::Generic(_, ts) | Type::Tuple(ts) => ts.iter().any(|t| self.has_variable(t)),
             Type::List(t) | Type::Set(t) | Type::Channel(t) => self.has_variable(t),
             Type::Map(k, v) => self.has_variable(k) || self.has_variable(v),
-            Type::AnonRecord { .. } | Type::AssocProj { .. } => true,
+            Type::AnonRecord { .. } => true,
             _ => false,
         }
     }

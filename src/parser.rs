@@ -407,13 +407,6 @@ pub struct Parser<'src> {
     docs: Option<Vec<Comment>>,
     /// The comments the lexer found, kept for `with_docs`.
     comments: Vec<Comment>,
-    /// Name of the trait whose body the parser is currently inside.
-    /// Used by `Self::Item` projection sugar to fill in the implicit
-    /// trait-name. `None` outside a trait/impl body. The parser sets
-    /// this on entry to `parse_trait_or_impl`'s body and restores it on
-    /// exit so nested-but-illegal forms (parser doesn't allow nested
-    /// traits, so this is purely defensive) cannot leak between siblings.
-    current_trait_name: Option<Symbol>,
     /// What a top-level item is called in the same-line error: a
     /// "declaration" in a file, a "statement" in the REPL, whose entries
     /// are statements (see `parse_cell`).
@@ -479,7 +472,6 @@ impl<'src> Parser<'src> {
             errors: Vec::new(),
             depth: 0,
             docs: None,
-            current_trait_name: None,
             top_level_item: "declaration",
         }
     }
@@ -644,6 +636,18 @@ impl<'src> Parser<'src> {
         &self.tokens[self.pos].kind
     }
 
+    /// The current token as an error names what it found: a `:` right
+    /// before another one is `::`, which silt has no use for.
+    fn found(&self) -> String {
+        let tok = &self.tokens[self.pos];
+        match tok.kind {
+            Token::Colon if self.source.as_bytes().get(tok.span.end as usize) == Some(&b':') => {
+                "::".to_string()
+            }
+            ref kind => kind.to_string(),
+        }
+    }
+
     fn at(&self, tok: &Token) -> bool {
         std::mem::discriminant(self.peek()) == std::mem::discriminant(tok)
     }
@@ -729,7 +733,7 @@ impl<'src> Parser<'src> {
             let d = Diagnostic::error(
                 Code::ExpectedToken,
                 self.span(),
-                format!("expected {expected}, found {}", self.peek()),
+                format!("expected {expected}, found {}", self.found()),
             );
             Err(self.with_line_start_help(d))
         }
@@ -832,7 +836,7 @@ impl<'src> Parser<'src> {
             _ => Err(Diagnostic::error(
                 Code::ExpectedIdentifier,
                 self.span(),
-                format!("expected identifier, found {}", self.peek()),
+                format!("expected identifier, found {}", self.found()),
             )),
         }
     }
@@ -860,7 +864,7 @@ impl<'src> Parser<'src> {
             self.span(),
             format!(
                 "expected '{closer}' to close {construct}, found {}",
-                self.peek()
+                self.found()
             ),
         )
         .with_label(opener_span, format!("the {construct} starts here"))
@@ -945,7 +949,7 @@ impl<'src> Parser<'src> {
             self.span(),
             format!(
                 "expected '{close}' or ',' to continue {what}, found {}",
-                self.peek()
+                self.found()
             ),
         )
         .with_label(open, format!("the {what} starts here"));
@@ -969,7 +973,7 @@ impl<'src> Parser<'src> {
             self.span(),
             format!(
                 "expected ')' or ',' to continue tuple type, found {}",
-                self.peek()
+                self.found()
             ),
         );
         self.advance();
@@ -1326,7 +1330,8 @@ impl<'src> Parser<'src> {
     /// take the trait or the impl and its other methods with it. (One
     /// that fails in its header is not known well enough to stand: the
     /// trait or the impl fails with it.) Returns whether the body goes
-    /// on.
+    /// on. A line in the body that does not start with `fn` is no
+    /// method: the error says what such a body holds.
     fn parse_method(&mut self, methods: &mut Vec<FnDecl>) -> Result<bool> {
         let start = self.pos;
         self.fn_stub = None;
@@ -1337,7 +1342,14 @@ impl<'src> Parser<'src> {
             }
             Err(e) => {
                 let Some(mut stub) = self.fn_stub.take().filter(|_| self.fn_header_whole) else {
-                    return Err(e);
+                    return Err(match self.tokens[start].kind {
+                        Token::Fn | Token::Eof => e,
+                        _ if !self.starts_line[start] => e,
+                        _ => e.with_help(
+                            "the body of a trait or an impl holds only methods, each \
+                             starting with `fn`",
+                        ),
+                    });
                 };
                 // (The stub of a top-level function has no where
                 // clauses; a method's are part of what its trait or its
@@ -1356,7 +1368,7 @@ impl<'src> Parser<'src> {
     /// Skip to where the next member of a trait or impl body starts,
     /// behind the member that began at token `start` and failed where
     /// the parser stands: outside every brace the member opened, to a
-    /// `fn` or `type` that starts a line or to the brace that closes
+    /// `fn` that starts a line or to the brace that closes
     /// the body. Returns false when a declaration keyword at the margin
     /// comes first: the body is not closed (it is being typed), and the
     /// declaration is the file's.
@@ -1384,7 +1396,7 @@ impl<'src> Parser<'src> {
                     return false;
                 }
                 Token::RBrace if open == 0 => return true,
-                Token::Fn | Token::Type if open == 0 && self.nl_before() => return true,
+                Token::Fn if open == 0 && self.nl_before() => return true,
                 kind => open = behind(open, kind),
             }
             self.advance();
@@ -1549,7 +1561,7 @@ impl<'src> Parser<'src> {
                 Err(Diagnostic::error(
                     Code::ExpectedDeclaration,
                     self.span(),
-                    format!("expected declaration, found {}", self.peek()),
+                    format!("expected declaration, found {}", self.found()),
                 ))
             }
         }
@@ -1696,7 +1708,7 @@ impl<'src> Parser<'src> {
                 Diagnostic::error(
                     Code::ExpectedIdentifier,
                     err.span,
-                    format!("expected parameter name, found {}", self.peek()),
+                    format!("expected parameter name, found {}", self.found()),
                 )
             } else {
                 err
@@ -1714,7 +1726,7 @@ impl<'src> Parser<'src> {
             _ => Err(Diagnostic::error(
                 Code::ExpectedIdentifier,
                 self.span(),
-                format!("expected parameter name, found {}", self.peek()),
+                format!("expected parameter name, found {}", self.found()),
             )),
         }
     }
@@ -2009,8 +2021,8 @@ impl<'src> Parser<'src> {
         Ok((Some(module), name, name_span))
     }
 
-    /// Parse a trait reference in a where clause, a supertrait list or
-    /// an associated-type bound: a bare or qualified name (`Display`,
+    /// Parse a trait reference in a where clause or a supertrait list:
+    /// a bare or qualified name (`Display`,
     /// `m.Describe`) with an optional argument list (`TryInto(Int)`,
     /// `Convert(a, b)`).
     fn parse_trait_ref(&mut self) -> Result<TraitRef> {
@@ -2145,31 +2157,19 @@ impl<'src> Parser<'src> {
             if self.at(&Token::LBrace) {
                 self.advance();
             }
-            // Trait body: methods (`fn ...`) interleaved with
-            // associated-type declarations (`type Item` or
-            // `type Item: Compare + Hash`). Both are accepted in any
-            // order; the parser collects them into separate vecs so
-            // downstream consumers don't have to re-classify.
-            let prev_trait = self.current_trait_name.replace(name);
+            // Trait body: methods (`fn ...`).
             let mut methods = Vec::new();
-            let mut assoc_types: Vec<crate::ast::AssocTypeDecl> = Vec::new();
             let mut closed = true;
             loop {
                 self.skip_rejected();
                 if self.at(&Token::RBrace) {
                     break;
                 }
-                if self.at(&Token::Type) {
-                    let assoc = self.parse_assoc_type_decl()?;
-                    assoc_types.push(assoc);
-                    continue;
-                }
                 if !self.parse_method(&mut methods)? {
                     closed = false;
                     break;
                 }
             }
-            self.current_trait_name = prev_trait;
             if closed {
                 self.expect(&Token::RBrace)?;
             }
@@ -2183,7 +2183,6 @@ impl<'src> Parser<'src> {
                 supertraits,
                 param_where_clauses,
                 methods,
-                assoc_types,
                 is_pub: false,
                 span: self.close(span),
                 doc,
@@ -2274,30 +2273,19 @@ impl<'src> Parser<'src> {
             // Multi-trait bounds via `+` are supported: `where a: Show + Hash`.
             let where_clauses = self.parse_where_clauses_opt()?;
             self.expect(&Token::LBrace)?;
-            // Impl body: methods (`fn ...`) interleaved with
-            // associated-type bindings (`type Item = Int`). Each
-            // binding must be a complete RHS — defaults / abstract
-            // assoc types are illegal in impls.
-            let prev_trait = self.current_trait_name.replace(name);
+            // Impl body: methods (`fn ...`).
             let mut methods = Vec::new();
-            let mut assoc_type_bindings: Vec<crate::ast::AssocTypeBinding> = Vec::new();
             let mut closed = true;
             loop {
                 self.skip_rejected();
                 if self.at(&Token::RBrace) {
                     break;
                 }
-                if self.at(&Token::Type) {
-                    let binding = self.parse_assoc_type_binding()?;
-                    assoc_type_bindings.push(binding);
-                    continue;
-                }
                 if !self.parse_method(&mut methods)? {
                     closed = false;
                     break;
                 }
             }
-            self.current_trait_name = prev_trait;
             if closed {
                 self.expect(&Token::RBrace)?;
             }
@@ -2316,7 +2304,6 @@ impl<'src> Parser<'src> {
                 target_param_names,
                 where_clauses,
                 methods,
-                assoc_type_bindings,
                 evidence: Default::default(),
                 args_key: crate::defs::ImplArgs::none(),
                 shown_args: String::new(),
@@ -2360,64 +2347,12 @@ impl<'src> Parser<'src> {
         }
     }
 
-    // ── Associated-type decl / binding ────────────────────────────────
-
-    /// Parse an associated-type declaration inside a trait body.
-    /// Accepted forms:
-    ///   `type Item`
-    ///   `type Item: Compare`
-    ///   `type Item: Compare + Hash`
-    /// Defaults (`type Item = Default`) are rejected; v1 reserves the
-    /// syntax for a future extension.
-    fn parse_assoc_type_decl(&mut self) -> Result<crate::ast::AssocTypeDecl> {
-        let span = self.span();
-        self.expect(&Token::Type)?;
-        let (name, _) = self.expect_ident()?;
-        let mut bounds: Vec<TraitRef> = Vec::new();
-        if self.at_on_line(&Token::Colon) {
-            self.advance();
-            bounds.push(self.parse_trait_ref()?);
-            while self.at_on_line(&Token::Plus) {
-                self.advance();
-                bounds.push(self.parse_trait_ref()?);
-            }
-        }
-        if self.at_on_line(&Token::Eq) {
-            return Err(Diagnostic::error(
-                Code::UnsupportedSyntax,
-                span,
-                "associated-type defaults are not supported in v1",
-            )
-            .with_help("declare the type abstractly (`type Item`) and bind it in each impl"));
-        }
-        Ok(crate::ast::AssocTypeDecl {
-            name,
-            bounds,
-            span: self.close(span),
-        })
-    }
-
-    /// Parse an associated-type binding inside a trait impl body.
-    /// Form: `type Item = TypeExpr`.
-    fn parse_assoc_type_binding(&mut self) -> Result<crate::ast::AssocTypeBinding> {
-        let span = self.span();
-        self.expect(&Token::Type)?;
-        let (name, _) = self.expect_ident()?;
-        self.expect(&Token::Eq)?;
-        let ty = self.parse_type_expr()?;
-        Ok(crate::ast::AssocTypeBinding {
-            name,
-            ty,
-            span: self.close(span),
-        })
-    }
-
     // ── Type expressions ─────────────────────────────────────────────
 
     fn parse_type_expr(&mut self) -> Result<TypeExpr> {
         // Depth guard mirroring parse_expr_bp / parse_pattern: type-expr
-        // recursion (nested generics, Fn types, qualified projections,
-        // anon record types) was the one unguarded sibling — deep
+        // recursion (nested generics, Fn types, anon record types) was
+        // the one unguarded sibling — deep
         // nesting overflowed even the 256MiB silt-main stack.
         self.depth += 1;
         if self.depth > MAX_DEPTH {
@@ -2453,30 +2388,7 @@ impl<'src> Parser<'src> {
         // header diagnostics (parse_trait_or_impl) to point at the
         // offending argument rather than the outer `trait` keyword.
         let start = self.span();
-        // Qualified projection: `<TypeExpr as TraitName>::IDENT`. The
-        // `<` here is unambiguous because every other use of `<` is
-        // an operator at expression position; in type-expr position
-        // the only legal opener is the qualified form.
-        if self.at(&Token::Lt) {
-            self.advance();
-            let receiver = self.parse_type_expr()?;
-            self.expect(&Token::As)?;
-            let (trait_module, trait_name, trait_name_span) =
-                self.parse_qualified_name("trait name")?;
-            self.expect(&Token::Gt)?;
-            self.expect(&Token::ColonColon)?;
-            let (assoc_name, _) = self.expect_ident()?;
-            return Ok(self.mk_type(
-                TypeExprKind::AssocProj {
-                    receiver: Box::new(receiver),
-                    trait_module,
-                    trait_name,
-                    trait_name_span: Some(trait_name_span),
-                    assoc_name,
-                },
-                start,
-            ));
-        }
+
         // Function type: Fn(A, B) -> C
         //
         // Only commit to the function-type form when `Fn` is followed by
@@ -2583,35 +2495,7 @@ impl<'src> Parser<'src> {
             return Ok(self.mk_type(TypeExprKind::AnonRecord { fields, tail }, start));
         }
         let (module, name, name_span) = self.parse_qualified_name("type name")?;
-        // `Self::Item` — sugar for `<Self as <enclosing_trait>>::Item`.
-        // The trait name is supplied by the parser's enclosing-trait
-        // context (set by parse_trait_or_impl on entry to the body).
-        // Outside a trait/impl body the projection is an error; it is
-        // caught by the typechecker (current_trait_name absent).
         if module.is_none() && name == intern::intern("Self") {
-            if self.at_on_line(&Token::ColonColon) {
-                self.advance();
-                let (assoc_name, _) = self.expect_ident()?;
-                let trait_name = self.current_trait_name.unwrap_or_else(|| {
-                    // Outside a trait body — leave a sentinel so the
-                    // typechecker can produce a clear diagnostic. The
-                    // parser doesn't have enough context to error here
-                    // (the token stream looks like a perfectly normal
-                    // type expression). Use an interned placeholder.
-                    intern::intern("__no_enclosing_trait__")
-                });
-                let recv = TypeExpr::new(TypeExprKind::SelfType, start);
-                return Ok(self.mk_type(
-                    TypeExprKind::AssocProj {
-                        receiver: Box::new(recv),
-                        trait_module: None,
-                        trait_name,
-                        trait_name_span: None,
-                        assoc_name,
-                    },
-                    start,
-                ));
-            }
             // `Self(a)`: `Self` applied, in a trait of type constructors,
             // is read like `List(a)` below.
             if !self.at_on_line(&Token::LParen) {
@@ -3534,7 +3418,7 @@ impl<'src> Parser<'src> {
                 let d = Diagnostic::error(
                     Code::ExpectedExpression,
                     self.span(),
-                    format!("expected expression, found {}", self.peek()),
+                    format!("expected expression, found {}", self.found()),
                 );
                 if let Some(help) = self.nested_fn_help() {
                     return Err(self.unclosed_fn_body(d).with_help(help));
@@ -4220,7 +4104,7 @@ impl<'src> Parser<'src> {
             self.span(),
             format!(
                 "expected '{close}' after `{rest}` in {list}, found {}",
-                self.peek()
+                self.found()
             ),
         ))
     }
@@ -4700,7 +4584,7 @@ impl<'src> Parser<'src> {
             _ => Err(Diagnostic::error(
                 Code::ExpectedPattern,
                 self.span(),
-                format!("expected pattern, found {}", self.peek()),
+                format!("expected pattern, found {}", self.found()),
             )),
         }
     }
@@ -4713,7 +4597,7 @@ impl<'src> Parser<'src> {
 /// a `match`. `tokens` are the contents at the braces' own depth: of a
 /// nested group only its opener. A parameter is a pattern with an
 /// optional `: Type` annotation, so the scan accepts identifiers, `,`,
-/// `|`, `:`, `::`, `.`, `type` and the openers of nested groups, and
+/// `|`, `:`, `.`, `type` and the openers of nested groups, and
 /// answers true at the first `->`. Anything else at that depth (a
 /// literal, `when`, the closing `}`) means braces of another kind:
 /// neither a block nor a record literal can put a `->` at its own depth
@@ -4730,7 +4614,6 @@ pub(crate) fn closure_head<'t>(tokens: impl IntoIterator<Item = &'t Token>) -> b
             | Token::Comma
             | Token::Bar
             | Token::Colon
-            | Token::ColonColon
             | Token::Dot
             | Token::Type
             | Token::LParen

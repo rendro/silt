@@ -58,8 +58,7 @@ rename_by_meaning.silt:84:21-84:22
 rename_by_meaning.silt:80:10-80:11
 rename_by_meaning.silt:81:12-81:13
 rename_by_meaning.silt:81:25-81:26
-> rename 94:24 Holder
+> rename 94:31 Holder
 rename_by_meaning.silt:89:7-89:16 => Holder
-rename_by_meaning.silt:94:24-94:33 => Holder
-rename_by_meaning.silt:94:50-94:59 => Holder
+rename_by_meaning.silt:94:31-94:40 => Holder
 rename_by_meaning.silt:95:3-95:12 => Holder

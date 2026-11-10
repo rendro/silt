@@ -1145,25 +1145,9 @@ impl Printer<'_> {
         } else {
             Doc::text("{")
         });
-        // The tree holds the associated types and the methods apart;
-        // the tokens say in which order they stand.
-        let mut assoc_types = t.assoc_types.iter();
         let mut methods = t.methods.iter();
-        docs.push(self.lines(|p| {
-            if p.cur.at(&Token::Type) {
-                let assoc = assoc_types.next()?;
-                let mut docs = vec![p.tok(Token::Type), space(), p.name()];
-                if !assoc.bounds.is_empty() {
-                    docs.push(p.tok(Token::Colon));
-                    docs.push(space());
-                    docs.push(p.bounds(&assoc.bounds));
-                }
-                Some(Doc::concat(docs))
-            } else {
-                Some(p.fn_decl(methods.next()?))
-            }
-        }));
-        if assoc_types.next().is_some() || methods.next().is_some() {
+        docs.push(self.lines(|p| Some(p.fn_decl(methods.next()?))));
+        if methods.next().is_some() {
             self.cur.fail("a trait member is not where the tree has it");
         }
         docs.push(self.tok(Token::RBrace));
@@ -1199,25 +1183,9 @@ impl Printer<'_> {
         docs.push(self.where_clauses(&t.where_clauses));
         docs.push(space());
         docs.push(self.tok(Token::LBrace));
-        let mut bindings = t.assoc_type_bindings.iter();
         let mut methods = t.methods.iter();
-        docs.push(self.lines(|p| {
-            if p.cur.at(&Token::Type) {
-                let binding = bindings.next()?;
-                Some(Doc::concat(vec![
-                    p.tok(Token::Type),
-                    space(),
-                    p.name(),
-                    space(),
-                    p.tok(Token::Eq),
-                    space(),
-                    p.type_expr(&binding.ty),
-                ]))
-            } else {
-                Some(p.fn_decl(methods.next()?))
-            }
-        }));
-        if bindings.next().is_some() || methods.next().is_some() {
+        docs.push(self.lines(|p| Some(p.fn_decl(methods.next()?))));
+        if methods.next().is_some() {
             self.cur.fail("an impl member is not where the tree has it");
         }
         docs.push(self.tok(Token::RBrace));
@@ -2752,29 +2720,6 @@ impl Printer<'_> {
                     space(),
                     self.type_expr(ret),
                 ])
-            }
-            TypeExprKind::AssocProj {
-                receiver,
-                trait_module,
-                ..
-            } => {
-                if self.cur.at(&Token::Lt) {
-                    // `<T as Trait>::Item`.
-                    Doc::concat(vec![
-                        self.tok(Token::Lt),
-                        self.type_expr(receiver),
-                        space(),
-                        self.tok(Token::As),
-                        space(),
-                        self.qualified(trait_module.is_some()),
-                        self.tok(Token::Gt),
-                        self.tok(Token::ColonColon),
-                        self.name(),
-                    ])
-                } else {
-                    // `Self::Item`.
-                    Doc::concat(vec![self.name(), self.tok(Token::ColonColon), self.name()])
-                }
             }
             TypeExprKind::AnonRecord { fields, tail } => {
                 let mut items: Vec<Option<&TypeExpr>> =

@@ -518,10 +518,7 @@ impl TypeChecker {
         match stmt {
             Stmt::Let { .. } => true,
             Stmt::Expr(e) => e.ty.as_ref().is_some_and(|ty| {
-                !matches!(
-                    self.statement_type(ty),
-                    Type::Unit | Type::Never | Type::Error
-                )
+                !matches!(self.apply(ty), Type::Unit | Type::Never | Type::Error)
             }),
             Stmt::When { .. } | Stmt::WhenBool { .. } => false,
         }
@@ -538,18 +535,6 @@ impl TypeChecker {
             .ty
             .as_ref()
             .is_some_and(|ty| matches!(self.apply(ty), Type::Fun(..)))
-    }
-
-    /// The type of a statement as the rule reads it: an associated type
-    /// of a known type is the type its impl binds (`<Printer as
-    /// Sink>::Out` is `()` where the impl says `type Out = ()`).
-    fn statement_type(&self, ty: &Type) -> Type {
-        match self.apply(ty) {
-            ty @ Type::AssocProj { .. } => {
-                crate::types::canonical::canonicalize(&self.tables.resolver, &ty)
-            }
-            ty => ty,
-        }
     }
 
     /// Report the unused values of `expr`'s blocks. `marks` are the
@@ -580,18 +565,12 @@ impl TypeChecker {
                 // (A statement the checker gave no type is in a body it
                 // did not check.)
                 let Some(ty) = &e.ty else { continue };
-                let message = match self.statement_type(ty) {
+                let message = match self.apply(ty) {
                     Type::Unit | Type::Never | Type::Error => continue,
                     // (A trait argument nothing decides: that error says
                     // to annotate the value.)
                     Type::Var(v) if self.statement_trait_args.contains(&v) => continue,
                     Type::Var(_) => {
-                        "this value is unused; write `let _ = ...` to discard it".to_string()
-                    }
-                    // An associated type of a type that is not known
-                    // here (`s.next()` with `s: a where a: Source`): the
-                    // caller's type decides it, so it is a value.
-                    ty @ Type::AssocProj { .. } if !free_vars_in(&ty).is_empty() => {
                         "this value is unused; write `let _ = ...` to discard it".to_string()
                     }
                     ty if ty.is_builtin("Result") => {
@@ -694,8 +673,6 @@ fn holds(ty: &Type, v: TyVar) -> bool {
         Type::Map(key, value) => holds(key, v) || holds(value, v),
         Type::Tuple(ts) | Type::Generic(_, ts) => ts.iter().any(|t| holds(t, v)),
         Type::AnonRecord { fields, .. } => fields.values().any(|t| holds(t, v)),
-        // The caller's type decides the associated type.
-        Type::AssocProj { receiver, .. } => holds(receiver, v),
         // (What the constructor is decides whether it holds its
         // argument.)
         Type::App(head, arg) => holds(head, v) || holds(arg, v),
@@ -725,7 +702,6 @@ fn holds_result(ty: &Type) -> bool {
         Type::App(_, arg) => holds_result(arg),
         Type::Fun(..)
         | Type::Con(..)
-        | Type::AssocProj { .. }
         | Type::Var(_)
         | Type::Int
         | Type::Float

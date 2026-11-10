@@ -60,7 +60,6 @@ impl TyVarSupply {
                     parts.iter().any(holds_never)
                 }
                 Type::AnonRecord { fields, .. } => fields.values().any(holds_never),
-                Type::AssocProj { receiver, .. } => holds_never(receiver),
                 _ => false,
             }
         }
@@ -95,15 +94,6 @@ impl TyVarSupply {
                     .map(|(name, t)| (name, self.without_never(t)))
                     .collect(),
                 tail,
-            },
-            Type::AssocProj {
-                receiver,
-                trait_name,
-                assoc_name,
-            } => Type::AssocProj {
-                receiver: Box::new(self.without_never(*receiver)),
-                trait_name,
-                assoc_name,
             },
             other => other,
         }
@@ -301,18 +291,6 @@ impl TypeChecker {
             Type::Map(k, v) => Type::Map(Box::new(self.apply(k)), Box::new(self.apply(v))),
             Type::Set(inner) => Type::Set(Box::new(self.apply(inner))),
             Type::Channel(inner) => Type::Channel(Box::new(self.apply(inner))),
-            // Walk into AssocProj receivers so a once-fresh tyvar that
-            // later unified with a concrete type gets propagated, which
-            // unblocks `canonicalize`'s impl-binding lookup.
-            Type::AssocProj {
-                receiver,
-                trait_name,
-                assoc_name,
-            } => Type::AssocProj {
-                receiver: Box::new(self.apply(receiver)),
-                trait_name: *trait_name,
-                assoc_name: *assoc_name,
-            },
             // Anon records: apply through each field; if the row tail
             // is a Var that resolved to another AnonRecord, merge its
             // fields and propagate its tail.
@@ -919,34 +897,6 @@ impl TypeChecker {
         }
     }
 
-    /// A projection from the `self` of an impl for every function or
-    /// every tuple (`Self::Item` in `trait T for Tuple`), as a
-    /// projection from a function or a tuple: the impl's own binding is
-    /// what it reduces to, whatever function or tuple `self` is.
-    fn of_shape_self(&self, ty: Type) -> Type {
-        let Type::AssocProj {
-            receiver,
-            trait_name,
-            assoc_name,
-        } = &ty
-        else {
-            return ty;
-        };
-        let stand_in = match &**receiver {
-            Type::Rigid(r) => match self.shape_vars.get(&r.var) {
-                Some(("function", _)) => Type::Fun(Vec::new(), Box::new(Type::Unit)),
-                Some(_) => Type::Tuple(Vec::new()),
-                None => return ty,
-            },
-            _ => return ty,
-        };
-        Type::AssocProj {
-            receiver: Box::new(stand_in),
-            trait_name: *trait_name,
-            assoc_name: *assoc_name,
-        }
-    }
-
     /// The fault of two types whose heads differ.
     fn type_mismatch(&self, got: &Type, expected: &Type) -> Fault {
         let (got_shown, expected_shown) = self.show_apart(got, expected);
@@ -990,26 +940,6 @@ impl TypeChecker {
     fn unify_into(&mut self, t1: &Type, t2: &Type, out: &mut Vec<Fault>) {
         let t1 = self.apply(t1);
         let t2 = self.apply(t2);
-
-        // Associated-type projections: canonicalise both sides first so
-        // concrete-receiver projections reduce to their impl bindings
-        // before structural matching. The canonicaliser is a fixed-point
-        // function (idempotent), so calling it on already-concrete shapes
-        // is a no-op. Only enter this fast-path when at least one side
-        // is an AssocProj — keeps the cost out of the hot unification
-        // path for normal types.
-        let t1 = if matches!(&t1, Type::AssocProj { .. }) {
-            let t1 = self.of_shape_self(self.apply(&t1));
-            crate::types::canonical::canonicalize(&self.tables.resolver, &t1)
-        } else {
-            t1
-        };
-        let t2 = if matches!(&t2, Type::AssocProj { .. }) {
-            let t2 = self.of_shape_self(self.apply(&t2));
-            crate::types::canonical::canonicalize(&self.tables.resolver, &t2)
-        } else {
-            t2
-        };
 
         match (&t1, &t2) {
             // A type still unknown that meets what has no type (a value
@@ -1357,43 +1287,6 @@ impl TypeChecker {
                 }
             }
 
-            // ── AssocProj × AssocProj (abstract receivers) ────────────
-            // The canonicalise fast-path at the top of `unify` already
-            // reduced any projection whose receiver has a registered
-            // impl, so reaching this arm means both sides are still
-            // abstract — the receiver is a type variable under a
-            // `where` bound (or another unreduced projection). Per the
-            // documented contract on `Type::AssocProj`
-            // (src/types/mod.rs): two abstract projections unify iff
-            // they have the same receiver, trait_name, and assoc_name.
-            // "Same receiver" means *unifiable* receivers — two
-            // distinct type variables can still unify (binding one to
-            // the other), so recurse rather than compare structurally.
-            (
-                Type::AssocProj {
-                    receiver: r1,
-                    trait_name: tn1,
-                    assoc_name: an1,
-                },
-                Type::AssocProj {
-                    receiver: r2,
-                    trait_name: tn2,
-                    assoc_name: an2,
-                },
-            ) => {
-                if tn1 == tn2 && an1 == an2 {
-                    self.unify_into(r1, r2, out);
-                } else {
-                    // Different trait or different member: genuinely
-                    // distinct abstract types. Directional convention:
-                    // t1 is the "got" side, t2 the "expected" side.
-                    out.push(Fault::new(
-                        Code::TypeMismatch,
-                        format!("type mismatch: expected {t2}, got {t1}"),
-                    ));
-                }
-            }
-
             _ => {
                 // Suppress cascade errors where either side is already in
                 // error state — a previous diagnostic explained the root
@@ -1445,7 +1338,6 @@ pub(super) fn rigid_in(ty: &Type) -> Option<RigidId> {
         Type::Tuple(elems) => elems.iter().find_map(rigid_in),
         Type::Generic(_, args) => args.iter().find_map(rigid_in),
         Type::Map(k, v) => rigid_in(k).or_else(|| rigid_in(v)),
-        Type::AssocProj { receiver, .. } => rigid_in(receiver),
         Type::AnonRecord { fields, tail } => match tail {
             RowTail::Rigid(r) => Some(*r),
             _ => fields.values().find_map(rigid_in),
@@ -1474,7 +1366,6 @@ fn occurs_in(var: TyVar, ty: &Type) -> bool {
         Type::Map(k, v) => occurs_in(var, k) || occurs_in(var, v),
         Type::Set(inner) => occurs_in(var, inner),
         Type::Channel(inner) => occurs_in(var, inner),
-        Type::AssocProj { receiver, .. } => occurs_in(var, receiver),
         Type::AnonRecord { fields, tail } => {
             fields.values().any(|t| occurs_in(var, t))
                 || matches!(tail, RowTail::Var(v) if *v == var)

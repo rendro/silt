@@ -1,7 +1,8 @@
 -- cmd: fmt
 -- A comment behind the opening brace of a type stays there, and one
 -- behind a declaration's closing brace stays behind it (FRONTEND-4 e,
--- the snippets of docs/language/modules.md and generics.md).
+-- the snippet of docs/language/modules.md), and one behind a member of
+-- a trait stays behind it.
 pub type Shape {      -- exports the type and all variants
   Circle(Float),
   Rect(Float, Float),
@@ -10,11 +11,9 @@ pub type Shape {      -- exports the type and all variants
 fn helper(x) { x * 2 }       -- not exported
 
 trait Container {
-  type Item: Compare
-  fn first(self) -> Self::Item
+  fn first(self) -> Int           -- every impl gives one
 }
 
 trait Container for Box {
-  type Item = Int           -- OK: Int auto-derives Compare
   fn first(self) -> Int { 1 }
 }

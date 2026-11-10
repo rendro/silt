@@ -55,7 +55,7 @@ cases! {
     t16_closures: "t16", ["main.silt"];
     t17_loop_binders: "t17", ["main.silt"];
     t18_traits_across_files: "t18", ["main.silt", "shapes.silt", "impls.silt"];
-    t19_associated_type_projections: "t19", ["main.silt"];
+    t19_trait_arguments_and_types: "t19", ["main.silt"];
     pkg2_dependency_importers: "pkg2", ["main.silt", "mathutil/src/lib.silt"];
 }
 

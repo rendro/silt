@@ -442,7 +442,6 @@ fn collect_app_heads(ty: &Type, f: &mut impl FnMut(TyVar)) {
             ts.iter().for_each(|t| collect_app_heads(t, f))
         }
         Type::AnonRecord { fields, .. } => fields.values().for_each(|t| collect_app_heads(t, f)),
-        Type::AssocProj { receiver, .. } => collect_app_heads(receiver, f),
         _ => {}
     }
 }

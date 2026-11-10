@@ -56,7 +56,7 @@ trait Big: Sized {
 --
 -- Two of them.
 trait Pairs(b) {
-  type Item
+  fn first(self) -> b
   fn pair(
     self,
     other: b,

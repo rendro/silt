@@ -353,9 +353,8 @@ pub struct ProgramUnits<'a> {
     /// for any other program.
     pub earlier: EarlierCells,
     /// The tables the session's modules were checked into. Read from
-    /// them: the type aliases and associated-type bindings (impl
-    /// targets are canonicalized with them, as the checker keyed the
-    /// impls), and the fields of each record type, with their types as
+    /// them: the type aliases (impl targets are canonicalized with
+    /// them, as the checker keyed the impls), and the fields of each record type, with their types as
     /// the checker inferred them, in declaration order.
     pub tables: &'a crate::typechecker::Tables,
 }
