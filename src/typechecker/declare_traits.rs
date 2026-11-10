@@ -775,32 +775,7 @@ impl TypeChecker {
             }
         }
 
-        // Pre-register a stub TraitInfo for `t` carrying just its
-        // supertraits, visible while the method signatures below are
-        // resolved. The stub is overwritten with the fully-populated
-        // TraitInfo at the end of this function.
         let private_to = (!t.is_pub).then_some((self.module, self.module_name));
-        let pre_supertraits: Vec<TraitKey> = supertraits.iter().map(|(s, _)| *s).collect();
-        self.tables.traits.insert(
-            key,
-            TraitInfo {
-                params: t.params.clone(),
-                param_var_ids: Vec::new(),
-                supertraits: pre_supertraits,
-                supertrait_args: Vec::new(),
-                param_where_clauses: Vec::new(),
-                methods: Vec::new(),
-                receivers: std::collections::HashSet::new(),
-                method_bounds: HashMap::new(),
-                self_var: 0,
-                constructor,
-                var_names: Vec::new(),
-                default_method_bodies: HashMap::new(),
-                private_to,
-                builtin_needs: HashMap::new(),
-                via_needs: HashMap::new(),
-            },
-        );
 
         let self_var = self.fresh_var();
         // Allocate a fresh TyVar for each trait-level parameter. These
