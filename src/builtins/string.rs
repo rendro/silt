@@ -42,16 +42,34 @@ fn padding(name: &str, s: &str, width: i64, pad: &str) -> Result<String, VmError
 /// The byte offset of the character at index `chars` of `s`, the end
 /// of `s` included; `None` beyond it. Where the first `chars` bytes are
 /// ASCII, each of them is a character and the index is the offset: no
-/// walk over the characters.
+/// walk over the characters. Otherwise the characters are counted
+/// eight bytes at a time (a character starts at every byte that is no
+/// UTF-8 continuation byte, `0b10xx_xxxx`), and byte by byte in the
+/// last word.
 fn byte_offset(s: &str, chars: usize) -> Option<usize> {
+    const HIGH: u64 = 0x8080_8080_8080_8080;
     let bytes = s.as_bytes();
     if bytes[..chars.min(bytes.len())].is_ascii() {
         return (chars <= bytes.len()).then_some(chars);
     }
-    s.char_indices()
-        .map(|(at, _)| at)
-        .chain(std::iter::once(s.len()))
-        .nth(chars)
+    // `left` characters start at or after `at`, before the one wanted.
+    let (mut at, mut left) = (0, chars);
+    while let Some(word) = bytes.get(at..at + 8) {
+        let word = u64::from_le_bytes(word.try_into().ok()?);
+        // The high bit of each continuation byte: bit 7 set, bit 6 not.
+        let continuing = word & !(word << 1) & HIGH;
+        let starts = 8 - continuing.count_ones() as usize;
+        if starts > left {
+            break;
+        }
+        (at, left) = (at + 8, left - starts);
+    }
+    // (`at` may be inside a character: its continuation bytes start
+    // none.)
+    (at..bytes.len())
+        .filter(|&i| bytes[i] & 0xC0 != 0x80)
+        .chain(std::iter::once(bytes.len()))
+        .nth(left)
 }
 
 /// The characters `start..end` of `s`, both indexes clamped to its
@@ -343,11 +361,21 @@ mod tests {
         }
     }
 
-    const TEXTS: [&str; 7] = ["", "abc", "é", "aé", "éa", "日本語abc", "a😀b\u{301}c"];
+    /// Short texts, and longer ones whose characters are counted eight
+    /// bytes at a time, with characters across the words' edges.
+    fn texts() -> Vec<String> {
+        let short = ["", "abc", "é", "aé", "éa", "日本語abc", "a😀b\u{301}c"];
+        let mut texts: Vec<String> = short.iter().map(|s| s.to_string()).collect();
+        texts.push("aé日😀".repeat(6));
+        texts.push(format!("{}abc", "é".repeat(13)));
+        texts.push(format!("{}é{}", "a".repeat(9), "😀b".repeat(7)));
+        texts.push("日".repeat(11));
+        texts
+    }
 
     #[test]
     fn a_byte_offset_is_that_of_the_character_at_the_index() {
-        for s in TEXTS {
+        for s in &texts() {
             let mut offsets: Vec<usize> = s.char_indices().map(|(at, _)| at).collect();
             offsets.push(s.len());
             for chars in 0..offsets.len() + 3 {
@@ -362,7 +390,7 @@ mod tests {
 
     #[test]
     fn a_range_of_characters_is_what_the_vector_of_them_gives() {
-        for s in TEXTS {
+        for s in &texts() {
             let most = s.chars().count() + 3;
             for start in 0..most {
                 for end in 0..most {
@@ -373,7 +401,7 @@ mod tests {
                     );
                 }
             }
-            assert_eq!(char_range(s, 0, usize::MAX), s);
+            assert_eq!(char_range(s, 0, usize::MAX), s.as_str());
             assert_eq!(char_range(s, usize::MAX, usize::MAX), "");
         }
     }
