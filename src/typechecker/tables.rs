@@ -95,10 +95,6 @@ pub(super) struct TraitInfo {
     /// the trait's methods can be called only in that module. `None` for
     /// a `pub` trait.
     pub(super) private_to: Option<(crate::session::ModuleId, Symbol)>,
-    /// Associated-type declarations on this trait. Each entry carries a
-    /// name and the trait bounds the impl-supplied binding must satisfy.
-    /// Empty for traits with no associated types (the common case).
-    pub(super) assoc_types: Vec<AssocTypeInfo>,
     /// What the default methods' bodies ask of their annotation
     /// variables (`var_names`) for the builtins they give them to, once
     /// the trait's module is checked: an impl in another module that
@@ -109,17 +105,6 @@ pub(super) struct TraitInfo {
     /// of their annotation variables (`Pred::Via`), as the trait's module
     /// decided them.
     pub(super) via_needs: HashMap<(TyVar, Symbol), Vec<super::builtin_needs::ViaNeed>>,
-}
-
-/// Information about a single associated-type declaration inside a
-/// trait. Bounds are stored as `(trait_name, trait_args)` pairs — the
-/// `trait_args` are the AST `TypeExpr`s captured at decl time and
-/// resolved against the impl's binding type at impl-registration time.
-#[derive(Debug, Clone)]
-pub(super) struct AssocTypeInfo {
-    pub(super) name: Symbol,
-    pub(super) bounds: Vec<(TraitKey, Vec<TypeExpr>)>,
-    pub(super) span: Span,
 }
 
 /// A method a type has: an impl's (a row of [`ImplMethods`]), or a
@@ -493,7 +478,7 @@ pub struct Tables {
     /// the builtins / record-or-enum lookup or be treated as an
     /// alias. The actual alias body lives on
     /// [`crate::types::canonical::Resolver`] (the session-scoped
-    /// alias / assoc-binding store the canonicaliser reads); this
+    /// alias store the canonicaliser reads); this
     /// set is just a fast-path so the typechecker doesn't have to go
     /// through the resolver on every type-expr resolution.
     pub(super) type_aliases: Table<std::collections::HashSet<TypeRef>, TypeRef>,
@@ -501,9 +486,8 @@ pub struct Tables {
     /// error diagnostics at use sites. Parallel to `type_aliases`
     /// (the alias is in `type_aliases` iff it is a key here).
     pub(super) type_alias_arity: HashMap<TypeRef, usize>,
-    /// The session's canonical alias / associated-type-binding
-    /// registries. Populated as the typechecker processes user
-    /// `type ... = ...` decls and trait impls; consumed by
+    /// The session's canonical alias registry. Populated as the
+    /// typechecker processes user `type ... = ...` decls; consumed by
     /// `canonicalize` and `canonical_head` at every read site, and by
     /// the compiler when it keys impl methods.
     pub(super) resolver: crate::types::canonical::Resolver,
@@ -741,7 +725,7 @@ impl Tables {
             .map_or(&[], |args| args.as_slice())
     }
 
-    /// The type aliases and associated-type bindings of the session.
+    /// The type aliases of the session.
     pub fn resolver(&self) -> &crate::types::canonical::Resolver {
         &self.resolver
     }
@@ -813,7 +797,6 @@ impl Tables {
             // module gives it.)
             if !self.impl_args.contains_key(&key) {
                 self.trait_impl_set.remove(&key);
-                self.resolver.unregister_assoc_bindings(key.0, key.1);
             }
         }
         for id in rows.schemes {

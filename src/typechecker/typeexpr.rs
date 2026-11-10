@@ -871,66 +871,6 @@ impl TypeChecker {
                 Some(ty) => ty.clone(),
                 None => self.self_outside_a_trait(te.span),
             },
-            TypeExprKind::AssocProj {
-                receiver,
-                trait_name,
-                assoc_name,
-                ..
-            } => {
-                if te.res == Some(crate::defs::Res::Error) {
-                    return Type::Error;
-                }
-                // Build a `Type::AssocProj` whose receiver is the
-                // resolved receiver type. The canonicaliser at
-                // `resolve_type_expr`'s wrapper layer reduces it to
-                // the impl's binding when the receiver is concrete
-                // and a binding is registered; otherwise the
-                // projection stays abstract.
-                //
-                // Sentinel-trait check: the parser emits
-                // `__no_enclosing_trait__` when `Self::X` was written
-                // outside a trait/impl body. Surface a clear
-                // diagnostic at use-site so the user understands the
-                // syntax requires an enclosing trait.
-                // (Before the receiver, whose `Self` would be a second
-                // error at the same place.)
-                if resolve(*trait_name) == "__no_enclosing_trait__" {
-                    self.error(
-                        Code::InvalidTypeAnnotation,
-                        format!(
-                            "`Self::{assoc_name}` is only valid inside a trait or trait-impl \
-                             body; use the qualified form `<T as Trait>::{assoc_name}` here"
-                        ),
-                        te.span,
-                    );
-                    return Type::Error;
-                }
-                let recv_ty = self.resolve_type_expr_inner(receiver, param_vars);
-                // Resolve the assoc-type name to its declaring trait.
-                // `Self::Item` inside `trait Sub: Super` may reference
-                // `Item` declared on `Super`; in that case the AssocProj
-                // must use `Super` as the trait_name so the binding
-                // (registered under `(Super, target, Item)`) is found
-                // by canonicalize. Walk the supertrait chain in DFS
-                // order (LIFO via `Vec::pop`); the first popped trait
-                // that declares the assoc-type wins.
-                let Some(trait_key) = self.named_trait(te.res, *trait_name) else {
-                    self.error(
-                        Code::UnknownTrait,
-                        format!("unknown trait '{trait_name}'"),
-                        te.span,
-                    );
-                    return Type::Error;
-                };
-                let declaring_trait = self
-                    .find_assoc_type_declaring_trait(trait_key, *assoc_name)
-                    .unwrap_or(trait_key);
-                Type::AssocProj {
-                    receiver: Box::new(recv_ty),
-                    trait_name: declaring_trait,
-                    assoc_name: *assoc_name,
-                }
-            }
             TypeExprKind::AnonRecord { fields, tail } => {
                 use std::collections::BTreeMap;
                 let mut field_map: BTreeMap<Symbol, Type> = BTreeMap::new();
@@ -978,37 +918,6 @@ impl TypeChecker {
             }
         }
     }
-
-    /// Walk the supertrait chain rooted at `trait_name` and return the
-    /// first trait whose `assoc_types` declares `assoc_name`. Returns
-    /// `None` when neither the trait nor any reachable supertrait
-    /// declares the name (the AssocProj will then stay abstract and
-    /// the typechecker emits the standard "type does not implement
-    /// trait" diagnostic at use-site).
-    fn find_assoc_type_declaring_trait(
-        &self,
-        trait_name: TraitKey,
-        assoc_name: Symbol,
-    ) -> Option<TraitKey> {
-        let mut frontier: Vec<TraitKey> = vec![trait_name];
-        let mut seen: std::collections::HashSet<TraitKey> = std::collections::HashSet::new();
-        while let Some(t) = frontier.pop() {
-            if !seen.insert(t) {
-                continue;
-            }
-            if let Some(info) = self.tables.traits.get(&t) {
-                if info.assoc_types.iter().any(|a| a.name == assoc_name) {
-                    return Some(t);
-                }
-                for s in &info.supertraits {
-                    if !seen.contains(s) {
-                        frontier.push(*s);
-                    }
-                }
-            }
-        }
-        None
-    }
 }
 
 /// The number of type arguments of the builtin type `name` when it is
@@ -1051,20 +960,6 @@ pub(crate) fn type_expr_text(te: &TypeExpr) -> String {
             format!("Fn({}) -> {}", all(params), type_expr_text(ret))
         }
         TypeExprKind::SelfType => "Self".to_string(),
-        TypeExprKind::AssocProj {
-            receiver,
-            trait_module,
-            trait_name,
-            assoc_name,
-            ..
-        } => match &receiver.kind {
-            TypeExprKind::SelfType => format!("Self::{assoc_name}"),
-            _ => format!(
-                "<{} as {}>::{assoc_name}",
-                type_expr_text(receiver),
-                Qualifier::written(*trait_module, *trait_name)
-            ),
-        },
         TypeExprKind::AnonRecord { fields, tail } => {
             let mut parts: Vec<String> = (fields.iter())
                 .map(|(n, t)| format!("{n}: {}", type_expr_text(t)))

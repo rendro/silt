@@ -37,7 +37,6 @@ mod property_tests;
 mod quiet;
 mod round73_postgres_poisoned_mutex_tests;
 mod round74_io_args_forward_via_double_dash_tests;
-mod round76_assoc_cycle_tests;
 mod round76_row_tail_merge_tests;
 mod round77_errors_clamp_offset_tests;
 mod round86_check_json_no_ansi_under_force_color_tests;

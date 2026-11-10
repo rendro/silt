@@ -221,8 +221,8 @@ A closure handed to a function is not a plain value: `let f = wrap({ n
   Interpolation, `println` and `string.from` call the
   `Display` impl written for each type the value is made of: its own,
   its fields', its type arguments'. A value of an unknown type (a type
-  variable, an associated type such as `Self::Item`) may be of any
-  type: showing it reaches every `Display` impl of the module.
+  variable) may be of any type: showing it reaches every `Display` impl
+  of the module.
 
 A function that shows a value of its own type variable shows what it is
 given, so that showing counts where the function is named, at the type

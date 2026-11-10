@@ -685,13 +685,6 @@ impl TypeChecker {
                 );
                 self.error(Code::InvalidTraitDeclaration, message, t.name_span);
             }
-            for a in &t.assoc_types {
-                let message = format!(
-                    "a trait of type constructors has no associated types: '{}'",
-                    a.name
-                );
-                self.error(Code::InvalidTraitDeclaration, message, a.span);
-            }
             for m in &t.methods {
                 if let Some(param) = m.params.first()
                     && writes_self(m)
@@ -751,8 +744,7 @@ impl TypeChecker {
     pub(super) fn register_trait_decl_inner(&mut self, t: &TraitDecl) {
         let key = self.own_trait(t.name);
         let constructor = self.constructor_traits.contains(&key);
-        // The supertraits and the associated types' bounds. A trait name
-        // that names no trait is reported here, unless the resolver
+        // The supertraits. A trait name that names no trait is reported here, unless the resolver
         // reported it.
         let mut supertraits: Vec<(TraitKey, Vec<TypeExpr>)> = Vec::new();
         for r in &t.supertraits {
@@ -764,35 +756,6 @@ impl TypeChecker {
                     format!("trait '{}' lists unknown supertrait '{}'", t.name, r.name),
                     t.span,
                 ),
-            }
-        }
-        let assoc_types: Vec<AssocTypeInfo> = t
-            .assoc_types
-            .iter()
-            .map(|a| AssocTypeInfo {
-                name: a.name,
-                bounds: a
-                    .bounds
-                    .iter()
-                    .filter_map(|b| Some((self.named_trait(b.res, b.name)?, b.args.clone())))
-                    .collect(),
-                span: a.span,
-            })
-            .collect();
-        for a in &t.assoc_types {
-            for b in &a.bounds {
-                if b.res != Some(crate::defs::Res::Error)
-                    && self.named_trait(b.res, b.name).is_none()
-                {
-                    self.error(
-                        Code::UnknownTrait,
-                        format!(
-                            "unknown trait '{}' in bound on associated type '{}::{}'",
-                            b.name, t.name, a.name
-                        ),
-                        a.span,
-                    );
-                }
             }
         }
         // A method name written twice in a trait declaration is an
@@ -812,39 +775,7 @@ impl TypeChecker {
             }
         }
 
-        // Pre-register a stub TraitInfo for `t` carrying just its
-        // supertraits and assoc_types. This lets `resolve_type_expr`
-        // resolve `Self::AssocName` projections inside method
-        // signatures by walking the supertrait chain — e.g. a `Sub`
-        // method declaring `Self::Item` (where `Item` lives on
-        // `Super`) needs `self.tables.traits[Sub].supertraits = [Super]` to
-        // be visible during method-type resolution. The stub is
-        // overwritten with the fully-populated TraitInfo at the end
-        // of this function.
-        let pre_assoc_types = assoc_types.clone();
         let private_to = (!t.is_pub).then_some((self.module, self.module_name));
-        let pre_supertraits: Vec<TraitKey> = supertraits.iter().map(|(s, _)| *s).collect();
-        self.tables.traits.insert(
-            key,
-            TraitInfo {
-                params: t.params.clone(),
-                param_var_ids: Vec::new(),
-                supertraits: pre_supertraits,
-                supertrait_args: Vec::new(),
-                param_where_clauses: Vec::new(),
-                methods: Vec::new(),
-                receivers: std::collections::HashSet::new(),
-                method_bounds: HashMap::new(),
-                self_var: 0,
-                constructor,
-                var_names: Vec::new(),
-                default_method_bodies: HashMap::new(),
-                assoc_types: pre_assoc_types,
-                private_to,
-                builtin_needs: HashMap::new(),
-                via_needs: HashMap::new(),
-            },
-        );
 
         let self_var = self.fresh_var();
         // Allocate a fresh TyVar for each trait-level parameter. These
@@ -1067,22 +998,6 @@ impl TypeChecker {
         let supertrait_args: Vec<Vec<TypeExpr>> =
             supertraits.into_iter().map(|(_, args)| args).collect();
 
-        // Reject duplicate assoc-type names within the same trait.
-        // Mirrors the duplicate-method check above.
-        let mut seen_assoc: std::collections::HashSet<Symbol> = std::collections::HashSet::new();
-        for a in &t.assoc_types {
-            if !seen_assoc.insert(a.name) {
-                self.error(
-                    Code::DuplicateDeclaration,
-                    format!(
-                        "duplicate associated type '{}' in trait '{}'",
-                        resolve(a.name),
-                        resolve(t.name)
-                    ),
-                    a.span,
-                );
-            }
-        }
         self.tables.traits.insert(
             key,
             TraitInfo {
@@ -1098,7 +1013,6 @@ impl TypeChecker {
                 constructor,
                 var_names,
                 default_method_bodies,
-                assoc_types,
                 private_to,
                 builtin_needs: HashMap::new(),
                 via_needs: HashMap::new(),
@@ -2060,147 +1974,6 @@ impl TypeChecker {
                         }
                     }
                 }
-            }
-        }
-
-        // ── Associated-type bindings ───────────────────────────────
-        //
-        // For each `type Name = T` in the impl:
-        //   - reject duplicate bindings;
-        //   - resolve the bound type through impl_param_map (so impl-
-        //     level type-vars are visible);
-        //   - register the binding into the canonical assoc-binding
-        //     registry under (trait_name, target_canonical_head, name)
-        //     so the canonicaliser can reduce `<T as Trait>::Name`.
-        // After processing the impl-supplied bindings, verify that
-        // every assoc-type the trait declares has a binding here, and
-        // that each binding satisfies the trait's declared bounds.
-        let trait_assoc_types: Vec<AssocTypeInfo> = self
-            .tables
-            .traits
-            .get(&trait_key)
-            .map(|info| info.assoc_types.clone())
-            .unwrap_or_default();
-        // Index the impl's bindings by name for lookup + duplicate check.
-        let mut impl_binding_map: HashMap<Symbol, Type> = HashMap::new();
-        let mut seen_binding: std::collections::HashSet<Symbol> = std::collections::HashSet::new();
-        for binding in &ti.assoc_type_bindings {
-            if !seen_binding.insert(binding.name) {
-                self.error(
-                    Code::DuplicateDeclaration,
-                    format!(
-                        "duplicate associated-type binding '{}' in impl of '{}' for '{}'",
-                        resolve(binding.name),
-                        self.impl_trait_name(ti),
-                        self.impl_target_name(ti, target_type),
-                    ),
-                    binding.span,
-                );
-                continue;
-            }
-            // Reject bindings whose name is not declared in the trait.
-            // (Trait info may be missing if the trait itself was
-            // unknown — in that case the per-impl unknown-trait error
-            // already fired and we silently skip the binding.)
-            let known = trait_assoc_types.iter().any(|a| a.name == binding.name);
-            if (!trait_assoc_types.is_empty() || self.tables.traits.contains_key(&trait_key))
-                && self.tables.traits.contains_key(&trait_key)
-                && !known
-            {
-                self.error(
-                    Code::InvalidTraitImpl,
-                    format!(
-                        "associated type '{}' is not declared in trait '{}'",
-                        resolve(binding.name),
-                        self.impl_trait_name(ti),
-                    ),
-                    binding.span,
-                );
-                continue;
-            }
-            let resolved = self.resolve_type_expr(&binding.ty, &mut impl_param_map);
-            // Register into the canonical assoc-binding registry. The
-            // registry keys on the canonical target head (so an alias
-            // and its target collapse), parallel to method_table's
-            // canonical_head routing above.
-            // The registry refuses self- or mutually-referential
-            // bindings that would otherwise drive `canonicalize` into
-            // infinite recursion (stack overflow). Skip the
-            // `impl_binding_map` insertion on cycle so the per-method
-            // signature check below reports a clean "missing required
-            // assoc-type" rather than walking through a poisoned entry.
-            match self.tables.resolver.register_assoc_binding(
-                trait_key,
-                target_type,
-                binding.name,
-                resolved.clone(),
-                &self_type,
-            ) {
-                Ok(()) => {
-                    impl_binding_map.insert(binding.name, resolved);
-                }
-                Err(cycle) => {
-                    let via_msg = if (cycle.via.0, cycle.via.1, cycle.via.2.as_str())
-                        == (cycle.trait_name, cycle.head, cycle.assoc_name.as_str())
-                    {
-                        String::new()
-                    } else {
-                        format!(
-                            " (cycle via <{} as {}>::{})",
-                            cycle.via.1, cycle.via.0, cycle.via.2
-                        )
-                    };
-                    self.error(Code::InvalidTraitImpl,
-                        format!(
-                            "associated type binding for <{} as {}>::{} is self-referential{via_msg}",
-                            cycle.head, cycle.trait_name, cycle.assoc_name,
-                        ),
-                        binding.span,
-                    );
-                }
-            }
-        }
-        // Verify each declared assoc-type has a binding and that the
-        // binding satisfies any declared bounds.
-        for assoc in &trait_assoc_types {
-            let Some(bound_ty) = impl_binding_map.get(&assoc.name) else {
-                self.error(
-                    Code::InvalidTraitImpl,
-                    format!(
-                        "impl of '{}' for '{}' is missing required associated type '{}'",
-                        self.impl_trait_name(ti),
-                        self.impl_target_name(ti, target_type),
-                        resolve(assoc.name),
-                    ),
-                    ti.span,
-                );
-                continue;
-            };
-            let applied = self.apply(bound_ty);
-            for (bound_trait, bound_args) in &assoc.bounds {
-                if !self.tables.traits.contains_key(bound_trait) {
-                    self.error(
-                        Code::UnknownTrait,
-                        format!(
-                            "unknown trait '{}' in bound on associated type '{}::{}'",
-                            resolve(bound_trait.name),
-                            self.impl_trait_name(ti),
-                            resolve(assoc.name),
-                        ),
-                        assoc.span,
-                    );
-                    continue;
-                }
-                // Resolve bound trait args at the impl site so any
-                // lowercase tyvars from the impl are visible.
-                let resolved_bound_args: Vec<Type> = bound_args
-                    .iter()
-                    .map(|te| self.resolve_type_expr(te, &mut impl_param_map))
-                    .collect();
-                // (A binding that is one of the impl's own variables,
-                // `type Item = a`, says nothing here: the impl's uses
-                // owe what the variable needs.)
-                self.verify_declared(*bound_trait, &resolved_bound_args, &applied, assoc.span);
             }
         }
 
@@ -3640,7 +3413,6 @@ impl SelfUses {
                     self.read(part);
                 }
             }
-            TypeExprKind::AssocProj { receiver, .. } => self.read(receiver),
             TypeExprKind::Named { .. } => {}
         }
     }
@@ -3759,8 +3531,8 @@ fn trait_arguments_message(name: Symbol, params: &[Symbol]) -> String {
 }
 
 /// The first part of the supertrait argument `te` that is no type there
-/// (`Self`, an associated type, an anonymous record, a name that is no
-/// type and none of the trait's `params`), as the error names it, with
+/// (`Self`, an anonymous record, a name that is no type and none of the
+/// trait's `params`), as the error names it, with
 /// its span: what `resolve_supertrait_arg` would read as no type at all.
 fn no_supertrait_argument(te: &TypeExpr, params: &[Symbol]) -> Option<(String, Span)> {
     // (A name the resolver refused it reported.)
@@ -3771,7 +3543,6 @@ fn no_supertrait_argument(te: &TypeExpr, params: &[Symbol]) -> Option<(String, S
     };
     match &te.kind {
         TypeExprKind::SelfType => Some(("'Self'".to_string(), te.span)),
-        TypeExprKind::AssocProj { .. } => Some(("an associated type".to_string(), te.span)),
         TypeExprKind::AnonRecord { .. } => Some(("an anonymous record type".to_string(), te.span)),
         TypeExprKind::Named { name, .. } if unread(*name) => {
             Some((format!("'{}'", resolve(*name)), te.span))

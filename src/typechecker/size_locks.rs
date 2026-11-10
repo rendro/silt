@@ -41,7 +41,7 @@ fn trait_info_size_locked() {
     // trait methods they give them to.
     assert_eq!(
         std::mem::size_of::<TraitInfo>(),
-        456,
+        432,
         "TraitInfo size changed — see module doc"
     );
 }

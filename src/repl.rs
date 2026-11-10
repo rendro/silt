@@ -1275,8 +1275,8 @@ mod tests {
     /// before it: what its check entered is forgotten when the next
     /// entry is added, and it wrote over nothing. One failing entry of
     /// each kind that enters rows, in a session that has a type, two
-    /// traits with a method of one name, an impl, a trait with an
-    /// associated type, a function and a `let`.
+    /// traits with a method of one name, an impl, a function and a
+    /// `let`.
     #[test]
     fn a_failed_entry_leaves_the_session_tables_as_they_were() {
         let mut repl = repl();
@@ -1284,7 +1284,6 @@ mod tests {
             "type U { U(Int) }",
             "trait A { fn m(self) -> String }\ntrait A for U { fn m(self) -> String { \"a\" } }",
             "trait B { fn m(self) -> Int }",
-            "trait Has {\n  type Item\n  fn item(self) -> Self::Item\n}",
             "fn f(u: U) -> String { \"{u}\" }",
             "let n = 1",
         ];
@@ -1296,7 +1295,6 @@ mod tests {
             "trait Display for U { fn display(self) -> String { 3 } }",
             "trait Display for U { fn display(self) -> String { \"x\" } }\nlet z: Int = \"s\"",
             "trait B for U { fn m(self) -> Int { \"bad\" } }",
-            "trait Has for U {\n  type Item = Int\n  fn item(self) -> Int { \"bad\" }\n}",
             "type U { U(Int), V }\nlet z: Int = \"s\"",
             "type Pair = (U, U)\nlet z: Int = \"s\"",
             "fn f(u: U) -> String { 3 }",

@@ -55,8 +55,7 @@
 //!    enum of the module, the types of its fields, and theirs. Showing
 //!    reaches the module's `Display` impl for each such type; a type of
 //!    another module among them is code outside the module; a type
-//!    variable among them, or an associated type an impl is yet to
-//!    name (`Self::Item`), is any type, so every `Display` impl of the
+//!    variable among them is any type, so every `Display` impl of the
 //!    module and code outside it. (`parts_shown` names every form of
 //!    type: one it did not know would be any type too.)
 //!
@@ -137,7 +136,7 @@ fn builtin_through(checker: &TypeChecker, ty: &Type) -> bool {
         Type::Map(k, v) => builtin_through(checker, k) && builtin_through(checker, v),
         Type::Tuple(ts) => all(ts),
         // A type the code does not know here: any type.
-        Type::AssocProj { .. } | Type::App(..) | Type::Con(..) => false,
+        Type::App(..) | Type::Con(..) => false,
         // (A function inside a value is not called by a method of the
         // value.)
         Type::Fun(..) => true,
@@ -210,9 +209,6 @@ impl TypeChecker {
             Type::Var(_) | Type::Rigid(_) | Type::App(..) | Type::Con(..) => {
                 parts.outside |= !declared
             }
-            // The type an impl gives for an associated type, which is
-            // not known here: any type.
-            Type::AssocProj { .. } => parts.outside = true,
             Type::Generic(name, args) => {
                 for arg in args {
                     self.parts_shown(arg, declared, parts);

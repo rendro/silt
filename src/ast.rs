@@ -421,8 +421,7 @@ pub struct TypeExpr {
     pub kind: TypeExprKind,
     pub span: Span,
     /// What the type name of a `Named` or `Generic` type names (a type
-    /// variable is [`Res::Local`]), or the trait of an `AssocProj`;
-    /// filled in by the resolver.
+    /// variable is [`Res::Local`]); filled in by the resolver.
     pub res: Option<Res>,
 }
 
@@ -474,30 +473,6 @@ pub enum TypeExprKind {
     Tuple(Vec<TypeExpr>),
     Function(Vec<TypeExpr>, Box<TypeExpr>),
     SelfType,
-    /// Associated-type projection.
-    ///
-    /// Two surface forms feed this single AST shape:
-    ///
-    /// - `Self::Item` inside a trait body — `receiver` is
-    ///   `TypeExprKind::SelfType` and `trait_name` is the enclosing
-    ///   trait (filled in by the parser from its current trait context).
-    /// - `<TypeExpr as Trait>::Item` outside a trait body — `receiver`
-    ///   is the user-supplied type expression and `trait_name` is the
-    ///   trait the projection is qualified against.
-    ///
-    /// The typechecker resolves this to `Type::AssocProj { ... }`,
-    /// which canonicalises to the impl's binding when the receiver is
-    /// concrete and stays abstract on a type variable.
-    AssocProj {
-        receiver: Box<TypeExpr>,
-        /// The module qualifier of the trait: `<T as m.Iter>::Item`.
-        trait_module: Option<Qualifier>,
-        trait_name: Symbol,
-        /// The span of the trait name as written; `None` for `Self::Item`,
-        /// which names no trait.
-        trait_name_span: Option<Span>,
-        assoc_name: Symbol,
-    },
     /// Anonymous structural record type, optionally row-polymorphic:
     /// `{name: String, age: Int}` (closed) or `{name: String, ...r}`
     /// (open, where `r` is a row variable name; its span is that of
@@ -552,37 +527,6 @@ pub struct WhereClause {
     pub trait_name_span: Span,
     /// What the trait name names; filled in by the resolver.
     pub trait_res: Option<Res>,
-}
-
-/// An associated-type declaration inside a trait body.
-///
-/// `trait Iterator { type Item; ... }` — declares an abstract type that
-/// each impl must bind. v1 supports declared bounds:
-/// `trait Container { type Item: Compare + Hash; ... }` requires every
-/// impl's `type Item = X` to satisfy each listed bound. Defaults are
-/// not supported in v1; the parser rejects `type Item = Default`.
-#[derive(Debug, Clone)]
-pub struct AssocTypeDecl {
-    pub name: Symbol,
-    /// Declared trait bounds, e.g. `[Compare, Hash]` for
-    /// `type Item: Compare + Hash`, with any trait args
-    /// (parameterized traits like `TryInto(Int)`).
-    /// Empty for unbounded `type Item`.
-    pub bounds: Vec<TraitRef>,
-    pub span: Span,
-}
-
-/// An associated-type binding inside a trait impl body.
-///
-/// `impl Iterator for IntList { type Item = Int; ... }` binds the
-/// trait's `Item` to `Int`. The typechecker verifies that the bound
-/// type satisfies each declared bound and that every assoc-type the
-/// trait declares has a binding.
-#[derive(Debug, Clone)]
-pub struct AssocTypeBinding {
-    pub name: Symbol,
-    pub ty: TypeExpr,
-    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -686,8 +630,8 @@ pub struct TypeDecl {
     pub doc: Option<String>,
 }
 
-/// A reference to a trait in a supertrait list or an associated-type
-/// bound: `Equal`, `m.Describe`, `TryInto(Int)`. `span` is the span of
+/// A reference to a trait in a supertrait list: `Equal`,
+/// `m.Describe`, `TryInto(Int)`. `span` is the span of
 /// the trait name itself.
 #[derive(Debug, Clone)]
 pub struct TraitRef {
@@ -744,11 +688,6 @@ pub struct TraitDecl {
     /// verified at `register_trait_impl` time.
     pub param_where_clauses: Vec<WhereClause>,
     pub methods: Vec<FnDecl>,
-    /// Associated-type declarations: `trait Iterator { type Item; ... }`.
-    /// Empty for traits with no associated types (the common case).
-    /// Each entry's bounds must be satisfied by the impl-supplied type;
-    /// every entry must have a corresponding binding in every impl.
-    pub assoc_types: Vec<AssocTypeDecl>,
     /// True for `pub trait`.
     pub is_pub: bool,
     pub span: Span,
@@ -812,13 +751,6 @@ pub struct TraitImpl {
     /// including multi-trait bounds via `+`.
     pub where_clauses: Vec<WhereClause>,
     pub methods: Vec<FnDecl>,
-    /// Associated-type bindings supplied by this impl. Each entry binds
-    /// one of the trait's declared associated types to a concrete type
-    /// expression. The typechecker enforces:
-    ///   - every assoc-type the trait declares has a binding here;
-    ///   - no name appears twice;
-    ///   - the bound type satisfies each declared trait bound.
-    pub assoc_type_bindings: Vec<AssocTypeBinding>,
     pub span: Span,
     /// What the impl proves of its type from the predicates of its
     /// header: its trait's supertraits, the `where` clauses on the

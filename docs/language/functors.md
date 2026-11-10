@@ -376,7 +376,7 @@ constructors, and not:
 - `Self` both with and without a type argument (a trait is for types or
   for type constructors, not both);
 - a supertrait of types (`trait Sized: Display`);
-- trait parameters (`trait MonadError(e)`) or associated types.
+- trait parameters (`trait MonadError(e)`).
 
 ## The laws
 

@@ -499,7 +499,6 @@ fn kind_of(token: &Token) -> Option<u32> {
         | Token::HashBracket
         | Token::Comma
         | Token::Colon
-        | Token::ColonColon
         | Token::Dot
         | Token::Eq => PUNCTUATION,
         // Text that is no token, and the end.

@@ -2,9 +2,8 @@
 //!
 //! ## Bug fixed (G1)
 //!
-//! `src/lexer.rs` defines `DotDotDot` (`...`, record spread / rest)
-//! and `ColonColon` (`::`, associated-type projection — `Self::Item`,
-//! `<T as Trait>::Item`). Both editor grammars omitted them:
+//! `src/lexer.rs` defines `DotDotDot` (`...`, record spread / rest).
+//! Both editor grammars omitted it:
 //!
 //! - `editors/vim/syntax/silt.vim`
 //! - `editors/vscode/syntaxes/silt.tmLanguage.json`
@@ -12,7 +11,7 @@
 //! The pre-existing parity lock at
 //! `tests/meta/round62_cleanup_lock_tests.rs::vim_and_vscode_grammars_share_operator_set`
 //! was symmetric drift-blind: it locked the two grammars to a fixed
-//! 20-item baseline that already omitted both tokens, so adding a new
+//! 20-item baseline that already omitted the token, so adding a new
 //! token to the lexer without updating the grammars would slip
 //! through unflagged. Round 86 extended that baseline AND added this
 //! lexer-anchored test so the canonical operator list lives next to
@@ -70,7 +69,6 @@ const MULTI_CHAR_OPERATORS: &[&str] = &[
     "..",  // DotDot
     "...", // DotDotDot — round 86 added
     "->",  // Arrow
-    "::",  // ColonColon — round 86 added
 ];
 
 fn repo_root() -> PathBuf {

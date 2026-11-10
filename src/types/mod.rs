@@ -200,21 +200,6 @@ pub enum Type {
     Error,
     /// A bottom type for expressions that never produce a value (return, panic).
     Never,
-    /// Associated-type projection: `<receiver as trait_name>::assoc_name`.
-    ///
-    /// Two states:
-    ///   - **Concrete receiver**: the canonicaliser reduces this to the
-    ///     impl's binding for `assoc_name`. The reduction is the dispatch
-    ///     oracle's only behaviour for projections.
-    ///   - **Abstract receiver** (still a type variable, or another
-    ///     unreduced AssocProj): stays as `AssocProj` and propagates
-    ///     through inference. Two abstract `AssocProj`s unify iff they
-    ///     have the same receiver, trait_name, and assoc_name.
-    AssocProj {
-        receiver: Box<Type>,
-        trait_name: TraitKey,
-        assoc_name: Symbol,
-    },
     /// An anonymous structural record type (row-polymorphic capable).
     /// `{name: String, age: Int}` is closed; `{name: String, ...r}` has
     /// a row-tail variable. Field order is irrelevant for equality —
@@ -366,7 +351,6 @@ impl Type {
             Type::Fun(params, ret) => params.iter().any(Type::holds_error) || ret.holds_error(),
             Type::List(t) | Type::Set(t) | Type::Channel(t) => t.holds_error(),
             Type::Map(k, v) => k.holds_error() || v.holds_error(),
-            Type::AssocProj { receiver, .. } => receiver.holds_error(),
             Type::AnonRecord { fields, .. } => fields.values().any(Type::holds_error),
             Type::App(head, arg) => head.holds_error() || arg.holds_error(),
             Type::Con(_, rest) => rest.iter().any(Type::holds_error),
@@ -406,7 +390,6 @@ impl Type {
                     t.collect_refs(out);
                 }
             }
-            Type::AssocProj { receiver, .. } => receiver.collect_refs(out),
             Type::AnonRecord { fields, .. } => {
                 for t in fields.values() {
                     t.collect_refs(out);
@@ -553,16 +536,6 @@ impl std::fmt::Display for Shown<'_> {
             // suggesting a second, distinct failure.
             Type::Error => write!(f, "_"),
             Type::Never => write!(f, "Never"),
-            Type::AssocProj {
-                receiver,
-                trait_name,
-                assoc_name,
-            } => {
-                // Render the qualified form `<recv as Trait>::Name` for
-                // diagnostics so the receiver/trait/assoc-name triple is
-                // unambiguous regardless of context.
-                write!(f, "<{} as {trait_name}>::{assoc_name}", self.of(receiver))
-            }
             Type::AnonRecord { fields, tail } => {
                 write!(f, "{{")?;
                 let mut first = true;
@@ -993,7 +966,6 @@ pub fn constructor_heads(ty: &Type) -> Vec<TyVar> {
                 ts.iter().for_each(|t| walk(t, out))
             }
             Type::AnonRecord { fields, .. } => fields.values().for_each(|t| walk(t, out)),
-            Type::AssocProj { receiver, .. } => walk(receiver, out),
             _ => {}
         }
     }
@@ -1022,7 +994,6 @@ pub fn free_vars_in(ty: &Type) -> Vec<TyVar> {
             Type::Tuple(ts) | Type::Generic(_, ts) | Type::Con(_, ts) => {
                 ts.iter().for_each(|t| walk(t, out))
             }
-            Type::AssocProj { receiver, .. } => walk(receiver, out),
             Type::AnonRecord { fields, tail } => {
                 fields.values().for_each(|t| walk(t, out));
                 if let RowTail::Var(v) = tail {
@@ -1158,15 +1129,6 @@ pub fn map_rigid(ty: &Type, f: &mut impl FnMut(RigidId) -> Type) -> Type {
             Type::Generic(*name, args.iter().map(|a| map_rigid(a, f)).collect())
         }
         Type::Map(k, v) => Type::Map(Box::new(map_rigid(k, f)), Box::new(map_rigid(v, f))),
-        Type::AssocProj {
-            receiver,
-            trait_name,
-            assoc_name,
-        } => Type::AssocProj {
-            receiver: Box::new(map_rigid(receiver, f)),
-            trait_name: *trait_name,
-            assoc_name: *assoc_name,
-        },
         Type::AnonRecord { fields, tail } => Type::AnonRecord {
             fields: fields.iter().map(|(n, t)| (*n, map_rigid(t, f))).collect(),
             tail: match tail {
@@ -1273,15 +1235,6 @@ pub fn substitute_vars(ty: &Type, mapping: &HashMap<TyVar, Type>) -> Type {
         ),
         Type::Set(inner) => Type::Set(Box::new(substitute_vars(inner, mapping))),
         Type::Channel(inner) => Type::Channel(Box::new(substitute_vars(inner, mapping))),
-        Type::AssocProj {
-            receiver,
-            trait_name,
-            assoc_name,
-        } => Type::AssocProj {
-            receiver: Box::new(substitute_vars(receiver, mapping)),
-            trait_name: *trait_name,
-            assoc_name: *assoc_name,
-        },
         Type::AnonRecord { fields, tail } => {
             let new_fields: BTreeMap<Symbol, Type> = fields
                 .iter()
@@ -1424,15 +1377,6 @@ pub fn substitute_enum_params(
             param_var_ids,
             type_args,
         ))),
-        Type::AssocProj {
-            receiver,
-            trait_name,
-            assoc_name,
-        } => Type::AssocProj {
-            receiver: Box::new(substitute_enum_params(receiver, param_var_ids, type_args)),
-            trait_name: *trait_name,
-            assoc_name: *assoc_name,
-        },
         Type::AnonRecord { fields, tail } => Type::AnonRecord {
             fields: fields
                 .iter()

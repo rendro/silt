@@ -1,0 +1,13 @@
+-- An impl for every tuple gives a method; an impl of a parameterized
+-- trait for every function answers a bound.
+trait Conv(b) { fn conv(self) -> b }
+trait Conv(Int) for Fn { fn conv(self) -> Int { 1 } }
+trait Has { fn item(self) -> Int }
+trait Has for Tuple { fn item(self) -> Int { 2 } }
+fn c(x: a, type b) -> b where a: Conv(b) { Conv.conv(x) }
+fn main() {
+  let n: Int = Conv.conv({ x -> x })
+  println(n)
+  println(c({ x -> x + 1 }, Int))
+  println(Has.item((1, 2)))
+}

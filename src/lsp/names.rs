@@ -187,9 +187,6 @@ impl<'a> Names<'a> {
                 for arg in ti.trait_args.iter().chain(&ti.target_type_args) {
                     self.type_expr(arg);
                 }
-                for binding in &ti.assoc_type_bindings {
-                    self.type_expr(&binding.ty);
-                }
                 for method in &ti.methods {
                     self.fn_decl(method);
                 }
@@ -199,11 +196,6 @@ impl<'a> Names<'a> {
                     self.trait_ref(supertrait);
                 }
                 self.where_clauses(&t.param_where_clauses);
-                for assoc in &t.assoc_types {
-                    for bound in &assoc.bounds {
-                        self.trait_ref(bound);
-                    }
-                }
                 for method in &t.methods {
                     self.fn_decl(method);
                 }
@@ -299,18 +291,6 @@ impl<'a> Names<'a> {
                 self.type_expr(ret);
             }
             TypeExprKind::SelfType => {}
-            // `<T as Trait>::Item` names the trait (`Self::Item` writes
-            // none).
-            TypeExprKind::AssocProj {
-                receiver,
-                trait_name_span,
-                ..
-            } => {
-                self.type_expr(receiver);
-                if let Some(span) = trait_name_span {
-                    self.name(*span, te.res);
-                }
-            }
             TypeExprKind::AnonRecord { fields, .. } => {
                 for (_, ty) in fields {
                     self.type_expr(ty);

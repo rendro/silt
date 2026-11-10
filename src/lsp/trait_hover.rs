@@ -357,10 +357,10 @@ fn below_signature(section: &str) -> String {
 }
 
 /// The signature of the trait `t`: its header and each method's
-/// signature (its default body left out) and associated type, one a
-/// line. With the text `source` of the file that declares it, each
-/// part is written as it is there; a trait of the prelude, which no
-/// file declares, is written from its declaration.
+/// signature (its default body left out), one a line. With the text
+/// `source` of the file that declares it, each part is written as it
+/// is there; a trait of the prelude, which no file declares, is written
+/// from its declaration.
 fn signature(t: &TraitDecl, source: Option<&str>) -> String {
     let Some(text) = source else {
         return written(t, None);
@@ -386,26 +386,14 @@ fn signature(t: &TraitDecl, source: Option<&str>) -> String {
         })
         .map_or(t.span.end as usize, |(at, _)| at);
     let header = slice(t.span.start, header_end as u32).trim_end();
-    let mut members: Vec<(u32, String)> = t
-        .methods
-        .iter()
-        .map(|f| {
-            let end = match f.is_signature_only {
-                true => f.span.end,
-                false => f.body.span.start,
-            };
-            (
-                f.span.start,
-                indented(text, f.span.start, slice(f.span.start, end)),
-            )
-        })
-        .collect();
-    for assoc in &t.assoc_types {
-        let start = assoc.span.start;
-        members.push((start, indented(text, start, slice(start, assoc.span.end))));
-    }
-    members.sort_by_key(|(start, _)| *start);
-    assemble(header, members.into_iter().map(|(_, member)| member))
+    let members = t.methods.iter().map(|f| {
+        let end = match f.is_signature_only {
+            true => f.span.end,
+            false => f.body.span.start,
+        };
+        indented(text, f.span.start, slice(f.span.start, end))
+    });
+    assemble(header, members)
 }
 
 /// The header and the members, one a line, in braces.
@@ -492,19 +480,8 @@ fn written(t: &TraitDecl, q: Option<&Qualify>) -> String {
         header.push_str(&format!(": {}", supers.join(" + ")));
     }
     header.push_str(&where_clauses(q, &t.param_where_clauses));
-    let mut members: Vec<String> = t
-        .assoc_types
-        .iter()
-        .map(|assoc| {
-            let bounds: Vec<String> = assoc.bounds.iter().map(|r| trait_ref(q, r)).collect();
-            match bounds.is_empty() {
-                true => format!("  type {}", assoc.name),
-                false => format!("  type {}: {}", assoc.name, bounds.join(" + ")),
-            }
-        })
-        .collect();
-    members.extend(t.methods.iter().map(|f| format!("  {}", method(q, f))));
-    assemble(&header, members.into_iter())
+    let members = t.methods.iter().map(|f| format!("  {}", method(q, f)));
+    assemble(&header, members)
 }
 
 /// `fn name(params) -> ret where ...` of the method `f`.
@@ -575,20 +552,6 @@ fn type_expr(q: Option<&Qualify>, te: &TypeExpr) -> String {
             format!("Fn({}) -> {}", all(params).join(", "), type_expr(q, ret))
         }
         TypeExprKind::SelfType => "Self".to_string(),
-        TypeExprKind::AssocProj {
-            receiver,
-            trait_module,
-            trait_name,
-            trait_name_span,
-            assoc_name,
-        } => match (&receiver.kind, trait_name_span) {
-            (TypeExprKind::SelfType, None) => format!("Self::{assoc_name}"),
-            _ => format!(
-                "<{} as {}>::{assoc_name}",
-                type_expr(q, receiver),
-                named(q, *trait_module, *trait_name)
-            ),
-        },
         TypeExprKind::AnonRecord { fields, tail } => {
             let mut parts: Vec<String> = fields
                 .iter()

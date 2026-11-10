@@ -10,9 +10,6 @@
 //! - User `type Foo = Bar` alias expansion: a `Type::Generic(name, args)`
 //!   whose `name` is registered in the [`Resolver`] alias registry
 //!   expands to its stored target with `args` substituted (Phase D).
-//! - `Type::AssocProj` reduction: `<T as Trait>::Item` reduces to the
-//!   impl's registered binding when the receiver canonicalises to a
-//!   concrete head (associated-types phase).
 //!
 //! ## Phase history (A through D — all live)
 //!
@@ -55,9 +52,7 @@
 //!   `Resolver`, so module B importing module A sees A's aliases, and
 //!   nothing leaks between sessions.
 //! - An alias is keyed by its [`TypeId`]: two modules may each declare
-//!   an alias of one name; a trait by its [`TraitKey`]. An associated
-//!   type's name is keyed by its resolved `String`, because the interner is `thread_local!`
-//!   (see `crate::intern`).
+//!   an alias of one name.
 //! - Phase A unit tests in this module continue to pass because they
 //!   exercise built-in types only — no aliases registered.
 //! - The substitution helper for parametric aliases is the existing
@@ -66,8 +61,8 @@
 //!   registration time so the substitution is straightforward.
 
 use crate::defs::TypeId;
-use crate::intern::{Symbol, resolve};
-use crate::types::{TraitKey, TyVar, Type, TypeRef};
+use crate::intern::Symbol;
+use crate::types::{TyVar, Type, TypeRef};
 use crate::value::Value;
 use std::collections::HashMap;
 
@@ -101,60 +96,14 @@ pub struct AliasInfo {
     pub target: Type,
 }
 
-// ── Associated-type bindings registry (Phase: associated types) ──────
-//
-// Mirrors the alias-registry pattern above. Keys are
-// `(trait, target_canonical_head, assoc_name)`, the associated type's
-// name resolved to a string (for the `Symbol`-vs-thread-local-interner
-// reason).
-// The typechecker populates this at impl registration; the
-// canonicaliser reads it when reducing `Type::AssocProj` whose
-// receiver canonicalises to a concrete head.
-
-#[derive(Debug, Clone)]
-pub struct AssocBinding {
-    /// The bound type. Stored already-canonicalised, so the reducer
-    /// returns it directly with no re-entry into the impl table for
-    /// this entry. (Recursive entries — bindings whose value is
-    /// itself an `AssocProj` — re-enter through `canonicalize` on the
-    /// enclosing type, not through this stored value.)
-    pub ty: Type,
-    /// The self type of the impl that binds it (`Box(a)`), canonical:
-    /// the binding's type variables are the impl's, and stand for the
-    /// arguments of the type the projection is taken of.
-    pub of: Type,
-}
-
-/// Cycle diagnostic returned by [`Resolver::register_assoc_binding`]
-/// when the supplied binding RHS would close a cycle back on the
-/// triple being registered.
-#[derive(Debug, Clone)]
-pub struct AssocBindingCycle {
-    /// Trait of the binding under registration.
-    pub trait_name: TraitKey,
-    /// Canonical target head of the binding under registration.
-    pub head: TypeRef,
-    /// Associated-type name of the binding under registration.
-    pub assoc_name: String,
-    /// Triple at which the cycle closes (may equal `(trait_name,
-    /// head, assoc_name)` for direct self-reference, or a different
-    /// triple for mutual cycles through other registered bindings).
-    pub via: (TraitKey, TypeRef, String),
-}
-
-/// The key of an associated-type binding: the trait, the canonical head
-/// of the impl's target, the associated type's name.
-type AssocKey = (TraitKey, TypeRef, String);
-
-/// Compile-session-scoped storage for the alias and associated-type
-/// binding registries: one per session, shared by every module's check.
+/// Compile-session-scoped storage for the alias registry: one per
+/// session, shared by every module's check.
 ///
 /// An alias is keyed by its definition, so two modules' aliases of one
 /// name are two entries.
 #[derive(Debug, Clone, Default)]
 pub struct Resolver {
     aliases: HashMap<TypeId, AliasInfo>,
-    assoc_bindings: HashMap<AssocKey, AssocBinding>,
 }
 
 impl Resolver {
@@ -186,194 +135,17 @@ impl Resolver {
         self.aliases.remove(&alias.id);
     }
 
-    /// Forget the associated-type bindings of the impl of `trait_name`
-    /// for the type with the head `target_head`: the impl is gone (its
-    /// module is checked again, or its REPL entry failed).
-    pub fn unregister_assoc_bindings(&mut self, trait_name: TraitKey, target_head: TypeRef) {
-        self.assoc_bindings
-            .retain(|(tr, head, _), _| !(*tr == trait_name && *head == target_head));
-    }
-
-    /// What the registries hold, for a test that compares two states of
-    /// a session: each alias and each binding, in a fixed order.
+    /// What the registry holds, for a test that compares two states of
+    /// a session: each alias, in a fixed order.
     #[doc(hidden)]
     pub fn fingerprint(&self) -> Vec<String> {
         let mut rows: Vec<String> = self
             .aliases
             .keys()
             .map(|id| format!("alias {id:?}"))
-            .chain(
-                self.assoc_bindings
-                    .iter()
-                    .map(|((tr, head, name), binding)| {
-                        format!("binding {tr:?} {head:?} {name} = {:?}", binding.ty)
-                    }),
-            )
             .collect();
         rows.sort();
         rows
-    }
-
-    /// Register an `assoc-type` impl binding.
-    ///
-    /// Called by the typechecker when processing a `TraitImpl`: for
-    /// each `type Item = X` binding, the target's canonical head is
-    /// computed (so an alias and its target collapse to the same key) and
-    /// the resolved type is stored. Re-registering the same triple
-    /// overwrites the previous entry (matches the alias-registry
-    /// convention; the typechecker enforces uniqueness via its
-    /// duplicate-impl check, so in practice this only fires once per
-    /// triple).
-    ///
-    /// Refuses to register a
-    /// binding whose RHS reduces to a chain of `AssocProj`s that
-    /// closes back on the very triple being registered (or any
-    /// already-registered triple). Without this guard, a binding like
-    /// `type Item = <Int as Container>::Item` (direct self-reference)
-    /// or a mutual pair `Foo::T = <Int as Bar>::S` /
-    /// `Bar::S = <Int as Foo>::T` would store a self-referential
-    /// `AssocProj` and the next `canonicalize` call would recurse
-    /// indefinitely. On detection,
-    /// returns the offending cycle's head triple so the caller can
-    /// emit a typed diagnostic; the binding is *not* inserted.
-    #[allow(clippy::result_large_err)]
-    pub fn register_assoc_binding(
-        &mut self,
-        trait_name: TraitKey,
-        target_head: TypeRef,
-        assoc_name: Symbol,
-        ty: Type,
-        of: &Type,
-    ) -> Result<(), AssocBindingCycle> {
-        let head_canon = canonical_head(self, target_head);
-        let canon_ty = canonicalize(self, &ty);
-        // Cycle detection: walk the canonicalised RHS, following any
-        // already-registered assoc bindings, and refuse insertion if
-        // we'd close back on the triple under registration. This
-        // covers both direct self-reference (`type Item =
-        // <Int as Container>::Item`) and mutual cycles through other
-        // bindings already in the registry.
-        let target_triple = (trait_name, head_canon, resolve(assoc_name));
-        let mut visited: std::collections::HashSet<AssocKey> = std::collections::HashSet::new();
-        // Treat the triple under registration as already-visited so a
-        // direct AssocProj on the RHS that resolves to the same triple
-        // is detected immediately.
-        visited.insert(target_triple.clone());
-        if let Some(cycle) = self.find_assoc_cycle(&canon_ty, &mut visited) {
-            return Err(AssocBindingCycle {
-                trait_name: target_triple.0,
-                head: target_triple.1,
-                assoc_name: target_triple.2.clone(),
-                via: cycle,
-            });
-        }
-        self.assoc_bindings.insert(
-            target_triple,
-            AssocBinding {
-                ty: canon_ty,
-                of: canonicalize(self, of),
-            },
-        );
-        Ok(())
-    }
-
-    /// Walk a canonicalised type and return the offending triple if any
-    /// `AssocProj` it contains transitively follows back to a triple in
-    /// `visited`. Used by `register_assoc_binding` to break cycles.
-    fn find_assoc_cycle(
-        &self,
-        ty: &Type,
-        visited: &mut std::collections::HashSet<AssocKey>,
-    ) -> Option<AssocKey> {
-        match ty {
-            Type::AssocProj {
-                receiver,
-                trait_name,
-                assoc_name,
-            } => {
-                if let Some(head) = head_of_canon(receiver) {
-                    let head_canon = canonical_head(self, head);
-                    let triple = (*trait_name, head_canon, resolve(*assoc_name));
-                    if visited.contains(&triple) {
-                        return Some(triple);
-                    }
-                    if let Some(binding) = self.assoc_bindings.get(&triple).cloned() {
-                        visited.insert(triple);
-                        let res = self.find_assoc_cycle(&binding.ty, visited);
-                        if res.is_some() {
-                            return res;
-                        }
-                    }
-                }
-                self.find_assoc_cycle(receiver, visited)
-            }
-            Type::List(inner) | Type::Set(inner) | Type::Channel(inner) => {
-                self.find_assoc_cycle(inner, visited)
-            }
-            Type::Map(k, v) => self
-                .find_assoc_cycle(k, visited)
-                .or_else(|| self.find_assoc_cycle(v, visited)),
-            Type::App(head, arg) => self
-                .find_assoc_cycle(head, visited)
-                .or_else(|| self.find_assoc_cycle(arg, visited)),
-            Type::Con(_, rest) => rest.iter().find_map(|t| self.find_assoc_cycle(t, visited)),
-            Type::Tuple(elems) => {
-                for e in elems {
-                    if let Some(c) = self.find_assoc_cycle(e, visited) {
-                        return Some(c);
-                    }
-                }
-                None
-            }
-            Type::Fun(params, ret) => {
-                for p in params {
-                    if let Some(c) = self.find_assoc_cycle(p, visited) {
-                        return Some(c);
-                    }
-                }
-                self.find_assoc_cycle(ret, visited)
-            }
-            Type::Generic(_, args) => {
-                for a in args {
-                    if let Some(c) = self.find_assoc_cycle(a, visited) {
-                        return Some(c);
-                    }
-                }
-                None
-            }
-            Type::AnonRecord { fields, .. } => {
-                for t in fields.values() {
-                    if let Some(c) = self.find_assoc_cycle(t, visited) {
-                        return Some(c);
-                    }
-                }
-                None
-            }
-            Type::Int
-            | Type::Float
-            | Type::Bool
-            | Type::String
-            | Type::Unit
-            | Type::Var(_)
-            | Type::Rigid(_)
-            | Type::Error
-            | Type::Never => None,
-        }
-    }
-
-    /// Look up an `assoc-type` binding by `(trait, target_head,
-    /// assoc_name)`. Returns `None` when no impl has registered the
-    /// binding.
-    pub fn lookup_assoc_binding(
-        &self,
-        trait_name: TraitKey,
-        target_head: TypeRef,
-        assoc_name: Symbol,
-    ) -> Option<AssocBinding> {
-        let head_canon = canonical_head(self, target_head);
-        self.assoc_bindings
-            .get(&(trait_name, head_canon, resolve(assoc_name)))
-            .cloned()
     }
 }
 
@@ -386,9 +158,6 @@ impl Resolver {
 ///   parameters, then canonicalised. (A name cannot be declared as
 ///   both a record and an alias: a declared record's `Generic` head is
 ///   never an alias.)
-/// - `Type::AssocProj` whose receiver canonicalises to a concrete head
-///   with a registered impl binding -> that binding's stored type,
-///   canonicalised.
 ///
 /// Every other variant is rebuilt structurally with each contained
 /// type recursively canonicalised. Primitive variants and type
@@ -450,58 +219,6 @@ pub fn canonicalize(resolver: &Resolver, ty: &Type) -> Type {
                 .collect(),
             tail: tail.clone(),
         },
-
-        // ── Associated-type projection ─────────────────────────────
-        // `<T as Trait>::Item` reduces to the impl's binding when the
-        // receiver is concrete. If the receiver canonicalises to a
-        // type-variable (or to another unreduced AssocProj), the
-        // projection itself is canonical: it stays as `AssocProj` and
-        // propagates through inference until the variable is solved.
-        // Cycle protection: the receiver is canonicalised first, so any
-        // alias chain on the receiver collapses before we look up the
-        // binding; the binding's stored type was canonicalised at
-        // registration time, so re-entering canonicalize here cannot
-        // re-trigger this arm on the same projection (it would have a
-        // concrete head different from the input).
-        Type::AssocProj {
-            receiver,
-            trait_name,
-            assoc_name,
-        } => {
-            let canon_recv = canonicalize(resolver, receiver);
-            // Try to find a head symbol on the canonicalised receiver.
-            // Concrete heads -> impl-table lookup. None -> abstract.
-            if let Some(head) = head_of_canon(&canon_recv)
-                && let Some(binding) = resolver.lookup_assoc_binding(*trait_name, head, *assoc_name)
-            {
-                // The stored binding was canonicalised at registration
-                // time. Canonicalise again here so any nested alias /
-                // assoc-projection inside the binding (registered
-                // before another alias became known) reduces too. The
-                // recursion terminates because the binding's head is
-                // not the same as the AssocProj's input head.
-                // The binding is written with the impl's type variables
-                // (`type Item = a` in `trait C for Box(a)`): each is
-                // what the receiver has in its place (`Int` for
-                // `Box(Int)`), not the impl's own variable.
-                let mut stands = std::collections::HashMap::new();
-                let bound = match super::instance_of(&binding.of, &canon_recv, &mut stands) {
-                    true => super::substitute_vars(&binding.ty, &stands),
-                    false => binding.ty.clone(),
-                };
-                return canonicalize(resolver, &bound);
-            }
-            // No binding (or abstract receiver): keep as canonical
-            // AssocProj. The typechecker emits a "type does not
-            // implement trait" diagnostic at the originating site if
-            // the receiver was concrete and no impl matches; the
-            // canonicaliser itself stays silent.
-            Type::AssocProj {
-                receiver: Box::new(canon_recv),
-                trait_name: *trait_name,
-                assoc_name: *assoc_name,
-            }
-        }
 
         // ── Leaf shapes: identity ──────────────────────────────────
         Type::Int
@@ -598,11 +315,6 @@ pub fn canonical_name(ty: &Type) -> String {
         Type::Rigid(r) => r.name.to_string(),
         Type::Error => "_".to_string(),
         Type::Never => "Never".to_string(),
-        // An unreduced AssocProj has no dispatch head — it is an
-        // abstract type pending receiver resolution. Same placeholder
-        // as Var to keep dispatch tables from accidentally keying on a
-        // pending projection.
-        Type::AssocProj { .. } => "_".to_string(),
         // Anonymous structural records have no nominal name; use a
         // dispatch key of their own, for which no impl is ever
         // registered.
@@ -651,8 +363,7 @@ pub fn canonical_head(resolver: &Resolver, ty: TypeRef) -> TypeRef {
 /// registration path.
 ///
 /// Returns `None` for shapes that have no nominal head (raw
-/// type-variables, error / never sentinels, associated projections,
-/// anonymous records).
+/// type-variables, error / never sentinels, anonymous records).
 pub fn head_of_canon(ty: &Type) -> Option<TypeRef> {
     let builtin = match ty {
         Type::Int => "Int",
@@ -680,7 +391,6 @@ pub fn head_of_canon(ty: &Type) -> Option<TypeRef> {
         | Type::Rigid(_)
         | Type::Error
         | Type::Never
-        | Type::AssocProj { .. }
         | Type::AnonRecord { .. } => return None,
     };
     Some(TypeRef::builtin(builtin))

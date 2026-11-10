@@ -2438,7 +2438,7 @@ impl TypeChecker {
             })
         };
         match &ty {
-            Type::Error | Type::Never | Type::AssocProj { .. } | Type::Con(..) => None,
+            Type::Error | Type::Never | Type::Con(..) => None,
             // (A constructor variable applied is some type, as a variable.)
             Type::Var(_) | Type::Rigid(_) | Type::App(..) => {
                 if !walk.open.contains(&ty) {
@@ -3098,9 +3098,6 @@ impl TypeChecker {
             // for completeness — entry-point `canonicalize` doesn't
             // collapse `Never` to anything else.
             (Type::Never, Type::Never) => true,
-            // No `(AssocProj, _)` arm is needed: the entry-point
-            // `canonicalize` resolves projections before this walk runs,
-            // so the recursive comparator never sees `AssocProj`.
             _ => false,
         }
     }
@@ -3394,9 +3391,6 @@ fn probe_unify(a: &Type, b: &Type, subst: &mut HashMap<TyVar, Type>) -> bool {
         (Type::Tuple(xs), Type::Tuple(ys)) => all(xs, ys, subst),
         (Type::Fun(xs, x), Type::Fun(ys, y)) => all(xs, ys, subst) && probe_unify(x, y, subst),
         (Type::Generic(x, xs), Type::Generic(y, ys)) => x == y && all(xs, ys, subst),
-        // (A projection not reduced yet, or a record: what the checker
-        // decides of them later.)
-        (Type::AssocProj { .. }, _) | (_, Type::AssocProj { .. }) => true,
         // Records field by field: a field one of them lacks is in the
         // other's open row, if it has one.
         (

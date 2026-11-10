@@ -6,11 +6,10 @@ order: 7
 
 # Traits
 
-Traits define shared behavior. No inheritance, no subclassing -- methods,
-plus associated types (a trait may declare a `type Item` member that each
-impl binds; see [Generics — Associated types](generics.md#associated-types)).
-A trait may also be about a type constructor (`Option(_)`) rather than
-a type: see [Traits of Type Constructors](#traits-of-type-constructors).
+Traits define shared behavior. No inheritance, no subclassing -- a trait
+is a set of methods. A trait may also be about a type constructor
+(`Option(_)`) rather than a type: see
+[Traits of Type Constructors](#traits-of-type-constructors).
 
 ## Declaration and Implementation
 
@@ -654,9 +653,8 @@ fn main() {
 
 A trait that writes `Self` in neither form is of its supertraits' kind.
 Such a trait names its parameters with their types (`self` is an error),
-and has no trait parameters, no associated types and no supertrait of
-types; a trait that writes `Self` both with and without a type argument
-is an error. The built-in `Functor`, `Applicative` and `Monad` are traits
+and has no trait parameters and no supertrait of types; a trait that
+writes `Self` both with and without a type argument is an error. The built-in `Functor`, `Applicative` and `Monad` are traits
 of type constructors; [Functors](functors.md) is about them, about
 generic code over constructors (`where m: Functor`), and about the rules
 of an impl's header.

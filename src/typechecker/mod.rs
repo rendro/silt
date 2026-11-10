@@ -2038,7 +2038,6 @@ fn row_tail_vars(ty: &Type, out: &mut Vec<TyVar>) {
             row_tail_vars(k, out);
             row_tail_vars(v, out);
         }
-        Type::AssocProj { receiver, .. } => row_tail_vars(receiver, out),
         Type::App(head, arg) => {
             row_tail_vars(head, out);
             row_tail_vars(arg, out);
@@ -2068,7 +2067,6 @@ fn written_defs(te: &TypeExpr, out: &mut std::collections::HashSet<crate::defs::
             params.iter().for_each(|p| written_defs(p, out));
             written_defs(ret, out);
         }
-        TypeExprKind::AssocProj { receiver, .. } => written_defs(receiver, out),
         TypeExprKind::AnonRecord { fields, .. } => {
             fields.iter().for_each(|(_, t)| written_defs(t, out))
         }

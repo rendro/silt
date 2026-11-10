@@ -229,9 +229,9 @@ fn main() {
   on a type: `Int.empty()`, or `a.empty()` for a type variable with the
   bound (`where a: Monoid`) or a `type a` parameter.
 - Bounds: `where a: Equal + Hash, b: Display`. A supertrait:
-  `trait Loud: Describe { ... }`. A trait may give default bodies,
-  associated types (`type Item`, `Self::Item`) and parameters
-  (`trait From(a)`, implemented as `trait From(Int) for Temp`).
+  `trait Loud: Describe { ... }`. A trait may give default bodies and
+  parameters (`trait From(a)`, implemented as `trait From(Int) for
+  Temp`).
 - An impl is written in the module of its type or of its trait, and is
   never imported.
 - Built in: `Display` (by structure, or a written impl), `Equal`, `Hash`

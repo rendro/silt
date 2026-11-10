@@ -1,6 +1,4 @@
-pub trait Conv { type Out
-  fn cv(self) -> Self::Out }
+pub trait Conv { fn cv(self) -> String }
 pub type Pt { s: String }
-trait Conv for Pt { type Out = String
-  fn cv(self) -> String { self.s } }
+trait Conv for Pt { fn cv(self) -> String { self.s } }
 pub fn run(v: t) -> String where t: Conv { "{Conv.cv(v)}" }

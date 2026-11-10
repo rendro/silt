@@ -6191,9 +6191,7 @@ impl TypeChecker {
                 }
                 self.check_supertrait_arg_parametric_arity(ret, trait_info);
             }
-            TypeExprKind::SelfType
-            | TypeExprKind::AssocProj { .. }
-            | TypeExprKind::AnonRecord { .. } => {
+            TypeExprKind::SelfType | TypeExprKind::AnonRecord { .. } => {
                 // These either aren't meaningful as supertrait args
                 // (handled elsewhere) or carry no bare-name parametric
                 // reference at the top level. Nothing to validate here.
@@ -6262,8 +6260,7 @@ impl TypeChecker {
                 .structure_gap(tr, ty, &mut walk, 0)
                 .is_none_or(|gap| !gap.is_whole());
         }
-        matches!(ty, Type::Error | Type::Never | Type::AssocProj { .. })
-            || self.tables.trait_impl_set.contains(&(tr, head))
+        matches!(ty, Type::Error | Type::Never) || self.tables.trait_impl_set.contains(&(tr, head))
     }
 }
 
@@ -6392,14 +6389,6 @@ pub(super) fn resolve_supertrait_arg(
             Box::new(resolve_supertrait_arg(ret, trait_info, base_args)),
         ),
         TypeExprKind::SelfType => Type::Error, // Self isn't meaningful in a supertrait arg
-        TypeExprKind::AssocProj { .. } => {
-            // Associated-type projections aren't meaningful as
-            // supertrait args either: a supertrait arg is a fixed
-            // type expression substituted from the enclosing trait's
-            // params. Returning `Type::Error` matches the SelfType
-            // arm and lets the caller continue without a cascade.
-            Type::Error
-        }
         TypeExprKind::AnonRecord { .. } => {
             // Anon records aren't meaningful as supertrait args either —
             // supertrait params are referred to by name.

@@ -229,7 +229,7 @@ trait Big: Sized {
 > hover 58:8
 ```silt
 trait Pairs(b) {
-  type Item
+  fn first(self) -> b
   fn pair(
     self,
     other: b,

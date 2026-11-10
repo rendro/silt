@@ -1,0 +1,13 @@
+error[parse]: expected fn, found type
+ --> trait_body__a_type_member_and_a_projection_are_refused.silt:6:3
+   |
+ 6 |   type Item
+   |   ^^^^ expected fn, found type
+  = help: the body of a trait or an impl holds only methods, each starting with `fn`
+
+error[parse]: expected the end of the type, found ::
+ --> trait_body__a_type_member_and_a_projection_are_refused.silt:11:24
+    |
+ 11 |   fn next(self) -> Self::Item
+    |                        ^ expected the end of the type, found ::
+  = help: silt has no `::`: a type of a module is written `m.Type`, and a type a trait leaves to each impl is a parameter of the trait, `trait Stream(item)`

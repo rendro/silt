@@ -922,7 +922,7 @@ mod tests {
                 TypeExprKind::AnonRecord { fields, .. } => {
                     fields.iter().for_each(|(_, field)| variables(field, out));
                 }
-                TypeExprKind::SelfType | TypeExprKind::AssocProj { .. } => {}
+                TypeExprKind::SelfType => {}
             }
         }
         let registry = registry();
