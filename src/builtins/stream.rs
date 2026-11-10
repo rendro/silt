@@ -680,10 +680,10 @@ fn one_a_read(
     move || read().into_iter().collect()
 }
 
-/// What a read of `stream.tcp_lines` that may wait for the peer asks
-/// for: a source that waits holds no more than this.
+/// What one read of `stream.tcp_lines` asks for, the one that may wait
+/// for the peer and each that does not.
 #[cfg(feature = "tcp")]
-const LINES_WAIT_READ: usize = 4 * 1024;
+const LINES_READ: usize = 4 * 1024;
 
 /// The reads of `stream.tcp_lines` on `conn`: each gives the lines,
 /// without their `\n` or `\r\n`, that are complete in what has been
@@ -694,23 +694,24 @@ const LINES_WAIT_READ: usize = 4 * 1024;
 /// lines before it; the connection is shut down then, as for any source
 /// on it that stops.
 ///
-/// A read that may wait asks for [`LINES_WAIT_READ`] bytes. After a read
-/// that filled what it asked for, more is likely there: what is there
-/// is read without waiting, up to [`READ_AT_ONCE`] bytes, where the
-/// connection can do that (a plain one; a TLS one reads on in small
-/// reads). Between reads only a small buffer is kept, also after a long
-/// line, so that a source waiting on an idle connection holds a few KiB.
+/// Every read asks for [`LINES_READ`] bytes. With a line in hand, the
+/// source reads on only what is there without waiting, where the
+/// connection can do that (a plain one; a TLS one gives the lines of
+/// what it has), while each read fills what it asked for, up to
+/// [`READ_AT_ONCE`] bytes. The lines are taken out after each read, so
+/// that what is kept is the line not yet complete and room for one
+/// read: a source that waits holds that, never more.
 #[cfg(feature = "tcp")]
 fn tcp_line_reads(
     conn: Arc<crate::runtime::handle::TcpStreamHandle>,
 ) -> impl FnMut() -> Vec<Value> + Send + 'static {
     // What was read and is no line yet; how much of it is known to
-    // have no `\n`; the peer has closed; the source has ended.
+    // have no `\n`; the peer has closed; the source has ended; the last
+    // read filled what it asked for.
     let mut pending: Vec<u8> = Vec::new();
     let mut scanned = 0;
     let mut closed = false;
     let mut ended = false;
-    // The last read filled what it asked for.
     let mut filled = false;
     let not_utf8 = |conn: &crate::runtime::handle::TcpStreamHandle| {
         conn.shut_down();
@@ -720,27 +721,87 @@ fn tcp_line_reads(
         );
         super::tcp::tcp_io_err(super::tcp::Doing::Using, &not_utf8)
     };
+    // Room for one read beside the line not yet complete, no more: a
+    // long line or a burst leaves no large buffer behind.
+    let give_back = |pending: &mut Vec<u8>| {
+        let keep = pending.len() + LINES_READ;
+        if pending.len() <= LINES_READ && pending.capacity() > keep {
+            pending.shrink_to(keep);
+        }
+    };
     move || {
         let mut lines = Vec::new();
         if ended {
             return lines;
         }
-        while !closed && !pending[scanned..].contains(&b'\n') {
-            scanned = pending.len();
-            let mut now = None;
-            if filled && conn.reads_now() {
-                pending.resize(scanned + READ_AT_ONCE, 0);
-                now = conn.read_now(&mut pending[scanned..]).map(Ok);
+        // The bytes this read of the source has read.
+        let mut read_here = 0;
+        loop {
+            let mut taken = 0;
+            let mut held_back = false;
+            // One allocation for the lines of a read, not a growing list
+            // (each size it passes through is memory that the I/O pool
+            // thread's allocator keeps while the thread waits).
+            lines.reserve(pending[scanned..].iter().filter(|&&b| b == b'\n').count());
+            loop {
+                let from = taken.max(scanned);
+                let Some(at) = pending[from..].iter().position(|&b| b == b'\n') else {
+                    break;
+                };
+                let line = &pending[taken..from + at];
+                let line = line.strip_suffix(b"\r").unwrap_or(line);
+                match std::str::from_utf8(line) {
+                    Ok(line) => lines.push(ok(Value::String(line.into()))),
+                    Err(_) if lines.is_empty() => {
+                        ended = true;
+                        lines.push(not_utf8(&conn));
+                        return lines;
+                    }
+                    // The lines before it are emitted first: the next read
+                    // ends the source with it.
+                    Err(_) => {
+                        held_back = true;
+                        break;
+                    }
+                }
+                taken = from + at + 1;
             }
-            let asked = match now {
-                Some(_) => READ_AT_ONCE,
-                None => LINES_WAIT_READ,
+            pending.drain(..taken);
+            scanned = if held_back { 0 } else { pending.len() };
+            if held_back || closed {
+                break;
+            }
+            // Wait only for a first line; with one in hand, read on what
+            // is there.
+            let wait = lines.is_empty();
+            let read_on = filled && conn.reads_now() && read_here < READ_AT_ONCE;
+            if !(wait || read_on) {
+                break;
+            }
+            if wait {
+                give_back(&mut pending);
+            }
+            let at = pending.len();
+            // Room for this read and no more, unless a long line is
+            // growing (then the list grows as lists do).
+            if at <= LINES_READ {
+                pending.reserve_exact(LINES_READ);
+            }
+            pending.resize(at + LINES_READ, 0);
+            let read = match wait {
+                true => conn.read(&mut pending[at..]),
+                false => match conn.read_now(&mut pending[at..]) {
+                    Some(got) => Ok(got),
+                    None => {
+                        pending.truncate(at);
+                        break;
+                    }
+                },
             };
-            pending.resize(scanned + asked, 0);
-            let read = now.unwrap_or_else(|| conn.read(&mut pending[scanned..]));
             let got = *read.as_ref().unwrap_or(&0);
-            pending.truncate(scanned + got);
-            filled = got == asked;
+            pending.truncate(at + got);
+            filled = got == LINES_READ;
+            read_here += got;
             match read {
                 Ok(0) => closed = true,
                 Ok(_) => {}
@@ -751,30 +812,7 @@ fn tcp_line_reads(
                 }
             }
         }
-        let mut taken = 0;
-        while let Some(at) = pending[taken..].iter().position(|&b| b == b'\n') {
-            let line = &pending[taken..taken + at];
-            let line = line.strip_suffix(b"\r").unwrap_or(line);
-            match std::str::from_utf8(line) {
-                Ok(line) => lines.push(ok(Value::String(line.into()))),
-                Err(_) if lines.is_empty() => {
-                    ended = true;
-                    lines.push(not_utf8(&conn));
-                    return lines;
-                }
-                // The lines before it are emitted first: the next read
-                // ends the source with it.
-                Err(_) => break,
-            }
-            taken += at + 1;
-        }
-        pending.drain(..taken);
-        scanned = 0;
-        // Back to a small buffer after a long line or a large read.
-        let keep = pending.len().max(LINES_WAIT_READ);
-        if pending.capacity() > 2 * keep {
-            pending.shrink_to(keep);
-        }
+        give_back(&mut pending);
         if lines.is_empty() && closed {
             ended = true;
             if !pending.is_empty() {
@@ -1739,8 +1777,8 @@ mod tests {
     /// lines of 40 bytes take about a hundred reads of 4 KiB on a
     /// connection that cannot read without waiting (TLS; they took one
     /// read a byte, 400,001, and 430 times as long as `tcp_chunks` over
-    /// loopback). No read asks for more than a waiting read may hold.
-    /// The lines of one read come in one read of the source.
+    /// loopback). No read asks for more than 4 KiB. The lines of one
+    /// read come in one read of the source.
     #[test]
     #[cfg(feature = "tcp")]
     fn tcp_lines_reads_a_buffer_at_a_time() {
@@ -1752,17 +1790,17 @@ mod tests {
         let most = reads[1].load(Ordering::SeqCst);
         let reads = reads[0].load(Ordering::SeqCst);
         assert!(
-            reads <= 400_000 / LINES_WAIT_READ + 3,
+            reads <= 400_000 / LINES_READ + 3,
             "{reads} reads of the connection"
         );
-        assert!(most <= LINES_WAIT_READ, "a read asked for {most} bytes");
+        assert!(most <= LINES_READ, "a read asked for {most} bytes");
         assert!(calls <= reads + 1, "{calls} reads of the source");
     }
 
-    /// On a plain connection what is there after a read that filled its
-    /// 4 KiB is read without waiting, up to 64 KiB: 32,000 bytes of lines
-    /// that the peer sent before the source began take a few reads of
-    /// the source (one a line, 801, a byte at a time).
+    /// On a plain connection, with a line in hand, what is there is read
+    /// on without waiting, 4 KiB at a time up to 64 KiB: 32,000 bytes of
+    /// lines that the peer sent before the source began come in one read
+    /// of the source (one a line, 801, a byte at a time).
     #[test]
     #[cfg(feature = "tcp")]
     fn tcp_lines_reads_what_is_there_in_one_read_on_a_plain_connection() {
@@ -1779,7 +1817,9 @@ mod tests {
         let conn = crate::runtime::handle::TcpStreamHandle::plain(0, sock);
         let (lines, calls) = lines_of(&conn);
         assert_eq!(lines.len(), 800);
-        assert!(calls <= 10, "{calls} reads of the source");
+        // The lines in one read of the source, then the end: 2. Every
+        // read one that waits, it would be 9.
+        assert!(calls <= 4, "{calls} reads of the source");
     }
 
     /// The lines are what they were when they were read a byte at a
