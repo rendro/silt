@@ -1,0 +1,25 @@
+-- cmd: check
+-- exit: 1
+-- An opaque type of another module that writes no `json.Decode` impl
+-- for it is not built by a trait with `json.Decode` as a supertrait,
+-- called on the type or through the trait on a value: the impl stands
+-- (in the trait's module), the calls are refused. (Both built an
+-- `Id {raw: 7}` outside `mail`.)
+import json
+import mail
+
+trait Dec: json.Decode {
+  fn make(s: String) -> Result(Self, json.JsonError) {
+    json.parse(s, Self)
+  }
+  fn again(self, s: String) -> Result(Self, json.JsonError) {
+    json.parse(s, Self)
+  }
+}
+
+trait Dec for mail.Id(a) where a: json.Decode {}
+
+fn main() {
+  println(mail.Id(Int).make("""{"raw": 7}"""))
+  println(Dec.again(mail.id(5), """{"raw": 7}"""))
+}

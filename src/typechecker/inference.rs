@@ -574,6 +574,40 @@ impl TypeChecker {
         matches
     }
 
+    /// A method of `tr`, a trait that has `json.Decode` among its
+    /// supertraits, called on the type `ty` (`Box(Int).make(s)`):
+    /// `ty` is what the decoder builds, as through a bound of the trait,
+    /// and is judged so (a type with no decoder, a generic type with
+    /// impls for other instantiations only, an opaque type of another
+    /// module).
+    /// `callee` is the call as it is written (`Box.make`, `Dec.again`).
+    fn decoded_through_type(&mut self, tr: TraitKey, ty: &Type, callee: String, span: Span) {
+        if !self.implies_decode(tr) {
+            return;
+        }
+        if let Some(refusal) = self.opaque_through_trait(tr, ty, span) {
+            self.refuse_opaque(span, refusal);
+            return;
+        }
+        let Some(head) = self.type_name_for_impl(ty) else {
+            return;
+        };
+        if self.generic_for_decode(head) && !self.type_args_of(ty).is_empty() {
+            let origin = Origin {
+                span,
+                callee: Some(intern(&callee)),
+                op: None,
+                header: None,
+            };
+            let owners: Vec<crate::session::ModuleId> = self
+                .def(tr.id.0)
+                .map(|def| def.module)
+                .into_iter()
+                .collect();
+            self.want_decode(ty, origin, None, owners);
+        }
+    }
+
     /// The evidence of `Type.method` at `span`, the method of an impl
     /// reached through its type `head`, just instantiated: as a call of
     /// the impl's method passes it on (`method_site`).
@@ -1065,6 +1099,7 @@ impl TypeChecker {
                     // arguments.)
                     let written = !self.holds_open_vars(&inner);
                     self.self_is(tr, field, (&instantiated, &inner, written), span);
+                    self.decoded_through_type(tr, &inner, format!("{}.{field}", name.name), span);
                     // (`Box(a).mk(s)` with no value of `a` where the code
                     // runs: `refuse_type_without_value`.)
                     if let Some(key) = self.entry_impl(name, &entry, field)
@@ -1312,6 +1347,12 @@ impl TypeChecker {
                 return Type::Error;
             }
             if let Some((head, entry)) = entry {
+                // (What it decodes is the value's type, as a bound of the
+                // trait decodes it.)
+                if let Some((_, at)) = &receiver {
+                    let callee = format!("{}.{field}", self.spell_trait(tr));
+                    self.decoded_through_type(tr, &recv, callee, *at);
+                }
                 self.method_trait = Some(tr);
                 self.trait_call_self.insert(span, recv.clone());
                 self.receiver_taken = true;
@@ -4511,6 +4552,8 @@ impl TypeChecker {
                                 .is_some_and(|def| def.kind == crate::defs::DefKind::TypeAlias)
                                 && free_vars_in(named).is_empty();
                             self.self_is(tr, field, (&ty, named, written), span);
+                            let callee = format!("{}.{field}", key.0.name);
+                            self.decoded_through_type(tr, named, callee, span);
                         }
                         let full = self.full_self(key.0, &entry, field, &ty);
                         self.type_method_site(key.0, &entry, field, full, span);
