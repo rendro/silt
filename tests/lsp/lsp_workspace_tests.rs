@@ -114,7 +114,7 @@ fn open_documents_of_a_directory_that_is_not_on_disk_import_each_other() {
         .filter_map(|loc| loc.get("uri").and_then(|u| u.as_str()).map(String::from))
         .collect();
     assert!(
-        uris.iter().any(|u| *u == file_b),
+        uris.contains(&file_b),
         "expected a reference in the importing document; got: {uris:?}"
     );
     client.shutdown();

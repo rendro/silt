@@ -136,15 +136,14 @@ fn main() { 0 }
 /// impl copies the body.
 ///
 /// Three programs are probed:
-///   1. `signature_only`:  trait with abstract method (no body): no
-///                         hint.
-///   2. `default_body`:    trait carrying a default body with an
-///                         unannotated `let x = 1`, and no impl: one
-///                         hint, which only the `Decl::Trait` arm can
-///                         emit.
+///   1. `signature_only`: trait with abstract method (no body): no
+///      hint.
+///   2. `default_body`: trait carrying a default body with an
+///      unannotated `let x = 1`, and no impl: one hint, which only the
+///      `Decl::Trait` arm can emit.
 ///   3. `paired_with_impl`: same trait body + `trait Foo for Item {}`:
-///                         still one hint, not one for the trait and
-///                         one for the impl's copy.
+///      still one hint, not one for the trait and one for the impl's
+///      copy.
 #[test]
 fn inlay_hints_standalone_trait_default_body_attribution() {
     // Program 1: signature-only trait. No body, no hint.

@@ -1013,7 +1013,8 @@ mod tests {
         let interrupted = Value::variant(crate::typeinfo::bv::IO_INTERRUPTED, []);
         let io = registry.module("io").expect("io");
         let message = io.message.as_ref().expect("IoError.message");
-        let Ok(Step::Done(Value::String(text))) = message.call(&mut vm, &[interrupted.clone()])
+        let Ok(Step::Done(Value::String(text))) =
+            message.call(&mut vm, std::slice::from_ref(&interrupted))
         else {
             panic!("IoError.message");
         };

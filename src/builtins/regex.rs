@@ -1,7 +1,7 @@
 //! The `regex.*` builtin functions.
 
-use regex_automata::meta::{BuildError, Regex};
 use regex_automata::PatternID;
+use regex_automata::meta::{BuildError, Regex};
 use regex_automata::util::captures::Captures;
 
 use super::common::{ok, too_long_text};

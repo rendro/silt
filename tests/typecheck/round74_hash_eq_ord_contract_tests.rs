@@ -5,6 +5,10 @@
 //! Rust's contract: `a == b` ⇒ `hash(a) == hash(b)` AND `a.cmp(&b) ==
 //! Equal`. These tests assert all three for each such pair.
 
+// A `HashSet<Value>` is the point here: the contract is checked through
+// a set of values, as a program's set holds them.
+#![allow(clippy::mutable_key_type)]
+
 use silt::typeinfo::bv;
 use std::cmp::Ordering;
 use std::collections::HashSet;

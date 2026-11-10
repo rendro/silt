@@ -234,7 +234,7 @@ mod tests {
         assert!(middle.complete(Ok(crate::value::Value::Unit), wake));
         assert!(done.complete(Ok(crate::value::Value::Unit), wake));
         let below = running_below(&root);
-        assert_eq!(ids(&below), ids(&[leaf.clone()]));
+        assert_eq!(ids(&below), ids(std::slice::from_ref(&leaf)));
         assert!(leaf.is_cancelled());
         assert!(!done.is_cancelled() && !middle.is_cancelled());
         assert!(running_below(&leaf).is_empty());
@@ -250,7 +250,7 @@ mod tests {
         let middle_key = key_of(&middle);
         drop(middle);
         assert!(!holds(&root, middle_key));
-        assert_eq!(ids(&running_below(&root)), ids(&[leaf.clone()]));
+        assert_eq!(ids(&running_below(&root)), ids(std::slice::from_ref(&leaf)));
         // And the leaf's own handle, dropped, leaves the tree too.
         let leaf_key = key_of(&leaf);
         drop(leaf);
@@ -268,7 +268,10 @@ mod tests {
         let tree = |handle: &TaskHandle| Arc::as_ptr(&handle.family().0.get().unwrap().0);
         assert_ne!(tree(&one), tree(&two));
         assert_eq!(tree(&one), tree(&under_one));
-        assert_eq!(ids(&running_below(&one)), ids(&[under_one.clone()]));
+        assert_eq!(
+            ids(&running_below(&one)),
+            ids(std::slice::from_ref(&under_one))
+        );
         assert!(!under_two.is_cancelled());
     }
 

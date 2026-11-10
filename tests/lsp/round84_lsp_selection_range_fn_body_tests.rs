@@ -42,10 +42,10 @@ fn pos_to_byte_offset(source: &str, line: u64, character: u64) -> usize {
 /// on each `SelectionRange` value (root and every parent).
 fn walk_chain(node: &Value, f: &mut impl FnMut(&Value)) {
     f(node);
-    if let Some(parent) = node.get("parent") {
-        if !parent.is_null() {
-            walk_chain(parent, f);
-        }
+    if let Some(parent) = node.get("parent")
+        && !parent.is_null()
+    {
+        walk_chain(parent, f);
     }
 }
 
