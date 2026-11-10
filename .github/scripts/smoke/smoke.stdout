@@ -1,0 +1,2 @@
+[{"word":"a","times":3},{"word":"b","times":1},{"word":"c","times":1}]
+Ok([Count {word: "a", times: 3}, Count {word: "b", times: 1}, Count {word: "c", times: 1}])

@@ -36,24 +36,24 @@ set -x
 case "$partition" in
   heavy)
     if $nextest; then
-      exec cargo nextest run --no-fail-fast --all-features --test heavy --test oracle
+      exec cargo nextest run --locked --no-fail-fast --all-features --test heavy --test oracle
     else
-      exec cargo test --all-features --test heavy --test oracle
+      exec cargo test --locked --all-features --test heavy --test oracle
     fi
     ;;
   concurrency)
     # At most 4 tests at once, as .config/nextest.toml does for nextest:
     # all at once oversubscribes the CPU and the timing tests fail.
     if $nextest; then
-      exec cargo nextest run --no-fail-fast --all-features --test concurrency
+      exec cargo nextest run --locked --no-fail-fast --all-features --test concurrency
     else
-      exec cargo test --all-features --test concurrency -- --test-threads=4
+      exec cargo test --locked --all-features --test concurrency -- --test-threads=4
     fi
     ;;
   rest1 | rest2 | rest3)
     if $nextest; then
       shard="${partition#rest}"
-      exec cargo nextest run --no-fail-fast --all-features -E "$rest_filter" --partition "hash:${shard}/3"
+      exec cargo nextest run --locked --no-fail-fast --all-features -E "$rest_filter" --partition "hash:${shard}/3"
     else
       # Without nextest there is no hash partitioning: rest1 runs
       # everything outside heavy, oracle, concurrency and database, rest2
@@ -65,7 +65,7 @@ case "$partition" in
           [[ -f "$d/main.rs" && "$name" != heavy && "$name" != oracle && "$name" != concurrency && "$name" != database ]] && suites+=("--test" "$name")
         done
         for f in tests/*.rs; do suites+=("--test" "$(basename "$f" .rs)"); done
-        exec cargo test --all-features --lib --bins "${suites[@]}"
+        exec cargo test --locked --all-features --lib --bins "${suites[@]}"
       fi
       exit 0
     fi
