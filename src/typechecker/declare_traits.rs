@@ -49,68 +49,11 @@ impl TypeChecker {
             );
             return true;
         }
-        // What the header gives, with the supertraits of each bound (at
-        // any trait arguments: those of a bound's supertraits are not
-        // read here).
-        let mut given: Vec<(TyVar, TraitKey, Option<Vec<Type>>)> = Vec::new();
-        for pred in self.tables.impl_preds.get(&key).into_iter().flatten() {
-            if let Pred::Trait {
-                tr: bound,
-                subject: Type::Var(v),
-                args,
-                ..
-            } = pred
-            {
-                given.push((*v, *bound, Some(args.clone())));
-                given.extend((self.supertraits_of(*bound).into_iter()).map(|s| (*v, s, None)));
-            }
-        }
-        // (A bound at other trait arguments gives no need at these: one
-        // impl is no other.)
-        let gives = |(v, t, args): &Need| {
-            (given.iter()).any(|(gv, gt, gargs)| {
-                gv == v
-                    && gt == t
-                    && (args.is_empty()
-                        || gargs.as_ref().is_none_or(|gargs| {
-                            gargs.len() == args.len()
-                                && (gargs.iter().zip(args))
-                                    .all(|(g, a)| self.apply(g) == self.apply(a))
-                        }))
-            })
-        };
-        let mut missing: Vec<Need> = Vec::new();
-        for need in needs.iter().filter(|need| !gives(need)) {
-            if !missing.contains(need) {
-                missing.push(need.clone());
-            }
-        }
+        let missing = self.unmet_needs(key, &needs);
         let Some((var, trait_needed, needed_args)) = missing.first().cloned() else {
             return false;
         };
-        // The impl's type variables by the names its header writes
-        // (letters for those it does not name: a `Tuple` impl's).
-        let mut names: Vec<(TyVar, Symbol)> =
-            self.impl_var_names.get(&key).cloned().unwrap_or_default();
-        let named = !names.is_empty();
-        for v in free_vars_in(&self_ty) {
-            if !names.iter().any(|(known, _)| *known == v) {
-                let letter = char::from(b'a' + (names.len() % 26) as u8);
-                names.push((v, intern(&letter.to_string())));
-            }
-        }
-        let mapping: HashMap<TyVar, Type> = names
-            .iter()
-            .map(|(v, name)| {
-                (
-                    *v,
-                    Type::Rigid(RigidId {
-                        var: *v,
-                        name: *name,
-                    }),
-                )
-            })
-            .collect();
+        let (names, named, mapping) = self.impl_var_naming(key, &self_ty);
         let shown_ty = self.show_type(&substitute_vars(&self_ty, &mapping));
         let name_of = |var: TyVar| {
             (names.iter())
@@ -163,6 +106,154 @@ impl TypeChecker {
             span,
         );
         true
+    }
+
+    /// Whether the impl `key` was reported for a trait argument that
+    /// lacks what the trait's own `where` clause asks of its parameter
+    /// (`trait Tbl(k) where k: G`, `trait Tbl(a) for B(a)` without
+    /// `where a: G`): its variables must have it by the impl's header.
+    /// (A part that is no variable and lacks it is reported where the
+    /// impl is registered.)
+    fn param_bounds_reported(&mut self, key: ImplKey, info: &TraitInfo, span: Span) -> bool {
+        let Some(self_ty) = self.tables.impl_self_types.get(&key).cloned() else {
+            return false;
+        };
+        let impl_args = (self.tables.impl_trait_args.get(&key))
+            .cloned()
+            .unwrap_or_default();
+        for (param, bound) in &info.param_where_clauses {
+            let Some(arg) =
+                (info.params.iter().position(|p| p == param)).and_then(|i| impl_args.get(i))
+            else {
+                continue;
+            };
+            let mut needs: Vec<Need> = Vec::new();
+            if !self.trait_needs(*bound, &[], arg, 0, &mut needs) {
+                continue;
+            }
+            let missing = self.unmet_needs(key, &needs);
+            let Some((var, trait_needed, needed_args)) = missing.first().cloned() else {
+                continue;
+            };
+            let (names, named, mapping) = self.impl_var_naming(key, &self_ty);
+            let name_of = |var: TyVar| {
+                (names.iter())
+                    .find(|(v, _)| *v == var)
+                    .map_or_else(|| "a".to_string(), |(_, name)| resolve(*name))
+            };
+            let shown_args: Vec<Type> = (impl_args.iter())
+                .map(|arg| substitute_vars(arg, &mapping))
+                .collect();
+            let bounds: Vec<String> = (missing.iter())
+                .map(|(v, t, args)| format!("{}: {}", name_of(*v), self.show_bound(*t, args)))
+                .collect();
+            let bounds = bounds.join(", ");
+            // (Of an argument built from the variable, which part needs
+            // it.)
+            let part = match self.apply(arg) {
+                Type::Var(v) if v == var => String::new(),
+                _ => format!(
+                    ": '{}' needs '{}'",
+                    name_of(var),
+                    self.show_bound(trait_needed, &needed_args)
+                ),
+            };
+            let message = format!(
+                "type '{}' implements '{}', whose argument '{}' must implement '{}' (trait '{}' \
+                 declares `where {}: {}`){part}",
+                self.show_type(&substitute_vars(&self_ty, &mapping)),
+                self.show_bound(key.0, &shown_args),
+                self.show_type(&substitute_vars(arg, &mapping)),
+                self.show_trait(*bound),
+                self.show_trait(key.0),
+                param,
+                self.show_trait(*bound),
+            );
+            let help = match named {
+                true => format!("add `where {bounds}` to the impl"),
+                false => format!(
+                    "write the impl for `{}`, with `where {bounds}`",
+                    self.show_type(&substitute_vars(&self_ty, &mapping))
+                ),
+            };
+            self.error_help(Code::MissingTraitImpl, (message, Some(help)), span);
+            return true;
+        }
+        false
+    }
+
+    /// Of `needs`, what the header of the impl `key` does not give its
+    /// type variables: each once, in order.
+    fn unmet_needs(&self, key: ImplKey, needs: &[Need]) -> Vec<Need> {
+        // What the header gives, with the supertraits of each bound (at
+        // any trait arguments: those of a bound's supertraits are not
+        // read here).
+        let mut given: Vec<(TyVar, TraitKey, Option<Vec<Type>>)> = Vec::new();
+        for pred in self.tables.impl_preds.get(&key).into_iter().flatten() {
+            if let Pred::Trait {
+                tr: bound,
+                subject: Type::Var(v),
+                args,
+                ..
+            } = pred
+            {
+                given.push((*v, *bound, Some(args.clone())));
+                given.extend((self.supertraits_of(*bound).into_iter()).map(|s| (*v, s, None)));
+            }
+        }
+        // (A bound at other trait arguments gives no need at these: one
+        // impl is no other.)
+        let gives = |(v, t, args): &Need| {
+            (given.iter()).any(|(gv, gt, gargs)| {
+                gv == v
+                    && gt == t
+                    && (args.is_empty()
+                        || gargs.as_ref().is_none_or(|gargs| {
+                            gargs.len() == args.len()
+                                && (gargs.iter().zip(args))
+                                    .all(|(g, a)| self.apply(g) == self.apply(a))
+                        }))
+            })
+        };
+        let mut missing: Vec<Need> = Vec::new();
+        for need in needs.iter().filter(|need| !gives(need)) {
+            if !missing.contains(need) {
+                missing.push(need.clone());
+            }
+        }
+        missing
+    }
+
+    /// The impl's type variables by the names its header writes
+    /// (letters for those it does not name: a `Tuple` impl's), whether
+    /// the header names any, and each as a rigid variable of its name.
+    fn impl_var_naming(
+        &self,
+        key: ImplKey,
+        self_ty: &Type,
+    ) -> (Vec<(TyVar, Symbol)>, bool, HashMap<TyVar, Type>) {
+        let mut names: Vec<(TyVar, Symbol)> =
+            self.impl_var_names.get(&key).cloned().unwrap_or_default();
+        let named = !names.is_empty();
+        for v in free_vars_in(self_ty) {
+            if !names.iter().any(|(known, _)| *known == v) {
+                let letter = char::from(b'a' + (names.len() % 26) as u8);
+                names.push((v, intern(&letter.to_string())));
+            }
+        }
+        let mapping: HashMap<TyVar, Type> = names
+            .iter()
+            .map(|(v, name)| {
+                (
+                    *v,
+                    Type::Rigid(RigidId {
+                        var: *v,
+                        name: *name,
+                    }),
+                )
+            })
+            .collect();
+        (names, named, mapping)
     }
 
     /// What the trait `tr` at the trait arguments `args` asks of the
@@ -351,6 +442,11 @@ impl TypeChecker {
                 self.decode_impl_refusal(*trait_name, *type_name, self_type, diag_span)
             {
                 self.errors.push(refusal);
+                continue;
+            }
+            // (c) What the trait's own `where` clause asks of its
+            // parameters, the impl's trait arguments have.
+            if self.param_bounds_reported(*impl_key, &trait_info, diag_span) {
                 continue;
             }
             let enclosing_args: Vec<Type> = self
