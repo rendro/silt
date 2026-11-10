@@ -17,6 +17,13 @@ use sha2::{Digest, Sha256};
 
 const REPO: &str = "rendro/silt";
 
+/// What every curl call is given first: only https, a redirect included,
+/// and TLS 1.2 or later.
+const CURL_HTTPS_ONLY: [&str; 3] = ["--proto", "=https", "--tlsv1.2"];
+
+/// What every wget call is given first: only https, a redirect included.
+const WGET_HTTPS_ONLY: &str = "--https-only";
+
 pub struct UpdateOptions {
     /// If true, print what would happen without downloading or replacing.
     pub dry_run: bool,
@@ -82,6 +89,25 @@ pub fn run_update(opts: UpdateOptions) -> Result<(), String> {
         ));
     }
 
+    // The checksum comes from the same release as the archive; the
+    // attestation is signed by the release workflow, so it also catches a
+    // release whose files were replaced. It needs the GitHub CLI.
+    match verify_attestation(&archive) {
+        Attestation::Verified => eprintln!("  Verified the build attestation"),
+        Attestation::Failed(said) => {
+            let _ = fs::remove_dir_all(&tmpdir);
+            return Err(format!(
+                "the build attestation of {asset} does not verify — refusing to install:\n{said}"
+            ));
+        }
+        Attestation::NotChecked => {
+            eprintln!(
+                "  Build attestation not checked: that needs the GitHub CLI (gh), logged in."
+            );
+            eprintln!("  To check the archive: gh attestation verify {asset} --repo {REPO}");
+        }
+    }
+
     eprintln!("  Extracting");
     extract(&archive, &tmpdir, ext)?;
 
@@ -121,6 +147,7 @@ fn fetch_latest_version() -> Result<String, String> {
 
     if which("curl").is_some() {
         let out = Command::new("curl")
+            .args(CURL_HTTPS_ONLY)
             .args(["-fsI", &url])
             .output()
             .map_err(|e| format!("failed to run curl: {e}"))?;
@@ -136,6 +163,7 @@ fn fetch_latest_version() -> Result<String, String> {
         }
     } else if which("wget").is_some() {
         let out = Command::new("wget")
+            .arg(WGET_HTTPS_ONLY)
             .args(["--server-response", "--spider", "--max-redirect=0", &url])
             .output()
             .map_err(|e| format!("failed to run wget: {e}"))?;
@@ -237,6 +265,7 @@ fn sha256_hex(path: &Path) -> Result<String, String> {
 fn download(url: &str, dest: &Path) -> Result<(), String> {
     if which("curl").is_some() {
         let status = Command::new("curl")
+            .args(CURL_HTTPS_ONLY)
             .args(["-fsSL", url, "-o"])
             .arg(dest)
             .status()
@@ -251,6 +280,7 @@ fn download(url: &str, dest: &Path) -> Result<(), String> {
     }
     if which("wget").is_some() {
         let status = Command::new("wget")
+            .arg(WGET_HTTPS_ONLY)
             .arg("-q")
             .arg(url)
             .arg("-O")
@@ -266,6 +296,54 @@ fn download(url: &str, dest: &Path) -> Result<(), String> {
         return Ok(());
     }
     Err("need curl or wget to download the release".to_string())
+}
+
+/// What the GitHub CLI says of the build attestation of an archive.
+#[derive(Debug, PartialEq)]
+enum Attestation {
+    Verified,
+    /// It does not verify: what gh said.
+    Failed(String),
+    /// It cannot be checked here: no `gh`, or `gh` not logged in.
+    NotChecked,
+}
+
+/// Check the build provenance that the release workflow signed for
+/// `archive`, with the `gh` found on PATH.
+fn verify_attestation(archive: &Path) -> Attestation {
+    match which("gh") {
+        Some(gh) => attestation_by(&gh, archive),
+        None => Attestation::NotChecked,
+    }
+}
+
+/// [`verify_attestation`] with the GitHub CLI `gh`.
+fn attestation_by(gh: &Path, archive: &Path) -> Attestation {
+    let logged_in = Command::new(gh)
+        .args(["auth", "status"])
+        .output()
+        .is_ok_and(|out| out.status.success());
+    if !logged_in {
+        return Attestation::NotChecked;
+    }
+    match Command::new(gh)
+        .args(["attestation", "verify"])
+        .arg(archive)
+        .args(["--repo", REPO])
+        .output()
+    {
+        Ok(out) if out.status.success() => Attestation::Verified,
+        Ok(out) => Attestation::Failed(
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            )
+            .trim_end()
+            .to_string(),
+        ),
+        Err(e) => Attestation::Failed(format!("failed to run gh: {e}")),
+    }
 }
 
 fn extract(archive: &Path, into: &Path, ext: &str) -> Result<(), String> {
@@ -512,6 +590,53 @@ mod tests {
         let sums_path = dir.join("SHA256SUMS");
         fs::write(&sums_path, format!("{hash}  silt-test.tar.gz\n")).expect("write");
         verify_archive(&archive, &sums_path, "silt-test.tar.gz").expect("should verify");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn every_download_is_over_https_only() {
+        // A redirect to http is refused, and so is a TLS older than 1.2.
+        assert_eq!(CURL_HTTPS_ONLY, ["--proto", "=https", "--tlsv1.2"]);
+        assert_eq!(WGET_HTTPS_ONLY, "--https-only");
+    }
+
+    /// A stub `gh` in `dir`: `auth status` exits with `auth`, and
+    /// `attestation verify` with `verify`, printing a line when it fails.
+    #[cfg(unix)]
+    fn stub_gh(dir: &Path, auth: u8, verify: u8) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let gh = dir.join(format!("gh-{auth}{verify}"));
+        fs::write(
+            &gh,
+            format!(
+                "#!/bin/sh\ncase \"$1 $2\" in\n  \"auth status\") exit {auth} ;;\n  \
+                 \"attestation verify\") [ {verify} = 0 ] || echo 'no attestation matches'; \
+                 [ \"$4 $5\" = \"--repo {REPO}\" ] || exit 9; exit {verify} ;;\nesac\nexit 1\n"
+            ),
+        )
+        .expect("write");
+        fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).expect("chmod");
+        gh
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_attestation_is_checked_with_a_logged_in_gh() {
+        let dir = tempdir();
+        let archive = dir.join("silt.tar.gz");
+        fs::write(&archive, b"archive").expect("write");
+        assert_eq!(
+            attestation_by(&stub_gh(&dir, 0, 0), &archive),
+            Attestation::Verified
+        );
+        assert_eq!(
+            attestation_by(&stub_gh(&dir, 0, 1), &archive),
+            Attestation::Failed("no attestation matches".to_string())
+        );
+        assert_eq!(
+            attestation_by(&stub_gh(&dir, 1, 0), &archive),
+            Attestation::NotChecked
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 

@@ -166,7 +166,7 @@ fn main() {
 curl -fsSL https://silt-lang.com/install.sh | sh
 ```
 
-The installer verifies the downloaded binary against the release's `SHA256SUMS` file before extracting — a mismatch aborts the install so a corrupted or tampered archive can't land on disk. To upgrade an existing install without re-running the curl pipe, use `silt self-update` (which performs the same verification).
+The installer downloads over https only and verifies the downloaded binary against the release's `SHA256SUMS` file before extracting — a mismatch aborts the install so a corrupted archive can't land on disk. The checksum comes from the same release as the archive; when the GitHub CLI (`gh`) is installed and logged in, the installer also checks the build attestation the release workflow signed, which a replaced release fails, and refuses an archive that does not verify. Without it, the installer says so and prints the command that checks the archive: `gh attestation verify silt-<version>-<target>.tar.gz --repo rendro/silt`. To upgrade an existing install without re-running the curl pipe, use `silt self-update` (which performs the same verification).
 
 Or build from source:
 

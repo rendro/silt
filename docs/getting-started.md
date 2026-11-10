@@ -266,7 +266,7 @@ Some problems are warnings, not errors: an import that nothing uses, a name that
 
 ### Staying up to date
 
-Run `silt self-update` to replace the installed binary with the latest GitHub release. It detects your platform, fetches the prebuilt archive, verifies it against the release's SHA-256 checksum, and atomically swaps the binary in place — no need to re-run the install script. Verification is fail-closed: a mismatch or missing `SHA256SUMS` file aborts the update without touching the installed binary. Pass `--dry-run` to preview the version that would be installed, or `--force` to reinstall when already current.
+Run `silt self-update` to replace the installed binary with the latest GitHub release. It detects your platform, fetches the prebuilt archive over https, verifies it against the release's SHA-256 checksum and, when the GitHub CLI (`gh`) is installed and logged in, against the build attestation the release workflow signed, and atomically swaps the binary in place — no need to re-run the install script. Verification is fail-closed: a mismatch, a missing `SHA256SUMS` file or an attestation that does not verify aborts the update without touching the installed binary. Pass `--dry-run` to preview the version that would be installed, or `--force` to reinstall when already current.
 
 The bare `silt update` command regenerates `silt.lock` from the current package's `silt.toml`. Use `silt self-update` for binary self-updates.
 

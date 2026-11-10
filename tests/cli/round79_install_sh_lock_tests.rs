@@ -27,16 +27,25 @@ static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 /// The stub `curl`. It only uses shell builtins, `cat` and `awk`, plus a
 /// SHA-256 tool, so a test that stubs `cp`, `mkdir` or `tar` to fail
-/// does not break the stub itself.
+/// does not break the stub itself. Each call's arguments are written to
+/// `$STUB_STATE/curl.log`, one call a line.
 const STUB_CURL: &str = r#"#!/bin/sh
-case "$1" in
-    -fsI)
-        printf 'HTTP/2 302\r\nlocation: https://github.com/rendro/silt/releases/tag/v9.9.9\r\n\r\n'
-        exit 0
-        ;;
-esac
-url="$2"
-dest="$4"
+echo "$*" >> "$STUB_STATE/curl.log"
+url=""
+dest=""
+head=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -fsI) head=1 ;;
+        -o) shift; dest="$1" ;;
+        https://*|http://*) url="$1" ;;
+    esac
+    shift
+done
+if [ -n "$head" ]; then
+    printf 'HTTP/2 302\r\nlocation: https://github.com/rendro/silt/releases/tag/v9.9.9\r\n\r\n'
+    exit 0
+fi
 case "$url" in
     *"$STUB_FAIL_FETCH"*)
         [ -n "$STUB_FAIL_FETCH" ] && exit 22
@@ -59,6 +68,26 @@ case "$url" in
 esac
 "#;
 
+/// A stub `gh` that is not logged in.
+const STUB_GH_LOGGED_OUT: &str = "#!/bin/sh\nexit 1\n";
+
+/// A stub `gh` that is logged in and whose `attestation verify` exits
+/// with `$STUB_GH_VERIFY` (0 when unset), saying so; its arguments go to
+/// `$STUB_STATE/gh.log`.
+const STUB_GH: &str = r#"#!/bin/sh
+echo "$*" >> "$STUB_STATE/gh.log"
+case "$1 $2" in
+    "auth status") exit 0 ;;
+    "attestation verify")
+        if [ "${STUB_GH_VERIFY:-0}" != 0 ]; then
+            echo "stub gh: no attestation matches"
+        fi
+        exit "${STUB_GH_VERIFY:-0}"
+        ;;
+esac
+exit 1
+"#;
+
 /// A stub `uname` that reports a Windows (MSYS) host, so the script takes
 /// its `.zip` / `unzip` branch.
 const STUB_UNAME_WINDOWS: &str =
@@ -79,6 +108,9 @@ impl Sandbox {
         }
         let sandbox = Sandbox { root };
         sandbox.stub("curl", STUB_CURL);
+        // The GitHub CLI of the machine must not take part: by default a
+        // `gh` that is not logged in, so the attestation is not checked.
+        sandbox.stub("gh", STUB_GH_LOGGED_OUT);
         // A real release archive holding a `silt` binary, so the steps
         // after extraction have something to install.
         fs::write(
@@ -111,6 +143,10 @@ impl Sandbox {
     }
 
     fn run(&self, fail_fetch: &str) -> Output {
+        self.run_with(fail_fetch, &[])
+    }
+
+    fn run_with(&self, fail_fetch: &str, env: &[(&str, &str)]) -> Output {
         let install_sh = Path::new(env!("CARGO_MANIFEST_DIR")).join("install.sh");
         let path = format!(
             "{}:{}",
@@ -125,6 +161,7 @@ impl Sandbox {
             .env("STUB_STATE", self.root.join("state"))
             .env("STUB_ASSET", self.root.join("release.tar.gz"))
             .env("STUB_FAIL_FETCH", fail_fetch)
+            .envs(env.iter().copied())
             .output()
             .expect("run install.sh")
     }
@@ -217,4 +254,86 @@ fn install_sh_chmod_binary_failure_is_branded() {
     let sb = Sandbox::new("chmod");
     sb.fail_tool("chmod");
     assert_branded_failure(&sb.run(""), "failed to mark");
+}
+
+#[test]
+fn install_sh_downloads_only_over_https() {
+    // Every curl call refuses a protocol but https, a redirect to http
+    // included, and a TLS older than 1.2.
+    let sb = Sandbox::new("https_only");
+    let out = sb.run("");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let log = fs::read_to_string(sb.root.join("state/curl.log")).unwrap();
+    assert_eq!(
+        log.lines().count(),
+        3,
+        "the version, the archive, the sums:\n{log}"
+    );
+    for call in log.lines() {
+        assert!(
+            call.starts_with("--proto =https --tlsv1.2 "),
+            "a curl call without --proto =https --tlsv1.2: {call}"
+        );
+    }
+}
+
+#[test]
+fn install_sh_without_a_logged_in_gh_says_the_attestation_is_not_checked() {
+    let sb = Sandbox::new("attest_unchecked");
+    let out = sb.run("");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        stdout.contains("Build attestation not checked")
+            && stdout.contains("gh attestation verify silt-v9.9.9-"),
+        "{stdout}"
+    );
+    assert!(sb.install_dir().join("silt").is_file());
+}
+
+#[test]
+fn install_sh_with_a_logged_in_gh_verifies_the_attestation() {
+    let sb = Sandbox::new("attest_ok");
+    sb.stub("gh", STUB_GH);
+    let out = sb.run("");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        stdout.contains("Verified the build attestation"),
+        "{stdout}"
+    );
+    let log = fs::read_to_string(sb.root.join("state/gh.log")).unwrap();
+    assert!(
+        log.lines()
+            .any(|call| call.starts_with("attestation verify ")
+                && call.ends_with(" --repo rendro/silt")),
+        "{log}"
+    );
+    assert!(sb.install_dir().join("silt").is_file());
+}
+
+#[test]
+fn install_sh_refuses_an_archive_whose_attestation_does_not_verify() {
+    let sb = Sandbox::new("attest_bad");
+    sb.stub("gh", STUB_GH);
+    let out = sb.run_with("", &[("STUB_GH_VERIFY", "1")]);
+    assert_branded_failure(&out, "the build attestation of silt-v9.9.9-");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("stub gh: no attestation matches"),
+        "{stderr}"
+    );
+    assert!(!sb.install_dir().join("silt").exists());
 }
