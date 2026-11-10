@@ -1,0 +1,35 @@
+error[type]: operator '+' requires Int or Float, got 'String'; build strings with interpolation, e.g. "{a}{b}"
+ --> impl_type_variable__a_call_at_another_type_is_rejected.silt:46:11
+    |
+ 46 |   println(Container.unwrap(w) + "x")
+    |           ^^^^^^^^^^^^^^^^^^^^^^^^^ operator '+' requires Int or Float, got 'String'; build strings with interpolation, e.g. "{a}{b}"
+
+error[type]: type 'Box(Int)' does not implement trait 'Container(String)': the matched impl is 'Container(Int)'
+ --> impl_type_variable__a_call_at_another_type_is_rejected.silt:46:28
+    |
+ 46 |   println(Container.unwrap(w) + "x")
+    |                            ^ type 'Box(Int)' does not implement trait 'Container(String)': the matched impl is 'Container(Int)'
+
+error[type]: type 'Box(Int)' does not implement trait 'Container(String)': the matched impl is 'Container(Int)'
+ --> impl_type_variable__a_call_at_another_type_is_rejected.silt:47:27
+    |
+ 47 |   println(Container.holds(w, "two"))
+    |                           ^ type 'Box(Int)' does not implement trait 'Container(String)': the matched impl is 'Container(Int)'
+
+error[type]: type 'Box(Int)' does not implement trait 'Container(String)': the matched impl is 'Container(Int)'
+ --> impl_type_variable__a_call_at_another_type_is_rejected.silt:48:36
+    |
+ 48 |   let n: String = Container.unwrap(Box { item: 1 })
+    |                                    ^^^^^^^^^^^^^^^ type 'Box(Int)' does not implement trait 'Container(String)': the matched impl is 'Container(Int)'
+
+error[type]: type 'Box(Int)' does not implement trait 'Container(String)': the matched impl is 'Container(Int)'
+ --> impl_type_variable__a_call_at_another_type_is_rejected.silt:49:16
+    |
+ 49 |   let s = take(Box { item: 1 }, String)
+    |                ^^^^^^^^^^^^^^^ type 'Box(Int)' does not implement trait 'Container(String)': the matched impl is 'Container(Int)'
+
+error[type]: type 'Bag(Int)' does not implement trait 'Container(List(String))': the matched impl is 'Container(List(Int))'
+ --> impl_type_variable__a_call_at_another_type_is_rejected.silt:50:42
+    |
+ 50 |   let l: List(String) = Container.unwrap(Bag { items: [1] })
+    |                                          ^^^^^^^^^^^^^^^^^^ type 'Bag(Int)' does not implement trait 'Container(List(String))': the matched impl is 'Container(List(Int))'

@@ -1,0 +1,52 @@
+-- cmd: check
+-- exit: 1
+-- An impl whose trait argument is a variable of its type (`trait
+-- Container(a) for Box(a)`) is the impl of `Container(Int)` for
+-- `Box(Int)` and of no other argument: `Box(Int)`'s `unwrap` gives an
+-- Int and its `holds` takes one, directly and through a bound. (It
+-- was the impl of any argument: `let n: String = Container.unwrap(Box
+-- { item: 1 })` checked and held an Int.)
+type Box(a) {
+  item: a,
+}
+
+type Bag(a) {
+  items: List(a),
+}
+
+trait Container(item) {
+  fn unwrap(self) -> item
+  fn holds(self, x: item) -> Bool
+}
+
+trait Container(a) for Box(a) where a: Equal {
+  fn unwrap(self) -> a {
+    self.item
+  }
+  fn holds(self, x: a) -> Bool {
+    self.item == x
+  }
+}
+
+trait Container(List(a)) for Bag(a) where a: Equal {
+  fn unwrap(self) -> List(a) {
+    self.items
+  }
+  fn holds(self, x: List(a)) -> Bool {
+    self.items == x
+  }
+}
+
+fn take(c: c, type i) -> i where c: Container(i) {
+  Container.unwrap(c)
+}
+
+fn main() {
+  let w = Box { item: 2 }
+  println(Container.unwrap(w) + "x")
+  println(Container.holds(w, "two"))
+  let n: String = Container.unwrap(Box { item: 1 })
+  let s = take(Box { item: 1 }, String)
+  let l: List(String) = Container.unwrap(Bag { items: [1] })
+  println("{n}{s}{l}")
+}
