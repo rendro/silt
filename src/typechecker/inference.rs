@@ -2058,6 +2058,9 @@ impl TypeChecker {
     /// Keep the parameter `param` of the type `ty` if it has no
     /// annotation: it may hold a type (`held_params`).
     fn note_held_param(&mut self, param: &crate::ast::Param, ty: &Type) {
+        if param.ty.is_none() && param.kind == crate::ast::ParamKind::Data {
+            self.unannotated_params.push(ty.clone());
+        }
         if param.ty.is_none()
             && param.kind == crate::ast::ParamKind::Data
             && matches!(param.pattern.kind, PatternKind::Ident(_))

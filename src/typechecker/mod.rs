@@ -415,6 +415,10 @@ pub struct TypeChecker {
     /// checked, by the span of their names, with their types: those that
     /// hold a type are the program's `held_types`.
     pub(super) held_params: Vec<(Span, Type)>,
+    /// The types of the parameters with no annotation of the functions
+    /// and closures checked, whatever their patterns: a type variable in
+    /// one is decided at each call (`check_unresolved_in_block`).
+    pub(super) unannotated_params: Vec<Type>,
     /// The arguments of the call whose callee, a method after a dot, is
     /// checked, as written (`1` of `Option(String).pure(1)`).
     pub(super) method_call_args: Option<String>,
@@ -877,6 +881,7 @@ impl TypeChecker {
             readings: HashMap::new(),
             closure_readings: Vec::new(),
             held_params: Vec::new(),
+            unannotated_params: Vec::new(),
             method_call_args: None,
             type_receiver: false,
             tuple_spelling: None,
