@@ -863,6 +863,12 @@ impl TcpStreamHandle {
         written
     }
 
+    /// Whether [`TcpStreamHandle::read_now`] can read anything: a plain
+    /// connection.
+    pub fn reads_now(&self) -> bool {
+        matches!(self.io, TcpIo::Plain { .. })
+    }
+
     /// Read what is there on a plain connection, without waiting for
     /// anything: `Some(0)` at its end, `None` if nothing is there (or
     /// a read is in flight, or the connection is closed or not a plain
