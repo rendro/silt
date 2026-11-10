@@ -38,8 +38,7 @@ fn trait_info_size_locked() {
     // are checked with, and `receivers`, which says where an impl's
     // method writes `self`. `builtin_needs` and `via_needs`: what the default
     // bodies ask of their annotation variables for the builtins and the
-    // trait methods they give them to. Associated types and their list
-    // went.
+    // trait methods they give them to.
     assert_eq!(
         std::mem::size_of::<TraitInfo>(),
         432,
