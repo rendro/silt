@@ -680,6 +680,84 @@ fn one_a_read(
     move || read().into_iter().collect()
 }
 
+/// The reads of `stream.tcp_lines` on `conn`: each gives the lines,
+/// without their `\n` or `\r\n`, that are complete in what has been
+/// read, reading (up to [`READ_AT_ONCE`] bytes at a time) until one is,
+/// or the peer has closed; then the bytes after the last `\n` are the
+/// last line, if there are any. What one read brings past its last line
+/// waits for the next. A line that is no UTF-8 ends the source with an
+/// error, as `file_lines` ends, after the lines before it; the
+/// connection is shut down then, as for any source on it that stops.
+#[cfg(feature = "tcp")]
+fn tcp_line_reads(
+    conn: Arc<crate::runtime::handle::TcpStreamHandle>,
+) -> impl FnMut() -> Vec<Value> + Send + 'static {
+    // What was read and is no line yet; how much of it is known to
+    // have no `\n`; the peer has closed; the source has ended.
+    let mut pending: Vec<u8> = Vec::new();
+    let mut scanned = 0;
+    let mut closed = false;
+    let mut ended = false;
+    let not_utf8 = |conn: &crate::runtime::handle::TcpStreamHandle| {
+        conn.shut_down();
+        let not_utf8 = std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "invalid input: stream did not contain valid UTF-8",
+        );
+        super::tcp::tcp_io_err(super::tcp::Doing::Using, &not_utf8)
+    };
+    move || {
+        let mut lines = Vec::new();
+        if ended {
+            return lines;
+        }
+        while !closed && !pending[scanned..].contains(&b'\n') {
+            scanned = pending.len();
+            pending.resize(scanned + READ_AT_ONCE, 0);
+            let read = conn.read(&mut pending[scanned..]);
+            pending.truncate(scanned + *read.as_ref().unwrap_or(&0));
+            match read {
+                Ok(0) => closed = true,
+                Ok(_) => {}
+                Err(e) => {
+                    ended = true;
+                    lines.push(super::tcp::tcp_io_err(super::tcp::Doing::Using, &e));
+                    return lines;
+                }
+            }
+        }
+        let mut taken = 0;
+        while let Some(at) = pending[taken..].iter().position(|&b| b == b'\n') {
+            let line = &pending[taken..taken + at];
+            let line = line.strip_suffix(b"\r").unwrap_or(line);
+            match std::str::from_utf8(line) {
+                Ok(line) => lines.push(ok(Value::String(line.into()))),
+                Err(_) if lines.is_empty() => {
+                    ended = true;
+                    lines.push(not_utf8(&conn));
+                    return lines;
+                }
+                // The lines before it are emitted first: the next read
+                // ends the source with it.
+                Err(_) => break,
+            }
+            taken += at + 1;
+        }
+        pending.drain(..taken);
+        scanned = 0;
+        if lines.is_empty() && closed {
+            ended = true;
+            if !pending.is_empty() {
+                lines.push(match std::str::from_utf8(&pending) {
+                    Ok(line) => ok(Value::String(line.into())),
+                    Err(_) => not_utf8(&conn),
+                });
+            }
+        }
+        lines
+    }
+}
+
 /// The value inside `Ok(_)`, if `v` is one.
 fn ok_inner(v: &Value) -> Option<Value> {
     match v {
@@ -967,54 +1045,8 @@ builtins! {
 
     #[cfg(feature = "tcp")]
     fn tcp_lines(vm, stream: TcpStream) -> Result<Step, VmError> {
-        let stream_handle = stream.clone();
-        let mut at_end = false;
-        reading(vm, "stream.tcp_lines", on_tcp(&stream_handle), one_a_read(move || {
-            // The stream is behind a lock and cannot be wrapped in a
-            // buffered reader that outlives one call, so a line is read
-            // byte by byte: the network buffer dominates the cost.
-            if at_end {
-                return None;
-            }
-            let mut current = Vec::new();
-            loop {
-                let mut byte = [0u8; 1];
-                let read = stream_handle.read(&mut byte);
-                match read {
-                    Ok(0) => {
-                        at_end = true;
-                        if current.is_empty() {
-                            return None;
-                        }
-                        break;
-                    }
-                    Ok(_) if byte[0] == b'\n' => {
-                        // Strip trailing \r if present.
-                        if current.last() == Some(&b'\r') {
-                            current.pop();
-                        }
-                        break;
-                    }
-                    Ok(_) => current.push(byte[0]),
-                    Err(e) => return Some(super::tcp::tcp_io_err(super::tcp::Doing::Using, &e)),
-                }
-            }
-            // A line that is no UTF-8 ends the source with an error, as
-            // `file_lines` ends; the connection is shut down, as for any
-            // source on it that stops.
-            match String::from_utf8(current) {
-                Ok(line) => Some(ok(Value::String(line.into()))),
-                Err(_) => {
-                    at_end = true;
-                    stream_handle.shut_down();
-                    let not_utf8 = std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        "invalid input: stream did not contain valid UTF-8",
-                    );
-                    Some(super::tcp::tcp_io_err(super::tcp::Doing::Using, &not_utf8))
-                }
-            }
-        }))
+        let conn = stream.clone();
+        reading(vm, "stream.tcp_lines", on_tcp(&conn), tcp_line_reads(conn))
     }
 
     // ── Transforms ────────────────────────────────────────────────────────
@@ -1582,6 +1614,188 @@ mod tests {
         };
         assert!(error.is(bv::TCP_OTHER), "{}", error.name());
         until("the source did not end", || out.is_closed());
+    }
+
+    /// A connection whose bytes are `data`, given at most `most` a
+    /// read, then the end or (with `fail`) that error; and how many
+    /// reads it was asked for.
+    #[cfg(feature = "tcp")]
+    fn counted(
+        data: &[u8],
+        most: usize,
+        fail: Option<std::io::ErrorKind>,
+    ) -> (
+        Arc<crate::runtime::handle::TcpStreamHandle>,
+        Arc<std::sync::atomic::AtomicUsize>,
+    ) {
+        use crate::runtime::handle::{ReadWrite, Shutter, TcpStreamHandle};
+        use std::sync::atomic::AtomicUsize;
+        struct Counted {
+            data: std::io::Cursor<Vec<u8>>,
+            most: usize,
+            fail: Option<std::io::ErrorKind>,
+            reads: Arc<AtomicUsize>,
+        }
+        impl std::io::Read for Counted {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                self.reads.fetch_add(1, Ordering::SeqCst);
+                let most = buf.len().min(self.most);
+                match (self.data.read(&mut buf[..most])?, self.fail) {
+                    (0, Some(fail)) => Err(fail.into()),
+                    (read, _) => Ok(read),
+                }
+            }
+        }
+        impl std::io::Write for Counted {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        impl ReadWrite for Counted {}
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let _peer =
+            std::net::TcpStream::connect(listener.local_addr().expect("addr")).expect("connect");
+        let (sock, _) = listener.accept().expect("accept");
+        let shutter = Shutter::default();
+        assert!(shutter.set(&sock));
+        let reads = Arc::new(AtomicUsize::new(0));
+        let fake = Counted {
+            data: std::io::Cursor::new(data.to_vec()),
+            most,
+            fail,
+            reads: reads.clone(),
+        };
+        let conn = TcpStreamHandle::whole(0, &sock, &shutter, move || {
+            Ok(Box::new(fake) as Box<dyn ReadWrite>)
+        })
+        .expect("a connection");
+        (conn, reads)
+    }
+
+    /// Every item of the reads of `stream.tcp_lines` until they end, as
+    /// text: a line as itself, an error as `Err:` and its variant's
+    /// name; and how many reads of the source there were.
+    #[cfg(feature = "tcp")]
+    fn lines_of(conn: &Arc<crate::runtime::handle::TcpStreamHandle>) -> (Vec<String>, usize) {
+        let mut read = tcp_line_reads(conn.clone());
+        let (mut items, mut calls) = (Vec::new(), 0);
+        loop {
+            calls += 1;
+            let got = read();
+            if got.is_empty() {
+                return (items, calls);
+            }
+            for item in got {
+                let Value::Variant(item) = item else {
+                    panic!("an item that is no Result");
+                };
+                let [field] = item.fields() else {
+                    panic!("a Result with one field");
+                };
+                items.push(match (item.is(bv::OK), field) {
+                    (true, Value::String(line)) => line.to_string(),
+                    (false, Value::Variant(error)) => format!("Err:{}", error.name()),
+                    _ => panic!("an item that is no Result of a line"),
+                });
+            }
+        }
+    }
+
+    /// `stream.tcp_lines` reads a buffer at a time, not a byte: 10,000
+    /// lines of 40 bytes take a few reads of 64 KiB (they took one read
+    /// a byte, 400,001, and 430 times as long as `tcp_chunks` over
+    /// loopback). The lines of one read come in one read of the source.
+    #[test]
+    #[cfg(feature = "tcp")]
+    fn tcp_lines_reads_a_buffer_at_a_time() {
+        let line = format!("{}\n", "k".repeat(39));
+        let (conn, reads) = counted(line.repeat(10_000).as_bytes(), usize::MAX, None);
+        let (lines, calls) = lines_of(&conn);
+        assert_eq!(lines.len(), 10_000);
+        assert!(lines.iter().all(|l| *l == line[..39]));
+        let reads = reads.load(Ordering::SeqCst);
+        assert!(
+            reads <= 400_000 / READ_AT_ONCE + 2,
+            "{reads} reads of the connection"
+        );
+        assert!(calls <= reads + 1, "{calls} reads of the source");
+    }
+
+    /// The lines are what they were when they were read a byte at a
+    /// time, however the bytes come: `\n` and `\r\n` end a line, a lone
+    /// `\r` is kept, an empty line is one, a final `\n` makes no empty
+    /// last line, and what follows the last `\n` is the last line (a
+    /// final `\r` with it).
+    #[test]
+    #[cfg(feature = "tcp")]
+    fn tcp_lines_gives_the_same_lines_however_the_bytes_come() {
+        let cases: [(&[u8], &[&str]); 5] = [
+            (b"a\r\nb\n\nc\rd\ne\r", &["a", "b", "", "c\rd", "e\r"]),
+            (b"x\n", &["x"]),
+            (b"", &[]),
+            (b"\n\r\n", &["", ""]),
+            ("é\n日本\r\nz".as_bytes(), &["é", "日本", "z"]),
+        ];
+        for (data, want) in cases {
+            for most in [1, 2, 3, 7, usize::MAX] {
+                let (conn, _) = counted(data, most, None);
+                assert_eq!(lines_of(&conn).0, want, "{data:?} read {most} at a time");
+                assert!(
+                    !conn.is_closed(),
+                    "a source that ends with the peer shuts nothing down"
+                );
+            }
+        }
+    }
+
+    /// A line that is no UTF-8 ends the source after the lines before
+    /// it, in a read of its own: the connection is shut down there, not
+    /// when the bytes came in. A read that fails ends the source with
+    /// its error, after the complete lines.
+    #[test]
+    #[cfg(feature = "tcp")]
+    fn tcp_lines_ends_at_a_line_that_is_no_utf8_or_a_read_that_fails() {
+        let (conn, _) = counted(b"a\nb\n\xff\nc\n", usize::MAX, None);
+        let mut read = tcp_line_reads(conn.clone());
+        let mut lines = 0;
+        let ended = loop {
+            let got = read();
+            if got.iter().any(|item| ok_inner(item).is_none()) {
+                break got;
+            }
+            lines += got.len();
+            assert!(!got.is_empty(), "the source ended without its error");
+            assert!(
+                !conn.is_closed(),
+                "shut down before the lines before it were emitted"
+            );
+        };
+        assert_eq!(lines, 2);
+        assert!(matches!(&ended[..], [Value::Variant(e)] if e.is(bv::ERR)));
+        assert!(conn.is_closed());
+        assert!(read().is_empty());
+        for (data, most) in [
+            (&b"a\n\xff"[..], usize::MAX),
+            (b"a\n\xff", 1),
+            (b"\xff\na\n", 2),
+        ] {
+            let (conn, _) = counted(data, most, None);
+            let (lines, _) = lines_of(&conn);
+            assert_eq!(
+                lines.last().map(|l| l.starts_with("Err:")),
+                Some(true),
+                "{data:?}: {lines:?}"
+            );
+            assert!(conn.is_closed());
+        }
+        let (conn, _) = counted(b"a\nb\nhalf", 3, Some(std::io::ErrorKind::ConnectionReset));
+        let (lines, _) = lines_of(&conn);
+        assert_eq!(lines[..2], ["a", "b"]);
+        assert_eq!(lines.len(), 3, "{lines:?}");
+        assert!(lines[2].starts_with("Err:"), "{lines:?}");
     }
 
     /// The reader of a source on a connection is gone when the source
