@@ -1015,10 +1015,17 @@ impl TypeChecker {
                     self.where_not_introduced(m, wc.type_param, wc.trait_name, None);
                     continue;
                 }
+                // (A trait of the module declared further down is known
+                // here as one declared above: the order of declarations
+                // does not matter.)
                 let (Some(Type::Var(tv)), Some(bound)) = (
                     param_map.get(&wc.type_param).cloned(),
                     self.named_trait(wc.trait_res, wc.trait_name)
-                        .filter(|bound| self.tables.traits.contains_key(bound) || *bound == key),
+                        .filter(|bound| {
+                            self.tables.traits.contains_key(bound)
+                                || *bound == key
+                                || self.own_traits.values().any(|own| own == bound)
+                        }),
                 ) else {
                     continue;
                 };
