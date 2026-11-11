@@ -681,13 +681,11 @@ pub mod bv {
     pub const ENCODING_INVALID_PERCENT: BuiltinVariant = BuiltinVariant::new(ty::ENCODING_ERROR, 0);
     pub const ENCODING_INVALID_UTF8: BuiltinVariant = BuiltinVariant::new(ty::ENCODING_ERROR, 1);
     pub const UUID_INVALID: BuiltinVariant = BuiltinVariant::new(ty::UUID_ERROR, 0);
-    pub const UUID_OTHER: BuiltinVariant = BuiltinVariant::new(ty::UUID_ERROR, 1);
     pub const CSV_SYNTAX: BuiltinVariant = BuiltinVariant::new(ty::CSV_ERROR, 0);
     pub const CSV_TYPE_MISMATCH: BuiltinVariant = BuiltinVariant::new(ty::CSV_ERROR, 1);
     pub const CSV_MISSING_FIELD: BuiltinVariant = BuiltinVariant::new(ty::CSV_ERROR, 2);
     pub const CSV_OTHER: BuiltinVariant = BuiltinVariant::new(ty::CSV_ERROR, 3);
     pub const TASK_TIMEOUT: BuiltinVariant = BuiltinVariant::new(ty::TASK_ERROR, 0);
-    pub const TASK_OTHER: BuiltinVariant = BuiltinVariant::new(ty::TASK_ERROR, 1);
     pub const HTTP_CONNECT: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 0);
     pub const HTTP_TLS: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 1);
     pub const HTTP_TIMEOUT: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 2);
@@ -716,7 +714,6 @@ pub mod bv {
     pub const TIME_PARSE_FORMAT: BuiltinVariant = BuiltinVariant::new(ty::TIME_ERROR, 0);
     pub const TIME_OUT_OF_RANGE: BuiltinVariant = BuiltinVariant::new(ty::TIME_ERROR, 1);
     pub const TIME_INVALID_FORMAT: BuiltinVariant = BuiltinVariant::new(ty::TIME_ERROR, 2);
-    pub const TIME_OTHER: BuiltinVariant = BuiltinVariant::new(ty::TIME_ERROR, 3);
     pub const BYTES_INVALID_UTF8: BuiltinVariant = BuiltinVariant::new(ty::BYTES_ERROR, 0);
     pub const BYTES_INVALID_HEX: BuiltinVariant = BuiltinVariant::new(ty::BYTES_ERROR, 1);
     pub const BYTES_INVALID_BASE64: BuiltinVariant = BuiltinVariant::new(ty::BYTES_ERROR, 2);
@@ -1087,13 +1084,11 @@ mod tests {
             (bv::ENCODING_INVALID_PERCENT, "InvalidPercent"),
             (bv::ENCODING_INVALID_UTF8, "InvalidUtf8"),
             (bv::UUID_INVALID, "Invalid"),
-            (bv::UUID_OTHER, "Other"),
             (bv::CSV_SYNTAX, "Syntax"),
             (bv::CSV_TYPE_MISMATCH, "TypeMismatch"),
             (bv::CSV_MISSING_FIELD, "MissingField"),
             (bv::CSV_OTHER, "Other"),
             (bv::TASK_TIMEOUT, "Timeout"),
-            (bv::TASK_OTHER, "Other"),
             (bv::HTTP_CONNECT, "Connect"),
             (bv::HTTP_TLS, "Tls"),
             (bv::HTTP_TIMEOUT, "Timeout"),
@@ -1122,7 +1117,6 @@ mod tests {
             (bv::TIME_PARSE_FORMAT, "ParseFormat"),
             (bv::TIME_OUT_OF_RANGE, "OutOfRange"),
             (bv::TIME_INVALID_FORMAT, "InvalidFormat"),
-            (bv::TIME_OTHER, "Other"),
             (bv::BYTES_INVALID_UTF8, "InvalidUtf8"),
             (bv::BYTES_INVALID_HEX, "InvalidHex"),
             (bv::BYTES_INVALID_BASE64, "InvalidBase64"),

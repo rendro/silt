@@ -309,7 +309,7 @@ pub(super) fn modules() -> Vec<Module> {
             name: "task",
             page: "channel-task.md",
             types: "\
-                pub type TaskError { Timeout, Other(String) }\n\
+                pub type TaskError { Timeout }\n\
             ",
             opaque: [("Handle", 1)],
             error: "TaskError" => concurrency::task_error_text,
@@ -430,7 +430,7 @@ pub(super) fn modules() -> Vec<Module> {
                 pub type DateTime { date: Date, time: Time }\n\
                 pub type Duration { ns: Int }\n\
                 pub type Weekday { Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday }\n\
-                pub type TimeError { ParseFormat(String), OutOfRange(String), InvalidFormat(String), Other(String) }\n\
+                pub type TimeError { ParseFormat(String), OutOfRange(String), InvalidFormat(String) }\n\
             ",
             error: "TimeError" => time::error_text,
             rows: [
@@ -668,7 +668,7 @@ pub(super) fn modules() -> Vec<Module> {
             name: "uuid",
             page: "uuid.md",
             types: "\
-                pub type UuidError { Invalid(String), Other(String) }\n\
+                pub type UuidError { Invalid(String) }\n\
             ",
             error: "UuidError" => uuid::error_text,
             rows: [

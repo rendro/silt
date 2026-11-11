@@ -451,7 +451,6 @@ impl Native for Body {
 pub(crate) fn task_error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
         ("Timeout", []) => "the function was ended by its deadline".to_string(),
-        ("Other", [Value::String(m)]) => m.to_string(),
         _ => return None,
     })
 }

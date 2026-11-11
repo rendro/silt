@@ -530,7 +530,7 @@ channel.try_send(ch: Channel(a), value: a) -> Bool
 ### task
 
 ```
-type TaskError { Timeout, Other(String) }
+type TaskError { Timeout }
 type Handle(a)  -- opaque
 task.cancel(handle: Handle(a)) -> ()
 task.deadline(dur: Duration, f: Fn() -> a) -> Result(a, TaskError)
@@ -631,7 +631,7 @@ type Time { hour: Int, minute: Int, second: Int, ns: Int }
 type DateTime { date: Date, time: Time }
 type Duration { ns: Int }
 type Weekday { Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday }
-type TimeError { ParseFormat(String), OutOfRange(String), InvalidFormat(String), Other(String) }
+type TimeError { ParseFormat(String), OutOfRange(String), InvalidFormat(String) }
 time.add(instant: Instant, duration: Duration) -> Instant
 time.add_days(date: Date, days: Int) -> Date
 time.add_months(date: Date, months: Int) -> Date
@@ -836,7 +836,7 @@ stream.zip(a: Channel(a), b: Channel(b)) -> Channel((a, b))
 ### uuid
 
 ```
-type UuidError { Invalid(String), Other(String) }
+type UuidError { Invalid(String) }
 uuid.is_valid(s: String) -> Bool
 uuid.nil() -> String
 uuid.parse(s: String) -> Result(String, UuidError)

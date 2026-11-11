@@ -11,7 +11,6 @@ fn show(label, r) {
     Err(time.ParseFormat(_)) -> println("{label}: ParseFormat")
     Err(time.OutOfRange(_)) -> println("{label}: OutOfRange")
     Err(time.InvalidFormat(why)) -> println("{label}: InvalidFormat({why})")
-    Err(time.Other(_)) -> println("{label}: Other")
   }
 }
 

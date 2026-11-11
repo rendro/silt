@@ -100,7 +100,6 @@ type channel.Selected(a) {
 ```silt
 type task.TaskError {
   Timeout,
-  Other(String),
 }
 ```
 
@@ -111,7 +110,6 @@ Returned by `task.deadline`.
 | Variant | Fields | Meaning |
 |---------|--------|---------|
 | `Timeout` | — | the function was ended because its time was over |
-| `Other(String)` | message | unclassified failure |
 > hover 64:16
 ```silt
 type regex.RegexError {
@@ -273,7 +271,6 @@ type time.TimeError {
   ParseFormat(String),
   OutOfRange(String),
   InvalidFormat(String),
-  Other(String),
 }
 ```
 
@@ -284,7 +281,6 @@ type time.TimeError {
 | `ParseFormat(String)` | message | the text did not match a pattern that could have given the value |
 | `OutOfRange(String)` | message | field out of valid range (e.g. month=13) |
 | `InvalidFormat(String)` | what is wrong | the pattern of `time.format`, `time.format_date`, `time.parse` or `time.parse_date` is no format, or one from which no text could give the value (no time of day for a `DateTime`, no date, empty) |
-| `Other(String)` | message | unclassified failure |
 > hover 75:16
 ```silt
 type http.Method {
@@ -408,7 +404,6 @@ Returned by `encoding.url_decode` and `encoding.form_decode`.
 ```silt
 type uuid.UuidError {
   Invalid(String),
-  Other(String),
 }
 ```
 
@@ -419,7 +414,6 @@ Returned by `uuid.parse`.
 | Variant | Fields | Meaning |
 |---------|--------|---------|
 | `Invalid(String)` | why | not a syntactically valid UUID |
-| `Other(String)` | message | unclassified failure |
 > hover 84:16
 ```silt
 type task.Handle(a)

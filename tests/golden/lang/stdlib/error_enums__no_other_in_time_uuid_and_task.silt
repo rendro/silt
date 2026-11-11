@@ -1,0 +1,40 @@
+import task
+import time
+import uuid
+
+-- Each match is exhaustive without an Other arm: no function of time,
+-- uuid or task makes one.
+fn time_text(e: time.TimeError) -> String {
+  match e {
+    time.ParseFormat(why) -> "parse: {why}"
+    time.OutOfRange(why) -> "range: {why}"
+    time.InvalidFormat(why) -> "format: {why}"
+  }
+}
+
+fn uuid_text(e: uuid.UuidError) -> String {
+  match e {
+    uuid.Invalid(why) -> "invalid: {why}"
+  }
+}
+
+fn task_text(e: task.TaskError) -> String {
+  match e {
+    task.Timeout -> "timeout"
+  }
+}
+
+fn main() {
+  match time.date(2024, 13, 1) {
+    Ok(_) -> ()
+    Err(e) -> println(time_text(e))
+  }
+  match uuid.parse("not-a-uuid") {
+    Ok(_) -> ()
+    Err(e) -> println(uuid_text(e))
+  }
+  match task.deadline(time.ms(10), { -> time.sleep(time.hours(1)) }) {
+    Ok(_) -> ()
+    Err(e) -> println(task_text(e))
+  }
+}

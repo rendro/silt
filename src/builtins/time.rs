@@ -302,7 +302,6 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
         ("ParseFormat", [Value::String(m)]) => format!("time parse error: {m}"),
         ("OutOfRange", [Value::String(m)]) => format!("time out of range: {m}"),
         ("InvalidFormat", [Value::String(m)]) => format!("time format error: {m}"),
-        ("Other", [Value::String(m)]) => m.to_string(),
         _ => return None,
     })
 }
