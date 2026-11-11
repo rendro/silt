@@ -352,6 +352,34 @@ fn test_two() {
     );
 }
 
+/// `*_test.silt` is the one test file name: a directory walk does not
+/// take `a.test.silt` for a test file. FAILS on the base commit: both
+/// files' tests ran.
+#[test]
+fn test_silt_test_finds_only_underscore_test_files() {
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!("silt_test_dc7_{n}"));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("b_test.silt"), "fn test_y() { () }\n").unwrap();
+    fs::write(dir.join("a.test.silt"), "fn test_x() { () }\n").unwrap();
+    let output = silt_cmd()
+        .arg("test")
+        .arg(&dir)
+        .output()
+        .expect("failed to run silt");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.status.success(), "{combined}");
+    assert!(combined.contains("test_y"), "{combined}");
+    assert!(!combined.contains("test_x"), "{combined}");
+    assert!(combined.contains("1 passed"), "{combined}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
 // ── silt fmt --check: rejects unformatted files without mutating ───
 
 #[test]
@@ -417,8 +445,8 @@ fn test_silt_test_help_mentions_filename_pattern() {
             "silt test {flag}: expected '_test.silt' in help output, got: {stdout}"
         );
         assert!(
-            stdout.contains(".test.silt"),
-            "silt test {flag}: expected '.test.silt' in help output, got: {stdout}"
+            !stdout.contains(".test.silt"),
+            "silt test {flag}: `*.test.silt` is no test file name: {stdout}"
         );
     }
 }

@@ -40,13 +40,13 @@ fn enters_package_dir(path: &Path) -> bool {
     !silt::file_discovery::should_skip_dir(path) && !path.join("silt.toml").is_file()
 }
 
-/// The test files under `root` (`*_test.silt`, `*.test.silt`), sorted,
+/// The test files under `root` (`*_test.silt`), sorted,
 /// as `silt test` and `silt check` find them, in the directories
 /// [`enters_package_dir`] lets the walk into.
 pub(crate) fn package_test_files(root: &Path) -> Vec<String> {
     let wanted = |path: &Path| {
         let name = path.to_string_lossy();
-        name.ends_with("_test.silt") || name.ends_with(".test.silt")
+        name.ends_with("_test.silt")
     };
     let names = files_under(root, &enters_package_dir, &wanted).into_iter();
     let mut out: Vec<String> = names

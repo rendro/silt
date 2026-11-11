@@ -58,7 +58,7 @@ pub(crate) fn dispatch(args: &[String]) {
             println!("  --watch, -w         Re-run on file changes");
             println!();
             println!("Auto-discovery: when no file is given, recursively runs tests");
-            println!("from files matching *_test.silt or *.test.silt.");
+            println!("from files matching *_test.silt.");
             process::exit(0);
         } else if args[i].starts_with('-') {
             // Unknown flag — don't silently treat as a filename.
@@ -385,7 +385,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         }
     };
     if total == 0 && !file_errors.any() {
-        said += "hint: test functions must be named 'fn test_*'; test files end with '_test.silt' or '.test.silt'\n";
+        said += "hint: test functions must be named 'fn test_*'; test files end with '_test.silt'\n";
     }
     say(&said);
     // (The tests may have left threads: see `vm_run_file`.)

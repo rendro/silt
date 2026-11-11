@@ -451,7 +451,7 @@ fn help_descriptions_are_the_docs() {
 ///
 /// This walker closes the gap: every ```silt fence in README + docs/**/*.md
 /// that declares a `fn test_*` or `fn skip_test_*` is treated as a testable
-/// file, written to a `*.test.silt` temp file, and driven through
+/// file, written to a `*_test.silt` temp file, and driven through
 /// `silt test`. The whole point of a test doc block is to be copy-paste
 /// runnable under `silt test`; if it isn't, the doc is broken. This is the
 /// regression lock for the fixed `testing.md` block and will catch any new
@@ -554,12 +554,12 @@ fn all_doc_fn_test_blocks_compile() {
 
     par_for_each(&jobs, |job| {
         // `silt test`'s auto-discovery path only picks up files that end
-        // in `_test.silt` or `.test.silt`. Writing the temp file with
-        // the `.test.silt` suffix keeps things consistent even when we
+        // in `_test.silt`. Writing the temp file with that suffix keeps
+        // things consistent even when we
         // pass the filename explicitly, and makes the temp artifact
         // self-describing for any debugging on failure.
         let file = tmp_dir.join(format!(
-            "{}_line{}.test.silt",
+            "{}_line{}_test.silt",
             job.file_stem, job.opener_line
         ));
         std::fs::write(&file, &job.src).expect("write temp silt test file");
