@@ -6341,7 +6341,7 @@ pub(super) fn operator_message(tr: &str, op: &str, ty: &Type, shown: &str) -> St
         "Number" => arith_operand_message(op, ty, shown),
         "Equal" => format!("operator {op} requires a comparable type, got '{shown}'"),
         _ => format!(
-            "operator {op} requires Int, Float, String, Bool, List, Tuple, Record, or Variant, got '{shown}'"
+            "operator {op} requires Int, Float, String, Bool, Bytes, List, Tuple, Record, or Variant, got '{shown}'"
         ),
     }
 }

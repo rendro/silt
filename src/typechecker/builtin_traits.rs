@@ -379,10 +379,11 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
         register_structural_traits_for(checker, &[ty.name], ty.derives);
     }
 
-    // Bytes: Display here (`Value::Bytes` prints as a short hex preview
-    // and its length), Equal and Hash below. No Compare: bytes are not
-    // an ordered key type (`bytes.to_hex` first).
-    register_structural_traits_for(checker, &["Bytes"], &["Display"]);
+    // Bytes: Display (`Value::Bytes` prints as a short hex preview and
+    // its length) and Compare here, byte by byte with each byte
+    // unsigned, a shorter prefix first (the order of `Value::cmp`, which
+    // map keys and set elements already have); Equal and Hash below.
+    register_structural_traits_for(checker, &["Bytes"], &["Display", "Compare"]);
 
     // `json.Encode`: the types the writer has a json form for
     // (`builtins::data`). A primitive, `()`, a list, a tuple and a map

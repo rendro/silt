@@ -15,6 +15,12 @@ every body of an [`http`](http.md) request or response.
 same content compare equal regardless of how they were constructed. They
 work as `Map`/`Set` keys and respect the standard `==` operator.
 
+`Bytes` values are ordered byte by byte, each byte a number from 0 to
+255; when one value is the start of the other, the shorter comes
+first. `<`, `<=`, `>`, `>=`, `Compare.compare`, `list.sort`,
+`list.max` and `list.min` use this order, and so do map keys and set
+elements when they are printed or walked.
+
 ## Summary
 
 | Function | Signature | Description |
@@ -84,6 +90,12 @@ fn main() {
   let a = bytes.from_string("foo")
   let b = bytes.from_string("foo")
   println(a == b) -- true
+
+  -- Order is byte by byte, a shorter prefix first
+  println(bytes.from_string("ab") < bytes.from_string("b")) -- true
+  println(bytes.from_string("ab") < bytes.from_string("abc")) -- true
+  println(bytes.from_string("é") < bytes.from_string("z")) -- false: byte 0xc3 is after 0x7a
+  println(list.sort([bytes.from_string("b"), bytes.empty()]) == [bytes.empty(), bytes.from_string("b")]) -- true
 
   -- Search / prefix / suffix / split
   let msg = bytes.from_string("foo::bar::baz")
