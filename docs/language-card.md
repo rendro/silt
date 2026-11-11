@@ -549,7 +549,7 @@ regex.find(text: String, pattern: String) -> Result(Option(String), RegexError)
 regex.find_all(text: String, pattern: String) -> Result(List(String), RegexError)
 regex.is_match(text: String, pattern: String) -> Result(Bool, RegexError)
 regex.replace(text: String, pattern: String, replacement: String) -> Result(String, RegexError)
-regex.replace_all_with(text: String, pattern: String, f: Fn(String) -> String) -> Result(String, RegexError)
+regex.replace_with(text: String, pattern: String, f: Fn(String) -> String) -> Result(String, RegexError)
 regex.replace_first(text: String, pattern: String, replacement: String) -> Result(String, RegexError)
 regex.split(text: String, pattern: String) -> Result(List(String), RegexError)
 ```

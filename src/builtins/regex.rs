@@ -193,7 +193,7 @@ builtins! {
 
     // `f` is called with each match, in order, and the string it
     // returns stands for the match.
-    fn replace_all_with(vm, text: &str, pattern: &str, f: &Value) -> Step {
+    fn replace_with(vm, text: &str, pattern: &str, f: &Value) -> Step {
         let re = match vm.regex(pattern) {
             Ok(re) => re,
             Err(error) => return Step::Done(pattern_err(pattern, &error)),
@@ -225,7 +225,7 @@ builtins! {
             }
         }
         iterate(
-            "regex.replace_all_with",
+            "regex.replace_with",
             matches,
             f.clone(),
             Replacing {
@@ -239,14 +239,14 @@ builtins! {
             },
             |state, item, replacement| {
                 let Value::String(replacement) = replacement else {
-                    return Err(unsound("regex.replace_all_with", "f"));
+                    return Err(unsound("regex.replace_with", "f"));
                 };
                 let (start, end) = span(&item);
                 state.out.push_str(&state.text[state.last_end..start]);
                 state.out.push_str(&replacement);
                 state.last_end = end;
                 if state.out.len() > MAX_COLLECTION_LEN {
-                    return Err(too_long_text("regex.replace_all_with", state.out.len()));
+                    return Err(too_long_text("regex.replace_with", state.out.len()));
                 }
                 next()
             },
@@ -254,7 +254,7 @@ builtins! {
                 let mut out = std::mem::take(&mut state.out);
                 out.push_str(&state.text[state.last_end..]);
                 if out.len() > MAX_COLLECTION_LEN {
-                    return Err(too_long_text("regex.replace_all_with", out.len()));
+                    return Err(too_long_text("regex.replace_with", out.len()));
                 }
                 Ok(ok(Value::String(out.into())))
             },

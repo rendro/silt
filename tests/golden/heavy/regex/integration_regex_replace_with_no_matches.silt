@@ -2,7 +2,7 @@ import io
 import regex
 import result
 fn program() {
-  regex.replace_all_with("hello world", "[a-z]+", { m -> "[{m}]" }) |> result.unwrap_or("")
+  regex.replace_with("no numbers here", "\\d+", { m -> "X" }) |> result.unwrap_or("")
 }
 
 fn main() {

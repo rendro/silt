@@ -74,7 +74,7 @@ every name. Match the `Err`, or try each pattern once in a test.
 | `find_all` | `(String, String) -> Result(List(String), RegexError)` | All matches |
 | `is_match` | `(String, String) -> Result(Bool, RegexError)` | Test if pattern matches |
 | `replace` | `(String, String, String) -> Result(String, RegexError)` | Replace all matches |
-| `replace_all_with` | `(String, String, Fn(String) -> String) -> Result(String, RegexError)` | Replace all with callback |
+| `replace_with` | `(String, String, Fn(String) -> String) -> Result(String, RegexError)` | Replace all with callback |
 | `replace_first` | `(String, String, String) -> Result(String, RegexError)` | Replace first match |
 | `split` | `(String, String) -> Result(List(String), RegexError)` | Split on pattern |
 
@@ -237,10 +237,10 @@ fn main() {
 ```
 
 
-## `regex.replace_all_with`
+## `regex.replace_with`
 
 ```
-regex.replace_all_with(text: String, pattern: String, f: Fn(String) -> String) -> Result(String, RegexError)
+regex.replace_with(text: String, pattern: String, f: Fn(String) -> String) -> Result(String, RegexError)
 ```
 
 Replaces all matches by calling `f` with each matched text. The callback must
@@ -253,7 +253,7 @@ import result
 import string
 
 fn main() {
-  let doubled = regex.replace_all_with("a1 b22 c333", "\\d+") { m ->
+  let doubled = regex.replace_with("a1 b22 c333", "\\d+") { m ->
     let n = int.parse(m) |> result.unwrap_or(0)
     string.from(n * 2)
   }

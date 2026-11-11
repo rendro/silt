@@ -8,7 +8,7 @@ fn main() {
   let v_regex_find_all: Int = regex.find_all
   let v_regex_is_match: Int = regex.is_match
   let v_regex_replace: Int = regex.replace
-  let v_regex_replace_all_with: Int = regex.replace_all_with
+  let v_regex_replace_with: Int = regex.replace_with
   let v_regex_replace_first: Int = regex.replace_first
   let v_regex_split: Int = regex.split
 }

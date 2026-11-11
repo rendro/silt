@@ -138,7 +138,7 @@ That holds for everything that grows a collection or joins two
 value hold at most 10,000,000 bytes where they are joined or built
 (string interpolation, `string.from`, `string.join`, `string.repeat`,
 `string.replace`, `regex.replace`, `regex.replace_first`,
-`regex.replace_all_with`, `encoding.form_encode`, `json.stringify`,
+`regex.replace_with`, `encoding.form_encode`, `json.stringify`,
 `json.pretty`, `toml.stringify`, `toml.pretty`, `bytes.concat`,
 `bytes.concat_all`), and a channel buffers at most
 10,000,000 values (`channel.new`). A program that keeps

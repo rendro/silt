@@ -10,7 +10,7 @@ import string
 -- Encoding and cipher toolkit: Caesar cipher, ROT13, run-length encoding,
 -- and Atbash substitution cipher with round-trip verification.
 -- ============================================================
--- Caesar Cipher (using regex.replace_all_with)
+-- Caesar Cipher (using regex.replace_with)
 -- ============================================================
 
 fn shift_char(c, shift) {
@@ -29,7 +29,7 @@ fn shift_char(c, shift) {
 
 fn encode_caesar(text, shift) {
   let normalized = (shift % 26 + 26) % 26
-  regex.replace_all_with(text, "[a-zA-Z]") { m -> shift_char(m, normalized) } |> result.unwrap_or("")
+  regex.replace_with(text, "[a-zA-Z]") { m -> shift_char(m, normalized) } |> result.unwrap_or("")
 }
 
 fn decode_caesar(text, shift) {
@@ -37,11 +37,11 @@ fn decode_caesar(text, shift) {
 }
 
 -- ============================================================
--- ROT13 (special case of Caesar with shift=13, via replace_all_with)
+-- ROT13 (special case of Caesar with shift=13, via replace_with)
 -- ============================================================
 
 fn rot13(text) {
-  regex.replace_all_with(text, "[a-zA-Z]") { c -> match {
+  regex.replace_with(text, "[a-zA-Z]") { c -> match {
     string.is_upper(c) -> {
       let code = (string.char_code(c) |> option.unwrap_or(65)) - 65
       string.from_char_code((code + 13) % 26 + 65) |> option.unwrap_or(c)

@@ -29,7 +29,7 @@ fn uppercase(lines) {
   |> word_count
   print_section("Pipeline 8: ERROR or WARN lines, sorted, with word count", result8)
  - - ---------------------------bered
-  print_section("Pipeline 13: log levels bracketed via replace_all_with", result13)
+  print_section("Pipeline 13: log levels bracketed via replace_with", result13)
   -- --------------------------------------------------------
   -- Pipeline 14: make_replace factory -- redact timestamps with callback
   -- -----------------------------------------|> filter_problems
@@ -37,7 +37,7 @@ fn uppercase(lines) {
   |> word_count
   print_section("Pipeline 8: ERROR or WARN lines, sorted, with word count", result8)
  - - ---------------------------bered
-  print_section("Pipeline 13: log levels bracketed via replace_all_with", result13)
+  print_section("Pipeline 13: log levels bracketed via replace_with", result13)
   -- --------------------------------------------------------
   -- Pipeline 14: make_replace factory -- redact timestamps with callback
   -- --------------------------------------------------------
@@ -46,7 +46,7 @@ fn uppercase(lines) {
   |> grep("ERROR")
   |> censor_times
   |> numqqqqqqqqqqqqqqqqqqqqqqqqqqqqbered
-  print_section("Pipeline 14: ERROR lines with timestamps redacted via replace_all_with", result14)
+  print_section("Pipeline 14: ERROR lines with timestamps redacted via replace_with", result14)
   -- --------------------------------------------------------
   -- Pipeline 15: r---------------
   let censor_times = make_replace("""\d{2}:\d{2}:\d{2}""") { m -> "XX:XX:XX" }
@@ -54,7 +54,7 @@ fn uppercase(lines) {
   |> grep("ERROR")
   |> censor_times
   |> numqqqqqqqqqqqqqqqqqqqqqqqqqqqqbered
-  print_section("Pipeline 14: ERROR lines with timestamps redacted via replace_all_with", result14)
+  print_section("Pipeline 14: ERROR lines with timestamps redacted via replace_with", result14)
   -- --------------------------------------------------------
   -- Pipeline 15: redact IP-like patterns and hostnames, word count
   -- ---/-----------------------------------------------------

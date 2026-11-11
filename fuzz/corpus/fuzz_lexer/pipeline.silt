@@ -131,12 +131,12 @@ fn make_truncate(max_len) {
   }
 }
 
--- make_replace: returns a closure that applies regex.replace_all_with to each line
+-- make_replace: returns a closure that applies regex.replace_with to each line
 
 fn make_replace(pattern, transform) {
   fn(lines) {
     lines
-    |> list.map { line -> (regex.replace_all_with(line, pattern, transform) |> result.unwrap_or("")) }
+    |> list.map { line -> (regex.replace_with(line, pattern, transform) |> result.unwrap_or("")) }
   }
 }
 
@@ -274,13 +274,13 @@ fn main() {
   |> numbered
   print_section("Pipeline 12: connection-related lines, lowered, grepped, sorted, uppered, numbered", result12)
   -- --------------------------------------------------------
-  -- Pipeline 13: regex.replace_all_with -- upcase log levels in-place
+  -- Pipeline 13: regex.replace_with -- upcase log levels in-place
   -- --------------------------------------------------------
   let result13 = lines
   |> list.take(5)
-  |> list.map { line -> (regex.replace_all_with(line, "(INFO|DEBUG|WARN|ERROR)") { m -> "[{string.to_upper(m)}]" } |> result.unwrap_or("")) }
+  |> list.map { line -> (regex.replace_with(line, "(INFO|DEBUG|WARN|ERROR)") { m -> "[{string.to_upper(m)}]" } |> result.unwrap_or("")) }
   |> numbered
-  print_section("Pipeline 13: log levels bracketed via replace_all_with", result13)
+  print_section("Pipeline 13: log levels bracketed via replace_with", result13)
   -- --------------------------------------------------------
   -- Pipeline 14: make_replace factory -- redact timestamps with callback
   -- --------------------------------------------------------
@@ -289,7 +289,7 @@ fn main() {
   |> grep("ERROR")
   |> censor_times
   |> numbered
-  print_section("Pipeline 14: ERROR lines with timestamps redacted via replace_all_with", result14)
+  print_section("Pipeline 14: ERROR lines with timestamps redacted via replace_with", result14)
   -- --------------------------------------------------------
   -- Pipeline 15: redact IP-like patterns and hostnames, word count
   -- --------------------------------------------------------

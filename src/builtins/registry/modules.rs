@@ -335,7 +335,7 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn find_all(text: String, pattern: String) -> Result(List(String), RegexError)", "All matches", regex::find_all),
                 f("fn is_match(text: String, pattern: String) -> Result(Bool, RegexError)", "Test if pattern matches", regex::is_match),
                 f("fn replace(text: String, pattern: String, replacement: String) -> Result(String, RegexError)", "Replace all matches", regex::replace),
-                f("fn replace_all_with(text: String, pattern: String, f: Fn(String) -> String) -> Result(String, RegexError)", "Replace all with callback", regex::replace_all_with),
+                f("fn replace_with(text: String, pattern: String, f: Fn(String) -> String) -> Result(String, RegexError)", "Replace all with callback", regex::replace_with),
                 f("fn replace_first(text: String, pattern: String, replacement: String) -> Result(String, RegexError)", "Replace first match", regex::replace_first),
                 f("fn split(text: String, pattern: String) -> Result(List(String), RegexError)", "Split on pattern", regex::split),
             ],

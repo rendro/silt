@@ -4,6 +4,7 @@
 -- stderr-contains: module 'map' has no member 'delete'
 -- stderr-contains: module 'stream' has no member 'count'
 -- stderr-contains: module 'regex' has no member 'replace_all'
+-- stderr-contains: module 'regex' has no member 'replace_all_with'
 -- stderr-contains: module 'set' has no member 'new'
 import list
 import map
@@ -16,5 +17,6 @@ fn main() {
   println(map.delete(#{ "a": 1 }, "a"))
   println(stream.count(stream.from_list([1])))
   println(regex.replace_all("a", "a", "b"))
+  println(regex.replace_all_with("a", "a") { m -> m })
   println(set.new())
 }
