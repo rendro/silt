@@ -139,7 +139,7 @@ pub(super) fn float_arithmetic(op: Op, a: &Value, b: &Value) -> Result<Float, Vm
             // Special error for Int/Float mixing
             if (a_type == "Int" && b_type == "Float") || (a_type == "Float" && b_type == "Int") {
                 return Err(VmError::type_confusion(
-                    "cannot mix Int and Float — use int.to_float or float.to_int for explicit conversion",
+                    "cannot mix Int and Float — use Float.from_int or float.to_int for explicit conversion",
                 ));
             }
             // Mirror the typechecker's operand-domain message: a

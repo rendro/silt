@@ -76,7 +76,7 @@ in `main`) writes `error: <e>` on stderr and ends the program with status
 | closure | `{ x -> x * 2 }`, `{ a, b -> a + b }`, `{ (k, v) -> v }`, `{ -> 42 }` |
 
 Every value is immutable. There is no null, no implicit conversion
-(`int.to_float(n)`), and `+` is arithmetic only: strings are built by
+(`Float.from_int(n)`), and `+` is arithmetic only: strings are built by
 interpolation. Strings, lists and maps are read with module functions
 (`list.get(xs, 0)`, `map.get(m, k)`); there is no `xs[i]`.
 
@@ -375,7 +375,6 @@ int.clamp(x: Int, lo: Int, hi: Int) -> Int
 int.max(a: Int, b: Int) -> Int
 int.min(a: Int, b: Int) -> Int
 int.parse(s: String) -> Result(Int, IntError)
-int.to_float(n: Int) -> Float
 ```
 
 ### float

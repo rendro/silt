@@ -17,7 +17,6 @@ Functions for parsing, converting, and comparing integers.
 | `max` | `(Int, Int) -> Int` | Larger of two values |
 | `min` | `(Int, Int) -> Int` | Smaller of two values |
 | `parse` | `(String) -> Result(Int, IntError)` | Parse string to integer |
-| `to_float` | `(Int) -> Float` | Convert to float |
 
 
 ## `int.abs`
@@ -129,24 +128,6 @@ fn main() {
     Err(int.Overflow) -> println("too large")
     Err(int.Underflow) -> println("too small")
   }
-}
-```
-
-
-## `int.to_float`
-
-```
-int.to_float(n: Int) -> Float
-```
-
-Converts an integer to a float.
-
-```silt
-import int
-
-fn main() {
-  let f = int.to_float(42)
-  println(f) -- 42.0
 }
 ```
 

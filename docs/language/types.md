@@ -16,7 +16,7 @@ order: 2
 | `String` | UTF-8 string with interpolation   | `"hello"`, `"age: {n}"`  |
 | `()`     | The unit type: no meaningful value | `()` (returned by `println`) |
 
-No implicit conversions. Use `int.to_float()` or `float.to_int()` explicitly.
+No implicit conversions. Use `Float.from_int()` or `float.to_int()` explicitly.
 
 ### Numeric Literals
 
@@ -86,7 +86,7 @@ Because every `Float` is finite, floats compare, sort and hash as ordinary numbe
 
 ### No implicit coercion
 
-There are no implicit conversions between `Int` and `Float`. Convert explicitly with `int.to_float(n)` and `float.to_int(x)`.
+There are no implicit conversions between `Int` and `Float`. Convert explicitly with `Float.from_int(n)` and `float.to_int(x)`.
 
 ## Enums (Tagged Unions)
 

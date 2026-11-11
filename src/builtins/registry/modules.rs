@@ -52,7 +52,7 @@ pub(super) fn impls() -> Vec<(&'static str, Vec<RowSpec>)> {
             f("fn from_int(n: Int) -> Int", "The Int itself", numeric::number::int::from_int),
         ]),
         ("Float", vec![
-            f("fn from_int(n: Int) -> Float", "The Float of the Int, as int.to_float", numeric::number::float::from_int),
+            f("fn from_int(n: Int) -> Float", "The Float nearest the Int", numeric::number::float::from_int),
         ]),
         ("List", vec![
             f("fn pure(x: a) -> List(a)", "The list of the one value", applicative::list::pure),
@@ -142,7 +142,6 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn max(a: Int, b: Int) -> Int", "Larger of two values", int::max),
                 f("fn min(a: Int, b: Int) -> Int", "Smaller of two values", int::min),
                 f("fn parse(s: String) -> Result(Int, IntError)", "Parse string to integer", int::parse),
-                f("fn to_float(n: Int) -> Float", "Convert to float", int::to_float),
             ],
         },
         module! {

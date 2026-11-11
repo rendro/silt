@@ -1,6 +1,5 @@
 -- verdict: same
 import float
-import int
 import json
 import list
 import map
@@ -45,7 +44,7 @@ fn avg_salary(employees) {
   let total = employees
   |> list.fold(0) { acc, e -> acc + e.salary }
   let count = list.length(employees)
-  int.to_float(total) / int.to_float(count) else 0.0
+  Float.from_int(total) / Float.from_int(count) else 0.0
 }
 
 -- Find top N earners from a list of employees

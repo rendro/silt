@@ -92,7 +92,7 @@ fn sum_list(nums) {
 fn mean(nums) {
   let n = list.length(nums)
   let total = sum_list(nums)
-  total / int.to_float(n) else 0.0
+  total / Float.from_int(n) else 0.0
 }
 
 fn median(nums) {
@@ -120,7 +120,7 @@ fn std_deviation(nums) {
     let diff = x - avg
     acc + diff * diff
   }
-  math.sqrt(sum_sq / int.to_float(n) else 0.0) else 0.0
+  math.sqrt(sum_sq / Float.from_int(n) else 0.0) else 0.0
 }
 
 -- Histogram: bucket values into ranges and display bars
@@ -132,8 +132,8 @@ fn histogram(label, values, bucket_size) {
   |> option.unwrap_or(0.0)
   let max_val = list.last(sorted)
   |> option.unwrap_or(0.0)
-  let min_bucket = float.to_int(float.floor(min_val / int.to_float(bucket_size) else 0.0)) * bucket_size
-  let max_bucket = float.to_int(float.floor(max_val / int.to_float(bucket_size) else 0.0)) * bucket_size
+  let min_bucket = float.to_int(float.floor(min_val / Float.from_int(bucket_size) else 0.0)) * bucket_size
+  let max_bucket = float.to_int(float.floor(max_val / Float.from_int(bucket_size) else 0.0)) * bucket_size
   -- Build frequency map: bucket_start -> count
   let counts = values
   |> list.fold(#{}) { acc, v ->
@@ -171,9 +171,9 @@ fn main() {
   }
   -- Extract scores as floats for statistics
   let scores = students
-  |> list.map { s -> int.to_float(s.score) }
+  |> list.map { s -> Float.from_int(s.score) }
   let ages = students
-  |> list.map { s -> int.to_float(s.age) }
+  |> list.map { s -> Float.from_int(s.age) }
   -- Compute statistics
   println("\n=== Score Statistics ===")
   let score_mean = mean(scores)

@@ -899,8 +899,8 @@ fn largest(x: a, y: a) -> a where a: Compare {
 ```
 
 `Number` has one method, `from_int(n: Int) -> Self`, which makes a value:
-the number of the type that `n` is (`Float.from_int(2)` is `2.0`, as
-`int.to_float(2)`). A literal has one type (`0` is an Int, `0.0` a
+the number of the type that `n` is (`Float.from_int(2)` is `2.0`: the
+way to turn an Int into a Float). A literal has one type (`0` is an Int, `0.0` a
 Float), so code that works for every number type writes its constants
 with it, `a.from_int(0)`, and turns a count into the type the same way:
 

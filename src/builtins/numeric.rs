@@ -188,10 +188,6 @@ pub(crate) mod int {
             }
             Ok(x.clamp(lo, hi))
         }
-
-        fn to_float(n: i64) -> f64 {
-            n as f64
-        }
     }
 }
 
@@ -209,7 +205,8 @@ pub(crate) mod number {
         }
     }
 
-    /// `Float.from_int`: the Float nearest the Int, as `int.to_float`.
+    /// `Float.from_int`: the Float nearest the Int, the one way to turn
+    /// an Int into a Float.
     pub(crate) mod float {
         use super::super::*;
 
