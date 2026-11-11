@@ -112,9 +112,7 @@ fn make_truncate(max_len) {
 fn make_replace(pattern, transform) {
   { lines ->
     lines
-      |> list.map { line ->
-        regex.replace_with(line, pattern, transform) |> result.unwrap_or(line)
-      }
+      |> list.map { line -> regex.replace_with(line, pattern, transform) |> result.unwrap_or(line) }
   }
 }
 

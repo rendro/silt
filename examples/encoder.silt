@@ -28,8 +28,7 @@ fn shift_char(c, shift) {
 
 fn encode_caesar(text, shift) {
   let normalized = (shift % 26 + 26) % 26
-  regex.replace_with(text, "[a-zA-Z]") { m -> shift_char(m, normalized) }
-    |> result.unwrap_or(text)
+  regex.replace_with(text, "[a-zA-Z]") { m -> shift_char(m, normalized) } |> result.unwrap_or(text)
 }
 
 fn decode_caesar(text, shift) {
