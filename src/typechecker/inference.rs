@@ -585,16 +585,14 @@ impl TypeChecker {
         if !self.implies_decode(tr) {
             return;
         }
-        // (A type not known yet is a bound's to judge, as it waits; a
-        // type without arguments is judged where its impl is declared.)
+        // (A type without arguments is judged where its impl is declared.
+        // Of one whose arguments are not known yet, what the code decides
+        // of them later is judged: `settle_decodes_through_calls`.)
         let ty = self.apply(ty);
         let Some(head) = self.type_name_for_impl(&ty) else {
             return;
         };
-        if !self.generic_for_decode(head)
-            || self.type_args_of(&ty).is_empty()
-            || !free_vars_in(&ty).is_empty()
-        {
+        if !self.generic_for_decode(head) || self.type_args_of(&ty).is_empty() {
             return;
         }
         let origin = Origin {

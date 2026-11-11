@@ -275,9 +275,14 @@ impl TypeChecker {
     /// impl's header asks of the type's arguments, a type needed in full)
     /// has its error.
     pub(super) fn settle_decodes_through_calls(&mut self) {
+        // (A type whose arguments are still not known is a bound's to
+        // judge, where the type is given.)
         let gaps: Vec<DecodeGap> = std::mem::take(&mut self.decodes_through_calls)
             .into_iter()
-            .filter(|gap| !(self.errors.iter()).any(|e| e.span == gap.origin.span && e.is_error()))
+            .filter(|gap| {
+                free_vars_in(&self.apply(&gap.subject)).is_empty()
+                    && !(self.errors.iter()).any(|e| e.span == gap.origin.span && e.is_error())
+            })
             .collect();
         self.decode_gaps = gaps;
         self.settle_decode_gaps();
