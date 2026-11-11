@@ -385,7 +385,8 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         }
     };
     if total == 0 && !file_errors.any() {
-        said += "hint: test functions must be named 'fn test_*'; test files end with '_test.silt'\n";
+        said +=
+            "hint: test functions must be named 'fn test_*'; test files end with '_test.silt'\n";
     }
     say(&said);
     // (The tests may have left threads: see `vm_run_file`.)

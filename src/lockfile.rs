@@ -589,7 +589,11 @@ pub(crate) fn parse_lockfile(text: &str) -> Result<Lockfile, LockParseError> {
                     .get("checksum")
                     .and_then(|v| v.as_str())
                     .map(str::to_string)
-                    .ok_or_else(|| bad(format!("[[package]] `{name}` has a git source but no checksum")))
+                    .ok_or_else(|| {
+                        bad(format!(
+                            "[[package]] `{name}` has a git source but no checksum"
+                        ))
+                    })
             };
             let source = match entry.get("source") {
                 None => LockedSource::Local,

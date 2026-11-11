@@ -398,7 +398,11 @@ fn test_an_entry_file_name_must_be_a_module_name() {
             invalid("my-entry"),
             Some("rename `my-entry.silt` to `my_entry.silt`"),
         ),
-        ("a b", invalid("a b"), Some("rename `a b.silt` to `a_b.silt`")),
+        (
+            "a b",
+            invalid("a b"),
+            Some("rename `a b.silt` to `a_b.silt`"),
+        ),
         (
             "a.test",
             invalid("a.test"),
