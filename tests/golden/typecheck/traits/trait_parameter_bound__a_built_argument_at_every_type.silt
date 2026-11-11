@@ -1,0 +1,56 @@
+-- cmd: check
+-- exit: 1
+-- A trait's bound on its parameter with trait arguments (`trait Tbl(k)
+-- where k: Conv(Int)`) must hold for a generic impl's built argument at
+-- every type its variables stand for: `Box(a)` is `Conv(a)` by `Conv(a)
+-- for Box(a)`, which is `Conv(Int)` only where `a` is Int, so `Tbl(Box(a))
+-- for Z(a)` is refused, beside an impl for one instantiation too, and so
+-- is one whose header asks something of `a` that does not make it hold.
+-- (They were accepted, and `sh(Z { z: true }, Box(Bool))` gave a Bool as
+-- an Int.)
+trait Conv(r) {
+  fn conv(self) -> (String, r)
+}
+
+type Box(a) {
+  item: a,
+}
+
+trait Conv(a) for Box(a) {
+  fn conv(self) -> (String, a) {
+    ("gen", self.item)
+  }
+}
+
+trait Conv(Int) for Box(String) {
+  fn conv(self) -> (String, Int) {
+    ("spec", 7)
+  }
+}
+
+trait Tbl(k) where k: Conv(Int) {
+  fn key(self) -> k
+  fn show(self) -> (String, Int) {
+    Conv.conv(Tbl.key(self))
+  }
+}
+
+type Z(a) {
+  z: a,
+}
+
+trait Tbl(Box(a)) for Z(a) {
+  fn key(self) -> Box(a) {
+    Box { item: self.z }
+  }
+}
+
+trait Tbl(Box(a)) for Box(a) where a: Conv(Int) {
+  fn key(self) -> Box(a) {
+    self
+  }
+}
+
+fn main() {
+  println(1)
+}

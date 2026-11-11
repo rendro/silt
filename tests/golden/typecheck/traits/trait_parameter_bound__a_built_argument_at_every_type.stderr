@@ -1,0 +1,11 @@
+error[type]: type 'Z(a)' implements 'Tbl(Box(a))', whose argument 'Box(a)' must implement 'Conv(Int)' (trait 'Tbl' declares `where k: Conv(Int)`) for every type the impl stands for, but found impl Conv(a) for Box(a) and impl Conv(Int) for Box(String)
+ --> trait_parameter_bound__a_built_argument_at_every_type.silt:42:1
+    |
+ 42 | trait Tbl(Box(a)) for Z(a) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type 'Z(a)' implements 'Tbl(Box(a))', whose argument 'Box(a)' must implement 'Conv(Int)' (trait 'Tbl' declares `where k: Conv(Int)`) for every type the impl stands for, but found impl Conv(a) for Box(a) and impl Conv(Int) for Box(String)
+
+error[type]: type 'Box(a)' implements 'Tbl(Box(a))', whose argument 'Box(a)' must implement 'Conv(Int)' (trait 'Tbl' declares `where k: Conv(Int)`) for every type the impl stands for, but found impl Conv(a) for Box(a) and impl Conv(Int) for Box(String)
+ --> trait_parameter_bound__a_built_argument_at_every_type.silt:48:1
+    |
+ 48 | trait Tbl(Box(a)) for Box(a) where a: Conv(Int) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type 'Box(a)' implements 'Tbl(Box(a))', whose argument 'Box(a)' must implement 'Conv(Int)' (trait 'Tbl' declares `where k: Conv(Int)`) for every type the impl stands for, but found impl Conv(a) for Box(a) and impl Conv(Int) for Box(String)
