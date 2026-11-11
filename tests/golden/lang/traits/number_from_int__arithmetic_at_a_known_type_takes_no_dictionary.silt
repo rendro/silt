@@ -1,0 +1,23 @@
+-- cmd: disasm
+-- Number is passed with a dictionary, but arithmetic is the VM's, found
+-- by the values: code whose types are known compiles to the same ops as
+-- before and takes no dictionary (`int_add`, `float_mul`, `main`); only
+-- a definition bounded by Number (`add`) takes one, and a call of it at
+-- a known type passes a constant.
+fn int_add(x: Int, y: Int) -> Int {
+  x + y
+}
+
+fn float_mul(x: Float, y: Float) -> Float {
+  x * y - 1.5
+}
+
+fn add(x: a, y: a) -> a where a: Number {
+  x + y
+}
+
+fn main() {
+  println(int_add(1, 2) + 3)
+  println(float_mul(2.0, 3.0) / 2.0)
+  println(add(1, 2))
+}
