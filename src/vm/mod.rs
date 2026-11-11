@@ -928,11 +928,7 @@ impl Vm {
     /// The compiled `pattern`, from the program's cache or compiled and
     /// kept there ([`RegexCache`]); why it does not compile.
     pub(crate) fn regex(&self, pattern: &str) -> Result<Arc<Regex>, BuildError> {
-        if let Some(re) = self.runtime.regex_cache.lock().lookup(pattern) {
-            return Ok(re);
-        }
-        let re = RegexCache::compile(pattern)?;
-        Ok(self.runtime.regex_cache.lock().insert(pattern, re))
+        RegexCache::get(&self.runtime.regex_cache, pattern)
     }
 
     /// Whether a runtime value's type has a Display impl — the single

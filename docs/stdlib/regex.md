@@ -44,19 +44,25 @@ fn main() {
 | `TooBig` | — | the compiled pattern exceeds the size budget |
 | `Other(String)` | message | unclassified failure |
 
-A pattern compiles to at most 4 MiB; a larger one is `TooBig`. A class of
-Unicode characters repeated many times is what grows: `\w{100}` is too big
-(about 5.6 MB), `^\w{3,32}$` is not (about 1.8 MB), and `[a-z0-9_]{100}` or
-`(?-u)\w{100}`, ASCII only, are small.
+A pattern compiles to at most 4 MiB; a larger one is `TooBig`: the pattern
+is valid, but too large to run. What grows is a class of characters repeated
+many times, the more so for a Unicode class: `^.{8,4096}$` (8 to 4096
+characters of any kind) and `\w{100}` are `TooBig`; `^\w{3,32}$` (about
+1.8 MB) is not, and the ASCII forms `[a-z0-9_]{100}` and `(?-u)\w{100}` are
+small. A length check is better written with `string.length`.
 
 A compiled pattern is kept for the next call with the same pattern, by every
-task of the program: up to 256 patterns and 32 MiB of them. When a new one
-does not fit, the patterns compiled first are dropped, and compiled again if
-they are used again.
+task of the program: up to 256 patterns and 128 MiB of them. When a new one
+does not fit, the patterns used least recently are dropped, and compiled again
+if they are used again. A pattern that does not compile is remembered too, so
+the error comes back without compiling it again. What a search keeps for its next one, on each
+thread that searched with a pattern, is not counted in the 128 MiB: it grows
+with the searching, up to a few MiB a pattern and thread.
 
-With a pattern the program writes itself, the error cannot happen, and
-`result.unwrap_or` says what the call is worth if it did:
-`regex.is_match(name, "^[a-z]+$") |> result.unwrap_or(false)`.
+A pattern the program writes itself can be `TooBig` as well, and
+`result.unwrap_or` hides that:
+`regex.is_match(name, "^.{8,4096}$") |> result.unwrap_or(false)` is `false` for
+every name. Match the `Err`, or try each pattern once in a test.
 
 ## Summary
 

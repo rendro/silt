@@ -3,7 +3,7 @@
 //! `io_op`.
 
 use regex_automata::meta::{BuildError, Regex};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc;
 
 use crate::bytecode::{Function, VmClosure};
@@ -661,40 +661,78 @@ impl Runtime {
 // ── Regex cache ──────────────────────────────────────────────────
 
 /// The compiled regex patterns of a program, one cache for its VM and
-/// the VMs of all its tasks ([`Runtime::regex_cache`]), bounded by the
-/// memory the compiled patterns take as well as by their number.
+/// the VMs of all its tasks ([`Runtime::regex_cache`]).
 ///
-/// A pattern compiles to at most [`RegexCache::PATTERN_MOST`] bytes of
-/// automaton (a larger one is `TooBig`). The cache keeps at most
-/// [`RegexCache::MAX_ENTRIES`] patterns and at most
-/// [`RegexCache::MOST_BYTES`] bytes of them, counted as each compiled
-/// regex reports its heap memory plus the pattern's text; when a new
-/// pattern would pass either bound, the oldest patterns go first. A hit
-/// does not move a pattern, so the order is the order they were
-/// compiled in. (What a search keeps between calls, the lazy DFA's
-/// cache of each thread that searched, is not counted: it grows with
-/// the searching, up to the regex crate's bound per thread.)
+/// A pattern compiles as `regex::Regex::new` compiles it, but to at most
+/// 4 MiB ([`RegexCache::PATTERN_MOST`]; the regex crate's own limit is
+/// 10 MiB); a larger one is `TooBig`. The cache keeps at most [`RegexCache::MAX_ENTRIES`]
+/// patterns and at most [`RegexCache::MOST_BYTES`] bytes of them, each
+/// counted by the heap memory its compiled regex reports plus its text.
+/// When a new pattern does not fit, the least recently used go first: a
+/// hit keeps a pattern young, so patterns used in turn stay compiled as
+/// long as they fit together. A pattern larger than the whole budget is
+/// compiled, used and not kept.
+///
+/// A pattern that does not compile is remembered with why
+/// ([`RegexCache::REFUSALS_MOST`] of them, their texts at most
+/// [`RegexCache::REFUSED_TEXT_MOST`] bytes together, the oldest going
+/// first), so it is not compiled again on every call.
+///
+/// What a search keeps between calls, the lazy DFA's cache of each
+/// thread that searched with a pattern, is not counted: it grows with
+/// the searching, up to the regex crate's bound per thread.
 pub(crate) struct RegexCache {
-    map: HashMap<String, (Arc<Regex>, usize)>,
-    order: VecDeque<String>,
+    /// The kept patterns: the compiled regex, its counted bytes, and
+    /// when it was last used (a tick of `clock`).
+    map: HashMap<String, (Arc<Regex>, usize, u64)>,
+    /// The kept patterns by when they were last used, the least
+    /// recently used first.
+    by_use: BTreeMap<u64, String>,
+    clock: u64,
     /// The bytes of all patterns kept, as counted in `map`.
     bytes: usize,
+    most_entries: usize,
+    most_bytes: usize,
+    /// The patterns that did not compile, with why; the oldest first in
+    /// `refused_order`.
+    refused: HashMap<String, BuildError>,
+    refused_order: VecDeque<String>,
+    refused_bytes: usize,
+    /// How many patterns were compiled ([`RegexCache::get`]).
+    compiled: u64,
 }
 
 impl RegexCache {
     /// The most patterns kept.
     pub(crate) const MAX_ENTRIES: usize = 256;
     /// The most bytes the patterns kept take, compiled.
-    pub(crate) const MOST_BYTES: usize = 32 << 20;
+    pub(crate) const MOST_BYTES: usize = 128 << 20;
     /// The largest automaton one pattern may compile to, in bytes (the
     /// regex crate's `size_limit`; its default is 10 MiB).
     pub(crate) const PATTERN_MOST: usize = 4 << 20;
+    /// The most refused patterns remembered.
+    pub(crate) const REFUSALS_MOST: usize = 64;
+    /// The most bytes of refused pattern texts remembered together; a
+    /// longer text is not remembered.
+    pub(crate) const REFUSED_TEXT_MOST: usize = 1 << 20;
 
     pub(super) fn new() -> Self {
+        Self::with_bounds(Self::MAX_ENTRIES, Self::MOST_BYTES)
+    }
+
+    /// A cache of at most `most_entries` patterns and `most_bytes` bytes.
+    pub(crate) fn with_bounds(most_entries: usize, most_bytes: usize) -> Self {
         Self {
             map: HashMap::new(),
-            order: VecDeque::new(),
+            by_use: BTreeMap::new(),
+            clock: 0,
             bytes: 0,
+            most_entries,
+            most_bytes,
+            refused: HashMap::new(),
+            refused_order: VecDeque::new(),
+            refused_bytes: 0,
+            compiled: 0,
         }
     }
 
@@ -713,39 +751,105 @@ impl RegexCache {
             .build(pattern)
     }
 
-    /// The compiled `pattern`, if it is kept.
-    pub(crate) fn lookup(&self, pattern: &str) -> Option<Arc<Regex>> {
-        self.map.get(pattern).map(|(re, _)| re.clone())
+    /// The compiled `pattern` from `cache`, or compiled (outside the
+    /// lock) and kept there; why it does not compile, remembered.
+    pub(crate) fn get(
+        cache: &parking_lot::Mutex<RegexCache>,
+        pattern: &str,
+    ) -> Result<Arc<Regex>, BuildError> {
+        if let Some(found) = cache.lock().lookup(pattern) {
+            return found;
+        }
+        let compiled = Self::compile(pattern);
+        cache.lock().insert(pattern, compiled)
     }
 
-    /// Keep `re`, compiled from `pattern`, making room for it; the
-    /// regex kept for `pattern` (one compiled meanwhile by another task
-    /// wins).
-    pub(crate) fn insert(&mut self, pattern: &str, re: Regex) -> Arc<Regex> {
-        if let Some(kept) = self.lookup(pattern) {
-            return kept;
+    /// The kept `pattern`, made the most recently used, or why it did
+    /// not compile; `None` when it is neither.
+    pub(crate) fn lookup(&mut self, pattern: &str) -> Option<Result<Arc<Regex>, BuildError>> {
+        if let Some(why) = self.refused.get(pattern) {
+            return Some(Err(why.clone()));
         }
-        // The key is kept twice, in the map and in the order.
+        let (re, _, used) = self.map.get_mut(pattern)?;
+        self.clock += 1;
+        let pattern = self
+            .by_use
+            .remove(used)
+            .expect("a kept pattern has its use");
+        *used = self.clock;
+        let re = re.clone();
+        self.by_use.insert(self.clock, pattern);
+        Some(Ok(re))
+    }
+
+    /// Keep what `pattern` compiled to, making room for it, or remember
+    /// why it did not compile. The regex kept for `pattern` wins over
+    /// `compiled` (another task compiled it meanwhile).
+    pub(crate) fn insert(
+        &mut self,
+        pattern: &str,
+        compiled: Result<Regex, BuildError>,
+    ) -> Result<Arc<Regex>, BuildError> {
+        self.compiled += 1;
+        if let Some(found) = self.lookup(pattern) {
+            return found;
+        }
+        let re = match compiled {
+            Ok(re) => Arc::new(re),
+            Err(why) => {
+                self.refuse(pattern, &why);
+                return Err(why);
+            }
+        };
+        // The text is kept twice, in `map` and in `by_use`.
         let size = re.memory_usage() + 2 * pattern.len();
-        while !self.order.is_empty()
-            && (self.map.len() >= Self::MAX_ENTRIES || self.bytes + size > Self::MOST_BYTES)
-        {
-            if let Some(old) = self.order.pop_front()
-                && let Some((_, old_size)) = self.map.remove(&old)
-            {
+        if size > self.most_bytes {
+            return Ok(re);
+        }
+        while self.map.len() >= self.most_entries || self.bytes + size > self.most_bytes {
+            let Some((_, oldest)) = self.by_use.pop_first() else {
+                break;
+            };
+            if let Some((_, old_size, _)) = self.map.remove(&oldest) {
                 self.bytes -= old_size;
             }
         }
-        let re = Arc::new(re);
-        self.order.push_back(pattern.to_string());
-        self.map.insert(pattern.to_string(), (re.clone(), size));
+        self.clock += 1;
+        self.by_use.insert(self.clock, pattern.to_string());
+        self.map
+            .insert(pattern.to_string(), (re.clone(), size, self.clock));
         self.bytes += size;
-        re
+        Ok(re)
     }
 
-    /// How many patterns are kept, and the bytes they take.
+    /// Remember that `pattern` does not compile, and why.
+    fn refuse(&mut self, pattern: &str, why: &BuildError) {
+        if pattern.len() > Self::REFUSED_TEXT_MOST {
+            return;
+        }
+        while self.refused_order.len() >= Self::REFUSALS_MOST
+            || self.refused_bytes + pattern.len() > Self::REFUSED_TEXT_MOST
+        {
+            let Some(oldest) = self.refused_order.pop_front() else {
+                break;
+            };
+            self.refused.remove(&oldest);
+            self.refused_bytes -= oldest.len();
+        }
+        self.refused.insert(pattern.to_string(), why.clone());
+        self.refused_order.push_back(pattern.to_string());
+        self.refused_bytes += pattern.len();
+    }
+
+    /// How many patterns are kept, the bytes they take, how many
+    /// refusals are remembered, and how many patterns were compiled.
     #[cfg(test)]
-    pub(crate) fn kept(&self) -> (usize, usize) {
-        (self.map.len(), self.bytes)
+    pub(crate) fn kept(&self) -> (usize, usize, usize, u64) {
+        (
+            self.map.len(),
+            self.bytes,
+            self.refused.len(),
+            self.compiled,
+        )
     }
 }
