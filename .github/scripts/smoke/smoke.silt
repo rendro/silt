@@ -1,0 +1,33 @@
+-- The smoke run of a release binary (.github/scripts/smoke/run.sh): a
+-- task, a channel, a map and json, so the scheduler, the collections and
+-- a decoder all run on the target before it is published.
+import channel
+import json
+import list
+import map
+import task
+
+type Count {
+  word: String,
+  times: Int,
+}
+
+fn main() {
+  let ch = channel.new(0)
+  let _ = task.spawn { ->
+    list.each(["a", "b", "a", "c", "a"]) { word -> channel.send(ch, word) }
+    channel.close(ch)
+  }
+  let counts = channel_counts(ch, #{})
+  let rows = counts |> map.entries |> list.map { (word, times) -> Count { word, times } }
+  let text = json.stringify(rows)
+  println(text)
+  println(json.parse(text, List(Count)))
+}
+
+fn channel_counts(ch, counts) {
+  match channel.receive(ch) {
+    Some(word) -> channel_counts(ch, map.update(counts, word, 0) { n -> n + 1 })
+    None -> counts
+  }
+}

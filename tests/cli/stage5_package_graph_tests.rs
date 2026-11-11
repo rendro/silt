@@ -778,7 +778,7 @@ fn concurrent_cold_cache_fetches_all_succeed() {
         .collect();
     assert_eq!(
         entries,
-        [head.clone()],
+        std::slice::from_ref(&head),
         "one checkout, no temporary directory"
     );
     let _ = fs::remove_dir_all(&ws);

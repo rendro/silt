@@ -17,6 +17,13 @@ use sha2::{Digest, Sha256};
 
 const REPO: &str = "rendro/silt";
 
+/// What every curl call is given first: only https, a redirect included,
+/// and TLS 1.2 or later.
+const CURL_HTTPS_ONLY: [&str; 3] = ["--proto", "=https", "--tlsv1.2"];
+
+/// The most redirects a wget download follows ([`download`]).
+const WGET_HOPS_MOST: usize = 10;
+
 pub struct UpdateOptions {
     /// If true, print what would happen without downloading or replacing.
     pub dry_run: bool,
@@ -82,6 +89,24 @@ pub fn run_update(opts: UpdateOptions) -> Result<(), String> {
         ));
     }
 
+    // The checksum comes from the same release as the archive; the
+    // attestation is signed by the release workflow, so it also catches a
+    // release whose files were replaced. It needs the GitHub CLI.
+    match verify_attestation(&archive) {
+        Attestation::Verified => eprintln!("  Verified the build attestation"),
+        Attestation::Failed(said) => {
+            let _ = fs::remove_dir_all(&tmpdir);
+            return Err(format!(
+                "the build attestation of {asset} does not verify — refusing to install:\n{said}"
+            ));
+        }
+        Attestation::NotChecked => {
+            eprintln!(
+                "  Build attestation not checked: that needs gh 2.49 or later, logged in to github.com"
+            );
+        }
+    }
+
     eprintln!("  Extracting");
     extract(&archive, &tmpdir, ext)?;
 
@@ -121,6 +146,7 @@ fn fetch_latest_version() -> Result<String, String> {
 
     if which("curl").is_some() {
         let out = Command::new("curl")
+            .args(CURL_HTTPS_ONLY)
             .args(["-fsI", &url])
             .output()
             .map_err(|e| format!("failed to run curl: {e}"))?;
@@ -237,6 +263,7 @@ fn sha256_hex(path: &Path) -> Result<String, String> {
 fn download(url: &str, dest: &Path) -> Result<(), String> {
     if which("curl").is_some() {
         let status = Command::new("curl")
+            .args(CURL_HTTPS_ONLY)
             .args(["-fsSL", url, "-o"])
             .arg(dest)
             .status()
@@ -250,22 +277,120 @@ fn download(url: &str, dest: &Path) -> Result<(), String> {
         return Ok(());
     }
     if which("wget").is_some() {
-        let status = Command::new("wget")
-            .arg("-q")
-            .arg(url)
-            .arg("-O")
-            .arg(dest)
-            .status()
-            .map_err(|e| format!("failed to run wget: {e}"))?;
-        if !status.success() {
-            return Err(format!(
-                "wget download failed ({})",
-                status.code().unwrap_or(-1)
-            ));
+        // wget follows a redirect wherever it leads (its --https-only is
+        // for recursive downloads only), so each redirect is followed
+        // here, and only to https.
+        let mut url = url.to_string();
+        for _ in 0..WGET_HOPS_MOST {
+            let out = Command::new("wget")
+                .args(["--max-redirect=0", "--server-response", "-O"])
+                .arg(dest)
+                .arg(&url)
+                .output()
+                .map_err(|e| format!("failed to run wget: {e}"))?;
+            if out.status.success() {
+                return Ok(());
+            }
+            match next_hop(&url, &String::from_utf8_lossy(&out.stderr))? {
+                Some(next) => url = next,
+                None => {
+                    return Err(format!(
+                        "wget download failed ({})",
+                        out.status.code().unwrap_or(-1)
+                    ));
+                }
+            }
         }
-        return Ok(());
+        return Err(format!(
+            "wget download failed: more than {WGET_HOPS_MOST} redirects"
+        ));
     }
     Err("need curl or wget to download the release".to_string())
+}
+
+/// Where a redirect from `current` that wget did not follow leads, read
+/// from what wget said with `--server-response` (the server's headers
+/// are indented): `None` when there is no redirect, an error when it
+/// leads elsewhere than https.
+fn next_hop(current: &str, said: &str) -> Result<Option<String>, String> {
+    let location = said
+        .lines()
+        .filter(|line| line.starts_with("  "))
+        .filter_map(|line| {
+            let line = line.trim();
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("location")
+                .then(|| value.trim().to_string())
+        })
+        .next_back();
+    let Some(location) = location else {
+        return Ok(None);
+    };
+    if location.starts_with("https://") {
+        Ok(Some(location))
+    } else if location.starts_with('/') && !location.starts_with("//") {
+        let host = current
+            .strip_prefix("https://")
+            .and_then(|rest| rest.split('/').next())
+            .ok_or_else(|| format!("a download from {current}, not https"))?;
+        Ok(Some(format!("https://{host}{location}")))
+    } else {
+        Err(format!(
+            "a download was redirected to {location}, which is not https"
+        ))
+    }
+}
+
+/// What the GitHub CLI says of the build attestation of an archive.
+#[derive(Debug, PartialEq)]
+enum Attestation {
+    Verified,
+    /// It does not verify: what gh said.
+    Failed(String),
+    /// It cannot be checked here: no `gh`, a `gh` without the
+    /// `attestation` command (before 2.49), or a `gh` not logged in to
+    /// github.com.
+    NotChecked,
+}
+
+/// Check the build provenance that the release workflow signed for
+/// `archive`, with the `gh` found on PATH.
+fn verify_attestation(archive: &Path) -> Attestation {
+    match which("gh") {
+        Some(gh) => attestation_by(&gh, archive),
+        None => Attestation::NotChecked,
+    }
+}
+
+/// [`verify_attestation`] with the GitHub CLI `gh`.
+fn attestation_by(gh: &Path, archive: &Path) -> Attestation {
+    let runs = |args: &[&str]| {
+        Command::new(gh)
+            .args(args)
+            .output()
+            .is_ok_and(|out| out.status.success())
+    };
+    if !runs(&["attestation", "--help"]) || !runs(&["auth", "status", "--hostname", "github.com"]) {
+        return Attestation::NotChecked;
+    }
+    match Command::new(gh)
+        .args(["attestation", "verify"])
+        .arg(archive)
+        .args(["--repo", REPO])
+        .output()
+    {
+        Ok(out) if out.status.success() => Attestation::Verified,
+        Ok(out) => Attestation::Failed(
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            )
+            .trim_end()
+            .to_string(),
+        ),
+        Err(e) => Attestation::Failed(format!("failed to run gh: {e}")),
+    }
 }
 
 fn extract(archive: &Path, into: &Path, ext: &str) -> Result<(), String> {
@@ -512,6 +637,88 @@ mod tests {
         let sums_path = dir.join("SHA256SUMS");
         fs::write(&sums_path, format!("{hash}  silt-test.tar.gz\n")).expect("write");
         verify_archive(&archive, &sums_path, "silt-test.tar.gz").expect("should verify");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn curl_downloads_over_https_only() {
+        // A redirect to http is refused, and so is a TLS older than 1.2.
+        assert_eq!(CURL_HTTPS_ONLY, ["--proto", "=https", "--tlsv1.2"]);
+    }
+
+    #[test]
+    fn a_wget_redirect_is_followed_only_to_https() {
+        let from = "https://github.com/rendro/silt/releases/download/v1/a.tar.gz";
+        let said = |location: &str| {
+            format!(
+                "--2026-11-11--  {from}\nHTTP request sent, awaiting response... \n  \
+                 HTTP/1.1 302 Found\n  Location: {location}\r\nLocation: {location} [following]\n\
+                 0 redirections exceeded.\n"
+            )
+        };
+        let to = "https://release-assets.githubusercontent.com/a?sig=1";
+        assert_eq!(next_hop(from, &said(to)), Ok(Some(to.to_string())));
+        assert_eq!(
+            next_hop(from, &said("/rendro/silt/other")),
+            Ok(Some("https://github.com/rendro/silt/other".to_string()))
+        );
+        for refused in [
+            "http://example.com/a",
+            "//example.com/a",
+            "ftp://example.com/a",
+        ] {
+            let error = next_hop(from, &said(refused)).expect_err(refused);
+            assert!(error.contains("which is not https"), "{error}");
+        }
+        assert_eq!(next_hop(from, "  HTTP/1.1 404 Not Found\n"), Ok(None));
+    }
+
+    /// A stub `gh` in `dir`: `attestation --help` exits with `help` (1
+    /// for a gh before 2.49), `auth status` with `auth`, and `attestation
+    /// verify` with `verify`, printing a line when it fails.
+    #[cfg(unix)]
+    fn stub_gh(dir: &Path, help: u8, auth: u8, verify: u8) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let gh = dir.join(format!("gh-{help}{auth}{verify}"));
+        fs::write(
+            &gh,
+            format!(
+                "#!/bin/sh\ncase \"$1 $2\" in\n  \"attestation --help\") exit {help} ;;\n  \
+                 \"auth status\") [ \"$3 $4\" = \"--hostname github.com\" ] || exit 8; exit {auth} ;;\n  \
+                 \"attestation verify\") [ {help} = 0 ] || exit 1; \
+                 [ {verify} = 0 ] || echo 'no attestation matches'; \
+                 [ \"$4 $5\" = \"--repo {REPO}\" ] || exit 9; exit {verify} ;;\nesac\nexit 1\n"
+            ),
+        )
+        .expect("write");
+        fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).expect("chmod");
+        gh
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_attestation_is_checked_with_a_logged_in_gh() {
+        let dir = tempdir();
+        let archive = dir.join("silt.tar.gz");
+        fs::write(&archive, b"archive").expect("write");
+        assert_eq!(
+            attestation_by(&stub_gh(&dir, 0, 0, 0), &archive),
+            Attestation::Verified
+        );
+        assert_eq!(
+            attestation_by(&stub_gh(&dir, 0, 0, 1), &archive),
+            Attestation::Failed("no attestation matches".to_string())
+        );
+        // Not logged in, and a gh that has no attestation command (as
+        // Ubuntu 24.04's 2.45): not checked, not refused.
+        assert_eq!(
+            attestation_by(&stub_gh(&dir, 0, 1, 0), &archive),
+            Attestation::NotChecked
+        );
+        assert_eq!(
+            attestation_by(&stub_gh(&dir, 1, 0, 1), &archive),
+            Attestation::NotChecked
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 

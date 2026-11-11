@@ -139,12 +139,11 @@ fn registered_fuzz_targets() -> Vec<String> {
             in_bin = line == "[[bin]]";
             continue;
         }
-        if in_bin {
-            if let Some(rest) = line.strip_prefix("name = \"") {
-                if let Some(name) = rest.strip_suffix('"') {
-                    targets.push(name.to_string());
-                }
-            }
+        if in_bin
+            && let Some(rest) = line.strip_prefix("name = \"")
+            && let Some(name) = rest.strip_suffix('"')
+        {
+            targets.push(name.to_string());
         }
     }
     assert!(

@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- A lone carriage return in the echoed line stands as a visible one: it
+-- does not send the terminal back to the start of the line, where the
+-- rest of the line would be written over the start.
+fn main() {
+  let x = 1  let y = nope
+}

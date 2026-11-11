@@ -21,9 +21,12 @@ on:
         required: true
         type: string
 
+# The token reads the repository; each job that must do more says so.
+# Only the job that pushes the version commit and tag, and the one that
+# makes the release, may write: the build jobs, which run third-party
+# actions and the build, hold a read-only token.
 permissions:
-  contents: write
-  actions: read
+  contents: read
 
 # Two releases never run at once.
 concurrency:
@@ -37,10 +40,15 @@ jobs:
   prepare:
     name: Version and tag
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # It pushes the version commit and the tag, and reads CI's runs.
+    permissions:
+      contents: write
+      actions: read
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
 
@@ -98,6 +106,7 @@ jobs:
     name: Build ${{ matrix.target }}
     needs: prepare
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -105,35 +114,52 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             archive: tar.gz
+            bin: silt
           # A native ARM runner: under `cross` this target took 11 minutes,
           # every other one about 2.
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04-arm
             archive: tar.gz
+            bin: silt
+          # Built on an ARM runner; its smoke run goes through Rosetta.
           - target: x86_64-apple-darwin
             os: macos-latest
             archive: tar.gz
+            bin: silt
+            runner: arch -x86_64
           - target: aarch64-apple-darwin
             os: macos-15
             archive: tar.gz
+            bin: silt
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             archive: zip
+            bin: silt.exe
     env:
       TAG: ${{ needs.prepare.outputs.tag }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.prepare.outputs.tag }}
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
+          toolchain: stable
           targets: ${{ matrix.target }}
 
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --locked --release --target ${{ matrix.target }}
+
+      # The binary that is packaged runs before it is published: its
+      # version is the tag's, and a program with a task, a channel, a
+      # map and json prints what it should.
+      - name: Smoke run
+        shell: bash
+        run: |
+          bash .github/scripts/smoke/run.sh \
+            "$PWD/target/${{ matrix.target }}/release/${{ matrix.bin }}" "${TAG#v}" ${{ matrix.runner }}
 
       - name: Package (unix)
         if: matrix.archive == 'tar.gz'
@@ -151,7 +177,7 @@ jobs:
           cd ../../..
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: silt-${{ matrix.target }}
           path: silt-${{ needs.prepare.outputs.tag }}-${{ matrix.target }}.*
@@ -162,20 +188,24 @@ jobs:
     name: Build the playground
     needs: prepare
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
       TAG: ${{ needs.prepare.outputs.tag }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.prepare.outputs.tag }}
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
+          toolchain: stable
           targets: wasm32-unknown-unknown
 
       - name: Install wasm-pack
-        uses: taiki-e/install-action@wasm-pack
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: wasm-pack
 
       - name: Build
         run: bash playground/build.sh
@@ -187,7 +217,7 @@ jobs:
         run: tar czf silt-$TAG-playground.tar.gz -C playground/pkg .
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: silt-playground
           path: silt-${{ needs.prepare.outputs.tag }}-playground.tar.gz
@@ -196,6 +226,7 @@ jobs:
     name: Create Release
     needs: [prepare, build, playground]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # The attestation is signed with the run's OIDC token and stored
     # with the repository. (The artifacts are this run's own: their
     # download needs no `actions: read`.)
@@ -206,12 +237,12 @@ jobs:
     env:
       TAG: ${{ needs.prepare.outputs.tag }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.prepare.outputs.tag }}
 
       - name: Download artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: artifacts
           merge-multiple: true
@@ -230,14 +261,14 @@ jobs:
       # this commit, built it: `gh attestation verify <archive> --repo
       # rendro/silt` checks one.
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
             artifacts/silt-*.tar.gz
             artifacts/silt-*.zip
 
       - name: Create release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ needs.prepare.outputs.tag }}
           generate_release_notes: true
@@ -249,6 +280,7 @@ jobs:
     name: Move the website to the release
     needs: [prepare, release]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     env:
       TAG: ${{ needs.prepare.outputs.tag }}
       SITE_TOKEN: ${{ secrets.SITE_TOKEN }}
@@ -257,7 +289,7 @@ jobs:
         if: env.SITE_TOKEN == ''
         run: echo "::warning::The secret SITE_TOKEN is not set, so the website still shows the previous release. Move its silt submodule to $TAG by hand."
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         if: env.SITE_TOKEN != ''
         with:
           repository: rendro/silt-website

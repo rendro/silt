@@ -74,7 +74,7 @@ fn unparseable(message: &str, span: Span, output: &str) -> Refusal {
     Refusal {
         message: format!(
             "the result would not parse ({message}, at line {line_number} of the result: `{}`)",
-            excerpt(line)
+            crate::diagnostic::visible_line(&excerpt(line))
         ),
         span: None,
     }

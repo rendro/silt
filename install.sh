@@ -48,6 +48,22 @@ main() {
     verify_sha256 "$tmpdir/silt.$ext" "$tmpdir/SHA256SUMS" "$asset" \
         || err "checksum verification failed — refusing to install"
 
+    # The checksum comes from the same release as the archive; the
+    # attestation is signed by the release workflow, so it also catches a
+    # release whose files were replaced. It needs the GitHub CLI.
+    attested=0
+    verify_attestation "$tmpdir/silt.$ext" "$tmpdir/attestation.out" || attested=$?
+    case "$attested" in
+        0) printf "  Verified the build attestation\n" ;;
+        1)
+            cat "$tmpdir/attestation.out" >&2
+            err "the build attestation of $asset does not verify — refusing to install"
+            ;;
+        *)
+            printf "  Build attestation not checked: that needs gh 2.49 or later, logged in to github.com\n"
+            ;;
+    esac
+
     printf "  Extracting\n"
     if [ "$ext" = "tar.gz" ]; then
         tar xzf "$tmpdir/silt.$ext" -C "$tmpdir" \
@@ -98,13 +114,54 @@ fetch() {
     # can fail closed on missing files (e.g. SHA256SUMS).
     _url="$1"
     _dest="$2"
+    # Only over https, a redirect included.
     if command -v curl > /dev/null 2>&1; then
-        curl -fsSL "$_url" -o "$_dest"
+        curl --proto '=https' --tlsv1.2 -fsSL "$_url" -o "$_dest"
     elif command -v wget > /dev/null 2>&1; then
-        wget -q "$_url" -O "$_dest"
+        wget_https "$_url" "$_dest"
     else
         err "need curl or wget to download"
     fi
+}
+
+wget_https() {
+    # wget_https <url> <dest>: wget follows a redirect wherever it leads
+    # (its --https-only is for recursive downloads only), so here each
+    # redirect is followed by hand, and only to https.
+    _wurl="$1"
+    _hops=0
+    while :; do
+        _said="$(wget --max-redirect=0 --server-response -O "$2" "$_wurl" 2>&1)" && return 0
+        # The Location of the server's answer (its headers are indented).
+        _loc="$(printf '%s\n' "$_said" | awk '/^  / && tolower($1) == "location:" { l = $2 } END { sub(/\r$/, "", l); print l }')"
+        case "$_loc" in
+            "") return 1 ;;
+            https://*) _wurl="$_loc" ;;
+            /*)
+                _host="${_wurl#https://}"
+                _wurl="https://${_host%%/*}$_loc"
+                ;;
+            *)
+                printf "  error: a download was redirected to %s, which is not https\n" "$_loc" >&2
+                return 1
+                ;;
+        esac
+        _hops=$((_hops + 1))
+        [ "$_hops" -lt 10 ] || return 1
+    done
+}
+
+verify_attestation() {
+    # verify_attestation <file> <out>: check the build provenance that the
+    # release workflow signed for <file>, with the GitHub CLI; what gh
+    # says goes to <out>. 0 when it verifies, 1 when it does not, 2 when
+    # it cannot be checked here: no gh, a gh without the attestation
+    # command (before 2.49), or a gh not logged in to github.com.
+    command -v gh > /dev/null 2>&1 || return 2
+    gh attestation --help > /dev/null 2>&1 || return 2
+    gh auth status --hostname github.com > /dev/null 2>&1 || return 2
+    gh attestation verify "$1" --repo "$REPO" > "$2" 2>&1 || return 1
+    return 0
 }
 
 verify_sha256() {
@@ -150,7 +207,7 @@ get_latest_version() {
     # We fetch only the response headers (no -L) and parse the Location header
     # case-insensitively, then take the final path segment as the version.
     if command -v curl > /dev/null 2>&1; then
-        curl -fsI "$BASE_URL/latest" 2>/dev/null \
+        curl --proto '=https' --tlsv1.2 -fsI "$BASE_URL/latest" 2>/dev/null \
             | awk 'tolower($1) == "location:" { sub(/\r$/, "", $2); n = split($2, parts, "/"); print parts[n]; exit }'
     elif command -v wget > /dev/null 2>&1; then
         wget --server-response --spider --max-redirect=0 "$BASE_URL/latest" 2>&1 \

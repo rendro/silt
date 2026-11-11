@@ -2951,6 +2951,115 @@ fn test_regex_cache_eviction_correctness() {
     );
 }
 
+#[test]
+fn a_hit_keeps_a_regex_pattern_young() {
+    // Three places: `a` is used again before `d` comes, so `b`, the least
+    // recently used, goes, not `a`, the first compiled.
+    let mut cache = runtime::RegexCache::with_bounds(3, usize::MAX);
+    for pattern in ["a", "b", "c"] {
+        cache
+            .insert(pattern, runtime::RegexCache::compile(pattern))
+            .unwrap();
+    }
+    assert!(cache.lookup("a").is_some());
+    cache
+        .insert("d", runtime::RegexCache::compile("d"))
+        .unwrap();
+    assert!(cache.lookup("b").is_none(), "the least recently used goes");
+    for kept in ["a", "c", "d"] {
+        assert!(cache.lookup(kept).is_some(), "{kept} is kept");
+    }
+}
+
+#[test]
+fn the_regex_cache_is_bounded_by_the_bytes_its_patterns_take() {
+    // A budget of three patterns of about 1.1 MB (`p<n>\w{20}`): a fourth
+    // drops the least recently used, and the bytes stay within it.
+    let size = runtime::RegexCache::compile(r"p0\w{20}")
+        .unwrap()
+        .memory_usage();
+    let budget = 3 * size + 3 * size / 4;
+    let mut cache = runtime::RegexCache::with_bounds(256, budget);
+    for n in 0..6 {
+        let pattern = format!(r"p{n}\w{{20}}");
+        cache
+            .insert(&pattern, runtime::RegexCache::compile(&pattern))
+            .unwrap();
+        let (count, bytes, _, _) = cache.kept();
+        assert!(bytes <= budget, "{bytes} bytes kept after {n}");
+        assert!(count <= 3, "{count} kept after {n}");
+    }
+    assert!(cache.lookup(r"p5\w{20}").is_some(), "the newest is kept");
+    assert!(cache.lookup(r"p0\w{20}").is_none(), "the oldest is dropped");
+    // A pattern larger than the whole budget is given, not kept.
+    let mut small = runtime::RegexCache::with_bounds(256, size / 2);
+    let re = small.insert(r"q\w{20}", runtime::RegexCache::compile(r"q\w{20}"));
+    assert!(re.is_ok());
+    assert_eq!(small.kept().0, 0, "a pattern over the budget is not kept");
+}
+
+#[test]
+fn patterns_used_in_turn_that_fit_together_compile_once_each() {
+    // Ten validators of about 3.6 MB each (`^\w{1,64}$`), used in turn:
+    // 36 MB fit the program's cache, so each compiles once, however many
+    // rounds.
+    let cache = parking_lot::Mutex::new(runtime::RegexCache::new());
+    for _ in 0..3 {
+        for n in 0..10 {
+            let pattern = format!(r"^v{n}\w{{1,64}}$");
+            assert!(runtime::RegexCache::get(&cache, &pattern).is_ok());
+        }
+    }
+    assert_eq!(cache.lock().kept().3, 10, "each compiled once");
+}
+
+#[test]
+fn a_pattern_that_does_not_compile_is_refused_once() {
+    // A syntax error and one past the size limit: each is compiled once,
+    // and the next calls get the remembered refusal.
+    let cache = parking_lot::Mutex::new(runtime::RegexCache::new());
+    for _ in 0..5 {
+        assert!(runtime::RegexCache::get(&cache, "a(").is_err());
+        let error = runtime::RegexCache::get(&cache, r"\pL{300}").expect_err("too big");
+        assert!(error.size_limit().is_some(), "{error}");
+    }
+    let (kept, _, refused, compiled) = cache.lock().kept();
+    assert_eq!((kept, refused, compiled), (0, 2, 2));
+}
+
+#[test]
+fn a_pattern_compiles_to_at_most_the_size_limit() {
+    // `\w{100}` (5.6 MB) and `^.{8,4096}$` are past the 4 MiB of a
+    // pattern (both compiled under the regex crate's own 10 MiB);
+    // `^\w{3,32}$`, about 1.8 MB, and `^\w{1,64}$`, about 3.6 MB, are not.
+    for pattern in [r"\w{100}", r"^.{8,4096}$"] {
+        let error = runtime::RegexCache::compile(pattern).expect_err(pattern);
+        assert!(error.size_limit().is_some(), "{pattern}: {error}");
+    }
+    for pattern in [r"^\w{3,32}$", r"^\w{1,64}$"] {
+        assert!(runtime::RegexCache::compile(pattern).is_ok(), "{pattern}");
+    }
+}
+
+#[test]
+fn the_tasks_of_a_program_share_its_compiled_patterns() {
+    // A pattern a task compiled is kept for the program: its parent and
+    // the other tasks find it, and do not compile it again.
+    let parent = Vm::new(crate::HostIo::process());
+    let child = parent.spawn_child();
+    let compiled = child.regex("shared[0-9]+").expect("the pattern compiles");
+    let found = parent
+        .runtime
+        .regex_cache
+        .lock()
+        .lookup("shared[0-9]+")
+        .expect("the parent finds the task's pattern")
+        .expect("it compiled");
+    assert!(Arc::ptr_eq(&compiled, &found));
+    let again = parent.regex("shared[0-9]+").expect("the pattern compiles");
+    assert!(Arc::ptr_eq(&compiled, &again));
+}
+
 // ── Audit regression: builtin panic is caught (V1) ───────────────────
 
 #[test]
