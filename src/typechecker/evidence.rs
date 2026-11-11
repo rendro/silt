@@ -548,6 +548,19 @@ impl TypeChecker {
         if let Some(impl_ty) = self.tables.impl_self_types.get(&key) {
             super::builtin_needs::match_type(impl_ty, &ty, &free_vars_in(impl_ty), &mut mapping);
         }
+        // (A variable of the impl's trait arguments that its type does not
+        // have, `r` of `Conv(r) for Box(a) where a: Conv(r)`, is what the
+        // use asks: its header's bounds are asked at it.)
+        if let Some(written) = self.tables.impl_trait_args.get(&key) {
+            for (written, asked) in written.iter().zip(args) {
+                super::builtin_needs::match_type(
+                    written,
+                    asked,
+                    &free_vars_in(written),
+                    &mut mapping,
+                );
+            }
+        }
         let subs = (self.tables.impl_preds.get(&key).into_iter().flatten())
             .filter(|pred| passes_dictionary(pred))
             .filter_map(|pred| match pred {

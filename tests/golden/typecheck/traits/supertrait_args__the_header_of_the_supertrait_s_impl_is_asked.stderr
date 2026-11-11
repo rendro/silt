@@ -1,0 +1,23 @@
+error[type]: type 'W(Box(Bool))' implements 'Sup' but does not implement supertrait 'Conv(Int)'
+ --> supertrait_args__the_header_of_the_supertrait_s_impl_is_asked.silt:51:1
+    |
+ 51 | trait Sup for W(Box(Bool)) {}
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type 'W(Box(Bool))' implements 'Sup' but does not implement supertrait 'Conv(Int)'
+
+error[type]: type 'W(Bool)' implements 'Sup' but does not implement supertrait 'Conv(Int)'
+ --> supertrait_args__the_header_of_the_supertrait_s_impl_is_asked.silt:53:1
+    |
+ 53 | trait Sup for W(Bool) {}
+    | ^^^^^^^^^^^^^^^^^^^^^^^^ type 'W(Bool)' implements 'Sup' but does not implement supertrait 'Conv(Int)'
+
+error[type]: type 'W(Box(a))' implements 'Sup2' but does not implement supertrait 'Conv(Int)'
+ --> supertrait_args__the_header_of_the_supertrait_s_impl_is_asked.silt:62:1
+    |
+ 62 | trait Sup2 for W(Box(a)) {}
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^ type 'W(Box(a))' implements 'Sup2' but does not implement supertrait 'Conv(Int)'
+
+error[type]: type 'V(Box(List(a)))' implements 'Sup3(a)' but does not implement supertrait 'Conv(a)'
+ --> supertrait_args__the_header_of_the_supertrait_s_impl_is_asked.silt:71:1
+    |
+ 71 | trait Sup3(a) for V(Box(List(a))) {}
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type 'V(Box(List(a)))' implements 'Sup3(a)' but does not implement supertrait 'Conv(a)'

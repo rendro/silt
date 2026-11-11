@@ -1,0 +1,75 @@
+-- cmd: check
+-- exit: 1
+-- The impl of a trait whose supertrait has trait arguments (`trait Sup:
+-- Conv(Int)`) needs the supertrait at its type, what the header of the
+-- supertrait's impl asks included: `Conv(Int) for W(a) where a:
+-- Conv(Int)` is no `Conv(Int)` of `W(Box(Bool))` (`Box(Bool)` is
+-- `Conv(Bool)`), of `W(Box(a))`, or of `W(Bool)` (no `Conv` at all), nor
+-- `Conv(r) for W(a) where a: Conv(r)` a `Conv(a)` of `W(Box(List(a)))`.
+-- (Each was accepted: `Sup.sup` added a Bool, or found no dictionary.)
+trait Conv(r) {
+  fn conv(self) -> (String, r)
+}
+
+type Box(a) {
+  item: a,
+}
+
+type W(a) {
+  w: a,
+}
+
+type V(a) {
+  v: a,
+}
+
+trait Conv(a) for Box(a) {
+  fn conv(self) -> (String, a) {
+    ("box", self.item)
+  }
+}
+
+trait Conv(Int) for W(a) where a: Conv(Int) {
+  fn conv(self) -> (String, Int) {
+    Conv.conv(self.w)
+  }
+}
+
+trait Conv(r) for V(a) where a: Conv(r) {
+  fn conv(self) -> (String, r) {
+    Conv.conv(self.v)
+  }
+}
+
+trait Sup: Conv(Int) {
+  fn sup(self) -> Int {
+    let (_, n) = Conv.conv(self)
+    n + 1
+  }
+}
+
+trait Sup for W(Box(Bool)) {}
+
+trait Sup for W(Bool) {}
+
+trait Sup2: Conv(Int) {
+  fn sup2(self) -> Int {
+    let (_, n) = Conv.conv(self)
+    n
+  }
+}
+
+trait Sup2 for W(Box(a)) {}
+
+trait Sup3(r): Conv(r) {
+  fn sup3(self) -> String {
+    let (t, _) = Conv.conv(self)
+    t
+  }
+}
+
+trait Sup3(a) for V(Box(List(a))) {}
+
+fn main() {
+  println(1)
+}

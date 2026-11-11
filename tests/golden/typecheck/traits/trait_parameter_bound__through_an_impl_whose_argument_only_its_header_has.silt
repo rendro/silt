@@ -1,0 +1,50 @@
+-- A trait parameter bound with trait arguments (`where k: Conv(Int)`)
+-- met through an impl whose trait argument only its header has (`Conv(r)
+-- for Box(a) where a: Conv(r)`): the impl's dictionary for the bound
+-- carries `a`'s `Conv(Int)` (it carried none: "a dictionary was
+-- expected" where it ran).
+trait Conv(r) {
+  fn conv(self) -> (String, r)
+}
+
+type Box(a) {
+  item: a,
+}
+
+type Z(a) {
+  z: a,
+}
+
+trait Conv(r) for Box(a) where a: Conv(r) {
+  fn conv(self) -> (String, r) {
+    let (t, n) = Conv.conv(self.item)
+    ("box{t}", n)
+  }
+}
+
+trait Conv(Int) for Int {
+  fn conv(self) -> (String, Int) {
+    ("int", self)
+  }
+}
+
+trait Tbl(k) where k: Conv(Int) {
+  fn key(self) -> k
+  fn show(self) -> (String, Int) {
+    Conv.conv(Tbl.key(self))
+  }
+}
+
+trait Tbl(Box(a)) for Z(a) where a: Conv(Int) {
+  fn key(self) -> Box(a) {
+    Box { item: self.z }
+  }
+}
+
+fn sh(x: t, type k) -> (String, Int) where t: Tbl(k) {
+  Tbl.show(x)
+}
+
+fn main() {
+  println(sh(Z { z: 4 }, Box(Int)))
+}

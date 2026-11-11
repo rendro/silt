@@ -161,7 +161,9 @@ impl TypeChecker {
                 // (A concrete argument without it is reported where the
                 // impl is registered; one built from the impl's variables
                 // has no impl at every type the variables stand for.)
-                if !free_vars_in(&self.apply(arg)).is_empty() {
+                if !free_vars_in(&self.apply(arg)).is_empty()
+                    || (bound_args.iter()).any(|ty| !free_vars_in(&self.apply(ty)).is_empty())
+                {
                     let (_, _, mapping) = self.impl_var_naming(key, &self_ty);
                     let shown = |args: &[Type], names: &HashMap<TyVar, Type>| -> Vec<Type> {
                         (args.iter())
@@ -266,6 +268,39 @@ impl TypeChecker {
         false
     }
 
+    /// Whether a part of the type of the impl `key` that is no variable
+    /// lacks the supertrait `sup` at `sup_args` (`trait_needs`).
+    fn supertrait_lacking(&self, key: ImplKey, sup: TraitKey, sup_args: &[Type]) -> bool {
+        let Some(self_ty) = self.tables.impl_self_types.get(&key) else {
+            return false;
+        };
+        !self.trait_needs(sup, sup_args, self_ty, 0, &mut Vec::new())
+    }
+
+    /// The types of the impl `key`'s trait arguments (or of any written
+    /// with its variables) with the names its header gives them.
+    fn impl_args_named(&self, key: ImplKey) -> impl Fn(&[Type]) -> Vec<Type> + '_ {
+        let names = match self.tables.impl_self_types.get(&key) {
+            Some(ty) => self.impl_var_naming(key, ty).2,
+            None => HashMap::new(),
+        };
+        move |args: &[Type]| {
+            (args.iter())
+                .map(|arg| substitute_vars(&self.apply(arg), &names))
+                .collect()
+        }
+    }
+
+    /// The type of the impl `key` with the names its header gives its
+    /// variables: `W(Box(a))`.
+    fn impl_type_named(&self, key: ImplKey) -> String {
+        let Some(ty) = self.tables.impl_self_types.get(&key) else {
+            return self.show_type(&Type::Generic(key.1, Vec::new()));
+        };
+        let (_, _, names) = self.impl_var_naming(key, ty);
+        self.show_type(&substitute_vars(&self.apply(ty), &names))
+    }
+
     /// Whether the impl `key` of a supertrait, whose trait arguments are
     /// `actual`, gives the impl whose type is `ours` (with the trait
     /// arguments `ours_args`) the supertrait at `expected`: its type is
@@ -364,7 +399,17 @@ impl TypeChecker {
         let mut names: Vec<(TyVar, Symbol)> =
             self.impl_var_names.get(&key).cloned().unwrap_or_default();
         let named = !names.is_empty();
-        for v in free_vars_in(self_ty) {
+        // (A header's variable as it stands now: one bound to another
+        // variable is named by its name too.)
+        for (v, name) in names.clone() {
+            if let Type::Var(w) = self.apply(&Type::Var(v))
+                && w != v
+                && !names.iter().any(|(known, _)| *known == w)
+            {
+                names.push((w, name));
+            }
+        }
+        for v in free_vars_in(&self.apply(self_ty)) {
             if !names.iter().any(|(known, _)| *known == v) {
                 let letter = char::from(b'a' + (names.len() % 26) as u8);
                 names.push((v, intern(&letter.to_string())));
@@ -711,6 +756,28 @@ impl TypeChecker {
                                 self.trait_arg_compatible(&e, &a)
                             }),
                     };
+                // (The impl it found is at those trait arguments, but what
+                // that impl's header asks, a part of this impl's type lacks:
+                // `Conv(Int) for W(a) where a: Conv(Int)` is no `Conv(Int)`
+                // of `W(Box(Bool))`.)
+                if pos_ok && self.supertrait_lacking(*impl_key, *supertrait, &expected_super_args) {
+                    let ty = self.impl_type_named(*impl_key);
+                    let (tr, sup) = {
+                        let named = self.impl_args_named(*impl_key);
+                        (
+                            self.show_bound(*trait_name, &named(&enclosing_args)),
+                            self.show_bound(*supertrait, &named(&expected_super_args)),
+                        )
+                    };
+                    self.error(
+                        Code::MissingTraitImpl,
+                        format!(
+                            "type '{ty}' implements '{tr}' but does not implement supertrait '{sup}'"
+                        ),
+                        diag_span,
+                    );
+                    continue;
+                }
                 if !pos_ok {
                     // (Each impl named by its trait arguments and its type,
                     // with the names its header gives its variables:
@@ -2243,6 +2310,16 @@ impl TypeChecker {
                 self.tables
                     .impl_trait_args
                     .insert(impl_key, resolved_trait_args.clone());
+                // (A variable only the trait arguments write, `r` of
+                // `Conv(r) for Box(a)`, has its name for a message too.)
+                let known = self.impl_var_names.entry(impl_key).or_default();
+                for (name, ty) in &impl_param_map {
+                    if let Type::Var(v) = ty
+                        && !known.iter().any(|(k, _)| k == v)
+                    {
+                        known.push((*v, *name));
+                    }
+                }
                 for name in &refused_trait_arg_bounds {
                     if let Some(Type::Var(tv)) = impl_param_map.get(name) {
                         self.unknown_bounds.insert(*tv);
@@ -2274,7 +2351,18 @@ impl TypeChecker {
                                 let bound_args: Vec<Type> = (written_args.iter())
                                     .map(|ty| substitute_vars(ty, &at_impl))
                                     .collect();
-                                self.verify_declared(*bound_trait, &bound_args, &applied, ti.span);
+                                // (So is a bound whose trait arguments have
+                                // one: `Q: Conv(a)` of `Tbl(Q, a)`.)
+                                if (bound_args.iter())
+                                    .all(|ty| free_vars_in(&self.apply(ty)).is_empty())
+                                {
+                                    self.verify_declared(
+                                        *bound_trait,
+                                        &bound_args,
+                                        &applied,
+                                        ti.span,
+                                    );
+                                }
                             }
                         }
                     }

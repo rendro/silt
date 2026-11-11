@@ -1,0 +1,72 @@
+-- cmd: check
+-- exit: 1
+-- A trait parameter bound naming another parameter (`trait Tbl(k, v)
+-- where k: Conv(v)`) at a concrete argument and an impl variable
+-- (`Tbl(Q, a)`, `Tbl(W(Box(Int)), a)`): `Q` is `Conv(Int)` only, so it is
+-- no `Conv(a)` at every `a`; refused. (It was accepted: the check where
+-- the impl is registered decided `a` as Int.)
+trait Conv(r) {
+  fn conv(self) -> (String, r)
+}
+
+type Q {
+  q: Int,
+}
+
+type Box(a) {
+  item: a,
+}
+
+type W(a) {
+  w: a,
+}
+
+type Z(a) {
+  z: a,
+}
+
+trait Conv(Int) for Q {
+  fn conv(self) -> (String, Int) {
+    ("q", 7)
+  }
+}
+
+trait Conv(a) for Box(a) {
+  fn conv(self) -> (String, a) {
+    ("box", self.item)
+  }
+}
+
+trait Conv(r) for W(a) where a: Conv(r) {
+  fn conv(self) -> (String, r) {
+    Conv.conv(self.w)
+  }
+}
+
+trait Tbl(k, v) where k: Conv(v) {
+  fn key(self) -> k
+  fn show(self) -> String {
+    let (t, _): (String, v) = Conv.conv(Tbl.key(self))
+    t
+  }
+}
+
+trait Tbl(Q, a) for Z(a) {
+  fn key(self) -> Q {
+    Q { q: 1 }
+  }
+}
+
+type Z2(a) {
+  z: a,
+}
+
+trait Tbl(W(Box(Int)), a) for Z2(a) {
+  fn key(self) -> W(Box(Int)) {
+    W { w: Box { item: 3 } }
+  }
+}
+
+fn main() {
+  println(1)
+}
