@@ -71,13 +71,14 @@ esac
 /// A stub `gh` that is not logged in.
 const STUB_GH_LOGGED_OUT: &str = "#!/bin/sh\nexit 1\n";
 
-/// A stub `gh` that is logged in and whose `attestation verify` exits
-/// with `$STUB_GH_VERIFY` (0 when unset), saying so; its arguments go to
-/// `$STUB_STATE/gh.log`.
+/// A stub `gh` that is logged in to github.com and whose `attestation
+/// verify` exits with `$STUB_GH_VERIFY` (0 when unset), saying so; its
+/// arguments go to `$STUB_STATE/gh.log`.
 const STUB_GH: &str = r#"#!/bin/sh
 echo "$*" >> "$STUB_STATE/gh.log"
 case "$1 $2" in
-    "auth status") exit 0 ;;
+    "attestation --help") exit 0 ;;
+    "auth status") [ "$3 $4" = "--hostname github.com" ] || exit 8; exit 0 ;;
     "attestation verify")
         if [ "${STUB_GH_VERIFY:-0}" != 0 ]; then
             echo "stub gh: no attestation matches"
@@ -86,6 +87,65 @@ case "$1 $2" in
         ;;
 esac
 exit 1
+"#;
+
+/// A stub `gh` as Ubuntu 24.04 ships it (2.45): logged in, but without
+/// the `attestation` command, which came in 2.49.
+const STUB_GH_WITHOUT_ATTESTATION: &str = r#"#!/bin/sh
+echo "$*" >> "$STUB_STATE/gh.log"
+case "$1 $2" in
+    "auth status") exit 0 ;;
+esac
+echo "unknown command \"$1\" for \"gh\"" >&2
+exit 1
+"#;
+
+/// The stub `wget`, for a machine without curl. The version lookup
+/// (`--spider`) is answered with a redirect to the tag; a download from
+/// github.com with a redirect to `$STUB_WGET_TO` followed by the file's
+/// name, as GitHub sends a release asset to its storage; any other URL is
+/// served as the stub curl serves it. Each call's arguments go to
+/// `$STUB_STATE/wget.log`.
+const STUB_WGET: &str = r#"#!/bin/sh
+echo "$*" >> "$STUB_STATE/wget.log"
+url=""
+dest=""
+spider=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --spider) spider=1 ;;
+        -O) shift; dest="$1" ;;
+        https://*|http://*) url="$1" ;;
+    esac
+    shift
+done
+if [ -n "$spider" ]; then
+    printf '  HTTP/1.1 302 Found\r\n  Location: https://github.com/rendro/silt/releases/tag/v9.9.9\r\n' >&2
+    exit 8
+fi
+case "$url" in
+    https://github.com/*)
+        printf '  HTTP/1.1 302 Found\r\n  Location: %s%s\r\nLocation: %s%s [following]\n0 redirections exceeded.\n' \
+            "$STUB_WGET_TO" "${url##*/}" "$STUB_WGET_TO" "${url##*/}" >&2
+        : > "$dest"
+        exit 8
+        ;;
+esac
+case "$url" in
+    *SHA256SUMS)
+        asset="$(cat "$STUB_STATE/asset")"
+        if command -v sha256sum > /dev/null 2>&1; then
+            hash="$(sha256sum "$STUB_ASSET" | awk '{print $1}')"
+        else
+            hash="$(shasum -a 256 "$STUB_ASSET" | awk '{print $1}')"
+        fi
+        printf '%s  %s\n' "$hash" "$asset" > "$dest"
+        ;;
+    *)
+        printf '%s' "${url##*/}" > "$STUB_STATE/asset"
+        cat "$STUB_ASSET" > "$dest"
+        ;;
+esac
 "#;
 
 /// A stub `uname` that reports a Windows (MSYS) host, so the script takes
@@ -147,12 +207,55 @@ impl Sandbox {
     }
 
     fn run_with(&self, fail_fetch: &str, env: &[(&str, &str)]) -> Output {
-        let install_sh = Path::new(env!("CARGO_MANIFEST_DIR")).join("install.sh");
         let path = format!(
             "{}:{}",
             self.root.join("stubs").display(),
             std::env::var("PATH").unwrap_or_default()
         );
+        self.run_on_path(&path, fail_fetch, env)
+    }
+
+    /// Run with the stub `wget` and no curl: PATH is the stubs and a
+    /// directory of links to the machine's tools that install.sh uses,
+    /// curl not among them.
+    fn run_with_wget(&self, env: &[(&str, &str)]) -> Output {
+        self.stub("wget", STUB_WGET);
+        let _ = fs::remove_file(self.root.join("stubs/curl"));
+        let tools = self.root.join("tools");
+        fs::create_dir_all(&tools).unwrap();
+        let path_var = std::env::var("PATH").unwrap_or_default();
+        for tool in [
+            "sh",
+            "uname",
+            "mktemp",
+            "rm",
+            "awk",
+            "tar",
+            "gzip",
+            "cp",
+            "mkdir",
+            "chmod",
+            "sha256sum",
+            "shasum",
+            "tr",
+            "grep",
+            "cat",
+            "sed",
+            "head",
+        ] {
+            let found = std::env::split_paths(&path_var)
+                .map(|dir| dir.join(tool))
+                .find(|candidate| candidate.is_file());
+            if let Some(found) = found {
+                let _ = std::os::unix::fs::symlink(found, tools.join(tool));
+            }
+        }
+        let path = format!("{}:{}", self.root.join("stubs").display(), tools.display());
+        self.run_on_path(&path, "", env)
+    }
+
+    fn run_on_path(&self, path: &str, fail_fetch: &str, env: &[(&str, &str)]) -> Output {
+        let install_sh = Path::new(env!("CARGO_MANIFEST_DIR")).join("install.sh");
         Command::new("sh")
             .arg(&install_sh)
             .env("PATH", path)
@@ -292,8 +395,9 @@ fn install_sh_without_a_logged_in_gh_says_the_attestation_is_not_checked() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(
-        stdout.contains("Build attestation not checked")
-            && stdout.contains("gh attestation verify silt-v9.9.9-"),
+        stdout.contains(
+            "Build attestation not checked: that needs gh 2.49 or later, logged in to github.com"
+        ),
         "{stdout}"
     );
     assert!(sb.install_dir().join("silt").is_file());
@@ -334,6 +438,61 @@ fn install_sh_refuses_an_archive_whose_attestation_does_not_verify() {
     assert!(
         stderr.contains("stub gh: no attestation matches"),
         "{stderr}"
+    );
+    assert!(!sb.install_dir().join("silt").exists());
+}
+
+#[test]
+fn install_sh_with_a_gh_that_has_no_attestation_command_installs_unchecked() {
+    // Ubuntu 24.04's gh (2.45) is logged in but has no `attestation`:
+    // the genuine release installs, the check is said to be skipped.
+    let sb = Sandbox::new("attest_old_gh");
+    sb.stub("gh", STUB_GH_WITHOUT_ATTESTATION);
+    let out = sb.run("");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(stdout.contains("Build attestation not checked"), "{stdout}");
+    assert!(sb.install_dir().join("silt").is_file());
+}
+
+#[test]
+fn install_sh_with_wget_follows_a_redirect_to_https() {
+    let sb = Sandbox::new("wget_https");
+    let out = sb.run_with_wget(&[("STUB_WGET_TO", "https://release-assets.example/")]);
+    assert!(
+        out.status.success(),
+        "stdout={}\nstderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(sb.install_dir().join("silt").is_file());
+    let log = fs::read_to_string(sb.root.join("state/wget.log")).unwrap();
+    assert!(
+        log.lines().any(
+            |call| call.ends_with("https://release-assets.example/SHA256SUMS")
+                || call.contains("https://release-assets.example/silt-v9.9.9-")
+        ),
+        "{log}"
+    );
+}
+
+#[test]
+fn install_sh_with_wget_refuses_a_redirect_to_http() {
+    // wget would follow it (its --https-only is for recursive downloads);
+    // install.sh follows redirects itself and never asks the http URL.
+    let sb = Sandbox::new("wget_http");
+    let out = sb.run_with_wget(&[("STUB_WGET_TO", "http://release-assets.example/")]);
+    assert_branded_failure(&out, "failed to download binary");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("which is not https"), "{stderr}");
+    let log = fs::read_to_string(sb.root.join("state/wget.log")).unwrap();
+    assert!(
+        !log.contains("http://"),
+        "a plain http URL was asked for:\n{log}"
     );
     assert!(!sb.install_dir().join("silt").exists());
 }

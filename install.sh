@@ -60,8 +60,7 @@ main() {
             err "the build attestation of $asset does not verify — refusing to install"
             ;;
         *)
-            printf "  Build attestation not checked: that needs the GitHub CLI (gh), logged in.\n"
-            printf "  To check the archive: gh attestation verify %s --repo %s\n" "$asset" "$REPO"
+            printf "  Build attestation not checked: that needs gh 2.49 or later, logged in to github.com\n"
             ;;
     esac
 
@@ -119,19 +118,48 @@ fetch() {
     if command -v curl > /dev/null 2>&1; then
         curl --proto '=https' --tlsv1.2 -fsSL "$_url" -o "$_dest"
     elif command -v wget > /dev/null 2>&1; then
-        wget --https-only -q "$_url" -O "$_dest"
+        wget_https "$_url" "$_dest"
     else
         err "need curl or wget to download"
     fi
+}
+
+wget_https() {
+    # wget_https <url> <dest>: wget follows a redirect wherever it leads
+    # (its --https-only is for recursive downloads only), so here each
+    # redirect is followed by hand, and only to https.
+    _wurl="$1"
+    _hops=0
+    while :; do
+        _said="$(wget --max-redirect=0 --server-response -O "$2" "$_wurl" 2>&1)" && return 0
+        # The Location of the server's answer (its headers are indented).
+        _loc="$(printf '%s\n' "$_said" | awk '/^  / && tolower($1) == "location:" { l = $2 } END { sub(/\r$/, "", l); print l }')"
+        case "$_loc" in
+            "") return 1 ;;
+            https://*) _wurl="$_loc" ;;
+            /*)
+                _host="${_wurl#https://}"
+                _wurl="https://${_host%%/*}$_loc"
+                ;;
+            *)
+                printf "  error: a download was redirected to %s, which is not https\n" "$_loc" >&2
+                return 1
+                ;;
+        esac
+        _hops=$((_hops + 1))
+        [ "$_hops" -lt 10 ] || return 1
+    done
 }
 
 verify_attestation() {
     # verify_attestation <file> <out>: check the build provenance that the
     # release workflow signed for <file>, with the GitHub CLI; what gh
     # says goes to <out>. 0 when it verifies, 1 when it does not, 2 when
-    # it cannot be checked here (no gh, or gh not logged in).
+    # it cannot be checked here: no gh, a gh without the attestation
+    # command (before 2.49), or a gh not logged in to github.com.
     command -v gh > /dev/null 2>&1 || return 2
-    gh auth status > /dev/null 2>&1 || return 2
+    gh attestation --help > /dev/null 2>&1 || return 2
+    gh auth status --hostname github.com > /dev/null 2>&1 || return 2
     gh attestation verify "$1" --repo "$REPO" > "$2" 2>&1 || return 1
     return 0
 }
@@ -182,7 +210,7 @@ get_latest_version() {
         curl --proto '=https' --tlsv1.2 -fsI "$BASE_URL/latest" 2>/dev/null \
             | awk 'tolower($1) == "location:" { sub(/\r$/, "", $2); n = split($2, parts, "/"); print parts[n]; exit }'
     elif command -v wget > /dev/null 2>&1; then
-        wget --https-only --server-response --spider --max-redirect=0 "$BASE_URL/latest" 2>&1 \
+        wget --server-response --spider --max-redirect=0 "$BASE_URL/latest" 2>&1 \
             | awk 'tolower($1) == "location:" { sub(/\r$/, "", $2); n = split($2, parts, "/"); print parts[n]; exit }'
     fi
 }
