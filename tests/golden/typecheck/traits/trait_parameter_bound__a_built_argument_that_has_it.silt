@@ -1,0 +1,75 @@
+-- A built trait argument has a trait parameter's bound with trait
+-- arguments where it holds at every type: an impl for one instantiation
+-- (`Tbl(Box(Int)) for Int`, `Tbl(Box(String)) for String`, each with
+-- its own `Conv(Int)`), and a generic impl whose bound names another
+-- parameter (`where k: Conv(v)` at `Tbl(Box(a), a)`: `Box(a)` is
+-- `Conv(a)` at every `a`).
+trait Conv(r) {
+  fn conv(self) -> (String, r)
+}
+
+type Box(a) {
+  item: a,
+}
+
+trait Conv(a) for Box(a) {
+  fn conv(self) -> (String, a) {
+    ("gen", self.item)
+  }
+}
+
+trait Conv(Int) for Box(String) {
+  fn conv(self) -> (String, Int) {
+    ("spec", 7)
+  }
+}
+
+trait Tbl(k) where k: Conv(Int) {
+  fn key(self) -> k
+  fn show(self) -> (String, Int) {
+    Conv.conv(Tbl.key(self))
+  }
+}
+
+trait Tbl(Box(Int)) for Int {
+  fn key(self) -> Box(Int) {
+    Box { item: self }
+  }
+}
+
+trait Tbl(Box(String)) for String {
+  fn key(self) -> Box(String) {
+    Box { item: self }
+  }
+}
+
+trait Pairs(k, v) where k: Conv(v) {
+  fn key(self) -> k
+  fn shown(self) -> (String, v) {
+    Conv.conv(Pairs.key(self))
+  }
+}
+
+type Z(a) {
+  z: a,
+}
+
+trait Pairs(Box(a), a) for Z(a) {
+  fn key(self) -> Box(a) {
+    Box { item: self.z }
+  }
+}
+
+fn sh(x: t, type k) -> (String, Int) where t: Tbl(k) {
+  Tbl.show(x)
+}
+
+fn ps(x: t, type k, type v) -> (String, v) where t: Pairs(k, v) {
+  Pairs.shown(x)
+}
+
+fn main() {
+  println("{sh(5, Box(Int))} {sh("q", Box(String))}")
+  let (_, b) = ps(Z { z: true }, Box(Bool), Bool)
+  println(b)
+}

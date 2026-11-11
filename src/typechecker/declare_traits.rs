@@ -158,6 +158,52 @@ impl TypeChecker {
                 .collect();
             let mut needs: Vec<Need> = Vec::new();
             if !self.trait_needs(*bound, &bound_args, arg, 0, &mut needs) {
+                // (A concrete argument without it is reported where the
+                // impl is registered; one built from the impl's variables
+                // has no impl at every type the variables stand for.)
+                if !free_vars_in(&self.apply(arg)).is_empty() {
+                    let (_, _, mapping) = self.impl_var_naming(key, &self_ty);
+                    let shown = |args: &[Type], names: &HashMap<TyVar, Type>| -> Vec<Type> {
+                        (args.iter())
+                            .map(|arg| substitute_vars(&self.apply(arg), names))
+                            .collect()
+                    };
+                    let arg_shown = self.show_type(&substitute_vars(&self.apply(arg), &mapping));
+                    let found: Vec<String> = (self.type_name_for_impl(&self.apply(arg)))
+                        .map(|head| {
+                            (self.tables.impl_args_of(*bound, head).iter())
+                                .filter_map(|at| {
+                                    let at = (*bound, head, *at);
+                                    let args = self.tables.impl_trait_args.get(&at)?.clone();
+                                    let ty = self.tables.impl_self_types.get(&at)?.clone();
+                                    let (_, _, names) = self.impl_var_naming(at, &ty);
+                                    Some(format!(
+                                        "impl {} for {}",
+                                        self.show_bound(*bound, &shown(&args, &names)),
+                                        self.show_type(&substitute_vars(&self.apply(&ty), &names))
+                                    ))
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let found = match found.is_empty() {
+                        true => "there is no impl of it".to_string(),
+                        false => format!("found {}", found.join(" and ")),
+                    };
+                    let message = format!(
+                        "type '{}' implements '{}', whose argument '{arg_shown}' must implement \
+                         '{}' (trait '{}' declares `where {}: {}`) for every type the impl \
+                         stands for, but {found}",
+                        self.show_type(&substitute_vars(&self_ty, &mapping)),
+                        self.show_bound(key.0, &shown(&impl_args, &mapping)),
+                        self.show_bound(*bound, &shown(&bound_args, &mapping)),
+                        self.show_trait(key.0),
+                        param,
+                        self.show_bound(*bound, &shown(written_args, &declared)),
+                    );
+                    self.error(Code::MissingTraitImpl, message, span);
+                    return true;
+                }
                 continue;
             }
             let missing = self.unmet_needs(key, &needs);
@@ -424,6 +470,19 @@ impl TypeChecker {
                 }
             }
         };
+        // (That impl at every type `ty` stands for: its trait arguments,
+        // its type matched with `ty`, are the asked ones with the
+        // variables of `ty` each one type. `Conv(a) for Box(a)` is
+        // `Conv(Int)` of `Box(a)` only where `a` is Int: no impl here.)
+        if !args.is_empty() {
+            let written = (self.tables.impl_trait_args.get(&key))
+                .cloned()
+                .unwrap_or_default();
+            if written.len() != args.len() || !self.super_args_hold(key, &ty, args, args, &written)
+            {
+                return false;
+            }
+        }
         let Some(impl_ty) = self.tables.impl_self_types.get(&key) else {
             return true;
         };
@@ -2205,10 +2264,12 @@ impl TypeChecker {
                         };
                         let applied = self.apply(arg_ty);
                         match &applied {
-                            Type::Var(_) => {
-                                // Deferred — the impl's own where clause path
-                                // will propagate it; skip here.
-                            }
+                            // (An argument with a variable of the impl in
+                            // it, `a` or `Box(a)`, is judged at every type
+                            // the variable stands for once the impls are
+                            // known (`param_bounds_reported`): checking it
+                            // here would decide the impl's variable.)
+                            _ if !free_vars_in(&applied).is_empty() => {}
                             _ => {
                                 let bound_args: Vec<Type> = (written_args.iter())
                                     .map(|ty| substitute_vars(ty, &at_impl))
