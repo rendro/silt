@@ -832,14 +832,20 @@ pub(crate) fn excerpt_around(line: &str, col: usize) -> Excerpt {
 /// (an escape sequence, a carriage return that goes back to the start
 /// of the line) nor moves the caret off its place. A C0 control and DEL
 /// are their symbol of the Control Pictures block (`␛`, `␍`, `␇`), the
-/// others `�`.
+/// others `�`: the C1 controls and the twelve bidirectional controls
+/// (U+061C, U+200E, U+200F, U+202A..U+202E, U+2066..U+2069).
 pub(crate) fn visible_line(line: &str) -> String {
     line.chars()
         .map(|ch| match ch {
             '\t' => ch,
             '\u{0}'..='\u{1f}' => char::from_u32(0x2400 + ch as u32).unwrap_or('\u{fffd}'),
             '\u{7f}' => '\u{2421}',
-            '\u{80}'..='\u{9f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' => '\u{fffd}',
+            '\u{80}'..='\u{9f}'
+            | '\u{61c}'
+            | '\u{200e}'
+            | '\u{200f}'
+            | '\u{202a}'..='\u{202e}'
+            | '\u{2066}'..='\u{2069}' => '\u{fffd}',
             _ => ch,
         })
         .collect()
@@ -1113,6 +1119,10 @@ mod tests {
         assert_eq!(
             visible_line("a\u{7}\u{8}\u{1b}[2J\rb\u{7f}\u{85}\u{202e}\u{2066}\tc"),
             "a␇␈␛[2J␍b␡\u{fffd}\u{fffd}\u{fffd}\tc"
+        );
+        assert_eq!(
+            visible_line("a\u{61c}b\u{200e}c\u{200f}d"),
+            "a\u{fffd}b\u{fffd}c\u{fffd}d"
         );
         assert_eq!(visible_line("let s = \"é 日本\""), "let s = \"é 日本\"");
     }

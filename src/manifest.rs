@@ -466,11 +466,13 @@ fn validate_identifier(name: &str) -> Result<(), String> {
 }
 
 /// The error for a module name that is not one of lowercase letters,
-/// digits and `_`.
+/// digits and `_`. The name is shown by the display rule
+/// ([`escape_for_display`]): it is a file's name, which can be anybody's.
 pub fn invalid_module_name(name: &str) -> String {
     format!(
-        "`{name}` is not a valid module name: use lowercase letters, digits and `_`, \
-         not starting with a digit"
+        "`{}` is not a valid module name: use lowercase letters, digits and `_`, \
+         not starting with a digit",
+        escape_for_display(name)
     )
 }
 
@@ -706,6 +708,18 @@ fn convert_git_dependency(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_module_name_is_shown_by_the_display_rule() {
+        // A file's name is anybody's: an escape sequence or a carriage
+        // return in it is shown escaped, not given to the terminal.
+        let message = invalid_module_name("t15_\u{1b}[2J\rName");
+        assert!(
+            message.starts_with("`t15_\\u{1b}[2J\\rName` is not"),
+            "{message}"
+        );
+        assert!(!message.contains(['\u{1b}', '\r']), "{message:?}");
+    }
 
     #[test]
     fn identifier_rules() {

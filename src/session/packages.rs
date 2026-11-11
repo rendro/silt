@@ -192,6 +192,26 @@ pub(super) fn upper_case_file_name(name: &str, file: FileId) -> Diagnostic {
     let lower = name.to_lowercase();
     match crate::module::is_builtin_module(&lower) {
         true => d,
-        false => d.with_help(format!("rename `{name}.silt` to `{lower}.silt`")),
+        false => d.with_help(format!(
+            "rename `{}.silt` to `{}.silt`",
+            crate::git::escape_for_display(name),
+            crate::git::escape_for_display(&lower)
+        )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_rename_help_of_a_module_file_shows_its_name_by_the_display_rule() {
+        let d = upper_case_file_name("t15_\u{1b}[2J\rName", FileId::default());
+        let help = d.help.join("\n");
+        assert_eq!(
+            help,
+            "rename `t15_\\u{1b}[2J\\rName.silt` to `t15_\\u{1b}[2j\\rname.silt`"
+        );
+        assert!(!d.message.contains(['\u{1b}', '\r']), "{:?}", d.message);
     }
 }
