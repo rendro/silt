@@ -1,0 +1,53 @@
+-- Bytes are ordered byte by byte, each byte unsigned (0x80-0xff after
+-- 0x00-0x7f), and a value the other starts with comes first; the empty
+-- value comes before every other. `<`, `<=`, `>`, `>=`,
+-- Compare.compare, list.sort, list.max_by and list.min_by use the order,
+-- the one map keys already print in.
+import bytes
+import list
+import option
+
+fn b(xs: List(Int)) -> Bytes {
+  match bytes.from_list(xs) {
+    Ok(v) -> v
+    Err(_) -> bytes.empty()
+  }
+}
+
+fn main() {
+  let empty = bytes.empty()
+  let ab = bytes.from_string("ab")
+  let abc = bytes.from_string("abc")
+  -- empty
+  println(empty < ab)
+  println(empty <= empty)
+  println(empty < empty)
+  -- prefix
+  println(ab < abc)
+  println(abc > ab)
+  println(b([1, 255]) < b([255]))
+  -- equal
+  println(ab <= bytes.from_string("ab"))
+  println(ab >= bytes.from_string("ab"))
+  println(Compare.compare(ab, bytes.from_string("ab")))
+  -- high bytes are unsigned
+  println(b([127]) < b([128]))
+  println(b([255]) > b([0]))
+  println(bytes.from_string("é") < bytes.from_string("z"))
+  println(Compare.compare(b([128]), b([127])))
+  println(Compare.compare(b([0]), b([0, 0])))
+  -- list.sort, list.max_by, list.min_by
+  let sorted = list.sort([b([255]), abc, empty, b([128]), ab, b([0])])
+  println(list.map(sorted) { v -> bytes.to_hex(v) })
+  println(list.max_by([ab, b([200]), abc]) { v -> v } |> option.map { v -> bytes.to_hex(v) })
+  println(list.min_by([ab, b([200]), empty]) { v -> v } |> option.map { v -> bytes.to_hex(v) })
+  -- a generic function bounded by Compare takes Bytes
+  println(bytes.to_hex(largest(b([1, 2]), b([1, 2, 0]))))
+}
+
+fn largest(x: a, y: a) -> a where a: Compare {
+  match x < y {
+    true -> y
+    false -> x
+  }
+}

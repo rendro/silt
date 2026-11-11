@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- channel.select takes channels of one message type: a list of
+-- operations on channels of two message types is a list error, and its
+-- help says how to signal on a channel of the same type (close it) or
+-- to wrap the messages in one enum. A list of two other types has no
+-- such help.
+import channel
+
+fn main() {
+  let jobs: Channel(Int) = channel.new(1)
+  let quit: Channel(()) = channel.new(1)
+  let _ = channel.select([channel.Recv(jobs), channel.Recv(quit)])
+  let _ = channel.select([channel.Recv(jobs), channel.Send(quit, ())])
+  let _ = [1, "two"]
+}

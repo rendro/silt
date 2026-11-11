@@ -1011,6 +1011,10 @@ What "every field supports them" means, for `Equal`, `Hash`, `Compare`
 and for `Display` where no impl is written:
 
 - `Int`, `Float`, `String`, `Bool` and `()` have all four.
+- `Bytes` has all four. Its order is byte by byte, each byte a number
+  from 0 to 255, and a shorter value that the other starts with comes
+  first: the bytes ff come after 01 ff, and the empty value comes
+  before every other.
 - A function has none. A channel has `Equal` only (it is equal to
   itself).
 - A list and a tuple have what their parts have (a tuple is ordered

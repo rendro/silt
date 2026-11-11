@@ -173,6 +173,8 @@ fn other_ordering(a: &Value, b: &Value) -> Result<Ordering, VmError> {
     Ok(match (a, b) {
         (Value::Float(a), Value::Float(b)) => a.cmp(b),
         (Value::String(a), Value::String(b)) => a.cmp(b),
+        // Bytes byte by byte, each unsigned, a shorter prefix first.
+        (Value::Bytes(a), Value::Bytes(b)) => a.cmp(b),
         // Lists are ordered element by element (`Value::cmp`), after
         // the function-leaf gate (see `ordering_with_fn_gate` below).
         (Value::List(_), Value::List(_)) => ordering_with_fn_gate(a, b)?,

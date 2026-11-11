@@ -129,7 +129,13 @@ A type variable of the result is checked against the type the call's
 arguments show it has: the argument of that type, the first element
 of a list of it, the value in an option of it, the type a `type a`
 parameter (or `t: TypeOf(a)`, the same written out) is given, and so
-on, the first one a parameter shows. A
+on, the first one a parameter shows. A type is taken only so, as
+`type a` or a `TypeOf` around the variable alone (`t: TypeOf(a)`, `o:
+Option(TypeOf(a))`): a signature that takes `TypeOf(List(a))` (a
+`TypeOf` around anything but a variable) is an error when the module
+is registered, because the type it is given shows nothing of `a` that
+the result could be checked against. Take `type a`, and build
+`List(a)` in the program where it is needed. A
 `fn same(x: a) -> a` that returns `5` for `same("x")` is that error:
 ``mylib.same: its signature returns a, here String (the type of its
 argument `x`), but it returned Int 5``. The row variable of an open

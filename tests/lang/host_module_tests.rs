@@ -326,6 +326,50 @@ fn type_variables_a_parameter_introduces_are_accepted() {
     }
 }
 
+/// A type taken as `TypeOf(..)` around anything but a bare variable
+/// shows no type for its variables that the result could be checked
+/// against (`TypeOf(List(a))` gives `List(String)`, and `a` is not
+/// read out of it): the signature is refused when the module is
+/// registered, and `type a` / `t: TypeOf(a)` stay accepted.
+#[test]
+fn a_type_of_around_more_than_a_variable_is_refused() {
+    for (signature, written) in [
+        ("fn oft(v: b, t: TypeOf(List(a))) -> a", "TypeOf(List(a))"),
+        ("fn opt(t: Option(TypeOf(List(a)))) -> a", "TypeOf(List(a))"),
+        (
+            "fn pair(t: (Int, TypeOf(Map(k, v)))) -> Int",
+            "TypeOf(Map(k, v))",
+        ),
+        ("fn rec(r: {t: TypeOf(Int)}) -> Int", "TypeOf(Int)"),
+    ] {
+        let host = HostModule::new("h").function(signature, |_: &[Value]| Ok(Value::Int(1)));
+        let errors = errors("fn main() { let _ = 1 }", host);
+        assert_eq!(errors.len(), 1, "{signature}: {errors:?}");
+        assert_eq!(
+            errors[0].code,
+            Code::HostSignature,
+            "{signature}: {errors:?}"
+        );
+        assert!(
+            errors[0]
+                .message
+                .contains(&format!("takes a type as `{written}`")),
+            "{signature}: {errors:?}"
+        );
+        let help = errors[0].help.join("\n");
+        assert!(help.contains("take `type a`"), "{signature}: {errors:?}");
+    }
+    for signature in [
+        "fn tcast(v: b, t: TypeOf(a)) -> a",
+        "fn otcast(v: b, t: Option(TypeOf(a))) -> a",
+        "fn pick(v: b, type a) -> a",
+    ] {
+        let host = HostModule::new("h").function(signature, |_: &[Value]| Ok(Value::Int(1)));
+        let errors = errors("fn main() { let _ = 1 }", host);
+        assert!(errors.is_empty(), "{signature}: {errors:?}");
+    }
+}
+
 #[test]
 fn a_signature_that_does_not_parse_is_reported_once() {
     let host = HostModule::new("h").function("fn (", |_: &[Value]| Ok(Value::Unit));

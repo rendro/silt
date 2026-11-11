@@ -4222,15 +4222,28 @@ impl TypeChecker {
                             if self.unify_types(&elem_type, t).is_err() {
                                 // A list-level message, clearer than the
                                 // mismatch of the two types.
-                                let (first_shown, elem_shown) =
-                                    self.show_apart(&self.apply(&first_ty), &self.apply(t));
-                                self.error(
+                                let (first, elem) = (self.apply(&first_ty), self.apply(t));
+                                let (first_shown, elem_shown) = self.show_apart(&first, &elem);
+                                // Two channel operations of different
+                                // message types: what `channel.select`
+                                // is given, which takes one.
+                                let channel_op = |ty: &Type| matches!(ty, Type::Generic(name, _) if name.is_builtin("ChannelOp"));
+                                let help = (channel_op(&first) && channel_op(&elem)).then(|| {
+                                    "channel.select takes channels of one message type: give the \
+                                     signal channel the same type and close it to signal (a closed \
+                                     channel is received as None), or wrap the messages in one enum"
+                                        .to_string()
+                                });
+                                self.error_help(
                                     Code::TypeMismatch,
-                                    format!(
-                                        "list elements must have the same type: first element is {}, but element {} is {}",
-                                        first_shown,
-                                        idx + 1,
-                                        elem_shown
+                                    (
+                                        format!(
+                                            "list elements must have the same type: first element is {}, but element {} is {}",
+                                            first_shown,
+                                            idx + 1,
+                                            elem_shown
+                                        ),
+                                        help,
                                     ),
                                     *espan,
                                 );
@@ -6341,7 +6354,7 @@ pub(super) fn operator_message(tr: &str, op: &str, ty: &Type, shown: &str) -> St
         "Number" => arith_operand_message(op, ty, shown),
         "Equal" => format!("operator {op} requires a comparable type, got '{shown}'"),
         _ => format!(
-            "operator {op} requires Int, Float, String, Bool, List, Tuple, Record, or Variant, got '{shown}'"
+            "operator {op} requires Int, Float, String, Bool, Bytes, List, Tuple, Record, or Variant, got '{shown}'"
         ),
     }
 }

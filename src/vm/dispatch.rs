@@ -177,6 +177,8 @@ impl Vm {
                     (Value::Int(a), Value::Int(b)) => a.cmp(b),
                     (Value::Float(a), Value::Float(b)) => a.cmp(b),
                     (Value::String(a), Value::String(b)) => a.cmp(b),
+                    // Bytes byte by byte, a shorter prefix first.
+                    (Value::Bytes(a), Value::Bytes(b)) => a.cmp(b),
                     (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
                     // List vs List: a list has Compare when its
                     // elements do, and is ordered element by element

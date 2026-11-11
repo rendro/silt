@@ -197,6 +197,34 @@ channels of different types, map each to a channel of one enum and merge
 them: see [Receiving from channels of different
 types](../concurrency.md#receiving-from-channels-of-different-types).
 
+A signal that carries nothing needs no type of its own. To wait for
+work or a stop, give the stop channel the type of the work channel,
+send nothing on it, and close it to signal: a closed channel is
+received as `None`, so the `None` of the stop channel is the stop.
+
+```silt
+import channel
+import task
+
+fn work(jobs: Channel(Int), quit: Channel(Int), done: Int) -> Int {
+  match channel.select([channel.Recv(jobs), channel.Recv(quit)]) {
+    channel.Received(^jobs, Some(job)) -> work(jobs, quit, done + job)
+    channel.Received(^quit, None) -> done
+    _ -> done
+  }
+}
+
+fn main() {
+  let jobs: Channel(Int) = channel.new(0)
+  let quit: Channel(Int) = channel.new(0)
+  let worker = task.spawn { -> work(jobs, quit, 0) }
+  channel.send(jobs, 1)
+  channel.send(jobs, 2)
+  channel.close(quit)
+  println(task.join(worker)) -- 3
+}
+```
+
 Receive-only form:
 
 ```silt

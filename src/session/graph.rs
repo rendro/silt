@@ -381,6 +381,25 @@ impl ModuleGraph {
                         ),
                     ));
                 }
+                let given = f.params.iter().filter_map(|p| p.ty.as_ref());
+                if let Some(ty) = given.clone().find_map(super::host::type_of_not_a_variable) {
+                    signature_problems.push(
+                        Diagnostic::error(
+                            Code::HostSignature,
+                            ty.span,
+                            format!(
+                                "the host function `{}` takes a type as `{}`, which shows no \
+                                 type for its variables that its result could be checked against",
+                                f.name,
+                                crate::typechecker::typeexpr::type_expr_text(ty)
+                            ),
+                        )
+                        .with_help(
+                            "a host function takes a type as `type a` or `t: TypeOf(a)`: take \
+                             `type a` and build the type around it in the program",
+                        ),
+                    );
+                }
                 for (var, row) in super::host::return_only_variables(f) {
                     let what = if row { "row" } else { "type" };
                     signature_problems.push(Diagnostic::error(
