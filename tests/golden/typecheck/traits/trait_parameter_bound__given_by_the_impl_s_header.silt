@@ -1,0 +1,70 @@
+-- The bound a trait asks of its parameter, given by the header of a
+-- generic impl (`where a: G`), holds in the trait's default body at
+-- every use.
+trait G {
+  fn g(self) -> String
+}
+
+trait G for Int {
+  fn g(self) -> String {
+    "I"
+  }
+}
+
+trait G for String {
+  fn g(self) -> String {
+    "S"
+  }
+}
+
+trait Tbl(k) where k: G {
+  fn key(self) -> k
+  fn show(self) -> String {
+    G.g(Tbl.key(self))
+  }
+}
+
+type B(a) {
+  B(a),
+}
+
+trait Tbl(a) for B(a) where a: G {
+  fn key(self) -> a {
+    match self {
+      B(x) -> x
+    }
+  }
+}
+
+trait Keyed(k) where k: Compare {
+  fn key(self) -> k
+  fn lower(self, o: Self) -> Bool {
+    Keyed.key(self) < Keyed.key(o)
+  }
+}
+
+type Cell(a) {
+  Cell(a),
+}
+
+trait Keyed(List(a)) for Cell(a) where a: Compare {
+  fn key(self) -> List(a) {
+    match self {
+      Cell(v) -> [v]
+    }
+  }
+}
+
+fn sh(x: t, type k) -> String where t: Tbl(k) {
+  Tbl.show(x)
+}
+
+fn lw(x: t, y: t, type k) -> Bool where t: Keyed(k) {
+  Keyed.lower(x, y)
+}
+
+fn main() {
+  println(sh(B(2), Int))
+  println(sh(B("s"), String))
+  println(lw(Cell(1), Cell(2), List(Int)))
+}

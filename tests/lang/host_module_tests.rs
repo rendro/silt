@@ -963,6 +963,8 @@ fn probe() -> HostModule {
             Ok(xs.get(*i as usize).unwrap_or(Value::Unit))
         })
         .function("fn cast(v: b, type a) -> a", at(0))
+        .function("fn tcast(v: b, t: TypeOf(a)) -> a", at(0))
+        .function("fn otcast(v: b, t: Option(TypeOf(a))) -> a", at(0))
         .function("fn tyval(x: a, type a) -> a", at(0))
         .function(
             "fn keep(p: {name: String, ...r}) -> {name: String, ...r}",
@@ -1078,6 +1080,8 @@ fn correct_host_results_of_every_shape_pass() {
         "h.second(task.spawn({ -> 1 }), task.spawn({ -> 2 }))",
         "h.second(json.parse(\"1\", json.Value), json.parse(\"[1]\", json.Value))",
         "h.cast(5, Int)",
+        "h.tcast(5, Int)",
+        "h.otcast(5, Some(Int))",
         "h.cast([1], List(Int))",
         "h.cast((1, \"x\"), (Int, String))",
         "h.cast(Box { v: 1 }, Box(Int))",
@@ -1238,6 +1242,17 @@ fn the_type_an_argument_shows_is_named_in_full() {
         (
             "h.cast([1], Box(Int))",
             "here Box(Int) (its type argument `a`)",
+        ),
+        // (`t: TypeOf(a)` is `type a` written out: the same check.)
+        (
+            "h.tcast(1, String)",
+            "here String (its type argument `a`), but it returned Int 1",
+        ),
+        ("h.tcast([1], Set(Int))", "here Set(Int)"),
+        // (And so is one inside the value of a parameter.)
+        (
+            "h.otcast(1, Some(String))",
+            "here String (its type argument `a`), but it returned Int 1",
         ),
         (
             "h.otherl([1], [\"x\"])",

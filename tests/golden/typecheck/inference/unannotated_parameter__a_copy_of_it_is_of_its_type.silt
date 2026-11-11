@@ -1,0 +1,32 @@
+-- A `let` that copies a parameter with no annotation, and is not read
+-- after, has the parameter's type, which each call decides: it is not
+-- refused "cannot infer the type" (it gets the "never used" warning).
+-- In a function, a closure, by a name with `_`, and through a pattern
+-- of the parameter.
+-- stderr-contains: warning[type]: 'copy' is never used
+-- stderr-not-contains: cannot infer
+fn keep(c) {
+  let copy = c
+  c
+}
+
+fn keep_quiet(c) {
+  let _copy = c
+  c
+}
+
+fn first((a, b)) {
+  let left = a
+  b
+}
+
+fn main() {
+  let f = { c ->
+    let v = c
+    c
+  }
+  println(keep(1))
+  println(keep_quiet("s"))
+  println(first((1, 2)))
+  println(f(3) + f(4))
+}

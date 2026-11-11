@@ -1,0 +1,11 @@
+error[type]: impl Sub(String) for Box(Int) requires impl Get(String) for Box(Int), but found impl Get(a) for Box(a)
+ --> supertrait_args__an_impl_whose_argument_is_a_variable_of_its_type.silt:38:1
+    |
+ 38 | trait Sub(String) for Box(Int) {}
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ impl Sub(String) for Box(Int) requires impl Get(String) for Box(Int), but found impl Get(a) for Box(a)
+
+error[type]: impl Sub(List(a)) for Pair(a) requires impl Get(List(a)) for Pair(a), but found impl Get(a) for Pair(a)
+ --> supertrait_args__an_impl_whose_argument_is_a_variable_of_its_type.silt:40:1
+    |
+ 40 | trait Sub(List(a)) for Pair(a) {}
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ impl Sub(List(a)) for Pair(a) requires impl Get(List(a)) for Pair(a), but found impl Get(a) for Pair(a)

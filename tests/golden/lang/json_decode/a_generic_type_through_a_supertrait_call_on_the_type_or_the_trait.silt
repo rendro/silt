@@ -1,0 +1,46 @@
+-- cmd: check
+-- exit: 1
+-- A method of a trait that has `json.Decode` as a supertrait, called on
+-- a generic type (`S(Int).make(s)`) or through the trait on a value
+-- (`Dec.again(x, s)`), decodes that type as a bound of the trait does:
+-- a type with a field no decoder has, and one with impls for other
+-- instantiations only, are refused at the call. (They checked, and the
+-- decoder refused them where the code ran, or decoded `Bx(String)` by
+-- its structure past the only impl, for `Bx(Int)`.)
+import json
+import set
+
+type S(a) {
+  s: Set(a),
+  n: Int,
+}
+
+type Bx(a) {
+  v: a,
+}
+
+trait json.Decode for Bx(Int) {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    Ok(Bx { v: 42 })
+  }
+}
+
+trait Dec: json.Decode {
+  fn make(s: String) -> Result(Self, json.JsonError) {
+    json.parse(s, Self)
+  }
+  fn again(self, s: String) -> Result(Self, json.JsonError) {
+    json.parse(s, Self)
+  }
+}
+
+trait Dec for S(a) where a: json.Decode {}
+
+trait Dec for Bx(a) where a: json.Decode {}
+
+fn main() {
+  println(S(Int).make("""{"s": [1], "n": 1}"""))
+  println(Dec.again(S { s: set.from_list([1]), n: 1 }, """{"s": [1], "n": 1}"""))
+  println(Bx(String).make("""{"v": "t"}"""))
+  println(Dec.again(Bx { v: "s" }, """{"v": "t"}"""))
+}

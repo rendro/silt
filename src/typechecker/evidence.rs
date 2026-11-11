@@ -450,9 +450,19 @@ impl TypeChecker {
                 (sup.id, self.evidence_of(*sup, &args, self_ty, &header, 0))
             })
             .collect();
+        // (The bound's own trait arguments are written with the trait's
+        // parameters: the impl's trait arguments here.)
+        let at_impl: HashMap<TyVar, Type> = (info.param_var_ids.iter().copied())
+            .zip(impl_args.iter().cloned())
+            .collect();
         let wheres = (self.param_wheres(tr).into_iter())
-            .map(|(i, bound)| match impl_args.get(i) {
-                Some(arg) => self.evidence_of(bound, &[], arg, &header, 0),
+            .map(|(i, bound, args)| match impl_args.get(i) {
+                Some(arg) => {
+                    let args: Vec<Type> = (args.iter())
+                        .map(|ty| substitute_vars(ty, &at_impl))
+                        .collect();
+                    self.evidence_of(bound, &args, arg, &header, 0)
+                }
                 None => Evidence::Missing,
             })
             .collect();
@@ -460,16 +470,21 @@ impl TypeChecker {
     }
 
     /// The `where` clauses the trait `tr` declares on its parameters
-    /// (`trait Pr(a) where a: Greet`), in order: the parameter's place
-    /// and the trait.
-    fn param_wheres(&self, tr: TraitKey) -> Vec<(usize, TraitKey)> {
+    /// (`trait Pr(a) where a: Greet`), in order: the parameter's place,
+    /// the trait and its trait arguments (written with the trait's
+    /// parameters).
+    fn param_wheres(&self, tr: TraitKey) -> Vec<(usize, TraitKey, Vec<Type>)> {
         let Some(info) = self.tables.traits.get(&tr) else {
             return Vec::new();
         };
         (info.param_where_clauses.iter())
-            .filter(|(_, bound)| has_dictionary(*bound))
-            .filter_map(|(param, bound)| {
-                Some((info.params.iter().position(|p| p == param)?, *bound))
+            .filter(|(_, bound, _)| has_dictionary(*bound))
+            .filter_map(|(param, bound, args)| {
+                Some((
+                    info.params.iter().position(|p| p == param)?,
+                    *bound,
+                    args.clone(),
+                ))
             })
             .collect()
     }
@@ -512,7 +527,20 @@ impl TypeChecker {
         }
         // (The impl of the trait arguments: they are decided here, the
         // arguments of an impl's header.)
-        let at = self.impl_reached(tr, head, Some(&ty), args);
+        // (Of several that could be it, the one that is it at every type
+        // `ty` stands for: `Get(a) for Box(a)` for `Get(a)` of `Box(a)`,
+        // beside `Get(String) for Box(Int)`.)
+        let at = self.impl_reached(tr, head, Some(&ty), args).or_else(|| {
+            (self.tables.impl_args_of(tr, head).iter())
+                .map(|at| (tr, head, *at))
+                .find(|key| {
+                    let written = (self.tables.impl_trait_args.get(key))
+                        .cloned()
+                        .unwrap_or_default();
+                    written.len() == args.len()
+                        && self.super_args_hold(*key, &ty, args, args, &written)
+                })
+        });
         let Some(key) = at.or_else(|| self.tables.one_impl(tr, head)) else {
             return Evidence::Missing;
         };
@@ -689,7 +717,7 @@ impl TypeChecker {
                     let own_args: Vec<Type> =
                         info.param_var_ids.iter().map(|v| Type::Var(*v)).collect();
                     let wheres: Vec<BoundKey> = (self.param_wheres(tr).into_iter())
-                        .map(|(i, bound)| (info.param_var_ids[i], bound, Vec::new()))
+                        .map(|(i, bound, args)| (info.param_var_ids[i], bound, args))
                         .collect();
                     for method in t.methods.iter_mut().filter(|m| !m.is_signature_only) {
                         let mut bounds = vec![(info.self_var, tr, own_args.clone())];

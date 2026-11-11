@@ -12,8 +12,16 @@ impl TypeChecker {
     /// Check whether a fully-applied type is a bare unresolved type variable.
     fn is_bare_type_var(&self, ty: &Type) -> bool {
         // (The type a parameter holds, `t` of `t.zero()`: known where the
-        // code runs, as a `type t` parameter's is.)
-        matches!(self.apply(ty), Type::Var(v) if !self.held_by_param(v))
+        // code runs, as a `type t` parameter's is. A variable of the type
+        // of a parameter with no annotation, `let v = c` in `fn keep(c)`:
+        // decided at each call, as the parameter's is.)
+        matches!(self.apply(ty), Type::Var(v)
+            if !self.held_by_param(v) && !self.of_unannotated_param(v))
+    }
+
+    /// Whether `v` is in the type of a parameter with no annotation.
+    fn of_unannotated_param(&self, v: TyVar) -> bool {
+        (self.unannotated_params.iter()).any(|ty| free_vars_in(&self.apply(ty)).contains(&v))
     }
 
     /// Check whether any already-emitted error has a span that points at

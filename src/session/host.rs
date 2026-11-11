@@ -176,6 +176,34 @@ pub(super) fn returns(f: &FnDecl) -> (HostShape, Vec<HostVar>) {
     (shape(ret, &index), vars)
 }
 
+/// The variable `a` of the type `TypeOf(a)`, which a `type a` parameter
+/// has.
+fn type_of_variable(ty: &TypeExpr) -> Option<Symbol> {
+    let TypeExprKind::Generic {
+        module: None,
+        name,
+        args,
+        ..
+    } = &ty.kind
+    else {
+        return None;
+    };
+    match args.as_slice() {
+        [
+            TypeExpr {
+                kind:
+                    TypeExprKind::Named {
+                        module: None,
+                        name: var,
+                        ..
+                    },
+                ..
+            },
+        ] if resolve(*name) == crate::defs::TYPE_OF && is_variable(*var) => Some(*var),
+        _ => None,
+    }
+}
+
 /// Whether the type `name` written alone is a type variable.
 fn is_variable(name: Symbol) -> bool {
     resolve(name).starts_with(|c: char| c.is_lowercase() || c == '_')
@@ -194,6 +222,17 @@ fn sources_in(
         sources_in(ty, source, index, vars);
         source.path.pop();
     };
+    // `TypeOf(a)`, the type `type a` gives its parameter, written out:
+    // the type a call gives there, as of `type a`, at its place
+    // (`t: TypeOf(a)`, `o: Option(TypeOf(a))`).
+    if let Some(var) = type_of_variable(ty) {
+        if let Some(var) = index(var, false) {
+            let mut at = source.clone();
+            at.of_type = true;
+            vars[var].sources.push(at);
+        }
+        return;
+    }
     match &ty.kind {
         TypeExprKind::Named {
             module: None, name, ..

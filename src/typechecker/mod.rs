@@ -162,6 +162,11 @@ pub struct TypeChecker {
     /// module's bodies are checked (`settle_decode_gaps`): what asks it
     /// of a declared bound is known then.
     pub(super) decode_gaps: Vec<json_decode::DecodeGap>,
+    /// The decodes owed by a call through a trait that has `json.Decode`
+    /// among its supertraits on a known type (`decoded_through_type`):
+    /// settled after the others, where nothing else said at the call
+    /// that the type is not decoded.
+    pub(super) decodes_through_calls: Vec<json_decode::DecodeGap>,
     /// The places of type arguments that name a generic type alone
     /// (`List`): a type with its arguments left open, which no decoder
     /// decodes.
@@ -415,6 +420,10 @@ pub struct TypeChecker {
     /// checked, by the span of their names, with their types: those that
     /// hold a type are the program's `held_types`.
     pub(super) held_params: Vec<(Span, Type)>,
+    /// The types of the parameters with no annotation of the functions
+    /// and closures checked, whatever their patterns: a type variable in
+    /// one is decided at each call (`check_unresolved_in_block`).
+    pub(super) unannotated_params: Vec<Type>,
     /// The arguments of the call whose callee, a method after a dot, is
     /// checked, as written (`1` of `Option(String).pure(1)`).
     pub(super) method_call_args: Option<String>,
@@ -808,6 +817,7 @@ impl TypeChecker {
             call_results: Vec::new(),
             trait_reports: Vec::new(),
             decode_gaps: Vec::new(),
+            decodes_through_calls: Vec::new(),
             open_type_arguments: std::collections::HashSet::new(),
             open_vars: std::collections::HashSet::new(),
             open_var_names: HashMap::new(),
@@ -877,6 +887,7 @@ impl TypeChecker {
             readings: HashMap::new(),
             closure_readings: Vec::new(),
             held_params: Vec::new(),
+            unannotated_params: Vec::new(),
             method_call_args: None,
             type_receiver: false,
             tuple_spelling: None,
@@ -2220,6 +2231,7 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
     checker.settle_encode_owners();
     checker.settle_undecided_decodes();
     checker.settle_in_full_refusals();
+    checker.settle_decodes_through_calls();
     checker.refuse_undecided_decoder_types();
     checker.record_def_owners(program, &env);
     checker.drop_errors_of_refused_calls();

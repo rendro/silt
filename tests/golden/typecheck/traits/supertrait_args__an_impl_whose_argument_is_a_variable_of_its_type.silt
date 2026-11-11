@@ -1,0 +1,44 @@
+-- cmd: check
+-- exit: 1
+-- An impl of a trait whose supertrait takes the trait's argument
+-- (`trait Sub(r): Get(r)`) needs the supertrait at that argument for its
+-- own type: `Get(a) for Box(a)` gives a `Box(Int)` `Get(Int)` and no
+-- other argument, a `Box(a)` `Get(a)` and not `Get(List(a))`. (Both were
+-- accepted, and `Sub.sub` gave a `Box(Int)`'s Int as a String.)
+type Box(a) {
+  item: a,
+}
+
+type Pair(a) {
+  first: a,
+}
+
+trait Get(r) {
+  fn get(self) -> r
+}
+
+trait Get(a) for Box(a) {
+  fn get(self) -> a {
+    self.item
+  }
+}
+
+trait Get(a) for Pair(a) {
+  fn get(self) -> a {
+    self.first
+  }
+}
+
+trait Sub(r): Get(r) {
+  fn sub(self) -> r {
+    Get.get(self)
+  }
+}
+
+trait Sub(String) for Box(Int) {}
+
+trait Sub(List(a)) for Pair(a) {}
+
+fn main() {
+  println(1)
+}
