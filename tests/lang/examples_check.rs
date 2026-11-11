@@ -315,7 +315,7 @@ fn all_doc_fn_main_blocks_type_check() {
     par_for_each(&jobs, |job| {
         let file = tmp_dir.join(format!(
             "{}_line{}.silt",
-            job.file_stem.to_lowercase(),
+            job.file_stem.to_lowercase().replace('-', "_"),
             job.opener_line
         ));
         std::fs::write(&file, &job.src).expect("write temp silt file");
@@ -560,7 +560,8 @@ fn all_doc_fn_test_blocks_compile() {
         // self-describing for any debugging on failure.
         let file = tmp_dir.join(format!(
             "{}_line{}_test.silt",
-            job.file_stem, job.opener_line
+            job.file_stem.to_lowercase().replace('-', "_"),
+            job.opener_line
         ));
         std::fs::write(&file, &job.src).expect("write temp silt test file");
 
@@ -685,7 +686,7 @@ fn test_doc_fn_main_blocks_emit_no_compile_warnings() {
     par_for_each(&jobs, |job| {
         let file = tmp_dir.join(format!(
             "{}_line{}.silt",
-            job.file_stem.to_lowercase(),
+            job.file_stem.to_lowercase().replace('-', "_"),
             job.opener_line
         ));
         std::fs::write(&file, &job.src).expect("write temp silt file");
@@ -1062,7 +1063,7 @@ fn all_doc_fn_main_blocks_run_if_safe() {
     par_for_each(&jobs, |job| {
         let file = tmp_dir.join(format!(
             "{}_line{}.silt",
-            job.file_stem.to_lowercase(),
+            job.file_stem.to_lowercase().replace('-', "_"),
             job.opener_line
         ));
         std::fs::write(&file, &job.src).expect("write temp silt file");

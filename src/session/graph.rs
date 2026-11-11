@@ -564,26 +564,27 @@ impl ModuleGraph {
                 )
             } else if module::is_builtin_module(&resolve(name)) {
                 ImportResolution::Builtin
-            } else if !module::is_lowercase_module_name(&resolve(name)) {
-                // A module's name is all lowercase, whatever file or
-                // dependency the name would find.
-                // The help names the lowercase name, unless that is a
-                // builtin module's, which no file can take.
+            } else if let Some(cell) = self.cell_module(name) {
+                // (Before the name rule: a cell's name, `<repl:k>`, is
+                // one no program can write.)
+                ImportResolution::Cell(cell)
+            } else if !module::is_module_name(&resolve(name)) {
+                // A module's name is lowercase letters, digits and `_`,
+                // whatever file or dependency the name would find.
+                // The help names a module name to use, when there is one
+                // that is not a builtin module's, which no file can take.
                 let written = resolve(name);
-                let lower = written.to_lowercase();
                 let d = Diagnostic::error(
                     Code::ModuleNamedLikeBuiltin,
                     span,
                     crate::manifest::invalid_module_name(&written),
                 );
-                ImportResolution::Unresolved(match module::is_builtin_module(&lower) {
-                    true => d,
-                    false => d.with_help(format!(
-                        "name the file `{lower}.silt` and write `import {lower}`"
+                ImportResolution::Unresolved(match module::suggested_module_name(&written) {
+                    None => d,
+                    Some(name) => d.with_help(format!(
+                        "name the file `{name}.silt` and write `import {name}`"
                     )),
                 })
-            } else if let Some(cell) = self.cell_module(name) {
-                ImportResolution::Cell(cell)
             } else if let Some(&host) = self.hosts.get(&name) {
                 // A dependency or module file of the same name would be
                 // hidden by the host module.

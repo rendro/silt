@@ -431,8 +431,13 @@ fn docs_markdown_println_annotations_match_silt_run_stdout() {
                         return;
                     }
                     let job = &jobs_ref[idx];
-                    let file =
-                        tmp_dir_ref.join(format!("{}_line{}.silt", job.file_stem, job.opener_line));
+                    // (A doc's name such as `channel-task` is no module
+                    // name: `-` becomes `_`.)
+                    let file = tmp_dir_ref.join(format!(
+                        "{}_line{}.silt",
+                        job.file_stem.to_lowercase().replace('-', "_"),
+                        job.opener_line
+                    ));
                     std::fs::write(&file, &job.src).expect("write temp silt file");
 
                     let output = silt_cmd()

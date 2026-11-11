@@ -380,6 +380,78 @@ fn test_silt_test_finds_only_underscore_test_files() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A file named on the command line is a module, and its name must be
+/// one: lowercase letters, digits and `_`, not starting with a digit,
+/// and not a builtin module's. FAILS on the base commit: only an
+/// upper-case letter was refused, and these all ran.
+#[test]
+fn test_an_entry_file_name_must_be_a_module_name() {
+    let invalid = |name: &str| {
+        format!(
+            "`{name}` is not a valid module name: use lowercase letters, digits and `_`, \
+             not starting with a digit"
+        )
+    };
+    let cases: [(&str, String, Option<&str>); 5] = [
+        (
+            "my-entry",
+            invalid("my-entry"),
+            Some("rename `my-entry.silt` to `my_entry.silt`"),
+        ),
+        ("a b", invalid("a b"), Some("rename `a b.silt` to `a_b.silt`")),
+        (
+            "a.test",
+            invalid("a.test"),
+            Some("rename `a.test.silt` to `a_test.silt`"),
+        ),
+        ("2nd", invalid("2nd"), None),
+        (
+            "string",
+            "the module `string` cannot be imported: `import string` names the builtin \
+             module `string`"
+                .to_string(),
+            Some("rename `string.silt`"),
+        ),
+    ];
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!("silt_test_tl2_{n}"));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    for (stem, message, help) in cases {
+        let file = format!("{stem}.silt");
+        fs::write(dir.join(&file), "fn main() {\n  println(1)\n}\n").unwrap();
+        for cmd in ["run", "check"] {
+            let output = silt_cmd()
+                .arg(cmd)
+                .arg(&file)
+                .current_dir(&dir)
+                .env("NO_COLOR", "1")
+                .output()
+                .expect("failed to run silt");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert_eq!(output.status.code(), Some(1), "{cmd} {file}: {stderr}");
+            assert!(stderr.contains(&message), "{cmd} {file}: {stderr}");
+            match help {
+                Some(help) => assert!(
+                    stderr.contains(&format!("= help: {help}")),
+                    "{cmd} {file}: {stderr}"
+                ),
+                None => assert!(!stderr.contains("= help: rename"), "{cmd} {file}: {stderr}"),
+            }
+        }
+    }
+    // A module name runs.
+    fs::write(dir.join("my_entry2.silt"), "fn main() {\n  println(1)\n}\n").unwrap();
+    let output = silt_cmd()
+        .arg("run")
+        .arg("my_entry2.silt")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run silt");
+    assert!(output.status.success(), "{output:?}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
 // ── silt fmt --check: rejects unformatted files without mutating ───
 
 #[test]

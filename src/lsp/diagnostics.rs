@@ -552,7 +552,7 @@ mod tests {
     fn lex_error_on_non_ascii_character_is_a_diagnostic() {
         let (connection, client) = Connection::memory();
         let mut server = Server::new(connection);
-        let uri = Uri::from_str("file:///test.silt").unwrap();
+        let uri = Uri::from_str("file:///lexing.silt").unwrap();
         let source = "fn main() {\n  println(“hello”)\n}\n";
         server.update_document(uri.clone(), source.to_string());
         server.analyse_pending();

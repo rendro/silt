@@ -15,10 +15,26 @@ pub fn builtin_modules() -> &'static [&'static str] {
 }
 
 /// Whether `name` (written after `import`, or a module file's name) can
-/// name a module: a module's name has no upper-case letter, in any
-/// script.
-pub fn is_lowercase_module_name(name: &str) -> bool {
-    !name.chars().any(char::is_uppercase)
+/// name a module: lowercase letters, digits and `_`, not starting with a
+/// digit, the rule of a package name ([`crate::manifest::is_silt_identifier`]).
+pub fn is_module_name(name: &str) -> bool {
+    crate::manifest::is_silt_identifier(name)
+}
+
+/// The module name to suggest for the file or import name `name`, which
+/// is not one: `name` in lowercase with `-`, ` ` and `.` turned into `_`.
+/// `None` when that is still no module name (a leading digit, a letter
+/// outside a-z) or is a builtin module's, which no file can take.
+pub fn suggested_module_name(name: &str) -> Option<String> {
+    let suggestion: String = name
+        .to_lowercase()
+        .chars()
+        .map(|c| match c {
+            '-' | ' ' | '.' => '_',
+            c => c,
+        })
+        .collect();
+    (is_module_name(&suggestion) && !is_builtin_module(&suggestion)).then_some(suggestion)
 }
 
 /// Returns true if `name` is a builtin module (io, string, int, etc.).
