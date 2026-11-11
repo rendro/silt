@@ -234,8 +234,8 @@ If `f` accepts every element, the result is empty.
 import list
 
 fn main() {
-  println(list.drop_while([1, 2, 5, 1], { x -> x < 3 })) -- [5, 1]
-  println(list.drop_while([1, 2], { x -> x < 3 })) -- []
+  println(list.drop_while([1, 2, 5, 1]) { x -> x < 3 }) -- [5, 1]
+  println(list.drop_while([1, 2]) { x -> x < 3 }) -- []
 }
 ```
 
@@ -994,8 +994,8 @@ element, the result is the whole list.
 import list
 
 fn main() {
-  println(list.take_while([1, 2, 5, 1], { x -> x < 3 })) -- [1, 2]
-  println(list.take_while([], { x -> x < 3 })) -- []
+  println(list.take_while([1, 2, 5, 1]) { x -> x < 3 }) -- [1, 2]
+  println(list.take_while([]) { x -> x < 3 }) -- []
 }
 ```
 
