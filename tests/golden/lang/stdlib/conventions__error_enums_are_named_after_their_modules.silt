@@ -39,7 +39,6 @@ fn main() {
     show(io.Other("io")),
     show(json.Other("json")),
     show(toml.Other("toml")),
-    show(time.Other("time")),
     show(http.Other("http")),
   ]
   println(last)

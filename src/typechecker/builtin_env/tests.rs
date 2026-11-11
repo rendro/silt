@@ -20,13 +20,16 @@ fn the_builtin_scope_binds_the_prelude_and_the_registry_s_rows() {
         assert!(env.root.lookup(intern(name)).is_some(), "{name} is bound");
     }
     // `Other` is a variant only where the platform can report more
-    // than the list: no function of these five makes one.
+    // than the list: no function of these eight makes one.
     for name in [
         "IntError.Other",
         "FloatError.Other",
         "RegexError.Other",
         "BytesError.Other",
         "EncodingError.Other",
+        "TimeError.Other",
+        "UuidError.Other",
+        "TaskError.Other",
     ] {
         assert!(
             env.root.lookup(intern(name)).is_none(),

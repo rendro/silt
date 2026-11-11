@@ -86,7 +86,6 @@ are total. It returns `Result(String, UuidError)`:
 | Variant | Fields | Meaning |
 |---------|--------|---------|
 | `Invalid(String)` | why | the input is not a syntactically valid UUID; `Error.message(e)` is `"invalid uuid: ..."` |
-| `Other(String)` | message | unclassified failure |
 
 ## Notes
 

@@ -69,7 +69,6 @@ pattern that is no format are the structural failure modes:
 | `ParseFormat(msg)` | `String` | the text did not match a pattern that could have given the value |
 | `OutOfRange(msg)` | `String` | field out of valid range (e.g. `month=13`) |
 | `InvalidFormat(msg)` | `String` | the pattern is at fault, whatever the value or the text: an unknown specifier, or one the type has nothing for (a time of day for a `Date`, a time zone), in a format and in its parse alike; for a parse also fields that are not enough for the value (no time of day for a `DateTime`, no date, an empty pattern) |
-| `Other(msg)` | `String` | unclassified failure |
 
 `TimeError` implements the built-in `Error` trait, so `Error.message(e)`
 yields a rendered string when variant branching isn't needed.

@@ -587,7 +587,6 @@ whole rule.
 | Variant | Fields | Meaning |
 |---------|--------|---------|
 | `Timeout` | — | the function was ended because its time was over |
-| `Other(String)` | message | unclassified failure |
 
 ```silt
 -- noexec

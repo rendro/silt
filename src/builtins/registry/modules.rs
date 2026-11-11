@@ -309,7 +309,7 @@ pub(super) fn modules() -> Vec<Module> {
             name: "task",
             page: "channel-task.md",
             types: "\
-                pub type TaskError { Timeout, Other(String) }\n\
+                pub type TaskError { Timeout }\n\
             ",
             opaque: [("Handle", 1)],
             error: "TaskError" => concurrency::task_error_text,
@@ -335,8 +335,8 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn find_all(text: String, pattern: String) -> Result(List(String), RegexError)", "All matches", regex::find_all),
                 f("fn is_match(text: String, pattern: String) -> Result(Bool, RegexError)", "Test if pattern matches", regex::is_match),
                 f("fn replace(text: String, pattern: String, replacement: String) -> Result(String, RegexError)", "Replace all matches", regex::replace),
-                f("fn replace_all_with(text: String, pattern: String, f: Fn(String) -> String) -> Result(String, RegexError)", "Replace all with callback", regex::replace_all_with),
                 f("fn replace_first(text: String, pattern: String, replacement: String) -> Result(String, RegexError)", "Replace first match", regex::replace_first),
+                f("fn replace_with(text: String, pattern: String, f: Fn(String) -> String) -> Result(String, RegexError)", "Replace all with callback", regex::replace_with),
                 f("fn split(text: String, pattern: String) -> Result(List(String), RegexError)", "Split on pattern", regex::split),
             ],
         },
@@ -430,7 +430,7 @@ pub(super) fn modules() -> Vec<Module> {
                 pub type DateTime { date: Date, time: Time }\n\
                 pub type Duration { ns: Int }\n\
                 pub type Weekday { Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday }\n\
-                pub type TimeError { ParseFormat(String), OutOfRange(String), InvalidFormat(String), Other(String) }\n\
+                pub type TimeError { ParseFormat(String), OutOfRange(String), InvalidFormat(String) }\n\
             ",
             error: "TimeError" => time::error_text,
             rows: [
@@ -668,7 +668,7 @@ pub(super) fn modules() -> Vec<Module> {
             name: "uuid",
             page: "uuid.md",
             types: "\
-                pub type UuidError { Invalid(String), Other(String) }\n\
+                pub type UuidError { Invalid(String) }\n\
             ",
             error: "UuidError" => uuid::error_text,
             rows: [

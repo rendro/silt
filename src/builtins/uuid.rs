@@ -26,7 +26,6 @@ use crate::vm::Vm;
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
         ("Invalid", [Value::String(why)]) => format!("invalid uuid: {why}"),
-        ("Other", [Value::String(m)]) => m.to_string(),
         _ => return None,
     })
 }

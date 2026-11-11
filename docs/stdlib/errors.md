@@ -139,7 +139,6 @@ in a type of its own (`float.Empty` is not `int.Empty`).
 | `ParseFormat(String)` | message | the text did not match a pattern that could have given the value |
 | `OutOfRange(String)` | message | field out of valid range (e.g. month=13) |
 | `InvalidFormat(String)` | what is wrong | the pattern of `time.format`, `time.format_date`, `time.parse` or `time.parse_date` is no format, or one from which no text could give the value (no time of day for a `DateTime`, no date, empty) |
-| `Other(String)` | message | unclassified failure |
 
 ### `BytesError` (requires `import bytes`)
 
@@ -157,7 +156,6 @@ Returned by `task.deadline`.
 | Variant | Fields | Meaning |
 |---------|--------|---------|
 | `Timeout` | — | the function was ended because its time was over |
-| `Other(String)` | message | unclassified failure |
 
 ### `EncodingError` (requires `import encoding`)
 
@@ -184,7 +182,6 @@ Returned by `uuid.parse`.
 | Variant | Fields | Meaning |
 |---------|--------|---------|
 | `Invalid(String)` | why | not a syntactically valid UUID |
-| `Other(String)` | message | unclassified failure |
 
 ### `CsvError` (requires `import csv`)
 
