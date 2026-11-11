@@ -1,0 +1,24 @@
+-- cmd: check
+-- exit: 1
+-- A trait passed with a dictionary that nothing decides the type of is
+-- refused, also when the same type is shown (`println` asks Display of
+-- it): Display does not make the type `()` first.
+-- stderr-contains: error[type]: cannot infer the type this use of 's' needs to implement trait 'Unit'
+-- stderr-not-contains: compiler bug
+trait Unit {
+  fn zero() -> Self
+}
+
+trait Unit for Int {
+  fn zero() -> Self {
+    0
+  }
+}
+
+fn s(xs: List(a)) -> a where a: Unit {
+  a.zero()
+}
+
+fn main() {
+  println(s([]))
+}
