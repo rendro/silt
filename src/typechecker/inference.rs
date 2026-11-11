@@ -6093,6 +6093,10 @@ impl TypeChecker {
                             self.passing_on = None;
                             let bounds = self.trait_bounds(&scheme.preds);
                             if !bounds.is_empty() {
+                                let vars = (self.bound_preds(&scheme.preds).into_iter())
+                                    .map(|(_, raw)| raw)
+                                    .collect();
+                                self.ev.let_vars.insert(value_span, vars);
                                 self.ev.lets.insert(value_span, bounds);
                             }
                             scheme

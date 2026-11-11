@@ -1,0 +1,18 @@
+-- A `let` inside an impl's method that is general over Number and only
+-- does arithmetic reads no dictionary, so an impl found by the value
+-- (Display) may use one on its variable's part.
+type Money(a) {
+  amount: a,
+}
+
+trait Display for Money(a) where a: Number + Display {
+  fn display(self) -> String {
+    let g = { y -> y + y }
+    "{g(self.amount)} {g(1)}"
+  }
+}
+
+fn main() {
+  println(Money { amount: 2 })
+  println(Money { amount: 2.5 })
+}
