@@ -424,9 +424,11 @@ pub fn prelude_lines() -> Vec<String> {
             .filter(|(name, _)| *name != crate::defs::TYPE_OF)
             .map(|(name, arity)| opaque_line(name, *arity)),
     );
-    // The traits of type constructors, which a program names in its
-    // bounds and calls (`Functor.map`); the traits found by the value
-    // are the language's, and the card says them in its prose.
+    // The traits passed with dictionaries, `Number` and the traits of
+    // type constructors, which a program names in its bounds and whose
+    // methods it calls (`a.from_int(0)`, `Functor.map`); the traits
+    // found by the value are the language's, and the card says them in
+    // its prose.
     lines.extend(
         (crate::typechecker::builtin_trait_decls().iter())
             .filter(|decl| {

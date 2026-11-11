@@ -1,7 +1,7 @@
 -- exit: 1
--- stderr-contains: list.sum_float overflow
+-- stderr-contains: list.sum overflow
 import float
 import list
 fn main() {
-  println(list.sum_float([float.max_value, float.max_value]))
+  println(list.sum([float.max_value, float.max_value]))
 }

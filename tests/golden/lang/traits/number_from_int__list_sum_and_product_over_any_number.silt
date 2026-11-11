@@ -1,0 +1,18 @@
+-- list.sum and list.product take a list of any Number; of an empty list
+-- they are the type's from_int(0) and from_int(1).
+import list
+
+fn main() {
+  println(list.sum([1, 2, 3]))
+  println(list.sum([0.5, 1.5]))
+  println(list.product([2, 3]))
+  println(list.product([2.0, 3.5]))
+  let ints: List(Int) = []
+  let floats: List(Float) = []
+  println(list.sum(ints))
+  println(list.sum(floats))
+  println(list.product(ints))
+  println(list.product(floats))
+  println(list.map([[1, 2], [3]], list.sum))
+  println(list.map([[1.5], []], list.product))
+}

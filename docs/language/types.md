@@ -71,7 +71,7 @@ println(float.max_value * 2.0) -- runtime error: float overflow
 println(math.sqrt(-4.0)) -- runtime error: math.sqrt of a negative number: -4.0
 ```
 
-The same holds for every function that returns a `Float`: `math.log` of a number that is not positive, `math.asin` / `math.acos` outside -1..1, `math.pow` and `math.exp` overflow, and `list.sum_float` / `list.product_float` overflow all raise. `float.parse` returns an `Err` for `"inf"`, `"NaN"` and out-of-range literals, and decoding a non-finite number into a `Float` field (`toml.parse`) is an error.
+The same holds for every function that returns a `Float`: `math.log` of a number that is not positive, `math.asin` / `math.acos` outside -1..1, `math.pow` and `math.exp` overflow, and `list.sum` / `list.product` of `Float`s overflow all raise. `float.parse` returns an `Err` for `"inf"`, `"NaN"` and out-of-range literals, and decoding a non-finite number into a `Float` field (`toml.parse`) is an error.
 
 Where an input can be out of range, guard it explicitly:
 

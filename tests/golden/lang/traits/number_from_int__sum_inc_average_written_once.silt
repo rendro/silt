@@ -1,0 +1,35 @@
+-- A function bounded by Number writes its constants with `a.from_int`:
+-- sum, inc and average are written once and run for Int and for Float.
+import list
+
+fn sum(xs: List(a)) -> a where a: Number {
+  list.fold(xs, a.from_int(0)) { acc, x -> acc + x }
+}
+
+fn sum_rec(xs: List(a)) -> a where a: Number {
+  match xs {
+    [] -> a.from_int(0)
+    [h, ..t] -> h + sum_rec(t)
+  }
+}
+
+fn inc(x: a) -> a where a: Number {
+  x + a.from_int(1)
+}
+
+fn average(xs: List(a)) -> a where a: Number {
+  sum(xs) / a.from_int(list.length(xs))
+}
+
+fn main() {
+  println(sum([1, 2, 3]))
+  println(sum([1.5, 2.5]))
+  let none: List(Float) = []
+  println(sum(none))
+  println(sum_rec([1, 2, 3]))
+  println(sum_rec([0.5, 0.25]))
+  println(inc(41))
+  println(inc(1.5))
+  println(average([1, 2, 6]))
+  println(average([1.0, 2.0, 6.0]))
+}

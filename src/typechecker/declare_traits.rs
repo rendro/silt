@@ -2151,6 +2151,15 @@ impl TypeChecker {
                 .iter()
                 .find(|(tr, _)| impl_trait.is_builtin(tr))
                 .map(|(_, help)| help.to_string());
+                // (Arithmetic is the one thing Number gives that the
+                // impl could want: it is done before.)
+                let help = match trait_name.is_builtin("Number") {
+                    true => Some(
+                        "do the arithmetic in a function bounded by Number, outside the impl"
+                            .to_string(),
+                    ),
+                    false => help,
+                };
                 self.error_help(Code::InvalidTraitImpl, (message, help), ti.span);
                 // (What the body asks of the variable is not reported
                 // again.)

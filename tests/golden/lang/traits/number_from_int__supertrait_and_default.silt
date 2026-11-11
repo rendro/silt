@@ -1,0 +1,20 @@
+-- A trait with Number as its supertrait calls `Self.from_int` in a
+-- default, and a function bounded by it reaches Number's method too.
+trait Scalar: Number {
+  fn half(self) -> Self {
+    self / Self.from_int(2)
+  }
+}
+
+trait Scalar for Int {}
+
+trait Scalar for Float {}
+
+fn halves(x: a) -> a where a: Scalar {
+  Scalar.half(x) + a.from_int(0)
+}
+
+fn main() {
+  println(halves(9))
+  println(halves(9.0))
+}

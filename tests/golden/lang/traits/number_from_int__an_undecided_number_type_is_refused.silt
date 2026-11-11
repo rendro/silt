@@ -1,0 +1,19 @@
+-- cmd: check
+-- exit: 1
+-- Nothing decides which number an empty list's sum is, nor the type a
+-- generic function makes: the use is refused, also where the value is
+-- shown (println asks Display of the same type).
+-- stderr-contains: error[type]: cannot infer the type this use of 'list.sum' needs to implement trait 'Number'
+-- stderr-contains: error[type]: cannot infer the type this use of 'one' needs to implement trait 'Number'
+-- stderr-contains: = help: annotate the value it is given
+-- stderr-not-contains: compiler bug
+import list
+
+fn one(xs: List(a)) -> a where a: Number {
+  a.from_int(1)
+}
+
+fn main() {
+  println(list.sum([]))
+  println(one([]))
+}

@@ -1,0 +1,23 @@
+-- cmd: check
+-- exit: 1
+-- `from_int` is Number's, and only Int and Float have Number; it takes
+-- an Int, never a Float; through the trait it names no impl; on a value
+-- it is a field.
+-- stderr-contains: error[type]: type 'String' has no method 'from_int'
+-- stderr-contains: = help: `from_int` is a method of trait `Number`, which type 'String' does not implement
+-- stderr-contains: error[type]: type mismatch: expected Int, got Float
+-- stderr-contains: error[type]: method 'from_int' of trait 'Number' takes no value of the type, so it is called on a type
+-- stderr-contains: = help: `from_int` is a method of trait `Number` that makes a value: call it on the type, `Int.from_int(..)`
+-- stderr-contains: error[type]: no method 'from_int' on type variable `a`: it has no bounds
+-- stderr-contains: = help: add the bound: `where a: Number`
+fn unbounded(x: a) -> a {
+  a.from_int(1)
+}
+
+fn main() {
+  println(String.from_int(1))
+  println(Float.from_int(1.5))
+  println(Number.from_int(1))
+  let x = 5
+  println(x.from_int(1))
+}

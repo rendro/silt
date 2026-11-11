@@ -20,12 +20,16 @@ use crate::typeinfo::bv;
 use crate::value::{IntoIter, Value};
 use crate::vm::{Native, Step, Vm, VmError, call_then};
 
-/// The built-in impls of the traits of type constructors (HK13), each
-/// with its methods in the order the trait declares them, and the row
-/// that is each: a module function (`list.map`), or a row of the type
-/// (`List.pure`, [`Registry::impl_row`](super::registry::Registry::impl_row)).
+/// The built-in impls of the builtin traits that are passed with
+/// dictionaries: `Number` for Int and Float, and the traits of type
+/// constructors (HK13). Each with its methods in the order the trait
+/// declares them, and the row that is each: a module function
+/// (`list.map`), or a row of the type (`List.pure`, `Int.from_int`,
+/// [`Registry::impl_row`](super::registry::Registry::impl_row)).
 /// Channel is a Functor only (`stream.map`).
 pub(crate) const IMPLS: &[(&str, &str, &[&str])] = &[
+    ("Number", "Int", &["Int.from_int"]),
+    ("Number", "Float", &["Float.from_int"]),
     ("Functor", "List", &["list.map"]),
     ("Functor", "Option", &["option.map"]),
     ("Functor", "Result", &["result.map"]),
@@ -47,6 +51,10 @@ pub(crate) fn method_row(qualified: &str) -> Option<&'static super::registry::Ro
         registry.impl_row(ty, method)
     })
 }
+
+/// The place of `from_int` among Number's methods, in the order the
+/// trait declares them.
+pub(crate) const FROM_INT: usize = 0;
 
 /// The place of `pure` among Applicative's methods, in the order the
 /// trait declares them: a dictionary of an impl holds them so.

@@ -279,12 +279,14 @@ pub fn builtin_trait_of_method(method: &str) -> Option<TraitId> {
 
 /// The builtin traits that are found by the value: a value of a type
 /// with one reaches its impl where the code runs, and no dictionary is
-/// passed for it (`crate::evidence`). The others, the traits of type
-/// constructors (Functor, Applicative, Monad), are passed with
-/// dictionaries as a program's traits are: `m.pure(x)` has no value of
-/// `m(..)` to find its impl by.
+/// passed for it (`crate::evidence`). The others, `Number` and the
+/// traits of type constructors (Functor, Applicative, Monad), are
+/// passed with dictionaries as a program's traits are: `a.from_int(0)`
+/// and `m.pure(x)` have no value of the type to find its impl by.
+/// (An operator on numbers is still found by the value: the VM's
+/// arithmetic reads it.)
 pub const VALUE_DRIVEN_TRAITS: &[&str] = &[
-    "Compare", "Display", "Equal", "Error", "Hash", "Number", "Encode", "Decode",
+    "Compare", "Display", "Equal", "Error", "Hash", "Encode", "Decode",
 ];
 
 /// Whether a value of a type with the trait `t` is passed with the

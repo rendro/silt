@@ -236,7 +236,8 @@ fn main() {
   never imported.
 - Built in: `Display` (by structure, or a written impl), `Equal`, `Hash`
   and `Compare` (always by structure; an impl of them is an error),
-  `Error` (written), `Number` (`Int` and `Float`). `Functor`,
+  `Error` (written), `Number` (`Int` and `Float`; `a.from_int(0)` is
+  the 0 of the type). `Functor`,
   `Applicative` and `Monad` are traits of type constructors (see
   [Functors](language/functors.md)). A record compares
   field by field in declared order, an enum by variant order, then
@@ -304,6 +305,7 @@ constants. A function of a cargo feature is in builds with that feature.
 type Result(a, e) { Ok(a), Err(e) }
 type Option(a) { Some(a), None }
 type Bytes  -- opaque
+trait Number { fn from_int(n: Int) -> Self }
 trait Functor { fn map(xs: Self(a), f: Fn(a) -> b) -> Self(b) }
 trait Applicative: Functor { fn pure(x: a) -> Self(a); fn map2(xs: Self(a), ys: Self(b), f: Fn(a, b) -> c) -> Self(c) }
 trait Monad: Applicative { fn flat_map(xs: Self(a), f: Fn(a) -> Self(b)) -> Self(b) }
@@ -430,8 +432,7 @@ list.map(xs: List(a), f: Fn(a) -> b) -> List(b)
 list.max_by(xs: List(a), key: Fn(a) -> b) -> Option(a) where b: Compare
 list.min_by(xs: List(a), key: Fn(a) -> b) -> Option(a) where b: Compare
 list.prepend(xs: List(a), elem: a) -> List(a)
-list.product(xs: List(Int)) -> Int
-list.product_float(xs: List(Float)) -> Float
+list.product(xs: List(a)) -> a where a: Number
 list.remove_at(xs: List(a), index: Int) -> Option(List(a))
 list.reverse(xs: List(a)) -> List(a)
 list.scan(xs: List(a), init: b, f: Fn(b, a) -> b) -> List(b)
@@ -440,8 +441,7 @@ list.set(xs: List(a), index: Int, value: a) -> Option(List(a))
 list.sort(xs: List(a)) -> List(a) where a: Compare
 list.sort_by(xs: List(a), key: Fn(a) -> b) -> List(a) where b: Compare
 list.sort_with(xs: List(a), cmp: Fn(a, a) -> Int) -> List(a)
-list.sum(xs: List(Int)) -> Int
-list.sum_float(xs: List(Float)) -> Float
+list.sum(xs: List(a)) -> a where a: Number
 list.tail(xs: List(a)) -> List(a)
 list.take(xs: List(a), n: Int) -> List(a)
 list.take_while(xs: List(a), f: Fn(a) -> Bool) -> List(a)

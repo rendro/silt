@@ -47,8 +47,7 @@ channel-backed lazy pipelines over the same combinator names.
 | `max_by` | `(List(a), Fn(a) -> b) -> Option(a) where b: Compare` | Element with largest key, or None |
 | `min_by` | `(List(a), Fn(a) -> b) -> Option(a) where b: Compare` | Element with smallest key, or None |
 | `prepend` | `(List(a), a) -> List(a)` | Add an element to the front |
-| `product` | `(List(Int)) -> Int` | Product of a list of ints (1 on empty) |
-| `product_float` | `(List(Float)) -> Float` | Product of a list of floats (1.0 on empty) |
+| `product` | `(List(a)) -> a where a: Number` | Product of a list of numbers (`a.from_int(1)` on empty) |
 | `remove_at` | `(List(a), Int) -> Option(List(a))` | The list without the element at index, or None if there is none |
 | `reverse` | `(List(a)) -> List(a)` | Reverse element order |
 | `scan` | `(List(a), b, Fn(b, a) -> b) -> List(b)` | Prefix fold; returns all intermediate accumulators |
@@ -57,8 +56,7 @@ channel-backed lazy pipelines over the same combinator names.
 | `sort` | `(List(a)) -> List(a) where a: Compare` | Sort in natural order |
 | `sort_by` | `(List(a), Fn(a) -> b) -> List(a) where b: Compare` | Sort by key function |
 | `sort_with` | `(List(a), Fn(a, a) -> Int) -> List(a)` | Sort with a comparison function (below 0: less, 0: equal, above 0: greater); stable |
-| `sum` | `(List(Int)) -> Int` | Sum a list of ints (0 on empty) |
-| `sum_float` | `(List(Float)) -> Float` | Sum a list of floats (0.0 on empty) |
+| `sum` | `(List(a)) -> a where a: Number` | Sum of a list of numbers (`a.from_int(0)` on empty) |
 | `tail` | `(List(a)) -> List(a)` | All elements except the first |
 | `take` | `(List(a), Int) -> List(a)` | Keep first n elements |
 | `take_while` | `(List(a), Fn(a) -> Bool) -> List(a)` | Elements until `f` first rejects one |
@@ -680,39 +678,24 @@ fn main() {
 ## `list.product`
 
 ```
-list.product(xs: List(Int)) -> Int
+list.product(xs: List(a)) -> a where a: Number
 ```
 
-Returns the product of all elements. Returns `1` on an empty list. Overflow
-is a runtime error; the product of a list that has a `0` in it is `0`,
-whatever the product of the other elements is.
+Returns the product of all elements, of a list of `Int`s or of `Float`s.
+Returns `a.from_int(1)` on an empty list: `1`, or `1.0`. Overflow is a
+runtime error: an `Int` product beyond the range of `Int`, a `Float`
+product too large for a `Float`. The product of a list of `Int`s that has
+a `0` in it is `0`, whatever the product of the other elements is.
 
 ```silt
 import list
 
 fn main() {
   println(list.product([1, 2, 3, 4])) -- 24
-  println(list.product([])) -- 1
+  println(list.product([1.5, 2.0, 4.0])) -- 12.0
   println(list.product(-100..100)) -- 0
-}
-```
-
-
-## `list.product_float`
-
-```
-list.product_float(xs: List(Float)) -> Float
-```
-
-Like `product`, but for lists of floats. Returns `1.0` on an empty list.
-Raises a runtime error when the product is too large for a `Float`.
-
-```silt
-import list
-
-fn main() {
-  println(list.product_float([1.5, 2.0, 4.0])) -- 12.0
-  println(list.product_float([])) -- 1.0
+  let none: List(Float) = []
+  println(list.product(none)) -- 1.0
 }
 ```
 
@@ -905,40 +888,24 @@ fn main() {
 ## `list.sum`
 
 ```
-list.sum(xs: List(Int)) -> Int
+list.sum(xs: List(a)) -> a where a: Number
 ```
 
-Returns the sum of all elements. Returns `0` on an empty list. Overflow
-is a runtime error.
+Returns the sum of all elements, of a list of `Int`s or of `Float`s.
+Returns `a.from_int(0)` on an empty list: `0`, or `0.0`. Overflow is a
+runtime error: an `Int` sum beyond the range of `Int`, a `Float` sum too
+large for a `Float`, counted from the first element on: a sum on the way
+that is too large is one too, even where the elements after it would
+bring the sum back (`[1.0e308, 1.0e308, -1.0e308]`).
 
 ```silt
 import list
 
 fn main() {
   println(list.sum([1, 2, 3, 4])) -- 10
-  println(list.sum([])) -- 0
-}
-```
-
-
-## `list.sum_float`
-
-```
-list.sum_float(xs: List(Float)) -> Float
-```
-
-Like `sum`, but for lists of floats. Returns `0.0` on an empty list.
-Raises a runtime error when the sum is too large for a `Float`, counted
-from the first element on: a sum on the way that is too large is one too,
-even where the elements after it would bring the sum back
-(`[1.0e308, 1.0e308, -1.0e308]`).
-
-```silt
-import list
-
-fn main() {
-  println(list.sum_float([0.5, 1.5, 2.0])) -- 4.0
-  println(list.sum_float([])) -- 0.0
+  println(list.sum([0.5, 1.5, 2.0])) -- 4.0
+  let none: List(Int) = []
+  println(list.sum(none)) -- 0
 }
 ```
 

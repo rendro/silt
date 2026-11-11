@@ -29,7 +29,6 @@ fn main() {
   let v_list_min_by: Int = list.min_by
   let v_list_prepend: Int = list.prepend
   let v_list_product: Int = list.product
-  let v_list_product_float: Int = list.product_float
   let v_list_remove_at: Int = list.remove_at
   let v_list_reverse: Int = list.reverse
   let v_list_scan: Int = list.scan
@@ -37,7 +36,6 @@ fn main() {
   let v_list_sort: Int = list.sort
   let v_list_sort_by: Int = list.sort_by
   let v_list_sum: Int = list.sum
-  let v_list_sum_float: Int = list.sum_float
   let v_list_tail: Int = list.tail
   let v_list_take: Int = list.take
   let v_list_take_while: Int = list.take_while

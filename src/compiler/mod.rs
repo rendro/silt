@@ -3821,7 +3821,9 @@ mod tests {
     fn test_compile_arithmetic() {
         let fns = compile("fn add(a, b) { a + b }");
         let f = find_fn(&fns, "add");
-        assert_eq!(f.arity(), 2);
+        // `where a: Number`: its dictionary is taken before `a` and `b`;
+        // `+` is the VM's, found by the values.
+        assert_eq!(f.arity(), 3);
         assert!(has_op(f.chunk(), Op::Add));
 
         let fns = compile("fn sub(a, b) { a - b }");

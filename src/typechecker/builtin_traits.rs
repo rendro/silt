@@ -173,19 +173,34 @@ pub fn builtin_trait_decls() -> Vec<TraitDecl> {
                     .to_string(),
             ),
         },
-        // trait Number {}: the types arithmetic is on, Int and Float.
+        // trait Number { fn from_int(n: Int) -> Self }: the types
+        // arithmetic is on, Int and Float, and the number of the type
+        // that an Int is.
         TraitDecl {
             name: intern("Number"),
             name_span: dummy_span,
             params: Vec::new(),
             supertraits: Vec::new(),
             param_where_clauses: Vec::new(),
-            methods: Vec::new(),
+            methods: vec![FnDecl {
+                return_type: Some(TypeExpr::new(TypeExprKind::SelfType, dummy_span)),
+                ..sig_only_method(
+                    "from_int",
+                    vec![Param {
+                        kind: ParamKind::Data,
+                        pattern: Pattern::new(PatternKind::Ident(intern("n")), dummy_span),
+                        ty: named_ret("Int", dummy_span),
+                    }],
+                    "Int",
+                    dummy_span,
+                )
+            }],
             is_pub: true,
             span: dummy_span,
             doc: Some(
                 "The types arithmetic is on, `Int` and `Float`: `+`, `-`, `*`, `/`,\n\
-                 `%` and unary `-` need it. No other type has it."
+                 `%` and unary `-` need it. No other type has it. `from_int` makes\n\
+                 the number of the type: `a.from_int(0)`, `Float.from_int(2)`."
                     .to_string(),
             ),
         },
@@ -344,13 +359,9 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
         all_auto_traits,
     );
     register_structural_traits_for(checker, &["List"], all_auto_traits);
-    // Arithmetic is on Int and Float.
-    for ty in ["Int", "Float"] {
-        checker
-            .tables
-            .trait_impl_set
-            .insert((TraitKey::builtin("Number"), TypeRef::builtin(ty)));
-    }
+    // Arithmetic is on Int and Float: their impls of `Number` are
+    // entered with the builtin impls that hold methods
+    // (`register_builtin_impls`).
     // A tuple has what its parts have; a map and a set have no order.
     register_structural_traits_for(checker, &["Tuple"], all_auto_traits);
     register_structural_traits_for(checker, &["Map", "Set"], non_ordering_traits);
@@ -410,7 +421,7 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
     // Bytes are a map key and a set element by their content.
     register_structural_traits_for(checker, &["Bytes"], &["Hash"]);
 
-    register_constructor_impls(checker);
+    register_builtin_impls(checker);
 
     // TcpListener / TcpStream are registered in BUILTIN_TYPES so the
     // trait-impl-target gate says where an impl for them may be
@@ -419,28 +430,36 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
     // unprintable opaque resources.
 }
 
-/// The impls of the builtin traits of type constructors for the builtin
-/// types (`builtins::applicative::IMPLS`): entered as a program's impl
-/// is, for the type's constructor (`Result(_, e)`), so their evidence
-/// is an impl's, which the compiler passes as a dictionary. Each method
-/// has the type the trait declares for it at that constructor.
-fn register_constructor_impls(checker: &mut TypeChecker) {
+/// The impls of the builtin traits that hold methods for the builtin
+/// types (`builtins::applicative::IMPLS`): `Number` for `Int` and
+/// `Float`, and the traits of type constructors. Each is entered as a
+/// program's impl is, for the type (`Int`) or the type's constructor
+/// (`Result(_, e)`), so its evidence is an impl's, which the compiler
+/// passes as a dictionary. Each method has the type the trait declares
+/// for it at that type.
+fn register_builtin_impls(checker: &mut TypeChecker) {
     for (trait_name, type_name, _) in crate::builtins::applicative::IMPLS {
         let (tr, ty) = (TraitKey::builtin(trait_name), TypeRef::builtin(type_name));
         let key = (tr, ty, ImplArgs::none());
         checker.tables.add_impl(key);
-        // The constructor: the type with its first argument open.
-        let first = checker.fresh_var();
-        let full = match *type_name {
-            "List" => Type::List(Box::new(first)),
-            "Channel" => Type::Channel(Box::new(first)),
-            "Result" => Type::Generic(ty, vec![first, checker.fresh_var()]),
-            _ => Type::Generic(ty, vec![first]),
+        let self_type = match *type_name {
+            "Int" => Type::Int,
+            "Float" => Type::Float,
+            _ => {
+                // The constructor: the type with its first argument open.
+                let first = checker.fresh_var();
+                let full = match *type_name {
+                    "List" => Type::List(Box::new(first)),
+                    "Channel" => Type::Channel(Box::new(first)),
+                    "Result" => Type::Generic(ty, vec![first, checker.fresh_var()]),
+                    _ => Type::Generic(ty, vec![first]),
+                };
+                let Some((head, rest, _)) = full.split_constructor() else {
+                    unreachable!("{type_name} takes a type argument");
+                };
+                Type::Con(head, rest)
+            }
         };
-        let Some((head, rest, _)) = full.split_constructor() else {
-            unreachable!("{type_name} takes a type argument");
-        };
-        let self_type = Type::Con(head, rest);
         checker
             .tables
             .impl_self_types

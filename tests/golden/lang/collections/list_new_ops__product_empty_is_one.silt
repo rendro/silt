@@ -1,2 +1,5 @@
 import list
-fn main() { println(list.product([])) }
+fn main() {
+  let none: List(Int) = []
+  println(list.product(none))
+}
