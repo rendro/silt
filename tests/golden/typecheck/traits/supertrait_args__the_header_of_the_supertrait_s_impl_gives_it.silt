@@ -1,0 +1,74 @@
+-- What the header of a supertrait's impl asks, given at the impl's type,
+-- gives the supertrait, and its dictionary carries it: `W(Box(Int))` and
+-- `W(a) where a: Conv(Int)` of `Sup: Conv(Int)`, and `V(a) where a:
+-- Conv(a)` of `Sup3(a): Conv(a)` through `Conv(r) for V(a) where a:
+-- Conv(r)` (that one found no dictionary for `a` where it ran).
+trait Conv(r) {
+  fn conv(self) -> (String, r)
+}
+
+type Box(a) {
+  item: a,
+}
+
+type W(a) {
+  w: a,
+}
+
+type V(a) {
+  v: a,
+}
+
+trait Conv(a) for Box(a) {
+  fn conv(self) -> (String, a) {
+    ("box", self.item)
+  }
+}
+
+trait Conv(Int) for Int {
+  fn conv(self) -> (String, Int) {
+    ("int", self)
+  }
+}
+
+trait Conv(Int) for W(a) where a: Conv(Int) {
+  fn conv(self) -> (String, Int) {
+    let (t, n) = Conv.conv(self.w)
+    ("w{t}", n)
+  }
+}
+
+trait Conv(r) for V(a) where a: Conv(r) {
+  fn conv(self) -> (String, r) {
+    let (t, n) = Conv.conv(self.v)
+    ("v{t}", n)
+  }
+}
+
+trait Sup: Conv(Int) {
+  fn sup(self) -> String {
+    let (t, n) = Conv.conv(self)
+    "{t} {n + 1}"
+  }
+}
+
+trait Sup for W(a) where a: Conv(Int) {}
+
+trait Sup3(r): Conv(r) {
+  fn sup3(self) -> String {
+    let (t, _) = Conv.conv(self)
+    t
+  }
+}
+
+trait Sup3(a) for V(a) where a: Conv(a) {}
+
+fn go(x: t, type r) -> String where t: Sup3(r) {
+  Sup3.sup3(x)
+}
+
+fn main() {
+  println(Sup.sup(W { w: Box { item: 4 } }))
+  println(Sup.sup(W { w: 6 }))
+  println(go(V { v: 5 }, Int))
+}
