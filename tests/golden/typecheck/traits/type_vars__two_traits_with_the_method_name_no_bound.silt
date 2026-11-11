@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- A type variable with no bounds calls a method two traits in sight make a
+-- value with: the help names no one of them.
+-- stderr-contains: error[type]: no method 'empty' on type variable `a`: it has no bounds
+-- stderr-contains: = help: add a bound whose trait has the method: `where a: SomeTrait`
+trait Monoid { fn empty() -> Self }
+trait Blank { fn empty() -> Self }
+trait Monoid for Int { fn empty() -> Int { 0 } }
+trait Blank for Int { fn empty() -> Int { 0 } }
+fn nob(xs: List(a)) -> Int { a.empty() }
+fn main() { println(1) }

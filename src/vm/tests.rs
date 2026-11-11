@@ -7981,6 +7981,8 @@ mod applicative {
             names.push(row.qualified());
         }
         let expected = [
+            "Int.from_int",
+            "Float.from_int",
             "List.pure",
             "List.map2",
             "Option.pure",

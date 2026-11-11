@@ -24,9 +24,11 @@ error[type]: type 'L' has no method 'decode'
     |
  28 |   println(L.decode(json.Null))
     |           ^^^^^^^^ type 'L' has no method 'decode'
+  = help: `decode` is a method of trait `json.Decode`, which type 'L' does not implement
 
 error[type]: type 'L' has no method 'decode'
  --> full_type__a_generic_alias_through_a_let_a_tuple_or_a_closure_is_named_as_written.silt:29:11
     |
  29 |   println(id(L).decode(json.Null))
     |           ^^^^^^^^^^^^ type 'L' has no method 'decode'
+  = help: `decode` is a method of trait `json.Decode`, which type 'L' does not implement

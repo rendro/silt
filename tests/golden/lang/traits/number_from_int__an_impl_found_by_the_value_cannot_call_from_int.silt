@@ -1,0 +1,37 @@
+-- cmd: check
+-- exit: 1
+-- An impl of a trait found by the value runs with the value alone, so
+-- its methods cannot read Number's dictionary: not by `a.from_int`, nor
+-- through a function that calls it.
+-- stderr-contains: error[type]: an impl of 'Display' runs with the value alone, so it cannot make a number of its type's variable (`from_int`, or a call that uses it, such as `list.sum`)
+-- stderr-contains: = help: compute the number before, in a function bounded by Number, and keep it in the value
+-- stderr-contains: --> number_from_int__an_impl_found_by_the_value_cannot_call_from_int.silt:22:1
+-- stderr-contains: --> number_from_int__an_impl_found_by_the_value_cannot_call_from_int.silt:28:1
+type Money(a) {
+  amount: a,
+}
+
+type Cents(a) {
+  amount: a,
+}
+
+fn bump(x: a) -> a where a: Number {
+  x + a.from_int(1)
+}
+
+trait Display for Money(a) where a: Number + Display {
+  fn display(self) -> String {
+    "{self.amount + a.from_int(1)}"
+  }
+}
+
+trait Display for Cents(a) where a: Number + Display {
+  fn display(self) -> String {
+    "{bump(self.amount)}"
+  }
+}
+
+fn main() {
+  println(Money { amount: 2 })
+  println(Cents { amount: 2 })
+}

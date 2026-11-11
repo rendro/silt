@@ -3821,6 +3821,8 @@ mod tests {
     fn test_compile_arithmetic() {
         let fns = compile("fn add(a, b) { a + b }");
         let f = find_fn(&fns, "add");
+        // `where a: Number`, which passes no dictionary: `+` is the VM's,
+        // found by the values, and nothing reads the bound.
         assert_eq!(f.arity(), 2);
         assert!(has_op(f.chunk(), Op::Add));
 

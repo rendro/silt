@@ -3,9 +3,114 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::typed::{List, Map, Set, builtins, unsound};
+use crate::bytecode::dict::Dict;
 use crate::typeinfo::bv;
 use crate::value::{IntTotal, MAX_COLLECTION_LEN, Value};
 use crate::vm::{Flow, Native, Step, Vm, VmError, call_then, item_arg, iterate, next, stop};
+
+/// Which total of a list of numbers `list.sum` and `list.product` are.
+#[derive(Clone, Copy)]
+enum Total {
+    Sum,
+    Product,
+}
+
+impl Total {
+    fn name(self) -> &'static str {
+        match self {
+            Total::Sum => "list.sum",
+            Total::Product => "list.product",
+        }
+    }
+
+    /// The total of no numbers, as an Int: the dictionary's `from_int`
+    /// makes it the number of the list's type.
+    fn empty(self) -> i64 {
+        match self {
+            Total::Sum => 0,
+            Total::Product => 1,
+        }
+    }
+}
+
+/// `list.sum` and `list.product` over the `Number` whose dictionary is
+/// `dict`: a list of Ints or of Floats, which its first element says;
+/// of no element, the dictionary's `from_int` of 0 or 1.
+fn total(which: Total, dict: &Dict, xs: List) -> Result<Step, VmError> {
+    let name = which.name();
+    let overflow = || VmError::new(format!("{name} overflow"));
+    match xs.iter().next() {
+        None => Ok(Step::Run(Box::new(EmptyTotal {
+            name,
+            dict: dict.clone(),
+            n: which.empty(),
+            called: false,
+        }))),
+        Some(Value::Int(_)) => {
+            let ints = match which {
+                Total::Sum => xs.sum_ints(),
+                Total::Product => xs.product_ints(),
+            };
+            match ints {
+                IntTotal::Total(total) => Ok(Step::Done(Value::Int(total))),
+                IntTotal::Overflow => Err(overflow()),
+                IntTotal::NotInts => Err(unsound(name, "xs")),
+            }
+        }
+        Some(Value::Float(_)) => {
+            let total = match which {
+                Total::Sum => float_total(xs, 0.0, |total, n| total + n),
+                Total::Product => float_total(xs, 1.0, |total, n| total * n),
+            };
+            let total = total.ok_or_else(|| unsound(name, "xs"))?;
+            // A finite total only ever overflows to ±inf, and cannot
+            // come back from there, so one check at the end sees it.
+            let total =
+                crate::builtins::numeric::checked_float(total, || format!("{name} overflow"))?;
+            Ok(Step::Done(total))
+        }
+        Some(_) => Err(unsound(name, "xs")),
+    }
+}
+
+/// `op` of the Floats of `xs` in turn, from `start`; `None` if an
+/// element is no Float.
+fn float_total(xs: List, start: f64, op: impl Fn(f64, f64) -> f64) -> Option<f64> {
+    let mut total = start;
+    for item in xs.iter() {
+        let Value::Float(n) = item else {
+            return None;
+        };
+        total = op(total, n.get());
+    }
+    Some(total)
+}
+
+/// The frame of the total of an empty list: a call of the dictionary's
+/// `from_int`, whose value is the total.
+struct EmptyTotal {
+    name: &'static str,
+    dict: Dict,
+    n: i64,
+    called: bool,
+}
+
+impl Native for EmptyTotal {
+    fn name(&self) -> &str {
+        self.name
+    }
+
+    fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError> {
+        if std::mem::replace(&mut self.called, true) {
+            return Ok(Step::Done(input));
+        }
+        vm.call_dict_method(
+            &self.dict,
+            crate::builtins::applicative::FROM_INT,
+            [Value::Int(self.n)],
+        )
+    }
+}
 
 fn some(value: Value) -> Value {
     Value::variant(bv::SOME, [value])
@@ -918,46 +1023,14 @@ pub(crate) mod list {
             Ok(xs.remove_at(index)?.map(Value::List))
         }
 
-        fn sum(xs: List) -> Result<i64, VmError> {
-            match xs.sum_ints() {
-                IntTotal::Total(total) => Ok(total),
-                IntTotal::Overflow => Err(VmError::new("list.sum overflow".into())),
-                IntTotal::NotInts => Err(unsound("list.sum", "xs")),
-            }
+        // The sum of the numbers; of none, the dictionary's `from_int(0)`.
+        fn sum(dict: &Dict, xs: List) -> Result<Step, VmError> {
+            total(Total::Sum, dict, xs)
         }
 
-        fn sum_float(xs: List) -> Result<Value, VmError> {
-            let mut total: f64 = 0.0;
-            for item in xs.iter() {
-                let Value::Float(n) = item else {
-                    return Err(unsound("list.sum_float", "xs"));
-                };
-                total += n.get();
-            }
-            // A finite sum only ever overflows to ±inf, and the sum
-            // cannot come back from there, so one check at the end sees it.
-            crate::builtins::numeric::checked_float(total, || "list.sum_float overflow".into())
-        }
-
-        fn product(xs: List) -> Result<i64, VmError> {
-            match xs.product_ints() {
-                IntTotal::Total(total) => Ok(total),
-                IntTotal::Overflow => Err(VmError::new("list.product overflow".into())),
-                IntTotal::NotInts => Err(unsound("list.product", "xs")),
-            }
-        }
-
-        fn product_float(xs: List) -> Result<Value, VmError> {
-            let mut total: f64 = 1.0;
-            for item in xs.iter() {
-                let Value::Float(n) = item else {
-                    return Err(unsound("list.product_float", "xs"));
-                };
-                total *= n.get();
-            }
-            // As in `sum_float`: once the product leaves the finite range
-            // it stays out, so one check at the end sees it.
-            crate::builtins::numeric::checked_float(total, || "list.product_float overflow".into())
+        // The product of the numbers; of none, `from_int(1)`.
+        fn product(dict: &Dict, xs: List) -> Result<Step, VmError> {
+            total(Total::Product, dict, xs)
         }
 
         fn intersperse(xs: List, sep: &Value) -> Result<Value, VmError> {

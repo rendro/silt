@@ -188,9 +188,32 @@ pub(crate) mod int {
             }
             Ok(x.clamp(lo, hi))
         }
+    }
+}
 
-        fn to_float(n: i64) -> f64 {
-            n as f64
+/// `Int.from_int` and `Float.from_int`: the methods of the built-in
+/// impls of `Number` (`builtins::applicative::IMPLS`).
+pub(crate) mod number {
+    /// `Int.from_int`: the Int itself.
+    pub(crate) mod int {
+        use super::super::*;
+
+        builtins! {
+            fn from_int(n: i64) -> i64 {
+                n
+            }
+        }
+    }
+
+    /// `Float.from_int`: the Float nearest the Int, the one way to turn
+    /// an Int into a Float.
+    pub(crate) mod float {
+        use super::super::*;
+
+        builtins! {
+            fn from_int(n: i64) -> f64 {
+                n as f64
+            }
         }
     }
 }

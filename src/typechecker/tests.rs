@@ -1122,7 +1122,7 @@ fn main() {
   let b = 3
   let mn = int.min(a, b)
   let mx = int.max(a, b)
-  let f = int.to_float(a)
+  let f = Float.from_int(a)
   let _ = f
 }
         "#,

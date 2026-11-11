@@ -615,6 +615,15 @@ impl Repl {
         if failed {
             return evaluation;
         }
+        // (What the entry's code would run with a dictionary no type
+        // decides: an error of running it, not of `:type`.)
+        let refusals = (self.session.module_analysis(self.session.module_of(file)))
+            .map(|analysis| analysis.ast.run_refusals.clone())
+            .unwrap_or_default();
+        if !refusals.is_empty() {
+            evaluation.diagnostics.extend(refusals);
+            return evaluation;
+        }
         let program = match self.session.compile(file, Entry::Cell) {
             Ok(program) => program,
             Err(errors) => {

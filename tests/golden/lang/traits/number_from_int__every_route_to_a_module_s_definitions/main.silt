@@ -1,0 +1,46 @@
+-- A module's silent (arithmetic only) and reading (`from_int`,
+-- `list.sum`) functions and `let`s, reached every way a name is: by
+-- the qualified name, by an item import, through an alias of the
+-- module, as a value, in a task, through a record field and through a
+-- trait's method. Each use passes what the definition takes.
+import list
+import nums
+import nums.{addf, incf, addl, suml}
+import nums as n
+import task
+
+fn main() {
+  -- qualified
+  println(nums.addf(1, 2))
+  println(nums.incf(1.5))
+  println(nums.addl(1, 2))
+  println(nums.addl(1.5, 2.0))
+  println(nums.suml([1, 2]))
+  -- item import
+  println(addf(2, 3))
+  println(incf(2))
+  println(addl(2.5, 0.5))
+  println(suml([0.5, 0.25]))
+  -- alias
+  println(n.addf(3, 4))
+  println(n.incf(3))
+  println(n.addl(3, 4))
+  println(n.suml([3.0]))
+  -- values
+  println(list.fold([1, 2, 3], 0, nums.addl))
+  println(list.fold([1.5], 0.5, addf))
+  println(list.map([1, 2], n.incf))
+  println(list.map([[1], [2, 3]], nums.suml))
+  -- tasks
+  let t1 = task.spawn({ -> nums.addl(10, 20) })
+  let t2 = task.spawn({ -> n.suml([1.5, 1.5]) })
+  println(task.join(t1))
+  println(task.join(t2))
+  -- record fields
+  let o = nums.ops()
+  println(o.add(4, 5))
+  println(o.inc(4.5))
+  -- a trait's method, as a call and as a value
+  println(nums.Twice.twice(nums.Wrap { n: 1.5 }))
+  println(list.map([nums.Wrap { n: 2.0 }], nums.Twice.twice))
+}

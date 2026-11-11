@@ -1,0 +1,17 @@
+import list
+
+pub fn add(x, y) {
+  x + y
+}
+
+pub fn inc(x: a) -> a where a: Number {
+  add(x, a.from_int(1))
+}
+
+pub fn inc_twice(x: a) -> a where a: Number {
+  inc(inc(x))
+}
+
+pub fn mean(xs: List(a)) -> a where a: Number {
+  list.sum(xs) / a.from_int(list.length(xs))
+}

@@ -1,0 +1,37 @@
+import list
+
+-- Silent: only arithmetic. Reading: `from_int` or `list.sum`.
+pub fn addf(x, y) {
+  x + y
+}
+
+pub fn incf(x: a) -> a where a: Number {
+  x + a.from_int(1)
+}
+
+pub let addl = { x, y -> x + y }
+
+pub let suml = { xs -> list.sum(xs) }
+
+pub type Ops {
+  add: Fn(Int, Int) -> Int,
+  inc: Fn(Float) -> Float,
+}
+
+pub fn ops() -> Ops {
+  Ops { add: addl, inc: incf }
+}
+
+pub trait Twice {
+  fn twice(self) -> Self
+}
+
+pub type Wrap {
+  n: Float,
+}
+
+trait Twice for Wrap {
+  fn twice(self) -> Self {
+    Wrap { n: addf(self.n, incf(self.n) - 1.0) }
+  }
+}

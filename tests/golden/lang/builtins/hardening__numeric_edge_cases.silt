@@ -30,8 +30,8 @@ fn main() {
   println(float.round(-0.5) == -1.0)
   -- test_math_sqrt_four
   println(math.sqrt(4.0) == 2.0)
-  -- test_int_to_float_zero
-  println(int.to_float(0) == 0.0)
-  -- test_int_to_float_i64_max: rounds to 2^63
-  println(int.to_float(9223372036854775807) == 9223372036854775808.0)
+  -- test_float_from_int_zero
+  println(Float.from_int(0) == 0.0)
+  -- test_float_from_int_i64_max: rounds to 2^63
+  println(Float.from_int(9223372036854775807) == 9223372036854775808.0)
 }

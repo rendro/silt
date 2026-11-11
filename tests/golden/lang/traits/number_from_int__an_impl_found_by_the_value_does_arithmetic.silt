@@ -1,0 +1,23 @@
+-- An impl of a trait found by the value (Display) may ask Number of its
+-- type's variable and do arithmetic on a part, also through a function
+-- that only does arithmetic: the operators are found by the values, and
+-- nothing passes it a dictionary.
+type Money(a) {
+  amount: a,
+}
+
+fn double(x) {
+  x + x
+}
+
+trait Display for Money(a) where a: Number + Display {
+  fn display(self) -> String {
+    "{double(self.amount) - self.amount + self.amount}"
+  }
+}
+
+fn main() {
+  println(Money { amount: 2 })
+  println(Money { amount: 1.5 })
+  println([Money { amount: 3 }])
+}

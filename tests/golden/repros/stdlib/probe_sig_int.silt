@@ -6,5 +6,4 @@ fn main() {
   let v_int_max: Int = int.max
   let v_int_min: Int = int.min
   let v_int_parse: Int = int.parse
-  let v_int_to_float: Int = int.to_float
 }

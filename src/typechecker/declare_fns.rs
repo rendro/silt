@@ -184,6 +184,15 @@ impl TypeChecker {
     /// parameters or its result write. (A bound on another variable is
     /// an error of its own.)
     pub(super) fn written_bounds(&self, f: &FnDecl) -> usize {
+        self.written_bounds_of(f, |_| true)
+    }
+
+    /// Of [`written_bounds`](Self::written_bounds), those of `Number`.
+    pub(super) fn written_number_bounds(&self, f: &FnDecl) -> usize {
+        self.written_bounds_of(f, |t| t.is_builtin("Number"))
+    }
+
+    fn written_bounds_of(&self, f: &FnDecl, of: impl Fn(TraitKey) -> bool) -> usize {
         let mut vars = Vec::new();
         for te in (f.params.iter().filter_map(|p| p.ty.as_ref())).chain(f.return_type.as_ref()) {
             super::names::type_vars_of(te, &mut vars);
@@ -201,7 +210,7 @@ impl TypeChecker {
             .filter(|wc| vars.contains(&wc.type_param))
             .filter(|wc| {
                 (self.named_trait(wc.trait_res, wc.trait_name))
-                    .is_some_and(super::evidence::has_dictionary)
+                    .is_some_and(|t| super::evidence::has_dictionary(t) && of(t))
             })
             .count()
     }
@@ -255,7 +264,10 @@ impl TypeChecker {
         // A function of more parameters and bounds than a function can
         // have does not run: its signature is read for its own errors,
         // and its body is not checked (`refuse_past_bounds`).
-        let refused = self.refuse_past_bounds(f, f.params.len(), self.written_bounds(f));
+        // (A `Number` bound passes a dictionary only where the body
+        // reads it, `settle_silent_numbers`: the compiler counts it then.)
+        let written = self.written_bounds(f) - self.written_number_bounds(f);
+        let refused = self.refuse_past_bounds(f, f.params.len(), written);
         let applied = self.check_signature_kinds(f);
         if let Some(id) = self.fn_def_id(f.name) {
             let type_params = (f.params.iter().enumerate())

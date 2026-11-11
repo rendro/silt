@@ -760,6 +760,9 @@ pub struct TypeChecker {
     /// Whether the module is a REPL cell: its `let`s are offered to the
     /// next cell, which may fix what is unknown of their types.
     pub(super) is_cell: bool,
+    /// For a REPL input: what its own code would run with a dictionary
+    /// no type decides (`Program::run_refusals`).
+    pub(super) run_refusals: Vec<Diagnostic>,
     /// The types the module names by their names: in a REPL cell its
     /// own and those of the earlier cells not declared again since,
     /// which a message writes by their names.
@@ -982,6 +985,7 @@ impl TypeChecker {
             impl_index: Default::default(),
             impl_met_index: HashMap::new(),
             is_cell: false,
+            run_refusals: Vec::new(),
             named_types: std::collections::HashSet::new(),
             signatures_only: false,
             registry_rows: false,
@@ -1293,14 +1297,63 @@ impl TypeChecker {
     fn leave_waiting(&mut self, program: &Program) {
         let earlier = std::mem::take(&mut self.taken_up);
         let own = |span: &Span| !earlier.contains(&span.file);
+        let wanted: Vec<_> = std::mem::take(&mut self.wanted)
+            .into_iter()
+            .filter(|w| !w.solved && own(&w.origin.span))
+            .collect();
+        let mut waits = Vec::new();
+        for w in wanted {
+            match self.runs_now_undecided(&w) {
+                Some(error) => self.run_refusals.push(error),
+                None => waits.push(w),
+            }
+        }
         let waiting = Waiting {
             decls: self.cell_decls(program),
-            wanted: std::mem::take(&mut self.wanted)
-                .into_iter()
-                .filter(|w| !w.solved && own(&w.origin.span))
-                .collect(),
+            wanted: waits,
         };
         self.tables.waiting.insert(self.module, waiting);
+    }
+
+    /// The refusal of a check the cell would leave waiting that its own
+    /// code needs now: a trait passed with a dictionary, owed on a type
+    /// nothing has decided, by code outside every function and closure
+    /// of the cell (`list.sum([])`, `let z = s([])`). That code runs when
+    /// the cell does, before any later cell can decide the type, so it is
+    /// refused as in a file. (In a function or closure it waits: a later
+    /// cell may decide the type before the code runs.)
+    fn runs_now_undecided(&self, w: &Wanted) -> Option<Diagnostic> {
+        let Goal::Pred(Pred::Trait {
+            tr, args, subject, ..
+        }) = &w.goal
+        else {
+            return None;
+        };
+        let span = w.origin.span;
+        let within = |outer: Span| {
+            outer.file == span.file && outer.start <= span.start && span.end <= outer.end
+        };
+        if w.in_scheme
+            || !evidence::has_dictionary(*tr)
+            || !matches!(self.apply(subject), Type::Var(_))
+            || self.fn_spans.iter().any(|site| within(site.span))
+            || self.closure_spans.iter().any(|(at, _)| within(*at))
+        {
+            return None;
+        }
+        let bound = self.show_bound(*tr, args);
+        let what = match w.origin.callee {
+            Some(callee) => format!("this use of '{callee}'"),
+            None => "this".to_string(),
+        };
+        Some(
+            Diagnostic::error(
+                Code::AmbiguousType,
+                span,
+                format!("cannot infer the type {what} needs to implement trait '{bound}'"),
+            )
+            .with_help("annotate the value it is given"),
+        )
     }
 
     /// A check an earlier cell left waiting that this cell fails is this
@@ -2224,6 +2277,7 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
     if checker.is_cell {
         checker.report_at_cell(program);
         checker.leave_waiting(program);
+        program.run_refusals = std::mem::take(&mut checker.run_refusals);
     }
     checker.settle_rows();
     checker.settle_builtin_needs();

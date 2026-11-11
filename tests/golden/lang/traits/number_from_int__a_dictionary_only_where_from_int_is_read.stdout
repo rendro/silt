@@ -1,0 +1,157 @@
+== <script> (arity=0, upvalues=0) ==
+0000  Constant             0     ; <fn:int_add>
+0003  SetGlobal            0     ; int_add
+0006  Pop
+0007  Constant             1     ; <fn:float_mul>
+0010  SetGlobal            1     ; float_mul
+0013  Pop
+0014  Constant             2     ; <fn:add>
+0017  SetGlobal            2     ; add
+0020  Pop
+0021  Constant             3     ; <fn:sq>
+0024  SetGlobal            3     ; sq
+0027  Pop
+0028  Constant             4     ; <fn:down>
+0031  SetGlobal            4     ; down
+0034  Pop
+0035  Constant             5     ; <fn:inc>
+0038  SetGlobal            5     ; inc
+0041  Pop
+0042  Constant             6     ; <fn:inc_twice>
+0045  SetGlobal            6     ; inc_twice
+0048  Pop
+0049  Constant             7     ; <fn:mean>
+0052  SetGlobal            7     ; mean
+0055  Pop
+0056  Constant             8     ; <fn:main>
+0059  SetGlobal            8     ; main
+0062  Pop
+0063  GetGlobal            8     ; main
+0066  Call                 0
+0068  Return
+
+== int_add (arity=2, upvalues=0) ==
+0000  GetLocal             0
+0003  GetLocal             1
+0006  Add
+0007  Return
+
+== float_mul (arity=2, upvalues=0) ==
+0000  GetLocal             0
+0003  GetLocal             1
+0006  Mul
+0007  Constant             0     ; 1.5
+0010  Sub
+0011  Return
+
+== add (arity=2, upvalues=0) ==
+0000  GetLocal             0
+0003  GetLocal             1
+0006  Add
+0007  Return
+
+== sq (arity=1, upvalues=0) ==
+0000  GetLocal             0
+0003  GetLocal             0
+0006  Mul
+0007  Return
+
+== down (arity=2, upvalues=0) ==
+0000  GetLocal             1
+0003  Constant             0     ; 0
+0006  JumpIfNotEq          8     -> 0017
+0009  GetLocal             0
+0012  Jump                 19    -> 0036
+0017  GetGlobal            4     ; down
+0020  GetLocal             0
+0023  GetLocal             0
+0026  Sub
+0027  GetLocal             1
+0030  SubConst             1     ; 1
+0033  TailCall             2
+0035  Return
+0036  Return
+
+== inc (arity=1, dictionaries=1, upvalues=0) ==
+0000  GetLocal             1
+0003  GetLocal             0     ; dictionary 0
+0006  Constant             0     ; 1
+0009  CallDict             0     1
+0014  Add
+0015  Return
+
+== inc_twice (arity=1, dictionaries=1, upvalues=0) ==
+0000  GetGlobal            5     ; inc
+0003  GetGlobal            5     ; inc
+0006  GetLocal             0     ; dictionary 0
+0009  GetLocal             1
+0012  Call                 2
+0014  TailCallKeep         1     1   ; keeps 1
+0017  Return
+
+== mean (arity=1, dictionaries=1, upvalues=0) ==
+0000  GetLocal             0     ; dictionary 0
+0003  GetLocal             1
+0006  CallBuiltin          2     ; list.sum
+0010  GetLocal             0     ; dictionary 0
+0013  GetLocal             1
+0016  CallBuiltin          1     ; list.length
+0020  CallDict             0     1
+0025  Div
+0026  Return
+
+== main (arity=0, upvalues=0) ==
+0000  Constant             0     ; <builtin:println>
+0003  GetGlobal            0     ; int_add
+0006  Constant             1     ; 1
+0009  Constant             2     ; 2
+0012  Call                 2
+0014  AddConst             3     ; 3
+0017  Call                 1
+0019  Pop
+0020  Constant             0     ; <builtin:println>
+0023  GetGlobal            1     ; float_mul
+0026  Constant             4     ; 2.0
+0029  Constant             5     ; 3.0
+0032  Call                 2
+0034  Constant             4     ; 2.0
+0037  Div
+0038  Call                 1
+0040  Pop
+0041  Constant             0     ; <builtin:println>
+0044  GetGlobal            2     ; add
+0047  Constant             1     ; 1
+0050  Constant             2     ; 2
+0053  Call                 2
+0055  Call                 1
+0057  Pop
+0058  Constant             0     ; <builtin:println>
+0061  GetGlobal            3     ; sq
+0064  Constant             6     ; 1.5
+0067  Call                 1
+0069  Call                 1
+0071  Pop
+0072  Constant             0     ; <builtin:println>
+0075  GetGlobal            4     ; down
+0078  Constant             4     ; 2.0
+0081  Constant             3     ; 3
+0084  Call                 2
+0086  Call                 1
+0088  Pop
+0089  Constant             0     ; <builtin:println>
+0092  GetGlobal            6     ; inc_twice
+0095  Constant             7     ; <dict:Number for Int>
+0098  Constant             1     ; 1
+0101  Call                 2
+0103  Call                 1
+0105  Pop
+0106  Constant             0     ; <builtin:println>
+0109  GetGlobal            7     ; mean
+0112  Constant             8     ; <dict:Number for Float>
+0115  Constant             9     ; 1.0
+0118  Constant             4     ; 2.0
+0121  MakeList             2
+0124  Call                 2
+0126  TailCall             1
+0128  Return
+

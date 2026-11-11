@@ -1,0 +1,29 @@
+-- `Int.from_int(n)` is n; `Float.from_int(n)` is what `Float.from_int(n)`
+-- is. A making method is a function value through its type, a type
+-- variable of a closure's enclosing function is a type there, and an
+-- unannotated parameter `t` called `t.from_int(..)` takes a type.
+import list
+
+fn conv(t) {
+  t.from_int(3)
+}
+
+fn incs(xs: List(a)) -> List(a) where a: Number {
+  list.map(xs) { x -> x + a.from_int(1) }
+}
+
+fn main() {
+  println(Int.from_int(-7))
+  println(Float.from_int(-7))
+  let big = 9007199254740993
+  println(Float.from_int(big) == Float.from_int(big))
+  println(3 |> Float.from_int)
+  println(list.map([1, 2], Float.from_int))
+  println(conv(Int))
+  println(conv(Float))
+  println(incs([1, 2]))
+  println(incs([0.5]))
+  let step = { x, t -> x + t.from_int(1) }
+  println(step(1, Int))
+  println(step(1.5, Float))
+}

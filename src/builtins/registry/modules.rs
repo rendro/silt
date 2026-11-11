@@ -48,6 +48,12 @@ pub(super) fn prelude() -> Vec<RowSpec> {
 #[rustfmt::skip]
 pub(super) fn impls() -> Vec<(&'static str, Vec<RowSpec>)> {
     vec![
+        ("Int", vec![
+            f("fn from_int(n: Int) -> Int", "The Int itself", numeric::number::int::from_int),
+        ]),
+        ("Float", vec![
+            f("fn from_int(n: Int) -> Float", "The Float nearest the Int", numeric::number::float::from_int),
+        ]),
         ("List", vec![
             f("fn pure(x: a) -> List(a)", "The list of the one value", applicative::list::pure),
             f("fn map2(xs: List(a), ys: List(b), f: Fn(a, b) -> c) -> List(c)", "f of every pair: each element of xs with each of ys", applicative::list::map2),
@@ -136,7 +142,6 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn max(a: Int, b: Int) -> Int", "Larger of two values", int::max),
                 f("fn min(a: Int, b: Int) -> Int", "Smaller of two values", int::min),
                 f("fn parse(s: String) -> Result(Int, IntError)", "Parse string to integer", int::parse),
-                f("fn to_float(n: Int) -> Float", "Convert to float", int::to_float),
             ],
         },
         module! {
@@ -200,8 +205,7 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn max_by(xs: List(a), key: Fn(a) -> b) -> Option(a) where b: Compare", "Element with largest key, or None", list::max_by),
                 f("fn min_by(xs: List(a), key: Fn(a) -> b) -> Option(a) where b: Compare", "Element with smallest key, or None", list::min_by),
                 f("fn prepend(xs: List(a), elem: a) -> List(a)", "Add an element to the front", list::prepend),
-                f("fn product(xs: List(Int)) -> Int", "Product of a list of ints (1 on empty)", list::product),
-                f("fn product_float(xs: List(Float)) -> Float", "Product of a list of floats (1.0 on empty)", list::product_float),
+                f("fn product(xs: List(a)) -> a where a: Number", "Product of a list of numbers (`a.from_int(1)` on empty)", list::product),
                 f("fn remove_at(xs: List(a), index: Int) -> Option(List(a))", "The list without the element at index, or None if there is none", list::remove_at),
                 f("fn reverse(xs: List(a)) -> List(a)", "Reverse element order", list::reverse),
                 f("fn scan(xs: List(a), init: b, f: Fn(b, a) -> b) -> List(b)", "Prefix fold; returns all intermediate accumulators", list::scan),
@@ -210,8 +214,7 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn sort(xs: List(a)) -> List(a) where a: Compare", "Sort in natural order", list::sort),
                 f("fn sort_by(xs: List(a), key: Fn(a) -> b) -> List(a) where b: Compare", "Sort by key function", list::sort_by),
                 f("fn sort_with(xs: List(a), cmp: Fn(a, a) -> Int) -> List(a)", "Sort with a comparison function (below 0: less, 0: equal, above 0: greater); stable", list::sort_with),
-                f("fn sum(xs: List(Int)) -> Int", "Sum a list of ints (0 on empty)", list::sum),
-                f("fn sum_float(xs: List(Float)) -> Float", "Sum a list of floats (0.0 on empty)", list::sum_float),
+                f("fn sum(xs: List(a)) -> a where a: Number", "Sum of a list of numbers (`a.from_int(0)` on empty)", list::sum),
                 f("fn tail(xs: List(a)) -> List(a)", "All elements except the first", list::tail),
                 f("fn take(xs: List(a), n: Int) -> List(a)", "Keep first n elements", list::take),
                 f("fn take_while(xs: List(a), f: Fn(a) -> Bool) -> List(a)", "Elements until `f` first rejects one", list::take_while),

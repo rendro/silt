@@ -1,0 +1,20 @@
+-- A function of another module that only does arithmetic takes no
+-- dictionary, one that calls `from_int` (or passes its bound on) takes
+-- Number's: each importer passes what the module's own code passes, in
+-- calls, as values and in tasks.
+import list
+import mathx
+import task
+
+fn main() {
+  println(mathx.add(1, 2))
+  println(mathx.add(1.5, 2.0))
+  println(mathx.inc(41))
+  println(mathx.inc(1.5))
+  println(mathx.inc_twice(1))
+  println(mathx.mean([1.0, 2.0, 6.0]))
+  println(list.fold([1, 2, 3], 0, mathx.add))
+  println(list.map([1.5, 2.5], mathx.inc))
+  let t = task.spawn({ -> mathx.add(mathx.inc(1), 10) })
+  println(task.join(t))
+}

@@ -16,7 +16,7 @@ order: 2
 | `String` | UTF-8 string with interpolation   | `"hello"`, `"age: {n}"`  |
 | `()`     | The unit type: no meaningful value | `()` (returned by `println`) |
 
-No implicit conversions. Use `int.to_float()` or `float.to_int()` explicitly.
+No implicit conversions. Use `Float.from_int()` or `float.to_int()` explicitly.
 
 ### Numeric Literals
 
@@ -71,7 +71,7 @@ println(float.max_value * 2.0) -- runtime error: float overflow
 println(math.sqrt(-4.0)) -- runtime error: math.sqrt of a negative number: -4.0
 ```
 
-The same holds for every function that returns a `Float`: `math.log` of a number that is not positive, `math.asin` / `math.acos` outside -1..1, `math.pow` and `math.exp` overflow, and `list.sum_float` / `list.product_float` overflow all raise. `float.parse` returns an `Err` for `"inf"`, `"NaN"` and out-of-range literals, and decoding a non-finite number into a `Float` field (`toml.parse`) is an error.
+The same holds for every function that returns a `Float`: `math.log` of a number that is not positive, `math.asin` / `math.acos` outside -1..1, `math.pow` and `math.exp` overflow, and `list.sum` / `list.product` of `Float`s overflow all raise. `float.parse` returns an `Err` for `"inf"`, `"NaN"` and out-of-range literals, and decoding a non-finite number into a `Float` field (`toml.parse`) is an error.
 
 Where an input can be out of range, guard it explicitly:
 
@@ -86,7 +86,7 @@ Because every `Float` is finite, floats compare, sort and hash as ordinary numbe
 
 ### No implicit coercion
 
-There are no implicit conversions between `Int` and `Float`. Convert explicitly with `int.to_float(n)` and `float.to_int(x)`.
+There are no implicit conversions between `Int` and `Float`. Convert explicitly with `Float.from_int(n)` and `float.to_int(x)`.
 
 ## Enums (Tagged Unions)
 

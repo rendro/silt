@@ -1172,6 +1172,7 @@ impl<'src> Parser<'src> {
             dict_owners: Vec::new(),
             pattern_lets: Vec::new(),
             held_types: Vec::new(),
+            run_refusals: Vec::new(),
         }
     }
 

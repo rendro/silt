@@ -116,10 +116,9 @@ fn main() {
 fn test_mixed_arithmetic_in_pipeline() {
     let result = run(r#"
 import float
-import int
 fn main() {
   let total = 100
-  let ratio = int.to_float(total) / 3.0
+  let ratio = Float.from_int(total) / 3.0
   host.give(float.format(ratio, 2))
 }
 import host

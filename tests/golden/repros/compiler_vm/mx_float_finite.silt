@@ -26,6 +26,6 @@ fn main() {
     Ok(r) -> println("json -0.0: {r.v}")
     Err(e) -> println("json -0.0: Err {Error.message(e)}")
   }
-  println("int.to_float max: {int.to_float(9223372036854775807)}")
+  println("Float.from_int max: {Float.from_int(9223372036854775807)}")
   println("abs min: {int.abs(-9223372036854775807 - 1)}")
 }

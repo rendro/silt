@@ -459,11 +459,14 @@ trait Greet for Box(a) where a: Greet + Loud {
 ```
 
 An impl of `Display`, `json.Encode`, `json.Decode` or `Error` asks only
-builtin traits (`Display`, `Equal`, `Compare`, `Hash`, `json.Encode`,
-`json.Decode`, `Error`) of its type's variables. The runtime runs such
-an impl itself (`println` shows the value, `json.stringify` encodes it),
-with no caller to give what a bound of a program's own trait needs.
-Show or encode the part through the builtin trait instead:
+the traits found by the value (`Display`, `Equal`, `Compare`, `Hash`,
+`json.Encode`, `json.Decode`, `Error`) and `Number` of its type's
+variables. The runtime runs such an impl itself (`println` shows the
+value, `json.stringify` encodes it), with no caller to give what a bound
+of a program's own trait needs. With `Number` it may do arithmetic on a
+part, which the values decide, but not call `from_int` on its variable:
+compute that number before, and keep it in the value. Show or encode the
+part through the builtin trait instead:
 
 ```silt
 trait Display for Box(a) where a: Display {
@@ -848,12 +851,19 @@ where it runs:
   stays general: its value is made again at each use, with the impls of
   that use, so `shout(K)` and `shout(J)` are each their type's.
 
-The built-in traits (`Equal`, `Compare`, `Hash`, `Display`,
-`json.Encode`, `json.Decode`, `Error`) are found by the value where the
+The built-in traits `Equal`, `Compare`, `Hash`, `Display`,
+`json.Encode`, `json.Decode` and `Error` are found by the value where the
 code runs: `println` shows a `Pt` inside a list with `Pt`'s `Display`,
 at any depth. An impl of `Display`, `json.Encode`, `json.Decode` or
-`Error` asks only built-in traits of its type's variables (see
+`Error` asks only those and `Number` of its type's variables (see
 [Impl-level where clauses](#impl-level-where-clauses)).
+
+`Number` is found both ways. Its operators by the value: `x + y` adds
+two Ints or two Floats as the values are. Its method `from_int`, which
+makes a value, by the type: a function that calls `a.from_int(..)`, or
+hands its bound to one that does (`list.sum`), is given the impl for
+`a` by each caller, as for a trait your program declares. A function
+that only does arithmetic (`fn add(x, y) { x + y }`) is given nothing.
 
 Functor, Applicative and Monad are built in too, but they are found by the
 types, like a trait your program declares: generic code over `m` is passed
@@ -878,7 +888,7 @@ types arithmetic is on, `Int` and `Float`, and nothing else. `Functor`,
 | `Hash`    | Hash value for maps/sets         | by structure | no (an error) |
 | `Compare` | Order comparison; includes `Equal` | by structure | no (an error) |
 | `Error`   | Error reporting (`Error.message(e)`) | types with an impl | yes |
-| `Number`  | `+ - * / %` and unary `-`        | Int and Float only | no |
+| `Number`  | `+ - * / %`, unary `-`, and `from_int` | Int and Float only | no |
 | `Functor` | `map` over a type constructor | `List`, `Option`, `Result`, `Channel`; types with an impl | yes, for a type of your own |
 | `Applicative` | `pure` and `map2`; includes `Functor` | `List`, `Option`, `Result`; types with an impl | yes, for a type of your own |
 | `Monad` | `flat_map`; includes `Applicative` | `List`, `Option`, `Result`; types with an impl | yes, for a type of your own |
@@ -895,6 +905,34 @@ fn largest(x: a, y: a) -> a where a: Compare {
     true -> y
     false -> x
   }
+}
+```
+
+`Number` has one method, `from_int(n: Int) -> Self`, which makes a value:
+the number of the type that `n` is (`Float.from_int(2)` is `2.0`: the
+way to turn an Int into a Float). A literal has one type (`0` is an Int, `0.0` a
+Float), so code that works for every number type writes its constants
+with it, `a.from_int(0)`, and turns a count into the type the same way:
+
+```silt
+import list
+
+fn sum(xs: List(a)) -> a where a: Number {
+  list.fold(xs, a.from_int(0)) { acc, x -> acc + x }
+}
+
+fn inc(x: a) -> a where a: Number {
+  x + a.from_int(1)
+}
+
+fn average(xs: List(a)) -> a where a: Number {
+  sum(xs) / a.from_int(list.length(xs))
+}
+
+fn main() {
+  println(sum([1, 2, 3])) -- 6
+  println(inc(1.5)) -- 2.5
+  println(average([1.0, 2.0, 6.0])) -- 3.0
 }
 ```
 

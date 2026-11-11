@@ -562,6 +562,28 @@ impl TypeChecker {
         let kept = self.closed_mark;
         self.waiting_decoders.retain(|&k| k < kept);
         self.waiting_vias.retain(|&k| k < kept);
+        // The variables nothing decides that a trait with impls is asked
+        // of: the use is refused below, whichever of its traits comes
+        // first, so a structural trait asked of the same variable
+        // (`println(list.sum([]))`) does not make it `()` first.
+        let undecided: std::collections::HashSet<TyVar> = (recorded.iter())
+            .filter(|wanted| !wanted.solved && !wanted.in_scheme)
+            .filter_map(|wanted| match &wanted.goal {
+                Goal::Pred(Pred::Trait { tr, subject, .. })
+                    if !tr.is_builtin("Decode")
+                        && !STRUCTURAL_METHODS
+                            .iter()
+                            .any(|(name, _)| tr.is_builtin(name))
+                        && !self.waits_for_outer(subject) =>
+                {
+                    match self.apply(subject) {
+                        Type::Var(v) => Some(v),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            })
+            .collect();
         for wanted in recorded {
             if wanted.solved {
                 continue;
@@ -654,10 +676,12 @@ impl TypeChecker {
                 .iter()
                 .any(|(name, _)| tr.is_builtin(name))
             {
-                if let Type::Var(v) = self.apply(subject) {
+                if let Type::Var(v) = self.apply(subject)
+                    && !undecided.contains(&v)
+                {
                     self.defaulted_vars.insert(v);
+                    let _ = self.unify_types(subject, &Type::Unit);
                 }
-                let _ = self.unify_types(subject, &Type::Unit);
                 self.ev_set(Some(wanted.ev), super::evidence::EvNode::Structural(*tr));
                 continue;
             }
@@ -1153,6 +1177,13 @@ impl TypeChecker {
                 }
                 if let (true, Some(ev)) = (super::evidence::passes_dictionary(pred), ev) {
                     owed.push(ev);
+                    // (Dropped where the definition's bound is silent.)
+                    if let Pred::Trait { tr, subject, .. } = pred
+                        && tr.is_builtin("Number")
+                        && let Some(var) = super::evidence::raw_var(subject)
+                    {
+                        self.ev.number_vars.insert(ev, var);
+                    }
                 }
             }
             if !owed.is_empty() {

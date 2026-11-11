@@ -496,6 +496,12 @@ pub struct Tables {
     /// `let`, a variant's constructor, a type written as a value. (A
     /// builtin's is the builtin scope's.)
     pub(super) schemes: Table<HashMap<crate::defs::DefId, Scheme>, crate::defs::DefId>,
+    /// The `Number` bounds of a top-level function or `let` that pass no
+    /// dictionary, by the variable its scheme writes (`raw_var`): its
+    /// body only does arithmetic at that variable, which the VM does by
+    /// the values, and calls nothing that reads the dictionary. Every
+    /// use leaves them out (`write_evidence`).
+    pub(super) silent_numbers: HashMap<crate::defs::DefId, Vec<TyVar>>,
     /// The parameters of a function (or of the closure a top-level
     /// `let` holds) whose function type returns `()` because the body
     /// calls them as a statement: the parameter's index and the
@@ -802,6 +808,7 @@ impl Tables {
         }
         for id in rows.schemes {
             self.schemes.remove(&id);
+            self.silent_numbers.remove(&id);
             self.statement_units.remove(&id);
         }
     }

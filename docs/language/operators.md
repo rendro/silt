@@ -208,7 +208,7 @@ let rows = [[]] as List(List(Int))
 `as` is a compile-time *assertion*, not a coercion: it only succeeds when
 the expression already has the named type. There is no implicit numeric
 conversion — `42 as Float` is rejected with `type mismatch: expected
-Float, got Int`. Convert numbers explicitly with `int.to_float(42)` or
+Float, got Int`. Convert numbers explicitly with `Float.from_int(42)` or
 `float.to_int(x)`.
 
 ## Field Access and Record Update (`.`)
