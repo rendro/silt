@@ -69,14 +69,23 @@ impl TypeChecker {
             .get(&key)
             .cloned()
             .unwrap_or_default();
+        // (Each type written with the names the impl's header gives its
+        // variables, as the help is to be written: `where a: Conv(b)`.)
+        let in_names = |args: &[Type]| -> Vec<Type> {
+            (args.iter())
+                .map(|arg| substitute_vars(&self.apply(arg), &mapping))
+                .collect()
+        };
         let (tr_shown, sup_shown, needed) = (
-            self.show_bound(tr, &impl_args),
-            self.show_bound(sup, sup_args),
-            self.show_bound(trait_needed, &needed_args),
+            self.show_bound(tr, &in_names(&impl_args)),
+            self.show_bound(sup, &in_names(sup_args)),
+            self.show_bound(trait_needed, &in_names(&needed_args)),
         );
         // The help names every variable that needs a bound.
         let bounds: Vec<String> = (missing.iter())
-            .map(|(v, t, args)| format!("{}: {}", name_of(*v), self.show_bound(*t, args)))
+            .map(|(v, t, args)| {
+                format!("{}: {}", name_of(*v), self.show_bound(*t, &in_names(args)))
+            })
             .collect();
         let bounds = bounds.join(", ");
         // (An impl for every tuple names no part, and no bound can
@@ -168,7 +177,13 @@ impl TypeChecker {
             };
             let shown_args = shown(&impl_args, &mapping);
             let bounds: Vec<String> = (missing.iter())
-                .map(|(v, t, args)| format!("{}: {}", name_of(*v), self.show_bound(*t, args)))
+                .map(|(v, t, args)| {
+                    format!(
+                        "{}: {}",
+                        name_of(*v),
+                        self.show_bound(*t, &shown(args, &mapping))
+                    )
+                })
                 .collect();
             let bounds = bounds.join(", ");
             // (Of an argument built from the variable, which part needs
@@ -178,7 +193,7 @@ impl TypeChecker {
                 _ => format!(
                     ": '{}' needs '{}'",
                     name_of(var),
-                    self.show_bound(trait_needed, &needed_args)
+                    self.show_bound(trait_needed, &shown(&needed_args, &mapping))
                 ),
             };
             let message = format!(
@@ -210,7 +225,7 @@ impl TypeChecker {
     /// arguments `ours_args`) the supertrait at `expected`: its type is
     /// matched with `ours` and its trait arguments then are what they
     /// say, with the variables of `ours` each one type of their own.
-    fn super_args_hold(
+    pub(super) fn super_args_hold(
         &self,
         key: ImplKey,
         ours: &Type,
@@ -587,6 +602,28 @@ impl TypeChecker {
                     self_type.as_ref(),
                     &expected_super_args,
                 ))
+                .or_else(|| {
+                    // (Of several that could be it, the one that is it at
+                    // this impl's every type: `Get(a) for Box(a)` for
+                    // `Sub(a) for Box(a)`, beside `Get(String) for
+                    // Box(Int)`.)
+                    let ours = self_type.as_ref()?;
+                    (self.tables.impl_args_of(*supertrait, *type_name).iter())
+                        .map(|at| (*supertrait, *type_name, *at))
+                        .find(|key| {
+                            let args = (self.tables.impl_trait_args.get(key))
+                                .cloned()
+                                .unwrap_or_default();
+                            args.len() == expected_super_args.len()
+                                && self.super_args_hold(
+                                    *key,
+                                    ours,
+                                    &enclosing_args,
+                                    &expected_super_args,
+                                    &args,
+                                )
+                        })
+                })
                 .or_else(|| self.tables.one_impl(*supertrait, *type_name));
                 let actual_super_args = (super_key)
                     .and_then(|key| self.tables.impl_trait_args.get(&key))

@@ -527,7 +527,20 @@ impl TypeChecker {
         }
         // (The impl of the trait arguments: they are decided here, the
         // arguments of an impl's header.)
-        let at = self.impl_reached(tr, head, Some(&ty), args);
+        // (Of several that could be it, the one that is it at every type
+        // `ty` stands for: `Get(a) for Box(a)` for `Get(a)` of `Box(a)`,
+        // beside `Get(String) for Box(Int)`.)
+        let at = self.impl_reached(tr, head, Some(&ty), args).or_else(|| {
+            (self.tables.impl_args_of(tr, head).iter())
+                .map(|at| (tr, head, *at))
+                .find(|key| {
+                    let written = (self.tables.impl_trait_args.get(key))
+                        .cloned()
+                        .unwrap_or_default();
+                    written.len() == args.len()
+                        && self.super_args_hold(*key, &ty, args, args, &written)
+                })
+        });
         let Some(key) = at.or_else(|| self.tables.one_impl(tr, head)) else {
             return Evidence::Missing;
         };
