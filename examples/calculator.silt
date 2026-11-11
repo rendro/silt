@@ -25,8 +25,8 @@ fn format(f) {
 fn apply_binary(stack, op_name, op_fn) {
   match list.length(stack) >= 2 {
     true -> {
-      let b = stack |> list.head |> option.unwrap_or(0.0)
-      let a = stack |> list.tail |> list.head |> option.unwrap_or(0.0)
+      let b = stack |> list.first |> option.unwrap_or(0.0)
+      let a = stack |> list.tail |> list.first |> option.unwrap_or(0.0)
       let rest = stack |> list.tail |> list.tail
       let outcome = op_fn(a, b)
       println("{format(a)} {op_name} {format(b)} = {format(outcome)}")
@@ -42,7 +42,7 @@ fn apply_binary(stack, op_name, op_fn) {
 fn apply_unary(stack, op_name, op_fn) {
   match list.length(stack) >= 1 {
     true -> {
-      let a = stack |> list.head |> option.unwrap_or(0.0)
+      let a = stack |> list.first |> option.unwrap_or(0.0)
       let rest = stack |> list.tail
       let outcome = op_fn(a)
       println("{op_name}({format(a)}) = {format(outcome)}")
@@ -113,7 +113,7 @@ fn main() {
             println("Stack and history cleared.")
             loop([], [])
           }
-          "undo" -> match list.head(stack) {
+          "undo" -> match list.first(stack) {
             Some(top) -> {
               println("Undone. Removed {format(top)} from stack.")
               loop(list.tail(stack), list.append(history, "undo: removed {format(top)}"))

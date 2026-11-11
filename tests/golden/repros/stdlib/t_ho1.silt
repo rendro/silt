@@ -12,7 +12,7 @@ fn main() {
   let ys = list.filter(xs) { x -> x % 3 == 0 }
   println(list.length(ys))
   let zs = list.sort_by(xs) { x -> 0 - x }
-  println(list.head(zs))
+  println(list.first(zs))
   let d = time.since(t0, time.now())
   println(d.ns / 1000000)
 }

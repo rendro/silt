@@ -1,6 +1,8 @@
 -- verdict: same
 import set
 fn main() {
+  let v_set_all: Int = set.all
+  let v_set_any: Int = set.any
   let v_set_contains: Int = set.contains
   let v_set_difference: Int = set.difference
   let v_set_each: Int = set.each
@@ -12,7 +14,6 @@ fn main() {
   let v_set_is_subset: Int = set.is_subset
   let v_set_length: Int = set.length
   let v_set_map: Int = set.map
-  let v_set_new: Int = set.new
   let v_set_remove: Int = set.remove
   let v_set_symmetric_difference: Int = set.symmetric_difference
   let v_set_to_list: Int = set.to_list

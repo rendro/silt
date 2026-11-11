@@ -132,6 +132,16 @@ pub(crate) mod option {
             }
         }
 
+        fn flatten(opt: Opt) -> Result<Value, VmError> {
+            match opt.inner {
+                Some(inner) => match Opt::take(inner) {
+                    Some(_) => Ok(inner.clone()),
+                    None => Err(unsound("option.flatten", "opt")),
+                },
+                None => Ok(opt.whole.clone()),
+            }
+        }
+
         fn to_result(opt: Opt, error: &Value) -> Value {
             match opt.inner {
                 Some(value) => Value::variant(bv::OK, [value.clone()]),

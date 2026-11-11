@@ -1,0 +1,15 @@
+import list
+import map
+import stream
+
+fn main() {
+  println(list.first([5, 6, 7]))
+  println(list.first([]))
+  println(list.first(["é", "a"]))
+  println(map.remove(#{ "a": 1, "b": 2 }, "a"))
+  println(map.remove(#{ "a": 1 }, "zz"))
+  println(map.remove(#{}, "a"))
+  println(stream.length(stream.from_list([1, 2, 3])))
+  println(stream.length(stream.from_list([])))
+  println(stream.first(stream.from_list([4, 5])))
+}

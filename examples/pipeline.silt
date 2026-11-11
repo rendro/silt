@@ -68,7 +68,7 @@ fn reject(lines, pattern) {
 -- redact: replace all matches of a regex pattern with "[REDACTED]" in each line
 fn redact(lines, pattern) {
   lines
-    |> list.map { line -> regex.replace_all(line, pattern, "[REDACTED]") |> result.unwrap_or(line) }
+    |> list.map { line -> regex.replace(line, pattern, "[REDACTED]") |> result.unwrap_or(line) }
 }
 
 -- ============================================================

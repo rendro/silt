@@ -296,7 +296,7 @@ import result
 import list
 fn main() {
   list.map(1..1001) { n ->
-    regex.replace_all("hello world {n}", "[aeiou]", "_") |> result.unwrap_or("")
+    regex.replace("hello world {n}", "[aeiou]", "_") |> result.unwrap_or("")
   } |> list.length
 }
     "#,

@@ -175,16 +175,16 @@ builtins! {
         with(vm, pattern, |re| Value::list(pieces(re, text).into_iter().map(string).collect()))
     }
 
-    fn replace(vm, text: &str, pattern: &str, replacement: &str) -> Result<Value, VmError> {
+    fn replace_first(vm, text: &str, pattern: &str, replacement: &str) -> Result<Value, VmError> {
         match Vm::get_regex(&mut vm.regex_cache, pattern) {
-            Ok(re) => Ok(ok(replaced("regex.replace", re, text, replacement, 1)?)),
+            Ok(re) => Ok(ok(replaced("regex.replace_first", re, text, replacement, 1)?)),
             Err(error) => Ok(pattern_err(pattern, &error)),
         }
     }
 
-    fn replace_all(vm, text: &str, pattern: &str, replacement: &str) -> Result<Value, VmError> {
+    fn replace(vm, text: &str, pattern: &str, replacement: &str) -> Result<Value, VmError> {
         match Vm::get_regex(&mut vm.regex_cache, pattern) {
-            Ok(re) => Ok(ok(replaced("regex.replace_all", re, text, replacement, usize::MAX)?)),
+            Ok(re) => Ok(ok(replaced("regex.replace", re, text, replacement, usize::MAX)?)),
             Err(error) => Ok(pattern_err(pattern, &error)),
         }
     }

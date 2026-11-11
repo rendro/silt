@@ -23,14 +23,14 @@ fn main() {
     |> stream.map { x -> x * 2 }
     |> stream.map { x -> x - 2 }
     |> stream.collect
-  println("collect: {list.length(xs)} values, first {list.head(xs)}, last {list.last(xs)}")
+  println("collect: {list.length(xs)} values, first {list.first(xs)}, last {list.last(xs)}")
   let ch = channel.new(500)
   fill(ch, 1, 500)
   let n = ch
     |> stream.map { x -> x }
     |> stream.filter { x -> x % 2 == 0 }
     |> stream.map { x -> x }
-    |> stream.count
+    |> stream.length
   println("count: {n}, left in ch: {channel.receive(ch)}")
   let sum = stream.from_range(1, 100) |> stream.map { x -> x } |> stream.fold(0) { acc, x -> acc + x }
   println("fold: {sum}")

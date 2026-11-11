@@ -63,7 +63,7 @@ fn length_line(message: Bytes) -> String {
     Ok(head) -> string.lines(head)
       |> list.map { line -> string.to_lower(string.trim(line)) }
       |> list.filter { line -> string.starts_with(line, "content-length:") }
-      |> list.head
+      |> list.first
       |> option.unwrap_or("no content-length")
     Err(_) -> "a head that is no text"
   }

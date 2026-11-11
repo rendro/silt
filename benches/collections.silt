@@ -43,7 +43,7 @@ fn mapset(n) {
 }
 
 fn setins(n) {
-  loop i = 0, acc = set.new() {
+  loop i = 0, acc = #[] {
     match i == n {
       true -> set.length(acc)
       false -> loop(i + 1, set.insert(acc, i))

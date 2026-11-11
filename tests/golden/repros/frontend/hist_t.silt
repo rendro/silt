@@ -117,25 +117,25 @@ fn from_rpn(tokens) {
   let stack = tokens
   |> list.fold([]) { stack, token -> match token {
     "+" -> {
-      let r = list.head(stack)
+      let r = list.first(stack)
       |> option.unwrap_or(Num(0))
       let s1 = list.tail(stack)
-      let l = list.head(s1)
+      let l = list.first(s1)
       |> option.unwrap_or(Num(0))
       let s2 = list.tail(s1)
       list.prepend(s2, Add(l, r))
     }
     "*" -> {
-      let r = list.head(stack)
+      let r = list.first(stack)
       |> option.unwrap_or(Num(0))
       let s1 = list.tail(stack)
-      let l = list.head(s1)
+      let l = list.first(s1)
       |> option.unwrap_or(Num(0))
       let s2 = list.tail(s1)
       list.prepend(s2, Mul(l, r))
     }
     "neg" -> {
-      let top = list.head(stack)
+      let top = list.first(stack)
       |> option.unwrap_or(Num(0))
       let rest = list.tail(stack)
       list.prepend(rest, Neg(top))
@@ -146,7 +146,7 @@ fn from_rpn(tokens) {
       list.prepend(stack, Num(n))
     }
   } }
-  list.head(stack)
+  list.first(stack)
   |> option.unwrap_or(Num(0))
 }
 

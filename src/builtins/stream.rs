@@ -1537,10 +1537,10 @@ builtins! {
         })
     }
 
-    fn count(ch: Chan) -> Result<Step, VmError> {
+    fn length(ch: Chan) -> Result<Step, VmError> {
         let ch = ch.clone();
         let mut n: i64 = 0;
-        sink("stream.count", ch, true, move |got| {
+        sink("stream.length", ch, true, move |got| {
             Ok(match got {
                 Got::Start => Next::Take(0),
                 Got::Value(..) => {

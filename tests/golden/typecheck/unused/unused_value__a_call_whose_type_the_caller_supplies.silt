@@ -40,7 +40,7 @@ fn best(run, n) {
 }
 
 fn first_or(xs, fallback) {
-  match list.head(xs) {
+  match list.first(xs) {
     Some(x) -> x
     None -> fallback
   }

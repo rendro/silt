@@ -7,7 +7,7 @@ import list
 
 fn main() {
   let xs: List(Int) = [1, 2, 3]
-  let head = list.head(xs)
+  let head = list.first(xs)
   let y = head + 1
   print(y)
 }

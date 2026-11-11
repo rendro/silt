@@ -146,7 +146,7 @@ fn the_builtins_of_those_modules_that_stay_inside_are_run() {
         "{inspect:?}"
     );
     let stream = verdict(
-        "import stream\nfn main() {\n  println(stream.count(stream.from_list([1, 2, 3])))\n}\n",
+        "import stream\nfn main() {\n  println(stream.length(stream.from_list([1, 2, 3])))\n}\n",
     );
     assert!(
         matches!(stream, Verdict::Passed(Compared::Invariants)),

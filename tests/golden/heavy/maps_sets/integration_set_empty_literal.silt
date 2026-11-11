@@ -1,7 +1,7 @@
 import io
 import set
 fn program() {
-  let s = set.new()
+  let s = #[]
   let s2 = set.insert(s, 42)
   set.contains(s2, 42)
 }

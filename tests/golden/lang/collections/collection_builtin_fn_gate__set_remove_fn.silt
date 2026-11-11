@@ -2,6 +2,6 @@
 -- stderr-contains: error[type]: type 'Fn(_) -> _' does not implement trait 'Hash'
 import set
 fn main() {
-  let s = set.remove(set.new(), { y -> y })
+  let s = set.remove(#[], { y -> y })
   println(set.length(s))
 }

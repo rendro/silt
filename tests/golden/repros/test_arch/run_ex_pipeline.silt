@@ -79,7 +79,7 @@ fn reject(lines, pattern) {
 
 fn redact(lines, pattern) {
   lines
-  |> list.map { line -> (regex.replace_all(line, pattern, "[REDACTED]") |> result.unwrap_or("")) }
+  |> list.map { line -> (regex.replace(line, pattern, "[REDACTED]") |> result.unwrap_or("")) }
 }
 
 -- ============================================================

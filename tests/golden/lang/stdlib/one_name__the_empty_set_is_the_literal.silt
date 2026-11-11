@@ -1,0 +1,9 @@
+import set
+
+fn main() {
+  let empty: Set(Int) = #[]
+  println(empty)
+  println(set.is_empty(empty))
+  println(set.insert(empty, 1))
+  println(empty == set.from_list([]))
+}

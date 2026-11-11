@@ -13,11 +13,11 @@ fn main() {
   let short = [1, 2, 3]
   |> list.map { x -> x + 1 }
   let long = [1, 2, 3] |> list.map { x -> x + 1 } |> list.filter { x -> x > 1 } |> list.fold(0) { acc, x -> acc + x }
-  let nested = option.unwrap_or([1, 2, 3] |> list.map { x -> x * 2 } |> list.filter { x -> x > 2 } |> list.head, 0)
+  let nested = option.unwrap_or([1, 2, 3] |> list.map { x -> x * 2 } |> list.filter { x -> x > 2 } |> list.first, 0)
   [1, 2] |> list.each { v ->
     let w = v + 1
     println("{w}")
   }
-  let checked = [1, 2] |> list.head |> option.unwrap_or(0)
+  let checked = [1, 2] |> list.first |> option.unwrap_or(0)
   println("{v5} {short} {long} {nested} {checked}")
 }

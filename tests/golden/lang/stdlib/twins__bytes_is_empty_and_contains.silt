@@ -1,0 +1,18 @@
+import bytes
+
+fn main() {
+  let text = bytes.from_string("héllo")
+  println(bytes.is_empty(bytes.empty()))
+  println(bytes.is_empty(text))
+  println(bytes.is_empty(bytes.slice(text, 3, 3)))
+  -- a needle of the two bytes of "é", and of its first byte alone
+  println(bytes.contains(text, bytes.from_string("é")))
+  println(bytes.contains(text, bytes.slice(bytes.from_string("é"), 0, 1)))
+  println(bytes.contains(text, bytes.from_string("e")))
+  -- the empty needle is in every byte sequence, the empty one too
+  println(bytes.contains(text, bytes.empty()))
+  println(bytes.contains(bytes.empty(), bytes.empty()))
+  -- a needle longer than the bytes, and one at the very end
+  println(bytes.contains(bytes.from_string("ab"), bytes.from_string("abc")))
+  println(bytes.contains(text, bytes.from_string("lo")))
+}

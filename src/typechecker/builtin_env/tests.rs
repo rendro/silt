@@ -136,7 +136,6 @@ fn a_row_s_scheme_is_its_signature() {
             vec!["Decode".to_string()]
         )
     );
-    assert_eq!(show("set.new"), ("Fn() -> Set(_)".to_string(), vec![]));
     assert_eq!(show("math.pi"), ("Float".to_string(), vec![]));
     assert_eq!(show("test.assert"), ("Fn(Bool) -> ()".to_string(), vec![]));
     assert_eq!(

@@ -389,7 +389,7 @@ fn ends_in_stage(expr: &Expr) -> bool {
 }
 
 /// Whether the last operand of `expr` is a stage of a pipeline written as
-/// a bare name (`list.head` of `xs |> list.head`), not called.
+/// a bare name (`list.first` of `xs |> list.first`), not called.
 fn ends_in_bare_stage(expr: &Expr) -> bool {
     match &expr.kind {
         ExprKind::Pipe(_, stage) => {
@@ -1538,7 +1538,7 @@ impl Printer<'_> {
                     let piped = closure && ends_in_stage(scrutinee);
                     let in_parens = self.cur.wrappers(scrutinee.span.end) > 0;
                     // A scrutinee that ends in a stage written as a bare
-                    // name (`xs |> list.head`), which the body's `{`
+                    // name (`xs |> list.first`), which the body's `{`
                     // could follow as a trailing closure, is written in
                     // parentheses, whatever the source has: the
                     // source's own are dropped, and these written.

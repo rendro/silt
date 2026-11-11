@@ -15,7 +15,7 @@ fn sum(xs: List(Int), acc: Int) -> Int {
 }
 
 fn count_by_tail(xs: List(Int), n: Int) -> Int {
-  match list.head(xs) {
+  match list.first(xs) {
     None -> n
     Some(_) -> count_by_tail(list.tail(xs), n + 1)
   }

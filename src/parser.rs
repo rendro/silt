@@ -3179,7 +3179,7 @@ impl<'src> Parser<'src> {
                     // Braces with nothing after them that could be the
                     // match body are the match body themselves (see
                     // `is_trailing_closure`):
-                    //   match items |> list.head { Some(x) -> … }
+                    //   match items |> list.first { Some(x) -> … }
                     let Some(right) =
                         self.parse_infix_rhs(min_bp, prec::PIPE.0, prec::PIPE.1, true)?
                     else {
@@ -3647,7 +3647,7 @@ impl<'src> Parser<'src> {
     /// braces belong to, or open a further block. False when nothing of
     /// the kind follows: in a match scrutinee the braces then have to be
     /// the match body itself, as in
-    /// `match xs |> list.head { Some(x) -> x ... }`.
+    /// `match xs |> list.first { Some(x) -> x ... }`.
     fn scrutinee_continues_after_braces(&self) -> bool {
         let inside = self.delim_depth_at(self.pos) + 1;
         let mut close = self.pos + 1;
@@ -6441,7 +6441,7 @@ fn main() {
         let prog = parse(
             r#"
             fn main() {
-                match xs |> list.head {
+                match xs |> list.first {
                     Some(x) -> x
                     None -> 0
                 }

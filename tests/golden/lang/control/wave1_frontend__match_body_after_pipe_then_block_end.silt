@@ -1,7 +1,7 @@
 -- The match is the last expression of a block: a `}` follows its body.
 import list
 fn pick(xs) {
-  match xs |> list.head {
+  match xs |> list.first {
     Some(x) -> x
     None -> 0
   }

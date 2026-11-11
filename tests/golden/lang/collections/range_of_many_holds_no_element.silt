@@ -8,7 +8,7 @@ import list
 fn main() {
   let big = 1..9223372036854775807
   println(list.length(big))
-  println(list.head(big))
+  println(list.first(big))
   println(list.last(big))
   println(list.get(big, 41))
   println(list.get(big, 9223372036854775806))

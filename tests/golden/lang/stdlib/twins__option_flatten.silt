@@ -1,0 +1,10 @@
+import option
+
+fn main() {
+  println(option.flatten(Some(Some(42))))
+  println(option.flatten(Some(None)))
+  let none: Option(Option(Int)) = None
+  println(option.flatten(none))
+  -- one level only
+  println(option.flatten(Some(Some(Some("é")))))
+}

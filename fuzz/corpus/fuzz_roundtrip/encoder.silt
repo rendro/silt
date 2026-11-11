@@ -63,7 +63,7 @@ fn rle_encode(text) {
     [] -> ""
     _ -> {
       let first = chars
-      |> list.head
+      |> list.first
       |> option.unwrap_or("")
       let rest = list.tail(chars)
       let output = rest

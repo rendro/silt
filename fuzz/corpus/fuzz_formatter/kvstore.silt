@@ -52,7 +52,7 @@ fn handle_del(store, parts) {
     Some(key) -> {
       match map.contains(store, key) {
         true -> {
-          let new_store = map.delete(store, key)
+          let new_store = map.remove(store, key)
           println("OK - deleted: {key}")
           new_store
         }

@@ -48,7 +48,7 @@ fn bound(n: usize) -> u64 {
 /// A map or a set built, or changed, one entry at a time copies a
 /// number of entries that grows like `n * log2(n)` at most, not like
 /// `n * n`: `map.set` of a new key and of a key it has
-/// (`map.update` stores so), `map.delete`, `set.insert`, `set.remove`,
+/// (`map.update` stores so), `map.remove`, `set.insert`, `set.remove`,
 /// `map.merge` and `set.union` of a large one and a small one either
 /// way round. Each old version is kept until the new one is made, as a
 /// fold keeps it. (Copying the whole map at each step, as a map kept
@@ -87,7 +87,7 @@ fn a_map_or_a_set_changed_an_entry_at_a_time_copies_n_log_n_entries() {
             }),
         );
         check(
-            "map.delete",
+            "map.remove",
             copies_of(|| {
                 for i in 0..n as i64 {
                     let next = map.remove(&int(i));

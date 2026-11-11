@@ -1,0 +1,22 @@
+import map
+
+fn main() {
+  let m = #{ "b": 2, "a": 1, "c": 3 }
+  -- fold sees the entries in key order, with the value so far first
+  println(map.fold(m, "", { acc, k, v -> "{acc}{k}={v} " }))
+  println(map.fold(#{}, 10, { acc, k, v -> acc + v }))
+  -- any stops at the first true, all at the first false
+  println(map.any(m, { k, v ->
+    println("any {k}")
+    v == 2
+  }))
+  println(map.all(m, { k, v ->
+    println("all {k}")
+    v < 2
+  }))
+  println(map.any(#{}, { k, v -> true }))
+  println(map.all(#{}, { k, v -> false }))
+  println(map.all(m, { k, v -> v > 0 }))
+  -- non-ASCII keys
+  println(map.any(#{ "é": 1, "ü": 2 }, { k, v -> k == "ü" }))
+}

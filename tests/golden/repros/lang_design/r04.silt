@@ -1,7 +1,7 @@
 -- verdict: same
 import list
 fn head_plus(xs: List(Int)) -> Result(Int, String) {
-  let h = list.head(xs)?
+  let h = list.first(xs)?
   Ok(h + 1)
 }
 fn main() {

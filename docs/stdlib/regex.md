@@ -57,9 +57,9 @@ With a pattern the program writes itself, the error cannot happen, and
 | `find` | `(String, String) -> Result(Option(String), RegexError)` | First match |
 | `find_all` | `(String, String) -> Result(List(String), RegexError)` | All matches |
 | `is_match` | `(String, String) -> Result(Bool, RegexError)` | Test if pattern matches |
-| `replace` | `(String, String, String) -> Result(String, RegexError)` | Replace first match |
-| `replace_all` | `(String, String, String) -> Result(String, RegexError)` | Replace all matches |
+| `replace` | `(String, String, String) -> Result(String, RegexError)` | Replace all matches |
 | `replace_all_with` | `(String, String, Fn(String) -> String) -> Result(String, RegexError)` | Replace all with callback |
+| `replace_first` | `(String, String, String) -> Result(String, RegexError)` | Replace first match |
 | `split` | `(String, String) -> Result(List(String), RegexError)` | Split on pattern |
 
 
@@ -203,38 +203,20 @@ fn main() {
 regex.replace(text: String, pattern: String, replacement: String) -> Result(String, RegexError)
 ```
 
-Replaces the first match with the replacement string. In the replacement,
-`$1` stands for the text of group 1, `$name` for the text of a named group,
-`$0` for the whole match, and `$$` for a `$`. A name runs as far as
-letters, digits and `_` go, so `$1x` is the group named `1x`, which is no
-group and stands for nothing: write `${1}x`, which a string literal writes
-`"$\{1}x"` (a `{` in it starts an interpolation). A group that took no
-part in the match stands for nothing:
-`regex.replace("ab", "(a)(b)", "$2$1")` is `Ok(ba)`.
+Replaces every match with the replacement string, as `string.replace`
+replaces every occurrence. In the replacement, `$1` stands for the text of
+group 1, `$name` for the text of a named group, `$0` for the whole match,
+and `$$` for a `$`. A name runs as far as letters, digits and `_` go, so
+`$1x` is the group named `1x`, which is no group and stands for nothing:
+write `${1}x`, which a string literal writes `"$\{1}x"` (a `{` in it starts
+an interpolation). A group that took no part in the match stands for
+nothing: `regex.replace("ab", "(a)(b)", "$2$1")` is `Ok(ba)`.
 
 ```silt
 import regex
 
 fn main() {
-  println(regex.replace("abc 123 def 456", "\\d+", "NUM")) -- Ok("abc NUM def 456")
-}
-```
-
-
-## `regex.replace_all`
-
-```
-regex.replace_all(text: String, pattern: String, replacement: String) -> Result(String, RegexError)
-```
-
-Replaces all matches with the replacement string, which reads `$1`,
-`$name` and `$$` as in `regex.replace`.
-
-```silt
-import regex
-
-fn main() {
-  println(regex.replace_all("abc 123 def 456", "\\d+", "NUM")) -- Ok("abc NUM def NUM")
+  println(regex.replace("abc 123 def 456", "\\d+", "NUM")) -- Ok("abc NUM def NUM")
 }
 ```
 
@@ -260,6 +242,24 @@ fn main() {
     string.from(n * 2)
   }
   println(doubled) -- Ok("a2 b44 c666")
+}
+```
+
+
+## `regex.replace_first`
+
+```
+regex.replace_first(text: String, pattern: String, replacement: String) -> Result(String, RegexError)
+```
+
+Replaces the first match only, with the replacement string, which reads
+`$1`, `$name` and `$$` as in `regex.replace`.
+
+```silt
+import regex
+
+fn main() {
+  println(regex.replace_first("abc 123 def 456", "\\d+", "NUM")) -- Ok("abc NUM def 456")
 }
 ```
 

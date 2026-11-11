@@ -21,5 +21,5 @@ fn main() {
   let two = ch |> stream.filter { x -> x % 50 == 0 } |> stream.take(2) |> stream.collect
   println("got {two}")
   println("next in ch: {channel.receive(ch)}")
-  println("left after it: {stream.count(ch)}")
+  println("left after it: {stream.length(ch)}")
 }

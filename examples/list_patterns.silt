@@ -38,8 +38,8 @@ fn main() {
     Some(n) -> println("last element: {n}")
     None -> println("empty list")
   }
-  -- Use list.head for the first element
-  match list.head([10, 20, 30]) {
+  -- Use list.first for the first element
+  match list.first([10, 20, 30]) {
     Some(n) -> println("first element: {n}")
     None -> println("empty list")
   }

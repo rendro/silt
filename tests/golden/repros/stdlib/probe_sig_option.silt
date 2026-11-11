@@ -2,6 +2,7 @@
 import option
 fn main() {
   let v_option_flat_map: Int = option.flat_map
+  let v_option_flatten: Int = option.flatten
   let v_option_is_none: Int = option.is_none
   let v_option_is_some: Int = option.is_some
   let v_option_map: Int = option.map

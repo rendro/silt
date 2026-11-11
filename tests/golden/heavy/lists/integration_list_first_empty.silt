@@ -1,6 +1,6 @@
 import io
 import list
-fn program() { list.head([]) }
+fn program() { list.first([]) }
 
 fn main() {
   println(io.inspect(program()))

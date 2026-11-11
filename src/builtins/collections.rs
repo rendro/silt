@@ -102,6 +102,13 @@ fn keep_item_if(out: &mut Vec<Value>, item: Value, result: Value) -> Flow {
     next()
 }
 
+/// The arguments of a function that takes the state, then the key
+/// and the value of a map's entry (`map.fold`).
+fn acc_key_and_value(acc: &Value, entry: &Value, stack: &mut Vec<Value>) {
+    stack.push(acc.clone());
+    key_and_value(acc, entry, stack);
+}
+
 fn ignore<S>(_: &mut S, _item: Value, _result: Value) -> Flow {
     next()
 }
@@ -541,6 +548,46 @@ pub(crate) mod list {
             )
         }
 
+        // The longest prefix whose elements f accepts: f is not called
+        // after the first it rejects. The prefix is a slice of xs.
+        fn take_while(xs: List, f: &Value) -> Step {
+            iterate(
+                "list.take_while",
+                xs.clone(),
+                f.clone(),
+                (xs.clone(), 0usize),
+                item_arg,
+                |(xs, taken), _, holds| match truthy(&holds) {
+                    true => {
+                        *taken += 1;
+                        next()
+                    }
+                    false => stop(Value::List(xs.slice(0, *taken))),
+                },
+                |(xs, _)| Ok(Value::List(xs.clone())),
+            )
+        }
+
+        // The rest of xs from the first element f rejects: f is not
+        // called after it. The rest is a slice of xs.
+        fn drop_while(xs: List, f: &Value) -> Step {
+            iterate(
+                "list.drop_while",
+                xs.clone(),
+                f.clone(),
+                (xs.clone(), 0usize),
+                item_arg,
+                |(xs, dropped), _, holds| match truthy(&holds) {
+                    true => {
+                        *dropped += 1;
+                        next()
+                    }
+                    false => stop(Value::List(xs.slice(*dropped, xs.len()))),
+                },
+                |_| Ok(Value::list(Vec::new())),
+            )
+        }
+
         fn flat_map(xs: List, f: &Value) -> Result<Step, VmError> {
             Ok(iterate(
                 "list.flat_map",
@@ -734,7 +781,7 @@ pub(crate) mod list {
             Ok(result)
         }
 
-        fn head(xs: List) -> Option<Value> {
+        fn first(xs: List) -> Option<Value> {
             xs.first()
         }
 
@@ -975,6 +1022,48 @@ pub(crate) mod map {
             iterate("map.each", m.clone(), f.clone(), (), key_and_value, ignore, unit)
         }
 
+        fn fold(m: Map, init: &Value, f: &Value) -> Step {
+            iterate(
+                "map.fold",
+                m.clone(),
+                f.clone(),
+                init.clone(),
+                acc_key_and_value,
+                set_acc,
+                take_acc,
+            )
+        }
+
+        fn any(m: Map, f: &Value) -> Step {
+            iterate(
+                "map.any",
+                m.clone(),
+                f.clone(),
+                (),
+                key_and_value,
+                |_, _, holds| match truthy(&holds) {
+                    true => stop(Value::Bool(true)),
+                    false => next(),
+                },
+                |_| Ok(Value::Bool(false)),
+            )
+        }
+
+        fn all(m: Map, f: &Value) -> Step {
+            iterate(
+                "map.all",
+                m.clone(),
+                f.clone(),
+                (),
+                key_and_value,
+                |_, _, holds| match truthy(&holds) {
+                    true => next(),
+                    false => stop(Value::Bool(false)),
+                },
+                |_| Ok(Value::Bool(true)),
+            )
+        }
+
         fn update(m: Map, key: &Value, default: &Value, f: &Value) -> Result<Step, VmError> {
             // Runtime Fn gate on the KEY only — same rationale as the
             // `map.from_entries` gate (its signature has no bound, so a
@@ -1007,7 +1096,7 @@ pub(crate) mod map {
             Ok(Value::Map(m.insert(k.clone(), v.clone())))
         }
 
-        fn delete(m: Map, key: &Value) -> Value {
+        fn remove(m: Map, key: &Value) -> Value {
             Value::Map(m.remove(key))
         }
 
@@ -1107,6 +1196,36 @@ pub(crate) mod set {
             iterate("set.each", s.clone(), f.clone(), (), item_arg, ignore, unit)
         }
 
+        fn any(s: Set, f: &Value) -> Step {
+            iterate(
+                "set.any",
+                s.clone(),
+                f.clone(),
+                (),
+                item_arg,
+                |_, _, holds| match truthy(&holds) {
+                    true => stop(Value::Bool(true)),
+                    false => next(),
+                },
+                |_| Ok(Value::Bool(false)),
+            )
+        }
+
+        fn all(s: Set, f: &Value) -> Step {
+            iterate(
+                "set.all",
+                s.clone(),
+                f.clone(),
+                (),
+                item_arg,
+                |_, _, holds| match truthy(&holds) {
+                    true => next(),
+                    false => stop(Value::Bool(false)),
+                },
+                |_| Ok(Value::Bool(true)),
+            )
+        }
+
         fn fold(s: Set, init: &Value, f: &Value) -> Step {
             iterate(
                 "set.fold",
@@ -1117,10 +1236,6 @@ pub(crate) mod set {
                 set_acc,
                 take_acc,
             )
-        }
-
-        fn new() -> Value {
-            Value::Set(crate::value::Set::new())
         }
 
         fn from_list(xs: List) -> Result<Value, VmError> {

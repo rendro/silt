@@ -8,6 +8,6 @@ import list
 
 fn main() {
   let xs: List(Int) = [1, 2, 3]
-  let head = list.head(xs)
+  let head = list.first(xs)
   head + 1
 }

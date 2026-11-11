@@ -18,7 +18,7 @@ ahead while it reads. A source works ahead of its reader, up to 16 values,
 and `stream.buffered(n)` lets the stages before it work up to `n` values
 ahead.
 
-Sinks (`collect`, `fold`, `count`, etc.) drain a channel in the calling
+Sinks (`collect`, `fold`, `length`, etc.) drain a channel in the calling
 task, which waits for each value.
 
 See also [io / fs](io-fs.md) for the underlying file operations behind
@@ -88,7 +88,7 @@ an earlier value. `buffered(ch, 0)` reads nothing ahead.
 |----------|-----------|
 | `collect` | `(Channel(a)) -> List(a)` |
 | `fold` | `(Channel(a), b, Fn(b, a) -> b) -> b` |
-| `count` | `(Channel(a)) -> Int` |
+| `length` | `(Channel(a)) -> Int` |
 | `first` | `(Channel(a)) -> Option(a)` |
 | `last` | `(Channel(a)) -> Option(a)` |
 | `write_to_file` | `(Channel(Bytes), String) -> Result((), IoError)` |
@@ -203,7 +203,7 @@ fn main() {
   only on that value: `ch |> stream.map(f) |> stream.take(2)` takes two
   values from `ch` and runs `f` twice, and a stage whose output nobody
   reads takes nothing and computes nothing. A sink that reads to the end
-  (`collect`, `fold`, `count`, `last`, `write_to_file`, `write_to_tcp`,
+  (`collect`, `fold`, `length`, `last`, `write_to_file`, `write_to_tcp`,
   `channel.each`) asks for every value: the stage before it works up to 16
   values ahead while it reads, and so does each stage before that, up to a
   `take`, a `take_while` or a `zip`, which ask for one value at a time, as

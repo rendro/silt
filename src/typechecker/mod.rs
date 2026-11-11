@@ -761,7 +761,7 @@ pub struct TypeChecker {
     /// Whether the declarations read are rows of the builtin registry.
     /// A row's text may say what a program's cannot: the type `Never`
     /// anywhere, and a result of a type no parameter fixes
-    /// (`set.new() -> Set(a)`).
+    /// (`channel.new(capacity: Int) -> Channel(a)`).
     pub(super) registry_rows: bool,
     /// Whether the annotation being resolved is a function's return
     /// type that is `Never`, the one place a program may write it.

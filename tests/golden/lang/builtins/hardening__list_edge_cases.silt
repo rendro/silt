@@ -10,7 +10,7 @@ fn main() {
   -- test_list_find_empty_returns_none
   println(list.find(empty, { x -> true }))
   -- test_list_head_empty_returns_none
-  println(list.head(empty))
+  println(list.first(empty))
   -- test_list_last_empty_returns_none
   println(list.last(empty))
   -- test_list_reverse_empty

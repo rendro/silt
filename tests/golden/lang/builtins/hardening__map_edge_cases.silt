@@ -12,7 +12,7 @@ fn main() {
   -- test_map_merge_both_empty
   println(map.merge(empty, empty))
   -- test_map_delete_missing_key
-  println(map.length(map.delete(#{"a": 1}, "b")))
+  println(map.length(map.remove(#{"a": 1}, "b")))
   -- test_map_contains_empty
   println(map.contains(empty, "anything"))
 }

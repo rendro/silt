@@ -1,7 +1,7 @@
 -- timeout: 60
 -- A map of 100,000 entries built an entry at a time by `map.set`, and a
 -- set of 100,000 members by `set.insert`; each changed an entry at a
--- time by `map.update` and `map.delete`, `set.remove`; and a small map
+-- time by `map.update` and `map.remove`, `set.remove`; and a small map
 -- merged into the large one, or a small set joined to it, 10,000
 -- times. Each step makes a new map that shares all but a path of the
 -- tree of the map before it, and the map before stays as it was.
@@ -32,7 +32,7 @@ fn by_delete(m: Map(Int, Int), n: Int) -> Map(Int, Int) {
   loop i = 0, acc = m {
     match i >= n {
       true -> acc
-      false -> loop(i + 2, map.delete(acc, i))
+      false -> loop(i + 2, map.remove(acc, i))
     }
   }
 }
@@ -47,7 +47,7 @@ fn by_merge(m: Map(Int, Int), n: Int) -> Map(Int, Int) {
 }
 
 fn by_insert(n: Int) -> Set(Int) {
-  loop i = 0, acc = set.new() {
+  loop i = 0, acc = #[] {
     match i == n {
       true -> acc
       false -> loop(i + 1, set.insert(acc, i))
@@ -88,7 +88,7 @@ fn main() {
   let m = by_set(n)
   show_map("map.set", m)
   show_map("map.update", by_update(m, n))
-  show_map("map.delete", by_delete(m, n))
+  show_map("map.remove", by_delete(m, n))
   show_map("map.merge", by_merge(m, 10000))
   -- The map each was made from is as it was.
   show_map("map.set again", m)

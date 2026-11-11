@@ -44,7 +44,7 @@ fn by_set(xs: List(Int)) -> List(Int) {
 }
 
 fn show(name: String, xs: List(Int)) {
-  println("{name}: {list.length(xs)} {list.head(xs)} {list.get(xs, 1000)} {list.last(xs)} {list.sum(xs)}")
+  println("{name}: {list.length(xs)} {list.first(xs)} {list.get(xs, 1000)} {list.last(xs)} {list.sum(xs)}")
 }
 
 fn main() {

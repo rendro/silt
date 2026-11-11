@@ -2,5 +2,5 @@
 -- stderr-contains: error[type]: type 'Fn(_) -> _' does not implement trait 'Hash'
 import set
 fn main() {
-  println(set.contains(set.new(), { y -> y }))
+  println(set.contains(#[], { y -> y }))
 }

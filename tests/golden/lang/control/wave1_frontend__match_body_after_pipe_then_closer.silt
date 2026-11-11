@@ -8,7 +8,7 @@ fn main() {
   let shown = string_of(match xs |> list.length {
     n -> n + 1
   })
-  let both = [match xs |> list.head {
+  let both = [match xs |> list.first {
     Some(x) -> x
     None -> 0
   }, 9]

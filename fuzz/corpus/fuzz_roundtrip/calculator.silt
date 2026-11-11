@@ -24,11 +24,11 @@ fn apply_binary(stack, op_name, op_fn) {
   match list.length(stack) >= 2 {
     true -> {
       let b = stack
-      |> list.head
+      |> list.first
       |> option.unwrap_or(0.0)
       let a = stack
       |> list.tail
-      |> list.head
+      |> list.first
       |> option.unwrap_or(0.0)
       let rest = stack
       |> list.tail
@@ -48,7 +48,7 @@ fn apply_unary(stack, op_name, op_fn) {
   match list.length(stack) >= 1 {
     true -> {
       let a = stack
-      |> list.head
+      |> list.first
       |> option.unwrap_or(0.0)
       let rest = stack
       |> list.tail
@@ -122,7 +122,7 @@ fn main() {
             loop([], [])
           }
           "undo" -> {
-            match list.head(stack) {
+            match list.first(stack) {
               Some(top) -> {
                 println("Undone. Removed {format(top)} from stack.")
                 loop(list.tail(stack), list.append(history, "undo: removed {format(top)}"))

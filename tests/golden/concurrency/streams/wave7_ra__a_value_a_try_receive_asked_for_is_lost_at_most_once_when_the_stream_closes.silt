@@ -25,6 +25,6 @@ fn main() {
     _ -> println("a value already")
   }
   channel.close(s)
-  let left = stream.count(ch)
+  let left = stream.length(ch)
   println("at most one gone: {left >= 99}")
 }

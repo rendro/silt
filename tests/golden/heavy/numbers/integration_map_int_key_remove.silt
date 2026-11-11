@@ -2,7 +2,7 @@ import io
 import map
 fn program() {
   let m = #{ 1: "a", 2: "b", 3: "c" }
-  let m2 = map.delete(m, 2)
+  let m2 = map.remove(m, 2)
   map.length(m2)
 }
 

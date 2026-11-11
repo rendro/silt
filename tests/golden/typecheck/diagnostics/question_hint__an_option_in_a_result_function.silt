@@ -5,7 +5,7 @@ import list
 import map
 
 fn first(xs: List(Int)) -> Result(Int, String) {
-  let x = list.head(xs)?
+  let x = list.first(xs)?
   Ok(x)
 }
 

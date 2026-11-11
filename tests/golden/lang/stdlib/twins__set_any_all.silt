@@ -1,0 +1,17 @@
+import set
+
+fn main() {
+  let s = #[3, 1, 2]
+  -- the elements are seen in sorted order; any stops at the first true
+  println(set.any(s, { x ->
+    println("any {x}")
+    x == 2
+  }))
+  println(set.all(s, { x ->
+    println("all {x}")
+    x < 2
+  }))
+  println(set.any(#[], { x -> true }))
+  println(set.all(#[], { x -> false }))
+  println(set.all(#["é", "ü"], { x -> x != "a" }))
+}

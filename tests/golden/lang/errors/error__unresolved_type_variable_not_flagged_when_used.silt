@@ -7,7 +7,7 @@
 -- stderr-not-contains: type annotation
 import list
 fn main() {
-  let x = match list.head([]) {
+  let x = match list.first([]) {
     Some(v) -> v
     None -> panic("no value")
   }

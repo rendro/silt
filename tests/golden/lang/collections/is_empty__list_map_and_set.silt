@@ -13,8 +13,8 @@ fn main() {
   println(list.is_empty(list.filter([1, 2]) { x -> x > 5 }))
   println(map.is_empty(#{}))
   println(map.is_empty(#{ "a": 1 }))
-  println(map.is_empty(map.delete(#{ "a": 1 }, "a")))
-  println(set.is_empty(set.new()))
+  println(map.is_empty(map.remove(#{ "a": 1 }, "a")))
+  println(set.is_empty(#[]))
   println(set.is_empty(#[1]))
   println(set.is_empty(set.remove(#[1], 1)))
   -- As a function value.

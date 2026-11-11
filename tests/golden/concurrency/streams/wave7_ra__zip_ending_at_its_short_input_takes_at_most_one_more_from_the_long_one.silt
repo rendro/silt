@@ -22,6 +22,6 @@ fn main() {
   fill(short, 1, 3)
   let pairs = stream.zip(long |> stream.map { x -> x }, short |> stream.map { x -> x })
     |> stream.collect
-  let taken = 100 - stream.count(long)
+  let taken = 100 - stream.length(long)
   println("zipped {pairs}, at most one more taken from the long input: {taken <= 4}")
 }
