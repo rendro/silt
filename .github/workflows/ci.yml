@@ -292,6 +292,12 @@ jobs:
         run: cargo build --locked --release --target x86_64-unknown-linux-gnu
       - name: Count a round of two loops
         run: bash .github/scripts/loop-guard/run.sh target/x86_64-unknown-linux-gnu/release/silt
+      # The smoke run the release job makes of each binary, here on every
+      # push, so a change that breaks it is seen before a tag is pushed.
+      - name: Smoke run (as the release job)
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          bash .github/scripts/smoke/run.sh "$PWD/target/x86_64-unknown-linux-gnu/release/silt" "$version"
 
   playground:
     # The playground of silt-lang.com: the library built for a browser
