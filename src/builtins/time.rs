@@ -767,8 +767,7 @@ struct Ready {
 type Seen = [Option<Rc<Result<Ready, String>>>; 6];
 
 /// The most patterns a thread keeps; when it has that many, the oldest
-/// quarter of them goes. (As the compiled regexes of a VM do,
-/// `RegexCache`.)
+/// quarter of them goes.
 const PATTERNS_MOST: usize = 256;
 
 /// The longest pattern a thread keeps, in bytes: a longer one is made

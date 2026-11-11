@@ -503,7 +503,7 @@ fn a_wait_that_ends_before_the_commit_wakes_nobody() {
     let ch = Channel::new(0, 0);
     let parked = park_only(&d, 1, recv(&ch));
     assert_eq!(parked.sources().len(), 1);
-    let parked = parked.finish().err().expect("the wait is open");
+    let parked = parked.finish().expect_err("the wait is open");
 
     // The double would fail the test on a wake: task 1 is not parked.
     assert!(matches!(ch.try_send(Value::Int(3), &d), TrySend::Sent));

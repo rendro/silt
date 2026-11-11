@@ -1,0 +1,39 @@
+-- Beside `Get(a) for Box(a)` and `Get(String) for Box(Int)`, the impl
+-- `Sub(a) for Box(a)` of `trait Sub(r): Get(r)` has its supertrait in the
+-- generic impl, at every `a`: it is accepted, and `Sub.sub` of a
+-- `Box(Int)` is the generic impl's `Get(Int)`. (It was refused: "requires
+-- impl Get(a) for Box(a), but found impl Get(a) for Box(a) and ...".)
+type Box(a) {
+  item: a,
+}
+
+trait Get(r) {
+  fn get(self) -> r
+}
+
+trait Get(a) for Box(a) {
+  fn get(self) -> a {
+    self.item
+  }
+}
+
+trait Get(String) for Box(Int) {
+  fn get(self) -> String {
+    "from-int"
+  }
+}
+
+trait Sub(r): Get(r) {
+  fn sub(self) -> r {
+    Get.get(self)
+  }
+}
+
+trait Sub(a) for Box(a) {}
+
+fn main() {
+  let n: Int = Sub.sub(Box { item: 2 })
+  let s: String = Sub.sub(Box { item: "x" })
+  let t: String = Get.get(Box { item: 3 })
+  println("{n + 1} {s} {t}")
+}

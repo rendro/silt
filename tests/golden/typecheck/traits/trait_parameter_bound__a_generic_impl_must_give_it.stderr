@@ -1,0 +1,13 @@
+error[type]: type 'B(a)' implements 'Tbl(a)', whose argument 'a' must implement 'G' (trait 'Tbl' declares `where k: G`)
+ --> trait_parameter_bound__a_generic_impl_must_give_it.silt:29:1
+    |
+ 29 | trait Tbl(a) for B(a) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^ type 'B(a)' implements 'Tbl(a)', whose argument 'a' must implement 'G' (trait 'Tbl' declares `where k: G`)
+  = help: add `where a: G` to the impl
+
+error[type]: type 'Cell(a)' implements 'Keyed(List(a))', whose argument 'List(a)' must implement 'Compare' (trait 'Keyed' declares `where k: Compare`): 'a' needs 'Compare'
+ --> trait_parameter_bound__a_generic_impl_must_give_it.silt:48:1
+    |
+ 48 | trait Keyed(List(a)) for Cell(a) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type 'Cell(a)' implements 'Keyed(List(a))', whose argument 'List(a)' must implement 'Compare' (trait 'Keyed' declares `where k: Compare`): 'a' needs 'Compare'
+  = help: add `where a: Compare` to the impl

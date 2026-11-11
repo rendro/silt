@@ -1,5 +1,9 @@
 //! The `regex.*` builtin functions.
 
+use regex_automata::PatternID;
+use regex_automata::meta::{BuildError, Regex};
+use regex_automata::util::captures::Captures;
+
 use super::common::{ok, too_long_text};
 use super::typed::{builtins, unsound};
 use crate::typeinfo::bv;
@@ -24,10 +28,10 @@ fn string(s: &str) -> Value {
     Value::String(s.into())
 }
 
-/// The groups of a match as a list of strings, a group that took no
-/// part in the match as the empty one.
-fn groups(caps: &regex::Captures) -> Value {
-    let groups = caps.iter().map(|m| string(m.map_or("", |m| m.as_str())));
+/// The groups of a match in `text` as a list of strings, a group that
+/// took no part in the match as the empty one.
+fn groups(text: &str, caps: &Captures) -> Value {
+    let groups = caps.iter().map(|m| string(m.map_or("", |m| &text[m])));
     Value::list(groups.collect())
 }
 
@@ -70,24 +74,22 @@ fn syntax_error(pattern: &str, report: &str) -> (String, usize) {
     }
 }
 
-/// `Err(RegexError)` of the pattern `pattern`, which did not compile.
-fn pattern_err(pattern: &str, error: &regex::Error) -> Value {
-    let variant = match error {
-        regex::Error::Syntax(report) => {
-            let (what, at) = syntax_error(pattern, report);
-            Value::variant(
-                bv::REGEX_INVALID_PATTERN,
-                [Value::String(what.into()), Value::Int(at as i64)],
-            )
-        }
-        regex::Error::CompiledTooBig(_) => Value::variant(bv::REGEX_TOO_BIG, []),
-        // The `regex` crate has no other error today; its enum is
-        // open, so a later one is a pattern that does not compile,
-        // at no place in it.
-        other => Value::variant(
+/// `Err(RegexError)` of the pattern `pattern`, which did not compile:
+/// `TooBig` past the size limit, else what the parser says is wrong
+/// with it (as `regex::Error` sorts the two).
+fn pattern_err(pattern: &str, error: &BuildError) -> Value {
+    let variant = if error.size_limit().is_some() {
+        Value::variant(bv::REGEX_TOO_BIG, [])
+    } else {
+        let report = match error.syntax_error() {
+            Some(syntax) => syntax.to_string(),
+            None => error.to_string(),
+        };
+        let (what, at) = syntax_error(pattern, &report);
+        Value::variant(
             bv::REGEX_INVALID_PATTERN,
-            [Value::String(other.to_string().into()), Value::Int(0)],
-        ),
+            [Value::String(what.into()), Value::Int(at as i64)],
+        )
     };
     Value::variant(bv::ERR, [variant])
 }
@@ -100,7 +102,7 @@ fn pattern_err(pattern: &str, error: &regex::Error) -> Value {
 /// would be longer than a string may be.
 fn replaced(
     name: &str,
-    re: &regex::Regex,
+    re: &Regex,
     text: &str,
     replacement: &str,
     most: usize,
@@ -108,9 +110,9 @@ fn replaced(
     let mut out = String::with_capacity(text.len());
     let mut last = 0;
     for caps in re.captures_iter(text).take(most) {
-        let whole = caps.get(0).map_or(0..0, |m| m.range());
+        let whole = caps.get_group(0).map_or(0..0, |m| m.range());
         out.push_str(&text[last..whole.start]);
-        caps.expand(replacement, &mut out);
+        caps.interpolate_string_into(text, replacement, &mut out);
         last = whole.end;
         if out.len() > MAX_COLLECTION_LEN {
             return Err(too_long_text(name, out.len()));
@@ -123,9 +125,9 @@ fn replaced(
     Ok(string(&out))
 }
 
-fn with(vm: &mut Vm, pattern: &str, found: impl FnOnce(&regex::Regex) -> Value) -> Value {
-    match Vm::get_regex(&mut vm.regex_cache, pattern) {
-        Ok(re) => ok(found(re)),
+fn with(vm: &mut Vm, pattern: &str, found: impl FnOnce(&Regex) -> Value) -> Value {
+    match vm.regex(pattern) {
+        Ok(re) => ok(found(&re)),
         Err(error) => pattern_err(pattern, &error),
     }
 }
@@ -134,7 +136,7 @@ fn with(vm: &mut Vm, pattern: &str, found: impl FnOnce(&regex::Regex) -> Value) 
 /// `string.split` cuts: a match of nothing at the start or the end of
 /// the text cuts nothing there, so it gives no empty piece (`""` cuts
 /// `"abc"` into its characters, and empty text into none).
-fn pieces<'t>(re: &regex::Regex, text: &'t str) -> Vec<&'t str> {
+fn pieces<'t>(re: &Regex, text: &'t str) -> Vec<&'t str> {
     let mut pieces = Vec::new();
     let mut start = 0;
     let mut matched = false;
@@ -162,12 +164,12 @@ builtins! {
     }
 
     fn find(vm, text: &str, pattern: &str) -> Value {
-        with(vm, pattern, |re| option(re.find(text).map(|m| string(m.as_str()))))
+        with(vm, pattern, |re| option(re.find(text).map(|m| string(&text[m.range()]))))
     }
 
     fn find_all(vm, text: &str, pattern: &str) -> Value {
         with(vm, pattern, |re| {
-            Value::list(re.find_iter(text).map(|m| string(m.as_str())).collect())
+            Value::list(re.find_iter(text).map(|m| string(&text[m.range()])).collect())
         })
     }
 
@@ -176,15 +178,15 @@ builtins! {
     }
 
     fn replace_first(vm, text: &str, pattern: &str, replacement: &str) -> Result<Value, VmError> {
-        match Vm::get_regex(&mut vm.regex_cache, pattern) {
-            Ok(re) => Ok(ok(replaced("regex.replace_first", re, text, replacement, 1)?)),
+        match vm.regex(pattern) {
+            Ok(re) => Ok(ok(replaced("regex.replace_first", &re, text, replacement, 1)?)),
             Err(error) => Ok(pattern_err(pattern, &error)),
         }
     }
 
     fn replace(vm, text: &str, pattern: &str, replacement: &str) -> Result<Value, VmError> {
-        match Vm::get_regex(&mut vm.regex_cache, pattern) {
-            Ok(re) => Ok(ok(replaced("regex.replace", re, text, replacement, usize::MAX)?)),
+        match vm.regex(pattern) {
+            Ok(re) => Ok(ok(replaced("regex.replace", &re, text, replacement, usize::MAX)?)),
             Err(error) => Ok(pattern_err(pattern, &error)),
         }
     }
@@ -192,7 +194,7 @@ builtins! {
     // `f` is called with each match, in order, and the string it
     // returns stands for the match.
     fn replace_all_with(vm, text: &str, pattern: &str, f: &Value) -> Step {
-        let re = match Vm::get_regex(&mut vm.regex_cache, pattern) {
+        let re = match vm.regex(pattern) {
             Ok(re) => re,
             Err(error) => return Step::Done(pattern_err(pattern, &error)),
         };
@@ -260,33 +262,40 @@ builtins! {
     }
 
     fn captures(vm, text: &str, pattern: &str) -> Value {
-        with(vm, pattern, |re| option(re.captures(text).map(|caps| groups(&caps))))
+        with(vm, pattern, |re| {
+            let mut caps = re.create_captures();
+            re.captures(text, &mut caps);
+            option(caps.is_match().then(|| groups(text, &caps)))
+        })
     }
 
     fn captures_all(vm, text: &str, pattern: &str) -> Value {
         with(vm, pattern, |re| {
-            Value::list(re.captures_iter(text).map(|caps| groups(&caps)).collect())
+            Value::list(re.captures_iter(text).map(|caps| groups(text, &caps)).collect())
         })
     }
 
     fn captures_named(vm, text: &str, pattern: &str) -> Value {
         with(vm, pattern, |re| {
-            // `capture_names()` yields one entry per group, including the
+            // The names yield one entry per group, including the
             // implicit whole-match group at index 0 (whose name is `None`)
             // and any numbered-only groups (also `None`). A pattern with no
             // *named* group gives `None`.
-            if re.capture_names().flatten().next().is_none() {
+            let names = || re.group_info().pattern_names(PatternID::ZERO).flatten();
+            if names().next().is_none() {
                 return option(None);
             }
-            let Some(caps) = re.captures(text) else {
+            let mut caps = re.create_captures();
+            re.captures(text, &mut caps);
+            if !caps.is_match() {
                 return option(None);
-            };
+            }
             // Collect (name → match) pairs. Skip any named group that
             // did not participate in the match — per the spec we omit
             // it entirely rather than mapping to "".
-            let named = re.capture_names().flatten().filter_map(|name| {
-                let m = caps.name(name)?;
-                Some((string(name), string(m.as_str())))
+            let named = names().filter_map(|name| {
+                let m = caps.get_group_by_name(name)?;
+                Some((string(name), string(&text[m])))
             });
             option(Some(Value::map(named)))
         })

@@ -1,0 +1,42 @@
+-- cmd: check
+-- exit: 1
+-- A call through a trait with `json.Decode` as a supertrait on a value
+-- whose type's arguments the call does not know yet (`S { s: x, .. }` in
+-- a closure) owes the decode as a bound of the trait does: judged where
+-- the closure is used, at the type it is used at. (The call was skipped:
+-- `f(set.from_list([1]))` failed where the decoder ran, and `g("s")`
+-- decoded `Bx(String)` by its structure past the only impl.)
+import json
+import set
+
+type S(a) {
+  s: Set(a),
+  n: Int,
+}
+
+type Bx(a) {
+  v: a,
+}
+
+trait json.Decode for Bx(Int) {
+  fn decode(value: json.Value) -> Result(Self, json.JsonError) {
+    Ok(Bx { v: 42 })
+  }
+}
+
+trait Dec: json.Decode {
+  fn again(self, s: String) -> Result(Self, json.JsonError) {
+    json.parse(s, Self)
+  }
+}
+
+trait Dec for S(a) where a: json.Decode {}
+
+trait Dec for Bx(a) where a: json.Decode {}
+
+fn main() {
+  let f = { x -> Dec.again(S { s: x, n: 1 }, """{"s": [1], "n": 1}""") }
+  let g = { x -> Dec.again(Bx { v: x }, """{"v": "t"}""") }
+  println(f(set.from_list([1])))
+  println(g("s"))
+}

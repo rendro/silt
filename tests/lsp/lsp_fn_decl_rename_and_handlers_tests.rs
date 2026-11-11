@@ -274,11 +274,11 @@ fn references_on_fn_decl_returns_array() {
         .filter_map(|loc| loc.pointer("/range/start/line").and_then(|v| v.as_u64()))
         .collect();
     assert!(
-        lines.iter().any(|&l| l == 0),
+        lines.contains(&0),
         "expected decl-site reference on line 0; got lines {lines:?}"
     );
     assert!(
-        lines.iter().any(|&l| l == 1),
+        lines.contains(&1),
         "expected use-site reference on line 1; got lines {lines:?}"
     );
     client.shutdown();
@@ -340,11 +340,11 @@ fn document_highlight_on_fn_decl_returns_both_sites() {
         .filter_map(|h| h.pointer("/range/start/line").and_then(|v| v.as_u64()))
         .collect();
     assert!(
-        lines.iter().any(|&l| l == 0),
+        lines.contains(&0),
         "expected highlight on decl line 0; got {lines:?}"
     );
     assert!(
-        lines.iter().any(|&l| l == 1),
+        lines.contains(&1),
         "expected highlight on use line 1; got {lines:?}"
     );
     client.shutdown();

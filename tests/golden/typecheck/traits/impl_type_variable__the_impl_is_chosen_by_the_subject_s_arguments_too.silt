@@ -1,0 +1,30 @@
+-- Two impls of one trait for one type: `Get(a) for Box(a)` and
+-- `Get(Int) for Box(String)`. A `Box(String)` has both, `Get(String)`
+-- and `Get(Int)`; a `Box(Int)` only the first. (The first answered
+-- `Get(Int)` for a `Box(String)` too, and gave its String as an Int.)
+type Box(a) {
+  item: a,
+}
+
+trait Get(r) {
+  fn get(self) -> r
+}
+
+trait Get(a) for Box(a) {
+  fn get(self) -> a {
+    self.item
+  }
+}
+
+trait Get(Int) for Box(String) {
+  fn get(self) -> Int {
+    7
+  }
+}
+
+fn main() {
+  let n: Int = Get.get(Box { item: "s" })
+  let s: String = Get.get(Box { item: "s" })
+  let m: Int = Get.get(Box { item: 3 })
+  println("{n + 1} {s} {m + 1}")
+}

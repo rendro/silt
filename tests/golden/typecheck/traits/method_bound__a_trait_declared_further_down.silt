@@ -1,0 +1,32 @@
+-- A trait method's `where` clause may name a trait declared further
+-- down the file: the bound holds in the default body and in each
+-- impl's body, as when the trait is declared above. (It was dropped in
+-- the bodies: "type variable `a` is not known to implement trait
+-- 'Lab'", with the bound written on that line.)
+trait Sh {
+  fn sh(self, x: a) -> String where a: Lab
+  fn dflt(self, x: a) -> String where a: Lab {
+    "d:{Lab.lab(x)}"
+  }
+}
+
+trait Lab {
+  fn lab(self) -> String
+}
+
+trait Lab for Int {
+  fn lab(self) -> String {
+    "int"
+  }
+}
+
+trait Sh for String {
+  fn sh(self, x: a) -> String where a: Lab {
+    "{self}:{Lab.lab(x)}"
+  }
+}
+
+fn main() {
+  println(Sh.sh("a", 1))
+  println(Sh.dflt("b", 2))
+}

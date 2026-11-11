@@ -1,0 +1,42 @@
+-- The supertrait's impl `Get(a) for Box(a)` gives the impls of
+-- `Sub(Int) for Box(Int)` and `Sub(a) for Box(a)` what they need: the
+-- default body gets the item back.
+type Box(a) {
+  item: a,
+}
+
+type Wrap(a) {
+  inner: Box(a),
+}
+
+trait Get(r) {
+  fn get(self) -> r
+}
+
+trait Get(a) for Box(a) {
+  fn get(self) -> a {
+    self.item
+  }
+}
+
+trait Get(a) for Wrap(a) {
+  fn get(self) -> a {
+    Get.get(self.inner)
+  }
+}
+
+trait Sub(r): Get(r) {
+  fn sub(self) -> r {
+    Get.get(self)
+  }
+}
+
+trait Sub(Int) for Box(Int) {}
+
+trait Sub(a) for Wrap(a) {}
+
+fn main() {
+  let n: Int = Sub.sub(Box { item: 4 })
+  let s: String = Sub.sub(Wrap { inner: Box { item: "w" } })
+  println("{n + 1} {s}")
+}

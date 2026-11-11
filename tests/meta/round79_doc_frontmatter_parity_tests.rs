@@ -76,13 +76,13 @@ fn doc_section_uniformity() {
 
     let mut offenders: Vec<String> = Vec::new();
     for path in &files {
-        if let Some(value) = frontmatter_value(path, "section") {
-            if value == "Guides" {
-                offenders.push(format!(
-                    "{}: section: \"Guides\" — should be \"Guide\" (singular)",
-                    path.strip_prefix(repo_root()).unwrap_or(path).display()
-                ));
-            }
+        if let Some(value) = frontmatter_value(path, "section")
+            && value == "Guides"
+        {
+            offenders.push(format!(
+                "{}: section: \"Guides\" — should be \"Guide\" (singular)",
+                path.strip_prefix(repo_root()).unwrap_or(path).display()
+            ));
         }
     }
     assert!(

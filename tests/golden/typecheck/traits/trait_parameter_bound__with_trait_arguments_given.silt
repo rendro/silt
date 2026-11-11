@@ -1,0 +1,29 @@
+-- A trait's bound on its parameter with trait arguments, given by a
+-- concrete trait argument and by a generic impl's header, holds in the
+-- default body: each impl's `Conv(Int)` is the one called.
+trait Conv(r) {
+  fn conv(self) -> r
+}
+trait Conv(Int) for Int {
+  fn conv(self) -> Int { self * 10 }
+}
+trait Conv(Int) for String {
+  fn conv(self) -> Int { 7 }
+}
+trait Tbl(k) where k: Conv(Int) {
+  fn key(self) -> k
+  fn show(self) -> Int { Conv.conv(Tbl.key(self)) + 1 }
+}
+type B(a) { B(a) }
+trait Tbl(a) for B(a) where a: Conv(Int) {
+  fn key(self) -> a { match self { B(x) -> x } }
+}
+trait Tbl(String) for Int {
+  fn key(self) -> String { "s" }
+}
+fn sh(x: t, type k) -> Int where t: Tbl(k) { Tbl.show(x) }
+fn main() {
+  println(sh(B(2), Int))
+  println(sh(B("x"), String))
+  println(sh(5, String))
+}

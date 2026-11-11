@@ -11,49 +11,63 @@ concurrency:
   group: ci-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
+# The token of every job reads the repository and nothing else.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
+  # The Rust that clippy and rustfmt run on. It is bumped by a pull
+  # request of its own, with the lint fixes the new release asks for,
+  # so a Rust release does not redden a tree that was green. The other
+  # jobs build and test on `stable`, which moves, as the releases do.
+  LINT_TOOLCHAIN: "1.99.1"
 
 jobs:
   check:
     name: Check & Lint
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust toolchain (lint)
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
+          toolchain: ${{ env.LINT_TOOLCHAIN }}
           components: clippy, rustfmt
 
       - name: Cache cargo dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       - name: cargo check
-        run: cargo check --all-features
+        run: cargo check --locked --all-features
 
       # The default feature set is what `cargo install silt` builds; check
       # and lint it too, so code behind a non-default feature cannot hide
       # a break in the default build.
       - name: cargo check (default features)
-        run: cargo check
+        run: cargo check --locked
 
       - name: cargo clippy (default features)
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --locked -- -D warnings
 
       # No job builds a set without the `http` or `tcp` feature
       # otherwise: code that every build has (a row of the registry, an
       # import) must not lean on something behind a feature.
       - name: cargo check (no features)
-        run: cargo check --no-default-features --lib --bins
+        run: cargo check --locked --no-default-features --lib --bins
 
       - name: cargo check --benches
-        run: cargo check --benches --all-features
+        run: cargo check --locked --benches --all-features
 
       # The tests and benches too: a lint in them reddens no other job.
       - name: cargo clippy
-        run: cargo clippy --all-features --all-targets -- -D warnings
+        run: cargo clippy --locked --all-features --all-targets -- -D warnings
+
+      # And every target of the build with no features.
+      - name: cargo clippy (no default features, all targets)
+        run: cargo clippy --locked --no-default-features --all-targets -- -D warnings
 
       - name: cargo fmt
         run: cargo fmt -- --check
@@ -69,7 +83,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - name: Install the rust-version toolchain
         id: toolchain
         run: |
@@ -78,9 +92,9 @@ jobs:
           rustup toolchain install "$version" --profile minimal --no-self-update
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: cargo check (no features)
-        run: cargo +${{ steps.toolchain.outputs.version }} check --no-default-features --lib --bins
+        run: cargo +${{ steps.toolchain.outputs.version }} check --locked --no-default-features --lib --bins
       - name: cargo check (all features)
-        run: cargo +${{ steps.toolchain.outputs.version }} check --all-features --lib --bins
+        run: cargo +${{ steps.toolchain.outputs.version }} check --locked --all-features --lib --bins
 
   test-linux:
     # Split Linux test runs across 5 parallel matrix partitions so total
@@ -98,13 +112,15 @@ jobs:
       matrix:
         partition: [heavy, concurrency, rest1, rest2, rest3]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
 
       - name: Cache cargo dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           # Different test sets pull different code paths into the
           # binaries — avoid the partitions stomping each other's caches.
@@ -114,7 +130,9 @@ jobs:
       # On the `rest` partition with 215 binaries, this is the difference between
       # 16-min wall clock (cargo test) and ~3-min wall clock (nextest).
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@nextest
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: nextest
 
       - name: cargo nextest (${{ matrix.partition }})
         run: |
@@ -152,13 +170,15 @@ jobs:
     env:
       SILT_TEST_POSTGRES_URL: postgres://silt_orm:silt_orm_dev@127.0.0.1:5432/silt_orm_test?sslmode=disable
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
 
       - name: Cache cargo dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           # Reads the concurrency partition's cache (same features, same
           # dependencies) and writes none: the repository's cache is full.
@@ -166,10 +186,12 @@ jobs:
           save-if: false
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@nextest
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: nextest
 
       - name: cargo nextest (database)
-        run: cargo nextest run --all-features --no-fail-fast --no-tests=fail --test database
+        run: cargo nextest run --locked --all-features --no-fail-fast --no-tests=fail --test database
 
   test-default-features:
     # Everything else runs with --all-features. This job runs the unit
@@ -180,19 +202,23 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
       - name: Cache cargo dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: test-default-features
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@nextest
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: nextest
       - name: cargo nextest (default features)
         run: |
           CI=1 perl -e 'alarm 1680; exec @ARGV or die "exec: $!"' \
-            cargo nextest run --no-fail-fast --lib --bin silt --test golden
+            cargo nextest run --locked --no-fail-fast --lib --bin silt --test golden
 
   test-no-default-features:
     # The same against a build with no features at all, beside the job
@@ -203,26 +229,26 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
-          components: clippy
+          toolchain: stable
       - name: Cache cargo dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: test-default-features
           save-if: false
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@nextest
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: nextest
       - name: cargo nextest (no default features)
         run: |
           CI=1 perl -e 'alarm 1680; exec @ARGV or die "exec: $!"' \
-            cargo nextest run --no-default-features --no-fail-fast --lib --bin silt --test golden
+            cargo nextest run --locked --no-default-features --no-fail-fast --lib --bin silt --test golden
       - name: cargo build --tests (no default features)
-        run: cargo build --no-default-features --tests
-      - name: cargo clippy (no default features, all targets)
-        run: cargo clippy --no-default-features --all-targets -- -D warnings
+        run: cargo build --locked --no-default-features --tests
 
   test-release-deep-values:
     # The tests whose limits depend on native stack frames in a release
@@ -232,15 +258,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
       - name: Cache cargo dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: test-release
       - name: cargo test --release (deep values)
-        run: cargo test --release --all-features --test lang deep_value_stack_tests
+        run: cargo test --locked --release --all-features --test lang deep_value_stack_tests
 
   loop-guard:
     # The machine code of the instruction loop, in the binary the
@@ -254,15 +282,22 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
+          toolchain: stable
           targets: x86_64-unknown-linux-gnu
       - name: cargo build --release (as the release job)
-        run: cargo build --release --target x86_64-unknown-linux-gnu
+        run: cargo build --locked --release --target x86_64-unknown-linux-gnu
       - name: Count a round of two loops
         run: bash .github/scripts/loop-guard/run.sh target/x86_64-unknown-linux-gnu/release/silt
+      # The smoke run the release job makes of each binary, here on every
+      # push, so a change that breaks it is seen before a tag is pushed.
+      - name: Smoke run (as the release job)
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          bash .github/scripts/smoke/run.sh "$PWD/target/x86_64-unknown-linux-gnu/release/silt" "$version"
 
   playground:
     # The playground of silt-lang.com: the library built for a browser
@@ -275,14 +310,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      # The lint toolchain, as its clippy and rustfmt steps are lint.
+      - name: Install Rust toolchain (lint)
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
+          toolchain: ${{ env.LINT_TOOLCHAIN }}
           targets: wasm32-unknown-unknown
           components: clippy, rustfmt
       - name: Install wasm-pack
-        uses: taiki-e/install-action@wasm-pack
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: wasm-pack
       - name: cargo fmt
         run: cargo fmt --manifest-path playground/Cargo.toml -- --check
       - name: cargo clippy (wasm32)
@@ -308,15 +347,19 @@ jobs:
       matrix:
         partition: [heavy, concurrency, rest1, rest2, rest3]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
       - name: Cache cargo dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: test-macos-${{ matrix.partition }}
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@nextest
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: nextest
       - name: cargo nextest (${{ matrix.partition }})
         run: |
           CI=1 perl -e 'alarm 1800; exec @ARGV or die "exec: $!"' \
@@ -342,18 +385,22 @@ jobs:
           git config --global core.autocrlf false
           git config --global core.eol lf
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
 
       - name: Cache cargo dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: test-windows-${{ matrix.partition }}
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@nextest
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: nextest
 
       - name: cargo nextest (${{ matrix.partition }})
         shell: pwsh
@@ -380,6 +427,7 @@ jobs:
   fuzz-corpus:
     name: Fuzz corpus replay
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # Deterministic regression gate: replays every committed file
     # under fuzz/corpus/<target>/ through each fuzz target exactly
     # once, with NO mutation. Catches regressions on bugs we have
@@ -387,13 +435,15 @@ jobs:
     # discoveries. Discovery-mode fuzzing lives in fuzz-nightly.yml
     # and `fuzz/local.sh`; see fuzz/README.md for the workflow.
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Install Rust nightly (required by cargo-fuzz)
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: nightly
 
       - name: Cache cargo dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: |
             .
@@ -442,9 +492,15 @@ jobs:
       - name: Replay fuzz_decode corpus
         run: ./fuzz/replay.sh fuzz_decode
 
+      - name: Replay fuzz_package_files corpus
+        run: ./fuzz/replay.sh fuzz_package_files
+
+      - name: Replay fuzz_csv corpus
+        run: ./fuzz/replay.sh fuzz_csv
+
       - name: Upload reproducers on failure
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: fuzz-reproducers
           path: |

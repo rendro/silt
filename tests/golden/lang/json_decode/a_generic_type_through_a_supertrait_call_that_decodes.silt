@@ -1,0 +1,25 @@
+-- A method of a trait that has `json.Decode` as a supertrait, called on
+-- a generic type the decoder has, or through the trait on a value of
+-- it, decodes it.
+import json
+
+type Box(a) {
+  v: a,
+}
+
+trait Dec: json.Decode {
+  fn make(s: String) -> Result(Self, json.JsonError) {
+    json.parse(s, Self)
+  }
+  fn again(self, s: String) -> Result(Self, json.JsonError) {
+    json.parse(s, Self)
+  }
+}
+
+trait Dec for Box(a) where a: json.Decode {}
+
+fn main() {
+  println(Box(Int).make("""{"v": 1}"""))
+  println(Dec.again(Box { v: "a" }, """{"v": "b"}"""))
+  println(Box(List(Int)).make("""{"v": [1, 2]}"""))
+}

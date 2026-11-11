@@ -349,12 +349,12 @@ fn decode_json_escapes(s: &str) -> String {
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
         if c == '\\' {
-            if let Some(&next) = chars.peek() {
-                if next == '\\' {
-                    out.push('\\');
-                    chars.next();
-                    continue;
-                }
+            if let Some(&next) = chars.peek()
+                && next == '\\'
+            {
+                out.push('\\');
+                chars.next();
+                continue;
             }
             out.push(c);
         } else {

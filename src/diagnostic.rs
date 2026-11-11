@@ -680,7 +680,8 @@ fn write_snippet(
         c.cyan, c.reset, p.line, p.col
     );
     let full_col = p.col.saturating_sub(1);
-    let excerpt = excerpt_around(&p.line_text, full_col);
+    let mut excerpt = excerpt_around(&p.line_text, full_col);
+    excerpt.text = visible_line(&excerpt.text);
     let (shown, col) = (&excerpt.text, excerpt.col);
     let width = line_num_width(p.line);
     let _ = write!(out, "\n {}{:>width$} |{}", c.cyan, "", c.reset);
@@ -823,6 +824,31 @@ pub(crate) fn excerpt_around(line: &str, col: usize) -> Excerpt {
         cut_before,
         cut_after,
     }
+}
+
+/// `line` as a terminal may be given it: each control character but the
+/// tab (which the caret line repeats) and each bidirectional control
+/// stands as one visible character, so it neither acts on the terminal
+/// (an escape sequence, a carriage return that goes back to the start
+/// of the line) nor moves the caret off its place. A C0 control and DEL
+/// are their symbol of the Control Pictures block (`␛`, `␍`, `␇`), the
+/// others `�`: the C1 controls and the twelve bidirectional controls
+/// (U+061C, U+200E, U+200F, U+202A..U+202E, U+2066..U+2069).
+pub(crate) fn visible_line(line: &str) -> String {
+    line.chars()
+        .map(|ch| match ch {
+            '\t' => ch,
+            '\u{0}'..='\u{1f}' => char::from_u32(0x2400 + ch as u32).unwrap_or('\u{fffd}'),
+            '\u{7f}' => '\u{2421}',
+            '\u{80}'..='\u{9f}'
+            | '\u{61c}'
+            | '\u{200e}'
+            | '\u{200f}'
+            | '\u{202a}'..='\u{202e}'
+            | '\u{2066}'..='\u{2069}' => '\u{fffd}',
+            _ => ch,
+        })
+        .collect()
 }
 
 /// The padding that puts a caret under the `col`-th char of `src_line`
@@ -1084,6 +1110,21 @@ mod tests {
                 code.id()
             );
         }
+    }
+
+    #[test]
+    fn a_control_character_of_an_echoed_line_is_one_visible_character() {
+        // Each stands as one character, so the carets stay under their
+        // place; a tab stays, as the caret line repeats it.
+        assert_eq!(
+            visible_line("a\u{7}\u{8}\u{1b}[2J\rb\u{7f}\u{85}\u{202e}\u{2066}\tc"),
+            "a␇␈␛[2J␍b␡\u{fffd}\u{fffd}\u{fffd}\tc"
+        );
+        assert_eq!(
+            visible_line("a\u{61c}b\u{200e}c\u{200f}d"),
+            "a\u{fffd}b\u{fffd}c\u{fffd}d"
+        );
+        assert_eq!(visible_line("let s = \"é 日本\""), "let s = \"é 日本\"");
     }
 
     #[test]

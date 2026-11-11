@@ -1,0 +1,41 @@
+-- cmd: check
+-- exit: 1
+-- A trait's bound on its parameter that names another of its parameters
+-- (`trait Tbl(k, v) where k: Conv(v)`) is asked of a generic impl at its
+-- own variables, and the help writes them as its header names them:
+-- `where a: Conv(b)` (it wrote `Conv(_)`, which does not check). The
+-- help applied: trait_parameter_bound__naming_another_parameter_given.
+-- stderr-contains: whose argument 'a' must implement 'Conv(b)' (trait 'Tbl' declares `where k: Conv(v)`)
+-- stderr-contains: = help: add `where a: Conv(b)` to the impl
+trait Conv(r) {
+  fn conv(self) -> r
+}
+
+trait Conv(Int) for String {
+  fn conv(self) -> Int {
+    7
+  }
+}
+
+trait Tbl(k, v) where k: Conv(v) {
+  fn key(self) -> k
+  fn show(self) -> v {
+    Conv.conv(Tbl.key(self))
+  }
+}
+
+type P(a, b) {
+  P(a, b),
+}
+
+trait Tbl(a, b) for P(a, b) {
+  fn key(self) -> a {
+    match self {
+      P(x, _) -> x
+    }
+  }
+}
+
+fn main() {
+  println(1)
+}

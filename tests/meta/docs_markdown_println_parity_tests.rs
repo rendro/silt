@@ -116,7 +116,7 @@ fn silt_cmd() -> Command {
 fn is_unsafe_to_run(src: &str) -> bool {
     let first_nonempty = src.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
     let trimmed = first_nonempty.trim();
-    if NOEXEC_MARKERS.iter().any(|m| trimmed == *m) {
+    if NOEXEC_MARKERS.contains(&trimmed) {
         return true;
     }
     DENY_SUBSTRINGS.iter().any(|needle| src.contains(needle))
@@ -282,8 +282,13 @@ fn diff_println_pairs(pairs: &[PrintlnPair], stdout: &str) -> DiffOutcome {
         let illustrative = is_illustrative(expected);
         let search_end = stdout_lines.len().min(cursor + max_skip);
         let mut found_at: Option<usize> = None;
-        for idx in cursor..search_end {
-            let got = stdout_lines[idx].trim_end();
+        for (idx, got) in stdout_lines
+            .iter()
+            .enumerate()
+            .take(search_end)
+            .skip(cursor)
+        {
+            let got = got.trim_end();
             if illustrative {
                 if !got.trim().is_empty() {
                     found_at = Some(idx);

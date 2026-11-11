@@ -253,6 +253,41 @@ impl TypeChecker {
         });
     }
 
+    /// A call through a trait that has `json.Decode` among its
+    /// supertraits owes `json.Decode` of the known type `ty` it decodes
+    /// (`decoded_through_type`).
+    pub(super) fn want_decode_through_call(
+        &mut self,
+        ty: &Type,
+        origin: Origin,
+        owners: Vec<crate::session::ModuleId>,
+    ) {
+        self.decodes_through_calls.push(DecodeGap {
+            subject: self.apply(ty),
+            origin,
+            asker: None,
+            owners,
+        });
+    }
+
+    /// The decodes owed by calls through a trait on a known type, once
+    /// the others are settled: a call some other refusal names (what the
+    /// impl's header asks of the type's arguments, a type needed in full)
+    /// has its error.
+    pub(super) fn settle_decodes_through_calls(&mut self) {
+        // (A type whose arguments are still not known is a bound's to
+        // judge, where the type is given.)
+        let gaps: Vec<DecodeGap> = std::mem::take(&mut self.decodes_through_calls)
+            .into_iter()
+            .filter(|gap| {
+                free_vars_in(&self.apply(&gap.subject)).is_empty()
+                    && !(self.errors.iter()).any(|e| e.span == gap.origin.span && e.is_error())
+            })
+            .collect();
+        self.decode_gaps = gaps;
+        self.settle_decode_gaps();
+    }
+
     /// A body owes `json.Decode` of its annotation variable `r`, for
     /// `asker`: what its declared bound asks for.
     pub(super) fn note_bound_asker(&mut self, r: RigidId, asker: Option<Asker>) {

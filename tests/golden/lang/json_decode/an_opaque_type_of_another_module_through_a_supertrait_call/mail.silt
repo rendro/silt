@@ -1,0 +1,7 @@
+pub opaque type Id(a) {
+  raw: a,
+}
+
+pub fn id(x: a) -> Id(a) {
+  Id { raw: x }
+}

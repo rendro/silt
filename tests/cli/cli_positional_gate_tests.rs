@@ -7,7 +7,7 @@
 //! - F13: `silt init <name>` (init.rs)
 //! - F14: `silt repl <pos>` (repl.rs) and `silt lsp <pos>` (lsp.rs)
 //! - F15: `silt fmt <dir>` errors with a raw "Is a directory" OS
-//!         error instead of recursing into the directory
+//!   error instead of recursing into the directory
 //!
 //! All tests shell out to the real `silt` binary so the full argv
 //! parsing path is exercised.

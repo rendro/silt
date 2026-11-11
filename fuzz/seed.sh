@@ -22,6 +22,9 @@ done
 # fuzz_http_request reads HTTP requests, not silt sources: its seeds are
 # the requests committed as fuzz/corpus/fuzz_http_request/*.http, and
 # there is nothing to copy for it. Nor for fuzz_decode, which reads JSON
-# and TOML texts: its seeds are fuzz/corpus/fuzz_decode/*.json and *.toml.
+# and TOML texts: its seeds are fuzz/corpus/fuzz_decode/*.json and *.toml;
+# for fuzz_package_files, which reads silt.toml and silt.lock texts
+# (fuzz/corpus/fuzz_package_files/*.toml and *.lock); or for fuzz_csv,
+# which reads csv texts (fuzz/corpus/fuzz_csv/*.csv).
 
 echo "Seeded corpora from examples/ into fuzz/corpus/<target>/"

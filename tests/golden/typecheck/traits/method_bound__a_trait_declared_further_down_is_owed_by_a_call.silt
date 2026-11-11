@@ -1,0 +1,30 @@
+-- cmd: check
+-- exit: 1
+-- The bound of a trait method that names a trait declared further down
+-- is owed by each call: a String has no `Lab`.
+-- stderr-contains: error[type]: type 'String' does not implement trait 'Lab'
+-- stderr-not-contains: which 'lab' needs
+trait Sh {
+  fn sh(self, x: a) -> String where a: Lab
+}
+
+trait Lab {
+  fn lab(self) -> String
+}
+
+trait Lab for Int {
+  fn lab(self) -> String {
+    "int"
+  }
+}
+
+trait Sh for String {
+  fn sh(self, x: a) -> String where a: Lab {
+    "{self}:{Lab.lab(x)}"
+  }
+}
+
+fn main() {
+  println(Sh.sh("a", 1))
+  println(Sh.sh("a", "nolab"))
+}

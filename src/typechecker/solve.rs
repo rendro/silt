@@ -550,7 +550,7 @@ impl TypeChecker {
         at.sort_unstable();
         (at.into_iter())
             .map(|i| &index.impls[i])
-            .filter(|(_, written)| {
+            .filter(|(key, written)| {
                 written.is_empty() || {
                     let apart = (written.iter().zip(&heads)).any(|(written, head)| {
                         head.is_some_and(|head| outer_head(written).is_some_and(|w| w != head))
@@ -560,11 +560,43 @@ impl TypeChecker {
                         && written.len() == args.len()
                         && (args.iter().zip(written.iter()))
                             .all(|(arg, written)| probe_unify(arg, written, &mut subst))
+                        && self.subject_agrees(key, written, subject.as_ref(), &mut subst)
                 }
             })
             .map(|(key, _)| *key)
             .filter(for_subject)
             .collect()
+    }
+
+    /// Whether the use's `subject` could be the self type of the impl
+    /// `key` in the substitution `subst` its trait arguments `written`
+    /// were matched in: an impl whose trait argument is built from a
+    /// variable of its type (`trait Get(a) for Box(a)`) is no impl of
+    /// `Get(String)` for `Box(Int)`. (An impl whose trait arguments name
+    /// none of its type's variables says nothing more here.)
+    fn subject_agrees(
+        &self,
+        key: &ImplKey,
+        written: &[Type],
+        subject: Option<&Type>,
+        subst: &mut HashMap<TyVar, Type>,
+    ) -> bool {
+        let written_vars: Vec<TyVar> = written.iter().flat_map(free_vars_in).collect();
+        if written_vars.is_empty() {
+            return true;
+        }
+        let (Some(subject), Some(self_ty)) = (subject, self.tables.impl_self_types.get(key)) else {
+            return true;
+        };
+        let self_ty =
+            crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(self_ty));
+        let shared = free_vars_in(&self_ty);
+        if !written_vars.iter().any(|v| shared.contains(v)) {
+            return true;
+        }
+        let (subject_args, self_args) = (self.type_args_of(subject), self.type_args_of(&self_ty));
+        subject_args.len() != self_args.len()
+            || (subject_args.iter().zip(&self_args)).all(|(s, i)| probe_unify(s, i, subst))
     }
 
     /// The impls of `tr` for the type `head`, as `impls_fitting` reads
@@ -2770,9 +2802,24 @@ impl TypeChecker {
                     return;
                 }
                 // The only impl is this one: what it says of the
-                // subject's parts holds.
+                // subject's parts holds. (A part the comparison above
+                // left to later that cannot be the impl's is the same
+                // error.)
                 for (ob, im) in obligated_args.iter().zip(&impl_args) {
-                    let _ = self.unify_types(ob, im);
+                    if self.unify_types(ob, im).is_err() {
+                        let (obligated, only) = self.show_apart(&resolved, &impl_self);
+                        self.error(
+                            Code::MissingTraitImpl,
+                            format!(
+                                "type `{}` does not implement trait `{}`: the only impl is for `{}`",
+                                obligated,
+                                self.show_bound(trait_name, bound_trait_args),
+                                only
+                            ),
+                            span,
+                        );
+                        return;
+                    }
                 }
                 linked = true;
             } else if matches!(
@@ -2810,6 +2857,20 @@ impl TypeChecker {
             // (An impl that fits the use was found so; a record is
             // compared again, by its fields and its row as written.)
             let fitted = !fitting.is_empty();
+            // (An argument built from a variable of the impl's type is
+            // decided by the subject's parts: the message names them.)
+            // (Shown only for an error: naming the subject reads the
+            // type's impls.)
+            let self_vars: Vec<TyVar> = impl_self.iter().flat_map(free_vars_in).collect();
+            let whole = (impl_trait_args.iter().flat_map(free_vars_in)).any(|v| {
+                self_vars
+                    .iter()
+                    .any(|w| fresh.get(w) == Some(&Type::Var(v)))
+            });
+            let subject_shown = |checker: &Self| match whole {
+                true => checker.show_type(&checker.apply(&resolved)),
+                false => checker.show_subject(&resolved, type_name, trait_name),
+            };
             for (bound_arg, impl_arg) in bound_trait_args.iter().zip(&impl_trait_args) {
                 let b = self.apply(bound_arg);
                 let i = self.apply(impl_arg);
@@ -2820,7 +2881,7 @@ impl TypeChecker {
                         Code::MissingTraitImpl,
                         format!(
                             "type '{}' does not implement trait '{}': the matched impl is '{}'",
-                            self.show_subject(&resolved, type_name, trait_name),
+                            subject_shown(self),
                             self.show_bound(trait_name, bound_trait_args),
                             self.show_bound(trait_name, &impl_trait_args),
                         ),
@@ -2829,8 +2890,22 @@ impl TypeChecker {
                     return;
                 }
             }
+            // (The impl's variables are the subject's parts by now: an
+            // argument built from one must be the use's.)
             for (bound_arg, impl_arg) in bound_trait_args.iter().zip(&impl_trait_args) {
-                let _ = self.unify_types(bound_arg, impl_arg);
+                if self.unify_types(bound_arg, impl_arg).is_err() {
+                    self.error(
+                        Code::MissingTraitImpl,
+                        format!(
+                            "type '{}' does not implement trait '{}': the matched impl is '{}'",
+                            subject_shown(self),
+                            self.show_bound(trait_name, bound_trait_args),
+                            self.show_bound(trait_name, &impl_trait_args),
+                        ),
+                        span,
+                    );
+                    return;
+                }
             }
         }
         // What the impl's header asks of its variables, which are the

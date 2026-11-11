@@ -990,6 +990,126 @@ impl JsonMaker<'_> {
     }
 }
 
+// ── The files of a package ─────────────────────────────────────────
+
+/// Whether `range` is a place in `text`: in order, inside it, and on the
+/// boundaries of its characters.
+fn place_in(text: &str, (start, end): (usize, usize)) -> bool {
+    start <= end && end <= text.len() && text.is_char_boundary(start) && text.is_char_boundary(end)
+}
+
+/// What the readers of a package's files make of any text, as
+/// `silt.toml` and as `silt.lock` (a git dependency's files are
+/// fetched: their text is anybody's). Each ends without a panic, with an
+/// error's place inside the text; and a lockfile that reads is written
+/// to a text that reads back as the same lockfile, and is written alike
+/// again.
+pub fn check_package_files(text: &str) -> Result<(), String> {
+    use crate::lockfile::{parse_lockfile, render_lockfile};
+    let mut sources = crate::source::SourceMap::new();
+    let path = std::path::PathBuf::from("silt.toml");
+    if let Err(d) = crate::manifest::Manifest::read(path, text.to_string(), &mut sources) {
+        let (start, end) = (d.span.start as usize, d.span.end as usize);
+        if !place_in(text, (start, end)) {
+            return Err(format!(
+                "the manifest error {:?} is at {start}..{end}, not in the {} bytes of the text",
+                d.message,
+                text.len()
+            ));
+        }
+    }
+    let lock = match parse_lockfile(text) {
+        Err(e) if place_in(text, e.span) => return Ok(()),
+        Err(e) => {
+            return Err(format!(
+                "the lockfile error is at {:?}, not in the {} bytes of the text",
+                e.span,
+                text.len()
+            ));
+        }
+        Ok(lock) => lock,
+    };
+    let written = render_lockfile(&lock);
+    let again = parse_lockfile(&written).map_err(|e| {
+        format!(
+            "a lockfile that read is written to {written:?}, which does not read: {:?}",
+            e.span
+        )
+    })?;
+    let by_name = |lock: &crate::lockfile::Lockfile| {
+        let mut packages = lock.packages.clone();
+        packages.sort_by(|a, b| a.name.cmp(&b.name));
+        (lock.version, packages)
+    };
+    if by_name(&again) != by_name(&lock) {
+        return Err(format!(
+            "a lockfile written to {written:?} reads back as another: {again:?}, was {lock:?}"
+        ));
+    }
+    if render_lockfile(&again) != written {
+        return Err(format!(
+            "a lockfile is written otherwise the second time: {written:?}"
+        ));
+    }
+    Ok(())
+}
+
+// ── csv ─────────────────────────────────────────────────────────────
+
+/// What the csv reader makes of any text (`csv.parse`, `csv.split_line`):
+/// it ends without a panic, with an error's place inside the text; and
+/// the records of a text that reads, written again with every field in
+/// quotes, read back as the same records.
+pub fn check_csv(text: &str) -> Result<(), String> {
+    use crate::builtins::csv::{fields_of_line, record, table};
+    let malformed_in = |what: &str, at: usize| match at <= text.len() && text.is_char_boundary(at) {
+        true => Ok(()),
+        false => Err(format!(
+            "{what} at byte {at}, not in the {} bytes of the text",
+            text.len()
+        )),
+    };
+    if let Err(m) = fields_of_line(text) {
+        malformed_in(m.why, m.at)?;
+    }
+    let _ = table(text);
+    let mut records = Vec::new();
+    let mut at = 0;
+    while at < text.len() {
+        match record(text, at) {
+            Ok((fields, next)) if next > at && next <= text.len() => {
+                records.push(fields);
+                at = next;
+            }
+            Ok((_, next)) => return Err(format!("the record at byte {at} ends at {next}")),
+            Err(m) => return malformed_in(m.why, m.at),
+        }
+    }
+    let quoted = |field: &String| format!("\"{}\"", field.replace('"', "\"\""));
+    let written: String = records
+        .iter()
+        .map(|fields| fields.iter().map(quoted).collect::<Vec<_>>().join(",") + "\n")
+        .collect();
+    let mut again = Vec::new();
+    let mut at = 0;
+    while at < written.len() {
+        let (fields, next) = record(&written, at).map_err(|m| {
+            format!(
+                "the records written to {written:?} do not read: {} at {}",
+                m.why, m.at
+            )
+        })?;
+        again.push(fields);
+        at = next;
+    }
+    if again != records {
+        return Err(format!(
+            "the records {records:?}, written to {written:?}, read back as {again:?}"
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1025,5 +1145,47 @@ mod tests {
             |text: &str| crate::format::format(file, text).map(|out| format!("-- more\n{out}"));
         let err = check_formatter_invariants_of(source, grows).unwrap_err();
         assert!(err.contains("not idempotent"), "{err}");
+    }
+
+    #[test]
+    fn the_package_files_check_holds_on_a_manifest_and_a_lockfile() {
+        check_package_files("[package]\nname = \"app\"\nversion = \"0.1.0\"\n").unwrap();
+        check_package_files("[package\nname = ").unwrap();
+        let lock = "version = 1\n\n[[package]]\nname = \"b\"\nversion = \"1.0.0\"\n\
+                    source = { path = \"../b\" }\nchecksum = \"sha256:00\"\n\n\
+                    [[package]]\nname = \"a\"\nversion = \"0.1.0\"\n";
+        check_package_files(lock).unwrap();
+    }
+
+    /// Each seed of the fuzz target `target` (`fuzz/corpus/<target>`),
+    /// as text, given to `check`.
+    fn check_seeds(target: &str, check: fn(&str) -> Result<(), String>) {
+        let seeds = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("fuzz/corpus")
+            .join(target);
+        let mut read = 0;
+        for seed in std::fs::read_dir(&seeds).expect("the seeds") {
+            let path = seed.expect("a seed").path();
+            let text = std::fs::read_to_string(&path).expect("a seed's text");
+            if let Err(e) = check(&text) {
+                panic!("{}: {e}", path.display());
+            }
+            read += 1;
+        }
+        assert!(read >= 4, "{read} seeds in {}", seeds.display());
+    }
+
+    #[test]
+    fn the_seeds_of_the_package_files_and_csv_targets_hold() {
+        check_seeds("fuzz_package_files", check_package_files);
+        check_seeds("fuzz_csv", check_csv);
+    }
+
+    #[test]
+    fn the_csv_check_holds_on_quotes_line_ends_and_errors() {
+        check_csv("a,b\n1,\"x, \"\"y\"\"\"\r\n\n").unwrap();
+        check_csv("\"open").unwrap();
+        check_csv("a\rb").unwrap();
+        check_csv("é,\"ü\"x").unwrap();
     }
 }

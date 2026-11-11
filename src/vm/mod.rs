@@ -110,7 +110,7 @@ pub fn submit_panicking_io_for_test(vm: &Vm, failure: fn(IoFailure<'_>) -> Value
     op.cell.get().cloned().expect("the operation has ended")
 }
 
-use regex::Regex;
+use regex_automata::meta::{BuildError, Regex};
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
@@ -209,14 +209,6 @@ pub struct Vm {
     /// ([`TailCalls`]).
     pub(crate) tco_elided: TailCalls,
 
-    // ── Caches ──────────────────────────────────────────────────
-    /// Cache for compiled regex patterns (bounded, FIFO eviction —
-    /// first-in first-out: the oldest 25% of entries are evicted when
-    /// the cache reaches `MAX_ENTRIES`. `RegexCache::get` only pushes
-    /// to its order deque on miss; a hit does not re-order, so this
-    /// is pure insertion order).
-    pub(crate) regex_cache: RegexCache,
-
     // ── What the loop does not read ─────────────────────────────
     // (Declared last: the fields above are where they were before
     // these were added, which the loop's speed was found to hang on.)
@@ -295,6 +287,7 @@ impl Vm {
                 refusals: Default::default(),
                 rng: parking_lot::Mutex::new(None),
                 uuid_v7: std::sync::Mutex::new(uuid::ContextV7::new()),
+                regex_cache: parking_lot::Mutex::new(RegexCache::new()),
             }),
             owns_runtime: true,
             frames: Vec::new(),
@@ -316,7 +309,6 @@ impl Vm {
             late: None,
             over: None,
             text: String::new(),
-            regex_cache: RegexCache::new(),
             tco_elided: TailCalls::default(),
         }
     }
@@ -724,7 +716,6 @@ impl Vm {
             late: None,
             over: None,
             text: String::new(),
-            regex_cache: RegexCache::new(),
             tco_elided: TailCalls::default(),
         }
     }
@@ -934,11 +925,10 @@ impl Vm {
         }
     }
 
-    pub(crate) fn get_regex<'a>(
-        cache: &'a mut RegexCache,
-        pattern: &str,
-    ) -> Result<&'a Regex, regex::Error> {
-        cache.get(pattern)
+    /// The compiled `pattern`, from the program's cache or compiled and
+    /// kept there ([`RegexCache`]); why it does not compile.
+    pub(crate) fn regex(&self, pattern: &str) -> Result<Arc<Regex>, BuildError> {
+        RegexCache::get(&self.runtime.regex_cache, pattern)
     }
 
     /// Whether a runtime value's type has a Display impl — the single

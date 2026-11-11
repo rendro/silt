@@ -128,7 +128,8 @@ can only fail (return `Err`).
 A type variable of the result is checked against the type the call's
 arguments show it has: the argument of that type, the first element
 of a list of it, the value in an option of it, the type a `type a`
-parameter is given, and so on, the first one a parameter shows. A
+parameter (or `t: TypeOf(a)`, the same written out) is given, and so
+on, the first one a parameter shows. A
 `fn same(x: a) -> a` that returns `5` for `same("x")` is that error:
 ``mylib.same: its signature returns a, here String (the type of its
 argument `x`), but it returned Int 5``. The row variable of an open
