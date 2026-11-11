@@ -44,7 +44,6 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
         ("ByteOutOfRange", [Value::Int(v)]) => {
             format!("byte value out of range (expected 0..=255): {v}")
         }
-        ("Other", [Value::String(m)]) => m.to_string(),
         _ => return None,
     })
 }

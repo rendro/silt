@@ -127,7 +127,7 @@ pub(super) fn modules() -> Vec<Module> {
             name: "int",
             page: "int-float.md",
             types: "\
-                pub type IntError { Empty, InvalidDigit(Int), Overflow, Underflow, Other(String) }\n\
+                pub type IntError { Empty, InvalidDigit(Int), Overflow, Underflow }\n\
             ",
             error: "IntError" => numeric::int_error_text,
             rows: [
@@ -143,7 +143,7 @@ pub(super) fn modules() -> Vec<Module> {
             name: "float",
             page: "int-float.md",
             types: "\
-                pub type FloatError { Empty, InvalidDigit(Int), Overflow, Underflow, NotFinite, Other(String) }\n\
+                pub type FloatError { Empty, InvalidDigit(Int), Overflow, Underflow, NotFinite }\n\
             ",
             error: "FloatError" => numeric::float_error_text,
             rows: [
@@ -318,7 +318,7 @@ pub(super) fn modules() -> Vec<Module> {
             name: "regex",
             page: "regex.md",
             types: "\
-                pub type RegexError { InvalidPattern(String, Int), TooBig, Other(String) }\n\
+                pub type RegexError { InvalidPattern(String, Int), TooBig }\n\
             ",
             error: "RegexError" => regex::error_text,
             rows: [
@@ -536,7 +536,7 @@ pub(super) fn modules() -> Vec<Module> {
             name: "bytes",
             page: "bytes.md",
             types: "\
-                pub type BytesError { InvalidUtf8(Int), InvalidHex(String), InvalidBase64(String), ByteOutOfRange(Int), Other(String) }\n\
+                pub type BytesError { InvalidUtf8(Int), InvalidHex(String), InvalidBase64(String), ByteOutOfRange(Int) }\n\
             ",
             error: "BytesError" => bytes::error_text,
             rows: [
@@ -583,7 +583,7 @@ pub(super) fn modules() -> Vec<Module> {
             name: "encoding",
             page: "encoding.md",
             types: "\
-                pub type EncodingError { InvalidPercent(String), InvalidUtf8(String), Other(String) }\n\
+                pub type EncodingError { InvalidPercent(String), InvalidUtf8(String) }\n\
             ",
             error: "EncodingError" => encoding::error_text,
             rows: [

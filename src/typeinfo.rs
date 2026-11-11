@@ -671,18 +671,15 @@ pub mod bv {
     pub const INT_INVALID_DIGIT: BuiltinVariant = BuiltinVariant::new(ty::INT_ERROR, 1);
     pub const INT_OVERFLOW: BuiltinVariant = BuiltinVariant::new(ty::INT_ERROR, 2);
     pub const INT_UNDERFLOW: BuiltinVariant = BuiltinVariant::new(ty::INT_ERROR, 3);
-    pub const INT_OTHER: BuiltinVariant = BuiltinVariant::new(ty::INT_ERROR, 4);
     pub const FLOAT_EMPTY: BuiltinVariant = BuiltinVariant::new(ty::FLOAT_ERROR, 0);
     pub const FLOAT_INVALID_DIGIT: BuiltinVariant = BuiltinVariant::new(ty::FLOAT_ERROR, 1);
     pub const FLOAT_OVERFLOW: BuiltinVariant = BuiltinVariant::new(ty::FLOAT_ERROR, 2);
     pub const FLOAT_UNDERFLOW: BuiltinVariant = BuiltinVariant::new(ty::FLOAT_ERROR, 3);
     pub const FLOAT_NOT_FINITE: BuiltinVariant = BuiltinVariant::new(ty::FLOAT_ERROR, 4);
-    pub const FLOAT_OTHER: BuiltinVariant = BuiltinVariant::new(ty::FLOAT_ERROR, 5);
     pub const CRYPTO_INVALID_LENGTH: BuiltinVariant = BuiltinVariant::new(ty::CRYPTO_ERROR, 0);
     pub const CRYPTO_OTHER: BuiltinVariant = BuiltinVariant::new(ty::CRYPTO_ERROR, 1);
     pub const ENCODING_INVALID_PERCENT: BuiltinVariant = BuiltinVariant::new(ty::ENCODING_ERROR, 0);
     pub const ENCODING_INVALID_UTF8: BuiltinVariant = BuiltinVariant::new(ty::ENCODING_ERROR, 1);
-    pub const ENCODING_OTHER: BuiltinVariant = BuiltinVariant::new(ty::ENCODING_ERROR, 2);
     pub const UUID_INVALID: BuiltinVariant = BuiltinVariant::new(ty::UUID_ERROR, 0);
     pub const UUID_OTHER: BuiltinVariant = BuiltinVariant::new(ty::UUID_ERROR, 1);
     pub const CSV_SYNTAX: BuiltinVariant = BuiltinVariant::new(ty::CSV_ERROR, 0);
@@ -700,7 +697,6 @@ pub mod bv {
     pub const HTTP_OTHER: BuiltinVariant = BuiltinVariant::new(ty::HTTP_ERROR, 6);
     pub const REGEX_INVALID_PATTERN: BuiltinVariant = BuiltinVariant::new(ty::REGEX_ERROR, 0);
     pub const REGEX_TOO_BIG: BuiltinVariant = BuiltinVariant::new(ty::REGEX_ERROR, 1);
-    pub const REGEX_OTHER: BuiltinVariant = BuiltinVariant::new(ty::REGEX_ERROR, 2);
     pub const PG_CONNECT: BuiltinVariant = BuiltinVariant::new(ty::POSTGRES_ERROR, 0);
     pub const PG_TLS: BuiltinVariant = BuiltinVariant::new(ty::POSTGRES_ERROR, 1);
     pub const PG_AUTH_FAILED: BuiltinVariant = BuiltinVariant::new(ty::POSTGRES_ERROR, 2);
@@ -725,7 +721,6 @@ pub mod bv {
     pub const BYTES_INVALID_HEX: BuiltinVariant = BuiltinVariant::new(ty::BYTES_ERROR, 1);
     pub const BYTES_INVALID_BASE64: BuiltinVariant = BuiltinVariant::new(ty::BYTES_ERROR, 2);
     pub const BYTES_BYTE_OUT_OF_RANGE: BuiltinVariant = BuiltinVariant::new(ty::BYTES_ERROR, 3);
-    pub const BYTES_OTHER: BuiltinVariant = BuiltinVariant::new(ty::BYTES_ERROR, 4);
     pub const PG_POOL: BuiltinVariant = BuiltinVariant::new(ty::PG_POOL, 0);
     pub const PG_TX: BuiltinVariant = BuiltinVariant::new(ty::PG_TX, 0);
     pub const PG_CURSOR: BuiltinVariant = BuiltinVariant::new(ty::PG_CURSOR, 0);
@@ -1082,18 +1077,15 @@ mod tests {
             (bv::INT_INVALID_DIGIT, "InvalidDigit"),
             (bv::INT_OVERFLOW, "Overflow"),
             (bv::INT_UNDERFLOW, "Underflow"),
-            (bv::INT_OTHER, "Other"),
             (bv::FLOAT_EMPTY, "Empty"),
             (bv::FLOAT_INVALID_DIGIT, "InvalidDigit"),
             (bv::FLOAT_OVERFLOW, "Overflow"),
             (bv::FLOAT_UNDERFLOW, "Underflow"),
             (bv::FLOAT_NOT_FINITE, "NotFinite"),
-            (bv::FLOAT_OTHER, "Other"),
             (bv::CRYPTO_INVALID_LENGTH, "InvalidLength"),
             (bv::CRYPTO_OTHER, "Other"),
             (bv::ENCODING_INVALID_PERCENT, "InvalidPercent"),
             (bv::ENCODING_INVALID_UTF8, "InvalidUtf8"),
-            (bv::ENCODING_OTHER, "Other"),
             (bv::UUID_INVALID, "Invalid"),
             (bv::UUID_OTHER, "Other"),
             (bv::CSV_SYNTAX, "Syntax"),
@@ -1111,7 +1103,6 @@ mod tests {
             (bv::HTTP_OTHER, "Other"),
             (bv::REGEX_INVALID_PATTERN, "InvalidPattern"),
             (bv::REGEX_TOO_BIG, "TooBig"),
-            (bv::REGEX_OTHER, "Other"),
             (bv::PG_CONNECT, "Connect"),
             (bv::PG_TLS, "Tls"),
             (bv::PG_AUTH_FAILED, "AuthFailed"),
@@ -1136,7 +1127,6 @@ mod tests {
             (bv::BYTES_INVALID_HEX, "InvalidHex"),
             (bv::BYTES_INVALID_BASE64, "InvalidBase64"),
             (bv::BYTES_BYTE_OUT_OF_RANGE, "ByteOutOfRange"),
-            (bv::BYTES_OTHER, "Other"),
             (bv::PG_POOL, "PgPool"),
             (bv::PG_TX, "PgTx"),
             (bv::PG_CURSOR, "PgCursor"),

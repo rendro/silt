@@ -1,0 +1,23 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: module 'int' has no member 'Other'
+-- stderr-contains: module 'float' has no member 'Other'
+-- stderr-contains: module 'regex' has no member 'Other'
+-- stderr-contains: module 'bytes' has no member 'Other'
+-- stderr-contains: module 'encoding' has no member 'Other'
+import bytes
+import encoding
+import float
+import int
+import io
+import regex
+
+fn main() {
+  println(int.Other("x"))
+  println(float.Other("x"))
+  println(regex.Other("x"))
+  println(bytes.Other("x"))
+  println(encoding.Other("x"))
+  -- io keeps it: the platform can report more than the list
+  println(io.Other("x"))
+}

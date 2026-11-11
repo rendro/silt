@@ -12,7 +12,6 @@ fn kind(e: float.FloatError) -> String {
     float.Overflow -> "Overflow"
     float.Underflow -> "Underflow"
     float.NotFinite -> "NotFinite"
-    float.Other(m) -> "Other({m})"
   }
 }
 

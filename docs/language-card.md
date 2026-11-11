@@ -367,7 +367,7 @@ string.trim_start(s: String) -> String
 ### int
 
 ```
-type IntError { Empty, InvalidDigit(Int), Overflow, Underflow, Other(String) }
+type IntError { Empty, InvalidDigit(Int), Overflow, Underflow }
 int.abs(n: Int) -> Int
 int.clamp(x: Int, lo: Int, hi: Int) -> Int
 int.max(a: Int, b: Int) -> Int
@@ -379,7 +379,7 @@ int.to_float(n: Int) -> Float
 ### float
 
 ```
-type FloatError { Empty, InvalidDigit(Int), Overflow, Underflow, NotFinite, Other(String) }
+type FloatError { Empty, InvalidDigit(Int), Overflow, Underflow, NotFinite }
 float.abs(f: Float) -> Float
 float.ceil(f: Float) -> Float
 float.clamp(x: Float, lo: Float, hi: Float) -> Float
@@ -535,7 +535,7 @@ task.spawn(f: Fn() -> a) -> Handle(a)
 ### regex
 
 ```
-type RegexError { InvalidPattern(String, Int), TooBig, Other(String) }
+type RegexError { InvalidPattern(String, Int), TooBig }
 regex.captures(text: String, pattern: String) -> Result(Option(List(String)), RegexError)
 regex.captures_all(text: String, pattern: String) -> Result(List(List(String)), RegexError)
 regex.captures_named(text: String, pattern: String) -> Result(Option(Map(String, String)), RegexError)
@@ -721,7 +721,7 @@ postgres.transact(pool: PgPool, f: Fn(PgTx) -> Result(a, PostgresError)) -> Resu
 ### bytes
 
 ```
-type BytesError { InvalidUtf8(Int), InvalidHex(String), InvalidBase64(String), ByteOutOfRange(Int), Other(String) }
+type BytesError { InvalidUtf8(Int), InvalidHex(String), InvalidBase64(String), ByteOutOfRange(Int) }
 bytes.concat(a: Bytes, b: Bytes) -> Bytes
 bytes.concat_all(parts: List(Bytes)) -> Bytes
 bytes.empty() -> Bytes
@@ -760,7 +760,7 @@ crypto.sha512(data: Bytes) -> Bytes
 ### encoding
 
 ```
-type EncodingError { InvalidPercent(String), InvalidUtf8(String), Other(String) }
+type EncodingError { InvalidPercent(String), InvalidUtf8(String) }
 encoding.form_decode(body: String) -> Result(List((String, String)), EncodingError)
 encoding.form_encode(pairs: List((String, String))) -> String
 encoding.url_decode(s: String) -> Result(String, EncodingError)

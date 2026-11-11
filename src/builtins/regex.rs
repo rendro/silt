@@ -14,7 +14,6 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
             format!("invalid regex pattern at position {pos}: {m}")
         }
         ("TooBig", []) => "compiled regex exceeds size budget".to_string(),
-        ("Other", [Value::String(m)]) => m.to_string(),
         _ => return None,
     })
 }
@@ -82,7 +81,13 @@ fn pattern_err(pattern: &str, error: &regex::Error) -> Value {
             )
         }
         regex::Error::CompiledTooBig(_) => Value::variant(bv::REGEX_TOO_BIG, []),
-        other => Value::variant(bv::REGEX_OTHER, [Value::String(other.to_string().into())]),
+        // The `regex` crate has no other error today; its enum is
+        // open, so a later one is a pattern that does not compile,
+        // at no place in it.
+        other => Value::variant(
+            bv::REGEX_INVALID_PATTERN,
+            [Value::String(other.to_string().into()), Value::Int(0)],
+        ),
     };
     Value::variant(bv::ERR, [variant])
 }

@@ -5,7 +5,6 @@ fn describe(e: int.IntError) -> String {
     int.InvalidDigit(off) -> "bad digit"
     int.Overflow -> "overflow"
     int.Underflow -> "underflow"
-    int.Other(_) -> "other"
   }
 }
 fn main() { println(describe(int.Empty)) }

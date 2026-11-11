@@ -16,8 +16,22 @@ fn the_builtin_scope_binds_the_prelude_and_the_registry_s_rows() {
     // A variant of a module's enum is bound through its enum only: two
     // modules may have a variant of one name.
     assert!(env.root.lookup(intern("Message")).is_none());
-    for name in ["HttpError.Timeout", "IntError.Other", "FloatError.Other"] {
+    for name in ["HttpError.Timeout", "IntError.Overflow", "IoError.Other"] {
         assert!(env.root.lookup(intern(name)).is_some(), "{name} is bound");
+    }
+    // `Other` is a variant only where the platform can report more
+    // than the list: no function of these five makes one.
+    for name in [
+        "IntError.Other",
+        "FloatError.Other",
+        "RegexError.Other",
+        "BytesError.Other",
+        "EncodingError.Other",
+    ] {
+        assert!(
+            env.root.lookup(intern(name)).is_none(),
+            "{name} is no variant"
+        );
     }
     // A builtin type is a value, its descriptor: one of a module through
     // its module only, one of the prelude by its name.

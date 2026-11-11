@@ -1,5 +1,6 @@
 -- Each module that can fail has one error enum, named after the module,
--- with variants that carry no prefix and a last variant `Other(String)`.
+-- with variants that carry no prefix and, where the platform can report more
+-- than the list, a last variant `Other(String)`.
 -- Every one has a `message`.
 import bytes
 import float
@@ -36,13 +37,9 @@ fn main() {
   println(io.inspect(bytes.from_hex("zz")))
   let last: List(String) = [
     show(io.Other("io")),
-    show(int.Other("int")),
-    show(float.Other("float")),
     show(json.Other("json")),
     show(toml.Other("toml")),
     show(time.Other("time")),
-    show(bytes.Other("bytes")),
-    show(regex.Other("regex")),
     show(http.Other("http")),
   ]
   println(last)

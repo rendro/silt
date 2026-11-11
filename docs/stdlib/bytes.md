@@ -108,7 +108,6 @@ for granular handling or fall back to `Error.message(e)`:
 | `InvalidHex(msg)` | `String` | `from_hex` on odd length / non-hex char |
 | `InvalidBase64(msg)` | `String` | `from_base64` on malformed input, or input without its `=` padding (`"aGVsbG8"` for `"aGVsbG8="`) |
 | `ByteOutOfRange(value)` | `Int` | `from_list` when an element is negative or `> 255` |
-| `Other(msg)` | `String` | unclassified failure |
 
 `bytes.get` is a lookup and returns an `Option`; `bytes.slice` clamps its
 indices to the length, as `string.slice` does, and returns `Bytes` (empty if

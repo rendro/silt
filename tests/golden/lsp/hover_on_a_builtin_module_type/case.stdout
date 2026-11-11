@@ -31,7 +31,6 @@ type int.IntError {
   InvalidDigit(Int),
   Overflow,
   Underflow,
-  Other(String),
 }
 ```
 
@@ -45,7 +44,6 @@ Returned by `int.parse`.
 | `InvalidDigit(Int)` | byte offset | non-digit character at offset |
 | `Overflow` | — | value exceeds type max |
 | `Underflow` | — | value below type min |
-| `Other(String)` | message | unclassified parse failure |
 > hover 58:16
 ```silt
 type float.FloatError {
@@ -54,7 +52,6 @@ type float.FloatError {
   Overflow,
   Underflow,
   NotFinite,
-  Other(String),
 }
 ```
 
@@ -70,7 +67,6 @@ in a type of its own (`float.Empty` is not `int.Empty`).
 | `Overflow` | — | literal above the `Float` range |
 | `Underflow` | — | literal below the `Float` range |
 | `NotFinite` | — | a spelled-out infinity or NaN (`"inf"`, `"NaN"`): a `Float` is always finite |
-| `Other(String)` | message | unclassified parse failure |
 > hover 59:15
 ```silt
 type list.Step(a) {
@@ -121,7 +117,6 @@ Returned by `task.deadline`.
 type regex.RegexError {
   InvalidPattern(String, Int),
   TooBig,
-  Other(String),
 }
 ```
 
@@ -133,7 +128,6 @@ Returned by every `regex.*` function for a pattern that does not compile.
 |---------|--------|---------|
 | `InvalidPattern(String, Int)` | what is wrong, and the character of the pattern where: counted from 0, as `string.slice` counts | pattern did not parse |
 | `TooBig` | — | compiled pattern exceeded size budget |
-| `Other(String)` | message | unclassified failure |
 > hover 65:15
 ```silt
 type json.JsonError {
@@ -367,7 +361,6 @@ type bytes.BytesError {
   InvalidHex(String),
   InvalidBase64(String),
   ByteOutOfRange(Int),
-  Other(String),
 }
 ```
 
@@ -379,7 +372,6 @@ type bytes.BytesError {
 | `InvalidHex(String)` | message | bad hex string |
 | `InvalidBase64(String)` | message | bad base64 string |
 | `ByteOutOfRange(Int)` | value | list element outside 0..=255 |
-| `Other(String)` | message | unclassified failure |
 > hover 81:18
 ```silt
 type crypto.CryptoError {
@@ -401,7 +393,6 @@ Returned by `crypto.random_bytes`.
 type encoding.EncodingError {
   InvalidPercent(String),
   InvalidUtf8(String),
-  Other(String),
 }
 ```
 
@@ -413,7 +404,6 @@ Returned by `encoding.url_decode` and `encoding.form_decode`.
 |---------|--------|---------|
 | `InvalidPercent(String)` | what and where | a `%` that two hex digits do not follow |
 | `InvalidUtf8(String)` | where | decoded bytes are not valid UTF-8 |
-| `Other(String)` | message | unclassified failure |
 > hover 83:16
 ```silt
 type uuid.UuidError {

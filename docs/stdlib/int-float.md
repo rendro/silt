@@ -102,7 +102,7 @@ int.parse(s: String) -> Result(Int, IntError)
 
 Parses a string as an integer. Leading/trailing whitespace is trimmed. Returns
 `Ok(n)` on success, `Err(IntError)` on failure — a typed enum with variants
-`Empty`, `InvalidDigit(offset)`, `Overflow`, `Underflow` and `Other(message)`.
+`Empty`, `InvalidDigit(offset)`, `Overflow` and `Underflow`.
 Match on the variant to handle specific cases, or fall back to `Error.message(e)` for
 a human-readable default.
 
@@ -128,7 +128,6 @@ fn main() {
     Err(int.InvalidDigit(i)) -> println("bad digit at byte {i}")
     Err(int.Overflow) -> println("too large")
     Err(int.Underflow) -> println("too small")
-    Err(int.Other(message)) -> println(message)
   }
 }
 ```
@@ -340,7 +339,7 @@ float.parse(s: String) -> Result(Float, FloatError)
 Parses a string as a float. Leading/trailing whitespace is trimmed. Returns
 `Ok(f)` on success, `Err(FloatError)` on failure — an enum of its own with
 the variants `int.parse` has (`Empty`, `InvalidDigit(offset)`, `Overflow`,
-`Underflow`, `Other(message)`) and `NotFinite`. A `Float` is always finite, so
+`Underflow`) and `NotFinite`. A `Float` is always finite, so
 `"NaN"` and `"inf"` are rejected as `NotFinite` ("not a finite number"), and a
 literal outside the `Float` range as `Overflow` (`"1e400"`, "number out of
 range: above float.max_value") or `Underflow` (`"-1e400"`, "number out of

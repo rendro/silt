@@ -79,7 +79,6 @@ fn parse_error_text(tag: &str, fields: &[Value]) -> Option<String> {
         }
         ("Overflow", []) => "number too large".to_string(),
         ("Underflow", []) => "number too small".to_string(),
-        ("Other", [Value::String(m)]) => m.to_string(),
         _ => return None,
     })
 }
