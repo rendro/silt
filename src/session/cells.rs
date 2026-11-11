@@ -95,6 +95,7 @@ impl CellInfo {
             dict_owners: checked.dict_owners.clone(),
             pattern_lets: checked.pattern_lets.clone(),
             held_types: checked.held_types.clone(),
+            run_refusals: Vec::new(),
         }
     }
 }

@@ -1,0 +1,13 @@
+-- cmd: repl
+-- stdin: import list\nlist.sum([])\nlist.product([])\n[list.sum([])]\nlet z = list.sum([])\nlet f = { -> list.sum([]) }\nf()\nlist.sequence([])\ntrait Unit { fn zero() -> Self }\ntrait Unit for Int { fn zero() -> Self { 0 } }\nfn s(xs: List(a)) -> a where a: Unit { a.zero() }\ns([])\nlet w = s([])\nlist.sum([1, 2])\nlet none: List(Float) = []\nlist.sum(none)\n:quit\n
+-- An entry's own code runs when the entry does, so a trait passed with a
+-- dictionary that nothing decides the type of is refused there, as in a
+-- file, not left to a later entry: a bare expression, a `let`'s value, a
+-- call of an earlier entry's closure. The session goes on.
+-- stderr-contains: cannot infer the type this use of 'list.sum' needs to implement trait 'Number'
+-- stderr-contains: cannot infer the type this use of 'list.product' needs to implement trait 'Number'
+-- stderr-contains: cannot infer the type this use of 'f' needs to implement trait 'Number'
+-- stderr-contains: cannot infer the type this use of 'list.sequence' needs to implement trait 'Applicative'
+-- stderr-contains: cannot infer the type this use of 's' needs to implement trait 'Unit'
+-- stderr-not-contains: error[runtime]
+-- stderr-not-contains: dictionary

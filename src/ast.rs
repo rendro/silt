@@ -914,6 +914,11 @@ pub struct Program {
     /// f(t) { List(t).mk(s) }`), by the span of its name: the type
     /// variable it holds; written by the typechecker.
     pub held_types: Vec<(Span, Type)>,
+    /// For a REPL input: what its own code would run with a dictionary
+    /// no type decides (`list.sum([])`), refused when the input is run,
+    /// not when only its type is asked (`:type`); written by the
+    /// typechecker.
+    pub run_refusals: Vec<crate::diagnostic::Diagnostic>,
 }
 
 /// What the parser saw of statements that the tree does not hold.

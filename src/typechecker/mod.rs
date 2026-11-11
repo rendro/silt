@@ -760,6 +760,9 @@ pub struct TypeChecker {
     /// Whether the module is a REPL cell: its `let`s are offered to the
     /// next cell, which may fix what is unknown of their types.
     pub(super) is_cell: bool,
+    /// For a REPL input: what its own code would run with a dictionary
+    /// no type decides (`Program::run_refusals`).
+    pub(super) run_refusals: Vec<Diagnostic>,
     /// The types the module names by their names: in a REPL cell its
     /// own and those of the earlier cells not declared again since,
     /// which a message writes by their names.
@@ -982,6 +985,7 @@ impl TypeChecker {
             impl_index: Default::default(),
             impl_met_index: HashMap::new(),
             is_cell: false,
+            run_refusals: Vec::new(),
             named_types: std::collections::HashSet::new(),
             signatures_only: false,
             registry_rows: false,
@@ -1293,14 +1297,124 @@ impl TypeChecker {
     fn leave_waiting(&mut self, program: &Program) {
         let earlier = std::mem::take(&mut self.taken_up);
         let own = |span: &Span| !earlier.contains(&span.file);
+        let wanted: Vec<_> = std::mem::take(&mut self.wanted)
+            .into_iter()
+            .filter(|w| !w.solved && own(&w.origin.span))
+            .collect();
+        let mut waits = Vec::new();
+        for w in wanted {
+            match self.runs_now_undecided(&w) {
+                Some(error) => self.run_refusals.push(error),
+                None => waits.push(w),
+            }
+        }
         let waiting = Waiting {
             decls: self.cell_decls(program),
-            wanted: std::mem::take(&mut self.wanted)
-                .into_iter()
-                .filter(|w| !w.solved && own(&w.origin.span))
-                .collect(),
+            wanted: waits,
         };
         self.tables.waiting.insert(self.module, waiting);
+    }
+
+    /// Refuse the bounds the function of a REPL entry's statements is
+    /// general in that pass a dictionary: the entry runs it with none
+    /// (`list.sum([])`, `s([])`, `f()` of `let f = { -> list.sum([]) }`
+    /// entered before), as `main` of a file would be refused. Each at the
+    /// use that owes it.
+    fn refuse_cell_bounds(&mut self, f: &FnDecl, scheme: &Scheme) {
+        let within = |outer: Span, inner: Span| {
+            outer.file == inner.file && outer.start <= inner.start && inner.end <= outer.end
+        };
+        let var_of = |checker: &Self, ty: &Type| match checker.apply(ty) {
+            Type::Var(v) => Some(checker.rigid_rep_var(v)),
+            Type::Rigid(r) => Some(checker.rigid_rep_var(r.var)),
+            _ => None,
+        };
+        let mut errors = Vec::new();
+        for pred in scheme
+            .preds
+            .iter()
+            .filter(|p| evidence::passes_dictionary(p))
+        {
+            let Pred::Trait {
+                tr, args, subject, ..
+            } = pred
+            else {
+                continue;
+            };
+            let var = var_of(self, subject);
+            let mut at: Vec<(Span, Option<Symbol>)> = (self.wanted.iter())
+                .filter(|w| within(f.span, w.origin.span) || within(f.body.span, w.origin.span))
+                .filter(|w| match &w.goal {
+                    Goal::Pred(Pred::Trait {
+                        tr: t, subject: s, ..
+                    }) => t == tr && var.is_some() && var_of(self, s) == var,
+                    _ => false,
+                })
+                .map(|w| (w.origin.span, w.origin.callee))
+                .collect();
+            at.sort_by_key(|(span, _)| span.start);
+            at.dedup_by_key(|(span, _)| *span);
+            if at.is_empty() {
+                at.push((f.body.span, None));
+            }
+            let bound = self.show_bound(*tr, args);
+            for (span, callee) in at {
+                let what = match callee {
+                    Some(callee) => format!("this use of '{callee}'"),
+                    None => "this".to_string(),
+                };
+                errors.push(
+                    Diagnostic::error(
+                        Code::AmbiguousType,
+                        span,
+                        format!("cannot infer the type {what} needs to implement trait '{bound}'"),
+                    )
+                    .with_help("annotate the value it is given"),
+                );
+            }
+        }
+        self.run_refusals.extend(errors);
+    }
+
+    /// The refusal of a check the cell would leave waiting that its own
+    /// code needs now: a trait passed with a dictionary, owed on a type
+    /// nothing has decided, by code outside every function and closure
+    /// of the cell (`list.sum([])`, `let z = s([])`). That code runs when
+    /// the cell does, before any later cell can decide the type, so it is
+    /// refused as in a file. (In a function or closure it waits: a later
+    /// cell may decide the type before the code runs.)
+    fn runs_now_undecided(&self, w: &Wanted) -> Option<Diagnostic> {
+        let Goal::Pred(Pred::Trait {
+            tr, args, subject, ..
+        }) = &w.goal
+        else {
+            return None;
+        };
+        let span = w.origin.span;
+        let within = |outer: Span| {
+            outer.file == span.file && outer.start <= span.start && span.end <= outer.end
+        };
+        if w.in_scheme
+            || !evidence::has_dictionary(*tr)
+            || !matches!(self.apply(subject), Type::Var(_))
+            || self.fn_spans.iter().any(|site| within(site.span))
+            || self.closure_spans.iter().any(|(at, _)| within(*at))
+        {
+            return None;
+        }
+        let bound = self.show_bound(*tr, args);
+        let what = match w.origin.callee {
+            Some(callee) => format!("this use of '{callee}'"),
+            None => "this".to_string(),
+        };
+        Some(
+            Diagnostic::error(
+                Code::AmbiguousType,
+                span,
+                format!("cannot infer the type {what} needs to implement trait '{bound}'"),
+            )
+            .with_help("annotate the value it is given"),
+        )
     }
 
     /// A check an earlier cell left waiting that this cell fails is this
@@ -1804,6 +1918,9 @@ impl TypeChecker {
                 self.passing_on = Some(f.name);
                 let mut scheme = self.generalize_fn(&sig.ty(), &bounds);
                 self.passing_on = None;
+                if crate::session::is_cell_name(&resolve(f.name)) {
+                    self.refuse_cell_bounds(f, &scheme);
+                }
                 // A return type written is held to its parameters as it
                 // is read (`register_fn_decl`); one inferred, here. (The
                 // function of a REPL entry's statements is no function a
@@ -2224,6 +2341,7 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
     if checker.is_cell {
         checker.report_at_cell(program);
         checker.leave_waiting(program);
+        program.run_refusals = std::mem::take(&mut checker.run_refusals);
     }
     checker.settle_rows();
     checker.settle_builtin_needs();
