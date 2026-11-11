@@ -169,13 +169,6 @@ pub(super) fn returns(f: &FnDecl) -> (HostShape, Vec<HostVar>) {
                 source.of_type = true;
                 vars[var].sources.push(source);
             }
-        } else if let Some(var) = param.ty.as_ref().and_then(type_of_variable) {
-            // `x: TypeOf(a)`, the type `type a` gives its parameter,
-            // written out: the type argument of the call, as of `type a`.
-            if let Some(var) = index(var, false) {
-                source.of_type = true;
-                vars[var].sources.push(source);
-            }
         } else if let Some(ty) = &param.ty {
             sources_in(ty, &mut source, &index, &mut vars);
         }
@@ -229,6 +222,17 @@ fn sources_in(
         sources_in(ty, source, index, vars);
         source.path.pop();
     };
+    // `TypeOf(a)`, the type `type a` gives its parameter, written out:
+    // the type a call gives there, as of `type a`, at its place
+    // (`t: TypeOf(a)`, `o: Option(TypeOf(a))`).
+    if let Some(var) = type_of_variable(ty) {
+        if let Some(var) = index(var, false) {
+            let mut at = source.clone();
+            at.of_type = true;
+            vars[var].sources.push(at);
+        }
+        return;
+    }
     match &ty.kind {
         TypeExprKind::Named {
             module: None, name, ..

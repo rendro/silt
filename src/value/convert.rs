@@ -41,10 +41,11 @@ pub struct HostVar {
 
 /// A place among a host function's parameters where the type of a
 /// variable shows: the parameter `param` (its name `name`, none when
-/// it is written as a pattern), then the
-/// parts `path` of its value. A `type a` parameter is the type itself
-/// (`of_type`). For a row variable, the place is a record, and `written`
-/// are the fields its type writes: the others are the row's.
+/// it is written as a pattern), then the parts `path` of its value. A
+/// `type a` parameter is the type itself (`of_type`), and so is the
+/// value at the place of a `TypeOf(a)` (`t: TypeOf(a)`, `o:
+/// Option(TypeOf(a))`). For a row variable, the place is a record, and
+/// `written` are the fields its type writes: the others are the row's.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostSource {
     pub param: usize,
@@ -168,14 +169,17 @@ impl<'h> Witnesses<'h, '_> {
         host.vars.get(at)?.sources.iter().find_map(|source| {
             let mut budget = SAME_TYPE_PARTS;
             let arg = self.args.get(source.param)?;
-            let value = match source.of_type {
-                true => matches!(
-                    arg,
+            let value = found_at(arg, &source.path, &mut budget)?;
+            // (A type given as a value, at its place: `t: TypeOf(a)`,
+            // `o: Option(TypeOf(a))`.)
+            if source.of_type
+                && !matches!(
+                    value,
                     Value::TypeDescriptor(_) | Value::PrimitiveDescriptor(_)
                 )
-                .then(|| arg.clone())?,
-                false => found_at(arg, &source.path, &mut budget)?,
-            };
+            {
+                return None;
+            }
             Some(Witness { value, source })
         })
     }
