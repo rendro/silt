@@ -40,10 +40,11 @@ pub(super) struct TraitInfo {
     /// signatures via `substitute_vars`. Parallel to `params`.
     pub(super) param_var_ids: Vec<TyVar>,
     /// Bounds declared directly on trait params, e.g.
-    /// `trait HashTable(k) where k: Hash`. Each `(param_name, trait_name)`
-    /// entry is checked at `register_trait_impl` against the concrete
-    /// type the impl supplies for that param.
-    pub(super) param_where_clauses: Vec<(Symbol, TraitKey)>,
+    /// `trait HashTable(k) where k: Hash`, `where k: Conv(Int)`. Each
+    /// `(param_name, trait_name, trait_args)` entry is checked against
+    /// the type the impl supplies for that param; the trait arguments are
+    /// written with the trait's parameters (`param_var_ids`).
+    pub(super) param_where_clauses: Vec<(Symbol, TraitKey, Vec<Type>)>,
     /// Supertrait names (e.g. `trait Ordered: Equal` yields `[Equal]`).
     /// Implementing this trait on a type requires every supertrait to also
     /// be implemented for the same type (validated in

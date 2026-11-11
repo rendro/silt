@@ -1,0 +1,52 @@
+-- cmd: check
+-- exit: 1
+-- A trait's bound on its parameter with trait arguments (`trait Tbl(k)
+-- where k: Conv(Int)`) is asked of each impl at those arguments: a
+-- concrete trait argument must have it, and a generic impl's header must
+-- give it. (The arguments were dropped: `Tbl(String) for Int` was
+-- accepted with `String` having `Conv(String)` only, and the default body
+-- added 1 to a String.)
+trait Conv(r) {
+  fn conv(self) -> r
+}
+
+trait Conv(Int) for Int {
+  fn conv(self) -> Int {
+    self
+  }
+}
+
+trait Conv(String) for String {
+  fn conv(self) -> String {
+    self
+  }
+}
+
+trait Tbl(k) where k: Conv(Int) {
+  fn key(self) -> k
+  fn show(self) -> Int {
+    Conv.conv(Tbl.key(self)) + 1
+  }
+}
+
+type B(a) {
+  B(a),
+}
+
+trait Tbl(String) for Int {
+  fn key(self) -> String {
+    "s"
+  }
+}
+
+trait Tbl(a) for B(a) where a: Conv(String) {
+  fn key(self) -> a {
+    match self {
+      B(x) -> x
+    }
+  }
+}
+
+fn main() {
+  println(1)
+}

@@ -1,0 +1,12 @@
+error[type]: type 'String' does not implement trait 'Conv(Int)': the matched impl is 'Conv(String)'
+ --> trait_parameter_bound__with_trait_arguments.silt:36:1
+    |
+ 36 | trait Tbl(String) for Int {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^ type 'String' does not implement trait 'Conv(Int)': the matched impl is 'Conv(String)'
+
+error[type]: type 'B(a)' implements 'Tbl(a)', whose argument 'a' must implement 'Conv(Int)' (trait 'Tbl' declares `where k: Conv(Int)`)
+ --> trait_parameter_bound__with_trait_arguments.silt:42:1
+    |
+ 42 | trait Tbl(a) for B(a) where a: Conv(String) {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type 'B(a)' implements 'Tbl(a)', whose argument 'a' must implement 'Conv(Int)' (trait 'Tbl' declares `where k: Conv(Int)`)
+  = help: add `where a: Conv(Int)` to the impl
