@@ -7,10 +7,10 @@
 
 use parking_lot::Mutex;
 use std::collections::BTreeMap;
-use std::sync::Arc;
 #[cfg(any(test, feature = "test-hooks"))]
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use super::channel::{Channel, Close};
@@ -34,8 +34,10 @@ enum Action {
     Fire(Arc<Token>),
     /// The deadline of the task that waits.
     Expire(Arc<Token>),
-    /// A channel that closes at a set time (`channel.timeout`).
-    Close(Arc<Channel>),
+    /// A channel that closes at a set time (`channel.timeout`). The
+    /// entry does not hold it: one that nobody has is not closed, and
+    /// as it is dropped it takes the entry out ([`Timer::close_at`]).
+    Close(Weak<Channel>),
 }
 
 #[derive(Default)]
@@ -123,19 +125,29 @@ impl Timer {
 
     /// Close `channel` at `deadline`. From now on the channel says
     /// so ([`Channel::closes_by_timer`]): a task that waits on it has
-    /// a wait that will end.
-    pub fn close_at(&self, deadline: Duration, channel: Arc<Channel>) -> TimerId {
-        channel.set_closes_by_timer();
-        self.arm(deadline, Action::Close(channel))
+    /// a wait that will end. If the channel is dropped before then,
+    /// the entry goes with it: a timeout that lost its select is not
+    /// kept until its time.
+    pub fn close_at(self: &Arc<Self>, deadline: Duration, channel: &Arc<Channel>) -> TimerId {
+        let id = self.arm(deadline, Action::Close(Arc::downgrade(channel)));
+        channel.set_timer(Arc::downgrade(self), id);
+        id
     }
 
     /// Take an entry out before its time. `false` when it has fired.
     pub fn disarm(&self, id: TimerId) -> bool {
-        let removed = self.entries.lock().by_deadline.remove(&id).is_some();
-        if removed {
+        // What the entry held is dropped after the lock is released.
+        let removed = self.entries.lock().by_deadline.remove(&id);
+        if removed.is_some() {
             self.pending.fetch_sub(1, Ordering::SeqCst);
         }
-        removed
+        removed.is_some()
+    }
+
+    /// How many entries are armed.
+    #[cfg(test)]
+    pub fn armed(&self) -> usize {
+        self.entries.lock().by_deadline.len()
     }
 
     /// How many entries are still to happen. An entry counts until what
@@ -205,7 +217,9 @@ impl Timer {
                     }
                 }
                 Action::Close(channel) => {
-                    channel.close(Close::default(), wake);
+                    if let Some(channel) = channel.upgrade() {
+                        channel.close(Close::default(), wake);
+                    }
                 }
             }
         }

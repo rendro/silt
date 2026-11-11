@@ -828,7 +828,7 @@ fn the_timer_closes_a_channel_at_its_time() {
     let ch = Channel::new(0, 0);
     let deadline = d.timer.deadline_after(10 * MS).unwrap();
     assert!(!ch.closes_by_timer());
-    let id = d.timer.close_at(deadline, ch.clone());
+    let id = d.timer.close_at(deadline, &ch);
     assert!(ch.closes_by_timer());
     assert_eq!(id.deadline(), deadline);
     assert!(d.block(1, recv(&ch)).is_none());
@@ -840,9 +840,26 @@ fn the_timer_closes_a_channel_at_its_time() {
     assert_eq!(d.timer.pending(), 0);
     assert!(!d.timer.disarm(id));
 
-    let id = d.timer.close_at(d.timer.now() + MS, Channel::new(1, 0));
+    let held = Channel::new(1, 0);
+    let id = d.timer.close_at(d.timer.now() + MS, &held);
     assert!(d.timer.disarm(id));
     assert_eq!(d.timer.pending(), 0);
+}
+
+/// A channel that a timer is to close and that nobody has any more
+/// takes its entry out of the timer as it is dropped: a timeout that
+/// lost its select is not kept until its time.
+#[test]
+fn a_dropped_channel_takes_its_timer_entry_out() {
+    let d = Double::new();
+    let deadline = d.timer.deadline_after(10 * MS).unwrap();
+    let ch = Channel::new(0, 0);
+    let id = d.timer.close_at(deadline, &ch);
+    assert_eq!((d.timer.armed(), d.timer.pending()), (1, 1));
+    drop(ch);
+    assert_eq!((d.timer.armed(), d.timer.pending()), (0, 0));
+    assert!(!d.timer.disarm(id));
+    assert_eq!(d.advance(10 * MS), 0);
 }
 
 #[test]
@@ -1059,6 +1076,18 @@ fn nothing_is_completed_for_a_waiter_once_its_flag_is_set() {
 /// A registry on the double's timer whose tasks are numbers, and the
 /// tasks it has handed back.
 type Ready = Arc<parking_lot::Mutex<Vec<(u64, Resumed)>>>;
+
+/// The tasks of these tests, whatever their number, are of one kind.
+static NUMBERS: Counts = Counts {
+    waiting: std::sync::atomic::AtomicUsize::new(0),
+    ending: std::sync::atomic::AtomicUsize::new(0),
+};
+
+impl Counted for u64 {
+    fn counts(&self) -> &Counts {
+        &NUMBERS
+    }
+}
 
 fn parking(d: &Double) -> (Arc<Parking<u64>>, Ready) {
     let ready = Ready::default();

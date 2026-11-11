@@ -751,12 +751,8 @@ fn report_task_failures(repl: &Repl) {
     for failure in &taken.failures {
         texts.push(repl.render(&failure.report_error().to_diagnostic()));
     }
-    for (_, count) in &taken.not_kept {
-        texts.push(repl.render(&Diagnostic::error(
-            crate::diagnostic::Code::UnjoinedTaskFailure,
-            Span::BUILTIN,
-            crate::scheduler::UnjoinedFailures::not_kept_message(*count),
-        )));
+    for not_shown in &taken.not_shown {
+        texts.push(repl.render(&not_shown.diagnostic()));
     }
     crate::scheduler::report(|| {
         for text in &texts {

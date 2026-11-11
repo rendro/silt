@@ -71,7 +71,9 @@ use std::thread;
 use std::time::Duration;
 
 use crate::runtime::handle::{StageOf, TaskHandle};
-use crate::runtime::sync::{self, Channel, Fired, Parking, Resumed, Source, TaskId, Wait, Waiting};
+use crate::runtime::sync::{
+    self, Channel, Counted, Counts, Fired, Parking, Resumed, Source, TaskId, Wait, Waiting,
+};
 use crate::source::Span;
 use crate::value::Value;
 use crate::vm::{HostIo, Vm, VmError};
@@ -110,10 +112,11 @@ pub const WORKER_STACK_BYTES: usize = if cfg!(target_pointer_width = "64") {
     16 * 1024 * 1024
 };
 
-/// Upper bound on the failed tasks kept for the report of failures that
-/// nobody joined. A long-running program whose tasks keep failing must
-/// not grow without bound; what goes beyond the bound is counted.
-const MAX_RECORDED_FAILURES: usize = 64;
+/// How many failures that nobody joined are shown for each owner; the
+/// rest are counted. Past these, a failure is kept only while the
+/// program can still join or cancel its task: a long-running program
+/// whose tasks keep failing must not grow without bound.
+const MAX_SHOWN_FAILURES: usize = 64;
 
 /// Parse a duration string like `"30s"`, `"500ms"`, `"5m"`, `"2h"`, or
 /// `"none"`/empty. Returns `None` for disabled/invalid input — the caller
@@ -183,6 +186,10 @@ struct Group {
     /// fewer than those that wait. A look without a lock that spares
     /// most of the exact ones.
     parking: AtomicUsize,
+    /// Those that wait, as the registry counts them: a second look
+    /// without a lock, which spares the exact one unless every task
+    /// waits and no wait will end ([`Inner::check`]).
+    waits: Counts,
     /// Set while its tasks are being stopped
     /// ([`Scheduler::stop_tasks`]): none of them runs another slice
     /// or enters a wait.
@@ -204,6 +211,16 @@ enum Sleeper {
     Task(Task),
     /// A thread that runs silt code of its own: it is told.
     Thread(Arc<ThreadPark>),
+}
+
+impl Counted for Sleeper {
+    /// A sleeper is counted with the tasks of its owner.
+    fn counts(&self) -> &Counts {
+        match self {
+            Sleeper::Task(task) => &task.group.waits,
+            Sleeper::Thread(park) => &park.group.waits,
+        }
+    }
 }
 
 /// Where a thread that waits finds how its wait ended, and sleeps
@@ -695,7 +712,7 @@ impl Scheduler {
 
     /// Close `channel` when the clock reads `deadline`. Until then a
     /// task that waits on the channel has a wait that will end.
-    pub(crate) fn close_at(&self, deadline: Duration, channel: Arc<Channel>) {
+    pub(crate) fn close_at(&self, deadline: Duration, channel: &Arc<Channel>) {
         let timer = self.inner.parking.timer();
         timer.close_at(deadline, channel);
         self.inner.timer_armed();
@@ -1642,6 +1659,7 @@ impl Inner {
                 live: AtomicUsize::new(0),
                 external: AtomicUsize::new(0),
                 parking: AtomicUsize::new(0),
+                waits: Counts::default(),
                 stopped: AtomicBool::new(false),
             })
         });
@@ -2247,6 +2265,18 @@ impl Inner {
         if group.external.load(Ordering::SeqCst) > 0 {
             return;
         }
+        // A second look without a lock, at what the registry counts:
+        // a stop needs every live task to wait, and no wait that will
+        // end. Most waits end here, while other tasks run or sleep, so
+        // a wait costs the same however many tasks wait besides. (The
+        // counts of a wait are kept before its check is called, so the
+        // check of the last event before a stop sees them all.)
+        let sum = |of: fn(&Group) -> &AtomicUsize| -> usize {
+            main.groups().map(|g| of(g).load(Ordering::SeqCst)).sum()
+        };
+        if sum(|g| &g.waits.waiting) != sum(|g| &g.live) || sum(|g| &g.waits.ending) > 0 {
+            return;
+        }
         // The exact look: with the registry held, nothing parks or
         // wakes, and the counts are of the same moment.
         let stopped = self.parking.inspect(|waiting| {
@@ -2562,58 +2592,178 @@ fn fire_timers(inner: &Inner) {
     }
 }
 
-/// Failed tasks kept for the report of failures that nobody joined, up
-/// to `MAX_RECORDED_FAILURES` for each owner: the many failures of one
-/// test do not push out the failure of another. Each scheduler has
-/// one; while the failures are collected (`collect_unjoined_failures`),
-/// the one of the process is used instead.
+/// Failed tasks kept for the report of failures that nobody joined,
+/// per owner. Each scheduler has one; while the failures are collected
+/// (`collect_unjoined_failures`), the one of the process is used
+/// instead.
 #[derive(Default)]
 struct FailedTasks {
-    /// Per owner tag, the handles of tasks that ended with an error,
-    /// in the order of their failures. Whether a join has received the
-    /// error since, or a cancel has dismissed it, is read from the
-    /// handle at report time.
-    handles: BTreeMap<u64, Vec<Arc<TaskHandle>>>,
-    /// Per owner tag, the number of failed tasks that were not recorded
-    /// because the owner's handles were full of failures that nobody
-    /// had joined.
-    not_recorded: BTreeMap<u64, usize>,
+    owners: BTreeMap<u64, Failed>,
+    /// Test-only: the most handles one owner's record has held.
+    #[cfg(test)]
+    most_held: usize,
+}
+
+/// The failed tasks of one owner.
+#[derive(Default)]
+struct Failed {
+    /// The handles of tasks that ended with an error, in the order of
+    /// their failures. Whether a join has received the error since, or
+    /// a cancel has dismissed it, is read from the handle at report
+    /// time. Kept: each one that nobody has handled and whose handle
+    /// the program still has, and of the others the first
+    /// `MAX_SHOWN_FAILURES` ([`Failed::count_unreachable`]).
+    handles: Vec<Arc<TaskHandle>>,
+    /// How many of the kept handles the program held at the last
+    /// sweep. The next sweep comes
+    /// when there are as many again besides: a program that holds its
+    /// failed tasks pays little per failure, and one that lets them go
+    /// keeps the record at about `MAX_SHOWN_FAILURES`.
+    held: usize,
+    /// The failures past those kept that nothing could handle any
+    /// more: they are only counted.
+    counted: usize,
+    /// Where the first of those was spawned, if that is a place in the
+    /// program.
+    first_counted: Option<crate::source::Span>,
+}
+
+impl Failed {
+    /// The first half of a sweep: let go of each handle whose failure
+    /// has been joined or cancelled, and of a second entry of a handle
+    /// (a failure that went back to its task, `Inner::hand_back`, is
+    /// recorded again). Returns the handles let go: dropped by the
+    /// caller after it has released the lock, they no longer count as
+    /// holders of the tasks whose failures they took, which the second
+    /// half reads ([`Failed::count_unreachable`]).
+    fn let_go_handled(&mut self) -> Vec<Arc<TaskHandle>> {
+        // (A second entry is dropped here: the first one holds the
+        // handle, so nothing of it is freed under the lock.)
+        let mut seen = std::collections::HashSet::with_capacity(self.handles.len());
+        self.handles
+            .retain(|handle| seen.insert(Arc::as_ptr(handle)));
+        let (kept, gone) = std::mem::take(&mut self.handles)
+            .into_iter()
+            .partition(|handle| handle.has_unjoined_failure());
+        self.handles = kept;
+        gone
+    }
+
+    /// The second half of a sweep. Of the failures that nobody has
+    /// handled, keep each whose handle the program still has (it may
+    /// join or cancel it yet), and the first `MAX_SHOWN_FAILURES` of
+    /// those that only the record holds: they are the errors the
+    /// report can show. Every other one can never be joined or
+    /// cancelled any more, so its failure is counted at once. Returns
+    /// the handles let go.
+    fn count_unreachable(&mut self) -> Vec<Arc<TaskHandle>> {
+        let mut gone = Vec::new();
+        let mut kept = Vec::with_capacity(self.handles.len());
+        let mut only_here = 0;
+        self.held = 0;
+        for handle in std::mem::take(&mut self.handles) {
+            if !handle.has_unjoined_failure() {
+                gone.push(handle);
+            } else if Arc::strong_count(&handle) > 1 {
+                self.held += 1;
+                kept.push(handle);
+            } else if only_here < MAX_SHOWN_FAILURES {
+                only_here += 1;
+                kept.push(handle);
+            } else {
+                if handle.take_unjoined_failure().is_some() {
+                    self.counted += 1;
+                    if self.first_counted.is_none() {
+                        self.first_counted = handle.spawn_site().map(|(at, _)| at);
+                    }
+                }
+                gone.push(handle);
+            }
+        }
+        self.handles = kept;
+        gone
+    }
 }
 
 impl FailedTasks {
     /// Keep the handle of a task that ended with an error. Returns the
-    /// handles that were let go to make room (failures that have been
-    /// joined or cancelled since they were kept); the caller drops them
-    /// after it has released the lock on the record.
-    fn record(&mut self, handle: &Arc<TaskHandle>) -> Vec<Arc<TaskHandle>> {
-        let owner = handle.owner();
-        let kept = self.handles.entry(owner).or_default();
-        let mut handled_since = Vec::new();
-        if kept.len() >= MAX_RECORDED_FAILURES {
-            let (unhandled, handled): (Vec<_>, Vec<_>) = std::mem::take(kept)
-                .into_iter()
-                .partition(|h| h.has_unjoined_failure());
-            *kept = unhandled;
-            handled_since = handled;
+    /// handles that were let go (the first half of a sweep), which the
+    /// caller drops after it has released the lock on the record, and
+    /// whether the second half is to follow then
+    /// ([`FailedTasks::count_unreachable`]).
+    fn record(&mut self, handle: &Arc<TaskHandle>) -> (Vec<Arc<TaskHandle>>, bool) {
+        let failed = self.owners.entry(handle.owner()).or_default();
+        let mut let_go = Vec::new();
+        let sweep = failed.handles.len() >= MAX_SHOWN_FAILURES + 2 * failed.held;
+        if sweep {
+            let_go = failed.let_go_handled();
         }
-        if kept.len() >= MAX_RECORDED_FAILURES {
-            *self.not_recorded.entry(owner).or_insert(0) += 1;
-        } else {
-            kept.push(handle.clone());
+        failed.handles.push(handle.clone());
+        #[cfg(test)]
+        {
+            self.most_held = self.most_held.max(failed.handles.len());
         }
-        handled_since
+        (let_go, sweep)
     }
 
-    /// Empty the record, and return what it held.
-    fn take(&mut self) -> (Vec<Arc<TaskHandle>>, BTreeMap<u64, usize>) {
-        (
-            std::mem::take(&mut self.handles)
-                .into_values()
-                .flatten()
-                .collect(),
-            std::mem::take(&mut self.not_recorded),
-        )
+    /// The second half of the sweep of `owner`'s failures
+    /// ([`Failed::count_unreachable`]); the caller drops the handles
+    /// let go after it has released the lock.
+    fn count_unreachable(&mut self, owner: u64) -> Vec<Arc<TaskHandle>> {
+        match self.owners.get_mut(&owner) {
+            Some(failed) => failed.count_unreachable(),
+            None => Vec::new(),
+        }
     }
+
+    /// Empty the record, and give out each failure it held that no
+    /// join has received and no cancel has dismissed, once: up to
+    /// `MAX_SHOWN_FAILURES` of each owner with their errors, in the
+    /// order of the owners and then of the failures; of the rest, per
+    /// owner, how many there are. The handles are dropped by the
+    /// caller, after it has released the lock on the record.
+    fn take(&mut self) -> Given {
+        let mut given = Given::default();
+        for (owner, failed) in std::mem::take(&mut self.owners) {
+            let mut shown = 0;
+            let mut not_shown = (failed.counted > 0).then_some(NotShown {
+                owner,
+                count: failed.counted,
+                first_spawned: failed.first_counted,
+            });
+            for handle in failed.handles {
+                match handle.take_unjoined_failure() {
+                    Some(error) if shown < MAX_SHOWN_FAILURES => {
+                        shown += 1;
+                        given.shown.push((handle, error));
+                    }
+                    Some(_) => {
+                        let first = not_shown.get_or_insert_with(|| NotShown {
+                            owner,
+                            count: 0,
+                            first_spawned: handle.spawn_site().map(|(at, _)| at),
+                        });
+                        first.count += 1;
+                        given.rest.push(handle);
+                    }
+                    None => given.rest.push(handle),
+                }
+            }
+            given.not_shown.extend(not_shown);
+        }
+        given
+    }
+}
+
+/// What [`FailedTasks::take`] gives out.
+#[derive(Default)]
+struct Given {
+    /// The failures to show: each task's handle, and its error.
+    shown: Vec<(Arc<TaskHandle>, VmError)>,
+    /// Per owner, how many more failures there were.
+    not_shown: Vec<NotShown>,
+    /// The other handles, to be dropped with the rest.
+    rest: Vec<Arc<TaskHandle>>,
 }
 
 /// Keep the handle of a task that ended with an error, for the report
@@ -2625,20 +2775,25 @@ fn record_failed_task(inner: &Inner, handle: &Arc<TaskHandle>) {
     if inner.exit.get().is_some() {
         return;
     }
-    let handled_since = if COLLECTING.load(Ordering::SeqCst) {
-        collected_failures().lock().record(handle)
-    } else {
-        inner.failed_tasks.lock().record(handle)
+    let record = match COLLECTING.load(Ordering::SeqCst) {
+        true => collected_failures(),
+        false => &inner.failed_tasks,
     };
-    // Dropped after the lock has been released.
+    let (handled_since, sweep) = record.lock().record(handle);
+    // Dropped after the lock has been released: from then on they hold
+    // no task whose failure they took.
     drop(handled_since);
+    if sweep {
+        let unreachable = record.lock().count_unreachable(handle.owner());
+        drop(unreachable);
+    }
 }
 
 /// Report on stderr every recorded task of this scheduler that failed,
 /// whose error no join has received and that no cancel has dismissed.
 /// A failure is reported once: the record is emptied and each handle
 /// gives its error out once. Returns the number of failures that this
-/// call reported, those that were counted but not kept included.
+/// call reported, those that were counted but not shown included.
 ///
 /// The report has no file name and no source line: the scheduler knows
 /// neither, so it renders through a source map with no files. A front end
@@ -2651,7 +2806,7 @@ fn report_unjoined_failures(inner: &Inner) -> usize {
     if ENDING.load(Ordering::SeqCst) == WITH_INTERNAL_ERROR {
         return 0;
     }
-    let (handles, not_recorded) = inner.failed_tasks.lock().take();
+    let given = inner.failed_tasks.lock().take();
     // (Nor after a `process.exit` that ended the run: what had failed
     // before it is dropped.)
     if inner.exit.get().is_some() {
@@ -2661,10 +2816,7 @@ fn report_unjoined_failures(inner: &Inner) -> usize {
     let no_files = crate::source::SourceMap::new();
     let mut reported = 0;
     let mut report = String::new();
-    for handle in &handles {
-        let Some(error) = handle.take_unjoined_failure() else {
-            continue;
-        };
+    for (handle, error) in given.shown {
         reported += 1;
         // (No file to show the place of the spawn in: the task is
         // named by its id.)
@@ -2680,13 +2832,13 @@ fn report_unjoined_failures(inner: &Inner) -> usize {
         report.push_str(&crate::diagnostic::render_human(&no_files, &d));
         report.push('\n');
     }
-    let not_recorded: usize = not_recorded.values().sum();
-    if not_recorded > 0 {
-        reported += not_recorded;
+    let not_shown: usize = given.not_shown.iter().map(|n| n.count).sum();
+    if not_shown > 0 {
+        reported += not_shown;
         let d = crate::diagnostic::Diagnostic::error(
             crate::diagnostic::Code::UnjoinedTaskFailure,
             crate::source::Span::BUILTIN,
-            UnjoinedFailures::not_kept_message(not_recorded),
+            UnjoinedFailures::not_shown_message(not_shown),
         );
         report.push_str(&crate::diagnostic::render_human(&no_files, &d));
         report.push('\n');
@@ -2849,27 +3001,57 @@ impl UnjoinedFailure {
 /// them out.
 #[derive(Debug, Default)]
 pub struct UnjoinedFailures {
-    /// The failures whose errors were kept, in the order in which the
-    /// tasks failed.
+    /// The failures to show, in the order in which the tasks failed:
+    /// at most `MAX_SHOWN_FAILURES` of each owner.
     pub failures: Vec<UnjoinedFailure>,
-    /// Per owner tag, the number of failed tasks whose errors were not
-    /// kept: at most `MAX_RECORDED_FAILURES` unjoined failures are kept
-    /// at a time.
-    pub not_kept: Vec<(u64, usize)>,
+    /// Per owner, the failed tasks that are not shown.
+    pub not_shown: Vec<NotShown>,
 }
+
+/// The failures of one owner's tasks beyond the `MAX_SHOWN_FAILURES`
+/// that are shown.
+#[derive(Debug, Clone)]
+pub struct NotShown {
+    /// The owner tag the tasks were spawned under.
+    pub owner: u64,
+    /// How many failed.
+    pub count: usize,
+    /// Where the first of them was spawned, if that is a place in the
+    /// program.
+    pub first_spawned: Option<crate::source::Span>,
+}
+
+impl NotShown {
+    /// The report of these failures, at the place where the first of
+    /// them was spawned.
+    pub fn diagnostic(&self) -> crate::diagnostic::Diagnostic {
+        let at = self.first_spawned.unwrap_or(crate::source::Span::BUILTIN);
+        crate::diagnostic::Diagnostic::error(
+            crate::diagnostic::Code::UnjoinedTaskFailure,
+            at,
+            UnjoinedFailures::not_shown_message(self.count),
+        )
+        .with_help(NOT_SHOWN_HELP)
+    }
+}
+
+/// What the report of the failures that are not shown advises.
+const NOT_SHOWN_HELP: &str = "the first of them was spawned here: join each task with \
+     task.join, or cancel it with task.cancel if you don't need its result";
 
 impl UnjoinedFailures {
     /// True if there is nothing to report.
     pub fn is_empty(&self) -> bool {
-        self.failures.is_empty() && self.not_kept.is_empty()
+        self.failures.is_empty() && self.not_shown.is_empty()
     }
 
-    /// The message that reports `count` failed tasks whose errors were
-    /// not kept.
-    pub fn not_kept_message(count: usize) -> String {
+    /// The message that reports `count` more failed tasks, which are
+    /// not shown. It names no place: which tasks they were is not
+    /// told.
+    pub fn not_shown_message(count: usize) -> String {
         format!(
-            "{count} more task(s) failed and were never joined; their errors were not kept \
-             (at most {MAX_RECORDED_FAILURES} are kept at a time)"
+            "{count} more task(s) failed and were never joined (at most \
+             {MAX_SHOWN_FAILURES} failures are shown)"
         )
     }
 }
@@ -2894,23 +3076,22 @@ pub fn collect_unjoined_failures() {
 pub fn take_unjoined_failures() -> UnjoinedFailures {
     // The lock is released at the end of this statement; the handles
     // are dropped after that.
-    let (handles, not_recorded) = collected_failures().lock().take();
-    let failures = handles
-        .iter()
-        .filter_map(|handle| {
-            handle.take_unjoined_failure().map(|error| UnjoinedFailure {
-                task_id: handle.id,
-                owner: handle.owner(),
-                stage: handle.stage(),
-                stage_call: handle.stage_call_of_a_failed_input(),
-                spawned: handle.spawn_site(),
-                error,
-            })
+    let given = collected_failures().lock().take();
+    let failures = given
+        .shown
+        .into_iter()
+        .map(|(handle, error)| UnjoinedFailure {
+            task_id: handle.id,
+            owner: handle.owner(),
+            stage: handle.stage(),
+            stage_call: handle.stage_call_of_a_failed_input(),
+            spawned: handle.spawn_site(),
+            error,
         })
         .collect();
     UnjoinedFailures {
         failures,
-        not_kept: not_recorded.into_iter().collect(),
+        not_shown: given.not_shown,
     }
 }
 
@@ -3240,6 +3421,240 @@ fn main() {
 import host
 "#);
         assert!(matches!(result, Ok(Value::Int(300000))), "got {result:?}");
+    }
+
+    /// A wait costs the same however many tasks wait besides: the
+    /// look at every task that waits (`Parking::inspect`) comes only
+    /// when the counts say that a stop is there. Before, each of the
+    /// sleeps and ping-pongs here beside idle tasks took such a look,
+    /// at all of them: at tens of thousands of idle tasks a program
+    /// ran 20 to 60 times slower. The looks are counted, not timed.
+    #[test]
+    fn a_wait_beside_idle_tasks_does_not_look_at_them() {
+        let program = crate::session::testing::compile_str(
+            r#"
+import channel
+import list
+import task
+import time
+fn main() {
+  let never: Channel(Int) = channel.new(0)
+  let idle = list.map(1..100) { _ -> task.spawn { -> channel.receive(never) } }
+  let sleeper = task.spawn { -> list.each(1..200) { _ -> time.sleep(time.micros(1)) } }
+  task.join(sleeper)
+  let ping = channel.new(0)
+  let pong = channel.new(0)
+  let partner = task.spawn { -> channel.each(ping) { v -> channel.send(pong, v) } }
+  list.each(1..200) { i ->
+    channel.send(ping, i)
+    let _ = channel.receive(pong)
+  }
+  channel.close(ping)
+  task.join(partner)
+  list.each(idle, task.cancel)
+}
+"#,
+        )
+        .expect("compiles");
+        let mut vm = Vm::new(HostIo::buffer(&crate::vm::Buffer::new()));
+        let result = vm.run_program(&program);
+        assert_eq!(result.map_err(|e| e.message), Ok(()));
+        let looks = vm.scheduler().inner.parking.inspections();
+        assert!(looks <= 10, "{looks} looks at every waiting task");
+    }
+
+    /// A `channel.timeout` that lost its select is let go with the
+    /// select, not kept in the timer until its time: the documented
+    /// timeout idiom in a message loop held about 400 bytes per message
+    /// for as long as the timeout.
+    #[test]
+    fn a_timeout_that_lost_its_select_leaves_the_timer() {
+        let program = crate::session::testing::compile_str(
+            r#"
+import channel
+import list
+import time
+fn main() {
+  let inbox = channel.new(1)
+  let kept = channel.timeout(time.minutes(10))
+  list.each(1..1000) { i ->
+    channel.send(inbox, i)
+    match channel.select([channel.Recv(inbox), channel.Recv(channel.timeout(time.minutes(10)))]) {
+      channel.Received(_, Some(_)) -> ()
+      _ -> panic("the message wins")
+    }
+  }
+  match channel.try_receive(kept) {
+    channel.Empty -> ()
+    _ -> panic("a timeout that is held stays")
+  }
+}
+"#,
+        )
+        .expect("compiles");
+        let mut vm = Vm::new(HostIo::buffer(&crate::vm::Buffer::new()));
+        let result = vm.run_program(&program);
+        assert_eq!(result.map_err(|e| e.message), Ok(()));
+        // The one that `kept` held, until it was dropped at the end of
+        // `main`.
+        assert_eq!(vm.scheduler().inner.parking.timer().pending(), 0);
+    }
+
+    /// The most failed tasks of one owner the record may hold when
+    /// nothing but the record holds them: the 64 it can show, and past
+    /// them those whose handles are still held as a sweep looks (each
+    /// worker's task that is ending, the one the program has just
+    /// spawned), twice, for the sweep's slack. The bound is wide, so
+    /// that no timing reaches it; a record that keeps failures it
+    /// should let go holds one or two a round and passes it at once.
+    fn failure_record_bound() -> usize {
+        2 * super::MAX_SHOWN_FAILURES + 2 * workers()
+    }
+
+    /// What the reports of a program say, once its tasks have ended:
+    /// the failures shown with the text `what`, the failures counted in
+    /// all; and the most failed tasks its record held at a time.
+    fn failure_reports(source: &str, what: &str) -> (String, usize, usize, usize) {
+        assert!(
+            !super::COLLECTING.load(Ordering::SeqCst),
+            "the scheduler keeps its own record (each test is a process of its own)"
+        );
+        let program = crate::session::testing::compile_str(source).expect("compiles");
+        let out = crate::vm::Buffer::new();
+        let mut vm = Vm::new(HostIo::buffer(&out));
+        let result = vm.run_program(&program);
+        assert_eq!(result.map_err(|e| e.message), Ok(()));
+        vm.settle();
+        let most = vm.scheduler().inner.failed_tasks.lock().most_held;
+        let printed = out.take();
+        let shown = printed.matches(what).count();
+        let counted: usize = printed
+            .split(" more task(s) failed")
+            .filter_map(|before| before.rsplit(' ').next()?.parse::<usize>().ok())
+            .sum();
+        (printed, shown, counted, most)
+    }
+
+    /// Failed tasks that the program holds are kept beside the 64 that
+    /// the report can show, not in their places: when they are
+    /// cancelled, 64 of the failures that are left are shown with their
+    /// errors (it was one, and "199 more"). A report shows fewer only
+    /// when fewer than 64 failed by then, so over the program's reports
+    /// at least 64 of the 200 are shown.
+    #[test]
+    fn held_failures_do_not_take_the_places_of_the_shown_ones() {
+        let (printed, shown, counted, _) = failure_reports(
+            r#"
+import list
+import task
+import time
+fn main() {
+  let held = list.map(1..64) { i -> task.spawn { -> panic("held {i}") } }
+  time.sleep(time.ms(50))
+  list.each(1..200) { i ->
+    let _ = task.spawn { -> panic("dropped {i}") }
+  }
+  time.sleep(time.ms(50))
+  list.each(held, task.cancel)
+}
+"#,
+            "failed and was never joined: panic: dropped",
+        );
+        assert!(!printed.contains("panic: held"), "{printed}");
+        assert_eq!(shown + counted, 200, "{printed}");
+        assert!(
+            shown >= super::MAX_SHOWN_FAILURES,
+            "{shown} shown: {printed}"
+        );
+    }
+
+    /// A failure that went back to its task, because the task that had
+    /// joined it was cancelled, is recorded again: the record keeps one
+    /// entry of it, so that it is let go like any other once nothing
+    /// else holds its task. Before, the two entries held each other's
+    /// task and the record grew by one failure a round.
+    #[test]
+    fn a_failure_that_went_back_to_its_task_is_let_go() {
+        let rounds = 1000;
+        let (printed, shown, counted, most) = failure_reports(
+            &format!(
+                r#"
+import list
+import task
+import time
+fn main() {{
+  list.each(1..{rounds}) {{ i ->
+    let c = task.spawn {{ -> panic("child {{i}}") }}
+    let j = task.spawn {{ -> task.join(c) }}
+    time.sleep(time.micros(300))
+    task.cancel(j)
+  }}
+}}
+"#
+            ),
+            "failed and was never joined: panic: child",
+        );
+        assert_eq!(shown + counted, rounds, "{printed}");
+        // As for failures that nothing holds (`failure_record_bound`):
+        // not one a round.
+        let bound = failure_record_bound();
+        assert!(
+            most <= bound,
+            "the record held {most} failures (at most {bound})"
+        );
+    }
+
+    /// Past the 64 failures that are shown, a failed task that only the
+    /// record holds (nothing can join or cancel it any more) is counted
+    /// and let go: a program whose tasks keep failing and whose handles
+    /// it drops does not grow (about 840 bytes per failure when every
+    /// one was kept). Failed tasks that the program holds are kept, so
+    /// a cancel still dismisses them. Counted, not timed: the record
+    /// holds no more than a few past the 64, however many fail, and
+    /// every failure is in the report.
+    #[test]
+    fn failures_that_nothing_can_handle_any_more_are_counted_not_kept() {
+        let run = failure_reports;
+        let dropped = "failed and was never joined: panic: dropped";
+        let (printed, shown, counted, most) = run(
+            r#"
+import list
+import task
+fn main() {
+  list.each(1..1000) { i ->
+    let _ = task.spawn { -> panic("dropped {i}") }
+  }
+}
+"#,
+            dropped,
+        );
+        assert_eq!(shown + counted, 1000, "{printed}");
+        // Not 1000 (`failure_record_bound`).
+        let bound = failure_record_bound();
+        assert!(
+            most <= bound,
+            "the record held {most} failures (at most {bound})"
+        );
+        // Failed tasks that the program holds stay in the record while
+        // dropped ones go, and are dismissed by their cancel.
+        let (printed, shown, counted, _) = run(
+            r#"
+import list
+import task
+import time
+fn main() {
+  let held = list.map(1..100) { i -> task.spawn { -> panic("held {i}") } }
+  list.each(1..1000) { i ->
+    let _ = task.spawn { -> panic("dropped {i}") }
+  }
+  time.sleep(time.ms(20))
+  list.each(held, task.cancel)
+}
+"#,
+            dropped,
+        );
+        assert!(!printed.contains("panic: held"), "{printed}");
+        assert_eq!(shown + counted, 1000, "{printed}");
     }
 
     /// As many workers as `Scheduler::ensure_workers` starts.

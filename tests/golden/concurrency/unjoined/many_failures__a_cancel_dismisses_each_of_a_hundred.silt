@@ -1,0 +1,13 @@
+-- A cancel dismisses the failure of a task however many failed: a
+-- hundred tasks fail, each is cancelled, and the run is clean. (Before,
+-- a failure past the 64th was only counted and stayed reported.)
+import list
+import task
+import time
+
+fn main() {
+  let hs = list.map(1..100) { i -> task.spawn { -> panic("task {i}") } }
+  time.sleep(time.ms(50))
+  list.each(hs, task.cancel)
+  println("all 100 failures dismissed")
+}

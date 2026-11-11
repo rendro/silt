@@ -29,6 +29,11 @@
 //! stops counting as external only after its wake has returned, and a
 //! task stops counting as live only after its last operation has
 //! returned. The timer of this module does so.
+//!
+//! A look at every entry costs as much as there are tasks that wait,
+//! and the scheduler may ask after every wait. The [`Counts`] of each
+//! task's kind say without a lock whether a look can find a stop at
+//! all: one comes only when they say so.
 
 use parking_lot::{Mutex, MutexGuard};
 use std::collections::HashMap;
@@ -45,6 +50,33 @@ struct Entry<T> {
     parked: Parked,
     /// The worker has given the task up: a wake will come for it.
     committed: bool,
+    /// The wait will end without anybody's doing ([`Counts::ending`]).
+    ends: bool,
+}
+
+/// What is counted of the tasks of one kind (those of one owner, say)
+/// that wait. The registry keeps it as it keeps its own count of the
+/// committed entries, under the lock of the entry's shard, so that a
+/// look at it without a lock is never behind the wait that was last
+/// committed or ended.
+#[derive(Default)]
+pub struct Counts {
+    /// The committed entries.
+    pub waiting: AtomicUsize,
+    /// Of those, the ones whose wait will end without anybody's doing:
+    /// it has a deadline, or is on a channel that a timer closes. (A
+    /// channel says so from the time it is made, and for good.)
+    pub ending: AtomicUsize,
+}
+
+/// A task that is counted in [`Counts`] of its kind while it waits.
+pub trait Counted {
+    fn counts(&self) -> &Counts;
+}
+
+/// Whether the wait `parked` will end without anybody's doing.
+fn ends(parked: &Parked) -> bool {
+    parked.deadline().is_some() || parked.sources().iter().any(Source::closes_by_timer)
 }
 
 /// The hash of a task's name is the name, spread over the word: names
@@ -96,9 +128,12 @@ pub struct Parking<T> {
     waiting: AtomicUsize,
     /// Set before the shards are emptied, read under a shard's lock.
     shut_down: AtomicBool,
+    /// Test-only: how many times [`Parking::inspect`] has looked.
+    #[cfg(test)]
+    inspections: AtomicUsize,
 }
 
-impl<T: Send> Parking<T> {
+impl<T: Send + Counted> Parking<T> {
     /// A registry whose waits have their deadlines in `timer`. `ready`
     /// gets a task whose wait has ended, from whichever thread ended
     /// it, with no lock of this module held: it counts the task as
@@ -110,6 +145,25 @@ impl<T: Send> Parking<T> {
             shards: (0..SHARDS).map(|_| Mutex::default()).collect(),
             waiting: AtomicUsize::new(0),
             shut_down: AtomicBool::new(false),
+            #[cfg(test)]
+            inspections: AtomicUsize::new(0),
+        }
+    }
+
+    /// Test-only: how many times [`Parking::inspect`] has looked.
+    #[cfg(test)]
+    pub fn inspections(&self) -> usize {
+        self.inspections.load(Ordering::SeqCst)
+    }
+
+    /// Count `entry`, which is being committed, or no longer
+    /// (`by` is `fetch_add` or `fetch_sub`). Under its shard's lock.
+    fn count(&self, entry: &Entry<T>, by: fn(&AtomicUsize, usize, Ordering) -> usize) {
+        by(&self.waiting, 1, Ordering::SeqCst);
+        let counts = entry.task.counts();
+        by(&counts.waiting, 1, Ordering::SeqCst);
+        if entry.ends {
+            by(&counts.ending, 1, Ordering::SeqCst);
         }
     }
 
@@ -167,10 +221,12 @@ impl<T: Send> Parking<T> {
                 return Some((task, Resumed::Cancelled));
             }
             let committed = false;
+            let ends = ends(&parked);
             let entry = Entry {
                 task,
                 parked,
                 committed,
+                ends,
             };
             let before = tasks.insert(id, entry);
             assert!(before.is_none(), "task {} is parked already", id.0);
@@ -187,7 +243,7 @@ impl<T: Send> Parking<T> {
             // a shutdown may have taken it before.
             if let Some(entry) = tasks.get_mut(&id) {
                 entry.committed = true;
-                self.waiting.fetch_add(1, Ordering::SeqCst);
+                self.count(entry, AtomicUsize::fetch_add);
             }
             return None;
         }
@@ -225,6 +281,8 @@ impl<T: Send> Parking<T> {
     /// is pending) is to be read inside `look`, so that it belongs to
     /// the same moment (see the [module documentation](self)).
     pub fn inspect<R>(&self, look: impl FnOnce(&[Waiting<'_, T>]) -> R) -> R {
+        #[cfg(test)]
+        self.inspections.fetch_add(1, Ordering::SeqCst);
         let shards: Vec<_> = self.shards.iter().map(|shard| shard.lock()).collect();
         let mut waiting: Vec<Waiting<'_, T>> = shards
             .iter()
@@ -249,8 +307,9 @@ impl<T: Send> Parking<T> {
         let mut entries = Vec::new();
         for shard in &self.shards {
             let mut tasks = shard.lock();
-            let committed = tasks.values().filter(|entry| entry.committed).count();
-            self.waiting.fetch_sub(committed, Ordering::SeqCst);
+            for entry in tasks.values().filter(|entry| entry.committed) {
+                self.count(entry, AtomicUsize::fetch_sub);
+            }
             entries.extend(tasks.drain());
         }
         let mut tasks: Vec<_> = entries
@@ -269,7 +328,7 @@ fn finish(parked: Parked) -> Resumed {
     }
 }
 
-impl<T: Send> Wake for Parking<T> {
+impl<T: Send + Counted> Wake for Parking<T> {
     fn wake(&self, task: TaskId) {
         let entry = {
             let mut tasks = self.shard(task);
@@ -277,7 +336,7 @@ impl<T: Send> Wake for Parking<T> {
             let Some(entry) = tasks.remove(&task) else {
                 return;
             };
-            self.waiting.fetch_sub(1, Ordering::SeqCst);
+            self.count(&entry, AtomicUsize::fetch_sub);
             entry
         };
         (self.ready)(entry.task, finish(entry.parked));

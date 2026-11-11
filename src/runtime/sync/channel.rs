@@ -13,10 +13,10 @@
 
 use parking_lot::Mutex;
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, Weak};
 
 use super::queue::{Waiter, Wakes};
+use super::timer::{Timer, TimerId};
 use super::token::{Fired, Outcome, Token, Wake};
 use crate::runtime::handle::TaskHandle;
 use crate::value::Value;
@@ -87,8 +87,11 @@ pub struct Channel {
     /// What its reader does when it drains the channel
     /// ([`Channel::drain`]): drain what feeds it.
     on_drain: OnceLock<Box<dyn Fn(&dyn Wake) + Send + Sync>>,
-    /// Set when a timer was told to close it (`channel.timeout`).
-    closes_by_timer: AtomicBool,
+    /// The timer that is to close it (`channel.timeout`), and its
+    /// entry there: set once, when the timer is told. The timer does
+    /// not hold the channel; a channel that is dropped before its time
+    /// takes its entry out.
+    timer: OnceLock<(Weak<Timer>, TimerId)>,
     pub(super) state: Mutex<State>,
 }
 
@@ -243,21 +246,35 @@ impl State {
     }
 }
 
+impl Drop for Channel {
+    fn drop(&mut self) {
+        // Nobody has the channel any more, so nobody waits for its
+        // close: the timer lets its entry go now, not at its time.
+        if let Some((timer, id)) = self.timer.get()
+            && let Some(timer) = timer.upgrade()
+        {
+            timer.disarm(*id);
+        }
+    }
+}
+
 impl Channel {
-    /// A channel that buffers up to `capacity` values. With capacity 0
-    /// a send completes only when a receiver takes the value.
-    /// A timer will close the channel.
-    pub(super) fn set_closes_by_timer(&self) {
-        self.closes_by_timer.store(true, Ordering::SeqCst);
+    /// The entry `id` of `timer` closes the channel. Told once, before
+    /// anybody else has the channel.
+    pub(super) fn set_timer(&self, timer: Weak<Timer>, id: TimerId) {
+        let set = self.timer.set((timer, id));
+        debug_assert!(set.is_ok(), "one timer closes a channel");
     }
 
     /// Whether a timer will close the channel, or has: a wait on it
     /// ends without anybody's doing. (Nobody waits on it once it is
     /// closed, so the answer need not change then.)
     pub fn closes_by_timer(&self) -> bool {
-        self.closes_by_timer.load(Ordering::SeqCst)
+        self.timer.get().is_some()
     }
 
+    /// A channel that buffers up to `capacity` values. With capacity 0
+    /// a send completes only when a receiver takes the value.
     pub fn new(id: usize, capacity: usize) -> Arc<Channel> {
         Channel::fed(id, capacity, capacity)
     }
@@ -271,7 +288,7 @@ impl Channel {
             capacity,
             on_abandon: OnceLock::new(),
             on_drain: OnceLock::new(),
-            closes_by_timer: AtomicBool::new(false),
+            timer: OnceLock::new(),
             state: Mutex::new(State {
                 capacity,
                 buf: VecDeque::new(),

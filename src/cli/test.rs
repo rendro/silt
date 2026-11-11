@@ -5,10 +5,9 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use std::process;
 
-use silt::diagnostic::{Code, Diagnostic, render_human};
-use silt::scheduler::UnjoinedFailures;
+use silt::diagnostic::{Diagnostic, render_human};
 use silt::session::{Entry, EntryPoint, LockPolicy, TestKind, selected_tests};
-use silt::source::{FileId, SourceMap, Span};
+use silt::source::SourceMap;
 use silt::vm::{Exit, Vm};
 
 use crate::cli::help::test_usage_banner;
@@ -247,7 +246,6 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
             path: path.clone(),
             shown: shown.to_string(),
             sources,
-            entry: file,
         });
         let setup_owner = owners.add_owner(file_index);
 
@@ -468,8 +466,6 @@ struct TestFile {
     shown: String,
     /// The text of the file and of every module file it imports.
     sources: SourceMap,
-    /// The file itself.
-    entry: FileId,
 }
 
 /// What spawned a task: a test, or the top-level code of a file.
@@ -530,25 +526,13 @@ impl TaskOwners {
             };
             reports.entry(failure.owner).or_default().push(rendered);
         }
-        for &(owner, count) in &taken.not_kept {
-            // Which tasks they were is not known: the report is about
-            // the whole file, at its start.
-            let message = UnjoinedFailures::not_kept_message(count);
-            let rendered = match self.file_of(owner) {
-                Some(file) => render_human(
-                    &ProgramFiles::new(&file.shown, &file.sources),
-                    &Diagnostic::error(
-                        Code::UnjoinedTaskFailure,
-                        Span::point(file.entry, 0),
-                        message,
-                    ),
-                ),
-                None => render_human(
-                    &SourceMap::new(),
-                    &Diagnostic::error(Code::UnjoinedTaskFailure, Span::BUILTIN, message),
-                ),
+        for not_shown in &taken.not_shown {
+            let d = not_shown.diagnostic();
+            let rendered = match self.file_of(not_shown.owner) {
+                Some(file) => render_human(&ProgramFiles::new(&file.shown, &file.sources), &d),
+                None => render_human(&SourceMap::new(), &d),
             };
-            reports.entry(owner).or_default().push(rendered);
+            reports.entry(not_shown.owner).or_default().push(rendered);
         }
         let mut current_reports = Vec::new();
         for (tag, owner_reports) in reports {

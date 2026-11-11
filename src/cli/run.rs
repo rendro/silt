@@ -3,9 +3,9 @@
 
 use std::process;
 
-use silt::diagnostic::{Code, Diagnostic, render_human};
+use silt::diagnostic::{Diagnostic, render_human};
 use silt::session::{Entry, LockPolicy};
-use silt::source::{FileId, SourceMap, Span};
+use silt::source::SourceMap;
 use silt::vm::{Exit, Vm, VmError};
 
 use crate::cli::help::{asks_for_help, run_help_text, run_usage_banner};
@@ -175,7 +175,7 @@ pub(crate) fn vm_run_file(path: &str) {
     // its code, and nothing is reported. Then the failure claims the end
     // (`claim_program_failure`): from here an exit is ignored, and the
     // report is written whole, and the run fails.
-    let (task_texts, tasks_failed) = task_failure_texts(path, &sources, file);
+    let (task_texts, tasks_failed) = task_failure_texts(path, &sources);
     // `main`'s error: raised, with its full diagnostic, or returned as
     // `Err(e)`, which is the program's message to its user: the one line
     // `error: <e>`, with no place of silt's (see `Vm::run_program`).
@@ -235,23 +235,15 @@ pub(crate) fn panic_where_a_test_says(vm: &Vm) {
 
 /// The failures of tasks that nobody joined or cancelled and that have
 /// happened so far, each rendered like any other runtime error of the
-/// program at `path`, whose entry file is `entry`, and whether there
-/// was one.
-fn task_failure_texts(path: &str, sources: &SourceMap, entry: FileId) -> (Vec<String>, bool) {
+/// program at `path`, and whether there was one.
+fn task_failure_texts(path: &str, sources: &SourceMap) -> (Vec<String>, bool) {
     let failures = silt::scheduler::take_unjoined_failures();
     let mut texts: Vec<String> = Vec::new();
     for failure in &failures.failures {
         texts.push(render_runtime_error(&failure.report_error(), path, sources));
     }
-    let not_kept: usize = failures.not_kept.iter().map(|(_, count)| count).sum();
-    if not_kept > 0 {
-        // Which tasks they were is not known: the report is about the
-        // whole program, at the start of its entry file.
-        let d = Diagnostic::error(
-            Code::UnjoinedTaskFailure,
-            Span::point(entry, 0),
-            silt::scheduler::UnjoinedFailures::not_kept_message(not_kept),
-        );
+    for not_shown in &failures.not_shown {
+        let d = not_shown.diagnostic();
         texts.push(render_human(&ProgramFiles::new(path, sources), &d));
     }
     (texts, !failures.is_empty())
