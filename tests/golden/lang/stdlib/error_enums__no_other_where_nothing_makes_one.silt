@@ -1,0 +1,72 @@
+import bytes
+import encoding
+import float
+import int
+import regex
+
+-- Each match is exhaustive without an Other arm: no function of these
+-- five modules makes one.
+fn int_text(e: int.IntError) -> String {
+  match e {
+    int.Empty -> "empty"
+    int.InvalidDigit(at) -> "digit at {at}"
+    int.Overflow -> "overflow"
+    int.Underflow -> "underflow"
+  }
+}
+
+fn float_text(e: float.FloatError) -> String {
+  match e {
+    float.Empty -> "empty"
+    float.InvalidDigit(at) -> "digit at {at}"
+    float.Overflow -> "overflow"
+    float.Underflow -> "underflow"
+    float.NotFinite -> "not finite"
+  }
+}
+
+fn regex_text(e: regex.RegexError) -> String {
+  match e {
+    regex.InvalidPattern(why, at) -> "{why} at {at}"
+    regex.TooBig -> "too big"
+  }
+}
+
+fn bytes_text(e: bytes.BytesError) -> String {
+  match e {
+    bytes.InvalidUtf8(at) -> "utf-8 at {at}"
+    bytes.InvalidHex(why) -> "hex: {why}"
+    bytes.InvalidBase64(why) -> "base64: {why}"
+    bytes.ByteOutOfRange(n) -> "byte {n}"
+  }
+}
+
+fn encoding_text(e: encoding.EncodingError) -> String {
+  match e {
+    encoding.InvalidPercent(why) -> "percent: {why}"
+    encoding.InvalidUtf8(why) -> "utf-8: {why}"
+  }
+}
+
+fn main() {
+  match int.parse("9x") {
+    Ok(_) -> ()
+    Err(e) -> println(int_text(e))
+  }
+  match float.parse("inf") {
+    Ok(_) -> ()
+    Err(e) -> println(float_text(e))
+  }
+  match regex.find("a", "(") {
+    Ok(_) -> ()
+    Err(e) -> println(regex_text(e))
+  }
+  match bytes.from_list([256]) {
+    Ok(_) -> ()
+    Err(e) -> println(bytes_text(e))
+  }
+  match encoding.url_decode("%C3%28") {
+    Ok(_) -> ()
+    Err(e) -> println(encoding_text(e))
+  }
+}

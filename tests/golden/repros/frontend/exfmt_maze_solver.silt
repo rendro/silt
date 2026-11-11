@@ -52,7 +52,7 @@ fn find_char(maze, target) {
       }
     }
   }
-  list.head(positions)
+  list.first(positions)
 }
 
 -- Get valid neighboring positions (up, down, left, right)

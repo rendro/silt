@@ -21,7 +21,7 @@ fn main() {
   println(task.deadline(time.ms(20), { ->
     stream.from_list([1, 2, 3]) |> stream.map { x -> x + recv(never) } |> stream.collect
   }))
-  println(task.deadline(time.ms(20), { -> stream.repeat(1) |> stream.count }))
+  println(task.deadline(time.ms(20), { -> stream.repeat(1) |> stream.length }))
   let inside = task.spawn { ->
     task.deadline(time.ms(20), { -> channel.each(stream.repeat(1)) { x -> time.sleep(time.ms(1)) } })
   }

@@ -28,5 +28,5 @@ fn main() {
   channel.send(c, 3)
   channel.close(c)
   time.sleep(time.ms(20))
-  println("the input still holds {stream.count(c)} of 3")
+  println("the input still holds {stream.length(c)} of 3")
 }

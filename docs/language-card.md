@@ -367,7 +367,7 @@ string.trim_start(s: String) -> String
 ### int
 
 ```
-type IntError { Empty, InvalidDigit(Int), Overflow, Underflow, Other(String) }
+type IntError { Empty, InvalidDigit(Int), Overflow, Underflow }
 int.abs(n: Int) -> Int
 int.clamp(x: Int, lo: Int, hi: Int) -> Int
 int.max(a: Int, b: Int) -> Int
@@ -379,7 +379,7 @@ int.to_float(n: Int) -> Float
 ### float
 
 ```
-type FloatError { Empty, InvalidDigit(Int), Overflow, Underflow, NotFinite, Other(String) }
+type FloatError { Empty, InvalidDigit(Int), Overflow, Underflow, NotFinite }
 float.abs(f: Float) -> Float
 float.ceil(f: Float) -> Float
 float.clamp(x: Float, lo: Float, hi: Float) -> Float
@@ -407,19 +407,20 @@ list.chunks(xs: List(a), n: Int) -> List(List(a))
 list.concat(xs: List(a), ys: List(a)) -> List(a)
 list.contains(xs: List(a), elem: a) -> Bool where a: Equal
 list.drop(xs: List(a), n: Int) -> List(a)
+list.drop_while(xs: List(a), f: Fn(a) -> Bool) -> List(a)
 list.each(xs: List(a), f: Fn(a) -> ()) -> ()
 list.enumerate(xs: List(a)) -> List((Int, a))
 list.filter(xs: List(a), f: Fn(a) -> Bool) -> List(a)
 list.filter_map(xs: List(a), f: Fn(a) -> Option(b)) -> List(b)
 list.find(xs: List(a), f: Fn(a) -> Bool) -> Option(a)
 list.find_map(xs: List(a), f: Fn(a) -> Option(b)) -> Option(b)
+list.first(xs: List(a)) -> Option(a)
 list.flat_map(xs: List(a), f: Fn(a) -> List(b)) -> List(b)
 list.flatten(xs: List(List(a))) -> List(a)
 list.fold(xs: List(a), init: b, f: Fn(b, a) -> b) -> b
 list.fold_until(xs: List(a), init: b, f: Fn(b, a) -> Step(b)) -> b
 list.get(xs: List(a), i: Int) -> Option(a)
 list.group_by(xs: List(a), f: Fn(a) -> b) -> Map(b, List(a)) where b: Hash
-list.head(xs: List(a)) -> Option(a)
 list.index_of(xs: List(a), target: a) -> Option(Int) where a: Equal
 list.intersperse(xs: List(a), sep: a) -> List(a)
 list.is_empty(xs: List(a)) -> Bool
@@ -443,6 +444,7 @@ list.sum(xs: List(Int)) -> Int
 list.sum_float(xs: List(Float)) -> Float
 list.tail(xs: List(a)) -> List(a)
 list.take(xs: List(a), n: Int) -> List(a)
+list.take_while(xs: List(a), f: Fn(a) -> Bool) -> List(a)
 list.traverse(xs: List(a), f: Fn(a) -> m(b)) -> m(List(b)) where m: Applicative
 list.unfold(seed: a, f: Fn(a) -> Option((b, a))) -> List(b)
 list.unique(xs: List(a)) -> List(a) where a: Equal
@@ -453,11 +455,13 @@ list.zip(xs: List(a), ys: List(b)) -> List((a, b))
 ### map
 
 ```
+map.all(m: Map(a, b), f: Fn(a, b) -> Bool) -> Bool
+map.any(m: Map(a, b), f: Fn(a, b) -> Bool) -> Bool
 map.contains(m: Map(a, b), key: a) -> Bool where a: Hash
-map.delete(m: Map(a, b), key: a) -> Map(a, b) where a: Hash
 map.each(m: Map(a, b), f: Fn(a, b) -> ()) -> ()
 map.entries(m: Map(a, b)) -> List((a, b))
 map.filter(m: Map(a, b), f: Fn(a, b) -> Bool) -> Map(a, b)
+map.fold(m: Map(a, b), init: c, f: Fn(c, a, b) -> c) -> c
 map.from_entries(entries: List((a, b))) -> Map(a, b) where a: Hash
 map.get(m: Map(a, b), k: a) -> Option(b) where a: Hash
 map.is_empty(m: Map(a, b)) -> Bool
@@ -465,6 +469,7 @@ map.keys(m: Map(a, b)) -> List(a)
 map.length(m: Map(a, b)) -> Int
 map.map(m: Map(a, b), f: Fn(a, b) -> (c, d)) -> Map(c, d) where c: Hash
 map.merge(m1: Map(a, b), m2: Map(a, b)) -> Map(a, b) where a: Hash
+map.remove(m: Map(a, b), key: a) -> Map(a, b) where a: Hash
 map.set(m: Map(a, b), k: a, v: b) -> Map(a, b) where a: Hash
 map.update(m: Map(a, b), key: a, default: b, f: Fn(b) -> b) -> Map(a, b) where a: Hash
 map.values(m: Map(a, b)) -> List(b)
@@ -487,6 +492,7 @@ result.unwrap_or(r: Result(a, b), default: a) -> a
 
 ```
 option.flat_map(opt: Option(a), f: Fn(a) -> Option(b)) -> Option(b)
+option.flatten(opt: Option(Option(a))) -> Option(a)
 option.is_none(opt: Option(a)) -> Bool
 option.is_some(opt: Option(a)) -> Bool
 option.map(opt: Option(a), f: Fn(a) -> b) -> Option(b)
@@ -535,7 +541,7 @@ task.spawn(f: Fn() -> a) -> Handle(a)
 ### regex
 
 ```
-type RegexError { InvalidPattern(String, Int), TooBig, Other(String) }
+type RegexError { InvalidPattern(String, Int), TooBig }
 regex.captures(text: String, pattern: String) -> Result(Option(List(String)), RegexError)
 regex.captures_all(text: String, pattern: String) -> Result(List(List(String)), RegexError)
 regex.captures_named(text: String, pattern: String) -> Result(Option(Map(String, String)), RegexError)
@@ -543,8 +549,8 @@ regex.find(text: String, pattern: String) -> Result(Option(String), RegexError)
 regex.find_all(text: String, pattern: String) -> Result(List(String), RegexError)
 regex.is_match(text: String, pattern: String) -> Result(Bool, RegexError)
 regex.replace(text: String, pattern: String, replacement: String) -> Result(String, RegexError)
-regex.replace_all(text: String, pattern: String, replacement: String) -> Result(String, RegexError)
 regex.replace_all_with(text: String, pattern: String, f: Fn(String) -> String) -> Result(String, RegexError)
+regex.replace_first(text: String, pattern: String, replacement: String) -> Result(String, RegexError)
 regex.split(text: String, pattern: String) -> Result(List(String), RegexError)
 ```
 
@@ -576,6 +582,8 @@ toml.stringify(value: a) -> Result(String, TomlError) where a: json.Encode
 ### set
 
 ```
+set.all(s: Set(a), f: Fn(a) -> Bool) -> Bool
+set.any(s: Set(a), f: Fn(a) -> Bool) -> Bool
 set.contains(s: Set(a), elem: a) -> Bool where a: Hash
 set.difference(a: Set(a), b: Set(a)) -> Set(a)
 set.each(s: Set(a), f: Fn(a) -> ()) -> ()
@@ -588,7 +596,6 @@ set.is_empty(s: Set(a)) -> Bool
 set.is_subset(a: Set(a), b: Set(a)) -> Bool
 set.length(s: Set(a)) -> Int
 set.map(s: Set(a), f: Fn(a) -> b) -> Set(b) where b: Hash
-set.new() -> Set(a)
 set.remove(s: Set(a), elem: a) -> Set(a) where a: Hash
 set.symmetric_difference(a: Set(a), b: Set(a)) -> Set(a)
 set.to_list(s: Set(a)) -> List(a)
@@ -721,9 +728,10 @@ postgres.transact(pool: PgPool, f: Fn(PgTx) -> Result(a, PostgresError)) -> Resu
 ### bytes
 
 ```
-type BytesError { InvalidUtf8(Int), InvalidHex(String), InvalidBase64(String), ByteOutOfRange(Int), Other(String) }
+type BytesError { InvalidUtf8(Int), InvalidHex(String), InvalidBase64(String), ByteOutOfRange(Int) }
 bytes.concat(a: Bytes, b: Bytes) -> Bytes
 bytes.concat_all(parts: List(Bytes)) -> Bytes
+bytes.contains(b: Bytes, needle: Bytes) -> Bool
 bytes.empty() -> Bytes
 bytes.ends_with(b: Bytes, suffix: Bytes) -> Bool
 bytes.from_base64(s: String) -> Result(Bytes, BytesError)
@@ -732,6 +740,7 @@ bytes.from_list(xs: List(Int)) -> Result(Bytes, BytesError)
 bytes.from_string(s: String) -> Bytes
 bytes.get(b: Bytes, i: Int) -> Option(Int)
 bytes.index_of(b: Bytes, needle: Bytes) -> Option(Int)
+bytes.is_empty(b: Bytes) -> Bool
 bytes.length(b: Bytes) -> Int
 bytes.slice(b: Bytes, start: Int, end: Int) -> Bytes
 bytes.split(b: Bytes, sep: Bytes) -> List(Bytes)
@@ -760,7 +769,7 @@ crypto.sha512(data: Bytes) -> Bytes
 ### encoding
 
 ```
-type EncodingError { InvalidPercent(String), InvalidUtf8(String), Other(String) }
+type EncodingError { InvalidPercent(String), InvalidUtf8(String) }
 encoding.form_decode(body: String) -> Result(List((String, String)), EncodingError)
 encoding.form_encode(pairs: List((String, String))) -> String
 encoding.url_decode(s: String) -> Result(String, EncodingError)
@@ -796,7 +805,6 @@ stream.buffered(ch: Channel(a), n: Int) -> Channel(a)
 stream.chunks(ch: Channel(a), n: Int) -> Channel(List(a))
 stream.collect(ch: Channel(a)) -> List(a)
 stream.concat(chs: List(Channel(a))) -> Channel(a)
-stream.count(ch: Channel(a)) -> Int
 stream.dedup(ch: Channel(a)) -> Channel(a) where a: Equal
 stream.drop(ch: Channel(a), n: Int) -> Channel(a)
 stream.drop_while(ch: Channel(a), pred: Fn(a) -> Bool) -> Channel(a)
@@ -810,6 +818,7 @@ stream.fold(ch: Channel(a), init: b, f: Fn(b, a) -> b) -> b
 stream.from_list(xs: List(a)) -> Channel(a)
 stream.from_range(lo: Int, hi: Int) -> Channel(Int)
 stream.last(ch: Channel(a)) -> Option(a)
+stream.length(ch: Channel(a)) -> Int
 stream.map(ch: Channel(a), f: Fn(a) -> b) -> Channel(b)
 stream.merge(chs: List(Channel(a))) -> Channel(a)
 stream.repeat(x: a) -> Channel(a)

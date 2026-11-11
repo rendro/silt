@@ -116,21 +116,21 @@ fn from_rpn(tokens) {
     |> list.fold([]) { stack, token ->
       match token {
         "+" -> {
-          let r = list.head(stack) |> option.unwrap_or(Num(0))
+          let r = list.first(stack) |> option.unwrap_or(Num(0))
           let s1 = list.tail(stack)
-          let l = list.head(s1) |> option.unwrap_or(Num(0))
+          let l = list.first(s1) |> option.unwrap_or(Num(0))
           let s2 = list.tail(s1)
           list.prepend(s2, Add(l, r))
         }
         "*" -> {
-          let r = list.head(stack) |> option.unwrap_or(Num(0))
+          let r = list.first(stack) |> option.unwrap_or(Num(0))
           let s1 = list.tail(stack)
-          let l = list.head(s1) |> option.unwrap_or(Num(0))
+          let l = list.first(s1) |> option.unwrap_or(Num(0))
           let s2 = list.tail(s1)
           list.prepend(s2, Mul(l, r))
         }
         "neg" -> {
-          let top = list.head(stack) |> option.unwrap_or(Num(0))
+          let top = list.first(stack) |> option.unwrap_or(Num(0))
           let rest = list.tail(stack)
           list.prepend(rest, Neg(top))
         }
@@ -140,7 +140,7 @@ fn from_rpn(tokens) {
         }
       }
     }
-  list.head(stack) |> option.unwrap_or(Num(0))
+  list.first(stack) |> option.unwrap_or(Num(0))
 }
 
 -- Compute expression depth

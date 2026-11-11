@@ -8,7 +8,7 @@ fn main() {
   println(stream.from_list([1, 2, 0, 4]) |> stream.take_while(fn(x) { 10 / x > 0 }) |> stream.collect)
   println(stream.from_list([1, 2, 0, 4]) |> stream.scan(0, fn(acc, x) { acc + 10 / x }) |> stream.collect)
   -- wrong-typed predicate result is "false"
-  println(stream.from_list([1, 2, 3]) |> stream.flat_map(fn(x) { [x] }) |> stream.count)
+  println(stream.from_list([1, 2, 3]) |> stream.flat_map(fn(x) { [x] }) |> stream.length)
   -- callbacks that do I/O run on a pump thread
   println(stream.from_list([1, 2]) |> stream.map(fn(x) {
     println("side effect {x}")

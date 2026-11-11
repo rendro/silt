@@ -106,7 +106,7 @@ fn main() {
     |> list.map { (dept, emps) ->
       let avg = avg_salary(emps)
       let count = list.length(emps)
-      let top = emps |> list.sort_by { e -> -e.salary } |> list.head
+      let top = emps |> list.sort_by { e -> -e.salary } |> list.first
       let top_name = match top {
         Some(e) -> e.name
         None -> "N/A"

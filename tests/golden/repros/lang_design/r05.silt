@@ -1,11 +1,11 @@
 -- verdict: same
 import list
 fn head_plus(xs: List(Int)) -> Option(Int) {
-  let h = list.head(xs)?
+  let h = list.first(xs)?
   Some(h + 1)
 }
 fn main() {
-  let x = list.head([1])?
+  let x = list.first([1])?
   println(head_plus([]))
   let _ = println(x)
 }

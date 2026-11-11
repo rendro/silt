@@ -18,7 +18,6 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
             format!("invalid regex pattern at position {pos}: {m}")
         }
         ("TooBig", []) => "compiled regex exceeds size budget".to_string(),
-        ("Other", [Value::String(m)]) => m.to_string(),
         _ => return None,
     })
 }
@@ -178,16 +177,16 @@ builtins! {
         with(vm, pattern, |re| Value::list(pieces(re, text).into_iter().map(string).collect()))
     }
 
-    fn replace(vm, text: &str, pattern: &str, replacement: &str) -> Result<Value, VmError> {
+    fn replace_first(vm, text: &str, pattern: &str, replacement: &str) -> Result<Value, VmError> {
         match vm.regex(pattern) {
-            Ok(re) => Ok(ok(replaced("regex.replace", &re, text, replacement, 1)?)),
+            Ok(re) => Ok(ok(replaced("regex.replace_first", &re, text, replacement, 1)?)),
             Err(error) => Ok(pattern_err(pattern, &error)),
         }
     }
 
-    fn replace_all(vm, text: &str, pattern: &str, replacement: &str) -> Result<Value, VmError> {
+    fn replace(vm, text: &str, pattern: &str, replacement: &str) -> Result<Value, VmError> {
         match vm.regex(pattern) {
-            Ok(re) => Ok(ok(replaced("regex.replace_all", &re, text, replacement, usize::MAX)?)),
+            Ok(re) => Ok(ok(replaced("regex.replace", &re, text, replacement, usize::MAX)?)),
             Err(error) => Ok(pattern_err(pattern, &error)),
         }
     }

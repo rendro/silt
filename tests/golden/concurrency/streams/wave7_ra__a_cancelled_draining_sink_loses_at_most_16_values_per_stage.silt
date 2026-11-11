@@ -34,6 +34,6 @@ fn main() {
   channel.send(gate, 2)
   channel.send(gate, 3)
   task.cancel(h)
-  let taken = 1000 - stream.count(ch)
+  let taken = 1000 - stream.length(ch)
   println("taken from ch at most 3 + 1 + 2 * 16: {taken <= 36}")
 }

@@ -25,7 +25,7 @@ fn fill(ch, i, n) {
 fn main() {
   let a = filled(100)
   let two = a |> stream.map { x -> x } |> stream.buffered(3) |> stream.take(2) |> stream.collect
-  let taken = 100 - stream.count(a)
+  let taken = 100 - stream.length(a)
   println("buffered(3): got {two}, at most 5 taken: {taken >= 2 && taken <= 5}")
   let b = filled(100)
   let more = b |> stream.buffered(0) |> stream.take(2) |> stream.collect

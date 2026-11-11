@@ -17,8 +17,9 @@ just wants a rendered error can fall back to `"{Error.message(e)}"`.
 
 Every error enum is named after its module (`io.IoError`,
 `tcp.TcpError`), its variants carry no prefix (`io.NotFound`,
-`tcp.Timeout`), and its last variant is `Other(String)` for a failure
-that fits no other. An error enum and its variants are members of their
+`tcp.Timeout`), and where the platform can report more than the list (a
+file system, a socket, a server), its last variant is `Other(String)` for
+such a failure. An error enum and its variants are members of their
 module, reached through it, with or without the enum as a second
 qualifier:
 
@@ -32,7 +33,7 @@ let b = io.IoError.NotFound("config.toml") -- same value
 
 A selective import binds a variant by its bare name:
 `import io.{ NotFound }`. Two modules may have a variant of one name
-(`tcp.Timeout` and `http.Timeout`, `Other` in every module): a file
+(`tcp.Timeout` and `http.Timeout`, `io.Other` and `tcp.Other`): a file
 imports at most one of them bare, and writes the others through their
 modules.
 
@@ -79,7 +80,6 @@ Returned by `int.parse`.
 | `InvalidDigit(Int)` | byte offset | non-digit character at offset |
 | `Overflow` | — | value exceeds type max |
 | `Underflow` | — | value below type min |
-| `Other(String)` | message | unclassified parse failure |
 
 ### `FloatError` (requires `import float`)
 
@@ -93,7 +93,6 @@ in a type of its own (`float.Empty` is not `int.Empty`).
 | `Overflow` | — | literal above the `Float` range |
 | `Underflow` | — | literal below the `Float` range |
 | `NotFinite` | — | a spelled-out infinity or NaN (`"inf"`, `"NaN"`): a `Float` is always finite |
-| `Other(String)` | message | unclassified parse failure |
 
 ### `HttpError` (requires `import http`)
 
@@ -150,7 +149,6 @@ in a type of its own (`float.Empty` is not `int.Empty`).
 | `InvalidHex(String)` | message | bad hex string |
 | `InvalidBase64(String)` | message | bad base64 string |
 | `ByteOutOfRange(Int)` | value | list element outside 0..=255 |
-| `Other(String)` | message | unclassified failure |
 
 ### `TaskError` (requires `import task`)
 
@@ -169,7 +167,6 @@ Returned by `encoding.url_decode` and `encoding.form_decode`.
 |---------|--------|---------|
 | `InvalidPercent(String)` | what and where | a `%` that two hex digits do not follow |
 | `InvalidUtf8(String)` | where | decoded bytes are not valid UTF-8 |
-| `Other(String)` | message | unclassified failure |
 
 ### `CryptoError` (requires `import crypto`)
 
@@ -208,7 +205,6 @@ Returned by every `regex.*` function for a pattern that does not compile.
 |---------|--------|---------|
 | `InvalidPattern(String, Int)` | what is wrong, and the character of the pattern where: counted from 0, as `string.slice` counts | pattern did not parse |
 | `TooBig` | — | compiled pattern exceeded size budget |
-| `Other(String)` | message | unclassified failure |
 
 ## Example: user-side pattern matching
 

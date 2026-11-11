@@ -1,0 +1,24 @@
+import list
+
+fn small(x: Int) -> Bool {
+  println("asked {x}")
+  x < 3
+}
+
+fn main() {
+  -- f is not called after the first element it rejects
+  println(list.take_while([1, 2, 5, 1, 0], small))
+  println(list.drop_while([1, 2, 5, 1, 0], small))
+  -- empty input, every element accepted, the first rejected
+  println(list.take_while([], { x -> x < 3 }))
+  println(list.drop_while([], { x -> x < 3 }))
+  println(list.take_while([1, 2], { x -> x < 3 }))
+  println(list.drop_while([1, 2], { x -> x < 3 }))
+  println(list.take_while([7, 1], { x -> x < 3 }))
+  println(list.drop_while([7, 1], { x -> x < 3 }))
+  -- a range far longer than a list may be is read only as far as f accepts
+  println(list.take_while(1..1000000000000, { x -> x < 4 }))
+  println(list.drop_while(1..1000000000000, { x -> x < 4 }) |> list.length)
+  -- text: the elements are whole strings, not bytes
+  println(list.take_while(["é", "ü", "a", "ö"], { s -> s != "a" }))
+}

@@ -10,7 +10,7 @@ fn total(xs: Shapes) -> Int {
 }
 
 fn first(xs: List(shapes.Shape)) -> Option(shapes.Shape) {
-  list.head(xs)
+  list.first(xs)
 }
 
 fn apply(f: Fn(shapes.Shape) -> Int, s: shapes.Shape) -> Int {

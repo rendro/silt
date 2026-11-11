@@ -4,5 +4,5 @@
 import stream
 
 fn main() {
-  println(stream.from_list([1, 2, 3]) |> stream.take(0) |> stream.count)
+  println(stream.from_list([1, 2, 3]) |> stream.take(0) |> stream.length)
 }

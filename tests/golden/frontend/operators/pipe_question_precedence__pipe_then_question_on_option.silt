@@ -3,10 +3,10 @@ import option
 
 fn outcome() {
   let xs = [1, 2, 3]
-  -- list.head returns Option(Int); `|> option.map { ... }`
+  -- list.first returns Option(Int); `|> option.map { ... }`
   -- transforms it; `?` propagates None.
   let _first = xs
-               |> list.head
+               |> list.first
                |> option.map { n -> n * 10 }
   match _first {
     Some(n) -> n

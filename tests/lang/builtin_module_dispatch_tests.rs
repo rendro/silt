@@ -30,7 +30,7 @@ fn module_call(module: &str) -> Option<Option<&'static str>> {
         "regex" => "regex.is_match(\"aa\", \"a+\")",
         "json" => "json.stringify(1)",
         "toml" => "toml.parse_map(\"a = 1\", Int)",
-        "set" => "set.new()",
+        "set" => "set.is_empty(#[])",
         "math" => "math.sqrt(4.0)",
         "time" => "time.hours(1)",
         "fs" => "fs.exists(\"silt_no_such_file_xyz\")",

@@ -1051,7 +1051,7 @@ fn main() {
   let xs = [1, 2, 3]
   let ys = list.append(xs, 4)
   let zs = list.concat(xs, ys)
-  let head = list.head(xs)
+  let head = list.first(xs)
   let tail = list.tail(xs)
   let last = list.last(xs)
   let rev = list.reverse(xs)
@@ -1138,7 +1138,7 @@ fn main() {
   let m = #{ "a": 1, "b": 2 }
   let got = map.get(m, "a")
   let updated = map.set(m, "c", 3)
-  let deleted = map.delete(m, "a")
+  let deleted = map.remove(m, "a")
   let ks = map.keys(m)
   let vs = map.values(m)
   let merged = map.merge(m, #{ "c": 3 })
@@ -1468,7 +1468,7 @@ fn test_recursive_list_function() {
         r#"
 import list
 fn sum(xs) {
-  match list.head(xs) {
+  match list.first(xs) {
     None -> 0
     Some(h) -> h + sum(list.tail(xs))
   }

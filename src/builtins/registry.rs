@@ -901,7 +901,6 @@ mod tests {
                 "channel.timeout",
                 "nothing is ever sent on it: it only closes",
             ),
-            ("set.new", "the set is empty: what is put in it"),
             ("Result.pure", "it is no Err: the error type of the use"),
         ];
         fn variables(ty: &TypeExpr, out: &mut Vec<String>) {

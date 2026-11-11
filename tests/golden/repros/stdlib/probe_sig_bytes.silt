@@ -3,6 +3,7 @@ import bytes
 fn main() {
   let v_bytes_concat: Int = bytes.concat
   let v_bytes_concat_all: Int = bytes.concat_all
+  let v_bytes_contains: Int = bytes.contains
   let v_bytes_empty: Int = bytes.empty
   let v_bytes_ends_with: Int = bytes.ends_with
   let v_bytes_from_base64: Int = bytes.from_base64
@@ -11,6 +12,7 @@ fn main() {
   let v_bytes_from_string: Int = bytes.from_string
   let v_bytes_get: Int = bytes.get
   let v_bytes_index_of: Int = bytes.index_of
+  let v_bytes_is_empty: Int = bytes.is_empty
   let v_bytes_length: Int = bytes.length
   let v_bytes_slice: Int = bytes.slice
   let v_bytes_split: Int = bytes.split

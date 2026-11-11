@@ -9,7 +9,7 @@
 import list
 
 fn first(xs) {
-  list.head(xs)
+  list.first(xs)
 }
 
 fn stays(r, xs) {

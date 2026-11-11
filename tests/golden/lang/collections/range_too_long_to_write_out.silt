@@ -20,7 +20,7 @@ fn long() -> List(Int) {
 }
 
 fn test_a_range_of_the_most_elements_is_reversed() {
-  test.assert_eq(list.head(list.reverse(1..10000000)), Some(10000000))
+  test.assert_eq(list.first(list.reverse(1..10000000)), Some(10000000))
 }
 
 fn test_println() {

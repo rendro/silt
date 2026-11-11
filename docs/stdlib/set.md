@@ -7,12 +7,15 @@ order: 5
 # set
 
 Functions for working with immutable, ordered sets (`Set(a)`). Sets use `#[...]`
-literal syntax and contain unique values.
+literal syntax and contain unique values; `#[]` is the empty set, as `#{}` is the
+empty map.
 
 ## Summary
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
+| `all` | `(Set(a), Fn(a) -> Bool) -> Bool` | True if predicate holds for every element |
+| `any` | `(Set(a), Fn(a) -> Bool) -> Bool` | True if predicate holds for at least one element |
 | `contains` | `(Set(a), a) -> Bool where a: Hash` | Check membership |
 | `difference` | `(Set(a), Set(a)) -> Set(a)` | Elements in first but not second |
 | `each` | `(Set(a), Fn(a) -> ()) -> ()` | Iterate over all elements |
@@ -25,11 +28,48 @@ literal syntax and contain unique values.
 | `is_subset` | `(Set(a), Set(a)) -> Bool` | True if first is subset of second |
 | `length` | `(Set(a)) -> Int` | Number of elements |
 | `map` | `(Set(a), Fn(a) -> b) -> Set(b) where b: Hash` | Transform each element |
-| `new` | `() -> Set(a)` | Create an empty set |
 | `remove` | `(Set(a), a) -> Set(a) where a: Hash` | Remove an element |
 | `symmetric_difference` | `(Set(a), Set(a)) -> Set(a)` | Elements in exactly one of the two sets |
 | `to_list` | `(Set(a)) -> List(a)` | Convert set to sorted list |
 | `union` | `(Set(a), Set(a)) -> Set(a)` | Combine all elements |
+
+
+## `set.all`
+
+```
+set.all(s: Set(a), f: Fn(a) -> Bool) -> Bool
+```
+
+Returns `true` if `f` returns `true` for every element, in sorted order.
+Stops at the first `false`. An empty set gives `true`.
+
+```silt
+import set
+
+fn main() {
+  println(set.all(#[2, 4, 6]) { x -> x % 2 == 0 }) -- true
+  println(set.all(#[]) { x -> false }) -- true
+}
+```
+
+
+## `set.any`
+
+```
+set.any(s: Set(a), f: Fn(a) -> Bool) -> Bool
+```
+
+Returns `true` if `f` returns `true` for at least one element, in sorted
+order. Stops at the first `true`. An empty set gives `false`.
+
+```silt
+import set
+
+fn main() {
+  println(set.any(#[1, 3, 4]) { x -> x % 2 == 0 }) -- true
+  println(set.any(#[]) { x -> true }) -- false
+}
+```
 
 
 ## `set.contains`
@@ -188,7 +228,7 @@ Returns `true` if the set has no elements.
 import set
 
 fn main() {
-  println(set.is_empty(set.new())) -- true
+  println(set.is_empty(#[])) -- true
   println(set.is_empty(#[1, 2])) -- false
 }
 ```
@@ -244,25 +284,6 @@ import set
 fn main() {
   let scaled = set.map(#[1, 2, 3]) { x -> x * 10 }
   println(set.to_list(scaled)) -- [10, 20, 30]
-}
-```
-
-
-## `set.new`
-
-```
-set.new() -> Set(a)
-```
-
-Creates a new empty set.
-
-```silt
-import set
-
-fn main() {
-  let s = set.new()
-  let s = set.insert(s, 42)
-  println(set.length(s)) -- 1
 }
 ```
 

@@ -45,7 +45,7 @@ let merged = [..a, 3, ..b]
 
 Key functions: `list.map`, `list.filter`, `list.fold`, `list.each`,
 `list.find`, `list.zip`, `list.flatten`, `list.flat_map`, `list.filter_map`,
-`list.sort_by`, `list.any`, `list.all`, `list.head`, `list.tail`,
+`list.sort_by`, `list.any`, `list.all`, `list.first`, `list.tail`,
 `list.last`, `list.length`, `list.contains`, `list.append`, `list.concat`,
 `list.reverse`, `list.get`, `list.take`, `list.drop`, `list.enumerate`,
 `list.group_by`, `list.fold_until`, `list.unfold`.
@@ -85,7 +85,7 @@ checker cannot know what `map.get(m, key)` returns, it cannot catch errors
 at compile time. See [Design Decisions](design-decisions.md#homogeneous-maps)
 for the full argument.
 
-Key functions: `map.get`, `map.set`, `map.delete`, `map.contains`,
+Key functions: `map.get`, `map.set`, `map.remove`, `map.contains`,
 `map.keys`, `map.values`, `map.entries`, `map.from_entries`, `map.length`,
 `map.merge`, `map.filter`, `map.map`, `map.each`, `map.update`.
 
@@ -109,7 +109,7 @@ Set equality with `==`/`!=` works:
 println(#[1, 2, 3] == #[3, 2, 1]) -- true
 ```
 
-Key functions: `set.new`, `set.from_list`, `set.to_list`, `set.contains`,
+Key functions: `set.from_list`, `set.to_list`, `set.contains`,
 `set.insert`, `set.remove`, `set.length`, `set.union`, `set.intersection`,
 `set.difference`, `set.is_subset`, `set.map`, `set.filter`, `set.each`,
 `set.fold`.
@@ -137,7 +137,7 @@ That holds for everything that grows a collection or joins two
 `stream.collect`, and a `stream.chunks` chunk). A string and a `Bytes`
 value hold at most 10,000,000 bytes where they are joined or built
 (string interpolation, `string.from`, `string.join`, `string.repeat`,
-`string.replace`, `regex.replace`, `regex.replace_all`,
+`string.replace`, `regex.replace`, `regex.replace_first`,
 `regex.replace_all_with`, `encoding.form_encode`, `json.stringify`,
 `json.pretty`, `toml.stringify`, `toml.pretty`, `bytes.concat`,
 `bytes.concat_all`), and a channel buffers at most

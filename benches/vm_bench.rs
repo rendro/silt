@@ -289,14 +289,14 @@ fn main() {
     );
 
     bench(
-        "regex: replace_all 1K",
+        "regex: replace 1K",
         r#"
 import regex
 import result
 import list
 fn main() {
   list.map(1..1001) { n ->
-    regex.replace_all("hello world {n}", "[aeiou]", "_") |> result.unwrap_or("")
+    regex.replace("hello world {n}", "[aeiou]", "_") |> result.unwrap_or("")
   } |> list.length
 }
     "#,

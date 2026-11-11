@@ -76,7 +76,6 @@ functions. `Error.message(e)` (and `"{e}"`) is the text of the variant.
 |---------|--------|---------|
 | `InvalidPercent(String)` | what and where | a `%` at the end of the text (`"bad%"`) or one that two hex digits do not follow (`"bad%ZZ"`) |
 | `InvalidUtf8(String)` | where | the decoded bytes are not valid UTF-8 (`"%C3%28"`) |
-| `Other(String)` | message | unclassified failure |
 
 ## Notes
 

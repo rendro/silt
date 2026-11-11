@@ -2,7 +2,7 @@
 import regex
 import string
 fn main() {
-  println("caaat" |> regex.replace("a+", "X"))
+  println("caaat" |> regex.replace_first("a+", "X"))
   println("caaat" |> string.replace("aaa", "X"))
   println("a,b;c" |> regex.split("[,;]"))
   println("a,b;c" |> string.split(","))

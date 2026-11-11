@@ -6,6 +6,6 @@ fn main() {
   let _ = list.map(xs) { x -> x }
   let _ = list.filter(xs) { x -> true }
   let _ = list.fold(xs, 0) { acc, x -> acc + x }
-  let _ = list.head(xs)
+  let _ = list.first(xs)
   let _ = list.reverse(xs)
 }

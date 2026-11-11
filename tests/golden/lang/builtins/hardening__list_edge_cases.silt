@@ -9,8 +9,8 @@ fn main() {
   println(list.fold(empty, 42) { acc, x -> acc + x })
   -- test_list_find_empty_returns_none
   println(list.find(empty, { x -> true }))
-  -- test_list_head_empty_returns_none
-  println(list.head(empty))
+  -- test_list_first_empty_returns_none
+  println(list.first(empty))
   -- test_list_last_empty_returns_none
   println(list.last(empty))
   -- test_list_reverse_empty

@@ -162,7 +162,7 @@ fn std_deviation(nums) {
 -- Uses map.update for O(n) frequency counting instead of per-bucket filtering
 fn histogram(label, values, bucket_size) {
   let sorted = list.sort(values)
-  let min_val = list.head(sorted) |> option.unwrap_or(0.0)
+  let min_val = list.first(sorted) |> option.unwrap_or(0.0)
   let max_val = list.last(sorted) |> option.unwrap_or(0.0)
   let min_bucket = float.to_int(float.floor(min_val / int.to_float(bucket_size))) * bucket_size
   let max_bucket = float.to_int(float.floor(max_val / int.to_float(bucket_size))) * bucket_size

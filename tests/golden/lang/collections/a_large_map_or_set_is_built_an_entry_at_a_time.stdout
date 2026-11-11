@@ -1,6 +1,6 @@
 map.set: 100000 Some(0) Some(2002) None 9999900000
 map.update: 100000 Some(1) Some(2003) None 10000000000
-map.delete: 50000 None Some(2002) None 5000000000
+map.remove: 50000 None Some(2002) None 5000000000
 map.merge: 110000 Some(0) Some(0) Some(4) 9949905000
 map.set again: 100000 Some(0) Some(2002) None 9999900000
 set.insert: 100000 true true false 4999950000

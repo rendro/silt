@@ -19,7 +19,7 @@ import list
 type Doc { parts: Map(String, List(json.Value)) }
 
 fn first(xs: List(json.Value)) -> Option(json.Value) {
-  list.head(xs)
+  list.first(xs)
 }
 
 fn main() {

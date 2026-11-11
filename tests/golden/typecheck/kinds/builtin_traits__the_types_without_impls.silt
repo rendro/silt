@@ -15,7 +15,7 @@ fn wrap(x: Int, type m) -> m(Int) where m: Applicative { m.pure(x) }
 fn again(xs: m(Int)) -> m(Int) where m: Monad { xs }
 
 fn main() {
-  let s = twice(set.new())
+  let s = twice(#[])
   let m = twice(#{1: 2})
   let ch: Channel(Int) = channel.new(1)
   let w: Channel(Int) = wrap(1, Channel)

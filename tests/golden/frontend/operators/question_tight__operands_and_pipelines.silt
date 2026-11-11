@@ -11,7 +11,7 @@ fn add(a: String, b: String) -> Result(Int, int.IntError) {
 }
 
 fn first_doubled(xs: List(Int)) -> Option(Int) {
-  let n = xs |> list.map { x -> x * 2 } |> list.head?
+  let n = xs |> list.map { x -> x * 2 } |> list.first?
   Some(n)
 }
 

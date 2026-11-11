@@ -10,7 +10,7 @@ type Smaller { a: Int }
 import list
 fn big(x: Bigger) -> Int { x.a }
 fn main() {
-  let h = list.head([1])
+  let h = list.first([1])
   match h {
     Just(x) -> println(x)
     Nothing -> println("n")

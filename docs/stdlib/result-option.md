@@ -235,6 +235,7 @@ matching.
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `flat_map` | `(Option(a), Fn(a) -> Option(b)) -> Option(b)` | Chain optional operations |
+| `flatten` | `(Option(Option(a))) -> Option(a)` | Remove one nesting level |
 | `is_none` | `(Option(a)) -> Bool` | True if None |
 | `is_some` | `(Option(a)) -> Bool` | True if Some |
 | `map` | `(Option(a), Fn(a) -> b) -> Option(b)` | Transform the inner value |
@@ -282,6 +283,25 @@ fn main() {
       }
     }
   println(chained) -- Some(84)
+}
+```
+
+
+## `option.flatten`
+
+```
+option.flatten(opt: Option(Option(a))) -> Option(a)
+```
+
+Collapses a nested Option. `Some(Some(v))` becomes `Some(v)`, and
+`Some(None)` and `None` become `None`.
+
+```silt
+import option
+
+fn main() {
+  println(option.flatten(Some(Some(42)))) -- Some(42)
+  println(option.flatten(Some(None))) -- None
 }
 ```
 

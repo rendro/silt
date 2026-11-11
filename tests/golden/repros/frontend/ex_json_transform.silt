@@ -124,7 +124,7 @@ fn main() {
     let count = list.length(emps)
     let top = emps
     |> list.sort_by { e -> -e.salary }
-    |> list.head
+    |> list.first
     let top_name = match top {
       Some(e) -> e.name
       None -> "N/A"

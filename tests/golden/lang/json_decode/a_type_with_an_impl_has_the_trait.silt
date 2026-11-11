@@ -12,7 +12,7 @@ type Tags { s: Set(String) }
 trait json.Decode for Tags {
   fn decode(value: json.Value) -> Result(Self, json.JsonError) {
     match value {
-      json.Array(_) -> Ok(Tags { s: set.new() })
+      json.Array(_) -> Ok(Tags { s: #[] })
       _ -> Err(json.TypeMismatch("array", "something else"))
     }
   }

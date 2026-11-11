@@ -17,7 +17,7 @@ fn main() {
   println(out2)
   let n = stream.from_list([1, 2, 0, 4])
     |> stream.filter(fn(x) { 100 / x > 0 })
-    |> stream.count
+    |> stream.length
   println(n)
   let u = stream.unfold(0, fn(s) {
     match s {

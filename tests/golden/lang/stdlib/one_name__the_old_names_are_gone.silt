@@ -1,0 +1,20 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: module 'list' has no member 'head'
+-- stderr-contains: module 'map' has no member 'delete'
+-- stderr-contains: module 'stream' has no member 'count'
+-- stderr-contains: module 'regex' has no member 'replace_all'
+-- stderr-contains: module 'set' has no member 'new'
+import list
+import map
+import regex
+import set
+import stream
+
+fn main() {
+  println(list.head([1]))
+  println(map.delete(#{ "a": 1 }, "a"))
+  println(stream.count(stream.from_list([1])))
+  println(regex.replace_all("a", "a", "b"))
+  println(set.new())
+}

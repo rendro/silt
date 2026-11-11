@@ -1,0 +1,12 @@
+a=1 b=2 c=3 
+10
+any a
+any b
+true
+all a
+all b
+false
+false
+true
+true
+true

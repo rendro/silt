@@ -155,7 +155,7 @@ fn cases(dur, few) {
     })
   })
   let _ = fate("a sink of a stream the function reads", dur, few, { _ ->
-    let _ = stream.from_list([1, 2, 3]) |> stream.count
+    let _ = stream.from_list([1, 2, 3]) |> stream.length
   })
   let _ = fate("a read of a file", dur, few, { _ ->
     let _ = io.read_file("/no/such/file")

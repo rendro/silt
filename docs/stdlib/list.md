@@ -10,7 +10,7 @@ Functions for working with ordered, immutable lists (`List(a)`). Lists use
 `[...]` literal syntax and support the range operator `1..5`.
 
 See also [result / option](result-option.md) for the return types of
-`find`, `find_map`, `head`, `last`, `get`, and `filter_map`; [stream](stream.md) for
+`find`, `find_map`, `first`, `last`, `get`, and `filter_map`; [stream](stream.md) for
 channel-backed lazy pipelines over the same combinator names.
 
 ## Summary
@@ -24,19 +24,20 @@ channel-backed lazy pipelines over the same combinator names.
 | `concat` | `(List(a), List(a)) -> List(a)` | Concatenate two lists |
 | `contains` | `(List(a), a) -> Bool where a: Equal` | Check if element is in list |
 | `drop` | `(List(a), Int) -> List(a)` | Remove first n elements |
+| `drop_while` | `(List(a), Fn(a) -> Bool) -> List(a)` | Skip elements until `f` first rejects one |
 | `each` | `(List(a), Fn(a) -> ()) -> ()` | Call function for each element (side effects) |
 | `enumerate` | `(List(a)) -> List((Int, a))` | Pair each element with its index |
 | `filter` | `(List(a), Fn(a) -> Bool) -> List(a)` | Keep elements matching predicate |
 | `filter_map` | `(List(a), Fn(a) -> Option(b)) -> List(b)` | Filter and transform in one pass |
 | `find` | `(List(a), Fn(a) -> Bool) -> Option(a)` | First element matching predicate |
 | `find_map` | `(List(a), Fn(a) -> Option(b)) -> Option(b)` | The first Some that f returns; f is not called after it |
+| `first` | `(List(a)) -> Option(a)` | First element, or None |
 | `flat_map` | `(List(a), Fn(a) -> List(b)) -> List(b)` | Map then flatten |
 | `flatten` | `(List(List(a))) -> List(a)` | Flatten one level of nesting |
 | `fold` | `(List(a), b, Fn(b, a) -> b) -> b` | Reduce to a single value |
 | `fold_until` | `(List(a), b, Fn(b, a) -> Step(b)) -> b` | Fold with early termination |
 | `get` | `(List(a), Int) -> Option(a)` | Element at index, or None |
 | `group_by` | `(List(a), Fn(a) -> b) -> Map(b, List(a)) where b: Hash` | Group elements by key function |
-| `head` | `(List(a)) -> Option(a)` | First element, or None |
 | `index_of` | `(List(a), a) -> Option(Int) where a: Equal` | Index of first matching element, or None |
 | `intersperse` | `(List(a), a) -> List(a)` | Insert separator between elements |
 | `is_empty` | `(List(a)) -> Bool` | True if the list has no elements |
@@ -60,6 +61,7 @@ channel-backed lazy pipelines over the same combinator names.
 | `sum_float` | `(List(Float)) -> Float` | Sum a list of floats (0.0 on empty) |
 | `tail` | `(List(a)) -> List(a)` | All elements except the first |
 | `take` | `(List(a), Int) -> List(a)` | Keep first n elements |
+| `take_while` | `(List(a), Fn(a) -> Bool) -> List(a)` | Elements until `f` first rejects one |
 | `traverse` | `(List(a), Fn(a) -> m(b)) -> m(List(b)) where m: Applicative` | Call f on every element, then one Applicative value of the list of the results: the first failure, if there is one |
 | `unfold` | `(a, Fn(a) -> Option((b, a))) -> List(b)` | Build a list from a seed |
 | `unique` | `(List(a)) -> List(a) where a: Equal` | Remove duplicates, preserving first occurrence |
@@ -218,6 +220,26 @@ fn main() {
 ```
 
 
+## `list.drop_while`
+
+```
+list.drop_while(xs: List(a), f: Fn(a) -> Bool) -> List(a)
+```
+
+Returns the list from the first element for which `f` returns `false`:
+the elements before it are dropped. `f` is not called after that element.
+If `f` accepts every element, the result is empty.
+
+```silt
+import list
+
+fn main() {
+  println(list.drop_while([1, 2, 5, 1]) { x -> x < 3 }) -- [5, 1]
+  println(list.drop_while([1, 2]) { x -> x < 3 }) -- []
+}
+```
+
+
 ## `list.each`
 
 ```
@@ -326,7 +348,7 @@ list.find_map(xs: List(a), f: Fn(a) -> Option(b)) -> Option(b)
 Calls `f` on each element in order and returns the first `Some` it gives,
 or `None` if it gives `None` for every element. `f` is not called on the
 elements after that `Some`, so this is the lazy form of `filter_map` then
-`head`.
+`first`.
 
 ```silt
 import int
@@ -336,6 +358,24 @@ import result
 fn main() {
   let first = list.find_map(["x", "12", "7"]) { s -> int.parse(s) |> result.to_option }
   println(first) -- Some(12)
+}
+```
+
+
+## `list.first`
+
+```
+list.first(xs: List(a)) -> Option(a)
+```
+
+Returns `Some(first_element)` or `None` if the list is empty.
+
+```silt
+import list
+
+fn main() {
+  println(list.first([1, 2, 3])) -- Some(1)
+  println(list.first([])) -- None
 }
 ```
 
@@ -458,24 +498,6 @@ import list
 fn main() {
   let groups = [1, 2, 3, 4, 5, 6] |> list.group_by { x -> x % 2 }
   println(groups) -- #{0: [2, 4, 6], 1: [1, 3, 5]}
-}
-```
-
-
-## `list.head`
-
-```
-list.head(xs: List(a)) -> Option(a)
-```
-
-Returns `Some(first_element)` or `None` if the list is empty.
-
-```silt
-import list
-
-fn main() {
-  println(list.head([1, 2, 3])) -- Some(1)
-  println(list.head([])) -- None
 }
 ```
 
@@ -954,6 +976,26 @@ import list
 
 fn main() {
   println(list.take([1, 2, 3, 4, 5], 3)) -- [1, 2, 3]
+}
+```
+
+
+## `list.take_while`
+
+```
+list.take_while(xs: List(a), f: Fn(a) -> Bool) -> List(a)
+```
+
+Returns the elements up to the first one for which `f` returns `false`,
+without it. `f` is not called after that element. If `f` accepts every
+element, the result is the whole list.
+
+```silt
+import list
+
+fn main() {
+  println(list.take_while([1, 2, 5, 1]) { x -> x < 3 }) -- [1, 2]
+  println(list.take_while([]) { x -> x < 3 }) -- []
 }
 ```
 

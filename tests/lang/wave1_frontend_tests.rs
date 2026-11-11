@@ -15,7 +15,7 @@
 //!    (`loop i = n, acc = Nil { ... }`). In a `match` scrutinee a
 //!    trailing closure may be used inside parentheses or call arguments,
 //!    and the match body may follow the right operand of `|>` directly
-//!    (`match xs |> list.head { ... }`).
+//!    (`match xs |> list.first { ... }`).
 //!
 //! The run-only tests of part 3 are golden cases
 //! (`tests/golden/lang/control/wave1_frontend__*`); what stays here runs
@@ -531,7 +531,7 @@ import option -- trailing on an import
 fn main() {
   let xs = [3, 1, 2] |> list.sort
   let s = string.join(list.map(xs) { x -> "{x}" }, ",")
-  let o = option.unwrap_or(list.head(xs), 0)
+  let o = option.unwrap_or(list.first(xs), 0)
   println("{s} {o}") -- trailing on a statement
   -- last comment in main
 }
@@ -637,7 +637,7 @@ fn sum_to(n) {
 fn main() {
   let u = User { name: "Ann", age: 30 }
   let older = u.{ age: 31 }
-  when let Some(first) = list.head([1, 2, 3]) else {
+  when let Some(first) = list.first([1, 2, 3]) else {
     return
   }
   when older.age > 30 else {
@@ -871,14 +871,14 @@ fn a_match_body_may_follow_the_right_operand_of_a_pipe() {
     let head = r#"import list
 fn main() {
   let xs = [1, 2]
-  let r = match xs |> list.head {
+  let r = match xs |> list.first {
     Some(x) -> x
     None -> 0
   }
   println("{r}")
 }
 "#;
-    assert_fmt_keeps_program("fmt_pipe_head", head, &["match (xs |> list.head) {\n"]);
+    assert_fmt_keeps_program("fmt_pipe_head", head, &["match (xs |> list.first) {\n"]);
 }
 
 /// Guard. A trailing closure on the right operand of a pipe in a

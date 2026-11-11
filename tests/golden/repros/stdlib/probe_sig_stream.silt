@@ -5,7 +5,6 @@ fn main() {
   let v_stream_chunks: Int = stream.chunks
   let v_stream_collect: Int = stream.collect
   let v_stream_concat: Int = stream.concat
-  let v_stream_count: Int = stream.count
   let v_stream_dedup: Int = stream.dedup
   let v_stream_drop: Int = stream.drop
   let v_stream_drop_while: Int = stream.drop_while
@@ -18,6 +17,7 @@ fn main() {
   let v_stream_from_list: Int = stream.from_list
   let v_stream_from_range: Int = stream.from_range
   let v_stream_last: Int = stream.last
+  let v_stream_length: Int = stream.length
   let v_stream_map: Int = stream.map
   let v_stream_merge: Int = stream.merge
   let v_stream_repeat: Int = stream.repeat

@@ -32,7 +32,7 @@ use crate::vm::VmError;
 /// `fields`: `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     match (tag, fields) {
-        ("InvalidPercent" | "InvalidUtf8" | "Other", [Value::String(m)]) => Some(m.to_string()),
+        ("InvalidPercent" | "InvalidUtf8", [Value::String(m)]) => Some(m.to_string()),
         _ => None,
     }
 }

@@ -24,7 +24,7 @@ fn fill(ch, i, n) {
 
 -- How many values left `ch` beyond `used`.
 fn lost(ch, used) {
-  100 - stream.count(ch) - used
+  100 - stream.length(ch) - used
 }
 
 fn main() {

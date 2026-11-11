@@ -127,7 +127,7 @@ pub(super) fn modules() -> Vec<Module> {
             name: "int",
             page: "int-float.md",
             types: "\
-                pub type IntError { Empty, InvalidDigit(Int), Overflow, Underflow, Other(String) }\n\
+                pub type IntError { Empty, InvalidDigit(Int), Overflow, Underflow }\n\
             ",
             error: "IntError" => numeric::int_error_text,
             rows: [
@@ -143,7 +143,7 @@ pub(super) fn modules() -> Vec<Module> {
             name: "float",
             page: "int-float.md",
             types: "\
-                pub type FloatError { Empty, InvalidDigit(Int), Overflow, Underflow, NotFinite, Other(String) }\n\
+                pub type FloatError { Empty, InvalidDigit(Int), Overflow, Underflow, NotFinite }\n\
             ",
             error: "FloatError" => numeric::float_error_text,
             rows: [
@@ -177,19 +177,20 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn concat(xs: List(a), ys: List(a)) -> List(a)", "Concatenate two lists", list::concat),
                 f("fn contains(xs: List(a), elem: a) -> Bool where a: Equal", "Check if element is in list", list::contains),
                 f("fn drop(xs: List(a), n: Int) -> List(a)", "Remove first n elements", list::drop),
+                f("fn drop_while(xs: List(a), f: Fn(a) -> Bool) -> List(a)", "Skip elements until `f` first rejects one", list::drop_while),
                 f("fn each(xs: List(a), f: Fn(a) -> ()) -> ()", "Call function for each element (side effects)", list::each),
                 f("fn enumerate(xs: List(a)) -> List((Int, a))", "Pair each element with its index", list::enumerate),
                 f("fn filter(xs: List(a), f: Fn(a) -> Bool) -> List(a)", "Keep elements matching predicate", list::filter),
                 f("fn filter_map(xs: List(a), f: Fn(a) -> Option(b)) -> List(b)", "Filter and transform in one pass", list::filter_map),
                 f("fn find(xs: List(a), f: Fn(a) -> Bool) -> Option(a)", "First element matching predicate", list::find),
                 f("fn find_map(xs: List(a), f: Fn(a) -> Option(b)) -> Option(b)", "The first Some that f returns; f is not called after it", list::find_map),
+                f("fn first(xs: List(a)) -> Option(a)", "First element, or None", list::first),
                 f("fn flat_map(xs: List(a), f: Fn(a) -> List(b)) -> List(b)", "Map then flatten", list::flat_map),
                 f("fn flatten(xs: List(List(a))) -> List(a)", "Flatten one level of nesting", list::flatten),
                 f("fn fold(xs: List(a), init: b, f: Fn(b, a) -> b) -> b", "Reduce to a single value", list::fold),
                 f("fn fold_until(xs: List(a), init: b, f: Fn(b, a) -> Step(b)) -> b", "Fold with early termination", list::fold_until),
                 f("fn get(xs: List(a), i: Int) -> Option(a)", "Element at index, or None", list::get),
                 f("fn group_by(xs: List(a), f: Fn(a) -> b) -> Map(b, List(a)) where b: Hash", "Group elements by key function", list::group_by),
-                f("fn head(xs: List(a)) -> Option(a)", "First element, or None", list::head),
                 f("fn index_of(xs: List(a), target: a) -> Option(Int) where a: Equal", "Index of first matching element, or None", list::index_of),
                 f("fn intersperse(xs: List(a), sep: a) -> List(a)", "Insert separator between elements", list::intersperse),
                 f("fn is_empty(xs: List(a)) -> Bool", "True if the list has no elements", list::is_empty),
@@ -213,6 +214,7 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn sum_float(xs: List(Float)) -> Float", "Sum a list of floats (0.0 on empty)", list::sum_float),
                 f("fn tail(xs: List(a)) -> List(a)", "All elements except the first", list::tail),
                 f("fn take(xs: List(a), n: Int) -> List(a)", "Keep first n elements", list::take),
+                f("fn take_while(xs: List(a), f: Fn(a) -> Bool) -> List(a)", "Elements until `f` first rejects one", list::take_while),
                 f("fn traverse(xs: List(a), f: Fn(a) -> m(b)) -> m(List(b)) where m: Applicative", "Call f on every element, then one Applicative value of the list of the results: the first failure, if there is one", list::traverse),
                 f("fn unfold(seed: a, f: Fn(a) -> Option((b, a))) -> List(b)", "Build a list from a seed", list::unfold),
                 f("fn unique(xs: List(a)) -> List(a) where a: Equal", "Remove duplicates, preserving first occurrence", list::unique),
@@ -224,11 +226,13 @@ pub(super) fn modules() -> Vec<Module> {
             name: "map",
             page: "map.md",
             rows: [
+                f("fn all(m: Map(a, b), f: Fn(a, b) -> Bool) -> Bool", "True if predicate holds for every entry", map::all),
+                f("fn any(m: Map(a, b), f: Fn(a, b) -> Bool) -> Bool", "True if predicate holds for at least one entry", map::any),
                 f("fn contains(m: Map(a, b), key: a) -> Bool where a: Hash", "Check if key exists", map::contains),
-                f("fn delete(m: Map(a, b), key: a) -> Map(a, b) where a: Hash", "Remove a key", map::delete),
                 f("fn each(m: Map(a, b), f: Fn(a, b) -> ()) -> ()", "Iterate over all entries", map::each),
                 f("fn entries(m: Map(a, b)) -> List((a, b))", "All key-value pairs as tuples", map::entries),
                 f("fn filter(m: Map(a, b), f: Fn(a, b) -> Bool) -> Map(a, b)", "Keep entries matching predicate", map::filter),
+                f("fn fold(m: Map(a, b), init: c, f: Fn(c, a, b) -> c) -> c", "Reduce to a single value", map::fold),
                 f("fn from_entries(entries: List((a, b))) -> Map(a, b) where a: Hash", "Build map from tuple list", map::from_entries),
                 f("fn get(m: Map(a, b), k: a) -> Option(b) where a: Hash", "Look up value by key", map::get),
                 f("fn is_empty(m: Map(a, b)) -> Bool", "True if the map has no entries", map::is_empty),
@@ -236,6 +240,7 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn length(m: Map(a, b)) -> Int", "Number of entries", map::length),
                 f("fn map(m: Map(a, b), f: Fn(a, b) -> (c, d)) -> Map(c, d) where c: Hash", "Transform all entries", map::map),
                 f("fn merge(m1: Map(a, b), m2: Map(a, b)) -> Map(a, b) where a: Hash", "Merge two maps (right wins)", map::merge),
+                f("fn remove(m: Map(a, b), key: a) -> Map(a, b) where a: Hash", "Remove a key", map::remove),
                 f("fn set(m: Map(a, b), k: a, v: b) -> Map(a, b) where a: Hash", "Insert or update a key", map::set),
                 f("fn update(m: Map(a, b), key: a, default: b, f: Fn(b) -> b) -> Map(a, b) where a: Hash", "Apply `f` to the existing value, or to `default` when the key is absent, and insert the result", map::update),
                 f("fn values(m: Map(a, b)) -> List(b)", "All values as a list", map::values),
@@ -260,6 +265,7 @@ pub(super) fn modules() -> Vec<Module> {
             page: "result-option.md",
             rows: [
                 f("fn flat_map(opt: Option(a), f: Fn(a) -> Option(b)) -> Option(b)", "Chain optional operations", core::option::flat_map),
+                f("fn flatten(opt: Option(Option(a))) -> Option(a)", "Remove one nesting level", core::option::flatten),
                 f("fn is_none(opt: Option(a)) -> Bool", "True if None", core::option::is_none),
                 f("fn is_some(opt: Option(a)) -> Bool", "True if Some", core::option::is_some),
                 f("fn map(opt: Option(a), f: Fn(a) -> b) -> Option(b)", "Transform the inner value", core::option::map),
@@ -318,7 +324,7 @@ pub(super) fn modules() -> Vec<Module> {
             name: "regex",
             page: "regex.md",
             types: "\
-                pub type RegexError { InvalidPattern(String, Int), TooBig, Other(String) }\n\
+                pub type RegexError { InvalidPattern(String, Int), TooBig }\n\
             ",
             error: "RegexError" => regex::error_text,
             rows: [
@@ -328,9 +334,9 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn find(text: String, pattern: String) -> Result(Option(String), RegexError)", "First match", regex::find),
                 f("fn find_all(text: String, pattern: String) -> Result(List(String), RegexError)", "All matches", regex::find_all),
                 f("fn is_match(text: String, pattern: String) -> Result(Bool, RegexError)", "Test if pattern matches", regex::is_match),
-                f("fn replace(text: String, pattern: String, replacement: String) -> Result(String, RegexError)", "Replace first match", regex::replace),
-                f("fn replace_all(text: String, pattern: String, replacement: String) -> Result(String, RegexError)", "Replace all matches", regex::replace_all),
+                f("fn replace(text: String, pattern: String, replacement: String) -> Result(String, RegexError)", "Replace all matches", regex::replace),
                 f("fn replace_all_with(text: String, pattern: String, f: Fn(String) -> String) -> Result(String, RegexError)", "Replace all with callback", regex::replace_all_with),
+                f("fn replace_first(text: String, pattern: String, replacement: String) -> Result(String, RegexError)", "Replace first match", regex::replace_first),
                 f("fn split(text: String, pattern: String) -> Result(List(String), RegexError)", "Split on pattern", regex::split),
             ],
         },
@@ -373,6 +379,8 @@ pub(super) fn modules() -> Vec<Module> {
             name: "set",
             page: "set.md",
             rows: [
+                f("fn all(s: Set(a), f: Fn(a) -> Bool) -> Bool", "True if predicate holds for every element", set::all),
+                f("fn any(s: Set(a), f: Fn(a) -> Bool) -> Bool", "True if predicate holds for at least one element", set::any),
                 f("fn contains(s: Set(a), elem: a) -> Bool where a: Hash", "Check membership", set::contains),
                 f("fn difference(a: Set(a), b: Set(a)) -> Set(a)", "Elements in first but not second", set::difference),
                 f("fn each(s: Set(a), f: Fn(a) -> ()) -> ()", "Iterate over all elements", set::each),
@@ -385,7 +393,6 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn is_subset(a: Set(a), b: Set(a)) -> Bool", "True if first is subset of second", set::is_subset),
                 f("fn length(s: Set(a)) -> Int", "Number of elements", set::length),
                 f("fn map(s: Set(a), f: Fn(a) -> b) -> Set(b) where b: Hash", "Transform each element", set::map),
-                f("fn new() -> Set(a)", "Create an empty set", set::new),
                 f("fn remove(s: Set(a), elem: a) -> Set(a) where a: Hash", "Remove an element", set::remove),
                 f("fn symmetric_difference(a: Set(a), b: Set(a)) -> Set(a)", "Elements in exactly one of the two sets", set::symmetric_difference),
                 f("fn to_list(s: Set(a)) -> List(a)", "Convert set to sorted list", set::to_list),
@@ -536,12 +543,13 @@ pub(super) fn modules() -> Vec<Module> {
             name: "bytes",
             page: "bytes.md",
             types: "\
-                pub type BytesError { InvalidUtf8(Int), InvalidHex(String), InvalidBase64(String), ByteOutOfRange(Int), Other(String) }\n\
+                pub type BytesError { InvalidUtf8(Int), InvalidHex(String), InvalidBase64(String), ByteOutOfRange(Int) }\n\
             ",
             error: "BytesError" => bytes::error_text,
             rows: [
                 f("fn concat(a: Bytes, b: Bytes) -> Bytes", "Concatenate two byte sequences", bytes::concat),
                 f("fn concat_all(parts: List(Bytes)) -> Bytes", "Concatenate every element of a list", bytes::concat_all),
+                f("fn contains(b: Bytes, needle: Bytes) -> Bool", "True if `needle` appears in `b`", bytes::contains),
                 f("fn empty() -> Bytes", "Zero-length byte sequence", bytes::empty),
                 f("fn ends_with(b: Bytes, suffix: Bytes) -> Bool", "True if `b` ends with `suffix`", bytes::ends_with),
                 f("fn from_base64(s: String) -> Result(Bytes, BytesError)", "Decode base64 string", bytes::from_base64),
@@ -550,6 +558,7 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn from_string(s: String) -> Bytes", "UTF-8 encode a string", bytes::from_string),
                 f("fn get(b: Bytes, i: Int) -> Option(Int)", "The byte at index, or None", bytes::get),
                 f("fn index_of(b: Bytes, needle: Bytes) -> Option(Int)", "First offset at which `needle` appears", bytes::index_of),
+                f("fn is_empty(b: Bytes) -> Bool", "True if there are no bytes", bytes::is_empty),
                 f("fn length(b: Bytes) -> Int", "Number of bytes", bytes::length),
                 f("fn slice(b: Bytes, start: Int, end: Int) -> Bytes", "The bytes from `start` up to `end`, both clamped to the length (a negative index is a runtime error)", bytes::slice),
                 f("fn split(b: Bytes, sep: Bytes) -> List(Bytes)", "Split on every occurrence of `sep` (an empty `sep` splits into the single bytes)", bytes::split),
@@ -583,7 +592,7 @@ pub(super) fn modules() -> Vec<Module> {
             name: "encoding",
             page: "encoding.md",
             types: "\
-                pub type EncodingError { InvalidPercent(String), InvalidUtf8(String), Other(String) }\n\
+                pub type EncodingError { InvalidPercent(String), InvalidUtf8(String) }\n\
             ",
             error: "EncodingError" => encoding::error_text,
             rows: [
@@ -648,7 +657,7 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn zip(a: Channel(a), b: Channel(b)) -> Channel((a, b))", "Pair elements of two streams", stream::zip),
                 f("fn collect(ch: Channel(a)) -> List(a)", "Drain into a list", stream::collect),
                 f("fn fold(ch: Channel(a), init: b, f: Fn(b, a) -> b) -> b", "Reduce to a single value", stream::fold),
-                f("fn count(ch: Channel(a)) -> Int", "Count the elements", stream::count),
+                f("fn length(ch: Channel(a)) -> Int", "Number of elements", stream::length),
                 f("fn first(ch: Channel(a)) -> Option(a)", "The first element, or `None`", stream::first),
                 f("fn last(ch: Channel(a)) -> Option(a)", "The last element, or `None`", stream::last),
                 f("fn write_to_file(ch: Channel(Bytes), path: String) -> Result((), IoError)", "Write each chunk to a file", stream::write_to_file),

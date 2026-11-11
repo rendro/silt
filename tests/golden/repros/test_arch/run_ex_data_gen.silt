@@ -128,7 +128,7 @@ fn std_deviation(nums) {
 
 fn histogram(label, values, bucket_size) {
   let sorted = list.sort(values)
-  let min_val = list.head(sorted)
+  let min_val = list.first(sorted)
   |> option.unwrap_or(0.0)
   let max_val = list.last(sorted)
   |> option.unwrap_or(0.0)

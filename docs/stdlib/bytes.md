@@ -21,6 +21,7 @@ work as `Map`/`Set` keys and respect the standard `==` operator.
 |----------|-----------|-------------|
 | `concat` | `(Bytes, Bytes) -> Bytes` | Concatenate two byte sequences |
 | `concat_all` | `(List(Bytes)) -> Bytes` | Concatenate every element of a list |
+| `contains` | `(Bytes, Bytes) -> Bool` | True if `needle` appears in `b` |
 | `empty` | `() -> Bytes` | Zero-length byte sequence |
 | `ends_with` | `(Bytes, Bytes) -> Bool` | True if `b` ends with `suffix` |
 | `from_base64` | `(String) -> Result(Bytes, BytesError)` | Decode base64 string |
@@ -29,6 +30,7 @@ work as `Map`/`Set` keys and respect the standard `==` operator.
 | `from_string` | `(String) -> Bytes` | UTF-8 encode a string |
 | `get` | `(Bytes, Int) -> Option(Int)` | The byte at index, or None |
 | `index_of` | `(Bytes, Bytes) -> Option(Int)` | First offset at which `needle` appears |
+| `is_empty` | `(Bytes) -> Bool` | True if there are no bytes |
 | `length` | `(Bytes) -> Int` | Number of bytes |
 | `slice` | `(Bytes, Int, Int) -> Bytes` | The bytes from `start` up to `end`, both clamped to the length (a negative index is a runtime error) |
 | `split` | `(Bytes, Bytes) -> List(Bytes)` | Split on every occurrence of `sep` (an empty `sep` splits into the single bytes) |
@@ -58,6 +60,8 @@ fn main() {
   println(bytes.get(hello, 0)) -- Some(104)
   println(bytes.get(hello, 5)) -- None
   println(bytes.length(raw)) -- 4
+  println(bytes.is_empty(raw)) -- false
+  println(bytes.is_empty(bytes.empty())) -- true
 
   -- Encoding
   println(bytes.to_hex(hello)) -- 68656c6c6f
@@ -88,6 +92,8 @@ fn main() {
     Some(i) -> println(i) -- 3
     None -> println(-1)
   }
+  println(bytes.contains(msg, sep)) -- true
+  println(bytes.contains(msg, bytes.from_string("qux"))) -- false
   println(bytes.starts_with(msg, bytes.from_string("foo"))) -- true
   println(bytes.ends_with(msg, bytes.from_string("baz"))) -- true
   -- bytes.split yields [foo, bar, baz] as three Bytes values.
@@ -108,7 +114,6 @@ for granular handling or fall back to `Error.message(e)`:
 | `InvalidHex(msg)` | `String` | `from_hex` on odd length / non-hex char |
 | `InvalidBase64(msg)` | `String` | `from_base64` on malformed input, or input without its `=` padding (`"aGVsbG8"` for `"aGVsbG8="`) |
 | `ByteOutOfRange(value)` | `Int` | `from_list` when an element is negative or `> 255` |
-| `Other(msg)` | `String` | unclassified failure |
 
 `bytes.get` is a lookup and returns an `Option`; `bytes.slice` clamps its
 indices to the length, as `string.slice` does, and returns `Bytes` (empty if

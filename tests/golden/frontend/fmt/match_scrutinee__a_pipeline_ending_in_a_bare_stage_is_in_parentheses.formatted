@@ -7,11 +7,11 @@ import list
 
 fn main() {
   let xs = [1, 2]
-  let a = match (xs |> list.head) {
+  let a = match (xs |> list.first) {
     Some(x) -> x
     None -> 0
   }
-  let b = match (xs |> list.head) {
+  let b = match (xs |> list.first) {
     Some(x) -> x
     None -> 0
   }

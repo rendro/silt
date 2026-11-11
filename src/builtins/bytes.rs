@@ -44,7 +44,6 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
         ("ByteOutOfRange", [Value::Int(v)]) => {
             format!("byte value out of range (expected 0..=255): {v}")
         }
-        ("Other", [Value::String(m)]) => m.to_string(),
         _ => return None,
     })
 }
@@ -250,6 +249,16 @@ builtins! {
     }
 
     // ── Search / prefix / suffix / split ──────────────────────────────
+
+    fn is_empty(b: Bytes) -> bool {
+        b.is_empty()
+    }
+
+    // An empty needle is in every byte sequence, as `index_of` finds it
+    // at 0.
+    fn contains(b: Bytes, needle: Bytes) -> bool {
+        find_subslice(b, needle).is_some()
+    }
 
     fn index_of(b: Bytes, needle: Bytes) -> Option<Value> {
         find_subslice(b, needle).map(|at| Value::Int(at as i64))

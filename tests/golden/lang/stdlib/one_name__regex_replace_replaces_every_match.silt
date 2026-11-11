@@ -1,0 +1,17 @@
+import regex
+import string
+
+fn main() {
+  -- replace means every match, as string.replace means every occurrence
+  println(regex.replace("a1 b22 c333", "\\d+", "#"))
+  println(string.replace("a1 a1", "a1", "#"))
+  -- the first match only
+  println(regex.replace_first("a1 b22 c333", "\\d+", "#"))
+  -- groups, no match, an empty text, non-ASCII text
+  println(regex.replace("ab ab", "(a)(b)", "$2$1"))
+  println(regex.replace_first("ab ab", "(a)(b)", "$2$1"))
+  println(regex.replace("xyz", "\\d", "#"))
+  println(regex.replace_first("", "\\d", "#"))
+  println(regex.replace("héllo wörld", "[éö]", "_"))
+  println(regex.replace_first("héllo wörld", "[éö]", "_"))
+}

@@ -2,7 +2,7 @@
 -- A map of 100,000 entries made in one go (`map.from_entries`, and what
 -- `map.filter` keeps of it), and a set of 100,000 members (`set.from_list`),
 -- each changed 100,000 times, every change made from the one made in
--- one go: `map.set` of a key it has and of one it lacks, `map.delete`,
+-- one go: `map.set` of a key it has and of one it lacks, `map.remove`,
 -- `set.insert`, `set.remove`. The first change makes a tree of the
 -- entries and keeps it with the map; each change after it shares all
 -- but a path of that tree. The map made in one go stays as it was.
@@ -18,7 +18,7 @@ fn changes_of_map(m: Map(Int, Int), n: Int) -> Int {
       false -> {
         let changed = map.set(m, i, 0 - 1)
         let added = map.set(m, 0 - i - 1, i)
-        let deleted = map.delete(m, i)
+        let deleted = map.remove(m, i)
         let got = match map.get(changed, i) {
           Some(v) -> v
           None -> 0

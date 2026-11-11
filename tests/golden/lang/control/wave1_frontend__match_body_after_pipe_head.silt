@@ -1,7 +1,7 @@
 import list
 fn main() {
   let xs = [1, 2]
-  let r = match xs |> list.head {
+  let r = match xs |> list.first {
     Some(x) -> x
     None -> 0
   }

@@ -1,0 +1,4 @@
+Some(42)
+None
+None
+Some(Some("é"))
