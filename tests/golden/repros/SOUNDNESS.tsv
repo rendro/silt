@@ -181,7 +181,7 @@ repros/type_soundness/n8.silt	-	obsolete	fn lambda; its subject, ExtFloat launde
 repros/type_soundness/n9.silt	holds	accept	float division by zero traps at run time (decided)
 repros/type_soundness/nf1.silt	holds	accept	modulo by zero traps at run time (decided)
 repros/type_soundness/nf2.silt	holds	accept	list.sum is over any Number: Floats sum to a Float (its overflow is a runtime error)
-repros/type_soundness/nf3.silt	holds	reject E0301	list.product is for Int
+repros/type_soundness/nf3.silt	holds	accept	list.product is over any Number: Floats multiply to a Float (its overflow is a runtime error)
 repros/type_soundness/nf4.silt	holds	accept	control: a non-finite JSON number is an Err
 repros/type_soundness/nf5.silt	holds	accept	control: float.parse of inf and NaN is an Err
 repros/type_soundness/o1.silt	holds	reject E0318	occurs check: `f(f)`
