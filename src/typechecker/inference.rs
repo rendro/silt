@@ -885,15 +885,24 @@ impl TypeChecker {
                     return None;
                 }
                 if bounds.is_empty() {
+                    // (The one trait in sight with a method of the name
+                    // that makes a value is the bound to add.)
+                    let help = match self.value_makers(field) {
+                        (makers, _) if makers.len() == 1 => format!(
+                            "add the bound: `where {name}: {}`",
+                            self.show_trait(makers[0])
+                        ),
+                        _ => format!(
+                            "add a bound whose trait has the method: `where {name}: SomeTrait`"
+                        ),
+                    };
                     self.error_help(
                         Code::UnknownMethod,
                         (
                             format!(
                                 "no method '{field}' on type variable `{name}`: it has no bounds"
                             ),
-                            Some(format!(
-                                "add a bound whose trait has the method: `where {name}: SomeTrait`"
-                            )),
+                            Some(help),
                         ),
                         span,
                     );
@@ -2498,6 +2507,15 @@ impl TypeChecker {
         if crate::module::is_builtin_module(&module) && builtin_env_has(qualified) {
             d = d.with_help(format!(
                 "did you mean `{module}.{field}`, a function of module `{module}`?"
+            ));
+        } else if let (makers, _) = self.value_makers(field)
+            && let [tr] = makers.as_slice()
+        {
+            // (The one trait in sight that makes a value by the name,
+            // which the type does not implement: `String.from_int(1)`.)
+            d = d.with_help(format!(
+                "`{field}` is a method of trait `{}`, which type '{shown}' does not implement",
+                self.spell_trait(*tr)
             ));
         }
         self.errors.push(d);

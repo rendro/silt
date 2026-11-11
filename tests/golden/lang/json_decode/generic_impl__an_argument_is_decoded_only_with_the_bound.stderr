@@ -3,7 +3,7 @@ error[type]: no method 'decode' on type variable `a`: it has no bounds
     |
  15 |       json.Array([inner]) -> match a.decode(inner) {
     |                                    ^^^^^^^^ no method 'decode' on type variable `a`: it has no bounds
-  = help: add a bound whose trait has the method: `where a: SomeTrait`
+  = help: add the bound: `where a: json.Decode`
 
 error[type]: `json.parse` cannot decode `Pair`: it is a generic record type, and a decoder builds a value of one type
  --> generic_impl__an_argument_is_decoded_only_with_the_bound.silt:39:29
