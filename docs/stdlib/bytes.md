@@ -94,7 +94,7 @@ fn main() {
   -- Order is byte by byte, a shorter prefix first
   println(bytes.from_string("ab") < bytes.from_string("b")) -- true
   println(bytes.from_string("ab") < bytes.from_string("abc")) -- true
-  println(bytes.from_string("é") < bytes.from_string("z")) -- false: byte 0xc3 is after 0x7a
+  println(bytes.from_string("é") < bytes.from_string("z")) -- false (its first byte, c3, is after 7a)
   println(list.sort([bytes.from_string("b"), bytes.empty()]) == [bytes.empty(), bytes.from_string("b")]) -- true
 
   -- Search / prefix / suffix / split

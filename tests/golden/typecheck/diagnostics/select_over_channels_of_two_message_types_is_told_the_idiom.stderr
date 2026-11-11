@@ -1,0 +1,19 @@
+error[type]: list elements must have the same type: first element is channel.ChannelOp(Int), but element 2 is channel.ChannelOp(())
+ --> select_over_channels_of_two_message_types_is_told_the_idiom.silt:13:47
+    |
+ 13 |   let _ = channel.select([channel.Recv(jobs), channel.Recv(quit)])
+    |                                               ^^^^^^^^^^^^^^^^^^ list elements must have the same type: first element is channel.ChannelOp(Int), but element 2 is channel.ChannelOp(())
+  = help: channel.select takes channels of one message type: give the signal channel the same type and close it to signal (a closed channel is received as None), or wrap the messages in one enum
+
+error[type]: list elements must have the same type: first element is channel.ChannelOp(Int), but element 2 is channel.ChannelOp(())
+ --> select_over_channels_of_two_message_types_is_told_the_idiom.silt:14:47
+    |
+ 14 |   let _ = channel.select([channel.Recv(jobs), channel.Send(quit, ())])
+    |                                               ^^^^^^^^^^^^^^^^^^^^^^ list elements must have the same type: first element is channel.ChannelOp(Int), but element 2 is channel.ChannelOp(())
+  = help: channel.select takes channels of one message type: give the signal channel the same type and close it to signal (a closed channel is received as None), or wrap the messages in one enum
+
+error[type]: list elements must have the same type: first element is Int, but element 2 is String
+ --> select_over_channels_of_two_message_types_is_told_the_idiom.silt:15:15
+    |
+ 15 |   let _ = [1, "two"]
+    |               ^^^^^ list elements must have the same type: first element is Int, but element 2 is String
