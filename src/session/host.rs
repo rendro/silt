@@ -357,6 +357,25 @@ pub(super) fn mentions_function(ty: &TypeExpr) -> bool {
     }
 }
 
+/// The first `TypeOf(..)` in the parameter type `ty` around anything
+/// but a bare type variable (`TypeOf(List(a))`, `TypeOf(Int)`): a type
+/// given so shows no type for its variables that a result could be
+/// checked against, and says nothing `type a` cannot.
+pub(super) fn type_of_not_a_variable(ty: &TypeExpr) -> Option<&TypeExpr> {
+    match &ty.kind {
+        TypeExprKind::Generic {
+            module: None, name, ..
+        } if resolve(*name) == crate::defs::TYPE_OF && type_of_variable(ty).is_none() => Some(ty),
+        TypeExprKind::Generic { args, .. } | TypeExprKind::Tuple(args) => {
+            args.iter().find_map(type_of_not_a_variable)
+        }
+        TypeExprKind::AnonRecord { fields, .. } => {
+            fields.iter().find_map(|(_, ty)| type_of_not_a_variable(ty))
+        }
+        TypeExprKind::Function(..) | TypeExprKind::Named { .. } | TypeExprKind::SelfType => None,
+    }
+}
+
 /// The variables of the return type of the host function `f` that no
 /// parameter introduces (by its type, or as a `type a` parameter), each
 /// with whether it is a row variable (`{name: String, ...r}`). Nothing
