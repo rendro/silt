@@ -289,7 +289,7 @@ fn main() {
     );
 
     bench(
-        "regex: replace_all 1K",
+        "regex: replace 1K",
         r#"
 import regex
 import result

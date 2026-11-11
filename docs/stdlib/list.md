@@ -10,7 +10,7 @@ Functions for working with ordered, immutable lists (`List(a)`). Lists use
 `[...]` literal syntax and support the range operator `1..5`.
 
 See also [result / option](result-option.md) for the return types of
-`find`, `find_map`, `head`, `last`, `get`, and `filter_map`; [stream](stream.md) for
+`find`, `find_map`, `first`, `last`, `get`, and `filter_map`; [stream](stream.md) for
 channel-backed lazy pipelines over the same combinator names.
 
 ## Summary
@@ -348,7 +348,7 @@ list.find_map(xs: List(a), f: Fn(a) -> Option(b)) -> Option(b)
 Calls `f` on each element in order and returns the first `Some` it gives,
 or `None` if it gives `None` for every element. `f` is not called on the
 elements after that `Some`, so this is the lazy form of `filter_map` then
-`head`.
+`first`.
 
 ```silt
 import int
