@@ -470,8 +470,9 @@ impl TypeChecker {
     }
 
     /// The `where` clauses the trait `tr` declares on its parameters
-    /// (`trait Pr(a) where a: Greet`), in order: the parameter's place
-    /// and the trait.
+    /// (`trait Pr(a) where a: Greet`), in order: the parameter's place,
+    /// the trait and its trait arguments (written with the trait's
+    /// parameters).
     fn param_wheres(&self, tr: TraitKey) -> Vec<(usize, TraitKey, Vec<Type>)> {
         let Some(info) = self.tables.traits.get(&tr) else {
             return Vec::new();
