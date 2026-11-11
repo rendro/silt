@@ -1152,7 +1152,7 @@ mod tests {
         check_package_files("[package]\nname = \"app\"\nversion = \"0.1.0\"\n").unwrap();
         check_package_files("[package\nname = ").unwrap();
         let lock = "version = 1\n\n[[package]]\nname = \"b\"\nversion = \"1.0.0\"\n\
-                    source = { path = \"../b\" }\nchecksum = \"sha256:00\"\n\n\
+                    source = { path = \"../b\" }\n\n\
                     [[package]]\nname = \"a\"\nversion = \"0.1.0\"\n";
         check_package_files(lock).unwrap();
     }

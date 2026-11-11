@@ -526,12 +526,18 @@ impl Resolver<'_> {
                 return None;
             }
         }
+        // Only a git dependency's checksum is pinned: a path dependency
+        // is live, its sources change as you work on them.
+        let pinned = match locked {
+            LockedSource::Git { .. } => checksum,
+            LockedSource::Local | LockedSource::Path { .. } => String::new(),
+        };
         Some(self.add(
             source,
             root,
             manifest,
             locked,
-            checksum,
+            pinned,
             Some((from, entry.key)),
         ))
     }

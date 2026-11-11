@@ -107,10 +107,51 @@ fn test_lockfile_generated_on_first_run() {
         lock.contains("name = \"calc\""),
         "lock missing calc: {lock}"
     );
+    // A path dependency is live: silt.lock pins no checksum for it.
     assert!(
-        lock.contains("checksum = \"sha256:"),
-        "lock missing checksum: {lock}"
+        !lock.contains("checksum"),
+        "a path dependency has no checksum: {lock}"
     );
+}
+
+/// Editing a path dependency leaves `silt.lock` as it is, also after
+/// `silt update`: the lock pins no checksum that could go stale.
+/// FAILS on the base commit: the lock carried a checksum that `silt
+/// update` rewrote after the edit.
+#[test]
+fn test_lockfile_path_dependency_edit_leaves_lock_unchanged() {
+    let ws = fresh_workspace("path_edit");
+    let app = ws.join("app");
+    let dep = ws.join("calc");
+    write_lib_package(&dep, "calc", &[], "pub fn add(a, b) { a + b }\n");
+    write_package(
+        &app,
+        "the_app",
+        &[r#"calc = { path = "../calc" }"#.to_string()],
+        "import calc\nfn main() { println(calc.add(2, 3)) }\n",
+    );
+    let update = || {
+        let out = silt_cmd()
+            .arg("update")
+            .current_dir(&app)
+            .output()
+            .expect("failed to invoke silt update");
+        assert!(
+            out.status.success(),
+            "silt update failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        read_lockfile(&app.join("silt.lock"))
+    };
+    let before = update();
+    assert!(!before.contains("checksum"), "{before}");
+    fs::write(
+        dep.join("src").join("lib.silt"),
+        "pub fn add(a, b) { b + a }\n",
+    )
+    .unwrap();
+    let after = update();
+    assert_eq!(before, after, "editing a path dependency changed silt.lock");
 }
 
 #[test]
@@ -207,38 +248,6 @@ fn test_lockfile_regenerates_when_manifest_changes() {
     assert!(
         second_text.contains("name = \"extra\""),
         "lock should now include extra; got:\n{second_text}"
-    );
-}
-
-#[test]
-fn test_lockfile_regenerates_when_dep_content_changes() {
-    let ws = fresh_workspace("dep_change");
-    let app = ws.join("app");
-    let dep = ws.join("dep");
-    write_lib_package(&dep, "dep", &[], "pub fn answer() { 41 }\n");
-    write_package(
-        &app,
-        "cs_app",
-        &[r#"dep = { path = "../dep" }"#.to_string()],
-        "import dep\nfn main() { println(dep.answer()) }\n",
-    );
-
-    // Initial lock from `silt update`.
-    let init = silt_cmd().arg("update").current_dir(&app).output().unwrap();
-    assert!(init.status.success(), "silt update failed: {init:?}");
-    let lock_path = app.join("silt.lock");
-    let initial_text = read_lockfile(&lock_path);
-
-    // Mutate the dep's source — the auto-regenerate logic doesn't pick
-    // this up (it only watches the *manifest*) but `silt update` does.
-    fs::write(dep.join("src/lib.silt"), "pub fn answer() { 42 }\n").unwrap();
-
-    let updated = silt_cmd().arg("update").current_dir(&app).output().unwrap();
-    assert!(updated.status.success(), "silt update failed: {updated:?}");
-    let new_text = read_lockfile(&lock_path);
-    assert_ne!(
-        initial_text, new_text,
-        "lockfile checksum should change when dep source changes; got identical content"
     );
 }
 

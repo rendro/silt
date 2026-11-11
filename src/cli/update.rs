@@ -38,8 +38,8 @@ pub(crate) fn dispatch(args: &[String]) {
         println!("Usage: silt update");
         println!();
         println!("Regenerate `silt.lock` from the current package's `silt.toml`.");
-        println!("Resolves the full dependency tree, computes content checksums,");
-        println!("and writes the result next to `silt.toml`.");
+        println!("Resolves the full dependency tree, computes the checksums of git");
+        println!("dependencies, and writes the result next to `silt.toml`.");
         println!();
         println!("To update the silt binary itself, use `silt self-update` instead.");
         process::exit(0);
@@ -50,7 +50,7 @@ pub(crate) fn dispatch(args: &[String]) {
 /// Implementation of `silt update`.
 ///
 /// Walks up from cwd to find a `silt.toml`, resolves the full dep tree
-/// fresh from disk, computes checksums, and writes `silt.lock` next to
+/// fresh from disk, computes git checksums, and writes `silt.lock` next to
 /// the manifest, the entire lock.
 ///
 /// Outside any package (no `silt.toml` reachable) we print a fixed

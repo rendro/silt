@@ -30,7 +30,6 @@
 //! name = "calc"
 //! version = "0.1.0"
 //! source = { path = "../calc" }
-//! checksum = "sha256:..."
 //!
 //! [[package]]
 //! name = "remote"
@@ -40,11 +39,11 @@
 //! ```
 //!
 //! The local package gets an entry with no `source` or `checksum` (it
-//! is the root of the dep graph; nothing pins *it*). All other entries
-//! must carry both fields. The checksum covers the package's
-//! `silt.toml` and its `src/` sources. A git dependency's checkout must
-//! have the checksum its entry pins (`package_graph`); a path
-//! dependency's is written and not compared.
+//! is the root of the dep graph; nothing pins *it*). Every other entry
+//! has a `source`; a git dependency's entry also has a `checksum`,
+//! which covers the package's `silt.toml` and its `src/` sources, and
+//! its checkout must have that checksum (`package_graph`). A path
+//! dependency has no checksum: its sources change as you work on them.
 //!
 //! # Why not `toml::to_string`?
 //!
@@ -93,7 +92,8 @@ pub struct LockedPackage {
     /// nothing pins the local package, so it has no source/checksum.
     pub source: LockedSource,
     /// Content hash of the dep's source tree (`"sha256:<hex>"`),
-    /// computed by `checksum_path_source` (internal). Empty for the root.
+    /// computed by `checksum_path_source` (internal). Only a git
+    /// dependency has one: empty for the root and for a path dependency.
     pub checksum: String,
 }
 
@@ -434,7 +434,6 @@ pub(crate) fn render_lockfile(lock: &Lockfile) -> String {
                     "source = {{ path = {} }}\n",
                     toml_escape_str(&path.display().to_string())
                 ));
-                out.push_str(&format!("checksum = {}\n", toml_escape_str(&pkg.checksum)));
             }
             LockedSource::Git {
                 url,
@@ -590,7 +589,7 @@ pub(crate) fn parse_lockfile(text: &str) -> Result<Lockfile, LockParseError> {
                     .get("checksum")
                     .and_then(|v| v.as_str())
                     .map(str::to_string)
-                    .ok_or_else(|| bad(format!("[[package]] `{name}` has source but no checksum")))
+                    .ok_or_else(|| bad(format!("[[package]] `{name}` has a git source but no checksum")))
             };
             let source = match entry.get("source") {
                 None => LockedSource::Local,
@@ -655,8 +654,8 @@ pub(crate) fn parse_lockfile(text: &str) -> Result<Lockfile, LockParseError> {
                 }
             };
             let checksum = match source {
-                LockedSource::Local => String::new(),
-                _ => checksum()?,
+                LockedSource::Git { .. } => checksum()?,
+                LockedSource::Local | LockedSource::Path { .. } => String::new(),
             };
             packages.push(LockedPackage {
                 name,
@@ -689,7 +688,7 @@ mod tests {
                     source: LockedSource::Path {
                         path: PathBuf::from("/abs/path/to/calc"),
                     },
-                    checksum: "sha256:deadbeef".into(),
+                    checksum: String::new(),
                 },
                 LockedPackage {
                     name: "my_app".into(),
@@ -706,6 +705,27 @@ mod tests {
         assert_eq!(parsed, lock);
     }
 
+    /// A path dependency's entry has no checksum line; a git
+    /// dependency's has one.
+    #[test]
+    fn only_a_git_entry_has_a_checksum() {
+        let path_entry = LockedPackage {
+            name: "calc".into(),
+            version: "0.1.0".into(),
+            source: LockedSource::Path {
+                path: PathBuf::from("../calc"),
+            },
+            checksum: String::new(),
+        };
+        let text = render_lockfile(&Lockfile {
+            version: 1,
+            packages: vec![path_entry],
+        });
+        assert!(!text.contains("checksum"), "{text}");
+        let git = parse_lockfile(&lockfile_with_git_rev(&"a".repeat(40))).unwrap();
+        assert!(render_lockfile(&git).contains("checksum = \"sha256:deadbeef\""));
+    }
+
     #[test]
     fn render_is_sorted_by_name() {
         let lock = Lockfile {
@@ -717,7 +737,7 @@ mod tests {
                     source: LockedSource::Path {
                         path: PathBuf::from("/z"),
                     },
-                    checksum: "sha256:z".into(),
+                    checksum: String::new(),
                 },
                 LockedPackage {
                     name: "a_pkg".into(),

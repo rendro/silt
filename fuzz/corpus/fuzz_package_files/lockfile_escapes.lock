@@ -4,4 +4,3 @@ version = 1
 name = "a\u0007\"b"
 version = "0.1.0"
 source = { path = "C:\\deps\\a" }
-checksum = ""
