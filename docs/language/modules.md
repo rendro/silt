@@ -26,8 +26,9 @@ fn helper(x) {
 
 A module's name is lowercase letters, digits and `_`, not starting
 with a digit (`src/geo_util.silt`, imported as `geo_util`). A file such as
-`src/Util.silt`, `src/geo-util.silt` or `src/2d.silt` is an error, and so
-is `import Util`. A file named on the command line is a module too:
+`src/Util.silt`, `src/geo-util.silt`, `src/2d.silt` or `src/match.silt`
+(a keyword) is an error, and so is `import Util`. A file named on the
+command line is a module too:
 `silt check Demo.silt` and `silt check my-script.silt` are the same error,
 and a file named like a builtin module (`string.silt`) is refused there as
 in `src/` (`silt fmt` checks no names and formats it).

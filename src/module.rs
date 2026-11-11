@@ -16,15 +16,18 @@ pub fn builtin_modules() -> &'static [&'static str] {
 
 /// Whether `name` (written after `import`, or a module file's name) can
 /// name a module: lowercase letters, digits and `_`, not starting with a
-/// digit, the rule of a package name ([`crate::manifest::is_silt_identifier`]).
+/// digit, and not a keyword (`import match` cannot parse), the rule of a
+/// package name ([`crate::manifest::is_silt_identifier`],
+/// [`crate::manifest::is_reserved_keyword`]).
 pub fn is_module_name(name: &str) -> bool {
-    crate::manifest::is_silt_identifier(name)
+    crate::manifest::is_silt_identifier(name) && !crate::manifest::is_reserved_keyword(name)
 }
 
 /// The module name to suggest for the file or import name `name`, which
 /// is not one: `name` in lowercase with `-`, ` ` and `.` turned into `_`.
 /// `None` when that is still no module name (a leading digit, a letter
-/// outside a-z) or is a builtin module's, which no file can take.
+/// outside a-z, a keyword) or is a builtin module's, which no file can
+/// take.
 pub fn suggested_module_name(name: &str) -> Option<String> {
     let suggestion: String = name
         .to_lowercase()

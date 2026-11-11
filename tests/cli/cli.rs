@@ -392,7 +392,19 @@ fn test_an_entry_file_name_must_be_a_module_name() {
              not starting with a digit"
         )
     };
-    let cases: [(&str, String, Option<&str>); 5] = [
+    let cases: [(&str, String, Option<&str>); 7] = [
+        (
+            "match",
+            "the module `match` cannot be imported: `match` is a keyword".to_string(),
+            Some("rename `match.silt`"),
+        ),
+        (
+            "",
+            "the file `.silt` has no module name: use lowercase letters, digits and `_`, \
+             not starting with a digit"
+                .to_string(),
+            None,
+        ),
         (
             "my-entry",
             invalid("my-entry"),
@@ -453,6 +465,36 @@ fn test_an_entry_file_name_must_be_a_module_name() {
         .output()
         .expect("failed to run silt");
     assert!(output.status.success(), "{output:?}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A module file of `src/` named like a keyword is refused: `import
+/// match` cannot parse. FAILS on the base commit: `silt check` passed.
+#[test]
+fn test_a_module_file_named_like_a_keyword_is_refused() {
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!("silt_test_tl2_kw_{n}"));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(
+        dir.join("silt.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(dir.join("src/main.silt"), "fn main() {\n  println(1)\n}\n").unwrap();
+    fs::write(dir.join("src/match.silt"), "pub fn f() { 1 }\n").unwrap();
+    let output = silt_cmd()
+        .arg("check")
+        .current_dir(&dir)
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("failed to run silt");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "{stderr}");
+    assert!(
+        stderr.contains("the module `match` cannot be imported: `match` is a keyword"),
+        "{stderr}"
+    );
     let _ = fs::remove_dir_all(&dir);
 }
 

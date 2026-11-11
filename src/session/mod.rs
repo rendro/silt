@@ -722,10 +722,12 @@ impl Session {
     /// reported already, by [`Session::packages`].
     fn entry_name_problem(&self, entry: ModuleId, path: &Path) -> Option<Diagnostic> {
         let module = self.graph.module(entry);
-        if module.host.is_some() || path.extension().is_none_or(|ext| ext != "silt") {
+        if module.host.is_some() {
             return None;
         }
-        let name = path.file_stem()?.to_str()?;
+        // (By the file's name, not `extension`: `.silt` has none, and its
+        // module name is the empty one.)
+        let name = path.file_name()?.to_str()?.strip_suffix(".silt")?;
         if crate::module::is_module_name(name) && !crate::module::is_builtin_module(name) {
             return None;
         }

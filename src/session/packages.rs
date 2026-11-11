@@ -166,13 +166,31 @@ pub(super) fn modules_named_like_builtins(
     errors
 }
 
-/// The error at the start of the module file `file`, named `name`, when
-/// that is no module name, `None` when it is one. A file named like a
-/// builtin module could never be imported (`import list` always means
-/// the builtin `list`); any other name must be lowercase letters, digits
-/// and `_`, not starting with a digit. The help names a module name to
-/// use, when there is one ([`crate::module::suggested_module_name`]).
+/// The error at the start of the module file `file`, named `name`, which
+/// is no module name. A file named like a builtin module could never be
+/// imported (`import list` always means the builtin `list`), nor one
+/// named like a keyword (`import match` cannot parse); any other name
+/// must be lowercase letters, digits and `_`, not starting with a digit.
+/// The help names a module name to use, when there is one
+/// ([`crate::module::suggested_module_name`]). A file named `.silt` has
+/// the empty name.
 pub(super) fn file_name_problem(name: &str, file: FileId) -> Diagnostic {
+    if name.is_empty() {
+        return Diagnostic::error(
+            Code::ModuleNamedLikeBuiltin,
+            Span::point(file, 0),
+            "the file `.silt` has no module name: use lowercase letters, digits and `_`, \
+             not starting with a digit",
+        );
+    }
+    if crate::manifest::is_reserved_keyword(name) {
+        return Diagnostic::error(
+            Code::ModuleNamedLikeBuiltin,
+            Span::point(file, 0),
+            format!("the module `{name}` cannot be imported: `{name}` is a keyword"),
+        )
+        .with_help(format!("rename `{name}.silt`"));
+    }
     if crate::module::is_builtin_module(name) {
         return Diagnostic::error(
             Code::ModuleNamedLikeBuiltin,
@@ -212,7 +230,7 @@ mod tests {
         let help = |name: &str| file_name_problem(name, FileId::default()).help.join("\n");
         assert_eq!(help("My-File"), "rename `My-File.silt` to `my_file.silt`");
         assert_eq!(help("a.test"), "rename `a.test.silt` to `a_test.silt`");
-        for name in ["t15_\u{1b}[2J\rName", "2nd", "Мир", "String"] {
+        for name in ["t15_\u{1b}[2J\rName", "2nd", "Мир", "String", "Match"] {
             assert_eq!(help(name), "", "{name:?}");
         }
         let d = file_name_problem("t15_\u{1b}[2J\rName", FileId::default());
