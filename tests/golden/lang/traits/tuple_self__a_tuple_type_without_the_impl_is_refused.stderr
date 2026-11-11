@@ -17,6 +17,7 @@ error[type]: type '(Int, String)' has no method 'zero'
     |
  28 |   println((Int, String).zero())
     |           ^^^^^^^^^^^^^^^^^^ type '(Int, String)' has no method 'zero'
+  = help: `zero` is a method of trait `Zero`, which type '(Int, String)' does not implement
 
 error[type]: a tuple that holds a type has no field 'empty'
  --> tuple_self__a_tuple_type_without_the_impl_is_refused.silt:30:11
