@@ -92,6 +92,49 @@ pub(crate) struct Ledger {
     /// The bounds of the module's top-level definitions, by name, when
     /// the evidence is written.
     pub(super) tops: HashMap<Symbol, Vec<BoundKey>>,
+    /// Each node a use owes for a `Number` bound of the definition it
+    /// uses: the variable of the bound as the definition's scheme writes
+    /// it (`raw_var`), to drop the node where that bound is silent
+    /// (`Tables::silent_numbers`).
+    pub(super) number_vars: HashMap<EvId, TyVar>,
+    /// Of each top-level function and `let` of the module, by the span
+    /// that names it: which of its bounds are silent (`write_evidence`).
+    pub(super) silent: HashMap<Span, Vec<bool>>,
+}
+
+/// The variable a predicate's subject is, as a scheme writes it.
+pub(super) fn raw_var(ty: &Type) -> Option<TyVar> {
+    match ty {
+        Type::Var(v) => Some(*v),
+        Type::Rigid(r) => Some(r.var),
+        _ => None,
+    }
+}
+
+/// What a use of a bound's evidence asks of its dictionary
+/// (`settle_silent_numbers`).
+#[derive(Debug, Clone, Copy)]
+enum Need {
+    /// The use reads it.
+    Always,
+    /// The use hands it to the bound, written with this variable, of a
+    /// top-level definition of the module: it reads it if that bound is
+    /// read.
+    If(crate::defs::DefId, TyVar),
+}
+
+/// Each bound of a definition that the evidence `ev` names
+/// (`Evidence::Param`), at any depth.
+fn params_in(ev: &Evidence, out: &mut Vec<(Span, u16)>) {
+    match ev {
+        Evidence::Param { owner, k } => out.push((*owner, *k)),
+        Evidence::Impl { subs, .. } => subs.iter().for_each(|sub| params_in(sub, out)),
+        Evidence::Super { of, .. } => params_in(of, out),
+        Evidence::Structural { .. }
+        | Evidence::Native { .. }
+        | Evidence::Missing
+        | Evidence::Pending(_) => {}
+    }
 }
 
 /// The evidence node of a predicate a use owes: of the module that owes
@@ -604,6 +647,31 @@ impl TypeChecker {
             })
             .collect();
         self.ev.tops = tops;
+        self.settle_silent_numbers(program, env);
+        if self.is_cell {
+            self.refuse_cell_reads(program, env);
+        }
+        // (Without the bounds that are silent.)
+        let tags: HashMap<Symbol, Span> = (program.decls.iter())
+            .filter_map(|decl| match decl {
+                Decl::Fn(f) => Some((f.name, f.body.span)),
+                Decl::Let { pattern, value, .. } => match pattern.kind {
+                    PatternKind::Ident(name) => Some((name, value.span)),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        let tops = std::mem::take(&mut self.ev.tops);
+        self.ev.tops = (tops.into_iter())
+            .map(|(name, bounds)| {
+                let bounds = match tags.get(&name) {
+                    Some(tag) => self.heard(*tag, bounds),
+                    None => bounds,
+                };
+                (name, bounds)
+            })
+            .collect();
         self.write_evidence_of(program, env);
         // (Their places past the limit were clamped: the program does
         // not run. A definition refused for the 255 a function has is
@@ -636,11 +704,11 @@ impl TypeChecker {
         for decl in &mut program.decls {
             match decl {
                 Decl::Fn(f) => {
+                    let tag = f.body.span;
                     let bounds = env
                         .lookup(f.name)
-                        .map(|scheme| self.trait_bounds(&scheme.preds))
+                        .map(|scheme| self.heard(tag, self.trait_bounds(&scheme.preds)))
                         .unwrap_or_default();
-                    let tag = f.body.span;
                     if !bounds.is_empty() {
                         owners.push((tag, scheme(bounds.len())));
                     }
@@ -650,7 +718,7 @@ impl TypeChecker {
                     let bounds = match &pattern.kind {
                         PatternKind::Ident(name) => env
                             .lookup(*name)
-                            .map(|scheme| self.trait_bounds(&scheme.preds))
+                            .map(|scheme| self.heard(value.span, self.trait_bounds(&scheme.preds)))
                             .unwrap_or_default(),
                         // (Each name of a pattern is general as its part
                         // is: the value's bounds are all the names'.)
@@ -815,6 +883,478 @@ impl TypeChecker {
         }
     }
 
+    /// `bounds`, the bounds of the definition named `tag`, without
+    /// those that are silent (`Ledger::silent`).
+    fn heard(&self, tag: Span, bounds: Vec<BoundKey>) -> Vec<BoundKey> {
+        match self.ev.silent.get(&tag) {
+            Some(mask) => (bounds.into_iter().zip(mask))
+                .filter(|(_, silent)| !**silent)
+                .map(|(bound, _)| bound)
+                .collect(),
+            None => bounds,
+        }
+    }
+
+    /// Whether the node `id` that a use of the definition `res` owes is
+    /// for a bound of it that is silent: the use passes nothing for it.
+    fn silent_at_use(&self, res: Option<crate::defs::Res>, id: EvId) -> bool {
+        let (Some(crate::defs::Res::Def(def)), Some(var)) = (res, self.ev.number_vars.get(&id))
+        else {
+            return false;
+        };
+        (self.tables.silent_numbers.get(&def)).is_some_and(|silent| silent.contains(var))
+    }
+
+    /// The bounds of `preds` that pass a dictionary ([`trait_bounds`]),
+    /// each with the variable the predicate writes (`raw_var`).
+    fn bound_preds(&self, preds: &[Pred]) -> Vec<(BoundKey, Option<TyVar>)> {
+        preds
+            .iter()
+            .filter(|pred| passes_dictionary(pred))
+            .filter_map(|pred| match pred {
+                Pred::Trait {
+                    tr, args, subject, ..
+                } => {
+                    let var = self.bound_var(subject)?;
+                    Some(((var, *tr, args.clone()), raw_var(subject)))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Decide which `Number` bounds of the module's top-level functions
+    /// and `let`s are silent: those no code reads the dictionary of. The
+    /// operators find their impl by the values, so a body that only
+    /// does arithmetic at a variable needs no dictionary for it; one
+    /// that calls `from_int` on it, or hands the bound on to a use that
+    /// reads it (`list.sum`, a method, an impl's header, a definition
+    /// whose bound is not silent), does. A use of another top-level
+    /// definition of the module reads the bound if that definition's
+    /// does: the least answer that holds for every group that refers to
+    /// itself. A silent bound is in no definition's dictionaries and no
+    /// use passes it: `Ledger::silent` for this module's code, and
+    /// `Tables::silent_numbers` for every module and REPL input after.
+    ///
+    /// An impl of a trait found by the value (`Display`) is run with the
+    /// value alone, so a `Number` bound of its header must be silent:
+    /// one its methods read is refused here.
+    fn settle_silent_numbers(&mut self, program: &mut Program, env: &TypeEnv) {
+        let Some(defs) = self.defs.clone() else {
+            return;
+        };
+        // The top-level functions and `let`s with a `Number` bound.
+        struct Candidate {
+            id: crate::defs::DefId,
+            tag: Span,
+            bounds: Vec<(BoundKey, Option<TyVar>)>,
+        }
+        let own: Vec<crate::defs::DefId> = defs.of_module(self.module).to_vec();
+        let mut candidates: Vec<Candidate> = Vec::new();
+        for decl in &program.decls {
+            let (name, tag, kind) = match decl {
+                Decl::Fn(f) => (f.name, f.body.span, crate::defs::DefKind::Fn),
+                Decl::Let { pattern, value, .. } => match pattern.kind {
+                    PatternKind::Ident(name) => (name, value.span, crate::defs::DefKind::Let),
+                    _ => continue,
+                },
+                _ => continue,
+            };
+            let Some(scheme) = env.lookup(name) else {
+                continue;
+            };
+            let bounds = self.bound_preds(&scheme.preds);
+            if !bounds.iter().any(|((_, tr, _), _)| tr.is_builtin("Number")) {
+                continue;
+            }
+            let Some(&id) = own.iter().find(|id| {
+                let def = defs.get(**id);
+                def.name == name && def.kind == kind
+            }) else {
+                continue;
+            };
+            candidates.push(Candidate { id, tag, bounds });
+        }
+        // The value-driven impls' methods with a `Number` bound.
+        let mut value_methods: Vec<(Span, Span, Vec<BoundKey>, TraitKey)> = Vec::new();
+        for decl in &program.decls {
+            let Decl::TraitImpl(ti) = decl else {
+                continue;
+            };
+            let Some(tr) = self.impl_trait(ti).filter(|tr| !has_dictionary(*tr)) else {
+                continue;
+            };
+            for method in &ti.methods {
+                let bounds = self.ev.methods.get(&method.body.span).cloned();
+                if let Some(bounds) =
+                    bounds.filter(|b| b.iter().any(|(_, tr, _)| tr.is_builtin("Number")))
+                {
+                    value_methods.push((ti.span, method.body.span, bounds, tr));
+                }
+            }
+        }
+        if candidates.is_empty() && value_methods.is_empty() {
+            return;
+        }
+        let local: HashMap<crate::defs::DefId, Vec<Option<TyVar>>> = (candidates.iter())
+            .map(|c| (c.id, c.bounds.iter().map(|(_, raw)| *raw).collect()))
+            .collect();
+        // What each use of a bound asks: by the definition's span and the
+        // bound's place.
+        let mut needs: Vec<(Span, u16, Need)> = Vec::new();
+        for decl in &mut program.decls {
+            let (tag, body) = match decl {
+                Decl::Fn(f) => (f.body.span, &mut f.body),
+                Decl::Let { value, .. } => (value.span, value),
+                Decl::TraitImpl(ti) => {
+                    for method in &mut ti.methods {
+                        let tag = method.body.span;
+                        if let Some((_, _, bounds, _)) =
+                            value_methods.iter().find(|(_, at, _, _)| *at == tag)
+                        {
+                            let mut owners = vec![Owner {
+                                tag,
+                                bounds: bounds.clone(),
+                            }];
+                            self.needs_walk(&mut method.body, &mut owners, &local, &mut needs);
+                        }
+                    }
+                    continue;
+                }
+                _ => continue,
+            };
+            let Some(c) = candidates.iter().find(|c| c.tag == tag) else {
+                continue;
+            };
+            let mut owners = vec![Owner {
+                tag,
+                bounds: c.bounds.iter().map(|(b, _)| b.clone()).collect(),
+            }];
+            self.needs_walk(body, &mut owners, &local, &mut needs);
+        }
+        // The bounds read, the least that holds.
+        let mut read: std::collections::HashSet<(crate::defs::DefId, TyVar)> =
+            std::collections::HashSet::new();
+        let reads =
+            |read: &std::collections::HashSet<(crate::defs::DefId, TyVar)>, tag: Span, k: usize| {
+                (needs.iter())
+                    .filter(|(at, place, _)| *at == tag && usize::from(*place) == k)
+                    .any(|(_, _, need)| match need {
+                        Need::Always => true,
+                        Need::If(def, var) => read.contains(&(*def, *var)),
+                    })
+            };
+        loop {
+            let mut changed = false;
+            for c in &candidates {
+                for (k, ((_, tr, _), raw)) in c.bounds.iter().enumerate() {
+                    let Some(raw) = raw else {
+                        continue;
+                    };
+                    if tr.is_builtin("Number")
+                        && !read.contains(&(c.id, *raw))
+                        && reads(&read, c.tag, k)
+                    {
+                        read.insert((c.id, *raw));
+                        changed = true;
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        for c in &candidates {
+            let mask: Vec<bool> = (c.bounds.iter())
+                .map(|((_, tr, _), raw)| {
+                    tr.is_builtin("Number") && raw.is_some_and(|raw| !read.contains(&(c.id, raw)))
+                })
+                .collect();
+            let silent: Vec<TyVar> = (c.bounds.iter().zip(&mask))
+                .filter(|(_, silent)| **silent)
+                .filter_map(|((_, raw), _)| *raw)
+                .collect();
+            if !silent.is_empty() {
+                self.tables.silent_numbers.insert(c.id, silent);
+                self.ev.silent.insert(c.tag, mask);
+            }
+        }
+        // An impl found by the value whose methods read a `Number` bound.
+        let mut refused: Vec<(Span, TraitKey)> = Vec::new();
+        for (at, tag, bounds, tr) in &value_methods {
+            let reads_number = (bounds.iter().enumerate())
+                .any(|(k, (_, t, _))| t.is_builtin("Number") && reads(&read, *tag, k));
+            if reads_number && !refused.iter().any(|(span, _)| span == at) {
+                refused.push((*at, *tr));
+            }
+        }
+        for (at, tr) in refused {
+            let shown = self.show_trait(tr);
+            self.error_help(
+                Code::InvalidTraitImpl,
+                (
+                    format!(
+                        "an impl of '{shown}' runs with the value alone, so it cannot make a \
+                         number of its type's variable with `from_int`"
+                    ),
+                    Some(
+                        "compute the number before, in a function bounded by Number, and keep \
+                         it in the value"
+                            .to_string(),
+                    ),
+                ),
+                at,
+            );
+        }
+    }
+
+    /// Refuse each call in a REPL entry's statements that reads a
+    /// dictionary of the bounds the entry's function is general in: the
+    /// REPL runs the entry with none (`list.sum([])`, `s([])`, `f()` of
+    /// an earlier `let f = { -> list.sum([]) }`), as `main` of a file
+    /// would be refused. A function only named as a value (`greet2`,
+    /// `Some(greet2)`) is shown as it is, and asks nothing.
+    fn refuse_cell_reads(&mut self, program: &mut Program, env: &TypeEnv) {
+        let mut found: Vec<(Span, String, TraitKey, Vec<Type>)> = Vec::new();
+        for decl in &mut program.decls {
+            let Decl::Fn(f) = decl else {
+                continue;
+            };
+            if !crate::session::is_cell_name(&resolve(f.name)) {
+                continue;
+            }
+            let tag = f.body.span;
+            let bounds = env
+                .lookup(f.name)
+                .map(|scheme| self.heard(tag, self.trait_bounds(&scheme.preds)))
+                .unwrap_or_default();
+            if bounds.is_empty() {
+                continue;
+            }
+            let mut owners = vec![Owner {
+                tag,
+                bounds: bounds.clone(),
+            }];
+            let mut reads = Vec::new();
+            self.cell_walk(&mut f.body, &mut owners, false, tag, &mut reads);
+            for (span, name, k) in reads {
+                if let Some((_, tr, args)) = bounds.get(usize::from(k)) {
+                    found.push((span, name, *tr, args.clone()));
+                }
+            }
+        }
+        found.sort_by_key(|(span, ..)| span.start);
+        found.dedup_by_key(|(span, ..)| *span);
+        for (span, name, tr, args) in found {
+            let bound = self.show_bound(tr, &args);
+            self.run_refusals.push(
+                Diagnostic::error(
+                    Code::AmbiguousType,
+                    span,
+                    format!("cannot infer the type this use of '{name}' needs to implement trait '{bound}'"),
+                )
+                .with_help("annotate the value it is given"),
+            );
+        }
+    }
+
+    /// The uses in `expr` that call something with a dictionary of a
+    /// bound of the entry's function `cell` (`refuse_cell_reads`): each
+    /// with its name and the bound's place. `called`: `expr` is called.
+    fn cell_walk(
+        &self,
+        expr: &mut Expr,
+        owners: &mut Vec<Owner>,
+        called: bool,
+        cell: Span,
+        out: &mut Vec<(Span, String, u16)>,
+    ) {
+        let span = expr.span;
+        let name = match &expr.kind {
+            ExprKind::Ident(name) => Some(resolve(*name).to_string()),
+            ExprKind::FieldAccess(on, field, _) => Some(match &on.kind {
+                ExprKind::Ident(module) => format!("{}.{}", resolve(*module), resolve(*field)),
+                _ => resolve(*field).to_string(),
+            }),
+            _ => None,
+        };
+        if called && let Some(name) = name {
+            let mut evs: Vec<Evidence> = Vec::new();
+            if matches!(expr.kind, ExprKind::FieldAccess(..))
+                && let Some((recv, own)) = self.ev.calls.get(&span)
+            {
+                evs.push(self.ev_final(*recv, owners, 0));
+                evs.extend(own.iter().map(|k| self.ev_final(*k, owners, 0)));
+            } else if let Some(ids) = self.ev.refs.get(&span) {
+                evs.extend(
+                    (ids.iter())
+                        .filter(|k| !self.silent_at_use(expr.res, **k))
+                        .map(|k| self.ev_final(*k, owners, 0)),
+                );
+            }
+            let mut params = Vec::new();
+            for ev in &evs {
+                params_in(ev, &mut params);
+            }
+            out.extend(
+                (params.into_iter())
+                    .filter(|(owner, _)| *owner == cell)
+                    .map(|(_, k)| (span, name.clone(), k)),
+            );
+        }
+        match &mut expr.kind {
+            ExprKind::Call(callee, args) => {
+                self.cell_walk(callee, owners, true, cell, out);
+                for arg in args {
+                    self.cell_walk(arg, owners, false, cell, out);
+                }
+            }
+            ExprKind::Pipe(value, then) => {
+                self.cell_walk(value, owners, false, cell, out);
+                let call = matches!(then.kind, ExprKind::Call(..));
+                self.cell_walk(then, owners, !call, cell, out);
+            }
+            ExprKind::Block(stmts) => {
+                for stmt in stmts {
+                    match stmt {
+                        Stmt::Let { value, .. } => {
+                            let tag = value.span;
+                            let bounds = self.ev.lets.get(&tag).cloned().unwrap_or_default();
+                            let owns = !bounds.is_empty();
+                            if owns {
+                                owners.push(Owner { tag, bounds });
+                            }
+                            self.cell_walk(value, owners, false, cell, out);
+                            if owns {
+                                owners.pop();
+                            }
+                        }
+                        Stmt::When {
+                            expr, else_body, ..
+                        } => {
+                            self.cell_walk(expr, owners, false, cell, out);
+                            self.cell_walk(else_body, owners, false, cell, out);
+                        }
+                        Stmt::WhenBool {
+                            condition,
+                            else_body,
+                        } => {
+                            self.cell_walk(condition, owners, false, cell, out);
+                            self.cell_walk(else_body, owners, false, cell, out);
+                        }
+                        Stmt::Expr(e) => self.cell_walk(e, owners, false, cell, out),
+                    }
+                }
+            }
+            _ => super::resolve::each_child_mut(expr, &mut |child| {
+                self.cell_walk(child, owners, false, cell, out)
+            }),
+        }
+    }
+
+    /// What the body `expr` asks of the bounds of the definitions it is
+    /// in (`owners`, innermost last), for `settle_silent_numbers`: each
+    /// bound a use reads the dictionary of, at once or if a top-level
+    /// definition of the module (`local`, with the variable of each of
+    /// its bounds) reads its own.
+    fn needs_walk(
+        &self,
+        expr: &mut Expr,
+        owners: &mut Vec<Owner>,
+        local: &HashMap<crate::defs::DefId, Vec<Option<TyVar>>>,
+        out: &mut Vec<(Span, u16, Need)>,
+    ) {
+        let span = expr.span;
+        let mut note = |ev: &Evidence, need: Need| {
+            let mut params = Vec::new();
+            params_in(ev, &mut params);
+            out.extend(params.into_iter().map(|(owner, k)| (owner, k, need)));
+        };
+        let callee = match expr.res {
+            Some(crate::defs::Res::Def(def)) => Some(def),
+            _ => None,
+        };
+        // What a use of the definition `callee` asks with the evidence
+        // `ev` of its bound written `var` (if it is a `Number` bound).
+        let need_of = |var: Option<TyVar>| -> Option<Need> {
+            match (callee, var) {
+                (Some(def), Some(var)) if local.contains_key(&def) => Some(Need::If(def, var)),
+                (Some(def), Some(var)) => match self.tables.silent_numbers.get(&def) {
+                    Some(silent) if silent.contains(&var) => None,
+                    _ => Some(Need::Always),
+                },
+                _ => Some(Need::Always),
+            }
+        };
+        if matches!(expr.kind, ExprKind::FieldAccess(..))
+            && let Some((recv, own)) = self.ev.calls.get(&span)
+        {
+            note(&self.ev_final(*recv, owners, 0), Need::Always);
+            for k in own {
+                note(&self.ev_final(*k, owners, 0), Need::Always);
+            }
+        } else if matches!(expr.kind, ExprKind::Ident(_) | ExprKind::FieldAccess(..))
+            && let Some(ids) = self.ev.refs.get(&span)
+        {
+            for id in ids {
+                let var = self.ev.number_vars.get(id).copied();
+                if let Some(need) = need_of(var) {
+                    note(&self.ev_final(*id, owners, 0), need);
+                }
+            }
+        } else if let ExprKind::Ident(name) = expr.kind
+            && let Some(bounds) = self.unowed_bounds(expr, name, owners)
+        {
+            // (A use inside its own group: the callee's bounds in order.)
+            let vars = callee.and_then(|def| local.get(&def));
+            for (k, ev) in bounds.iter().enumerate() {
+                let var = vars.and_then(|vars| vars.get(k).copied().flatten());
+                let number = (self.ev.tops.get(&name))
+                    .and_then(|tops| tops.get(k))
+                    .is_some_and(|(_, tr, _)| tr.is_builtin("Number"));
+                if let Some(need) = need_of(var.filter(|_| number)) {
+                    note(ev, need);
+                }
+            }
+        }
+        if let ExprKind::Block(stmts) = &mut expr.kind {
+            for stmt in stmts {
+                match stmt {
+                    Stmt::Let { value, .. } => {
+                        let tag = value.span;
+                        let bounds = self.ev.lets.get(&tag).cloned().unwrap_or_default();
+                        let owns = !bounds.is_empty();
+                        if owns {
+                            owners.push(Owner { tag, bounds });
+                        }
+                        self.needs_walk(value, owners, local, out);
+                        if owns {
+                            owners.pop();
+                        }
+                    }
+                    Stmt::When {
+                        expr, else_body, ..
+                    } => {
+                        self.needs_walk(expr, owners, local, out);
+                        self.needs_walk(else_body, owners, local, out);
+                    }
+                    Stmt::WhenBool {
+                        condition,
+                        else_body,
+                    } => {
+                        self.needs_walk(condition, owners, local, out);
+                        self.needs_walk(else_body, owners, local, out);
+                    }
+                    Stmt::Expr(e) => self.needs_walk(e, owners, local, out),
+                }
+            }
+            return;
+        }
+        super::resolve::each_child_mut(expr, &mut |child| {
+            self.needs_walk(child, owners, local, out)
+        });
+    }
+
     fn evidence_walk(&self, expr: &mut Expr, owners: &mut Vec<Owner>) {
         let span = expr.span;
         if matches!(expr.kind, ExprKind::FieldAccess(..))
@@ -828,7 +1368,10 @@ impl TypeChecker {
             && let Some(ids) = self.ev.refs.get(&span)
         {
             expr.ev = Some(Box::new(Site::Ref(
-                ids.iter().map(|k| self.ev_final(*k, owners, 0)).collect(),
+                (ids.iter())
+                    .filter(|k| !self.silent_at_use(expr.res, **k))
+                    .map(|k| self.ev_final(*k, owners, 0))
+                    .collect(),
             )));
         } else if let ExprKind::Ident(name) = expr.kind
             && let Some(bounds) = self.unowed_bounds(expr, name, owners)

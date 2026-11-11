@@ -1,0 +1,6 @@
+-- cmd: repl
+-- stdin: fn add(x, y) { x + y }\nadd(1, 2)\nadd(1.5, 2.0)\nfn inc(x: a) -> a where a: Number { add(x, a.from_int(1)) }\ninc(41)\ninc(0.5)\nimport list\nlist.map([1, 2], inc)\nlist.fold([1, 2], 0, add)\nfn both(x: a) -> a where a: Number { add(inc(x), x) }\nboth(1)\nboth(1.5)\nlet twice = { x -> add(x, x) }\ntwice(3)\ntwice(0.25)\n:quit\n
+-- A function an earlier entry defined that only does arithmetic takes no
+-- dictionary, and one that calls `from_int` takes Number's: later entries
+-- call each as it was compiled, also as a value and from a closure.
+-- stderr-not-contains: error

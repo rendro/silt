@@ -1177,6 +1177,13 @@ impl TypeChecker {
                 }
                 if let (true, Some(ev)) = (super::evidence::passes_dictionary(pred), ev) {
                     owed.push(ev);
+                    // (Dropped where the definition's bound is silent.)
+                    if let Pred::Trait { tr, subject, .. } = pred
+                        && tr.is_builtin("Number")
+                        && let Some(var) = super::evidence::raw_var(subject)
+                    {
+                        self.ev.number_vars.insert(ev, var);
+                    }
                 }
             }
             if !owed.is_empty() {

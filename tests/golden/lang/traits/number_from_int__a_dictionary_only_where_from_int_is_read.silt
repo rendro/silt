@@ -1,0 +1,54 @@
+-- cmd: disasm
+-- Arithmetic is the VM's, found by the values: code whose types are
+-- known takes no dictionary (`int_add`, `float_mul`), and neither does
+-- a generic function that only does arithmetic, written (`add`) or
+-- inferred (`sq`), recursive too (`down`). A function that calls
+-- `from_int` (`inc`), or hands its bound to one that does
+-- (`inc_twice`, `list.sum` in `mean`), takes Number's dictionary, and
+-- a call of it at a known type passes a constant.
+import list
+
+fn int_add(x: Int, y: Int) -> Int {
+  x + y
+}
+
+fn float_mul(x: Float, y: Float) -> Float {
+  x * y - 1.5
+}
+
+fn add(x: a, y: a) -> a where a: Number {
+  x + y
+}
+
+fn sq(x) {
+  x * x
+}
+
+fn down(x, n) {
+  match n == 0 {
+    true -> x
+    false -> down(x - x, n - 1)
+  }
+}
+
+fn inc(x: a) -> a where a: Number {
+  x + a.from_int(1)
+}
+
+fn inc_twice(x: a) -> a where a: Number {
+  inc(inc(x))
+}
+
+fn mean(xs: List(a)) -> a where a: Number {
+  list.sum(xs) / a.from_int(list.length(xs))
+}
+
+fn main() {
+  println(int_add(1, 2) + 3)
+  println(float_mul(2.0, 3.0) / 2.0)
+  println(add(1, 2))
+  println(sq(1.5))
+  println(down(2.0, 3))
+  println(inc_twice(1))
+  println(mean([1.0, 2.0]))
+}

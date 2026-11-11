@@ -1315,67 +1315,6 @@ impl TypeChecker {
         self.tables.waiting.insert(self.module, waiting);
     }
 
-    /// Refuse the bounds the function of a REPL entry's statements is
-    /// general in that pass a dictionary: the entry runs it with none
-    /// (`list.sum([])`, `s([])`, `f()` of `let f = { -> list.sum([]) }`
-    /// entered before), as `main` of a file would be refused. Each at the
-    /// use that owes it.
-    fn refuse_cell_bounds(&mut self, f: &FnDecl, scheme: &Scheme) {
-        let within = |outer: Span, inner: Span| {
-            outer.file == inner.file && outer.start <= inner.start && inner.end <= outer.end
-        };
-        let var_of = |checker: &Self, ty: &Type| match checker.apply(ty) {
-            Type::Var(v) => Some(checker.rigid_rep_var(v)),
-            Type::Rigid(r) => Some(checker.rigid_rep_var(r.var)),
-            _ => None,
-        };
-        let mut errors = Vec::new();
-        for pred in scheme
-            .preds
-            .iter()
-            .filter(|p| evidence::passes_dictionary(p))
-        {
-            let Pred::Trait {
-                tr, args, subject, ..
-            } = pred
-            else {
-                continue;
-            };
-            let var = var_of(self, subject);
-            let mut at: Vec<(Span, Option<Symbol>)> = (self.wanted.iter())
-                .filter(|w| within(f.span, w.origin.span) || within(f.body.span, w.origin.span))
-                .filter(|w| match &w.goal {
-                    Goal::Pred(Pred::Trait {
-                        tr: t, subject: s, ..
-                    }) => t == tr && var.is_some() && var_of(self, s) == var,
-                    _ => false,
-                })
-                .map(|w| (w.origin.span, w.origin.callee))
-                .collect();
-            at.sort_by_key(|(span, _)| span.start);
-            at.dedup_by_key(|(span, _)| *span);
-            if at.is_empty() {
-                at.push((f.body.span, None));
-            }
-            let bound = self.show_bound(*tr, args);
-            for (span, callee) in at {
-                let what = match callee {
-                    Some(callee) => format!("this use of '{callee}'"),
-                    None => "this".to_string(),
-                };
-                errors.push(
-                    Diagnostic::error(
-                        Code::AmbiguousType,
-                        span,
-                        format!("cannot infer the type {what} needs to implement trait '{bound}'"),
-                    )
-                    .with_help("annotate the value it is given"),
-                );
-            }
-        }
-        self.run_refusals.extend(errors);
-    }
-
     /// The refusal of a check the cell would leave waiting that its own
     /// code needs now: a trait passed with a dictionary, owed on a type
     /// nothing has decided, by code outside every function and closure
@@ -1918,9 +1857,6 @@ impl TypeChecker {
                 self.passing_on = Some(f.name);
                 let mut scheme = self.generalize_fn(&sig.ty(), &bounds);
                 self.passing_on = None;
-                if crate::session::is_cell_name(&resolve(f.name)) {
-                    self.refuse_cell_bounds(f, &scheme);
-                }
                 // A return type written is held to its parameters as it
                 // is read (`register_fn_decl`); one inferred, here. (The
                 // function of a REPL entry's statements is no function a

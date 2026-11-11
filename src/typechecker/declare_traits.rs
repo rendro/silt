@@ -2122,15 +2122,19 @@ impl TypeChecker {
             // The runtime runs an impl of a builtin trait found by the
             // value (println shows a value, json.stringify encodes it)
             // with no caller to pass what a bound of a program's trait
-            // needs: such an impl asks only builtin traits.
+            // needs: such an impl asks only builtin traits. (`Number`
+            // too: its operators are found by the values; a method that
+            // reads its dictionary, `a.from_int`, is refused when the
+            // evidence is written, `settle_silent_numbers`.)
             if !super::evidence::has_dictionary(impl_trait)
                 && super::evidence::has_dictionary(*trait_name)
+                && !trait_name.is_builtin("Number")
             {
                 let shown = self.show_trait(impl_trait);
                 let message = format!(
                     "an impl of '{shown}' can ask only 'Display', 'Equal', 'Compare', 'Hash', \
-                     'json.Encode', 'json.Decode' or 'Error' of its type's variables: the runtime \
-                     runs it with nothing else"
+                     'json.Encode', 'json.Decode', 'Error' or 'Number' of its type's variables: \
+                     the runtime runs it with nothing else"
                 );
                 // (Each help points at what the impl can do instead.)
                 let help = [
@@ -2151,15 +2155,6 @@ impl TypeChecker {
                 .iter()
                 .find(|(tr, _)| impl_trait.is_builtin(tr))
                 .map(|(_, help)| help.to_string());
-                // (Arithmetic is the one thing Number gives that the
-                // impl could want: it is done before.)
-                let help = match trait_name.is_builtin("Number") {
-                    true => Some(
-                        "do the arithmetic in a function bounded by Number, outside the impl"
-                            .to_string(),
-                    ),
-                    false => help,
-                };
                 self.error_help(Code::InvalidTraitImpl, (message, help), ti.span);
                 // (What the body asks of the variable is not reported
                 // again.)
