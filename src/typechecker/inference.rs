@@ -1751,34 +1751,6 @@ impl TypeChecker {
         let mut message =
             format!("`{who}` takes a type as `{param_name}`, not a value of type `{shown}`");
         let mut help = None;
-        // (An anonymous record type written out, `{x: Int}`: a record of
-        // types, said as its alias is.)
-        if let (ExprKind::AnonRecord { spread: None, .. }, Type::AnonRecord { fields, tail }) =
-            (&arg.kind, &given)
-        {
-            let types: Option<std::collections::BTreeMap<Symbol, Type>> = (fields.iter())
-                .map(|(name, ty)| match self.apply(ty) {
-                    Type::Generic(head, args) if head.is_builtin(crate::defs::TYPE_OF) => {
-                        Some((*name, args.first()?.clone()))
-                    }
-                    _ => None,
-                })
-                .collect();
-            if let Some(types) = types.filter(|types| !types.is_empty()) {
-                let written = self.show_type(&Type::AnonRecord {
-                    fields: types,
-                    tail: tail.clone(),
-                });
-                let fields = written.trim_start_matches('{').trim_end_matches('}');
-                message = format!(
-                    "`{who}` takes a type as `{param_name}`, but `{written}` is an anonymous \
-                     record type, which has no value as a type"
-                );
-                help = Some(format!(
-                    "declare a record type for it: `type Name {{ {fields} }}`"
-                ));
-            }
-        }
         if let Some(variant) = made_by {
             message.push_str(&format!(": `{variant}` is a variant of `{shown}`"));
             help = Some(format!("give the type, `{shown}`"));
@@ -5510,63 +5482,6 @@ impl TypeChecker {
                 base_ty
             }
 
-            ExprKind::AnonRecord { spread, fields } => {
-                use std::collections::BTreeMap;
-                // Phase F: Extend operator. With a spread, infer
-                // base's type, then merge the listed `fields` on top.
-                // Reject duplicate field names in the literal portion.
-                {
-                    let mut seen: std::collections::HashSet<Symbol> =
-                        std::collections::HashSet::new();
-                    for (fn_name, _) in fields.iter() {
-                        if !seen.insert(*fn_name) {
-                            self.error(
-                                Code::DuplicateRecordField,
-                                format!("duplicate field '{}' in anon record literal", fn_name),
-                                span,
-                            );
-                        }
-                    }
-                }
-                // Type each new field expression.
-                let new_field_tys: Vec<(Symbol, Type)> = fields
-                    .iter_mut()
-                    .map(|(n, e)| (*n, self.infer_expr(e, env)))
-                    .collect();
-                let mut field_map: BTreeMap<Symbol, Type> = BTreeMap::new();
-                for (n, t) in &new_field_tys {
-                    field_map.insert(*n, t.clone());
-                }
-                if let Some(base_expr) = spread {
-                    // A spread makes an anonymous record of the base's
-                    // fields and the written ones, once the base's type
-                    // is decided (`Goal::Rebuild`).
-                    let base = self.infer_expr(base_expr, env);
-                    let result = self.fresh_var();
-                    self.want_goal(
-                        Goal::Rebuild {
-                            base,
-                            without: Vec::new(),
-                            with: new_field_tys,
-                            result: result.clone(),
-                            rest: false,
-                        },
-                        Origin {
-                            span,
-                            callee: None,
-                            op: None,
-                            header: None,
-                        },
-                    );
-                    self.apply(&result)
-                } else {
-                    // Closed anon record literal.
-                    Type::AnonRecord {
-                        fields: field_map,
-                        tail: RowTail::Closed,
-                    }
-                }
-            }
 
             ExprKind::Match {
                 expr: scrutinee,
@@ -6008,14 +5923,6 @@ impl TypeChecker {
                     self.check_recur_tail_positions(e, inner);
                 }
             }
-            ExprKind::AnonRecord { spread, fields } => {
-                if let Some(base) = spread {
-                    self.check_recur_tail_positions(base, inner);
-                }
-                for (_, e) in fields {
-                    self.check_recur_tail_positions(e, inner);
-                }
-            }
         }
     }
 
@@ -6280,7 +6187,7 @@ impl TypeChecker {
                 }
                 self.check_supertrait_arg_parametric_arity(ret, trait_info);
             }
-            TypeExprKind::SelfType | TypeExprKind::AnonRecord { .. } => {
+            TypeExprKind::SelfType => {
                 // These either aren't meaningful as supertrait args
                 // (handled elsewhere) or carry no bare-name parametric
                 // reference at the top level. Nothing to validate here.
@@ -6478,11 +6385,6 @@ pub(super) fn resolve_supertrait_arg(
             Box::new(resolve_supertrait_arg(ret, trait_info, base_args)),
         ),
         TypeExprKind::SelfType => Type::Error, // Self isn't meaningful in a supertrait arg
-        TypeExprKind::AnonRecord { .. } => {
-            // Anon records aren't meaningful as supertrait args either —
-            // supertrait params are referred to by name.
-            Type::Error
-        }
     }
 }
 
@@ -6533,10 +6435,6 @@ impl TypeChecker {
             ExprKind::RecordCreate { fields, .. } => {
                 fields.iter().all(|(_, e)| self.is_syntactic_value(e))
             }
-            ExprKind::AnonRecord {
-                spread: None,
-                fields,
-            } => fields.iter().all(|(_, e)| self.is_syntactic_value(e)),
             // A variant applied to values: `Some(1)`, `Err("x")`. (The
             // builtin environment, which the builtin definitions are
             // made from, cannot ask what a name resolves to.)

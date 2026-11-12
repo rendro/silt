@@ -35,12 +35,6 @@ impl DeclVars {
                     params.iter().for_each(|param| walk(param, written));
                     walk(ret, written);
                 }
-                TypeExprKind::AnonRecord { fields, tail } => {
-                    fields.iter().for_each(|(_, ty)| walk(ty, written));
-                    if let Some((row, span)) = tail {
-                        write(written, intern(&format!("__row__{row}")), *span);
-                    }
-                }
             }
         }
         let mut written = Vec::new();

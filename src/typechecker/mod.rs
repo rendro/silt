@@ -2131,9 +2131,6 @@ fn written_defs(te: &TypeExpr, out: &mut std::collections::HashSet<crate::defs::
             params.iter().for_each(|p| written_defs(p, out));
             written_defs(ret, out);
         }
-        TypeExprKind::AnonRecord { fields, .. } => {
-            fields.iter().for_each(|(_, t)| written_defs(t, out))
-        }
         TypeExprKind::Named { .. } | TypeExprKind::SelfType => {}
     }
 }

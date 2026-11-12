@@ -414,13 +414,6 @@ fn emit_pattern_binding_tokens(pattern: &Pattern, source: &SourceFile, out: &mut
         PatternKind::Record { fields, .. } => {
             emit_shorthand_field_tokens(fields, source, out);
         }
-        PatternKind::AnonRecord { fields, rest } => {
-            emit_shorthand_field_tokens(fields, source, out);
-            // `{x, ...rest}` binds `rest` to the unmatched fields.
-            if let Some((rname, rspan)) = rest {
-                emit_binding_token(source, rspan, *rname, TT_VARIABLE, out);
-            }
-        }
         PatternKind::Map(entries) => {
             // Map-pattern values bind (`#{ "k": v }` binds
             // `v`); keys are string literals, never binders.

@@ -128,14 +128,6 @@ pub enum ExprKind {
         /// As on `RecordCreate`.
         punned: Vec<Symbol>,
     },
-    /// Anonymous (row-polymorphic) record literal: `{name: "A", age: 30}`
-    /// or with a spread head `{...other, age: 30}`. The optional
-    /// `spread` is the base record whose fields are copied; `fields`
-    /// are added/overridden on top.
-    AnonRecord {
-        spread: Option<Box<Expr>>,
-        fields: Vec<(Symbol, Expr)>,
-    },
 
     // Control flow
     Match {
@@ -363,17 +355,6 @@ pub enum PatternKind {
         fields: Vec<(Symbol, Span, Option<Pattern>)>,
         has_rest: bool,
     },
-    /// Anonymous record pattern with optional named rest binding:
-    /// `{name: n, ...rest}` binds `rest` to a record carrying the
-    /// unmatched fields. `rest = None` means closed (no extra fields
-    /// allowed). v1 forbids unnamed rest (`{x, ...}`); use `{x, ...rest}`
-    /// or omit the pattern entirely.
-    AnonRecord {
-        /// As in [`PatternKind::Record::fields`].
-        fields: Vec<(Symbol, Span, Option<Pattern>)>,
-        /// The rest binder and the span of its name.
-        rest: Option<(Symbol, Span)>,
-    },
     /// Match a list: `[a, b, c]`, `[]`, or with a rest after the
     /// elements, `[head, ..tail]` or `[head, ..]`. The rest is the list
     /// of the elements after those named: an `Ident` for `..tail`, a
@@ -473,15 +454,6 @@ pub enum TypeExprKind {
     Tuple(Vec<TypeExpr>),
     Function(Vec<TypeExpr>, Box<TypeExpr>),
     SelfType,
-    /// Anonymous structural record type, optionally row-polymorphic:
-    /// `{name: String, age: Int}` (closed) or `{name: String, ...r}`
-    /// (open, where `r` is a row variable name; its span is that of
-    /// `...r`). Multiple annotations in the same scope sharing a row name `r` refer to the same
-    /// row variable, so `fn id(p: {name: String, ...r}) -> {name: String, ...r}` threads it.
-    AnonRecord {
-        fields: Vec<(Symbol, TypeExpr)>,
-        tail: Option<(Symbol, Span)>,
-    },
 }
 
 // ── Statements ───────────────────────────────────────────────────────

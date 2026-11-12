@@ -141,19 +141,12 @@ pub(crate) fn pattern_binders(pattern: &Pattern, out: &mut Vec<(Symbol, Span)>) 
                 pattern_binders(part, out);
             }
         }
-        PatternKind::Record { fields, .. } | PatternKind::AnonRecord { fields, .. } => {
+        PatternKind::Record { fields, .. } => {
             for (field, _, sub) in fields {
                 match sub {
                     Some(sub) => pattern_binders(sub, out),
                     None => out.push((*field, pattern.span)),
                 }
-            }
-            if let PatternKind::AnonRecord {
-                rest: Some((rest, _)),
-                ..
-            } = &pattern.kind
-            {
-                out.push((*rest, pattern.span));
             }
         }
         PatternKind::List(elems, rest) => {
@@ -811,17 +804,24 @@ impl<'src> Parser<'src> {
         )
     }
 
-    /// The error for the field `name` of an anonymous record literal,
-    /// at `span`, written without its value.
-    fn anon_field_alone(span: Span, name: Symbol) -> Diagnostic {
-        let name = intern::resolve(name);
+    /// The error for braces that hold the fields of a record (`{ x: 1 }`,
+    /// `{ x, y }`) where an expression starts, the first field at `span`:
+    /// a record literal starts with its type.
+    fn record_without_a_name(&self, span: Span) -> Diagnostic {
+        let field = self.source.get(span.start as usize..span.end as usize);
+        let example = match field {
+            Some(field) if self.tokens.get(self.pos + 2).map(|t| &t.kind) == Some(&Token::Colon) => {
+                format!("P {{ {field}: ... }}")
+            }
+            Some(field) => format!("P {{ {field}, ... }}"),
+            None => "P { ... }".to_string(),
+        };
         Diagnostic::error(
             Code::UnsupportedSyntax,
             span,
             format!(
-                "an anonymous record writes each field as `name: value`: write `{name}: {name}`; \
-                 only a record literal with a type name takes a field written alone \
-                 (`P {{ {name} }}`)"
+                "a record literal starts with the name of its type, `{example}`; \
+                 braces alone hold a block"
             ),
         )
     }
@@ -2352,7 +2352,7 @@ impl<'src> Parser<'src> {
 
     fn parse_type_expr(&mut self) -> Result<TypeExpr> {
         // Depth guard mirroring parse_expr_bp / parse_pattern: type-expr
-        // recursion (nested generics, Fn types, anon record types) was
+        // recursion (nested generics, Fn types) was
         // the one unguarded sibling — deep
         // nesting overflowed even the 256MiB silt-main stack.
         self.depth += 1;
@@ -2474,41 +2474,6 @@ impl<'src> Parser<'src> {
                 Self::parse_type_expr,
             )?);
             return Ok(self.mk_type(TypeExprKind::Tuple(elems), start));
-        }
-        // Anonymous record type: `{name: Type, age: Type}` or open
-        // `{name: Type, ...r}`.
-        if self.at(&Token::LBrace) {
-            self.advance();
-            let mut tail: Option<(Symbol, Span)> = None;
-            let mut seen: std::collections::HashSet<Symbol> = std::collections::HashSet::new();
-            let fields = self.comma_list(
-                "anon record type",
-                start,
-                ListEnd::Close(&Token::RBrace),
-                |p| {
-                    p.nothing_after_rest(tail.is_some(), "...", '}', "an anon record type")?;
-                    if p.at(&Token::DotDotDot) {
-                        let dots = p.advance().span;
-                        // Row variable name (e.g. `r` in `...r`). Required.
-                        let (row, row_span) = p.expect_ident()?;
-                        tail = Some((row, dots.to(row_span)));
-                        return Ok(None);
-                    }
-                    let (fname, fname_span) = p.expect_field_name()?;
-                    p.expect(&Token::Colon)?;
-                    let fty = p.parse_type_expr()?;
-                    if !seen.insert(fname) {
-                        return Err(Diagnostic::error(
-                            Code::DuplicateField,
-                            fname_span,
-                            format!("duplicate field '{}' in anon record type", fname),
-                        ));
-                    }
-                    Ok(Some((fname, fty)))
-                },
-            )?;
-            let fields = fields.into_iter().flatten().collect();
-            return Ok(self.mk_type(TypeExprKind::AnonRecord { fields, tail }, start));
         }
         let (module, name, name_span) = self.parse_qualified_name("type name")?;
         if module.is_none() && name == intern::intern("Self") {
@@ -3079,9 +3044,7 @@ impl<'src> Parser<'src> {
                         // `util.Pt { x: 1, y: 2 }` builds the same value as
                         // bare `Pt { x: 1, y: 2 }`, with the qualifier
                         // selecting which module's record type the literal
-                        // is checked against. (This shape once misparsed
-                        // as a field access plus a discarded
-                        // anonymous-record statement.)
+                        // is checked against.
                         //
                         // Gating mirrors the bare `Pt { ... }` atom exactly
                         // (same-line `{`, match-body suppression via the
@@ -3381,31 +3344,19 @@ impl<'src> Parser<'src> {
                 Ok(self.mk_expr(ExprKind::SetLit(elems), span))
             }
             Token::LBrace => {
-                // Could be a trailing closure, an anonymous record
-                // literal, or a block. Disambiguation order:
-                //   1. trailing-closure heuristic (existing) — `{ x -> ... }`
-                //   2. anon-record literal — `{ Ident: ... }` or `{ ...spread, ... }`
-                //   3. block — fallthrough
+                // A trailing closure, `{ x -> ... }`, or a block.
                 if self.is_trailing_closure() {
                     self.parse_trailing_closure_as_lambda()
-                } else if self.is_anon_record_literal() {
-                    self.parse_anon_record_literal()
                 } else if let Some(first) = self.tokens.get(self.pos + 1)
                     && (matches!(first.kind, Token::Ident(_)) || first.kind.keyword().is_some())
                     && matches!(
                         self.tokens.get(self.pos + 2).map(|t| &t.kind),
-                        Some(Token::Comma)
+                        Some(Token::Comma | Token::Colon)
                     )
                 {
-                    // `{ x, ...` starts no block and no closure: an
-                    // anonymous record with a field written alone.
-                    Err(match (&first.kind, first.kind.keyword()) {
-                        (_, Some(keyword)) => {
-                            Self::keyword_field_alone(first.span, keyword, "its value", "value")
-                        }
-                        (Token::Ident(name), None) => Self::anon_field_alone(first.span, *name),
-                        _ => unreachable!("the first token is a name or a keyword"),
-                    })
+                    // `{ x: ...` or `{ x, ...` starts no block and no
+                    // closure: the fields of a record, without its type.
+                    Err(self.record_without_a_name(first.span))
                 } else {
                     self.parse_block()
                 }
@@ -3995,80 +3946,6 @@ impl<'src> Parser<'src> {
 
     // ── Record fields ────────────────────────────────────────────────
 
-    /// Lookahead: is the current `{` the start of an anonymous-record
-    /// literal? Two shapes match:
-    ///   - `{ Ident COLON ... }` — closed anon record literal
-    ///   - `{ DotDotDot ... }` — spread head (extend op `{...other, ...}`)
-    /// Disambiguation runs after `is_trailing_closure()` returned false,
-    /// so the lookahead can be aggressive without needing to defer to
-    /// the closure heuristic.
-    fn is_anon_record_literal(&self) -> bool {
-        if self.peek() != &Token::LBrace {
-            return false;
-        }
-        let i = self.pos + 1;
-        // Spread head is unambiguous.
-        if matches!(self.tokens.get(i).map(|t| &t.kind), Some(Token::DotDotDot)) {
-            return true;
-        }
-        // `name COLON`, the name maybe a keyword: an anonymous record.
-        self.field_name_and_colon_at(i)
-    }
-
-    /// Parse `{name: expr, ...}` or `{...spread, name: expr, ...}` after
-    /// the caller has confirmed via `is_anon_record_literal` that the
-    /// current `{` opens an anon-record literal. Consumes the closing
-    /// `}` itself.
-    fn parse_anon_record_literal(&mut self) -> Result<Expr> {
-        let span = self.span();
-        self.expect(&Token::LBrace)?;
-        let mut spread: Option<Box<Expr>> = None;
-        let mut first = true;
-        let mut seen: std::collections::HashSet<Symbol> = std::collections::HashSet::new();
-        let fields = self.comma_list(
-            "anon record literal",
-            span,
-            ListEnd::Close(&Token::RBrace),
-            |p| {
-                let first = std::mem::take(&mut first);
-                if p.at(&Token::DotDotDot) {
-                    if !first {
-                        return Err(Diagnostic::error(
-                            Code::UnsupportedSyntax,
-                            p.span(),
-                            "v1 row polymorphism allows only one spread head per anon record literal",
-                        ));
-                    }
-                    p.advance();
-                    spread = Some(Box::new(p.parse_expr()?));
-                    return Ok(None);
-                }
-                let keyword = p.peek().keyword();
-                let (name, name_span) = p.expect_field_name()?;
-                if !p.at(&Token::Colon) {
-                    return Err(match keyword {
-                        Some(keyword) => {
-                            Self::keyword_field_alone(name_span, keyword, "its value", "value")
-                        }
-                        None => Self::anon_field_alone(name_span, name),
-                    });
-                }
-                p.advance();
-                let value = p.parse_expr()?;
-                if !seen.insert(name) {
-                    return Err(Diagnostic::error(
-                        Code::DuplicateField,
-                        name_span,
-                        format!("duplicate field '{}' in anon record literal", name),
-                    ));
-                }
-                Ok(Some((name, value)))
-            },
-        )?;
-        let fields = fields.into_iter().flatten().collect();
-        Ok(self.mk_expr(ExprKind::AnonRecord { spread, fields }, span))
-    }
-
     /// The braces of a record literal or a record update, at the `{`:
     /// `{ name: expr, ... }`, where a field written `name` alone is
     /// `name: name` (the shorthand of record patterns).
@@ -4109,8 +3986,7 @@ impl<'src> Parser<'src> {
     }
 
     /// The error for an element behind the rest of a pattern (`..`,
-    /// `..tail`, `...rest`) or the row variable of a record type, when
-    /// `seen` says there was one: the rest stands last.
+    /// `..tail`), when `seen` says there was one: the rest stands last.
     fn nothing_after_rest(&self, seen: bool, rest: &str, close: char, list: &str) -> Result<()> {
         if !seen {
             return Ok(());
@@ -4481,32 +4357,12 @@ impl<'src> Parser<'src> {
                     Ok(first)
                 }
             }
-            Token::LBrace => {
-                // Anonymous record pattern: `{name: n, age: a}` or
-                // `{name: n, ...rest}`. Only entered in pattern position
-                // (parse_primary_pattern), so we don't conflict with
-                // block / trailing-closure disambiguation in expression
-                // contexts.
-                self.advance();
-                let mut rest: Option<(Symbol, Span)> = None;
-                let fields = self.comma_list(
-                    "anon record pattern",
-                    start,
-                    ListEnd::Close(&Token::RBrace),
-                    |p| {
-                        p.nothing_after_rest(rest.is_some(), "...", '}', "an anon record pattern")?;
-                        if p.at(&Token::DotDotDot) {
-                            p.advance();
-                            // Named rest binding required (B6: no unnamed rest).
-                            rest = Some(p.expect_ident()?);
-                            return Ok(None);
-                        }
-                        p.parse_field_pattern().map(Some)
-                    },
-                )?;
-                let fields = fields.into_iter().flatten().collect();
-                Ok(mk(PatternKind::AnonRecord { fields, rest }))
-            }
+            Token::LBrace => Err(Diagnostic::error(
+                Code::ExpectedPattern,
+                self.span(),
+                "expected pattern, found {",
+            )
+            .with_help("a record pattern starts with the name of its type: `P { x, .. }`")),
             Token::LBracket => {
                 self.advance(); // consume [
                 let mut rest = None;
@@ -4962,35 +4818,41 @@ fn main() {
     }
 
     /// The brace shapes that the closure-parameter grammar must keep
-    /// apart: a typed closure, a record literal with the same prefix, a
-    /// block holding a tuple, a destructuring closure, a closure whose
-    /// annotation is a function type, and a parameterless closure.
+    /// apart: a typed closure, the fields of a record with the same
+    /// prefix (no type name: refused), a block holding a tuple, a
+    /// destructuring closure, a closure whose annotation is a function
+    /// type, and a parameterless closure.
     #[test]
     fn test_closure_param_brace_disambiguation() {
         let kind_of = |body: &str| -> String {
-            let prog = parse(&format!("fn main() {{\n  {body}\n}}"));
+            let source = format!("fn main() {{\n  {body}\n}}");
+            let tokens = Lexer::new(crate::source::FileId::default(), &source)
+                .tokenize()
+                .checked()
+                .unwrap();
+            let Ok(prog) = Parser::new(tokens, &source).parse_program() else {
+                return "refused".to_string();
+            };
             match &last_expr_of_main(&prog).kind {
                 ExprKind::Lambda { params, .. } => format!(
                     "lambda/{}/{}",
                     params.len(),
                     params.iter().filter(|p| p.ty.is_some()).count()
                 ),
-                ExprKind::AnonRecord { .. } => "record".to_string(),
                 ExprKind::Block(_) => "block".to_string(),
                 other => format!("{other:?}"),
             }
         };
         assert_eq!(kind_of("{ a: Int -> a }"), "lambda/1/1");
-        assert_eq!(kind_of("{ a: 1 }"), "record");
-        assert_eq!(kind_of("{ a: Int }"), "record");
+        assert_eq!(kind_of("{ a: 1 }"), "refused");
+        assert_eq!(kind_of("{ a: Int }"), "refused");
         assert_eq!(kind_of("{ x -> x }"), "lambda/1/0");
         assert_eq!(kind_of("{ (a, b) }"), "block");
         assert_eq!(kind_of("{ (a, b): (Int, Int) -> a }"), "lambda/1/1");
         assert_eq!(kind_of("{ Point { x, y } -> x }"), "lambda/1/0");
-        assert_eq!(kind_of("{ { name, ...rest } -> name }"), "lambda/1/0");
         assert_eq!(kind_of("{ f: Fn(Int) -> Int, x -> f(x) }"), "lambda/2/1");
         assert_eq!(kind_of("{ -> 1 }"), "lambda/0/0");
-        assert_eq!(kind_of("{ a: { v: Int -> v } }"), "record");
+        assert_eq!(kind_of("{ a: { v: Int -> v } }"), "refused");
     }
 
     #[test]

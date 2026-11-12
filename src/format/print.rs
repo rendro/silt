@@ -259,7 +259,7 @@ fn needs_parens(expr: &Expr, ctx: Ctx) -> bool {
 /// written between the call's parentheses.)
 fn opens_brace_in_header(expr: &Expr) -> bool {
     match &expr.kind {
-        ExprKind::Lambda { .. } | ExprKind::Block(_) | ExprKind::AnonRecord { .. } => true,
+        ExprKind::Lambda { .. } | ExprKind::Block(_) => true,
         ExprKind::RecordCreate { fields, punned, .. } => {
             fields.is_empty() || (fields.len() == 1 && !punned.is_empty())
         }
@@ -324,7 +324,6 @@ fn pattern_head(pattern: &Pattern, out: &mut Vec<Token>) {
         PatternKind::Tuple(_) => out.push(Token::LParen),
         PatternKind::List(..) => out.push(Token::LBracket),
         PatternKind::Map(_) => out.push(Token::HashBrace),
-        PatternKind::AnonRecord { .. } => out.push(Token::LBrace),
         PatternKind::Constructor {
             qualifier,
             name,
@@ -415,19 +414,10 @@ fn ends_in_bare_stage(expr: &Expr) -> bool {
     }
 }
 
-/// Whether `pattern`, printed without parentheses, starts with a `{`.
-fn pattern_starts_with_brace(pattern: &Pattern) -> bool {
-    match &pattern.kind {
-        PatternKind::AnonRecord { .. } => true,
-        PatternKind::Or(alts) => alts.first().is_some_and(pattern_starts_with_brace),
-        _ => false,
-    }
-}
-
 /// Whether `expr`, printed without parentheses, starts with a `{`.
 fn starts_with_brace(expr: &Expr) -> bool {
     match &expr.kind {
-        ExprKind::Lambda { .. } | ExprKind::Block(_) | ExprKind::AnonRecord { .. } => true,
+        ExprKind::Lambda { .. } | ExprKind::Block(_) => true,
         ExprKind::Binary(left, ..)
         | ExprKind::Pipe(left, _)
         | ExprKind::Range(left, _)
@@ -1498,28 +1488,6 @@ impl Printer<'_> {
                 let fields = self.fields(fields);
                 Doc::concat(vec![name, space(), fields])
             }
-            ExprKind::AnonRecord { spread, fields } => {
-                // The spread is the first item of the list.
-                let spread = spread.as_deref();
-                let mut items: Vec<Option<&(intern::Symbol, Expr)>> = Vec::new();
-                if spread.is_some() {
-                    items.push(None);
-                }
-                items.extend(fields.iter().map(Some));
-                self.delimited(
-                    Token::LBrace,
-                    Token::RBrace,
-                    SPACED,
-                    &items,
-                    |p, item| match (item, spread) {
-                        (Some((_, value)), _) => p.field(value),
-                        (None, Some(spread)) => {
-                            Doc::concat(vec![p.tok(Token::DotDotDot), p.expr(spread, Ctx::top())])
-                        }
-                        (None, None) => Doc::Nil,
-                    },
-                )
-            }
             ExprKind::Match {
                 expr: scrutinee,
                 arms,
@@ -2343,10 +2311,7 @@ impl Printer<'_> {
                 None => self.name(),
             });
         } else {
-            // As for a statement that starts with `{` (`Ctx::line_start`):
-            // the parentheses in front of a record pattern stay.
-            let braces = !first && pattern_starts_with_brace(&arm.pattern);
-            docs.push(self.pattern_in(&arm.pattern, braces));
+            docs.push(self.pattern(&arm.pattern));
             if let Some(guard) = &arm.guard {
                 docs.push(space());
                 docs.push(self.tok(Token::When));
@@ -2526,16 +2491,17 @@ impl Printer<'_> {
         Doc::concat(docs)
     }
 
+    /// The fields of a record pattern, `{ x, y: 0, .. }` (`rest`: with
+    /// the `..`).
     fn field_patterns(
         &mut self,
         fields: &[(intern::Symbol, crate::source::Span, Option<Pattern>)],
-        rest: Option<Token>,
-        named_rest: bool,
+        rest: bool,
     ) -> Doc {
         // The rest is the last item of the list.
         let mut items: Vec<Option<&Option<Pattern>>> =
             fields.iter().map(|(_, _, sub)| Some(sub)).collect();
-        if rest.is_some() {
+        if rest {
             items.push(None);
         }
         self.delimited(
@@ -2543,8 +2509,8 @@ impl Printer<'_> {
             Token::RBrace,
             SPACED,
             &items,
-            |p, item| match (item, &rest) {
-                (Some(sub), _) => {
+            |p, item| match item {
+                Some(sub) => {
                     let name = p.field_name();
                     match sub {
                         Some(sub) => {
@@ -2553,15 +2519,7 @@ impl Printer<'_> {
                         None => name,
                     }
                 }
-                (None, Some(rest)) => {
-                    let dots = p.tok(rest.clone());
-                    if named_rest {
-                        Doc::concat(vec![dots, p.name()])
-                    } else {
-                        dots
-                    }
-                }
-                (None, None) => Doc::Nil,
+                None => p.tok(Token::DotDot),
             },
         )
     }
@@ -2605,13 +2563,8 @@ impl Printer<'_> {
                 ..
             } => {
                 let name = self.qualified(module.is_some());
-                let rest = has_rest.then_some(Token::DotDot);
-                let fields = self.field_patterns(fields, rest, false);
+                let fields = self.field_patterns(fields, *has_rest);
                 Doc::concat(vec![name, space(), fields])
-            }
-            PatternKind::AnonRecord { fields, rest } => {
-                let rest = rest.is_some().then_some(Token::DotDotDot);
-                self.field_patterns(fields, rest, true)
             }
             PatternKind::List(elems, rest) => {
                 let rest = rest.as_deref();
@@ -2720,28 +2673,6 @@ impl Printer<'_> {
                     space(),
                     self.type_expr(ret),
                 ])
-            }
-            TypeExprKind::AnonRecord { fields, tail } => {
-                let mut items: Vec<Option<&TypeExpr>> =
-                    fields.iter().map(|(_, ty)| Some(ty)).collect();
-                if tail.is_some() {
-                    items.push(None);
-                }
-                self.delimited(
-                    Token::LBrace,
-                    Token::RBrace,
-                    SPACED,
-                    &items,
-                    |p, item| match item {
-                        Some(ty) => Doc::concat(vec![
-                            p.field_name(),
-                            p.tok(Token::Colon),
-                            space(),
-                            p.type_expr(ty),
-                        ]),
-                        None => Doc::concat(vec![p.tok(Token::DotDotDot), p.name()]),
-                    },
-                )
             }
         }
     }

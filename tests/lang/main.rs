@@ -2,7 +2,6 @@
 //!
 //! One test binary; each module was a separate test crate before.
 
-mod anon_record_resolve_recursion_tests;
 mod builtin_module_constant_value_access_runtime_tests;
 mod builtin_module_dispatch_tests;
 mod builtin_structural_traits_tests;

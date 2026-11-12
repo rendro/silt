@@ -283,9 +283,6 @@ pub(super) fn any_expr(expr: &Expr, found: &mut impl FnMut(&Expr) -> bool) -> bo
         ExprKind::RecordUpdate { expr, fields, .. } => {
             inner(expr) || fields.iter().any(|(_, e)| inner(e))
         }
-        ExprKind::AnonRecord { spread, fields } => {
-            spread.as_deref().is_some_and(&mut inner) || fields.iter().any(|(_, e)| inner(e))
-        }
         ExprKind::Match { expr, arms } => {
             expr.as_deref().is_some_and(&mut inner)
                 || arms
@@ -2078,40 +2075,6 @@ impl<'a> Compiler<'a> {
                 )?;
                 let fields = self.name_constants(&field_names, span)?;
                 self.emit(Asm::RecordUpdate { fields: &fields }, span)?;
-            }
-
-            ExprKind::AnonRecord { spread, fields } => {
-                if let Some(base) = spread {
-                    // A spread makes a new anonymous record whatever the
-                    // base is: the base's fields as an anonymous record
-                    // (the rest of the base with no field left out),
-                    // then the written fields merged in.
-                    self.in_tail_position = false;
-                    self.compile_expr(base)?;
-                    self.emit(Asm::DestructRecordRest { excluded: &[] }, span)?;
-                    let field_names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
-                    self.compile_operands(fields.iter().map(|(_, val)| val))?;
-                    let fields = self.name_constants(&field_names, span)?;
-                    self.emit(Asm::RecordUpdate { fields: &fields }, span)?;
-                } else {
-                    // Closed anon record literal: same encoding as nominal
-                    // RecordCreate but with the type of the anonymous
-                    // records of these fields.
-                    let field_names: Vec<Symbol> = fields.iter().map(|(n, _)| *n).collect();
-                    self.compile_operands(fields.iter().map(|(_, val)| val))?;
-                    let mut names: Vec<String> = field_names.iter().map(|n| resolve(*n)).collect();
-                    names.sort();
-                    let anon = crate::typeinfo::anon_record_type(names.iter().map(|n| &**n));
-                    let ty = self.add_constant(Value::TypeDescriptor(anon), span)?;
-                    let fields = self.name_constants(&field_names, span)?;
-                    self.emit(
-                        Asm::MakeRecord {
-                            ty,
-                            fields: &fields,
-                        },
-                        span,
-                    )?;
-                }
             }
 
             ExprKind::Loop { bindings, body } => {

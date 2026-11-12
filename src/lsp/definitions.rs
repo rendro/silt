@@ -222,50 +222,6 @@ fn collect_let_pattern_defs(
                 }
             }
         }
-        PatternKind::AnonRecord { fields, rest } => {
-            // Anonymous-record destructure at top-level
-            // (`let { x, y } = some_anon_record`). Mirrors the nominal
-            // `Record` case above.
-            let field_tys = value_ty.and_then(|ty| record_field_types(ty, records));
-            let lookup_field_ty = |fname: Symbol| -> Option<Type> {
-                field_tys
-                    .as_ref()
-                    .and_then(|fs| fs.iter().find(|(n, _)| *n == fname).map(|(_, t)| t.clone()))
-            };
-            for (name, _, sub) in fields {
-                if let Some(p) = sub {
-                    let ty = lookup_field_ty(*name);
-                    collect_let_pattern_defs(p, ty.as_ref(), None, false, defs, records);
-                } else if resolve(*name) != "_" {
-                    defs.insert(
-                        *name,
-                        DefInfo {
-                            signature: None,
-                            fields: None,
-                            ty: lookup_field_ty(*name),
-                            params: vec![],
-                            doc: None,
-                        },
-                    );
-                }
-            }
-            // The named rest binder (`{ x, ...rest }`) binds
-            // `rest` — mirror the typechecker's `collect_pattern_vars`.
-            if let Some((r, _)) = rest
-                && resolve(*r) != "_"
-            {
-                defs.insert(
-                    *r,
-                    DefInfo {
-                        signature: None,
-                        fields: None,
-                        ty: None,
-                        params: vec![],
-                        doc: None,
-                    },
-                );
-            }
-        }
         PatternKind::Map(entries) => {
             // Map-pattern values bind (`#{ "k": v }` binds
             // `v`); keys are string literals, never binders.

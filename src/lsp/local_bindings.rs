@@ -437,69 +437,6 @@ fn collect_pattern_bindings(
                 }
             }
         }
-        PatternKind::AnonRecord { fields, rest } => {
-            // Row-polymorphism destructure
-            // (`let { x, y } = anon_record`). Mirror the `Record` arm.
-            // The fields come from the type of the expression: an
-            // anonymous record type's own, or a declared record's
-            // (`record_field_types`). A field the type does not list
-            // binds without a type.
-            let field_tys = expr_ty.and_then(|ty| record_field_types(ty, out.records));
-            let lookup_field_ty = |fname: Symbol| -> Option<Type> {
-                field_tys
-                    .as_ref()
-                    .and_then(|fs| fs.iter().find(|(n, _)| *n == fname).map(|(_, t)| t.clone()))
-            };
-            for (name, name_span, sub) in fields {
-                if let Some(p) = sub {
-                    // The field's name (`x` in `P { x: a }`) has its type.
-                    let ty = lookup_field_ty(*name);
-                    out.names.push(PatternName {
-                        span: *name_span,
-                        ty: ty.as_ref().and_then(known),
-                        matched: ty.as_ref().and_then(known),
-                    });
-                    collect_pattern_bindings(p, visible_from, ty.as_ref(), scope_end, out);
-                } else {
-                    out.bindings.push(LocalBinding {
-                        name: *name,
-                        binding_offset: name_span.start as usize,
-                        binding_len: resolve(*name).len(),
-                        scope_start: visible_from,
-                        scope_end,
-                        ty: lookup_field_ty(*name),
-                        same_as: None,
-                    });
-                }
-            }
-            // The named rest binder (`{ x, ...rest }`) binds `rest` to
-            // an anonymous record of the fields the pattern does not
-            // name, whatever the record is (over an open row, with the
-            // row).
-            if let Some((r, r_span)) = rest {
-                let tail = match expr_ty {
-                    Some(Type::AnonRecord { tail, .. }) => tail.clone(),
-                    _ => crate::types::RowTail::Closed,
-                };
-                let ty = field_tys.as_ref().map(|fs| Type::AnonRecord {
-                    fields: fs
-                        .iter()
-                        .filter(|(n, _)| !fields.iter().any(|(named, _, _)| named == n))
-                        .cloned()
-                        .collect(),
-                    tail,
-                });
-                out.bindings.push(LocalBinding {
-                    name: *r,
-                    binding_offset: r_span.start as usize,
-                    binding_len: resolve(*r).len(),
-                    scope_start: visible_from,
-                    scope_end,
-                    ty,
-                    same_as: None,
-                });
-            }
-        }
         PatternKind::Map(entries) => {
             // Map-pattern values bind (`#{ "k": v }` binds
             // `v`); keys are string literals, never binders. A value

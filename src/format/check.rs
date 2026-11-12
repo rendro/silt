@@ -816,16 +816,6 @@ impl ShapeWriter {
                 self.type_expr(ret);
             }
             TypeExprKind::SelfType => self.open("self"),
-            TypeExprKind::AnonRecord { fields, tail } => {
-                self.open("record");
-                self.opt_sym(tail.map(|(name, _)| name));
-                for (name, ty) in fields {
-                    self.open("field");
-                    self.sym(*name);
-                    self.type_expr(ty);
-                    self.close();
-                }
-            }
         }
         self.close();
     }
@@ -913,11 +903,6 @@ impl ShapeWriter {
                 self.qualifier(*module);
                 self.opt_sym(*name);
                 self.flag(*has_rest);
-                self.field_patterns(fields);
-            }
-            PatternKind::AnonRecord { fields, rest } => {
-                self.open("anon-record");
-                self.opt_sym(rest.map(|(r, _)| r));
                 self.field_patterns(fields);
             }
             PatternKind::List(elems, rest) => {
@@ -1153,11 +1138,6 @@ impl ShapeWriter {
             ExprKind::RecordUpdate { expr, fields, .. } => {
                 self.open("record-update");
                 self.expr(expr);
-                self.field_values(fields);
-            }
-            ExprKind::AnonRecord { spread, fields } => {
-                self.open("anon-record");
-                self.opt_expr(spread.as_deref());
                 self.field_values(fields);
             }
             ExprKind::Match { expr, arms } => {

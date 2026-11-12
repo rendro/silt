@@ -3805,11 +3805,6 @@ impl SelfUses {
                     self.read(part);
                 }
             }
-            TypeExprKind::AnonRecord { fields, .. } => {
-                for (_, part) in fields {
-                    self.read(part);
-                }
-            }
             TypeExprKind::Named { .. } => {}
         }
     }
@@ -3940,7 +3935,6 @@ fn no_supertrait_argument(te: &TypeExpr, params: &[Symbol]) -> Option<(String, S
     };
     match &te.kind {
         TypeExprKind::SelfType => Some(("'Self'".to_string(), te.span)),
-        TypeExprKind::AnonRecord { .. } => Some(("an anonymous record type".to_string(), te.span)),
         TypeExprKind::Named { name, .. } if unread(*name) => {
             Some((format!("'{}'", resolve(*name)), te.span))
         }

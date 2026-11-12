@@ -389,23 +389,6 @@ impl Compiler<'_> {
                 Ok(all_jumps)
             }
 
-            PatternKind::AnonRecord { fields, .. } => {
-                let mut all_jumps = Vec::new();
-                for (field_name, _, sub_pat) in fields {
-                    let sub_pattern = match sub_pat {
-                        Some(p) => p,
-                        None => continue,
-                    };
-                    if !sub_pattern.irrefutable {
-                        self.emit_destruct_field(FieldRead::Named(*field_name), span)?;
-                        let sub_fails =
-                            self.compile_pattern_test_tracked(sub_pattern, span, base_depth + 1)?;
-                        self.emit(Asm::Pop, span)?;
-                        all_jumps.extend(sub_fails);
-                    }
-                }
-                Ok(all_jumps)
-            }
 
             PatternKind::Map(entries) => {
                 let mut all_jumps = Vec::new();
@@ -712,42 +695,6 @@ impl Compiler<'_> {
                 self.compile_compound_bind(items, span)?;
             }
 
-            PatternKind::AnonRecord { fields, rest } => {
-                let mut items: Vec<(BindDestructKind, Pattern)> = Vec::new();
-                for (field_name, _, sub_pat) in fields {
-                    match sub_pat {
-                        Some(pat) => {
-                            if self.pattern_has_bindings(pat) {
-                                items.push((
-                                    BindDestructKind::RecordField(FieldRead::Named(*field_name)),
-                                    pat.clone(),
-                                ));
-                            }
-                        }
-                        None => {
-                            items.push((
-                                BindDestructKind::RecordField(FieldRead::Named(*field_name)),
-                                Pattern::new(PatternKind::Ident(*field_name), pattern.span),
-                            ));
-                        }
-                    }
-                }
-                if let Some((rest_name, _)) = rest {
-                    // The rest-capture must run against the parent record,
-                    // not against any per-field sub-value. Funnel it through
-                    // `compile_compound_bind` so it shares the
-                    // `__bind_parent__` slot used by every other field
-                    // destructure — that way the rest opcode is fed the
-                    // actual parent on every iteration regardless of which
-                    // sub-value happens to be on TOS.
-                    let names: Vec<Symbol> = fields.iter().map(|(n, _, _)| *n).collect();
-                    items.push((
-                        BindDestructKind::RecordRest(names),
-                        Pattern::new(PatternKind::Ident(*rest_name), pattern.span),
-                    ));
-                }
-                self.compile_compound_bind(items, span)?;
-            }
 
             PatternKind::Map(entries) => {
                 let items: Vec<(BindDestructKind, Pattern)> = entries
@@ -1034,7 +981,7 @@ impl Compiler<'_> {
             PatternKind::Constructor { args, .. } => product(&mut args.iter()),
             PatternKind::Tuple(parts) => product(&mut parts.iter()),
             PatternKind::List(elems, _) => product(&mut elems.iter()),
-            PatternKind::Record { fields, .. } | PatternKind::AnonRecord { fields, .. } => {
+            PatternKind::Record { fields, .. } => {
                 product(&mut fields.iter().filter_map(|(_, _, part)| part.as_ref()))
             }
             PatternKind::Map(entries) => product(&mut entries.iter().map(|(_, part)| part)),
@@ -1124,14 +1071,6 @@ impl Compiler<'_> {
                         name_span: *name_span,
                         fields,
                         has_rest: *has_rest,
-                    })
-                })
-                .collect(),
-            PatternKind::AnonRecord { fields, rest } => (field_ways(fields).into_iter())
-                .map(|fields| {
-                    rebuilt(PatternKind::AnonRecord {
-                        fields,
-                        rest: *rest,
                     })
                 })
                 .collect(),
@@ -1388,13 +1327,6 @@ impl Compiler<'_> {
                     None => true, // shorthand {name} always binds
                 }
             }),
-            PatternKind::AnonRecord { fields, rest } => {
-                rest.is_some()
-                    || fields.iter().any(|(_, _, p)| match p {
-                        Some(pat) => self.pattern_has_bindings(pat),
-                        None => true,
-                    })
-            }
             PatternKind::Or(alts) => alts.iter().any(|p| self.pattern_has_bindings(p)),
             PatternKind::Map(entries) => entries.iter().any(|(_, p)| self.pattern_has_bindings(p)),
         }
@@ -1453,19 +1385,6 @@ impl Compiler<'_> {
                             names(*field_name);
                         }
                     }
-                }
-            }
-            PatternKind::AnonRecord { fields, rest } => {
-                for (field_name, _, sub_pat) in fields {
-                    match sub_pat {
-                        Some(pat) => Self::collect_binding_names(pat, names),
-                        None => {
-                            names(*field_name);
-                        }
-                    }
-                }
-                if let Some((r, _)) = rest {
-                    names(*r);
                 }
             }
             PatternKind::Or(alts) => {

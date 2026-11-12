@@ -436,11 +436,6 @@ fn find_ident_in_type_expr(te: &TypeExpr, cursor: usize, best: &mut Option<Symbo
             find_ident_in_type_expr(ret, cursor, best);
         }
         TypeExprKind::SelfType => {}
-        TypeExprKind::AnonRecord { fields, .. } => {
-            for (_, t) in fields {
-                find_ident_in_type_expr(t, cursor, best);
-            }
-        }
     }
 }
 
@@ -511,22 +506,6 @@ fn find_ident_in_pattern(pattern: &Pattern, cursor: usize, best: &mut Option<Sym
                 } else {
                     check_span_match(*name, *name_span, cursor, best);
                 }
-            }
-        }
-        PatternKind::AnonRecord { fields, rest } => {
-            // Anon-record destructure `let { x, y } = p`.
-            // Same handling as nominal `Record`.
-            for (name, name_span, sub) in fields {
-                if let Some(p) = sub {
-                    find_ident_in_pattern(p, cursor, best);
-                } else {
-                    check_span_match(*name, *name_span, cursor, best);
-                }
-            }
-            // The named rest binder (`{ x, ...rest }`) binds
-            // `rest`.
-            if let Some((r, r_span)) = rest {
-                check_span_match(*r, *r_span, cursor, best);
             }
         }
         PatternKind::List(pats, rest) => {
@@ -682,17 +661,6 @@ pub(super) fn visit_expr_children(expr: &Expr, mut f: impl FnMut(&Expr)) {
         }
         ExprKind::RecordUpdate { expr, fields, .. } => {
             f(expr);
-            for (_, v) in fields {
-                f(v);
-            }
-        }
-        ExprKind::AnonRecord { spread, fields } => {
-            // Anonymous-record literal field values must be
-            // walked so identifier searches (find references / hover etc.)
-            // descend into them. Mirrors the `RecordCreate` arm above.
-            if let Some(s) = spread {
-                f(s);
-            }
             for (_, v) in fields {
                 f(v);
             }

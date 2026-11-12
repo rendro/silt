@@ -174,11 +174,7 @@ fn plain_value(
         ExprKind::Map(entries) => entries
             .iter()
             .all(|(k, v)| plain_value(checker, k, reads) && plain_value(checker, v, reads)),
-        ExprKind::RecordCreate { fields, .. }
-        | ExprKind::AnonRecord {
-            spread: None,
-            fields,
-        } => fields.iter().all(|(_, e)| plain_value(checker, e, reads)),
+        ExprKind::RecordCreate { fields, .. } => fields.iter().all(|(_, e)| plain_value(checker, e, reads)),
         ExprKind::Call(callee, args) => {
             checker.is_syntactic_value(expr) && {
                 reads.push(callee.res);

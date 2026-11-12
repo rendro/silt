@@ -68,28 +68,6 @@ fn collect_pattern_names(pattern: &Pattern, locals: &mut Vec<LocalVar>) {
                 }
             }
         }
-        PatternKind::AnonRecord { fields, rest } => {
-            // Anon-record destructure (`let { x, y } = p`)
-            // also binds shorthand fields. The named rest
-            // binder (`{ x, ...rest }`) binds too — mirror the
-            // typechecker's `collect_pattern_vars`.
-            for (name, _, sub) in fields {
-                if let Some(p) = sub {
-                    collect_pattern_names(p, locals);
-                } else {
-                    locals.push(LocalVar {
-                        name: name.to_string(),
-                        ty: None,
-                    });
-                }
-            }
-            if let Some((r, _)) = rest {
-                locals.push(LocalVar {
-                    name: r.to_string(),
-                    ty: None,
-                });
-            }
-        }
         PatternKind::List(pats, rest) => {
             for p in pats {
                 collect_pattern_names(p, locals);
