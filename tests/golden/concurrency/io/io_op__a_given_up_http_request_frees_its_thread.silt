@@ -1,0 +1,32 @@
+-- requires-feature: http
+-- A server that accepts and never answers holds an http.get for its own
+-- time (60 s). Seventy requests are given up at a deadline: each one's
+-- client is shut down when its task no longer waits, so its thread ends.
+-- A file read afterwards runs. (Before, the requests could not be
+-- interrupted, 64 of them made every new I/O operation of the program
+-- fail, and the read said so.)
+import http
+import io
+import string
+import task
+import tcp
+import time
+
+fn give_up(port: Int, n: Int) {
+  match {
+    n > 0 -> {
+      let _ = task.deadline(time.ms(5)) { -> http.get("http://127.0.0.1:{port}/") }
+      give_up(port, n - 1)
+    }
+    _ -> ()
+  }
+}
+
+fn main() {
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  give_up(tcp.local_port(listener), 70)
+  match io.read_file("io_op__a_given_up_http_request_frees_its_thread.silt") {
+    Ok(text) -> println("read the file: {string.length(text) > 0}")
+    Err(e) -> println("read_file: {Error.message(e)}")
+  }
+}

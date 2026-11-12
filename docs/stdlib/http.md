@@ -102,6 +102,14 @@ Which variant a failure is, is decided by the kind of failure the
 transport reports, never by the wording of its message: the message is
 only what `Connect`, `Tls`, `InvalidResponse` and `Other` carry.
 
+To bound a request by a time of your own, put a `task.deadline` around
+it. A request that nobody waits for any more (its deadline passed, its
+task was cancelled) is ended at once, wherever it waits: for the
+server's answer, in its body, in a TLS handshake. (A TCP connect under
+way runs on to its end, at most 10 s, and the request ends after it.) So
+requests given up by their deadlines, however many, hold no thread and
+never hold up the program's other I/O.
+
 
 ## `http.get`
 

@@ -1012,6 +1012,11 @@ impl Shutter {
         true
     }
 
+    /// Whether the shutter was shut: the operation is to give up.
+    pub fn is_shut(&self) -> bool {
+        self.0.lock().shut
+    }
+
     /// Shut the operation's socket down, now or as soon as it has one:
     /// a read or a write that blocks on it returns. `false` if it has
     /// none yet (and none was shut before).

@@ -263,11 +263,7 @@ mod tls {
             .map_err(|e| format!("invalid hostname '{hostname}': {e}"))?;
         let conn = ClientConnection::new(Arc::new(config), server_name)
             .map_err(|e| format!("client connection setup: {e}"))?;
-        let sock = TcpStream::connect(addr).map_err(NoTls::Connection)?;
-        // Nobody waits for the connect any more: it ends here.
-        if !shutter.set(&sock) {
-            return Err(NoTls::Connection(std::io::ErrorKind::NotConnected.into()));
-        }
+        let sock = super::connect_shuttered(addr, shutter).map_err(NoTls::Connection)?;
         // Clone the fd for the shutdown side-channel BEFORE handing the
         // socket to rustls. `StreamOwned` takes the socket by value, and
         // once inside rustls we can no longer reach the raw fd through
@@ -503,6 +499,50 @@ pub(crate) fn accept_op(
     })
 }
 
+/// Connect to `addr` (as `TcpStream::connect` does: each address it
+/// names in turn) so that `shutter` ends the connect wherever it
+/// stands: each socket is made and given to the shutter before it
+/// connects, and a shut of it ends a connect that waits for its peer.
+/// The connect of `tcp.connect` and `tcp.connect_tls` is one, so a task
+/// that stops waiting for it (cancelled, ended by its deadline) leaves
+/// no thread behind. (The name lookup before it cannot be interrupted:
+/// it ends by the system's own time.)
+pub(crate) fn connect_shuttered(
+    addr: &str,
+    shutter: &crate::runtime::handle::Shutter,
+) -> std::io::Result<TcpStream> {
+    use std::net::ToSocketAddrs;
+    let given_up = || std::io::Error::from(std::io::ErrorKind::NotConnected);
+    let mut last = None;
+    for addr in addr.to_socket_addrs()? {
+        let socket = socket2::Socket::new(
+            socket2::Domain::for_address(addr),
+            socket2::Type::STREAM,
+            Some(socket2::Protocol::TCP),
+        )?;
+        let stream = TcpStream::from(socket);
+        // Nobody waits for the connect any more: it ends here.
+        if !shutter.set(&stream) {
+            return Err(given_up());
+        }
+        let socket = socket2::Socket::from(stream);
+        let connected = socket.connect(&addr.into());
+        if shutter.is_shut() {
+            return Err(given_up());
+        }
+        match connected {
+            Ok(()) => return Ok(socket.into()),
+            Err(e) => last = Some(e),
+        }
+    }
+    Err(last.unwrap_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "could not resolve to any addresses",
+        )
+    }))
+}
+
 /// What makes an operation on `stream` return when nobody waits for
 /// it any more: the connection is shut down.
 fn stopper(stream: &Arc<TcpStreamHandle>) -> impl FnOnce() -> bool + Send + 'static {
@@ -610,11 +650,15 @@ builtins! {
         vm.io_wait("tcp", op)
     }
 
+    // A connect that nobody waits for any more (cancelled, ended by its
+    // deadline) is ended: its socket is shut down.
     fn connect(vm, addr: &str) -> Result<Step, VmError> {
         let addr = addr.to_string();
         let next_id = vm.next_tcp_id();
-        vm.io("tcp", tcp_timeout_err, Leave::RunsOut, move |_| {
-            match TcpStream::connect(&addr) {
+        let shutter = crate::runtime::handle::Shutter::default();
+        let shut = shutter.clone();
+        vm.io("tcp", tcp_timeout_err, Leave::closes(move || shut.shut()), move |_| {
+            match connect_shuttered(&addr, &shutter) {
                 Ok(stream) => Value::variant(
                     bv::OK,
                     [Value::TcpStream(TcpStreamHandle::plain(next_id, stream))],
@@ -735,5 +779,57 @@ mod tests {
             assert_eq!(variant(doing, ErrorKind::TimedOut), "Timeout");
             assert_eq!(variant(doing, ErrorKind::WouldBlock), "Timeout");
         }
+    }
+
+    /// A connect that waits for its peer ends when its shutter is shut:
+    /// the connect of `tcp.connect` that nobody waits for any more frees
+    /// its thread. (It waited for the system's own time, two minutes on
+    /// Linux, for a peer that does not answer.)
+    #[test]
+    fn a_shut_ends_a_connect_that_waits_for_its_peer() {
+        use std::net::SocketAddr;
+        use std::time::Duration;
+        // A listener whose queue is full, so the system does not answer a
+        // further connect: it waits. The queue is filled with connects
+        // that are never accepted, until one of them waits.
+        let listener = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None)
+            .expect("a socket");
+        let any: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        listener.bind(&any.into()).expect("bound");
+        listener.listen(0).expect("listening");
+        let addr = listener.local_addr().unwrap().as_socket().unwrap();
+        let mut held = Vec::new();
+        let full =
+            (0..64).any(
+                |_| match TcpStream::connect_timeout(&addr, Duration::from_millis(200)) {
+                    Ok(conn) => {
+                        held.push(conn);
+                        false
+                    }
+                    Err(e) => e.kind() == ErrorKind::TimedOut || e.kind() == ErrorKind::WouldBlock,
+                },
+            );
+        // (A system that refuses a connect to a full queue has nothing
+        // to wait for.)
+        if !full {
+            return;
+        }
+        let shutter = crate::runtime::handle::Shutter::default();
+        let (done, result) = std::sync::mpsc::channel();
+        let connecting = shutter.clone();
+        std::thread::spawn(move || {
+            let _ = done.send(connect_shuttered(&addr.to_string(), &connecting));
+        });
+        // While it waits, or before: either way it ends.
+        std::thread::sleep(Duration::from_millis(100));
+        shutter.shut();
+        let connected = result
+            .recv_timeout(Duration::from_secs(30))
+            .expect("the connect ended when its shutter was shut");
+        assert_eq!(
+            connected.map(drop).map_err(|e| e.kind()),
+            Err(ErrorKind::NotConnected)
+        );
+        drop(held);
     }
 }

@@ -503,10 +503,9 @@ fn client_with_times(connect: Duration, global: Duration) -> ureq::Agent {
         .into()
 }
 
-/// Perform a synchronous HTTP GET and return a `Value`: the request of
-/// `http.request` with no body and no headers, so that a redirect is
-/// followed as there.
-#[cfg(feature = "http")]
+/// Test-only: an HTTP GET as `http.get` makes it, with a client of its
+/// own.
+#[cfg(all(test, feature = "http"))]
 fn do_http_get(url: &str) -> Value {
     do_http_request("GET", url, &[], &[])
 }
@@ -516,7 +515,20 @@ fn do_http_get(url: &str) -> Value {
 #[cfg(feature = "http")]
 const REDIRECTS_MAX: usize = 10;
 
-/// Perform a synchronous HTTP request and return a `Value`.
+/// Test-only: a request as `http.request` makes it, with a client of
+/// its own.
+#[cfg(all(test, feature = "http"))]
+fn do_http_request(
+    method_tag: &str,
+    url: &str,
+    body: &[u8],
+    headers: &[(String, String)],
+) -> Value {
+    do_http_request_on(&client(), method_tag, url, body, headers)
+}
+
+/// Perform a synchronous HTTP request with the client `agent` and
+/// return a `Value`.
 ///
 /// The request follows redirects itself, because ureq does not send a
 /// body again: a 303 goes on as a GET without a body (a HEAD stays a
@@ -526,8 +538,14 @@ const REDIRECTS_MAX: usize = 10;
 /// redirect drops the `authorization` and `cookie` headers. A `content-length` header of the program's is not sent:
 /// the body's own length is (an empty body of a method that takes
 /// none by default has none).
+///
+/// A shutdown of `agent` (`ureq::Agent::shutdown`, from another thread)
+/// ends the request: a read or a write it waits in, a TLS handshake,
+/// the next redirect. A connect under way runs on to its end (at most
+/// the connect time of [`client`]), and the request ends after it.
 #[cfg(feature = "http")]
-fn do_http_request(
+fn do_http_request_on(
+    agent: &ureq::Agent,
     method_tag: &str,
     url: &str,
     body: &[u8],
@@ -547,7 +565,6 @@ fn do_http_request(
             )],
         );
     }
-    let agent = client();
     let mut method = method_tag;
     let mut url = url.to_string();
     let mut body = body;
@@ -560,7 +577,7 @@ fn do_http_request(
         if let Some(refused) = refuse_port(&url) {
             return refused;
         }
-        let result = send_request(&agent, method, &url, body, &headers);
+        let result = send_request(agent, method, &url, body, &headers);
         let Some((status, next)) = result.as_ref().ok().and_then(|r| redirect(r, &url)) else {
             return finish_http_response(result, &url, method == "HEAD");
         };
@@ -1997,7 +2014,13 @@ builtins! {
     #[cfg(feature = "http")]
     fn get(vm, url: &str) -> Result<Step, VmError> {
         let url = url.to_string();
-        vm.io("http", http_timeout_err, Leave::RunsOut, move |_| do_http_get(&url))
+        // A request that nobody waits for any more (cancelled, ended
+        // by its deadline) is ended: its client is shut down.
+        let agent = client();
+        let stop = agent.clone();
+        vm.io("http", http_timeout_err, Leave::interrupts(move |_| stop.shutdown()), move |_| {
+            do_http_request_on(&agent, "GET", &url, &[], &[])
+        })
     }
 
     #[cfg(feature = "http")]
@@ -2007,8 +2030,10 @@ builtins! {
             .iter()
             .filter_map(|(k, v)| Some((<&str>::take(k)?.to_string(), <&str>::take(v)?.to_string())))
             .collect();
-        vm.io("http", http_timeout_err, Leave::RunsOut, move |_| {
-            do_http_request(&method, &url, &body, &headers)
+        let agent = client();
+        let stop = agent.clone();
+        vm.io("http", http_timeout_err, Leave::interrupts(move |_| stop.shutdown()), move |_| {
+            do_http_request_on(&agent, &method, &url, &body, &headers)
         })
     }
 

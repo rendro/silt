@@ -165,11 +165,12 @@ moment in which its task stops waiting: what the read had taken is gone
 with the connection. The same holds for the
 `stream.tcp_*` sources and sink when their pipeline is cut short or
 their I/O times out. A `tcp.accept` that nobody waits
-for is woken and gives up; the listener stays usable. A handshake of
-`tcp.connect_tls` or `tcp.tls_server` that nobody waits for any more
-ends its connection the same way. (The TCP connect of `tcp.connect_tls`,
-before its handshake, cannot be interrupted, as `tcp.connect` cannot: it
-runs to its end, and its connection is then shut down.) (The whole rule, for every module:
+for is woken and gives up; the listener stays usable. A `tcp.connect`,
+and a connect or handshake of `tcp.connect_tls` or `tcp.tls_server`,
+that nobody waits for any more ends its connection the same way, also
+while it waits for the peer to answer. (The name lookup of a connect to
+a host name cannot be interrupted: it ends by the system's own time,
+and the connect gives up after it.) (The whole rule, for every module:
 [the I/O pool](../concurrency.md#the-io-pool-and-operations-that-nobody-waits-for).)
 
 ## Listener lifetime
