@@ -54,6 +54,12 @@
 //!   fetched: no git command runs. A git dependency is taken from the
 //!   cache at the commit the lock pins (or a full `rev` names); one that
 //!   is not there is `GitDependency`, "not fetched: run `silt check`".
+//! - A package fetched over git reaches only its own files: a path
+//!   dependency it names (or a path dependency of it names) must be
+//!   inside its checkout, and it may name no repository on this machine
+//!   (a local path or `file://` URL). Either is
+//!   `DependencyOutsideCheckout`. The project's own manifest, and its
+//!   path dependencies', may name both.
 //! - A symbolic link in a dependency's `silt.toml` or `src/` is
 //!   `SymlinkInDependency`; a git checkout that holds one is not cached.
 //! - Under [`LockPolicy::Update`], [`LockPolicy::ReadOnly`] and
@@ -193,6 +199,7 @@ pub fn resolve_packages(
         manifests: Vec::new(),
         locked: Vec::new(),
         via: Vec::new(),
+        inside: Vec::new(),
         by_source: HashMap::new(),
         failed: HashSet::new(),
         diagnostics: Vec::new(),
@@ -282,6 +289,10 @@ struct Resolver<'a> {
     /// The dependency that first reached each package: the package that
     /// declares it and the span of its key. `None` for the root.
     via: Vec<Option<(PackageId, Span)>>,
+    /// The checkout of the git package each package came in: its own
+    /// root for a git package, its parent's for a path dependency of
+    /// one. `None` for the project and its path dependencies.
+    inside: Vec<Option<PathBuf>>,
     by_source: HashMap<SourceKey, PackageId>,
     /// Sources whose manifest or sources failed already: reported once.
     failed: HashSet<SourceKey>,
@@ -311,6 +322,7 @@ impl Resolver<'_> {
         self.manifests.push(manifest);
         self.locked.push((locked, checksum));
         self.via.push(via);
+        self.inside.push(None);
         self.by_source.insert(key, id);
         self.queue.push_back(id);
         id
@@ -326,10 +338,22 @@ impl Resolver<'_> {
     ) -> Option<PackageId> {
         let base = self.nodes[from.0 as usize].root.clone();
         let key_name = intern::resolve(key);
+        // The checkout of the git package `from` came in, if it did.
+        let inside = self.inside[from.0 as usize].clone();
         match &entry.source {
             Dependency::Path { path } => {
                 let dir = normalize_path(&base.join(path));
                 let shown = escape_for_display(&path.display().to_string());
+                if let Some(checkout) = &inside
+                    && !dir.starts_with(checkout)
+                {
+                    self.diagnostics.push(outside_checkout_diagnostic(
+                        entry.value,
+                        &key_name,
+                        &shown,
+                    ));
+                    return None;
+                }
                 if !dir.exists() {
                     let mut d = Diagnostic::error(
                         Code::DependencyNotFound,
@@ -362,6 +386,18 @@ impl Resolver<'_> {
                     return None;
                 }
                 let root = crate::source::canonical_path(&dir);
+                // (Through a link, a path inside the checkout can lead
+                // out of it.)
+                if let Some(checkout) = &inside
+                    && !root.starts_with(checkout)
+                {
+                    self.diagnostics.push(outside_checkout_diagnostic(
+                        entry.value,
+                        &key_name,
+                        &shown,
+                    ));
+                    return None;
+                }
                 // Written relative to the project's directory, which the
                 // lockfile is in.
                 let project = &self.nodes[0].root;
@@ -380,6 +416,14 @@ impl Resolver<'_> {
             }
             Dependency::Git { url, ref_spec } => {
                 let written = url;
+                if inside.is_some() && git::is_local_git_url(written) {
+                    self.diagnostics.push(local_repository_diagnostic(
+                        entry.value,
+                        &key_name,
+                        written,
+                    ));
+                    return None;
+                }
                 let url = resolve_git_url(written, &base);
                 // The lock names the repository as the manifest does: a
                 // relative local URL relative to the project's directory,
@@ -571,19 +615,25 @@ impl Resolver<'_> {
             }
         }
         // Only a git dependency's checksum is pinned: a path dependency
-        // is live, its sources change as you work on them.
-        let pinned = match locked {
-            LockedSource::Git { .. } => checksum,
-            LockedSource::Local | LockedSource::Path { .. } => String::new(),
+        // is live, its sources change as you work on them. A git
+        // package's dependencies stay inside its checkout, a path
+        // dependency's inside the checkout its parent came in.
+        let (pinned, inside) = match locked {
+            LockedSource::Git { .. } => (checksum, Some(root.clone())),
+            LockedSource::Local | LockedSource::Path { .. } => {
+                (String::new(), self.inside[from.0 as usize].clone())
+            }
         };
-        Some(self.add(
+        let id = self.add(
             source,
             root,
             manifest,
             locked,
             pinned,
             Some((from, entry.key)),
-        ))
+        );
+        self.inside[id.0 as usize] = inside;
+        Some(id)
     }
 
     /// The checksum the existing lock pins the checkout of `url` at
@@ -863,6 +913,41 @@ fn not_fetched_diagnostic(at: Span, key: &str, url: &str, ref_spec: &GitRef) -> 
     .with_note(
         "the language server fetches nothing; `silt check`, `silt run` and `silt test` \
          fetch the dependencies of silt.toml",
+    )
+}
+
+/// The path dependency `key`, written `shown`, of a package that came
+/// over git leads out of its checkout.
+fn outside_checkout_diagnostic(at: Span, key: &str, shown: &str) -> Diagnostic {
+    Diagnostic::error(
+        Code::DependencyOutsideCheckout,
+        at,
+        format!(
+            "dependency `{key}`: path `{shown}` is outside the checkout of this package, \
+             which was fetched over git"
+        ),
+    )
+    .with_help(
+        "a package fetched over git reads only its own files: its path dependencies must be \
+         inside its checkout",
+    )
+}
+
+/// The git dependency `key` of a package that came over git names a
+/// repository on this machine, `url`.
+fn local_repository_diagnostic(at: Span, key: &str, url: &str) -> Diagnostic {
+    Diagnostic::error(
+        Code::DependencyOutsideCheckout,
+        at,
+        format!(
+            "git dependency `{key}`: `{}` is a repository on this machine, and this package \
+             was fetched over git",
+            escape_for_display(url)
+        ),
+    )
+    .with_help(
+        "a package fetched over git reads only its own files: its git dependencies must be \
+         network URLs (`https://`, `ssh://`, `git://`)",
     )
 }
 

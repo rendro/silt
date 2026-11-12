@@ -277,7 +277,7 @@ impl std::error::Error for InvalidGitUrl {}
 /// (`silt add --git ./lib` stores such a path made from the working
 /// directory). Elsewhere `C:/repo` is the scp-like `host:path`.
 pub fn validate_git_url(url: &str) -> Result<(), InvalidGitUrl> {
-    let local = url.starts_with("file://") || is_local_path(url);
+    let local = is_local_git_url(url);
     let is_forbidden: fn(char) -> bool = if local {
         is_forbidden_in_local_form
     } else {
@@ -328,6 +328,12 @@ pub fn validate_git_url(url: &str) -> Result<(), InvalidGitUrl> {
         url: escape_for_display(url),
         reason: format!("{problem}; expected {ACCEPTED_GIT_URL_FORMS}"),
     })
+}
+
+/// Whether the git URL `url` names a repository on this machine: a
+/// `file://` URL or a local path ([`is_local_path`]).
+pub fn is_local_git_url(url: &str) -> bool {
+    url.starts_with("file://") || is_local_path(url)
 }
 
 /// A local path: a value starting with `/`, `./` or `../`, and on
