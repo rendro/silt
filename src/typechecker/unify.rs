@@ -59,7 +59,6 @@ impl TyVarSupply {
                 Type::Tuple(parts) | Type::Generic(_, parts) | Type::Con(_, parts) => {
                     parts.iter().any(holds_never)
                 }
-                Type::AnonRecord { fields, .. } => fields.values().any(holds_never),
                 _ => false,
             }
         }
@@ -89,12 +88,6 @@ impl TyVarSupply {
             Type::Tuple(parts) => Type::Tuple(each(&parts, self)),
             Type::Generic(name, args) => Type::Generic(name, each(&args, self)),
             Type::Con(head, rest) => Type::Con(head, each(&rest, self)),
-            Type::AnonRecord { fields, tail } => Type::AnonRecord {
-                fields: (fields.into_iter())
-                    .map(|(name, t)| (name, self.without_never(t)))
-                    .collect(),
-                tail,
-            },
             other => other,
         }
     }
@@ -234,7 +227,6 @@ impl TypeChecker {
         self.solve_wanted(self.closed_mark);
         self.close_level();
         self.decide_tries();
-        self.default_rebuilds();
     }
 
     /// Make variables as the scope `exit_level` just left did, until
@@ -257,8 +249,6 @@ impl TypeChecker {
     }
 
     /// Allocate a fresh `TyVar` id without wrapping it in `Type::Var`.
-    /// Used by row polymorphism for `RowTail::Var(id)` where the id is
-    /// the binding target rather than a type position.
     pub(super) fn fresh_tyvar_id(&mut self) -> TyVar {
         self.tables.vars.fresh()
     }
@@ -289,50 +279,6 @@ impl TypeChecker {
             Type::Map(k, v) => Type::Map(Box::new(self.apply(k)), Box::new(self.apply(v))),
             Type::Set(inner) => Type::Set(Box::new(self.apply(inner))),
             Type::Channel(inner) => Type::Channel(Box::new(self.apply(inner))),
-            // Anon records: apply through each field; if the row tail
-            // is a Var that resolved to another AnonRecord, merge its
-            // fields and propagate its tail.
-            Type::AnonRecord { fields, tail } => {
-                use std::collections::BTreeMap;
-                let mut new_fields: BTreeMap<Symbol, Type> =
-                    fields.iter().map(|(n, t)| (*n, self.apply(t))).collect();
-                let new_tail = match tail {
-                    RowTail::Closed => RowTail::Closed,
-                    RowTail::Rigid(r) => RowTail::Rigid(*r),
-                    RowTail::Var(v) => {
-                        if let Some(Some(resolved)) = self.tables.vars.subst.get(*v) {
-                            let resolved = self.apply(resolved);
-                            if let Type::AnonRecord {
-                                fields: rfields,
-                                tail: rtail,
-                            } = resolved
-                            {
-                                for (n, t) in rfields {
-                                    new_fields.entry(n).or_insert(t);
-                                }
-                                rtail
-                            } else if let Type::Var(w) = resolved {
-                                // Tail var transitively resolved to another
-                                // tyvar — re-tail on the fresh var so the
-                                // freshening propagates. Mirrors
-                                // substitute_vars' `Some(Type::Var(w))` arm.
-                                RowTail::Var(w)
-                            } else {
-                                // The row is a nominal record
-                                // (`open_row_is`): the type is that
-                                // record's.
-                                return resolved;
-                            }
-                        } else {
-                            RowTail::Var(*v)
-                        }
-                    }
-                };
-                Type::AnonRecord {
-                    fields: new_fields,
-                    tail: new_tail,
-                }
-            }
             Type::Rigid(r) if !self.rigid_alias.is_empty() => Type::Rigid(self.rigid_rep(*r)),
             // A constructor variable applied, once the variable is a
             // constructor, is the full type (`Option(_)` at `Int` is
@@ -431,11 +377,7 @@ impl TypeChecker {
         }
     }
 
-    /// The one wording of the occurs-check
-    /// diagnostic, emitted from every unification site (main `Var(v) ↔ t`
-    /// arm, plus the row-unif arms in `unify_anon_anon` and
-    /// `open_row_is`): an occurs-check failure reads the same whichever
-    /// arm tripped.
+    /// The one wording of the occurs-check diagnostic.
     pub fn infinite_type_message(t: &Type) -> String {
         format!("infinite type: the type variable appears inside {t}")
     }
@@ -466,260 +408,6 @@ impl TypeChecker {
             return;
         }
         self.tables.vars.bind(v, t);
-    }
-
-    /// Unify two anon records. See module-level row-poly notes.
-    fn unify_anon_anon(
-        &mut self,
-        f1: std::collections::BTreeMap<Symbol, Type>,
-        tail1: RowTail,
-        f2: std::collections::BTreeMap<Symbol, Type>,
-        tail2: RowTail,
-        out: &mut Vec<Fault>,
-    ) {
-        use std::collections::BTreeMap;
-        // Skip work if both tails point to the same row var AND fields
-        // are identical — already unified.
-        if let (RowTail::Var(v1), RowTail::Var(v2)) = (&tail1, &tail2)
-            && v1 == v2
-            && f1 == f2
-        {
-            return;
-        }
-        // Pairwise unify overlapping fields.
-        let common_keys: Vec<Symbol> = f1.keys().filter(|k| f2.contains_key(k)).copied().collect();
-        for k in &common_keys {
-            let a = f1.get(k).cloned().unwrap();
-            let b = f2.get(k).cloned().unwrap();
-            self.unify_into(&a, &b, out);
-        }
-        // Determine non-overlapping parts.
-        let only_in_1: BTreeMap<Symbol, Type> = f1
-            .iter()
-            .filter(|(k, _)| !f2.contains_key(*k))
-            .map(|(k, v)| (*k, v.clone()))
-            .collect();
-        let only_in_2: BTreeMap<Symbol, Type> = f2
-            .iter()
-            .filter(|(k, _)| !f1.contains_key(*k))
-            .map(|(k, v)| (*k, v.clone()))
-            .collect();
-        // A rigid row is the same fields wherever it is written, and
-        // unknown ones: it is another record's row only if that is the
-        // same rigid row with the same fields listed, or an open row
-        // that lists no field this one does not.
-        let whole = |fields: &BTreeMap<Symbol, Type>, tail: &RowTail| Type::AnonRecord {
-            fields: fields.clone(),
-            tail: tail.clone(),
-        };
-        match (tail1, tail2) {
-            (RowTail::Rigid(r1), RowTail::Rigid(r2))
-                if r1 == r2 && only_in_1.is_empty() && only_in_2.is_empty() => {}
-            (RowTail::Rigid(r), RowTail::Var(v)) if only_in_2.is_empty() => {
-                let rest = Type::AnonRecord {
-                    fields: only_in_1,
-                    tail: RowTail::Rigid(r),
-                };
-                self.bind(v, rest, out);
-            }
-            (RowTail::Var(v), RowTail::Rigid(r)) if only_in_1.is_empty() => {
-                let rest = Type::AnonRecord {
-                    fields: only_in_2,
-                    tail: RowTail::Rigid(r),
-                };
-                self.bind(v, rest, out);
-            }
-            (t1 @ RowTail::Rigid(_), t2) | (t1, t2 @ RowTail::Rigid(_)) => {
-                let fault = self.type_mismatch(&whole(&f1, &t1), &whole(&f2, &t2));
-                out.push(fault);
-            }
-            (RowTail::Closed, RowTail::Closed) => {
-                // Both must have the same field set.
-                if !only_in_1.is_empty() {
-                    let names: Vec<String> = only_in_1
-                        .keys()
-                        .map(|s| crate::intern::resolve(*s))
-                        .collect();
-                    out.push(Fault::new(
-                        Code::NoSuchField,
-                        format!(
-                            "record literal has unexpected field{} not declared in target type: {}",
-                            if names.len() == 1 { "" } else { "s" },
-                            names.join(", ")
-                        ),
-                    ));
-                }
-                if !only_in_2.is_empty() {
-                    let names: Vec<String> = only_in_2
-                        .keys()
-                        .map(|s| crate::intern::resolve(*s))
-                        .collect();
-                    out.push(Fault::new(
-                        Code::MissingField,
-                        format!(
-                            "record literal is missing required field{}: {}",
-                            if names.len() == 1 { "" } else { "s" },
-                            names.join(", ")
-                        ),
-                    ));
-                }
-            }
-            (RowTail::Var(v), RowTail::Closed) => {
-                // Open × Closed: open must be a subset of closed; bind
-                // v to a closed record carrying the leftover closed fields.
-                // Shared with the symmetric
-                // Closed×Open arm via `unify_open_closed`.
-                self.unify_open_closed(&only_in_1, only_in_2, v, out);
-            }
-            (RowTail::Closed, RowTail::Var(v)) => {
-                // Closed × Open: symmetric — open side (only_in_2) must
-                // not have extras; bind v to leftover from the closed
-                // side (only_in_1).
-                self.unify_open_closed(&only_in_2, only_in_1, v, out);
-            }
-            (RowTail::Var(v1), RowTail::Var(v2)) if v1 == v2 => {
-                // Same row var, but field disagreement: impossible to
-                // satisfy.
-                if !only_in_1.is_empty() || !only_in_2.is_empty() {
-                    out.push(Fault::new(
-                        Code::TypeMismatch,
-                        "row variable shared between two records with mismatched field sets"
-                            .to_string(),
-                    ));
-                }
-            }
-            (RowTail::Var(v1), RowTail::Var(v2)) => {
-                // Open × Open: bind v1 to a record carrying only_in_2 with
-                // a fresh shared row tail; bind v2 symmetrically.
-                let new_tail_id = self.fresh_tyvar_id();
-                let new_tail = RowTail::Var(new_tail_id);
-                let to_v1 = Type::AnonRecord {
-                    fields: only_in_2,
-                    tail: new_tail.clone(),
-                };
-                let to_v2 = Type::AnonRecord {
-                    fields: only_in_1,
-                    tail: new_tail,
-                };
-                if !occurs_in(v1, &to_v1) {
-                    self.bind(v1, to_v1, out);
-                } else {
-                    let msg = Self::infinite_type_message(&to_v1);
-                    out.push(Fault::new(Code::InfiniteType, msg));
-                }
-                if !occurs_in(v2, &to_v2) {
-                    self.bind(v2, to_v2, out);
-                } else {
-                    let msg = Self::infinite_type_message(&to_v2);
-                    out.push(Fault::new(Code::InfiniteType, msg));
-                }
-            }
-        }
-    }
-
-    /// The byte-symmetric Open×Closed and
-    /// Closed×Open arms of `unify_anon_anon`. Bind a row-tail var
-    /// `v` from the open side to a closed-tailed leftover record made
-    /// of the closed side's extra fields. Reject if the open side has
-    /// fields the closed side does not declare. The occurs-check
-    /// barrier is kept, with the canonical
-    /// `Self::infinite_type_message` wording of the other
-    /// occurs-check sites in this module.
-    ///
-    /// `open_extras` are fields present on the open side but missing
-    /// from the closed side (rejected — they cannot be added to a
-    /// closed shape). `closed_extras` are fields present on the
-    /// closed side but missing from the open side (these become the
-    /// row-tail leftover the open's row var binds to).
-    fn unify_open_closed(
-        &mut self,
-        open_extras: &std::collections::BTreeMap<Symbol, Type>,
-        closed_extras: std::collections::BTreeMap<Symbol, Type>,
-        v: TyVar,
-        out: &mut Vec<Fault>,
-    ) {
-        if !open_extras.is_empty() {
-            let names: Vec<String> = open_extras
-                .keys()
-                .map(|s| crate::intern::resolve(*s))
-                .collect();
-            out.push(Fault::new(
-                Code::TypeMismatch,
-                format!(
-                    "record open side has fields not present in closed target: {}",
-                    names.join(", ")
-                ),
-            ));
-            return;
-        }
-        let leftover = Type::AnonRecord {
-            fields: closed_extras,
-            tail: RowTail::Closed,
-        };
-        if !occurs_in(v, &leftover) {
-            self.bind(v, leftover, out);
-        } else {
-            out.push(Fault::new(
-                Code::InfiniteType,
-                Self::infinite_type_message(&leftover),
-            ));
-        }
-    }
-
-    /// The open row `{fields, ...v}` is the nominal record type
-    /// `nominal`: the record has each listed field, at its type, and the
-    /// row variable stands for the rest of it, so the row type is the
-    /// nominal type itself (`apply`).
-    fn open_row_is(
-        &mut self,
-        fields: &std::collections::BTreeMap<Symbol, Type>,
-        v: TyVar,
-        nominal: &Type,
-        out: &mut Vec<Fault>,
-    ) {
-        let Type::Generic(name, args) = nominal else {
-            return;
-        };
-        let declared = self.instantiate_record_fields_with_args(*name, args);
-        let mut missing: Vec<String> = Vec::new();
-        for (field, ty) in fields {
-            match declared.iter().find(|(n, _)| n == field) {
-                Some((_, declared_ty)) => self.unify_into(ty, declared_ty, out),
-                None => missing.push(resolve(*field)),
-            }
-        }
-        if !missing.is_empty() {
-            let shown = self.written_type(*name);
-            let mut fault = Fault::new(
-                Code::NoSuchField,
-                match missing.as_slice() {
-                    [field] => format!("type '{shown}' has no field '{field}'"),
-                    _ => format!(
-                        "type '{shown}' has no fields {}",
-                        missing
-                            .iter()
-                            .map(|f| format!("'{f}'"))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ),
-                },
-            );
-            // A method of a trait is not a field: it is called through
-            // its trait.
-            if let [field] = missing.as_slice() {
-                fault.help = self.method_help(nominal, intern(field), "x");
-            }
-            out.push(fault);
-            return;
-        }
-        if occurs_in(v, nominal) {
-            out.push(Fault::new(
-                Code::InfiniteType,
-                Self::infinite_type_message(nominal),
-            ));
-        } else {
-            self.bind(v, nominal.clone(), out);
-        }
     }
 
     /// Unify `t1` (the type got) with `t2` (the type expected) and report
@@ -1132,137 +820,6 @@ impl TypeChecker {
                 }
             }
 
-            // ── Anon record × Anon record ─────────────────────────────
-            (
-                Type::AnonRecord {
-                    fields: f1,
-                    tail: tail1,
-                },
-                Type::AnonRecord {
-                    fields: f2,
-                    tail: tail2,
-                },
-            ) => {
-                self.unify_anon_anon(f1.clone(), tail1.clone(), f2.clone(), tail2.clone(), out);
-            }
-
-            // ── Anon record × nominal record ──────────────────────────
-            // They are different types. A nominal record fits an OPEN
-            // row whose listed fields it has: the row then is the
-            // nominal type itself (`open_row_is`). A closed anonymous
-            // record type is never a nominal one, in either direction.
-            // An opaque record of another module fits no row: the row
-            // would read what is in it. (The module is the one of the
-            // code at hand, wherever the function that asks for the row
-            // was written.)
-            // A row of a definition of the type's own module is the
-            // module's code: the value may pass into it.
-            (Type::AnonRecord { fields, tail }, Type::Generic(name, _))
-            | (Type::Generic(name, _), Type::AnonRecord { fields, tail })
-                if !matches!(tail, RowTail::Closed)
-                    && self.tables.records.contains_key(name)
-                    && !self.row_of_types_module(*name, tail)
-                    && let Some(module) = self.opaque_outside(*name) =>
-            {
-                let shown = super::opaque::opaque_name(*name, module);
-                // (A row of no fields names the record's first field: it
-                // could read it, through a spread.)
-                let first = (self.tables.records.get(name))
-                    .and_then(|rec| rec.fields.first().map(|(n, _)| *n));
-                let message = match fields.keys().next().copied().or(first) {
-                    Some(field) => format!(
-                        "type '{shown}' has no field '{field}' outside module '{module}': \
-                         the type is opaque"
-                    ),
-                    None => format!(
-                        "cannot spread a '{shown}' outside module '{module}': the type is opaque"
-                    ),
-                };
-                let mut fault = Fault::new(Code::OpaqueType, message);
-                fault.help = Some(super::opaque::opaque_help(module));
-                out.push(fault);
-            }
-            (Type::AnonRecord { fields, tail }, Type::Generic(name, args))
-            | (Type::Generic(name, args), Type::AnonRecord { fields, tail })
-                if self.tables.records.contains_key(name) =>
-            {
-                match tail {
-                    RowTail::Var(v) => {
-                        let nominal = Type::Generic(*name, args.clone());
-                        self.open_row_is(fields, *v, &nominal, out);
-                    }
-                    RowTail::Rigid(_) => out.push(self.type_mismatch(&t1, &t2)),
-                    RowTail::Closed => {
-                        let anon_is_got = matches!(&t1, Type::AnonRecord { .. });
-                        let mut fault = self.type_mismatch(&t1, &t2);
-                        // (As the module writes the type: an imported
-                        // one with its module.)
-                        let shown = self.written_type(*name);
-                        // Another module neither builds nor converts an
-                        // opaque type.
-                        let opaque = self.opaque_outside(*name);
-                        fault.help = Some(match anon_is_got {
-                            _ if let Some(module) = opaque => super::opaque::opaque_help(module),
-                            true => format!(
-                                "an anonymous record is not a `{shown}`: write `{shown} {{ ... }}`"
-                            ),
-                            false => format!(
-                                "a `{shown}` is not an anonymous record: convert it with a spread, `{{...v}}`, or take an open row, `{{x: T, ...r}}`"
-                            ),
-                        });
-                        out.push(fault);
-                    }
-                }
-            }
-
-            // ── Open row × a type with no fields ─────────────────────
-            // What a dot after a value of unknown type asked for (`x.f`,
-            // `x.f(..)`): the value's type has no field.
-            (
-                Type::AnonRecord {
-                    fields,
-                    tail: RowTail::Var(_),
-                },
-                other,
-            )
-            | (
-                other,
-                Type::AnonRecord {
-                    fields,
-                    tail: RowTail::Var(_),
-                },
-            ) if !matches!(
-                other,
-                Type::AnonRecord { .. } | Type::Var(_) | Type::Error | Type::Never
-            ) && !matches!(other, Type::Generic(name, _) if self.tables.records.contains_key(name))
-                && !fields.is_empty() =>
-            {
-                let field = *fields.keys().next().expect("a field");
-                // (A type given where a value with fields is asked: said
-                // in those words, not as `type Rec`.)
-                let mut fault = match self.apply(other) {
-                    Type::Generic(name, args) if name.is_builtin(crate::defs::TYPE_OF) => {
-                        Fault::new(
-                            Code::TypeMismatch,
-                            format!(
-                                "type mismatch: expected a value with a field `{field}`, got the type \
-                             `{}`",
-                                self.show_type(&self.apply(&args[0]))
-                            ),
-                        )
-                    }
-                    _ => {
-                        let shown = self.show_type(other);
-                        Fault::new(
-                            Code::UnknownField,
-                            format!("type '{shown}' has no field '{field}'"),
-                        )
-                    }
-                };
-                fault.help = self.method_help(other, field, "x");
-                out.push(fault);
-            }
-
             (Type::Generic(n1, a1), Type::Generic(n2, a2)) => {
                 if n1 != n2 {
                     // Formatting the bare
@@ -1336,10 +893,6 @@ pub(super) fn rigid_in(ty: &Type) -> Option<RigidId> {
         Type::Tuple(elems) => elems.iter().find_map(rigid_in),
         Type::Generic(_, args) => args.iter().find_map(rigid_in),
         Type::Map(k, v) => rigid_in(k).or_else(|| rigid_in(v)),
-        Type::AnonRecord { fields, tail } => match tail {
-            RowTail::Rigid(r) => Some(*r),
-            _ => fields.values().find_map(rigid_in),
-        },
         Type::App(head, arg) => rigid_in(head).or_else(|| rigid_in(arg)),
         Type::Con(_, rest) => rest.iter().find_map(rigid_in),
         Type::Int
@@ -1364,10 +917,6 @@ fn occurs_in(var: TyVar, ty: &Type) -> bool {
         Type::Map(k, v) => occurs_in(var, k) || occurs_in(var, v),
         Type::Set(inner) => occurs_in(var, inner),
         Type::Channel(inner) => occurs_in(var, inner),
-        Type::AnonRecord { fields, tail } => {
-            fields.values().any(|t| occurs_in(var, t))
-                || matches!(tail, RowTail::Var(v) if *v == var)
-        }
         Type::App(head, arg) => occurs_in(var, head) || occurs_in(var, arg),
         Type::Con(_, rest) => rest.iter().any(|t| occurs_in(var, t)),
         Type::Int

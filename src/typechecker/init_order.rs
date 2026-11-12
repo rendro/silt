@@ -129,9 +129,6 @@ fn builtin_through(checker: &TypeChecker, ty: &Type) -> bool {
                 .is_some_and(|def| def.module.is_builtin())
                 && all(args)
         }
-        Type::AnonRecord { fields, tail } => {
-            matches!(tail, RowTail::Closed) && fields.values().all(|t| builtin_through(checker, t))
-        }
         Type::List(t) | Type::Set(t) | Type::Channel(t) => builtin_through(checker, t),
         Type::Map(k, v) => builtin_through(checker, k) && builtin_through(checker, v),
         Type::Tuple(ts) => all(ts),
@@ -240,12 +237,6 @@ impl TypeChecker {
                 };
                 for field in &fields {
                     self.parts_shown(&self.apply(field), true, parts);
-                }
-            }
-            Type::AnonRecord { fields, tail } => {
-                parts.outside |= !declared && !matches!(tail, RowTail::Closed);
-                for field in fields.values() {
-                    self.parts_shown(field, declared, parts);
                 }
             }
             Type::List(t) | Type::Set(t) | Type::Channel(t) => self.parts_shown(t, declared, parts),

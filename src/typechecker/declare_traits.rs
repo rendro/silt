@@ -1248,15 +1248,7 @@ impl TypeChecker {
             let mut own: Vec<(TyVar, Symbol)> = param_map
                 .iter()
                 .filter_map(|(name, ty)| match ty {
-                    // (A row variable, `{x: Int, ...r}`, is kept under
-                    // `__row__r`: it is named `r`.)
-                    Type::Var(v) if !known_vars.contains(v) => {
-                        let name = match resolve(*name).strip_prefix("__row__") {
-                            Some(row) => intern(row),
-                            None => *name,
-                        };
-                        Some((*v, name))
-                    }
+                    Type::Var(v) if !known_vars.contains(v) => Some((*v, *name)),
                     _ => None,
                 })
                 .collect();
@@ -2424,10 +2416,7 @@ impl TypeChecker {
             if let Type::Var(var) = ty {
                 let id = RigidId {
                     var: *var,
-                    name: match resolve(*name).strip_prefix("__row__") {
-                        Some(row) => intern(row),
-                        None => *name,
-                    },
+                    name: *name,
                 };
                 rigid.push(id);
                 impl_names.insert(*name, Type::Rigid(id));
@@ -3923,8 +3912,8 @@ fn trait_arguments_message(name: Symbol, params: &[Symbol]) -> String {
 }
 
 /// The first part of the supertrait argument `te` that is no type there
-/// (`Self`, an anonymous record, a name that is no type and none of the
-/// trait's `params`), as the error names it, with
+/// (`Self`, a name that is no type and none of the trait's `params`),
+/// as the error names it, with
 /// its span: what `resolve_supertrait_arg` would read as no type at all.
 fn no_supertrait_argument(te: &TypeExpr, params: &[Symbol]) -> Option<(String, Span)> {
     // (A name the resolver refused it reported.)

@@ -209,17 +209,6 @@ pub fn canonicalize(resolver: &Resolver, ty: &Type) -> Type {
             rest.iter().map(|t| canonicalize(resolver, t)).collect(),
         ),
 
-        // ── Anonymous structural records ───────────────────────────
-        // Recurse on each field. Tail is preserved as-is — row variables
-        // are inference-internal and unification handles their binding.
-        Type::AnonRecord { fields, tail } => Type::AnonRecord {
-            fields: fields
-                .iter()
-                .map(|(n, t)| (*n, canonicalize(resolver, t)))
-                .collect(),
-            tail: tail.clone(),
-        },
-
         // ── Leaf shapes: identity ──────────────────────────────────
         Type::Int
         | Type::Float
@@ -315,10 +304,6 @@ pub fn canonical_name(ty: &Type) -> String {
         Type::Rigid(r) => r.name.to_string(),
         Type::Error => "_".to_string(),
         Type::Never => "Never".to_string(),
-        // Anonymous structural records have no nominal name; use a
-        // dispatch key of their own, for which no impl is ever
-        // registered.
-        Type::AnonRecord { .. } => "<anon>".to_string(),
         // A constructor variable applied: as a variable. A constructor:
         // its head.
         Type::App(..) => "_".to_string(),
@@ -390,8 +375,7 @@ pub fn head_of_canon(ty: &Type) -> Option<TypeRef> {
         | Type::Var(_)
         | Type::Rigid(_)
         | Type::Error
-        | Type::Never
-        | Type::AnonRecord { .. } => return None,
+        | Type::Never => return None,
     };
     Some(TypeRef::builtin(builtin))
 }

@@ -1,40 +1,5 @@
 use super::*;
 
-/// Each record type `ty` writes over a row variable it writes more than
-/// once, with the fields it lists there.
-fn row_listings(ty: &Type) -> Vec<(TyVar, std::collections::BTreeMap<Symbol, Type>)> {
-    fn walk(ty: &Type, out: &mut Vec<(TyVar, std::collections::BTreeMap<Symbol, Type>)>) {
-        match ty {
-            Type::AnonRecord { fields, tail } => {
-                if let RowTail::Var(v) = tail {
-                    out.push((*v, fields.clone()));
-                }
-                fields.values().for_each(|t| walk(t, out));
-            }
-            Type::Fun(params, ret) => {
-                params.iter().for_each(|t| walk(t, out));
-                walk(ret, out);
-            }
-            Type::List(t) | Type::Set(t) | Type::Channel(t) => walk(t, out),
-            Type::Map(k, v) => {
-                walk(k, out);
-                walk(v, out);
-            }
-            Type::Tuple(ts) | Type::Generic(_, ts) => ts.iter().for_each(|t| walk(t, out)),
-            _ => {}
-        }
-    }
-    let mut all = Vec::new();
-    walk(ty, &mut all);
-    let once: Vec<TyVar> = all
-        .iter()
-        .map(|(v, _)| *v)
-        .filter(|v| all.iter().filter(|(w, _)| w == v).count() == 1)
-        .collect();
-    all.retain(|(v, fields)| !once.contains(v) && !fields.is_empty());
-    all
-}
-
 impl TypeChecker {
     // ── Generalization / Instantiation ──────────────────────────────
 
@@ -64,7 +29,6 @@ impl TypeChecker {
         // anywhere: the `let` is general in a receiver bounded by the
         // trait.)
         self.decide_tries();
-        self.default_rebuilds();
         for i in self.closed_mark..self.wanted.len() {
             if self.wanted[i].solved {
                 continue;
@@ -91,16 +55,6 @@ impl TypeChecker {
                 Goal::Try { operand, ok, ret } => {
                     ret.iter().chain([operand, ok]).cloned().collect()
                 }
-                Goal::Listed { .. } => continue,
-                // (One that waits is over a record of an outer scope.)
-                Goal::Rebuild {
-                    base, with, result, ..
-                } => with
-                    .iter()
-                    .map(|(_, ty)| ty)
-                    .chain([base, result])
-                    .cloned()
-                    .collect(),
             };
             for ty in mentioned {
                 self.keep_monomorphic(&ty);
@@ -273,14 +227,6 @@ impl TypeChecker {
                         args: args.iter().map(|t| self.apply(t)).collect(),
                         subject: Type::Var(subject),
                         asker,
-                    },
-                    Pred::Anon { given, .. } => Pred::Anon {
-                        row: Type::Var(subject),
-                        given: *given,
-                    },
-                    Pred::Lacks { field, .. } => Pred::Lacks {
-                        row: Type::Var(subject),
-                        field: *field,
                     },
                     // The definition passes the type on to the builtin;
                     // each use names its own type (`written`).
@@ -590,11 +536,7 @@ impl TypeChecker {
             if wanted.solved {
                 continue;
             }
-            let waits_on = match &wanted.goal {
-                Goal::Rebuild { base, .. } => self.rebuild_waits(base).map(Type::Var),
-                goal => Some(goal.waits_on().clone()),
-            };
-            if waits_on.is_some_and(|ty| self.waits_for_outer(&ty)) {
+            if self.waits_for_outer(wanted.goal.waits_on()) {
                 self.wanted.push(wanted);
                 continue;
             }
@@ -602,11 +544,6 @@ impl TypeChecker {
                 Goal::Pred(Pred::Trait {
                     tr, args, subject, ..
                 }) => (tr, args, subject),
-                // (A row nothing gives fields to has none to clash, and
-                // is no declared record.)
-                Goal::Listed { .. }
-                | Goal::Rebuild { .. }
-                | Goal::Pred(Pred::Anon { .. } | Pred::Lacks { .. }) => continue,
                 // A type nothing decides is no type a builtin is given:
                 // nothing to check.
                 Goal::Pred(Pred::Builtin { .. } | Pred::Given { .. }) => continue,
@@ -1205,19 +1142,6 @@ impl TypeChecker {
                 self.ev.use_ev = Some(owed);
             }
         }
-        // A row variable the type writes more than once: what a declared
-        // record that stands for it says of each field holds for each
-        // writing.
-        for (row, fields) in row_listings(&scheme.ty) {
-            if let Some(row) = mapping.get(&row).cloned() {
-                let origin = self.use_origin();
-                let fields = fields
-                    .iter()
-                    .map(|(name, ty)| (*name, substitute_vars(ty, &mapping)))
-                    .collect();
-                self.want_goal(Goal::Listed { fields, row }, origin);
-            }
-        }
         self.named_use = None;
         substitute_vars(&scheme.ty, &mapping)
     }
@@ -1251,11 +1175,9 @@ impl TypeChecker {
                     && !self.is_cell
                 {
                     let ty = self.apply(&scheme.ty);
-                    let mut rows = Vec::new();
-                    row_tail_vars(&ty, &mut rows);
                     let unknown: HashMap<TyVar, Type> = free_vars_in(&ty)
                         .into_iter()
-                        .filter(|v| !scheme.vars.contains(v) && !rows.contains(v))
+                        .filter(|v| !scheme.vars.contains(v))
                         .map(|v| (v, Type::Error))
                         .collect();
                     if !unknown.is_empty() {

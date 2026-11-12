@@ -754,10 +754,9 @@ impl TypeChecker {
                     subs.push((*field_name, sub));
                 }
                 // The pattern names a record type, and what is matched
-                // is of that type (the `unify` above says so: an
-                // anonymous record is not a `P`, and an open row that is
-                // matched with `P { .. }` is `P`). Where it is not, the
-                // mismatch is reported and the pattern covers nothing.
+                // is of that type (the `unify` above says so). Where it
+                // is not, the mismatch is reported and the pattern
+                // covers nothing.
                 let fits = match self.apply(expected) {
                     Type::Generic(n, _) => match &declared {
                         Some((rec_ref, _)) => n == *rec_ref,

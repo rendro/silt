@@ -2925,40 +2925,11 @@ impl TypeChecker {
             let target = self.type_instance(alias).map(|instance| {
                 crate::types::canonical::canonicalize(&self.tables.resolver, &instance)
             });
-            match target {
-                Some(Type::Generic(rec, args)) if self.tables.records.contains_key(&rec) => {
-                    ty = Some(rec);
-                    fixed = Some(args);
-                }
-                // An alias of an anonymous record type: such a record is
-                // written without a name.
-                Some(anon @ Type::AnonRecord { .. }) => {
-                    let Type::AnonRecord { fields, .. } = &anon else {
-                        unreachable!()
-                    };
-                    // The record as a literal or a pattern writes it.
-                    let written: Vec<String> = fields
-                        .keys()
-                        .map(|field| match in_pattern {
-                            true => format!("{field}"),
-                            false => format!("{field}: ..."),
-                        })
-                        .collect();
-                    let shown = self.show_type(&anon);
-                    let mut message =
-                        format!("`{name}` is another name for the anonymous record type `{shown}`");
-                    // (`{}` is the empty block: no literal writes the
-                    // record without fields.)
-                    if !written.is_empty() {
-                        message.push_str(&format!(
-                            ": write the record without the name, `{{ {} }}`",
-                            written.join(", ")
-                        ));
-                    }
-                    self.error(Code::UndefinedConstructor, message, span);
-                    return None;
-                }
-                _ => {}
+            if let Some(Type::Generic(rec, args)) = target
+                && self.tables.records.contains_key(&rec)
+            {
+                ty = Some(rec);
+                fixed = Some(args);
             }
         }
         match ty.and_then(|ty| Some((ty, self.tables.records.get(&ty).cloned()?))) {
@@ -3035,15 +3006,15 @@ impl TypeChecker {
     }
 
     /// Report `ty`, the type `arg` writes as a value, if a part of it
-    /// that the value of the type is made of has no value as a type:
-    /// an anonymous record type or a function type (of an alias written
-    /// alone, the type it stands for; of a type written in full, any of
-    /// its parts). `takes` names the function and its type parameter
-    /// when `arg` is a type argument. Whether it was reported.
+    /// that the value of the type is made of has no value as a type: a
+    /// function type (of an alias written alone, the type it stands
+    /// for; of a type written in full, any of its parts). `takes` names
+    /// the function and its type parameter when `arg` is a type
+    /// argument. Whether it was reported.
     fn valueless_type(&mut self, arg: &Expr, ty: &Type, takes: Option<(Symbol, Symbol)>) -> bool {
         fn part(ty: &Type, whole: bool) -> Option<&Type> {
             match ty {
-                Type::AnonRecord { .. } | Type::Fun(..) => Some(ty),
+                Type::Fun(..) => Some(ty),
                 _ if !whole => None,
                 Type::List(t) | Type::Set(t) | Type::Channel(t) => part(t, true),
                 Type::Map(k, v) => part(k, true).or_else(|| part(v, true)),
@@ -3056,28 +3027,14 @@ impl TypeChecker {
             return false;
         };
         let shown = self.show_type(part);
-        let what = match part {
-            Type::Fun(..) => "a function type",
-            _ => "an anonymous record type",
-        };
         let message = match takes {
             Some((who, param)) => format!(
-                "`{who}` takes a type as `{param}`, but `{shown}` is {what}, which has no value \
-                 as a type"
+                "`{who}` takes a type as `{param}`, but `{shown}` is a function type, which has \
+                 no value as a type"
             ),
-            None => format!("`{shown}` is {what}, which has no value as a type"),
+            None => format!("`{shown}` is a function type, which has no value as a type"),
         };
-        let help = matches!(part, Type::AnonRecord { .. }).then(|| {
-            let fields = shown.trim_start_matches('{').trim_end_matches('}');
-            match self.plain_alias(arg) {
-                Some(alias) => format!(
-                    "declare `{0}` as a record type: `type {0} {{ {fields} }}`",
-                    alias.name
-                ),
-                None => format!("declare a record type for it: `type Name {{ {fields} }}`"),
-            }
-        });
-        self.error_help(Code::TypeMismatch, (message, help), arg.span);
+        self.error(Code::TypeMismatch, message, arg.span);
         true
     }
 
@@ -3405,10 +3362,7 @@ impl TypeChecker {
             .filter_map(|(name, ty)| match ty {
                 Type::Var(var) => Some(RigidId {
                     var: *var,
-                    name: match resolve(*name).strip_prefix("__row__") {
-                        Some(row) => intern(row),
-                        None => *name,
-                    },
+                    name: *name,
                 }),
                 _ => None,
             })
@@ -3579,7 +3533,6 @@ impl TypeChecker {
                     let Type::Var(v) = (match (&self.wanted[k].goal, &type_given) {
                         (_, Some(given)) => given,
                         (Goal::Pred(pred), None) => pred.subject(),
-                        (Goal::Listed { row, .. }, None) => row,
                         _ => continue,
                     }) else {
                         continue;
@@ -4659,9 +4612,9 @@ impl TypeChecker {
                 // type it stands for.
                 let obj_ty = crate::types::canonical::canonicalize(&self.tables.resolver, &obj_ty);
 
-                // A dot after a value is a field: a record's (its type's
-                // or an anonymous one's), or, on a value whose type is
-                // still unknown, the field of a record that has one.
+                // A dot after a value is a field of its record type, or,
+                // on a value whose type is still unknown, a field read
+                // when the type is known (`Goal::Select`).
                 //
                 // `TypeOf(inner)` values (descriptors produced by `type a`
                 // parameters or bare type names like `Int`) call the
@@ -4759,32 +4712,6 @@ impl TypeChecker {
                     return Type::Error;
                 }
                 match &obj_ty {
-                    Type::AnonRecord { fields, tail } => {
-                        if let Some(ft) = fields.get(&field) {
-                            ft.clone()
-                        } else if let RowTail::Var(_) = tail {
-                            // Open row: extend the row variable with this
-                            // new field. Bind the existing row var to
-                            // `{field: fresh, ...new_row}` and surface the
-                            // fresh field type.
-                            use std::collections::BTreeMap;
-                            let result_ty = self.fresh_var();
-                            let new_row = self.fresh_tyvar_id();
-                            let mut new_fields = BTreeMap::new();
-                            new_fields.insert(field, result_ty.clone());
-                            let extended = Type::AnonRecord {
-                                fields: new_fields,
-                                tail: RowTail::Var(new_row),
-                            };
-                            self.unify(&obj_ty, &extended, span);
-                            result_ty
-                        } else {
-                            let candidates: Vec<(Symbol, Type)> =
-                                fields.iter().map(|(k, v)| (*k, v.clone())).collect();
-                            self.no_field(&obj_ty, field, Some(obj), &candidates, span);
-                            Type::Error
-                        }
-                    }
                     Type::Generic(type_name, type_args)
                         if let Some(module) = self.opaque_outside(*type_name)
                             && (self.tables.records.get(type_name))
@@ -5324,11 +5251,10 @@ impl TypeChecker {
 
                     Type::Generic(rec_ty, type_args)
                 } else {
-                    // G2: Unknown record type (reported by `named_record`
-                    // or the resolver) — this used to silently synthesize
-                    // an anonymous record. We still walk the field
-                    // expressions so nested errors are reported, but return
-                    // Type::Error to prevent downstream cascades.
+                    // An unknown record type (reported by `named_record`
+                    // or the resolver). The field expressions are still
+                    // walked so nested errors are reported, but the type
+                    // is Type::Error to prevent downstream cascades.
                     for (_, e) in fields.iter_mut() {
                         let _ = self.infer_expr(e, env);
                     }
@@ -5371,57 +5297,11 @@ impl TypeChecker {
                         }
                     }
                 }
-                // Three cases:
-                //  1. An anonymous record type — validate against its
-                //     fields and row.
-                //  2. `Type::Generic(name, args)`, a declared record —
+                // Two cases:
+                //  1. `Type::Generic(name, args)`, a declared record —
                 //     validate against the declared fields.
-                //  3. Anything else — compile-time reject.
+                //  2. Anything else — compile-time reject.
                 let mut handled = false;
-                // Anon record (row-poly) update: validate each field
-                // against the row's known fields when present; for open
-                // rows, missing fields are added to the row variable.
-                if let Type::AnonRecord {
-                    fields: af,
-                    tail: at,
-                } = &resolved
-                {
-                    let af = af.clone();
-                    let at = at.clone();
-                    for (field_name, field_expr) in &mut *fields {
-                        let ft = self.infer_expr(field_expr, env);
-                        if let Some(declared_ty) = af.get(field_name) {
-                            self.unify_field(*field_name, &ft, declared_ty, field_expr.span);
-                        } else if let RowTail::Var(_) = at {
-                            // Open row: extend by unifying with a
-                            // record carrying this new field.
-                            use std::collections::BTreeMap;
-                            let new_row = self.fresh_tyvar_id();
-                            let mut new_fields = BTreeMap::new();
-                            new_fields.insert(*field_name, ft.clone());
-                            let extended = Type::AnonRecord {
-                                fields: new_fields,
-                                tail: RowTail::Var(new_row),
-                            };
-                            self.unify(&resolved, &extended, span);
-                        } else {
-                            // Mirror the sibling
-                            // Record / Generic record-update sites and
-                            // append a did-you-mean hint when the typo
-                            // is close to one of the closed row's fields.
-                            let candidates: Vec<(Symbol, Type)> =
-                                af.iter().map(|(k, v)| (*k, v.clone())).collect();
-                            let base =
-                                format!("unknown field '{field_name}' in closed anon record");
-                            self.error_help(
-                                Code::UnknownField,
-                                format_record_field_suggestion(base, *field_name, &candidates),
-                                span,
-                            );
-                        }
-                    }
-                    handled = true;
-                }
                 if let Type::Generic(type_name, type_args) = &resolved
                     && self.tables.records.contains_key(type_name)
                 {
@@ -6570,7 +6450,6 @@ fn holds_held_type(ty: &Type) -> bool {
         Type::Fun(params, ret) => params.iter().any(holds_held_type) || holds_held_type(ret),
         Type::List(t) | Type::Set(t) | Type::Channel(t) => holds_held_type(t),
         Type::Map(k, v) => holds_held_type(k) || holds_held_type(v),
-        Type::AnonRecord { fields, .. } => fields.values().any(holds_held_type),
         Type::App(head, arg) => holds_held_type(head) || holds_held_type(arg),
         _ => false,
     }
