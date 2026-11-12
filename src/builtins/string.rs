@@ -1,5 +1,6 @@
 //! String builtin functions (`string.*`).
 
+use super::common::cut;
 use super::typed::{List, builtins};
 use crate::value::{MAX_COLLECTION_LEN, Value};
 use crate::vm::{Step, VmError};
@@ -22,20 +23,15 @@ fn pad_char(name: &str, pad: &str) -> Result<char, VmError> {
 }
 
 /// The characters that pad `s` to `width`, for `string.<name>`: none
-/// if it is that wide already.
+/// if it is that wide already (a negative width is 0).
 fn padding(name: &str, s: &str, width: i64, pad: &str) -> Result<String, VmError> {
     let pad = pad_char(name, pad)?;
-    if width < 0 {
-        return Err(VmError::new(format!(
-            "string.{name}: negative width {width}"
-        )));
-    }
-    if width as u128 > MAX_COLLECTION_LEN as u128 {
+    if width as i128 > MAX_COLLECTION_LEN as i128 {
         return Err(VmError::new(format!(
             "string.{name}: width {width} exceeds maximum of {MAX_COLLECTION_LEN}"
         )));
     }
-    let missing = (width as usize).saturating_sub(s.chars().count());
+    let missing = cut(width).saturating_sub(s.chars().count());
     Ok(std::iter::repeat_n(pad, missing).collect())
 }
 
@@ -218,10 +214,9 @@ builtins! {
         s.chars().map(|c| Value::String(c.encode_utf8(&mut [0; 4]).into())).collect()
     }
 
+    // A negative count is 0.
     fn repeat(s: &str, n: i64) -> Result<String, VmError> {
-        if n < 0 {
-            return Err(VmError::new(format!("string.repeat: negative count {n}")));
-        }
+        let n = cut(n);
         let result_len = (n as u128) * (s.len() as u128);
         if result_len > MAX_COLLECTION_LEN as u128 {
             return Err(VmError::new(format!(
@@ -229,7 +224,7 @@ builtins! {
                 result_len, MAX_COLLECTION_LEN
             )));
         }
-        Ok(s.repeat(n as usize))
+        Ok(s.repeat(n))
     }
 
     // (A character index, as `string.slice` takes them: not a byte's.)
@@ -286,14 +281,10 @@ builtins! {
             .is_some_and(|at| s[at..].starts_with(prefix))
     }
 
-    fn slice(s: &str, start: i64, end: i64) -> Result<String, VmError> {
-        if let Some(negative) = [start, end].into_iter().find(|index| *index < 0) {
-            return Err(VmError::new(format!(
-                "string.slice: negative index {negative}"
-            )));
-        }
-        let index = |at: i64| usize::try_from(at).unwrap_or(usize::MAX);
-        Ok(char_range(s, index(start), index(end)).to_string())
+    // Both indexes are cut to the string: a negative one is 0, one
+    // past the end is the end.
+    fn slice(s: &str, start: i64, end: i64) -> String {
+        char_range(s, cut(start), cut(end)).to_string()
     }
 
     fn pad_left(s: &str, width: i64, pad: &str) -> Result<String, VmError> {

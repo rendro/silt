@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use base64::Engine;
 
-use super::common::{nibble_to_hex, ok};
+use super::common::{cut, nibble_to_hex, ok};
 use super::typed::{Bytes, List, builtins, unsound};
 use crate::typeinfo::bv;
 use crate::value::{MAX_COLLECTION_LEN, Value};
@@ -201,20 +201,16 @@ builtins! {
         b.len() as i64
     }
 
-    // As `string.slice`: an index past the end is the end, a start
-    // past the end gives nothing, and a negative index is an error.
-    fn slice(b: Bytes, start: i64, end: i64) -> Result<Vec<u8>, VmError> {
-        if let Some(negative) = [start, end].into_iter().find(|index| *index < 0) {
-            return Err(VmError::new(format!(
-                "bytes.slice: negative index {negative}"
-            )));
-        }
-        let start = (start as usize).min(b.len());
-        let end = (end as usize).min(b.len());
-        Ok(match start > end {
+    // As `string.slice`: both indexes are cut to the bytes there are
+    // (a negative one is 0, one past the end is the end), and a start
+    // not before the end gives nothing.
+    fn slice(b: Bytes, start: i64, end: i64) -> Vec<u8> {
+        let start = cut(start).min(b.len());
+        let end = cut(end).min(b.len());
+        match start > end {
             true => Vec::new(),
             false => b[start..end].to_vec(),
-        })
+        }
     }
 
     fn concat(a: Bytes, b: Bytes) -> Result<Vec<u8>, VmError> {

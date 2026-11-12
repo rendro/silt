@@ -563,7 +563,7 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn index_of(b: Bytes, needle: Bytes) -> Option(Int)", "First offset at which `needle` appears", bytes::index_of),
                 f("fn is_empty(b: Bytes) -> Bool", "True if there are no bytes", bytes::is_empty),
                 f("fn length(b: Bytes) -> Int", "Number of bytes", bytes::length),
-                f("fn slice(b: Bytes, start: Int, end: Int) -> Bytes", "The bytes from `start` up to `end`, both clamped to the length (a negative index is a runtime error)", bytes::slice),
+                f("fn slice(b: Bytes, start: Int, end: Int) -> Bytes", "The bytes from `start` up to `end`, both cut to the bytes there are", bytes::slice),
                 f("fn split(b: Bytes, sep: Bytes) -> List(Bytes)", "Split on every occurrence of `sep` (an empty `sep` splits into the single bytes)", bytes::split),
                 f("fn starts_with(b: Bytes, prefix: Bytes) -> Bool", "True if `b` begins with `prefix`", bytes::starts_with),
                 f("fn to_base64(b: Bytes) -> String", "Encode as base64", bytes::to_base64),

@@ -425,8 +425,8 @@ string.pad_left(s: String, width: Int, pad: String) -> String
 
 Pads `s` on the left with `pad`, which must be exactly one character,
 until it is `width` characters long. Returns `s` unchanged if already at or
-beyond `width`. A `pad` of any other length, a negative `width` and a
-`width` over 10,000,000 are runtime errors.
+beyond `width`, as it is for a negative `width`. A `pad` of any other length
+and a `width` over 10,000,000 are runtime errors.
 
 ```silt
 import string
@@ -445,8 +445,8 @@ string.pad_right(s: String, width: Int, pad: String) -> String
 
 Pads `s` on the right with `pad`, which must be exactly one character,
 until it is `width` characters long. Returns `s` unchanged if already at or
-beyond `width`. A `pad` of any other length, a negative `width` and a
-`width` over 10,000,000 are runtime errors.
+beyond `width`, as it is for a negative `width`. A `pad` of any other length
+and a `width` over 10,000,000 are runtime errors.
 
 ```silt
 import string
@@ -463,7 +463,8 @@ fn main() {
 string.repeat(s: String, n: Int) -> String
 ```
 
-Returns the string repeated `n` times. `n` must be non-negative.
+Returns the string repeated `n` times. A negative `n` counts as 0 and returns
+an empty string.
 
 ```silt
 import string
@@ -499,8 +500,8 @@ string.slice(s: String, start: Int, end: Int) -> String
 ```
 
 Returns the substring from character index `start` (inclusive) to `end`
-(exclusive). Indices are clamped to the string length. Returns an empty string
-if `start > end`. Negative indices are a runtime error.
+(exclusive). Both indices are cut to the string: a negative one counts as 0,
+one past the end as the end. Returns an empty string if `start > end`.
 
 ```silt
 import string

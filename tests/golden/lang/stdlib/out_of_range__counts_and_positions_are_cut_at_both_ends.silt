@@ -1,0 +1,28 @@
+-- A count, width or position outside the range is cut to it: a negative
+-- one counts as 0, as one past the end counts as the end.
+import bytes
+import list
+import string
+
+fn main() {
+  let n = 2
+  let k = 5
+  println(list.take([1, 2, 3], n - k))
+  println(list.take([1, 2, 3], 9))
+  println(list.drop([1, 2, 3], n - k))
+  println(list.drop([1, 2, 3], 9))
+  println(list.take(1..10, -1))
+  println("[{string.slice("héllo", -3, 2)}]")
+  println("[{string.slice("héllo", -3, -1)}]")
+  println("[{string.slice("héllo", 3, 99)}]")
+  println("[{string.slice("héllo", 4, 1)}]")
+  println("[{string.repeat("ab", -2)}]")
+  println("[{string.repeat("ab", 0)}]")
+  println("[{string.pad_left("hi", -4, "*")}]")
+  println("[{string.pad_right("hi", -4, "*")}]")
+  println("[{string.pad_left("hé", 4, "*")}]")
+  let b = bytes.from_string("hello")
+  println(bytes.to_string(bytes.slice(b, -9, 2)))
+  println(bytes.length(bytes.slice(b, -9, -1)))
+  println(bytes.to_string(bytes.slice(b, 3, 99)))
+}
