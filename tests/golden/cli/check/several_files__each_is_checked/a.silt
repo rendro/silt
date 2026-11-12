@@ -1,0 +1,6 @@
+import helper
+
+fn main() {
+  let x: Int = "s"
+  println(x + helper.two())
+}

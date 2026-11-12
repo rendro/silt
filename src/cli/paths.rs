@@ -73,6 +73,30 @@ pub(crate) fn open_entry(path: &str, lock: LockPolicy) -> std::io::Result<(Sessi
         host: Vec::new(),
     });
     let file = session.open(Path::new(path))?;
+    Ok(with_packages(session, file))
+}
+
+/// How a program read from stdin is named: `silt check -` and `silt fmt -`.
+pub(crate) const STDIN_NAME: &str = "<stdin>";
+
+/// [`open_entry`] for the program read from stdin, named [`STDIN_NAME`]:
+/// a file of the working directory, whose project is found from there.
+/// `Err` when stdin cannot be read (or is not UTF-8).
+pub(crate) fn open_stdin(lock: LockPolicy) -> std::io::Result<(Session, FileId)> {
+    let text = std::io::read_to_string(std::io::stdin())?;
+    let mut session = Session::new(Config {
+        project: ProjectSetup::Discover(std::env::current_dir().unwrap_or_else(|_| ".".into())),
+        lock,
+        host: Vec::new(),
+    });
+    let file = session.set_overlay(Path::new(STDIN_NAME), text);
+    Ok(with_packages(session, file))
+}
+
+/// The session of an entry file `file` once its packages are resolved:
+/// a rewritten `silt.lock` is announced; package errors are printed and
+/// the process exits.
+fn with_packages(mut session: Session, file: FileId) -> (Session, FileId) {
     let failure = match session.packages() {
         Ok(packages) => {
             match packages.lock {
@@ -92,7 +116,7 @@ pub(crate) fn open_entry(path: &str, lock: LockPolicy) -> std::io::Result<(Sessi
             diagnostics,
         });
     }
-    Ok((session, file))
+    (session, file)
 }
 
 /// [`open_entry`], where a file that cannot be read is reported and the

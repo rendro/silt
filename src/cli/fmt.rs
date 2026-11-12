@@ -1,6 +1,7 @@
 //! `silt fmt [--check] [files...]` — format silt source. With no
 //! files, recursively formats every `.silt` under cwd provided we're
-//! inside a silt package (or the user passed an explicit `.`).
+//! inside a silt package (or the user passed an explicit `.`). `-` reads
+//! the program from stdin and writes the result to stdout.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -38,6 +39,7 @@ pub(crate) fn dispatch(args: &[String]) {
             tamper = Some((from.to_string(), to.to_string()));
         } else if arg == "--help" || arg == "-h" {
             println!("Usage: silt fmt [--check] [files-or-dirs...]");
+            println!("       silt fmt [--check] -");
             println!();
             println!("Formats silt source files in place. Each positional may be a");
             println!("`.silt` file or a directory; directories are expanded recursively");
@@ -46,9 +48,15 @@ pub(crate) fn dispatch(args: &[String]) {
             println!("silt package to recursively format every `.silt` under cwd");
             println!("of this package, not of a package inside it.");
             println!();
+            println!("`-` reads the program from stdin and writes the formatted program");
+            println!("to stdout; with --check it writes nothing and only says whether it");
+            println!("is formatted.");
+            println!();
             println!("Options:");
             println!("  --check    Check formatting without modifying files");
             process::exit(0);
+        } else if arg == "-" {
+            files.push(arg.clone());
         } else if arg.starts_with('-') {
             // Unknown flag — don't silently treat as a filename.
             let suggestion = match arg.as_str() {
@@ -62,6 +70,15 @@ pub(crate) fn dispatch(args: &[String]) {
         } else {
             files.push(arg.clone());
         }
+    }
+    if files.iter().any(|f| f == "-") {
+        // Stdin is read once, and is the program: no file goes with it.
+        if files.len() > 1 {
+            eprintln!("error: silt fmt: '-' reads the program from stdin, and takes no other file");
+            eprintln!("Run 'silt fmt --help' for usage.");
+            process::exit(1);
+        }
+        format_stdin(check_mode, tamper.as_ref());
     }
     // With no files, or only an explicit `.`, every .silt file under
     // the current directory is formatted. This is risky if the user
@@ -243,6 +260,48 @@ fn format_source(source: &str, path: &str, tamper: Option<&Tamper>) -> Result<St
         Some(_) => silt::format::format(file, source),
     };
     result.map_err(|diagnostic| silt::diagnostic::render_human(&sources, &diagnostic))
+}
+
+/// `silt fmt -`: format the program read from stdin and write the result
+/// to stdout; with `--check`, write nothing to stdout and say whether it
+/// is formatted. Exits as for a file: 1 when `--check` finds it not
+/// formatted, 2 when it cannot be read or formatted.
+fn format_stdin(check_mode: bool, tamper: Option<&Tamper>) -> ! {
+    let name = crate::cli::paths::STDIN_NAME;
+    let source = match std::io::read_to_string(std::io::stdin()) {
+        Ok(source) => source,
+        Err(e) => {
+            eprintln!(
+                "error reading {name}: {}",
+                silt::diagnostic::io_error_text(&e)
+            );
+            process::exit(2);
+        }
+    };
+    let formatted = match format_source(&source, name, tamper) {
+        Ok(formatted) => formatted,
+        Err(e) => {
+            eprintln!("{e}");
+            process::exit(2);
+        }
+    };
+    if check_mode {
+        if formatted != source {
+            eprintln!("{name}: not formatted");
+            process::exit(1);
+        }
+    } else {
+        use std::io::Write;
+        let mut out = std::io::stdout().lock();
+        if let Err(e) = out
+            .write_all(formatted.as_bytes())
+            .and_then(|()| out.flush())
+        {
+            eprintln!("error writing to stdout: {e}");
+            process::exit(2);
+        }
+    }
+    process::exit(0);
 }
 
 /// Format the file at `path` in place: whether it was changed.

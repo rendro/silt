@@ -238,11 +238,13 @@ silt run <file.silt>       -- run a program
 silt run <dir>             -- run the package in that directory (its src/main.silt)
 silt run <file.silt> -- a b   -- run it with the arguments a and b (io.args())
 silt run -w <file.silt>    -- run and re-run on file changes
-silt check <file.silt>     -- type-check without running
+silt check <file.silt>...  -- type-check without running, each file on its own
+silt check -               -- type-check the program read from stdin
 silt check --format json <file.silt>   -- type-check with JSON output (for CI/editors)
 silt check --deny-warnings <file.silt>   -- also fail on warnings (for CI)
 silt test [path]           -- run test functions
 silt fmt [files...]        -- format source code
+silt fmt -                 -- format the program read from stdin, to stdout
 silt fmt --check           -- check formatting without modifying files
 silt repl                  -- interactive REPL
 silt init [--lib]          -- create a new silt package (a library with --lib) in this directory
@@ -256,6 +258,8 @@ silt remove <name>         -- remove a dependency from silt.toml and silt.lock
 ```
 
 The `--watch` / `-w` flag works with `run`, `check`, `disasm`, and `test` to re-run the command when a file of the program (a module it imports, `silt.toml` or `silt.lock`) changes. A run that is still going, such as a server, is stopped first.
+
+`silt check -` and `silt fmt -` read the program from stdin, as an editor that pipes a buffer through them needs: `silt fmt -` writes the formatted program to stdout (with `--check`, nothing, and exit 1 when it is not formatted), and `silt check -` reports what it finds at `<stdin>`. The program is a file of the working directory: it imports the modules beside it and belongs to the package there. `-` takes no other file with it.
 
 `silt check` checks a file as a module: a file needs no `main` to check (a library module, a file of types and traits, a test file), and a `main` it has must take no parameters. `silt run` starts a program at `main`, so it asks for one.
 

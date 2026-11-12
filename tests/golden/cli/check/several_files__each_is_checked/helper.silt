@@ -1,0 +1,4 @@
+pub fn two() -> Int {
+  let spare = 1
+  2
+}

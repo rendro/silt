@@ -96,6 +96,12 @@ vim.api.nvim_create_autocmd('BufWritePre', {
 })
 ```
 
+Without the language server, an editor can pipe the buffer through
+`silt fmt -`, which reads the program from stdin and writes the
+formatted program to stdout, and through `silt check -` (add
+`--format json` for diagnostics a plugin can read), which names the
+buffer `<stdin>` in what it reports.
+
 ### Completion (nvim-cmp)
 
 Install [nvim-cmp](https://github.com/hrsh7th/nvim-cmp) with the
