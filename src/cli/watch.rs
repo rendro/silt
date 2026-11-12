@@ -283,12 +283,24 @@ fn entries(sub: &str, positional: Option<&str>) -> Vec<PathBuf> {
         let dir = match positional {
             Some(path) if !Path::new(path).is_dir() => return vec![PathBuf::from(path)],
             Some(path) => PathBuf::from(path),
-            None => cwd,
+            None => cwd.clone(),
         };
-        return crate::cli::paths::package_test_files(&dir)
+        let mut files: Vec<PathBuf> = crate::cli::paths::package_test_files(&dir)
             .into_iter()
             .map(PathBuf::from)
             .collect();
+        // Given no path, `silt test` checks the package first: its files
+        // are the program's too.
+        if positional.is_none()
+            && let Ok(Some((root, _))) = find_project_root(&cwd)
+        {
+            files.extend(
+                package_entry(&root, true)
+                    .into_iter()
+                    .filter(|p| p.is_file()),
+            );
+        }
+        return files;
     }
     if let Some(path) = positional {
         return vec![PathBuf::from(path)];
@@ -296,9 +308,16 @@ fn entries(sub: &str, positional: Option<&str>) -> Vec<PathBuf> {
     let Ok(Some((root, _))) = find_project_root(&cwd) else {
         return Vec::new();
     };
+    package_entry(&root, sub == "check")
+}
+
+/// The entry file of the package at `root`: its `src/main.silt`, or with
+/// `allow_lib` its `src/lib.silt` when it has no main.
+#[cfg(feature = "watch")]
+fn package_entry(root: &Path, allow_lib: bool) -> Vec<PathBuf> {
     let main = root.join("src").join("main.silt");
     let lib = root.join("src").join("lib.silt");
-    if sub == "check" && !main.is_file() && lib.is_file() {
+    if allow_lib && !main.is_file() && lib.is_file() {
         vec![lib]
     } else {
         vec![main]

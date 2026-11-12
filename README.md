@@ -181,9 +181,10 @@ Then:
 ```sh
 silt init
 silt run
+silt test
 ```
 
-`silt init` writes a `silt.toml` manifest and a starter `src/main.silt`; `silt run` (no arguments, inside a package) executes the entry point. `silt init --lib` starts a library instead: `src/lib.silt`, for other packages to import.
+`silt init` writes a `silt.toml` manifest, a starter `src/main.silt` and a first test, `src/main_test.silt`; `silt run` (no arguments, inside a package) executes the entry point, and `silt test` runs the test. `silt init --lib` starts a library instead: `src/lib.silt` with its test `src/lib_test.silt`, for other packages to import.
 
 See `examples/` for runnable sample programs — start with `examples/hello.silt`, `examples/fizzbuzz.silt`, and `examples/records.silt`.
 

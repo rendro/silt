@@ -304,4 +304,155 @@ fn test_init_help_tells_of_lib() {
         help.contains("  --lib    A library: src/lib.silt instead of src/main.silt\n"),
         "{help}"
     );
+    assert!(
+        help.contains("first test beside it (src/main_test.silt or src/lib_test.silt);\n"),
+        "{help}"
+    );
+}
+
+// ── the first test, and `silt test` checks the package ────────────────
+
+/// `silt init` writes a first test beside the entry file, and the
+/// `silt test` it points at runs it and passes, for a program and for a
+/// library. FAILS on the base commit: no test was written, and `silt
+/// test` said "no test files found".
+#[test]
+fn test_init_writes_a_first_test_that_passes() {
+    for (dir, args, test, name) in [
+        ("first_app", vec!["init"], "main_test.silt", "test_greeting"),
+        (
+            "first_lib",
+            vec!["init", "--lib"],
+            "lib_test.silt",
+            "test_hello",
+        ),
+    ] {
+        let dir = temp_dir_named(dir);
+        let out = silt_cmd().args(&args).current_dir(&dir).output().unwrap();
+        assert!(out.status.success(), "{out:?}");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let test_line = format!("src{}{test}\n", std::path::MAIN_SEPARATOR);
+        assert!(stdout.contains(&test_line), "{stdout}");
+        assert!(
+            dir.join("src").join(test).is_file(),
+            "src/{test} was not created"
+        );
+
+        // (The results are written to stderr.)
+        let out = silt_cmd().arg("test").current_dir(&dir).output().unwrap();
+        let said = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "{said}");
+        assert_eq!(
+            said,
+            format!("  PASS ./src/{test}::{name}\n\n1 test: 1 passed, 0 failed, 0 skipped\n")
+        );
+    }
+    // The program still runs.
+    let dir = temp_dir_named("first_run");
+    assert!(
+        silt_cmd()
+            .arg("init")
+            .current_dir(&dir)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let out = silt_cmd().arg("run").current_dir(&dir).output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "hello, silt!\n");
+}
+
+/// A test file already there is not overwritten, and nothing is written.
+#[test]
+fn test_init_refuses_to_overwrite_the_test_file() {
+    let dir = temp_dir_named("has_test");
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(
+        dir.join("src").join("main_test.silt"),
+        "fn test_mine() { () }\n",
+    )
+    .unwrap();
+    let out = silt_cmd().arg("init").current_dir(&dir).output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&out.stderr)
+            .starts_with("error: silt init: src/main_test.silt already exists at "),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        read(&dir.join("src").join("main_test.silt")),
+        "fn test_mine() { () }\n"
+    );
+    assert!(!dir.join("silt.toml").exists(), "nothing is written");
+    assert!(
+        !dir.join("src").join("main.silt").exists(),
+        "nothing is written"
+    );
+}
+
+/// `silt test` with no path, in a package, checks the package first: a
+/// module with an error fails the run though no test file imports it,
+/// and though there is no test file at all; from `src/` too. Given a
+/// path, and outside a package, nothing more is checked. FAILS on the
+/// base commit: "no test files found", exit 0.
+#[test]
+fn test_silt_test_checks_the_package_first() {
+    let dir = temp_dir_named("broken_pkg");
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(
+        dir.join("silt.toml"),
+        "[package]\nname = \"broken_pkg\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(dir.join("src").join("main.silt"), "fn main() { () }\n").unwrap();
+    fs::write(
+        dir.join("src").join("other.silt"),
+        "pub fn bad() -> Int {\n  \"no\"\n}\n",
+    )
+    .unwrap();
+    let failed = |cwd: &Path, file: &str| {
+        let out = silt_cmd().arg("test").current_dir(cwd).output().unwrap();
+        assert_eq!(out.status.code(), Some(1), "{out:?}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("error[type]: type mismatch: expected Int, got String"),
+            "{stderr}"
+        );
+        assert!(stderr.contains(&format!(" --> {file}:2:3\n")), "{stderr}");
+        assert!(
+            stderr.ends_with(
+                "error: silt test: the package has errors (see above), so no test was run\n"
+            ),
+            "{stderr}"
+        );
+        assert!(out.stdout.is_empty(), "{out:?}");
+    };
+    let sep = std::path::MAIN_SEPARATOR;
+    // No test file.
+    failed(&dir, &format!("src{sep}other.silt"));
+    failed(&dir.join("src"), "other.silt");
+    // A passing test file that does not import the broken module.
+    fs::write(
+        dir.join("src").join("main_test.silt"),
+        "fn test_ok() { () }\n",
+    )
+    .unwrap();
+    failed(&dir, &format!("src{sep}other.silt"));
+    // Given a path, the file or the directory is what is tested.
+    let out = silt_cmd()
+        .args(["test", "src/main_test.silt"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+
+    // Outside a package there is no package to check.
+    let plain = temp_dir_named("no_pkg");
+    let out = silt_cmd().arg("test").current_dir(&plain).output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "no test files found\n"
+    );
 }

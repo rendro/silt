@@ -1,5 +1,6 @@
 //! `silt init [--lib]` — create a new silt package in the current
-//! directory: a program (`src/main.silt`) or a library (`src/lib.silt`).
+//! directory: a program (`src/main.silt`) or a library (`src/lib.silt`),
+//! with a first test beside it.
 
 use std::fs;
 use std::process;
@@ -12,8 +13,9 @@ pub(crate) fn dispatch(args: &[String]) {
             println!();
             println!("Create a new silt package in the current directory.");
             println!("Writes silt.toml and src/main.silt, a program, or with --lib");
-            println!("src/lib.silt, a library for other packages to import; the");
-            println!("package name is derived from the directory name.");
+            println!("src/lib.silt, a library for other packages to import, and a");
+            println!("first test beside it (src/main_test.silt or src/lib_test.silt);");
+            println!("the package name is derived from the directory name.");
             println!();
             println!("Options:");
             println!("  --lib    A library: src/lib.silt instead of src/main.silt");
@@ -101,17 +103,20 @@ fn init_project(lib: bool) {
         );
         process::exit(1);
     }
-    let entry = match lib {
-        true => "lib.silt",
-        false => "main.silt",
+    let (entry, test) = match lib {
+        true => ("lib.silt", "lib_test.silt"),
+        false => ("main.silt", "main_test.silt"),
     };
     let entry_path = cwd.join("src").join(entry);
-    if entry_path.exists() {
-        eprintln!(
-            "error: silt init: src/{entry} already exists at {}",
-            entry_path.display()
-        );
-        process::exit(1);
+    let test_path = cwd.join("src").join(test);
+    for (name, path) in [(entry, &entry_path), (test, &test_path)] {
+        if path.exists() {
+            eprintln!(
+                "error: silt init: src/{name} already exists at {}",
+                path.display()
+            );
+            process::exit(1);
+        }
     }
 
     let dirname = cwd.file_name().and_then(|n| n.to_str()).unwrap_or("");
@@ -152,9 +157,17 @@ fn init_project(lib: bool) {
     }
 
     let manifest_contents = format!("[package]\nname = \"{package_name}\"\nversion = \"0.1.0\"\n");
-    let entry_contents = match lib {
-        true => "pub fn hello() -> String {\n  \"hello, silt!\"\n}\n",
-        false => "fn main() {\n  println(\"hello, silt!\")\n}\n",
+    // The test imports the module it tests, as a test file of a package
+    // does, and calls a `pub` function of it.
+    let (entry_contents, test_contents) = match lib {
+        true => (
+            "pub fn hello() -> String {\n  \"hello, silt!\"\n}\n",
+            "import lib\nimport test\n\nfn test_hello() {\n  test.assert_eq(lib.hello(), \"hello, silt!\")\n}\n",
+        ),
+        false => (
+            "pub fn greeting() -> String {\n  \"hello, silt!\"\n}\n\nfn main() {\n  println(greeting())\n}\n",
+            "import main\nimport test\n\nfn test_greeting() {\n  test.assert_eq(main.greeting(), \"hello, silt!\")\n}\n",
+        ),
     };
 
     // Create src/ first so a failure there doesn't leave a stray manifest.
@@ -165,21 +178,27 @@ fn init_project(lib: bool) {
         );
         process::exit(1);
     }
-    if let Err(e) = fs::write(&entry_path, entry_contents) {
-        eprintln!("error writing {}: {e}", entry_path.display());
-        process::exit(1);
-    }
-    if let Err(e) = fs::write(&manifest_path, manifest_contents) {
-        eprintln!("error writing {}: {e}", manifest_path.display());
-        // Best-effort cleanup so a partial init doesn't leave a stray
-        // source file without a manifest pinning it to a package.
-        let _ = fs::remove_file(&entry_path);
-        process::exit(1);
+    // Best-effort cleanup so a partial init doesn't leave stray source
+    // files without a manifest pinning them to a package.
+    let written = [
+        (&entry_path, entry_contents),
+        (&test_path, test_contents),
+        (&manifest_path, manifest_contents.as_str()),
+    ];
+    for (i, (path, contents)) in written.iter().enumerate() {
+        if let Err(e) = fs::write(path, contents) {
+            eprintln!("error writing {}: {e}", path.display());
+            for (earlier, _) in &written[..i] {
+                let _ = fs::remove_file(earlier);
+            }
+            process::exit(1);
+        }
     }
 
     println!("created silt package `{package_name}`:");
     println!("  {}", manifest_path.display());
     println!("  {}", entry_path.display());
+    println!("  {}", test_path.display());
     println!();
     match lib {
         true => println!("  check: silt check"),
