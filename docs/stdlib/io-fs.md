@@ -19,7 +19,9 @@ inspection.
 | `inspect` | `(a) -> String` | Debug representation of any value |
 | `read_bytes` | `(String) -> Result(Bytes, IoError)` | Read entire file as bytes |
 | `read_file` | `(String) -> Result(String, IoError)` | Read entire file as string |
-| `read_line` | `() -> Result(String, IoError)` | Read one line from stdin |
+| `read_line` | `() -> Result(Option(String), IoError)` | Read one line from stdin, or None at its end |
+| `read_stdin` | `() -> Result(String, IoError)` | Read all of stdin as a string |
+| `read_stdin_bytes` | `() -> Result(Bytes, IoError)` | Read all of stdin as bytes |
 | `write_file` | `(String, String) -> Result((), IoError)` | Write string to file |
 
 ## Errors
@@ -175,13 +177,15 @@ fn main() {
 ## `io.read_line`
 
 ```
-io.read_line() -> Result(String, IoError)
+io.read_line() -> Result(Option(String), IoError)
 ```
 
 Reads a single line from stdin (trailing newline stripped). Returns
-`Ok(line)` on success or `Err(IoError)` on failure — in particular
-`Err(UnexpectedEof)` when stdin is closed. When called from a spawned
-task, the operation transparently yields to the scheduler.
+`Ok(Some(line))` for a line, `Ok(None)` at the end of stdin (and on every read
+after it), as the end of a channel or of a stream is a value, and
+`Err(IoError)` on failure. When called from a spawned task, the operation
+transparently yields to the scheduler. To read all of stdin at once, use
+`io.read_stdin`; to read it a line at a time as a stream, `stream.stdin_lines`.
 
 ```silt
 import io
@@ -189,8 +193,57 @@ import io
 fn main() {
   print("Name: ")
   match io.read_line() {
-    Ok(name) -> println("Hello, {name}!")
-    Err(io.UnexpectedEof) -> println("(EOF)")
+    Ok(Some(name)) -> println("Hello, {name}!")
+    Ok(None) -> println("(no input)")
+    Err(e) -> println("Error: {Error.message(e)}")
+  }
+}
+```
+
+
+## `io.read_stdin`
+
+```
+io.read_stdin() -> Result(String, IoError)
+```
+
+Reads all of stdin, to its end, as one string: `Ok(text)`, line ends
+included, or `Err(IoError)`. Input that is not UTF-8 is
+`Err(InvalidInput(...))` with the byte where it stops being UTF-8; read it with
+`io.read_stdin_bytes` instead. Stdin that is already at its end gives
+`Ok("")`. This is the way to write a filter: read the input, work on it, print
+the result.
+
+```silt
+import io
+import list
+import string
+
+fn main() {
+  match io.read_stdin() {
+    Ok(text) -> println("{list.length(string.lines(text))} lines")
+    Err(e) -> println("Error: {Error.message(e)}")
+  }
+}
+```
+
+
+## `io.read_stdin_bytes`
+
+```
+io.read_stdin_bytes() -> Result(Bytes, IoError)
+```
+
+Reads all of stdin, to its end, as the bytes it is: `Ok(bytes)` or
+`Err(IoError)`. Any input will do, UTF-8 or not.
+
+```silt
+import bytes
+import io
+
+fn main() {
+  match io.read_stdin_bytes() {
+    Ok(b) -> println("{bytes.length(b)} bytes")
     Err(e) -> println("Error: {Error.message(e)}")
   }
 }

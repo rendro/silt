@@ -1,0 +1,8 @@
+-- An empty stdin is a stream of no lines; so is a second stream after
+-- the first read it all.
+import stream
+
+fn main() {
+  println(stream.stdin_lines() |> stream.length)
+  println(stream.stdin_lines() |> stream.length)
+}

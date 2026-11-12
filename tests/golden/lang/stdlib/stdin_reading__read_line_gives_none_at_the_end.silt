@@ -1,0 +1,18 @@
+-- stdin: first\n  second  \n
+-- io.read_line gives each line, then Ok(None) at the end of stdin, and
+-- Ok(None) again on every read after it.
+import io
+
+fn main() {
+  loop count = 0 {
+    match io.read_line() {
+      Ok(Some(line)) -> {
+        println("[{line}]")
+        loop(count + 1)
+      }
+      Ok(None) -> println("end after {count} lines")
+      Err(e) -> println("error: {e}")
+    }
+  }
+  println(io.read_line())
+}

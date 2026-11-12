@@ -291,6 +291,14 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     })
 }
 
+/// The bytes stdin has to its end.
+fn read_all_stdin() -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    std::io::stdin().lock().read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+
 /// The error of an `io` function whose operation has no value of its
 /// own: its wait timed out, or the operation could not run. Either
 /// way `Other` with the reason.
@@ -349,15 +357,44 @@ builtins! {
         })
     }
 
+    // The end of stdin is a value, `Ok(None)`, as the end of every
+    // other source is.
     fn read_line(vm) -> Result<Step, VmError> {
         vm.io("io.read_line", io_unknown_err, Leave::RunsOut, move |_| {
             let mut line = String::new();
             match std::io::stdin().read_line(&mut line) {
-                // Ok(0) means EOF — surface as Err(UnexpectedEof) so
-                // match-against-Err loops terminate cleanly instead of
-                // spinning on "".
-                Ok(0) => io_err(Value::variant(bv::IO_UNEXPECTED_EOF, [])),
-                Ok(_) => fs_ok(Value::String(line.trim_end().into())),
+                Ok(0) => fs_ok(Value::variant(bv::NONE, [])),
+                Ok(_) => fs_ok(Value::variant(
+                    bv::SOME,
+                    [Value::String(line.trim_end().into())],
+                )),
+                Err(e) => io_result_err(&e, ""),
+            }
+        })
+    }
+
+    // All of stdin, to its end, as text.
+    fn read_stdin(vm) -> Result<Step, VmError> {
+        vm.io("io.read_stdin", io_unknown_err, Leave::RunsOut, move |_| {
+            match read_all_stdin() {
+                Ok(bytes) => match String::from_utf8(bytes) {
+                    Ok(text) => fs_ok(Value::String(text.into())),
+                    Err(e) => {
+                        let at = e.utf8_error().valid_up_to();
+                        let why = format!("stdin is not UTF-8 at byte {at}");
+                        io_err(Value::variant(bv::IO_INVALID_INPUT, [Value::String(why.into())]))
+                    }
+                },
+                Err(e) => io_result_err(&e, ""),
+            }
+        })
+    }
+
+    // All of stdin, to its end, as the bytes it is.
+    fn read_stdin_bytes(vm) -> Result<Step, VmError> {
+        vm.io("io.read_stdin_bytes", io_unknown_err, Leave::RunsOut, move |_| {
+            match read_all_stdin() {
+                Ok(bytes) => fs_ok(Value::Bytes(Arc::new(bytes))),
                 Err(e) => io_result_err(&e, ""),
             }
         })

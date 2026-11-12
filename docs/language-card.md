@@ -324,7 +324,9 @@ io.eprintln(value: a) -> () where a: Display
 io.inspect(x: a) -> String
 io.read_bytes(path: String) -> Result(Bytes, IoError)
 io.read_file(path: String) -> Result(String, IoError)
-io.read_line() -> Result(String, IoError)
+io.read_line() -> Result(Option(String), IoError)
+io.read_stdin() -> Result(String, IoError)
+io.read_stdin_bytes() -> Result(Bytes, IoError)
 io.write_file(path: String, contents: String) -> Result((), IoError)
 ```
 
@@ -838,6 +840,7 @@ stream.map(ch: Channel(a), f: Fn(a) -> b) -> Channel(b)
 stream.merge(chs: List(Channel(a))) -> Channel(a)
 stream.repeat(x: a) -> Channel(a)
 stream.scan(ch: Channel(a), init: b, f: Fn(b, a) -> b) -> Channel(b)
+stream.stdin_lines() -> Channel(Result(String, IoError))
 stream.take(ch: Channel(a), n: Int) -> Channel(a)
 stream.take_while(ch: Channel(a), pred: Fn(a) -> Bool) -> Channel(a)
 stream.tcp_chunks(stream: TcpStream, size: Int) -> Channel(Result(Bytes, TcpError))  -- cargo feature `tcp`

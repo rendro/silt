@@ -34,7 +34,7 @@ use parking_lot::Mutex;
 
 use super::collections::{Kind, fits};
 use super::common::{READ_AT_ONCE, ok};
-use super::io::path_err;
+use super::io::{io_result_err, path_err};
 #[cfg(feature = "tcp")]
 use super::typed::TcpStream;
 use super::typed::{Arg, Chan, List, builtins, unsound};
@@ -680,6 +680,94 @@ fn one_a_read(
     move || read().into_iter().collect()
 }
 
+/// The reads of `stream.stdin_lines`: each gives the lines, without
+/// their `\n` or `\r\n`, that are complete in what has been read,
+/// reading until one is or stdin ends; at the end, the bytes after the
+/// last `\n` are the last line, if there are any. A read takes what
+/// stdin has, up to [`READ_AT_ONCE`] bytes, and does not wait for more:
+/// a line typed at a terminal comes as it is typed, and a pipe gives
+/// many lines a read. A line that is no UTF-8 ends the source with an
+/// error, after the lines before it, as `file_lines` ends.
+fn stdin_line_reads() -> impl FnMut() -> Vec<Value> + Send + 'static {
+    // What was read and is no line yet; stdin has ended; the source has
+    // ended; how many lines were given.
+    let mut pending: Vec<u8> = Vec::new();
+    let mut at_end = false;
+    let mut ended = false;
+    let mut given: u64 = 0;
+    let not_utf8 = |number: u64| {
+        let why = format!("line {number} of stdin is not UTF-8");
+        Value::variant(
+            bv::ERR,
+            [Value::variant(
+                bv::IO_INVALID_INPUT,
+                [Value::String(why.into())],
+            )],
+        )
+    };
+    move || {
+        use std::io::Read;
+        let mut lines = Vec::new();
+        while !ended {
+            let mut taken = 0;
+            let mut held_back = false;
+            while let Some(at) = pending[taken..].iter().position(|&b| b == b'\n') {
+                let line = &pending[taken..taken + at];
+                let line = line.strip_suffix(b"\r").unwrap_or(line);
+                match std::str::from_utf8(line) {
+                    Ok(line) => {
+                        given += 1;
+                        lines.push(ok(Value::String(line.into())));
+                    }
+                    Err(_) if lines.is_empty() => {
+                        ended = true;
+                        lines.push(not_utf8(given + 1));
+                        return lines;
+                    }
+                    // The lines before it are given first: the next read
+                    // ends the source with it.
+                    Err(_) => {
+                        held_back = true;
+                        break;
+                    }
+                }
+                taken += at + 1;
+            }
+            pending.drain(..taken);
+            if held_back || !lines.is_empty() {
+                break;
+            }
+            if at_end {
+                ended = true;
+                if !pending.is_empty() {
+                    let line = pending.strip_suffix(b"\r").unwrap_or(&pending);
+                    lines.push(match std::str::from_utf8(line) {
+                        Ok(line) => ok(Value::String(line.into())),
+                        Err(_) => not_utf8(given + 1),
+                    });
+                }
+                break;
+            }
+            let at = pending.len();
+            pending.resize(at + READ_AT_ONCE, 0);
+            match std::io::stdin().lock().read(&mut pending[at..]) {
+                Ok(got) => {
+                    pending.truncate(at + got);
+                    at_end = got == 0;
+                }
+                Err(e) => {
+                    pending.truncate(at);
+                    if e.kind() != std::io::ErrorKind::Interrupted {
+                        ended = true;
+                        lines.push(io_result_err(&e, ""));
+                    }
+                }
+            }
+        }
+        lines
+    }
+}
+
 /// What one read of `stream.tcp_lines` asks for, the one that may wait
 /// for the peer and each that does not.
 #[cfg(feature = "tcp")]
@@ -1084,6 +1172,11 @@ builtins! {
             }
             lines
         })
+    }
+
+    // (Stdin is read as a file is: a read under way is not stopped.)
+    fn stdin_lines(vm) -> Result<Step, VmError> {
+        reading(vm, "stream.stdin_lines", ON_A_FILE, stdin_line_reads())
     }
 
     #[cfg(feature = "tcp")]

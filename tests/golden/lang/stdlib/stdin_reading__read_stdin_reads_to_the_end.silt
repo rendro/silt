@@ -1,0 +1,16 @@
+-- stdin: one\ntwo\n\nthree é
+-- io.read_stdin gives all of stdin as it is, line ends included; what
+-- is read is gone, so a second read gives the empty text.
+import io
+import string
+
+fn main() {
+  match io.read_stdin() {
+    Ok(text) -> {
+      println(io.inspect(text))
+      println(string.lines(text))
+    }
+    Err(e) -> println("error: {e}")
+  }
+  println(io.inspect(io.read_stdin()))
+}
