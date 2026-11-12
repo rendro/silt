@@ -87,7 +87,28 @@ impl<'a> Arg<'a> for bool {
 impl<'a> Arg<'a> for &'a str {
     fn take(value: &'a Value) -> Option<Self> {
         match value {
-            Value::String(s) => Some(s),
+            Value::String(s, _) => Some(s),
+            _ => None,
+        }
+    }
+}
+
+/// A `String` argument with its mark of being all ASCII
+/// ([`crate::value::Ascii`]), for a body that counts characters: in an
+/// ASCII string a character offset is a byte offset.
+#[derive(Clone, Copy)]
+pub(crate) struct Text<'a> {
+    pub(crate) text: &'a str,
+    pub(crate) ascii: bool,
+}
+
+impl<'a> Arg<'a> for Text<'a> {
+    fn take(value: &'a Value) -> Option<Self> {
+        match value {
+            Value::String(text, ascii) => Some(Text {
+                text,
+                ascii: ascii.is(),
+            }),
             _ => None,
         }
     }
@@ -300,7 +321,7 @@ impl Ret for f64 {
 
 impl Ret for String {
     fn ret(self) -> Result<Step, VmError> {
-        Ok(Step::Done(Value::String(self.into())))
+        Ok(Step::Done(Value::string(self)))
     }
 }
 

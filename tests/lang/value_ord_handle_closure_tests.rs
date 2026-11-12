@@ -192,11 +192,8 @@ fn btreeset_of_distinct_variant_constructors_retains_all() {
 fn ord_discriminant_ordering_preserved() {
     let float = |f: f64| Value::Float(silt::value::Float::new(f).expect("a finite number"));
     assert_eq!(Value::Int(1).cmp(&float(0.0)), Ordering::Less);
-    assert_eq!(float(1e9).cmp(&Value::String("".into())), Ordering::Less);
-    assert_eq!(
-        Value::String("".into()).cmp(&Value::list(vec![])),
-        Ordering::Less
-    );
+    assert_eq!(float(1e9).cmp(&Value::string("")), Ordering::Less);
+    assert_eq!(Value::string("").cmp(&Value::list(vec![])), Ordering::Less);
 }
 
 /// Value-level ordering within a type still uses content comparison
@@ -204,18 +201,12 @@ fn ord_discriminant_ordering_preserved() {
 #[test]
 fn ord_value_types_still_content_compared() {
     assert_eq!(Value::Int(1).cmp(&Value::Int(2)), Ordering::Less);
-    assert_eq!(
-        Value::String("a".into()).cmp(&Value::String("b".into())),
-        Ordering::Less
-    );
+    assert_eq!(Value::string("a").cmp(&Value::string("b")), Ordering::Less);
     assert_eq!(
         Value::tuple(vec![Value::Int(1)]).cmp(&Value::tuple(vec![Value::Int(2)])),
         Ordering::Less
     );
     // Reflexivity for value types.
     assert_eq!(Value::Int(42).cmp(&Value::Int(42)), Ordering::Equal);
-    assert_eq!(
-        Value::String("x".into()).cmp(&Value::String("x".into())),
-        Ordering::Equal
-    );
+    assert_eq!(Value::string("x").cmp(&Value::string("x")), Ordering::Equal);
 }

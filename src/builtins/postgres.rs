@@ -62,7 +62,7 @@ fn pg_timeout_err(failure: crate::vm::IoFailure<'_>) -> Value {
     let error = match failure {
         IoFailure::Timeout(_) => Value::variant(bv::PG_TIMEOUT, []),
         IoFailure::Panicked(why) | IoFailure::Refused(why) => {
-            Value::variant(bv::PG_OTHER, [Value::String(why.into())])
+            Value::variant(bv::PG_OTHER, [Value::string(why)])
         }
     };
     Value::variant(bv::ERR, [error])
@@ -930,23 +930,20 @@ pub fn redact_pg_message(s: &str) -> String {
 fn pg_connect(msg: impl Into<String>) -> Value {
     Value::variant(
         bv::PG_CONNECT,
-        [Value::String(redact_pg_message(&msg.into()).into())],
+        [Value::string(redact_pg_message(&msg.into()))],
     )
 }
 
 /// Build a bare `Tls(msg)` variant (no Err wrapper).
 fn pg_tls(msg: impl Into<String>) -> Value {
-    Value::variant(
-        bv::PG_TLS,
-        [Value::String(redact_pg_message(&msg.into()).into())],
-    )
+    Value::variant(bv::PG_TLS, [Value::string(redact_pg_message(&msg.into()))])
 }
 
 /// Build a bare `Other(msg)` variant (no Err wrapper).
 fn pg_unknown(msg: impl Into<String>) -> Value {
     Value::variant(
         bv::PG_OTHER,
-        [Value::String(redact_pg_message(&msg.into()).into())],
+        [Value::string(redact_pg_message(&msg.into()))],
     )
 }
 
@@ -965,15 +962,12 @@ fn pg_error_to_variant(e: &tokio_postgres::Error) -> Value {
             // 42703: undefined_column.
             "42703" => rows::no_such_column(column_named(&message)),
             code if code.starts_with("28") => {
-                Value::variant(bv::PG_AUTH_FAILED, [Value::String(message.into())])
+                Value::variant(bv::PG_AUTH_FAILED, [Value::string(message)])
             }
             code if code.starts_with("08") => {
-                Value::variant(bv::PG_CONNECT, [Value::String(message.into())])
+                Value::variant(bv::PG_CONNECT, [Value::string(message)])
             }
-            code => Value::variant(
-                bv::PG_QUERY,
-                [Value::String(message.into()), Value::String(code.into())],
-            ),
+            code => Value::variant(bv::PG_QUERY, [Value::string(message), Value::string(code)]),
         }
     } else {
         // Non-DB: transport / protocol. Sniff keywords to pick a
@@ -993,10 +987,7 @@ fn pg_error_to_variant(e: &tokio_postgres::Error) -> Value {
             // parameter 0"): its cause says what happened.
             let causes = std::iter::successors(std::error::Error::source(e), |c| c.source());
             let text = causes.fold(raw, |text, cause| format!("{text}: {cause}"));
-            Value::variant(
-                bv::PG_OTHER,
-                [Value::String(redact_pg_message(&text).into())],
-            )
+            Value::variant(bv::PG_OTHER, [Value::string(redact_pg_message(&text))])
         }
     }
 }
@@ -1041,7 +1032,7 @@ fn connect_error_value(e: &tokio_postgres::Error) -> Value {
     if let Some(db) = e.as_db_error() {
         let message = redact_pg_message(db.message());
         return match db.code().code().starts_with("28") {
-            true => Value::variant(bv::PG_AUTH_FAILED, [Value::String(message.into())]),
+            true => Value::variant(bv::PG_AUTH_FAILED, [Value::string(message)]),
             false => pg_connect(message),
         };
     }
@@ -1069,7 +1060,7 @@ fn connect_error_value(e: &tokio_postgres::Error) -> Value {
         // the server did not use, a SCRAM answer that does not check
         // out. (A password the server asks for and the URL does not
         // give is an error of the configuration: `Connect`.)
-        Value::variant(bv::PG_AUTH_FAILED, [Value::String(text.into())])
+        Value::variant(bv::PG_AUTH_FAILED, [Value::string(text)])
     } else {
         pg_connect(text)
     }
@@ -2597,8 +2588,8 @@ fn make_notification(channel: &str, payload: &str, pid: i64) -> Value {
     Value::builtin_record(
         ty::NOTIFICATION,
         [
-            ("channel", Value::String(channel.into())),
-            ("payload", Value::String(payload.into())),
+            ("channel", Value::string(channel)),
+            ("payload", Value::string(payload)),
             ("pid", Value::Int(pid)),
         ],
     )
@@ -2692,19 +2683,26 @@ fn do_notify(
 /// `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
-        ("Connect", [Value::String(m)]) => format!("postgres connect failed: {m}"),
-        ("Tls", [Value::String(m)]) => format!("postgres TLS error: {m}"),
-        ("AuthFailed", [Value::String(m)]) => {
+        ("Connect", [Value::String(m, _)]) => format!("postgres connect failed: {m}"),
+        ("Tls", [Value::String(m, _)]) => format!("postgres TLS error: {m}"),
+        ("AuthFailed", [Value::String(m, _)]) => {
             format!("postgres authentication failed: {m}")
         }
-        ("Query", [Value::String(msg), Value::String(sqlstate)]) => {
+        ("Query", [Value::String(msg, _), Value::String(sqlstate, _)]) => {
             if sqlstate.is_empty() {
                 format!("postgres query error: {msg}")
             } else {
                 format!("postgres query error [{sqlstate}]: {msg}")
             }
         }
-        ("TypeMismatch", [Value::String(col), Value::String(exp), Value::String(act)]) => {
+        (
+            "TypeMismatch",
+            [
+                Value::String(col, _),
+                Value::String(exp, _),
+                Value::String(act, _),
+            ],
+        ) => {
             let text =
                 format!("postgres type mismatch on column `{col}`: expected {exp}, got {act}");
             match mend(exp, act) {
@@ -2719,13 +2717,13 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
                 Mend::None => text,
             }
         }
-        ("NoSuchColumn", [Value::String(col)]) => {
+        ("NoSuchColumn", [Value::String(col, _)]) => {
             format!("postgres: no such column `{col}`")
         }
         ("Closed", []) => "postgres connection closed".to_string(),
         ("Timeout", []) => "postgres operation timed out".to_string(),
         ("TxnAborted", []) => "postgres transaction aborted; rollback required".to_string(),
-        ("Other", [Value::String(m)]) => m.to_string(),
+        ("Other", [Value::String(m, _)]) => m.to_string(),
         _ => return None,
     })
 }
@@ -3482,7 +3480,7 @@ mod tests {
         // `ConnectionError`. The message text still mentions TLS /
         // postgres-tls so operators see the feature-flag hint.
         assert_eq!(error.name(), "Tls");
-        let Some(Value::String(msg)) = error.fields().first() else {
+        let Some(Value::String(msg, _)) = error.fields().first() else {
             panic!("expected message string");
         };
         assert!(msg.contains("TLS"), "message: {msg}");
@@ -3504,7 +3502,7 @@ mod tests {
             let Value::Variant(error) = inner else {
                 panic!("expected inner Variant for {mode}");
             };
-            let Some(Value::String(msg)) = error.fields().first() else {
+            let Some(Value::String(msg, _)) = error.fields().first() else {
                 panic!("expected message string for {mode}");
             };
             assert!(

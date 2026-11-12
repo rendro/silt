@@ -83,10 +83,7 @@ fn time_parse_err(
             )
         }
     };
-    Value::variant(
-        bv::ERR,
-        [Value::variant(variant, [Value::String(msg.into())])],
-    )
+    Value::variant(bv::ERR, [Value::variant(variant, [Value::string(msg)])])
 }
 
 /// Why `pattern` does not read `s`, which chrono refused with `err`:
@@ -278,7 +275,7 @@ fn invalid_format_err(why: String) -> Value {
         bv::ERR,
         [Value::variant(
             bv::TIME_INVALID_FORMAT,
-            [Value::String(why.into())],
+            [Value::string(why)],
         )],
     )
 }
@@ -288,10 +285,7 @@ fn invalid_format_err(why: String) -> Value {
 fn time_out_of_range_err(msg: String) -> Value {
     Value::variant(
         bv::ERR,
-        [Value::variant(
-            bv::TIME_OUT_OF_RANGE,
-            [Value::String(msg.into())],
-        )],
+        [Value::variant(bv::TIME_OUT_OF_RANGE, [Value::string(msg)])],
     )
 }
 
@@ -299,9 +293,9 @@ fn time_out_of_range_err(msg: String) -> Value {
 /// `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
-        ("ParseFormat", [Value::String(m)]) => format!("time parse error: {m}"),
-        ("OutOfRange", [Value::String(m)]) => format!("time out of range: {m}"),
-        ("InvalidFormat", [Value::String(m)]) => format!("time format error: {m}"),
+        ("ParseFormat", [Value::String(m, _)]) => format!("time parse error: {m}"),
+        ("OutOfRange", [Value::String(m, _)]) => format!("time out of range: {m}"),
+        ("InvalidFormat", [Value::String(m, _)]) => format!("time format error: {m}"),
         _ => return None,
     })
 }
@@ -723,7 +717,7 @@ fn written(shown: impl std::fmt::Display, pattern: &str) -> Value {
 
     let mut text = String::new();
     match write!(text, "{shown}") {
-        Ok(()) => ok(Value::String(text.into())),
+        Ok(()) => ok(Value::string(text)),
         Err(_) => invalid_format_err(format!("invalid format specifier in '{pattern}'")),
     }
 }
@@ -1342,7 +1336,7 @@ mod tests {
     }
 
     fn text(s: &str) -> Value {
-        Value::String(s.into())
+        Value::string(s)
     }
 
     /// Whether `result` is `Err(InvalidFormat(_))`.
@@ -1358,7 +1352,7 @@ mod tests {
     fn ok_text(result: &Value) -> Option<String> {
         match result {
             Value::Variant(result) if result.is(bv::OK) => match result.fields() {
-                [Value::String(text)] => Some(text.to_string()),
+                [Value::String(text, _)] => Some(text.to_string()),
                 _ => None,
             },
             _ => None,

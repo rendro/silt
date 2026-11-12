@@ -1517,7 +1517,7 @@ impl<'a> Compiler<'a> {
             }
 
             ExprKind::StringLit(s) => {
-                let idx = self.add_constant(Value::String(s.clone().into()), span)?;
+                let idx = self.add_constant(Value::string(s.clone()), span)?;
                 self.emit(Asm::Constant { k: idx }, span)?;
             }
 
@@ -1841,7 +1841,7 @@ impl<'a> Compiler<'a> {
                 for part in parts {
                     match part {
                         StringPart::Literal(s) => {
-                            let k = self.add_constant(Value::String(s.clone().into()), span)?;
+                            let k = self.add_constant(Value::string(s.clone()), span)?;
                             segments.push(Segment::Literal(k));
                         }
                         StringPart::Expr(e) => {
@@ -2209,10 +2209,8 @@ impl<'a> Compiler<'a> {
         }
 
         // No arm matched — panic
-        let msg_idx = self.add_constant(
-            Value::String("non-exhaustive match: no arm matched".into()),
-            span,
-        )?;
+        let msg_idx =
+            self.add_constant(Value::string("non-exhaustive match: no arm matched"), span)?;
         self.emit(Asm::Constant { k: msg_idx }, span)?;
         self.emit(Asm::Panic, span)?;
 
@@ -2267,7 +2265,7 @@ impl<'a> Compiler<'a> {
         // arm, so like the scrutinee form's non-exhaustive panic this is
         // only a backstop.
         let msg_idx = self.add_constant(
-            Value::String("non-exhaustive match: no condition was true".into()),
+            Value::string("non-exhaustive match: no condition was true"),
             span,
         )?;
         self.emit(Asm::Constant { k: msg_idx }, span)?;
@@ -3384,7 +3382,7 @@ impl<'a> Compiler<'a> {
     fn name_constants(&mut self, names: &[Symbol], span: Span) -> Result<Vec<Const>, Diagnostic> {
         names
             .iter()
-            .map(|name| self.add_constant(Value::String(resolve(*name).into()), span))
+            .map(|name| self.add_constant(Value::string(resolve(*name)), span))
             .collect()
     }
 
@@ -3657,7 +3655,7 @@ mod tests {
         chunk
             .constants()
             .iter()
-            .any(|c| matches!(c, Value::String(v) if **v == *s))
+            .any(|c| matches!(c, Value::String(v, _) if **v == *s))
     }
 
     /// Check if an int constant exists in the chunk.

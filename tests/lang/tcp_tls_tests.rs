@@ -62,7 +62,7 @@ import host
 "#
     .to_string();
     let v = run(&src);
-    assert_eq!(v, Value::String("errored".into()));
+    assert_eq!(v, Value::string("errored"));
 }
 
 #[test]
@@ -129,7 +129,7 @@ import host
     );
     let _ = (cert_pem_escaped, key_pem_escaped); // suppress unused
     let v = run(&src);
-    let Value::String(s) = v else {
+    let Value::String(s, _) = v else {
         panic!("got {v:?}")
     };
     // Either the handshake-failed path (most likely with garbage client)

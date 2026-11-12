@@ -152,8 +152,8 @@ fn hash_eq_int_values() {
 
 #[test]
 fn hash_eq_string_values() {
-    let a = Value::String("hello".into());
-    let b = Value::String("hello".into());
+    let a = Value::string("hello");
+    let b = Value::string("hello");
     assert_eq!(a, b);
     assert_eq!(hash_of(&a), hash_of(&b));
 }
@@ -204,7 +204,7 @@ fn nested_list_eq() {
 fn different_variant_types_not_equal() {
     assert_ne!(Value::Int(1), float(1.0));
     assert_ne!(Value::Int(0), Value::Bool(false));
-    assert_ne!(Value::String("1".into()), Value::Int(1));
+    assert_ne!(Value::string("1"), Value::Int(1));
 }
 
 #[test]
@@ -214,8 +214,8 @@ fn unit_eq() {
 
 #[test]
 fn tuple_eq() {
-    let a = Value::tuple(vec![Value::Int(1), Value::String("x".into())]);
-    let b = Value::tuple(vec![Value::Int(1), Value::String("x".into())]);
+    let a = Value::tuple(vec![Value::Int(1), Value::string("x")]);
+    let b = Value::tuple(vec![Value::Int(1), Value::string("x")]);
     assert_eq!(a, b);
 }
 
@@ -237,8 +237,8 @@ fn ord_int_ordering() {
 
 #[test]
 fn ord_string_ordering() {
-    assert!(Value::String("apple".into()) < Value::String("banana".into()));
-    assert!(Value::String("a".into()) < Value::String("b".into()));
+    assert!(Value::string("apple") < Value::string("banana"));
+    assert!(Value::string("a") < Value::string("b"));
 }
 
 #[test]
@@ -297,7 +297,7 @@ fn ord_result_variants_decl_order() {
     // Result is declared as `type Result(a, e) { Ok(a), Err(e) }`,
     // so Ok has ordinal 0, Err ordinal 1, and `Ok < Err`.
     let ok = Value::variant(bv::OK, [Value::Int(1)]);
-    let err = Value::variant(bv::ERR, [Value::String("e".into())]);
+    let err = Value::variant(bv::ERR, [Value::string("e")]);
     assert!(ok < err, "Ok declared before Err → Ok < Err");
 }
 
@@ -388,10 +388,10 @@ fn a_variant_is_shared_not_copied() {
 /// items, counted once more.
 #[test]
 fn a_string_and_a_tuple_are_shared_not_copied() {
-    let text = Value::String("silt".repeat(1000).into());
+    let text = Value::string("silt".repeat(1000));
     let tuple = Value::tuple(vec![text.clone(), Value::Int(1)]);
     let (text_again, tuple_again) = (text.clone(), tuple.clone());
-    let (Value::String(a), Value::String(b)) = (&text, &text_again) else {
+    let (Value::String(a, _), Value::String(b, _)) = (&text, &text_again) else {
         panic!("two strings");
     };
     assert!(Arc::ptr_eq(a, b));
@@ -587,8 +587,8 @@ fn values_of_every_kind_have_one_key() {
         Value::Int(7),
         float(-0.5),
         float(7.0),
-        Value::String("a".into()),
-        Value::String("b".into()),
+        Value::string("a"),
+        Value::string("b"),
         Value::list(vec![]),
         Value::list(vec![Value::Int(1)]),
         Value::list(vec![Value::Int(1), Value::Int(0)]),
@@ -666,11 +666,7 @@ fn the_key_of_a_value_does_not_depend_on_its_depth() {
     // level in (or the innermost Int) and a string.
     fn nested(depth: usize, innermost: i64) -> Value {
         (0..depth).fold(Value::Int(innermost), |inner, level| {
-            Value::tuple(vec![
-                Value::Int(level as i64),
-                inner,
-                Value::String("s".into()),
-            ])
+            Value::tuple(vec![Value::Int(level as i64), inner, Value::string("s")])
         })
     }
     // Its hash, written out: for a tuple its rank, the number of its
@@ -952,7 +948,7 @@ fn display_bool() {
 
 #[test]
 fn display_string() {
-    assert_eq!(format!("{}", Value::String("hello".into())), "hello");
+    assert_eq!(format!("{}", Value::string("hello")), "hello");
 }
 
 #[test]
@@ -974,7 +970,7 @@ fn display_empty_list() {
 
 #[test]
 fn display_tuple() {
-    let tuple = Value::tuple(vec![Value::Int(1), Value::String("x".into())]);
+    let tuple = Value::tuple(vec![Value::Int(1), Value::string("x")]);
     assert_eq!(format!("{}", tuple), "(1, \"x\")");
 }
 
@@ -1018,7 +1014,7 @@ fn display_generic_record() {
 /// is inspected. Each value here with its two texts.
 #[test]
 fn a_value_is_shown_and_inspected_by_one_formatter() {
-    let text = |s: &str| Value::String(s.into());
+    let text = |s: &str| Value::string(s);
     let point = record_type(9200, "Point", &["y", "x"]);
     let println = crate::builtins::registry::registry()
         .named("println")
@@ -2383,5 +2379,9 @@ fn the_kind_of_a_value_is_a_plain_tag() {
     for (kind, size) in held {
         assert!(words(size) <= 2, "{kind} holds {size} bytes");
     }
+    // A string's mark of all ASCII is one byte with no spare values: it
+    // sits beside the tag in the kind's word, and the layout has no
+    // niche in it to put the kind into.
+    assert_eq!(size_of::<super::Ascii>(), 1);
     assert_eq!(words(size_of::<Value>()), 3);
 }

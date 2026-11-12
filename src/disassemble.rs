@@ -480,8 +480,8 @@ mod tests {
     #[test]
     fn test_interpolate() {
         let output = disassembly(1, 0, |e| {
-            let v = e.constant(Value::String("v".into()), span()).unwrap();
-            let end = e.constant(Value::String("!".into()), span()).unwrap();
+            let v = e.constant(Value::string("v"), span()).unwrap();
+            let end = e.constant(Value::string("!"), span()).unwrap();
             let segments = [Segment::Literal(v), Segment::Value, Segment::Literal(end)];
             e.emit(
                 Asm::Interpolate {
@@ -507,8 +507,8 @@ mod tests {
             let ty = e
                 .constant(Value::TypeDescriptor(date.clone()), span())
                 .unwrap();
-            let x = e.constant(Value::String("x".into()), span()).unwrap();
-            let y = e.constant(Value::String("y".into()), span()).unwrap();
+            let x = e.constant(Value::string("x"), span()).unwrap();
+            let y = e.constant(Value::string("y"), span()).unwrap();
             e.emit(
                 Asm::MakeRecord {
                     ty,
@@ -583,7 +583,7 @@ mod tests {
     #[test]
     fn test_record_update() {
         let output = disassembly(2, 0, |e| {
-            let x = e.constant(Value::String("x".into()), span()).unwrap();
+            let x = e.constant(Value::string("x"), span()).unwrap();
             e.emit(Asm::RecordUpdate { fields: &[x] }, span()).unwrap();
             e.emit(Asm::Return, span()).unwrap();
         });

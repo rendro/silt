@@ -1,0 +1,8 @@
+-- stdin: alpha\nbeta\n\nlast without newline
+-- stream.stdin_lines gives each line without its \n, an empty
+-- line too, and the text after the last \n as the last line.
+import stream
+
+fn main() {
+  stream.stdin_lines() |> stream.collect |> println
+}

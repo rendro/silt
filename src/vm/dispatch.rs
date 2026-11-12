@@ -175,7 +175,7 @@ impl Vm {
                 let ord = match (receiver, other) {
                     (Value::Int(a), Value::Int(b)) => a.cmp(b),
                     (Value::Float(a), Value::Float(b)) => a.cmp(b),
-                    (Value::String(a), Value::String(b)) => a.cmp(b),
+                    (Value::String(a, _), Value::String(b, _)) => a.cmp(b),
                     // Bytes byte by byte, a shorter prefix first.
                     (Value::Bytes(a), Value::Bytes(b)) => a.cmp(b),
                     (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
@@ -238,7 +238,7 @@ impl Vm {
                     Value::Int(_)
                     | Value::Float(_)
                     | Value::Bool(_)
-                    | Value::String(_)
+                    | Value::String(_, _)
                     | Value::List(_)
                     | Value::Tuple(_)
                     | Value::Map(_)

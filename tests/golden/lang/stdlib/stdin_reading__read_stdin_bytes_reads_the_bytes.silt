@@ -1,0 +1,16 @@
+-- stdin: aé\n
+-- io.read_stdin_bytes gives the bytes of stdin; an empty stdin after
+-- them is no bytes.
+import bytes
+import io
+
+fn main() {
+  match io.read_stdin_bytes() {
+    Ok(b) -> println(bytes.to_list(b))
+    Err(e) -> println("error: {e}")
+  }
+  match io.read_stdin_bytes() {
+    Ok(b) -> println(bytes.length(b))
+    Err(e) -> println("error: {e}")
+  }
+}

@@ -914,7 +914,7 @@ impl Vm {
 
     pub(crate) fn display_value(&self, val: &Value) -> String {
         match val {
-            Value::String(s) => s.to_string(),
+            Value::String(s, _) => s.to_string(),
             _ => {
                 let mut text = String::new();
                 if !write_plain(&mut text, val) {

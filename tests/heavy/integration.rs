@@ -123,7 +123,7 @@ fn main() {
 }
 import host
     "#);
-    assert_eq!(result, Value::String("33.33".into()));
+    assert_eq!(result, Value::string("33.33"));
 }
 
 // ── Cross-type comparison errors ────────────────────────────────────
@@ -169,7 +169,7 @@ fn main() {
 import host
 "#;
     let result = run(input);
-    assert_eq!(result, Value::String("ready".into()));
+    assert_eq!(result, Value::string("ready"));
 }
 
 #[cfg(feature = "http")]
@@ -834,7 +834,7 @@ import host
     });
 
     let result = handle.join().expect("silt program panicked");
-    assert_eq!(result, Value::String("silt-response".into()));
+    assert_eq!(result, Value::string("silt-response"));
 }
 
 // ── Lambda as immediately-invoked expression ────────────────────────

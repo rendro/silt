@@ -323,7 +323,9 @@ io.eprintln(value: a) -> () where a: Display
 io.inspect(x: a) -> String
 io.read_bytes(path: String) -> Result(Bytes, IoError)
 io.read_file(path: String) -> Result(String, IoError)
-io.read_line() -> Result(String, IoError)
+io.read_line() -> Result(Option(String), IoError)
+io.read_stdin() -> Result(String, IoError)
+io.read_stdin_bytes() -> Result(Bytes, IoError)
 io.write_file(path: String, contents: String) -> Result((), IoError)
 ```
 
@@ -347,17 +349,22 @@ string.is_upper(s: String) -> Bool
 string.is_whitespace(s: String) -> Bool
 string.join(xs: List(String), sep: String) -> String
 string.last_index_of(s: String, needle: String) -> Option(Int)
+string.left(x: a, width: Int) -> String where a: Display
 string.length(s: String) -> Int
 string.lines(s: String) -> List(String)
 string.pad_left(s: String, width: Int, pad: String) -> String
 string.pad_right(s: String, width: Int, pad: String) -> String
 string.repeat(s: String, n: Int) -> String
 string.replace(s: String, from: String, to: String) -> String
+string.right(x: a, width: Int) -> String where a: Display
 string.slice(s: String, start: Int, end: Int) -> String
 string.split(s: String, separator: String) -> List(String)
 string.split_at(s: String, idx: Int) -> Option((String, String))
+string.split_once(s: String, separator: String) -> Option((String, String))
 string.starts_with(s: String, prefix: String) -> Bool
 string.starts_with_at(s: String, offset: Int, prefix: String) -> Bool
+string.strip_prefix(s: String, prefix: String) -> Option(String)
+string.strip_suffix(s: String, suffix: String) -> Option(String)
 string.to_lower(s: String) -> String
 string.to_upper(s: String) -> String
 string.trim(s: String) -> String
@@ -370,10 +377,20 @@ string.trim_start(s: String) -> String
 ```
 type IntError { Empty, InvalidDigit(Int), Overflow, Underflow }
 int.abs(n: Int) -> Int
+int.bit_and(a: Int, b: Int) -> Int
+int.bit_or(a: Int, b: Int) -> Int
+int.bit_xor(a: Int, b: Int) -> Int
 int.clamp(x: Int, lo: Int, hi: Int) -> Int
 int.max(a: Int, b: Int) -> Int
+int.max_value: Int
 int.min(a: Int, b: Int) -> Int
+int.min_value: Int
 int.parse(s: String) -> Result(Int, IntError)
+int.parse_radix(s: String, radix: Int) -> Result(Int, IntError)
+int.pow(base: Int, exponent: Int) -> Int
+int.shift_left(n: Int, count: Int) -> Int
+int.shift_right(n: Int, count: Int) -> Int
+int.to_radix(n: Int, radix: Int) -> String
 ```
 
 ### float
@@ -615,6 +632,7 @@ math.log10(x: Float) -> Float
 math.pi: Float
 math.pow(base: Float, exponent: Float) -> Float
 math.random() -> Float
+math.random_int(lo: Int, hi: Int) -> Int
 math.sin(x: Float) -> Float
 math.sqrt(x: Float) -> Float
 math.tan(x: Float) -> Float
@@ -821,6 +839,7 @@ stream.map(ch: Channel(a), f: Fn(a) -> b) -> Channel(b)
 stream.merge(chs: List(Channel(a))) -> Channel(a)
 stream.repeat(x: a) -> Channel(a)
 stream.scan(ch: Channel(a), init: b, f: Fn(b, a) -> b) -> Channel(b)
+stream.stdin_lines() -> Channel(Result(String, IoError))
 stream.take(ch: Channel(a), n: Int) -> Channel(a)
 stream.take_while(ch: Channel(a), pred: Fn(a) -> Bool) -> Channel(a)
 stream.tcp_chunks(stream: TcpStream, size: Int) -> Channel(Result(Bytes, TcpError))  -- cargo feature `tcp`

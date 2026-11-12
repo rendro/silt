@@ -45,7 +45,7 @@ import host
 "#
     );
     let client_v = run(&client_src);
-    let silt::value::Value::String(client_msg) = client_v else {
+    let silt::value::Value::String(client_msg, _) = client_v else {
         panic!("client_v not a string: {client_v:?}");
     };
     assert!(
@@ -88,7 +88,7 @@ import host
 "#
     .to_string();
     let server_v = run(&server_src);
-    let silt::value::Value::String(server_msg) = server_v else {
+    let silt::value::Value::String(server_msg, _) = server_v else {
         panic!("server_v not a string: {server_v:?}");
     };
     assert!(

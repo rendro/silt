@@ -49,7 +49,7 @@ fn main() {
 }
 import host
 "#);
-    assert_eq!(v, Value::String("ok".into()));
+    assert_eq!(v, Value::string("ok"));
 }
 
 // ── Echo roundtrip ────────────────────────────────────────────────────
@@ -104,7 +104,7 @@ import host
 "#
     .to_string();
     let v = run(&src);
-    assert_eq!(v, Value::String("hello".into()));
+    assert_eq!(v, Value::string("hello"));
 }
 
 #[test]
@@ -154,7 +154,7 @@ import host
 "#
     .to_string();
     let v = run(&src);
-    assert_eq!(v, Value::String("abcdefgh".into()));
+    assert_eq!(v, Value::string("abcdefgh"));
 }
 
 #[test]
@@ -200,7 +200,7 @@ import host
     // (both contained "error"), so the assertion could never fail.
     // Sibling tests (`test_write_after_close_errors`,
     // `test_connect_to_unbound_port_errors`) already use this shape.
-    assert_eq!(v, Value::String("errored".into()));
+    assert_eq!(v, Value::string("errored"));
 }
 
 #[test]
@@ -241,7 +241,7 @@ import host
 "#
     .to_string();
     let v = run(&src);
-    assert_eq!(v, Value::String("errored".into()));
+    assert_eq!(v, Value::string("errored"));
 }
 
 #[test]
@@ -260,5 +260,5 @@ import host
 "#
     );
     let v = run(&src);
-    assert_eq!(v, Value::String("errored".into()));
+    assert_eq!(v, Value::string("errored"));
 }

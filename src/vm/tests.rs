@@ -137,7 +137,7 @@ fn script_error(build: impl FnOnce(&mut Emitter)) -> String {
 fn an_add_of_a_constant_refuses_what_an_add_refuses() {
     // (Fused: `AddConst`.)
     let message = script_error(|e| {
-        let a = e.constant(Value::String("a".into()), span()).unwrap();
+        let a = e.constant(Value::string("a"), span()).unwrap();
         let one = e.constant(Value::Int(1), span()).unwrap();
         e.emit(Asm::Constant { k: a }, span()).unwrap();
         e.emit(Asm::Constant { k: one }, span()).unwrap();
@@ -183,7 +183,7 @@ fn equality_of_two_ints_and_of_an_int_and_another_kind() {
     );
     for op in [Asm::Eq, Asm::Neq] {
         assert_eq!(
-            run(Value::Int(1), Value::String("1".into()), op),
+            run(Value::Int(1), Value::string("1"), op),
             Err("unsupported operation: cannot compare Int and String".to_string()),
             "{op:?}"
         );
@@ -196,7 +196,7 @@ fn a_comparison_and_its_jump_refuse_what_the_comparison_refuses() {
         // (Fused: one `JumpIfNot..` instruction.)
         let message = script_error(|e| {
             let one = e.constant(Value::Int(1), span()).unwrap();
-            let a = e.constant(Value::String("a".into()), span()).unwrap();
+            let a = e.constant(Value::string("a"), span()).unwrap();
             let end = e.label();
             e.emit(Asm::Constant { k: one }, span()).unwrap();
             e.emit(Asm::Constant { k: a }, span()).unwrap();
@@ -440,9 +440,9 @@ fn test_locals() {
 #[test]
 fn test_interpolate() {
     let script = make_function(|e| {
-        let a = e.constant(Value::String("hello".into()), span()).unwrap();
-        let b = e.constant(Value::String(" ".into()), span()).unwrap();
-        let c = e.constant(Value::String("world".into()), span()).unwrap();
+        let a = e.constant(Value::string("hello"), span()).unwrap();
+        let b = e.constant(Value::string(" "), span()).unwrap();
+        let c = e.constant(Value::string("world"), span()).unwrap();
         e.emit(Asm::Constant { k: b }, span()).unwrap();
         let segments = [Segment::Literal(a), Segment::Value, Segment::Literal(c)];
         e.emit(
@@ -456,7 +456,7 @@ fn test_interpolate() {
     });
     let mut vm = Vm::new(crate::HostIo::process());
     let result = vm.run(script).unwrap();
-    assert_eq!(result, Value::String("hello world".into()));
+    assert_eq!(result, Value::string("hello world"));
 }
 
 /// `DisplayValue` leaves a String, an Int, a Float and a Bool as they
@@ -476,12 +476,12 @@ fn test_display_value() {
         Value::Int(42),
         float(-0.0),
         Value::Bool(true),
-        Value::String("s".into()),
+        Value::string("s"),
     ] {
         assert_eq!(shown(plain.clone()), plain);
     }
     let list = Value::list(vec![Value::Int(1), Value::Int(2)]);
-    assert_eq!(shown(list), Value::String("[1, 2]".into()));
+    assert_eq!(shown(list), Value::string("[1, 2]"));
 }
 
 /// Each kind `Interpolate` writes itself, written as `println` writes
@@ -491,7 +491,7 @@ fn test_display_value() {
 fn test_interpolate_writes_plain_values() {
     let interpolated = |values: Vec<Value>| {
         let script = make_function(|e| {
-            let dash = e.constant(Value::String("-".into()), span()).unwrap();
+            let dash = e.constant(Value::string("-"), span()).unwrap();
             let mut segments = vec![];
             for value in values {
                 let k = e.constant(value, span()).unwrap();
@@ -516,12 +516,12 @@ fn test_interpolate_writes_plain_values() {
         float(1e20),
         float(1e-7),
         Value::Bool(false),
-        Value::String("s".into()),
+        Value::string("s"),
     ];
     let expected = "-9223372036854775808-0.0-100000000000000000000.0-0.0000001-false-s";
-    assert_eq!(interpolated(values), Value::String(expected.into()));
+    assert_eq!(interpolated(values), Value::string(expected));
     let alone: Arc<str> = "alone".into();
-    let Value::String(result) = interpolated(vec![Value::String(alone.clone())]) else {
+    let Value::String(result, _) = interpolated(vec![Value::string(alone.clone())]) else {
         panic!("a String")
     };
     assert!(Arc::ptr_eq(&result, &alone), "a lone String is copied");
@@ -1027,7 +1027,7 @@ fn test_e2e_match_int() {
             import host
         "#,
     );
-    assert_eq!(result, Value::String("one".into()));
+    assert_eq!(result, Value::string("one"));
 }
 
 #[test]
@@ -1083,7 +1083,7 @@ fn test_e2e_string_from_int() {
             import host
         "#,
     );
-    assert_eq!(result, Value::String("42".into()));
+    assert_eq!(result, Value::string("42"));
 }
 
 #[test]
@@ -1387,7 +1387,7 @@ fn test_match_int_literal() {
             import host
         "#,
     );
-    assert_eq!(result, Value::String("yes".into()));
+    assert_eq!(result, Value::string("yes"));
 }
 
 #[test]
@@ -1401,7 +1401,7 @@ fn test_match_int_fallthrough() {
             import host
         "#,
     );
-    assert_eq!(result, Value::String("no".into()));
+    assert_eq!(result, Value::string("no"));
 }
 
 #[test]
@@ -1429,7 +1429,7 @@ fn test_match_bool_literal() {
             import host
         "#,
     );
-    assert_eq!(result, Value::String("yes".into()));
+    assert_eq!(result, Value::string("yes"));
 }
 
 #[test]
@@ -1443,7 +1443,7 @@ fn test_match_float_literal() {
             import host
         "#,
     );
-    assert_eq!(result, Value::String("pi".into()));
+    assert_eq!(result, Value::string("pi"));
 }
 
 #[test]
@@ -1652,7 +1652,7 @@ fn test_match_or_pattern() {
             import host
         "#,
     );
-    assert_eq!(result, Value::String("small".into()));
+    assert_eq!(result, Value::string("small"));
 }
 
 #[test]
@@ -1668,7 +1668,7 @@ fn test_match_or_pattern_no_match() {
             import host
         "#,
     );
-    assert_eq!(result, Value::String("big".into()));
+    assert_eq!(result, Value::string("big"));
 }
 
 #[test]
@@ -1685,7 +1685,7 @@ fn test_match_guard() {
             import host
         "#,
     );
-    assert_eq!(result, Value::String("positive".into()));
+    assert_eq!(result, Value::string("positive"));
 }
 
 #[test]
@@ -1702,7 +1702,7 @@ fn test_match_guard_all_fail() {
             import host
         "#,
     );
-    assert_eq!(result, Value::String("other".into()));
+    assert_eq!(result, Value::string("other"));
 }
 
 #[test]
@@ -1718,7 +1718,7 @@ fn test_match_range() {
 import host
         "#,
     );
-    assert_eq!(result, Value::String("in range".into()));
+    assert_eq!(result, Value::string("in range"));
 }
 
 #[test]
@@ -1734,7 +1734,7 @@ fn test_match_range_boundary() {
             import host
         "#,
     );
-    assert_eq!(result, Value::String("in range".into()));
+    assert_eq!(result, Value::string("in range"));
 }
 
 #[test]
@@ -1750,7 +1750,7 @@ fn test_match_range_out() {
             import host
         "#,
     );
-    assert_eq!(result, Value::String("out".into()));
+    assert_eq!(result, Value::string("out"));
 }
 
 #[test]
@@ -1768,7 +1768,7 @@ fn test_guardless_match() {
             import host
         "#,
     );
-    assert_eq!(result, Value::String("positive".into()));
+    assert_eq!(result, Value::string("positive"));
 }
 
 #[test]
@@ -1786,7 +1786,7 @@ fn test_guardless_match_default() {
             import host
         "#,
     );
-    assert_eq!(result, Value::String("other".into()));
+    assert_eq!(result, Value::string("other"));
 }
 
 #[test]
@@ -1821,7 +1821,7 @@ fn test_match_multiple_arms() {
             import host
         "#,
     );
-    assert_eq!(result, Value::String("two".into()));
+    assert_eq!(result, Value::string("two"));
 }
 
 #[test]
@@ -1847,7 +1847,7 @@ fn test_match_wildcard() {
             import host
         "#,
     );
-    assert_eq!(result, Value::String("matched".into()));
+    assert_eq!(result, Value::string("matched"));
 }
 
 #[test]
@@ -1969,7 +1969,7 @@ fn test_match_constructor_wildcard_field() {
             import host
         "#,
     );
-    assert_eq!(result, Value::String("is ok".into()));
+    assert_eq!(result, Value::string("is ok"));
 }
 
 #[test]
@@ -1985,7 +1985,7 @@ fn test_match_or_pattern_constructor() {
             import host
         "#,
     );
-    assert_eq!(result, Value::String("empty".into()));
+    assert_eq!(result, Value::string("empty"));
 }
 
 #[test]
@@ -2020,7 +2020,7 @@ fn test_guardless_match_first_branch() {
             import host
         "#,
     );
-    assert_eq!(result, Value::String("big".into()));
+    assert_eq!(result, Value::string("big"));
 }
 
 #[test]
@@ -2041,7 +2041,7 @@ fn test_match_in_function() {
             import host
         "#,
     );
-    assert_eq!(result, Value::String("zero".into()));
+    assert_eq!(result, Value::string("zero"));
 }
 
 #[test]
@@ -2058,7 +2058,7 @@ fn test_match_float_range() {
             import host
         "#,
     );
-    assert_eq!(result, Value::String("medium".into()));
+    assert_eq!(result, Value::string("medium"));
 }
 
 #[test]
@@ -2075,7 +2075,7 @@ fn test_match_float_range_out() {
             import host
         "#,
     );
-    assert_eq!(result, Value::String("large".into()));
+    assert_eq!(result, Value::string("large"));
 }
 
 #[test]
@@ -2112,7 +2112,7 @@ fn test_match_map_pattern() {
             import host
         "#,
     );
-    assert_eq!(result, Value::String("Alice".into()));
+    assert_eq!(result, Value::string("Alice"));
 }
 
 #[test]
@@ -2129,7 +2129,7 @@ fn test_match_constructor_nested_or() {
             import host
         "#,
     );
-    assert_eq!(result, Value::String("big".into()));
+    assert_eq!(result, Value::string("big"));
 }
 
 #[test]
@@ -2161,7 +2161,7 @@ fn test_match_list_empty() {
             import host
         "#,
     );
-    assert_eq!(result, Value::String("empty".into()));
+    assert_eq!(result, Value::string("empty"));
 }
 
 #[test]
@@ -2214,7 +2214,7 @@ fn test_match_pin_pattern() {
             import host
         "#,
     );
-    assert_eq!(result, Value::String("matched".into()));
+    assert_eq!(result, Value::string("matched"));
 }
 
 #[test]
@@ -2231,7 +2231,7 @@ fn test_match_pin_pattern_no_match() {
             import host
         "#,
     );
-    assert_eq!(result, Value::String("nope".into()));
+    assert_eq!(result, Value::string("nope"));
 }
 
 #[test]
@@ -2506,7 +2506,7 @@ fn test_custom_display_trait() {
             import host
         "#,
     );
-    assert_eq!(result, Value::String("Circle".into()));
+    assert_eq!(result, Value::string("Circle"));
 }
 
 #[test]
@@ -2788,7 +2788,7 @@ fn test_scheduler_list_fold_with_yielding_callback_string_acc() {
             import host
             "#,
     );
-    assert_eq!(result, Value::String("abc".into()));
+    assert_eq!(result, Value::string("abc"));
 }
 
 #[test]
@@ -4501,7 +4501,7 @@ mod type_confusion {
     }
 
     fn string(s: &str) -> Value {
-        Value::String(s.into())
+        Value::string(s)
     }
 
     fn name(e: &mut Emitter, s: &str) -> crate::bytecode::Const {
@@ -5046,7 +5046,7 @@ mod pushes_that_make_room {
             Value::Bool(true),
             Value::Unit,
             closure(),
-            Value::String("text".into()),
+            Value::string("text"),
             Value::list(vec![Value::Int(1), Value::Unit]),
             Value::tuple(vec![float(0.5), Value::Bool(false)]),
         ]
@@ -5395,7 +5395,7 @@ mod two_operands {
     use super::*;
 
     fn string(s: &str) -> Value {
-        Value::String(s.into())
+        Value::string(s)
     }
 
     /// Emit the push of `value`.
@@ -5656,7 +5656,7 @@ mod slots_in_place {
             Value::Bool(true),
             Value::Bool(false),
             Value::Unit,
-            Value::String("text".into()),
+            Value::string("text"),
             Value::list(vec![Value::Int(1), Value::Unit]),
         ]
     }
@@ -5865,7 +5865,7 @@ mod calls_and_returns {
             Value::Bool(true),
             Value::Bool(false),
             Value::Unit,
-            Value::String("text".into()),
+            Value::string("text"),
             Value::list(vec![Value::Int(1), Value::Unit]),
             Value::tuple(vec![float(0.5), Value::Bool(false)]),
         ]
@@ -5996,7 +5996,7 @@ mod calls_and_returns {
             let source = format!(
                 "import string\nfn step() {{ {step} }}\nfn depth(n) {{\n  match n {{\n    0 -> {base}\n    _ -> {sum}\n  }}\n}}\nfn main() {{ host.give(\"{{{shown}}}\") }}\nimport host"
             );
-            assert_eq!(run_vm(&source), Value::String(expected.into()), "{source}");
+            assert_eq!(run_vm(&source), Value::string(expected), "{source}");
         }
     }
 }
@@ -6018,7 +6018,7 @@ mod parts_in_place {
     }
 
     fn name(e: &mut Emitter, s: &str) -> Const {
-        e.constant(Value::String(s.into()), span()).unwrap()
+        e.constant(Value::string(s), span()).unwrap()
     }
 
     /// A part of every sort the instruction loop knows (`Sort` in
@@ -6034,7 +6034,7 @@ mod parts_in_place {
                 Arc::new(Function::returning_unit("f".to_string(), 0)),
                 vec![],
             ))),
-            Value::String("text".into()),
+            Value::string("text"),
             Value::list(vec![Value::Int(1), Value::Unit]),
             Value::test_record([("x", Value::Int(1))]),
             Value::variant(bv::SOME, [float(0.5)]),
@@ -6133,8 +6133,8 @@ mod parts_in_place {
                 e.emit(Asm::DestructVariant { index: 0 }, span()).unwrap();
             });
             let map = Value::map([
-                (Value::String("j".into()), Value::Int(5)),
-                (Value::String("k".into()), part.clone()),
+                (Value::string("j"), Value::Int(5)),
+                (Value::string("k"), part.clone()),
             ]);
             above(&part, map, |e| {
                 let k = name(e, "k");
@@ -6183,8 +6183,8 @@ mod parts_in_place {
 
     fn map_of(parts: &[Value]) -> Value {
         Value::map([
-            (Value::String("j".into()), parts[0].clone()),
-            (Value::String("k".into()), parts[1].clone()),
+            (Value::string("j"), parts[0].clone()),
+            (Value::string("k"), parts[1].clone()),
         ])
     }
 
@@ -6463,7 +6463,7 @@ mod methods_in_place {
             Value::Bool(true),
             Value::Unit,
             closure(Arc::new(Function::returning_unit("f".to_string(), 0))),
-            Value::String("text".into()),
+            Value::string("text"),
             Value::list(vec![Value::Int(1), Value::Unit]),
             Value::test_record([("x", Value::Int(1))]),
         ]
@@ -6526,7 +6526,7 @@ mod methods_in_place {
                 push(e, Value::Int(99));
                 push(e, receiver.clone());
                 push(e, Value::Int(1));
-                push(e, Value::String("two".into()));
+                push(e, Value::string("two"));
                 e.emit(call(3, tail), span()).unwrap();
                 if !tail {
                     e.emit(Asm::MakeList { count: 2 }, span()).unwrap();
@@ -6534,7 +6534,7 @@ mod methods_in_place {
                 e.emit(Asm::Return, span()).unwrap();
             });
             let result = run.unwrap();
-            let given = Value::list(vec![Value::Int(1), Value::String("two".into())]);
+            let given = Value::list(vec![Value::Int(1), Value::string("two")]);
             match tail {
                 true => assert_eq!(result, given),
                 false => assert_eq!(result, Value::list(vec![Value::Int(99), given])),
@@ -6549,7 +6549,7 @@ mod methods_in_place {
     #[test]
     fn a_method_call_makes_room_for_its_slot() {
         for below in 0..70usize {
-            let receiver = Value::String("r".into());
+            let receiver = Value::string("r");
             let vm = vm_with(&receiver, listing(1));
             let (vm, run) = left(vm, |e| {
                 for n in 0..below {
@@ -6664,7 +6664,7 @@ mod results_in_place {
     }
 
     fn string(s: &str) -> Value {
-        Value::String(s.into())
+        Value::string(s)
     }
 
     /// The stack after `op` has run on `operand`, which lay above a
@@ -6875,7 +6875,7 @@ mod slide_in_place {
                 Arc::new(Function::returning_unit("f".to_string(), 0)),
                 vec![],
             ))),
-            Value::String("text".into()),
+            Value::string("text"),
             Value::list(vec![Value::Int(1), Value::Unit]),
         ]
     }
@@ -6962,7 +6962,7 @@ mod interpolation {
 
     fn text(value: Value) -> String {
         match value {
-            Value::String(s) => s.to_string(),
+            Value::String(s, _) => s.to_string(),
             other => panic!("a String, not {other:?}"),
         }
     }
@@ -7002,9 +7002,9 @@ mod interpolation {
     #[test]
     fn literals_only_and_no_segment() {
         let result = run_script(|e| {
-            let a = e.constant(Value::String("ab".into()), span()).unwrap();
-            let empty = e.constant(Value::String("".into()), span()).unwrap();
-            let c = e.constant(Value::String("c".into()), span()).unwrap();
+            let a = e.constant(Value::string("ab"), span()).unwrap();
+            let empty = e.constant(Value::string(""), span()).unwrap();
+            let c = e.constant(Value::string("c"), span()).unwrap();
             let segments = [
                 Segment::Literal(a),
                 Segment::Literal(empty),
@@ -7026,7 +7026,7 @@ mod interpolation {
             for n in 0..65535 {
                 e.constant(Value::Int(n), span()).unwrap();
             }
-            let last = e.constant(Value::String("last".into()), span()).unwrap();
+            let last = e.constant(Value::string("last"), span()).unwrap();
             assert_eq!(last.index(), 65535);
             let segments = [Segment::Literal(last), Segment::Literal(last)];
             e.emit(
@@ -7050,7 +7050,7 @@ mod interpolation {
     fn values_come_off_the_stack_in_order() {
         let script = make_function(|e| {
             let s = |e: &mut Emitter, text: &str| {
-                let k = e.constant(Value::String(text.into()), span()).unwrap();
+                let k = e.constant(Value::string(text), span()).unwrap();
                 e.emit(Asm::Constant { k }, span()).unwrap();
                 k
             };
@@ -7169,7 +7169,7 @@ mod interpolation {
                 name: "probe".to_string(),
                 call: Arc::new(move |_| {
                     seen.lock().unwrap().push(Arc::strong_count(&literal));
-                    Ok(Value::String("x".into()))
+                    Ok(Value::string("x"))
                 }),
                 returns: HostShape::Any,
                 vars: Vec::new(),
@@ -7177,7 +7177,7 @@ mod interpolation {
             }))
         };
         let script = make_function(|e| {
-            let k = e.constant(Value::String(literal.clone()), span()).unwrap();
+            let k = e.constant(Value::string(literal.clone()), span()).unwrap();
             let p = e.constant(probe, span()).unwrap();
             e.emit(Asm::Constant { k: p }, span()).unwrap();
             e.emit(Asm::Call { argc: 0 }, span()).unwrap();
@@ -7675,7 +7675,7 @@ mod applicative {
     }
 
     fn strings(ss: &[&str]) -> Value {
-        Value::list(ss.iter().map(|s| Value::String((*s).into())).collect())
+        Value::list(ss.iter().map(|s| Value::string(*s)).collect())
     }
 
     fn some(v: Value) -> Value {
@@ -7697,7 +7697,7 @@ mod applicative {
     /// What `int.parse` gives for `s`.
     fn parsed(s: &str) -> Value {
         let mut vm = Vm::new(crate::HostIo::process());
-        run(&mut vm, body("int.parse"), &[Value::String(s.into())]).expect("int.parse")
+        run(&mut vm, body("int.parse"), &[Value::string(s)]).expect("int.parse")
     }
 
     #[test]
@@ -7757,10 +7757,7 @@ mod applicative {
             assert_eq!(run(&mut vm, map2, &[xs, ys, f]), Ok(given));
         }
         let map2 = body("Result.map2");
-        let (a, b) = (
-            err(Value::String("a".into())),
-            err(Value::String("b".into())),
-        );
+        let (a, b) = (err(Value::string("a")), err(Value::string("b")));
         for (xs, ys, given) in [
             (ok(one.clone()), ok(two.clone()), ok(Value::Int(3))),
             (a.clone(), ok(two.clone()), a.clone()),

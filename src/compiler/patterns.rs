@@ -229,7 +229,7 @@ impl Compiler<'_> {
             }
 
             PatternKind::StringLit(s) => {
-                let idx = self.add_constant(Value::String(s.clone().into()), span)?;
+                let idx = self.add_constant(Value::string(s.clone()), span)?;
                 self.emit(Asm::TestEqual { k: idx }, span)?;
                 let jump = self.jump_if_false(span)?;
                 Ok(vec![(jump, base_depth)])
@@ -389,14 +389,13 @@ impl Compiler<'_> {
                 let mut all_jumps = Vec::new();
 
                 for (key, sub_pat) in entries {
-                    let key_idx = self.add_constant(Value::String(key.clone().into()), span)?;
+                    let key_idx = self.add_constant(Value::string(key.clone()), span)?;
                     self.emit(Asm::TestMapHasKey { key: key_idx }, span)?;
                     let key_jump = self.jump_if_false(span)?;
                     all_jumps.push((key_jump, base_depth));
 
                     if !sub_pat.irrefutable {
-                        let key_idx2 =
-                            self.add_constant(Value::String(key.clone().into()), span)?;
+                        let key_idx2 = self.add_constant(Value::string(key.clone()), span)?;
                         self.emit(Asm::DestructMapValue { key: key_idx2 }, span)?;
                         let sub_fails =
                             self.compile_pattern_test_tracked(sub_pat, span, base_depth + 1)?;
@@ -545,7 +544,7 @@ impl Compiler<'_> {
         self.emit(Asm::GetLocal { slot: matched_slot }, span)?;
         let matched = self.jump_if_true(span)?;
         let message = self.add_constant(
-            Value::String("the value does not match the pattern it is bound to".into()),
+            Value::string("the value does not match the pattern it is bound to"),
             span,
         )?;
         self.emit(Asm::Constant { k: message }, span)?;
@@ -891,7 +890,7 @@ impl Compiler<'_> {
                     self.emit_destruct_field(*field, span)?;
                 }
                 BindDestructKind::MapValue(key) => {
-                    let key_idx = self.add_constant(Value::String(key.clone().into()), span)?;
+                    let key_idx = self.add_constant(Value::string(key.clone()), span)?;
                     self.emit(Asm::DestructMapValue { key: key_idx }, span)?;
                 }
             }

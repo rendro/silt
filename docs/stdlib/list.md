@@ -206,7 +206,7 @@ list.drop(xs: List(a), n: Int) -> List(a)
 ```
 
 Returns the list without its first `n` elements. If `n >= length`, returns an
-empty list. Negative `n` is a runtime error.
+empty list; a negative `n` counts as 0 and returns the whole list.
 
 ```silt
 import list
@@ -935,8 +935,8 @@ fn main() {
 list.take(xs: List(a), n: Int) -> List(a)
 ```
 
-Returns the first `n` elements. If `n >= length`, returns the whole list.
-Negative `n` is a runtime error.
+Returns the first `n` elements. If `n >= length`, returns the whole list; a
+negative `n` counts as 0 and returns an empty list.
 
 ```silt
 import list

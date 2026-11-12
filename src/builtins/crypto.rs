@@ -44,7 +44,7 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
         ("InvalidLength", [Value::Int(n)]) => {
             format!("crypto.random_bytes: {n} bytes exceed the cap of {RANDOM_BYTES_CAP} (1 MiB)")
         }
-        ("Other", [Value::String(m)]) => m.to_string(),
+        ("Other", [Value::String(m, _)]) => m.to_string(),
         _ => return None,
     })
 }
@@ -111,7 +111,7 @@ builtins! {
             let text = format!("CSPRNG failure: {e}");
             return crypto_err(Value::variant(
                 bv::CRYPTO_OTHER,
-                [Value::String(text.into())],
+                [Value::string(text)],
             ));
         }
         ok(Value::Bytes(Arc::new(buf)))

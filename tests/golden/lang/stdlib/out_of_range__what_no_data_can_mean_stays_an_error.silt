@@ -1,0 +1,9 @@
+-- exit: 1
+-- stderr-contains: string.pad_left: pad must be a 1-character string
+-- A pad that is not one character is a mistake in the code, not in the
+-- data: it stays a runtime error after counts and positions are cut.
+import string
+
+fn main() {
+  println(string.pad_left("hi", -4, "ab"))
+}

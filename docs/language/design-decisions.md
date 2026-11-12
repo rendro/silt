@@ -102,6 +102,36 @@ or `list.get(xs, list.length(xs) - 1)` for explicit end-relative access.
 This keeps the mental model simple and avoids hidden "if negative, wrap"
 logic.
 
+## Arguments Out of Range
+
+A standard library function meets an argument outside its range in one of
+three ways, by what the argument says:
+
+- **A position to look up** that is not there gives `None`: `list.get`,
+  `bytes.get`, `string.split_at`, `list.set` past the end.
+- **A count, width or position that says how much** is cut to the range: a
+  negative one counts as 0, as one past the end counts as the end. This is
+  `list.take`, `list.drop`, `stream.take`, `stream.drop`, `string.slice`,
+  `bytes.slice`, `string.repeat` and the width of `string.pad_left`,
+  `string.pad_right`, `string.left` and `string.right`. A count worked
+  out from data, as in `list.take(xs, n - k)`, so never ends a program.
+- **An argument that no data can mean** is a mistake in the code, and a
+  runtime error: a size of 0 or less for `list.chunks` and `stream.chunks`,
+  `int.clamp` with the low bound above the high one, a pad that is not one
+  character, negative decimals for `float.format`, month 13 for
+  `time.days_in_month`.
+
+```silt
+import list
+import string
+
+fn main() {
+  println(list.take([1, 2, 3], -1)) -- []
+  println(string.slice("hello", -2, 2)) -- he
+  println(list.get([1, 2, 3], 5)) -- None
+}
+```
+
 ## Immutability Cost
 
 DP and graph algorithms must thread state through `loop` or `fold`. More

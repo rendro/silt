@@ -256,7 +256,7 @@ pub fn same_type(witness: &Value, value: &Value) -> bool {
             (Value::Int(_), Value::Int(_))
             | (Value::Float(_), Value::Float(_))
             | (Value::Bool(_), Value::Bool(_))
-            | (Value::String(_), Value::String(_))
+            | (Value::String(_, _), Value::String(_, _))
             | (Value::Bytes(_), Value::Bytes(_))
             | (Value::Unit, Value::Unit)
             | (Value::Channel(_), Value::Channel(_))
@@ -361,7 +361,7 @@ pub fn of_type(ty: &Value, value: &Value) -> bool {
         Value::PrimitiveDescriptor(name) => match (*name, value) {
             ("Int", Value::Int(_))
             | ("Float", Value::Float(_))
-            | ("String", Value::String(_))
+            | ("String", Value::String(_, _))
             | ("Bool", Value::Bool(_)) => true,
             ("Int" | "Float" | "String" | "Bool", _) => false,
             _ => true,
@@ -374,7 +374,7 @@ pub fn of_type(ty: &Value, value: &Value) -> bool {
                 Value::Int(_) => head("Int"),
                 Value::Float(_) => head("Float"),
                 Value::Bool(_) => head("Bool"),
-                Value::String(_) => head("String"),
+                Value::String(_, _) => head("String"),
                 Value::Bytes(_) => head("Bytes"),
                 Value::List(_) => head("List"),
                 Value::Set(_) => head("Set"),
@@ -423,7 +423,7 @@ fn shown_type(value: &Value, budget: &mut usize) -> String {
         Value::Int(_) => "Int".to_string(),
         Value::Float(_) => "Float".to_string(),
         Value::Bool(_) => "Bool".to_string(),
-        Value::String(_) => "String".to_string(),
+        Value::String(_, _) => "String".to_string(),
         Value::Bytes(_) => "Bytes".to_string(),
         Value::Unit => "()".to_string(),
         Value::List(items) => format!("List({})", of(items.first().as_ref(), budget)),
@@ -628,7 +628,7 @@ impl HostShape {
             | (HostShape::Int, Value::Int(_))
             | (HostShape::Float, Value::Float(_))
             | (HostShape::Bool, Value::Bool(_))
-            | (HostShape::String, Value::String(_))
+            | (HostShape::String, Value::String(_, _))
             | (HostShape::Bytes, Value::Bytes(_))
             | (HostShape::Unit, Value::Unit)
             | (HostShape::Channel(_), Value::Channel(_)) => Ok(()),
@@ -803,7 +803,7 @@ impl IntoValue for bool {
 impl FromValue for String {
     fn from_value(value: &Value) -> Result<Self, String> {
         match value {
-            Value::String(s) => Ok(s.to_string()),
+            Value::String(s, _) => Ok(s.to_string()),
             other => Err(format!("expected String, got {}", other.kind())),
         }
     }
@@ -811,13 +811,13 @@ impl FromValue for String {
 
 impl IntoValue for String {
     fn into_value(self) -> Result<Value, String> {
-        Ok(Value::String(self.into()))
+        Ok(Value::string(self))
     }
 }
 
 impl IntoValue for &str {
     fn into_value(self) -> Result<Value, String> {
-        Ok(Value::String(self.into()))
+        Ok(Value::string(self))
     }
 }
 
@@ -864,7 +864,7 @@ impl<T: IntoValue> IntoValue for Result<T, String> {
     fn into_value(self) -> Result<Value, String> {
         Ok(match self {
             Ok(v) => Value::variant(bv::OK, [v.into_value()?]),
-            Err(e) => Value::variant(bv::ERR, [Value::String(e.into())]),
+            Err(e) => Value::variant(bv::ERR, [Value::string(e)]),
         })
     }
 }

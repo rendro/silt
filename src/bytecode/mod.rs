@@ -688,7 +688,7 @@ impl Chunk {
     /// a string, as the verifier checked.
     pub fn string(&self, k: Const) -> &str {
         match self.constant(k) {
-            Value::String(s) => s,
+            Value::String(s, _) => s,
             other => unreachable!("verified code names a string constant, not {other:?}"),
         }
     }
@@ -744,7 +744,7 @@ impl Chunk {
         let key = match &value {
             Value::Int(n) => Some(ConstantKey::Int(*n)),
             Value::Bool(b) => Some(ConstantKey::Bool(*b)),
-            Value::String(s) => Some(ConstantKey::String(s.clone())),
+            Value::String(s, _) => Some(ConstantKey::String(s.clone())),
             Value::Float(f) => Some(ConstantKey::Float(f.get().to_bits())),
             Value::VariantConstructor(tag) => {
                 Some(ConstantKey::Variant(tag.type_id(), tag.ordinal()))

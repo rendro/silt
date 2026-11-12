@@ -1,8 +1,0 @@
--- exit: 1
--- stderr-contains: error[runtime]
--- stderr-contains: string.pad_left: negative width
--- stderr-not-contains: negative index
-import string
-fn main() {
-  let _ = string.pad_left("hi", -1, " ")
-}

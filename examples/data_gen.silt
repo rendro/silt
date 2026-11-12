@@ -181,7 +181,7 @@ fn histogram(label, values, bucket_size) {
     |> list.each { bucket_start ->
       let bucket_end = bucket_start + bucket_size
       let count = map.get(counts, bucket_start) |> option.unwrap_or(0)
-      let range_label = "{bucket_start}-{bucket_end}" |> string.pad_right(10, " ")
+      let range_label = "{bucket_start}-{bucket_end}" |> string.left(10)
       let bar = string.repeat("#", count)
       println("{range_label} | {bar} ({count})")
     }

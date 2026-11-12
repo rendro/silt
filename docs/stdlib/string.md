@@ -9,6 +9,29 @@ order: 3
 Functions for working with immutable strings. Strings use `"..."` literal syntax
 with `{expr}` interpolation.
 
+Offsets and lengths count characters, not bytes. A string of ASCII text only
+(source code, logs, CSV) knows that each of its characters is one byte, so
+`string.length`, `string.slice`, `string.split_at`, `string.starts_with_at`
+and the index that `string.index_of` gives take no longer for an offset deep
+into the text than for one at its start. In text with other characters an
+offset is counted from the start of the string each time: a loop that takes
+such text one index at a time takes time that grows with the square of its
+length. Scan it with `string.chars` or `string.split` instead, which go
+through it once.
+
+```silt
+import list
+import string
+
+fn main() {
+  -- One pass over the characters, for any text.
+  let vowels = string.chars("naïve café")
+    |> list.filter { c -> string.contains("aeiouïé", c) }
+    |> list.length
+  println(vowels) -- 5
+}
+```
+
 ## Summary
 
 | Function | Signature | Description |
@@ -30,17 +53,22 @@ with `{expr}` interpolation.
 | `is_whitespace` | `(String) -> Bool` | All chars are whitespace |
 | `join` | `(List(String), String) -> String` | Join list with separator |
 | `last_index_of` | `(String, String) -> Option(Int)` | Character index of last occurrence |
+| `left` | `(a, Int) -> String where a: Display` | The value as Display shows it, padded with spaces on the right to width |
 | `length` | `(String) -> Int` | Length in characters |
 | `lines` | `(String) -> List(String)` | Split on `\n` (strips trailing `\r`, no empty final element) |
 | `pad_left` | `(String, Int, String) -> String` | Pad to width on the left |
 | `pad_right` | `(String, Int, String) -> String` | Pad to width on the right |
 | `repeat` | `(String, Int) -> String` | Repeat string n times |
 | `replace` | `(String, String, String) -> String` | Replace all occurrences |
+| `right` | `(a, Int) -> String where a: Display` | The value as Display shows it, padded with spaces on the left to width |
 | `slice` | `(String, Int, Int) -> String` | Substring by character indices |
 | `split` | `(String, String) -> List(String)` | Split on separator |
 | `split_at` | `(String, Int) -> Option((String, String))` | Split into two strings at a character index, or None past the end |
+| `split_once` | `(String, String) -> Option((String, String))` | Split at the first separator into the text before and after it, or None if it is not there |
 | `starts_with` | `(String, String) -> Bool` | Check prefix |
 | `starts_with_at` | `(String, Int, String) -> Bool` | Check prefix at a given character offset |
+| `strip_prefix` | `(String, String) -> Option(String)` | The rest after the prefix, or None if s does not start with it |
+| `strip_suffix` | `(String, String) -> Option(String)` | The rest before the suffix, or None if s does not end with it |
 | `to_lower` | `(String) -> String` | Convert to lowercase |
 | `to_upper` | `(String) -> String` | Convert to uppercase |
 | `trim` | `(String) -> String` | Remove leading and trailing whitespace |
@@ -373,6 +401,30 @@ fn main() {
 ```
 
 
+## `string.left`
+
+```
+string.left(x: a, width: Int) -> String where a: Display
+```
+
+Returns `x` as `Display` shows it (as in `"{x}"`), with spaces after it up to
+`width` characters: the text sits at the left of the column. Any value that
+has `Display` will do, so a number needs no conversion first. A text as wide
+as `width` or wider comes back as it is, as it does for a negative `width`. A
+`width` over 10,000,000 is a runtime error. For another pad character than a
+space, use `string.pad_right`.
+
+```silt
+import string
+
+fn main() {
+  println("[{string.left("name", 8)}]") -- [name    ]
+  println("[{string.left(3.5, 6)}]") -- [3.5   ]
+  println("[{string.left("toolong", 3)}]") -- [toolong]
+}
+```
+
+
 ## `string.length`
 
 ```
@@ -424,9 +476,10 @@ string.pad_left(s: String, width: Int, pad: String) -> String
 ```
 
 Pads `s` on the left with `pad`, which must be exactly one character,
-until it is `width` characters long. Returns `s` unchanged if already at or
-beyond `width`. A `pad` of any other length, a negative `width` and a
-`width` over 10,000,000 are runtime errors.
+until it is `width` characters long. To pad with spaces, use `string.right`,
+which also takes any value that has `Display`. Returns `s` unchanged if already at or
+beyond `width`, as it is for a negative `width`. A `pad` of any other length
+and a `width` over 10,000,000 are runtime errors.
 
 ```silt
 import string
@@ -444,9 +497,10 @@ string.pad_right(s: String, width: Int, pad: String) -> String
 ```
 
 Pads `s` on the right with `pad`, which must be exactly one character,
-until it is `width` characters long. Returns `s` unchanged if already at or
-beyond `width`. A `pad` of any other length, a negative `width` and a
-`width` over 10,000,000 are runtime errors.
+until it is `width` characters long. To pad with spaces, use `string.left`,
+which also takes any value that has `Display`. Returns `s` unchanged if already at or
+beyond `width`, as it is for a negative `width`. A `pad` of any other length
+and a `width` over 10,000,000 are runtime errors.
 
 ```silt
 import string
@@ -463,7 +517,8 @@ fn main() {
 string.repeat(s: String, n: Int) -> String
 ```
 
-Returns the string repeated `n` times. `n` must be non-negative.
+Returns the string repeated `n` times. A negative `n` counts as 0 and returns
+an empty string.
 
 ```silt
 import string
@@ -492,6 +547,31 @@ fn main() {
 ```
 
 
+## `string.right`
+
+```
+string.right(x: a, width: Int) -> String where a: Display
+```
+
+Returns `x` as `Display` shows it (as in `"{x}"`), with spaces before it up to
+`width` characters: the text sits at the right of the column, as numbers do in
+a table. Any value that has `Display` will do. A text as wide as `width` or
+wider comes back as it is, as it does for a negative `width`. A `width` over
+10,000,000 is a runtime error. For another pad character than a space, use
+`string.pad_left`.
+
+```silt
+import list
+import string
+
+fn main() {
+  println("[{string.right(42, 6)}]") -- [    42]
+  let rows = [("apples", 12), ("kiwis", 1500)]
+  list.each(rows) { (name, n) -> println("{string.left(name, 8)}{string.right(n, 6)}") }
+}
+```
+
+
 ## `string.slice`
 
 ```
@@ -499,8 +579,8 @@ string.slice(s: String, start: Int, end: Int) -> String
 ```
 
 Returns the substring from character index `start` (inclusive) to `end`
-(exclusive). Indices are clamped to the string length. Returns an empty string
-if `start > end`. Negative indices are a runtime error.
+(exclusive). Both indices are cut to the string: a negative one counts as 0,
+one past the end as the end. Returns an empty string if `start > end`.
 
 ```silt
 import string
@@ -556,6 +636,28 @@ fn main() {
 ```
 
 
+## `string.split_once`
+
+```
+string.split_once(s: String, separator: String) -> Option((String, String))
+```
+
+Splits `s` at the first `separator` into `Some((before, after))`, the
+separator itself in neither; `None` if `s` does not contain it. Only the
+first separator splits: the rest stays in `after`. It is the way to read
+`key=value` and `--name=value`.
+
+```silt
+import string
+
+fn main() {
+  println(string.split_once("--top=5", "=")) -- Some(("--top", "5"))
+  println(string.split_once("a = b = c", " = ")) -- Some(("a", "b = c"))
+  println(string.split_once("verbose", "=")) -- None
+}
+```
+
+
 ## `string.starts_with`
 
 ```
@@ -592,6 +694,44 @@ fn main() {
   println(string.starts_with_at("hello", 2, "lx")) -- false
   println(string.starts_with_at("hello", -1, "h")) -- false
   println(string.starts_with_at("hello", 99, "")) -- false
+}
+```
+
+
+## `string.strip_prefix`
+
+```
+string.strip_prefix(s: String, prefix: String) -> Option(String)
+```
+
+Returns `Some` of the rest of `s` after `prefix`, or `None` if `s` does not
+start with `prefix`.
+
+```silt
+import string
+
+fn main() {
+  println(string.strip_prefix("Bearer xyz", "Bearer ")) -- Some("xyz")
+  println(string.strip_prefix("Basic xyz", "Bearer ")) -- None
+}
+```
+
+
+## `string.strip_suffix`
+
+```
+string.strip_suffix(s: String, suffix: String) -> Option(String)
+```
+
+Returns `Some` of the rest of `s` before `suffix`, or `None` if `s` does not
+end with `suffix`.
+
+```silt
+import string
+
+fn main() {
+  println(string.strip_suffix("notes.txt", ".txt")) -- Some("notes")
+  println(string.strip_suffix("notes.md", ".txt")) -- None
 }
 ```
 

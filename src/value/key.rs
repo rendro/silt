@@ -53,7 +53,7 @@ fn rank(value: &Value) -> u8 {
         Value::Bool(_) => 1,
         Value::Int(_) => 2,
         Value::Float(_) => 3,
-        Value::String(_) => 4,
+        Value::String(_, _) => 4,
         Value::List(_) => 5,
         Value::Tuple(_) => 6,
         Value::Map(_) => 7,
@@ -97,7 +97,7 @@ fn has_parts(value: &Value) -> bool {
 fn cmp_heads(a: &Value, b: &Value) -> Ordering {
     match (a, b) {
         (Value::Int(a), Value::Int(b)) => a.cmp(b),
-        (Value::String(a), Value::String(b)) => a.cmp(b),
+        (Value::String(a, _), Value::String(b, _)) => a.cmp(b),
         (Value::Float(a), Value::Float(b)) => a.cmp(b),
         (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
         (Value::Unit, Value::Unit)
@@ -168,7 +168,7 @@ fn hash_head<H: Hasher>(value: &Value, state: &mut H) {
         Value::Bool(b) => b.hash(state),
         Value::Int(n) => n.hash(state),
         Value::Float(f) => f.hash(state),
-        Value::String(s) => s.hash(state),
+        Value::String(s, _) => s.hash(state),
         // (Which variant of its type, and nothing of the type: the
         // keys of one map are of one type, and a hash that held the
         // type's id would be another when a type is declared before

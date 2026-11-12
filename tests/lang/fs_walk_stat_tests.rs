@@ -79,11 +79,11 @@ fn err_msg(v: Value) -> String {
         Value::Variant(err) if err.is(bv::ERR) => match err.fields().first() {
             // Still accept bare strings in case any caller ever hands us
             // one, but the modern path is the IoError variant arm below.
-            Some(Value::String(s)) => s.to_string(),
+            Some(Value::String(s, _)) => s.to_string(),
             Some(Value::Variant(error)) => {
                 let first_str = |vs: &[Value]| -> String {
                     match vs.first() {
-                        Some(Value::String(s)) => s.to_string(),
+                        Some(Value::String(s, _)) => s.to_string(),
                         other => format!("<non-string payload: {other:?}>"),
                     }
                 };
@@ -286,7 +286,7 @@ import host
 "#
     );
     match run(&input) {
-        Value::String(s) => s.to_string(),
+        Value::String(s, _) => s.to_string(),
         other => panic!("expected a String, got {other:?}"),
     }
 }
@@ -441,7 +441,7 @@ import host
     );
     let inner = ok_inner(run(&input));
     match inner {
-        Value::String(s) => {
+        Value::String(s, _) => {
             // read_link returns the raw target as stored, not the
             // canonicalized resolution. Since we symlinked with an
             // absolute path, that's what we expect back.

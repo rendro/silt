@@ -638,6 +638,34 @@ impl Runtime {
 
     /// The next value of `math.random`, in `[0, 1)`.
     pub(crate) fn random(&self) -> f64 {
+        (self.next_random() >> 11) as f64 / ((1u64 << 53) as f64)
+    }
+
+    /// The next value of `math.random_int(lo, hi)`: any Int of
+    /// `lo..=hi` as likely as any other (`lo` is at most `hi`).
+    pub(crate) fn random_int(&self, lo: i64, hi: i64) -> i64 {
+        // How many Ints there are, less one: all 2^64 of them is
+        // `u64::MAX`.
+        let span = hi.abs_diff(lo);
+        let Some(count) = span.checked_add(1) else {
+            // Every Int: the high halves of two draws, as the generator
+            // never gives 0 itself.
+            let high = self.next_random() & 0xFFFF_FFFF_0000_0000;
+            return (high | (self.next_random() >> 32)) as i64;
+        };
+        // A draw below `2^64 % count` is drawn again: what is left is a
+        // whole number of rounds of `count`, each value as often.
+        let least = count.wrapping_neg() % count;
+        loop {
+            let drawn = self.next_random();
+            if drawn >= least {
+                return lo.wrapping_add((drawn % count) as i64);
+            }
+        }
+    }
+
+    /// The next number of the generator.
+    fn next_random(&self) -> u64 {
         let mut state = self.rng.lock();
         let mut s = state.unwrap_or_else(|| {
             // splitmix64 of the host clock's time: clocks that read
@@ -653,8 +681,7 @@ impl Runtime {
         s ^= s >> 7;
         s ^= s << 17;
         *state = Some(s);
-        // Convert to [0.0, 1.0)
-        (s >> 11) as f64 / ((1u64 << 53) as f64)
+        s
     }
 }
 
