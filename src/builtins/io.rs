@@ -368,6 +368,11 @@ builtins! {
                     bv::SOME,
                     [Value::string(line.trim_end())],
                 )),
+                // As `read_stdin` and `stream.stdin_lines` say it.
+                Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+                    let why = Value::string("a line of stdin is not UTF-8");
+                    io_err(Value::variant(bv::IO_INVALID_INPUT, [why]))
+                }
                 Err(e) => io_result_err(&e, ""),
             }
         })

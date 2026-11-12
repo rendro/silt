@@ -502,9 +502,16 @@ mod tests {
     /// million, each taken at its offset and its index found. Were
     /// each offset counted from the start again (if only by looking at
     /// the bytes before it, eight or more at a time), that would be
-    /// some 10^12 bytes looked at: hours, not the moment it takes.
+    /// some 10^12 bytes looked at: minutes, not the moment it takes.
+    /// (What says that the mark alone answers, without a look at the
+    /// text, is the first assertion.)
     #[test]
     fn an_offset_into_a_string_marked_ascii_costs_nothing() {
+        // Given the mark, the offset is the index, whatever the bytes:
+        // the text is not looked at (a mark is never set on such text;
+        // here it is, to see that it is believed).
+        assert_eq!(byte_offset("éé", true, 1), Some(1));
+        assert_eq!(byte_offset("éé", false, 1), Some(2));
         let long = 4_000_000;
         let s = "ab".repeat(long / 2);
         let value = Value::string(s.as_str());

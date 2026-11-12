@@ -648,7 +648,10 @@ impl Runtime {
         // `u64::MAX`.
         let span = hi.abs_diff(lo);
         let Some(count) = span.checked_add(1) else {
-            return self.next_random() as i64;
+            // Every Int: the high halves of two draws, as the generator
+            // never gives 0 itself.
+            let high = self.next_random() & 0xFFFF_FFFF_0000_0000;
+            return (high | (self.next_random() >> 32)) as i64;
         };
         // A draw below `2^64 % count` is drawn again: what is left is a
         // whole number of rounds of `count`, each value as often.

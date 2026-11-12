@@ -149,6 +149,28 @@ fn main() {
 }
 
 #[test]
+fn input_that_is_no_utf8_is_invalid_input_for_all_three_readers() {
+    // io.read_line says it as io.read_stdin and stream.stdin_lines do: an
+    // `InvalidInput`, which one match arm takes for all three.
+    let src = r#"import io
+
+fn main() {
+  println(io.inspect(io.read_line()))
+  match io.read_line() {
+    Err(io.InvalidInput(why)) -> println("invalid input: {why}")
+    other -> println("not InvalidInput: {io.inspect(other)}")
+  }
+}
+"#;
+    let (out, err, ok) = run_with("read_line_bad", src, b"ok\n\xff\xfe\n");
+    assert!(ok, "{err}");
+    assert_eq!(
+        out,
+        "Ok(Some(\"ok\"))\ninvalid input: a line of stdin is not UTF-8\n"
+    );
+}
+
+#[test]
 fn a_line_on_an_open_stdin_comes_before_the_input_ends() {
     // `stream.stdin_lines` does not wait for a full read: the line it is
     // given is printed while stdin is still open.

@@ -111,8 +111,9 @@ three ways, by what the argument says:
   `bytes.get`, `string.split_at`, `list.set` past the end.
 - **A count, width or position that says how much** is cut to the range: a
   negative one counts as 0, as one past the end counts as the end. This is
-  `list.take`, `list.drop`, `string.slice`, `bytes.slice`, `string.repeat`
-  and the width of `string.pad_left` and `string.pad_right`. A count worked
+  `list.take`, `list.drop`, `stream.take`, `stream.drop`, `string.slice`,
+  `bytes.slice`, `string.repeat` and the width of `string.pad_left`,
+  `string.pad_right`, `string.left` and `string.right`. A count worked
   out from data, as in `list.take(xs, n - k)`, so never ends a program.
 - **An argument that no data can mean** is a mistake in the code, and a
   runtime error: a size of 0 or less for `list.chunks` and `stream.chunks`,

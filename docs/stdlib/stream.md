@@ -55,7 +55,10 @@ ends at the end of stdin; the text after the last `\n` is the last line. A
 read takes what stdin has at that moment, up to 64 KiB, so a pipe gives many
 lines a read and a line typed at a terminal comes as soon as it is typed. A
 line that is not UTF-8 ends the stream with `Err(InvalidInput(...))` after
-the lines before it, as for `file_lines`.
+the lines before it, as for `file_lines`; its number counts the lines this
+stream gave. A stream reads ahead of what it gives: once a program has made one,
+the rest of stdin is its own, and an `io.read_line` or `io.read_stdin` after it
+does not see what the stream has read but not given.
 
 ### Transforms
 

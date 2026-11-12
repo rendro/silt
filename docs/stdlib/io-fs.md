@@ -183,8 +183,9 @@ io.read_line() -> Result(Option(String), IoError)
 Reads a single line from stdin (trailing newline stripped). Returns
 `Ok(Some(line))` for a line, `Ok(None)` at the end of stdin (and on every read
 after it), as the end of a channel or of a stream is a value, and
-`Err(IoError)` on failure. When called from a spawned task, the operation
-transparently yields to the scheduler. To read all of stdin at once, use
+`Err(IoError)` on failure: a line that is not UTF-8 is `Err(InvalidInput(...))`,
+as for `io.read_stdin` and `stream.stdin_lines`. When called from a spawned
+task, the operation transparently yields to the scheduler. To read all of stdin at once, use
 `io.read_stdin`; to read it a line at a time as a stream, `stream.stdin_lines`.
 
 ```silt

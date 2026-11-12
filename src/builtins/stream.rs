@@ -686,36 +686,76 @@ fn one_a_read(
 /// many lines a read. A line that is no UTF-8 ends the source with an
 /// error, after the lines before it, as `file_lines` ends.
 fn stdin_line_reads() -> impl FnMut() -> Vec<Value> + Send + 'static {
-    // What was read and is no line yet; stdin has ended; the source has
-    // ended; how many lines were given.
-    let mut pending: Vec<u8> = Vec::new();
-    let mut at_end = false;
-    let mut ended = false;
-    let mut given: u64 = 0;
-    let not_utf8 = |number: u64| {
+    use std::io::Read;
+    let mut lines = LineReads::new(|buf: &mut [u8]| std::io::stdin().lock().read(buf));
+    move || lines.next_lines()
+}
+
+/// The lines of a source read a piece at a time by `read` (see
+/// [`stdin_line_reads`]). Each byte is looked at for a `\n` once: a line
+/// that many reads bring is not searched again from its start at each
+/// one.
+struct LineReads<R> {
+    read: R,
+    /// What was read and is no line yet.
+    pending: Vec<u8>,
+    /// How much of `pending` is known to have no `\n`.
+    scanned: usize,
+    /// The source has ended; the lines have ended.
+    at_end: bool,
+    ended: bool,
+    /// How many lines were given.
+    given: u64,
+    /// How many bytes were looked at for a `\n`, in all (what a test
+    /// asks: each byte once).
+    #[cfg_attr(not(test), allow(dead_code))]
+    looked: u64,
+}
+
+impl<R: FnMut(&mut [u8]) -> std::io::Result<usize>> LineReads<R> {
+    fn new(read: R) -> LineReads<R> {
+        LineReads {
+            read,
+            pending: Vec::new(),
+            scanned: 0,
+            at_end: false,
+            ended: false,
+            given: 0,
+            looked: 0,
+        }
+    }
+
+    fn not_utf8(number: u64) -> Value {
         let why = format!("line {number} of stdin is not UTF-8");
         Value::variant(
             bv::ERR,
             [Value::variant(bv::IO_INVALID_INPUT, [Value::string(why)])],
         )
-    };
-    move || {
-        use std::io::Read;
+    }
+
+    /// The lines of the next read (see [`stdin_line_reads`]).
+    fn next_lines(&mut self) -> Vec<Value> {
         let mut lines = Vec::new();
-        while !ended {
+        while !self.ended {
             let mut taken = 0;
             let mut held_back = false;
-            while let Some(at) = pending[taken..].iter().position(|&b| b == b'\n') {
-                let line = &pending[taken..taken + at];
+            loop {
+                let from = taken.max(self.scanned);
+                let Some(at) = self.pending[from..].iter().position(|&b| b == b'\n') else {
+                    self.looked += (self.pending.len() - from) as u64;
+                    break;
+                };
+                self.looked += (at + 1) as u64;
+                let line = &self.pending[taken..from + at];
                 let line = line.strip_suffix(b"\r").unwrap_or(line);
                 match std::str::from_utf8(line) {
                     Ok(line) => {
-                        given += 1;
+                        self.given += 1;
                         lines.push(ok(Value::string(line)));
                     }
                     Err(_) if lines.is_empty() => {
-                        ended = true;
-                        lines.push(not_utf8(given + 1));
+                        self.ended = true;
+                        lines.push(Self::not_utf8(self.given + 1));
                         return lines;
                     }
                     // The lines before it are given first: the next read
@@ -725,34 +765,35 @@ fn stdin_line_reads() -> impl FnMut() -> Vec<Value> + Send + 'static {
                         break;
                     }
                 }
-                taken += at + 1;
+                taken = from + at + 1;
             }
-            pending.drain(..taken);
+            self.pending.drain(..taken);
+            self.scanned = if held_back { 0 } else { self.pending.len() };
             if held_back || !lines.is_empty() {
                 break;
             }
-            if at_end {
-                ended = true;
-                if !pending.is_empty() {
-                    let line = pending.strip_suffix(b"\r").unwrap_or(&pending);
+            if self.at_end {
+                self.ended = true;
+                if !self.pending.is_empty() {
+                    let line = self.pending.strip_suffix(b"\r").unwrap_or(&self.pending);
                     lines.push(match std::str::from_utf8(line) {
                         Ok(line) => ok(Value::string(line)),
-                        Err(_) => not_utf8(given + 1),
+                        Err(_) => Self::not_utf8(self.given + 1),
                     });
                 }
                 break;
             }
-            let at = pending.len();
-            pending.resize(at + READ_AT_ONCE, 0);
-            match std::io::stdin().lock().read(&mut pending[at..]) {
+            let at = self.pending.len();
+            self.pending.resize(at + READ_AT_ONCE, 0);
+            match (self.read)(&mut self.pending[at..]) {
                 Ok(got) => {
-                    pending.truncate(at + got);
-                    at_end = got == 0;
+                    self.pending.truncate(at + got);
+                    self.at_end = got == 0;
                 }
                 Err(e) => {
-                    pending.truncate(at);
+                    self.pending.truncate(at);
                     if e.kind() != std::io::ErrorKind::Interrupted {
-                        ended = true;
+                        self.ended = true;
                         lines.push(io_result_err(&e, ""));
                     }
                 }
@@ -1705,6 +1746,59 @@ builtins! {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The lines of `input`, given `piece` bytes a read, and how many
+    /// bytes were looked at for a `\n`.
+    fn piece_lines_of(input: &[u8], piece: usize) -> (Vec<String>, u64) {
+        let mut at = 0;
+        let input = input.to_vec();
+        let mut lines = LineReads::new(move |buf: &mut [u8]| {
+            let n = piece.min(buf.len()).min(input.len() - at);
+            buf[..n].copy_from_slice(&input[at..at + n]);
+            at += n;
+            Ok(n)
+        });
+        let mut got = Vec::new();
+        loop {
+            let read = lines.next_lines();
+            if read.is_empty() {
+                break;
+            }
+            // A line's text, or "ERR" for an error.
+            got.extend(read.iter().map(|line| match line {
+                Value::Variant(v) if v.is(bv::OK) => match v.fields() {
+                    [Value::String(text, _)] => text.to_string(),
+                    _ => "?".to_string(),
+                },
+                _ => "ERR".to_string(),
+            }));
+        }
+        (got, lines.looked)
+    }
+
+    /// A line that many reads bring is looked at once, not again from
+    /// its start at each read: one line of 2,000,000 bytes in reads of
+    /// 100 bytes looks at 2,000,000 bytes and a few, not 2 * 10^10.
+    #[test]
+    fn a_long_line_over_many_reads_is_looked_at_once() {
+        let mut input = vec![b'a'; 2_000_000];
+        input.extend_from_slice(b"\nb\r\nlast");
+        let (lines, looked) = piece_lines_of(&input, 100);
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0].len(), 2_000_000);
+        assert_eq!(lines[1..], ["b".to_string(), "last".to_string()]);
+        assert!(
+            looked <= input.len() as u64,
+            "looked at {looked} bytes of {}",
+            input.len()
+        );
+    }
+
+    #[test]
+    fn line_reads_give_the_lines_before_one_that_is_no_utf8() {
+        let (lines, _) = piece_lines_of(b"one\ntwo\n\xff\nfour\n", 3);
+        assert_eq!(lines, ["one", "two", "ERR"]);
+    }
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
