@@ -453,6 +453,14 @@ impl Vm {
             })?;
         let result = self.run(Arc::new(script));
         self.report_unjoined_failures();
+        // A write to stdout that failed after the print that made it had
+        // returned (the process's stdout is written by its writer) is the
+        // program's error, as the print's own would have been.
+        if result.is_ok()
+            && let Some(why) = self.runtime.io.unraised_stdout_failure()
+        {
+            return Err(VmError::new(format!("cannot write to stdout: {why}")));
+        }
         result
     }
 

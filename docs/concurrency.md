@@ -1531,8 +1531,10 @@ requests that a deadline gives up, however many, never use the bound.
 None of these block the OS thread. The task is parked and the thread continues
 running other tasks.
 
-What a program prints goes to a writer, one for stdout and one for stderr,
-which writes it out in the order of the calls, each text whole: two tasks'
+What a program prints to the process's output (the `silt` command's
+`HostIo::process()`; an embedder's own outputs are written by the print
+itself, see [the FFI](ffi.md#output-and-clock)) goes to a writer, one for stdout and one
+for stderr, which writes it out in the order of the calls, each text whole: two tasks'
 lines never mix. A print does not wait for the reader. Only when the reader
 has not taken 64 KiB of what was printed (a slow log shipper, a pager, a pipe
 nobody reads yet) does a print wait for room, as any wait of a task: the other

@@ -4068,7 +4068,7 @@ fn main() {
         let ran = {
             let (out, err) = (out.clone(), err.clone());
             std::thread::spawn(move || {
-                let mut vm = Vm::new(HostIo::new(out, err));
+                let mut vm = Vm::new(HostIo::queued(out, err));
                 vm.run_program(&program)
             })
         };
