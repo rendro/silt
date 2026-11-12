@@ -715,17 +715,20 @@ impl Session {
     }
 
     /// The error for the entry file `entry`, named `path`, when that
-    /// name has an upper-case letter: a file named on the command line or
-    /// opened in an editor is a module too, and a module's name is all
-    /// lowercase. A module file of a package's `src/` is reported
-    /// already, by [`Session::packages`].
+    /// name is no module name: a file named on the command line or
+    /// opened in an editor is a module too, and a module's name is
+    /// lowercase letters, digits and `_`, not starting with a digit, and
+    /// not a builtin module's. A module file of a package's `src/` is
+    /// reported already, by [`Session::packages`].
     fn entry_name_problem(&self, entry: ModuleId, path: &Path) -> Option<Diagnostic> {
         let module = self.graph.module(entry);
-        if module.host.is_some() || path.extension().is_none_or(|ext| ext != "silt") {
+        if module.host.is_some() {
             return None;
         }
-        let name = path.file_stem()?.to_str()?;
-        if crate::module::is_lowercase_module_name(name) {
+        // (By the file's name, not `extension`: `.silt` has none, and its
+        // module name is the empty one.)
+        let name = path.file_name()?.to_str()?.strip_suffix(".silt")?;
+        if crate::module::is_module_name(name) && !crate::module::is_builtin_module(name) {
             return None;
         }
         let key = graph::canonical_key(&module.path);
@@ -736,7 +739,7 @@ impl Session {
         });
         match reported {
             true => None,
-            false => Some(packages::upper_case_file_name(name, module.file?)),
+            false => Some(packages::file_name_problem(name, module.file?)),
         }
     }
 

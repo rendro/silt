@@ -168,7 +168,7 @@ fn app_with_a_lock_pinning_another_source(ws: &Path) -> PathBuf {
         format!(
             "{LOCK_HEADER}\n[[package]]\nname = \"app\"\nversion = \"0.1.0\"\n\n\
              [[package]]\nname = \"x\"\nversion = \"0.1.0\"\n\
-             source = {{ path = {} }}\nchecksum = \"sha256:0\"\n",
+             source = {{ path = {} }}\n",
             toml_path(&app.join("evil"))
         ),
     )

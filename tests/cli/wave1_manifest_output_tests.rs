@@ -709,11 +709,6 @@ fn lockfile_package_name_is_escaped() {
             "`source` must be a table",
         ),
         (
-            "lock_path_without_checksum",
-            "version = \"0.1.0\"\nsource = { path = \"/silt-test-nonexistent\" }\n".to_string(),
-            "has source but no checksum",
-        ),
-        (
             "lock_git_without_rev",
             format!("version = \"0.1.0\"\nsource = {{ {url} }}\n"),
             "git source missing `rev`",
@@ -721,7 +716,7 @@ fn lockfile_package_name_is_escaped() {
         (
             "lock_git_without_checksum",
             format!("version = \"0.1.0\"\nsource = {{ {url}, rev = \"{FULL_REV}\" }}\n"),
-            "has source but no checksum",
+            "has a git source but no checksum",
         ),
         (
             "lock_branch_and_tag",

@@ -125,9 +125,9 @@ pub(super) fn project_packages(
 /// An error for each module file of a project package (one with a
 /// manifest) whose name is no module name: one named like a builtin
 /// module (`import list` always means the builtin `list`, so
-/// `src/list.silt` could never be imported), and one with an upper-case
-/// letter (a module's name is all lowercase). The file is registered in
-/// `sources`, and the error is at its start.
+/// `src/list.silt` could never be imported), and one that is not
+/// lowercase letters, digits and `_` ([`crate::module::is_module_name`]).
+/// The file is registered in `sources`, and the error is at its start.
 pub(super) fn modules_named_like_builtins(
     packages: &Packages,
     sources: &mut SourceMap,
@@ -148,7 +148,7 @@ pub(super) fn modules_named_like_builtins(
                         .and_then(|stem| stem.to_str())
                         .is_some_and(|stem| {
                             crate::module::is_builtin_module(stem)
-                                || !crate::module::is_lowercase_module_name(stem)
+                                || !crate::module::is_module_name(stem)
                         })
             })
             .collect();
@@ -160,42 +160,58 @@ pub(super) fn modules_named_like_builtins(
                 .unwrap_or_default();
             let text = std::fs::read_to_string(&path).unwrap_or_default();
             let file = sources.add(SourceName::Path(path.clone()), text.into());
-            let error = if crate::module::is_builtin_module(&name) {
-                Diagnostic::error(
-                    Code::ModuleNamedLikeBuiltin,
-                    Span::point(file, 0),
-                    format!(
-                        "the module `{name}` cannot be imported: `import {name}` names the \
-                         builtin module `{name}`"
-                    ),
-                )
-                .with_help(format!("rename `{name}.silt`"))
-            } else {
-                upper_case_file_name(&name, file)
-            };
-            errors.push(error);
+            errors.push(file_name_problem(&name, file));
         }
     }
     errors
 }
 
-/// The error at the start of the module file `file`, named `name`, whose
-/// name has an upper-case letter: a module's name is all lowercase.
-/// The help names the lowercase name, unless that is a builtin module's,
-/// which no file can take.
-pub(super) fn upper_case_file_name(name: &str, file: FileId) -> Diagnostic {
+/// The error at the start of the module file `file`, named `name`, which
+/// is no module name. A file named like a builtin module could never be
+/// imported (`import list` always means the builtin `list`), nor one
+/// named like a keyword (`import match` cannot parse); any other name
+/// must be lowercase letters, digits and `_`, not starting with a digit.
+/// The help names a module name to use, when there is one
+/// ([`crate::module::suggested_module_name`]). A file named `.silt` has
+/// the empty name.
+pub(super) fn file_name_problem(name: &str, file: FileId) -> Diagnostic {
+    if name.is_empty() {
+        return Diagnostic::error(
+            Code::ModuleNamedLikeBuiltin,
+            Span::point(file, 0),
+            "the file `.silt` has no module name: use lowercase letters, digits and `_`, \
+             not starting with a digit",
+        );
+    }
+    if crate::manifest::is_reserved_keyword(name) {
+        return Diagnostic::error(
+            Code::ModuleNamedLikeBuiltin,
+            Span::point(file, 0),
+            format!("the module `{name}` cannot be imported: `{name}` is a keyword"),
+        )
+        .with_help(format!("rename `{name}.silt`"));
+    }
+    if crate::module::is_builtin_module(name) {
+        return Diagnostic::error(
+            Code::ModuleNamedLikeBuiltin,
+            Span::point(file, 0),
+            format!(
+                "the module `{name}` cannot be imported: `import {name}` names the \
+                 builtin module `{name}`"
+            ),
+        )
+        .with_help(format!("rename `{name}.silt`"));
+    }
     let d = Diagnostic::error(
         Code::ModuleNamedLikeBuiltin,
         Span::point(file, 0),
         crate::manifest::invalid_module_name(name),
     );
-    let lower = name.to_lowercase();
-    match crate::module::is_builtin_module(&lower) {
-        true => d,
-        false => d.with_help(format!(
-            "rename `{}.silt` to `{}.silt`",
-            crate::git::escape_for_display(name),
-            crate::git::escape_for_display(&lower)
+    match crate::module::suggested_module_name(name) {
+        None => d,
+        Some(suggestion) => d.with_help(format!(
+            "rename `{}.silt` to `{suggestion}.silt`",
+            crate::git::escape_for_display(name)
         )),
     }
 }
@@ -204,14 +220,20 @@ pub(super) fn upper_case_file_name(name: &str, file: FileId) -> Diagnostic {
 mod tests {
     use super::*;
 
+    /// The help names a module name to rename the file to when there is
+    /// one: lowercase, with `-`, ` ` and `.` as `_`. A name with a
+    /// control character, a leading digit, a letter outside a-z, or whose
+    /// lowercase form is a builtin module's has no such help, and the
+    /// message shows the name by the display rule.
     #[test]
-    fn the_rename_help_of_a_module_file_shows_its_name_by_the_display_rule() {
-        let d = upper_case_file_name("t15_\u{1b}[2J\rName", FileId::default());
-        let help = d.help.join("\n");
-        assert_eq!(
-            help,
-            "rename `t15_\\u{1b}[2J\\rName.silt` to `t15_\\u{1b}[2j\\rname.silt`"
-        );
+    fn the_rename_help_of_a_module_file_names_a_module_name() {
+        let help = |name: &str| file_name_problem(name, FileId::default()).help.join("\n");
+        assert_eq!(help("My-File"), "rename `My-File.silt` to `my_file.silt`");
+        assert_eq!(help("a.test"), "rename `a.test.silt` to `a_test.silt`");
+        for name in ["t15_\u{1b}[2J\rName", "2nd", "Мир", "String", "Match"] {
+            assert_eq!(help(name), "", "{name:?}");
+        }
+        let d = file_name_problem("t15_\u{1b}[2J\rName", FileId::default());
         assert!(!d.message.contains(['\u{1b}', '\r']), "{:?}", d.message);
     }
 }

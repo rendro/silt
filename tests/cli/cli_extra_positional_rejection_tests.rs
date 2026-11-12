@@ -202,9 +202,9 @@ fn no_file_outside_a_package_is_an_error_with_the_usage() {
     }
 }
 
-/// A module's name has no upper-case letter in any script: a file named
-/// `Мир.silt` is refused as `Demo.silt` is. FAILS on the base: only
-/// ASCII upper case counted.
+/// A module's name is lowercase letters a-z, digits and `_`: a file named
+/// `Мир.silt` is refused as `Demo.silt` is, with no name to rename it to
+/// (`мир` is no module name either).
 #[test]
 fn a_file_named_with_a_non_ascii_upper_case_letter_is_refused() {
     let dir = fresh_dir("unicode_upper");
@@ -219,7 +219,7 @@ fn a_file_named_with_a_non_ascii_upper_case_letter_is_refused() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(1), "{stderr}");
     assert!(
-        stderr.contains("`Мир` is not a valid module name") && stderr.contains("`мир.silt`"),
+        stderr.contains("`Мир` is not a valid module name") && !stderr.contains("help: rename"),
         "{stderr}"
     );
 }

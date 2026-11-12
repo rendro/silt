@@ -352,6 +352,152 @@ fn test_two() {
     );
 }
 
+/// `*_test.silt` is the one test file name: a directory walk does not
+/// take `a.test.silt` for a test file. FAILS on the base commit: both
+/// files' tests ran.
+#[test]
+fn test_silt_test_finds_only_underscore_test_files() {
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!("silt_test_dc7_{n}"));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("b_test.silt"), "fn test_y() { () }\n").unwrap();
+    fs::write(dir.join("a.test.silt"), "fn test_x() { () }\n").unwrap();
+    let output = silt_cmd()
+        .arg("test")
+        .arg(&dir)
+        .output()
+        .expect("failed to run silt");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.status.success(), "{combined}");
+    assert!(combined.contains("test_y"), "{combined}");
+    assert!(!combined.contains("test_x"), "{combined}");
+    assert!(combined.contains("1 passed"), "{combined}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A file named on the command line is a module, and its name must be
+/// one: lowercase letters, digits and `_`, not starting with a digit,
+/// and not a builtin module's. FAILS on the base commit: only an
+/// upper-case letter was refused, and these all ran.
+#[test]
+fn test_an_entry_file_name_must_be_a_module_name() {
+    let invalid = |name: &str| {
+        format!(
+            "`{name}` is not a valid module name: use lowercase letters, digits and `_`, \
+             not starting with a digit"
+        )
+    };
+    let cases: [(&str, String, Option<&str>); 7] = [
+        (
+            "match",
+            "the module `match` cannot be imported: `match` is a keyword".to_string(),
+            Some("rename `match.silt`"),
+        ),
+        (
+            "",
+            "the file `.silt` has no module name: use lowercase letters, digits and `_`, \
+             not starting with a digit"
+                .to_string(),
+            None,
+        ),
+        (
+            "my-entry",
+            invalid("my-entry"),
+            Some("rename `my-entry.silt` to `my_entry.silt`"),
+        ),
+        (
+            "a b",
+            invalid("a b"),
+            Some("rename `a b.silt` to `a_b.silt`"),
+        ),
+        (
+            "a.test",
+            invalid("a.test"),
+            Some("rename `a.test.silt` to `a_test.silt`"),
+        ),
+        ("2nd", invalid("2nd"), None),
+        (
+            "string",
+            "the module `string` cannot be imported: `import string` names the builtin \
+             module `string`"
+                .to_string(),
+            Some("rename `string.silt`"),
+        ),
+    ];
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!("silt_test_tl2_{n}"));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    for (stem, message, help) in cases {
+        let file = format!("{stem}.silt");
+        fs::write(dir.join(&file), "fn main() {\n  println(1)\n}\n").unwrap();
+        for cmd in ["run", "check"] {
+            let output = silt_cmd()
+                .arg(cmd)
+                .arg(&file)
+                .current_dir(&dir)
+                .env("NO_COLOR", "1")
+                .output()
+                .expect("failed to run silt");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert_eq!(output.status.code(), Some(1), "{cmd} {file}: {stderr}");
+            assert!(stderr.contains(&message), "{cmd} {file}: {stderr}");
+            match help {
+                Some(help) => assert!(
+                    stderr.contains(&format!("= help: {help}")),
+                    "{cmd} {file}: {stderr}"
+                ),
+                None => assert!(!stderr.contains("= help: rename"), "{cmd} {file}: {stderr}"),
+            }
+        }
+    }
+    // A module name runs.
+    fs::write(dir.join("my_entry2.silt"), "fn main() {\n  println(1)\n}\n").unwrap();
+    let output = silt_cmd()
+        .arg("run")
+        .arg("my_entry2.silt")
+        .current_dir(&dir)
+        .output()
+        .expect("failed to run silt");
+    assert!(output.status.success(), "{output:?}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A module file of `src/` named like a keyword is refused: `import
+/// match` cannot parse. FAILS on the base commit: `silt check` passed.
+#[test]
+fn test_a_module_file_named_like_a_keyword_is_refused() {
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!("silt_test_tl2_kw_{n}"));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(
+        dir.join("silt.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(dir.join("src/main.silt"), "fn main() {\n  println(1)\n}\n").unwrap();
+    fs::write(dir.join("src/match.silt"), "pub fn f() { 1 }\n").unwrap();
+    let output = silt_cmd()
+        .arg("check")
+        .current_dir(&dir)
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("failed to run silt");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "{stderr}");
+    assert!(
+        stderr.contains("the module `match` cannot be imported: `match` is a keyword"),
+        "{stderr}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
 // ── silt fmt --check: rejects unformatted files without mutating ───
 
 #[test]
@@ -417,8 +563,8 @@ fn test_silt_test_help_mentions_filename_pattern() {
             "silt test {flag}: expected '_test.silt' in help output, got: {stdout}"
         );
         assert!(
-            stdout.contains(".test.silt"),
-            "silt test {flag}: expected '.test.silt' in help output, got: {stdout}"
+            !stdout.contains(".test.silt"),
+            "silt test {flag}: `*.test.silt` is no test file name: {stdout}"
         );
     }
 }

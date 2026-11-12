@@ -11,10 +11,8 @@ runs test functions without any configuration.
 
 ## File Conventions
 
-Test files must use one of these naming patterns to be auto-discovered:
-
-- `*_test.silt` (e.g. `math_test.silt`)
-- `*.test.silt` (e.g. `math.test.silt`)
+A test file's name ends with `_test.silt` (e.g. `math_test.silt`):
+that is how `silt test` finds it.
 
 Without a path argument, `silt test` searches the current directory
 recursively, but not a directory that holds a `silt.toml` of its own:
