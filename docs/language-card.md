@@ -348,12 +348,14 @@ string.is_upper(s: String) -> Bool
 string.is_whitespace(s: String) -> Bool
 string.join(xs: List(String), sep: String) -> String
 string.last_index_of(s: String, needle: String) -> Option(Int)
+string.left(x: a, width: Int) -> String where a: Display
 string.length(s: String) -> Int
 string.lines(s: String) -> List(String)
 string.pad_left(s: String, width: Int, pad: String) -> String
 string.pad_right(s: String, width: Int, pad: String) -> String
 string.repeat(s: String, n: Int) -> String
 string.replace(s: String, from: String, to: String) -> String
+string.right(x: a, width: Int) -> String where a: Display
 string.slice(s: String, start: Int, end: Int) -> String
 string.split(s: String, separator: String) -> List(String)
 string.split_at(s: String, idx: Int) -> Option((String, String))

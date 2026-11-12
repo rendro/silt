@@ -1,0 +1,8 @@
+-- exit: 1
+-- stderr-contains: string.right: width 10000001 exceeds maximum of 10000000
+-- As for string.pad_left, a width no string can have is an error.
+import string
+
+fn main() {
+  println(string.right(1, 10000001))
+}

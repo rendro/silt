@@ -3,7 +3,7 @@
 use super::common::cut;
 use super::typed::{List, builtins};
 use crate::value::{MAX_COLLECTION_LEN, Value};
-use crate::vm::{Step, VmError};
+use crate::vm::{Step, Vm, VmError};
 
 /// The one character `pad` is, for `string.<name>`.
 fn pad_char(name: &str, pad: &str) -> Result<char, VmError> {
@@ -26,13 +26,42 @@ fn pad_char(name: &str, pad: &str) -> Result<char, VmError> {
 /// if it is that wide already (a negative width is 0).
 fn padding(name: &str, s: &str, width: i64, pad: &str) -> Result<String, VmError> {
     let pad = pad_char(name, pad)?;
-    if width as i128 > MAX_COLLECTION_LEN as i128 {
-        return Err(VmError::new(format!(
+    fits_width(name, width)?;
+    Ok(fill(s, width, pad))
+}
+
+/// `width` is no wider than a string may be, for `string.<name>`.
+fn fits_width(name: &str, width: i64) -> Result<(), VmError> {
+    match width as i128 > MAX_COLLECTION_LEN as i128 {
+        true => Err(VmError::new(format!(
             "string.{name}: width {width} exceeds maximum of {MAX_COLLECTION_LEN}"
-        )));
+        ))),
+        false => Ok(()),
     }
+}
+
+/// The `pad`s that fill `s` up to `width` characters.
+fn fill(s: &str, width: i64, pad: char) -> String {
     let missing = cut(width).saturating_sub(s.chars().count());
-    Ok(std::iter::repeat_n(pad, missing).collect())
+    std::iter::repeat_n(pad, missing).collect()
+}
+
+/// `string.left` and `string.right`: `x` as `Display` shows it, with
+/// spaces after it (`at_left`) or before it up to `width` characters.
+fn aligned(vm: &mut Vm, x: &Value, width: i64, at_left: bool) -> Result<Step, VmError> {
+    let (name, builtin) = match at_left {
+        true => ("left", "string.left"),
+        false => ("right", "string.right"),
+    };
+    fits_width(name, width)?;
+    vm.show_within(x, Some(builtin), move |_, text| {
+        let spaces = fill(&text, width, ' ');
+        let line = match at_left {
+            true => text + &spaces,
+            false => spaces + &text,
+        };
+        Ok(Step::Done(Value::String(line.into())))
+    })
 }
 
 /// The byte offset of the character at index `chars` of `s`, the end
@@ -304,6 +333,18 @@ builtins! {
     // past the end is the end.
     fn slice(s: &str, start: i64, end: i64) -> String {
         char_range(s, cut(start), cut(end)).to_string()
+    }
+
+    // `x` as `Display` shows it, at the left of `width` characters:
+    // spaces after it.
+    fn left(vm, x: &Value, width: i64) -> Result<Step, VmError> {
+        aligned(vm, x, width, true)
+    }
+
+    // `x` as `Display` shows it, at the right of `width` characters:
+    // spaces before it.
+    fn right(vm, x: &Value, width: i64) -> Result<Step, VmError> {
+        aligned(vm, x, width, false)
     }
 
     fn pad_left(s: &str, width: i64, pad: &str) -> Result<String, VmError> {

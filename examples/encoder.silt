@@ -139,16 +139,12 @@ fn print_table_header(title: String) {
   println("")
   println(title)
   print_separator()
-  println(
-    "{string.pad_right("Original", 24, " ")} {string.pad_right("Encoded", 24, " ")} {string.pad_right("Decoded", 24, " ")}",
-  )
+  println("{string.left("Original", 24)} {string.left("Encoded", 24)} {string.left("Decoded", 24)}")
   print_separator()
 }
 
 fn print_table_row(original, encoded, decoded) {
-  println(
-    "{string.pad_right(original, 24, " ")} {string.pad_right(encoded, 24, " ")} {string.pad_right(decoded, 24, " ")}",
-  )
+  println("{string.left(original, 24)} {string.left(encoded, 24)} {string.left(decoded, 24)}")
 }
 
 fn check_roundtrip(name, original, decoded) {

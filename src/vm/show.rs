@@ -243,7 +243,7 @@ impl Vm {
     /// [`Vm::show`], with a text no longer than a string may hold when
     /// `limit` names the builtin that makes it (`string.from`, string
     /// interpolation): an error of that builtin's if it would be.
-    fn show_within(
+    pub(crate) fn show_within(
         &mut self,
         value: &Value,
         limit: Option<&'static str>,

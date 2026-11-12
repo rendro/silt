@@ -30,12 +30,14 @@ with `{expr}` interpolation.
 | `is_whitespace` | `(String) -> Bool` | All chars are whitespace |
 | `join` | `(List(String), String) -> String` | Join list with separator |
 | `last_index_of` | `(String, String) -> Option(Int)` | Character index of last occurrence |
+| `left` | `(a, Int) -> String where a: Display` | The value as Display shows it, padded with spaces on the right to width |
 | `length` | `(String) -> Int` | Length in characters |
 | `lines` | `(String) -> List(String)` | Split on `\n` (strips trailing `\r`, no empty final element) |
 | `pad_left` | `(String, Int, String) -> String` | Pad to width on the left |
 | `pad_right` | `(String, Int, String) -> String` | Pad to width on the right |
 | `repeat` | `(String, Int) -> String` | Repeat string n times |
 | `replace` | `(String, String, String) -> String` | Replace all occurrences |
+| `right` | `(a, Int) -> String where a: Display` | The value as Display shows it, padded with spaces on the left to width |
 | `slice` | `(String, Int, Int) -> String` | Substring by character indices |
 | `split` | `(String, String) -> List(String)` | Split on separator |
 | `split_at` | `(String, Int) -> Option((String, String))` | Split into two strings at a character index, or None past the end |
@@ -376,6 +378,30 @@ fn main() {
 ```
 
 
+## `string.left`
+
+```
+string.left(x: a, width: Int) -> String where a: Display
+```
+
+Returns `x` as `Display` shows it (as in `"{x}"`), with spaces after it up to
+`width` characters: the text sits at the left of the column. Any value that
+has `Display` will do, so a number needs no conversion first. A text as wide
+as `width` or wider comes back as it is, as it does for a negative `width`. A
+`width` over 10,000,000 is a runtime error. For another pad character than a
+space, use `string.pad_right`.
+
+```silt
+import string
+
+fn main() {
+  println("[{string.left("name", 8)}]") -- [name    ]
+  println("[{string.left(3.5, 6)}]") -- [3.5   ]
+  println("[{string.left("toolong", 3)}]") -- [toolong]
+}
+```
+
+
 ## `string.length`
 
 ```
@@ -427,7 +453,8 @@ string.pad_left(s: String, width: Int, pad: String) -> String
 ```
 
 Pads `s` on the left with `pad`, which must be exactly one character,
-until it is `width` characters long. Returns `s` unchanged if already at or
+until it is `width` characters long. To pad with spaces, use `string.right`,
+which also takes any value that has `Display`. Returns `s` unchanged if already at or
 beyond `width`, as it is for a negative `width`. A `pad` of any other length
 and a `width` over 10,000,000 are runtime errors.
 
@@ -447,7 +474,8 @@ string.pad_right(s: String, width: Int, pad: String) -> String
 ```
 
 Pads `s` on the right with `pad`, which must be exactly one character,
-until it is `width` characters long. Returns `s` unchanged if already at or
+until it is `width` characters long. To pad with spaces, use `string.left`,
+which also takes any value that has `Display`. Returns `s` unchanged if already at or
 beyond `width`, as it is for a negative `width`. A `pad` of any other length
 and a `width` over 10,000,000 are runtime errors.
 
@@ -492,6 +520,31 @@ import string
 fn main() {
   println(string.replace("hello world", "world", "silt"))
   -- hello silt
+}
+```
+
+
+## `string.right`
+
+```
+string.right(x: a, width: Int) -> String where a: Display
+```
+
+Returns `x` as `Display` shows it (as in `"{x}"`), with spaces before it up to
+`width` characters: the text sits at the right of the column, as numbers do in
+a table. Any value that has `Display` will do. A text as wide as `width` or
+wider comes back as it is, as it does for a negative `width`. A `width` over
+10,000,000 is a runtime error. For another pad character than a space, use
+`string.pad_left`.
+
+```silt
+import list
+import string
+
+fn main() {
+  println("[{string.right(42, 6)}]") -- [    42]
+  let rows = [("apples", 12), ("kiwis", 1500)]
+  list.each(rows) { (name, n) -> println("{string.left(name, 8)}{string.right(n, 6)}") }
 }
 ```
 
