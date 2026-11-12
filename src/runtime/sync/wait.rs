@@ -238,7 +238,7 @@ pub fn park(task: TaskId, wait: Wait, timer: &Arc<Timer>, wake: &dyn Wake) -> Pa
     channels.dedup_by(|a, b| Arc::ptr_eq(a, b));
     let lock_of = |channel: &Arc<Channel>| {
         channels
-            .binary_search_by_key(&Arc::as_ptr(channel), |c| Arc::as_ptr(c))
+            .binary_search_by_key(&Arc::as_ptr(channel), Arc::as_ptr)
             .expect("every channel of the wait is locked")
     };
     let mut states: Vec<_> = channels.iter().map(|c| c.state.lock()).collect();

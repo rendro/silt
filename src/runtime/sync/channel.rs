@@ -261,7 +261,7 @@ impl Drop for Channel {
         // wherever its last holder lets it go, maybe under a lock that
         // the stop takes (`scheduler::run_deferred`).
         if let Some(stop) = self.on_abandon.take() {
-            crate::scheduler::defer(move || stop());
+            crate::scheduler::defer(stop);
         }
     }
 }
