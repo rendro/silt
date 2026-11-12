@@ -15,7 +15,7 @@
 //!                                               // span of the key in silt.toml
 //! }
 //! pub struct PackageGraph { pub root: PackageId, pub packages: Vec<PackageNode>, pub lock: LockChange }
-//! pub enum LockPolicy { Update, ReadOnly, Refresh }
+//! pub enum LockPolicy { Update, ReadOnly, Offline, Refresh }
 //! pub enum LockChange { Unchanged, Created, Updated }
 //! pub fn resolve_packages(project_root: &Path, policy: LockPolicy, sources: &mut SourceMap)
 //!     -> Result<PackageGraph, Vec<Diagnostic>>;
@@ -50,9 +50,14 @@
 //!   [`LockPolicy::Update`] a stale lock is rewritten; under
 //!   [`LockPolicy::ReadOnly`] a stale entry is `LockfileStale`. The lock
 //!   lives next to the project's `silt.toml`.
+//! - Under [`LockPolicy::Offline`] (the language server) nothing is
+//!   fetched: no git command runs. A git dependency is taken from the
+//!   cache at the commit the lock pins (or a full `rev` names); one that
+//!   is not there is `GitDependency`, "not fetched: run `silt check`".
 //! - A symbolic link in a dependency's `silt.toml` or `src/` is
 //!   `SymlinkInDependency`; a git checkout that holds one is not cached.
-//! - Under [`LockPolicy::Update`] and [`LockPolicy::ReadOnly`], the
+//! - Under [`LockPolicy::Update`], [`LockPolicy::ReadOnly`] and
+//!   [`LockPolicy::Offline`], the
 //!   checkout of a git dependency must have the checksum the lock pins
 //!   for its URL and commit, whether it came from the cache or was just
 //!   fetched, or it is `LockfileChecksum`. [`LockPolicy::Refresh`]
@@ -125,13 +130,26 @@ pub enum LockPolicy {
     /// still the manifest's, resolve the rest, and rewrite the lock when
     /// it changed.
     Update,
-    /// `fmt`, `disasm`, the LSP: never write. A lock entry that is not
-    /// what the manifest resolves to is an error; with no lock at all
-    /// the graph is resolved in memory.
+    /// `disasm`: never write. A lock entry that is not what the
+    /// manifest resolves to is an error; with no lock at all the graph
+    /// is resolved in memory.
     ReadOnly,
+    /// The language server: as [`LockPolicy::ReadOnly`], and nothing is
+    /// fetched, so opening a folder in an editor runs no git and
+    /// connects to no host. A git dependency comes from the cache, at
+    /// the commit the lock pins or a full `rev` names; one that is not
+    /// there is an error that says to run `silt check`, which fetches it.
+    Offline,
     /// `silt update`: ignore the lock's pins, resolve every branch and
     /// tag again, and write the lock.
     Refresh,
+}
+
+impl LockPolicy {
+    /// Whether `silt.lock` is only read: a stale entry is an error.
+    fn reads_only(self) -> bool {
+        matches!(self, LockPolicy::ReadOnly | LockPolicy::Offline)
+    }
 }
 
 /// What resolving did to `silt.lock`.
@@ -162,7 +180,7 @@ pub fn resolve_packages(
     let lock_path = root_dir.join("silt.lock");
     let existing = match policy {
         LockPolicy::Refresh => None,
-        LockPolicy::Update | LockPolicy::ReadOnly => {
+        LockPolicy::Update | LockPolicy::ReadOnly | LockPolicy::Offline => {
             Lockfile::load(&lock_path, sources).map_err(|d| vec![d])?
         }
     };
@@ -211,7 +229,7 @@ pub fn resolve_packages(
 
     let fresh = resolver.lockfile();
     let lock = match (policy, &resolver.existing) {
-        (LockPolicy::ReadOnly, _) => LockChange::Unchanged,
+        (LockPolicy::ReadOnly | LockPolicy::Offline, _) => LockChange::Unchanged,
         (LockPolicy::Update, Some(old)) if old.same_pins(&fresh) => LockChange::Unchanged,
         (_, existing) => {
             let created = existing.is_none() && !lock_path.exists();
@@ -369,7 +387,7 @@ impl Resolver<'_> {
                 let lock_url = locked_git_url(written, &url, &self.nodes[0].root);
                 let commit = match self.pinned_commit(&lock_url, ref_spec) {
                     Some(commit) => commit,
-                    None if self.policy == LockPolicy::ReadOnly && self.existing.is_some() => {
+                    None if self.policy.reads_only() && self.existing.is_some() => {
                         self.diagnostics.push(stale_diagnostic(
                             entry.value,
                             &key_name,
@@ -377,6 +395,20 @@ impl Resolver<'_> {
                         ));
                         return None;
                     }
+                    // A branch, a tag or a short rev is resolved over
+                    // the network.
+                    None if self.policy == LockPolicy::Offline => match ref_spec {
+                        GitRef::Rev(rev) if git::is_full_commit_id(rev) => rev.to_lowercase(),
+                        _ => {
+                            self.diagnostics.push(not_fetched_diagnostic(
+                                entry.value,
+                                &key_name,
+                                &url,
+                                ref_spec,
+                            ));
+                            return None;
+                        }
+                    },
                     None => match git::resolve_ref(&url, ref_spec) {
                         Ok(commit) => commit,
                         Err(e) => {
@@ -410,6 +442,18 @@ impl Resolver<'_> {
                         git::fetch_to_cache(&url, &commit),
                         self.locked_checksum(&lock_url, &commit),
                     ),
+                    LockPolicy::Offline => match git::cached_checkout(&url, &commit) {
+                        Some(dir) => (Ok(dir), self.locked_checksum(&lock_url, &commit)),
+                        None => {
+                            self.diagnostics.push(not_fetched_diagnostic(
+                                entry.value,
+                                &key_name,
+                                &url,
+                                ref_spec,
+                            ));
+                            return None;
+                        }
+                    },
                 };
                 let root = match fetched {
                     Ok(root) => crate::source::canonical_path(&root),
@@ -502,7 +546,7 @@ impl Resolver<'_> {
                 return None;
             }
         };
-        if self.policy == LockPolicy::ReadOnly
+        if self.policy.reads_only()
             && let Some(lock) = &self.existing
         {
             let name = intern::resolve(manifest.package.name);
@@ -801,6 +845,25 @@ fn git_diagnostic(at: Span, key: &str, url: &str, ref_spec: &GitRef, err: &GitEr
     d.notes
         .extend(lines.map(|line| line.trim_start().to_string()));
     d
+}
+
+/// The git dependency `key` on `url` at `ref_spec` is not in the cache,
+/// and the language server fetches nothing.
+fn not_fetched_diagnostic(at: Span, key: &str, url: &str, ref_spec: &GitRef) -> Diagnostic {
+    Diagnostic::error(
+        Code::GitDependency,
+        at,
+        format!(
+            "git dependency `{key}` (`{}`, {} = `{}`): not fetched: run `silt check`",
+            escape_for_display(url),
+            ref_spec.kind(),
+            escape_for_display(ref_spec.as_ref_string())
+        ),
+    )
+    .with_note(
+        "the language server fetches nothing; `silt check`, `silt run` and `silt test` \
+         fetch the dependencies of silt.toml",
+    )
 }
 
 fn symlink_diagnostic(at: Span, key: &str, path: &Path) -> Diagnostic {

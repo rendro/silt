@@ -23,6 +23,11 @@ A buffer that was never saved (`untitled:Untitled-1`) is checked as a
 file of its own, outside any package: it sees the other unsaved buffers
 of the editor, and no file on disk.
 
+The server fetches nothing: opening a folder runs no git and connects
+to no host. A git dependency of the project that is not in silt's cache
+yet is an error on its line of `silt.toml`, "not fetched: run
+`silt check`"; `silt check` (or `silt run`, `silt test`) fetches it.
+
 ### Supported Features
 
 | Feature | Description |

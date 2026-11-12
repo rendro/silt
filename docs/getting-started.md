@@ -277,6 +277,8 @@ Run `silt self-update` to replace the installed binary with the latest GitHub re
 
 The bare `silt update` command regenerates `silt.lock` from the current package's `silt.toml`. Use `silt self-update` for binary self-updates.
 
+`silt check`, `silt run` and `silt test` fetch the git dependencies of `silt.toml` that are not in silt's cache. The language server fetches nothing: opening a folder in an editor runs no git and connects to no host. A git dependency that is not fetched yet is an error on its line of `silt.toml` in the editor, "not fetched: run `silt check`"; once `silt check` has fetched it, the editor reads it from the cache.
+
 `silt.lock` pins each git dependency to a commit and to a checksum of its sources (`silt.toml` and `src/`). Every command that loads the dependency compares its checkout with that checksum and refuses one that differs, naming the dependency, both checksums and the checkout in silt's cache: a checkout that was changed after it was fetched never runs. Delete that checkout to fetch the commit again. `silt update` takes nothing from the cache: it fetches every git dependency afresh and pins what it fetched. A path dependency has no checksum in `silt.lock`: its sources change as you work on them. A path dependency, and a git dependency given by a relative path (`git = "../repo"`), is written as a path relative to the directory of `silt.toml`, so a package moved or checked out elsewhere together with its dependencies keeps its `silt.lock`.
 
 ## What's next

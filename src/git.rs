@@ -697,6 +697,21 @@ pub fn cache_for(url: &str, commit: &str) -> Result<PathBuf, GitError> {
     Ok(root.join(url_hash(url)).join(commit.to_lowercase()))
 }
 
+/// The checkout of `url` at the full commit id `commit` in the cache,
+/// when it is there ([`cache_for`]). Nothing is fetched, and nothing is
+/// created: the language server, which fetches nothing, reads the cache
+/// with it.
+pub fn cached_checkout(url: &str, commit: &str) -> Option<PathBuf> {
+    if !is_full_commit_id(commit) {
+        return None;
+    }
+    let dir = compute_cache_root()
+        .ok()?
+        .join(url_hash(url))
+        .join(commit.to_lowercase());
+    dir.is_dir().then_some(dir)
+}
+
 fn url_hash(url: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(url.as_bytes());
