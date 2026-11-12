@@ -338,9 +338,10 @@ fn test_init_writes_a_first_test_that_passes() {
             "src/{test} was not created"
         );
 
-        // (The results are written to stderr.)
+        // (The results are written to stderr; Windows names the file
+        // `.\src\...`.)
         let out = silt_cmd().arg("test").current_dir(&dir).output().unwrap();
-        let said = String::from_utf8_lossy(&out.stderr);
+        let said = String::from_utf8_lossy(&out.stderr).replace('\\', "/");
         assert!(out.status.success(), "{said}");
         assert_eq!(
             said,
