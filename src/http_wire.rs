@@ -242,11 +242,17 @@ impl<R: Read> Reader<R> {
     /// `true` if the client waits for `100 Continue` before it sends
     /// the body (`Expect: 100-continue`), which the callee then writes
     /// to the connection.
+    ///
+    /// After it, [`Reader::begun`] says whether the request after this
+    /// one has begun: a server that begins to drain before its next
+    /// read has started reads on only where it has.
     pub fn next(&mut self, before_body: &mut dyn FnMut(bool) -> io::Result<()>) -> Next {
-        match self.request(before_body) {
+        let next = match self.request(before_body) {
             Ok(request) => Next::Request(request),
             Err(next) => next,
-        }
+        };
+        self.begun.store(self.has_begun(), Ordering::SeqCst);
+        next
     }
 
     fn request(&mut self, before_body: &mut dyn FnMut(bool) -> io::Result<()>) -> Step<Request> {
@@ -1024,6 +1030,28 @@ mod tests {
         }
         assert!(matches!(reader.buffered(), Some(Next::Request(_))));
         assert!(!reader.has_begun() && !begun.load(Ordering::SeqCst));
+    }
+
+    /// A request read from the connection leaves the reader saying that
+    /// nothing of the next one has come, unless something has. (It said
+    /// that the next one had begun until the next read started: a server
+    /// that began to drain before then waited for that request, 30 s,
+    /// and answered 408, instead of closing the kept-alive connection.)
+    #[test]
+    fn a_request_read_leaves_no_beginning_of_the_next() {
+        for (bytes, has) in [
+            (&b"GET / HTTP/1.1\r\nHost: x\r\n\r\n"[..], false),
+            (b"GET / HTTP/1.1\r\nHost: x\r\n\r\nGE", true),
+            (
+                b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\n\r\nab",
+                false,
+            ),
+        ] {
+            let mut reader = Reader::new(bytes);
+            let begun = reader.begun();
+            assert!(matches!(reader.next(&mut |_| Ok(())), Next::Request(_)));
+            assert_eq!(begun.load(Ordering::SeqCst), has, "{bytes:?}");
+        }
     }
 
     #[test]
