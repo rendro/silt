@@ -29,14 +29,15 @@ pub(crate) struct Wanted {
 pub(crate) enum Goal {
     /// A predicate a use owes.
     Pred(Pred),
-    /// `recv.name(args)`, with the result `result`, where the receiver's
-    /// type was unknown at the call: the function-typed field it calls
-    /// is checked when the receiver's type is known (`select_call`), and
-    /// when the definition is generalised if it still is not.
+    /// `recv.name` (`args` none), or the call `recv.name(args)`, with
+    /// the result `result`, where the receiver's type was unknown: the
+    /// field is read when the receiver's type is known (`select_call`).
+    /// Like an update, it never enters a scheme: a field of a record
+    /// nothing decides needs an annotation.
     Select {
         recv: Type,
         name: Symbol,
-        args: Vec<Type>,
+        args: Option<Vec<Type>>,
         result: Type,
     },
     /// `base.{ field: value }` where the type of `base` was unknown at
@@ -939,17 +940,21 @@ impl TypeChecker {
         }
     }
 
-    /// Decide what `recv.field(args)` calls, now that the receiver's type
-    /// is known: the function a field of the record holds.
+    /// Read the field of `recv.field`, or decide what `recv.field(args)`
+    /// calls, now that the receiver's type is known: a field of the
+    /// record, or the function it holds.
     fn select_call(
         &mut self,
         recv: &Type,
         field: Symbol,
-        args: Vec<Type>,
+        args: Option<Vec<Type>>,
         result: Type,
         span: Span,
     ) {
-        let result_ty = Type::Fun(args, Box::new(result));
+        let result_ty = match args {
+            Some(args) => Type::Fun(args, Box::new(result)),
+            None => result,
+        };
         let resolved =
             crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(recv));
         match &resolved {
@@ -1593,54 +1598,6 @@ impl TypeChecker {
         }
         self.solve_wanted(self.closed_mark);
         self.close_level();
-    }
-
-    /// Decide each call `x.f(args)` of the scope just left whose
-    /// receiver is still unknown and is the scope's to generalise: `x` is
-    /// a record with a function in its field `m`.
-    pub(super) fn default_selects(&mut self) {
-        let mine: Vec<usize> = (self.closed_mark..self.wanted.len())
-            .filter(|&i| {
-                !self.wanted[i].solved
-                    && matches!(self.wanted[i].goal, Goal::Select { .. })
-                    && matches!(
-                        self.apply(self.wanted[i].goal.waits_on()),
-                        Type::Var(var) if self.tables.vars.is_generalizable(var)
-                    )
-            })
-            .collect();
-        // The variables this makes are the scope's.
-        self.reopen_level();
-        for i in mine {
-            let origin = self.wanted[i].origin;
-            let Goal::Select {
-                recv,
-                name,
-                args,
-                result,
-            } = self.wanted[i].goal.clone()
-            else {
-                continue;
-            };
-            // (An earlier one of these may have decided this receiver.)
-            if matches!(self.apply(&recv), Type::Var(_)) {
-                self.wanted[i].solved = true;
-                let call_ty = Type::Fun(args, Box::new(result));
-                self.default_select(&recv, name, call_ty, origin.span);
-            }
-        }
-        self.solve_wanted(self.closed_mark);
-        self.close_level();
-    }
-
-    /// `x.name(..)` whose receiver nothing decided: `x` is a record with
-    /// a function of the call's type in its field `name`.
-    fn default_select(&mut self, recv: &Type, name: Symbol, call_ty: Type, span: Span) {
-        let row = Type::AnonRecord {
-            fields: std::collections::BTreeMap::from([(name, call_ty)]),
-            tail: RowTail::Var(self.fresh_tyvar_id()),
-        };
-        self.unify(recv, &row, span);
     }
 
     /// Report that `method`, called on `on` (`type 'Int'`, `a value

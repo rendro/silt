@@ -51,9 +51,9 @@ impl TypeChecker {
         self.generalize_decided(ty)
     }
 
-    /// The scheme of a `let` inside a function. A `?`, an update or a
-    /// call of a method several traits declare that still waits for its
-    /// type is not decided here: the function goes on, and a use of the
+    /// The scheme of a `let` inside a function. A `?`, an update, a
+    /// field read or a call of a method several traits declare that
+    /// still waits for its type is not decided here: the function goes on, and a use of the
     /// `let` may decide it. So the `let` is not general in what such a
     /// goal mentions.
     pub(super) fn generalize_local(&mut self, ty: &Type) -> Scheme {
@@ -65,7 +65,6 @@ impl TypeChecker {
         // trait.)
         self.decide_tries();
         self.default_rebuilds();
-        self.default_selects();
         for i in self.closed_mark..self.wanted.len() {
             if self.wanted[i].solved {
                 continue;
@@ -84,7 +83,10 @@ impl TypeChecker {
                 Goal::Pred(_) => continue,
                 Goal::Select {
                     recv, args, result, ..
-                } => args.iter().chain([recv, result]).cloned().collect(),
+                } => (args.iter().flatten())
+                    .chain([recv, result])
+                    .cloned()
+                    .collect(),
                 Goal::Update { base, value, .. } => vec![base.clone(), value.clone()],
                 Goal::Try { operand, ok, ret } => {
                     ret.iter().chain([operand, ok]).cloned().collect()
@@ -644,8 +646,21 @@ impl TypeChecker {
                     );
                     continue;
                 }
-                // (Each is decided when the scope is generalised.)
-                Goal::Select { .. } => continue,
+                Goal::Select { name, args, .. } => {
+                    let what = match args {
+                        Some(_) => "this calls",
+                        None => "this reads",
+                    };
+                    self.errors.push(
+                        Diagnostic::error(
+                            Code::AmbiguousType,
+                            wanted.origin.span,
+                            format!("cannot infer the record type whose field '{name}' {what}"),
+                        )
+                        .with_help("annotate the record: `r: SomeRecord`"),
+                    );
+                    continue;
+                }
                 Goal::Update { field, .. } => {
                     self.errors.push(
                         Diagnostic::error(

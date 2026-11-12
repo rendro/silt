@@ -228,15 +228,13 @@ impl TypeChecker {
     }
 
     /// Decide what the scope `exit_level` just left can decide: what it
-    /// owes for a type it has decided since, and the calls on receivers
-    /// that are its to generalise (`default_selects`).
+    /// owes for a type it has decided since.
     pub(super) fn decide_closed(&mut self) {
         self.reopen_level();
         self.solve_wanted(self.closed_mark);
         self.close_level();
         self.decide_tries();
         self.default_rebuilds();
-        self.default_selects();
     }
 
     /// Make variables as the scope `exit_level` just left did, until

@@ -3541,7 +3541,7 @@ impl TypeChecker {
                 Goal::Select {
                     recv,
                     name,
-                    args,
+                    args: Some(args),
                     result: result.clone(),
                 },
                 Origin {
@@ -4922,17 +4922,24 @@ impl TypeChecker {
                             self.unknown_receiver = Some((obj_ty.clone(), field));
                             self.fresh_var()
                         } else {
-                            // `x.f`: a record with the field `f`.
-                            let result_ty = self.fresh_var();
-                            let row_ty = Type::AnonRecord {
-                                fields: std::collections::BTreeMap::from([(
-                                    field,
-                                    result_ty.clone(),
-                                )]),
-                                tail: RowTail::Var(self.fresh_tyvar_id()),
-                            };
-                            self.unify(&obj_ty, &row_ty, span);
-                            result_ty
+                            // `x.f`: the field is read when the type of
+                            // `x` is known.
+                            let result = self.fresh_var();
+                            self.want_goal(
+                                Goal::Select {
+                                    recv: obj_ty.clone(),
+                                    name: field,
+                                    args: None,
+                                    result: result.clone(),
+                                },
+                                Origin {
+                                    span,
+                                    callee: None,
+                                    op: None,
+                                    header: None,
+                                },
+                            );
+                            result
                         }
                     }
                     Type::Error | Type::Never => {
