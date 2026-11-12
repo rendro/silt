@@ -2047,7 +2047,7 @@ builtins! {
     fn segments(path: &str) -> Vec<Value> {
         path.split('/')
             .filter(|s| !s.is_empty())
-            .map(|s| Value::string(s))
+            .map(Value::string)
             .collect()
     }
 

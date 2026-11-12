@@ -143,7 +143,7 @@ builtins! {
                 .collect();
         }
         s.split(separator)
-            .map(|part| Value::string(part))
+            .map(Value::string)
             .collect()
     }
 
@@ -299,11 +299,11 @@ builtins! {
     }
 
     fn strip_prefix(s: &str, prefix: &str) -> Option<Value> {
-        s.strip_prefix(prefix).map(|rest| Value::string(rest))
+        s.strip_prefix(prefix).map(Value::string)
     }
 
     fn strip_suffix(s: &str, suffix: &str) -> Option<Value> {
-        s.strip_suffix(suffix).map(|rest| Value::string(rest))
+        s.strip_suffix(suffix).map(Value::string)
     }
 
     fn lines(s: &str) -> Vec<Value> {

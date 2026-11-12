@@ -77,11 +77,12 @@ const INSIDE_MODULES: &[&str] = &[
     "stream", "csv",
 ];
 
-/// The functions of [`INSIDE_MODULES`] that read or write a file or a
-/// connection.
+/// The functions of [`INSIDE_MODULES`] that read or write a file, a
+/// connection or stdin.
 const OUTSIDE: &[&str] = &[
     "stream.file_chunks",
     "stream.file_lines",
+    "stream.stdin_lines",
     "stream.tcp_chunks",
     "stream.tcp_lines",
     "stream.write_to_file",

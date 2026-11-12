@@ -489,7 +489,7 @@ builtins! {
     fn split_line(line: &str) -> Value {
         match fields_of_line(line) {
             Ok(fields) => ok(Value::list(
-                fields.into_iter().map(|f| Value::string(f)).collect(),
+                fields.into_iter().map(Value::string).collect(),
             )),
             Err(malformed) => syntax_err(&malformed),
         }

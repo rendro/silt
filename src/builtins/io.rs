@@ -404,7 +404,7 @@ builtins! {
     // separator (`silt run script.silt -- foo bar` → `["foo", "bar"]`).
     fn args() -> Vec<Value> {
         let args = program_args().into_iter();
-        args.map(|arg| Value::string(arg)).collect()
+        args.map(Value::string).collect()
     }
 }
 
@@ -671,7 +671,7 @@ pub(crate) mod env {
     builtins! {
         fn get(key: &str) -> Option<Value> {
             let value = std::env::var(key).ok();
-            value.map(|value| Value::string(value))
+            value.map(Value::string)
         }
 
         fn set(vm, key: &str, value: &str) -> Result<(), VmError> {
