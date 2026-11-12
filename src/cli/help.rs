@@ -24,8 +24,8 @@ pub(crate) fn usage_text() -> String {
     // tests/cli/cli_round26_tests.rs will fail otherwise.
     //
     // SIG_WIDTH is wide enough for the longest signature, `silt check`'s
-    // (66 chars), so that every description column aligns.
-    const SIG_WIDTH: usize = 66;
+    // (69 chars), so that every description column aligns.
+    const SIG_WIDTH: usize = 69;
     let line = |sig: &str, desc: &str| format!("  {sig:<SIG_WIDTH$}  {desc}\n");
     // Rows whose signatures advertise `[--watch]` get the same up-front
     // "requires feature: watch" caveat as `run` when the watch feature is
@@ -50,7 +50,7 @@ pub(crate) fn usage_text() -> String {
     out.push_str("Usage:\n");
     out.push_str(&line("silt run [--watch] <file.silt>", &run_desc));
     out.push_str(&line(
-        "silt check [--format json] [--deny-warnings] [--watch] <file.silt>",
+        "silt check [--format json] [--deny-warnings] [--watch] <file.silt>...",
         &check_desc,
     ));
     out.push_str(&line(test_usage_banner(), &test_desc));
@@ -152,7 +152,7 @@ pub(crate) fn asks_for_help(args: &[String]) -> bool {
 /// from this so they can't drift apart. A regression test in
 /// tests/cli/cli.rs asserts the two banners are byte-identical.
 pub(crate) fn check_usage_banner() -> &'static str {
-    "silt check [--format json] [--deny-warnings] [--watch] <file.silt>"
+    "silt check [--format json] [--deny-warnings] [--watch] <file.silt>..."
 }
 
 /// Single source of truth for the `silt run` usage banner line.

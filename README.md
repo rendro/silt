@@ -181,9 +181,10 @@ Then:
 ```sh
 silt init
 silt run
+silt test
 ```
 
-`silt init` writes a `silt.toml` manifest and a starter `src/main.silt`; `silt run` (no arguments, inside a package) executes the entry point. `silt init --lib` starts a library instead: `src/lib.silt`, for other packages to import.
+`silt init` writes a `silt.toml` manifest, a starter `src/main.silt` and a first test, `src/main_test.silt`; `silt run` (no arguments, inside a package) executes the entry point, and `silt test` runs the test. `silt init --lib` starts a library instead: `src/lib.silt` with its test `src/lib_test.silt`, for other packages to import.
 
 See `examples/` for runnable sample programs — start with `examples/hello.silt`, `examples/fizzbuzz.silt`, and `examples/records.silt`.
 
@@ -192,11 +193,13 @@ See `examples/` for runnable sample programs — start with `examples/hello.silt
 ```
 silt run <file.silt>       Run a program
 silt run -w <file.silt>    Run and re-run on file changes
-silt check <file.silt>     Type-check without running
+silt check <file.silt>...  Type-check without running, each file on its own
+silt check -               Type-check the program read from stdin
 silt check --format json <file.silt>   Type-check with JSON output (for CI/editors)
 silt check --deny-warnings <file.silt>   Also fail on warnings (for CI)
 silt test [path]           Run test functions
 silt fmt [files...]        Format source code
+silt fmt -                 Format the program read from stdin, to stdout
 silt fmt --check           Check formatting without modifying files
 silt repl                  Interactive REPL
 silt init [--lib]          Create a new silt package (a library with --lib) in this directory

@@ -58,7 +58,9 @@ pub(crate) fn dispatch(args: &[String]) {
             println!("  --watch, -w         Re-run on file changes");
             println!();
             println!("Auto-discovery: when no file is given, recursively runs tests");
-            println!("from files matching *_test.silt.");
+            println!("from files matching *_test.silt. In a package, it first checks");
+            println!("the package as 'silt check' does, and runs no test when the");
+            println!("package has an error.");
             process::exit(0);
         } else if args[i].starts_with('-') {
             // Unknown flag — don't silently treat as a filename.
@@ -127,6 +129,48 @@ fn report_diagnostics(
     true
 }
 
+/// A `silt test` given no path, in a package, checks the package first
+/// as `silt check` does (its manifest, its lock and every module of
+/// `src/`; the test files are checked as they are run): a package that
+/// does not check fails the run before a test runs, also where no test
+/// file imports what is broken. Its errors are shown; its warnings are
+/// left to `silt check`. Outside a package there is nothing to check.
+fn check_package_first() {
+    let files = match crate::cli::check::package_files() {
+        Ok(Some(files)) => files,
+        Ok(None) => return,
+        Err(()) => process::exit(1),
+    };
+    let checked = match crate::cli::check::check_package(&files.entry, &files.modules, &[]) {
+        Ok(checked) => checked,
+        Err(e) => {
+            eprintln!(
+                "error reading {}: {}",
+                files.entry,
+                silt::diagnostic::io_error_text(&e)
+            );
+            process::exit(1);
+        }
+    };
+    if !checked.failed() {
+        return;
+    }
+    let errors: Vec<Diagnostic> = (checked.diagnostics.iter())
+        .filter(|d| d.is_error())
+        .cloned()
+        .collect();
+    for (path, e) in &checked.unreadable {
+        eprintln!(
+            "error reading {path}: {}",
+            silt::diagnostic::io_error_text(e)
+        );
+    }
+    let files = ProgramFiles::new(&files.entry, checked.session.sources());
+    silt::diagnostic::eprint_all(&files, &errors);
+    eprintln!("error: silt test: the package has errors (see above), so no test was run");
+    process::exit(1);
+}
+
 fn run_tests(file: Option<&str>, filter: Option<String>) {
     silt::intern::reset();
     let paths: Vec<String> = if let Some(f) = file {
@@ -140,6 +184,7 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         }
     } else {
         // silt test — find all test files in current directory recursively
+        check_package_first();
         package_test_files(Path::new("."))
     };
 

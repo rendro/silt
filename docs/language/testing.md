@@ -62,7 +62,12 @@ fn test_parse() {
 
 `silt test` in the package's directory runs both files. In a package,
 `silt check` checks every module of the package and its test files,
-without running them.
+without running them. `silt test` with no path checks the package
+first, as `silt check` does: when a module has an error, it shows the
+errors and runs no test, even where no test file imports that module.
+`silt init` writes a first test, `src/main_test.silt` (`src/lib_test.silt`
+in a library), that imports the entry module and calls a `pub` function
+of it.
 
 ## Function Conventions
 

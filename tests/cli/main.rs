@@ -17,6 +17,7 @@ mod cli_round26_tests;
 mod cli_round36_tests;
 mod cli_run_paths_tests;
 mod cli_self_update_flag_tests;
+mod cli_stdin_and_many_files_tests;
 mod cli_test_rendering_tests;
 mod cli_watch_subcommand_gate_tests;
 mod empty_file_tests;

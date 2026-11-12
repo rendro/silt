@@ -1,0 +1,8 @@
+-- cmd: check a.silt
+-- exit: 1
+import helper
+
+fn main() {
+  let unused = 1
+  println(helper.two())
+}

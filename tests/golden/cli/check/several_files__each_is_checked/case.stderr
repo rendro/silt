@@ -1,0 +1,19 @@
+warning[type]: 'spare' is never used
+ --> helper.silt:2:7
+   |
+ 2 |   let spare = 1
+   |       ^^^^^ 'spare' is never used
+  = help: remove it, or name it `_spare`
+
+error[type]: type mismatch: expected Int, got String
+ --> a.silt:4:16
+   |
+ 4 |   let x: Int = "s"
+   |                ^^^ type mismatch: expected Int, got String
+
+warning[type]: 'unused' is never used
+ --> main.silt:6:7
+   |
+ 6 |   let unused = 1
+   |       ^^^^^^ 'unused' is never used
+  = help: remove it, or name it `_unused`

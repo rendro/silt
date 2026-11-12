@@ -290,7 +290,8 @@ the import.
 
 ## Multi-file projects
 
-`silt init` creates a package with a `silt.toml` manifest and a `src/` tree.
+`silt init` creates a package with a `silt.toml` manifest and a `src/` tree
+with a first test (see [Testing](testing.md#tests-of-a-package)).
 The entry point is `src/main.silt`, and every `.silt` file directly in
 `src/` is a module of the package, imported by its file name.
 

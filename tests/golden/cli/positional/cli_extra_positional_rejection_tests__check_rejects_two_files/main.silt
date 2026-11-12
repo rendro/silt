@@ -1,5 +1,0 @@
--- cmd: check a.silt
--- exit: 1
--- stderr-contains: silt check
--- stderr-contains: unexpected extra argument
-fn main() { print("hi") }

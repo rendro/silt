@@ -198,6 +198,11 @@ fn handle_watch(args: &[String]) {
         eprintln!("Run 'silt {sub} --help' for usage.");
         process::exit(1);
     }
+    // Stdin is read once: there is no file to watch.
+    if sub == "check" && filtered.iter().any(|a| a == "-") {
+        eprintln!("error: silt check: --watch cannot watch stdin ('-'): name the files");
+        process::exit(1);
+    }
     let requires_file = matches!(sub, "run" | "check" | "disasm");
     // `silt test` takes an optional file / path, so it's NOT in
     // the list above — `silt test --watch` alone is legitimate
@@ -226,7 +231,8 @@ fn handle_watch(args: &[String]) {
         }
     }
 
-    let positional = first_positional(&filtered);
+    let all = positionals(&filtered);
+    let positional = all.first().cloned();
     // `silt test` without a file finds its test files in a directory.
     let discovery = match (sub, positional.as_deref()) {
         ("test", None) => Some(env::current_dir().unwrap_or_else(|_| ".".into())),
@@ -241,7 +247,7 @@ fn handle_watch(args: &[String]) {
     };
     let sub = sub.to_string();
     let target = Target {
-        entries: Box::new(move || entries(&sub, positional.as_deref())),
+        entries: Box::new(move || entries(&sub, &all)),
         discovery,
         lock,
     };
@@ -249,46 +255,70 @@ fn handle_watch(args: &[String]) {
 }
 
 /// The first positional argument of the subcommand in `args` (`args[0]`
-/// is the subcommand): its file or path. `--format` takes a value;
-/// everything from a `--` on is the program's.
+/// is the subcommand): its file or path.
 #[cfg(feature = "watch")]
 fn first_positional(args: &[String]) -> Option<String> {
+    positionals(args).into_iter().next()
+}
+
+/// The positional arguments of the subcommand in `args` (`args[0]` is
+/// the subcommand): its files or paths. `--format` takes a value;
+/// everything from a `--` on is the program's.
+#[cfg(feature = "watch")]
+fn positionals(args: &[String]) -> Vec<String> {
+    let mut found = Vec::new();
     let mut i = 1;
     while i < args.len() {
         let a = args[i].as_str();
         if a == "--" {
-            return None;
+            break;
         }
         if a == "--format" || a == "--filter" {
             i += 2;
             continue;
         }
-        if a.starts_with('-') {
-            i += 1;
-            continue;
+        if !a.starts_with('-') {
+            found.push(a.to_string());
         }
-        return Some(a.to_string());
+        i += 1;
     }
-    None
+    found
 }
 
-/// The entry files of the programs `silt <sub> <positional>` runs: the
-/// file given; for `test`, the test files of the directory given or of
-/// the working directory; otherwise the package's `src/main.silt` (for
-/// `check`, its `src/lib.silt` when it has no main).
+/// The entry files of the programs `silt <sub> <positionals>` runs: the
+/// file given (for `check`, every file given); for `test`, the test files
+/// of the directory given or of the working directory; otherwise the
+/// package's `src/main.silt` (for `check`, its `src/lib.silt` when it has
+/// no main).
 #[cfg(feature = "watch")]
-fn entries(sub: &str, positional: Option<&str>) -> Vec<PathBuf> {
+fn entries(sub: &str, positionals: &[String]) -> Vec<PathBuf> {
     let cwd = env::current_dir().unwrap_or_else(|_| ".".into());
+    if sub == "check" && !positionals.is_empty() {
+        return positionals.iter().map(PathBuf::from).collect();
+    }
+    let positional = positionals.first().map(String::as_str);
     if sub == "test" {
         let dir = match positional {
             Some(path) if !Path::new(path).is_dir() => return vec![PathBuf::from(path)],
             Some(path) => PathBuf::from(path),
-            None => cwd,
+            None => cwd.clone(),
         };
-        return crate::cli::paths::package_test_files(&dir)
+        let mut files: Vec<PathBuf> = crate::cli::paths::package_test_files(&dir)
             .into_iter()
             .map(PathBuf::from)
             .collect();
+        // Given no path, `silt test` checks the package first: its files
+        // are the program's too.
+        if positional.is_none()
+            && let Ok(Some((root, _))) = find_project_root(&cwd)
+        {
+            files.extend(
+                package_entry(&root, true)
+                    .into_iter()
+                    .filter(|p| p.is_file()),
+            );
+        }
+        return files;
     }
     if let Some(path) = positional {
         return vec![PathBuf::from(path)];
@@ -296,9 +326,16 @@ fn entries(sub: &str, positional: Option<&str>) -> Vec<PathBuf> {
     let Ok(Some((root, _))) = find_project_root(&cwd) else {
         return Vec::new();
     };
+    package_entry(&root, sub == "check")
+}
+
+/// The entry file of the package at `root`: its `src/main.silt`, or with
+/// `allow_lib` its `src/lib.silt` when it has no main.
+#[cfg(feature = "watch")]
+fn package_entry(root: &Path, allow_lib: bool) -> Vec<PathBuf> {
     let main = root.join("src").join("main.silt");
     let lib = root.join("src").join("lib.silt");
-    if sub == "check" && !main.is_file() && lib.is_file() {
+    if allow_lib && !main.is_file() && lib.is_file() {
         vec![lib]
     } else {
         vec![main]
