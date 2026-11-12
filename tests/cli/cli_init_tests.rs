@@ -415,7 +415,7 @@ fn test_silt_test_checks_the_package_first() {
     let failed = |cwd: &Path, file: &str| {
         let out = silt_cmd().arg("test").current_dir(cwd).output().unwrap();
         assert_eq!(out.status.code(), Some(1), "{out:?}");
-        let stderr = String::from_utf8_lossy(&out.stderr);
+        let stderr = String::from_utf8_lossy(&out.stderr).replace('\\', "/");
         assert!(
             stderr.contains("error[type]: type mismatch: expected Int, got String"),
             "{stderr}"
@@ -429,9 +429,8 @@ fn test_silt_test_checks_the_package_first() {
         );
         assert!(out.stdout.is_empty(), "{out:?}");
     };
-    let sep = std::path::MAIN_SEPARATOR;
     // No test file.
-    failed(&dir, &format!("src{sep}other.silt"));
+    failed(&dir, "src/other.silt");
     failed(&dir.join("src"), "other.silt");
     // A passing test file that does not import the broken module.
     fs::write(
@@ -439,7 +438,7 @@ fn test_silt_test_checks_the_package_first() {
         "fn test_ok() { () }\n",
     )
     .unwrap();
-    failed(&dir, &format!("src{sep}other.silt"));
+    failed(&dir, "src/other.silt");
     // Given a path, the file or the directory is what is tested.
     let out = silt_cmd()
         .args(["test", "src/main_test.silt"])
