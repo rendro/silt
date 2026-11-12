@@ -1526,9 +1526,20 @@ requests that a deadline gives up, however many, never use the bound.
 | `io.read_line()` | Always (stdin) |
 | `http.get(url)` | Always (network) |
 | `http.request(...)` | Always (network) |
+| `print`, `println`, `io.eprint`, `io.eprintln` | The output's writer holds 64 KiB that its reader has not taken yet -- resumes when there is room |
 
 None of these block the OS thread. The task is parked and the thread continues
 running other tasks.
+
+What a program prints goes to a writer, one for stdout and one for stderr,
+which writes it out in the order of the calls, each text whole: two tasks'
+lines never mix. A print does not wait for the reader. Only when the reader
+has not taken 64 KiB of what was printed (a slow log shipper, a pager, a pipe
+nobody reads yet) does a print wait for room, as any wait of a task: the other
+tasks, their timers and deadlines go on, and a `task.deadline` around a print
+that waits ends it (its text is not written). Everything printed is written out
+before the program ends, and before `process.exit` ends it, as long as the
+reader takes it.
 
 I/O operations follow the same transparent yielding pattern as channel
 operations -- no special syntax needed. When code calls `io.read_file` or

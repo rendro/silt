@@ -24,6 +24,7 @@ pub(crate) use decode::Source;
 pub use error::VmError;
 pub use io::{Buffer, Clock, HostIo, Output, SystemClock};
 pub(crate) use io::{NO_PANIC_TEXT, panic_message, write_stderr};
+pub(crate) use io::{Printed, Stream, drain_process_output};
 pub use io_op::IoFailure;
 pub(crate) use io_op::{ErrFactory, IoOp, Leave, Limit, Wanted};
 pub(crate) use iter::{Flow, call_then, item_arg, iterate, next, stop};
@@ -403,6 +404,9 @@ impl Vm {
     /// collects them (`scheduler::collect_unjoined_failures`).
     fn report_unjoined_failures(&self) {
         self.runtime.scheduler.report_unjoined_failures();
+        // What the tasks printed, and the report, are written out before
+        // whoever settled says more.
+        self.runtime.io.drain();
     }
 
     /// Run a compiled program: take in its tables, then run its script.

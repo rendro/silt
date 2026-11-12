@@ -519,6 +519,12 @@ pub(crate) struct Running {
 impl Drop for Running {
     fn drop(&mut self) {
         if let Some(group) = &self.counted {
+            // What the code printed is written out before the call
+            // that ran it returns (and the thread still counts while
+            // it waits for that).
+            if !thread::panicking() {
+                self.inner.io.drain();
+            }
             let _ = COUNTED.try_with(|counted| counted.set(false));
             group.live.fetch_sub(1, Ordering::SeqCst);
             self.inner.check(group);
@@ -1372,7 +1378,9 @@ pub fn claim_program_failure() {
 /// calling thread waits for that end instead.
 ///
 /// What the program printed and stdout still holds is written out
-/// first, all of it, waiting for the reader as a normal end does.
+/// first, all of it, waiting for the reader as a normal end does: what
+/// the output's writers hold (`vm::io`'s lanes), as long as their
+/// reader takes some of it within [`LAST_WORDS`], then stdout's buffer.
 /// stdout's lock is taken for that and kept until the process is gone,
 /// so nothing is printed after the exit. Only the wait for the lock is
 /// bounded: another task's write that holds it, held up by a full
@@ -1388,6 +1396,9 @@ pub(crate) fn exit_from_the_program(code: u8) -> ! {
         }
     }
     end_as(WITH_STATUS);
+    // What the program printed and the writers still hold goes first,
+    // as long as their readers take it.
+    crate::vm::drain_process_output(LAST_WORDS);
     let (locked, has_lock) = std::sync::mpsc::channel();
     let (done, flushed) = std::sync::mpsc::channel();
     let flushes = move || {
@@ -1540,8 +1551,11 @@ impl InternalError {
         // held up. The program's text comes after the line, if the
         // line is written within half the time.
         let flushes = move || {
-            let mut stdout = std::io::stdout().lock();
             let _ = line_waits.recv_timeout(LAST_WORDS / 2);
+            // What the output's writers still hold first (they take
+            // stdout's lock to write it).
+            crate::vm::drain_process_output(LAST_WORDS / 4);
+            let mut stdout = std::io::stdout().lock();
             let _ = stdout.flush();
             let _ = done.send(());
             loop {
@@ -3926,5 +3940,113 @@ fn main() {
         let inner = Arc::downgrade(&vm.scheduler().inner);
         drop(vm);
         wait_for_the_end(inner);
+    }
+
+    /// An output whose writes wait until the gate is opened: a reader
+    /// that takes nothing for now.
+    #[derive(Clone, Default)]
+    struct Gated {
+        open: Arc<(Mutex<bool>, parking_lot::Condvar)>,
+        text: Arc<Mutex<String>>,
+    }
+
+    impl Output for Gated {
+        fn write(&self, text: &str) -> std::io::Result<()> {
+            let (open, opened) = &*self.open;
+            let mut is_open = open.lock();
+            while !*is_open {
+                opened.wait(&mut is_open);
+            }
+            self.text.lock().push_str(text);
+            Ok(())
+        }
+    }
+
+    /// Prints into an output that takes nothing park their tasks, and
+    /// the program's other tasks and its deadlines go on: twelve tasks
+    /// that print more than the writer holds (more than there are
+    /// workers) do not stop a task that computes, and a deadline around
+    /// a print that waits ends it. When the reader takes the output,
+    /// every line is there, whole, each task's lines in their order.
+    /// (A print wrote on the worker that ran it: with the output held
+    /// up, every worker was soon held in a print, and nothing else ran.)
+    #[test]
+    fn prints_that_wait_for_the_output_hold_up_nothing_else() {
+        let (program, given) = crate::session::testing::compile_given(
+            r#"
+import io
+import list
+import string
+import task
+import time
+fn main() {
+  let line = string.repeat("x", 1000)
+  let printers = list.map(1..12) { p ->
+    task.spawn { -> list.each(1..100) { i -> println("{p} {i} {line}") } }
+  }
+  let sum = task.spawn { -> list.fold(1..1000, 0) { acc, i -> acc + i } }
+  io.eprintln("computed {task.join(sum)}")
+  let cut = task.deadline(time.ms(50)) { -> list.each(1..100) { _ -> println(line) } }
+  io.eprintln("the deadline: {cut}")
+  list.each(printers, task.join)
+}
+"#,
+        )
+        .expect("the program compiles");
+        drop(given);
+        let out = Gated::default();
+        let err = Timed::default();
+        let ran = {
+            let (out, err) = (out.clone(), err.clone());
+            std::thread::spawn(move || {
+                let mut vm = Vm::new(HostIo::new(out, err));
+                vm.run_program(&program)
+            })
+        };
+        // The task that computes, and the deadline, while the output
+        // takes nothing.
+        let limit = Instant::now() + Duration::from_secs(60);
+        let said = |err: &Timed| {
+            let lines: Vec<String> = err.0.lock().iter().map(|(text, _)| text.clone()).collect();
+            lines.concat()
+        };
+        while !said(&err).contains("the deadline:") {
+            assert!(
+                Instant::now() < limit,
+                "the program stopped while its output took nothing: {:?}",
+                said(&err)
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(
+            said(&err),
+            "computed 500500\nthe deadline: Err(the function was ended by its deadline)\n"
+        );
+        // The reader takes it all.
+        {
+            let (open, opened) = &*out.open;
+            *open.lock() = true;
+            opened.notify_all();
+        }
+        ran.join().unwrap().expect("the program ends");
+        let text = out.text.lock().clone();
+        let mut next = [1; 13];
+        for line in text.lines() {
+            let mut parts = line.splitn(3, ' ');
+            let (Some(p), Some(i), Some(rest)) = (parts.next(), parts.next(), parts.next()) else {
+                // A line of the deadline's prints that went out before
+                // the cut: all of it, or none.
+                assert_eq!(line, "x".repeat(1000));
+                continue;
+            };
+            let (p, i): (usize, usize) = (p.parse().unwrap(), i.parse().unwrap());
+            assert_eq!(rest, "x".repeat(1000), "a line is whole");
+            assert_eq!(i, next[p], "the lines of task {p} are in their order");
+            next[p] += 1;
+        }
+        assert!(
+            next[1..].iter().all(|n| *n == 101),
+            "every line is there: {next:?}"
+        );
     }
 }
