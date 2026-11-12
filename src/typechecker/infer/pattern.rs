@@ -691,9 +691,8 @@ impl TypeChecker {
                 }
                 // The record type the pattern names, with its fields in
                 // the order of the declaration.
-                let declared = self
-                    .named_record(res, *name, pattern_span, true)
-                    .map(|(rec_ref, rec_info, param_ids, fixed)| {
+                let declared = self.named_record(res, *name, pattern_span, true).map(
+                    |(rec_ref, rec_info, param_ids, fixed)| {
                         let (fields, args) =
                             self.instantiate_record_fields(&rec_info, param_ids.as_deref());
                         // An alias's arguments (`BI { .. }` for `type BI = B(Int)`).
@@ -707,7 +706,8 @@ impl TypeChecker {
                             self.misread_pattern(expected, &given, reported, pattern_span);
                         }
                         (rec_ref, fields)
-                    });
+                    },
+                );
                 if let Some((rec_ref, _)) = &declared
                     && let Some(module) = self.opaque_outside(*rec_ref)
                 {
