@@ -271,6 +271,9 @@ struct Inner {
     /// The verdict, between the check that gave it and the program's
     /// thread that raises it.
     deadlock: Mutex<Option<VmError>>,
+    /// Test-only: the event whose check gave the verdict ([`GivenAt`]).
+    #[cfg(test)]
+    verdict_given_at: Mutex<Option<&'static str>>,
     /// The names of the waits of threads.
     next_thread_wait: AtomicU64,
     /// The owner tag of the tasks spawned outside any task
@@ -512,6 +515,8 @@ impl Scheduler {
                 }),
                 main: Mutex::new(None),
                 deadlock: Mutex::new(None),
+                #[cfg(test)]
+                verdict_given_at: Mutex::new(None),
                 next_thread_wait: AtomicU64::new(0),
                 owner: AtomicU64::new(0),
                 outer: AtomicU64::new(0),
@@ -912,7 +917,11 @@ impl Scheduler {
                 if timed {
                     inner.timer_armed();
                 }
+                #[cfg(test)]
+                let at = GivenAt::event("a thread parked");
                 inner.check(&group);
+                #[cfg(test)]
+                drop(at);
                 inner.wait_thread(&park)
             }
         };
@@ -1893,6 +1902,8 @@ impl Inner {
     fn ended(&self, group: &Group) {
         self.spawned.fetch_sub(1, Ordering::SeqCst);
         group.live.fetch_sub(1, Ordering::SeqCst);
+        #[cfg(test)]
+        let _at = GivenAt::event("a task ended");
         self.check(group);
     }
 
@@ -2220,6 +2231,8 @@ impl Inner {
                         if timed {
                             self.timer_armed();
                         }
+                        #[cfg(test)]
+                        let _at = GivenAt::event("a task parked");
                         self.check(&group);
                     }
                 }
@@ -2313,6 +2326,10 @@ impl Inner {
                 // `None`: the program's thread is not among those that
                 // wait (its wait is over, or not yet begun).
                 if let Some(verdict) = verdict.flatten() {
+                    #[cfg(test)]
+                    {
+                        *self.verdict_given_at.lock() = GivenAt::now();
+                    }
                     *self.deadlock.lock() = Some(verdict);
                     self.parking.cancel(id);
                 }
@@ -2327,6 +2344,40 @@ impl Inner {
         for group in groups {
             self.check(&group);
         }
+    }
+}
+
+/// Test-only: which event the check that runs on this thread follows,
+/// while it runs (a task's end, a task's park). The check that gives a
+/// deadlock verdict notes it (`Inner::verdict_given_at`), so a test
+/// can say that the verdict came with the last event of the program,
+/// not later, without measuring a time.
+#[cfg(test)]
+struct GivenAt(Option<&'static str>);
+
+#[cfg(test)]
+thread_local! {
+    static GIVEN_AT: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+impl GivenAt {
+    /// The checks on this thread follow `event` until the value is
+    /// dropped.
+    fn event(event: &'static str) -> GivenAt {
+        GivenAt(GIVEN_AT.with(|at| at.replace(Some(event))))
+    }
+
+    /// The event the checks on this thread follow now.
+    fn now() -> Option<&'static str> {
+        GIVEN_AT.with(std::cell::Cell::get)
+    }
+}
+
+#[cfg(test)]
+impl Drop for GivenAt {
+    fn drop(&mut self) {
+        GIVEN_AT.with(|at| at.set(self.0));
     }
 }
 
@@ -3135,12 +3186,34 @@ mod tests {
         (result, out, Instant::now())
     }
 
-    /// How long after the last event of a deadlocked program the
-    /// verdict may come. It is given by the event itself (the last
-    /// park, the last task's end, the last timer), so the bound is
-    /// that of waking one thread. A loaded Windows runner of CI has
-    /// taken 143 ms to wake one, so there the bound is wider.
-    const VERDICT_WITHIN: Duration = Duration::from_millis(if cfg!(windows) { 500 } else { 100 });
+    /// [`run`], with the event whose check gave the deadlock verdict
+    /// ([`super::GivenAt`]). A verdict is given by the last event of a
+    /// deadlocked program itself, not by a later look: that is what a
+    /// test asks here, not how soon after it the verdict came (a time
+    /// that a busy machine stretches: a CI runner took 109 ms once).
+    fn run_given(source: &str) -> (Result<Value, VmError>, Option<&'static str>) {
+        let (program, given) =
+            crate::session::testing::compile_given(source).expect("the program compiles");
+        let out = Timed::default();
+        let mut vm = Vm::new(HostIo::new(out.clone(), out));
+        let result = vm
+            .run_program(&program)
+            .map(|()| given.last().unwrap_or(Value::Unit));
+        let at = *vm.scheduler().inner.verdict_given_at.lock();
+        (result, at)
+    }
+
+    /// The verdict was given at `event`, the last event of the program.
+    /// (Its task sleeps 150 ms first, so that the program's thread has
+    /// parked by then. Where a busy machine held the program's thread
+    /// up for longer, its park was the last event and gave it: as
+    /// right, and no failure.)
+    fn assert_given_by_the_last(at: Option<&'static str>, event: &str) {
+        assert!(
+            at == Some(event) || at == Some("a thread parked"),
+            "the verdict was given at {at:?}, not at the last event ({event})"
+        );
+    }
 
     fn assert_deadlock(result: Result<Value, VmError>, what: &str) {
         let error = result.expect_err("the program is deadlocked");
@@ -3284,7 +3357,8 @@ fn main() {
 
     #[test]
     fn a_deadlock_is_reported_when_the_last_task_parks() {
-        let (result, out, end) = run(r#"
+        let (result, at) = run_given(
+            r#"
 import channel
 import task
 import time
@@ -3299,15 +3373,16 @@ fn main() {
   host.give(channel.receive(a))
 }
 import host
-"#);
+"#,
+        );
         assert_deadlock(result, "channel receive with no counterparty");
-        let after = end.duration_since(out.at("last"));
-        assert!(after < VERDICT_WITHIN, "the verdict came {after:?} late");
+        assert_given_by_the_last(at, "a task parked");
     }
 
     #[test]
     fn a_deadlock_is_reported_when_the_last_task_ends() {
-        let (result, out, end) = run(r#"
+        let (result, at) = run_given(
+            r#"
 import channel
 import task
 import time
@@ -3320,10 +3395,10 @@ fn main() {
   channel.send(ch, 1)
   task.join(ends)
 }
-"#);
+"#,
+        );
         assert_deadlock(result, "channel send with no counterparty");
-        let after = end.duration_since(out.at("last"));
-        assert!(after < VERDICT_WITHIN, "the verdict came {after:?} late");
+        assert_given_by_the_last(at, "a task ended");
     }
 
     #[test]
