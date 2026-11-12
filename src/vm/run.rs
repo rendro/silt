@@ -1805,6 +1805,7 @@ impl Vm {
         self.runtime.charge(0)?;
         let mut run = start(self)?;
         loop {
+            crate::scheduler::run_deferred();
             if program {
                 scheduler.give_panic_on();
             }

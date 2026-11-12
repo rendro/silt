@@ -267,10 +267,17 @@ fn main() {
   by hand (`channel.receive`, `channel.select`) and then left takes
   nothing more from what feeds it: its transforms wait for a reader. Its
   source and a `stream.buffered` work on until their outputs are full or
-  the source is at its end, and the program does not end before they have
-  stopped (see [When a program
-  ends](../concurrency.md#when-a-program-ends)). `channel.close(s)` on the
-  stream stops them at once.
+  the source is at its end. `channel.close(s)` on the stream stops them
+  at once.
+- **A stream that nothing can read any more is closed.** When the last
+  name of a stream goes (the function that read it returned, the loop
+  went round to its next stream), it is closed as `channel.close(s)`
+  closes it: its stages stop, a TCP source shuts its connection down
+  (the client sees the end), and the tasks of the stages are gone. So a
+  handler that reads a few lines of `stream.tcp_lines(conn)` and returns
+  leaves nothing behind, and neither does a loop that reads one value of
+  each of a million streams. A stream that a later stage reads, or that
+  a channel or a task holds, is not left.
 - **Errors flow through the stream.** File sources emit
   `Channel(Result(_, IoError))`; TCP sources emit
   `Channel(Result(_, TcpError))`. Each chunk can fail independently;

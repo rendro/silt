@@ -23,12 +23,16 @@
 //! - A stage or a sink that reads no further (`take`, `first`, an
 //!   error downstream) stops the stage that feeds it, which stops the
 //!   one before it. A channel that no stage feeds is left alone.
+//! - A stage whose output every reader has let go of is stopped the
+//!   same way: the stage holds its output weakly, and so does its wait
+//!   to be asked (`Source::Demand`), so the output is dropped with its
+//!   last reader (`Channel`'s `Drop`).
 //!
 //! Every stage and every sink is one `Pipe`: a frame that does the
 //! waiting, around a function (`Logic`) that says what comes next.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Weak};
 
 use parking_lot::Mutex;
 
@@ -152,10 +156,10 @@ enum State {
     Go(Got),
     /// It waits for a value; the wait's arms are these inputs.
     Taking(Vec<usize>),
-    Emitting,
     Calling,
     Io(IoOp),
-    /// It waits to be asked for a value, and then does this take.
+    /// It waits to be asked for a value, or for room in its output, and
+    /// then does this: a take, or the emit of a value.
     Asking(Next),
     /// It gave way to the other tasks; it goes on with this.
     Then(Next),
@@ -168,8 +172,11 @@ struct Pipe {
     inputs: Vec<Arc<Channel>>,
     /// Which inputs have not ended.
     open: Vec<bool>,
-    /// The output of a stage; a sink has none.
-    out: Option<Arc<Channel>>,
+    /// The output of a stage; a sink has none. Held weakly: the stage
+    /// does not keep its output. When every reader has let it go, it is
+    /// dropped, and that stops the stage (`Channel`'s `Drop`); the stage
+    /// that finds it gone is over.
+    out: Option<Weak<Channel>>,
     /// The handle of a stage's own task: where its failure is read
     /// when the task ends by one.
     handle: Option<Arc<TaskHandle>>,
@@ -273,7 +280,7 @@ impl Pipe {
             return;
         }
         let wake = vm.scheduler().wake();
-        if let Some(out) = &self.out {
+        if let Some(out) = self.output() {
             let stage = failure.as_ref().and(self.handle.clone());
             out.close(Close { failure, stage }, wake);
         }
@@ -282,6 +289,11 @@ impl Pipe {
                 input.abandon(wake);
             }
         }
+    }
+
+    /// The output of a stage, while a reader has it.
+    fn output(&self) -> Option<Arc<Channel>> {
+        self.out.as_ref().and_then(Weak::upgrade)
     }
 
     /// Nobody reads the output any more, and the pipe has a value for
@@ -331,12 +343,14 @@ impl Pipe {
                 // drains it; `stream.buffered` holds values ahead):
                 // until then it waits, with nothing taken.
                 take @ (Next::Take(_) | Next::TakeAny)
-                    if self.out.as_ref().is_some_and(|out| !out.is_asked()) =>
+                    if self.out.is_some() && self.output().is_none_or(|out| !out.is_asked()) =>
                 {
-                    let Some(out) = &self.out else {
-                        return Err(internal("has no output"));
+                    // Its readers have let the output go: nobody asks.
+                    let Some(out) = self.output() else {
+                        self.cut_short(vm);
+                        return Ok(Step::Done(Value::Unit));
                     };
-                    let wait = Wait::new(vec![Arm::Demand(out.clone())]);
+                    let wait = Wait::new(vec![Arm::Demand(out)]);
                     self.state = State::Asking(take);
                     return Ok(Step::Park(wait));
                 }
@@ -366,8 +380,13 @@ impl Pipe {
                     return Ok(Step::Park(wait));
                 }
                 Next::Emit(value) => {
-                    let Some(out) = &self.out else {
+                    if self.out.is_none() {
                         return Err(internal("has no output"));
+                    }
+                    // Nobody reads the output: its readers let it go.
+                    let Some(out) = self.output() else {
+                        self.cut_short(vm);
+                        return Ok(Step::Done(Value::Unit));
                     };
                     match out.try_send(value, vm.scheduler().wake()) {
                         TrySend::Sent => Got::Emitted,
@@ -376,9 +395,11 @@ impl Pipe {
                             self.cut_short(vm);
                             return Ok(Step::Done(Value::Unit));
                         }
+                        // It waits for room as for being asked, which
+                        // does not keep the output, and sends again.
                         TrySend::Full(value) => {
-                            let wait = Wait::new(vec![Arm::Send(out.clone(), value)]);
-                            self.state = State::Emitting;
+                            let wait = Wait::new(vec![Arm::Demand(out)]);
+                            self.state = State::Asking(Next::Emit(value));
                             return Ok(Step::Park(wait));
                         }
                     }
@@ -437,14 +458,6 @@ impl Native for Pipe {
                 Fired::Arm(arm, Outcome::Received(value)) => Got::Value(arms[arm], value),
                 Fired::Arm(arm, Outcome::Closed(close)) => self.ended(arms[arm], close)?,
                 _ => return Err(internal("was woken without a value")),
-            },
-            State::Emitting => match vm.woken()? {
-                Fired::Arm(_, Outcome::Sent) => Got::Emitted,
-                // Nobody reads the output.
-                _ => {
-                    self.cut_short(vm);
-                    return Ok(Step::Done(Value::Unit));
-                }
             },
             // The value, or the module's error at `SILT_IO_TIMEOUT`.
             State::Io(op) => Got::Io(op.value(&vm.woken()?)),
@@ -555,7 +568,7 @@ fn stage_on(
     });
     let mut pipe = Pipe::new(name, inputs, logic);
     pipe.armed = armed;
-    pipe.out = Some(out.clone());
+    pipe.out = Some(Arc::downgrade(&out));
     pipe.handle = Some(handle.clone());
     if drains {
         // A reader that drains the output drains every input: the
@@ -1975,7 +1988,10 @@ mod tests {
                 .send(Value::Int(item as i64))
                 .expect("the source reads");
         }
-        until("the source did not wait for room", || out.waiting().1 > 0);
+        // (It waits to be asked for room, with its item.)
+        until("the source did not wait for room", || {
+            out.len() == AHEAD && out.feeders() > 0
+        });
         assert!(!stopped.load(Ordering::SeqCst));
         out.close(Close::default(), vm.scheduler().wake());
         until("the connection was left open", || {
@@ -2014,7 +2030,7 @@ mod tests {
                     _ => Next::Done(Value::Unit),
                 })
             });
-            pipe.out = Some(out.clone());
+            pipe.out = Some(Arc::downgrade(&out));
             // The VM of a stage's task has the task's flag.
             vm.cancelled = Some(handle.cancel_flag());
             pipe.handle = Some(handle);

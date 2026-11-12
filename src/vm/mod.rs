@@ -496,6 +496,9 @@ impl Vm {
     /// The tasks waited for are those of the current owner
     /// ([`Vm::set_task_owner`]).
     pub fn settle(&mut self) {
+        // The streams that the code left as it returned are closed
+        // first, as they would be by the next step of a task.
+        crate::scheduler::run_deferred();
         self.runtime.scheduler.settle();
         self.report_unjoined_failures();
     }
@@ -534,6 +537,7 @@ impl Vm {
     /// where the process ends; `silt test` calls this after a test
     /// that failed, since the VM goes on to the next test.
     pub fn stop_tasks(&mut self) {
+        crate::scheduler::run_deferred();
         self.runtime.scheduler.stop_tasks();
         self.report_unjoined_failures();
     }
@@ -544,6 +548,7 @@ impl Vm {
     /// tasks of which may serve the file's tests
     /// ([`Vm::set_task_owner_within`]).
     pub fn wait_until_idle(&mut self) {
+        crate::scheduler::run_deferred();
         self.runtime.scheduler.wait_until_idle();
         self.report_unjoined_failures();
     }

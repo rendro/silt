@@ -666,6 +666,8 @@ impl Scheduler {
         handle: Arc<TaskHandle>,
     ) -> Result<(), String> {
         self.begin();
+        // The stages that were stopped first: their slots count.
+        run_deferred();
         vm.cancelled = Some(handle.cancel_flag());
         vm.deadline = handle.deadline();
         vm.late = handle.deadline().map(|_| handle.late());
@@ -2502,14 +2504,15 @@ fn waits_of_the_others(own: &[&Waiting<'_, Sleeper>], main: TaskId) -> Vec<(Stri
                     // A stream stage sends on its output, and waits there
                     // for its reader to ask for a value or to make room;
                     // a channel that its function sends to is named.
-                    Source::Send(channel) | Source::Demand(channel)
+                    Source::Send(channel)
                         if stage.is_some_and(|stage| stage.output == channel.id()) =>
                     {
                         "for its output to be read".to_string()
                     }
-                    Source::Send(channel) | Source::Demand(channel) => {
-                        format!("to send to <channel:{}>", channel.id())
-                    }
+                    // (Only what feeds a channel waits to be asked: a
+                    // stage, on its output.)
+                    Source::Demand(_) => "for its output to be read".to_string(),
+                    Source::Send(channel) => format!("to send to <channel:{}>", channel.id()),
                     Source::Cell(cell) => match cell.label() {
                         Some(label) => format!("for {label} to end"),
                         None => "for a task to end".to_string(),
@@ -2656,6 +2659,7 @@ fn worker_loop(inner: Arc<Inner>) {
     let work = AssertUnwindSafe(|| {
         while let Some(task) = inner.next_task() {
             inner.run_slice(task, true);
+            run_deferred();
         }
     });
     if let Err(payload) = catch_unwind(work) {
@@ -2957,6 +2961,42 @@ fn report_unjoined_failures(inner: &Inner) -> usize {
         inner.io.err(&report);
     }
     reported
+}
+
+/// What is to be done where the runtime holds no lock of its own: the
+/// stops of stream stages whose output every reader has let go of
+/// (`Channel`'s `Drop`). A channel is dropped wherever its last holder
+/// lets it go, maybe under the lock of another channel or of the
+/// registry of waits, which the stop (a cancel of the stage's task)
+/// takes. They are run after each slice a worker runs, after each slice
+/// of a thread that runs silt code, and before a task is spawned
+/// ([`run_deferred`]).
+static DEFERRED: std::sync::Mutex<Vec<Box<dyn FnOnce() + Send>>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// Whether [`DEFERRED`] has anything: the look without its lock.
+static DEFERRED_ANY: AtomicBool = AtomicBool::new(false);
+
+/// Do `stop` where the runtime holds no lock ([`DEFERRED`]).
+pub(crate) fn defer(stop: impl FnOnce() + Send + 'static) {
+    let mut deferred = DEFERRED.lock().unwrap_or_else(|e| e.into_inner());
+    deferred.push(Box::new(stop));
+    DEFERRED_ANY.store(true, Ordering::SeqCst);
+}
+
+/// Run what was deferred ([`defer`]), and what that defers in turn. The
+/// caller holds no lock of the runtime.
+pub(crate) fn run_deferred() {
+    while DEFERRED_ANY.load(Ordering::SeqCst) {
+        let stops = {
+            let mut deferred = DEFERRED.lock().unwrap_or_else(|e| e.into_inner());
+            DEFERRED_ANY.store(false, Ordering::SeqCst);
+            std::mem::take(&mut *deferred)
+        };
+        for stop in stops {
+            stop();
+        }
+    }
 }
 
 /// The schedulers whose workers a thread has started.
@@ -3940,6 +3980,35 @@ fn main() {
         let inner = Arc::downgrade(&vm.scheduler().inner);
         drop(vm);
         wait_for_the_end(inner);
+    }
+
+    /// A stream that nothing can read any more is closed, and its
+    /// stages end: a loop that reads one value of each of 1,000 streams
+    /// and leaves them keeps no stage of them. (They stayed, parked: two
+    /// tasks for each stream, and in a longer loop the task limit.)
+    /// The bound leaves room for the stages of the last streams, which
+    /// may still be running their last steps.
+    #[test]
+    fn streams_left_by_a_loop_keep_no_stage() {
+        let (program, _) = crate::session::testing::compile_given(
+            r#"
+import channel
+import list
+import stream
+fn main() {
+  list.each(1..1000) { i ->
+    let s = stream.from_range(i, i + 100) |> stream.map { x -> x + 1 }
+    let _ = channel.receive(s)
+  }
+}
+"#,
+        )
+        .expect("the program compiles");
+        let out = Timed::default();
+        let mut vm = Vm::new(HostIo::new(out.clone(), out));
+        vm.run_program(&program).expect("the program runs");
+        let left = vm.scheduler().inner.spawned.load(Ordering::SeqCst);
+        assert!(left <= 64, "{left} stages of left streams are still there");
     }
 
     /// An output whose writes wait until the gate is opened: a reader

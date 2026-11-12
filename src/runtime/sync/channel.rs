@@ -255,6 +255,14 @@ impl Drop for Channel {
         {
             timer.disarm(*id);
         }
+        // The output of a feeder (a stream's stage, which holds it
+        // weakly) that every reader has let go of: the feeder is told
+        // to stop, as by `abandon`. Not here: a channel is dropped
+        // wherever its last holder lets it go, maybe under a lock that
+        // the stop takes (`scheduler::run_deferred`).
+        if let Some(stop) = self.on_abandon.take() {
+            crate::scheduler::defer(move || stop());
+        }
     }
 }
 
@@ -419,7 +427,7 @@ impl Channel {
 
     /// How many feeders wait here to be asked for a value.
     #[cfg(test)]
-    pub(super) fn feeders(&self) -> usize {
+    pub(crate) fn feeders(&self) -> usize {
         self.state.lock().demandq.len()
     }
 

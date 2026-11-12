@@ -1398,7 +1398,9 @@ fn the_waiting_tasks_are_shown_with_what_they_wait_on() {
                         .map(|source| match source {
                             Source::Recv(channel) => format!("receive {}", channel.id()),
                             Source::Send(channel) => format!("send {}", channel.id()),
-                            Source::Demand(channel) => format!("demand {}", channel.id()),
+                            Source::Demand(channel) => {
+                                format!("demand {}", channel.upgrade().map_or(0, |c| c.id()))
+                            }
                             Source::Cell(_) => "cell".to_string(),
                         })
                         .collect();
