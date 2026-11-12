@@ -412,16 +412,16 @@ fn type_mismatch(column: &str, expected: &str, actual: &str) -> Value {
     Value::variant(
         bv::PG_TYPE_MISMATCH,
         [
-            Value::String(column.into()),
-            Value::String(expected.into()),
-            Value::String(actual.into()),
+            Value::string(column),
+            Value::string(expected),
+            Value::string(actual),
         ],
     )
 }
 
 /// `NoSuchColumn(column)`.
 pub(super) fn no_such_column(column: &str) -> Value {
-    Value::variant(bv::PG_NO_SUCH_COLUMN, [Value::String(column.into())])
+    Value::variant(bv::PG_NO_SUCH_COLUMN, [Value::string(column)])
 }
 
 /// The error of a result with two columns of the name `column`, which
@@ -651,7 +651,7 @@ impl Plan {
                 for c in columns {
                     let value = cell(r, c, &c.col, &FieldType::JsonValue, raw(c.column)?)
                         .map_err(|m| type_mismatch(&c.name, &m.expected, &m.actual))?;
-                    entries.push((Value::String(c.name.as_str().into()), value));
+                    entries.push((Value::string(c.name.as_str()), value));
                 }
                 let json = Value::variant(bv::JSON_OBJECT, [Value::map(entries)]);
                 Ok(match decoded {
@@ -1032,9 +1032,9 @@ fn cell(
             let f = float(col, raw).map_err(malformed)?;
             Value::Float(Float::new(f).ok_or_else(|| Mismatch::new(rt, field, non_finite(f)))?)
         }
-        (Col::Numeric, F::String) => Value::String(numeric(raw).map_err(malformed)?.into()),
+        (Col::Numeric, F::String) => Value::string(numeric(raw).map_err(malformed)?),
         (Col::Text | Col::Char | Col::Uuid, F::String) => {
-            Value::String(text(col, raw).map_err(malformed)?.into())
+            Value::string(text(col, raw).map_err(malformed)?)
         }
         (Col::Bytea, F::Bytes) => Value::Bytes(Arc::new(raw.to_vec())),
         (Col::Date, F::Date) => make_date(date(raw).map_err(|why| Mismatch::new(rt, field, why))?),
@@ -1101,7 +1101,7 @@ const MALFORMED: &str = "a value the server sent malformed";
 fn dynamic(rt: &Runtime, c: &ColumnPlan, col: &Col, raw: &[u8]) -> Result<Value, Mismatch> {
     let field = FieldType::JsonValue;
     let malformed = |_| Mismatch::new(rt, &field, MALFORMED);
-    let string = |s: String| Value::variant(bv::JSON_STRING, [Value::String(s.into())]);
+    let string = |s: String| Value::variant(bv::JSON_STRING, [Value::string(s)]);
     Ok(match col {
         Col::Bool => Value::variant(
             bv::JSON_BOOL,
@@ -1458,8 +1458,8 @@ mod tests {
     #[test]
     fn a_list_is_an_array_literal_with_every_element_quoted() {
         let list = Value::list(vec![
-            Value::String("a\"b".into()),
-            Value::String("c\\d".into()),
+            Value::string("a\"b"),
+            Value::string("c\\d"),
             Value::variant(bv::NONE, []),
             Value::variant(bv::SOME, [Value::Int(1)]),
         ]);
@@ -1521,21 +1521,21 @@ mod tests {
         value: &Value,
     ) -> Result<String, String> {
         let mut vm = crate::vm::Vm::new(crate::vm::HostIo::process());
-        let doc = Value::map([(Value::String("v".into()), value.clone())]);
+        let doc = Value::map([(Value::string("v"), value.clone())]);
         let written = match f(&mut vm, &[doc]) {
             Some(Ok(crate::vm::Step::Done(written))) => written,
             Some(Err(e)) => return Err(e.message),
             _ => panic!("no result"),
         };
         match written {
-            Value::String(text) => Ok(text.to_string()),
+            Value::String(text, _) => Ok(text.to_string()),
             Value::Variant(result) if result.is(bv::OK) => match result.fields() {
-                [Value::String(text)] => Ok(text.to_string()),
+                [Value::String(text, _)] => Ok(text.to_string()),
                 other => panic!("{other:?}"),
             },
             Value::Variant(result) => match result.fields() {
                 [Value::Variant(other)] => match other.fields() {
-                    [Value::String(message)] => Err(message.to_string()),
+                    [Value::String(message, _)] => Err(message.to_string()),
                     fields => panic!("{fields:?}"),
                 },
                 fields => panic!("{fields:?}"),
@@ -1593,7 +1593,7 @@ mod tests {
             (float(2.5), Read::Text, "2.5"),
             (float(2.0), Read::Text, "2.0"),
             (Value::Bool(true), Read::Text, "true"),
-            (Value::String("a \"b\" ü".into()), Read::Text, "a \"b\" ü"),
+            (Value::string("a \"b\" ü"), Read::Text, "a \"b\" ü"),
             (Value::variant(bv::SOME, [Value::Int(3)]), Read::Text, "3"),
             (
                 Value::variant(bv::JSON_INT, [Value::Int(5)]),
@@ -1652,7 +1652,7 @@ mod tests {
             .stack_size(16 * 1024 * 1024)
             .spawn(|| {
                 let bytes = Value::Bytes(Arc::new(vec![1, 2]));
-                let v = |x: Value| Value::map([(Value::String("v".into()), x)]);
+                let v = |x: Value| Value::map([(Value::string("v"), x)]);
                 let nested = (0..crate::builtins::data::MAX_ENCODE_DEPTH)
                     .fold(Value::Int(1), |inner, _| Value::list(vec![inner]));
                 let refused = [

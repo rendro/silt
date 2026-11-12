@@ -50,7 +50,7 @@ fn written(
 /// string it builds, so that `DisplayValue` leaves them as they are.
 pub(crate) fn write_plain(out: &mut String, value: &Value) -> bool {
     match value {
-        Value::String(s) => out.push_str(s),
+        Value::String(s, _) => out.push_str(s),
         Value::Int(n) => {
             let _ = write!(out, "{n}");
         }
@@ -97,7 +97,7 @@ impl Native for Showing {
     fn resume(&mut self, vm: &mut Vm, input: Value) -> Result<Step, VmError> {
         if self.calling {
             match input {
-                Value::String(text) => self.texts.push(text.to_string()),
+                Value::String(text, _) => self.texts.push(text.to_string()),
                 other => {
                     return Err(VmError::type_confusion(format!(
                         "display returned {}, not a String",
@@ -269,7 +269,7 @@ impl Vm {
                 .flatten();
             if wider.is_none() {
                 let text = match (limit, value) {
-                    (None, _) | (Some(_), Value::String(_)) => self.display_value(value),
+                    (None, _) | (Some(_), Value::String(_, _)) => self.display_value(value),
                     (Some(_), _) => written(limit, |out| match value {
                         Value::Int(n) => write!(out, "{n}"),
                         Value::Float(f) => write!(out, "{f}"),
@@ -334,12 +334,12 @@ impl Vm {
         let floor = self.frames.len();
         let stack_floor = self.stack.len();
         match self.shown(value)? {
-            Step::Done(Value::String(text)) => Ok(text.to_string()),
+            Step::Done(Value::String(text, _)) => Ok(text.to_string()),
             Step::Run(showing) => {
                 self.push_native_frame(showing);
                 let run = self.run_thread(floor, |vm| vm.run_frames(floor, vm.own_slice()));
                 match self.finish_run(run, floor, stack_floor)? {
-                    Value::String(text) => Ok(text.to_string()),
+                    Value::String(text, _) => Ok(text.to_string()),
                     _ => Ok(value.to_string()),
                 }
             }
@@ -349,7 +349,7 @@ impl Vm {
 
     /// [`Vm::show`] for what gives the text as its value.
     pub(crate) fn shown(&mut self, value: &Value) -> Result<Step, VmError> {
-        self.show(value, |_, text| Ok(Step::Done(Value::String(text.into()))))
+        self.show(value, |_, text| Ok(Step::Done(Value::string(text))))
     }
 
     /// [`Vm::shown`] for the builtin `name`, whose text is a string a
@@ -360,7 +360,7 @@ impl Vm {
         name: &'static str,
     ) -> Result<Step, VmError> {
         self.show_within(value, Some(name), |_, text| {
-            Ok(Step::Done(Value::String(text.into())))
+            Ok(Step::Done(Value::string(text)))
         })
     }
 }

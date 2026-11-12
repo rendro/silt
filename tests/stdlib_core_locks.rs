@@ -73,10 +73,7 @@ import option
 import host
 fn main() { host.give(option.to_result(None, "missing")) }
     "#);
-    assert_eq!(
-        result,
-        Value::variant(bv::ERR, [Value::String("missing".into())])
-    );
+    assert_eq!(result, Value::variant(bv::ERR, [Value::string("missing")]));
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -150,10 +147,7 @@ import result
 fn main() { host.give(result.flat_map(Err("fail"), { n: Int -> Ok(n * n) })) }
 import host
     "#);
-    assert_eq!(
-        result,
-        Value::variant(bv::ERR, [Value::String("fail".into())])
-    );
+    assert_eq!(result, Value::variant(bv::ERR, [Value::string("fail")]));
 }
 
 // ════════════════════════════════════════════════════════════════════

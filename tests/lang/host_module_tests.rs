@@ -40,7 +40,7 @@ fn program_importing_a_host_module_runs() {
 #[test]
 fn host_functions_imported_by_name_and_through_an_alias() {
     let source = "import mylib.{ shout }\nimport mylib as m\nfn main() { host.give(\"{shout(\"hi\")} {m.double(4)}\") }\nimport host";
-    assert_eq!(run(source, mylib()), Ok(Value::String("HI 8".into())));
+    assert_eq!(run(source, mylib()), Ok(Value::string("HI 8")));
 }
 
 /// Two host modules with functions of one name: each function has a
@@ -61,7 +61,7 @@ fn two_host_modules_with_functions_of_one_name() {
     ];
     assert_eq!(
         run_with_host(&files, vec![twice, thrice]),
-        Ok(Value::String("2 3".into()))
+        Ok(Value::string("2 3"))
     );
 }
 
@@ -162,7 +162,7 @@ import host
             Value::Int(7),
             Value::Int(1),
             Value::Int(0),
-            Value::String("x".into())
+            Value::string("x")
         ]))
     );
     // The generic signature is checked at each use.
@@ -396,13 +396,10 @@ fn typed_function_arity_must_match_the_signature() {
 fn a_result_of_the_wrong_type_names_the_host_function() {
     let host = HostModule::new("mylib")
         .function("fn count() -> Int", |_: &[Value]| {
-            Ok(Value::String("three".into()))
+            Ok(Value::string("three"))
         })
         .function("fn evens() -> List(Int)", |_: &[Value]| {
-            Ok(Value::list(vec![
-                Value::Int(2),
-                Value::String("four".into()),
-            ]))
+            Ok(Value::list(vec![Value::Int(2), Value::string("four")]))
         })
         .function("fn maybe() -> Option(String)", |_: &[Value]| {
             Ok(Value::variant(bv::SOME, [Value::Int(1)]))
@@ -452,9 +449,7 @@ fn a_result_of_the_wrong_type_names_the_host_function() {
 #[test]
 fn a_host_function_returning_never_can_only_fail() {
     let host = HostModule::new("h")
-        .function("fn f() -> Never", |_: &[Value]| {
-            Ok(Value::String("x".into()))
-        })
+        .function("fn f() -> Never", |_: &[Value]| Ok(Value::string("x")))
         .function("fn fail(msg: String) -> Never", |args: &[Value]| {
             Err(VmError::new(format!("failed: {}", args[0])))
         });
@@ -500,7 +495,7 @@ fn a_result_of_a_type_variable_is_of_its_argument_s_type() {
 fn an_element_of_a_list_argument_shows_the_variable() {
     let host = HostModule::new("h")
         .function("fn first(xs: List(a)) -> Option(a)", |_: &[Value]| {
-            Ok(Value::variant(bv::SOME, [Value::String("s".into())]))
+            Ok(Value::variant(bv::SOME, [Value::string("s")]))
         });
     let err = returned_error(host, "h.first([1, 2])");
     assert!(
@@ -518,7 +513,7 @@ fn an_element_of_a_list_argument_shows_the_variable() {
 fn a_variable_no_argument_shows_stays_unchecked() {
     let host = HostModule::new("h")
         .function("fn first(xs: List(a)) -> Option(a)", |_: &[Value]| {
-            Ok(Value::variant(bv::SOME, [Value::String("s".into())]))
+            Ok(Value::variant(bv::SOME, [Value::string("s")]))
         });
     let source = "import h\nfn main() {\n  let xs: List(Int) = []\n  let _ = h.first(xs)\n  host.give(1)\n}\nimport host";
     assert_eq!(run(source, host), Ok(Value::Int(1)));
@@ -550,11 +545,11 @@ fn a_record_result_is_checked_by_its_fields() {
     let host = HostModule::new("h")
         .function(
             "fn missing(n: Int) -> {name: String, age: Int}",
-            |_: &[Value]| Ok(Value::anon_record([("name", Value::String("a".into()))])),
+            |_: &[Value]| Ok(Value::anon_record([("name", Value::string("a"))])),
         )
         .function("fn extra(n: Int) -> {name: String}", |_: &[Value]| {
             Ok(Value::anon_record([
-                ("name", Value::String("a".into())),
+                ("name", Value::string("a")),
                 ("age", Value::Int(3)),
             ]))
         })
@@ -563,7 +558,7 @@ fn a_record_result_is_checked_by_its_fields() {
         })
         .function(
             "fn keep(p: {name: String, ...r}) -> {name: String, ...r}",
-            |_: &[Value]| Ok(Value::anon_record([("name", Value::String("b".into()))])),
+            |_: &[Value]| Ok(Value::anon_record([("name", Value::string("b"))])),
         );
     for (call, expected) in [
         (
@@ -640,7 +635,7 @@ fn a_deep_result_of_a_variable_s_type_is_checked_in_bounded_steps() {
 fn later_elements_of_a_collection_are_compared() {
     let host = HostModule::new("h")
         .function("fn hetero(x: a) -> a", |_: &[Value]| {
-            Ok(Value::list(vec![Value::Int(1), Value::String("x".into())]))
+            Ok(Value::list(vec![Value::Int(1), Value::string("x")]))
         })
         .function("fn same(x: a) -> a", |args: &[Value]| Ok(args[0].clone()));
     let err = returned_error(host.clone(), "h.hetero([7])");
@@ -701,12 +696,12 @@ fn the_field_names_of_a_wide_anonymous_record_are_compared_whole() {
 /// result is refused.
 #[test]
 fn a_later_argument_shows_the_variable_past_a_long_one() {
-    let wrong = |_: &[Value]| Ok(Value::String("s".into()));
+    let wrong = |_: &[Value]| Ok(Value::string("s"));
     let host = HostModule::new("h")
         .function("fn f(xs: List(Option(a)), w: a) -> a", wrong)
         .function(
             "fn g(xs: List(Option(a)), ys: List(Option(a))) -> Option(a)",
-            |_: &[Value]| Ok(Value::variant(bv::SOME, [Value::String("s".into())])),
+            |_: &[Value]| Ok(Value::variant(bv::SOME, [Value::string("s")])),
         );
     let nones = vec!["None"; 200].join(", ");
     let err = returned_error(host.clone(), &format!("h.f([Some(1), {nones}], 1)"));
@@ -735,10 +730,7 @@ fn a_wrong_part_within_the_bound_is_refused() {
         let Value::Record(record) = &args[0] else {
             return Err(VmError::new("expected a record".into()));
         };
-        Ok(Value::record(
-            record.ty().clone(),
-            vec![Value::String("s".into())],
-        ))
+        Ok(Value::record(record.ty().clone(), vec![Value::string("s")]))
     });
     let source = "import h\ntype Box(t) { v: t }\nfn main() {\n  let b = h.same(Box { v: 1 })\n  host.give(b.v)\n}\nimport host";
     let err = run(source, host).expect_err("a Box(String) for a Box(Int)");
@@ -802,7 +794,7 @@ fn results_of_the_type_the_signature_returns_pass() {
             |args: &[Value]| {
                 Ok(Value::anon_record([
                     ("age", args[0].clone()),
-                    ("name", Value::String("a".into())),
+                    ("name", Value::string("a")),
                 ]))
             },
         )
@@ -833,8 +825,8 @@ import host
 "#;
     assert_eq!(
         run(source, host),
-        Ok(Value::String(
-            "[1, 2] Some(\"x\") (\"s\", 1) [\"k\"] 3 true 3 4 [] 7".into()
+        Ok(Value::string(
+            "[1, 2] Some(\"x\") (\"s\", 1) [\"k\"] 3 true 3 4 [] 7"
         ))
     );
 }
@@ -1188,8 +1180,8 @@ fn correct_host_results_of_every_shape_pass() {
   host.give("{f(1)} {g(1)} {k(1.0)} {s("abc")} {list.length(fs)} {p} {m(3)} {rs |> list.map({ r -> r.age })} {a2.age}")"#;
     assert_eq!(
         run_probe(body, None),
-        Ok(Value::String(
-            "2 2 Circle(1.0) 0 2 2 Some(3) [2, 1, 3, 9] 5".into()
+        Ok(Value::string(
+            "2 2 Circle(1.0) 0 2 2 Some(3) [2, 1, 3, 9] 5"
         ))
     );
 }

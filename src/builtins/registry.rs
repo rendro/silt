@@ -1029,7 +1029,7 @@ mod tests {
         let interrupted = Value::variant(crate::typeinfo::bv::IO_INTERRUPTED, []);
         let io = registry.module("io").expect("io");
         let message = io.message.as_ref().expect("IoError.message");
-        let Ok(Step::Done(Value::String(text))) =
+        let Ok(Step::Done(Value::String(text, _))) =
             message.call(&mut vm, std::slice::from_ref(&interrupted))
         else {
             panic!("IoError.message");
@@ -1052,7 +1052,7 @@ mod tests {
             ),
             (vec![], "int.abs takes (n: Int), but was called with ()"),
             (
-                vec![Value::Int(1), Value::String("x".into())],
+                vec![Value::Int(1), Value::string("x")],
                 "int.abs takes (n: Int), but was called with (Int, String)",
             ),
         ] {

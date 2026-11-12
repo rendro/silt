@@ -607,10 +607,7 @@ fn unexpected() -> Result<Next, VmError> {
 
 /// Build an `Err(Other(msg))` for string-only failures.
 fn err_io_unknown(s: impl Into<Arc<str>>) -> Value {
-    Value::variant(
-        bv::ERR,
-        [Value::variant(bv::IO_OTHER, [Value::String(s.into())])],
-    )
+    Value::variant(bv::ERR, [Value::variant(bv::IO_OTHER, [Value::string(s)])])
 }
 
 /// What a source or a sink on `stream` works on: its errors are
@@ -699,10 +696,7 @@ fn stdin_line_reads() -> impl FnMut() -> Vec<Value> + Send + 'static {
         let why = format!("line {number} of stdin is not UTF-8");
         Value::variant(
             bv::ERR,
-            [Value::variant(
-                bv::IO_INVALID_INPUT,
-                [Value::String(why.into())],
-            )],
+            [Value::variant(bv::IO_INVALID_INPUT, [Value::string(why)])],
         )
     };
     move || {
@@ -717,7 +711,7 @@ fn stdin_line_reads() -> impl FnMut() -> Vec<Value> + Send + 'static {
                 match std::str::from_utf8(line) {
                     Ok(line) => {
                         given += 1;
-                        lines.push(ok(Value::String(line.into())));
+                        lines.push(ok(Value::string(line)));
                     }
                     Err(_) if lines.is_empty() => {
                         ended = true;
@@ -742,7 +736,7 @@ fn stdin_line_reads() -> impl FnMut() -> Vec<Value> + Send + 'static {
                 if !pending.is_empty() {
                     let line = pending.strip_suffix(b"\r").unwrap_or(&pending);
                     lines.push(match std::str::from_utf8(line) {
-                        Ok(line) => ok(Value::String(line.into())),
+                        Ok(line) => ok(Value::string(line)),
                         Err(_) => not_utf8(given + 1),
                     });
                 }
@@ -839,7 +833,7 @@ fn tcp_line_reads(
                 let line = &pending[taken..from + at];
                 let line = line.strip_suffix(b"\r").unwrap_or(line);
                 match std::str::from_utf8(line) {
-                    Ok(line) => lines.push(ok(Value::String(line.into()))),
+                    Ok(line) => lines.push(ok(Value::string(line))),
                     Err(_) if lines.is_empty() => {
                         ended = true;
                         lines.push(not_utf8(&conn));
@@ -905,7 +899,7 @@ fn tcp_line_reads(
             ended = true;
             if !pending.is_empty() {
                 lines.push(match std::str::from_utf8(&pending) {
-                    Ok(line) => ok(Value::String(line.into())),
+                    Ok(line) => ok(Value::string(line)),
                     Err(_) => not_utf8(&conn),
                 });
             }
@@ -1149,7 +1143,7 @@ builtins! {
                                 line.pop();
                             }
                         }
-                        lines.push(ok(Value::String(line.into())));
+                        lines.push(ok(Value::string(line)));
                     }
                     // A line that is no UTF-8 is `InvalidInput`, named by
                     // its number and the path.
@@ -1159,7 +1153,7 @@ builtins! {
                         let why = format!("line {number} of {path} is not UTF-8");
                         lines.push(Value::variant(
                             bv::ERR,
-                            [Value::variant(bv::IO_INVALID_INPUT, [Value::String(why.into())])],
+                            [Value::variant(bv::IO_INVALID_INPUT, [Value::string(why)])],
                         ));
                         break;
                     }
@@ -1858,7 +1852,7 @@ mod tests {
                     panic!("a Result with one field");
                 };
                 items.push(match (item.is(bv::OK), field) {
-                    (true, Value::String(line)) => line.to_string(),
+                    (true, Value::String(line, _)) => line.to_string(),
                     (false, Value::Variant(error)) => format!("Err:{}", error.name()),
                     _ => panic!("an item that is no Result of a line"),
                 });

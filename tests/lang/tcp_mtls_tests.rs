@@ -205,7 +205,7 @@ import host
         );
         let v = run(&src);
         match v {
-            Value::String(s) => s.to_string(),
+            Value::String(s, _) => s.to_string(),
             other => format!("unexpected:{other:?}"),
         }
     })
@@ -395,7 +395,7 @@ import host
             key_hex = hex_encode(pki.server_key_pem.as_bytes()),
         );
         match run(&src) {
-            Value::String(s) => s.to_string(),
+            Value::String(s, _) => s.to_string(),
             other => format!("unexpected:{other:?}"),
         }
     });

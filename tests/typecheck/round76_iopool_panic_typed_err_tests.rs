@@ -65,7 +65,7 @@ fn synthetic_typed_factory(failure: silt::vm::IoFailure<'_>) -> Value {
                 ),
                 0,
             ),
-            [Value::String(msg.into())],
+            [Value::string(msg)],
         )],
     )
 }
@@ -90,7 +90,7 @@ fn iopool_worker_panic_produces_typed_err_via_completion_factory() {
 
     let (typed_tag, typed_args) = match inner {
         Value::Variant(variant) => (variant.name(), variant.fields()),
-        Value::String(_) => panic!(
+        Value::String(_, _) => panic!(
             "REGRESSION: IoPool worker-panic recovery produced legacy untyped \
              Err(String) shape — typed callers' match arms will not fire. \
              Got: {:?}",
@@ -108,7 +108,7 @@ fn iopool_worker_panic_produces_typed_err_via_completion_factory() {
 
     assert_eq!(typed_args.len(), 1, "expected exactly one payload arg");
     let msg = match &typed_args[0] {
-        Value::String(s) => &**s,
+        Value::String(s, _) => &**s,
         other => panic!("expected String payload, got {:?}", other),
     };
     assert!(

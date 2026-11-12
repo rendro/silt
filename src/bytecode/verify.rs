@@ -272,7 +272,7 @@ fn check(
                 Value::BuiltinFn(id) => return builtin(op, *id).map(|_| ()),
                 _ => true,
             },
-            ConstKind::Str => matches!(value, Value::String(_)),
+            ConstKind::Str => matches!(value, Value::String(_, _)),
             ConstKind::Tag => matches!(value, Value::VariantConstructor(_)),
             ConstKind::Type => matches!(value, Value::TypeDescriptor(_)),
             ConstKind::Func => matches!(value, Value::VmClosure(_)),
@@ -558,7 +558,7 @@ mod tests {
         );
         // A variant test against something that is no variant.
         let code = vec![op(Op::Unit), op(Op::TestTag), 0, 0, op(Op::Return)];
-        let why = rejected(code, vec![Value::String("Some".into())]);
+        let why = rejected(code, vec![Value::string("Some")]);
         assert!(why.contains("`TestTag` names constant 0 as Tag"), "{why}");
         // A field name in a list that is no string.
         let code = vec![op(Op::Unit), op(Op::RecordUpdate), 1, 0, 0, op(Op::Return)];
@@ -699,7 +699,7 @@ mod tests {
             0,
             op(Op::Return),
         ];
-        let function = Function::unverified(0, 0, code, vec![Value::String("foo".into())]);
+        let function = Function::unverified(0, 0, code, vec![Value::string("foo")]);
         assert_eq!(verify(&function), Ok(()));
         assert_eq!(
             verify_globals(&function, &globals).unwrap_err().to_string(),
@@ -730,7 +730,7 @@ mod tests {
         let [lo, hi] = 0u16.to_le_bytes();
         let code = vec![op(Op::CallMethod), 0, 0, 0, lo, hi, 0, op(Op::Return)];
         assert_eq!(
-            rejected(code, vec![Value::String("foo".into())]),
+            rejected(code, vec![Value::string("foo")]),
             "at offset 0: `CallMethod` has no receiver"
         );
         // And with more arguments than the frame holds.
@@ -746,7 +746,7 @@ mod tests {
             op(Op::Return),
         ];
         assert_eq!(
-            rejected(code, vec![Value::String("foo".into())]),
+            rejected(code, vec![Value::string("foo")]),
             "at offset 1: `CallMethod` takes 5 values off a frame of 1"
         );
         // And by an argument it is not given.
@@ -762,7 +762,7 @@ mod tests {
             op(Op::Return),
         ];
         assert_eq!(
-            rejected(code, vec![Value::String("foo".into())]),
+            rejected(code, vec![Value::string("foo")]),
             "at offset 1: `CallMethod` finds its method by argument 2 of 1"
         );
     }
@@ -895,7 +895,7 @@ mod tests {
             code
         };
         let (literal, value) = ([1, 0, 0], [0, 0, 0]);
-        let hi = || vec![Value::String("hi".into())];
+        let hi = || vec![Value::string("hi")];
         verify(&Function::unverified(
             0,
             0,

@@ -31,7 +31,7 @@ fn int(n: i64) -> Value {
 /// keys of two kinds are ordered too.
 fn key(n: i64) -> Value {
     match n % 5 {
-        0 => Value::String(format!("k{n}").into()),
+        0 => Value::string(format!("k{n}")),
         _ => int(n),
     }
 }

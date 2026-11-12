@@ -9,6 +9,29 @@ order: 3
 Functions for working with immutable strings. Strings use `"..."` literal syntax
 with `{expr}` interpolation.
 
+Offsets and lengths count characters, not bytes. A string of ASCII text only
+(source code, logs, CSV) knows that each of its characters is one byte, so
+`string.length`, `string.slice`, `string.split_at`, `string.starts_with_at`
+and the index that `string.index_of` gives take no longer for an offset deep
+into the text than for one at its start. In text with other characters an
+offset is counted from the start of the string each time: a loop that takes
+such text one index at a time takes time that grows with the square of its
+length. Scan it with `string.chars` or `string.split` instead, which go
+through it once.
+
+```silt
+import list
+import string
+
+fn main() {
+  -- One pass over the characters, for any text.
+  let vowels = string.chars("naïve café")
+    |> list.filter { c -> string.contains("aeiouïé", c) }
+    |> list.length
+  println(vowels) -- 5
+}
+```
+
 ## Summary
 
 | Function | Signature | Description |

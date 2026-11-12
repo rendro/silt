@@ -25,7 +25,7 @@ use crate::vm::Vm;
 /// `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
-        ("Invalid", [Value::String(why)]) => format!("invalid uuid: {why}"),
+        ("Invalid", [Value::String(why, _)]) => format!("invalid uuid: {why}"),
         _ => return None,
     })
 }
@@ -67,12 +67,12 @@ builtins! {
     /// canonical form on success, `Err(Invalid(why))` on malformed input.
     fn parse(s: &str) -> Value {
         match ::uuid::Uuid::parse_str(s) {
-            Ok(u) => ok(Value::String(u.hyphenated().to_string().into())),
+            Ok(u) => ok(Value::string(u.hyphenated().to_string())),
             Err(e) => Value::variant(
                 bv::ERR,
                 [Value::variant(
                     bv::UUID_INVALID,
-                    [Value::String(e.to_string().into())],
+                    [Value::string(e.to_string())],
                 )],
             ),
         }

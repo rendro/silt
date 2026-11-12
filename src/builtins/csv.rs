@@ -24,14 +24,14 @@ use crate::vm::{Source, Step, Vm, VmError};
 /// `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
-        ("Syntax", [Value::String(m), Value::Int(offset)]) => {
+        ("Syntax", [Value::String(m, _), Value::Int(offset)]) => {
             format!("csv syntax error at byte {offset}: {m}")
         }
-        ("TypeMismatch", [Value::String(exp), Value::String(act)]) => {
+        ("TypeMismatch", [Value::String(exp, _), Value::String(act, _)]) => {
             format!("csv type mismatch: expected {exp}, got {act}")
         }
-        ("MissingField", [Value::String(n)]) => format!("csv missing field: {n}"),
-        ("Other", [Value::String(m)]) => m.to_string(),
+        ("MissingField", [Value::String(n, _)]) => format!("csv missing field: {n}"),
+        ("Other", [Value::String(m, _)]) => m.to_string(),
         _ => return None,
     })
 }
@@ -155,7 +155,7 @@ pub(crate) fn syntax_err(malformed: &Malformed) -> Value {
         bv::ERR,
         [Value::variant(
             bv::CSV_SYNTAX,
-            [Value::String(malformed.why.into()), Value::Int(at)],
+            [Value::string(malformed.why), Value::Int(at)],
         )],
     )
 }
@@ -192,10 +192,7 @@ fn syntax_at(line: usize, why: impl std::fmt::Display, at: usize) -> Value {
         bv::ERR,
         [Value::variant(
             bv::CSV_SYNTAX,
-            [
-                Value::String(format!("line {line}: {why}").into()),
-                Value::Int(at),
-            ],
+            [Value::string(format!("line {line}: {why}")), Value::Int(at)],
         )],
     )
 }
@@ -367,7 +364,7 @@ fn with_lines(result: Value, lines: &[usize]) -> Value {
         return result;
     }
     let text = |v: &Value| match v {
-        Value::String(s) => Value::String(at_line(s, lines).into()),
+        Value::String(s, _) => Value::string(at_line(s, lines)),
         other => other.clone(),
     };
     let fields: Vec<Value> = match error.fields() {
@@ -398,10 +395,7 @@ impl Source for Text {
 fn other_err(message: String) -> Value {
     Value::variant(
         bv::ERR,
-        [Value::variant(
-            bv::CSV_OTHER,
-            [Value::String(message.into())],
-        )],
+        [Value::variant(bv::CSV_OTHER, [Value::string(message)])],
     )
 }
 
@@ -471,7 +465,7 @@ builtins! {
         if let Some(name) = missing_column(vm, &table, &element) {
             return Ok(Step::Done(Value::variant(
                 bv::ERR,
-                [Value::variant(bv::CSV_MISSING_FIELD, [Value::String(name.into())])],
+                [Value::variant(bv::CSV_MISSING_FIELD, [Value::string(name)])],
             )));
         }
         let expected = FieldType::List(Box::new(element));
@@ -495,7 +489,7 @@ builtins! {
     fn split_line(line: &str) -> Value {
         match fields_of_line(line) {
             Ok(fields) => ok(Value::list(
-                fields.into_iter().map(|f| Value::String(f.into())).collect(),
+                fields.into_iter().map(|f| Value::string(f)).collect(),
             )),
             Err(malformed) => syntax_err(&malformed),
         }

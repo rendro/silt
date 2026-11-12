@@ -353,13 +353,13 @@ pub(crate) fn at_part(error: &Value, at: &str) -> Value {
         return error.clone();
     }
     let ended = |text: &Value| match text {
-        Value::String(s) => Value::String(format!("{s} at {at}").into()),
+        Value::String(s, _) => Value::string(format!("{s} at {at}")),
         other => other.clone(),
     };
     let mut fields = variant.fields().to_vec();
     if variant.is(bv::JSON_MISSING_FIELD) {
-        if let Some(Value::String(field)) = fields.first() {
-            fields[0] = Value::String(key_path(at, field).into());
+        if let Some(Value::String(field, _)) = fields.first() {
+            fields[0] = Value::string(key_path(at, field));
         }
     } else if variant.is(bv::JSON_TYPE_MISMATCH) {
         if let Some(actual) = fields.get_mut(1) {
@@ -686,10 +686,10 @@ impl Error {
     /// The variant of the error of the format of `rules`.
     pub(crate) fn variant(self, rules: &Rules) -> Value {
         let [mismatch, missing, other] = rules.errors;
-        let string = |s: std::string::String| Value::String(s.into());
+        let string = |s: std::string::String| Value::string(s);
         match self {
             Error::TypeMismatch(expected, actual) => {
-                Value::variant(mismatch, [Value::String(expected.into()), string(actual)])
+                Value::variant(mismatch, [Value::string(expected), string(actual)])
             }
             Error::MissingField(path) => Value::variant(missing, [string(path)]),
             Error::Other(message) => Value::variant(other, [string(message)]),

@@ -37,8 +37,8 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
         ("InvalidUtf8", [Value::Int(offset)]) => {
             format!("invalid UTF-8 at byte {offset}")
         }
-        ("InvalidHex", [Value::String(m)]) => format!("invalid hex: {m}"),
-        ("InvalidBase64", [Value::String(m)]) => {
+        ("InvalidHex", [Value::String(m, _)]) => format!("invalid hex: {m}"),
+        ("InvalidBase64", [Value::String(m, _)]) => {
             format!("invalid base64: {m}")
         }
         ("ByteOutOfRange", [Value::Int(v)]) => {
@@ -62,16 +62,13 @@ fn err_utf8(offset: usize) -> Value {
 }
 
 fn err_hex(msg: impl Into<Arc<str>>) -> Value {
-    bytes_err(Value::variant(
-        bv::BYTES_INVALID_HEX,
-        [Value::String(msg.into())],
-    ))
+    bytes_err(Value::variant(bv::BYTES_INVALID_HEX, [Value::string(msg)]))
 }
 
 fn err_base64(msg: impl Into<Arc<str>>) -> Value {
     bytes_err(Value::variant(
         bv::BYTES_INVALID_BASE64,
-        [Value::String(msg.into())],
+        [Value::string(msg)],
     ))
 }
 
@@ -121,7 +118,7 @@ builtins! {
 
     fn to_string(b: Bytes) -> Value {
         match std::str::from_utf8(b) {
-            Ok(s) => ok(Value::String(s.into())),
+            Ok(s) => ok(Value::string(s)),
             Err(e) => err_utf8(e.valid_up_to()),
         }
     }
@@ -129,7 +126,7 @@ builtins! {
     // Each sequence that is no UTF-8 (a byte that starts no character,
     // or a character cut short) is one U+FFFD, as Unicode recommends.
     fn to_string_lossy(b: Bytes) -> Value {
-        Value::String(String::from_utf8_lossy(b).as_ref().into())
+        Value::string(String::from_utf8_lossy(b).as_ref())
     }
 
     fn from_hex(s: &str) -> Value {
