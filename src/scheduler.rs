@@ -1851,6 +1851,7 @@ impl Inner {
         // end. (The task is in hand here: it spawns nothing meanwhile.)
         self.cancel_below(&handle);
         handle.expire(&self.parking);
+        handle.stop(&self.parking);
         drop(handle);
         self.ended(&group);
     }
@@ -1936,6 +1937,9 @@ impl Inner {
             vm, handle, group, ..
         } = task;
         drop(vm);
+        // Then whoever waits for its end (`task.cancel`) is told,
+        // while it still counts: a wait for it is never seen as stuck.
+        handle.stop(&self.parking);
         drop(handle);
         self.ended(&group);
     }

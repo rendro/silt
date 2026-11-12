@@ -623,6 +623,19 @@ fn joined(
     }
 }
 
+/// The step of `task.cancel` once it has cancelled: wait until each
+/// task of `ends` has ended, one after the other, then return `()`.
+fn until_ended(vm: &mut Vm, mut ends: Vec<Arc<TaskHandle>>) -> Step {
+    ends.retain(|task| !task.has_stopped());
+    let Some(next) = ends.last() else {
+        return Step::Done(Value::Unit);
+    };
+    let wait = Wait::new(vec![Arm::Cell(next.stopped())]);
+    vm.park("task.cancel", wait, move |vm, _| {
+        Ok(until_ended(vm, std::mem::take(&mut ends)))
+    })
+}
+
 /// `task.*`
 pub(crate) mod task {
     use super::*;
@@ -677,8 +690,21 @@ pub(crate) mod task {
         // dismissed and not reported as an unjoined failure. A join
         // still raises that failure, because the handle keeps the
         // result that came first.
-        fn cancel(vm, handle: Handle) {
+        //
+        // The call returns when the task has ended, and every task
+        // below it that the cancel reached: their last steps are over,
+        // so what comes after the cancel (a close, a count) sees all
+        // they did. A caller that is cancelled itself (it cancelled
+        // itself, or a task above it) does not wait: it returns at
+        // once, and has the last steps of a cancelled task.
+        fn cancel(vm, handle: Handle) -> Result<Step, VmError> {
             vm.scheduler().cancel(handle);
+            if vm.cancelled.as_ref().is_some_and(|own| own.load(std::sync::atomic::Ordering::SeqCst)) {
+                return Ok(Step::Done(Value::Unit));
+            }
+            let mut ends = crate::runtime::family::not_stopped_below(handle);
+            ends.push(handle.clone());
+            Ok(until_ended(vm, ends))
         }
     }
 }

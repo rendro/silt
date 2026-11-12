@@ -1277,6 +1277,10 @@ pub struct TaskHandle {
     /// spawned it, if a task did: the report of a failure that nobody
     /// joined names them, since nobody holds the handle's id.
     spawned: Option<(Span, Option<Arc<AtomicBool>>)>,
+    /// Completed when the task has ended: its last step has run and its
+    /// frames are gone (`Scheduler::end_task`). Later than its result
+    /// when the task was cancelled: `task.cancel` waits for it.
+    stopped: Arc<Cell<()>>,
     /// The task's place among the tasks that spawned it and that it
     /// spawned, for a cancel to reach them (`runtime::family`).
     family: super::family::Member,
@@ -1302,6 +1306,7 @@ impl TaskHandle {
             stage: None,
             failed_with_input: AtomicBool::new(false),
             spawned: None,
+            stopped: Cell::new(),
             family: Default::default(),
         }
     }
@@ -1508,6 +1513,22 @@ impl TaskHandle {
     /// Whether the task has its result.
     pub(crate) fn has_result(&self) -> bool {
         self.result.get().is_some()
+    }
+
+    /// Completed when the task has ended ([`TaskHandle::stop`]).
+    pub(crate) fn stopped(&self) -> Arc<Cell<()>> {
+        self.stopped.clone()
+    }
+
+    /// Whether the task has ended.
+    pub(crate) fn has_stopped(&self) -> bool {
+        self.stopped.get().is_some()
+    }
+
+    /// The task has ended: its last step has run and its frames are
+    /// gone. Whoever waits for that is woken.
+    pub(crate) fn stop(&self, wake: &dyn Wake) {
+        let _ = self.stopped.complete((), wake);
     }
 
     /// A cancel of a task that spawned this one, or of one of their

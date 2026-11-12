@@ -360,15 +360,15 @@ sentinel value when cancellation is an expected outcome rather than an error.
 ### Cancelling: `task.cancel(handle)`
 
 ```silt
-let done = channel.new(1)
+let results = channel.new(16)
 let h = task.spawn { ->
-  -- long-running work
-  channel.send(done, 42)
+  -- long-running work that sends what it finds
+  channel.send(results, 42)
 }
 task.cancel(h)
--- task.join(h) would raise `joined task failed: cancelled` at this point;
--- instead, wait on the sentinel channel if you want a non-raising
--- "task is settled" signal.
+-- The task has ended: closing its channel loses nothing it sent.
+-- task.join(h) would raise `joined task failed: cancelled` here.
+channel.close(results)
 ```
 
 **A cancel reaches the tasks the task spawned.** `task.cancel(h)` also
@@ -377,8 +377,8 @@ one that those spawned, however deep: "stop this work" includes the work
 it started. That holds also when `h`'s task has already returned, and
 below a task between them that has returned: a worker that starts
 children and returns is cancelled with its children. Each of them is
-cancelled as `h` is, and all have their result when `task.cancel`
-returns. A task that has already ended keeps its result: a failure of it
+cancelled as `h` is, and `task.cancel` returns when all of them have
+ended. A task that has already ended keeps its result: a failure of it
 is still reported. A task that is spawned by a task that has been
 cancelled is cancelled at once and never runs. The tasks the runtime
 starts in a task's place count as spawned by it: the function of a
@@ -491,33 +491,21 @@ may be lost when the work stops, tell the task to stop over a channel
 (a stop message, or the close of its input), let it finish what it has,
 and join it.
 
+**`task.cancel` returns when the task has ended**, and every task below
+it that the cancel reached: the last steps above have run, theirs too.
+What comes after the cancel (closing the channel the task sent on,
+counting what it sent, removing a file it wrote) sees everything they
+did. The wait is short: a cancelled task ends at its next wait or after
+at most 2,000 steps. A task cannot wait for its own end: one that is
+cancelled itself (it cancels itself, or a task it was spawned by, whose
+cancel reaches it) does not wait, its call returns at once, and it has
+the last steps of a cancelled task.
+
 In every case a `task.join(h)` on the cancelled handle raises `joined task
 failed: cancelled` as a runtime error, at once: the handle has its result
-when `task.cancel` returns, whatever the task still does. This matches
-the `task.cancel` section of `docs/stdlib/channel-task.md`; the two are
-kept in sync deliberately.
-
-`task.cancel` does not wait for the task to stop: the task's last steps
-may still run after it returns. Because `task.join` raises on
-a cancelled handle (it does not return `Err("cancelled")` as a value), you
-typically want one of two patterns when cancellation is an expected outcome:
-
-1. **Sentinel channel handshake** — have the task signal completion
-   through a channel before it exits, and wait on that channel instead of
-   `task.join`:
-
-   ```silt
-   task.cancel(h)
-   -- `task.join(h)` here would raise `joined task failed: cancelled`.
-   -- If you only need to know the cancel was acknowledged and you do not
-   -- need the task's value, omit the join and rely on the sentinel
-   -- channel from the task body for your "settled" signal.
-   ```
-
-2. **Join at the boundary** — if you do call `task.join` on a cancelled
-   handle, accept that it will raise `joined task failed: cancelled` at
-   the call site and scope the surrounding code so that failure is the
-   expected exit path.
+as soon as the cancel is made. A task you cancel is not joined: the cancel
+is the wait for it. This matches the `task.cancel` section of
+`docs/stdlib/channel-task.md`; the two are kept in sync deliberately.
 
 Returns `()`.
 
