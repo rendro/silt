@@ -126,7 +126,7 @@ import host
     );
     assert_eq!(
         v,
-        Value::String("eof".into()),
+        Value::string("eof"),
         "expected reader to see EOF after close; got {v:?}",
     );
 }
@@ -174,7 +174,7 @@ fn main() {
 import host
 "#
     .to_string();
-    assert_eq!(run(&src), Value::String("errored".into()));
+    assert_eq!(run(&src), Value::string("errored"));
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -215,7 +215,7 @@ fn main() {
 import host
 "#
     .to_string();
-    assert_eq!(run(&src), Value::String("ok".into()));
+    assert_eq!(run(&src), Value::string("ok"));
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -277,5 +277,5 @@ import host
     .to_string();
     let v = run_with_timeout(src, Duration::from_secs(5))
         .expect("tls close path hung — regression in shutdown handling");
-    assert_eq!(v, Value::String("errored".into()));
+    assert_eq!(v, Value::string("errored"));
 }

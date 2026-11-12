@@ -47,10 +47,10 @@ pub(crate) fn json_error_to_variant(err: &serde_json::Error, text: &[u8]) -> Val
             let message = full.strip_suffix(&place).unwrap_or(&full);
             Value::variant(
                 bv::JSON_SYNTAX,
-                [Value::String(message.into()), Value::Int(offset)],
+                [Value::string(message), Value::Int(offset)],
             )
         }
-        _ => Value::variant(bv::JSON_OTHER, [Value::String(err.to_string().into())]),
+        _ => Value::variant(bv::JSON_OTHER, [Value::string(err.to_string())]),
     }
 }
 
@@ -89,23 +89,23 @@ fn syntax_offset(err: &serde_json::Error, text: &[u8]) -> usize {
 /// Build `Err(Other(msg))` for ad-hoc failures (unknown type
 /// descriptor, internal unexpected results, etc.).
 pub(crate) fn json_unknown_err<S: Into<Arc<str>>>(msg: S) -> Value {
-    json_err_wrap(Value::variant(bv::JSON_OTHER, [Value::String(msg.into())]))
+    json_err_wrap(Value::variant(bv::JSON_OTHER, [Value::string(msg)]))
 }
 
 /// What `JsonError`'s `message` says of the variant `tag` with `fields`:
 /// `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
-        ("Syntax", [Value::String(m), Value::Int(offset)]) => {
+        ("Syntax", [Value::String(m, _), Value::Int(offset)]) => {
             format!("json syntax error at byte {offset}: {m}")
         }
-        ("TypeMismatch", [Value::String(exp), Value::String(act)]) => {
+        ("TypeMismatch", [Value::String(exp, _), Value::String(act, _)]) => {
             format!("json type mismatch: expected {exp}, got {act}")
         }
-        ("MissingField", [Value::String(n)]) => {
+        ("MissingField", [Value::String(n, _)]) => {
             format!("json missing field: {n}")
         }
-        ("Other", [Value::String(m)]) => m.to_string(),
+        ("Other", [Value::String(m, _)]) => m.to_string(),
         _ => return None,
     })
 }
@@ -194,7 +194,7 @@ fn json_value(json: &serde_json::Value) -> Value {
             // (JSON has no number that is no finite float.)
             (None, None) => Value::variant(bv::JSON_NULL, []),
         },
-        J::String(s) => Value::variant(bv::JSON_STRING, [Value::String(s.as_str().into())]),
+        J::String(s) => Value::variant(bv::JSON_STRING, [Value::string(s.as_str())]),
         J::Array(items) => Value::variant(
             bv::JSON_ARRAY,
             [Value::list(items.iter().map(json_value).collect())],
@@ -202,7 +202,7 @@ fn json_value(json: &serde_json::Value) -> Value {
         J::Object(members) => Value::variant(
             bv::JSON_OBJECT,
             [Value::map(members.iter().map(|(key, member)| {
-                (Value::String(key.as_str().into()), json_value(member))
+                (Value::string(key.as_str()), json_value(member))
             }))],
         ),
     }
@@ -425,7 +425,7 @@ fn written_text(
 ) -> Result<Step, VmError> {
     vm.encode(caller, Format::Json, value, move |_, data| {
         let text = text(caller, &data?, pretty)?;
-        Ok(Step::Done(Value::String(text.into())))
+        Ok(Step::Done(Value::string(text)))
     })
 }
 

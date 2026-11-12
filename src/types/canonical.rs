@@ -415,7 +415,7 @@ pub fn dispatch_type_for_value(val: &Value) -> TypeId {
         Value::Int(_) => kinds.int,
         Value::Float(_) => kinds.float,
         Value::Bool(_) => kinds.bool,
-        Value::String(_) => kinds.string,
+        Value::String(_, _) => kinds.string,
         Value::List(_) => kinds.list,
         Value::Map(_) => kinds.map,
         Value::Set(_) => kinds.set,
@@ -788,7 +788,7 @@ mod tests {
             builtin_id("Bool")
         );
         assert_eq!(
-            dispatch_type_for_value(&Value::String(String::new().into())),
+            dispatch_type_for_value(&Value::string(String::new())),
             builtin_id("String")
         );
         assert_eq!(dispatch_type_for_value(&Value::Unit), builtin_id("()"));

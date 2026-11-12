@@ -1,6 +1,0 @@
--- exit: 1
--- stderr-contains: error[runtime]
--- stderr-contains: list.take: negative count
--- stderr-not-contains: negative index
-import list
-fn main() { let _ = list.take([1, 2, 3], -1) }

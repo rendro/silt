@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use base64::Engine;
 
-use super::common::{nibble_to_hex, ok};
+use super::common::{cut, nibble_to_hex, ok};
 use super::typed::{Bytes, List, builtins, unsound};
 use crate::typeinfo::bv;
 use crate::value::{MAX_COLLECTION_LEN, Value};
@@ -37,8 +37,8 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
         ("InvalidUtf8", [Value::Int(offset)]) => {
             format!("invalid UTF-8 at byte {offset}")
         }
-        ("InvalidHex", [Value::String(m)]) => format!("invalid hex: {m}"),
-        ("InvalidBase64", [Value::String(m)]) => {
+        ("InvalidHex", [Value::String(m, _)]) => format!("invalid hex: {m}"),
+        ("InvalidBase64", [Value::String(m, _)]) => {
             format!("invalid base64: {m}")
         }
         ("ByteOutOfRange", [Value::Int(v)]) => {
@@ -62,16 +62,13 @@ fn err_utf8(offset: usize) -> Value {
 }
 
 fn err_hex(msg: impl Into<Arc<str>>) -> Value {
-    bytes_err(Value::variant(
-        bv::BYTES_INVALID_HEX,
-        [Value::String(msg.into())],
-    ))
+    bytes_err(Value::variant(bv::BYTES_INVALID_HEX, [Value::string(msg)]))
 }
 
 fn err_base64(msg: impl Into<Arc<str>>) -> Value {
     bytes_err(Value::variant(
         bv::BYTES_INVALID_BASE64,
-        [Value::String(msg.into())],
+        [Value::string(msg)],
     ))
 }
 
@@ -121,7 +118,7 @@ builtins! {
 
     fn to_string(b: Bytes) -> Value {
         match std::str::from_utf8(b) {
-            Ok(s) => ok(Value::String(s.into())),
+            Ok(s) => ok(Value::string(s)),
             Err(e) => err_utf8(e.valid_up_to()),
         }
     }
@@ -129,7 +126,7 @@ builtins! {
     // Each sequence that is no UTF-8 (a byte that starts no character,
     // or a character cut short) is one U+FFFD, as Unicode recommends.
     fn to_string_lossy(b: Bytes) -> Value {
-        Value::String(String::from_utf8_lossy(b).as_ref().into())
+        Value::string(String::from_utf8_lossy(b).as_ref())
     }
 
     fn from_hex(s: &str) -> Value {
@@ -201,20 +198,16 @@ builtins! {
         b.len() as i64
     }
 
-    // As `string.slice`: an index past the end is the end, a start
-    // past the end gives nothing, and a negative index is an error.
-    fn slice(b: Bytes, start: i64, end: i64) -> Result<Vec<u8>, VmError> {
-        if let Some(negative) = [start, end].into_iter().find(|index| *index < 0) {
-            return Err(VmError::new(format!(
-                "bytes.slice: negative index {negative}"
-            )));
-        }
-        let start = (start as usize).min(b.len());
-        let end = (end as usize).min(b.len());
-        Ok(match start > end {
+    // As `string.slice`: both indexes are cut to the bytes there are
+    // (a negative one is 0, one past the end is the end), and a start
+    // not before the end gives nothing.
+    fn slice(b: Bytes, start: i64, end: i64) -> Vec<u8> {
+        let start = cut(start).min(b.len());
+        let end = cut(end).min(b.len());
+        match start > end {
             true => Vec::new(),
             false => b[start..end].to_vec(),
-        })
+        }
     }
 
     fn concat(a: Bytes, b: Bytes) -> Result<Vec<u8>, VmError> {

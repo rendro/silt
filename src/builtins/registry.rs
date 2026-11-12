@@ -253,12 +253,29 @@ fn off(signature: &'static str, summary: &'static str) -> RowSpec {
     }
 }
 
+/// The value of a constant row: a Float or an Int.
+trait Constant {
+    fn value(self) -> Value;
+}
+
+impl Constant for f64 {
+    fn value(self) -> Value {
+        Value::Float(
+            crate::value::Float::new(self).expect("a constant of the registry is a finite number"),
+        )
+    }
+}
+
+impl Constant for i64 {
+    fn value(self) -> Value {
+        Value::Int(self)
+    }
+}
+
 /// A constant row, `name: Type`, with its value.
-fn k(signature: &'static str, summary: &'static str, value: f64) -> RowSpec {
+fn k(signature: &'static str, summary: &'static str, value: impl Constant) -> RowSpec {
     RowSpec {
-        constant: Some(Value::Float(
-            crate::value::Float::new(value).expect("a constant of the registry is a finite number"),
-        )),
+        constant: Some(value.value()),
         ..off(signature, summary)
     }
 }
@@ -1012,7 +1029,7 @@ mod tests {
         let interrupted = Value::variant(crate::typeinfo::bv::IO_INTERRUPTED, []);
         let io = registry.module("io").expect("io");
         let message = io.message.as_ref().expect("IoError.message");
-        let Ok(Step::Done(Value::String(text))) =
+        let Ok(Step::Done(Value::String(text, _))) =
             message.call(&mut vm, std::slice::from_ref(&interrupted))
         else {
             panic!("IoError.message");
@@ -1035,7 +1052,7 @@ mod tests {
             ),
             (vec![], "int.abs takes (n: Int), but was called with ()"),
             (
-                vec![Value::Int(1), Value::String("x".into())],
+                vec![Value::Int(1), Value::string("x")],
                 "int.abs takes (n: Int), but was called with (Int, String)",
             ),
         ] {

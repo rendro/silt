@@ -34,7 +34,7 @@ pub(crate) fn tcp_timeout_err(failure: crate::vm::IoFailure<'_>) -> Value {
     let error = match failure {
         IoFailure::Timeout(_) => Value::variant(bv::TCP_TIMEOUT, []),
         IoFailure::Panicked(why) | IoFailure::Refused(why) => {
-            Value::variant(bv::TCP_OTHER, [Value::String(why.into())])
+            Value::variant(bv::TCP_OTHER, [Value::string(why)])
         }
     };
     Value::variant(bv::ERR, [error])
@@ -44,12 +44,12 @@ pub(crate) fn tcp_timeout_err(failure: crate::vm::IoFailure<'_>) -> Value {
 /// `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
-        ("Connect", [Value::String(m)]) => format!("tcp connect failed: {m}"),
-        ("Bind", [Value::String(m)]) => format!("tcp listen failed: {m}"),
-        ("Tls", [Value::String(m)]) => format!("tcp TLS error: {m}"),
+        ("Connect", [Value::String(m, _)]) => format!("tcp connect failed: {m}"),
+        ("Bind", [Value::String(m, _)]) => format!("tcp listen failed: {m}"),
+        ("Tls", [Value::String(m, _)]) => format!("tcp TLS error: {m}"),
         ("Closed", []) => "tcp connection closed".to_string(),
         ("Timeout", []) => "tcp operation timed out".to_string(),
-        ("Other", [Value::String(m)]) => m.to_string(),
+        ("Other", [Value::String(m, _)]) => m.to_string(),
         _ => return None,
     })
 }
@@ -167,10 +167,7 @@ mod tls {
 
     /// `Err(Tls(why))`.
     fn tls_err(why: impl Into<Arc<str>>) -> Value {
-        Value::variant(
-            bv::ERR,
-            [Value::variant(bv::TCP_TLS, [Value::String(why.into())])],
-        )
+        Value::variant(bv::ERR, [Value::variant(bv::TCP_TLS, [Value::string(why)])])
     }
 
     /// The step of `tcp.tls_server` and `tcp.tls_server_mtls`: `conn`
@@ -406,7 +403,7 @@ pub(crate) enum Doing {
 /// and anything else is `Other`.
 pub(crate) fn tcp_io_err(doing: Doing, err: &std::io::Error) -> Value {
     use std::io::ErrorKind;
-    let reason = || vec![Value::String(err.to_string().into())];
+    let reason = || vec![Value::string(err.to_string())];
     let variant = match (err.kind(), doing) {
         (ErrorKind::TimedOut | ErrorKind::WouldBlock, _) => Value::variant(bv::TCP_TIMEOUT, []),
         (_, Doing::Connecting) => Value::variant(bv::TCP_CONNECT, reason()),
@@ -427,10 +424,7 @@ pub(crate) fn tcp_io_err(doing: Doing, err: &std::io::Error) -> Value {
 /// Build `Err(Other(msg))` for string-form failures (TLS stringly
 /// errors from the rustls code path; ad-hoc arg/validation failures).
 fn err(s: impl Into<Arc<str>>) -> Value {
-    Value::variant(
-        bv::ERR,
-        [Value::variant(bv::TCP_OTHER, [Value::String(s.into())])],
-    )
+    Value::variant(bv::ERR, [Value::variant(bv::TCP_OTHER, [Value::string(s)])])
 }
 
 /// Build `Err(Closed)`.
@@ -582,7 +576,7 @@ builtins! {
             return err_closed();
         }
         match stream.peer_addr() {
-            Ok(addr) => ok(Value::String(addr.to_string().into())),
+            Ok(addr) => ok(Value::string(addr.to_string())),
             Err(e) => tcp_io_err(Doing::Using, &e),
         }
     }

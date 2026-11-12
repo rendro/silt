@@ -32,7 +32,7 @@ use crate::vm::VmError;
 /// `fields`: `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     match (tag, fields) {
-        ("InvalidPercent" | "InvalidUtf8", [Value::String(m)]) => Some(m.to_string()),
+        ("InvalidPercent" | "InvalidUtf8", [Value::String(m, _)]) => Some(m.to_string()),
         _ => None,
     }
 }
@@ -62,7 +62,7 @@ impl DecodeError {
             DecodeError::Percent(_) => bv::ENCODING_INVALID_PERCENT,
             DecodeError::Utf8 => bv::ENCODING_INVALID_UTF8,
         };
-        let text = Value::String(format!("{at}{self}").into());
+        let text = Value::string(format!("{at}{self}"));
         Value::variant(bv::ERR, [Value::variant(variant, [text])])
     }
 }
@@ -227,7 +227,7 @@ builtins! {
             return error.err("");
         }
         match String::from_utf8(percent_decode_str(s).collect()) {
-            Ok(out) => ok(Value::String(out.into())),
+            Ok(out) => ok(Value::string(out)),
             Err(_) => DecodeError::Utf8.err(""),
         }
     }
@@ -243,7 +243,7 @@ builtins! {
                 Value::Tuple(pair) => &pair[..],
                 _ => &[],
             };
-            let [Value::String(key), Value::String(value)] = pair else {
+            let [Value::String(key, _), Value::String(value, _)] = pair else {
                 return Err(unsound("encoding.form_encode", "pairs"));
             };
             if at > 0 {
@@ -285,7 +285,7 @@ builtins! {
                 Ok(val) => val,
                 Err(error) => return error.err(&format!("pair {i}: value: ")),
             };
-            out.push(Value::tuple(vec![Value::String(key.into()), Value::String(val.into())]));
+            out.push(Value::tuple(vec![Value::string(key), Value::string(val)]));
         }
         ok(Value::list(out))
     }

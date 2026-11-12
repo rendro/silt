@@ -92,8 +92,8 @@ fn main() {
   loop stack = [], history = [] {
     print("> ")
     match io.read_line() {
-      Err(_) -> println("Goodbye!")
-      Ok(line) -> {
+      Err(_) | Ok(None) -> println("Goodbye!")
+      Ok(Some(line)) -> {
         let input = string.trim(line)
         match input {
           "quit" -> println("Goodbye!")

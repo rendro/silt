@@ -212,25 +212,25 @@ fn print_category_totals(transactions) {
   let counts = expenses
     |> list.fold(#{}) { acc, t -> map.update(acc, t.category, 0) { v -> v + 1 } }
   let category_keys = map.keys(totals) |> list.sort
-  let hdr_cat = string.pad_right("  Category", 20, " ")
-  let hdr_tot = string.pad_left("Total", 15, " ")
-  let hdr_cnt = string.pad_left("# Trans", 12, " ")
+  let hdr_cat = string.left("  Category", 20)
+  let hdr_tot = string.right("Total", 15)
+  let hdr_cnt = string.right("# Trans", 12)
   println("{hdr_cat}{hdr_tot}{hdr_cnt}")
   print_thin_separator()
   category_keys
     |> list.each { cat ->
       let total = map.get(totals, cat) |> option.unwrap_or(0.0)
       let count = map.get(counts, cat) |> option.unwrap_or(0)
-      let col1 = string.pad_right("  {cat}", 20, " ")
-      let col2 = string.pad_left(fmt_currency(total), 15, " ")
-      let col3 = string.pad_left(string.from(count), 12, " ")
+      let col1 = string.left("  {cat}", 20)
+      let col2 = string.right(fmt_currency(total), 15)
+      let col3 = string.right(count, 12)
       println("{col1}{col2}{col3}")
     }
   let grand_total = expenses |> list.fold(0.0) { acc, t -> acc + t.amount }
   print_thin_separator()
-  let gt_col1 = string.pad_right("  TOTAL", 20, " ")
-  let gt_col2 = string.pad_left(fmt_currency(grand_total), 15, " ")
-  let gt_col3 = string.pad_left(string.from(list.length(expenses)), 12, " ")
+  let gt_col1 = string.left("  TOTAL", 20)
+  let gt_col2 = string.right(fmt_currency(grand_total), 15)
+  let gt_col3 = string.right(list.length(expenses), 12)
   println("{gt_col1}{gt_col2}{gt_col3}")
 }
 
@@ -250,22 +250,22 @@ fn print_monthly_summary(transactions) {
     |> list.filter { t -> t.amount < 0.0 }
     |> list.fold(0.0) { acc, t -> acc + t.amount }
   let net = income + expenses
-  let l1 = string.pad_right("  Total Income:", 25, " ")
-  let v1 = string.pad_left(fmt_currency(income), 15, " ")
+  let l1 = string.left("  Total Income:", 25)
+  let v1 = string.right(fmt_currency(income), 15)
   println("{l1}{v1}")
-  let l2 = string.pad_right("  Total Expenses:", 25, " ")
-  let v2 = string.pad_left(fmt_currency(expenses), 15, " ")
+  let l2 = string.left("  Total Expenses:", 25)
+  let v2 = string.right(fmt_currency(expenses), 15)
   println("{l2}{v2}")
   print_thin_separator()
-  let l3 = string.pad_right("  Net Balance:", 25, " ")
-  let v3 = string.pad_left(fmt_currency(net), 15, " ")
+  let l3 = string.left("  Net Balance:", 25)
+  let v3 = string.right(fmt_currency(net), 15)
   println("{l3}{v3}")
   let savings_rate = match {
     income > 0.0 -> net / income * 100.0
     _ -> 0.0
   }
-  let l4 = string.pad_right("  Savings Rate:", 25, " ")
-  let v4 = string.pad_left("{float.format(savings_rate, 1)}%", 15, " ")
+  let l4 = string.left("  Savings Rate:", 25)
+  let v4 = string.right("{float.format(savings_rate, 1)}%", 15)
   println("{l4}{v4}")
 }
 
@@ -279,20 +279,20 @@ fn print_running_balance(transactions) {
   println("  RUNNING BALANCE")
   print_separator()
   let sorted = transactions |> list.sort_by { t -> t.date }
-  let h1 = string.pad_right("  Date", 14, " ")
-  let h2 = string.pad_right("Description", 25, " ")
-  let h3 = string.pad_left("Amount", 14, " ")
-  let h4 = string.pad_left("Balance", 14, " ")
+  let h1 = string.left("  Date", 14)
+  let h2 = string.left("Description", 25)
+  let h3 = string.right("Amount", 14)
+  let h4 = string.right("Balance", 14)
   println("{h1}{h2}{h3}{h4}")
   print_thin_separator()
   let _ = sorted
     |> list.fold(0.0) { bal, t ->
       let new_bal = bal + t.amount
-      let c1 = string.pad_right("  {t.date}", 14, " ")
+      let c1 = string.left("  {t.date}", 14)
       let desc = string.slice(t.description, 0, 23)
-      let c2 = string.pad_right(desc, 25, " ")
-      let c3 = string.pad_left(fmt_currency(t.amount), 14, " ")
-      let c4 = string.pad_left(fmt_currency(new_bal), 14, " ")
+      let c2 = string.left(desc, 25)
+      let c3 = string.right(fmt_currency(t.amount), 14)
+      let c4 = string.right(fmt_currency(new_bal), 14)
       println("{c1}{c2}{c3}{c4}")
       new_bal
     }
@@ -314,10 +314,10 @@ fn print_budget_vs_actual(transactions) {
   -- Build spending totals with map.update instead of group_by + per-group fold
   let spending = expenses
     |> list.fold(#{}) { acc, t -> map.update(acc, t.category, 0.0) { v -> v + t.amount } }
-  let h1 = string.pad_right("  Category", 18, " ")
-  let h2 = string.pad_left("Budget", 12, " ")
-  let h3 = string.pad_left("Actual", 12, " ")
-  let h4 = string.pad_left("Remaining", 12, " ")
+  let h1 = string.left("  Category", 18)
+  let h2 = string.right("Budget", 12)
+  let h3 = string.right("Actual", 12)
+  let h4 = string.right("Remaining", 12)
   println("{h1}{h2}{h3}{h4}  Status")
   print_thin_separator()
   let budget_keys = map.keys(budgets) |> list.sort
@@ -332,10 +332,10 @@ fn print_budget_vs_actual(transactions) {
         actual_abs > limit * 0.9 -> "~~ WARNING"
         _ -> "   OK"
       }
-      let c1 = string.pad_right("  {cat}", 18, " ")
-      let c2 = string.pad_left(fmt_currency(limit), 12, " ")
-      let c3 = string.pad_left(fmt_currency(actual), 12, " ")
-      let c4 = string.pad_left(fmt_currency(remaining), 12, " ")
+      let c1 = string.left("  {cat}", 18)
+      let c2 = string.right(fmt_currency(limit), 12)
+      let c3 = string.right(fmt_currency(actual), 12)
+      let c4 = string.right(fmt_currency(remaining), 12)
       println("{c1}{c2}{c3}{c4}  {status}")
     }
 }
@@ -357,10 +357,10 @@ fn print_forecast(transactions) {
   -- Build spending totals with map.update instead of group_by + per-group fold
   let spending = expenses
     |> list.fold(#{}) { acc, t -> map.update(acc, t.category, 0.0) { v -> v + t.amount } }
-  let h1 = string.pad_right("  Category", 18, " ")
-  let h2 = string.pad_left("Spent", 12, " ")
-  let h3 = string.pad_left("Projected", 12, " ")
-  let h4 = string.pad_left("Budget", 12, " ")
+  let h1 = string.left("  Category", 18)
+  let h2 = string.right("Spent", 12)
+  let h3 = string.right("Projected", 12)
+  let h4 = string.right("Budget", 12)
   println("{h1}{h2}{h3}{h4}  Forecast")
   print_thin_separator()
   let budget_keys = map.keys(budgets) |> list.sort
@@ -377,10 +377,10 @@ fn print_forecast(transactions) {
         projected > limit -> "OVER by {fmt_currency(projected - limit)}"
         _ -> "UNDER by {fmt_currency(limit - projected)}"
       }
-      let c1 = string.pad_right("  {cat}", 18, " ")
-      let c2 = string.pad_left(fmt_currency(spent), 12, " ")
-      let c3 = string.pad_left(fmt_currency(projected), 12, " ")
-      let c4 = string.pad_left(fmt_currency(limit), 12, " ")
+      let c1 = string.left("  {cat}", 18)
+      let c2 = string.right(fmt_currency(spent), 12)
+      let c3 = string.right(fmt_currency(projected), 12)
+      let c4 = string.right(fmt_currency(limit), 12)
       println("{c1}{c2}{c3}{c4}  {forecast}")
     }
 }

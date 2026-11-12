@@ -254,8 +254,7 @@ impl Vm {
             0,
             crate::bytecode::Op::Panic as u8,
         ];
-        let function =
-            crate::bytecode::Function::of_code(name, code, vec![Value::String(message.into())]);
+        let function = crate::bytecode::Function::of_code(name, code, vec![Value::string(message)]);
         Value::VmClosure(Arc::new(VmClosure::new(Arc::new(function), vec![])))
     }
 

@@ -1001,7 +1001,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     fn failure(failure: IoFailure<'_>) -> Value {
-        Value::String(failure.text().into())
+        Value::string(failure.text())
     }
 
     fn pool(max: usize, idle: Duration) -> IoPool {
@@ -1040,7 +1040,7 @@ mod tests {
             panic!("no such file")
         });
         match op.cell.get() {
-            Some(Value::String(msg)) => assert_eq!(&**msg, "panic: no such file"),
+            Some(Value::String(msg, _)) => assert_eq!(&**msg, "panic: no such file"),
             other => panic!("expected the typed failure, got {other:?}"),
         }
         assert!(op.in_flight.lock().is_none());
@@ -1124,7 +1124,7 @@ mod tests {
         until("two run", || running.load(Ordering::SeqCst) == 2);
         let refused = pool.submit(failure, Vec::new(), Leave::RunsOut, |_| Value::Int(3));
         match refused.cell.get() {
-            Some(Value::String(msg)) => {
+            Some(Value::String(msg, _)) => {
                 assert_eq!(&**msg, "too many I/O operations in flight (2)")
             }
             other => panic!("expected the refusal, got {other:?}"),
@@ -1167,7 +1167,7 @@ mod tests {
         assert_eq!(pool.live_threads(), IO_POOL_UNHEARD_MAX);
         let refused = pool.submit(failure, Vec::new(), Leave::RunsOut, |_| Value::Int(1));
         match refused.cell.get() {
-            Some(Value::String(msg)) => assert_eq!(
+            Some(Value::String(msg, _)) => assert_eq!(
                 &**msg,
                 &format!(
                     "too many I/O operations that nobody waits for are still running \
@@ -1508,7 +1508,7 @@ mod tests {
         until("the thread ended", || pool.threads() == 0);
         let op = pool.submit(failure, Vec::new(), Leave::RunsOut, |_| Value::Int(2));
         match op.cell.get() {
-            Some(Value::String(msg)) => assert!(msg.contains(VM_GONE), "{msg}"),
+            Some(Value::String(msg, _)) => assert!(msg.contains(VM_GONE), "{msg}"),
             other => panic!("expected the typed failure, got {other:?}"),
         }
     }

@@ -73,14 +73,6 @@ fn top_frequent(freq_map, n) {
   freq_map |> map.entries |> list.sort_by { (_, count) -> -count } |> list.take(n)
 }
 
-fn pad_right(s, width) {
-  string.pad_right(s, width, " ")
-}
-
-fn pad_left(s, width) {
-  string.pad_left(s, width, " ")
-}
-
 fn print_header(title) {
   println("")
   println(string.repeat("=", 50))
@@ -89,7 +81,7 @@ fn print_header(title) {
 }
 
 fn print_row(label, value) {
-  println("  {pad_right(label, 25)}{value}")
+  println("  {string.left(label, 25)}{value}")
 }
 
 fn main() {
@@ -127,13 +119,13 @@ fn main() {
       print_row("Shortest word:", shortest)
       print_header("Top {top_n} Most Frequent Words")
       println("")
-      println("  {pad_right("Rank", 8)}{pad_right("Word", 20)}{pad_left("Count", 6)}")
+      println("  {string.left("Rank", 8)}{string.left("Word", 20)}{string.right("Count", 6)}")
       println("  {string.repeat("-", 34)}")
       top
         |> list.enumerate
         |> list.each { (i, (word, count)) ->
           let rank = "{i + 1}."
-          println("  {pad_right(rank, 8)}{pad_right(word, 20)}{pad_left("{count}", 6)}")
+          println("  {string.left(rank, 8)}{string.left(word, 20)}{string.right(count, 6)}")
         }
       println("")
       println(string.repeat("=", 50))

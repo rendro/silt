@@ -1,8 +1,9 @@
 //! String builtin functions (`string.*`).
 
-use super::typed::{List, builtins};
+use super::common::cut;
+use super::typed::{List, Text, builtins};
 use crate::value::{MAX_COLLECTION_LEN, Value};
-use crate::vm::{Step, VmError};
+use crate::vm::{Step, Vm, VmError};
 
 /// The one character `pad` is, for `string.<name>`.
 fn pad_char(name: &str, pad: &str) -> Result<char, VmError> {
@@ -22,34 +23,59 @@ fn pad_char(name: &str, pad: &str) -> Result<char, VmError> {
 }
 
 /// The characters that pad `s` to `width`, for `string.<name>`: none
-/// if it is that wide already.
+/// if it is that wide already (a negative width is 0).
 fn padding(name: &str, s: &str, width: i64, pad: &str) -> Result<String, VmError> {
     let pad = pad_char(name, pad)?;
-    if width < 0 {
-        return Err(VmError::new(format!(
-            "string.{name}: negative width {width}"
-        )));
-    }
-    if width as u128 > MAX_COLLECTION_LEN as u128 {
-        return Err(VmError::new(format!(
+    fits_width(name, width)?;
+    Ok(fill(s, width, pad))
+}
+
+/// `width` is no wider than a string may be, for `string.<name>`.
+fn fits_width(name: &str, width: i64) -> Result<(), VmError> {
+    match width as i128 > MAX_COLLECTION_LEN as i128 {
+        true => Err(VmError::new(format!(
             "string.{name}: width {width} exceeds maximum of {MAX_COLLECTION_LEN}"
-        )));
+        ))),
+        false => Ok(()),
     }
-    let missing = (width as usize).saturating_sub(s.chars().count());
-    Ok(std::iter::repeat_n(pad, missing).collect())
+}
+
+/// The `pad`s that fill `s` up to `width` characters.
+fn fill(s: &str, width: i64, pad: char) -> String {
+    let missing = cut(width).saturating_sub(s.chars().count());
+    std::iter::repeat_n(pad, missing).collect()
+}
+
+/// `string.left` and `string.right`: `x` as `Display` shows it, with
+/// spaces after it (`at_left`) or before it up to `width` characters.
+fn aligned(vm: &mut Vm, x: &Value, width: i64, at_left: bool) -> Result<Step, VmError> {
+    let (name, builtin) = match at_left {
+        true => ("left", "string.left"),
+        false => ("right", "string.right"),
+    };
+    fits_width(name, width)?;
+    vm.show_within(x, Some(builtin), move |_, text| {
+        let spaces = fill(&text, width, ' ');
+        let line = match at_left {
+            true => text + &spaces,
+            false => spaces + &text,
+        };
+        Ok(Step::Done(Value::string(line)))
+    })
 }
 
 /// The byte offset of the character at index `chars` of `s`, the end
-/// of `s` included; `None` beyond it. Where the first `chars` bytes are
-/// ASCII, each of them is a character and the index is the offset: no
-/// walk over the characters. Otherwise the characters are counted
-/// eight bytes at a time (a character starts at every byte that is no
-/// UTF-8 continuation byte, `0b10xx_xxxx`), and byte by byte in the
-/// last word.
-fn byte_offset(s: &str, chars: usize) -> Option<usize> {
+/// of `s` included; `None` beyond it. In a string marked all ASCII
+/// (`ascii`) each byte is a character and the index is the offset, at
+/// once. So it is where the first `chars` bytes are ASCII, which is
+/// looked at first: no walk over the characters. Otherwise the
+/// characters are counted eight bytes at a time (a character starts at
+/// every byte that is no UTF-8 continuation byte, `0b10xx_xxxx`), and
+/// byte by byte in the last word.
+fn byte_offset(s: &str, ascii: bool, chars: usize) -> Option<usize> {
     const HIGH: u64 = 0x8080_8080_8080_8080;
     let bytes = s.as_bytes();
-    if bytes[..chars.min(bytes.len())].is_ascii() {
+    if ascii || bytes[..chars.min(bytes.len())].is_ascii() {
         return (chars <= bytes.len()).then_some(chars);
     }
     // `left` characters start at or after `at`, before the one wanted.
@@ -72,22 +98,27 @@ fn byte_offset(s: &str, chars: usize) -> Option<usize> {
         .nth(left)
 }
 
-/// The characters `start..end` of `s`, both indexes clamped to its
-/// length; empty where `start` is not before `end`. What it costs is
-/// the walk to `start` (none over ASCII) and the piece: the rest of
-/// `s` is not looked at, so a scan that takes a few characters at a
-/// time is not quadratic in the length of `s`.
-fn char_range(s: &str, start: usize, end: usize) -> &str {
-    let from = byte_offset(s, start).unwrap_or(s.len());
+/// The characters `start..end` of `s` (marked all ASCII if `ascii`),
+/// both indexes clamped to its length; empty where `start` is not
+/// before `end`. What it costs is the walk to `start` (none over ASCII)
+/// and the piece: the rest of `s` is not looked at, so a scan that
+/// takes a few characters at a time is not quadratic in the length of
+/// `s`.
+fn char_range(s: &str, ascii: bool, start: usize, end: usize) -> &str {
+    let from = byte_offset(s, ascii, start).unwrap_or(s.len());
     let rest = &s[from..];
-    let to = byte_offset(rest, end.saturating_sub(start)).unwrap_or(rest.len());
+    let to = byte_offset(rest, ascii, end.saturating_sub(start)).unwrap_or(rest.len());
     &rest[..to]
 }
 
-/// The character index of the byte offset `at` of `s`, as `Some`; or
-/// `None`.
-fn char_index(s: &str, at: Option<usize>) -> Option<Value> {
-    at.map(|at| Value::Int(s[..at].chars().count() as i64))
+/// The character index of the byte offset `at` of `s` (its byte offset
+/// in a string marked all ASCII), as `Some`; or `None`.
+fn char_index(s: Text, at: Option<usize>) -> Option<Value> {
+    let index = |at: usize| match s.ascii {
+        true => at,
+        false => s.text[..at].chars().count(),
+    };
+    at.map(|at| Value::Int(index(at) as i64))
 }
 
 /// Whether `s` has a character and all of them are `of`.
@@ -108,11 +139,11 @@ builtins! {
         if separator.is_empty() {
             return s
                 .chars()
-                .map(|c| Value::String(c.to_string().into()))
+                .map(|c| Value::string(c.to_string()))
                 .collect();
         }
         s.split(separator)
-            .map(|part| Value::String(part.into()))
+            .map(Value::string)
             .collect()
     }
 
@@ -176,7 +207,7 @@ builtins! {
         let items = xs.len() as u128;
         let mut result_len = (sep.len() as u128).saturating_mul(items.saturating_sub(1));
         for item in xs.iter() {
-            if let Value::String(s) = item {
+            if let Value::String(s, _) = item {
                 result_len = result_len.saturating_add(s.len() as u128);
             }
         }
@@ -190,8 +221,12 @@ builtins! {
         Ok(shown.join(sep))
     }
 
-    fn length(s: &str) -> i64 {
-        s.chars().count() as i64
+    // Constant time for a string marked all ASCII.
+    fn length(s: Text) -> i64 {
+        match s.ascii {
+            true => s.text.len() as i64,
+            false => s.text.chars().count() as i64,
+        }
     }
 
     fn byte_length(s: &str) -> i64 {
@@ -215,13 +250,12 @@ builtins! {
     }
 
     fn chars(s: &str) -> Vec<Value> {
-        s.chars().map(|c| Value::String(c.encode_utf8(&mut [0; 4]).into())).collect()
+        s.chars().map(|c| Value::string(c.encode_utf8(&mut [0; 4]))).collect()
     }
 
+    // A negative count is 0.
     fn repeat(s: &str, n: i64) -> Result<String, VmError> {
-        if n < 0 {
-            return Err(VmError::new(format!("string.repeat: negative count {n}")));
-        }
+        let n = cut(n);
         let result_len = (n as u128) * (s.len() as u128);
         if result_len > MAX_COLLECTION_LEN as u128 {
             return Err(VmError::new(format!(
@@ -229,28 +263,47 @@ builtins! {
                 result_len, MAX_COLLECTION_LEN
             )));
         }
-        Ok(s.repeat(n as usize))
+        Ok(s.repeat(n))
     }
 
     // (A character index, as `string.slice` takes them: not a byte's.)
-    fn index_of(s: &str, needle: &str) -> Option<Value> {
-        char_index(s, s.find(needle))
+    fn index_of(s: Text, needle: &str) -> Option<Value> {
+        char_index(s, s.text.find(needle))
     }
 
-    fn last_index_of(s: &str, needle: &str) -> Option<Value> {
-        char_index(s, s.rfind(needle))
+    fn last_index_of(s: Text, needle: &str) -> Option<Value> {
+        char_index(s, s.text.rfind(needle))
     }
 
     // Character indexing (consistent with string.index_of /
     // string.slice): every index up to the length is a boundary, and
     // any other index, a negative one too, is `None`.
-    fn split_at(s: &str, idx: i64) -> Option<Value> {
-        let boundary = byte_offset(s, usize::try_from(idx).ok()?)?;
-        let (left, right) = s.split_at(boundary);
+    fn split_at(s: Text, idx: i64) -> Option<Value> {
+        let boundary = byte_offset(s.text, s.ascii, usize::try_from(idx).ok()?)?;
+        let (left, right) = s.text.split_at(boundary);
         Some(Value::tuple(vec![
-            Value::String(left.into()),
-            Value::String(right.into()),
+            Value::string(left),
+            Value::string(right),
         ]))
+    }
+
+    // At the first `separator`: the text before it and the text after
+    // it, or `None` if it is not in `s`. (An empty separator is found
+    // at the start, as `index_of` finds it.)
+    fn split_once(s: &str, separator: &str) -> Option<Value> {
+        let (left, right) = s.split_once(separator)?;
+        Some(Value::tuple(vec![
+            Value::string(left),
+            Value::string(right),
+        ]))
+    }
+
+    fn strip_prefix(s: &str, prefix: &str) -> Option<Value> {
+        s.strip_prefix(prefix).map(Value::string)
+    }
+
+    fn strip_suffix(s: &str, suffix: &str) -> Option<Value> {
+        s.strip_suffix(suffix).map(Value::string)
     }
 
     fn lines(s: &str) -> Vec<Value> {
@@ -271,7 +324,7 @@ builtins! {
                 break;
             }
             let trimmed = part.strip_suffix('\r').unwrap_or(part);
-            lines.push(Value::String(trimmed.into()));
+            lines.push(Value::string(trimmed));
         }
         lines
     }
@@ -279,21 +332,29 @@ builtins! {
     // A predicate: an offset that is not in the string is `false`, not
     // an error. Character indexing, consistent with string.index_of /
     // string.slice.
-    fn starts_with_at(s: &str, offset: i64, prefix: &str) -> bool {
+    fn starts_with_at(s: Text, offset: i64, prefix: &str) -> bool {
         usize::try_from(offset)
             .ok()
-            .and_then(|offset| byte_offset(s, offset))
-            .is_some_and(|at| s[at..].starts_with(prefix))
+            .and_then(|offset| byte_offset(s.text, s.ascii, offset))
+            .is_some_and(|at| s.text[at..].starts_with(prefix))
     }
 
-    fn slice(s: &str, start: i64, end: i64) -> Result<String, VmError> {
-        if let Some(negative) = [start, end].into_iter().find(|index| *index < 0) {
-            return Err(VmError::new(format!(
-                "string.slice: negative index {negative}"
-            )));
-        }
-        let index = |at: i64| usize::try_from(at).unwrap_or(usize::MAX);
-        Ok(char_range(s, index(start), index(end)).to_string())
+    // Both indexes are cut to the string: a negative one is 0, one
+    // past the end is the end.
+    fn slice(s: Text, start: i64, end: i64) -> String {
+        char_range(s.text, s.ascii, cut(start), cut(end)).to_string()
+    }
+
+    // `x` as `Display` shows it, at the left of `width` characters:
+    // spaces after it.
+    fn left(vm, x: &Value, width: i64) -> Result<Step, VmError> {
+        aligned(vm, x, width, true)
+    }
+
+    // `x` as `Display` shows it, at the right of `width` characters:
+    // spaces before it.
+    fn right(vm, x: &Value, width: i64) -> Result<Step, VmError> {
+        aligned(vm, x, width, false)
     }
 
     fn pad_left(s: &str, width: i64, pad: &str) -> Result<String, VmError> {
@@ -314,7 +375,7 @@ builtins! {
     // 0x10FFFF.
     fn from_char_code(code: i64) -> Option<Value> {
         let c = u32::try_from(code).ok().and_then(char::from_u32)?;
-        Some(Value::String(c.to_string().into()))
+        Some(Value::string(c.to_string()))
     }
 
     fn is_empty(s: &str) -> bool {
@@ -380,9 +441,14 @@ mod tests {
             offsets.push(s.len());
             for chars in 0..offsets.len() + 3 {
                 assert_eq!(
-                    byte_offset(s, chars),
+                    byte_offset(s, s.is_ascii(), chars),
                     offsets.get(chars).copied(),
                     "{s:?} at {chars}"
+                );
+                assert_eq!(
+                    byte_offset(s, false, chars),
+                    offsets.get(chars).copied(),
+                    "{s:?} at {chars}, not marked"
                 );
             }
         }
@@ -395,14 +461,14 @@ mod tests {
             for start in 0..most {
                 for end in 0..most {
                     assert_eq!(
-                        char_range(s, start, end),
+                        char_range(s, s.is_ascii(), start, end),
                         by_vector(s, start, end),
                         "{s:?} {start}..{end}"
                     );
                 }
             }
-            assert_eq!(char_range(s, 0, usize::MAX), s.as_str());
-            assert_eq!(char_range(s, usize::MAX, usize::MAX), "");
+            assert_eq!(char_range(s, s.is_ascii(), 0, usize::MAX), s.as_str());
+            assert_eq!(char_range(s, s.is_ascii(), usize::MAX, usize::MAX), "");
         }
     }
 
@@ -421,12 +487,66 @@ mod tests {
         ] {
             let first = s.chars().next().map(String::from).unwrap_or_default();
             let tenth: String = s.chars().skip(10).take(10).collect();
+            let ascii = s.is_ascii();
             for _ in 0..1_000_000 {
-                assert_eq!(char_range(&s, 0, 1), first);
+                assert_eq!(char_range(&s, ascii, 0, 1), first);
             }
             for _ in 0..100_000 {
-                assert_eq!(char_range(&s, 10, 20), tenth);
+                assert_eq!(char_range(&s, ascii, 10, 20), tenth);
             }
+        }
+    }
+
+    /// In a string marked all ASCII an offset costs nothing, wherever it
+    /// is: a scan by index of every character of a string of four
+    /// million, each taken at its offset and its index found. Were
+    /// each offset counted from the start again (if only by looking at
+    /// the bytes before it, eight or more at a time), that would be
+    /// some 10^12 bytes looked at: minutes, not the moment it takes.
+    /// (What says that the mark alone answers, without a look at the
+    /// text, is the first assertion.)
+    #[test]
+    fn an_offset_into_a_string_marked_ascii_costs_nothing() {
+        // Given the mark, the offset is the index, whatever the bytes:
+        // the text is not looked at (a mark is never set on such text;
+        // here it is, to see that it is believed).
+        assert_eq!(byte_offset("éé", true, 1), Some(1));
+        assert_eq!(byte_offset("éé", false, 1), Some(2));
+        let long = 4_000_000;
+        let s = "ab".repeat(long / 2);
+        let value = Value::string(s.as_str());
+        let Value::String(text, ascii) = &value else {
+            unreachable!("a string");
+        };
+        assert!(ascii.is());
+        let text = Text {
+            text,
+            ascii: ascii.is(),
+        };
+        let mut a = 0;
+        for i in 0..long {
+            let piece = char_range(text.text, text.ascii, i, i + 1);
+            a += usize::from(piece == "a");
+            assert_eq!(byte_offset(text.text, text.ascii, i), Some(i));
+            assert!(char_index(text, Some(i)).is_some());
+        }
+        assert_eq!(a, long / 2);
+    }
+
+    #[test]
+    fn a_string_is_marked_ascii_when_it_is() {
+        for (s, ascii) in [
+            ("", true),
+            ("abc ~\u{7f}", true),
+            ("\u{7f}", true),
+            ("é", false),
+            ("abc\u{80}", false),
+            ("日本", false),
+        ] {
+            let Value::String(_, mark) = Value::string(s) else {
+                unreachable!("a string");
+            };
+            assert_eq!(mark.is(), ascii, "{s:?}");
         }
     }
 }
