@@ -529,17 +529,16 @@ fn full_listener() -> (TcpListener, Vec<TcpStream>, String) {
     (listener, held, addr)
 }
 
-/// A `tcp.connect_tls` given up while its TCP connect still waits (the
-/// listener's queue is full) has no socket to shut down yet: the
-/// connect runs on, and counts among the operations that nobody waits
-/// for and that cannot be interrupted, of which there may be 64. So the
-/// program does not take a thread for each of a hundred: from the 65th
-/// on an operation is refused, the file read at the end too. (Before,
-/// such a connect stopped counting at once, and every one of them held
-/// a thread for the minutes its connect waited.)
+/// A `tcp.connect_tls` or a `tcp.connect` given up while its TCP connect
+/// still waits (the listener's queue is full) is shut down: its socket
+/// was made before the connect, so the connect ends and frees its
+/// thread. A hundred of them leave nothing behind, and the file read at
+/// the end runs. (The connect could not be interrupted: it ran on for
+/// minutes, and from the 65th on every operation was refused, the file
+/// read too.)
 #[test]
 #[cfg(all(feature = "tcp-tls", target_os = "linux"))]
-fn a_tls_connect_given_up_before_its_socket_counts_until_it_ends() {
+fn a_connect_given_up_while_it_waits_frees_its_thread() {
     let (_listener, _held, addr) = full_listener();
     let file = temp_file("tls_connect_bound.txt", "text");
     let source = format!(
@@ -553,6 +552,7 @@ fn tries(n: Int) {{
   match {{
     n > 0 -> {{
       let _ = task.deadline(time.ms(2)) {{ -> tcp.connect_tls("{addr}", "localhost") }}
+      let _ = task.deadline(time.ms(2)) {{ -> tcp.connect("{addr}") }}
       tries(n - 1)
     }}
     _ -> ()
@@ -569,9 +569,5 @@ fn main() {{
 "#
     );
     let (_vm, out) = run(&source).expect("the program ended");
-    assert_eq!(
-        out,
-        "too many I/O operations that nobody waits for are still running (64); \
-         they cannot be interrupted\n"
-    );
+    assert_eq!(out, "read the file\n");
 }
