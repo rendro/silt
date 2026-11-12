@@ -810,7 +810,9 @@ impl<'src> Parser<'src> {
     fn record_without_a_name(&self, span: Span) -> Diagnostic {
         let field = self.source.get(span.start as usize..span.end as usize);
         let example = match field {
-            Some(field) if self.tokens.get(self.pos + 2).map(|t| &t.kind) == Some(&Token::Colon) => {
+            Some(field)
+                if self.tokens.get(self.pos + 2).map(|t| &t.kind) == Some(&Token::Colon) =>
+            {
                 format!("P {{ {field}: ... }}")
             }
             Some(field) => format!("P {{ {field}, ... }}"),
@@ -2474,6 +2476,16 @@ impl<'src> Parser<'src> {
                 Self::parse_type_expr,
             )?);
             return Ok(self.mk_type(TypeExprKind::Tuple(elems), start));
+        }
+        // Braces of fields where a type stands: a record type is written
+        // by its name.
+        if self.at(&Token::LBrace) {
+            return Err(Diagnostic::error(
+                Code::ExpectedType,
+                start,
+                "expected a type, found {",
+            )
+            .with_help("a record type is declared with a name, `type P { x: Int }`, and written by it, `P`"));
         }
         let (module, name, name_span) = self.parse_qualified_name("type name")?;
         if module.is_none() && name == intern::intern("Self") {

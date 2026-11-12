@@ -5362,7 +5362,6 @@ impl TypeChecker {
                 base_ty
             }
 
-
             ExprKind::Match {
                 expr: scrutinee,
                 arms,

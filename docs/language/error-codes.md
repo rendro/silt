@@ -40,7 +40,6 @@ missing belong to codes that are gone.
 | `E0108` | Two declarations, or two statements, on one line. |
 | `E0109` | Syntax of another language, or of an older silt, that silt does not have. |
 | `E0110` | A name bound twice at the top level of a file. |
-| `E0111` | A field named twice in an anonymous record type or literal. |
 | `E0112` | Expressions, patterns or types nested deeper than the parser follows. |
 | `E0113` | A declaration whose parts are not allowed together (a supertrait on an impl, an annotated `type` parameter, a lowercase type name, `opaque` on an alias or on a private type, ...). |
 | `E0114` | The count of the lex and parse errors of a file that are not shown, at the first of them. |

@@ -241,6 +241,8 @@ fn bad_signatures_are_reported() {
         ("fn f(x: Int) -> Nope", "Nope"),
         ("fn f(x: Int) -> _", "unknown type '_'"),
         ("fn f(x: Int) -> Option(_a)", "unknown type '_a'"),
+        // (A record without a name is no type.)
+        ("fn f(p: {name: String}) -> Int", "expected a type, found {"),
         (
             "fn f(g: Fn(Int) -> Int) -> Int",
             "cannot take or return a function",
@@ -266,10 +268,6 @@ fn bad_signatures_are_reported() {
         (
             "fn f() -> Result(a, String) where a: Display",
             "type variable 'a' in the return type",
-        ),
-        (
-            "fn f(p: {name: String}) -> {name: String, ...r}",
-            "row variable 'r' in the return type of the host function `f`",
         ),
     ];
     for (signature, expected) in cases {
@@ -317,7 +315,6 @@ fn type_variables_a_parameter_introduces_are_accepted() {
         "fn first(xs: List(a)) -> Option(a)",
         "fn same(x: a) -> a",
         "fn pair(x: a, y: b) -> (b, a)",
-        "fn keep(p: {name: String, ...r}) -> {name: String, ...r}",
         "fn pick(s: String, type a) -> Option(a)",
     ] {
         let host = HostModule::new("h").function(signature, |_: &[Value]| Ok(Value::Unit));
@@ -340,7 +337,6 @@ fn a_type_of_around_more_than_a_variable_is_refused() {
             "fn pair(t: (Int, TypeOf(Map(k, v)))) -> Int",
             "TypeOf(Map(k, v))",
         ),
-        ("fn rec(r: {t: TypeOf(Int)}) -> Int", "TypeOf(Int)"),
     ] {
         let host = HostModule::new("h").function(signature, |_: &[Value]| Ok(Value::Int(1)));
         let errors = errors("fn main() { let _ = 1 }", host);
@@ -543,52 +539,6 @@ fn a_type_parameter_shows_the_variable() {
     assert_eq!(run(source, host), Ok(Value::Int(1)));
 }
 
-/// A closed record result has the fields its type writes, no more and
-/// no fewer; an open one gives back the rest of the record it is given.
-#[test]
-fn a_record_result_is_checked_by_its_fields() {
-    let host = HostModule::new("h")
-        .function(
-            "fn missing(n: Int) -> {name: String, age: Int}",
-            |_: &[Value]| Ok(Value::anon_record([("name", Value::String("a".into()))])),
-        )
-        .function("fn extra(n: Int) -> {name: String}", |_: &[Value]| {
-            Ok(Value::anon_record([
-                ("name", Value::String("a".into())),
-                ("age", Value::Int(3)),
-            ]))
-        })
-        .function("fn wrong(n: Int) -> {name: String}", |_: &[Value]| {
-            Ok(Value::anon_record([("name", Value::Int(1))]))
-        })
-        .function(
-            "fn keep(p: {name: String, ...r}) -> {name: String, ...r}",
-            |_: &[Value]| Ok(Value::anon_record([("name", Value::String("b".into()))])),
-        );
-    for (call, expected) in [
-        (
-            "h.missing(1)",
-            "h.missing: its signature returns {name: String, age: Int}, but it returned Record",
-        ),
-        (
-            "h.extra(1)",
-            "h.extra: its signature returns {name: String}, but it returned Record",
-        ),
-        (
-            "h.wrong(1)",
-            "h.wrong: its signature returns {name: String}, but it returned Record",
-        ),
-        (
-            r#"h.keep({name: "a", age: 3})"#,
-            "h.keep: its signature returns {name: String, ...r}, where r is the rest of \
-             {age: Int, name: String} (the type of its argument `p`), but it returned Record {name: \"b\"}",
-        ),
-    ] {
-        let err = returned_error(host.clone(), call);
-        assert!(err.contains(expected), "{call}: {err}");
-    }
-}
-
 /// A Channel result is a channel; what it carries is not shown.
 #[test]
 fn a_channel_result_is_a_channel() {
@@ -664,37 +614,6 @@ fn later_elements_of_a_collection_are_compared() {
     );
 }
 
-/// The field names of an anonymous record are its type, compared whole
-/// however many fields it has, as a declared type's id is: a record of
-/// 100 fields with other names is refused, one with the same names
-/// passes.
-#[test]
-fn the_field_names_of_a_wide_anonymous_record_are_compared_whole() {
-    let fields = |prefix: &str| -> Vec<(String, Value)> {
-        (0..100)
-            .map(|i| (format!("{prefix}{i:02}"), Value::Int(i)))
-            .collect()
-    };
-    let record = move |prefix: &str| {
-        let fields = fields(prefix);
-        Value::anon_record(fields.iter().map(|(name, v)| (name.as_str(), v.clone())))
-    };
-    let host = HostModule::new("h")
-        .function("fn renamed(x: a) -> a", move |_: &[Value]| Ok(record("g")))
-        .function("fn rebuilt(x: a) -> a", move |_: &[Value]| Ok(record("f")));
-    let literal: Vec<String> = (0..100).map(|i| format!("f{i:02}: {i}")).collect();
-    let literal = format!("{{{}}}", literal.join(", "));
-    let err = returned_error(host.clone(), &format!("h.renamed({literal})"));
-    assert!(
-        err.contains("h.renamed: its signature returns a, here {f00: Int, f01: Int"),
-        "got: {err}"
-    );
-    let source = format!(
-        "import h\nfn main() {{\n  let r = h.rebuilt({literal})\n  host.give(r.f99)\n}}\nimport host"
-    );
-    assert_eq!(run(&source, host), Ok(Value::Int(99)));
-}
-
 /// Each place that may show a variable is searched as far as the bound
 /// on its own: a long argument that shows nothing (200 `None`s) leaves
 /// a later argument that shows the variable its search, so a wrong
@@ -754,8 +673,8 @@ fn a_wrong_part_within_the_bound_is_refused() {
 /// Host functions that return what their signatures say keep running,
 /// of every shape that is checked: variables shown by an argument, its
 /// element, a key or a value of a map, an option's value, a tuple's
-/// part, a record's field and row, a `type a` parameter, records,
-/// channels, and a variable bound to a record of a declared type.
+/// part, a `type a` parameter, channels, and a variable bound to a
+/// record of a declared type.
 #[test]
 fn results_of_the_type_the_signature_returns_pass() {
     let host = HostModule::new("h")
@@ -784,28 +703,9 @@ fn results_of_the_type_the_signature_returns_pass() {
                 _ => args[1].clone(),
             })
         })
-        .function("fn name(p: {name: a}) -> a", |args: &[Value]| {
-            let Value::Record(r) = &args[0] else {
-                return Err(VmError::new("expected a record".into()));
-            };
-            Ok(r.get("name").cloned().unwrap_or(Value::Unit))
-        })
-        .function(
-            "fn keep(p: {name: String, ...r}) -> {name: String, ...r}",
-            |args: &[Value]| Ok(args[0].clone()),
-        )
         .function("fn pick(s: String, type a) -> List(a)", |_: &[Value]| {
             Ok(Value::list(Vec::new()))
         })
-        .function(
-            "fn user(n: Int) -> {name: String, age: Int}",
-            |args: &[Value]| {
-                Ok(Value::anon_record([
-                    ("age", args[0].clone()),
-                    ("name", Value::String("a".into())),
-                ]))
-            },
-        )
         .function(
             "fn pass(c: Channel(Int)) -> Channel(Int)",
             |args: &[Value]| Ok(args[0].clone()),
@@ -820,21 +720,18 @@ fn main() {
   let c = h.swap((1, "s"))
   let d = h.keys(#{"k": 1})
   let e = h.get(None, 3)
-  let f = h.name({name: true})
-  let g = h.keep({name: "a", age: 3})
-  let p = h.keep(Person { name: "b", age: 4 })
+  let p = h.same(Person { name: "b", age: 4 })
   let q: List(Int) = h.pick("x", Int)
-  let u = h.user(7)
   let ch = h.pass(channel.new(1))
   channel.close(ch)
-  host.give("{a} {b} {c} {d} {e} {f} {g.age} {p.age} {q} {u.age}")
+  host.give("{a} {b} {c} {d} {e} {p.age} {q}")
 }
 import host
 "#;
     assert_eq!(
         run(source, host),
         Ok(Value::String(
-            "[1, 2] Some(\"x\") (\"s\", 1) [\"k\"] 3 true 3 4 [] 7".into()
+            "[1, 2] Some(\"x\") (\"s\", 1) [\"k\"] 3 4 []".into()
         ))
     );
 }
@@ -993,7 +890,7 @@ fn docs_ffi_quick_start() {
 /// The host module the result checks are probed with: functions that
 /// give back an argument (`same`, `second`, `other` its second, of
 /// another type), an element of one (`pick`), or the value of a type
-/// argument (`cast`), and functions of records, maps, sets, channels.
+/// argument (`cast`), and functions of maps, sets, channels.
 fn probe() -> HostModule {
     let at = |i: usize| move |args: &[Value]| Ok(args[i].clone());
     HostModule::new("h")
@@ -1010,24 +907,6 @@ fn probe() -> HostModule {
         .function("fn tcast(v: b, t: TypeOf(a)) -> a", at(0))
         .function("fn otcast(v: b, t: Option(TypeOf(a))) -> a", at(0))
         .function("fn tyval(x: a, type a) -> a", at(0))
-        .function(
-            "fn keep(p: {name: String, ...r}) -> {name: String, ...r}",
-            at(0),
-        )
-        .function(
-            "fn keep2(p: {name: String, ...r}, q: {name: String, ...r}) -> {name: String, ...r}",
-            at(1),
-        )
-        .function(
-            "fn rename(p: {name: String, ...r}, q: {title: String, ...r}) -> {title: String, ...r}",
-            at(1),
-        )
-        .function("fn open(p: {...r}) -> {...r}", at(0))
-        .function("fn open2(p: {...r}, q: {...r}) -> {...r}", at(1))
-        .function(
-            "fn keepl(ps: List({name: String, ...r})) -> List({name: String, ...r})",
-            at(0),
-        )
         .function(
             "fn chan2(c: Channel(a), d: Channel(a)) -> Channel(a)",
             at(1),
@@ -1116,8 +995,7 @@ fn correct_host_results_of_every_shape_pass() {
         "h.second(#{\"a\": []}, #{\"b\": [1]})",
         "h.second(Ok(1), Err(\"e\"))",
         "h.second((1, []), (2, [\"x\"]))",
-        "h.second({a: 1, b: \"x\"}, {b: \"y\", a: 2})",
-        "h.second({a: [], b: None}, {a: [1], b: Some(2)})",
+        "h.second(Person { name: \"x\", age: 1 }, Person { age: 2, name: \"y\" })",
         "h.second(1..3, [5, 6])",
         "h.second((), ())",
         "h.second(1.5, 2.5)",
@@ -1144,17 +1022,6 @@ fn correct_host_results_of_every_shape_pass() {
         "h.tyval(5, Id)",
         "h.tyval((5, \"x\"), Pair)",
         "h.chan2(channel.new(0), channel.new(5))",
-        "h.keep(Person { name: \"a\", age: 1 })",
-        "h.keep({name: \"a\", age: 1})",
-        "h.keep2({name: \"a\", age: 1, z: [1]}, {name: \"b\", age: 2, z: []})",
-        "h.keep2(Person { name: \"a\", age: 1 }, Person { name: \"b\", age: 2 })",
-        "h.keep({name: \"a\", inner: {name: \"b\", x: 1}})",
-        "h.rename({name: \"a\", age: 1}, {title: \"t\", age: 2})",
-        "h.open({a: 1})",
-        "h.open(Person { name: \"a\", age: 1 })",
-        "h.open2({a: 1, b: None}, {a: 2, b: Some(1)})",
-        "h.keepl([{name: \"a\", age: 1}, {name: \"b\", age: 2}])",
-        "h.keepl([Person { name: \"a\", age: 1 }, Person { name: \"b\", age: 2 }])",
         "h.vals(#{\"a\": [1], \"b\": []})",
         "h.keys2(#{\"a\": []}, #{\"b\": [1]})",
         "h.sets(#[1], #[2, 3])",
@@ -1182,54 +1049,14 @@ fn correct_host_results_of_every_shape_pass() {
   let lit = Person { name: "a", age: 1 }
   let fromjson = json.parse(json.stringify(#{"age": json.Int(2), "name": json.String("b")}), Person) |> result.map_err({ e -> "{e}" })?
   let fromtoml = toml.parse("age = 3\nname = 'c'", Person) |> result.map_err({ e -> "{e}" })?
-  let anon = {name: "x", age: 1}
   let rs = [h.second(lit, fromjson), h.second(fromjson, lit), h.second(lit, fromtoml), h.second(lit, lit.{ age: 9 })]
-  let a2 = h.second(anon, anon.{ age: 5 })
-  host.give("{f(1)} {g(1)} {k(1.0)} {s("abc")} {list.length(fs)} {p} {m(3)} {rs |> list.map({ r -> r.age })} {a2.age}")"#;
+  host.give("{f(1)} {g(1)} {k(1.0)} {s("abc")} {list.length(fs)} {p} {m(3)} {rs |> list.map({ r -> r.age })}")"#;
     assert_eq!(
         run_probe(body, None),
         Ok(Value::String(
-            "2 2 Circle(1.0) 0 2 2 Some(3) [2, 1, 3, 9] 5".into()
+            "2 2 Circle(1.0) 0 2 2 Some(3) [2, 1, 3, 9]".into()
         ))
     );
-}
-
-/// A host function whose result is an open record (`{name: String,
-/// ...r}`) given a record of a declared type gives back a record of that
-/// type, whatever fields the parameter and the result write and in
-/// whatever order: a record of another declared type (a `Pet` for a
-/// `Person`) or an anonymous one is refused in each shape, and the
-/// record given passes.
-#[test]
-fn an_open_record_result_given_a_declared_record_is_of_its_type() {
-    let shapes = [
-        "fn f(p: {age: Int, name: String, ...r}, q: {...s}) -> {name: String, age: Int, ...r}",
-        "fn f(p: {name: String, age: Int, ...r}, q: {...s}) -> {name: String, age: Int, ...r}",
-        "fn f(p: {name: String, ...r}, q: {...s}) -> {...r}",
-        "fn f(p: {name: String, ...r}, q: {...s}) -> {age: Int, ...r}",
-        "fn f(p: {name: String, age: Int, ...r}, q: {...s}) -> {name: String, ...r}",
-        "fn f(p: {...r}, q: {...s}) -> {...r}",
-    ];
-    let body = |other: &str| {
-        format!(
-            "  let y = g.f(Person {{ name: \"a\", age: 1 }}, {other})\n  let z: Person = y\n  host.give(z.age + 1)"
-        )
-    };
-    for shape in shapes {
-        for other in ["Pet { name: \"rex\", age: 3 }", "{age: 3, name: \"rex\"}"] {
-            let err = run_probe(&body(other), Some((shape, 1))).expect_err(shape);
-            assert!(
-                err.contains("g.f: its signature returns")
-                    && err.contains("Person (the type of its argument `p`)"),
-                "{shape} given {other}: {err}"
-            );
-        }
-        assert_eq!(
-            run_probe(&body("Pet { name: \"rex\", age: 3 }"), Some((shape, 0))),
-            Ok(Value::Int(2)),
-            "{shape}"
-        );
-    }
 }
 
 /// The type a variable has at the call is named in full, as far as the
@@ -1260,7 +1087,10 @@ fn the_type_an_argument_shows_is_named_in_full() {
         ("h.other(Box { v: 1 }, Box { v: \"s\" })", "here Box(Int)"),
         ("h.other(Box { v: [\"s\"] }, 1)", "here Box(List(String))"),
         ("h.other(Circle(1.0), Some(1))", "here Shape"),
-        ("h.other({a: 1}, {a: \"x\"})", "here {a: Int}"),
+        (
+            "h.other(Person { name: \"a\", age: 1 }, Pet { name: \"b\", age: 2 })",
+            "here Person",
+        ),
         ("h.other((), 1)", "here ()"),
         ("h.other(channel.new(0), 1)", "here Channel(_)"),
         ("h.other(inc, 1)", "here Fn"),
@@ -1338,31 +1168,5 @@ fn a_parameter_written_as_a_pattern_is_named_by_its_place() {
         let err =
             run_probe(&format!("  host.give({call})"), Some((signature, ret))).expect_err(call);
         assert!(err.contains(expected), "{signature}: {err}");
-    }
-}
-
-/// An anonymous record type has no value as a type: given to a host
-/// function's `type a` parameter by an alias or written out, it is
-/// refused by the checker (by an alias it reached the compiler).
-#[test]
-fn an_anonymous_record_type_is_no_type_argument_of_a_host_function() {
-    for call in ["h.cast({x: 1}, Rec)", "h.cast({x: 1}, {x: Int})"] {
-        let body = format!("  host.give({call})");
-        let err = run_with_host(
-            &[(
-                "main.silt",
-                &format!(
-                    "{PROBE_PRELUDE}type Rec = {{x: Int}}\nfn main() {{\n{body}\n}}\nimport host"
-                ),
-            )],
-            vec![probe()],
-        )
-        .expect_err(call);
-        assert_eq!(
-            err,
-            "`h.cast` takes a type as `a`, but `{x: Int}` is an anonymous record type, which has \
-             no value as a type",
-            "{call}"
-        );
     }
 }

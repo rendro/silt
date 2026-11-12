@@ -2260,8 +2260,7 @@ impl TypeChecker {
             for (bound_arg, impl_arg) in bound_trait_args.iter().zip(&impl_trait_args) {
                 let b = self.apply(bound_arg);
                 let i = self.apply(impl_arg);
-                if !fitted && !self.trait_arg_compatible(&b, &i)
-                {
+                if !fitted && !self.trait_arg_compatible(&b, &i) {
                     self.error(
                         Code::MissingTraitImpl,
                         format!(

@@ -117,8 +117,6 @@ codes! {
     UnsupportedSyntax = "E0109", Parse;
     /// A name bound twice at the top level of a file.
     DuplicateTopLevel = "E0110", Parse;
-    /// A field named twice in an anonymous record type or literal.
-    DuplicateField = "E0111", Parse;
     NestingTooDeep = "E0112", Parse;
     /// A declaration whose parts are not allowed together (a supertrait
     /// on an impl, an annotated `type` parameter, a lowercase type

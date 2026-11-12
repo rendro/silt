@@ -348,7 +348,7 @@ pub fn canonical_head(resolver: &Resolver, ty: TypeRef) -> TypeRef {
 /// registration path.
 ///
 /// Returns `None` for shapes that have no nominal head (raw
-/// type-variables, error / never sentinels, anonymous records).
+/// type-variables, error / never sentinels).
 pub fn head_of_canon(ty: &Type) -> Option<TypeRef> {
     let builtin = match ty {
         Type::Int => "Int",
@@ -371,11 +371,7 @@ pub fn head_of_canon(ty: &Type) -> Option<TypeRef> {
             crate::types::Head::Set => "Set",
             crate::types::Head::Channel => "Channel",
         },
-        Type::App(..)
-        | Type::Var(_)
-        | Type::Rigid(_)
-        | Type::Error
-        | Type::Never => return None,
+        Type::App(..) | Type::Var(_) | Type::Rigid(_) | Type::Error | Type::Never => return None,
     };
     Some(TypeRef::builtin(builtin))
 }

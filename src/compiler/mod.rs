@@ -54,21 +54,6 @@ mod patterns;
 // a type (`Pred::Builtin`), so a checked program never gives a decoder
 // one.
 
-// ── Reading a field ──────────────────────────────────────────────────
-
-/// How code reads a field of a record.
-#[derive(Clone, Copy)]
-enum FieldRead {
-    /// At the place the record's type declares the field: the type is a
-    /// declared record the compiler knows (the receiver's checked type,
-    /// the type a pattern names).
-    Slot(usize),
-    /// By its name, in the type of the record that is there when the
-    /// code runs: an anonymous record, or a record behind an open row
-    /// (`{x: T, ...r}`), which a declared record flows into as itself.
-    Named(Symbol),
-}
-
 // ── Bind destruct kind ───────────────────────────────────────────────
 
 /// Describes how to destructure a sub-value from a compound pattern.
@@ -77,10 +62,8 @@ enum BindDestructKind {
     Tuple(usize),
     List(usize),
     ListRest(usize),
-    RecordField(FieldRead),
-    /// Anonymous record `...rest` capture: produces a new record containing
-    /// every field of the parent record except those listed here.
-    RecordRest(Vec<Symbol>),
+    /// The field at that place of a record.
+    RecordField(usize),
     MapValue(String),
 }
 
@@ -1846,7 +1829,7 @@ impl<'a> Compiler<'a> {
             // the checker.)
             ExprKind::FieldAccess(expr, field, _) => {
                 self.compile_expr(expr)?;
-                self.emit_get_field(self.receiver_field(expr, *field), span)?;
+                self.emit_get_field(self.receiver_field(expr, *field, span)?, span)?;
             }
 
             ExprKind::StringInterp(parts) => {
@@ -2484,7 +2467,7 @@ impl<'a> Compiler<'a> {
             // The function a field holds: an ordinary call of it.
             Some(Selection::FieldCall) => {
                 self.compile_expr(receiver)?;
-                self.emit_get_field(self.receiver_field(receiver, method), span)?;
+                self.emit_get_field(self.receiver_field(receiver, method, span)?, span)?;
                 self.compile_operands(args.iter().copied())?;
                 self.emit_call(args.len(), tail, span)
             }
@@ -2741,46 +2724,35 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    /// How the field `field` of the record `receiver` evaluates to is
-    /// read: at its place, if the checker gave the receiver a declared
-    /// record type.
-    fn receiver_field(&self, receiver: &Expr, field: Symbol) -> FieldRead {
+    /// The place of the field `field` in the record type the checker
+    /// gave `receiver`.
+    fn receiver_field(
+        &self,
+        receiver: &Expr,
+        field: Symbol,
+        span: Span,
+    ) -> Result<usize, Diagnostic> {
         let declared = match &receiver.ty {
             Some(Type::Generic(ty, _)) => Some(self.type_info(ty.id)),
             _ => None,
         };
-        Self::field_read(declared.as_deref(), field)
+        Self::field_read(declared.as_deref(), field, span)
     }
 
-    /// How the field `field` of a record is read: at its place in the
-    /// declared type `ty`, by its name without one.
-    fn field_read(ty: Option<&TypeInfo>, field: Symbol) -> FieldRead {
-        match ty.and_then(|ty| ty.field_index(&resolve(field))) {
-            Some(slot) => FieldRead::Slot(slot),
-            None => FieldRead::Named(field),
-        }
+    /// The place of the field `field` in the record type `ty`.
+    fn field_read(ty: Option<&TypeInfo>, field: Symbol, span: Span) -> Result<usize, Diagnostic> {
+        ty.and_then(|ty| ty.field_index(&resolve(field)))
+            .ok_or_else(|| checker_missed(span, &format!("the field '{field}' of no record type")))
     }
 
-    /// Replace the record on top of the stack with its field.
-    fn emit_get_field(&mut self, field: FieldRead, span: Span) -> Result<(), Diagnostic> {
-        match field {
-            FieldRead::Slot(index) => self.emit(Asm::GetField { index }, span),
-            FieldRead::Named(name) => {
-                let name = self.add_constant(Value::String(resolve(name).into()), span)?;
-                self.emit(Asm::GetFieldNamed { name }, span)
-            }
-        }
+    /// Replace the record on top of the stack with its field at `index`.
+    fn emit_get_field(&mut self, index: usize, span: Span) -> Result<(), Diagnostic> {
+        self.emit(Asm::GetField { index }, span)
     }
 
-    /// Push the field of the record on top of the stack.
-    fn emit_destruct_field(&mut self, field: FieldRead, span: Span) -> Result<(), Diagnostic> {
-        match field {
-            FieldRead::Slot(index) => self.emit(Asm::DestructRecordField { index }, span),
-            FieldRead::Named(name) => {
-                let name = self.add_constant(Value::String(resolve(name).into()), span)?;
-                self.emit(Asm::DestructRecordFieldNamed { name }, span)
-            }
-        }
+    /// Push the field at `index` of the record on top of the stack.
+    fn emit_destruct_field(&mut self, index: usize, span: Span) -> Result<(), Diagnostic> {
+        self.emit(Asm::DestructRecordField { index }, span)
     }
 
     /// The type a resolution names, if it names a record or enum type,
@@ -4058,13 +4030,11 @@ fn main() {
         assert!(has_op(main.chunk(), Op::GetField));
     }
 
-    /// A field of a record whose declared type the checker knows is
-    /// read at the place the type declares it, in an expression and in
-    /// a pattern that names the type; a field of an anonymous record,
-    /// and of a record behind an open row (which a declared record
-    /// flows into as itself), by its name.
+    /// A field of a record is read at the place its type declares it, in
+    /// an expression and in a pattern that names the type, also where
+    /// the type is decided after the read.
     #[test]
-    fn test_field_reads_at_a_place_or_by_name() {
+    fn test_field_reads_at_their_places() {
         use crate::bytecode::Instr;
         let fns = compile(
             r#"
@@ -4084,12 +4054,10 @@ fn matched(u: User) -> Int {
         _ -> 1
     }
 }
-fn open(r: {age: Int, ...rest}) -> Int { r.age }
-fn closed(r: {name: String, age: Int}) -> Int { r.age }
-fn inferred(r) { r.age }
-fn rest(r: {name: String, age: Int}) -> Int {
-    let {age, ...others} = r
-    age
+fn later(u) -> Int {
+    let a = u.age
+    let _: User = u
+    a
 }
 "#,
         );
@@ -4100,10 +4068,6 @@ fn rest(r: {name: String, age: Int}) -> Int {
                 .filter_map(|(_, instr)| match instr {
                     Instr::GetField { index } => Some(format!("get {index}")),
                     Instr::DestructRecordField { index } => Some(format!("destruct {index}")),
-                    Instr::GetFieldNamed { name } => Some(format!("get {}", chunk.string(name))),
-                    Instr::DestructRecordFieldNamed { name } => {
-                        Some(format!("destruct {}", chunk.string(name)))
-                    }
                     _ => None,
                 })
                 .collect()
@@ -4117,10 +4081,8 @@ fn rest(r: {name: String, age: Int}) -> Int {
             ["destruct 0", "destruct 1", "destruct 1"],
             "the tests of `name` and of `age`, then the binding of `age`"
         );
-        assert_eq!(reads("open"), ["get age"]);
-        assert_eq!(reads("closed"), ["get age"]);
-        assert_eq!(reads("inferred"), ["get age"]);
-        assert_eq!(reads("rest"), ["destruct age"]);
+        // (A receiver whose type is decided after the read.)
+        assert_eq!(reads("later"), ["get 1"]);
     }
 
     // ── Enum type declarations ─────────────────────────────────────
@@ -4502,7 +4464,8 @@ trait Show for Foo {
     fn show(self) -> String { "foo" }
 }
 fn shown(x: a) -> String where a: Show { Show.show(x) }
-fn field(r: {f: Fn(Int) -> Int}) -> Int { r.f(1) }
+type Holder { f: Fn(Int) -> Int }
+fn field(r: Holder) -> Int { r.f(1) }
 fn go() -> String {
     let f = Foo { x: 1 }
     Show.show(f)
@@ -4525,7 +4488,7 @@ fn main() {
         assert!(!has_op(shown.chunk(), Op::TailCallMethod));
         // A field that holds a function is read and called.
         let field = find_fn(&fns, "field");
-        assert!(has_op(field.chunk(), Op::GetFieldNamed));
+        assert!(has_op(field.chunk(), Op::GetField));
         assert!(!has_op(field.chunk(), Op::CallMethod));
     }
 

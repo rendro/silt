@@ -252,27 +252,6 @@ mod tests {
     }
 
     #[test]
-    fn test_locals_when_let_anon_record_rest_binder() {
-        // `when let {x, ...rest} = p` binds BOTH the
-        // shorthand field `x` and the named rest binder `rest`. Pre-fix,
-        // the AnonRecord arm destructured `{ fields, .. }` and dropped
-        // the rest symbol, so completion never offered `rest`.
-        let source = "fn f(p) {\n  when let {x, ...rest} = p else { return 0 }\n  0\n}";
-        let program = checked_program(source);
-
-        let locals = locals_at_offset(&program, source.len() - 2);
-        let names: Vec<&str> = locals.iter().map(|l| l.name.as_str()).collect();
-        assert!(
-            names.contains(&"x"),
-            "should contain shorthand 'x': {names:?}"
-        );
-        assert!(
-            names.contains(&"rest"),
-            "should contain rest binder 'rest': {names:?}"
-        );
-    }
-
-    #[test]
     fn test_locals_match_map_and_or_binders() {
         // Match-arm Map patterns (`#{\"k\": v}`) and
         // Or patterns (`A(v) | B(v)`) bind `v`; both previously fell to

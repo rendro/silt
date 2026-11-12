@@ -227,10 +227,16 @@ mod tests {
     /// The record types `Outer { inner: Inner }` and `Inner { value:
     /// Int }`, with the fields a module's analysis gives them.
     fn records() -> (Type, Type, RecordFields) {
-        let (outer, inner) = (crate::types::TypeRef::test("Outer"), crate::types::TypeRef::test("Inner"));
+        let (outer, inner) = (
+            crate::types::TypeRef::test("Outer"),
+            crate::types::TypeRef::test("Inner"),
+        );
         let inner_ty = Type::Generic(inner, Vec::new());
         let fields = RecordFields::from([
-            (outer, vec![(crate::intern::intern("inner"), inner_ty.clone())]),
+            (
+                outer,
+                vec![(crate::intern::intern("inner"), inner_ty.clone())],
+            ),
             (inner, vec![(crate::intern::intern("value"), Type::Int)]),
         ]);
         (Type::Generic(outer, Vec::new()), inner_ty, fields)
@@ -383,12 +389,7 @@ mod tests {
         // Cursor on 'v' of "value" — offset 8 in "d.inner.value"
         let cursor_on_value = 8;
         let mut result = None;
-        find_field_in_expr(
-            &outer_access,
-            cursor_on_value,
-            &records,
-            &mut result,
-        );
+        find_field_in_expr(&outer_access, cursor_on_value, &records, &mut result);
 
         assert!(
             result.is_some(),
@@ -443,12 +444,7 @@ mod tests {
         // Cursor on 'i' of "inner" — offset 2 in "d.inner.value"
         let cursor_on_inner = 2;
         let mut result = None;
-        find_field_in_expr(
-            &outer_access,
-            cursor_on_inner,
-            &records,
-            &mut result,
-        );
+        find_field_in_expr(&outer_access, cursor_on_inner, &records, &mut result);
 
         assert!(
             result.is_some(),

@@ -189,8 +189,6 @@ fn disassemble_instruction(
         | Instr::AddConst { k }
         | Instr::SubConst { k }
         | Instr::TestEqual { k }
-        | Instr::GetFieldNamed { name: k }
-        | Instr::DestructRecordFieldNamed { name: k }
         | Instr::TestRecordTag { ty: k }
         | Instr::TestMapHasKey { key: k }
         | Instr::DestructMapValue { key: k } => with_constant(k),
@@ -301,13 +299,8 @@ fn disassemble_instruction(
 
         // ── A list of names ───────────────────────────────────
         //   RecordUpdate:        label "field".
-        //   DestructRecordRest:  label "exclude".
         Instr::RecordUpdate { fields } => {
             with_number(fields.len()) + &name_lines(chunk, globals, fields.iter(code), "field")
-        }
-        Instr::DestructRecordRest { excluded } => {
-            with_number(excluded.len())
-                + &name_lines(chunk, globals, excluded.iter(code), "exclude")
         }
     }
 }
@@ -510,9 +503,9 @@ mod tests {
     #[test]
     fn test_make_record() {
         let output = disassembly(2, 0, |e| {
-            let anon = crate::typeinfo::builtin_type(crate::typeinfo::ty::ANON_RECORD);
+            let date = crate::typeinfo::builtin_type(crate::typeinfo::ty::DATE);
             let ty = e
-                .constant(Value::TypeDescriptor(anon.clone()), span())
+                .constant(Value::TypeDescriptor(date.clone()), span())
                 .unwrap();
             let x = e.constant(Value::String("x".into()), span()).unwrap();
             let y = e.constant(Value::String("y".into()), span()).unwrap();
@@ -598,25 +591,7 @@ mod tests {
             output.contains("0000  RecordUpdate         1\n"),
             "{output}"
         );
-        // The per-entry label is "field", not "exclude" (the
-        // DestructRecordRest label).
         assert!(output.contains("      |  field 0     ; \"x\""), "{output}");
-    }
-
-    #[test]
-    fn test_destruct_record_rest_label() {
-        let output = disassembly(1, 0, |e| {
-            let z = e.constant(Value::String("z".into()), span()).unwrap();
-            e.emit(Asm::DestructRecordRest { excluded: &[z] }, span())
-                .unwrap();
-            e.emit(Asm::Return, span()).unwrap();
-        });
-        assert!(
-            output.contains("      |  exclude 0     ; \"z\""),
-            "{output}"
-        );
-        // Must NOT use the sibling label.
-        assert!(!output.contains("field "), "{output}");
     }
 
     #[test]

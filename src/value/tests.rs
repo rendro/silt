@@ -491,92 +491,6 @@ fn a_record_update_replaces_fields_by_name() {
     );
 }
 
-/// Anonymous records of one set of field names have one type, whose
-/// fields are in name order; a field added to one makes a record of
-/// the larger set, and the rest of a record is an anonymous record.
-#[test]
-fn anonymous_records_of_one_set_of_names_share_a_type() {
-    let fields = |record: &Value| -> Vec<(String, Value)> {
-        let Value::Record(record) = record else {
-            panic!("a record");
-        };
-        let named = record.named();
-        named
-            .map(|(name, value)| (name.to_string(), value.clone()))
-            .collect()
-    };
-    let ty = |record: &Value| match record {
-        Value::Record(record) => record.ty().clone(),
-        _ => panic!("a record"),
-    };
-    let a = Value::anon_record([("y", Value::Int(2)), ("x", Value::Int(1))]);
-    let b = Value::anon_record([("x", Value::Int(1)), ("y", Value::Int(2))]);
-    assert!(Arc::ptr_eq(&ty(&a), &ty(&b)));
-    assert!(ty(&a).is_anon());
-    assert_eq!(
-        fields(&a),
-        [
-            ("x".to_string(), Value::Int(1)),
-            ("y".to_string(), Value::Int(2))
-        ]
-    );
-    assert_eq!(a, b);
-    assert_eq!(hash_of(&a), hash_of(&b));
-    assert_eq!(format!("{a}"), "{x: 1, y: 2}");
-
-    let other = Value::anon_record([("x", Value::Int(1)), ("z", Value::Int(2))]);
-    assert!(!Arc::ptr_eq(&ty(&a), &ty(&other)));
-    assert_ne!(a, other);
-    let none = Value::anon_record([]);
-    assert!(Arc::ptr_eq(
-        &ty(&none),
-        crate::typeinfo::builtin_type(ty::ANON_RECORD)
-    ));
-    assert_eq!(format!("{none}"), "{}");
-
-    // A spread's written fields: one the record has is replaced, one
-    // it has not is added.
-    let (Value::Record(base), Value::Record(wider)) = (&a, &other) else {
-        panic!("two records");
-    };
-    let replaced = base
-        .clone()
-        .updated(["y"].into_iter(), vec![Value::Int(7)])
-        .expect("an anonymous record");
-    assert!(Arc::ptr_eq(replaced.ty(), base.ty()));
-    assert_eq!(replaced.fields(), [Value::Int(1), Value::Int(7)]);
-    let added = base
-        .clone()
-        .updated(["z", "x"].into_iter(), vec![Value::Int(2), Value::Int(1)])
-        .expect("an anonymous record");
-    let added = Value::Record(added);
-    assert_eq!(format!("{added}"), "{x: 1, y: 2, z: 2}");
-    assert_eq!(base.fields(), [Value::Int(1), Value::Int(2)]);
-
-    // The rest of a record: of an anonymous record with nothing left
-    // out, the record; of a declared record, an anonymous record.
-    assert!(std::ptr::eq(
-        base.rest([].into_iter()).fields(),
-        base.fields()
-    ));
-    assert_eq!(
-        Value::Record(wider.rest(["x"].into_iter())),
-        Value::anon_record([("z", Value::Int(2))])
-    );
-    let pt = Value::record(
-        record_type(9006, "Pt", &["y", "x"]),
-        vec![Value::Int(2), Value::Int(1)],
-    );
-    let Value::Record(declared) = &pt else {
-        panic!("a record");
-    };
-    let rest = Value::Record(declared.rest([].into_iter()));
-    assert!(ty(&rest).is_anon());
-    assert_eq!(format!("{pt}"), "Pt {y: 2, x: 1}");
-    assert_eq!(format!("{rest}"), "{x: 1, y: 2}");
-    assert_eq!(rest, a);
-}
-
 /// A builtin record is built with its fields named, in the order its
 /// type declares them, and is written and ordered in that order.
 #[test]
@@ -595,51 +509,36 @@ fn a_builtin_record_has_the_fields_its_type_declares() {
     assert!(make_date(2024, 3, 9) < make_date(2024, 10, 1));
 }
 
-/// A record is of its type. Records of two declared types with the
-/// same fields are two values, and an anonymous record is not a
-/// declared one of the same fields: not equal, in the order of their
-/// types, and two members of a set. (An anonymous record once stood
-/// for any record of its fields, in `==`, in the order and in the
-/// hash: what a set held depended on the order its members came in.)
+/// A record is of its type. Records of two types with the same fields
+/// are two values: not equal, in the order of their types, and two
+/// members of a set, whatever order the members come in.
 #[test]
 fn a_record_is_of_its_type() {
     let person = Value::record(record_type(9100, "Person", &["x"]), vec![Value::Int(1)]);
     let again = Value::record(record_type(9100, "Person", &["x"]), vec![Value::Int(1)]);
     let car = Value::record(record_type(9101, "Car", &["x"]), vec![Value::Int(1)]);
-    let anon = Value::anon_record([("x", Value::Int(1))]);
+    let boat = Value::record(record_type(9103, "Boat", &["x"]), vec![Value::Int(1)]);
 
     // One type, described twice: one value.
     assert_eq!(person, again);
     assert_eq!(person.cmp(&again), Ordering::Equal);
     assert_eq!(hash_of(&person), hash_of(&again));
 
-    for (a, b) in [(&person, &car), (&person, &anon), (&car, &anon)] {
+    for (a, b) in [(&person, &car), (&person, &boat), (&car, &boat)] {
         assert_ne!(a, b);
         assert_ne!(a.cmp(b), Ordering::Equal);
         assert_eq!(a.cmp(b), b.cmp(a).reverse());
     }
     for order in [
-        [&person, &car, &anon],
-        [&anon, &car, &person],
-        [&car, &anon, &person],
+        [&person, &car, &boat],
+        [&boat, &car, &person],
+        [&car, &boat, &person],
     ] {
         let members: std::collections::BTreeSet<Value> = order.into_iter().cloned().collect();
         assert_eq!(members.len(), 3);
         let hashed: std::collections::HashSet<Value> = order.into_iter().cloned().collect();
         assert_eq!(hashed.len(), 3);
     }
-
-    // Anonymous records of other fields are other values, and each is
-    // itself.
-    let wider = Value::anon_record([("x", Value::Int(1)), ("y", Value::Int(2))]);
-    let named = Value::anon_record([("z", Value::Int(1))]);
-    assert_ne!(anon, wider);
-    assert_ne!(anon, named);
-    assert_ne!(anon.cmp(&wider), Ordering::Equal);
-    assert_ne!(anon.cmp(&named), Ordering::Equal);
-    assert_eq!(anon, Value::anon_record([("x", Value::Int(1))]));
-    assert_ne!(anon, Value::anon_record([("x", Value::Int(2))]));
-    assert!(anon < Value::anon_record([("x", Value::Int(2))]));
 }
 
 /// Records of one type are in the order of their fields as the type
@@ -700,7 +599,7 @@ fn values_of_every_kind_have_one_key() {
         Value::map([(Value::Int(1), Value::Int(2))]),
         Value::set([Value::Int(1)]),
         Value::set([Value::Int(1), Value::Int(2)]),
-        Value::anon_record([("x", Value::Int(1))]),
+        Value::record(record_type(9104, "R", &["x"]), vec![Value::Int(1)]),
         Value::variant(bv::OK, [Value::Int(1)]),
         Value::variant(bv::OK, [Value::Int(2)]),
         Value::variant(bv::ERR, [Value::Int(0)]),
@@ -1185,17 +1084,12 @@ fn a_value_is_shown_and_inspected_by_one_formatter() {
             "#[\"a\", \"b\"]",
             "#[\"a\", \"b\"]",
         ),
-        // A record in the order its type declares its fields; an
-        // anonymous one without a name; one without fields.
+        // A record in the order its type declares its fields; one
+        // without fields.
         (
             Value::record(point.clone(), vec![Value::Int(2), text("one")]),
             "Point {y: 2, x: \"one\"}",
             "Point {y: 2, x: \"one\"}",
-        ),
-        (
-            Value::anon_record([("b", Value::Int(2)), ("a", text("x"))]),
-            "{a: \"x\", b: 2}",
-            "{a: \"x\", b: 2}",
         ),
         (
             Value::record(record_type(9201, "Empty", &[]), vec![]),

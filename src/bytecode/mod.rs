@@ -42,12 +42,6 @@ enum ConstantKey {
     Nullary(TypeId, u16),
     /// A type descriptor (a record literal's or pattern's type).
     Type(TypeId),
-    /// The descriptor of an anonymous record type (an anonymous record
-    /// literal's): the types of all such share one id, and there is
-    /// one description for each set of field names
-    /// ([`crate::typeinfo::anon_record_type`]), which the constant
-    /// holds; this is where it is.
-    AnonType(usize),
     /// A builtin function used as a value (`println`), by its row's
     /// id.
     Builtin(BuiltinId),
@@ -757,9 +751,6 @@ impl Chunk {
             }
             Value::Variant(variant) if variant.fields().is_empty() => {
                 Some(ConstantKey::Nullary(variant.type_id(), variant.ordinal()))
-            }
-            Value::TypeDescriptor(ty) if ty.is_anon() => {
-                Some(ConstantKey::AnonType(Arc::as_ptr(ty) as usize))
             }
             // (A type applied to types has its head's id.)
             Value::TypeDescriptor(ty) if matches!(ty.shape, crate::typeinfo::Shape::Applied(_)) => {

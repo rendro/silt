@@ -1172,10 +1172,8 @@ impl Vm {
                     self.stack.push(Value::Record(record));
                 }
                 Instr::RecordUpdate { fields } => {
-                    // Functional record update, `r.{ x: 1 }`, and the
-                    // fields written after a spread, `{...r, x: 1}`, whose
-                    // base is the anonymous record `DestructRecordRest`
-                    // made of `r`: see `Record::updated`.
+                    // Functional record update, `r.{ x: 1 }`: see
+                    // `Record::updated`.
                     let start = self.stack.len() - fields.len();
                     let values: Vec<Value> = self.stack.drain(start..).collect();
                     let base = pop(&mut self.stack);
@@ -1236,29 +1234,6 @@ impl Vm {
                                 "cannot access field {index} of {}",
                                 self.user_facing_type_name(&target)
                             )));
-                        }
-                    }
-                }
-                Instr::GetFieldNamed { name } => {
-                    let top = self.stack.len() - 1;
-                    let name = chunk.string(name);
-                    let field = match &self.stack[top] {
-                        Value::Record(record) => record.get(name),
-                        _ => None,
-                    };
-                    match field {
-                        Some(field) => set_copy!(self.stack, top, *field),
-                        None => {
-                            let target = pop(&mut self.stack);
-                            fail!(match &target {
-                                Value::Record(_) =>
-                                    VmError::type_confusion(format!("record has no field '{name}'")),
-                                other => VmError::type_confusion(format!(
-                                    "cannot access field '{}' on {}",
-                                    name,
-                                    self.user_facing_type_name(other)
-                                )),
-                            });
                         }
                     }
                 }
@@ -1415,32 +1390,6 @@ impl Vm {
                             self.user_facing_type_name(peek(&self.stack))
                         ))),
                     }
-                }
-                Instr::DestructRecordFieldNamed { name } => {
-                    let name = chunk.string(name);
-                    match peek(&self.stack) {
-                        Value::Record(record) => match record.get(name) {
-                            Some(field) => push_copy!(self.stack, *field),
-                            None => fail!(VmError::type_confusion(format!(
-                                "record has no field '{name}'"
-                            ))),
-                        },
-                        other => fail!(VmError::type_confusion(format!(
-                            "record destructure: expected record, got {}",
-                            self.user_facing_type_name(other)
-                        ))),
-                    }
-                }
-                Instr::DestructRecordRest { excluded } => {
-                    let val = pop(&mut self.stack);
-                    let Value::Record(record) = &val else {
-                        fail!(VmError::type_confusion(format!(
-                            "record rest destructure: expected record, got {}",
-                            self.user_facing_type_name(&val)
-                        )));
-                    };
-                    let rest = record.rest(excluded.iter(code).map(|k| chunk.string(k)));
-                    self.stack.push(Value::Record(rest));
                 }
                 Instr::TestRecordTag { ty } => {
                     let expected = chunk.type_info(ty).id;

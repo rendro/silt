@@ -4509,7 +4509,7 @@ mod type_confusion {
     }
 
     fn record(fields: &[(&str, Value)]) -> Value {
-        Value::anon_record(fields.iter().cloned())
+        Value::test_record(fields.iter().cloned())
     }
 
     fn function(arity: u8) -> Value {
@@ -4755,21 +4755,11 @@ mod type_confusion {
 
     #[test]
     fn field_of_a_value_without_it() {
-        confused("cannot access field 'x' on Int", |e| {
-            push(e, Value::Int(1));
-            let x = name(e, "x");
-            e.emit(Asm::GetFieldNamed { name: x }, span()).unwrap();
-        });
-        confused("record has no field 'x'", |e| {
-            push(e, record(&[("y", Value::Int(1))]));
-            let x = name(e, "x");
-            e.emit(Asm::GetFieldNamed { name: x }, span()).unwrap();
-        });
         confused("cannot access field 0 of Int", |e| {
             push(e, Value::Int(1));
             e.emit(Asm::GetField { index: 0 }, span()).unwrap();
         });
-        confused("cannot access field 1 of an anonymous record", |e| {
+        confused("cannot access field 1 of R", |e| {
             push(e, record(&[("y", Value::Int(1))]));
             e.emit(Asm::GetField { index: 1 }, span()).unwrap();
         });
@@ -4834,35 +4824,14 @@ mod type_confusion {
 
     #[test]
     fn record_pattern_on_a_value_of_another_shape() {
-        confused("record destructure: expected record, got Int", |e| {
-            push(e, Value::Int(1));
-            let x = name(e, "x");
-            e.emit(Asm::DestructRecordFieldNamed { name: x }, span())
-                .unwrap();
-        });
-        confused("record has no field 'x'", |e| {
-            push(e, record(&[("y", Value::Int(1))]));
-            let x = name(e, "x");
-            e.emit(Asm::DestructRecordFieldNamed { name: x }, span())
-                .unwrap();
-        });
         confused("record destructure: no field 0 in Int", |e| {
             push(e, Value::Int(1));
             e.emit(Asm::DestructRecordField { index: 0 }, span())
                 .unwrap();
         });
-        confused(
-            "record destructure: no field 1 in an anonymous record",
-            |e| {
-                push(e, record(&[("y", Value::Int(1))]));
-                e.emit(Asm::DestructRecordField { index: 1 }, span())
-                    .unwrap();
-            },
-        );
-        confused("record rest destructure: expected record, got Int", |e| {
-            push(e, Value::Int(1));
-            let x = name(e, "x");
-            e.emit(Asm::DestructRecordRest { excluded: &[x] }, span())
+        confused("record destructure: no field 1 in R", |e| {
+            push(e, record(&[("y", Value::Int(1))]));
+            e.emit(Asm::DestructRecordField { index: 1 }, span())
                 .unwrap();
         });
     }
@@ -6067,7 +6036,7 @@ mod parts_in_place {
             ))),
             Value::String("text".into()),
             Value::list(vec![Value::Int(1), Value::Unit]),
-            Value::anon_record([("x", Value::Int(1))]),
+            Value::test_record([("x", Value::Int(1))]),
             Value::variant(bv::SOME, [float(0.5)]),
         ]
     }
@@ -6082,7 +6051,7 @@ mod parts_in_place {
 
     /// The record `{ a: 5, b: part }`, and the place of `b` in it.
     fn record(part: &Value) -> (Value, usize) {
-        let record = Value::anon_record([("a", Value::Int(5)), ("b", part.clone())]);
+        let record = Value::test_record([("a", Value::Int(5)), ("b", part.clone())]);
         let Value::Record(fields) = &record else {
             unreachable!()
         };
@@ -6131,12 +6100,8 @@ mod parts_in_place {
     fn a_field_of_every_kind_is_written_over_its_record() {
         for part in samples() {
             let (whole, index) = record(&part);
-            over(&part, whole.clone(), |e| {
-                e.emit(Asm::GetField { index }, span()).unwrap();
-            });
             over(&part, whole, |e| {
-                let b = name(e, "b");
-                e.emit(Asm::GetFieldNamed { name: b }, span()).unwrap();
+                e.emit(Asm::GetField { index }, span()).unwrap();
             });
         }
     }
@@ -6156,13 +6121,8 @@ mod parts_in_place {
     fn a_pattern_reads_a_part_of_every_kind_above_the_value() {
         for part in samples() {
             let (whole, index) = record(&part);
-            above(&part, whole.clone(), |e| {
-                e.emit(Asm::DestructRecordField { index }, span()).unwrap();
-            });
             above(&part, whole, |e| {
-                let b = name(e, "b");
-                e.emit(Asm::DestructRecordFieldNamed { name: b }, span())
-                    .unwrap();
+                e.emit(Asm::DestructRecordField { index }, span()).unwrap();
             });
             let tuple = Value::tuple(vec![Value::Int(5), part.clone()]);
             above(&part, tuple, |e| {
@@ -6210,7 +6170,7 @@ mod parts_in_place {
     }
 
     fn record_of(parts: &[Value]) -> Value {
-        Value::anon_record([("a", parts[0].clone()), ("b", parts[1].clone())])
+        Value::test_record([("a", parts[0].clone()), ("b", parts[1].clone())])
     }
 
     fn ok_of(parts: &[Value]) -> Value {
@@ -6262,15 +6222,14 @@ mod parts_in_place {
     #[test]
     fn a_field_read_lets_go_of_the_record_and_keeps_the_field() {
         let whole = |e: &mut Emitter, k| held(e, k, holder("record", record_of), 2);
-        let (_, a) = record(&Value::Unit);
-        let a = if a == 0 { 1 } else { 0 };
+        let (_, b) = record(&Value::Unit);
+        let a = if b == 0 { 1 } else { 0 };
         assert_eq!(ends(whole, 1, Asm::GetField { index: a }), [3, 2, 1]);
         let whole = |e: &mut Emitter, k| held(e, k, holder("record", record_of), 2);
         let (vm, run, log) = left_by(|e, k| {
             probe(e, k);
             whole(e, k);
-            let b = name(e, "b");
-            e.emit(Asm::GetFieldNamed { name: b }, span()).unwrap();
+            e.emit(Asm::GetField { index: b }, span()).unwrap();
             e.emit(Asm::Pop, span()).unwrap();
             e.emit(Asm::Pop, span()).unwrap();
             e.emit(Asm::Unit, span()).unwrap();
@@ -6312,7 +6271,7 @@ mod parts_in_place {
                     e.emit(Asm::DestructMapValue { key }, span()).unwrap();
                 } else {
                     held(e, k, holder("record", record_of), 2);
-                    e.emit(Asm::DestructRecordFieldNamed { name: key }, span())
+                    e.emit(Asm::DestructRecordField { index: b }, span())
                         .unwrap();
                 }
                 e.emit(Asm::Pop, span()).unwrap();
@@ -6333,23 +6292,12 @@ mod parts_in_place {
     #[test]
     fn a_read_that_fails_leaves_the_stack_as_it_was() {
         type Read = fn(&mut Emitter);
-        let off: [Read; 2] = [
-            |e| {
-                e.emit(Asm::GetField { index: 0 }, span()).unwrap();
-            },
-            |e| {
-                let b = name(e, "b");
-                e.emit(Asm::GetFieldNamed { name: b }, span()).unwrap();
-            },
-        ];
-        let kept: [Read; 6] = [
+        let off: [Read; 1] = [|e| {
+            e.emit(Asm::GetField { index: 0 }, span()).unwrap();
+        }];
+        let kept: [Read; 5] = [
             |e| {
                 e.emit(Asm::DestructRecordField { index: 0 }, span())
-                    .unwrap();
-            },
-            |e| {
-                let b = name(e, "b");
-                e.emit(Asm::DestructRecordFieldNamed { name: b }, span())
                     .unwrap();
             },
             |e| {
@@ -6517,7 +6465,7 @@ mod methods_in_place {
             closure(Arc::new(Function::returning_unit("f".to_string(), 0))),
             Value::String("text".into()),
             Value::list(vec![Value::Int(1), Value::Unit]),
-            Value::anon_record([("x", Value::Int(1))]),
+            Value::test_record([("x", Value::Int(1))]),
         ]
     }
 
@@ -6808,11 +6756,11 @@ mod results_in_place {
     fn tests(e: &mut Emitter) -> Vec<(Asm<'static>, Value, Value)> {
         let mut constant = |value: Value| e.constant(value, span()).unwrap();
         let some = Value::variant(bv::SOME, [Value::Int(1)]);
-        let record = Value::anon_record([("x", Value::Int(1))]);
+        let record = Value::test_record([("x", Value::Int(1))]);
         let Value::Record(fields) = &record else {
             unreachable!()
         };
-        let anon = Value::TypeDescriptor(fields.ty().clone());
+        let ty = Value::TypeDescriptor(fields.ty().clone());
         let pair = Value::tuple(vec![Value::Int(1), Value::Int(2)]);
         let triple = Value::list(vec![Value::Int(1), Value::Int(2), Value::Int(3)]);
         let map = Value::map([(string("k"), Value::Int(1))]);
@@ -6854,7 +6802,7 @@ mod results_in_place {
                 float(1.0),
                 float(2.0),
             ),
-            (Asm::TestRecordTag { ty: constant(anon) }, record, some),
+            (Asm::TestRecordTag { ty: constant(ty) }, record, some),
             (
                 Asm::TestMapHasKey {
                     key: constant(string("k")),

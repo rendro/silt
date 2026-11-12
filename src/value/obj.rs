@@ -2,7 +2,7 @@
 //!
 //! Each points to an object that holds its type and its fields: a
 //! variant's in the order its declaration gives them, a record's in the
-//! order its type declares them (an anonymous record's in name order).
+//! order its type declares them.
 //! A variant without fields (`None`, `Red`) points to its type alone,
 //! the one object all such variants of the type share, and nothing is
 //! made for it. A variant of one field (`Some(x)`, `Ok(x)`) holds the
@@ -23,7 +23,7 @@ use std::sync::Arc;
 use super::Value;
 use super::deep::drop_held;
 use crate::defs::TypeId;
-use crate::typeinfo::{BuiltinVariant, Tag, TypeInfo, anon_record_type};
+use crate::typeinfo::{BuiltinVariant, Tag, TypeInfo};
 
 /// What a variant with fields, or a record, points to.
 #[derive(Clone)]
@@ -147,12 +147,7 @@ impl Variant {
     }
 }
 
-/// Whether `name` is one of `names`.
-fn is_among<'a>(mut names: impl Iterator<Item = &'a str>, name: &str) -> bool {
-    names.any(|given| given == name)
-}
-
-/// A record: `Pt { x: 1, y: 2 }`, `{name: "a"}`.
+/// A record: `Pt { x: 1, y: 2 }`.
 #[derive(Clone)]
 pub struct Record(Arc<Obj>);
 
@@ -165,14 +160,6 @@ impl Record {
             ty,
             fields: fields.into_boxed_slice(),
         }))
-    }
-
-    /// The anonymous record of the fields `fields`, whose names are
-    /// distinct ([`Value::anon_record`]).
-    pub(super) fn anon(mut fields: Vec<(&str, Value)>) -> Record {
-        fields.sort_by_key(|(name, _)| *name);
-        let ty = anon_record_type(fields.iter().map(|(name, _)| *name));
-        Record::new(ty, fields.into_iter().map(|(_, value)| value).collect())
     }
 
     /// The record of the type `ty` a literal writes: `values` are the
@@ -225,56 +212,21 @@ impl Record {
         names.zip(self.0.fields.iter())
     }
 
-    /// The record with `values` as its fields `names`: `r.{ x: 1 }`,
-    /// and the fields written after a spread, `{...r, x: 1}`. A name
-    /// that is a field of the record replaces it, and the record keeps
-    /// its type; a name that is none is added to an anonymous record,
-    /// which is then one of more fields. `None` for a name that is no
-    /// field of a declared record.
+    /// The record with `values` as its fields `names`, `r.{ x: 1 }`: each
+    /// replaces that field, and the record keeps its type. `None` for a
+    /// name that is no field of the record.
     pub fn updated<'a>(
         mut self,
         names: impl Iterator<Item = &'a str> + Clone,
         values: Vec<Value>,
     ) -> Option<Record> {
-        let ty = &self.0.ty;
-        let replaces = names.clone().all(|name| ty.field_index(name).is_some());
-        if replaces {
-            // (The one holder of a record updates it where it is.)
-            let obj = Arc::make_mut(&mut self.0);
-            for (name, value) in names.zip(values) {
-                let index = obj.ty.field_index(name)?;
-                obj.fields[index] = value;
-            }
-            return Some(self);
-        }
-        if !self.0.ty.is_anon() {
-            return None;
-        }
-        let mut fields: Vec<(&str, Value)> = self
-            .named()
-            .filter(|(name, _)| !is_among(names.clone(), name))
-            .map(|(name, value)| (name, value.clone()))
-            .collect();
+        // (The one holder of a record updates it where it is.)
+        let obj = Arc::make_mut(&mut self.0);
         for (name, value) in names.zip(values) {
-            fields.push((name, value));
+            let index = obj.ty.field_index(name)?;
+            obj.fields[index] = value;
         }
-        Some(Record::anon(fields))
-    }
-
-    /// The anonymous record of the fields but those named `excluded`:
-    /// what a rest pattern binds, `{x, ...rest}`, and with none
-    /// excluded what a spread starts from, `{...r}`.
-    pub fn rest<'a>(&self, excluded: impl Iterator<Item = &'a str> + Clone) -> Record {
-        let kept = |name: &str| !is_among(excluded.clone(), name);
-        if self.0.ty.is_anon() && self.named().all(|(name, _)| kept(name)) {
-            return self.clone();
-        }
-        Record::anon(
-            self.named()
-                .filter(|(name, _)| kept(name))
-                .map(|(name, value)| (name, value.clone()))
-                .collect(),
-        )
+        Some(self)
     }
 }
 

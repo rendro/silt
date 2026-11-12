@@ -10,9 +10,7 @@ use crate::intern::{Symbol, intern};
 use crate::source::Span;
 use crate::value::Value;
 
-use super::{
-    BindDestructKind, Compiler, FieldRead, MATCH_ARM, checker_missed, name_without_binding,
-};
+use super::{BindDestructKind, Compiler, MATCH_ARM, checker_missed, name_without_binding};
 use crate::diagnostic::Diagnostic;
 
 /// The most ways an or-pattern under a guard is taken apart into (see
@@ -377,7 +375,7 @@ impl Compiler<'_> {
                         None => continue,
                     };
                     if !sub_pattern.irrefutable {
-                        let field = Self::field_read(ty.as_deref(), *field_name);
+                        let field = Self::field_read(ty.as_deref(), *field_name, span)?;
                         self.emit_destruct_field(field, span)?;
                         let sub_fails =
                             self.compile_pattern_test_tracked(sub_pattern, span, base_depth + 1)?;
@@ -388,7 +386,6 @@ impl Compiler<'_> {
 
                 Ok(all_jumps)
             }
-
 
             PatternKind::Map(entries) => {
                 let mut all_jumps = Vec::new();
@@ -676,7 +673,7 @@ impl Compiler<'_> {
                 let ty = self.pattern_record_type(pattern, span)?;
                 let mut items: Vec<(BindDestructKind, Pattern)> = Vec::new();
                 for (field_name, _, sub_pat) in fields {
-                    let field = Self::field_read(ty.as_deref(), *field_name);
+                    let field = Self::field_read(ty.as_deref(), *field_name, span)?;
                     match sub_pat {
                         Some(pat) => {
                             if self.pattern_has_bindings(pat) {
@@ -694,7 +691,6 @@ impl Compiler<'_> {
                 }
                 self.compile_compound_bind(items, span)?;
             }
-
 
             PatternKind::Map(entries) => {
                 let items: Vec<(BindDestructKind, Pattern)> = entries
@@ -895,21 +891,6 @@ impl Compiler<'_> {
                 }
                 BindDestructKind::RecordField(field) => {
                     self.emit_destruct_field(*field, span)?;
-                }
-                BindDestructKind::RecordRest(names) => {
-                    // `Op::DestructRecordRest` pops its input and pushes the
-                    // remainder record. The surrounding loop expects each
-                    // destruct opcode to peek+push so that
-                    // `[parent_copy, sub_value]` is on the stack afterwards.
-                    // Dup the parent_copy first to bridge the contract gap.
-                    self.emit(Asm::Dup, span)?;
-                    let excluded = self.name_constants(names, span)?;
-                    self.emit(
-                        Asm::DestructRecordRest {
-                            excluded: &excluded,
-                        },
-                        span,
-                    )?;
                 }
                 BindDestructKind::MapValue(key) => {
                     let key_idx = self.add_constant(Value::String(key.clone().into()), span)?;
@@ -1638,16 +1619,15 @@ mod tests {
     #[test]
     fn test_irrefutable_binding_has_no_test() {
         let f = compiled(
-            "fn f((a, {x, y}), ()) -> Int {\n  let (c, (d, _)) = (x, (y, a))\n  a + c + d\n}\n",
+            "type P { x: Int, y: Int }\n\
+             fn f((a, P { x, y }), ()) -> Int {\n  let (c, (d, _)) = (x, (y, a))\n  a + c + d\n}\n",
             "f",
         );
         for op in [Op::TestTupleLen, Op::TestEqual, Op::Panic] {
             assert!(!has_op(&f, op), "{op:?} emitted for an irrefutable binding");
         }
         assert!(has_op(&f, Op::DestructTuple));
-        // (An anonymous record's fields are read by their names.)
-        assert!(has_op(&f, Op::DestructRecordFieldNamed));
-        assert!(!has_op(&f, Op::DestructRecordField));
+        assert!(has_op(&f, Op::DestructRecordField));
     }
 
     /// The one variant of an enum and a record type are irrefutable too:
@@ -1663,9 +1643,8 @@ mod tests {
             assert!(!has_op(&f, op), "{op:?} emitted for an irrefutable binding");
         }
         assert!(has_op(&f, Op::DestructVariant));
-        // (A declared record's fields are read at their places.)
+        // (A record's fields are read at their places.)
         assert!(has_op(&f, Op::DestructRecordField));
-        assert!(!has_op(&f, Op::DestructRecordFieldNamed));
 
         let g = compiled(
             &format!(

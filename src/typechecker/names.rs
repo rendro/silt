@@ -32,8 +32,7 @@ use std::sync::Arc;
 
 use crate::ast::*;
 use crate::defs::{
-    ANON_RECORD, BuiltinDefs, Def, DefId, DefKind, DefTable, Res, TraitId, TypeId, Vis,
-    builtin_types,
+    BuiltinDefs, Def, DefId, DefKind, DefTable, Res, TraitId, TypeId, Vis, builtin_types,
 };
 use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{Symbol, intern, resolve};
@@ -255,7 +254,7 @@ fn build_builtins() -> (BuiltinDefs, BuiltinScopes) {
         debug_assert_eq!(id, ty.0);
         // (The unit type `()` is written as punctuation, never as a
         // name a scope binds.)
-        if resolve(name) != ANON_RECORD && resolve(name) != "()" {
+        if resolve(name) != "()" {
             let exports = match module {
                 None => &mut prelude_exports,
                 Some(_) => module_exports.entry(module_id).or_default(),
