@@ -1,18 +1,6 @@
 -- cmd: fmt
--- Braces that are a record or a closure are no block: they are the
--- body. A block around them goes.
-fn point(n) {
-  match n {
-    1 -> { x: 1, y: n }
-    2 -> { { x: 2, y: n } }
-    _ -> { ...origin(), y: 0 }
-  }
-}
-
-fn origin() {
-  { x: 0 }
-}
-
+-- Braces that are a closure are no block: they are the body. A block
+-- around them goes.
 fn adder(n) {
   match n {
     1 -> { m -> m + 1 }
@@ -22,5 +10,5 @@ fn adder(n) {
 }
 
 fn main() {
-  println((point(1), adder(1)(1)))
+  println(adder(1)(1))
 }

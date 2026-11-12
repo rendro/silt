@@ -1,20 +1,15 @@
 -- cmd: check
 -- exit: 1
 -- requires-feature: postgres
--- A row type given to `postgres.query` through an alias of an anonymous
--- record type or of a function type is refused at the check, as written
--- out it is: it has no value as a type. It reached the compiler, which
--- said "compiler bug".
--- stderr-contains: error[type]: `{x: Int}` is an anonymous record type, which has no value as a type
+-- A row type given to `postgres.query` through an alias of a function
+-- type is refused at the check, as written out it is: it has no value as
+-- a type. It reached the compiler, which said "compiler bug".
 -- stderr-contains: error[type]: `Fn(Int) -> Int` is a function type, which has no value as a type
 -- stderr-not-contains: compiler bug
 import postgres
 type F = Fn(Int) -> Int
-type R = {x: Int}
 fn go(db: postgres.PgPool) -> Result((), postgres.PostgresError) {
-  let a = postgres.query(db, "SELECT 1", (), R)?
   let c = postgres.query(db, "SELECT 1", (), F)?
-  let _ = a
   let _ = c
   Ok(())
 }

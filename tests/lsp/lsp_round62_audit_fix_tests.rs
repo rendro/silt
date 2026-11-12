@@ -3,12 +3,6 @@
 //! - **B8** — `find_ident_in_pattern` recognises record-shorthand
 //!   binders (`let Point { x, y } = p` → cursor on `x` resolves to a
 //!   symbol; previously returned `None`).
-//! - **B9** — `PatternKind::AnonRecord` (row-polymorphic destructure
-//!   `let { x, y } = p`) wired through every LSP walker so binders are
-//!   visible to hover / prepareRename / rename / find references.
-//! - **B10** — `visit_expr_children` recurses into
-//!   `ExprKind::AnonRecord` field values so identifier searches reach
-//!   them (find references on an ident inside an anon-record literal).
 //! - **B11** — `Decl::Trait` walks default-method param patterns and
 //!   bodies (cursor on `x` in
 //!   `trait T { fn foo(x: Int) -> Int { x + 1 } }` returns a symbol).
@@ -101,76 +95,6 @@ fn hover_on_record_shorthand_binder_returns_signature() {
     assert!(
         !result.is_null(),
         "hover on record-shorthand binder must NOT return null (round-62 B8); got {resp}"
-    );
-    client.shutdown();
-}
-
-// ── B9: anon-record destructure binder ──────────────────────────────
-
-#[test]
-fn prepare_rename_on_anon_record_destructure_binder_returns_edit() {
-    // `  let { x, y } = p` -> two spaces + "let { " = 8, `x` at 8
-    let mut client = LspClient::spawn();
-    let uri = unique_uri("anon_rec_pr");
-    let text =
-        "fn main() {\n  let p = { x: 10, y: 20 }\n  let { x, y } = p\n  println(\"{x} {y}\")\n}\n";
-    client.did_open_and_wait(&uri, text);
-
-    let resp = client.request(
-        "textDocument/prepareRename",
-        json!({
-            "textDocument": { "uri": uri },
-            "position": { "line": 2, "character": 8 }
-        }),
-    );
-    let result = resp.get("result").expect("prepareRename has result");
-    assert!(
-        !result.is_null(),
-        "prepareRename on anon-record-destructure binder must NOT return null (round-62 B9); got {resp}"
-    );
-    client.shutdown();
-}
-
-// ── B10: anon-record literal field-value walking ────────────────────
-
-#[test]
-fn find_references_inside_anon_record_literal_field_value() {
-    // `let arg = 99\nlet r = { name: arg, age: 30 }`
-    // Cursor on `arg` at the use-site inside the anon-record literal.
-    // Without the B10 fix, visit_expr_children skipped ExprKind::AnonRecord
-    // so the find_references walk never visited the `arg` use site.
-    //
-    // Layout:
-    //   line 0: `fn main() {`
-    //   line 1: `  let arg = 99`
-    //   line 2: `  let r = { name: arg, age: 30 }`
-    //   line 3: `  println(\"{r.name}\")`
-    //   line 4: `}`
-    // `arg` use-site is on line 2 at char=18: `  let r = { name: arg`
-    //                                          0         1
-    //                                          012345678901234567890
-    let mut client = LspClient::spawn();
-    let uri = unique_uri("anon_rec_field_val");
-    let text = "fn main() {\n  let arg = 99\n  let r = { name: arg, age: 30 }\n  println(\"{r.name}\")\n}\n";
-    client.did_open_and_wait(&uri, text);
-
-    let resp = client.request(
-        "textDocument/references",
-        json!({
-            "textDocument": { "uri": uri },
-            "position": { "line": 2, "character": 18 },
-            "context": { "includeDeclaration": true }
-        }),
-    );
-    let result = resp.get("result").expect("references has result");
-    assert!(
-        !result.is_null(),
-        "find references inside anon-record literal field value must NOT return null (round-62 B10); got {resp}"
-    );
-    let arr = result.as_array().expect("references result is an array");
-    assert!(
-        !arr.is_empty(),
-        "find references must return at least one location (round-62 B10); got {resp}"
     );
     client.shutdown();
 }

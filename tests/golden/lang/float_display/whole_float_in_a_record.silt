@@ -3,8 +3,7 @@ type P {
   n: Int,
 }
 
--- A whole Float as a field of a record, named or anonymous.
+-- A whole Float as a field of a record.
 fn main() {
   println(P { x: 1.0, n: 1 })
-  println({ x: 2.0, n: 2 })
 }

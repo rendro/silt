@@ -1,7 +1,7 @@
 -- cmd: fmt
 -- A list that is broken over lines has a comma behind its last item, in
 -- every list form: also in a list pattern, and behind the rest of a
--- pattern and the row variable of a record type.
+-- pattern.
 type Customer {
   given_name: String,
   family_name: String,
@@ -10,13 +10,9 @@ type Customer {
 }
 
 fn describe(
-  record: {
-    given_name: String,
-    family_name: String,
-    street_address: String,
-    postal_code: String,
-    ...other_fields,
-  },
+  record: Customer,
+  the_number_of_the_house: Int,
+  the_name_of_the_city: String,
 ) -> String {
   record.given_name
 }
@@ -55,18 +51,5 @@ fn main() {
       ..,
     } -> println(the_given_name_of_the_customer)
   }
-  let anonymous = {
-    given_name: "Bo",
-    family_name: "Diddley",
-    street_address: "1 Main Street",
-    postal_code: "0",
-  }
-  match anonymous {
-    {
-      given_name: the_given_name_of_the_customer,
-      family_name: the_family_name_of_the_customer,
-      ...all_the_other_fields,
-    } -> println(the_given_name_of_the_customer)
-  }
-  println(describe(anonymous))
+  println(describe(customer, 12, "London"))
 }

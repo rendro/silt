@@ -1,0 +1,6 @@
+error[parse]: expected pattern, found {
+ --> record_without_a_name__a_pattern_is_refused.silt:8:7
+   |
+ 8 |   let { x, ..rest } = P { x: 1, y: 2 }
+   |       ^ expected pattern, found {
+  = help: a record pattern starts with the name of its type: `P { x, .. }`

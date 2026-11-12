@@ -808,24 +808,43 @@ impl<'src> Parser<'src> {
     /// `{ x, y }`) where an expression starts, the first field at `span`:
     /// a record literal starts with its type.
     fn record_without_a_name(&self, span: Span) -> Diagnostic {
+        // (A name in front of the braces on their line, `point { x: 1 }`,
+        // is written as a type's name, which starts with an uppercase
+        // letter.)
+        let named = match self.pos.checked_sub(1).map(|at| &self.tokens[at].kind) {
+            Some(Token::Ident(name)) if !self.nl_before() => Some(intern::resolve(*name)),
+            _ => None,
+        };
+        let ty = match &named {
+            Some(name) => {
+                let mut chars = name.chars();
+                chars.next().map_or(String::new(), |first| {
+                    first.to_uppercase().chain(chars).collect()
+                })
+            }
+            None => "P".to_string(),
+        };
         let field = self.source.get(span.start as usize..span.end as usize);
         let example = match field {
             Some(field)
                 if self.tokens.get(self.pos + 2).map(|t| &t.kind) == Some(&Token::Colon) =>
             {
-                format!("P {{ {field}: ... }}")
+                format!("{ty} {{ {field}: ... }}")
             }
-            Some(field) => format!("P {{ {field}, ... }}"),
-            None => "P { ... }".to_string(),
+            Some(field) => format!("{ty} {{ {field}, ... }}"),
+            None => format!("{ty} {{ ... }}"),
         };
-        Diagnostic::error(
-            Code::UnsupportedSyntax,
-            span,
-            format!(
-                "a record literal starts with the name of its type, `{example}`; \
-                 braces alone hold a block"
+        let message = match named {
+            Some(name) => format!(
+                "'{name}' is no type name: a record literal starts with the name of its type, \
+                 which starts with an uppercase letter, `{example}`"
             ),
-        )
+            None => format!(
+                "a record literal starts with the name of its type, `{example}`; braces alone \
+                 hold a block"
+            ),
+        };
+        Diagnostic::error(Code::UnsupportedSyntax, span, message)
     }
 
     fn expect_ident(&mut self) -> Result<(Symbol, Span)> {
@@ -3369,6 +3388,15 @@ impl<'src> Parser<'src> {
                     // `{ x: ...` or `{ x, ...` starts no block and no
                     // closure: the fields of a record, without its type.
                     Err(self.record_without_a_name(first.span))
+                } else if let Some(dots) = self.tokens.get(self.pos + 1)
+                    && dots.kind == Token::DotDot
+                {
+                    // `{ ..p, x: 1 }`: no statement starts with `..`.
+                    Err(Diagnostic::error(
+                        Code::UnsupportedSyntax,
+                        dots.span,
+                        "spread syntax is not supported; use `value.{ field: expr }` for record updates",
+                    ))
                 } else {
                     self.parse_block()
                 }

@@ -43,7 +43,6 @@ mod round92_bom_tests;
 mod round93_dep_error_attribution_tests;
 mod round93_lib_check_tests;
 mod round94_qualified_paths_tests;
-mod row_polymorphism_tests;
 mod session_tests;
 mod stage7_io_pool_tests;
 mod stale_method_row_test;

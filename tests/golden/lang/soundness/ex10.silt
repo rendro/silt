@@ -1,18 +1,20 @@
 -- Port of repros/type_soundness/ex10.silt, two statements on one line split.
--- Literal fields of anonymous-record patterns count towards coverage.
-fn h(r: {on: Bool, n: Int}) -> Int {
+-- Literal fields of record patterns count towards coverage.
+type R { on: Bool, n: Int }
+type S { on: Bool }
+fn h(r: R) -> Int {
   match r {
-    {on: true, n: n} -> n
-    {on: false, n: n} -> n
+    R { on: true, n: n } -> n
+    R { on: false, n: n } -> n
   }
 }
-fn h2(r: {on: Bool}) -> Int {
+fn h2(r: S) -> Int {
   match r {
-    {on: true} -> 1
-    {on: false} -> 0
+    S { on: true } -> 1
+    S { on: false } -> 0
   }
 }
 fn main() {
-  println(h({on: false, n: 5}))
-  println(h2({on: true}))
+  println(h(R { on: false, n: 5 }))
+  println(h2(S { on: true }))
 }

@@ -1,8 +1,8 @@
 -- A value of a type with a written Display impl is shown as the impl
 -- says wherever it is inside what is shown: in a list, a tuple, a map
 -- (as a value and as a key), a set, a record and a variant of types
--- with no impl of their own, an Option and a Result, an anonymous
--- record, and any depth of these. A type without an impl shows by its
+-- with no impl of their own, an Option and a Result, and any depth of
+-- these. A type without an impl shows by its
 -- structure, its fields in the order it declares them.
 import map
 import set
@@ -46,7 +46,6 @@ fn main() {
   println(Some(t))
   println(None == Some(t))
   println(Ok(t) |> wrap)
-  println({temp: t, n: 1})
   println(Box { item: [Some((t, [u]))] })
   println(map.get(#{1: [Box { item: t }]}, 1))
 }

@@ -6,6 +6,11 @@
 import list
 import string
 
+type Name {
+  first: String,
+  length: Int,
+}
+
 fn pick(n, xs, name) {
   match n {
     1 -> { xs
@@ -45,5 +50,5 @@ fn some_function_with_a_long_name(a, b, c, d) {
 }
 
 fn main() {
-  println((pick(1, [1, 2], { first: "a", length: 1 }), label(1)))
+  println((pick(1, [1, 2], Name { first: "a", length: 1 }), label(1)))
 }

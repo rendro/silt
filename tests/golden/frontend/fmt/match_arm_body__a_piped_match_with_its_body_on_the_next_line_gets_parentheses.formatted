@@ -11,24 +11,22 @@ fn first(xs) {
 
 fn braced(r, xs) {
   match r {
-    { a: 1 } -> {
-      match (xs |> first) {
-        x -> 1
-      }
+    1 -> match (xs |> first) {
+      x -> 1
     }
-    { a } -> a
+    a -> a
   }
 }
 
 fn bare(r, xs) {
   match r {
-    { a: 1 } -> match (xs |> first) {
+    1 -> match (xs |> first) {
       x -> 1
     }
-    { a } -> a
+    a -> a
   }
 }
 
 fn main() {
-  println((braced({ a: 1 }, [1]), bare({ a: 1 }, [1])))
+  println((braced(1, [1]), bare(1, [1])))
 }
