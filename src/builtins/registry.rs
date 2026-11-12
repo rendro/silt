@@ -253,12 +253,29 @@ fn off(signature: &'static str, summary: &'static str) -> RowSpec {
     }
 }
 
+/// The value of a constant row: a Float or an Int.
+trait Constant {
+    fn value(self) -> Value;
+}
+
+impl Constant for f64 {
+    fn value(self) -> Value {
+        Value::Float(
+            crate::value::Float::new(self).expect("a constant of the registry is a finite number"),
+        )
+    }
+}
+
+impl Constant for i64 {
+    fn value(self) -> Value {
+        Value::Int(self)
+    }
+}
+
 /// A constant row, `name: Type`, with its value.
-fn k(signature: &'static str, summary: &'static str, value: f64) -> RowSpec {
+fn k(signature: &'static str, summary: &'static str, value: impl Constant) -> RowSpec {
     RowSpec {
-        constant: Some(Value::Float(
-            crate::value::Float::new(value).expect("a constant of the registry is a finite number"),
-        )),
+        constant: Some(value.value()),
         ..off(signature, summary)
     }
 }

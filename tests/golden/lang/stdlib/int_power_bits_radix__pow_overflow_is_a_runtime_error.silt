@@ -1,0 +1,8 @@
+-- exit: 1
+-- stderr-contains: integer overflow: pow(2, 63)
+-- A power outside the Ints overflows as `*` does.
+import int
+
+fn main() {
+  println(int.pow(2, 63))
+}

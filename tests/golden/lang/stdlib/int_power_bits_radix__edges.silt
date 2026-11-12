@@ -1,0 +1,66 @@
+-- int.pow, the bit operations, the limits and the radix functions at
+-- their edges, and math.random_int.
+import int
+import list
+import math
+
+fn main() {
+  println(int.max_value)
+  println(int.min_value)
+  println(int.pow(2, 10))
+  println(int.pow(2, 62))
+  println(int.pow(-2, 63))
+  println(int.pow(0, 0))
+  println(int.pow(7, 0))
+  println(int.pow(0, 5000000000))
+  println(int.pow(1, 5000000000))
+  println(int.pow(-1, 5000000001))
+  println(int.pow(-1, 5000000000))
+  println(int.bit_and(12, 10))
+  println(int.bit_or(12, 10))
+  println(int.bit_xor(12, 10))
+  println(int.bit_and(-1, 255))
+  println(int.bit_xor(5, -1))
+  println(int.shift_left(1, 10))
+  println(int.shift_left(1, 63))
+  println(int.shift_left(3, 63))
+  println(int.shift_left(1, 64))
+  println(int.shift_left(5, -2))
+  println(int.shift_right(1024, 3))
+  println(int.shift_right(-8, 1))
+  println(int.shift_right(-7, 1))
+  println(int.shift_right(int.max_value, 64))
+  println(int.shift_right(-1, 100))
+  println(int.shift_right(5, -2))
+  println(int.to_radix(255, 16))
+  println(int.to_radix(-5, 2))
+  println(int.to_radix(0, 36))
+  println(int.to_radix(35, 36))
+  println(int.to_radix(int.min_value, 16))
+  println(int.to_radix(int.max_value, 2))
+  println(int.parse_radix("ff", 16))
+  println(int.parse_radix(" FF ", 16))
+  println(int.parse_radix("-zz", 36))
+  println(int.parse_radix("+101", 2))
+  println(int.parse_radix("-8000000000000000", 16))
+  println(int.parse_radix("8000000000000000", 16))
+  println(int.parse_radix("-8000000000000001", 16))
+  println(int.parse_radix("12g4", 16))
+  println(int.parse_radix("  2", 2))
+  println(int.parse_radix("", 8))
+  println(int.parse_radix("-", 8))
+  println(int.parse_radix("é", 16))
+  println(int.parse_radix(int.to_radix(int.min_value, 7), 7))
+  println(math.random_int(5, 5))
+  let any = math.random_int(int.min_value, int.max_value)
+  println(any >= int.min_value && any <= int.max_value)
+  let rolls = list.map(1..600) { _ -> math.random_int(1, 6) }
+  println(list.all(rolls) { r -> r >= 1 && r <= 6 })
+  println(list.sort(list.unique(rolls)))
+  let top = list.map(1..200) { _ -> math.random_int(int.max_value - 1, int.max_value) }
+  println(list.sort(list.unique(top)))
+  let bottom = list.map(1..200) { _ -> math.random_int(int.min_value, int.min_value + 1) }
+  println(list.sort(list.unique(bottom)))
+  let negative = list.map(1..200) { _ -> math.random_int(-3, -2) }
+  println(list.sort(list.unique(negative)))
+}

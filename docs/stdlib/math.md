@@ -29,6 +29,7 @@ is not positive, `math.asin` / `math.acos` outside -1..1, and `math.exp` /
 | `pi` | `Float` | Pi (3.14159...) |
 | `pow` | `(Float, Float) -> Float` | Exponentiation |
 | `random` | `() -> Float` | Random float in [0.0, 1.0) |
+| `random_int` | `(Int, Int) -> Int` | Random integer in [lo, hi] |
 | `sin` | `(Float) -> Float` | Sine |
 | `sqrt` | `(Float) -> Float` | Square root |
 | `tan` | `(Float) -> Float` | Tangent |
@@ -252,6 +253,27 @@ import math
 fn main() {
   let r = math.random()
   println(r) -- e.g. 0.7291035...
+}
+```
+
+
+## `math.random_int`
+
+```
+math.random_int(lo: Int, hi: Int) -> Int
+```
+
+Returns a random `Int` from `lo` to `hi`, both included, each as likely as
+any other. `lo` may equal `hi`; `lo` above `hi` is a runtime error, as for
+`int.clamp`.
+
+```silt
+import math
+
+fn main() {
+  let die = math.random_int(1, 6)
+  println(die) -- e.g. 4
+  println(math.random_int(7, 7)) -- 7
 }
 ```
 

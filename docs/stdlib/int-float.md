@@ -6,17 +6,29 @@ order: 6
 
 # int
 
-Functions for parsing, converting, and comparing integers.
+Functions for parsing, converting, and comparing integers, for powers, for
+the bits of an integer, and the limits of `Int`.
 
 ## Summary
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `abs` | `(Int) -> Int` | Absolute value |
+| `bit_and` | `(Int, Int) -> Int` | The bits set in both |
+| `bit_or` | `(Int, Int) -> Int` | The bits set in either |
+| `bit_xor` | `(Int, Int) -> Int` | The bits set in one but not both |
 | `clamp` | `(Int, Int, Int) -> Int` | Clamp value to `[lo, hi]` |
 | `max` | `(Int, Int) -> Int` | Larger of two values |
 | `min` | `(Int, Int) -> Int` | Smaller of two values |
 | `parse` | `(String) -> Result(Int, IntError)` | Parse string to integer |
+| `parse_radix` | `(String, Int) -> Result(Int, IntError)` | Parse string to integer in a radix from 2 to 36 |
+| `pow` | `(Int, Int) -> Int` | Power; overflow is a runtime error |
+| `shift_left` | `(Int, Int) -> Int` | Bits moved up by count; bits past the top are gone |
+| `shift_right` | `(Int, Int) -> Int` | Bits moved down by count, the sign kept |
+| `to_radix` | `(Int, Int) -> String` | Text of the integer in a radix from 2 to 36 |
+| **Constants** | | |
+| `int.max_value` | `Int` | Largest Int (`9223372036854775807`) |
+| `int.min_value` | `Int` | Smallest Int (`-9223372036854775808`) |
 
 
 ## `int.abs`
@@ -34,6 +46,32 @@ import int
 fn main() {
   println(int.abs(-42)) -- 42
   println(int.abs(7)) -- 7
+}
+```
+
+
+## `int.bit_and`, `int.bit_or`, `int.bit_xor`
+
+```
+int.bit_and(a: Int, b: Int) -> Int
+int.bit_or(a: Int, b: Int) -> Int
+int.bit_xor(a: Int, b: Int) -> Int
+```
+
+The bits of the two numbers combined one by one, over all 64 bits of an
+`Int` (a negative number has its high bits set, as in two's complement):
+`bit_and` keeps a bit set in both, `bit_or` one set in either, `bit_xor` one
+set in exactly one of them. `bit_xor(n, -1)` flips every bit. Use them for
+masks, flags and checksums over the bytes of a `Bytes`.
+
+```silt
+import int
+
+fn main() {
+  println(int.bit_and(12, 10)) -- 8
+  println(int.bit_or(12, 10)) -- 14
+  println(int.bit_xor(12, 10)) -- 6
+  println(int.bit_and(-1, 255)) -- 255
 }
 ```
 
@@ -128,6 +166,138 @@ fn main() {
     Err(int.Overflow) -> println("too large")
     Err(int.Underflow) -> println("too small")
   }
+}
+```
+
+
+## `int.parse_radix`
+
+```
+int.parse_radix(s: String, radix: Int) -> Result(Int, IntError)
+```
+
+Parses a string as an integer written in `radix`, from 2 to 36: the digits
+`0`-`9` and then the letters `a`-`z`, of either case. As for `int.parse`, the
+whitespace around the number is trimmed, a `+` or `-` may come first, and a
+failure is an `Err(IntError)` with the same variants and the same offsets.
+There is no prefix: `"0xff"` is no number in radix 16. A `radix` outside 2 to
+36 is a runtime error.
+
+```silt
+import int
+
+fn main() {
+  println(int.parse_radix("ff", 16)) -- Ok(255)
+  println(int.parse_radix("-101", 2)) -- Ok(-5)
+  println(int.parse_radix("12g", 16)) -- Err(invalid digit at byte 2)
+}
+```
+
+
+## `int.pow`
+
+```
+int.pow(base: Int, exponent: Int) -> Int
+```
+
+Returns `base` to the power `exponent`, exactly. A result outside the `Int`
+range is a runtime error, the overflow that `*` raises, and so is a negative
+`exponent`, which has no `Int` result. `int.pow(0, 0)` is `1`.
+
+```silt
+import int
+
+fn main() {
+  println(int.pow(2, 10)) -- 1024
+  println(int.pow(-3, 3)) -- -27
+  println(int.pow(2, 62)) -- 4611686018427387904
+}
+```
+
+
+## `int.shift_left`
+
+```
+int.shift_left(n: Int, count: Int) -> Int
+```
+
+Moves the 64 bits of `n` up by `count` places: 0s come in at the bottom and
+the bits moved past the top are gone, with no error, since this is an
+operation on bits and not arithmetic (use `int.pow` or `*` for a number that
+must not overflow). So `int.shift_left(1, 63)` is `int.min_value`. A `count`
+of 64 or more gives `0`, and a negative `count` counts as 0.
+
+```silt
+import int
+
+fn main() {
+  println(int.shift_left(1, 10)) -- 1024
+  println(int.shift_left(255, 8)) -- 65280
+  println(int.shift_left(1, 64)) -- 0
+}
+```
+
+
+## `int.shift_right`
+
+```
+int.shift_right(n: Int, count: Int) -> Int
+```
+
+Moves the 64 bits of `n` down by `count` places, keeping the sign: the result
+is `n` divided by 2^`count`, rounded down, so `int.shift_right(-7, 1)` is
+`-4`. A `count` of 64 or more gives `0` for a number of 0 or more and `-1`
+for a negative one, and a negative `count` counts as 0.
+
+```silt
+import int
+
+fn main() {
+  println(int.shift_right(1024, 3)) -- 128
+  println(int.shift_right(65280, 8)) -- 255
+  println(int.shift_right(-8, 1)) -- -4
+}
+```
+
+
+## `int.to_radix`
+
+```
+int.to_radix(n: Int, radix: Int) -> String
+```
+
+Returns the text of `n` in `radix`, from 2 to 36: the digits `0`-`9` and then
+lower-case letters, with a `-` in front of a negative number and no prefix.
+`int.parse_radix` reads it back. A `radix` outside 2 to 36 is a runtime error.
+
+```silt
+import int
+
+fn main() {
+  println(int.to_radix(255, 16)) -- ff
+  println(int.to_radix(-5, 2)) -- -101
+  println(int.to_radix(35, 36)) -- z
+}
+```
+
+
+## Int Constants
+
+| Constant | Type | Value |
+|----------|------|-------|
+| `int.max_value` | `Int` | `9223372036854775807` |
+| `int.min_value` | `Int` | `-9223372036854775808` |
+
+The largest and the smallest `Int`, 2^63 - 1 and -2^63. Arithmetic that would
+go past them is a runtime error (see
+[Integer Overflow](../language/design-decisions.md#integer-overflow)).
+
+```silt
+import int
+
+fn main() {
+  println(int.max_value) -- 9223372036854775807
+  println(int.min_value) -- -9223372036854775808
 }
 ```
 

@@ -1,0 +1,8 @@
+-- exit: 1
+-- stderr-contains: integer overflow: pow(2, 5000000000)
+-- An exponent beyond 32 bits overflows for any base but 0, 1 and -1.
+import int
+
+fn main() {
+  println(int.pow(2, 5000000000))
+}
