@@ -1395,8 +1395,9 @@ A task holds its worker thread until one of two things happens:
    starving each other.
 
 The slice budget can be set with the `SILT_TIME_SLICE` environment variable,
-which is read once, when the program starts; its least value is 1. A
-smaller value makes tasks take turns more often (for example,
+which is read once, when the program starts: a whole number above 0. A
+value silt cannot read (`abc`, `0`, `-5`) is refused: the program does
+not start, and the error says why. A smaller value makes tasks take turns more often (for example,
 `SILT_TIME_SLICE=500 silt run main.silt`). Its main use is testing and
 debugging: with `SILT_TIME_SLICE=1` a task gives way after every
 instruction, which brings out the faults that depend on where a task is
@@ -1441,9 +1442,11 @@ or a wait on a channel is not I/O and is not ended by it. (The connections
 of `http.serve` have the server's own times instead, see
 [http](stdlib/http.md).)
 
-Accepted format: a suffixed duration only — `5s`, `500ms`, `2m`, `1h`.
-A bare integer with no unit (e.g. `SILT_IO_TIMEOUT=5000`) is NOT accepted; it
-fails to parse and leaves the waits without an end.
+Accepted format: a whole number above 0 with a unit: `500ms`, `5s`, `2m`,
+`1h`. Any other value (a bare number such as `5000`, `0s`, a typo) is
+refused: `silt run`, `silt test` and `silt repl` do not start, and the
+error names the variable, the value and the forms it takes. An empty value
+is the same as none.
 
 ```sh
 # Any I/O that stalls > 5s surfaces the module's typed timeout variant.

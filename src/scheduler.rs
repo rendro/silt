@@ -118,17 +118,13 @@ pub const WORKER_STACK_BYTES: usize = if cfg!(target_pointer_width = "64") {
 /// whose tasks keep failing must not grow without bound.
 const MAX_SHOWN_FAILURES: usize = 64;
 
-/// Parse a duration string like `"30s"`, `"500ms"`, `"5m"`, `"2h"`, or
-/// `"none"`/empty. Returns `None` for disabled/invalid input — the caller
-/// treats `None` as "no timeout configured" (infinite wait).
+/// A duration like `"30s"`, `"500ms"`, `"5m"`, `"2h"`: a whole number
+/// above 0 with a unit. `None` for anything else.
 fn parse_duration(s: &str) -> Option<Duration> {
     let s = s.trim();
-    if s.is_empty() || s.eq_ignore_ascii_case("none") || s.eq_ignore_ascii_case("off") {
-        return None;
-    }
     let unit_start = s.find(|c: char| c.is_alphabetic())?;
     let (num_part, unit) = s.split_at(unit_start);
-    let n: u64 = num_part.trim().parse().ok()?;
+    let n: u64 = num_part.trim().parse().ok().filter(|n| *n > 0)?;
     match unit.trim().to_lowercase().as_str() {
         "ms" => Some(Duration::from_millis(n)),
         "s" | "sec" | "secs" => Some(Duration::from_secs(n)),
@@ -136,6 +132,52 @@ fn parse_duration(s: &str) -> Option<Duration> {
         "h" | "hr" | "hrs" => Some(Duration::from_secs(n.checked_mul(3600)?)),
         _ => None,
     }
+}
+
+/// The value of the environment variable `name`; `None` where it is
+/// not set or empty.
+fn setting(name: &str) -> Option<String> {
+    std::env::var_os(name)
+        .map(|value| value.to_string_lossy().into_owned())
+        .filter(|value| !value.trim().is_empty())
+}
+
+/// `SILT_IO_TIMEOUT`: `Ok(None)` where it is not set, the error's text
+/// where silt cannot read it.
+fn io_timeout_setting() -> Result<Option<Duration>, String> {
+    let Some(value) = setting("SILT_IO_TIMEOUT") else {
+        return Ok(None);
+    };
+    match parse_duration(&value) {
+        Some(timeout) => Ok(Some(timeout)),
+        None => Err(format!(
+            "SILT_IO_TIMEOUT='{value}' is not a duration: write a whole number above 0 with a unit, as in 500ms, 5s, 2m or 1h"
+        )),
+    }
+}
+
+/// `SILT_TIME_SLICE`: `Ok(None)` where it is not set, the error's text
+/// where silt cannot read it.
+fn time_slice_setting() -> Result<Option<usize>, String> {
+    let Some(value) = setting("SILT_TIME_SLICE") else {
+        return Ok(None);
+    };
+    match value.trim().parse::<usize>() {
+        Ok(slice) if slice > 0 => Ok(Some(slice)),
+        _ => Err(format!(
+            "SILT_TIME_SLICE='{value}' is not a number of steps: write a whole number above 0, as in 500"
+        )),
+    }
+}
+
+/// What is wrong with the runtime's settings in the environment
+/// (`SILT_IO_TIMEOUT`, `SILT_TIME_SLICE`), if anything. `silt run` and
+/// `silt test` refuse to start then: a safety setting with a typo would
+/// otherwise be silently not there.
+pub fn settings_error() -> Option<String> {
+    io_timeout_setting()
+        .err()
+        .or_else(|| time_slice_setting().err())
 }
 
 /// What the error of an I/O operation says when the wait for it ended
@@ -489,9 +531,9 @@ impl Scheduler {
     /// deadlines are read on the clock of `io`, and its reports go to
     /// the stderr of `io`.
     pub fn new(io: HostIo) -> Self {
-        let global_io_timeout = std::env::var("SILT_IO_TIMEOUT")
-            .ok()
-            .and_then(|s| parse_duration(&s));
+        // (A value silt cannot read is refused before the program
+        // starts: `settings_error`.)
+        let global_io_timeout = io_timeout_setting().ok().flatten();
         let timer = sync::Timer::new(io.clone());
         let inner = Arc::new_cyclic(|inner: &Weak<Inner>| {
             let ready = inner.clone();
@@ -2519,11 +2561,10 @@ const LATE_STEPS: usize = STANDARD_SLICE;
 pub(crate) fn time_slice() -> usize {
     static SLICE: OnceLock<usize> = OnceLock::new();
     *SLICE.get_or_init(|| {
-        std::env::var("SILT_TIME_SLICE")
+        time_slice_setting()
             .ok()
-            .and_then(|s| s.parse().ok())
+            .flatten()
             .unwrap_or(STANDARD_SLICE)
-            .max(1)
     })
 }
 

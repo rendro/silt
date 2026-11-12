@@ -44,6 +44,7 @@ mod round92_sigpipe_tests;
 mod round96_help_watch_caveat_parity_tests;
 mod run_banner_consistency_tests;
 mod runtime_panic_tests;
+mod runtime_settings_tests;
 mod stage5_package_graph_tests;
 mod stage7_io_timeout_tests;
 mod stage7_stdin_reader_tests;

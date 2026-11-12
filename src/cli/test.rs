@@ -89,6 +89,7 @@ pub(crate) fn dispatch(args: &[String]) {
             process::exit(1);
         }
     }
+    crate::cli::refuse_bad_settings("test");
     run_tests(file.as_deref(), filter);
 }
 
