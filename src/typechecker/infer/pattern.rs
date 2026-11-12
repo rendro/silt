@@ -691,8 +691,8 @@ impl TypeChecker {
                 }
                 // The record type the pattern names, with its fields in
                 // the order of the declaration.
-                let declared = name
-                    .and_then(|rec_name| self.named_record(res, rec_name, pattern_span, true))
+                let declared = self
+                    .named_record(res, *name, pattern_span, true)
                     .map(|(rec_ref, rec_info, param_ids, fixed)| {
                         let (fields, args) =
                             self.instantiate_record_fields(&rec_info, param_ids.as_deref());

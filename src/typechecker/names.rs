@@ -2272,9 +2272,7 @@ impl Resolver<'_> {
                         self.pattern(sub);
                     }
                 }
-                if let Some(name) = name {
-                    pattern.res = self.record_name(module, name, name_span, span, true);
-                }
+                pattern.res = self.record_name(module, name, name_span, span, true);
             }
             PatternKind::Tuple(parts) | PatternKind::Or(parts) => {
                 for p in parts {

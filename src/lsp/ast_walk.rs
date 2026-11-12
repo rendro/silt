@@ -495,9 +495,7 @@ fn find_ident_in_pattern(pattern: &Pattern, cursor: usize, best: &mut Option<Sym
             fields,
             ..
         } => {
-            if let Some(head) = name {
-                check_span_match(*head, *name_span, cursor, best);
-            }
+            check_span_match(*name, *name_span, cursor, best);
             // Field-shorthand binders (`let Point { x, y } = p`)
             // match the cursor at the field name's own span.
             for (name, name_span, sub) in fields {

@@ -901,7 +901,7 @@ impl ShapeWriter {
             } => {
                 self.open("record");
                 self.qualifier(*module);
-                self.opt_sym(*name);
+                self.sym(*name);
                 self.flag(*has_rest);
                 self.field_patterns(fields);
             }

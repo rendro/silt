@@ -26,9 +26,9 @@ impl Compiler<'_> {
         span: Span,
     ) -> Result<Option<std::sync::Arc<crate::typeinfo::TypeInfo>>, Diagnostic> {
         match &pattern.kind {
-            PatternKind::Record {
-                name: Some(name), ..
-            } => self.record_type(pattern.res, *name, span).map(Some),
+            PatternKind::Record { name, .. } => {
+                self.record_type(pattern.res, *name, span).map(Some)
+            }
             _ => Ok(None),
         }
     }
@@ -356,13 +356,11 @@ impl Compiler<'_> {
                 Ok(all_jumps)
             }
 
-            PatternKind::Record { name, fields, .. } => {
+            PatternKind::Record { fields, .. } => {
                 let mut all_jumps = Vec::new();
 
                 let ty = self.pattern_record_type(pattern, span)?;
-                if name.is_some()
-                    && let Some(ty) = &ty
-                {
+                if let Some(ty) = &ty {
                     let idx = self.add_constant(Value::TypeDescriptor(ty.clone()), span)?;
                     self.emit(Asm::TestRecordTag { ty: idx }, span)?;
                     let tag_jump = self.jump_if_false(span)?;

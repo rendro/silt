@@ -347,7 +347,7 @@ pub enum PatternKind {
         /// [`PatternKind::Constructor::qualifier`] — checked by the
         /// typechecker, invisible to exhaustiveness and codegen.
         module: Option<Qualifier>,
-        name: Option<Symbol>,
+        name: Symbol,
         /// Span of the type name itself.
         name_span: Span,
         /// Each field's name, the span of the name, and its sub-pattern;

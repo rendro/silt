@@ -4195,7 +4195,7 @@ impl<'src> Parser<'src> {
             }
             Ok(mk(PatternKind::Record {
                 module: qualifier.first().copied(),
-                name: Some(name),
+                name,
                 name_span,
                 fields,
                 has_rest,
@@ -5560,7 +5560,7 @@ fn main() {
             ..
         } = arm.pattern.kind
         {
-            assert_eq!(*name, Some(intern::intern("User")));
+            assert_eq!(*name, intern::intern("User"));
             assert_eq!(fields.len(), 2);
             assert_eq!(fields[0].0, intern::intern("name"));
             assert!(fields[0].2.is_none()); // shorthand
@@ -6183,7 +6183,7 @@ fn main() {
             ..
         } = arm.pattern.kind
         {
-            assert_eq!(*name, Some(intern::intern("User")));
+            assert_eq!(*name, intern::intern("User"));
             assert_eq!(fields.len(), 1);
             assert!(has_rest);
         } else {

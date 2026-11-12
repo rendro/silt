@@ -342,10 +342,7 @@ fn pattern_head(pattern: &Pattern, out: &mut Vec<Token>) {
             if let Some(module) = module {
                 out.extend([Token::Ident(module.name), Token::Dot]);
             }
-            if let Some(name) = name {
-                out.push(Token::Ident(*name));
-            }
-            out.push(Token::LBrace);
+            out.extend([Token::Ident(*name), Token::LBrace]);
         }
         PatternKind::Or(alts) => {
             for (i, alt) in alts.iter().enumerate() {

@@ -390,15 +390,12 @@ fn collect_pattern_bindings(
             }
         }
         PatternKind::Record {
-            name,
-            name_span,
-            fields,
-            ..
+            name_span, fields, ..
         } => {
             // The record's name has the type of the value it matches,
             // when it is known (hover shows the record's declaration: a
             // type's name is looked up first).
-            if let (Some(_), Some(ty)) = (name, expr_ty) {
+            if let Some(ty) = expr_ty {
                 out.names.push(PatternName {
                     span: *name_span,
                     ty: Some(ty.clone()),
