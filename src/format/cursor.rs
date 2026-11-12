@@ -105,10 +105,10 @@ fn is_closer_or_comma(kind: &Token) -> bool {
 
 /// The spellings of the keywords and marks: the text of such a token is
 /// one of these, written without a copy.
-const SPELLINGS: [&str; 53] = [
+const SPELLINGS: [&str; 52] = [
     "let", "fn", "type", "trait", "match", "when", "return", "pub", "opaque", "import", "as",
     "else", "where", "loop", "true", "false", "+", "-", "*", "/", "%", "==", "!=", "<", ">", "<=",
-    ">=", "&&", "||", "!", "|>", "|", "?", "^", "..", "...", "->", "(", ")", "{", "}", "[", "]",
+    ">=", "&&", "||", "!", "|>", "|", "?", "^", "..", "->", "(", ")", "{", "}", "[", "]",
     "#{", "#[", ",", ":", "::", ".", "=", "_", "self", "Self",
 ];
 

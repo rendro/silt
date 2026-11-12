@@ -1,7 +1,0 @@
-type Person { x: Int }
-fn main() {
-  let p: Person = Person { x: 1 }
-  let q = {...p, y: 7}
-  let r: {x: Int, y: Int} = {x: 1, y: 7}
-  println(q == r)
-}

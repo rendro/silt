@@ -108,18 +108,22 @@ let lists = HostModule::new("lists").function(
 
 A type variable of the return type must be one that a parameter
 introduces: by its type, as `a` is in `first`, or as a `type a`
-parameter (`fn pick(s: String, type a) -> Option(a)`). The same holds
-for the row variable of an open record (`{name: String, ...r}`).
+parameter (`fn pick(s: String, type a) -> Option(a)`).
 `fn any() -> a` is an error: no value it returns could be the type each
 call asks for.
+
+A signature writes a record by the name of its type: braces of fields
+are no type. A host module declares no types of its own, so a record of
+the program reaches a host function through a type variable
+(`fn same(x: a) -> a` given a `Person` gives back a `Person`), and a
+builtin record by its name (`time.Date`).
 
 The checker has already made sure the arguments have the declared types
 and number, so a function can rely on its signature. When the function
 returns, its result is checked against its return type, as far as a
 value shows it: `Int`, `Float`, `Bool`, `String`, `Bytes` and `()`;
-`List`, `Set`, `Map`, `Option`, `Result` and tuples of them; a
-`Channel`; and an anonymous record, which has the fields its type
-writes and, closed, no others. A `-> Int` function that returns a
+`List`, `Set`, `Map`, `Option`, `Result` and tuples of them; and a
+`Channel`. A `-> Int` function that returns a
 `String` is a runtime error that names it (`mylib.count: its signature
 returns Int, but it returned String "three"`). No value is of `Never`:
 a `-> Never` function that returns a value is that error too, and it
@@ -138,10 +142,8 @@ the result could be checked against. Take `type a`, and build
 `List(a)` in the program where it is needed. A
 `fn same(x: a) -> a` that returns `5` for `same("x")` is that error:
 ``mylib.same: its signature returns a, here String (the type of its
-argument `x`), but it returned Int 5``. The row variable of an open
-record is checked so too: `fn keep(p: {name: String, ...r}) -> {name:
-String, ...r}` gives back the fields of the record it is given, and a
-record of a declared type (`Person`) as a record of that type.
+argument `x`), but it returned Int 5``. A record is checked so too: a
+`Person` given back where the argument was a `Pet` is that error.
 
 What no argument shows stays the function's to get right: a variable
 whose arguments hold no value of it (`first([])`), the parts of two
@@ -176,8 +178,8 @@ whether or not the program imports it, at `<host:mylib>`:
 - a signature that is not one `fn` header without a body, or that
   leaves a parameter or the return type untyped;
 - a signature that takes or returns a function;
-- a signature whose return type has a type variable or row variable that
-  no parameter introduces (`fn any() -> a`);
+- a signature whose return type has a type variable that no parameter
+  introduces (`fn any() -> a`);
 - a typed function (`fn0`, `fn1`, `fn2`) whose signature declares another
   number of parameters;
 - a type the signature names that does not exist;

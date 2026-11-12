@@ -943,8 +943,7 @@ known: `fn step(x) -> Result(Int, String) { Ok(x? + 1) }`.
 
 The structural `Display` formats in constructor syntax: `Circle(5.0)`
 for a variant, `Point {x: 1, y: 2}` for a record, its fields in the
-order the type declares them (`{x: 1, y: 2}` for an anonymous record,
-its fields in the order of their names). A string inside a structure
+order the type declares them. A string inside a structure
 is written as a program writes it, in quotes and escaped:
 `["a", "b, c"]`, `Some("x")`, `(1, "a\nb")`, `#{"k": "v"}`, so the
 parts can be told apart. A string shown by itself (`println(s)`,
@@ -1022,8 +1021,7 @@ and for `Display` where no impl is written:
   when their parts do, and no `Compare`.
 - A record or an enum has a trait when every field and payload does, at
   the type's arguments: `Option(Int)` has `Compare`, `Option(Fn(Int) ->
-  Int)` has none of them. A closed anonymous record (`{a: Int}`) has
-  `Equal`, `Hash` and `Display` when its fields do.
+  Int)` has none of them.
 - A type variable has what its bound says (`where a: Compare`).
   `Compare` includes `Equal`: what is ordered can be compared with `==`.
 

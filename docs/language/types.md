@@ -140,15 +140,22 @@ fn main() {
 A field written alone takes the value of the name in scope: `User { name,
 age, active: true }` is `User { name: name, age: age, active: true }`,
 as the record pattern `User { name, age, .. }` binds `name` and `age`.
-Building and reading a record look alike. An anonymous record has no
-such shorthand: `{ name }` is a block.
+Building and reading a record look alike. A record literal starts with
+the name of its type: braces alone, `{ name }`, are a block, and
+`{ name: "A" }` is an error.
+
+A field is read on a value whose type is known where it is read, or
+later in the same function. A function that reads a field of a
+parameter names the parameter's type,
+`fn age(u: User) -> Int { u.age }`: a field of a value whose type
+nothing in the function decides is an error that asks for the
+annotation.
 
 In the header of a `match` or a `loop`, braces that hold one name alone
 are the header's block, as `match x { y }` would be: there a literal
 with a single field written alone goes in parentheses,
 `match (User { name }) { ... }`, or writes the field out,
-`match User { name: name } { ... }`. Braces whose first name is
-followed by `:` or `,` are a literal there too.
+`match User { name: name } { ... }`.
 
 Records declared in another module can be constructed with a
 **module-qualified path** — no selective import needed. The qualifier is
@@ -199,300 +206,6 @@ binds or reads a variable, and a keyword names none.
 Read as "alice, but with age 31." Compare to Elm `{ u | age = 31 }`, Rust
 `User { age: 31, ..u }`. Silt's `.{ }` syntax avoids new keywords or sigils.
 
-## Anonymous Records and Row Polymorphism
-
-Beside nominal records (`type User { ... }`), silt has **anonymous
-structural records**: a record literal or type written without a name.
-Two anonymous records with the same fields and field types are the same
-type — there is no `type Foo { ... }` declaration to anchor identity.
-
-```silt
-let alice = { name: "Alice", age: 30 }
-let bob = { name: "Bob", age: 25 } -- same type as alice
-println(alice.name) -- Alice
-```
-
-An anonymous record is shown as it is written, without a name, its
-fields in the order of their names: `println(alice)` prints
-`{age: 30, name: "Alice"}`. A closed one has `Equal` (`==`), `Hash` and
-`Display` when its fields do, and no order (`<`, `Compare.compare`).
-
-The type of `alice` is the structural type `{name: String, age: Int}`,
-which can also appear in any annotation:
-
-```silt
-fn full_name(p: { first: String, last: String }) -> String {
-  "{p.first} {p.last}"
-}
-```
-
-### Open rows: `...r`
-
-A record type can leave its tail **open** with `...r`, where `r` is a
-lowercase row variable — a polymorphic placeholder for "any further
-fields you happen to have." The function only commits to the fields it
-names; the row variable absorbs whatever else the caller passes:
-
-```silt
-fn first_name(p: { name: String, ...r }) -> String {
-  p.name
-}
-
-fn main() {
-  println(first_name({ name: "Alice", age: 30 }))
-  println(first_name({ name: "Bob" }))
-}
-```
-
-Inside the function `p.name` is the only legal access; `p.age` would be
-rejected, even when the caller passes a record that happens to have an
-`age` field. The row variable of an annotation stands for whatever the
-caller's record has, and the function may assume nothing about it.
-
-A row variable can be threaded into the return type so the caller's
-extra fields survive the round trip:
-
-```silt
-fn id_name(p: { name: String, ...r }) -> { name: String, ...r } {
-  p
-}
-
-fn main() {
-  let q = id_name({ name: "Alice", age: 30 })
-  -- `age` came along with the row
-  println(q.age) -- 30
-}
-```
-
-Row variables are inferred at first appearance, just like ordinary type
-variables: a function written without annotations like
-`fn show_name(p) { p.name }` is inferred to take an open record carrying
-at least a `name` field.
-
-### Nominal records flow into open rows
-
-Nominal records widen to open rows automatically, so a fn taking a
-`{name: String, ...r}` parameter accepts any nominal record that has a
-`name: String` field:
-
-```silt
-type Person {
-  name: String,
-  age: Int,
-}
-
-fn name(p: { name: String, ...r }) -> String {
-  p.name
-}
-
-fn main() {
-  println(name(Person { name: "Bob", age: 42 })) -- Bob
-}
-```
-
-The row is then the record itself: what a function gives back through
-the row is still a `Person`, with its methods and patterns.
-
-```silt
-type Person {
-  name: String,
-  age: Int,
-}
-
-fn id_name(p: { name: String, ...r }) -> { name: String, ...r } {
-  p
-}
-
-fn main() {
-  let q = id_name(Person { name: "Bob", age: 42 }) -- q is a Person
-  println(q.age) -- 42
-}
-```
-
-That is the only place a nominal record and an anonymous record type
-meet. An anonymous record is not a `Person`, and a `Person` is not a
-closed anonymous record: converting is written out.
-
-```silt
-fn greet(p: Person) -> String { p.name }
-greet({name: "x", age: 3})
--- error: type mismatch: expected Person, got {name: String, age: Int}
--- help: an anonymous record is not a `Person`: write `Person { ... }`
-
-let r: {name: String, age: Int} = Person { name: "x", age: 3 }
--- error: type mismatch: expected {name: String, age: Int}, got Person
--- help: a `Person` is not an anonymous record: convert it with a spread, `{...v}`, or take an open row, `{x: T, ...r}`
-```
-
-(A type of another module is written with its module in the help:
-`time.Date { ... }`.)
-
-A value whose fields are read is a record, and `p.greet()` on it calls
-a function held in a field `greet`. A method of a trait is not a field:
-it is called through its trait, `Greet.greet(p)`.
-
-A row variable stands for the rest of a record's fields, not for a
-type, so the only bounds it takes are the traits a record has when its
-fields do, `Display`, `Equal` and `Hash`, for a function that prints,
-compares for equality or hashes the whole record:
-
-```silt
-fn show(p: { name: String, ...r }) -> String where r: Display {
-  "{p}"
-}
-```
-
-Any other bound on a row variable (`where r: Compare`, a trait of the
-program) is an error where it is written.
-
-### Closed rows reject extra fields
-
-A record type **without** `...r` is closed: the caller must supply
-exactly the listed fields, no more, no less:
-
-```silt
-fn ident(x: { a: Int, b: String }) -> { a: Int, b: String } {
-  x
-}
-
-fn main() {
-  println(ident({ a: 1, b: "hi" })) -- {a: 1, b: "hi"}
-}
-```
-
-`ident({ a: 1, b: "hi", c: 9 })` is an error ("record literal has
-unexpected field not declared in target type: c"), and so is
-`ident({ a: 1 })` ("record literal is missing required field: b").
-
-### Record extension: `{...p, ...}`
-
-The same `...` token, in a record **expression**, spreads an existing
-record into a new one. Additional fields after the spread are appended;
-attempting to overwrite a field that already exists is rejected:
-
-```silt
-fn main() {
-  let p = { name: "Alice" }
-  let q = { ...p, age: 30 } -- {name: String, age: Int}
-  println(q.name) -- Alice
-  println(q.age) -- 30
-}
-```
-
-Trying to redefine an existing field — `{...p, name: "Bob"}` — is a
-compile-time error. The shape is "extend, never overwrite"; use record
-update (`p.{ name: "Bob" }`) for that. The same holds behind an open
-row: `fn ext(p) { {...p, age: 30} }` takes any record that has no
-`age`, and a call with one that has is an error at the call:
-
-```silt
-ext({ age: 1 })
--- error: cannot extend the record with field 'age': it has one already
--- help: a record is extended, never overwritten: update the field with `r.{ age: ... }`
-```
-
-A spread always makes a new anonymous record: its value never carries
-the name of a declared type. Over a value of a declared record type it
-is the conversion, written out: `{...person}` is the anonymous record
-with `Person`'s fields, and a field written after the spread is added.
-It extends, never overwrites, as over any record: `{...person, name:
-"Al"}` is an error, and `person.{ name: "Al" }` is the update. The type
-of the base may be decided anywhere in the function, before the spread
-or after it:
-
-```silt
-type Person {
-  name: String,
-  age: Int,
-}
-
-fn main() {
-  let p = Person { name: "Bob", age: 42 }
-  let r = { ...p, city: "x" } -- {name: String, age: Int, city: String}
-  println(r.city) -- x
-}
-```
-
-There is no spelling for the other direction: a `Person` is built from
-its fields, `Person { name: r.name, age: r.age }`.
-
-A function that spreads a record whose type it does not know makes an
-anonymous record over the record's row, so it takes anonymous records
-only: a declared record does not stand for a row that a function
-spreads, with or without fields after the spread. Convert first,
-`copy({...person})`:
-
-```silt
-type Person {
-  name: String,
-  age: Int,
-}
-
-fn copy(p) {
-  { ...p }
-}
-
-fn ext(p) {
-  { ...p, city: "x" }
-}
-
-fn main() {
-  println(copy({ name: "Bob" })) -- {name: "Bob"}
-  println(ext({ ...Person { name: "Bob", age: 42 } })) -- {age: 42, city: "x", name: "Bob"}
-}
-```
-
-`copy(Person { name: "Bob", age: 42 })` is an error: "cannot spread a
-`Person` through 'copy': convert it where its type is known, `{...p}`".
-
-The same holds for a closure bound with `let`, for a function whose
-signature writes the row (`fn tag(p: {name: String, ...r}) -> ...`
-whose body spreads `p`), and through a function that passes its
-parameter on to one of these. The row variable of a trait method's
-signature, or of a `let` annotation, cannot be spread at all.
-
-### Pattern destructuring with rest
-
-Record patterns mirror the type form. A `{name: nm, ...rest}` pattern
-binds the listed fields, and `rest` to an anonymous record of the
-fields the pattern does not name, the same way `..rest` works on
-lists. It does so in `match`, `let`, `when let` and a parameter alike,
-and whatever the record is: the rest of a declared record is an
-anonymous record too, never the declared type.
-
-```silt
-type Person {
-  name: String,
-  age: Int,
-}
-
-fn main() {
-  let p = { name: "A", age: 30 }
-  match p {
-    { name: nm } -> println(nm) -- A
-  }
-  let { name, ...rest } = Person { name: "B", age: 42 } -- rest is {age: Int}
-  println(name) -- B
-  println(rest.age) -- 42
-}
-```
-
-Like a spread, a rest binder over a record whose type the function
-does not know makes an anonymous record over its row: a function that
-binds one takes anonymous records only.
-
-See [pattern matching](pattern-matching.md) for the full record-pattern
-grammar.
-
-### Summary
-
-| Form                              | Meaning                                                |
-|-----------------------------------|--------------------------------------------------------|
-| `{name: "A", age: 30}`            | Anonymous record literal                               |
-| `{name: String, age: Int}`        | Closed structural record type — exactly these fields   |
-| `{name: String, ...r}`            | Open row — at least `name`, plus any tail captured by `r` |
-| `{...p, age: 30}`                 | Record extension — copy `p`, append `age` (no overwrite) |
-
 ## Type Aliases
 
 `type Name = T` gives the type `T` another name; the name stands for
@@ -502,21 +215,6 @@ an alias of an enum writes its variants (`type C = Color`, then `C.Red`),
 an alias with arguments gives them (`type IntBox = Box(Int)`, then
 `IntBox { value: 1 }` is a `Box(Int)`), and an alias is a type argument
 as its type is (`json.parse(text, Q)`).
-
-An alias of an anonymous record type names the type in annotations
-only: such a record is written without a name.
-
-```silt
-type Person = { name: String, age: Int }
-
-fn main() {
-  let p: Person = { name: "A", age: 30 }
-  println(p.name)
-}
-```
-
-`Person { name: "A", age: 30 }` is an error: write the record without
-the name, `{ name: ..., age: ... }`.
 
 ## Tuples
 
