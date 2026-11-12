@@ -1298,14 +1298,14 @@ impl TypeChecker {
     /// This is the single source of truth for the dispatch-name oracle
     /// on the typechecker side.
     pub(super) fn type_name_for_impl(&self, ty: &Type) -> Option<TypeRef> {
-        let ty = crate::types::canonical::canonicalize(&self.tables.resolver, ty);
-        match &ty {
-            // Function values resolve to `Fn`, and `Unit` is `Unit`, so
-            // `where a: Trait` constraints route into the same impl
-            // table the compiler keys impl methods by and
-            // `dispatch_type_for_value` returns at runtime.
-            _ => head_of(&ty),
-        }
+        // Function values resolve to `Fn`, and `Unit` is `Unit`, so
+        // `where a: Trait` constraints route into the same impl table the
+        // compiler keys impl methods by and `dispatch_type_for_value`
+        // returns at runtime.
+        head_of(&crate::types::canonical::canonicalize(
+            &self.tables.resolver,
+            ty,
+        ))
     }
 
     /// Return the positional type arguments of a (concrete) type. Mirrors

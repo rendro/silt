@@ -1,21 +1,9 @@
-//! Round 86: lexer-anchored editor-grammar operator parity lock.
-//!
-//! ## Bug fixed (G1)
-//!
-//! `src/lexer.rs` defines `DotDotDot` (`...`, record spread / rest).
-//! Both editor grammars omitted it:
-//!
-//! - `editors/vim/syntax/silt.vim`
-//! - `editors/vscode/syntaxes/silt.tmLanguage.json`
-//!
-//! The pre-existing parity lock at
-//! `tests/meta/round62_cleanup_lock_tests.rs::vim_and_vscode_grammars_share_operator_set`
-//! was symmetric drift-blind: it locked the two grammars to a fixed
-//! 20-item baseline that already omitted the token, so adding a new
-//! token to the lexer without updating the grammars would slip
-//! through unflagged. Round 86 extended that baseline AND added this
-//! lexer-anchored test so the canonical operator list lives next to
-//! the lexer rather than next to the grammars.
+//! Lexer-anchored editor-grammar operator parity lock: the canonical
+//! operator list lives next to the lexer rather than next to the
+//! grammars, so a token added to the lexer without the grammars is
+//! flagged (the symmetric lock in
+//! `tests/meta/round62_cleanup_lock_tests.rs` compares the two grammars
+//! only).
 //!
 //! ## What this test locks
 //!
@@ -59,16 +47,15 @@ use silt::lexer::{Lexer, Token};
 /// covered by `collection-prefix` / `siltCollectionPrefix` in the
 /// grammars; they are excluded here.
 const MULTI_CHAR_OPERATORS: &[&str] = &[
-    "==",  // EqEq
-    "!=",  // NotEq
-    "<=",  // LtEq
-    ">=",  // GtEq
-    "&&",  // AndAnd
-    "||",  // OrOr
-    "|>",  // Pipe
-    "..",  // DotDot
-    "...", // DotDotDot — round 86 added
-    "->",  // Arrow
+    "==", // EqEq
+    "!=", // NotEq
+    "<=", // LtEq
+    ">=", // GtEq
+    "&&", // AndAnd
+    "||", // OrOr
+    "|>", // Pipe
+    "..", // DotDot
+    "->", // Arrow
 ];
 
 fn repo_root() -> PathBuf {
@@ -161,8 +148,8 @@ fn vim_grammar_covers_every_multi_char_lexer_operator() {
              Add a line like `syntax match siltOperator \"<escaped-pattern>\"` \
              — see existing entries for the escape convention. \
              Multi-char operators should appear in longest-first order \
-             so vim's longest-match rule prefers them (e.g. `...` before \
-             `..`).",
+             so vim's longest-match rule prefers them (e.g. `->` before \
+             `-`).",
             vim_ops
         );
     }
@@ -187,7 +174,7 @@ fn vscode_grammar_covers_every_multi_char_lexer_operator() {
              \"match\": \"<escaped-regex>\" }}` to the `operators.patterns` \
              array — see existing entries for the escape convention. \
              Multi-char operators that share a prefix with another must \
-             come first in the array (e.g. `...` before `..`).",
+             come first in the array (e.g. `->` before `-`).",
             vscode_ops
         );
     }
