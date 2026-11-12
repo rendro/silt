@@ -39,8 +39,11 @@ with `{expr}` interpolation.
 | `slice` | `(String, Int, Int) -> String` | Substring by character indices |
 | `split` | `(String, String) -> List(String)` | Split on separator |
 | `split_at` | `(String, Int) -> Option((String, String))` | Split into two strings at a character index, or None past the end |
+| `split_once` | `(String, String) -> Option((String, String))` | Split at the first separator into the text before and after it, or None if it is not there |
 | `starts_with` | `(String, String) -> Bool` | Check prefix |
 | `starts_with_at` | `(String, Int, String) -> Bool` | Check prefix at a given character offset |
+| `strip_prefix` | `(String, String) -> Option(String)` | The rest after the prefix, or None if s does not start with it |
+| `strip_suffix` | `(String, String) -> Option(String)` | The rest before the suffix, or None if s does not end with it |
 | `to_lower` | `(String) -> String` | Convert to lowercase |
 | `to_upper` | `(String) -> String` | Convert to uppercase |
 | `trim` | `(String) -> String` | Remove leading and trailing whitespace |
@@ -557,6 +560,28 @@ fn main() {
 ```
 
 
+## `string.split_once`
+
+```
+string.split_once(s: String, separator: String) -> Option((String, String))
+```
+
+Splits `s` at the first `separator` into `Some((before, after))`, the
+separator itself in neither; `None` if `s` does not contain it. Only the
+first separator splits: the rest stays in `after`. It is the way to read
+`key=value` and `--name=value`.
+
+```silt
+import string
+
+fn main() {
+  println(string.split_once("--top=5", "=")) -- Some(("--top", "5"))
+  println(string.split_once("a = b = c", " = ")) -- Some(("a", "b = c"))
+  println(string.split_once("verbose", "=")) -- None
+}
+```
+
+
 ## `string.starts_with`
 
 ```
@@ -593,6 +618,44 @@ fn main() {
   println(string.starts_with_at("hello", 2, "lx")) -- false
   println(string.starts_with_at("hello", -1, "h")) -- false
   println(string.starts_with_at("hello", 99, "")) -- false
+}
+```
+
+
+## `string.strip_prefix`
+
+```
+string.strip_prefix(s: String, prefix: String) -> Option(String)
+```
+
+Returns `Some` of the rest of `s` after `prefix`, or `None` if `s` does not
+start with `prefix`.
+
+```silt
+import string
+
+fn main() {
+  println(string.strip_prefix("Bearer xyz", "Bearer ")) -- Some("xyz")
+  println(string.strip_prefix("Basic xyz", "Bearer ")) -- None
+}
+```
+
+
+## `string.strip_suffix`
+
+```
+string.strip_suffix(s: String, suffix: String) -> Option(String)
+```
+
+Returns `Some` of the rest of `s` before `suffix`, or `None` if `s` does not
+end with `suffix`.
+
+```silt
+import string
+
+fn main() {
+  println(string.strip_suffix("notes.txt", ".txt")) -- Some("notes")
+  println(string.strip_suffix("notes.md", ".txt")) -- None
 }
 ```
 

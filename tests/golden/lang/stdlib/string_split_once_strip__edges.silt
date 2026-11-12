@@ -1,0 +1,32 @@
+-- string.split_once, strip_prefix and strip_suffix at their edges: empty
+-- text, an empty separator or prefix, a separator at either end, the
+-- whole text, characters beyond ASCII.
+import string
+
+fn main() {
+  println(string.split_once("key=value", "="))
+  println(string.split_once("a==b", "="))
+  println(string.split_once("=x", "="))
+  println(string.split_once("x=", "="))
+  println(string.split_once("", "="))
+  println(string.split_once("abc", ""))
+  println(string.split_once("", ""))
+  println(string.split_once("héllo→wörld→!", "→"))
+  println(string.split_once("abc", "abcd"))
+  println(string.strip_prefix("--top=5", "--"))
+  println(string.strip_prefix("--", "--"))
+  println(string.strip_prefix("abc", ""))
+  println(string.strip_prefix("", "a"))
+  println(string.strip_prefix("é-x", "é"))
+  println(string.strip_prefix("ab", "abc"))
+  println(string.strip_suffix("report.csv", ".csv"))
+  println(string.strip_suffix(".csv", ".csv"))
+  println(string.strip_suffix("abc", ""))
+  println(string.strip_suffix("", "a"))
+  println(string.strip_suffix("naïve", "ïve"))
+  println(string.strip_suffix("bc", "abc"))
+  match string.split_once("port = 8080", " = ") {
+    Some((name, value)) -> println("{name}: {value}")
+    None -> println("no value")
+  }
+}

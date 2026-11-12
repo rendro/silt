@@ -357,8 +357,11 @@ string.replace(s: String, from: String, to: String) -> String
 string.slice(s: String, start: Int, end: Int) -> String
 string.split(s: String, separator: String) -> List(String)
 string.split_at(s: String, idx: Int) -> Option((String, String))
+string.split_once(s: String, separator: String) -> Option((String, String))
 string.starts_with(s: String, prefix: String) -> Bool
 string.starts_with_at(s: String, offset: Int, prefix: String) -> Bool
+string.strip_prefix(s: String, prefix: String) -> Option(String)
+string.strip_suffix(s: String, suffix: String) -> Option(String)
 string.to_lower(s: String) -> String
 string.to_upper(s: String) -> String
 string.trim(s: String) -> String

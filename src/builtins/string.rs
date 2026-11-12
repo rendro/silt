@@ -248,6 +248,25 @@ builtins! {
         ]))
     }
 
+    // At the first `separator`: the text before it and the text after
+    // it, or `None` if it is not in `s`. (An empty separator is found
+    // at the start, as `index_of` finds it.)
+    fn split_once(s: &str, separator: &str) -> Option<Value> {
+        let (left, right) = s.split_once(separator)?;
+        Some(Value::tuple(vec![
+            Value::String(left.into()),
+            Value::String(right.into()),
+        ]))
+    }
+
+    fn strip_prefix(s: &str, prefix: &str) -> Option<Value> {
+        s.strip_prefix(prefix).map(|rest| Value::String(rest.into()))
+    }
+
+    fn strip_suffix(s: &str, suffix: &str) -> Option<Value> {
+        s.strip_suffix(suffix).map(|rest| Value::String(rest.into()))
+    }
+
     fn lines(s: &str) -> Vec<Value> {
         // Split on '\n' only. A trailing '\n' must NOT produce an empty
         // final element (matches user expectation: "a\nb\n".lines() ==
