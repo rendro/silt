@@ -19,6 +19,10 @@ silt lsp
 
 The server communicates over stdin/stdout using the standard LSP protocol.
 
+A buffer that was never saved (`untitled:Untitled-1`) is checked as a
+file of its own, outside any package: it sees the other unsaved buffers
+of the editor, and no file on disk.
+
 ### Supported Features
 
 | Feature | Description |
