@@ -358,7 +358,9 @@ fn next_hop(current: &str, said: &str) -> Result<Option<String>, String> {
         .map(|(scheme, _)| scheme)
         .filter(|scheme| {
             scheme.starts_with(|c: char| c.is_ascii_alphabetic())
-                && scheme.chars().all(|c| c.is_ascii_alphanumeric() || "+.-".contains(c))
+                && scheme
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "+.-".contains(c))
         });
     let next = match scheme {
         Some(scheme) if scheme.eq_ignore_ascii_case("https") && location[6..].starts_with("//") => {
@@ -716,7 +718,11 @@ mod tests {
             ),
             ("HTTPS://cdn.example/a", "https://cdn.example/a"),
         ] {
-            assert_eq!(next_hop(from, &said(to)), Ok(Some(next.to_string())), "{to}");
+            assert_eq!(
+                next_hop(from, &said(to)),
+                Ok(Some(next.to_string())),
+                "{to}"
+            );
         }
         assert_eq!(
             next_hop(&format!("{from}?sig=a/b"), &said("c")),

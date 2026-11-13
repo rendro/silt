@@ -619,7 +619,10 @@ fn install_sh_interrupted_before_the_move_leaves_no_staged_copy() {
 fn install_sh_refuses_an_install_path_that_is_a_directory() {
     let sb = Sandbox::new("dir_target");
     fs::create_dir_all(sb.install_dir().join("silt")).unwrap();
-    let expected = format!("{}/silt is a directory: remove it", sb.install_dir().display());
+    let expected = format!(
+        "{}/silt is a directory: remove it",
+        sb.install_dir().display()
+    );
     assert_branded_failure(&sb.run(""), &expected);
     let inside: Vec<_> = fs::read_dir(sb.install_dir().join("silt"))
         .unwrap()
@@ -655,7 +658,11 @@ fn install_sh_installs_a_binary_everyone_can_run_whatever_the_umask() {
 #[test]
 fn install_sh_with_wget_follows_a_redirect_without_a_scheme() {
     for (tag, to, asked) in [
-        ("wget_slashes", "//release-assets.example/via/", "https://release-assets.example/via/"),
+        (
+            "wget_slashes",
+            "//release-assets.example/via/",
+            "https://release-assets.example/via/",
+        ),
         (
             "wget_relative",
             "via/",
@@ -673,7 +680,8 @@ fn install_sh_with_wget_follows_a_redirect_without_a_scheme() {
         assert!(sb.install_dir().join("silt").is_file());
         let log = fs::read_to_string(sb.root.join("state/wget.log")).unwrap();
         assert!(
-            log.lines().any(|call| call.ends_with(&format!("{asked}silt-v9.9.9-SHA256SUMS"))),
+            log.lines()
+                .any(|call| call.ends_with(&format!("{asked}silt-v9.9.9-SHA256SUMS"))),
             "{to}:\n{log}"
         );
     }
