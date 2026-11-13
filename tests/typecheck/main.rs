@@ -3,13 +3,13 @@
 //! One test binary; each module was a separate test crate before.
 
 mod error_enum_message_rows_tests;
-mod round73_postgres_typed_timeout_tests;
-mod round74_hash_eq_ord_contract_tests;
-mod round75_fuzz_typechecker_target_tests;
-mod round75_kind_naming_canonical_tests;
-mod round76_iopool_panic_typed_err_tests;
-mod round80_typechecker_fixes_tests;
-mod round95_interp_display_runtime_tests;
+mod fuzz_typechecker_target_tests;
+mod hash_eq_ord_contract_tests;
+mod interp_display_runtime_tests;
+mod iopool_panic_typed_err_tests;
+mod kind_naming_tests;
+mod postgres_typed_timeout_tests;
+mod typeof_head_display_tests;
 mod typeof_render_tests;
 mod unified_trait_registration_tests;
 mod vm_error_display_tests;
