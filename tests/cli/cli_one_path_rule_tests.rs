@@ -216,6 +216,13 @@ fn a_directory_whose_files_are_in_a_package_below_names_the_package() {
     let dir = workspace("nested");
     fs::create_dir_all(dir.join("outer")).unwrap();
     fs::rename(dir.join("pk"), dir.join("outer/pk")).unwrap();
+    // A package that holds no .silt file is not named.
+    fs::create_dir_all(dir.join("outer/bare")).unwrap();
+    fs::write(
+        dir.join("outer/bare/silt.toml"),
+        "[package]\nname = \"bare\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
     for (command, verb) in [("check", "check"), ("fmt", "format")] {
         let out = silt(&dir, &[command, "outer"]);
         assert_eq!(out.status.code(), Some(1), "{command}: {out:?}");
@@ -248,13 +255,19 @@ fn a_test_file_reached_through_a_link_checks_its_own_package_first() {
     let dir = workspace("test_link");
     std::os::unix::fs::symlink(dir.join("pk/src/main_test.silt"), dir.join("out_test.silt"))
         .unwrap();
-    let out = silt(&dir, &["test", "out_test.silt"]);
-    assert_eq!(out.status.code(), Some(1), "{out:?}");
-    let err = stderr(&out);
-    assert!(err.contains("pk/src/util.silt:2:16\n"), "{err}");
-    assert!(
-        err.ends_with("error: silt test: the package has errors (see above), so no test was run\n"),
-        "{err}"
-    );
+    // And through a link to the package's src directory.
+    std::os::unix::fs::symlink(dir.join("pk/src"), dir.join("srclink")).unwrap();
+    for path in ["out_test.silt", "srclink/main_test.silt"] {
+        let out = silt(&dir, &["test", path]);
+        assert_eq!(out.status.code(), Some(1), "{path}: {out:?}");
+        let err = stderr(&out);
+        assert!(err.contains("pk/src/util.silt:2:16\n"), "{path}: {err}");
+        assert!(
+            err.ends_with(
+                "error: silt test: the package has errors (see above), so no test was run\n"
+            ),
+            "{path}: {err}"
+        );
+    }
     let _ = fs::remove_dir_all(&dir);
 }

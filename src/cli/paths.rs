@@ -70,18 +70,21 @@ pub(crate) const FILE_OR_DIRECTORY: &str = "a .silt file or a directory";
 /// The usage error of `silt <command>` (`check` or `fmt`) when the walk
 /// of `dir` (`shown`: how it is named) found no `.silt` file: exit 1.
 /// Where the files under it are those of packages below it, which the
-/// walk leaves to their packages, the message names one.
+/// walk leaves to their packages, the message names one (a package that
+/// holds no `.silt` file either is not named).
 pub(crate) fn refuse_empty_walk(command: &str, dir: &Path, shown: &str) -> ! {
     let enter = |path: &Path| !silt::file_discovery::should_skip_dir(path);
     let manifest = |path: &Path| path.file_name().is_some_and(|name| name == "silt.toml");
+    let silt_file = |path: &Path| path.to_string_lossy().ends_with(".silt");
     let packages: Vec<String> = files_under(dir, &enter, &manifest)
         .iter()
         .filter_map(|toml| toml.parent())
         .filter(|package| *package != dir)
+        .filter(|package| !files_under(package, &enter, &silt_file).is_empty())
         .map(|package| {
-            let package = package.to_string_lossy();
-            let package = package.strip_prefix("./").unwrap_or(&package);
-            silt::git::escape_for_display(package)
+            // `./pk` (`.\pk` on Windows) is shown as `pk`.
+            let package = package.strip_prefix(".").unwrap_or(package);
+            silt::git::escape_for_display(&package.to_string_lossy())
         })
         .collect();
     let verb = if command == "fmt" { "format" } else { command };
@@ -112,14 +115,16 @@ pub(crate) fn find_silt_files(dir: &Path) -> Vec<String> {
 }
 
 /// The path of a file a walk found, as text. A file whose path is not
-/// Unicode cannot be named to read it, nor is its name a module name: as
-/// for such an argument, a usage error (exit 1).
+/// Unicode (its own name, or a directory's on the way) cannot be named to
+/// read it, nor is its name a module name: as for such an argument, a
+/// usage error (exit 1).
 pub(crate) fn unicode_path(path: std::path::PathBuf) -> String {
     match path.into_os_string().into_string() {
         Ok(path) => path,
         Err(path) => {
             eprintln!(
-                "error: silt: the file {path:?} has a name that is not valid Unicode: rename it"
+                "error: silt: the path {path:?} is not valid Unicode: rename the file or \
+                 directory whose name is not"
             );
             std::process::exit(1);
         }

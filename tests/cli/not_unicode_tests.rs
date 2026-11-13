@@ -155,7 +155,9 @@ fn a_file_found_whose_name_is_not_unicode_is_named_and_refused() {
         assert_eq!(out.status.code(), Some(1), "{args:?}: {stderr}");
         assert!(
             stderr.contains("\\xFF")
-                && stderr.contains("has a name that is not valid Unicode: rename it"),
+                && stderr.contains(
+                    "is not valid Unicode: rename the file or directory whose name is not"
+                ),
             "{args:?}: {stderr}"
         );
         assert!(!stderr.contains("no such file"), "{args:?}: {stderr}");
