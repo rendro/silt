@@ -41,6 +41,10 @@ and [channel / task](channel-task.md) for the primitive channel operations.
 | `tcp_chunks` | `(TcpStream, Int) -> Channel(Result(Bytes, TcpError))` | Read TCP in chunks |
 | `tcp_lines` | `(TcpStream) -> Channel(Result(String, TcpError))` | Read TCP line-by-line |
 
+A stream's channel is only read: a send into it (`channel.send`,
+`channel.try_send`, a `Send` arm of `channel.select`) is a runtime error,
+`cannot send into a stream: channel 4 is the output of stream.from_range`.
+
 `file_lines` reads the file up to 64 KiB of lines at a time and emits
 them one by one, so it can be up to about 64 KiB ahead of what has been
 received: a file that changes while it is read gives lines from before

@@ -65,6 +65,20 @@ fn timer_span(dur: Duration) -> Duration {
     }
 }
 
+/// A send into the output of a stream's stage is refused: a stream's
+/// channel is only read. (It went ahead of what the stage gives, or,
+/// where the stage had ended, was refused as a send on a closed
+/// channel.)
+fn refuse_a_stream(ch: &Channel) -> Result<(), VmError> {
+    match ch.fed_by() {
+        Some(name) => Err(VmError::new(format!(
+            "cannot send into a stream: channel {} is the output of {name}",
+            ch.id()
+        ))),
+        None => Ok(()),
+    }
+}
+
 /// The arms of a `channel.select`: each operation is `Recv(channel)`
 /// or `Send(channel, value)`.
 fn select_arms(ops: List) -> Result<Vec<Arm>, VmError> {
@@ -108,6 +122,7 @@ pub(crate) mod channel {
         }
 
         fn send(vm, ch: Chan, value: &Value) -> Result<Step, VmError> {
+            refuse_a_stream(ch)?;
             let id = ch.id();
             let value = match ch.try_send(value.clone(), vm.scheduler().wake()) {
                 TrySend::Sent => return Ok(Step::Done(Value::Unit)),
@@ -163,6 +178,7 @@ pub(crate) mod channel {
         // `true` if the value was sent, `false` if there is no room and
         // no receiver for it now.
         fn try_send(vm, ch: Chan, value: &Value) -> Result<bool, VmError> {
+            refuse_a_stream(ch)?;
             match ch.try_send(value.clone(), vm.scheduler().wake()) {
                 TrySend::Sent => Ok(true),
                 TrySend::Full(_) => Ok(false),
@@ -191,8 +207,13 @@ pub(crate) mod channel {
                     "channel.select requires at least one operation".into(),
                 ));
             }
-            // A `Send` arm on a closed channel is the error of a send
-            // on it, whatever the other arms could do.
+            // A `Send` arm on a stream's channel, or on a closed one, is
+            // the error of a send on it, whatever the other arms could do.
+            for arm in &arms {
+                if let Arm::Send(ch, _) = arm {
+                    refuse_a_stream(ch)?;
+                }
+            }
             if let Some(closed) = arms.iter().find_map(|arm| match arm {
                 Arm::Send(ch, _) if ch.is_closed() => Some(ch.id()),
                 _ => None,

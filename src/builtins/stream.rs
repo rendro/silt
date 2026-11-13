@@ -566,6 +566,7 @@ fn stage_on(
         drains,
     } = output;
     let out = Channel::fed(vm.next_channel_id(), capacity, ahead);
+    out.set_fed_by(name);
     let id = vm.next_task_id();
     let owner = vm.scheduler().current_owner();
     let stage = StageOf {
