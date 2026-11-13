@@ -13,6 +13,8 @@ mod deep_value_stack_tests;
 mod dependency_error_attribution_tests;
 mod diagnostic_offset_past_end_tests;
 mod disabled_feature_help_tests;
+#[path = "../support/env_switch.rs"]
+mod env_switch;
 mod error_tests;
 mod examples_check;
 mod fs_walk_stat_tests;

@@ -19,6 +19,8 @@ use crate::fmt_property::{
     mutants, plain, run, stress,
 };
 
+use crate::fmt_property::env_switch;
+
 /// Without `SILT_FMT_FULL`, every n-th gap of a doc snippet and of a
 /// golden case gets a comment.
 const DOC_GAPS: usize = 3;
@@ -26,7 +28,7 @@ const GOLDEN_GAPS: usize = 41;
 
 #[test]
 fn every_input_and_its_comment_mutants() {
-    let full = std::env::var_os("SILT_FMT_FULL").is_some_and(|v| v != "0");
+    let full = env_switch::on("SILT_FMT_FULL");
     let examples = examples();
     let docs = doc_snippets();
     let (repros, golden): (Vec<_>, Vec<_>) = golden_files()
