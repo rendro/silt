@@ -1596,6 +1596,10 @@ for a task that waits for an I/O operation. Only `main` gets a deadlock verdict;
   value is still buffered, the channel and everything in its buffer stay
   in memory until the program ends. Receive what is buffered before the
   last use of such a channel, or send a value that does not hold it.
+- **At most 100,000 tasks at once.** A `task.spawn` while 100,000 tasks
+  have not ended is a runtime error, "task limit exceeded: 100000 tasks
+  running (max 100000)". The tasks that the `stream` functions,
+  `task.deadline` and `http.serve` start count too.
 
 
 ## Quick Reference
