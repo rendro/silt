@@ -38,7 +38,7 @@ elements when they are printed or walked.
 | `index_of` | `(Bytes, Bytes) -> Option(Int)` | First offset at which `needle` appears |
 | `is_empty` | `(Bytes) -> Bool` | True if there are no bytes |
 | `length` | `(Bytes) -> Int` | Number of bytes |
-| `slice` | `(Bytes, Int, Int) -> Bytes` | The bytes from `start` up to `end`, both clamped to the length (a negative index is a runtime error) |
+| `slice` | `(Bytes, Int, Int) -> Bytes` | The bytes from `start` up to `end`, both cut to the bytes there are |
 | `split` | `(Bytes, Bytes) -> List(Bytes)` | Split on every occurrence of `sep` (an empty `sep` splits into the single bytes) |
 | `starts_with` | `(Bytes, Bytes) -> Bool` | True if `b` begins with `prefix` |
 | `to_base64` | `(Bytes) -> String` | Encode as base64 |
@@ -128,9 +128,10 @@ for granular handling or fall back to `Error.message(e)`:
 | `InvalidBase64(msg)` | `String` | `from_base64` on malformed input, or input without its `=` padding (`"aGVsbG8"` for `"aGVsbG8="`) |
 | `ByteOutOfRange(value)` | `Int` | `from_list` when an element is negative or `> 255` |
 
-`bytes.get` is a lookup and returns an `Option`; `bytes.slice` clamps its
-indices to the length, as `string.slice` does, and returns `Bytes` (empty if
-`start > end`). As for `string.slice`, a negative index is a runtime error.
+`bytes.get` is a lookup and returns an `Option`; `bytes.slice` cuts its
+indices to the bytes there are, as `string.slice` does (a negative one counts
+as 0, one past the end as the end), and returns `Bytes` (empty if
+`start > end`).
 
 `BytesError` implements the built-in `Error` trait.
 

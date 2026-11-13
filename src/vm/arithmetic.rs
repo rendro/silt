@@ -172,7 +172,7 @@ pub(super) fn ordering(a: &Value, b: &Value) -> Result<Ordering, VmError> {
 fn other_ordering(a: &Value, b: &Value) -> Result<Ordering, VmError> {
     Ok(match (a, b) {
         (Value::Float(a), Value::Float(b)) => a.cmp(b),
-        (Value::String(a), Value::String(b)) => a.cmp(b),
+        (Value::String(a, _), Value::String(b, _)) => a.cmp(b),
         // Bytes byte by byte, each unsigned, a shorter prefix first.
         (Value::Bytes(a), Value::Bytes(b)) => a.cmp(b),
         // Lists are ordered element by element (`Value::cmp`), after

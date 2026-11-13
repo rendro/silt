@@ -424,7 +424,7 @@ proptest! {
             calls.join(", ")
         );
         let joined = match silt::session::testing::run_given(&source) {
-            Ok(silt::value::Value::String(joined)) => joined.to_string(),
+            Ok(silt::value::Value::String(joined, _)) => joined.to_string(),
             other => return Err(TestCaseError::fail(format!("{source}: {other:?}"))),
         };
         let texts: Vec<&str> = joined.split('|').collect();

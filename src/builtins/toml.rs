@@ -78,7 +78,7 @@ pub(crate) fn toml_de_error_to_variant(err: &::toml::de::Error) -> Value {
     let offset = err.span().map(|s| s.start as i64).unwrap_or(0);
     Value::variant(
         bv::TOML_SYNTAX,
-        [Value::String(err.message().into()), Value::Int(offset)],
+        [Value::string(err.message()), Value::Int(offset)],
     )
 }
 
@@ -90,23 +90,23 @@ pub(crate) fn toml_de_result_err(err: &::toml::de::Error) -> Value {
 /// Build `Err(Other(msg))` for ad-hoc failures (unknown type,
 /// serialization errors, document-shape violations, etc.).
 pub(crate) fn toml_unknown_err<S: Into<Arc<str>>>(msg: S) -> Value {
-    toml_err_wrap(Value::variant(bv::TOML_OTHER, [Value::String(msg.into())]))
+    toml_err_wrap(Value::variant(bv::TOML_OTHER, [Value::string(msg)]))
 }
 
 /// What `TomlError`'s `message` says of the variant `tag` with `fields`:
 /// `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
-        ("Syntax", [Value::String(m), Value::Int(offset)]) => {
+        ("Syntax", [Value::String(m, _), Value::Int(offset)]) => {
             format!("toml syntax error at byte {offset}: {m}")
         }
-        ("TypeMismatch", [Value::String(exp), Value::String(act)]) => {
+        ("TypeMismatch", [Value::String(exp, _), Value::String(act, _)]) => {
             format!("toml type mismatch: expected {exp}, got {act}")
         }
-        ("MissingField", [Value::String(n)]) => {
+        ("MissingField", [Value::String(n, _)]) => {
             format!("toml missing field: {n}")
         }
-        ("Other", [Value::String(m)]) => m.to_string(),
+        ("Other", [Value::String(m, _)]) => m.to_string(),
         _ => return None,
     })
 }
@@ -270,7 +270,7 @@ fn from_impl(error: &Value, at: &str) -> Value {
         _ if json.is(bv::JSON_SYNTAX) => {
             let message =
                 super::json::error_text(json.name(), &fields).unwrap_or_else(|| error.to_string());
-            return Value::variant(bv::TOML_OTHER, [Value::String(message.into())]);
+            return Value::variant(bv::TOML_OTHER, [Value::string(message)]);
         }
         _ => return error,
     };
@@ -335,7 +335,7 @@ fn text(caller: &str, data: Result<Data, VmError>, pretty: bool) -> Result<Value
         Ok(s) if s.len() > crate::value::MAX_COLLECTION_LEN => {
             Err(super::common::too_long_text(caller, s.len()))
         }
-        Ok(s) => Ok(Value::variant(bv::OK, [Value::String(s.into())])),
+        Ok(s) => Ok(Value::variant(bv::OK, [Value::string(s)])),
         Err(e) => Ok(toml_unknown_err(format!("{caller}: {e}"))),
     }
 }
@@ -433,7 +433,7 @@ fn marking<T>(
                     return Err(toml_err_wrap(Value::variant(
                         bv::TOML_SYNTAX,
                         [
-                            Value::String(e.message().into()),
+                            Value::string(e.message()),
                             Value::Int(at.saturating_sub(growth) as i64),
                         ],
                     )));
@@ -648,7 +648,7 @@ mod tests {
                     (0..levels)
                         .rev()
                         .fold(Value::Int(1), |inner, level| match level % 2 {
-                            0 => Value::map([(Value::String("k".into()), inner)]),
+                            0 => Value::map([(Value::string("k"), inner)]),
                             _ => Value::list(vec![inner]),
                         })
                 };

@@ -44,7 +44,9 @@ pub enum Value {
     Int(i64),
     Float(Float),
     Bool(bool),
-    String(Arc<str>),
+    /// A string, and whether it is all ASCII ([`Ascii`]): made by
+    /// [`Value::string`], which looks.
+    String(Arc<str>, Ascii),
     List(List),
     Map(Map),
     Set(Set),
@@ -90,9 +92,38 @@ pub enum Value {
     Unit,
 }
 
+/// Whether a string is all ASCII, kept beside it in the value
+/// (`Value::String`): then each of its bytes is a character, and a
+/// character offset is a byte offset, which `string.length`,
+/// `string.slice` and their neighbours take at once instead of walking
+/// the text from its start. It is made only by looking at the text
+/// ([`Ascii::of`]), so it never says ASCII of other text.
+///
+/// One byte with no spare values (a `u8`, not a `bool`): it sits in the
+/// word of the value's kind, after the tag, and the kind stays a plain
+/// tag of its own (see below), as nothing in it is a niche the layout
+/// could put the kind into.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Ascii(u8);
+
+impl Ascii {
+    /// Whether `text` is all ASCII.
+    #[inline]
+    pub fn of(text: &str) -> Ascii {
+        Ascii(u8::from(text.is_ascii()))
+    }
+
+    /// Whether the string is all ASCII.
+    #[inline]
+    pub fn is(self) -> bool {
+        self.0 != 0
+    }
+}
+
 // A value is 24 bytes where pointers are 64 bits: a word for its kind
 // and two for what it holds, which a list (src/value/list.rs), a variant
-// (src/value/obj.rs), a string and a type token fill. The instruction
+// (src/value/obj.rs), a string and a type token fill. (A string's
+// `Ascii` byte is in the kind's word, after the tag.) The instruction
 // loop is written, and checked by the loop guard in CI
 // (.github/scripts/loop-guard), for that size. The kind must stay a
 // plain tag of its own: put into a spare value of a variant's bytes
@@ -110,6 +141,14 @@ const _: () = assert!(std::mem::size_of::<List>() <= 16 && std::mem::size_of::<V
 const _: () = assert!(std::mem::size_of::<Option<Value>>() == 24);
 
 impl Value {
+    /// The string `text`, marked as all ASCII if it is.
+    #[inline]
+    pub fn string(text: impl Into<Arc<str>>) -> Value {
+        let text = text.into();
+        let ascii = Ascii::of(&text);
+        Value::String(text, ascii)
+    }
+
     /// The list of `items`.
     pub fn list(items: Vec<Value>) -> Value {
         Value::List(List::from(items))
@@ -187,7 +226,7 @@ impl Value {
             Value::Int(_) => "Int",
             Value::Float(_) => "Float",
             Value::Bool(_) => "Bool",
-            Value::String(_) => "String",
+            Value::String(..) => "String",
             Value::List(_) => "List",
             Value::Map(_) => "Map",
             Value::Set(_) => "Set",

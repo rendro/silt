@@ -1493,7 +1493,7 @@ What becomes of the operation is one rule for each kind of operation:
 | `tcp.accept`, and the accept of `http.serve` | The accept is woken and gives up; the listener stays usable. A client's connection that reached it is kept by the listener for the next accept. |
 | `postgres.query`, `postgres.execute`, `postgres.notify` and the cursor functions, the `BEGIN` of `postgres.transact`, the `LISTEN` of `postgres.listen` | One that has no connection yet is **never sent**, and the connection goes back to the pool. One that has it: on a pool it is left to finish; in a transaction the server is asked to cancel it, and the transaction is aborted (see [postgres](stdlib/postgres.md)). |
 | `postgres.connect`, `postgres.listen` that were done all the same | What they made is nobody's and is closed: the pool, the listener (its connection goes back to the pool). |
-| `tcp.connect` and the TCP connect of `tcp.connect_tls` (its handshake has not begun), `http.get`, `http.request`, `io.read_file`, `io.write_file`, `io.read_line`, `stream.file_*`, `stream.write_to_file` | It **cannot be interrupted**: it runs to its end, and its result is dropped. A write that had started completes, and a line that `io.read_line` reads afterwards is nobody's. |
+| `tcp.connect` and the TCP connect of `tcp.connect_tls` (its handshake has not begun), `http.get`, `http.request`, `io.read_file`, `io.write_file`, `io.read_line`, `io.read_stdin`, `io.read_stdin_bytes`, `stream.file_*`, `stream.stdin_lines`, `stream.write_to_file` | It **cannot be interrupted**: it runs to its end, and its result is dropped. A write that had started completes, and a line that `io.read_line` reads afterwards is nobody's. |
 
 In every case an operation that had not started yet never runs, and an
 operation whose result arrives in the very moment its task stops waiting
@@ -1529,6 +1529,7 @@ so, instead of the program taking a thread for each without end.
 | `io.read_file(path)` | Always (file I/O) |
 | `io.write_file(path, content)` | Always (file I/O) |
 | `io.read_line()` | Always (stdin) |
+| `io.read_stdin()`, `io.read_stdin_bytes()` | Always (stdin) |
 | `http.get(url)` | Always (network) |
 | `http.request(...)` | Always (network) |
 

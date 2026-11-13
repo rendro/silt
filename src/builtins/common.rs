@@ -11,6 +11,12 @@ use crate::vm::VmError;
 /// arrive, never for the number asked for.
 pub(crate) const READ_AT_ONCE: usize = 64 * 1024;
 
+/// A count, width or position cut to the range there is: a negative
+/// one is 0. (One past the end the caller cuts to the end.)
+pub(crate) fn cut(n: i64) -> usize {
+    usize::try_from(n.max(0)).unwrap_or(usize::MAX)
+}
+
 /// A text that a builtin writes, which holds at most
 /// [`MAX_COLLECTION_LEN`] bytes: a write that would make it longer
 /// fails, and the text says how long it would have been at least. As

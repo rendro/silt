@@ -1,0 +1,8 @@
+-- exit: 1
+-- stderr-contains: math.random_int: invalid bounds: lo (2) > hi (1)
+-- As for `int.clamp`, bounds the wrong way round are an error.
+import math
+
+fn main() {
+  println(math.random_int(2, 1))
+}

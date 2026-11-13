@@ -6,7 +6,7 @@ Functions for working with ordered, immutable lists (`List(a)`).
 type Map(a, b)  -- builtin
 Functions for working with immutable, ordered maps (`Map(k, v)`).
 type Int  -- builtin
-Functions for parsing, converting, and comparing integers.
+Functions for parsing, converting, and comparing integers, for powers, for the bits of an integer, and the limits of `Int`.
 type Bool  -- builtin
 type Bytes  -- opaque
 trait Equal { fn equal(self, other: Self) -> Bool }

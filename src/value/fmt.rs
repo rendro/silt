@@ -265,7 +265,7 @@ fn begin<'a>(
         Value::Float(n) => return write!(f, "{n}").map(|()| None),
         Value::Bool(b) => return write!(f, "{b}").map(|()| None),
         Value::Unit => return f.write_str("()").map(|()| None),
-        Value::String(s) => {
+        Value::String(s, _) => {
             return match shown && !inside {
                 true => f.write_str(s),
                 false => {

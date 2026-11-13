@@ -14,7 +14,7 @@ use crate::vm::{Step, Vm, VmError, iterate, next};
 /// `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
-        ("InvalidPattern", [Value::String(m), Value::Int(pos)]) => {
+        ("InvalidPattern", [Value::String(m, _), Value::Int(pos)]) => {
             format!("invalid regex pattern at position {pos}: {m}")
         }
         ("TooBig", []) => "compiled regex exceeds size budget".to_string(),
@@ -25,7 +25,7 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
 // ── The functions ───────────────────────────────────────────────────
 
 fn string(s: &str) -> Value {
-    Value::String(s.into())
+    Value::string(s)
 }
 
 /// The groups of a match in `text` as a list of strings, a group that
@@ -88,7 +88,7 @@ fn pattern_err(pattern: &str, error: &BuildError) -> Value {
         let (what, at) = syntax_error(pattern, &report);
         Value::variant(
             bv::REGEX_INVALID_PATTERN,
-            [Value::String(what.into()), Value::Int(at as i64)],
+            [Value::string(what), Value::Int(at as i64)],
         )
     };
     Value::variant(bv::ERR, [variant])
@@ -235,10 +235,10 @@ builtins! {
             },
             |state, item, stack| {
                 let (start, end) = span(item);
-                stack.push(Value::String(state.text[start..end].into()));
+                stack.push(Value::string(&state.text[start..end]));
             },
             |state, item, replacement| {
-                let Value::String(replacement) = replacement else {
+                let Value::String(replacement, _) = replacement else {
                     return Err(unsound("regex.replace_with", "f"));
                 };
                 let (start, end) = span(&item);
@@ -256,7 +256,7 @@ builtins! {
                 if out.len() > MAX_COLLECTION_LEN {
                     return Err(too_long_text("regex.replace_with", out.len()));
                 }
-                Ok(ok(Value::String(out.into())))
+                Ok(ok(Value::string(out)))
             },
         )
     }

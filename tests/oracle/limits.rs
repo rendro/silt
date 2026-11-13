@@ -268,7 +268,7 @@ fn a_deadline_ends_its_function_at_every_slice() {
             });
             assert_eq!(
                 result,
-                Ok(Value::String(expected.into())),
+                Ok(Value::string(expected)),
                 "{what} at slice {slice:?}"
             );
         }
@@ -546,7 +546,7 @@ import host
             });
             assert_eq!(
                 result,
-                Ok(Value::String(expected.into())),
+                Ok(Value::string(expected)),
                 "{what} at slice {slice:?}"
             );
         }
@@ -707,7 +707,7 @@ import host
                 vm.set_time_slice(slice);
             }
         });
-        let Ok(Value::String(text)) = result else {
+        let Ok(Value::String(text, _)) = result else {
             panic!("at slice {slice:?}: {result:?}");
         };
         let counts: Vec<i64> = text
@@ -1567,7 +1567,7 @@ import host
             });
             assert_eq!(
                 (result, output.as_str()),
-                (Ok(Value::String("accepted".into())), ""),
+                (Ok(Value::string("accepted")), ""),
                 "at slice {slice:?}"
             );
         }

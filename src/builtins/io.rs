@@ -253,7 +253,7 @@ pub(crate) fn io_error_to_variant(err: &std::io::Error, path: &str) -> Value {
         _ => (bv::IO_OTHER, Some(err.to_string())),
     };
     match arg {
-        Some(a) => Value::variant(variant, [Value::String(a.into())]),
+        Some(a) => Value::variant(variant, [Value::string(a)]),
         None => Value::variant(variant, []),
     }
 }
@@ -270,25 +270,33 @@ pub(crate) fn io_result_err(err: &std::io::Error, path: &str) -> Value {
 /// `fs.walk` entry-cap cutoff). Keeps the result type
 /// `Result(T, IoError)` uniform.
 pub(crate) fn io_result_err_unknown<S: Into<Arc<str>>>(msg: S) -> Value {
-    io_err(Value::variant(bv::IO_OTHER, [Value::String(msg.into())]))
+    io_err(Value::variant(bv::IO_OTHER, [Value::string(msg)]))
 }
 
 /// What `IoError`'s `message` says of the variant `tag` with `fields`:
 /// `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
-        ("NotFound", [Value::String(p)]) => format!("file not found: {p}"),
-        ("PermissionDenied", [Value::String(p)]) => {
+        ("NotFound", [Value::String(p, _)]) => format!("file not found: {p}"),
+        ("PermissionDenied", [Value::String(p, _)]) => {
             format!("permission denied: {p}")
         }
-        ("AlreadyExists", [Value::String(p)]) => format!("already exists: {p}"),
-        ("InvalidInput", [Value::String(m)]) => format!("invalid input: {m}"),
+        ("AlreadyExists", [Value::String(p, _)]) => format!("already exists: {p}"),
+        ("InvalidInput", [Value::String(m, _)]) => format!("invalid input: {m}"),
         ("Interrupted", []) => "operation interrupted".to_string(),
         ("UnexpectedEof", []) => "unexpected end of file".to_string(),
         ("WriteZero", []) => "zero-byte write".to_string(),
-        ("Other", [Value::String(m)]) => m.to_string(),
+        ("Other", [Value::String(m, _)]) => m.to_string(),
         _ => return None,
     })
+}
+
+/// The bytes stdin has to its end.
+fn read_all_stdin() -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    std::io::stdin().lock().read_to_end(&mut bytes)?;
+    Ok(bytes)
 }
 
 /// The error of an `io` function whose operation has no value of its
@@ -297,7 +305,7 @@ pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
 fn io_unknown_err(failure: crate::vm::IoFailure<'_>) -> Value {
     io_err(Value::variant(
         bv::IO_OTHER,
-        [Value::String(failure.text().into())],
+        [Value::string(failure.text())],
     ))
 }
 
@@ -326,7 +334,7 @@ builtins! {
         let path = path.to_string();
         vm.io("io.read_file", io_unknown_err, Leave::RunsOut, move |_| {
             result(std::fs::read_to_string(&path), &path, |text| {
-                Value::String(text.into())
+                Value::string(text)
             })
         })
     }
@@ -349,15 +357,49 @@ builtins! {
         })
     }
 
+    // The end of stdin is a value, `Ok(None)`, as the end of every
+    // other source is.
     fn read_line(vm) -> Result<Step, VmError> {
         vm.io("io.read_line", io_unknown_err, Leave::RunsOut, move |_| {
             let mut line = String::new();
             match std::io::stdin().read_line(&mut line) {
-                // Ok(0) means EOF — surface as Err(UnexpectedEof) so
-                // match-against-Err loops terminate cleanly instead of
-                // spinning on "".
-                Ok(0) => io_err(Value::variant(bv::IO_UNEXPECTED_EOF, [])),
-                Ok(_) => fs_ok(Value::String(line.trim_end().into())),
+                Ok(0) => fs_ok(Value::variant(bv::NONE, [])),
+                Ok(_) => fs_ok(Value::variant(
+                    bv::SOME,
+                    [Value::string(line.trim_end())],
+                )),
+                // As `read_stdin` and `stream.stdin_lines` say it.
+                Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+                    let why = Value::string("a line of stdin is not UTF-8");
+                    io_err(Value::variant(bv::IO_INVALID_INPUT, [why]))
+                }
+                Err(e) => io_result_err(&e, ""),
+            }
+        })
+    }
+
+    // All of stdin, to its end, as text.
+    fn read_stdin(vm) -> Result<Step, VmError> {
+        vm.io("io.read_stdin", io_unknown_err, Leave::RunsOut, move |_| {
+            match read_all_stdin() {
+                Ok(bytes) => match String::from_utf8(bytes) {
+                    Ok(text) => fs_ok(Value::string(text)),
+                    Err(e) => {
+                        let at = e.utf8_error().valid_up_to();
+                        let why = format!("stdin is not UTF-8 at byte {at}");
+                        io_err(Value::variant(bv::IO_INVALID_INPUT, [Value::string(why)]))
+                    }
+                },
+                Err(e) => io_result_err(&e, ""),
+            }
+        })
+    }
+
+    // All of stdin, to its end, as the bytes it is.
+    fn read_stdin_bytes(vm) -> Result<Step, VmError> {
+        vm.io("io.read_stdin_bytes", io_unknown_err, Leave::RunsOut, move |_| {
+            match read_all_stdin() {
+                Ok(bytes) => fs_ok(Value::Bytes(Arc::new(bytes))),
                 Err(e) => io_result_err(&e, ""),
             }
         })
@@ -367,7 +409,7 @@ builtins! {
     // separator (`silt run script.silt -- foo bar` → `["foo", "bar"]`).
     fn args() -> Vec<Value> {
         let args = program_args().into_iter();
-        args.map(|arg| Value::String(arg.into())).collect()
+        args.map(Value::string).collect()
     }
 }
 
@@ -394,7 +436,7 @@ pub(crate) mod fs {
             let names = std::fs::read_dir(path).and_then(|entries| {
                 let names = entries.map(|entry| {
                     let name = entry?.file_name();
-                    Ok(Value::String(name.to_string_lossy().into_owned().into()))
+                    Ok(Value::string(name.to_string_lossy().into_owned()))
                 });
                 names.collect::<std::io::Result<Vec<Value>>>()
             });
@@ -515,10 +557,10 @@ pub(crate) mod fs {
                 // neither the fault nor the path.)
                 Err(e) if e.kind() == std::io::ErrorKind::InvalidInput => io_err(Value::variant(
                     bv::IO_INVALID_INPUT,
-                    [Value::String(format!("not a symlink: {path}").into())],
+                    [Value::string(format!("not a symlink: {path}"))],
                 )),
                 done => result(done, path, |target| {
-                    Value::String(target.to_string_lossy().into_owned().into())
+                    Value::string(target.to_string_lossy().into_owned())
                 }),
             }
         }
@@ -562,7 +604,7 @@ pub(crate) mod fs {
                     Ok(below) => shown_root.join(below),
                     Err(_) => entry.path().to_path_buf(),
                 };
-                out.push(Value::String(shown.to_string_lossy().into_owned().into()));
+                out.push(Value::string(shown.to_string_lossy().into_owned()));
             }
             fs_ok(Value::list(out))
         }
@@ -576,7 +618,7 @@ pub(crate) mod fs {
                 Err(e) => {
                     return io_err(Value::variant(
                         bv::IO_INVALID_INPUT,
-                        [Value::String(e.to_string().into())],
+                        [Value::string(e.to_string())],
                     ));
                 }
             };
@@ -588,7 +630,7 @@ pub(crate) mod fs {
                     ));
                 }
                 match entry {
-                    Ok(path) => out.push(Value::String(path.to_string_lossy().into_owned().into())),
+                    Ok(path) => out.push(Value::string(path.to_string_lossy().into_owned())),
                     Err(e) => return path_err(&e, pattern),
                 }
             }
@@ -634,7 +676,7 @@ pub(crate) mod env {
     builtins! {
         fn get(key: &str) -> Option<Value> {
             let value = std::env::var(key).ok();
-            value.map(|value| Value::String(value.into()))
+            value.map(Value::string)
         }
 
         fn set(vm, key: &str, value: &str) -> Result<(), VmError> {
@@ -673,7 +715,7 @@ pub(crate) mod env {
         fn vars() -> Vec<Value> {
             std::env::vars_os()
                 .filter_map(|(k, v)| Some((k.into_string().ok()?, v.into_string().ok()?)))
-                .map(|(k, v)| Value::tuple(vec![Value::String(k.into()), Value::String(v.into())]))
+                .map(|(k, v)| Value::tuple(vec![Value::string(k), Value::string(v)]))
                 .collect()
         }
     }

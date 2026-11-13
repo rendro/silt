@@ -11,14 +11,14 @@ use crate::vm::VmError;
 /// length of the trimmed number where it stops short (`"1e"` is 2, a
 /// lone sign 1). `decimal` reads the grammar of `float.parse` (a
 /// fraction and an exponent), else the one of `int.parse` (a sign and
-/// digits).
-fn invalid_digit_offset(s: &str, decimal: bool) -> i64 {
+/// digits); the digits are those of `radix`.
+fn invalid_digit_offset(s: &str, decimal: bool, radix: u32) -> i64 {
     let lead = s.len() - s.trim_start().len();
     let bytes = s.trim().as_bytes();
     let digits = |from: usize| {
         bytes[from..]
             .iter()
-            .take_while(|b| b.is_ascii_digit())
+            .take_while(|b| char::from(**b).is_digit(radix))
             .count()
     };
     let mut at = usize::from(matches!(bytes.first(), Some(b'+' | b'-')));
@@ -40,7 +40,7 @@ fn invalid_digit_offset(s: &str, decimal: bool) -> i64 {
 /// Classify a `ParseIntError` into the matching `IntError` variant.
 /// `s` is the original input, used to recover an offset for
 /// `InvalidDigit` since `IntErrorKind::InvalidDigit` doesn't expose one.
-fn classify_int_parse_error(err: &std::num::ParseIntError, s: &str) -> Value {
+fn classify_int_parse_error(err: &std::num::ParseIntError, s: &str, radix: u32) -> Value {
     use std::num::IntErrorKind;
     match err.kind() {
         IntErrorKind::Empty => Value::variant(bv::INT_EMPTY, []),
@@ -50,7 +50,7 @@ fn classify_int_parse_error(err: &std::num::ParseIntError, s: &str) -> Value {
         // to `InvalidDigit(offset)`: std doesn't promise IntErrorKind
         // stays exhaustive, so the `_` arm is not dead code even today.
         _ => {
-            let offset = invalid_digit_offset(s, false);
+            let offset = invalid_digit_offset(s, false, radix);
             Value::variant(bv::INT_INVALID_DIGIT, [Value::Int(offset)])
         }
     }
@@ -65,7 +65,7 @@ fn classify_float_parse_error(s: &str) -> Value {
     if s.trim().is_empty() {
         return Value::variant(bv::FLOAT_EMPTY, []);
     }
-    let offset = invalid_digit_offset(s, true);
+    let offset = invalid_digit_offset(s, true, 10);
     Value::variant(bv::FLOAT_INVALID_DIGIT, [Value::Int(offset)])
 }
 
@@ -110,6 +110,17 @@ pub(crate) fn checked_float(f: f64, msg: impl FnOnce() -> String) -> Result<Valu
     Float::new(f)
         .map(Value::Float)
         .ok_or_else(|| VmError::new(msg()))
+}
+
+/// The radix `radix` of `int.<name>`: one from 2 to 36 (the digits 0-9
+/// and then a-z), else a runtime error.
+fn radix_of(name: &str, radix: i64) -> Result<u32, VmError> {
+    match u32::try_from(radix) {
+        Ok(r @ 2..=36) => Ok(r),
+        _ => Err(VmError::new(format!(
+            "int.{name}: radix must be from 2 to 36, got {radix}"
+        ))),
+    }
 }
 
 /// `int.*`
@@ -163,8 +174,90 @@ pub(crate) mod int {
         fn parse(s: &str) -> Value {
             match s.trim().parse::<i64>() {
                 Ok(n) => Value::variant(bv::OK, [Value::Int(n)]),
-                Err(e) => Value::variant(bv::ERR, [classify_int_parse_error(&e, s)]),
+                Err(e) => Value::variant(bv::ERR, [classify_int_parse_error(&e, s, 10)]),
             }
+        }
+
+        // As `int.parse`, in the radix `radix`: its letters of either
+        // case.
+        fn parse_radix(s: &str, radix: i64) -> Result<Value, VmError> {
+            let radix = radix_of("parse_radix", radix)?;
+            Ok(match i64::from_str_radix(s.trim(), radix) {
+                Ok(n) => Value::variant(bv::OK, [Value::Int(n)]),
+                Err(e) => Value::variant(bv::ERR, [classify_int_parse_error(&e, s, radix)]),
+            })
+        }
+
+        // Lower-case letters, and a `-` in front of a negative number.
+        fn to_radix(n: i64, radix: i64) -> Result<String, VmError> {
+            let radix = radix_of("to_radix", radix)?;
+            let mut magnitude = n.unsigned_abs();
+            let mut digits = Vec::new();
+            loop {
+                let digit = (magnitude % u64::from(radix)) as u32;
+                digits.push(char::from_digit(digit, radix).expect("a digit of the radix"));
+                magnitude /= u64::from(radix);
+                if magnitude == 0 {
+                    break;
+                }
+            }
+            if n < 0 {
+                digits.push('-');
+            }
+            Ok(digits.into_iter().rev().collect())
+        }
+
+        // `base` to the power `exponent`. A result outside the Ints is
+        // the overflow `*` raises; a negative exponent, which has no
+        // Int result, is a runtime error too.
+        fn pow(base: i64, exponent: i64) -> Result<i64, VmError> {
+            let overflow = || VmError::new(format!("integer overflow: pow({base}, {exponent})"));
+            if exponent < 0 {
+                return Err(VmError::new(format!(
+                    "int.pow: negative exponent {exponent}"
+                )));
+            }
+            match u32::try_from(exponent) {
+                Ok(exponent) => base.checked_pow(exponent).ok_or_else(overflow),
+                // Beyond `u32`: only 0, 1 and -1 stay in range.
+                Err(_) => match base {
+                    0 | 1 => Ok(base),
+                    -1 => Ok(if exponent % 2 == 0 { 1 } else { -1 }),
+                    _ => Err(overflow()),
+                },
+            }
+        }
+
+        fn bit_and(a: i64, b: i64) -> i64 {
+            a & b
+        }
+
+        fn bit_or(a: i64, b: i64) -> i64 {
+            a | b
+        }
+
+        fn bit_xor(a: i64, b: i64) -> i64 {
+            a ^ b
+        }
+
+        // The 64 bits of `n` moved `count` places up: the bits moved
+        // past the top are gone, 0s come in at the bottom. A count of
+        // 64 or more gives 0; a negative count is 0, as every count in
+        // the standard library.
+        fn shift_left(n: i64, count: i64) -> i64 {
+            match count {
+                ..0 => n,
+                0..64 => n << count,
+                _ => 0,
+            }
+        }
+
+        // The 64 bits of `n` moved `count` places down, the sign kept:
+        // `n` divided by 2^count, rounded down. A count of 64 or more
+        // gives 0 for a number of 0 or more and -1 for a negative one;
+        // a negative count is 0.
+        fn shift_right(n: i64, count: i64) -> i64 {
+            n >> count.clamp(0, 63)
         }
 
         fn abs(n: i64) -> Result<i64, VmError> {
@@ -416,6 +509,16 @@ pub(crate) mod math {
 
         fn random(vm) -> f64 {
             vm.runtime.random()
+        }
+
+        // An Int of `lo..=hi`, both ends included, each as likely.
+        fn random_int(vm, lo: i64, hi: i64) -> Result<i64, VmError> {
+            if lo > hi {
+                return Err(VmError::new(format!(
+                    "math.random_int: invalid bounds: lo ({lo}) > hi ({hi})"
+                )));
+            }
+            Ok(vm.runtime.random_int(lo, hi))
         }
     }
 }

@@ -182,8 +182,6 @@ fn main() {
     |> list.each { route ->
       let segments = route.pattern |> string.split("/") |> list.filter { s -> !string.is_empty(s) }
       let depth = list.length(segments)
-      println(
-        "  {string.pad_right(route.method, 7, " ")} {string.pad_right(route.pattern, 45, " ")} (depth: {depth})",
-      )
+      println("  {string.left(route.method, 7)} {string.left(route.pattern, 45)} (depth: {depth})")
     }
 }
