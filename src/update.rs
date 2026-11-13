@@ -283,7 +283,8 @@ fn download(url: &str, dest: &Path) -> Result<(), String> {
         // here, and only to https.
         wget_keeps_to_https(&wget)?;
         let mut url = url.to_string();
-        for _ in 0..WGET_HOPS_MOST {
+        // The first request and at most WGET_HOPS_MOST redirects.
+        for _ in 0..=WGET_HOPS_MOST {
             let out = Command::new("wget")
                 .args(["--max-redirect=0", "--server-response", "-O"])
                 .arg(dest)
@@ -376,8 +377,18 @@ fn next_hop(current: &str, said: &str) -> Result<Option<String>, String> {
             None if location.starts_with('/') => format!("https://{host}{location}"),
             None => {
                 let asked = current.split(['?', '#']).next().unwrap_or(current);
-                let dir = asked.rsplit_once('/').map_or(asked, |(dir, _)| dir);
-                format!("{dir}/{location}")
+                if location.starts_with('?') {
+                    // A new query of the path asked for.
+                    format!("{asked}{location}")
+                } else {
+                    // Beside the path asked for, or at the root of a URL
+                    // that has no path.
+                    let dir = match asked["https://".len()..].contains('/') {
+                        true => asked.rsplit_once('/').map_or(asked, |(dir, _)| dir),
+                        false => asked,
+                    };
+                    format!("{dir}/{location}")
+                }
             }
         },
     };
@@ -717,6 +728,14 @@ mod tests {
                 "https://github.com/rendro/silt/releases/download/v1/../v2/a.tar.gz",
             ),
             ("HTTPS://cdn.example/a", "https://cdn.example/a"),
+            (
+                "?sig=2",
+                "https://github.com/rendro/silt/releases/download/v1/a.tar.gz?sig=2",
+            ),
+            (
+                "1a:b",
+                "https://github.com/rendro/silt/releases/download/v1/1a:b",
+            ),
         ] {
             assert_eq!(
                 next_hop(from, &said(to)),
@@ -729,6 +748,11 @@ mod tests {
             Ok(Some(
                 "https://github.com/rendro/silt/releases/download/v1/c".to_string()
             ))
+        );
+        // From a URL with no path, a relative path is at its root.
+        assert_eq!(
+            next_hop("https://cdn.example", &said("file.tgz")),
+            Ok(Some("https://cdn.example/file.tgz".to_string()))
         );
         for refused in [
             "http://example.com/a",

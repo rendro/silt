@@ -175,12 +175,18 @@ wget_https() {
             # On the https host it names, or on this one.
             //*) _wurl="https:$_loc" ;;
             /*) _wurl="https://$_host$_loc" ;;
+            # A new query of the path asked for.
+            \?*) _wurl="${_wurl%%[?#]*}$_loc" ;;
             *)
                 case "${_loc%%:*}" in
-                    "$_loc" | *[!A-Za-z0-9+.-]* | "")
-                        # A path beside the one asked for.
+                    "$_loc" | [!A-Za-z]* | *[!A-Za-z0-9+.-]* | "")
+                        # A path beside the one asked for (at the root of
+                        # a URL that has no path).
                         _base="${_wurl%%[?#]*}"
-                        _wurl="${_base%/*}/$_loc"
+                        case "${_base#https://}" in
+                            */*) _wurl="${_base%/*}/$_loc" ;;
+                            *) _wurl="$_base/$_loc" ;;
+                        esac
                         ;;
                     *)
                         printf "  error: a download was redirected to %s, which is not https\n" "$_loc" >&2
@@ -190,7 +196,7 @@ wget_https() {
                 ;;
         esac
         _hops=$((_hops + 1))
-        if [ "$_hops" -ge 10 ]; then
+        if [ "$_hops" -gt 10 ]; then
             printf "  error: a download was redirected more than 10 times\n" >&2
             return 1
         fi
