@@ -129,8 +129,10 @@ enum Next {
 /// The part of a stage or sink that is its own: given what happened,
 /// what comes next.
 /// What makes the blocking operations of a source or a sink return
-/// when nobody waits for them any more (a connection is shut down).
-type Stop = Arc<dyn Fn() + Send + Sync>;
+/// when nobody waits for them any more (a source on a connection lets go
+/// of it, a sink shuts it down): `true` if what is in flight ends so
+/// (see `Leave::Closes`).
+type Stop = Arc<dyn Fn() -> bool + Send + Sync>;
 
 /// What the blocking operations of a source or a sink work on: the
 /// typed error of its module, for an operation that could not run, and
@@ -191,13 +193,14 @@ struct Pipe {
     /// called when the pipe is stopped before its end, whether an
     /// operation is in flight then or not.
     stop: Option<Stop>,
-    /// For a source on a connection: the shut-down that its output's
-    /// reader runs when it stops reading, also before the source has
-    /// run. It is disarmed when the source ends by itself.
+    /// For a source on a connection: its stop (it lets go of the
+    /// connection, [`Held::let_go`]) that its output's reader runs when
+    /// it stops reading, also before the source has run. It is disarmed
+    /// when the source ends by itself.
     armed: Option<Arc<Armed>>,
 }
 
-/// The shut-down of a connection that a stage is stopped with: run
+/// The stop that a stage on a connection is stopped with: run
 /// once, by whoever stops the stage first, and not after the stage
 /// ended by itself.
 struct Armed {
@@ -215,7 +218,7 @@ impl Armed {
 
     fn fire(&self) {
         if self.armed.swap(false, Ordering::SeqCst) {
-            (self.stop)();
+            let _ = (self.stop)();
         }
     }
 
@@ -297,14 +300,14 @@ impl Pipe {
     }
 
     /// Nobody reads the output any more, and the pipe has a value for
-    /// it: the pipe is over before its end. One on a connection shuts
-    /// the connection down, as one that is stopped in a wait does
-    /// (`abandon`): a source that is cut short ends its connection at
-    /// whatever moment its reader went.
+    /// it: the pipe is over before its end. One on a connection is
+    /// stopped (a source lets go of it, a sink shuts it down), as one
+    /// that is stopped in a wait is (`abandon`), at whatever moment its
+    /// reader went.
     fn cut_short(&mut self, vm: &Vm) {
         if !self.finished {
             if let Some(stop) = self.stop.take() {
-                stop();
+                let _ = stop();
             }
             if let Some(armed) = &self.armed {
                 armed.fire();
@@ -415,10 +418,7 @@ impl Pipe {
                     let leave = match stop {
                         Some(stop) => {
                             self.stop = Some(stop.clone());
-                            Leave::Closes(Box::new(move || {
-                                stop();
-                                true
-                            }))
+                            Leave::Closes(Box::new(move || stop()))
                         }
                         None => Leave::RunsOut,
                     };
@@ -475,12 +475,12 @@ impl Native for Pipe {
     }
 
     fn abandon(&mut self, vm: &mut Vm) {
-        // A pipe on a connection that is stopped before its end shuts
-        // the connection down, whatever it was doing: not only when a
-        // read happened to be in flight.
+        // A pipe on a connection that is stopped before its end is
+        // stopped on it (a source lets go of it, a sink shuts it down),
+        // whatever it was doing: not only when a read was in flight.
         if !self.finished {
             if let Some(stop) = self.stop.take() {
-                stop();
+                let _ = stop();
             }
             if let Some(armed) = &self.armed {
                 armed.fire();
@@ -521,8 +521,8 @@ fn stage(
 }
 
 /// Start a stage, as [`stage`] does, that works on a connection: `stop`
-/// shuts the connection down when the stage is stopped, whenever that
-/// is: in a read, between two, or before the stage has run at all.
+/// is run when the stage is stopped, whenever that is: in a read,
+/// between two, or before the stage has run at all.
 fn stage_on(
     vm: &mut Vm,
     name: &'static str,
@@ -623,15 +623,117 @@ fn err_io_unknown(s: impl Into<Arc<str>>) -> Value {
     Value::variant(bv::ERR, [Value::variant(bv::IO_OTHER, [Value::string(s)])])
 }
 
-/// What a source or a sink on `stream` works on: its errors are
-/// `TcpError`s, and its operations return when the connection is shut
-/// down.
+/// What a sink on `stream` works on: its errors are `TcpError`s, and
+/// its operations return when the connection is shut down.
 #[cfg(feature = "tcp")]
 fn on_tcp(stream: &Arc<crate::runtime::handle::TcpStreamHandle>) -> On {
     let stream = stream.clone();
     On {
         failure: super::tcp::tcp_timeout_err,
-        stop: Some(Arc::new(move || stream.shut_down())),
+        stop: Some(Arc::new(move || {
+            stream.shut_down();
+            true
+        })),
+    }
+}
+
+/// The connection of a `stream.tcp_*` source, which the stream holds as
+/// any other name does: while the stream is read, the connection stays.
+/// When the stream is let go of (nothing can read it any more, or
+/// `channel.close`), the source stops reading and lets go of the
+/// connection ([`Held::let_go`]): it is closed only when nothing else
+/// holds it, as any value is. A source that ends by itself (the peer
+/// closed, an error) lets go of it too.
+#[cfg(feature = "tcp")]
+struct Held {
+    slot: Mutex<Option<Arc<crate::runtime::handle::TcpStreamHandle>>>,
+    conn: Weak<crate::runtime::handle::TcpStreamHandle>,
+    /// A read of the source is in flight, with its own hold of the
+    /// connection.
+    reading: AtomicBool,
+    /// What ends that read without shutting the connection down: on a
+    /// plain connection.
+    wake: Option<crate::runtime::handle::ReadWake>,
+}
+
+#[cfg(feature = "tcp")]
+impl Held {
+    fn new(conn: &Arc<crate::runtime::handle::TcpStreamHandle>) -> Arc<Held> {
+        let wake = match conn.reads_now() {
+            true => crate::runtime::handle::ReadWake::new().ok(),
+            false => None,
+        };
+        Arc::new(Held {
+            slot: Mutex::new(Some(conn.clone())),
+            conn: Arc::downgrade(conn),
+            reading: AtomicBool::new(false),
+            wake,
+        })
+    }
+
+    /// The connection, for a read, which is in flight until the guard
+    /// is dropped; `None` once the source has let go of it.
+    fn for_read(&self) -> Option<(Arc<crate::runtime::handle::TcpStreamHandle>, Reading<'_>)> {
+        let slot = self.slot.lock();
+        let conn = slot.clone()?;
+        self.reading.store(true, Ordering::SeqCst);
+        Some((conn, Reading(self)))
+    }
+
+    /// The source has ended by itself: it holds the connection no more.
+    fn release(&self) {
+        let taken = self.slot.lock().take();
+        std::mem::drop(taken);
+    }
+
+    /// The stream is let go of: the source lets go of the connection,
+    /// and a read in flight ends without taking anything. If that read
+    /// is the last holder, nobody else can use the connection: it is
+    /// shut down, which ends the read, and closed with it. Else, on a
+    /// plain connection, the read is woken ([`ReadWake`]); on a TLS
+    /// connection it cannot be (it waits inside the TLS library): it
+    /// runs on until the peer sends or closes, and `false` says so.
+    fn let_go(&self) -> bool {
+        self.release();
+        if let Some(wake) = &self.wake {
+            wake.wake();
+        }
+        if !self.reading.load(Ordering::SeqCst) {
+            return true;
+        }
+        match self.conn.strong_count() {
+            0 => true,
+            1 => {
+                if let Some(conn) = self.conn.upgrade() {
+                    conn.shut_down();
+                }
+                true
+            }
+            _ => self.wake.is_some(),
+        }
+    }
+}
+
+/// A read of a source on a connection is in flight ([`Held::for_read`]).
+#[cfg(feature = "tcp")]
+struct Reading<'a>(&'a Held);
+
+#[cfg(feature = "tcp")]
+impl Drop for Reading<'_> {
+    fn drop(&mut self) {
+        self.0.reading.store(false, Ordering::SeqCst);
+    }
+}
+
+/// What a source on a connection works on: its errors are `TcpError`s,
+/// and when nobody reads it any more it lets go of the connection
+/// ([`Held::let_go`]).
+#[cfg(feature = "tcp")]
+fn on_held(held: &Arc<Held>) -> On {
+    let held = held.clone();
+    On {
+        failure: super::tcp::tcp_timeout_err,
+        stop: Some(Arc::new(move || held.let_go())),
     }
 }
 
@@ -838,9 +940,7 @@ const LINES_READ: usize = 4 * 1024;
 /// that what is kept is the line not yet complete and room for one
 /// read: a source that waits holds that, never more.
 #[cfg(feature = "tcp")]
-fn tcp_line_reads(
-    conn: Arc<crate::runtime::handle::TcpStreamHandle>,
-) -> impl FnMut() -> Vec<Value> + Send + 'static {
+fn tcp_line_reads(held: Arc<Held>) -> impl FnMut() -> Vec<Value> + Send + 'static {
     // What was read and is no line yet; how much of it is known to
     // have no `\n`; the peer has closed; the source has ended; the last
     // read filled what it asked for.
@@ -870,6 +970,12 @@ fn tcp_line_reads(
         if ended {
             return lines;
         }
+        // (The guard is dropped before the connection: the read is over
+        // while it still holds it.)
+        let Some((conn, _reading)) = held.for_read() else {
+            ended = true;
+            return lines;
+        };
         // The bytes this read of the source has read.
         let mut read_here = 0;
         loop {
@@ -891,6 +997,7 @@ fn tcp_line_reads(
                     Err(_) if lines.is_empty() => {
                         ended = true;
                         lines.push(not_utf8(&conn));
+                        held.release();
                         return lines;
                     }
                     // The lines before it are emitted first: the next read
@@ -925,7 +1032,20 @@ fn tcp_line_reads(
             }
             pending.resize(at + LINES_READ, 0);
             let read = match wait {
-                true => conn.read(&mut pending[at..]),
+                true => match held.wake.as_ref() {
+                    Some(wake) => match conn.read_unless_woken(&mut pending[at..], wake) {
+                        Ok(Some(got)) => Ok(got),
+                        // The stream was let go of: nothing was read, and
+                        // the source ends.
+                        Ok(None) => {
+                            pending.truncate(at);
+                            ended = true;
+                            return lines;
+                        }
+                        Err(e) => Err(e),
+                    },
+                    None => conn.read(&mut pending[at..]),
+                },
                 false => match conn.read_now(&mut pending[at..]) {
                     Some(got) => Ok(got),
                     None => {
@@ -944,6 +1064,7 @@ fn tcp_line_reads(
                 Err(e) => {
                     ended = true;
                     lines.push(super::tcp::tcp_io_err(super::tcp::Doing::Using, &e));
+                    held.release();
                     return lines;
                 }
             }
@@ -951,6 +1072,7 @@ fn tcp_line_reads(
         give_back(&mut pending);
         if lines.is_empty() && closed {
             ended = true;
+            held.release();
             if !pending.is_empty() {
                 lines.push(match std::str::from_utf8(&pending) {
                     Ok(line) => ok(Value::string(line)),
@@ -1232,21 +1354,34 @@ builtins! {
         let Ok(n @ 1..) = usize::try_from(size) else {
             return Err(VmError::new("stream.tcp_chunks: size must be positive".into()));
         };
-        let stream_handle = stream.clone();
+        let held = Held::new(stream);
+        let on = on_held(&held);
         reading(
             vm,
             "stream.tcp_chunks",
-            on_tcp(&stream_handle),
+            on,
             one_a_read(move || {
+                let (conn, _reading) = held.for_read()?;
                 let mut buf = vec![0u8; n.min(READ_AT_ONCE)];
-                let read = stream_handle.read(&mut buf);
+                let read = match held.wake.as_ref() {
+                    Some(wake) => conn.read_unless_woken(&mut buf, wake),
+                    None => conn.read(&mut buf).map(Some),
+                };
                 match read {
-                    Ok(0) => None,
-                    Ok(read) => {
+                    // The stream was let go of: nothing was read.
+                    Ok(None) => None,
+                    Ok(Some(0)) => {
+                        held.release();
+                        None
+                    }
+                    Ok(Some(read)) => {
                         buf.truncate(read);
                         Some(ok(Value::Bytes(Arc::new(buf))))
                     }
-                    Err(e) => Some(super::tcp::tcp_io_err(super::tcp::Doing::Using, &e)),
+                    Err(e) => {
+                        held.release();
+                        Some(super::tcp::tcp_io_err(super::tcp::Doing::Using, &e))
+                    }
                 }
             }),
         )
@@ -1254,8 +1389,9 @@ builtins! {
 
     #[cfg(feature = "tcp")]
     fn tcp_lines(vm, stream: TcpStream) -> Result<Step, VmError> {
-        let conn = stream.clone();
-        reading(vm, "stream.tcp_lines", on_tcp(&conn), tcp_line_reads(conn))
+        let held = Held::new(stream);
+        let on = on_held(&held);
+        reading(vm, "stream.tcp_lines", on, tcp_line_reads(held))
     }
 
     // ── Transforms ────────────────────────────────────────────────────────
@@ -1825,7 +1961,10 @@ mod tests {
         let (items, next) = mpsc::channel::<Value>();
         let stopped = Arc::new(AtomicBool::new(false));
         let flag = stopped.clone();
-        let stop: Stop = Arc::new(move || flag.store(true, Ordering::SeqCst));
+        let stop: Stop = Arc::new(move || {
+            flag.store(true, Ordering::SeqCst);
+            true
+        });
         let on = On {
             failure: io_failure,
             stop: Some(stop),
@@ -1943,7 +2082,7 @@ mod tests {
     /// name; and how many reads of the source there were.
     #[cfg(feature = "tcp")]
     fn lines_of(conn: &Arc<crate::runtime::handle::TcpStreamHandle>) -> (Vec<String>, usize) {
-        let mut read = tcp_line_reads(conn.clone());
+        let mut read = tcp_line_reads(Held::new(conn));
         let (mut items, mut calls) = (Vec::new(), 0);
         loop {
             calls += 1;
@@ -2051,7 +2190,7 @@ mod tests {
     #[cfg(feature = "tcp")]
     fn tcp_lines_ends_at_a_line_that_is_no_utf8_or_a_read_that_fails() {
         let (conn, _) = counted(b"a\nb\n\xff\nc\n", usize::MAX, None);
-        let mut read = tcp_line_reads(conn.clone());
+        let mut read = tcp_line_reads(Held::new(&conn));
         let mut lines = 0;
         let ended = loop {
             let got = read();
@@ -2091,8 +2230,9 @@ mod tests {
     }
 
     /// The reader of a source on a connection is gone when the source
-    /// comes with an item for it: the source ends, and it shuts its
-    /// connection down, as it does when it is stopped in a read.
+    /// comes with an item for it: the source ends, and runs its stop on
+    /// the connection (here a flag; `stream.tcp_*`: it lets go of it),
+    /// as it does when it is stopped in a read.
     #[test]
     fn a_source_that_finds_its_output_closed_stops_its_connection() {
         let (vm, out, items, stopped) = source();
@@ -2112,14 +2252,15 @@ mod tests {
         let flag = stopped.clone();
         let mut pipe = Pipe::new("test.source", vec![], logic);
         pipe.armed = Some(Arc::new(Armed::new(Arc::new(move || {
-            flag.store(true, Ordering::SeqCst)
+            flag.store(true, Ordering::SeqCst);
+            true
         }))));
         (pipe, stopped)
     }
 
     /// A source on a connection that is stopped before it has run (a
     /// worker ends a task that was cancelled before its first slice:
-    /// its frames are abandoned) shuts its connection down; it does not
+    /// its frames are abandoned) runs its stop on its connection; it does not
     /// take the stop for an end of its own. (Before, its abandon
     /// disarmed the shut-down, and a reader that stopped it at that
     /// moment left the connection open.)

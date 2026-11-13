@@ -162,9 +162,13 @@ blocked operation, and its thread, end. So a read that timed out cannot
 be tried again: the next call on that connection gives `Err(Closed)`.
 So is the connection of an operation whose result arrives in the very
 moment in which its task stops waiting: what the read had taken is gone
-with the connection. The same holds for the
-`stream.tcp_*` sources and sink when their pipeline is cut short or
-their I/O times out. A `tcp.accept` that nobody waits
+with the connection. The same holds for `stream.write_to_tcp` when its
+task is cancelled or its I/O times out. A `stream.tcp_lines` or
+`stream.tcp_chunks` source is different: it holds the connection as any
+other name does, and when its stream is stopped or its read times out it
+lets go of the connection without shutting it; the connection closes when
+its last holder is gone (see
+[stream](stream.md)). A `tcp.accept` that nobody waits
 for is woken and gives up; the listener stays usable. A `tcp.connect`,
 and a connect or handshake of `tcp.connect_tls` or `tcp.tls_server`,
 that nobody waits for any more ends its connection the same way. A

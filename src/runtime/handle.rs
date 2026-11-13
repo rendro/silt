@@ -706,6 +706,43 @@ impl TcpStreamHandle {
         }
     }
 
+    /// [`TcpStreamHandle::read`], which on a plain connection first
+    /// waits for something to read beside `wake`: `Ok(None)` when it is
+    /// woken ([`ReadWake::wake`]) instead. Nothing is taken from the
+    /// connection then, and the connection is as it was. (A TLS
+    /// connection reads as `read` does: what waits in the TLS library
+    /// cannot be woken so.)
+    pub fn read_unless_woken(
+        &self,
+        buf: &mut [u8],
+        wake: &ReadWake,
+    ) -> std::io::Result<Option<usize>> {
+        use std::io::Read;
+        match &self.io {
+            TcpIo::Plain {
+                socket,
+                reading,
+                switching,
+                ..
+            } => {
+                let _turn = reading.lock();
+                if self.handed_over.load(AtomicOrdering::SeqCst) {
+                    return Err(std::io::ErrorKind::NotConnected.into());
+                }
+                if !wake.wait(socket) {
+                    return Ok(None);
+                }
+                loop {
+                    match (&*socket).read(buf) {
+                        Err(e) if switched_meanwhile(&e) => drop(switching.lock()),
+                        read => return read.map(Some),
+                    }
+                }
+            }
+            TcpIo::Tls { both, .. } => both.lock().read(buf).map(Some),
+        }
+    }
+
     /// Read exactly `n` bytes. The buffer grows as the bytes arrive: a
     /// peer that sends few costs what it sent, however many were asked
     /// for. A connection that ends before the `n`th byte is
@@ -1051,6 +1088,131 @@ impl Shutter {
             None => before && !shut.connecting,
         }
     }
+}
+
+/// What wakes a read that waits for a plain connection to have
+/// something to read, without shutting the connection down
+/// ([`TcpStreamHandle::read_unless_woken`]): the read waits on the
+/// connection and on a loopback socket of its own, and a wake is a
+/// datagram to that socket. A `stream.tcp_*` source has one: when its
+/// stream is let go of while the connection still has other holders,
+/// its read in flight ends so, and the connection stays theirs.
+pub struct ReadWake {
+    socket: std::net::UdpSocket,
+    at: std::net::SocketAddr,
+    woken: AtomicBool,
+}
+
+impl ReadWake {
+    pub fn new() -> std::io::Result<ReadWake> {
+        let socket = std::net::UdpSocket::bind("127.0.0.1:0")?;
+        let at = socket.local_addr()?;
+        socket.set_nonblocking(true)?;
+        Ok(ReadWake {
+            socket,
+            at,
+            woken: AtomicBool::new(false),
+        })
+    }
+
+    /// End the wait of the read, now or when it begins: from now on it
+    /// reads nothing.
+    pub fn wake(&self) {
+        self.woken.store(true, AtomicOrdering::SeqCst);
+        let _ = self.socket.send_to(&[0], self.at);
+    }
+
+    /// Wait until `conn` has something to read, its end or an error:
+    /// `true`; `false` when woken.
+    fn wait(&self, conn: &std::net::TcpStream) -> bool {
+        loop {
+            if self.woken.load(AtomicOrdering::SeqCst) {
+                return false;
+            }
+            match poll_two(conn, &self.socket) {
+                Ok((conn_ready, wake_ready)) => {
+                    if wake_ready {
+                        let mut byte = [0u8; 1];
+                        while self.socket.recv(&mut byte).is_ok() {}
+                    }
+                    if self.woken.load(AtomicOrdering::SeqCst) {
+                        return false;
+                    }
+                    if conn_ready {
+                        return true;
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                // The read itself says what is wrong.
+                Err(_) => return true,
+            }
+        }
+    }
+}
+
+/// Wait until one of the two sockets has something to read (or its
+/// end, or an error): which ones.
+#[cfg(unix)]
+fn poll_two(
+    conn: &std::net::TcpStream,
+    wake: &std::net::UdpSocket,
+) -> std::io::Result<(bool, bool)> {
+    use std::os::unix::io::AsRawFd;
+    let mut fds = [
+        libc::pollfd {
+            fd: conn.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        },
+        libc::pollfd {
+            fd: wake.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        },
+    ];
+    // SAFETY: `fds` is an array of two valid `pollfd`s of descriptors
+    // that the caller keeps open for the call; its length is passed.
+    let n = unsafe { libc::poll(fds.as_mut_ptr(), 2, -1) };
+    if n < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok((fds[0].revents != 0, fds[1].revents != 0))
+}
+
+#[cfg(windows)]
+fn poll_two(
+    conn: &std::net::TcpStream,
+    wake: &std::net::UdpSocket,
+) -> std::io::Result<(bool, bool)> {
+    use std::os::windows::io::AsRawSocket;
+    use windows_sys::Win32::Networking::WinSock::{POLLRDNORM, SOCKET_ERROR, WSAPOLLFD, WSAPoll};
+    let mut fds = [
+        WSAPOLLFD {
+            fd: conn.as_raw_socket() as _,
+            events: POLLRDNORM,
+            revents: 0,
+        },
+        WSAPOLLFD {
+            fd: wake.as_raw_socket() as _,
+            events: POLLRDNORM,
+            revents: 0,
+        },
+    ];
+    // SAFETY: `fds` is an array of two valid `WSAPOLLFD`s of sockets
+    // that the caller keeps open for the call; its length is passed.
+    let n = unsafe { WSAPoll(fds.as_mut_ptr(), 2, -1) };
+    if n == SOCKET_ERROR {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok((fds[0].revents != 0, fds[1].revents != 0))
+}
+
+#[cfg(not(any(unix, windows)))]
+fn poll_two(
+    _conn: &std::net::TcpStream,
+    _wake: &std::net::UdpSocket,
+) -> std::io::Result<(bool, bool)> {
+    Ok((true, false))
 }
 
 /// Shut `socket` down, and end what blocks on `used`.
