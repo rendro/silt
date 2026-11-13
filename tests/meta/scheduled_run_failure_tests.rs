@@ -75,7 +75,10 @@ fn holds_a_report_job(name: &str, label: &str) {
     );
     let condition = line_with("if:");
     for part in ["!cancelled()", "github.event_name == 'schedule'"] {
-        assert!(condition.contains(part), "{name}: {condition} has no {part}");
+        assert!(
+            condition.contains(part),
+            "{name}: {condition} has no {part}"
+        );
     }
     assert_eq!(
         line_with("run:"),
@@ -98,8 +101,8 @@ fn holds_a_report_job(name: &str, label: &str) {
 fn a_failed_nightly_or_weekly_job_opens_an_issue() {
     holds_a_report_job("fuzz-nightly.yml", "nightly");
     holds_a_report_job("audit.yml", "weekly");
-    let script = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join(".github/scripts/report-failed-jobs.sh");
+    let script =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".github/scripts/report-failed-jobs.sh");
     let script = std::fs::read_to_string(script).expect("the report script");
     assert!(script.contains("title=\"$label: $job failed\""));
     assert!(script.contains("gh issue comment") && script.contains("gh issue create"));
@@ -117,7 +120,10 @@ fn a_fuzz_crash_fails_its_job_after_the_crash_file_is_saved() {
         fuzz.find(&format!("- name: {name}"))
             .unwrap_or_else(|| panic!("no step {name}"))
     };
-    let (run, upload) = (step("Fuzz ${{ matrix.target }}"), step("Upload reproducers"));
+    let (run, upload) = (
+        step("Fuzz ${{ matrix.target }}"),
+        step("Upload reproducers"),
+    );
     assert!(run < upload, "the crash file is saved after the run");
     assert!(
         fuzz[upload..].contains("if: always()"),
