@@ -113,3 +113,52 @@ fn main() {
         "{stderr}"
     );
 }
+
+/// A `.silt` file whose name is not Unicode, found by the walk of a
+/// package (check), of a directory (fmt) or of the tests (test), is a
+/// usage error that names it. FAILS on the base: its name was made
+/// Unicode by replacing the bad bytes, and reading that name said "no
+/// such file". Linux only: macOS refuses such a name, and a golden case
+/// cannot hold one.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_file_found_whose_name_is_not_unicode_is_named_and_refused() {
+    use std::os::unix::ffi::OsStringExt;
+    let dir = std::env::temp_dir().join(format!("silt_not_unicode_walk_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("pk/src")).unwrap();
+    std::fs::write(
+        dir.join("pk/silt.toml"),
+        "[package]\nname = \"pk\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("pk/src/main.silt"),
+        "fn main() {\n  println(1)\n}\n",
+    )
+    .unwrap();
+    for name in [&b"a\xff.silt"[..], &b"b\xff_test.silt"[..]] {
+        let name = OsString::from_vec(name.to_vec());
+        std::fs::write(
+            dir.join("pk/src").join(name),
+            "fn main() {\n  println(2)\n}\n",
+        )
+        .unwrap();
+    }
+    for args in [["check", "pk"], ["fmt", "pk"], ["test", "pk"]] {
+        let out = Command::new(env!("CARGO_BIN_EXE_silt"))
+            .args(args)
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{args:?}: {stderr}");
+        assert!(
+            stderr.contains("\\xFF")
+                && stderr.contains("has a name that is not valid Unicode: rename it"),
+            "{args:?}: {stderr}"
+        );
+        assert!(!stderr.contains("no such file"), "{args:?}: {stderr}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

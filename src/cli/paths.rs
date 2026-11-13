@@ -106,11 +106,24 @@ pub(crate) fn refuse_empty_walk(command: &str, dir: &Path, shown: &str) -> ! {
 pub(crate) fn find_silt_files(dir: &Path) -> Vec<String> {
     let wanted = |path: &Path| path.to_string_lossy().ends_with(".silt");
     let names = files_under(dir, &enters_package_dir, &wanted).into_iter();
-    let mut results: Vec<String> = names
-        .map(|path| path.to_string_lossy().to_string())
-        .collect();
+    let mut results: Vec<String> = names.map(unicode_path).collect();
     results.sort();
     results
+}
+
+/// The path of a file a walk found, as text. A file whose path is not
+/// Unicode cannot be named to read it, nor is its name a module name: as
+/// for such an argument, a usage error (exit 1).
+pub(crate) fn unicode_path(path: std::path::PathBuf) -> String {
+    match path.into_os_string().into_string() {
+        Ok(path) => path,
+        Err(path) => {
+            eprintln!(
+                "error: silt: the file {path:?} has a name that is not valid Unicode: rename it"
+            );
+            std::process::exit(1);
+        }
+    }
 }
 
 /// Whether a walk of a package's files goes into the directory `path`
@@ -133,9 +146,7 @@ pub(crate) fn package_test_files(root: &Path) -> Vec<String> {
         name.ends_with("_test.silt")
     };
     let names = files_under(root, &enters_package_dir, &wanted).into_iter();
-    let mut out: Vec<String> = names
-        .map(|path| path.to_string_lossy().into_owned())
-        .collect();
+    let mut out: Vec<String> = names.map(unicode_path).collect();
     out.sort();
     out
 }
