@@ -192,8 +192,10 @@ See `examples/` for runnable sample programs; run them from the repository's roo
 
 ```
 silt run <file.silt>       Run a program
+silt run                   Run the package's src/main.silt (inside a package)
 silt run -w <file.silt>    Run and re-run on file changes
 silt check <file.silt>...  Type-check without running, each file on its own
+silt check                 Type-check the package (inside a package)
 silt check -               Type-check the program read from stdin
 silt check --format json <file.silt>   Type-check with JSON output (for CI/editors)
 silt check --deny-warnings <file.silt>   Also fail on warnings (for CI)
@@ -204,7 +206,7 @@ silt fmt --check           Check formatting without modifying files
 silt repl                  Interactive REPL
 silt init [--lib]          Create a new silt package (a library with --lib) in this directory
 silt lsp                   Start the language server
-silt disasm <file.silt>    Show bytecode disassembly
+silt disasm [<file.silt>]  Show bytecode disassembly
 silt self-update           Update the silt binary to the latest release
 silt update                Regenerate silt.lock for the current package's dependencies
 silt add <name> --path <path>                             Add a path-based dependency to silt.toml

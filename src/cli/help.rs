@@ -48,9 +48,9 @@ pub(crate) fn usage_text() -> String {
     out.push_str("silt — a statically-typed, expression-based language\n");
     out.push('\n');
     out.push_str("Usage:\n");
-    out.push_str(&line("silt run [--watch] <file.silt>", &run_desc));
+    out.push_str(&line("silt run [--watch] [<file.silt>]", &run_desc));
     out.push_str(&line(
-        "silt check [--format json] [--deny-warnings] [--watch] <file.silt>...",
+        "silt check [--format json] [--deny-warnings] [--watch] [<path>...]",
         &check_desc,
     ));
     out.push_str(&line(test_usage_banner(), &test_desc));
@@ -152,7 +152,7 @@ pub(crate) fn asks_for_help(args: &[String]) -> bool {
 /// from this so they can't drift apart. A regression test in
 /// tests/cli/cli.rs asserts the two banners are byte-identical.
 pub(crate) fn check_usage_banner() -> &'static str {
-    "silt check [--format json] [--deny-warnings] [--watch] <file.silt>..."
+    "silt check [--format json] [--deny-warnings] [--watch] [<path>...]"
 }
 
 /// Single source of truth for the `silt run` usage banner line.
@@ -162,12 +162,10 @@ pub(crate) fn check_usage_banner() -> &'static str {
 /// Keeping them all rendering from this helper is locked by
 /// `tests/cli/run_banner_consistency_tests.rs::test_silt_run_banner_consistency_all_paths`.
 ///
-/// We deliberately keep `<file.silt>` (without optional brackets) so the
-/// banner stays byte-identical across paths even though `silt run` now
-/// also accepts no file argument when invoked inside a package — the
-/// optional-no-arg behavior is documented separately in the help text.
+/// The file is in brackets: inside a package `silt run` with no file
+/// runs the package's src/main.silt (the examples of the help say so).
 pub(crate) fn run_usage_banner() -> &'static str {
-    "silt run [--watch] <file.silt> [-- <args>...]"
+    "silt run [--watch] [<file.silt>] [-- <args>...]"
 }
 
 /// Single source of truth for the `silt test` usage banner line.

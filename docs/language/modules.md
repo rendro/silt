@@ -290,7 +290,11 @@ the import.
 `silt init` creates a package with a `silt.toml` manifest and a `src/` tree
 with a first test (see [Testing](testing.md#tests-of-a-package)).
 The entry point is `src/main.silt`, and every `.silt` file directly in
-`src/` is a module of the package, imported by its file name.
+`src/` is a module of the package, imported by its file name. A file in a
+sub-directory of `src/` is no module: it cannot be imported, and
+`silt check` does not read it. Test files (`*_test.silt`) are found
+anywhere under the package, in `src/`, its sub-directories or a `tests/`
+directory beside it, and import the package's modules by name.
 
 External dependencies are declared in `silt.toml` via `silt add <name>
 --path <path>` or `silt add <name> --git <url> --tag <tag>` (or

@@ -1,4 +1,4 @@
-Usage: silt run [--watch] <file.silt> [-- <args>...]
+Usage: silt run [--watch] [<file.silt>] [-- <args>...]
 
 Options:
   --watch, -w         Re-run on file changes
