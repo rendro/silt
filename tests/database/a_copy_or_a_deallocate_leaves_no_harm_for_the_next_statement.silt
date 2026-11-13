@@ -1,0 +1,79 @@
+-- A `COPY` of standard input or output is refused before it is sent, on
+-- a pool and inside a transaction, and its connection stays as it was
+-- (the module sends and reads no COPY data; sent, the client closed the
+-- connection). A `DEALLOCATE` of one of the statements the connection
+-- keeps prepared for itself, by its name, closes the connection when the
+-- statement ends: the next statement that needs a look-up of a type is
+-- not refused for a statement that is gone. (A pool of one connection,
+-- so that every statement gets the connection the one before had.)
+import env
+import list
+import postgres
+
+type N { n: Int }
+type Name { name: String }
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+fn said(answer: Result(a, postgres.PostgresError)) -> String {
+  match answer {
+    Ok(_) -> "Ok"
+    Err(e) -> "{e}"
+  }
+}
+
+fn backend(pool: postgres.PgPool) -> Int {
+  match postgres.query(pool, "SELECT pg_backend_pid()::int8 AS n", (), N) {
+    Ok([row]) -> row.n
+    _ -> 0
+  }
+}
+
+fn main() {
+  match postgres.connect_with(url(), #{"max_pool_size": 1}) {
+    Ok(pool) -> {
+      let _ = postgres.execute(pool, "DROP TABLE IF EXISTS silt_database_copy", ())
+      let _ = postgres.execute(pool, "CREATE TABLE silt_database_copy (n int)", ())
+      let first = backend(pool)
+      [
+        "COPY silt_database_copy FROM STDIN",
+        "copy silt_database_copy (n) from stdin with (format csv)",
+        "COPY (SELECT ')' AS n) TO STDOUT",
+      ]
+        |> list.each { sql -> println("{sql}: {said(postgres.execute(pool, sql, ()))}") }
+      println("query: {said(postgres.query(pool, "COPY silt_database_copy TO STDOUT", (), N))}")
+      println("the same connection after them: {backend(pool) == first}")
+      let in_tx = postgres.transact(pool) { tx ->
+        println("inside: {said(postgres.execute(tx, "COPY silt_database_copy FROM STDIN", ()))}")
+        postgres.execute(tx, "INSERT INTO silt_database_copy VALUES (1)", ())
+      }
+      println("the transaction goes on and commits: {said(in_tx)}")
+      let _ = postgres.execute(pool, "DROP TYPE IF EXISTS silt_database_copy_a", ())
+      let _ = postgres.execute(pool, "DROP TYPE IF EXISTS silt_database_copy_b", ())
+      let _ = postgres.execute(pool, "CREATE TYPE silt_database_copy_a AS ENUM ('x')", ())
+      let _ = postgres.execute(pool, "CREATE TYPE silt_database_copy_b AS ENUM ('y')", ())
+      println("a type looked up: {said(postgres.execute(pool, "SELECT $1::silt_database_copy_a", ("x",)))}")
+      let look_ups = postgres.query(
+        pool,
+        "SELECT name FROM pg_prepared_statements WHERE NOT from_sql AND statement LIKE '%pg_catalog.pg_type%' ORDER BY name LIMIT 1",
+        (),
+        Name,
+      )
+      match look_ups {
+        Ok([one]) -> println("its look-up dropped: {said(postgres.execute(pool, "DEALLOCATE {one.name}", ()))}")
+        other -> println("no look-up found: {said(other)}")
+      }
+      println("another type looked up: {said(postgres.execute(pool, "SELECT $1::silt_database_copy_b", ("y",)))}")
+      let _ = postgres.execute(pool, "DROP TABLE silt_database_copy", ())
+      let _ = postgres.execute(pool, "DROP TYPE silt_database_copy_a", ())
+      let _ = postgres.execute(pool, "DROP TYPE silt_database_copy_b", ())
+      postgres.close(pool)
+    }
+    Err(e) -> println("connect failed: {e}")
+  }
+}
