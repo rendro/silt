@@ -2103,6 +2103,74 @@ pub struct ModuleCheck {
     pub let_order: Vec<Span>,
 }
 
+impl TypeChecker {
+    /// The error an entry point returns, `main`'s or a test's `Err(e)`,
+    /// is shown through `Display` (`error: <e>`, the test's failure):
+    /// its type must have it. A type the checker could not decide, or
+    /// one left to the caller (`Result((), e)` with nothing deciding
+    /// `e`), is let through.
+    fn check_entry_errors_shown(&mut self, program: &Program, env: &TypeEnv) {
+        for decl in &program.decls {
+            let Decl::Fn(f) = decl else { continue };
+            let name = resolve(f.name);
+            let who = match () {
+                _ if name == crate::session::ENTRY_POINT => EntryWho::Main,
+                _ if crate::session::test_kind(&name).is_some() => EntryWho::Test(name),
+                _ => continue,
+            };
+            let Some(scheme) = env.lookup(f.name) else {
+                continue;
+            };
+            let Type::Fun(params, ret) = self.apply(&scheme.ty) else {
+                continue;
+            };
+            let Type::Generic(result, args) = *ret else {
+                continue;
+            };
+            let [_, error] = args.as_slice() else {
+                continue;
+            };
+            if !params.is_empty() || !result.is_builtin("Result") {
+                continue;
+            }
+            let display = TraitKey::builtin("Display");
+            let mut walk = solve::Walk::default();
+            let Some(gap) = self.structure_gap(display, error, &mut walk, 0) else {
+                continue;
+            };
+            let lacks = self.gap_message(display, error, &gap);
+            let span = f.return_type.as_ref().map_or(f.name_span, |ty| ty.span);
+            let (code, message, help) = match who {
+                EntryWho::Main => (
+                    Code::MainSignature,
+                    format!(
+                        "the entry point 'main' must return an error that can be shown, but {lacks}"
+                    ),
+                    "main's `Err(e)` is shown as `error: {e}`: return a String, or a type that \
+                     has Display (by its structure, or by `trait Display for ...`)",
+                ),
+                EntryWho::Test(name) => (
+                    Code::TestSignature,
+                    format!(
+                        "the test function '{name}' must return an error that can be shown, but \
+                         {lacks}"
+                    ),
+                    "a test's `Err(e)` is shown in its failure: return a String, or a type that \
+                     has Display (by its structure, or by `trait Display for ...`)",
+                ),
+            };
+            self.error_help(code, (message, Some(help.to_string())), span);
+        }
+    }
+}
+
+/// Which entry point [`TypeChecker::check_entry_errors_shown`] looks
+/// at.
+enum EntryWho {
+    Main,
+    Test(String),
+}
+
 /// The context a module is checked in, from the session.
 pub struct ModuleContext<'a> {
     /// The module checked.
@@ -2209,6 +2277,9 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
         checker.take_up_waiting(program, earlier);
     }
     let env = checker.check_program_in(program, env);
+    if kind == names::ModuleKind::File {
+        checker.check_entry_errors_shown(program, &env);
+    }
     if checker.is_cell {
         checker.report_at_cell(program);
         checker.leave_waiting(program);
