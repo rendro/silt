@@ -1049,7 +1049,24 @@ impl Lexer {
         (Token::Error, start)
     }
 
+    /// A number literal. It is read as far as a number of any spelling
+    /// goes; one that is not in the one spelling of a number (see
+    /// `number_spelling`) is an error that names the spelling.
     fn scan_number(&mut self, first: char, start: Span) -> Scanned {
+        let scanned = self.scan_number_value(first, start);
+        if scanned.0 == Token::Error {
+            return scanned;
+        }
+        // (A number is ASCII: as many characters as bytes.)
+        let len = self.byte_offset - start.start as usize;
+        let raw: String = self.source[self.pos - len..self.pos].iter().collect();
+        match number_spelling(&raw) {
+            Some(message) => self.invalid_number(start, &message),
+            None => scanned,
+        }
+    }
+
+    fn scan_number_value(&mut self, first: char, start: Span) -> Scanned {
         // Handle hex (0x) and binary (0b) prefixes
         if first == '0'
             && let Some(prefix) = self.peek()
@@ -1584,6 +1601,83 @@ fn is_stray(c: char) -> bool {
 /// The value of an integer literal's digits (underscores removed). The
 /// magnitude 2^63 is `i64::MIN` (see `Token::Int`); anything larger is too
 /// large.
+/// What is wrong with the number literal `raw` as it is written, when it
+/// is not in the one spelling of its number: a `_` only between two
+/// digits, the prefixes `0x` and `0b` and the exponent `e` in lower
+/// case, no `+` in an exponent, no leading zero in a decimal number.
+/// The message says the first fault and writes the whole literal right.
+fn number_spelling(raw: &str) -> Option<String> {
+    let lower_prefix = raw.starts_with("0X") || raw.starts_with("0B");
+    let (prefix, body) = match raw.get(..2) {
+        Some(p @ ("0x" | "0X" | "0b" | "0B")) => (p.to_ascii_lowercase(), &raw[2..]),
+        _ => (String::new(), raw),
+    };
+    let decimal = prefix.is_empty();
+    let is_digit = |c: char| match prefix.as_str() {
+        "0x" => c.is_ascii_hexdigit(),
+        "0b" => c == '0' || c == '1',
+        _ => c.is_ascii_digit(),
+    };
+    let mut faults: Vec<&str> = Vec::new();
+    if lower_prefix {
+        faults.push("the prefix of a number is written in lower case");
+    }
+    // The exponent: `e`, and no `+`.
+    let mut text = String::new();
+    let mut chars = body.chars().peekable();
+    while let Some(c) = chars.next() {
+        if decimal && (c == 'e' || c == 'E') {
+            if c == 'E' {
+                faults.push("the exponent of a number is written with a lower-case `e`");
+            }
+            text.push('e');
+            if chars.peek() == Some(&'+') {
+                chars.next();
+                faults.push("an exponent is written without `+`");
+            }
+        } else {
+            text.push(c);
+        }
+    }
+    // A `_` stands between two digits: a run of them between two digits
+    // is one, any other is dropped.
+    let mut fixed = String::new();
+    let all: Vec<char> = text.chars().collect();
+    let mut i = 0;
+    while i < all.len() {
+        if all[i] != '_' {
+            fixed.push(all[i]);
+            i += 1;
+            continue;
+        }
+        let run = all[i..].iter().take_while(|c| **c == '_').count();
+        let before = i.checked_sub(1).map(|b| all[b]);
+        let after = all.get(i + run).copied();
+        let between = before.is_some_and(is_digit) && after.is_some_and(is_digit);
+        if run > 1 || !between {
+            faults.push("a `_` in a number stands between two digits");
+        }
+        if between {
+            fixed.push('_');
+        }
+        i += run;
+    }
+    // No leading zero in a decimal number: its whole part is `0` or
+    // starts with another digit.
+    if decimal {
+        let whole_end = fixed.find(['.', 'e']).unwrap_or(fixed.len());
+        let whole: String = fixed[..whole_end].to_string();
+        let digits = whole.trim_start_matches(['0', '_']);
+        if whole.len() > 1 && whole.starts_with('0') {
+            faults.push("a number has no leading zero");
+            let whole = if digits.is_empty() { "0" } else { digits };
+            fixed = format!("{whole}{}", &fixed[whole_end..]);
+        }
+    }
+    let first = faults.first()?;
+    Some(format!("{first}: write `{prefix}{fixed}`"))
+}
+
 fn int_magnitude(digits: &str, radix: u32) -> Option<i64> {
     const MIN_MAGNITUDE: u64 = i64::MIN.unsigned_abs();
     match u64::from_str_radix(digits, radix) {
@@ -2031,7 +2125,7 @@ mod tests {
     fn test_hex_literal() {
         assert_eq!(lex("0xFF"), vec![Token::Int(255)]);
         assert_eq!(lex("0x1A"), vec![Token::Int(26)]);
-        assert_eq!(lex("0X10"), vec![Token::Int(16)]);
+        assert_eq!(lex("0xaB"), vec![Token::Int(0xAB)]);
         assert_eq!(lex("0x00"), vec![Token::Int(0)]);
     }
 
@@ -2067,7 +2161,6 @@ mod tests {
     #[test]
     fn test_binary_literal() {
         assert_eq!(lex("0b1010"), vec![Token::Int(10)]);
-        assert_eq!(lex("0B110"), vec![Token::Int(6)]);
         assert_eq!(lex("0b0"), vec![Token::Int(0)]);
     }
 
@@ -2079,7 +2172,6 @@ mod tests {
     #[test]
     fn test_scientific_notation_always_float() {
         assert_eq!(lex("1e5"), vec![Token::Float(1e5)]);
-        assert_eq!(lex("1E5"), vec![Token::Float(1e5)]);
         assert_eq!(lex("2e10"), vec![Token::Float(2e10)]);
         // Even whole-number results are Float
         assert_eq!(lex("1e2"), vec![Token::Float(100.0)]);
@@ -2087,8 +2179,52 @@ mod tests {
 
     #[test]
     fn test_scientific_with_sign() {
-        assert_eq!(lex("1e+5"), vec![Token::Float(1e5)]);
         assert_eq!(lex("1e-3"), vec![Token::Float(1e-3)]);
+    }
+
+    /// A number has one spelling; each other one is an error that
+    /// writes the number in it.
+    #[test]
+    fn a_number_has_one_spelling() {
+        for (src, message) in [
+            ("1_", "a `_` in a number stands between two digits: write `1`"),
+            ("1__0", "a `_` in a number stands between two digits: write `1_0`"),
+            ("0x_F", "a `_` in a number stands between two digits: write `0xF`"),
+            ("1_.0", "a `_` in a number stands between two digits: write `1.0`"),
+            ("1.0_", "a `_` in a number stands between two digits: write `1.0`"),
+            ("1e3_", "a `_` in a number stands between two digits: write `1e3`"),
+            ("0b_1", "a `_` in a number stands between two digits: write `0b1`"),
+            ("0XFF", "the prefix of a number is written in lower case: write `0xFF`"),
+            ("0B11", "the prefix of a number is written in lower case: write `0b11`"),
+            ("1E3", "the exponent of a number is written with a lower-case `e`: write `1e3`"),
+            ("1e+3", "an exponent is written without `+`: write `1e3`"),
+            ("007", "a number has no leading zero: write `7`"),
+            ("00.5", "a number has no leading zero: write `0.5`"),
+            ("0_7", "a number has no leading zero: write `7`"),
+            ("00", "a number has no leading zero: write `0`"),
+            ("0X_1E+3", "the prefix of a number is written in lower case: write `0x1E`"),
+        ] {
+            let errors = Lexer::new(crate::source::FileId::default(), src)
+                .tokenize()
+                .checked()
+                .map(|_| ())
+                .expect_err(src);
+            assert_eq!(errors.code, Code::InvalidNumber, "{src}");
+            assert_eq!(errors.message, message, "{src}");
+        }
+        for (src, token) in [
+            ("0", Token::Int(0)),
+            ("10", Token::Int(10)),
+            ("1_000_000", Token::Int(1_000_000)),
+            ("0xFf_0a", Token::Int(0xFF0A)),
+            ("0b1010_0101", Token::Int(0b1010_0101)),
+            ("0.5", Token::Float(0.5)),
+            ("0e3", Token::Float(0.0)),
+            ("1_0.2_5e1_0", Token::Float(10.25e10)),
+            ("2.5e-3", Token::Float(2.5e-3)),
+        ] {
+            assert_eq!(lex(src), vec![token], "{src}");
+        }
     }
 
     #[test]

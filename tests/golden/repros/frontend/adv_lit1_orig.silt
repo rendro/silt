@@ -8,12 +8,12 @@ fn main() {
   let f = 100000000000000000000.0
   let g = 0.1
   let h = 1.0
-  let i = 0XAB
+  let i = 0xAB
   let j = 1_0.5_0
   let k = 9223372036854775807
   let l = 0.000001
   let m = 123456789.123456789
-  let n = 1E5
+  let n = 1e5
   let s1 = "tab\there \{brace\} quote\" backslash\\ nl\n"
   let s2 = "unicode é ✓ \\"
   let s3 = "{a}\{{b}\}"
