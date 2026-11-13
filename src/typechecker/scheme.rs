@@ -1,13 +1,15 @@
 use super::*;
 
 impl TypeChecker {
-    /// Whether the module checked sees the record type `ty`: its own, a
-    /// public one of a module it imports, a builtin module's it imports.
+    /// Whether the module checked sees the record type `ty`: its own (in
+    /// a REPL cell, an earlier cell's), a public one of a module it
+    /// imports, a builtin module's it imports.
     fn sees_record(&self, ty: TypeRef) -> bool {
         let Some(def) = self.def(ty.id.0) else {
             return false;
         };
-        if def.module == self.module {
+        // (In a REPL cell, also an earlier cell's not declared again.)
+        if def.module == self.module || (self.is_cell && self.named_types.contains(&ty.id.0)) {
             return true;
         }
         if def.module.builtin_name().is_some() {
