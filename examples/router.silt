@@ -54,7 +54,7 @@ fn route(method, pattern, handler) -> Result(Route, regex.RegexError) {
 
 -- Extract path parameters from a URL path given a compiled route pattern.
 -- Returns Some(map) with extracted params or None if no match.
-fn extract_params(compiled, path) {
+fn extract_params(compiled: CompiledPattern, path: String) -> Option(Map(String, String)) {
   match regex.captures(path, compiled.re) {
     None -> None
     Some(captures) -> {
