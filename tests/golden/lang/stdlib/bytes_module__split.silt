@@ -5,7 +5,7 @@ fn main() {
   println(list.map(parts) { p ->
     match bytes.to_string(p) {
       Ok(s) -> s
-      Err(e) -> Error.message(e)
+      Err(e) -> "{e}"
     }
   })
   println(list.length(bytes.split(bytes.from_string("hello"), bytes.from_string(","))))

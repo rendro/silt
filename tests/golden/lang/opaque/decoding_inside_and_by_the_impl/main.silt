@@ -9,10 +9,10 @@ fn main() {
   println(json.parse("\"nope\"", mail.Email))
   match mail.decode_inside() {
     Ok(u) -> println(mail.name(u))
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println("{e}")
   }
   match mail.decode_through_util() {
     Ok(u) -> println(mail.name(u))
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println("{e}")
   }
 }

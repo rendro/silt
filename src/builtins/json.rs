@@ -54,6 +54,21 @@ pub(crate) fn json_error_to_variant(err: &serde_json::Error, text: &[u8]) -> Val
     }
 }
 
+/// `error`, a `JsonError` of the text after a byte order mark of `mark`
+/// bytes, with a `Syntax` error's byte counted from before the mark.
+fn after_mark(error: Value, mark: usize) -> Value {
+    match &error {
+        Value::Variant(v) if mark > 0 && v.is(bv::JSON_SYNTAX) => match v.fields() {
+            [message, Value::Int(at)] => Value::variant(
+                bv::JSON_SYNTAX,
+                [message.clone(), Value::Int(at + mark as i64)],
+            ),
+            _ => error,
+        },
+        _ => error,
+    }
+}
+
 /// Build a full `Err(JsonError)` from a `serde_json::Error` of reading
 /// `text`.
 pub(crate) fn json_result_err(err: &serde_json::Error, text: &[u8]) -> Value {
@@ -92,7 +107,7 @@ pub(crate) fn json_unknown_err<S: Into<Arc<str>>>(msg: S) -> Value {
     json_err_wrap(Value::variant(bv::JSON_OTHER, [Value::string(msg)]))
 }
 
-/// What `JsonError`'s `message` says of the variant `tag` with `fields`:
+/// How `JsonError` shows the variant `tag` with `fields`:
 /// `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
@@ -348,9 +363,9 @@ pub(crate) const RULES: Rules = Rules {
 /// The value of the field type `expected` that the JSON text `text` is,
 /// for a decoder of a format that holds JSON documents (postgres's
 /// `json` and `jsonb` columns), read by `r` (a part of a type with a
-/// written `json.Decode` impl is its hole): `Err` of what `JsonError`'s
-/// `message` says of why there is none, or `None` where the text is no
-/// document.
+/// written `json.Decode` impl is its hole): `Err` of how the
+/// `JsonError` of why there is none is shown, or `None` where the text
+/// is no document.
 #[cfg(feature = "postgres")]
 pub(crate) fn decode_field(
     r: &decode::Reader,
@@ -361,7 +376,7 @@ pub(crate) fn decode_field(
     Ok(decoded.map_err(|e| message(&e.variant(&RULES))))
 }
 
-/// What `JsonError`'s `message` says of `error`.
+/// How the `JsonError` `error` is shown.
 #[cfg(feature = "postgres")]
 pub(crate) fn message(error: &Value) -> std::string::String {
     let text = match error {
@@ -437,11 +452,18 @@ builtins! {
         decode_value(vm, value, ty)
     }
 
+    // One byte order mark before the document is dropped, as toml and
+    // csv drop it; a syntax error's byte is still counted in `s`.
     fn parse(vm, s: &str, ty: Type) -> Result<Step, VmError> {
-        let text = s.as_bytes();
+        let mark = match s.starts_with('\u{feff}') {
+            true => '\u{feff}'.len_utf8(),
+            false => 0,
+        };
+        let text = &s.as_bytes()[mark..];
         let expected = decode::target(&PARSE, ty)?.element();
         let read = |r: &decode::Reader, expected: &FieldType, parts: &decode::seed::Parts| {
-            decode::seed::json_text(r, expected, text, parts).map_err(|e| json_result_err(&e, text))
+            decode::seed::json_text(r, expected, text, parts)
+                .map_err(|e| json_err_wrap(after_mark(json_error_to_variant(&e, text), mark)))
         };
         let source = || -> Box<dyn Source> { Box::new(Text(text.into())) };
         vm.decode_read("json.decode", &RULES, expected, read, source)

@@ -333,12 +333,21 @@ impl TypeChecker {
     /// not, the help line that explains how to thread the value
     /// through: the raw "expected String, got Result(String, _)" is
     /// correct but doesn't say how to fix it; the help points at `?` and
-    /// `result.flat_map` / `option.flat_map`.
+    /// `result.flat_map` / `option.flat_map`. A `String` where a
+    /// `regex.Regex` is expected (a pattern given as text) is told to
+    /// compile it.
     pub(super) fn chain_hint(got: &Type, expected: &Type) -> Option<std::string::String> {
         let is_wrapper = |t: &Type, name: &str| -> bool { t.is_builtin(name) };
         // (A type constructor, `Option(_)`, holds no value to chain.)
         if matches!(got, Type::Con(..)) {
             return None;
+        }
+        // (A pattern written where a compiled one is taken.)
+        if matches!(got, Type::String) && expected.is_builtin("Regex") {
+            return Some(
+                "a regex function takes a compiled pattern: make one with `regex.compile(pattern)`, once, and pass it on"
+                    .to_string(),
+            );
         }
         if is_wrapper(expected, "Result") || is_wrapper(expected, "Option") {
             return None;

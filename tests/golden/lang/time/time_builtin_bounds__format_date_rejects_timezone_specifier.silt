@@ -7,7 +7,7 @@ fn day() -> time.Date {
 }
 fn main() {
   match time.format_date(day(), "%z") {
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println("{e}")
     Ok(text) -> println("formatted: {text}")
   }
 }

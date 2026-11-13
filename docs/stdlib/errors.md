@@ -9,9 +9,9 @@ order: 24
 Every fallible stdlib module declares its own typed error enum. Silt's
 `Result(T, ModuleError)` return shape lets user code pattern-match the
 failure modes directly instead of substring-matching on a `String`
-payload. Each enum implements the built-in `Error` trait, which
-has `Display` as its supertrait and a method `message`, so code that
-just wants a rendered error can fall back to `"{Error.message(e)}"`.
+payload. Each enum is shown as its message (`"{e}"`, `println(e)`, the
+`error:` line of a `main` that returns it), so code that just wants a
+rendered error writes `"{e}"`.
 
 ## Variant naming
 
@@ -196,7 +196,7 @@ Returned by `csv.split_line` and `csv.parse`.
 
 ### `RegexError` (requires `import regex`)
 
-Returned by every `regex.*` function for a pattern that does not compile.
+Returned by `regex.compile` for a pattern that does not compile.
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|

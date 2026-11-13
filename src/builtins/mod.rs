@@ -34,11 +34,8 @@ pub mod toml;
 pub(crate) mod typed;
 pub mod uuid;
 
-use crate::value::Value;
-use crate::vm::VmError;
-
-/// The text of a variant of a builtin error enum, as its `message`
-/// gives it and as it is shown (`"{e}"`): one text for both. `None` if
+/// The text of a variant of a builtin error enum, as it is shown
+/// (`"{e}"`, the `error:` line of a `main` that returns it). `None` if
 /// the variant is of no builtin error enum that is built (a program's
 /// own enum is shown as any variant is).
 ///
@@ -47,15 +44,4 @@ use crate::vm::VmError;
 pub fn error_text(error: &crate::value::Variant) -> Option<String> {
     let text = registry::registry().error_module(error.type_id())?.text?;
     text(error.name(), error.fields())
-}
-
-typed::builtins! {
-    /// The body of every error enum's `message` row.
-    fn error_message(error: &Value) -> Result<String, VmError> {
-        let Value::Variant(variant) = error else {
-            return Err(typed::unsound("message", "error"));
-        };
-        error_text(variant)
-            .ok_or_else(|| typed::unsound(&format!("{}.message", variant.ty().name), "error"))
-    }
 }

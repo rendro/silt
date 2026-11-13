@@ -28,7 +28,7 @@ fn url() -> String {
 fn show(r: Result(List(a), postgres.PostgresError)) where a: Display {
   match r {
     Ok(rows) -> println(rows)
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println("{e}")
   }
 }
 
@@ -60,6 +60,6 @@ fn main() {
       }
       postgres.close(db)
     }
-    Err(e) -> println("connect: {Error.message(e)}")
+    Err(e) -> println("connect: {e}")
   }
 }

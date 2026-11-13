@@ -273,7 +273,7 @@ pub(crate) fn io_result_err_unknown<S: Into<Arc<str>>>(msg: S) -> Value {
     io_err(Value::variant(bv::IO_OTHER, [Value::string(msg)]))
 }
 
-/// What `IoError`'s `message` says of the variant `tag` with `fields`:
+/// How `IoError` shows the variant `tag` with `fields`:
 /// `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {

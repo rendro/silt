@@ -16,23 +16,23 @@ fn main() {
   let key = bytes.from_string("not a key")
   match tcp.tls_server(conn, cert, key) {
     Ok(_) -> println("a TLS connection")
-    Err(e) -> println("tls_server: {Error.message(e)}")
+    Err(e) -> println("tls_server: {e}")
   }
   match tcp.read(conn, 1) {
     Ok(_) -> println("the taken connection reads")
-    Err(e) -> println("read of the taken connection: {Error.message(e)}")
+    Err(e) -> println("read of the taken connection: {e}")
   }
   match tcp.write(conn, bytes.from_string("x")) {
     Ok(_) -> println("the taken connection writes")
-    Err(e) -> println("write of the taken connection: {Error.message(e)}")
+    Err(e) -> println("write of the taken connection: {e}")
   }
   match tcp.tls_server(conn, cert, key) {
     Ok(_) -> println("a TLS connection")
-    Err(e) -> println("tls_server again: {Error.message(e)}")
+    Err(e) -> println("tls_server again: {e}")
   }
   match tcp.read(client, 1) {
     Ok(data) -> println("the client reads {bytes.length(data)} bytes")
-    Err(e) -> println("the client's read fails: {Error.message(e)}")
+    Err(e) -> println("the client's read fails: {e}")
   }
   -- A connection closed before the call.
   when let Ok(other) = tcp.connect(addr) else { panic("cannot connect") }
@@ -40,7 +40,7 @@ fn main() {
   tcp.close(closed)
   match tcp.tls_server(closed, cert, key) {
     Ok(_) -> println("a TLS connection")
-    Err(e) -> println("tls_server of a closed connection: {Error.message(e)}")
+    Err(e) -> println("tls_server of a closed connection: {e}")
   }
   tcp.close(other)
 }

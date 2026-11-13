@@ -3,7 +3,6 @@ import io
 import list
 import map
 import regex
-import result
 import string
 
 -- Text file statistics: line count, word count, character count, unique words,
@@ -24,13 +23,11 @@ fn get_filename() {
   }
 }
 
-fn get_words(text) {
+fn get_words(text, spaces) {
   text
     |> string.split("\n")
     |> list.flat_map { line ->
-      regex.split(line, """\s+""")
-        |> result.unwrap_or([])
-        |> list.filter { w -> !string.is_empty(w) }
+      regex.split(line, spaces) |> list.filter { w -> !string.is_empty(w) }
     }
 }
 
@@ -84,15 +81,16 @@ fn print_row(label, value) {
   println("  {string.left(label, 25)}{value}")
 }
 
-fn main() {
+fn main() -> Result((), regex.RegexError) {
+  let spaces = regex.compile("""\s+""")?
   let filename = get_filename()
   match io.read_file(filename) {
-    Err(e) -> println("Error reading file '{filename}': {Error.message(e)}")
+    Err(e) -> println("Error reading file '{filename}': {e}")
     Ok(content) -> {
       let lines = content |> string.split("\n") |> list.filter { l -> !string.is_empty(l) }
       let line_count = list.length(lines)
       let char_count = string.length(content)
-      let words = get_words(content)
+      let words = get_words(content, spaces)
       let normalized = words |> list.map { w -> normalize_word(w) }
       let word_count = list.length(normalized)
       let unique_words = normalized |> list.unique
@@ -131,4 +129,5 @@ fn main() {
       println(string.repeat("=", 50))
     }
   }
+  Ok(())
 }

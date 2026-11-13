@@ -57,7 +57,7 @@ fn main() {
     Ok(_) -> ()
     Err(e) -> println(float_text(e))
   }
-  match regex.find("a", "(") {
+  match regex.compile("(") {
     Ok(_) -> ()
     Err(e) -> println(regex_text(e))
   }

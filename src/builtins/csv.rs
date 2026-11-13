@@ -12,15 +12,16 @@
 use serde::de::value::MapDeserializer;
 use serde::de::{self, DeserializeSeed, SeqAccess, Visitor};
 
-use super::common::ok;
+use super::common::{ok, too_long_text};
+use super::data::{self, Data, Format};
 use super::decode::{self, Decoder, Numbers, Rules};
 use super::registry::decoding::Family;
-use super::typed::{Type, builtins};
+use super::typed::{self, Type, builtins, unsound};
 use crate::typeinfo::{FieldType, bv};
-use crate::value::Value;
+use crate::value::{MAX_COLLECTION_LEN, Value};
 use crate::vm::{Source, Step, Vm, VmError};
 
-/// What `CsvError`'s `message` says of the variant `tag` with `fields`:
+/// How `CsvError` shows the variant `tag` with `fields`:
 /// `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
@@ -332,7 +333,7 @@ impl<'de> de::Deserializer<'de> for Row<'_> {
     }
 }
 
-/// The text of the decoder's error `message`, which ends with the path of
+/// The text of the decoder's error, which ends with the path of
 /// the value (` at [2].age`), with the line and the column instead
 /// (` at line 4, column age`).
 fn at_line(message: &str, lines: &[usize]) -> String {
@@ -446,6 +447,59 @@ fn missing_column(vm: &Vm, table: &Table, element: &FieldType) -> Option<String>
         .map(|(name, _)| name)
 }
 
+// ── Writing ─────────────────────────────────────────────────────────
+
+/// `field` appended to `out` as RFC 4180 writes it: quoted when it
+/// holds a comma, a quote or a line break (`\n` or `\r`), a quote in
+/// it doubled; as it is otherwise.
+fn write_field(out: &mut String, field: &str) {
+    if field.contains([',', '"', '\n', '\r']) {
+        out.push('"');
+        out.push_str(&field.replace('"', "\"\""));
+        out.push('"');
+    } else {
+        out.push_str(field);
+    }
+}
+
+/// `fields` appended to `out` as one line, a comma between two, with
+/// no line break at its end. One empty field is written `""`: as an
+/// empty line, most readers would skip it, and the row with it.
+fn write_line<'f>(out: &mut String, fields: impl IntoIterator<Item = &'f str>) {
+    let fields: Vec<&str> = fields.into_iter().collect();
+    if let [""] = fields[..] {
+        out.push_str("\"\"");
+        return;
+    }
+    for (k, field) in fields.into_iter().enumerate() {
+        if k > 0 {
+            out.push(',');
+        }
+        write_field(out, field);
+    }
+}
+
+/// The text of a cell that `csv.parse` reads back as `data`, a field
+/// of a row: empty for `None`, a number as silt shows it, a date or a
+/// time as `json.stringify` writes it. (The checker lets no other kind
+/// of field reach it.)
+fn cell(data: &Data) -> Result<String, VmError> {
+    Ok(match data {
+        Data::Null => String::new(),
+        Data::Int(n) => n.to_string(),
+        Data::Float(f) => match crate::value::Float::new(*f) {
+            Some(f) => f.to_string(),
+            None => f.to_string(),
+        },
+        Data::Bool(b) => b.to_string(),
+        Data::String(s) => s.to_string(),
+        Data::Date(date) => date.to_string(),
+        Data::Time(time) => time.to_string(),
+        Data::DateTime(at) => format!("{}T{}", at.0, at.1),
+        _ => return Err(unsound("csv.stringify", "rows")),
+    })
+}
+
 builtins! {
     // Every row of the text as a record of the type, its fields read
     // from the columns of their names by the one decoder (as json's and
@@ -484,6 +538,49 @@ builtins! {
             Step::Done(result) => Step::Done(with_lines(result, &table.lines)),
             other => other,
         })
+    }
+
+    // A header of the field names of the records' type, then a line
+    // for each record, each line ended by a line break: what
+    // `csv.parse` reads back as the same records.
+    fn stringify(rows: typed::List) -> Result<String, VmError> {
+        let mut out = String::new();
+        for (k, row) in rows.iter().enumerate() {
+            let Data::Table(fields) = data::data("csv.stringify", Format::Json, &row)? else {
+                return Err(unsound("csv.stringify", "rows"));
+            };
+            if k == 0 {
+                write_line(&mut out, fields.iter().map(|(name, _)| name.as_str()));
+                out.push('\n');
+            }
+            let cells = (fields.iter())
+                .map(|(_, data)| cell(data))
+                .collect::<Result<Vec<String>, VmError>>()?;
+            write_line(&mut out, cells.iter().map(String::as_str));
+            out.push('\n');
+            if out.len() > MAX_COLLECTION_LEN {
+                return Err(too_long_text("csv.stringify", out.len()));
+            }
+        }
+        Ok(out)
+    }
+
+    // The fields as one line, quoted where they need it: what
+    // `split_line` reads back as the same fields.
+    fn join_line(fields: typed::List) -> Result<String, VmError> {
+        let mut texts = Vec::with_capacity(fields.len());
+        for field in fields.iter() {
+            let Value::String(text, _) = field else {
+                return Err(unsound("csv.join_line", "fields"));
+            };
+            texts.push(text);
+        }
+        let mut out = String::new();
+        write_line(&mut out, texts.iter().map(|text| &**text));
+        if out.len() > MAX_COLLECTION_LEN {
+            return Err(too_long_text("csv.join_line", out.len()));
+        }
+        Ok(out)
     }
 
     fn split_line(line: &str) -> Value {

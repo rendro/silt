@@ -36,9 +36,9 @@ fn main() {
 ```
 
 A file is a module. `silt run main.silt` runs its `fn main()`, which
-returns `()` or `Result((), e)`; a `main` that returns `Err(e)` (a `?`
-in `main`) writes `error: <e>` on stderr and ends the program with status
-1. `silt run main.silt
+returns `()` or `Result((), e)`, `e` a type with `Display`; a `main`
+that returns `Err(e)` (a `?` in `main`) writes `error: <e>` on stderr and
+ends the program with status 1. `silt run main.silt
 -- a b` gives the program its arguments (`io.args()`).
 
 ## Lexical
@@ -180,8 +180,9 @@ fn main() {
 Errors are values: `Result(a, e)` and `Option(a)`. `e?` gives the `Ok` or
 `Some` value, or returns the `Err` or `None` from the function, whose
 error type must be the same (`?` converts nothing). A `?` at the end of
-a pipeline applies to all of it. The error enums of the standard library
-have the `Error` trait (`Error.message(e)`). `panic(msg)` stops the
+a pipeline applies to all of it. An error is shown as any value is: the
+error enums of the standard library as their message (`"{e}"`), a type
+of the program by its structure or its `Display` impl. `panic(msg)` stops the
 program. A function declared `-> Never` (the one place `Never` is
 written) never returns either: its body ends in `panic`, in a call of
 another such function or in an endless `loop`.
@@ -235,7 +236,7 @@ fn main() {
   never imported.
 - Built in: `Display` (by structure, or a written impl), `Equal`, `Hash`
   and `Compare` (always by structure; an impl of them is an error),
-  `Error` (written), `Number` (`Int` and `Float`; `a.from_int(0)` is
+  `Number` (`Int` and `Float`; `a.from_int(0)` is
   the 0 of the type). `Functor`,
   `Applicative` and `Monad` are traits of type constructors (see
   [Functors](language/functors.md)). A record compares
@@ -557,16 +558,19 @@ task.spawn(f: Fn() -> a) -> Handle(a)
 
 ```
 type RegexError { InvalidPattern(String, Int), TooBig }
-regex.captures(text: String, pattern: String) -> Result(Option(List(String)), RegexError)
-regex.captures_all(text: String, pattern: String) -> Result(List(List(String)), RegexError)
-regex.captures_named(text: String, pattern: String) -> Result(Option(Map(String, String)), RegexError)
-regex.find(text: String, pattern: String) -> Result(Option(String), RegexError)
-regex.find_all(text: String, pattern: String) -> Result(List(String), RegexError)
-regex.is_match(text: String, pattern: String) -> Result(Bool, RegexError)
-regex.replace(text: String, pattern: String, replacement: String) -> Result(String, RegexError)
-regex.replace_first(text: String, pattern: String, replacement: String) -> Result(String, RegexError)
-regex.replace_with(text: String, pattern: String, f: Fn(String) -> String) -> Result(String, RegexError)
-regex.split(text: String, pattern: String) -> Result(List(String), RegexError)
+type Regex  -- opaque
+regex.captures(text: String, re: Regex) -> Option(List(String))
+regex.captures_all(text: String, re: Regex) -> List(List(String))
+regex.captures_named(text: String, re: Regex) -> Option(Map(String, String))
+regex.compile(pattern: String) -> Result(Regex, RegexError)
+regex.escape(text: String) -> String
+regex.find(text: String, re: Regex) -> Option(String)
+regex.find_all(text: String, re: Regex) -> List(String)
+regex.is_match(text: String, re: Regex) -> Bool
+regex.replace(text: String, re: Regex, replacement: String) -> String
+regex.replace_first(text: String, re: Regex, replacement: String) -> String
+regex.replace_with(text: String, re: Regex, f: Fn(String) -> String) -> String
+regex.split(text: String, re: Regex) -> List(String)
 ```
 
 ### json
@@ -871,6 +875,8 @@ process.exit(code: Int) -> Never
 
 ```
 type CsvError { Syntax(String, Int), TypeMismatch(String, String), MissingField(String), Other(String) }
+csv.join_line(fields: List(String)) -> String
 csv.parse(text: String, type a) -> Result(List(a), CsvError)
 csv.split_line(line: String) -> Result(List(String), CsvError)
+csv.stringify(rows: List(a)) -> String
 ```

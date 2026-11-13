@@ -36,4 +36,4 @@ error[type]: `toml.parse` cannot decode `Config`: variant `Raw` of `Blob`, an en
  46 |   show(from_toml("", Config))
     |                      ^^^^^^ `toml.parse` cannot decode `Config`: variant `Raw` of `Blob`, an enum type nested in it, has a field of type `Bytes`, which has no decoder
   = note: `from_toml` passes it to `toml.parse`
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these

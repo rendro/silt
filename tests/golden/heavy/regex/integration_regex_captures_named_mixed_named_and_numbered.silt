@@ -1,9 +1,11 @@
 -- Numbered groups are silently skipped; only the named group appears.
 import io
 import regex
-import result
 fn program() {
-  regex.captures_named("abc-xyz", "(\\w+)-(?P<tag>\\w+)") |> result.unwrap_or(None)
+  match regex.compile("(\\w+)-(?P<tag>\\w+)") {
+    Ok(re) -> regex.captures_named("abc-xyz", re)
+    Err(_) -> None
+  }
 }
 
 fn main() {

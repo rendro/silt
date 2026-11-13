@@ -56,16 +56,16 @@ error[type]: `json.parse` cannot decode `L`: its type argument must be Int, Floa
   = note: `listed` passes it to `json.parse`
   = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
-error[type]: `toml.parse_list` cannot decode `L`: its type argument must be Int, Float, String, Bool, a record type, an enum type, a type with a `json.Decode` impl, or List(T), Option(T), Map(String, T) or a tuple of decodable types
+error[type]: `toml.parse_list` cannot decode `L`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, a type with a `json.Decode` impl, or List(T), Option(T), Map(String, T) or a tuple of decodable types
  --> full_type__a_generic_alias_written_alone_is_refused.silt:47:38
     |
  47 |   println(toml.parse_list("a = [1]", L))
-    |                                      ^ `toml.parse_list` cannot decode `L`: its type argument must be Int, Float, String, Bool, a record type, an enum type, a type with a `json.Decode` impl, or List(T), Option(T), Map(String, T) or a tuple of decodable types
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+    |                                      ^ `toml.parse_list` cannot decode `L`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, a type with a `json.Decode` impl, or List(T), Option(T), Map(String, T) or a tuple of decodable types
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
-error[type]: `toml.parse_map` cannot decode `L`: its type argument must be Int, Float, String, Bool, a record type, an enum type, a type with a `json.Decode` impl, or List(T), Option(T), Map(String, T) or a tuple of decodable types
+error[type]: `toml.parse_map` cannot decode `L`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, a type with a `json.Decode` impl, or List(T), Option(T), Map(String, T) or a tuple of decodable types
  --> full_type__a_generic_alias_written_alone_is_refused.silt:48:37
     |
  48 |   println(toml.parse_map("a = [1]", L))
-    |                                     ^ `toml.parse_map` cannot decode `L`: its type argument must be Int, Float, String, Bool, a record type, an enum type, a type with a `json.Decode` impl, or List(T), Option(T), Map(String, T) or a tuple of decodable types
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+    |                                     ^ `toml.parse_map` cannot decode `L`: its type argument must be Int, Float, String, Bool, json.Value, a record type, an enum type, a type with a `json.Decode` impl, or List(T), Option(T), Map(String, T) or a tuple of decodable types
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these

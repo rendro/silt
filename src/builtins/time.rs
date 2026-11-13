@@ -289,7 +289,7 @@ fn time_out_of_range_err(msg: String) -> Value {
     )
 }
 
-/// What `TimeError`'s `message` says of the variant `tag` with `fields`:
+/// How `TimeError` shows the variant `tag` with `fields`:
 /// `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
@@ -888,17 +888,24 @@ fn hours_alone(rest: &str) -> bool {
 
 /// Read `item` at the start of `rest` into `parsed`: what is behind it.
 /// `%::z` (`+hh:mm:ss`, or `Z`) is read here, as chrono reads only
-/// `+hh:mm` by it; every other item is chrono's.
+/// `+hh:mm` by it; so is `%f`, which chrono reads as a whole number of
+/// nanoseconds, as the digits of a fraction of a second
+/// ([`fraction_of_a_second`]); every other item is chrono's.
 fn read_item<'s>(
     parsed: &mut Parsed,
     rest: &'s str,
     item: &chrono::format::Item<'_>,
 ) -> chrono::ParseResult<&'s str> {
-    use chrono::format::{Fixed, Item};
+    use chrono::format::{Fixed, Item, Numeric};
     match item {
         Item::Fixed(Fixed::TimezoneOffsetDoubleColon) => {
             let (offset, behind) = offset_with_seconds(rest.trim_start())?;
             parsed.set_offset(offset)?;
+            Ok(behind)
+        }
+        Item::Numeric(Numeric::Nanosecond, _) => {
+            let (nanos, behind) = fraction_of_a_second(rest)?;
+            parsed.set_nanosecond(nanos)?;
             Ok(behind)
         }
         other => chrono::format::parse_and_remainder(parsed, rest, std::iter::once(other)),
@@ -918,6 +925,22 @@ fn chrono_error(short: bool) -> chrono::ParseError {
         Err(e) => e,
         Ok(_) => unreachable!("'{text}' is no '+'"),
     }
+}
+
+/// The digits at the start of `s` read as the fraction of a second they
+/// write after a decimal point, in nanoseconds, and what is behind
+/// them: `5` is half a second, `123` 123 milliseconds, `500000000` half a
+/// second too. Digits past the ninth are cut, as `%.f` cuts them.
+fn fraction_of_a_second(s: &str) -> chrono::ParseResult<(i64, &str)> {
+    let digits = s.bytes().take_while(u8::is_ascii_digit).count();
+    if digits == 0 {
+        return Err(chrono_error(s.is_empty()));
+    }
+    let nanos = (s.bytes().take(9))
+        .take(digits)
+        .fold(0, |n, d| n * 10 + i64::from(d - b'0'));
+    let nanos = nanos * 10_i64.pow(9 - digits.min(9) as u32);
+    Ok((nanos, &s[digits..]))
 }
 
 /// An offset of `%::z` at the start of `s`, in seconds, and what is
@@ -949,11 +972,10 @@ fn offset_with_seconds(s: &str) -> chrono::ParseResult<(i64, &str)> {
     }
 }
 
-/// `DateTime::parse_from_str` by the items of a pattern [`ready`].
-fn read_instant(
-    s: &str,
-    items: &[chrono::format::Item<'static>],
-) -> chrono::ParseResult<chrono::DateTime<chrono::FixedOffset>> {
+/// The fields `s` gives by the items of a pattern [`ready`], each item
+/// read by [`read_item`]: chrono's `parse`, but for the items it reads
+/// otherwise.
+fn read_fields(s: &str, items: &[chrono::format::Item<'static>]) -> chrono::ParseResult<Parsed> {
     let mut parsed = Parsed::new();
     let mut rest = s;
     for item in items {
@@ -968,7 +990,15 @@ fn read_instant(
         );
         return Err(behind.expect_err("text behind no item"));
     }
-    parsed.to_datetime()
+    Ok(parsed)
+}
+
+/// `DateTime::parse_from_str` by the items of a pattern [`ready`].
+fn read_instant(
+    s: &str,
+    items: &[chrono::format::Item<'static>],
+) -> chrono::ParseResult<chrono::DateTime<chrono::FixedOffset>> {
+    read_fields(s, items)?.to_datetime()
 }
 
 /// `NaiveDateTime::parse_from_str` by the items of a pattern [`ready`].
@@ -976,16 +1006,12 @@ fn read_datetime(
     s: &str,
     items: &[chrono::format::Item<'static>],
 ) -> chrono::ParseResult<NaiveDateTime> {
-    let mut parsed = Parsed::new();
-    chrono::format::parse(&mut parsed, s, items.iter())?;
-    parsed.to_naive_datetime_with_offset(0)
+    read_fields(s, items)?.to_naive_datetime_with_offset(0)
 }
 
 /// `NaiveDate::parse_from_str` by the items of a pattern [`ready`].
 fn read_date(s: &str, items: &[chrono::format::Item<'static>]) -> chrono::ParseResult<NaiveDate> {
-    let mut parsed = Parsed::new();
-    chrono::format::parse(&mut parsed, s, items.iter())?;
-    parsed.to_naive_date()
+    read_fields(s, items)?.to_naive_date()
 }
 
 // ── The functions ───────────────────────────────────────────────────

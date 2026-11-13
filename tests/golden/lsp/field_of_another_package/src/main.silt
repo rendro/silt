@@ -1,0 +1,24 @@
+-- cmd: lsp
+-- requires-feature: http
+-- lsp: references 22:13
+-- lsp: prepare-rename 22:13
+-- lsp: rename 22:13 left
+-- lsp: references 23:22
+-- lsp: prepare-rename 23:22
+-- lsp: rename 23:22 code
+-- A field of a type of a dependency is found in this package and in the
+-- dependency, but a rename edits the files of this package only, so it
+-- is refused; so is a rename of a field of one of silt's own types.
+import bytes
+import geom
+import http
+
+fn reply(code: Int) -> http.Response {
+  http.Response { status: code, body: bytes.from_string("ok"), headers: #{} }
+}
+
+fn main() {
+  let p = geom.Pt { x: 3, y: 4 }
+  println(p.x + geom.norm(p))
+  println(reply(p.y).status)
+}

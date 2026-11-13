@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- `trait Error for` a type of another module: the help says how the
+-- type is shown, not to write an impl only its own module can write.
+-- stderr-contains: error[type]: trait 'Error' is not declared
+-- stderr-contains: help: an error is shown as any value is: `io.IoError` is shown (by `{e}`, and as the error of main) by the Display it has
+-- stderr-not-contains: write `trait Display
+import io
+trait Error for io.IoError { fn message(self) -> String { "b" } }
+fn main() { println(1) }

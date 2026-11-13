@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: type mismatch: expected regex.Regex, got String
+-- stderr-contains: help: a regex function takes a compiled pattern: make one with `regex.compile(pattern)`, once, and pass it on
+-- A pattern written as text where a compiled one is taken says how to
+-- make one.
+import regex
+
+fn main() {
+  println(regex.is_match("aa", "a+"))
+}

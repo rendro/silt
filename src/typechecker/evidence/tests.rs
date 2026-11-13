@@ -219,36 +219,6 @@ fn main() { () }
     }
 }
 
-/// The `Error` of a builtin module's error enum is an impl the runtime
-/// provides: no program wrote it.
-#[test]
-fn the_error_of_a_builtin_error_enum_is_provided_by_the_runtime() {
-    let (found, _) = sites(
-        r#"
-import io
-fn main() {
-  match io.read_file("/nowhere") {
-    Ok(_) -> ()
-    Err(e) -> println(Error.message(e))
-  }
-}
-"#,
-    );
-    let message = (found.iter())
-        .find(|(n, _)| n == "Error.message")
-        .map(|(_, site)| site);
-    assert!(
-        matches!(
-            message,
-            Some(Site::Method {
-                recv: Evidence::Native { .. },
-                ..
-            })
-        ),
-        "{found:?}"
-    );
-}
-
 /// A bound an impl's method restates is the bound the trait declares,
 /// not one of its own: in the impl for every tuple, `x: a` with the
 /// restated `a: Greet` is the declared bound (the first), and `self`'s

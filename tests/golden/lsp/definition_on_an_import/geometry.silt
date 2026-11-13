@@ -1,0 +1,7 @@
+pub fn double(n: Int) -> Int {
+  n * 2
+}
+
+pub fn triple(n: Int) -> Int {
+  n * 3
+}

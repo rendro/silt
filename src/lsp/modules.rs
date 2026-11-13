@@ -159,24 +159,7 @@ impl Server {
     /// `module_hover` shows it, one of silt's own as
     /// `builtin_module_hover` does.
     pub(super) fn imported_module_hover(&self, doc: &Document, cursor: usize) -> Option<String> {
-        let program = doc.program.as_ref()?;
-        let text = &doc.source.text;
-        let module = program.decls.iter().find_map(|decl| {
-            let Decl::Import(target, span) = decl else {
-                return None;
-            };
-            let module = target.module();
-            let rest = text
-                .get(span.start as usize..span.end as usize)?
-                .strip_prefix("import")?;
-            let start = span.start as usize + "import".len() + rest.len() - rest.trim_start().len();
-            let end = start + crate::intern::resolve(module).len();
-            let alias = match target {
-                ImportTarget::Alias(_, _, at) => at.start as usize..at.end as usize,
-                _ => 0..0,
-            };
-            ((start..end).contains(&cursor) || alias.contains(&cursor)).then_some(module)
-        })?;
+        let module = import_module_at(doc, cursor, true)?;
         if let Some(view) = self.module_view(doc, module) {
             return Some(Self::module_hover(&view));
         }
@@ -220,6 +203,15 @@ impl Server {
             _ => None,
         })?;
         self.module_view(doc, module_name)
+    }
+
+    /// The file of the module an import of the open document `doc`
+    /// names at byte `cursor` (`geometry` in `import geometry`, in
+    /// `import geometry as g`, in `import geometry.{ area }`): none for
+    /// one of silt's own modules, which has no file.
+    pub(super) fn imported_module_file_at(&self, doc: &Document, cursor: usize) -> Option<Uri> {
+        let module = import_module_at(doc, cursor, false)?;
+        Some(self.module_view(doc, module)?.uri)
     }
 
     /// The module the import of `module_name` in `doc` resolves to.
@@ -281,6 +273,30 @@ impl Server {
             .or_else(|| found(false))
             .or_else(|| super::path_to_file_uri(path))
     }
+}
+
+/// The module an import of the open document `doc` names at byte
+/// `cursor`: where the import writes the module's name, and with
+/// `alias` where it writes its alias (`t` in `import time as t`).
+fn import_module_at(doc: &Document, cursor: usize, alias: bool) -> Option<Symbol> {
+    let program = doc.program.as_ref()?;
+    let text = &doc.source.text;
+    program.decls.iter().find_map(|decl| {
+        let Decl::Import(target, span) = decl else {
+            return None;
+        };
+        let module = target.module();
+        let rest = text
+            .get(span.start as usize..span.end as usize)?
+            .strip_prefix("import")?;
+        let start = span.start as usize + "import".len() + rest.len() - rest.trim_start().len();
+        let end = start + crate::intern::resolve(module).len();
+        let written_alias = match target {
+            ImportTarget::Alias(_, _, at) if alias => at.start as usize..at.end as usize,
+            _ => 0..0,
+        };
+        ((start..end).contains(&cursor) || written_alias.contains(&cursor)).then_some(module)
+    })
 }
 
 /// The hover of silt's own module `module`, if its feature is built: its

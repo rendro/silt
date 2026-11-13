@@ -1,0 +1,59 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: `json.parse` cannot decode `Option(Option(Int))`: an Option in an Option has no decoder
+-- stderr-contains: `json.parse` cannot decode `R`: field `n` has type `Option(Option(Int))`, and an Option in an Option has no decoder
+-- stderr-contains: `json.parse` cannot decode `List(Option(Option(Int)))`: an Option in an Option has no decoder
+-- stderr-contains: `json.parse` cannot decode `G(Option(Int))`: field `g` has type `Option(Option(Int))`, and an Option in an Option has no decoder
+-- stderr-contains: `json.parse` cannot decode `E`: variant `Hit` has a field of type `Option(Option(Int))`
+-- stderr-contains: `json.parse` cannot decode `A`: field `m` has type `Option(Option(Int))`
+-- stderr-contains: `json.decode` cannot decode `Option(Option(Int))`: an Option in an Option has no decoder
+-- stderr-contains: `toml.parse` cannot decode `R`: field `n` has type `Option(Option(Int))`, and an Option in an Option has no decoder
+-- stderr-contains: `toml.parse_list` cannot decode `Option(Option(Int))`: an Option in an Option has no decoder
+-- stderr-contains: `read` passes it to `json.parse`
+-- stderr-contains: `json.parse` cannot decode `List(Option(Option(Int)))`: an Option in an Option has no decoder
+-- stderr-contains: `read_options` passes it to `json.parse`
+-- stderr-contains: `read_option` passes it to `json.parse`
+-- stderr-not-contains: `W`
+-- `None` and `Some(None)` are written alike (json's `null`, toml's left-out
+-- key), so `Some(None)` never reads back: json and toml refuse an Option
+-- directly inside an Option, as csv does. `Option(json.Value)` is decoded.
+import json
+import toml
+
+type R { n: Option(Option(Int)) }
+type G(a) { g: Option(a) }
+type E { Hit(Option(Option(Int))), Miss }
+type MaybeInt = Option(Int)
+type A { m: Option(MaybeInt) }
+type W { v: Option(json.Value) }
+
+fn read(s: String, type t) -> Result(t, json.JsonError) where t: json.Decode {
+  json.parse(s, t)
+}
+
+-- A function that wraps its own type argument in an Option: each use
+-- judges the whole at the type it gives.
+fn read_option(s: String, type t) -> Result(Option(t), json.JsonError) where t: json.Decode {
+  json.parse(s, Option(t))
+}
+
+fn read_options(s: String, type t) -> Result(List(Option(t)), json.JsonError) where t: json.Decode {
+  json.parse(s, List(Option(t)))
+}
+
+fn main() {
+  println(json.parse("null", Option(Option(Int))))
+  println(json.parse("""{}""", R))
+  println(json.parse("[]", List(Option(Option(Int)))))
+  println(json.parse("""{}""", G(Option(Int))))
+  println(json.parse("[]", E))
+  println(json.parse("""{}""", A))
+  println(json.decode(json.Null, Option(Option(Int))))
+  println(toml.parse("", R))
+  println(toml.parse_list("", Option(Option(Int))))
+  println(read("null", Option(Option(Int))))
+  println(json.parse("""{"v": null}""", W))
+  println(read_option("null", Option(Int)))
+  println(read_options("[null]", Option(Int)))
+  println(read_option("1", Int))
+}

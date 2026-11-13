@@ -2,9 +2,11 @@
 -- The contract: return None rather than Some(empty map).
 import io
 import regex
-import result
 fn program() {
-  regex.captures_named("user@host", "(\\w+)@(\\w+)") |> result.unwrap_or(None)
+  match regex.compile("(\\w+)@(\\w+)") {
+    Ok(re) -> regex.captures_named("user@host", re)
+    Err(_) -> None
+  }
 }
 
 fn main() {

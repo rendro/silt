@@ -104,7 +104,7 @@ fn main() {
           println("  {first}")
           channel.close(rows)
         }
-        Err(e) -> println(Error.message(e))
+        Err(e) -> println("{e}")
       }
       println("an impl that waits for the reader:")
       match postgres.stream(db, "SELECT to_jsonb(g) AS step FROM generate_series(1, 5) g", (), T) {
@@ -115,11 +115,11 @@ fn main() {
                 println("  read {r.step.n}")
                 let _ = io.write_file(marker(r.step.n), "")
               }
-              Err(e) -> println("  Err {Error.message(e)}")
+              Err(e) -> println("  Err {e}")
             }
           }
         }
-        Err(e) -> println(Error.message(e))
+        Err(e) -> println("{e}")
       }
       loop n = 1 {
         match n <= 5 {
@@ -137,11 +137,11 @@ fn main() {
           println("  {first}")
           channel.close(rows)
         }
-        Err(e) -> println(Error.message(e))
+        Err(e) -> println("{e}")
       }
       println("  the next statement: {postgres.query(db, "SELECT 1 AS n", (), One)}")
       postgres.close(db)
     }
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println("{e}")
   }
 }

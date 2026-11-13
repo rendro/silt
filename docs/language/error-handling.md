@@ -36,8 +36,8 @@ is `Other(String)`. The full
 catalog is in [`docs/stdlib/errors.md`](../stdlib/errors.md); hovering
 over an error type in your editor shows the same table.
 
-You can either pattern-match on a specific variant, or fall back to
-`Error.message` for a rendered string:
+You can either pattern-match on a specific variant, or show the error,
+which gives its message:
 
 ```silt
 import io
@@ -48,16 +48,38 @@ fn main() {
     Ok(content) -> println("loaded {string.length(content)} bytes")
     Err(io.NotFound(path)) -> println("file does not exist: {path}")
     Err(io.PermissionDenied(path)) -> println("denied: {path}")
-    Err(e) -> println("error: {Error.message(e)}")
+    Err(e) -> println("error: {e}")
   }
 }
 ```
 
-Every stdlib error enum implements the built-in `Error` trait, which has
-`Display` as a supertrait and provides `message(self) -> String`. String
-interpolation `"{e}"` and `Error.message(e)` produce the same text — silt routes
-the `Display` impl through `Error.message` for stdlib error enums so the two
-shapes never drift.
+A stdlib error enum is shown as its message: `"{e}"`, `println(e)` and
+the `error:` line of a `main` that returns `Err(e)` all give that text. An
+error type of your own is shown as any type is, by its structure
+(`Bad("x")`), unless you write a `Display` impl for it:
+
+```silt
+type ConfigError {
+  Missing(String),
+  Bad(String),
+}
+
+trait Display for ConfigError {
+  fn display(self) -> String {
+    match self {
+      Missing(key) -> "missing key: {key}"
+      Bad(s) -> "bad input: {s}"
+    }
+  }
+}
+
+fn main() {
+  println(Bad("x"))
+  println("{Missing("port")}")
+}
+```
+
+It prints `bad input: x` and `missing key: port`.
 
 ## The `?` Operator
 
@@ -122,7 +144,10 @@ and it is how a tool fails: the `Err` is the program's message to its user.
 | a runtime error or a `panic` | the error with its place and calls on stderr, exit status 1 |
 
 The payload is shown as `println` shows it, so a tool's own error type
-with a `Display` impl reads as the tool writes it:
+with a `Display` impl reads as the tool writes it. Its type must have
+`Display`: a function, a channel, or a type that holds one and has no
+`Display` impl, is refused when the program is checked (and so is the
+error type of a test function).
 
 ```silt
 -- noexec
@@ -159,7 +184,7 @@ fn main() {
   match int.parse("forty") {
     Ok(n) -> println(n)
     Err(e) -> {
-      io.eprintln("count: {Error.message(e)}")
+      io.eprintln("count: {e}")
       process.exit(2)
     }
   }

@@ -1,0 +1,12 @@
+-- A field of type `Option(json.Value)` is decoded: a `null` in it reads as
+-- `None`, as a left-out key does; any other value as `Some` of it.
+import json
+
+type W { v: Option(json.Value) }
+
+fn main() {
+  println(json.parse("""{"v": null}""", W))
+  println(json.parse("""{}""", W))
+  println(json.parse("""{"v": [1, null]}""", W))
+  println(json.parse("null", Option(json.Value)))
+}

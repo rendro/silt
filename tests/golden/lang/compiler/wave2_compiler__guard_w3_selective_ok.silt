@@ -5,10 +5,10 @@ type Point { x: Int, y: Int }
 fn main() {
   match parse("""{"x": 1, "y": 2}""", Point) {
     Ok(p) -> println(p.x + p.y)
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println("{e}")
   }
   match parse("""[{"x": 3, "y": 4}]""", List(Point)) {
     Ok(ps) -> println(ps)
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println("{e}")
   }
 }

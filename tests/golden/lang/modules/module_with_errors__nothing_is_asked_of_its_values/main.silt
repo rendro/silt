@@ -10,7 +10,7 @@ fn pass(x) { x }
 fn main() {
   match broken.connect("x") {
     Ok(c) -> println(c.name)
-    Err(e) -> println(e.message())
+    Err(e) -> println("{e}")
   }
   let v = broken.thing()
   println(v.show())
