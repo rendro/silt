@@ -1,0 +1,39 @@
+-- cmd: lsp
+-- lsp: references 24:10
+-- lsp: rename 24:10 left
+-- lsp: references 33:34
+-- lsp: rename 33:34 w
+-- lsp: rename 24:10 y
+-- lsp: prepare-rename 34:21
+-- lsp: definition 34:21
+-- lsp: highlight 36:24
+-- lsp: rename 23:10 n
+-- lsp: definition 30:16
+-- A record field is found by its record type: `x` of `Pt` is named in
+-- its type, in literals, updates, reads and patterns, in this file and
+-- in shapes.silt; `x` of `Size` is another field. A rename of the field
+-- writes a field written alone out so the local keeps its name
+-- (`Pt { x }` becomes `Pt { left: x }`); a rename at that place renames
+-- the local. A name the record has already is refused.
+import shapes
+import shapes.{ Pt, Size, Box }
+
+fn norm(p: Pt) -> Int {
+  match p {
+    Pt { x, y: 0 } -> x
+    Pt { x: a, y } -> a + y
+  }
+}
+
+fn main() {
+  let x = 3
+  let p = Pt { x, y: 4 }
+  let s = Size { x: 1, w: 2 }
+  let b = Box { value: p }
+  println(norm(shapes.shift(p, s.x)))
+  println("{b.value.x} {s.w}")
+  let Pt { x: px, y: _ } = shapes.origin()
+  println(px + b.value.y)
+  println(Pt { x: 7, y: 8 }.x + (Pt { x: 9, y: 0 }).x)
+  println("{Size { x: 1, w: 1 }.x} {Pt { x: 2, y: 3 }.x}")
+}

@@ -1,0 +1,39 @@
+> references 19:18
+main.silt:19:18-19:20
+main.silt:21:12-21:14
+main.silt:23:5-23:7
+main.silt:24:5-24:7
+main.silt:29:10-29:12
+main.silt:29:18-29:20
+main.silt:31:16-31:18
+main.silt:31:32-31:34
+> prepare-rename 31:16
+31:16-31:18
+> rename 31:16 shp
+main.silt:19:18-19:20 => shp
+main.silt:21:12-21:14 => shp
+main.silt:23:5-23:7 => shp
+main.silt:24:5-24:7 => shp
+main.silt:29:10-29:12 => shp
+main.silt:29:18-29:20 => shp
+main.silt:31:16-31:18 => shp
+main.silt:31:32-31:34 => shp
+> highlight 31:16
+19:18-19:20
+21:12-21:14
+23:5-23:7
+24:5-24:7
+29:10-29:12
+29:18-29:20
+31:16-31:18
+31:32-31:34
+> rename 19:18 geometry
+error: `sh` cannot be renamed to `geometry`: `geometry` already names the module imported at line 16, and the rename would change what a name means
+> rename 19:18 string
+error: `sh` cannot be renamed to `string`: `string` is the name of one of silt's own modules, and the rename would change what a name means
+> rename 19:18 sh2
+error: `sh` cannot be renamed to `sh2`: `sh2` is already a local name at main.silt:31 (bound at line 30), and the rename would change what a name means
+> rename 19:18 size
+error: `sh` cannot be renamed to `size`: `size` is already a top-level name of main.silt, and the rename would change what a name means
+> definition 31:16
+shapes.silt:1:1-1:1

@@ -83,6 +83,12 @@ jobs:
         # A fixed version, its prebuilt binary checked by its SHA-256.
         run: bash .github/scripts/install-cargo-fuzz.sh
 
+      # cargo-fuzz has no --locked: it builds from fuzz/Cargo.lock, which
+      # this step holds to the manifest (it fails on a lock that would
+      # have to change).
+      - name: fuzz/Cargo.lock is current
+        run: cargo metadata --locked --manifest-path fuzz/Cargo.toml --format-version 1 > /dev/null
+
       - name: Seed corpus
         run: ./fuzz/seed.sh
 

@@ -132,6 +132,79 @@ fn without_warnings(stderr: &str) -> String {
     out
 }
 
+/// The instructions whose operands after the name are constants of the
+/// function's pool (src/disassemble.rs): how many of them.
+const CONSTANT_OPERANDS: &[(&str, usize)] = &[
+    ("Constant", 1),
+    ("AddConst", 1),
+    ("SubConst", 1),
+    ("TestEqual", 1),
+    ("GetFieldNamed", 1),
+    ("DestructRecordFieldNamed", 1),
+    ("TestRecordTag", 1),
+    ("TestMapHasKey", 1),
+    ("DestructMapValue", 1),
+    ("MakeDict", 1),
+    ("MakeClosure", 1),
+    ("MakeType", 1),
+    ("MakeRecord", 1),
+    ("TestIntRange", 2),
+    ("TestFloatRange", 2),
+];
+
+/// `disasm` output with each constant an instruction names written so
+/// that a field rename does not move it. A field's name is a string
+/// constant, one for every use of the same text: a rename to a name in
+/// use, or away from one another field keeps, numbers the pool anew and
+/// is the same program. So a string constant's number is left out (its
+/// text is behind the `;`), and every other constant is written as its
+/// rank among the other constants of its function, in the order they
+/// first appear (`k0`, `k1`): adding or dropping a string does not move
+/// those, and two that print alike (two closures of one function, two
+/// types `Pt` of two modules) keep two ranks. Every other operand (a
+/// global's slot, a count, a jump) is compared as it is.
+fn without_constant_numbers(disasm: &str) -> String {
+    let mut out = String::with_capacity(disasm.len());
+    let mut ranks: BTreeMap<String, usize> = BTreeMap::new();
+    for line in disasm.lines() {
+        // The pool is the function's: ranks start again at each one.
+        if line.starts_with("== ") {
+            ranks.clear();
+        }
+        let Some((code, comment)) = line.split_once(" ; ") else {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        };
+        let mut words: Vec<String> = code.split_whitespace().map(str::to_string).collect();
+        let operands = match words.get(..2) {
+            Some([bar, label])
+                if bar == "|" && ["field", "exclude", "literal"].contains(&&**label) =>
+            {
+                1
+            }
+            Some([_, name]) => (CONSTANT_OPERANDS.iter())
+                .find(|(op, _)| op == name)
+                .map_or(0, |(_, n)| *n),
+            _ => 0,
+        };
+        let string = operands == 1 && comment.starts_with('"');
+        for at in 2..(2 + operands).min(words.len()) {
+            words[at] = if string {
+                "#".to_string()
+            } else {
+                let next = ranks.len();
+                format!("k{}", ranks.entry(words[at].clone()).or_insert(next))
+            };
+        }
+        out.push_str(&words.join(" "));
+        out.push_str(" ; ");
+        out.push_str(comment);
+        out.push('\n');
+    }
+    out
+}
+
 /// What is compared: the check of every file, the disasm of the entry,
 /// and the run of the entry when `run`, each without its warnings.
 fn verdict(dir: &Path, files: &[PathBuf], entry: &str, run: bool) -> Vec<String> {
@@ -143,7 +216,7 @@ fn verdict(dir: &Path, files: &[PathBuf], entry: &str, run: bool) -> Vec<String>
         out.push(format!("check {name}: {code:?}\n{stdout}{stderr}"));
     }
     let (code, stdout, stderr) = silt(dir, &["disasm", entry]);
-    let stderr = without_warnings(&stderr);
+    let (stdout, stderr) = (without_constant_numbers(&stdout), without_warnings(&stderr));
     out.push(format!("disasm: {code:?}\n{stdout}{stderr}"));
     if run {
         let (code, stdout, stderr) = silt(dir, &["run", entry]);
@@ -360,10 +433,13 @@ pub(crate) fn sweep(
                     let end = offset_of(&file_text, pos("end", "line"), pos("end", "character"));
                     let old = file_text.get(start..end).unwrap_or("");
                     // A punned field is renamed by writing the field
-                    // out: `x` becomes `x: new`.
+                    // out: `x` becomes `x: new` for a rename of what
+                    // it holds, `new: x` for a rename of the field.
                     let new_text = edit["newText"].as_str().unwrap_or("");
                     let plain = old == name && new_text == new.as_str();
-                    let unpunned = old == name && new_text == format!("{name}: {new}");
+                    let unpunned = old == name
+                        && (new_text == format!("{name}: {new}")
+                            || new_text == format!("{new}: {name}"));
                     if !plain && !unpunned {
                         problem = Some(format!(
                             "the edit {rel}:{}:{} replaces `{old}` by `{new_text}`",

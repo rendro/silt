@@ -1,0 +1,10 @@
+pub type Pt { x: Int, y: Int }
+
+pub type Shape {
+  Circle(Int),
+  Square(Int),
+}
+
+pub fn area(p: Pt) -> Int {
+  p.x * p.y
+}
