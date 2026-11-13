@@ -386,6 +386,10 @@ fn http_error(error: &ureq::Error, url: &str) -> Value {
     }
     match error {
         Error::Timeout(_) => Value::variant(bv::HTTP_TIMEOUT, []),
+        // The name of the host was not found ([`Resolving`]).
+        Error::Io(io) if io.get_ref().is_some_and(|e| e.is::<NoSuchHost>()) => {
+            Value::variant(bv::HTTP_CONNECT, why())
+        }
         Error::Io(io) => match io.kind() {
             ErrorKind::TimedOut | ErrorKind::WouldBlock => Value::variant(bv::HTTP_TIMEOUT, []),
             ErrorKind::ConnectionRefused
@@ -601,6 +605,46 @@ impl<In: ureq::unversioned::transport::Transport> ureq::unversioned::transport::
     }
 }
 
+/// The name lookup of the http client: ureq's, with a lookup that fails
+/// marked ([`NoSuchHost`]), so that [`http_error`] makes it `Connect`, as
+/// `tcp.connect` does. The system says such a failure in a kind of error
+/// that names nothing (on Linux "failed to lookup address information"),
+/// and ureq hands it on as it is.
+#[cfg(feature = "http")]
+#[derive(Debug, Default)]
+struct Resolving(ureq::unversioned::resolver::DefaultResolver);
+
+#[cfg(feature = "http")]
+impl ureq::unversioned::resolver::Resolver for Resolving {
+    fn resolve(
+        &self,
+        uri: &ureq::http::Uri,
+        config: &ureq::config::Config,
+        timeout: ureq::unversioned::transport::NextTimeout,
+    ) -> Result<ureq::unversioned::resolver::ResolvedSocketAddrs, ureq::Error> {
+        self.0.resolve(uri, config, timeout).map_err(|e| match e {
+            ureq::Error::Io(e) => ureq::Error::Io(std::io::Error::new(e.kind(), NoSuchHost(e))),
+            e => e,
+        })
+    }
+}
+
+/// A failure of the name lookup of the http client ([`Resolving`]): its
+/// words are the system's.
+#[cfg(feature = "http")]
+#[derive(Debug)]
+struct NoSuchHost(std::io::Error);
+
+#[cfg(feature = "http")]
+impl std::fmt::Display for NoSuchHost {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+#[cfg(feature = "http")]
+impl std::error::Error for NoSuchHost {}
+
 /// A connection the http client made itself ([`Connecting`]), as ureq's
 /// transport for TCP is: its buffers, and the socket, shared with the
 /// client's shutdown.
@@ -723,7 +767,8 @@ impl Client {
 /// request says `user-agent: silt/<version>` and `accept-encoding:
 /// gzip`, unless the program sets that header itself: ureq sends the
 /// request's header then. Its connector is ureq's default (a CONNECT
-/// proxy, TCP, TLS) with its own TCP connector ([`Connecting`]).
+/// proxy, TCP, TLS) with its own TCP connector ([`Connecting`]), and its
+/// resolver ureq's, with a failed lookup marked ([`Resolving`]).
 #[cfg(feature = "http")]
 fn client_with_times(connect: Duration, global: Duration) -> Client {
     use ureq::unversioned::transport::{ConnectProxyConnector, Connector, RustlsConnector};
@@ -739,7 +784,7 @@ fn client_with_times(connect: Duration, global: Duration) -> Client {
         ().chain(ConnectProxyConnector::default())
             .chain(Connecting(connects.clone()))
             .chain(RustlsConnector::default());
-    let resolver = ureq::unversioned::resolver::DefaultResolver::default();
+    let resolver = Resolving::default();
     Client {
         agent: ureq::Agent::with_parts(config, connector, resolver),
         connects,
@@ -2759,6 +2804,15 @@ mod http_error_tests {
         ] {
             assert!(refuse_port(url).is_none(), "{url}");
         }
+    }
+
+    /// A host whose name is not found is `Connect`, as for `tcp.connect`
+    /// ("no such host", http.md), not `Other`. (`.invalid` is never found,
+    /// RFC 6761.)
+    #[test]
+    fn a_host_that_is_not_found_is_connect() {
+        let failed = failure(&do_http_get("http://no-such-host.invalid/"));
+        assert!(failed.starts_with("Connect("), "{failed}");
     }
 
     #[test]
