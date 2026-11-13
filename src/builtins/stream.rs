@@ -626,10 +626,12 @@ fn failed_stream(vm: &mut Vm, item: Value) -> Step {
     Step::Done(Value::Channel(out))
 }
 
-/// A channel that is closed and empty: the output of a stage that has
-/// nothing to do (`stream.take(s, 0)`).
-fn closed_channel(vm: &mut Vm) -> Step {
+/// A channel that is closed and empty: the output of a stage `name` that
+/// has nothing to do (`stream.take(s, 0)`). It is a stream's channel all
+/// the same: a send into it is refused as one.
+fn closed_channel(vm: &mut Vm, name: &'static str) -> Step {
     let out = Channel::new(vm.next_channel_id(), 1);
+    out.set_fed_by(name);
     out.close(Close::default(), vm.scheduler().wake());
     Step::Done(Value::Channel(out))
 }
@@ -1613,7 +1615,7 @@ builtins! {
         // it reads cuts it.
         if n <= 0 {
             ch.abandon(vm.scheduler().wake());
-            return Ok(closed_channel(vm));
+            return Ok(closed_channel(vm, "stream.take"));
         }
         let in_ch = ch.clone();
         let mut left = n;
