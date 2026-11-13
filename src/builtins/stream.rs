@@ -2292,7 +2292,10 @@ after
             cases.push((input, vec![cap.clone(), "ERR".to_string()]));
         }
         cases.push(("a".repeat(LINE_MAX).into_bytes(), vec![cap.clone()]));
-        cases.push(("a".repeat(LINE_MAX + 1).into_bytes(), vec!["ERR".to_string()]));
+        cases.push((
+            "a".repeat(LINE_MAX + 1).into_bytes(),
+            vec!["ERR".to_string()],
+        ));
         for (input, expected) in cases {
             assert_eq!(kinds(file_of(&input)), expected, "file");
             for piece in [4096, 65536] {

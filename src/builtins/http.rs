@@ -3414,7 +3414,10 @@ mod connect_each_tests {
         let took = started.elapsed();
         let mut response = got.expect("the second address answers");
         assert_eq!(response.status(), 200);
-        assert_eq!(response.body_mut().read_to_string().expect("the body"), "ok");
+        assert_eq!(
+            response.body_mut().read_to_string().expect("the body"),
+            "ok"
+        );
         // The first address had its share, 1 s of the 1.5 s.
         assert!(took >= Duration::from_millis(900), "{took:?}");
         drop(held);
