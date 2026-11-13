@@ -367,6 +367,38 @@ mod tls {
                 fn raw_socket(&self) -> Option<usize> {
                     self.inner.sock.0.raw_socket()
                 }
+
+                fn reads_in_parts(&self) -> bool {
+                    true
+                }
+
+                fn read_buffered(&mut self, buf: &mut [u8]) -> std::io::Result<Option<usize>> {
+                    // What the library has to say first (an alert, a key
+                    // update) goes out, as a read of the stream sends it.
+                    if self.inner.conn.wants_write() {
+                        self.inner.conn.write_tls(&mut self.inner.sock)?;
+                    }
+                    match self.inner.conn.reader().read(buf) {
+                        Ok(read) => Ok(Some(read)),
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
+                        Err(e) => Err(e),
+                    }
+                }
+
+                fn read_socket(&mut self) -> std::io::Result<()> {
+                    match self.inner.conn.read_tls(&mut self.inner.sock) {
+                        Ok(_) => match self.inner.conn.process_new_packets() {
+                            Ok(_) => Ok(()),
+                            Err(e) => {
+                                // The alert that says why, as the stream does.
+                                let _ = self.inner.conn.write_tls(&mut self.inner.sock);
+                                Err(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+                            }
+                        },
+                        Err(e) if e.kind() == std::io::ErrorKind::Interrupted => Ok(()),
+                        Err(e) => Err(e),
+                    }
+                }
             }
         };
     }

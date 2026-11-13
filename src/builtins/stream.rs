@@ -615,6 +615,16 @@ fn stage_on(
     Ok(Step::Done(Value::Channel(out)))
 }
 
+/// A stream whose one item is `item` (an `Err`), and then its end: a
+/// source that could not start says why.
+#[cfg(feature = "tcp")]
+fn failed_stream(vm: &mut Vm, item: Value) -> Step {
+    let out = Channel::new(vm.next_channel_id(), 1);
+    let _ = out.try_send(item, vm.scheduler().wake());
+    out.close(Close::default(), vm.scheduler().wake());
+    Step::Done(Value::Channel(out))
+}
+
 /// A channel that is closed and empty: the output of a stage that has
 /// nothing to do (`stream.take(s, 0)`).
 fn closed_channel(vm: &mut Vm) -> Step {
@@ -679,24 +689,21 @@ struct Held {
     /// A read of the source is in flight, with its own hold of the
     /// connection.
     reading: AtomicBool,
-    /// What ends that read without shutting the connection down: on a
-    /// plain connection.
-    wake: Option<crate::runtime::handle::ReadWake>,
+    /// What ends that read without shutting the connection down.
+    wake: crate::runtime::handle::ReadWake,
 }
 
 #[cfg(feature = "tcp")]
 impl Held {
-    fn new(conn: &Arc<crate::runtime::handle::TcpStreamHandle>) -> Arc<Held> {
-        let wake = match conn.reads_now() {
-            true => crate::runtime::handle::ReadWake::new().ok(),
-            false => None,
-        };
-        Arc::new(Held {
+    /// The hold of `conn`; an error when its wake cannot be made (the
+    /// process has no descriptor left), which the stream gives.
+    fn new(conn: &Arc<crate::runtime::handle::TcpStreamHandle>) -> std::io::Result<Arc<Held>> {
+        Ok(Arc::new(Held {
             slot: Mutex::new(Some(conn.clone())),
             conn: Arc::downgrade(conn),
             reading: AtomicBool::new(false),
-            wake,
-        })
+            wake: crate::runtime::handle::ReadWake::new()?,
+        }))
     }
 
     /// The connection, for a read, which is in flight until the guard
@@ -717,15 +724,14 @@ impl Held {
     /// The stream is let go of: the source lets go of the connection,
     /// and a read in flight ends without taking anything. If that read
     /// is the last holder, nobody else can use the connection: it is
-    /// shut down, which ends the read, and closed with it. Else, on a
-    /// plain connection, the read is woken ([`ReadWake`]); on a TLS
-    /// connection it cannot be (it waits inside the TLS library): it
-    /// runs on until the peer sends or closes, and `false` says so.
+    /// shut down, which ends the read, and closed with it. Else the read
+    /// is woken ([`ReadWake`]): it ends without taking anything, and the
+    /// connection stays its other holders'.
+    ///
+    /// [`ReadWake`]: crate::runtime::handle::ReadWake
     fn let_go(&self) -> bool {
         self.release();
-        if let Some(wake) = &self.wake {
-            wake.wake();
-        }
+        self.wake.wake();
         if !self.reading.load(Ordering::SeqCst) {
             return true;
         }
@@ -737,7 +743,7 @@ impl Held {
                 }
                 true
             }
-            _ => self.wake.is_some(),
+            _ => true,
         }
     }
 }
@@ -1066,19 +1072,16 @@ fn tcp_line_reads(held: Arc<Held>) -> impl FnMut() -> Vec<Value> + Send + 'stati
             }
             pending.resize(at + LINES_READ, 0);
             let read = match wait {
-                true => match held.wake.as_ref() {
-                    Some(wake) => match conn.read_unless_woken(&mut pending[at..], wake) {
-                        Ok(Some(got)) => Ok(got),
-                        // The stream was let go of: nothing was read, and
-                        // the source ends.
-                        Ok(None) => {
-                            pending.truncate(at);
-                            ended = true;
-                            return lines;
-                        }
-                        Err(e) => Err(e),
-                    },
-                    None => conn.read(&mut pending[at..]),
+                true => match conn.read_unless_woken(&mut pending[at..], &held.wake) {
+                    Ok(Some(got)) => Ok(got),
+                    // The stream was let go of: nothing was read, and the
+                    // source ends.
+                    Ok(None) => {
+                        pending.truncate(at);
+                        ended = true;
+                        return lines;
+                    }
+                    Err(e) => Err(e),
                 },
                 false => match conn.read_now(&mut pending[at..]) {
                     Some(got) => Ok(got),
@@ -1388,7 +1391,10 @@ builtins! {
         let Ok(n @ 1..) = usize::try_from(size) else {
             return Err(VmError::new("stream.tcp_chunks: size must be positive".into()));
         };
-        let held = Held::new(stream);
+        let held = match Held::new(stream) {
+            Ok(held) => held,
+            Err(e) => return Ok(failed_stream(vm, super::tcp::tcp_io_err(super::tcp::Doing::Using, &e))),
+        };
         let on = on_held(&held);
         reading(
             vm,
@@ -1397,10 +1403,7 @@ builtins! {
             one_a_read(move || {
                 let (conn, _reading) = held.for_read()?;
                 let mut buf = vec![0u8; n.min(READ_AT_ONCE)];
-                let read = match held.wake.as_ref() {
-                    Some(wake) => conn.read_unless_woken(&mut buf, wake),
-                    None => conn.read(&mut buf).map(Some),
-                };
+                let read = conn.read_unless_woken(&mut buf, &held.wake);
                 match read {
                     // The stream was let go of: nothing was read.
                     Ok(None) => None,
@@ -1423,7 +1426,10 @@ builtins! {
 
     #[cfg(feature = "tcp")]
     fn tcp_lines(vm, stream: TcpStream) -> Result<Step, VmError> {
-        let held = Held::new(stream);
+        let held = match Held::new(stream) {
+            Ok(held) => held,
+            Err(e) => return Ok(failed_stream(vm, super::tcp::tcp_io_err(super::tcp::Doing::Using, &e))),
+        };
         let on = on_held(&held);
         reading(vm, "stream.tcp_lines", on, tcp_line_reads(held))
     }
@@ -2117,7 +2123,7 @@ mod tests {
     /// name; and how many reads of the source there were.
     #[cfg(feature = "tcp")]
     fn lines_of(conn: &Arc<crate::runtime::handle::TcpStreamHandle>) -> (Vec<String>, usize) {
-        let mut read = tcp_line_reads(Held::new(conn));
+        let mut read = tcp_line_reads(Held::new(conn).expect("a wake"));
         let (mut items, mut calls) = (Vec::new(), 0);
         loop {
             calls += 1;
@@ -2225,7 +2231,7 @@ mod tests {
     #[cfg(feature = "tcp")]
     fn tcp_lines_ends_at_a_line_that_is_no_utf8_or_a_read_that_fails() {
         let (conn, _) = counted(b"a\nb\n\xff\nc\n", usize::MAX, None);
-        let mut read = tcp_line_reads(Held::new(&conn));
+        let mut read = tcp_line_reads(Held::new(&conn).expect("a wake"));
         let mut lines = 0;
         let ended = loop {
             let got = read();

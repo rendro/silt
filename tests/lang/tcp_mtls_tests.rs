@@ -499,3 +499,145 @@ fn main() {{
     assert!(out.starts_with("a write failed: "), "{out}");
     assert!(out.ends_with("the server is still running\n"), "{out}");
 }
+
+/// The TLS server of the tests below: it writes its port to
+/// `port_path`, accepts `n` clients, makes each a TLS connection, and
+/// runs `handle(conn, i)` for each in a task of its own; it gives
+/// `after` once every handler has returned.
+fn tls_handlers_src(port_path: &str, pki: &MtlsPki, n: usize, handle: &str, after: &str) -> String {
+    format!(
+        r#"
+import bytes
+import channel
+import io
+import list
+import result
+import stream
+import task
+import tcp
+import time
+
+fn head(conn: tcp.TcpStream) -> List(String) {{
+  let lines = stream.tcp_lines(conn)
+  loop got = [] {{
+    match channel.receive(lines) {{
+      Some(Ok("")) -> got
+      Some(Ok(line)) -> loop(list.append(got, line))
+      _ -> got
+    }}
+  }}
+}}
+
+{handle}
+
+fn main() {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {{ panic("cannot listen") }}
+  when let Ok(_) = io.write_file("{port_path}", "{{tcp.local_port(listener)}}\n") else {{
+    panic("cannot write the port")
+  }}
+  when let Ok(cert) = bytes.from_hex("{cert_hex}") else {{ panic("no cert") }}
+  when let Ok(key) = bytes.from_hex("{key_hex}") else {{ panic("no key") }}
+  let handlers = list.map(1..{n}) {{ i ->
+    when let Ok(raw) = tcp.accept(listener) else {{ panic("no client") }}
+    task.spawn {{ ->
+      when let Ok(conn) = tcp.tls_server(raw, cert, key) else {{ panic("no handshake") }}
+      handle(conn, i)
+    }}
+  }}
+  list.each(handlers) {{ h -> task.join(h) }}
+  host.give({after})
+}}
+import host
+"#,
+        cert_hex = hex_encode(pki.server_cert_pem.as_bytes()),
+        key_hex = hex_encode(pki.server_key_pem.as_bytes()),
+    )
+}
+
+/// A rustls client of `addr`, its handshake done.
+fn tls_client(addr: &str, pki: &MtlsPki) -> (ClientConnection, TcpStream) {
+    let config = build_client_config(&pki.ca_cert_pem, None);
+    let name = ServerName::try_from("localhost".to_string()).expect("server name");
+    let mut conn = ClientConnection::new(Arc::new(config), name).expect("client connection");
+    let mut sock = TcpStream::connect(addr).expect("the client connects");
+    sock.set_read_timeout(Some(Duration::from_secs(20))).ok();
+    while conn.is_handshaking() {
+        conn.complete_io(&mut sock).expect("handshake");
+    }
+    (conn, sock)
+}
+
+/// STR-2 on TLS: a helper reads the head of a request through
+/// `stream.tcp_lines(conn)` and returns; the handler then answers on
+/// `conn`, while the client waits for the answer and sends nothing
+/// more. The stream's read in flight is woken when the stream is left,
+/// so the answer does not wait behind it. (It waited until the client
+/// sent again: the read held the connection's lock.)
+#[test]
+fn a_tls_stream_left_by_a_helper_leaves_the_connection_to_its_handler() {
+    let pki = generate_pki();
+    let port_file = PortFile::new();
+    let src = tls_handlers_src(
+        &port_file.path(),
+        &pki,
+        1,
+        r#"fn handle(conn: tcp.TcpStream, _i: Int) -> () {
+  let got = head(conn)
+  let _ = tcp.write(conn, bytes.from_string("got {list.length(got)} lines\n"))
+}"#,
+        r#""answered""#,
+    );
+    let server = thread::spawn(move || match run(&src) {
+        Value::String(s, _) => s.to_string(),
+        other => format!("unexpected:{other:?}"),
+    });
+    let addr = format!("127.0.0.1:{}", port_file.wait());
+    let (mut conn, mut sock) = tls_client(&addr, &pki);
+    let mut tls = rustls::Stream::new(&mut conn, &mut sock);
+    tls.write_all(b"a\nb\n\n").expect("the request");
+    let mut answer = [0u8; 12];
+    let read = std::io::Read::read_exact(&mut tls, &mut answer);
+    assert!(read.is_ok(), "the answer did not come: {read:?}");
+    assert_eq!(&answer, b"got 2 lines\n");
+    assert_eq!(server.join().expect("server thread"), "answered");
+}
+
+/// STR-2 on TLS: handlers that give up reading the head of silent
+/// clients (a deadline around the helper) and return leave nothing
+/// behind: each stream's read is woken and ends, so the connections,
+/// held by nothing any more, close, and the I/O pool is free: a file
+/// read after them runs.
+/// (The reads ran on, held their connections and counted among the
+/// operations that cannot be interrupted: 70 such clients made every
+/// I/O operation fail.)
+#[test]
+fn tls_handlers_that_give_up_on_silent_clients_leave_nothing_behind() {
+    let n = 70;
+    let pki = generate_pki();
+    let port_file = PortFile::new();
+    let read_back = port_file.path();
+    let src = tls_handlers_src(
+        &port_file.path(),
+        &pki,
+        n,
+        r#"fn handle(conn: tcp.TcpStream, _i: Int) -> () {
+  let _ = task.deadline(time.ms(200)) { -> head(conn) }
+}"#,
+        &format!(
+            r#"io.read_file("{read_back}") |> result.map {{ _ -> "a file read after them" }} |> result.unwrap_or("no file read")"#
+        ),
+    );
+    let server = thread::spawn(move || match run(&src) {
+        Value::String(s, _) => s.to_string(),
+        other => format!("unexpected:{other:?}"),
+    });
+    let addr = format!("127.0.0.1:{}", port_file.wait());
+    // The clients stay, silent, until the server has said how it went.
+    let clients: Vec<(ClientConnection, TcpStream)> =
+        (0..n).map(|_| tls_client(&addr, &pki)).collect();
+    assert_eq!(
+        server.join().expect("server thread"),
+        "a file read after them"
+    );
+    drop(clients);
+}

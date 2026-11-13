@@ -32,6 +32,27 @@ pub trait ReadWrite: std::io::Read + std::io::Write + Send {
     fn raw_socket(&self) -> Option<usize> {
         None
     }
+
+    /// What is decrypted already, read without touching the socket:
+    /// `Some(n)` (`Some(0)` at the end of the connection), `None` when
+    /// the TLS library needs bytes of the socket first
+    /// ([`ReadWrite::read_socket`]). A plain socket has no such part.
+    fn read_buffered(&mut self, _buf: &mut [u8]) -> std::io::Result<Option<usize>> {
+        Ok(None)
+    }
+
+    /// Take into the TLS library what the socket has: one read of it,
+    /// which the caller has waited for, so that it does not wait.
+    fn read_socket(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    /// Whether it reads in those two parts ([`ReadWrite::read_buffered`],
+    /// [`ReadWrite::read_socket`]): the TLS connections do. Another
+    /// reads with `read`, which may wait.
+    fn reads_in_parts(&self) -> bool {
+        false
+    }
 }
 
 impl ReadWrite for std::net::TcpStream {
@@ -549,6 +570,11 @@ pub struct TcpStreamHandle {
     /// usize` on Windows, where `CancelIoEx` on it ends what blocks on
     /// it; the file descriptor on Unix, unused).
     io_socket: Option<usize>,
+    /// The OS socket that the connection's bytes come on, plain or under
+    /// TLS: what a read that can be woken waits on
+    /// ([`TcpStreamHandle::read_unless_woken`]). It stays open while
+    /// the handle lives.
+    wait_socket: Option<usize>,
 }
 
 enum TcpIo {
@@ -585,6 +611,7 @@ impl TcpStreamHandle {
         Arc::new(TcpStreamHandle {
             id,
             io_socket: socket.raw_socket(),
+            wait_socket: socket.raw_socket(),
             io: TcpIo::Plain {
                 socket,
                 reading: Mutex::new(()),
@@ -606,10 +633,12 @@ impl TcpStreamHandle {
         wrap: impl FnOnce() -> Result<Box<dyn ReadWrite>, String>,
     ) -> Result<Arc<Self>, String> {
         let other = Mutex::new(socket.try_clone().ok());
+        let both = wrap()?;
+        let wait_socket = both.raw_socket();
         Ok(Arc::new(TcpStreamHandle {
             id,
             io: TcpIo::Tls {
-                both: Mutex::new(wrap()?),
+                both: Mutex::new(both),
                 socket: other,
                 shutter: shutter.clone(),
             },
@@ -617,6 +646,7 @@ impl TcpStreamHandle {
             handed_over: AtomicBool::new(false),
             // The shutter ends what blocks.
             io_socket: None,
+            wait_socket,
         }))
     }
 
@@ -706,12 +736,14 @@ impl TcpStreamHandle {
         }
     }
 
-    /// [`TcpStreamHandle::read`], which on a plain connection first
-    /// waits for something to read beside `wake`: `Ok(None)` when it is
-    /// woken ([`ReadWake::wake`]) instead. Nothing is taken from the
-    /// connection then, and the connection is as it was. (A TLS
-    /// connection reads as `read` does: what waits in the TLS library
-    /// cannot be woken so.)
+    /// [`TcpStreamHandle::read`], which first waits for something to
+    /// read beside `wake`: `Ok(None)` when it is woken
+    /// ([`ReadWake::wake`]) instead. Nothing is taken from the connection
+    /// then, and the connection is as it was. On a TLS connection what is
+    /// decrypted already is read at once; else the wait for the socket is
+    /// made outside the connection's lock, so a write on the connection
+    /// does not wait behind it, and the socket's bytes are then taken
+    /// into the TLS library under the lock, one read at a time.
     pub fn read_unless_woken(
         &self,
         buf: &mut [u8],
@@ -729,7 +761,9 @@ impl TcpStreamHandle {
                 if self.handed_over.load(AtomicOrdering::SeqCst) {
                     return Err(std::io::ErrorKind::NotConnected.into());
                 }
-                if !wake.wait(socket) {
+                if let Some(raw) = self.wait_socket
+                    && !wake.wait(raw)
+                {
                     return Ok(None);
                 }
                 loop {
@@ -739,7 +773,23 @@ impl TcpStreamHandle {
                     }
                 }
             }
-            TcpIo::Tls { both, .. } => both.lock().read(buf).map(Some),
+            TcpIo::Tls { both, .. } if !both.lock().reads_in_parts() => {
+                both.lock().read(buf).map(Some)
+            }
+            TcpIo::Tls { both, .. } => loop {
+                if let Some(read) = both.lock().read_buffered(buf)? {
+                    return Ok(Some(read));
+                }
+                if self.is_closed() {
+                    return Err(std::io::ErrorKind::NotConnected.into());
+                }
+                if let Some(raw) = self.wait_socket
+                    && !wake.wait(raw)
+                {
+                    return Ok(None);
+                }
+                both.lock().read_socket()?;
+            },
         }
     }
 
@@ -1090,28 +1140,49 @@ impl Shutter {
     }
 }
 
-/// What wakes a read that waits for a plain connection to have
-/// something to read, without shutting the connection down
+/// What wakes a read that waits for a connection to have something to
+/// read, without shutting the connection down
 /// ([`TcpStreamHandle::read_unless_woken`]): the read waits on the
-/// connection and on a loopback socket of its own, and a wake is a
-/// datagram to that socket. A `stream.tcp_*` source has one: when its
+/// connection and on a descriptor of the wake's own, and a wake makes
+/// that descriptor readable. A `stream.tcp_*` source has one: when its
 /// stream is let go of while the connection still has other holders,
 /// its read in flight ends so, and the connection stays theirs.
+///
+/// The descriptor is an `eventfd` on Linux (one descriptor), a pipe on
+/// the other Unix systems (two), and on Windows, where a wait on a
+/// socket can only wait on sockets beside it, a UDP socket on the
+/// loopback address that a datagram from itself wakes. Nobody else can
+/// end a wait: the flag decides, the descriptor only wakes.
 pub struct ReadWake {
-    socket: std::net::UdpSocket,
-    at: std::net::SocketAddr,
     woken: AtomicBool,
+    signal: Signal,
 }
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
+struct Signal(std::os::fd::OwnedFd);
+
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
+struct Signal {
+    read: std::os::fd::OwnedFd,
+    write: std::os::fd::OwnedFd,
+}
+
+#[cfg(windows)]
+struct Signal {
+    socket: std::net::UdpSocket,
+    at: std::net::SocketAddr,
+}
+
+#[cfg(not(any(unix, windows)))]
+struct Signal;
+
 impl ReadWake {
+    /// A wake: an error when the system gives no descriptor for it
+    /// (none left), which the caller reports.
     pub fn new() -> std::io::Result<ReadWake> {
-        let socket = std::net::UdpSocket::bind("127.0.0.1:0")?;
-        let at = socket.local_addr()?;
-        socket.set_nonblocking(true)?;
         Ok(ReadWake {
-            socket,
-            at,
             woken: AtomicBool::new(false),
+            signal: Signal::new()?,
         })
     }
 
@@ -1119,23 +1190,25 @@ impl ReadWake {
     /// reads nothing.
     pub fn wake(&self) {
         self.woken.store(true, AtomicOrdering::SeqCst);
-        let _ = self.socket.send_to(&[0], self.at);
+        self.signal.raise();
     }
 
-    /// Wait until `conn` has something to read, its end or an error:
-    /// `true`; `false` when woken.
-    fn wait(&self, conn: &std::net::TcpStream) -> bool {
+    fn is_woken(&self) -> bool {
+        self.woken.load(AtomicOrdering::SeqCst)
+    }
+
+    /// Wait until the socket `conn` (as [`ReadWrite::raw_socket`] gives
+    /// it) has something to read, its end or an error: `true`; `false`
+    /// when woken.
+    fn wait(&self, conn: usize) -> bool {
         loop {
-            if self.woken.load(AtomicOrdering::SeqCst) {
+            if self.is_woken() {
                 return false;
             }
-            match poll_two(conn, &self.socket) {
-                Ok((conn_ready, wake_ready)) => {
-                    if wake_ready {
-                        let mut byte = [0u8; 1];
-                        while self.socket.recv(&mut byte).is_ok() {}
-                    }
-                    if self.woken.load(AtomicOrdering::SeqCst) {
+            match poll_two(conn, &self.signal) {
+                Ok(conn_ready) => {
+                    self.signal.drain();
+                    if self.is_woken() {
                         return false;
                     }
                     if conn_ready {
@@ -1150,69 +1223,171 @@ impl ReadWake {
     }
 }
 
-/// Wait until one of the two sockets has something to read (or its
-/// end, or an error): which ones.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+impl Signal {
+    fn new() -> std::io::Result<Signal> {
+        use std::os::fd::FromRawFd;
+        // SAFETY: `eventfd` makes a descriptor or fails; a descriptor it
+        // makes is owned here alone.
+        let fd = unsafe { libc::eventfd(0, libc::EFD_CLOEXEC | libc::EFD_NONBLOCK) };
+        if fd < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        // SAFETY: as above: `fd` is open and nobody else owns it.
+        Ok(Signal(unsafe { std::os::fd::OwnedFd::from_raw_fd(fd) }))
+    }
+
+    fn raise(&self) {
+        use std::os::fd::AsRawFd;
+        let one: u64 = 1;
+        // SAFETY: writes the 8 bytes of `one` to a descriptor this owns.
+        unsafe {
+            libc::write(self.0.as_raw_fd(), (&one as *const u64).cast(), 8);
+        }
+    }
+
+    fn fd(&self) -> libc::c_int {
+        use std::os::fd::AsRawFd;
+        self.0.as_raw_fd()
+    }
+
+    /// (Only the wake writes to it.)
+    fn drain(&self) {}
+}
+
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
+impl Signal {
+    fn new() -> std::io::Result<Signal> {
+        use std::os::fd::FromRawFd;
+        let mut fds = [0 as libc::c_int; 2];
+        // SAFETY: `pipe` fills the two descriptors or fails.
+        if unsafe { libc::pipe(fds.as_mut_ptr()) } < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        // SAFETY: both are open and owned here alone.
+        let (read, write) = unsafe {
+            (
+                std::os::fd::OwnedFd::from_raw_fd(fds[0]),
+                std::os::fd::OwnedFd::from_raw_fd(fds[1]),
+            )
+        };
+        for fd in fds {
+            // SAFETY: `fcntl` on descriptors this owns: close on exec, and
+            // a write to a full pipe does not wait.
+            unsafe {
+                libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
+                let flags = libc::fcntl(fd, libc::F_GETFL);
+                libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
+            }
+        }
+        Ok(Signal { read, write })
+    }
+
+    fn raise(&self) {
+        use std::os::fd::AsRawFd;
+        let byte = 1u8;
+        // SAFETY: writes one byte to a descriptor this owns.
+        unsafe {
+            libc::write(self.write.as_raw_fd(), (&byte as *const u8).cast(), 1);
+        }
+    }
+
+    fn fd(&self) -> libc::c_int {
+        use std::os::fd::AsRawFd;
+        self.read.as_raw_fd()
+    }
+
+    /// (Only the wake writes to it.)
+    fn drain(&self) {}
+}
+
+#[cfg(windows)]
+impl Signal {
+    fn new() -> std::io::Result<Signal> {
+        let socket = std::net::UdpSocket::bind("127.0.0.1:0")?;
+        let at = socket.local_addr()?;
+        socket.set_nonblocking(true)?;
+        Ok(Signal { socket, at })
+    }
+
+    fn raise(&self) {
+        let _ = self.socket.send_to(&[0], self.at);
+    }
+
+    /// Take what came to the socket: a datagram of another process to
+    /// the port ends no wait, and must not leave the socket readable.
+    fn drain(&self) {
+        let mut byte = [0u8; 1];
+        while self.socket.recv(&mut byte).is_ok() {}
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+impl Signal {
+    fn new() -> std::io::Result<Signal> {
+        Ok(Signal)
+    }
+
+    fn raise(&self) {}
+
+    fn drain(&self) {}
+}
+
+/// Wait until the socket `conn` or the wake's descriptor has something
+/// to read (or its end, or an error): whether `conn` does. (The wake's
+/// descriptor is never drained: once raised, every later wait returns
+/// at once, and the flag of the wake ends it.)
 #[cfg(unix)]
-fn poll_two(
-    conn: &std::net::TcpStream,
-    wake: &std::net::UdpSocket,
-) -> std::io::Result<(bool, bool)> {
-    use std::os::unix::io::AsRawFd;
+fn poll_two(conn: usize, wake: &Signal) -> std::io::Result<bool> {
     let mut fds = [
         libc::pollfd {
-            fd: conn.as_raw_fd(),
+            fd: conn as libc::c_int,
             events: libc::POLLIN,
             revents: 0,
         },
         libc::pollfd {
-            fd: wake.as_raw_fd(),
+            fd: wake.fd(),
             events: libc::POLLIN,
             revents: 0,
         },
     ];
     // SAFETY: `fds` is an array of two valid `pollfd`s of descriptors
-    // that the caller keeps open for the call; its length is passed.
+    // that the callers keep open for the call; its length is passed.
     let n = unsafe { libc::poll(fds.as_mut_ptr(), 2, -1) };
     if n < 0 {
         return Err(std::io::Error::last_os_error());
     }
-    Ok((fds[0].revents != 0, fds[1].revents != 0))
+    Ok(fds[0].revents != 0)
 }
 
 #[cfg(windows)]
-fn poll_two(
-    conn: &std::net::TcpStream,
-    wake: &std::net::UdpSocket,
-) -> std::io::Result<(bool, bool)> {
+fn poll_two(conn: usize, wake: &Signal) -> std::io::Result<bool> {
     use std::os::windows::io::AsRawSocket;
     use windows_sys::Win32::Networking::WinSock::{POLLRDNORM, SOCKET_ERROR, WSAPOLLFD, WSAPoll};
     let mut fds = [
         WSAPOLLFD {
-            fd: conn.as_raw_socket() as _,
+            fd: conn as _,
             events: POLLRDNORM,
             revents: 0,
         },
         WSAPOLLFD {
-            fd: wake.as_raw_socket() as _,
+            fd: wake.socket.as_raw_socket() as _,
             events: POLLRDNORM,
             revents: 0,
         },
     ];
     // SAFETY: `fds` is an array of two valid `WSAPOLLFD`s of sockets
-    // that the caller keeps open for the call; its length is passed.
+    // that the callers keep open for the call; its length is passed.
     let n = unsafe { WSAPoll(fds.as_mut_ptr(), 2, -1) };
     if n == SOCKET_ERROR {
         return Err(std::io::Error::last_os_error());
     }
-    Ok((fds[0].revents != 0, fds[1].revents != 0))
+    Ok(fds[0].revents != 0)
 }
 
 #[cfg(not(any(unix, windows)))]
-fn poll_two(
-    _conn: &std::net::TcpStream,
-    _wake: &std::net::UdpSocket,
-) -> std::io::Result<(bool, bool)> {
-    Ok((true, false))
+fn poll_two(_conn: usize, _wake: &Signal) -> std::io::Result<bool> {
+    Ok(true)
 }
 
 /// Shut `socket` down, and end what blocks on `used`.

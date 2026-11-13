@@ -294,12 +294,13 @@ fn main() {
   The source reads ahead: what it had read and nobody took (the rest of
   the lines of its last read, up to 64 KiB) is gone with the stream, and
   a later `tcp.read(conn, ..)` gets what comes after it. A read the
-  source had in flight on a plain connection ends at once without taking
-  anything. On a TLS connection it cannot be ended so (it waits inside
-  the TLS library): it runs on until the peer sends or closes, what it
-  reads is gone, and meanwhile a write on that connection waits for it
-  (a TLS connection is one object behind one lock). Read a TLS connection
-  that is to be used afterwards with `tcp.read`.
+  source had in flight ends at once without taking anything, on a plain
+  connection and on a TLS one alike; on a TLS connection the source
+  waits for the peer's bytes without holding the connection, so a
+  write on it does not wait for the source. (A source has a descriptor
+  of its own for this, which it gives back when its stream is gone. A
+  process that has none left gets a stream whose one item is the
+  error.)
 - **A TCP sink that is stopped closes its connection.** When the task in
   `stream.write_to_tcp` is cancelled, the connection is shut down, as by
   `tcp.close`: a write that may be in flight has to end, and the peer
