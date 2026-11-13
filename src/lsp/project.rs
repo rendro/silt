@@ -67,7 +67,8 @@ impl Project {
         };
         let config = Config {
             project,
-            lock: LockPolicy::ReadOnly,
+            // Opening a folder runs no git: nothing is fetched.
+            lock: LockPolicy::Offline,
             host: Vec::new(),
         };
         Project {

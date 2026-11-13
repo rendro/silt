@@ -21,8 +21,9 @@ fn url() -> String {
 fn main() {
   match postgres.connect_with(url(), #{ "max_pool_size": 1 }) {
     Ok(pool) -> {
+      let _ = postgres.execute(pool, "DROP TABLE IF EXISTS silt_late_statement", ())
+      let _ = postgres.execute(pool, "CREATE TABLE silt_late_statement (n int)", ())
       let done = postgres.transact(pool) { tx ->
-        let _ = postgres.execute(tx, "CREATE TEMP TABLE silt_late_statement (n int)", ())
         let late = task.deadline(time.ms(200)) { ->
           postgres.execute(pool, "INSERT INTO silt_late_statement VALUES (1)", ())
         }
@@ -45,6 +46,7 @@ fn main() {
         Ok(rows) -> println("rows: {rows}")
         Err(e) -> println("count: {Error.message(e)}")
       }
+      let _ = postgres.execute(pool, "DROP TABLE silt_late_statement", ())
       postgres.close(pool)
     }
     Err(e) -> println("connect: {Error.message(e)}")

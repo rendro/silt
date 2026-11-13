@@ -1,0 +1,13 @@
+error[type]: cannot infer the record type whose field 'a' this reads
+ --> field_read__a_refused_read_is_the_one_error.silt:7:11
+   |
+ 7 | fn i(p) { p.a + p.d }
+   |           ^^^ cannot infer the record type whose field 'a' this reads
+  = help: annotate the record: `p: A`
+
+error[type]: cannot infer the record type whose field 'd' this reads
+ --> field_read__a_refused_read_is_the_one_error.silt:7:17
+   |
+ 7 | fn i(p) { p.a + p.d }
+   |                 ^^^ cannot infer the record type whose field 'd' this reads
+  = help: annotate the record: `p: A`

@@ -56,8 +56,8 @@ impl Pat {
 pub(super) enum CtorId {
     /// The one constructor of a tuple type; of `()` with no fields.
     Tuple,
-    /// The one constructor of a record type, nominal or anonymous, with
-    /// the names of the fields the pattern gives, in that order. Patterns
+    /// The one constructor of a record type, with the names of the
+    /// fields the pattern gives, in that order. Patterns
     /// of one column may name different fields; a field a pattern leaves
     /// out takes any value.
     Record(Vec<Symbol>),
@@ -698,9 +698,8 @@ impl TypeChecker {
 
     /// The value `value` of type `ty` as a pattern would write it. A
     /// part nothing is said of is `_`; a list of which only the first
-    /// elements are said ends in `..`; a declared record that leaves
-    /// fields out ends in `..`, an anonymous one names the fields it
-    /// tests.
+    /// elements are said ends in `..`; a record that leaves fields out
+    /// ends in `..`.
     fn show_witness(&self, value: &Witness, ty: &Type) -> std::string::String {
         let ty = crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(ty));
         let (ctor, fields) = match value {
@@ -781,9 +780,8 @@ impl TypeChecker {
                 format!("{written}({})", shown.join(", "))
             }
             CtorId::Record(names) => {
-                // A declared record keeps its name, and says `..` when
-                // it leaves fields out; an anonymous record pattern
-                // names the fields it tests and no others.
+                // A record is shown by its name, with `..` when it leaves
+                // fields out (`_` where its type is not known).
                 let declared: Option<(std::string::String, Vec<(Symbol, Type)>)> = match &ty {
                     Type::Generic(name, args) => self.tables.records.get(name).map(|info| {
                         let mapping: HashMap<TyVar, Type> = self
@@ -802,10 +800,6 @@ impl TypeChecker {
                     }),
                     _ => None,
                 };
-                let anon_fields = match &ty {
-                    Type::AnonRecord { fields, .. } => Some(fields),
-                    _ => None,
-                };
                 let mut shown: Vec<std::string::String> = names
                     .iter()
                     .zip(fields)
@@ -815,7 +809,6 @@ impl TypeChecker {
                             .as_ref()
                             .and_then(|(_, fields)| fields.iter().find(|(n, _)| n == name))
                             .map(|(_, t)| t)
-                            .or_else(|| anon_fields.and_then(|fields| fields.get(name)))
                             .unwrap_or(&unknown);
                         format!("{name}: {}", self.show_witness(field, field_ty))
                     })
@@ -827,7 +820,7 @@ impl TypeChecker {
                         }
                         format!("{type_name} {{ {} }}", shown.join(", "))
                     }
-                    None => format!("{{ {} }}", shown.join(", ")),
+                    None => "_".to_string(),
                 }
             }
         }

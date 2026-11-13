@@ -27,11 +27,6 @@ fn assert_names(src: &str, expected: &[&str]) {
 }
 
 #[test]
-fn repl_completion_names_include_anon_record_rest_binder() {
-    assert_names("let {x, ...rest} = r", &["x", "rest"]);
-}
-
-#[test]
 fn repl_completion_names_include_list_rest_binder() {
     assert_names("let [h, ..t] = xs", &["h", "t"]);
 }

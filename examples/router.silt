@@ -68,7 +68,7 @@ fn extract_params(pattern, path) {
 }
 
 -- Match a request method and path against a list of routes.
-fn match_route(method, path, routes) {
+fn match_route(method, path, routes: List(Route)) {
   routes
     |> list.find { route ->
       match {

@@ -1,5 +1,4 @@
 import string
-import util
 
 pub opaque type Email {
   Email(String),
@@ -35,10 +34,9 @@ pub fn everything() -> String {
   let u = User { name: "a", age: 1 }
   let v = u.{ age: 2 }
   let User { name: n, .. } = v
-  let w = { ...v }
   let e = Email("x@y")
   let s = match e {
     Email(t) -> t
   }
-  "{n} {w.age} {v.age} {util.name_of(v)} {s}"
+  "{n} {u.age} {v.age} {s}"
 }

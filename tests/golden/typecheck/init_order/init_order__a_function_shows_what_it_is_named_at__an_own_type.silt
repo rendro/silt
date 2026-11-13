@@ -11,6 +11,10 @@ type Row {
   n: Int,
 }
 
+type Go {
+  go: Fn(Row) -> String,
+}
+
 fn label(x: a) -> String where a: Display {
   "<{x}>"
 }
@@ -69,7 +73,7 @@ let s = f()
 
 let f = mk(Row { n: 9 })
 
-let r: { go: Fn(Row) -> String } = { go: label }
+let r = Go { go: label }
 
 let t = r.go(Row { n: 10 })
 

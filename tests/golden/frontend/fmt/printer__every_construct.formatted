@@ -20,10 +20,10 @@ type A {
 
 type R(a) {}
 
-pub type F = Fn() -> Fn(Int) -> { x: Int, ...r }
+pub type F = Fn() -> Fn(Int) -> R(Int)
 
 fn g(
-  { x, y: P { z, .. }, ...rest }: R(a),
+  Q { x, y: P { z, .. }, .. }: R(a),
   [],
   [a, ..b],
   (),
@@ -60,7 +60,7 @@ fn h() {
     loop(a, b)
   }
   let n = m.P { x: 1 }.{ x: 2 }
-  let o = { ...p }
+  let o = [..p]
   let p = "a{"b{{ -> 1 }()}c"}d{[1, 2]}"
   let q = x.a.y?.b
   let r = (-x)? as m.T(Int)
@@ -74,5 +74,5 @@ fn h() {
   when x else {
     return
   }
-  return { x: 1 }.x
+  return P { x: 1 }.x
 }

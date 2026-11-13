@@ -8,16 +8,20 @@ name: Fuzz (nightly deep)
 # hit). Keep PR CI fast and deterministic via the corpus-replay job
 # in ci.yml; do real discovery here.
 #
-# When a crash fires, the artifact is uploaded for triage. Any new
-# crash that needs permanent regression coverage should be copied
-# into fuzz/corpus/<target>/ so the ci.yml corpus-replay gate picks
-# it up on every subsequent push.
+# When a crash fires, the crash file is uploaded for triage and the
+# job fails. A crash that needs permanent regression coverage should
+# be copied into fuzz/corpus/<target>/ so the ci.yml corpus-replay
+# gate picks it up on every subsequent push.
 #
 # The `oracle` job is the full sweep of the differential oracle
 # (tests/oracle): every input of every class, where the per-push suite
-# runs a sample. Unlike a fuzz crash, a failure of it fails the run:
-# the sweep is deterministic, and what it reports is a finding that has
-# no line in tests/oracle/skip.txt, or a line whose finding is gone.
+# runs a sample. A failure of it fails the run: the sweep is
+# deterministic, and what it reports is a finding that has no line in
+# tests/oracle/skip.txt, or a line whose finding is gone.
+#
+# A failed job of a scheduled run opens a GitHub issue, "nightly: <job>
+# failed" (the `report` job), and a release is refused while the newest
+# finished run of this workflow on main is not green (release.yml).
 
 on:
   schedule:
@@ -58,6 +62,8 @@ jobs:
           - fuzz_decode
           - fuzz_package_files
           - fuzz_csv
+          - fuzz_http_response
+          - fuzz_lsp_messages
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
@@ -74,28 +80,25 @@ jobs:
             fuzz
 
       - name: Install cargo-fuzz
-        # See ci.yml `fuzz-corpus` for the rationale on dropping
-        # `--locked`: cargo-fuzz's published Cargo.lock pins a rustix
-        # release that no longer compiles on current nightly.
-        run: cargo install cargo-fuzz
+        # A fixed version, its prebuilt binary checked by its SHA-256.
+        run: bash .github/scripts/install-cargo-fuzz.sh
 
       - name: Seed corpus
         run: ./fuzz/seed.sh
 
-      # Discovery-mode: a crash here is a *finding*, not a regression.
-      # The deterministic regression gate is `fuzz-corpus` in ci.yml,
-      # which replays every committed seed and fails if any regress.
-      # So this step is allowed to "fail" (= produce a crash artifact)
-      # without failing the job. The job conclusion stays green; new
-      # findings are surfaced via uploaded artifacts and a workflow
-      # warning annotation. Triage by copying any worth-keeping crash
-      # into fuzz/corpus/<target>/ so the regression gate locks it.
+      # Discovery-mode: a crash here is a *finding*. It fails the job,
+      # after the steps below have saved the crash file and said where
+      # it is. Triage by copying the crash into fuzz/corpus/<target>/
+      # so the regression gate (`fuzz-corpus` in ci.yml) locks it.
+      # The target is named: the pinned cargo-fuzz is a musl build, and
+      # its own triple, the default, is one the sanitizer refuses.
       - name: Fuzz ${{ matrix.target }}
         id: fuzz
-        continue-on-error: true
+        env:
+          FUZZ_TARGET: ${{ matrix.target }}
+          SECONDS_PER_TARGET: ${{ github.event.inputs.seconds_per_target || 900 }}
         run: |
-          secs=${{ github.event.inputs.seconds_per_target || 900 }}
-          cargo +nightly fuzz run ${{ matrix.target }} -- -max_total_time=$secs
+          cargo +nightly fuzz run --target x86_64-unknown-linux-gnu "$FUZZ_TARGET" -- -max_total_time="$SECONDS_PER_TARGET"
 
       - name: Upload reproducers if any
         if: always()
@@ -112,9 +115,9 @@ jobs:
           if-no-files-found: ignore
 
       - name: Annotate new crash
-        if: steps.fuzz.outcome == 'failure'
+        if: failure() && steps.fuzz.outcome == 'failure'
         run: |
-          echo "::warning title=New fuzz finding::Target ${{ matrix.target }} produced a crash artifact in this run. Job is intentionally not failed — see uploaded artifacts to triage. Add the repro to fuzz/corpus/${{ matrix.target }}/ to lock it as a regression test."
+          echo "::error title=New fuzz finding::Target ${{ matrix.target }} failed in this run; its crash file, if it wrote one, is in the artifact fuzz-nightly-${{ matrix.target }}. Add the repro to fuzz/corpus/${{ matrix.target }}/ to lock it as a regression test."
 
   oracle:
     name: Differential oracle (full sweep)
@@ -154,3 +157,29 @@ jobs:
           path: oracle-report.txt
           retention-days: 30
           if-no-files-found: ignore
+
+  # Each failed job of a scheduled run opens one issue, "nightly: <job>
+  # failed", or adds the run to it while it is open. A run started by
+  # hand is watched by whoever started it, and a fork's scheduled runs
+  # are its own business: neither reports.
+  report:
+    name: Report failed jobs
+    needs: [fuzz, oracle]
+    if: ${{ !cancelled() && github.event_name == 'schedule' && github.repository == 'rendro/silt' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # The only job that may write: issues, nothing else.
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
+      - name: Open or update an issue for each failed job
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/report-failed-jobs.sh nightly

@@ -1,9 +1,0 @@
--- cmd: check
--- exit: 1
--- `==` on two records with different open rows is rejected: they are
--- two types (the hidden fields could differ).
--- stderr-contains: error[type]: type mismatch: expected {x: Int, ...ra}, got {x: Int, ...rb}
-fn cmp(a: {x: Int, ...ra}, b: {x: Int, ...rb}) { a == b }
-fn main() {
-  println(cmp({x: 1, y: 2}, {x: 1, z: 3}))
-}

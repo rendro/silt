@@ -1,0 +1,5 @@
+error[parse]: the rest of a record pattern is `..` alone, `P { x, .. }`: it binds no name
+ --> record_pattern__the_rest_binds_no_name.silt:9:12
+   |
+ 9 |     P { x, ..rest } -> println(x)
+   |            ^^^^^^ the rest of a record pattern is `..` alone, `P { x, .. }`: it binds no name

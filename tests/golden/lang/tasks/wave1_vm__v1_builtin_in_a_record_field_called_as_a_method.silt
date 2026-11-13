@@ -2,6 +2,7 @@
 import channel
 import task
 import time
+type R { recv: Fn(Channel(Int)) -> Option(Int) }
 fn outer(g, y) { "outer called with {y}" }
 fn inner(c, y) { "INNER called instead" }
 fn main() {
@@ -11,7 +12,7 @@ fn main() {
     channel.send(a, 1)
   }
   let worker = task.spawn { ->
-    let r = { recv: channel.receive }
+    let r = R { recv: channel.receive }
     outer(inner, r.recv(a))
   }
   println(task.join(worker))

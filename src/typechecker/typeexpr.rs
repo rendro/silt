@@ -591,11 +591,6 @@ impl TypeChecker {
                     self.kind_uses(part, label, uses);
                 }
             }
-            TypeExprKind::AnonRecord { fields, .. } => {
-                for (_, part) in fields {
-                    self.kind_uses(part, label, uses);
-                }
-            }
             _ => {}
         }
     }
@@ -871,51 +866,6 @@ impl TypeChecker {
                 Some(ty) => ty.clone(),
                 None => self.self_outside_a_trait(te.span),
             },
-            TypeExprKind::AnonRecord { fields, tail } => {
-                use std::collections::BTreeMap;
-                let mut field_map: BTreeMap<Symbol, Type> = BTreeMap::new();
-                let mut seen: std::collections::HashSet<Symbol> = std::collections::HashSet::new();
-                for (n, t) in fields {
-                    if !seen.insert(*n) {
-                        self.error(
-                            Code::DuplicateRecordField,
-                            format!("duplicate field '{}' in anon record type", n),
-                            te.span,
-                        );
-                        continue;
-                    }
-                    field_map.insert(*n, self.resolve_type_expr(t, param_vars));
-                }
-                let row_tail = match tail {
-                    None => RowTail::Closed,
-                    Some((rname, _)) => {
-                        // Row-tail variable name: bind it through param_vars
-                        // so multiple annotations in the same scope sharing
-                        // a row name refer to the same row variable. The
-                        // entry in param_vars is `Type::Var(id)` for normal
-                        // type vars; for row tails we still use the same
-                        // map but carry the id directly.
-                        let key = intern(&format!("__row__{}", resolve(*rname)));
-                        match param_vars.get(&key).cloned() {
-                            Some(Type::Var(v)) => RowTail::Var(v),
-                            // Inside the declaration that introduced it.
-                            Some(Type::Rigid(r)) => RowTail::Rigid(r),
-                            // A row that was reported (a type
-                            // declaration's): the record is not known.
-                            Some(Type::Error) => return Type::Error,
-                            _ => {
-                                let id = self.fresh_tyvar_id();
-                                param_vars.insert(key, Type::Var(id));
-                                RowTail::Var(id)
-                            }
-                        }
-                    }
-                };
-                Type::AnonRecord {
-                    fields: field_map,
-                    tail: row_tail,
-                }
-            }
         }
     }
 }
@@ -960,14 +910,5 @@ pub(crate) fn type_expr_text(te: &TypeExpr) -> String {
             format!("Fn({}) -> {}", all(params), type_expr_text(ret))
         }
         TypeExprKind::SelfType => "Self".to_string(),
-        TypeExprKind::AnonRecord { fields, tail } => {
-            let mut parts: Vec<String> = (fields.iter())
-                .map(|(n, t)| format!("{n}: {}", type_expr_text(t)))
-                .collect();
-            if let Some((row, _)) = tail {
-                parts.push(format!("...{row}"));
-            }
-            format!("{{{}}}", parts.join(", "))
-        }
     }
 }

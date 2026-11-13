@@ -7,6 +7,8 @@ import list
 import map
 import string
 
+type Sized { size: Int }
+
 fn shout(string: String) -> String {
   string.to_upper(string)
 }
@@ -14,7 +16,7 @@ fn shout(string: String) -> String {
 fn main() {
   let list = [3, 1, 2]
   println(list.length(list))
-  let map = {size: 1}
+  let map = Sized { size: 1 }
   println(map.keys(map))
   let f = { list: List(Int) -> list.reverse(list) }
   println(f([1]))

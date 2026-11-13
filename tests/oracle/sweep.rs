@@ -18,6 +18,9 @@ use std::time::{Duration, Instant};
 
 use crate::oracle::{Compared, Cut, Input, Steps, Verdict, examine};
 
+#[path = "../support/env_switch.rs"]
+mod env_switch;
+
 /// The threads of a sweep in the suite: the tests of the binary run
 /// side by side, and a program with tasks starts a worker for each CPU.
 const SUITE_WORKERS: usize = 2;
@@ -35,7 +38,7 @@ pub fn name_of(path: &Path) -> String {
 
 /// Whether `SILT_ORACLE_FULL` asks for the full sweep.
 pub fn full() -> bool {
-    std::env::var_os("SILT_ORACLE_FULL").is_some_and(|v| v != "0")
+    env_switch::on("SILT_ORACLE_FULL")
 }
 
 /// The steps a run may take: in the suite, enough for all but the

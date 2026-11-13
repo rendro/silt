@@ -117,8 +117,6 @@ codes! {
     UnsupportedSyntax = "E0109", Parse;
     /// A name bound twice at the top level of a file.
     DuplicateTopLevel = "E0110", Parse;
-    /// A field named twice in an anonymous record type or literal.
-    DuplicateField = "E0111", Parse;
     NestingTooDeep = "E0112", Parse;
     /// A declaration whose parts are not allowed together (a supertrait
     /// on an impl, an annotated `type` parameter, a lowercase type
@@ -217,8 +215,7 @@ codes! {
     /// constructor is needed.
     KindMismatch = "E0343", Type;
     /// What only an opaque type's own module may do with its values
-    /// (build, take apart, update, read, spread, pass into an open
-    /// row), done in another module.
+    /// (build, take apart, update, read), done in another module.
     OpaqueType = "E0344", Type;
     // ── compile ──
     /// An import of a module that is not there.
@@ -268,6 +265,10 @@ codes! {
     /// A package that depends on itself, or names one package by two
     /// dependency keys.
     DependencyTwice = "E0612", Package;
+    /// A dependency that a package fetched over git names outside its
+    /// own checkout: a path that leaves it, or a repository on this
+    /// machine.
+    DependencyOutsideCheckout = "E0613", Package;
     // ── runtime ──
     RuntimeError = "E0701", Runtime;
     /// `main` returned `Err(..)`.

@@ -14,6 +14,8 @@
 //! under `repros/` is verdict-only; a fixed sample of it runs by default,
 //! all of it with `SILT_GOLDEN_FULL_CORPUS=1`.
 
+#[path = "../support/env_switch.rs"]
+mod env_switch;
 mod fmt;
 mod lsp;
 mod soundness;
@@ -606,7 +608,7 @@ fn run_shard(shard: usize) {
         .into_iter()
         .filter(|p| !is_verdict_only(p))
         .collect();
-    let bless = std::env::var_os("SILT_BLESS").is_some();
+    let bless = env_switch::on("SILT_BLESS");
     run_cases(&shard_of(all, shard), "golden", |case| {
         for run in 1..=case.directives.repeat {
             let out = run_case(case);
@@ -630,7 +632,7 @@ fn run_shard(shard: usize) {
 fn verdict_cases() -> Vec<PathBuf> {
     let (repros, others): (Vec<PathBuf>, Vec<PathBuf>) =
         all_cases().into_iter().partition(|p| is_verdict_only(p));
-    let full = std::env::var_os("SILT_GOLDEN_FULL_CORPUS").is_some_and(|v| v != "0");
+    let full = env_switch::on("SILT_GOLDEN_FULL_CORPUS");
     let repros: Vec<PathBuf> = if full || repros.len() <= REPRO_SAMPLE {
         repros
     } else {
@@ -671,11 +673,11 @@ fn run_verdict_shard(shard: usize) {
         eprintln!("verdict cases skipped: they need a build with --all-features");
         return;
     }
-    if std::env::var_os("SILT_GOLDEN_SKIP_VERDICT").is_some_and(|v| v != "0") {
+    if env_switch::on("SILT_GOLDEN_SKIP_VERDICT") {
         eprintln!("verdict cases skipped: SILT_GOLDEN_SKIP_VERDICT is set");
         return;
     }
-    let bless = std::env::var_os("SILT_BLESS").is_some();
+    let bless = env_switch::on("SILT_BLESS");
     run_cases(&shard_of(verdict_cases(), shard), "verdict", |case| {
         let Some(mark) = &case.directives.verdict else {
             return Vec::new();

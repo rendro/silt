@@ -8,4 +8,4 @@ Fn(a) -> a
 Fn(a, a) -> Bool where a: Equal
 Bool
 List(Option(a))
-Fn({name: a, ...b}) -> a
+Fn(a) -> List(a)

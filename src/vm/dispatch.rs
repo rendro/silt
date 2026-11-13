@@ -49,10 +49,9 @@ pub(super) fn invoke_host_fn(host: &HostFn, args: &[Value]) -> Result<Value, VmE
                         true => given_type(&witness.value),
                         false => witness_type(&witness.value),
                     };
-                    match (&host.returns, source.written.is_empty()) {
-                        (HostShape::Var(..), _) => format!(", here {ty} ({from})"),
-                        (_, true) => format!(", where {var} is {ty} ({from})"),
-                        (_, false) => format!(", where {var} is the rest of {ty} ({from})"),
+                    match &host.returns {
+                        HostShape::Var(..) => format!(", here {ty} ({from})"),
+                        _ => format!(", where {var} is {ty} ({from})"),
                     }
                 }),
                 HostFault::Shape => None,

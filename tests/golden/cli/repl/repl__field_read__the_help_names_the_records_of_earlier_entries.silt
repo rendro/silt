@@ -1,0 +1,6 @@
+-- cmd: repl
+-- stderr-contains: cannot infer the record type whose field 'x' this reads
+-- stderr-contains: help: annotate the record: `p: A` or `p: B`
+-- stdin: type A { pad: Int, x: Int }\ntype B { x: String }\nfn g(p) { p.x }\n:quit\n
+-- A field read that nothing decides names the records with the field
+-- that earlier entries declared.
