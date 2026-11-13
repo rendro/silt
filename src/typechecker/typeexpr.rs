@@ -885,7 +885,7 @@ impl TypeChecker {
 fn impl_only_type_message(ty: TypeRef) -> Option<String> {
     let written = match builtin_type_name(ty)? {
         "Tuple" => "a tuple type is written with its parts: `(Int, String)`",
-        "Fn" | "Fun" => "a function type is written with its parts: `Fn(Int) -> String`",
+        "Fn" => "a function type is written with its parts: `Fn(Int) -> String`",
         _ => return None,
     };
     let name = builtin_type_name(ty)?;
