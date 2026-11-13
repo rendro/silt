@@ -1,0 +1,15 @@
+-- cmd: check
+-- exit: 1
+-- A chain of reads on a value nothing decides is one error, at its
+-- first link: the links behind it wait on it.
+type In { c: Int }
+type Mid { b: In }
+type Out { a: Mid }
+
+fn f(o) {
+  o.a.b.c
+}
+
+fn main() {
+  println(f(Out { a: Mid { b: In { c: 1 } } }))
+}

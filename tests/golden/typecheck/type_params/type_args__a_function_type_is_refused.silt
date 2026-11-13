@@ -1,0 +1,30 @@
+-- exit: 1
+-- A function type has no value as a type: given as a type argument, by
+-- an alias, an alias of one, a type written in full that holds one, or
+-- written out, it is refused with one text (it ended in a compiler
+-- error). Of a builtin decoder, an alias says what it cannot decode.
+import json
+
+type F = Fn(Int) -> Int
+type F2 = F
+type G(a) = Fn(a) -> a
+type L = List(Fn(Int) -> Int)
+type Box(t) { v: t }
+
+fn f(type a) -> Int { 1 }
+
+fn shown(type a) -> Int where a: Display { 2 }
+
+fn main() {
+  let _ = f(F)
+  let _ = f(F2)
+  let _ = shown(F)
+  let _ = f(List(F))
+  let _ = f((F, Int))
+  let _ = f(Box(F))
+  let _ = f(G(Int))
+  let _ = f(List(L))
+  let _ = f(Fn(Int) -> Int)
+  let _ = json.parse("1", F)
+  let _t = List(F)
+}

@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- Braces that spread a record are no expression; a record is updated
+-- with `p.{ y: 2 }`.
+type P { x: Int, y: Int }
+
+fn main() {
+  let p = P { x: 1, y: 2 }
+  println({ ...p, y: 3 })
+}

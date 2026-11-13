@@ -1,0 +1,31 @@
+-- cmd: check
+-- exit: 1
+-- A parameter whose `t.mk()` the function reads as a field (two traits
+-- have a value-making `mk`, or the one trait is of type constructors) and
+-- that the function then decides to be a record: a call that gives it a
+-- type says so, with the type parameter that says which; a closure is
+-- told to be a named function.
+trait A { fn mk() -> Self }
+trait B { fn mk() -> Self }
+type W { n: Int }
+trait A for W { fn mk() -> Self { W { n: 1 } } }
+type Rec { mk: Fn() -> Int, pure: Fn(Int) -> Int }
+fn go(t) {
+  let r = t.mk()
+  let _: Rec = t
+  r
+}
+fn lift(m) {
+  let r = m.pure(1)
+  let _: Rec = m
+  r
+}
+fn main() {
+  let rec = Rec { mk: { -> 5 }, pure: { n -> n } }
+  println(go(rec))
+  println(go(W))
+  println(lift(Option))
+  let k = { m -> m.pure(3) }
+  println(k(rec))
+  println(k(Option))
+}

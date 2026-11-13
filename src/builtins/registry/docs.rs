@@ -534,7 +534,6 @@ fn trait_text(decl: &crate::ast::TraitDecl) -> String {
             TypeExprKind::Tuple(elems) => format!("({})", all(elems)),
             TypeExprKind::Function(params, ret) => format!("Fn({}) -> {}", all(params), ty(ret)),
             TypeExprKind::SelfType => "Self".to_string(),
-            _ => "_".to_string(),
         }
     }
     let mut header = format!("trait {}", decl.name);

@@ -158,11 +158,6 @@ pub fn opaque_type_arity(name: &str) -> Option<usize> {
 /// parameter): `TypeOf(Pt)`, a prelude type.
 pub const TYPE_OF: &str = "TypeOf";
 
-/// The dispatch key of an anonymous record type, which no impl can
-/// target: `type '<anon>' does not implement trait 'T'`. A builtin type
-/// no program can name.
-pub const ANON_RECORD: &str = "<anon>";
-
 /// Every builtin type, with the builtin module that declares it (`None`
 /// for the prelude), in the order of their ids: the `k`th is
 /// `TypeId(DefId(k))`. The builtin definitions begin with them, so their
@@ -211,7 +206,6 @@ pub fn builtin_types() -> &'static [(&'static str, Option<&'static str>)] {
         for (name, _) in crate::builtins::registry::PRELUDE_OPAQUE {
             add(name, None);
         }
-        add(ANON_RECORD, None);
         for module in &registry.modules {
             for name in of_module(module) {
                 add(name, Some(module.name));

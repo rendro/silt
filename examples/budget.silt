@@ -163,7 +163,7 @@ fn budget_limits() {
 -- Validation
 -- ============================================================
 
-fn validate_transaction(t) {
+fn validate_transaction(t: Transaction) {
   match {
     string.is_empty(t.date) -> Err("Transaction missing date")
     string.is_empty(t.category) -> Err("Transaction missing category")
@@ -200,7 +200,7 @@ fn print_thin_separator() {
 -- Uses map.update to aggregate totals and counts in a single pass each
 -- ============================================================
 
-fn print_category_totals(transactions) {
+fn print_category_totals(transactions: List(Transaction)) {
   println("")
   print_separator()
   println("  SPENDING BY CATEGORY")
@@ -238,7 +238,7 @@ fn print_category_totals(transactions) {
 -- Monthly Summary
 -- ============================================================
 
-fn print_monthly_summary(transactions) {
+fn print_monthly_summary(transactions: List(Transaction)) {
   println("")
   print_separator()
   println("  MONTHLY SUMMARY")
@@ -273,7 +273,7 @@ fn print_monthly_summary(transactions) {
 -- Running Balance
 -- ============================================================
 
-fn print_running_balance(transactions) {
+fn print_running_balance(transactions: List(Transaction)) {
   println("")
   print_separator()
   println("  RUNNING BALANCE")
@@ -304,7 +304,7 @@ fn print_running_balance(transactions) {
 -- Uses map.update to build per-category spending totals
 -- ============================================================
 
-fn print_budget_vs_actual(transactions) {
+fn print_budget_vs_actual(transactions: List(Transaction)) {
   println("")
   print_separator()
   println("  BUDGET vs ACTUAL")
@@ -345,7 +345,7 @@ fn print_budget_vs_actual(transactions) {
 -- Uses map.update to build per-category spending totals
 -- ============================================================
 
-fn print_forecast(transactions) {
+fn print_forecast(transactions: List(Transaction)) {
   println("")
   print_separator()
   println("  SPENDING FORECAST (30-day projection)")
@@ -389,7 +389,7 @@ fn print_forecast(transactions) {
 -- Validate all transactions
 -- ============================================================
 
-fn print_validation(transactions) {
+fn print_validation(transactions: List(Transaction)) {
   println("")
   print_separator()
   println("  TRANSACTION VALIDATION")

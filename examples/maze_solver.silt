@@ -28,7 +28,7 @@ fn make_maze() {
 }
 
 -- Get the character at a given position in the maze
-fn get_cell(maze, pos) {
+fn get_cell(maze, pos: Pos) {
   let row_str = maze |> list.get(pos.row) |> option.unwrap_or("")
   let chars = string.chars(row_str)
   chars |> list.get(pos.col) |> option.unwrap_or("#")
@@ -55,7 +55,7 @@ fn find_char(maze, target) {
 }
 
 -- Get valid neighboring positions (up, down, left, right)
-fn get_neighbors(maze, pos) {
+fn get_neighbors(maze, pos: Pos) {
   let candidates = [
     Pos { row: pos.row - 1, col: pos.col },
     Pos { row: pos.row + 1, col: pos.col },
@@ -83,7 +83,7 @@ fn reconstruct_path(visited, goal_idx) {
 }
 
 -- BFS using loop: bind queue and visited, iterate until found or exhausted
-fn bfs(maze, start, goal) {
+fn bfs(maze, start: Pos, goal: Pos) {
   loop queue = [(start, -1)], visited = [(start, -1)] {
     match queue {
       [] -> None

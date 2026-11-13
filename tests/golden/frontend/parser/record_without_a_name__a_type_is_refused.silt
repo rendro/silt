@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- Braces of fields where a type stands are no type, closed or open: a
+-- record type is declared with a name and written by it.
+fn name(p: { name: String, ...rest }) -> String {
+  p.name
+}
+
+fn main() {
+  println(1)
+}

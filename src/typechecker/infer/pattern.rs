@@ -60,7 +60,7 @@ pub(in crate::typechecker) fn names_unresolved(pattern: &Pattern) -> bool {
         PatternKind::Tuple(ps)
         | PatternKind::Or(ps)
         | PatternKind::Constructor { args: ps, .. } => ps.iter().any(names_unresolved),
-        PatternKind::Record { fields, .. } | PatternKind::AnonRecord { fields, .. } => fields
+        PatternKind::Record { fields, .. } => fields
             .iter()
             .any(|(_, _, sub)| sub.as_ref().is_some_and(names_unresolved)),
         PatternKind::List(elems, rest) => {
@@ -238,7 +238,6 @@ impl TypeChecker {
             | PatternKind::Ident(_)
             | PatternKind::Tuple(_)
             | PatternKind::Record { .. }
-            | PatternKind::AnonRecord { .. }
             | PatternKind::Or(_) => false,
             PatternKind::Constructor { .. } => self
                 .pattern_constructor_enum(pattern)
@@ -303,7 +302,6 @@ impl TypeChecker {
             | PatternKind::Ident(_)
             | PatternKind::Tuple(_)
             | PatternKind::Record { .. }
-            | PatternKind::AnonRecord { .. }
             | PatternKind::Or(_) => self.refutable_type_reason(ty),
         }
     }
@@ -489,29 +487,6 @@ impl TypeChecker {
                 }
                 for (name, sp) in union_binders {
                     seen.insert(name, sp);
-                }
-            }
-            PatternKind::AnonRecord { fields, rest } => {
-                for (field_name, _, sub_pat) in fields {
-                    match sub_pat {
-                        Some(sp) => {
-                            Self::collect_pattern_binders_into(sp, seen, on_dup);
-                        }
-                        None => {
-                            if seen.contains_key(field_name) {
-                                on_dup(*field_name, pattern.span);
-                            } else {
-                                seen.insert(*field_name, pattern.span);
-                            }
-                        }
-                    }
-                }
-                if let Some((rest_name, _)) = rest {
-                    if seen.contains_key(rest_name) {
-                        on_dup(*rest_name, pattern.span);
-                    } else {
-                        seen.insert(*rest_name, pattern.span);
-                    }
                 }
             }
         }
@@ -716,9 +691,8 @@ impl TypeChecker {
                 }
                 // The record type the pattern names, with its fields in
                 // the order of the declaration.
-                let declared = name
-                    .and_then(|rec_name| self.named_record(res, rec_name, pattern_span, true))
-                    .map(|(rec_ref, rec_info, param_ids, fixed)| {
+                let declared = self.named_record(res, *name, pattern_span, true).map(
+                    |(rec_ref, rec_info, param_ids, fixed)| {
                         let (fields, args) =
                             self.instantiate_record_fields(&rec_info, param_ids.as_deref());
                         // An alias's arguments (`BI { .. }` for `type BI = B(Int)`).
@@ -732,7 +706,8 @@ impl TypeChecker {
                             self.misread_pattern(expected, &given, reported, pattern_span);
                         }
                         (rec_ref, fields)
-                    });
+                    },
+                );
                 if let Some((rec_ref, _)) = &declared
                     && let Some(module) = self.opaque_outside(*rec_ref)
                 {
@@ -779,10 +754,9 @@ impl TypeChecker {
                     subs.push((*field_name, sub));
                 }
                 // The pattern names a record type, and what is matched
-                // is of that type (the `unify` above says so: an
-                // anonymous record is not a `P`, and an open row that is
-                // matched with `P { .. }` is `P`). Where it is not, the
-                // mismatch is reported and the pattern covers nothing.
+                // is of that type (the `unify` above says so). Where it
+                // is not, the mismatch is reported and the pattern
+                // covers nothing.
                 let fits = match self.apply(expected) {
                     Type::Generic(n, _) => match &declared {
                         Some((rec_ref, _)) => n == *rec_ref,
@@ -911,73 +885,6 @@ impl TypeChecker {
                 }
                 Pat::Lit
             }
-            PatternKind::AnonRecord { .. }
-                if let Some((ty, module)) = self.opaque_value(expected) =>
-            {
-                let message = format!(
-                    "cannot take a '{}' apart outside module '{module}': the type is opaque",
-                    crate::typechecker::opaque::opaque_name(ty, module)
-                );
-                self.opaque_error(message, module, pattern_span);
-                self.bind_unresolved(pattern, env);
-                Pat::Wild
-            }
-            PatternKind::AnonRecord { fields, rest } => {
-                // The pattern's type is an open record with a fresh type
-                // for every field it names. The tail is open with or
-                // without a `...rest` binding: without one the other
-                // fields are just not named. A declared record is such
-                // a record, so `{name: n, ...rest}` matches a
-                // `type Person { ... }` value too.
-                use std::collections::BTreeMap;
-                let field_tys: BTreeMap<Symbol, Type> = fields
-                    .iter()
-                    .map(|(fname, _, _)| (*fname, self.fresh_var()))
-                    .collect();
-                let row_var = self.fresh_tyvar_id();
-                let anon_ty = Type::AnonRecord {
-                    fields: field_tys.clone(),
-                    tail: RowTail::Var(row_var),
-                };
-                self.unify_pattern(&anon_ty, expected, pattern_span);
-                let mut subs: BTreeMap<Symbol, Pat> = BTreeMap::new();
-                for (fname, _, sub) in fields.iter_mut() {
-                    let ft = self.apply(&field_tys[fname]);
-                    let sub = match sub {
-                        Some(p) => self.type_pattern(p, &ft, env, cx),
-                        None => {
-                            // Shorthand `{name}` binds `name`.
-                            env.define(*fname, Scheme::mono(ft));
-                            Pat::Wild
-                        }
-                    };
-                    subs.insert(*fname, sub);
-                }
-                if let Some((rest_name, _)) = rest {
-                    // The rest is an anonymous record of the fields the
-                    // pattern does not name, whatever the record is
-                    // (`Goal::Rebuild`).
-                    let rest_ty = self.fresh_var();
-                    self.want_goal(
-                        Goal::Rebuild {
-                            base: expected.clone(),
-                            without: fields.iter().map(|(name, _, _)| *name).collect(),
-                            with: Vec::new(),
-                            result: rest_ty.clone(),
-                            rest: true,
-                        },
-                        Origin {
-                            span,
-                            callee: None,
-                            op: None,
-                            header: None,
-                        },
-                    );
-                    env.define(*rest_name, Scheme::mono(self.apply(&rest_ty)));
-                }
-                let (names, subs) = subs.into_iter().unzip();
-                self.ctor_pat(CtorId::Record(names), subs)
-            }
         }
     }
 
@@ -1089,7 +996,7 @@ fn sub_patterns(pattern: &Pattern) -> Vec<&Pattern> {
     match &pattern.kind {
         PatternKind::Tuple(ps) | PatternKind::Or(ps) => ps.iter().collect(),
         PatternKind::Constructor { args, .. } => args.iter().collect(),
-        PatternKind::Record { fields, .. } | PatternKind::AnonRecord { fields, .. } => {
+        PatternKind::Record { fields, .. } => {
             fields.iter().filter_map(|(_, _, p)| p.as_ref()).collect()
         }
         PatternKind::List(elems, rest) => elems.iter().chain(rest.as_deref()).collect(),
@@ -1130,20 +1037,6 @@ pub(in crate::typechecker) fn collect_pattern_vars(pat: &Pattern) -> Vec<Symbol>
                     // Shorthand field `{ x }` binds `x`
                     vars.push(*field_name);
                 }
-            }
-            vars
-        }
-        PatternKind::AnonRecord { fields, rest } => {
-            let mut vars: Vec<Symbol> = Vec::new();
-            for (field_name, _, sub_pat) in fields {
-                if let Some(p) = sub_pat {
-                    vars.extend(collect_pattern_vars(p));
-                } else {
-                    vars.push(*field_name);
-                }
-            }
-            if let Some((r, _)) = rest {
-                vars.push(*r);
             }
             vars
         }

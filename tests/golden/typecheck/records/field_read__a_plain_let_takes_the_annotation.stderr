@@ -1,0 +1,6 @@
+error[type]: cannot infer the record type whose field 'x' this reads
+ --> field_read__a_plain_let_takes_the_annotation.silt:9:3
+   |
+ 9 |   v.x
+   |   ^^^ cannot infer the record type whose field 'x' this reads
+  = help: annotate the record: `let v: A`

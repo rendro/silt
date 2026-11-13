@@ -8,6 +8,11 @@ type Box(a) {
 
 type Wide = Box(Meters)
 
+type Applied {
+  m: Meters,
+  n: Int,
+}
+
 trait Container(item) {
   fn unwrap(self) -> item
 }
@@ -26,9 +31,9 @@ trait Container(Int) for Meters {
   }
 }
 
-fn apply(f: Fn(Meters) -> Meters, pair: (Meters, Int)) -> {m: Meters, n: Int} {
+fn apply(f: Fn(Meters) -> Meters, pair: (Meters, Int)) -> Applied {
   let (m, n) = pair
-  { m: f(m), n: n }
+  Applied { m: f(m), n: n }
 }
 
 fn get(c: t) -> Int where t: Container(Int) {

@@ -1,10 +1,9 @@
 -- An alias given as a type argument is the type it stands for, when that
--- type has a value as a type: a tuple, a list of anonymous records, `()`,
--- a tuple that holds an anonymous record (the value of a type written
--- alone is its head).
-type R = {x: Int}
+-- type has a value as a type: a tuple, a list of records, `()`, a tuple
+-- that holds a record (the value of a type written alone is its head).
+type R { x: Int }
 type P = (Int, String)
-type L = List({x: Int})
+type L = List(R)
 type U = ()
 type T = (R, Int)
 

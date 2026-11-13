@@ -783,16 +783,17 @@ A dot after a value names a field, whatever methods traits declare, with
 one exception (the third point):
 
 - `p.name` is the record's field; `r.f(..)` calls the function the field
-  `f` holds.
-- In a function whose parameter has no annotation, `fn name_of(p) {
-  p.name }` takes any record with a field `name`.
-- In such a function a call `t.zero()`, where exactly one trait in sight
-  has a method `zero` that makes a value, takes `t` as a type that has
-  that trait, as `json.parse(s, t)` takes one that has `json.Decode`:
-  `fn zeros(t) { t.zero() }` is `fn zeros(type a) -> a where a: Zero`.
-  Annotate the parameter (`fn get(r: Rec)`) to call a record's field of
-  that name. If the function also reads a field of `t`, `t` is a record,
-  and `t.zero()` calls its field.
+  `f` holds. The record's type is the one the function decides: a
+  parameter that is read so is annotated, `fn name_of(p: Person) {
+  p.name }`; without it the read is an error that asks for the
+  annotation.
+- In a function whose parameter has no annotation, a call `t.zero()`,
+  where exactly one trait in sight has a method `zero` that makes a
+  value, takes `t` as a type that has that trait, as `json.parse(s, t)`
+  takes one that has `json.Decode`: `fn zeros(t) { t.zero() }` is
+  `fn zeros(type a) -> a where a: Zero`. Annotate the parameter
+  (`fn get(r: Rec)`) to call a record's field of that name; once the
+  function decides that `t` is a record, `t.zero()` calls its field.
 - A trait's method is called through the trait: `fn g(x) {
   Greet.greet(x) }` is `fn g(x: a) -> String where a: Greet`, the bound
   coming from the trait the call names.
@@ -943,8 +944,7 @@ known: `fn step(x) -> Result(Int, String) { Ok(x? + 1) }`.
 
 The structural `Display` formats in constructor syntax: `Circle(5.0)`
 for a variant, `Point {x: 1, y: 2}` for a record, its fields in the
-order the type declares them (`{x: 1, y: 2}` for an anonymous record,
-its fields in the order of their names). A string inside a structure
+order the type declares them. A string inside a structure
 is written as a program writes it, in quotes and escaped:
 `["a", "b, c"]`, `Some("x")`, `(1, "a\nb")`, `#{"k": "v"}`, so the
 parts can be told apart. A string shown by itself (`println(s)`,
@@ -1022,8 +1022,7 @@ and for `Display` where no impl is written:
   when their parts do, and no `Compare`.
 - A record or an enum has a trait when every field and payload does, at
   the type's arguments: `Option(Int)` has `Compare`, `Option(Fn(Int) ->
-  Int)` has none of them. A closed anonymous record (`{a: Int}`) has
-  `Equal`, `Hash` and `Display` when its fields do.
+  Int)` has none of them.
 - A type variable has what its bound says (`where a: Compare`).
   `Compare` includes `Equal`: what is ordered can be compared with `==`.
 

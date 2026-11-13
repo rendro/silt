@@ -1,4 +1,0 @@
-Bob 43
-Person {name: "Bob", age: 43}
-{age: 42, city: "x", name: "Bob"}
-true

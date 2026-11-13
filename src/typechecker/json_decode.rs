@@ -1268,8 +1268,8 @@ impl TypeChecker {
             | Type::Channel(_) => {
                 self.decode_refusal(builtin, Decoding::JSON, written, ty, owner, span)
             }
-            // A type no type argument names (a function, an
-            // anonymous record): what a decoder's type argument may be.
+            // A type no type argument names (a function): what a
+            // decoder's type argument may be.
             other => {
                 let accepted = Decoding::JSON.type_arguments(str::to_string);
                 Some(

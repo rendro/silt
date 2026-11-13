@@ -68,28 +68,6 @@ fn collect_pattern_names(pattern: &Pattern, locals: &mut Vec<LocalVar>) {
                 }
             }
         }
-        PatternKind::AnonRecord { fields, rest } => {
-            // Anon-record destructure (`let { x, y } = p`)
-            // also binds shorthand fields. The named rest
-            // binder (`{ x, ...rest }`) binds too — mirror the
-            // typechecker's `collect_pattern_vars`.
-            for (name, _, sub) in fields {
-                if let Some(p) = sub {
-                    collect_pattern_names(p, locals);
-                } else {
-                    locals.push(LocalVar {
-                        name: name.to_string(),
-                        ty: None,
-                    });
-                }
-            }
-            if let Some((r, _)) = rest {
-                locals.push(LocalVar {
-                    name: r.to_string(),
-                    ty: None,
-                });
-            }
-        }
         PatternKind::List(pats, rest) => {
             for p in pats {
                 collect_pattern_names(p, locals);
@@ -271,27 +249,6 @@ mod tests {
         let names: Vec<&str> = locals.iter().map(|l| l.name.as_str()).collect();
         assert!(names.contains(&"x"), "should contain 'x'");
         assert!(names.contains(&"y"), "should contain 'y'");
-    }
-
-    #[test]
-    fn test_locals_when_let_anon_record_rest_binder() {
-        // `when let {x, ...rest} = p` binds BOTH the
-        // shorthand field `x` and the named rest binder `rest`. Pre-fix,
-        // the AnonRecord arm destructured `{ fields, .. }` and dropped
-        // the rest symbol, so completion never offered `rest`.
-        let source = "fn f(p) {\n  when let {x, ...rest} = p else { return 0 }\n  0\n}";
-        let program = checked_program(source);
-
-        let locals = locals_at_offset(&program, source.len() - 2);
-        let names: Vec<&str> = locals.iter().map(|l| l.name.as_str()).collect();
-        assert!(
-            names.contains(&"x"),
-            "should contain shorthand 'x': {names:?}"
-        );
-        assert!(
-            names.contains(&"rest"),
-            "should contain rest binder 'rest': {names:?}"
-        );
     }
 
     #[test]

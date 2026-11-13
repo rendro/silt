@@ -450,7 +450,6 @@ fn collect_app_heads(ty: &Type, f: &mut impl FnMut(TyVar)) {
         Type::Tuple(ts) | Type::Generic(_, ts) | Type::Con(_, ts) => {
             ts.iter().for_each(|t| collect_app_heads(t, f))
         }
-        Type::AnonRecord { fields, .. } => fields.values().for_each(|t| collect_app_heads(t, f)),
         _ => {}
     }
 }

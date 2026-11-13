@@ -6,6 +6,8 @@
 -- when it has no member of the name; a local with the field is used.
 import list
 
+type Len { length: Int }
+
 fn count(xs: List(Int)) -> Int {
   let string = [1]
   string.length(string) + list.length(xs)
@@ -17,7 +19,7 @@ fn odd() -> Int {
 }
 
 fn main() {
-  let list = {length: 3}
+  let list = Len { length: 3 }
   println(list.length)
   println(count([1]))
   println(odd())

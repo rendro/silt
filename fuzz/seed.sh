@@ -24,7 +24,11 @@ done
 # there is nothing to copy for it. Nor for fuzz_decode, which reads JSON
 # and TOML texts: its seeds are fuzz/corpus/fuzz_decode/*.json and *.toml;
 # for fuzz_package_files, which reads silt.toml and silt.lock texts
-# (fuzz/corpus/fuzz_package_files/*.toml and *.lock); or for fuzz_csv,
-# which reads csv texts (fuzz/corpus/fuzz_csv/*.csv).
+# (fuzz/corpus/fuzz_package_files/*.toml and *.lock); for fuzz_csv,
+# which reads csv texts (fuzz/corpus/fuzz_csv/*.csv); for
+# fuzz_http_response, which reads HTTP responses
+# (fuzz/corpus/fuzz_http_response/*.http); or for fuzz_lsp_messages,
+# which reads an editor's framed messages
+# (fuzz/corpus/fuzz_lsp_messages/*.lsp).
 
 echo "Seeded corpora from examples/ into fuzz/corpus/<target>/"

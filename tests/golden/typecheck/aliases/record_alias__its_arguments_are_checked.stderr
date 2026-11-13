@@ -1,0 +1,5 @@
+error[type]: field `value` expects Int, got String
+ --> record_alias__its_arguments_are_checked.silt:11:27
+    |
+ 11 |   let b = IntBox { value: "no" }
+    |                           ^^^^ field `value` expects Int, got String

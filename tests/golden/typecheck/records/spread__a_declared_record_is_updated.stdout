@@ -1,2 +1,0 @@
-Person {name: "Al", age: 42}
-{age: 42, city: "x", name: "Bob"}

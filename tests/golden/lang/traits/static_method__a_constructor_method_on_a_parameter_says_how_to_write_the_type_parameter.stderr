@@ -1,0 +1,6 @@
+error[type]: cannot infer the record type whose field 'pure' this calls
+ --> static_method__a_constructor_method_on_a_parameter_says_how_to_write_the_type_parameter.silt:10:3
+    |
+ 10 |   m.pure(1)
+    |   ^^^^^^ cannot infer the record type whose field 'pure' this calls
+  = help: annotate the record: `m: SomeRecord`; or, for the method of trait 'Applicative': give 'go' a type parameter with its bound, and write it with its type argument, as in `fn wrap(x: a, type m) -> m(a) where m: Applicative`

@@ -1,0 +1,13 @@
+-- cmd: check
+-- exit: 1
+-- An alias with arguments builds the record of those arguments.
+type Box(a) {
+  value: a,
+}
+
+type IntBox = Box(Int)
+
+fn main() {
+  let b = IntBox { value: "no" }
+  println(b)
+}

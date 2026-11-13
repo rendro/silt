@@ -20,17 +20,16 @@ pub struct HostFn {
     /// What its signature says it returns: each result is checked
     /// against it.
     pub returns: HostShape,
-    /// The type and row variables of the return type, by their index in
-    /// `HostShape::Var` and `HostShape::Record::row`, with where the
-    /// arguments of a call show each.
+    /// The type variables of the return type, by their index in
+    /// `HostShape::Var`, with where the arguments of a call show each.
     pub vars: Vec<HostVar>,
     /// The number of parameters its signature declares: a call with
     /// another number of arguments shows no variable.
     pub arity: usize,
 }
 
-/// A type variable (`a`) or row variable (`...r`) of a host function's
-/// return type, with the places among its parameters where an argument
+/// A type variable (`a`) of a host function's return type, with the
+/// places among its parameters where an argument
 /// shows the type a call gives it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostVar {
@@ -44,15 +43,13 @@ pub struct HostVar {
 /// it is written as a pattern), then the parts `path` of its value. A
 /// `type a` parameter is the type itself (`of_type`), and so is the
 /// value at the place of a `TypeOf(a)` (`t: TypeOf(a)`, `o:
-/// Option(TypeOf(a))`). For a row variable, the place is a record, and
-/// `written` are the fields its type writes: the others are the row's.
+/// Option(TypeOf(a))`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostSource {
     pub param: usize,
     pub name: Option<String>,
     pub path: Vec<HostStep>,
     pub of_type: bool,
-    pub written: Vec<String>,
 }
 
 /// One step into a value, toward the place of a variable.
@@ -69,8 +66,6 @@ pub enum HostStep {
     Err,
     /// The `n`th part of a tuple.
     Part(usize),
-    /// The field of a record.
-    Field(String),
 }
 
 /// What a call's arguments show of a variable: a value of the type, or
@@ -113,13 +108,6 @@ pub enum HostShape {
     Tuple(Vec<HostShape>),
     /// A channel; what it carries is not shown by the value.
     Channel(Box<HostShape>),
-    /// An anonymous record, its fields as written, open where it has a
-    /// row variable (`{name: String, ...r}`): the index of `r` among the
-    /// function's variables, and its name.
-    Record {
-        fields: Vec<(String, HostShape)>,
-        row: Option<(usize, String)>,
-    },
     /// The type variable of that index among the function's variables,
     /// and its name.
     Var(usize, String),
@@ -231,7 +219,6 @@ fn found_at(value: &Value, path: &[HostStep], budget: &mut usize) -> Option<Valu
             found_at(variant.fields().first()?, rest, budget)
         }
         (HostStep::Part(n), Value::Tuple(parts)) => found_at(parts.get(*n)?, rest, budget),
-        (HostStep::Field(name), Value::Record(record)) => found_at(record.get(name)?, rest, budget),
         _ => None,
     }
 }
@@ -332,15 +319,6 @@ pub fn same_type(witness: &Value, value: &Value) -> bool {
                 }
                 if shares(a.fields(), b.fields()) {
                     continue;
-                }
-                // (Anonymous records share one id: their field names
-                // are their type, compared whole as an id is, outside
-                // the bound; their values within it.)
-                if !std::sync::Arc::ptr_eq(a.ty(), b.ty())
-                    && a.type_id() == crate::typeinfo::ty::ANON_RECORD
-                    && !(a.named().map(|(name, _)| name)).eq(b.named().map(|(name, _)| name))
-                {
-                    return false;
                 }
                 let room = room(budget, &work);
                 work.extend(
@@ -464,12 +442,6 @@ fn shown_type(value: &Value, budget: &mut usize) -> String {
         }
         Value::Channel(_) => "Channel(_)".to_string(),
         Value::Handle(_) => "Handle(_)".to_string(),
-        Value::Record(record) if record.type_id() == crate::typeinfo::ty::ANON_RECORD => {
-            let fields: Vec<String> = (record.named())
-                .map(|(name, value)| format!("{name}: {}", of(Some(value), budget)))
-                .collect();
-            format!("{{{}}}", fields.join(", "))
-        }
         Value::Record(record) => {
             let declared = match &record.ty().shape {
                 crate::typeinfo::Shape::Record(fields) => fields.iter().map(|(_, ty)| ty).collect(),
@@ -693,51 +665,6 @@ impl HostShape {
                 yes(items.len() == values.len())?;
                 all(items.iter().zip(values.iter()), witnesses, budget)
             }
-            (HostShape::Record { fields, row }, Value::Record(record)) => {
-                let anonymous = record.type_id() == crate::typeinfo::ty::ANON_RECORD;
-                for (name, shape) in fields {
-                    match record.get(name) {
-                        Some(v) => shape.check_in(v, witnesses, budget)?,
-                        None => return Err(HostFault::Shape),
-                    }
-                }
-                let written = |name: &str| fields.iter().any(|(field, _)| field == name);
-                let Some((at, _)) = row else {
-                    // (A closed record is anonymous, of its fields alone.)
-                    return yes(anonymous && record.named().all(|(name, _)| written(name)));
-                };
-                let Some(witness) = witnesses.get(*at) else {
-                    return Ok(());
-                };
-                let Value::Record(given) = &witness.value else {
-                    return Ok(());
-                };
-                let rest = |name: &str| !witness.source.written.iter().any(|w| w == name);
-                let row_fits = match given.type_id() == crate::typeinfo::ty::ANON_RECORD {
-                    // The row's fields are the given record's that its
-                    // parameter does not write; nothing else is added.
-                    true => {
-                        anonymous
-                            && (given.named().filter(|(name, _)| rest(name)))
-                                .all(|(name, w)| record.get(name).is_some_and(|v| same_type(w, v)))
-                            && (record.named().filter(|(name, _)| !written(name)))
-                                .all(|(name, _)| given.get(name).is_some() && rest(name))
-                    }
-                    // A record of a declared type the row stands for is
-                    // given back as a record of that type, whatever fields
-                    // the parameter and the result write (and in whatever
-                    // order): the checker types the result as that type.
-                    false => {
-                        record.type_id() == given.type_id()
-                            && (given.named().filter(|(name, _)| rest(name)))
-                                .all(|(name, w)| record.get(name).is_some_and(|v| same_type(w, v)))
-                    }
-                };
-                match row_fits {
-                    true => Ok(()),
-                    false => Err(HostFault::Var(*at)),
-                }
-            }
             (HostShape::Var(at, _), value) => match witnesses.get(*at) {
                 Some(witness) => {
                     let fits = match witness.source.of_type {
@@ -784,22 +711,6 @@ impl fmt::Display for HostShape {
             HostShape::Result(ok, err) => list(f, "Result", &[ok, err]),
             HostShape::Tuple(items) => list(f, "", &items.iter().collect::<Vec<_>>()),
             HostShape::Channel(item) => list(f, "Channel", &[item]),
-            HostShape::Record { fields, row } => {
-                write!(f, "{{")?;
-                for (i, (name, shape)) in fields.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{name}: {shape}")?;
-                }
-                if let Some((_, name)) = row {
-                    if !fields.is_empty() {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "...{name}")?;
-                }
-                write!(f, "}}")
-            }
             HostShape::Var(_, name) => write!(f, "{name}"),
         }
     }

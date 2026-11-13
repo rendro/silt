@@ -1,8 +1,8 @@
 //! Opaque types (`pub opaque type T { .. }`): another module sees the
 //! type and none of what is in it. Outside the type's own module, a
-//! value of it cannot be built, taken apart, updated, read, spread, or
-//! passed into an open row; the module's functions are the only way in
-//! or out. Each of those is one error, with one help. "Outside" is the
+//! value of it cannot be built, taken apart, updated or read; the
+//! module's functions are the only way in or out. Each of those is one
+//! error, with one help. "Outside" is the
 //! module of the code at hand, the use, whatever module wrote the
 //! function the value goes through.
 
@@ -71,24 +71,11 @@ impl TypeChecker {
             && def.module != self.module
         {
             let module = def.module;
-            let mut vars = free_vars_in(&ty);
-            super::row_tail_vars(&ty, &mut vars);
-            for var in vars {
+            for var in free_vars_in(&ty) {
                 self.use_owners.insert(var, module);
             }
         }
         ty
-    }
-
-    /// Whether a value of the opaque type `ty` of another module may pass
-    /// into the row whose tail is `tail`: a row of a definition of the
-    /// type's own module.
-    pub(super) fn row_of_types_module(&self, ty: TypeRef, tail: &RowTail) -> bool {
-        let RowTail::Var(v) = tail else {
-            return false;
-        };
-        let owner = self.use_owners.get(v);
-        owner.is_some() && owner.copied() == self.def(ty.id.0).map(|def| def.module)
     }
 
     /// Report `message`, about a value of an opaque type of `module`.
@@ -238,9 +225,6 @@ impl TypeChecker {
             Type::Tuple(parts) => parts
                 .iter()
                 .find_map(|part| self.opaque_encoded(part, seen, viewer)),
-            Type::AnonRecord { fields, .. } => fields
-                .values()
-                .find_map(|part| self.opaque_encoded(part, seen, viewer)),
             _ => None,
         }
     }
@@ -269,14 +253,6 @@ impl TypeChecker {
                 Type::Map(k, v) => {
                     walk(k, false, out);
                     walk(v, false, out);
-                }
-                Type::AnonRecord { fields, tail } => {
-                    fields.values().for_each(|t| walk(t, false, out));
-                    match tail {
-                        RowTail::Var(v) => out.push(Type::Var(*v)),
-                        RowTail::Rigid(r) => out.push(Type::Rigid(*r)),
-                        RowTail::Closed => {}
-                    }
                 }
                 _ => {}
             }

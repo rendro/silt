@@ -210,11 +210,18 @@ impl Value {
         let fields = fields.into_iter().map(|(_, value)| value).collect();
         Value::record(ty.clone(), fields)
     }
+}
 
-    /// The anonymous record of the fields `fields`, whose names are
-    /// distinct.
-    pub fn anon_record<'a>(fields: impl IntoIterator<Item = (&'a str, Value)>) -> Value {
-        Value::Record(Record::anon(fields.into_iter().collect()))
+#[cfg(test)]
+impl Value {
+    /// A record of the test type `R` with the fields `fields`, in that
+    /// order.
+    pub fn test_record<'a>(fields: impl IntoIterator<Item = (&'a str, Value)>) -> Value {
+        let (names, values): (Vec<_>, Vec<_>) = (fields.into_iter())
+            .map(|(name, value)| ((name.to_string(), crate::typeinfo::FieldType::Int), value))
+            .unzip();
+        let id = crate::defs::TypeId(crate::defs::DefId(u32::MAX - 3));
+        Value::record(TypeInfo::new_record(id, "R", names), values)
     }
 }
 

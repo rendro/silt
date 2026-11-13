@@ -7,8 +7,9 @@ import other
 type P { n: Int }
 trait other.Greet for P { fn greet(self) -> String { "p {self.n} {later}" } }
 type Q { p: P }
+type Go { go: Fn(P) -> String }
 trait other.Greet for Q { fn greet(self) -> String { other.greet2(self.p) } }
-let r = {go: other.greet2}
+let r = Go { go: other.greet2 }
 let v = r.go(P { n: 1 })
 let later = {
   println("later")
