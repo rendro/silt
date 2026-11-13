@@ -29,6 +29,9 @@
 // Two suites include this file and each uses a part of it.
 #![allow(dead_code)]
 
+#[path = "../../support/env_switch.rs"]
+pub mod env_switch;
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -230,7 +233,7 @@ pub fn extra_corpus() -> Vec<Input> {
                 "SILT_FMT_CORPUS is not a directory: {}",
                 dir.display()
             );
-            let all = std::env::var_os("SILT_FMT_CORPUS_ALL").is_some_and(|v| v != "0");
+            let all = env_switch::on("SILT_FMT_CORPUS_ALL");
             let keep: &dyn Fn(&Path) -> bool = if all { &|_| true } else { &is_silt };
             inputs_under(&dir, &dir, "corpus", keep)
         }

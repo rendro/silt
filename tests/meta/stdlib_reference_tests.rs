@@ -15,10 +15,13 @@ use silt::builtins::registry::decoding::{Family, Leaf};
 use silt::builtins::registry::docs::{pages, render_card, render_page, signature_block};
 use silt::builtins::registry::registry;
 
+#[path = "../support/env_switch.rs"]
+mod env_switch;
+
 #[test]
 fn the_reference_pages_are_what_the_registry_renders() {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("docs/stdlib");
-    let bless = std::env::var_os("SILT_BLESS").is_some();
+    let bless = env_switch::on("SILT_BLESS");
     let mut stale = Vec::new();
     for (file, page) in pages() {
         let rendered = render_page(page)
@@ -47,7 +50,7 @@ fn the_language_card_is_what_the_registry_renders() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("docs/language-card.md");
     let card = std::fs::read_to_string(&path).expect("docs/language-card.md");
     let rendered = render_card(&card).expect("docs/language-card.md has no marker line");
-    if rendered != card && std::env::var_os("SILT_BLESS").is_some() {
+    if rendered != card && env_switch::on("SILT_BLESS") {
         std::fs::write(&path, &rendered).expect("write the card");
         return;
     }

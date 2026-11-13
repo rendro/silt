@@ -325,4 +325,7 @@ the case.
 / `.stderr` / `.formatted` file and every `-- verdict:` mark from the current binary
 (with `SILT_GOLDEN_FULL_CORPUS=1` for the marks of the whole repro
 corpus). Only the integrator uses it,
-after reviewing the diff.
+after reviewing the diff. A switch like this one (`SILT_BLESS`,
+`SILT_GOLDEN_FULL_CORPUS`, `SILT_GOLDEN_SKIP_VERDICT`) is on only when its
+variable holds a value other than the empty one and `0`: `SILT_BLESS=`
+checks, it does not bless (`tests/support/env_switch.rs`).
