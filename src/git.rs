@@ -332,9 +332,23 @@ pub fn validate_git_url(url: &str) -> Result<(), InvalidGitUrl> {
 
 /// Whether the git URL `url` names a repository on this machine: a
 /// `file://` URL or a local path (starting with `/`, `./` or `../`, or
-/// on Windows a drive or UNC path).
+/// on Windows a drive or UNC path). On Windows, git takes any
+/// `<letter>:` in front for a drive, also with no slash after it
+/// (`c:repo`, relative to the current directory of that drive), where
+/// elsewhere it is the host of an scp-like URL.
 pub fn is_local_git_url(url: &str) -> bool {
-    url.starts_with("file://") || is_local_path(url)
+    is_local_git_url_on(url, cfg!(windows))
+}
+
+/// [`is_local_git_url`] as it is on Windows (`windows`) or elsewhere.
+fn is_local_git_url_on(url: &str, windows: bool) -> bool {
+    let bytes = url.as_bytes();
+    let drive = bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
+    url.starts_with("file://")
+        || url.starts_with('/')
+        || url.starts_with("./")
+        || url.starts_with("../")
+        || (windows && (drive || url.starts_with(r"\\")))
 }
 
 /// A local path: a value starting with `/`, `./` or `../`, and on
@@ -1097,6 +1111,39 @@ mod tests {
         assert!(!is_windows_absolute_path("git@host:repo"));
         // A local path on Windows only, as git takes it.
         assert_eq!(is_local_path("C:/repo"), cfg!(windows));
+    }
+
+    /// A repository on this machine, as git takes the URL on each
+    /// platform: on Windows any `<letter>:` in front is a drive, also
+    /// `c:repo` and `c:../other`, which elsewhere are scp-like hosts.
+    #[test]
+    fn a_local_git_url_is_told_on_each_platform() {
+        for url in ["file:///srv/repo", "/srv/repo", "./repo", "../repo"] {
+            assert!(is_local_git_url_on(url, false), "{url}");
+            assert!(is_local_git_url_on(url, true), "{url}");
+        }
+        for url in [
+            "c:repo",
+            "C:../other/repo",
+            r"C:\repo",
+            "C:/repo",
+            r"\\server\share",
+        ] {
+            assert!(is_local_git_url_on(url, true), "{url}");
+        }
+        for url in ["c:repo", "C:../other/repo"] {
+            assert!(!is_local_git_url_on(url, false), "{url}");
+        }
+        for url in [
+            "https://example.com/repo",
+            "ssh://git@example.com/repo",
+            "git://example.com/repo",
+            "git@example.com:repo",
+            "example.com:repo",
+        ] {
+            assert!(!is_local_git_url_on(url, false), "{url}");
+            assert!(!is_local_git_url_on(url, true), "{url}");
+        }
     }
 
     const RULE_SPACE: &str = "must not contain whitespace or control characters";

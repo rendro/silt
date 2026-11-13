@@ -563,3 +563,24 @@ fn install_sh_replaces_a_running_binary() {
         .collect();
     assert_eq!(left, ["silt"], "{left:?}");
 }
+
+/// A signal between the copy and the move ends the script with its
+/// EXIT trap: the staged copy is removed and the old binary stays.
+/// FAILS on the base of this fix: under dash, which runs no EXIT trap
+/// when a signal ends the script, `.silt.new.<pid>` was left behind.
+#[test]
+fn install_sh_interrupted_before_the_move_leaves_no_staged_copy() {
+    let sb = Sandbox::new("signal");
+    let out = sb.run("");
+    assert!(out.status.success(), "{out:?}");
+    // `mv` signals the script (its parent) and fails.
+    sb.stub("mv", "#!/bin/sh\nkill -TERM $PPID\nsleep 1\nexit 1\n");
+    let out = sb.run("");
+    assert_ne!(out.status.code(), Some(0), "{out:?}");
+    let left: Vec<_> = fs::read_dir(sb.install_dir())
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name())
+        .collect();
+    assert_eq!(left, ["silt"], "{left:?}");
+}

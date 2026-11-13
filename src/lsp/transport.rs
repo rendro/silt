@@ -76,9 +76,7 @@ fn read_frame_within(input: &mut impl BufRead, max_body: u64) -> io::Result<Fram
             break;
         }
         headers += 1;
-        if let Some((name, value)) = line.split_once(':')
-            && name.trim().eq_ignore_ascii_case("Content-Length")
-        {
+        if let Some(value) = content_length(line) {
             length = Some(value.trim().parse::<u64>().ok());
         }
     }
@@ -116,6 +114,24 @@ fn read_frame_within(input: &mut impl BufRead, max_body: u64) -> io::Result<Fram
         Some(id @ (Value::Number(_) | Value::String(_))) => id.clone(),
         _ => Value::Null,
     };
+    // lsp-server reads an object with an id as a response and one with a
+    // method as a notification, whatever else they hold: a request whose
+    // method is no string, or whose id is no number or string, would go
+    // unanswered.
+    if let Some(method) = value.get("method") {
+        let id_ok = value
+            .get("id")
+            .is_none_or(|id| matches!(id, Value::Number(_) | Value::String(_)));
+        if !method.is_string() || !id_ok {
+            return Ok(Frame::Fault {
+                id,
+                code: INVALID_REQUEST,
+                message: "the message is no request or notification: its method must be a \
+                          string, and its id a number or a string"
+                    .to_string(),
+            });
+        }
+    }
     match serde_json::from_value::<Message>(value) {
         Ok(message) => Ok(Frame::Message(message)),
         Err(e) => Ok(Frame::Fault {
@@ -124,6 +140,17 @@ fn read_frame_within(input: &mut impl BufRead, max_body: u64) -> io::Result<Fram
             message: format!("the message is no request, response or notification: {e}"),
         }),
     }
+}
+
+/// The value of the `Content-Length` header in the header line `line`:
+/// its last one, also where it does not start the line. After a message
+/// whose length was wrong, the rest of its body is read as a header line,
+/// and the next message's header is at its end: it is taken, so the
+/// reader finds the messages again.
+fn content_length(line: &str) -> Option<&str> {
+    const NAME: &str = "content-length:";
+    let at = line.to_ascii_lowercase().rfind(NAME)?;
+    Some(&line[at + NAME.len()..])
 }
 
 fn fault(code: i64, message: &str) -> Frame {
@@ -278,6 +305,57 @@ mod tests {
             read_frame_within(&mut reader, 60).unwrap(),
             Frame::Message(_)
         ));
+    }
+
+    /// A length that is wrong by some bytes either way costs the message
+    /// it belongs to (and, when too long, the one after it), never the
+    /// rest of the session.
+    #[test]
+    fn a_wrong_length_loses_no_message_but_its_own_and_the_next() {
+        let hover = r#"{"jsonrpc":"2.0","id":9,"method":"textDocument/hover","params":{}}"#;
+        let short = format!("Content-Length: {}\r\n\r\n{hover}", hover.len() - 10);
+        let found = frames(&[short, framed(PING), framed(PING)].concat());
+        assert_eq!(code(&found[0]), Some(PARSE_ERROR), "{found:?}");
+        let messages = (found.iter())
+            .filter(|f| matches!(f, Frame::Message(_)))
+            .count();
+        assert_eq!(messages, 2, "{found:?}");
+        let long = format!("Content-Length: {}\r\n\r\n{hover}", hover.len() + 10);
+        let found = frames(&[long, framed(PING), framed(PING), framed(PING)].concat());
+        assert_eq!(code(&found[0]), Some(PARSE_ERROR), "{found:?}");
+        let messages = (found.iter())
+            .filter(|f| matches!(f, Frame::Message(_)))
+            .count();
+        assert!(messages >= 1, "{found:?}");
+        assert!(matches!(found.last(), Some(Frame::Message(_))), "{found:?}");
+    }
+
+    /// A request whose method is no string, or whose id is no number or
+    /// string, is answered with -32600, with its id when it has one.
+    #[test]
+    fn a_malformed_request_is_an_invalid_request() {
+        let found = frames(
+            &[
+                framed(r#"{"jsonrpc":"2.0","id":5,"method":5}"#),
+                framed(r#"{"jsonrpc":"2.0","id":"abc","method":[]}"#),
+                framed(r#"{"jsonrpc":"2.0","id":{"a":1},"method":"textDocument/hover"}"#),
+            ]
+            .concat(),
+        );
+        let ids: Vec<(Option<i64>, Value)> = (found.iter())
+            .map(|f| match f {
+                Frame::Fault { id, code, .. } => (Some(*code), id.clone()),
+                _ => (None, Value::Null),
+            })
+            .collect();
+        assert_eq!(
+            ids,
+            [
+                (Some(INVALID_REQUEST), json!(5)),
+                (Some(INVALID_REQUEST), json!("abc")),
+                (Some(INVALID_REQUEST), Value::Null),
+            ]
+        );
     }
 
     #[test]

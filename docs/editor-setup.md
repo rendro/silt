@@ -20,8 +20,9 @@ silt lsp
 The server communicates over stdin/stdout using the standard LSP protocol.
 
 A buffer that was never saved (`untitled:Untitled-1`) is checked as a
-file of its own, outside any package: it sees the other unsaved buffers
-of the editor, and no file on disk.
+file of its own, outside any package. It reads no file on disk; it can
+import another unsaved buffer whose name ends in `.silt`
+(`import helper` for `untitled:helper.silt`).
 
 The server fetches nothing: opening a folder runs no git and connects
 to no host. A git dependency of the project that is not in silt's cache

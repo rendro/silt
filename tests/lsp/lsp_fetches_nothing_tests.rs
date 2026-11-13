@@ -92,7 +92,10 @@ fn opening_a_file_fetches_no_git_dependency() {
     let ws = std::env::temp_dir().join(format!("silt_lsp_no_fetch_{}", std::process::id()));
     let _ = fs::remove_dir_all(&ws);
     fs::create_dir_all(&ws).unwrap();
-    let ws = ws.canonicalize().unwrap();
+    // (Canonical for a temporary directory behind a link, as on macOS,
+    // and without the `\\?\` prefix Windows gives a canonical path,
+    // which git cannot take.)
+    let ws = silt::source::canonical_path(&ws);
     fs::write(ws.join("gitconfig"), "").unwrap();
 
     // A repository holding a library package.
@@ -123,13 +126,20 @@ fn opening_a_file_fetches_no_git_dependency() {
     let main = "import dep\n\nfn main() {\n  println(dep.two())\n}\n";
     fs::write(app.join("src/main.silt"), main).unwrap();
     let main_uri = path_to_uri(&app.join("src/main.silt"));
-    let manifest_uri = path_to_uri(&app.join("silt.toml"));
 
     let env = hermetic_env(&ws);
     let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
     let mut client = LspClient::spawn_with_root_and_env(Some(&path_to_uri(&app)), &env);
     client.did_open(&main_uri, main);
-    let published = client.wait_for_diagnostics(&manifest_uri);
+    // (The server writes the URI of silt.toml itself: matched by its
+    // end, whatever it makes of a drive letter.)
+    let published = client.recv_until("diagnostics of app/silt.toml", |msg| {
+        msg.get("method").and_then(|m| m.as_str()) == Some("textDocument/publishDiagnostics")
+            && msg
+                .pointer("/params/uri")
+                .and_then(|u| u.as_str())
+                .is_some_and(|u| u.ends_with("/app/silt.toml"))
+    });
     let found = messages(&published);
     assert!(
         found.iter().any(|m| m.contains("git dependency `dep`")

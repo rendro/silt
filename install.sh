@@ -35,6 +35,9 @@ main() {
 
     tmpdir="$(mktemp -d)" || err "mktemp -d failed"
     trap 'rm -rf "$tmpdir"' EXIT
+    # A signal ends the script through `exit`, so that the EXIT trap
+    # runs (dash runs none when a signal ends it).
+    trap 'exit 130' INT TERM HUP
 
     printf "  Downloading %s\n" "$url"
     fetch "$url" "$tmpdir/silt.$ext" \
