@@ -1,0 +1,18 @@
+-- stdin: two  spaces \t\nquit \r\n\n\t\r\nlast\t
+-- io.read_line drops only the line end, `\n` or `\r\n`, as
+-- stream.stdin_lines does: spaces and tabs at the end of a line are kept,
+-- an empty line is "", and a last line with no line end is read whole.
+import io
+
+fn main() {
+  loop {
+    match io.read_line() {
+      Ok(Some(line)) -> {
+        println(io.inspect(line))
+        loop()
+      }
+      Ok(None) -> println("end")
+      Err(e) -> println("error: {e}")
+    }
+  }
+}

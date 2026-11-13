@@ -156,7 +156,12 @@ fn parse_directives(source: &str) -> Result<Directives, String> {
             "stdout-contains" => d.stdout_contains.push(value),
             "stderr-contains" => d.stderr_contains.push(value),
             "stderr-not-contains" => d.stderr_not_contains.push(value),
-            "stdin" => d.stdin = value.replace("\\n", "\n"),
+            "stdin" => {
+                d.stdin = value
+                    .replace("\\n", "\n")
+                    .replace("\\r", "\r")
+                    .replace("\\t", "\t")
+            }
             "requires-feature" => d.requires_features.push(value),
             "without-feature" => d.without_features.push(value),
             "timeout" => {

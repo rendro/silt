@@ -781,7 +781,7 @@ fn test_signature_help_returns_arity() {
         .and_then(|v| v.as_str())
         .expect("SignatureInformation must have a label string");
 
-    // `build_signature_from_def` renders a typed Fun as
+    // `build_signature_from_def` renders a function type as
     //   fn add(a: Int, b: Int) -> Int
     // — assert on both parameter names and the return type.
     assert!(
