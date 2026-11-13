@@ -1899,12 +1899,22 @@ impl TypeChecker {
             let message = format!("trait '{}' is not declared", ti.trait_name);
             // (An error type of another language's kind: an error is
             // shown as any value is.)
+            // An impl of Display can be written only for a type of this
+            // module; any other type is shown by the Display it has.
+            let own = matches!(ti.target_res, Some(crate::defs::Res::Def(id))
+                if self.defs.as_ref().is_some_and(|defs| defs.get(id).module == self.module));
             let help = (ti.trait_module.is_none() && resolve(ti.trait_name) == "Error").then(|| {
-                let ty = resolve(ti.target_type);
-                format!(
-                    "an error is shown as any value is: to say how `{ty}` is shown (by `{{e}}`, \
-                     and as the error of main), write `trait Display for {ty}`"
-                )
+                let ty = Qualifier::written(ti.target_module, ti.target_type);
+                match own {
+                    true => format!(
+                        "an error is shown as any value is: to say how `{ty}` is shown (by \
+                         `{{e}}`, and as the error of main), write `trait Display for {ty}`"
+                    ),
+                    false => format!(
+                        "an error is shown as any value is: `{ty}` is shown (by `{{e}}`, and as \
+                         the error of main) by the Display it has"
+                    ),
+                }
             });
             self.error_help(Code::UnknownTrait, (message, help), ti.span);
             return;

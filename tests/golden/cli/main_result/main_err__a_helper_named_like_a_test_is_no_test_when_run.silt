@@ -1,0 +1,10 @@
+-- A function named like a test is a test only where the file is tested
+-- or checked: a run holds it to no rule of a test, neither its
+-- signature nor the Display of its error.
+fn test_connection() -> Result((), Fn(Int) -> Int) { Ok(()) }
+fn main() {
+  match test_connection() {
+    Ok(_) -> println("fine")
+    Err(_) -> println("no")
+  }
+}

@@ -48,8 +48,9 @@ fn no_doc_fence_redeclares_a_builtin_trait() {
     use std::path::{Path, PathBuf};
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
 
-    // Match `src/typechecker/mod.rs::BUILTIN_TRAIT_NAMES` exactly.
-    const BUILTINS: &[&str] = &["Equal", "Compare", "Hash", "Display", "Error"];
+    // The structural traits of `src/typechecker/mod.rs::BUILTIN_TRAIT_NAMES`
+    // (`Error` is no builtin trait: a program may declare one).
+    const BUILTINS: &[&str] = &["Equal", "Compare", "Hash", "Display"];
 
     let mut targets: Vec<PathBuf> = Vec::new();
     let readme = manifest_dir.join("README.md");
