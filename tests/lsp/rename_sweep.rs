@@ -132,29 +132,74 @@ fn without_warnings(stderr: &str) -> String {
     out
 }
 
-/// `disasm` output without the number of each constant an instruction
-/// names (the constant itself is written behind the `;`). A field's name
-/// is a string constant, one for every use of the same text: a rename of
-/// a field to a name in use, or away from a name another field keeps,
-/// numbers the constants anew and is the same program.
+/// The instructions whose operands after the name are constants of the
+/// function's pool (src/disassemble.rs): how many of them.
+const CONSTANT_OPERANDS: &[(&str, usize)] = &[
+    ("Constant", 1),
+    ("AddConst", 1),
+    ("SubConst", 1),
+    ("TestEqual", 1),
+    ("GetFieldNamed", 1),
+    ("DestructRecordFieldNamed", 1),
+    ("TestRecordTag", 1),
+    ("TestMapHasKey", 1),
+    ("DestructMapValue", 1),
+    ("MakeDict", 1),
+    ("MakeClosure", 1),
+    ("MakeType", 1),
+    ("MakeRecord", 1),
+    ("TestIntRange", 2),
+    ("TestFloatRange", 2),
+];
+
+/// `disasm` output with each constant an instruction names written so
+/// that a field rename does not move it. A field's name is a string
+/// constant, one for every use of the same text: a rename to a name in
+/// use, or away from one another field keeps, numbers the pool anew and
+/// is the same program. So a string constant's number is left out (its
+/// text is behind the `;`), and every other constant is written as its
+/// rank among the other constants of its function, in the order they
+/// first appear (`k0`, `k1`): adding or dropping a string does not move
+/// those, and two that print alike (two closures of one function, two
+/// types `Pt` of two modules) keep two ranks. Every other operand (a
+/// global's slot, a count, a jump) is compared as it is.
 fn without_constant_numbers(disasm: &str) -> String {
     let mut out = String::with_capacity(disasm.len());
+    let mut ranks: BTreeMap<String, usize> = BTreeMap::new();
     for line in disasm.lines() {
-        match line.split_once(" ; ") {
-            Some((code, comment)) => {
-                let mut words: Vec<&str> = code.split_whitespace().collect();
-                // (The first word of an instruction is its offset.)
-                let operand =
-                    (1..words.len()).find(|at| words[*at].bytes().all(|b| b.is_ascii_digit()));
-                if let Some(at) = operand {
-                    words[at] = "#";
-                }
-                out.push_str(&words.join(" "));
-                out.push_str(" ; ");
-                out.push_str(comment);
-            }
-            None => out.push_str(line),
+        // The pool is the function's: ranks start again at each one.
+        if line.starts_with("== ") {
+            ranks.clear();
         }
+        let Some((code, comment)) = line.split_once(" ; ") else {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        };
+        let mut words: Vec<String> = code.split_whitespace().map(str::to_string).collect();
+        let operands = match words.get(..2) {
+            Some([bar, label])
+                if bar == "|" && ["field", "exclude", "literal"].contains(&&**label) =>
+            {
+                1
+            }
+            Some([_, name]) => (CONSTANT_OPERANDS.iter())
+                .find(|(op, _)| op == name)
+                .map_or(0, |(_, n)| *n),
+            _ => 0,
+        };
+        let string = operands == 1 && comment.starts_with('"');
+        for at in (2..2 + operands).filter(|at| *at < words.len()) {
+            words[at] = if string {
+                "#".to_string()
+            } else {
+                let next = ranks.len();
+                format!("k{}", ranks.entry(words[at].clone()).or_insert(next))
+            };
+        }
+        out.push_str(&words.join(" "));
+        out.push_str(" ; ");
+        out.push_str(comment);
         out.push('\n');
     }
     out
