@@ -1,3 +1,4 @@
+12:3 error cannot infer the record type whose field 'x' this reads\nhelp: annotate the record: `p: Pt`
 > references 9:11
 field_rename_refused_where_a_read_is_unknown.silt:9:11-9:12
 field_rename_refused_where_a_read_is_unknown.silt:16:20-16:21

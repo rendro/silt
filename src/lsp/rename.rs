@@ -113,8 +113,8 @@ impl Server {
         }
         if let Some(unknown) = self.unknown_field_reads(&target) {
             return Err(invalid(format!(
-                "`{old_name}` cannot be renamed now: {unknown}, which may be this field; fix \
-                 that first, so the rename can find every place of the field"
+                "`{old_name}` cannot be renamed now: {unknown}; fix that first, so the rename \
+                 can find every place of the field"
             )));
         }
         if let Some(clash) = self.rename_clash(uri, &target, &new_name) {

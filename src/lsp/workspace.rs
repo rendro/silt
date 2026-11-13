@@ -1221,7 +1221,10 @@ impl Server {
                     continue;
                 }
                 if session.module_analysis(module.id).is_none() {
-                    return Some(format!("{} was not checked", file_of(module.id)));
+                    return Some(format!(
+                        "{} was not checked, and it can read this field",
+                        file_of(module.id)
+                    ));
                 }
                 let reads = (modules.iter())
                     .find(|m| m.module == module.id)
@@ -1229,7 +1232,8 @@ impl Server {
                 if let Some((span, _)) = reads.iter().find(|(_, read)| *read == name) {
                     let (line, col) = session.sources().line_col((span.file, span.start));
                     return Some(format!(
-                        "{}:{line}:{col} reads a field `{}` of a value whose type is not known",
+                        "{}:{line}:{col} reads a field `{}` of a value whose type is not known, \
+                         which may be this field",
                         file_of(module.id),
                         resolve_sym(name)
                     ));

@@ -189,7 +189,7 @@ fn without_constant_numbers(disasm: &str) -> String {
             _ => 0,
         };
         let string = operands == 1 && comment.starts_with('"');
-        for at in (2..2 + operands).filter(|at| *at < words.len()) {
+        for at in 2..(2 + operands).min(words.len()) {
             words[at] = if string {
                 "#".to_string()
             } else {
