@@ -27,9 +27,13 @@ postgres = ["dep:tokio-postgres", "dep:tokio", "dep:futures-util", "dep:postgres
 postgres-tls = ["postgres", "dep:native-tls", "dep:postgres-native-tls"]
 tcp = []
 tcp-tls = ["tcp", "dep:rustls", "dep:webpki-roots"]
-# Exposes what tests outside the crate read of the I/O pool (its size,
-# what a panicking operation completes with) and are told of a
-# connection's writes. Always enabled under `cfg(test)`.
+# The test API, which is no part of what the crate promises an
+# embedder: `silt::session::testing` (check or run a program given as
+# text), `silt::fuzz_invariants` (what the fuzz targets assert), and
+# what tests outside the crate read of the I/O pool (its size, what a
+# panicking operation completes with) and are told of a connection's
+# writes. Always enabled under `cfg(test)`; the tests, benches and the
+# fuzz crate turn it on.
 test-hooks = []
 
 [[bench]]
@@ -120,6 +124,9 @@ windows-sys = { version = "0.59", features = [
 [dev-dependencies]
 proptest = "1.4"
 rcgen = "0.13"
+# The tests, benches and examples are built with the test API
+# (`test-hooks`): the crate as its own dev-dependency turns it on.
+silt = { path = ".", features = ["test-hooks"] }
 
 # A release binary carries no symbol table: a smaller download. (A
 # panic's backtrace then names no functions.)

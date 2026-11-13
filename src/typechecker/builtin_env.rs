@@ -401,6 +401,7 @@ fn argument_checks(row: &crate::builtins::registry::Row, ty: &Type) -> Vec<Pred>
 ///
 /// Stringifies the `Symbol` keys so test code doesn't need access to
 /// the crate-private `Symbol`/`intern` types.
+#[cfg(any(test, feature = "test-hooks"))]
 #[doc(hidden)]
 pub fn __trait_init_fingerprint_check_program() -> std::collections::BTreeSet<String> {
     use std::collections::BTreeSet;
@@ -427,6 +428,7 @@ pub fn __trait_init_fingerprint_check_program() -> std::collections::BTreeSet<St
 ///    params_count, supertraits_count, param_where_clauses_count)
 ///
 /// Used by `tests/typecheck/unified_trait_registration_tests.rs`.
+#[cfg(any(test, feature = "test-hooks"))]
 #[doc(hidden)]
 pub fn __builtin_trait_registration_fingerprint() -> Vec<(
     String,

@@ -418,9 +418,9 @@ impl Vm {
     /// its values to its host through a host function it calls (see
     /// `docs/ffi.md`).
     ///
-    /// [`Program`]: crate::session::Program
-    pub fn run_program(&mut self, program: &crate::session::Program) -> Result<(), VmError> {
-        use crate::session::EntryPoint;
+    /// [`Program`]: crate::program::Program
+    pub fn run_program(&mut self, program: &crate::program::Program) -> Result<(), VmError> {
+        use crate::program::EntryPoint;
         if program.entry == EntryPoint::Cell {
             return Err(VmError::new(
                 "a program compiled for Entry::Cell is run by the REPL, not by run_program".into(),
@@ -437,11 +437,11 @@ impl Vm {
     /// give the entry's value. A session runs each entry's program on
     /// one `Vm`.
     #[cfg(feature = "repl")]
-    pub(crate) fn run_cell(&mut self, program: &crate::session::Program) -> Result<Value, VmError> {
+    pub(crate) fn run_cell(&mut self, program: &crate::program::Program) -> Result<Value, VmError> {
         self.run_loaded(program)
     }
 
-    fn run_loaded(&mut self, program: &crate::session::Program) -> Result<Value, VmError> {
+    fn run_loaded(&mut self, program: &crate::program::Program) -> Result<Value, VmError> {
         self.load(program);
         let script =
             program.functions.first().cloned().ok_or_else(|| {
@@ -548,7 +548,7 @@ impl Vm {
     /// [`Vm::run_program`] (compiled for `Entry::Tests`), with no
     /// arguments. As for `main`, a test function that returns `Err(e)`
     /// has failed: an error with [`VmError::returned`] set.
-    pub fn call_test(&mut self, test: &crate::session::TestFn) -> Result<(), VmError> {
+    pub fn call_test(&mut self, test: &crate::program::TestFn) -> Result<(), VmError> {
         let value = self.run(Arc::new(crate::bytecode::call_global_script(
             test.slot, &test.name,
         )));
@@ -560,7 +560,7 @@ impl Vm {
     /// types carry, which the decoders look up by id, and its global
     /// slots and impl methods. A REPL entry's program has the slots of
     /// the entries before it too, whose values stay.
-    pub(crate) fn load(&mut self, program: &crate::session::Program) {
+    pub(crate) fn load(&mut self, program: &crate::program::Program) {
         self.runtime.types.lock().extend(&program.types);
         // (A description taken in anew may differ from the one a decoder
         // was decided by.)

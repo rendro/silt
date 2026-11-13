@@ -23,15 +23,7 @@ use crate::package_graph::PackageId;
 
 use super::packages::Packages;
 
-/// A module of the graph: an index into [`ModuleGraph::modules`].
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
-pub struct ModuleId(pub u32);
-
-impl ModuleId {
-    pub(crate) fn index(self) -> usize {
-        self.0 as usize
-    }
-}
+pub use crate::defs::ModuleId;
 
 /// One module: a `.silt` file of a package.
 pub struct Module {

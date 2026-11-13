@@ -20,6 +20,7 @@ mod editor_grammar_string_escapes_tests;
 mod error_codes_page_tests;
 mod keyword_list_parity_tests;
 mod lexer_keyword_parity_tests;
+mod public_api_tests;
 mod release_asset_name_parity_tests;
 mod release_version_drift_tests;
 mod round101_features_footer_cargo_parity_tests;

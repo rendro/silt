@@ -13,8 +13,9 @@ libfuzzer-sys = "0.4"
 [dependencies.silt]
 path = ".."
 default-features = false
-# The reader of HTTP requests is the `http` feature's.
-features = ["http"]
+# The reader of HTTP requests is the `http` feature's; the invariants
+# the targets assert are the test API's.
+features = ["http", "test-hooks"]
 
 # Disable workspace auto-discovery
 [workspace]

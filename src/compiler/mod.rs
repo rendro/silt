@@ -302,9 +302,6 @@ pub struct ModuleUnit {
     /// The module's top-level `let`s, by the span of each, in the order
     /// the checker decided they are initialised in.
     pub let_order: Vec<Span>,
-    /// The module's name in its package (`"lib"` for a dependency's
-    /// library, `"util"` for `src/util.silt`).
-    pub name: String,
     /// How a value of a type of the module names the module when two
     /// types of the program have the type's name (`util.Pt {x: 1}`):
     /// as the entry's package imports it. A module of the entry's

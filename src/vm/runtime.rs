@@ -326,7 +326,7 @@ pub(crate) struct View {
     pub(crate) slots: Arc<[std::sync::OnceLock<Value>]>,
     /// What each global slot is, and the slot of each impl method: what
     /// the VM looks a method up in. For the VM of a task this is what
-    /// STANDS of the program ([`crate::session::Program::settled`]):
+    /// STANDS of the program ([`crate::program::Program::settled`]):
     /// nothing in it is ever taken back or changed, so what the VM
     /// finds in it needs no second look.
     pub(crate) table: Arc<crate::bytecode::Globals>,

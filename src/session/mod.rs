@@ -18,6 +18,7 @@ mod entry;
 mod graph;
 mod host;
 mod packages;
+#[cfg(any(test, feature = "test-hooks"))]
 pub mod testing;
 
 use std::collections::HashMap;
@@ -25,7 +26,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::ast;
-use crate::bytecode::{Function, Globals};
+use crate::bytecode::Globals;
 use crate::compiler::{Compiler, EarlierCells, ModuleUnit, ProgramUnits};
 use crate::defs::DefTable;
 use crate::diagnostic::{Code, Diagnostic};
@@ -36,8 +37,9 @@ use crate::typechecker::{self, ModuleContext, Tables};
 use crate::types::Type;
 use crate::value::HostFn;
 
+pub use crate::program::{EntryPoint, Program, TestFn, TestKind};
 pub use crate::value::HostCall;
-pub use entry::{ENTRY_POINT, TestFn, TestKind, selected_tests, test_functions, test_kind};
+pub use entry::{ENTRY_POINT, selected_tests, test_functions, test_kind};
 pub(crate) use graph::is_cell_name;
 pub use graph::{Import, ImportResolution, Module, ModuleGraph, ModuleId, Ordering, parse_text};
 pub use host::{HostFunction, HostModule};
@@ -167,39 +169,6 @@ pub struct ModuleAnalysis {
     pub let_order: Vec<crate::source::Span>,
     /// The module's type errors and warnings.
     pub diagnostics: Vec<Diagnostic>,
-}
-
-/// What the VM runs: the compiled functions, the first of which is the
-/// script that installs the program's globals (and, for
-/// [`Entry::Main`], calls `main`).
-pub struct Program {
-    pub functions: Vec<Function>,
-    /// The types its values are of, which the VM is given
-    /// ([`crate::vm::Vm::run_program`]).
-    pub types: crate::typeinfo::TypeTable,
-    /// Its global slots, which the VM is given too.
-    pub globals: Arc<Globals>,
-    /// The part of `globals` that stands whatever becomes of the
-    /// program's run. For a REPL entry: the slots, impl methods and
-    /// `Display` impls of the entries before it that ran to their end,
-    /// without the entry's own, which the session takes back if the
-    /// entry fails. For any other program: all of `globals`. (The VM
-    /// of a task keeps this table, see `Vm::look_again`.)
-    pub settled: Arc<Globals>,
-    pub entry: EntryPoint,
-}
-
-/// What a [`Program`] was compiled for.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum EntryPoint {
-    /// `main`, bound at `span` (its name): where a `main` that returns
-    /// `Err` is reported.
-    Main {
-        span: crate::source::Span,
-    },
-    /// The selected tests, in source order.
-    Tests(Vec<TestFn>),
-    Cell,
 }
 
 /// What the imports of `module` name, as the compiler looks them up:
@@ -967,7 +936,6 @@ impl Session {
                         id: *m,
                         program: self.analyses[m].ast.clone(),
                         let_order: self.analyses[m].let_order.clone(),
-                        name: resolve(module.name),
                         qualifier: match (module.package == entry_package, resolve(module.name)) {
                             (true, name) => name,
                             (false, name) if name == "lib" => resolve(module.package_name),

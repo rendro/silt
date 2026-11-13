@@ -137,6 +137,7 @@ impl Resolver {
 
     /// What the registry holds, for a test that compares two states of
     /// a session: each alias, in a fixed order.
+    #[cfg(any(test, feature = "test-hooks"))]
     #[doc(hidden)]
     pub fn fingerprint(&self) -> Vec<String> {
         let mut rows: Vec<String> = self
