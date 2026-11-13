@@ -4,9 +4,13 @@
 -- a temporary table, an advisory lock, a `LISTEN`, a cursor `WITH HOLD`
 -- are gone; what the connection string sets stays. A session that holds
 -- a statement prepared with `PREPARE` is closed instead, and the pool
--- opens another. (A pool of one connection; a second pool looks from
--- outside.)
+-- opens another; so is one whose `DEALLOCATE ALL` or `DISCARD ALL`
+-- dropped the statements the client keeps prepared for its look-ups of
+-- types, on the pool or in a transaction: a later parameter of a type
+-- the client has not seen yet is sent. (A pool of one connection; a
+-- second pool looks from outside.)
 import env
+import list
 import postgres
 import string
 
@@ -48,6 +52,32 @@ fn session(pool: postgres.PgPool) -> Int {
   }
 }
 
+-- A pool of its own, which nothing before reaches: the statements the
+-- client keeps prepared for its look-ups of types, dropped on the pool
+-- and in a transaction.
+fn the_type_look_ups(other: postgres.PgPool) {
+  match postgres.connect_with(url(), #{"max_pool_size": 1}) {
+    Ok(fresh) -> {
+      let drop = "DROP TYPE IF EXISTS silt_reset_t1, silt_reset_t2, silt_reset_t3, silt_reset_t4"
+      let _ = postgres.execute(other, drop, ())
+      ["t1", "t2", "t3", "t4"]
+        |> list.each { t -> let _ = postgres.execute(other, "CREATE TYPE silt_reset_{t} AS ENUM ('ok')", ()) }
+      let typed = { t -> said(postgres.query(fresh, "SELECT $1::{t}::text AS s", ("ok",), S)) }
+      println("a parameter of a type: {typed("silt_reset_t1")}")
+      println("DEALLOCATE ALL: {said(postgres.execute(fresh, "DEALLOCATE ALL", ()))}")
+      println("  a parameter of another type: {typed("silt_reset_t2")}")
+      println("DISCARD ALL: {said(postgres.execute(fresh, "DISCARD ALL", ()))}")
+      println("  a parameter of another type: {typed("silt_reset_t3")}")
+      let in_tx = postgres.transact(fresh) { tx -> postgres.execute(tx, "DEALLOCATE ALL", ()) }
+      println("DEALLOCATE ALL in a transaction: {said(in_tx)}")
+      println("  a parameter of another type: {typed("silt_reset_t4")}")
+      let _ = postgres.execute(other, drop, ())
+      postgres.close(fresh)
+    }
+    Err(e) -> println("connect: {Error.message(e)}")
+  }
+}
+
 fn main() {
   match (postgres.connect_with(url(), #{"max_pool_size": 1}), postgres.connect(url())) {
     (Ok(pool), Ok(other)) -> {
@@ -78,6 +108,7 @@ fn main() {
       println("  again: {said(postgres.execute(pool, "PREPARE silt_reset_p AS SELECT 1", ()))}")
       println("  another session: {session(pool) != first}")
       postgres.close(pool)
+      the_type_look_ups(other)
       postgres.close(other)
     }
     _ -> println("connect failed")

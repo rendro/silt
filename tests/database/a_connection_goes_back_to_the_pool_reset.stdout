@@ -17,3 +17,10 @@ the same session all along: true
 PREPARE: Ok
   again: Ok
   another session: true
+a parameter of a type: Ok
+DEALLOCATE ALL: Ok
+  a parameter of another type: Ok
+DISCARD ALL: Ok
+  a parameter of another type: Ok
+DEALLOCATE ALL in a transaction: Ok
+  a parameter of another type: Ok

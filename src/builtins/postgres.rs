@@ -107,6 +107,8 @@ fn block_on_within<F: std::future::Future>(
 struct Driver {
     runtime: Option<tokio::runtime::Runtime>,
     task: Option<tokio::task::JoinHandle<()>>,
+    /// How long its `drop` drives the protocol task at most.
+    ending: Duration,
 }
 
 impl Driver {
@@ -136,10 +138,12 @@ impl Driver {
 impl Drop for Driver {
     /// The client is gone (`Conn` drops it first): the protocol task
     /// ends the session once the answers it waits for have come, and is
-    /// driven here until it has.
+    /// driven here until it has, `ending` at most. Then it is dropped,
+    /// and its socket with it: the server ends a session whose socket
+    /// closed as one that ended, and rolls back its transaction.
     fn drop(&mut self) {
         if let (Some(runtime), Some(task)) = (self.runtime.take(), self.task.take()) {
-            let _ = runtime.block_on(task);
+            let _ = block_on_within(&runtime, self.ending, task);
             runtime.shutdown_background();
         }
     }
@@ -333,13 +337,21 @@ impl Conn {
     /// a statement or a transaction set in it is undone, as `DISCARD ALL`
     /// does, but for the statements the client prepared itself (which it
     /// keeps). A session that is inside a transaction, or holds a
-    /// statement the program prepared with `PREPARE`, or that does not
-    /// answer within the connect limit, is marked broken: it is closed,
-    /// and the server rolls its transaction back.
+    /// statement the program prepared with `PREPARE`, or lost the
+    /// client's prepared statements (`DEALLOCATE ALL`, `DISCARD ALL`:
+    /// the [`MARK`] is gone with them), is marked broken: it is closed,
+    /// and the server rolls its transaction back. So is one that does
+    /// not answer within [`RESET_LIMIT`] (or the connect limit, if that
+    /// is shorter), and it is closed without waiting for its answer:
+    /// the statement whose connection it was waits for its reset.
     fn reset(&mut self) {
+        let limit = self.canceller.limit.min(RESET_LIMIT);
         let reset = self
             .driver
-            .block_on_within(self.canceller.limit, self.client.simple_query(RESET));
+            .block_on_within(limit, self.client.simple_query(RESET));
+        if reset.is_none() {
+            self.driver.ending = Duration::ZERO;
+        }
         let clean = match reset {
             Some(Ok(messages)) => messages.iter().find_map(|message| match message {
                 tokio_postgres::SimpleQueryMessage::Row(row) => Some(row.get(0) == Some("t")),
@@ -353,17 +365,31 @@ impl Conn {
     }
 }
 
+/// How long the reset of a connection given back to the pool may take
+/// ([`Conn::reset`]) at most: a server answers it at once, and the
+/// statement whose connection it was waits for it.
+const RESET_LIMIT: Duration = Duration::from_secs(1);
+
+/// The statement every connection prepares when it is made, through
+/// SQL, under a name of its own. The client's prepared statements (the
+/// look-ups of types it keeps) go with it: `DEALLOCATE ALL` and
+/// `DISCARD ALL` drop them all, also in a `DO` block. A session without
+/// it has lost them, and every later look-up of a type would fail on
+/// it: it is not given back to the pool ([`RESET`]).
+const MARK: &str = "PREPARE silt_pool_mark AS SELECT 1";
+
 /// What resets a session given back to the pool ([`Conn::reset`]). Its
 /// first statement says whether the session is clean: outside a
 /// transaction, as only the first statement of its own transaction
-/// finds `now()` equal to its start, and without a statement prepared
-/// by `PREPARE`, which the reset leaves alone. In a transaction that
-/// failed it is an error. The rest is `DISCARD ALL` (which cannot run
+/// finds `now()` equal to its start; with the [`MARK`]; and without a
+/// statement prepared by `PREPARE`, which the reset leaves alone. In a
+/// transaction that failed it is an error. The rest is `DISCARD ALL` (which cannot run
 /// with other statements in one string) in parts, without its
 /// `DEALLOCATE ALL`: that would drop the statements the client keeps
 /// prepared for its look-ups of types.
-const RESET: &str = "SELECT pg_catalog.now() = pg_catalog.statement_timestamp() \
-     AND NOT EXISTS (SELECT FROM pg_catalog.pg_prepared_statements WHERE from_sql); \
+const RESET: &str = "SELECT pg_catalog.now() OPERATOR(pg_catalog.=) pg_catalog.statement_timestamp() \
+     AND (SELECT pg_catalog.array_agg(name) FROM pg_catalog.pg_prepared_statements WHERE from_sql) \
+     OPERATOR(pg_catalog.=) ARRAY['silt_pool_mark']::pg_catalog.text[]; \
      CLOSE ALL; SET SESSION AUTHORIZATION DEFAULT; RESET ROLE; RESET ALL; UNLISTEN *; \
      SELECT pg_catalog.pg_advisory_unlock_all(); DISCARD PLANS; DISCARD SEQUENCES; DISCARD TEMP";
 
@@ -1811,8 +1837,13 @@ fn connect_first(cfg: &Config, tls: Tls, limit: Duration) -> Result<(Tls, Conn),
 /// stays behind.
 fn connect_within(cfg: &Config, tls: &Tls, limit: Duration) -> Result<Conn, ConnectFailure> {
     let runtime = new_runtime()?;
-    let attempt =
-        std::panic::AssertUnwindSafe(|| block_on_within(&runtime, limit, tls.connect(cfg)));
+    // The login, then the statement that marks the session (`MARK`).
+    let marked = async {
+        let connected = tls.connect(cfg).await?;
+        connected.0.batch_execute(MARK).await?;
+        Ok::<_, tokio_postgres::Error>(connected)
+    };
+    let attempt = std::panic::AssertUnwindSafe(|| block_on_within(&runtime, limit, marked));
     let (client, told, task) = match crate::scheduler::catch_as_error(attempt) {
         Ok(Some(Ok(connected))) => connected,
         failed => {
@@ -1835,6 +1866,7 @@ fn connect_within(cfg: &Config, tls: &Tls, limit: Duration) -> Result<Conn, Conn
         driver: Driver {
             runtime: Some(runtime),
             task: Some(task),
+            ending: limit,
         },
         told,
         broken: false,
@@ -3741,6 +3773,12 @@ mod tests {
 
     impl Counting {
         fn start() -> Counting {
+            Counting::serving(false)
+        }
+
+        /// The server, which holds back its answer to a reset for a
+        /// minute where `stalls`.
+        fn serving(stalls: bool) -> Counting {
             use std::io::{Read, Write};
             use std::sync::atomic::Ordering;
             let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
@@ -3791,6 +3829,10 @@ mod tests {
                                     message.extend_from_slice(body);
                                     message
                                 };
+                                if stalls && body.starts_with(b"SELECT pg_catalog.now()") {
+                                    std::thread::sleep(Duration::from_secs(60));
+                                    return;
+                                }
                                 let mut answer = match body.as_slice() {
                                     // EmptyQueryResponse.
                                     [0] => message(b'I', b""),
@@ -3827,7 +3869,7 @@ mod tests {
     /// A pool opens its first connection only: two statements one after
     /// the other run on that connection, which is checked with one
     /// round trip each time it is taken, and reset with one each time it
-    /// goes back.
+    /// goes back (and marked with one when it is made).
     #[test]
     fn a_pool_opens_its_first_connection_only() {
         use std::sync::atomic::Ordering;
@@ -3856,7 +3898,37 @@ mod tests {
         // (Time for connections the pool would open at once.)
         std::thread::sleep(Duration::from_millis(300));
         assert_eq!(server.taken.load(Ordering::SeqCst), 1, "connections");
-        assert_eq!(server.queries.load(Ordering::SeqCst), 4, "queries");
+        assert_eq!(server.queries.load(Ordering::SeqCst), 5, "queries");
+    }
+
+    /// A connection whose reset gets no answer is closed, and the
+    /// statement whose connection it was does not wait for the server:
+    /// one second at most, though the server holds the answer back for a
+    /// minute (and the connect limit is 10 seconds). The pool's next
+    /// connection is a new one.
+    #[test]
+    fn a_reset_that_gets_no_answer_closes_its_connection_at_once() {
+        use std::sync::atomic::Ordering;
+        let server = Counting::serving(true);
+        let config: Config = format!("postgres://u@127.0.0.1:{}/db?sslmode=disable", server.port)
+            .parse()
+            .expect("config");
+        let limit = Duration::from_secs(10);
+        let first = connect_within(&config, &Tls::Off, limit).expect("the first connection");
+        let manager = Manager {
+            config,
+            tls: Tls::Off,
+            limit,
+            first: Mutex::new(Some(first)),
+        };
+        let pool = pool_of(manager, &ConnectOpts::default());
+        let conn = PinnedConn::take(&pool).expect("a connection");
+        let started = std::time::Instant::now();
+        drop(conn);
+        let took = started.elapsed();
+        assert!(took < Duration::from_secs(5), "the drop took {took:?}");
+        drop(PinnedConn::take(&pool).expect("a connection"));
+        assert!(server.taken.load(Ordering::SeqCst) >= 2, "connections");
     }
 
     /// What a client did with a server without TLS, which answers a

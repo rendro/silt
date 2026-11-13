@@ -47,7 +47,7 @@ pub(super) fn control(sql: &str) -> Option<Control> {
     let first = first.to_ascii_lowercase();
     Some(match first.as_str() {
         "begin" => Control::Ends("BEGIN"),
-        "start" => Control::Ends("START TRANSACTION"),
+        "start" if is(next(), "transaction") => Control::Ends("START TRANSACTION"),
         "end" => Control::Ends("END"),
         "abort" => Control::Ends("ABORT"),
         "commit" if is(next(), "prepared") => return None,
@@ -235,6 +235,8 @@ mod tests {
             "WITH x AS (SELECT 1) SELECT * FROM x",
             "(SELECT 1)",
             "rollbacks",
+            "START",
+            "start something",
             "ÄBEGIN",
         ] {
             assert_eq!(control(sql), None, "{sql:?}");

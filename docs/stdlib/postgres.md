@@ -291,8 +291,11 @@ temporary table, a session's advisory lock, a `LISTEN` or a cursor
 of the transaction inside `postgres.transact`: it never reaches the
 next statement that takes the connection. What the connection string
 sets (`application_name`, `options=-c name=value`) stays. A connection
-whose session holds a statement prepared with SQL's `PREPARE` is
-closed instead, and the pool opens another when it needs one.
+is closed instead, and the pool opens another when it needs one (a new
+login), when its session holds a statement prepared with SQL's
+`PREPARE`, or a `DEALLOCATE ALL` or `DISCARD ALL` dropped the statements
+the connection keeps prepared for itself, or the reset gets no answer
+within a second.
 
 ## Cooperative I/O
 
