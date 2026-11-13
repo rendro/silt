@@ -201,7 +201,8 @@ impl Iterator for Matches {
                     index = next + 1;
                 }
             }
-            // (A name that is no UTF-8 is not matched, as by the crate.)
+            // (A listing with a name that is no UTF-8 failed; a path the
+            // pattern named is text, and `..` has no name to match.)
             let Some(name) = found.path.file_name().and_then(|name| name.to_str()) else {
                 continue;
             };
@@ -246,13 +247,16 @@ fn fill_todo(todo: &mut Todo, parts: &[Part], index: usize, found: &Found) {
             let listing = fs::read_dir(&found.path).and_then(|entries| {
                 entries
                     .map(|entry| {
-                        entry.map(|entry| {
-                            let path = match here {
-                                true => PathBuf::from(entry.file_name()),
-                                false => entry.path(),
-                            };
-                            Found::listed(path, &entry)
-                        })
+                        let entry = entry?;
+                        // A name that is no UTF-8 fails the listing.
+                        if entry.file_name().to_str().is_none() {
+                            return Err(super::name_not_utf8(&found.path, &entry.file_name()));
+                        }
+                        let path = match here {
+                            true => PathBuf::from(entry.file_name()),
+                            false => entry.path(),
+                        };
+                        Ok(Found::listed(path, &entry))
                     })
                     .collect::<Result<Vec<_>, _>>()
             });

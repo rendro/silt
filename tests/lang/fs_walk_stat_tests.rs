@@ -557,6 +557,51 @@ fn test_fs_walk_and_glob_name_the_directory_they_cannot_read() {
     assert_eq!(starred, denied);
 }
 
+// ── fs.list_dir, fs.walk, fs.glob: a name that is no UTF-8 ──────────
+
+/// A file name that is no UTF-8 fails fs.list_dir, fs.walk and fs.glob
+/// alike, and the error names the directory it is in: no String can
+/// hold the name, and the name with U+FFFD in it (which list_dir and
+/// walk gave) names no file, while glob left the file out without a
+/// word. A pattern that lists no such directory is not touched. (Not on
+/// macOS, whose file system refuses such a name, nor on Windows.)
+#[cfg(all(unix, not(target_os = "macos")))]
+#[test]
+fn test_a_file_name_that_is_no_utf8_fails_the_listing_and_names_its_directory() {
+    use std::os::unix::ffi::OsStrExt;
+    let dir = TempDir::new("names");
+    let names = dir.path().join("names");
+    std::fs::create_dir_all(names.join("sub")).unwrap();
+    std::fs::write(names.join("ok.txt"), "ok").unwrap();
+    std::fs::write(names.join("sub/fine.txt"), "fine").unwrap();
+    let bad = std::ffi::OsStr::from_bytes(b"bad\xffname.txt");
+    if std::fs::write(names.join(bad), "bad").is_err() {
+        eprintln!("skipped: the file system refuses a name that is no UTF-8");
+        return;
+    }
+    let (base, at) = (dir.as_silt_str(), names.to_string_lossy());
+    let call = |expr: String| {
+        err_msg(run(&format!(
+            "import fs\nimport host\nfn main() {{\n  host.give({expr})\n}}\n"
+        )))
+    };
+    let refused = format!("invalid input: a name in {at} is not UTF-8: bad\u{FFFD}name.txt");
+    assert_eq!(call(format!("fs.list_dir(\"{at}\")")), refused);
+    assert_eq!(call(format!("fs.walk(\"{at}\")")), refused);
+    assert_eq!(call(format!("fs.walk(\"{base}\")")), refused);
+    assert_eq!(call(format!("fs.glob(\"{at}/*.txt\")")), refused);
+    assert_eq!(call(format!("fs.glob(\"{base}/**/fine.txt\")")), refused);
+    // A pattern that lists only other directories, or names its path.
+    assert_eq!(
+        sorted_paths(&format!("fs.glob(\"{at}/sub/*.txt\")")),
+        format!("{at}/sub/fine.txt")
+    );
+    assert_eq!(
+        sorted_paths(&format!("fs.glob(\"{at}/ok.txt\")")),
+        format!("{at}/ok.txt")
+    );
+}
+
 // ── fs.remove: a link is removed itself ─────────────────────────────
 
 /// A link to a directory, made as the system makes one: `None` where

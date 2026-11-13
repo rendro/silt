@@ -532,6 +532,13 @@ or `Err(IoError)` if the path does not exist or is not a directory. The
 entries come in the order the file system gives them, which is no order
 in particular: sort the list where the order matters.
 
+A file name that is not UTF-8 (some systems allow any bytes in a name)
+cannot be a `String`, and a name with its bytes replaced would name no
+file. So a directory that holds one cannot be listed: `fs.list_dir`,
+`fs.walk` and `fs.glob` return
+`Err(InvalidInput("a name in <dir> is not UTF-8: <name>"))`, with U+FFFD
+for the bytes in `<name>`, until the file is renamed.
+
 ```silt
 import fs
 import list
@@ -754,7 +761,8 @@ a higher layer.
 **A directory that cannot be read fails the walk.** The error names that
 directory, as `fs.list_dir` would: `Err(PermissionDenied("src/locked"))`
 for `fs.walk("src")`. No partial list is returned, so a list that comes
-back is complete.
+back is complete. A file name that is not UTF-8 fails the walk too (see
+`fs.list_dir`).
 
 ```silt
 import fs
@@ -795,7 +803,8 @@ directory.
 Returns `Err(InvalidInput(msg))` if the pattern itself is malformed. The result
 is subject to the same `1_000_000`-entry cap as `fs.walk`. A directory the
 pattern has to list and cannot read fails the call, as for `fs.walk`, and the
-error names that directory, not the pattern.
+error names that directory, not the pattern. So does a directory it lists
+that holds a file name that is not UTF-8 (see `fs.list_dir`).
 
 ```silt
 import fs

@@ -175,6 +175,21 @@ fn is_link_loop(err: &std::io::Error) -> bool {
     }
 }
 
+/// The error of a listing of `dir` that meets the name `name`, which is
+/// no UTF-8: a String cannot hold it, and a name changed to fit (U+FFFD
+/// for the bytes) would name no file. (`InvalidInput`, which `path_err`
+/// keeps with its words.)
+pub(crate) fn name_not_utf8(dir: &std::path::Path, name: &std::ffi::OsStr) -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::InvalidInput,
+        format!(
+            "a name in {} is not UTF-8: {}",
+            dir.to_string_lossy(),
+            name.to_string_lossy()
+        ),
+    )
+}
+
 /// `Err(Other("<what>: <path>"))`, the form of `file not found: <path>`.
 fn path_err_text(what: &str, path: &str) -> Value {
     io_result_err_unknown(format!("{what}: {path}"))
@@ -434,7 +449,10 @@ pub(crate) mod fs {
             let names = std::fs::read_dir(path).and_then(|entries| {
                 let names = entries.map(|entry| {
                     let name = entry?.file_name();
-                    Ok(Value::string(name.to_string_lossy().into_owned()))
+                    match name.into_string() {
+                        Ok(name) => Ok(Value::string(name)),
+                        Err(name) => Err(name_not_utf8(Path::new(path), &name)),
+                    }
                 });
                 names.collect::<std::io::Result<Vec<Value>>>()
             });
@@ -613,6 +631,13 @@ pub(crate) mod fs {
                     return io_result_err_unknown(format!(
                         "fs.walk: exceeded {MAX_FS_WALK_ENTRIES} entries (cap)"
                     ));
+                }
+                // A name that is no UTF-8 fails the walk, naming the
+                // directory it is in (met before what is in it).
+                if entry.depth() > 0 && entry.file_name().to_str().is_none() {
+                    let dir = entry.path().parent().unwrap_or(base);
+                    let why = name_not_utf8(dir, entry.file_name());
+                    return path_err(&why, &dir.to_string_lossy());
                 }
                 let shown = match entry.path().strip_prefix(base) {
                     Ok(below) if below.as_os_str().is_empty() => shown_root.clone(),
