@@ -60,9 +60,18 @@ impl TypeChecker {
                 format!("annotate the record: {}", written.join(" or "))
             }
         };
-        let Some(first) = at.traits.first().copied() else {
-            return record;
-        };
+        match self.type_parameter_help(at) {
+            Some(how) => format!("{record}; or, {how}"),
+            None => record,
+        }
+    }
+
+    /// For a call the checker read as a field because traits have a
+    /// method of the name that makes a value (`t.mk()`): the type
+    /// parameter that calls the method instead, "for the method of trait
+    /// 'A': give 'go' a type parameter ...".
+    pub(super) fn type_parameter_help(&self, at: &super::solve::ReadAt) -> Option<String> {
+        let first = at.traits.first().copied()?;
         let param = at
             .name
             .map_or_else(|| "t".to_string(), |(name, _)| resolve(name));
@@ -100,10 +109,7 @@ impl TypeChecker {
                  its bound, `where {param}: {bound}`"
             ),
         };
-        format!(
-            "{record}; or, for the method of {}: {how}",
-            of.join(" or of ")
-        )
+        Some(format!("for the method of {}: {how}", of.join(" or of ")))
     }
 
     // ── Generalization / Instantiation ──────────────────────────────

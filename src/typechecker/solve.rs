@@ -807,11 +807,11 @@ impl TypeChecker {
                         name,
                         args,
                         result,
-                        ..
+                        at,
                     } => {
                         if !matches!(self.apply(&recv), Type::Var(_)) {
                             self.wanted[i].solved = true;
-                            self.select_call(&recv, name, args, result, origin.span);
+                            self.select_call(&recv, name, args, result, &at, origin.span);
                         }
                     }
                     Goal::Try { operand, ok, ret } => {
@@ -870,6 +870,7 @@ impl TypeChecker {
         field: Symbol,
         args: Option<Vec<Type>>,
         result: Type,
+        at: &ReadAt,
         span: Span,
     ) {
         let result_ty = match args {
@@ -882,17 +883,17 @@ impl TypeChecker {
             Type::Error | Type::Never => {}
             Type::Var(_) => unreachable!("a selection waits while its receiver is unknown"),
             // A type given where a value with fields is read: said in
-            // those words, not as `type Rec`.
+            // those words, not as `type Rec`; a call read as a field
+            // because traits have a method of the name says how to call
+            // the method (`{ m -> m.pure(3) }` given `Option`).
             Type::Generic(name, args) if name.is_builtin(crate::defs::TYPE_OF) => {
                 let shown = self.show_type(&self.apply(&args[0]));
-                self.error(
-                    Code::TypeMismatch,
-                    format!(
-                        "type mismatch: expected a value with a field `{field}`, got the type \
-                         `{shown}`"
-                    ),
-                    span,
+                let message = format!(
+                    "type mismatch: expected a value with a field `{field}`, got the type \
+                     `{shown}`"
                 );
+                let help = self.type_parameter_help(at);
+                self.error_help(Code::TypeMismatch, (message, help), span);
             }
             Type::Generic(type_name, _)
                 if let Some(module) = self.opaque_outside(*type_name)

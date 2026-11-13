@@ -1,9 +1,9 @@
 -- cmd: check
 -- exit: 1
 -- A closure whose parameter's method is a trait of type constructors'
--- (`m.pure(3)`) would read the parameter as a record with that field,
--- which nothing decides: it is refused, and the help says that a closure
--- cannot take a type parameter and how a named function takes one (a
+-- (`m.pure(3)`) reads the parameter as a value with that field; given
+-- the type constructor, the read is refused, and the help says that a
+-- closure cannot take a type parameter and how a named function takes one (a
 -- named function is told to take one:
 -- static_method__a_constructor_method_on_a_parameter_says_how_to_write_the_type_parameter).
 fn main() {

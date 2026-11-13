@@ -3,3 +3,4 @@ error[type]: type mismatch: expected a value with a field `pure`, got the type `
     |
  10 |   let k = { m -> m.pure(3) }
     |                  ^^^^^^ type mismatch: expected a value with a field `pure`, got the type `Option(_)`
+  = help: for the method of trait 'Applicative': a closure cannot take a type parameter: declare a named function with one and its bound, as in `fn wrap(x: a, type m) -> m(a) where m: Applicative`
