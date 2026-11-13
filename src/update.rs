@@ -160,7 +160,8 @@ fn fetch_latest_version() -> Result<String, String> {
         if let Some(v) = parse_location_version(&headers) {
             return Ok(v);
         }
-    } else if which("wget").is_some() {
+    } else if let Some(wget) = which("wget") {
+        wget_keeps_to_https(&wget)?;
         let out = Command::new("wget")
             .args(["--server-response", "--spider", "--max-redirect=0", &url])
             .output()
@@ -276,10 +277,11 @@ fn download(url: &str, dest: &Path) -> Result<(), String> {
         }
         return Ok(());
     }
-    if which("wget").is_some() {
+    if let Some(wget) = which("wget") {
         // wget follows a redirect wherever it leads (its --https-only is
         // for recursive downloads only), so each redirect is followed
         // here, and only to https.
+        wget_keeps_to_https(&wget)?;
         let mut url = url.to_string();
         for _ in 0..WGET_HOPS_MOST {
             let out = Command::new("wget")
@@ -308,10 +310,31 @@ fn download(url: &str, dest: &Path) -> Result<(), String> {
     Err("need curl or wget to download the release".to_string())
 }
 
-/// Where a redirect from `current` that wget did not follow leads, read
-/// from what wget said with `--server-response` (the server's headers
-/// are indented): `None` when there is no redirect, an error when it
-/// leads elsewhere than https.
+/// That the wget `wget` can be kept to https: it must know
+/// `--max-redirect`, as [`download`] follows each redirect itself (GNU
+/// wget does; busybox's wget does not).
+fn wget_keeps_to_https(wget: &Path) -> Result<(), String> {
+    let out = Command::new(wget)
+        .arg("--help")
+        .output()
+        .map_err(|e| format!("failed to run wget: {e}"))?;
+    let help = [out.stdout, out.stderr].concat();
+    match String::from_utf8_lossy(&help).contains("--max-redirect") {
+        true => Ok(()),
+        false => Err(WGET_WITHOUT_MAX_REDIRECT.to_string()),
+    }
+}
+
+/// Why a wget without `--max-redirect` is not used.
+const WGET_WITHOUT_MAX_REDIRECT: &str = "this wget cannot be kept to https (it has no \
+    --max-redirect, as busybox's wget): install curl or GNU wget";
+
+/// Where a redirect from `current` (an https URL) that wget did not
+/// follow leads, read from what wget said with `--server-response` (the
+/// server's headers are indented): `None` when there is no redirect, an
+/// error when it leads elsewhere than https. A Location without a scheme
+/// is read as a browser reads it: `//host/path` on that host, `/path` on
+/// this host, any other path beside the one asked for.
 fn next_hop(current: &str, said: &str) -> Result<Option<String>, String> {
     let location = said
         .lines()
@@ -326,19 +349,37 @@ fn next_hop(current: &str, said: &str) -> Result<Option<String>, String> {
     let Some(location) = location else {
         return Ok(None);
     };
-    if location.starts_with("https://") {
-        Ok(Some(location))
-    } else if location.starts_with('/') && !location.starts_with("//") {
-        let host = current
-            .strip_prefix("https://")
-            .and_then(|rest| rest.split('/').next())
-            .ok_or_else(|| format!("a download from {current}, not https"))?;
-        Ok(Some(format!("https://{host}{location}")))
-    } else {
-        Err(format!(
-            "a download was redirected to {location}, which is not https"
-        ))
-    }
+    let Some(rest) = current.strip_prefix("https://") else {
+        return Err(format!("a download from {current}, not https"));
+    };
+    let host = rest.split('/').next().unwrap_or(rest);
+    let scheme = location
+        .split_once(':')
+        .map(|(scheme, _)| scheme)
+        .filter(|scheme| {
+            scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+                && scheme.chars().all(|c| c.is_ascii_alphanumeric() || "+.-".contains(c))
+        });
+    let next = match scheme {
+        Some(scheme) if scheme.eq_ignore_ascii_case("https") && location[6..].starts_with("//") => {
+            format!("https://{}", &location[8..])
+        }
+        Some(_) => {
+            return Err(format!(
+                "a download was redirected to {location}, which is not https"
+            ));
+        }
+        None => match location.strip_prefix("//") {
+            Some(elsewhere) => format!("https://{elsewhere}"),
+            None if location.starts_with('/') => format!("https://{host}{location}"),
+            None => {
+                let asked = current.split(['?', '#']).next().unwrap_or(current);
+                let dir = asked.rsplit_once('/').map_or(asked, |(dir, _)| dir);
+                format!("{dir}/{location}")
+            }
+        },
+    };
+    Ok(Some(next))
 }
 
 /// What the GitHub CLI says of the build attestation of an archive.
@@ -662,15 +703,67 @@ mod tests {
             next_hop(from, &said("/rendro/silt/other")),
             Ok(Some("https://github.com/rendro/silt/other".to_string()))
         );
+        // A Location without a scheme, read as a browser reads it.
+        for (to, next) in [
+            ("//cdn.example/a", "https://cdn.example/a"),
+            (
+                "b.tar.gz?x=1",
+                "https://github.com/rendro/silt/releases/download/v1/b.tar.gz?x=1",
+            ),
+            (
+                "../v2/a.tar.gz",
+                "https://github.com/rendro/silt/releases/download/v1/../v2/a.tar.gz",
+            ),
+            ("HTTPS://cdn.example/a", "https://cdn.example/a"),
+        ] {
+            assert_eq!(next_hop(from, &said(to)), Ok(Some(next.to_string())), "{to}");
+        }
+        assert_eq!(
+            next_hop(&format!("{from}?sig=a/b"), &said("c")),
+            Ok(Some(
+                "https://github.com/rendro/silt/releases/download/v1/c".to_string()
+            ))
+        );
         for refused in [
             "http://example.com/a",
-            "//example.com/a",
             "ftp://example.com/a",
+            "HTTP://example.com/a",
+            "file:/etc/passwd",
+            "https:/example.com/a",
         ] {
             let error = next_hop(from, &said(refused)).expect_err(refused);
             assert!(error.contains("which is not https"), "{error}");
         }
         assert_eq!(next_hop(from, "  HTTP/1.1 404 Not Found\n"), Ok(None));
+    }
+
+    /// A wget that cannot be told not to follow a redirect (busybox's)
+    /// is not used, and says what is needed instead.
+    #[cfg(unix)]
+    #[test]
+    fn a_wget_without_max_redirect_is_not_used() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = env::temp_dir().join(format!("silt_update_busybox_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let wget = dir.join("wget");
+        fs::write(
+            &wget,
+            "#!/bin/sh\necho 'BusyBox v1.36.1 multi-call binary.' >&2\n\
+             echo 'Usage: wget [-cqS] [-O FILE] URL' >&2\nexit 1\n",
+        )
+        .unwrap();
+        fs::set_permissions(&wget, fs::Permissions::from_mode(0o755)).unwrap();
+        let busybox = wget_keeps_to_https(&wget);
+        fs::write(
+            &wget,
+            "#!/bin/sh\necho '       --max-redirect=NUMBER       maximum redirections allowed'\n",
+        )
+        .unwrap();
+        let gnu = wget_keeps_to_https(&wget);
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(busybox, Err(WGET_WITHOUT_MAX_REDIRECT.to_string()));
+        assert_eq!(gnu, Ok(()));
     }
 
     /// A stub `gh` in `dir`: `attestation --help` exits with `help` (1
