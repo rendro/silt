@@ -101,3 +101,38 @@ fn lsp_exits_cleanly_on_shutdown_exit() {
         "child exited via signal, not graceful exit: {status:?}"
     );
 }
+
+/// A message that cannot be read is answered with a JSON-RPC error and
+/// the session goes on: a body that is not JSON and a length that is no
+/// number get -32700 (parse error, id null), JSON that is no message
+/// -32600; the next request is answered, and the server
+/// still shuts down cleanly. FAIL on the base commit: the server's
+/// reader ended at the first of them and the server exited.
+#[test]
+fn a_message_that_cannot_be_read_is_answered_and_the_session_goes_on() {
+    let mut client = LspClient::spawn();
+    let errors = |client: &LspClient, code: i64| {
+        client.recv_until(&format!("error {code}"), |msg| {
+            msg.pointer("/error/code").and_then(|c| c.as_i64()) == Some(code)
+        })
+    };
+    client.send_bytes(b"Content-Length: 5\r\n\r\n{bad}");
+    let answer = errors(&client, -32700);
+    assert_eq!(answer.get("id"), Some(&json!(null)), "{answer}");
+    client.send_bytes(b"Content-Length: 99999999999999999999\r\n\r\n");
+    errors(&client, -32700);
+    let body = "42";
+    client.send_bytes(format!("Content-Length: {}\r\n\r\n{body}", body.len()).as_bytes());
+    let answer = errors(&client, -32600);
+    assert_eq!(answer.get("id"), Some(&json!(null)), "{answer}");
+    // The session goes on.
+    let uri = "file:///silt_lsp_bad_message.silt";
+    let published = client.did_open_and_wait(uri, "fn main() {\n  let x: Int = \"s\"\n}\n");
+    assert!(
+        published.to_string().contains("type mismatch"),
+        "{published}"
+    );
+    let hover = client.hover(uri, 1, 6);
+    assert!(hover.get("result").is_some(), "{hover}");
+    client.shutdown();
+}

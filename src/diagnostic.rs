@@ -268,6 +268,10 @@ codes! {
     /// A package that depends on itself, or names one package by two
     /// dependency keys.
     DependencyTwice = "E0612", Package;
+    /// A dependency that a package fetched over git names outside its
+    /// own checkout: a path that leaves it, or a repository on this
+    /// machine.
+    DependencyOutsideCheckout = "E0613", Package;
     // ── runtime ──
     RuntimeError = "E0701", Runtime;
     /// `main` returned `Err(..)`.
