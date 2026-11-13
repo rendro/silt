@@ -150,6 +150,12 @@ pub static BUILTIN_TYPES: &[BuiltinType] = &[
         arity: Some(0),
         kind: BuiltinKind::Container,
     },
+    // A compiled pattern of the regex module (`regex.compile`).
+    BuiltinType {
+        name: "Regex",
+        arity: Some(0),
+        kind: BuiltinKind::Container,
+    },
 ];
 
 /// Look up a built-in type entry by surface name. Returns `None` for
