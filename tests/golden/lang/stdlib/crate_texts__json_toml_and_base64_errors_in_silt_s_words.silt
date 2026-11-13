@@ -1,0 +1,18 @@
+-- The errors of json, toml and base64 in silt's words, not their crates': a lone trailing surrogate is no "leading" one, a whole json.Float is no "number with a fraction", a toml reason is one line and never empty, base64 names the character as from_hex does.
+import bytes
+import json
+import toml
+type A { a: Int }
+fn main() {
+  println(json.parse("\"\\ude00\"", json.Value))
+  println(json.decode(json.Float(2.0), Int))
+  println(json.decode(json.Float(2.5), Int))
+  println(toml.parse("# a\u{1}b\na = 1", A))
+  println(toml.parse("a = 9223372036854775808", A))
+  println(toml.parse("a = .5", A))
+  println(toml.parse("a = \"\\q\"", A))
+  println(bytes.from_base64("aGVs\nbG8="))
+  println(bytes.from_base64("aGVsbG9="))
+  println(bytes.from_base64("aGVsbG8"))
+  println(bytes.from_base64("abcde"))
+}

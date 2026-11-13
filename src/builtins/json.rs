@@ -45,6 +45,12 @@ pub(crate) fn json_error_to_variant(err: &serde_json::Error, text: &[u8]) -> Val
             let full = err.to_string();
             let place = format!(" at line {} column {}", err.line(), err.column());
             let message = full.strip_suffix(&place).unwrap_or(&full);
+            // (serde says "leading" of a trailing surrogate with no
+            // leading one too.)
+            let message = match message {
+                "lone leading surrogate in hex escape" => "a \\u escape of half a surrogate pair",
+                message => message,
+            };
             Value::variant(
                 bv::JSON_SYNTAX,
                 [Value::string(message), Value::Int(offset)],

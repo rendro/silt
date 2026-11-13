@@ -78,8 +78,29 @@ pub(crate) fn toml_de_error_to_variant(err: &::toml::de::Error) -> Value {
     let offset = err.span().map(|s| s.start as i64).unwrap_or(0);
     Value::variant(
         bv::TOML_SYNTAX,
-        [Value::string(err.message()), Value::Int(offset)],
+        [
+            Value::string(toml_reason(err.message())),
+            Value::Int(offset),
+        ],
     )
+}
+
+/// The reason of a `toml` syntax error in silt's words, from the
+/// crate's message: on one line (the crate writes what it expected on a
+/// second one: "invalid table header\nduplicate key `a` in document
+/// root"), with no reason left empty (a control character in a
+/// comment), and a number too large worded as `int.parse` words it.
+fn toml_reason(message: &str) -> String {
+    let lines: Vec<&str> = (message.lines())
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    match lines.as_slice() {
+        [] => "a character that is not allowed here".to_string(),
+        ["number too large to fit in target type"] => "number too large".to_string(),
+        ["number too small to fit in target type"] => "number too small".to_string(),
+        lines => lines.join(": "),
+    }
 }
 
 /// Build a full `Err(TomlError)` from a `toml::de::Error`.
@@ -433,7 +454,7 @@ fn marking<T>(
                     return Err(toml_err_wrap(Value::variant(
                         bv::TOML_SYNTAX,
                         [
-                            Value::string(e.message()),
+                            Value::string(toml_reason(e.message())),
                             Value::Int(at.saturating_sub(growth) as i64),
                         ],
                     )));
