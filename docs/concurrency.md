@@ -1480,8 +1480,8 @@ What becomes of the operation is one rule for each kind of operation:
 
 | Operation | What becomes of it when nobody waits for it |
 |---|---|
-| `tcp.connect`, `tcp.connect_tls`, `tcp.read`, `tcp.read_exact`, `tcp.write`, the TLS handshakes of `tcp.tls_server` and `tcp.tls_server_mtls`, and the `stream.tcp_*` sources and sink | The connection is **shut down**, as by `tcp.close`, which makes the operation return and frees its thread. (The name lookup of a connect to a host name cannot be interrupted: it ends by the system's own time.) |
-| `http.get`, `http.request` | The request is **ended**: a read or a write it waits in, a TLS handshake, a redirect, which frees its thread. A TCP connect under way runs on to its end (at most 10 s), and the request ends after it. |
+| `tcp.connect`, `tcp.connect_tls`, `tcp.read`, `tcp.read_exact`, `tcp.write`, the TLS handshakes of `tcp.tls_server` and `tcp.tls_server_mtls`, and the `stream.tcp_*` sources and sink | The connection is **shut down**, as by `tcp.close`, which makes the operation return and frees its thread. A connect that waits for its peer (`tcp.connect`, `tcp.connect_tls`) is shut down too; on Linux that ends it at once, elsewhere it may run on to the system's connect time, and until the connect has returned it counts among the operations that cannot be interrupted (the bound of 64 below). The name lookup of a connect to a host name cannot be interrupted: it ends by the system's own time. |
+| `http.get`, `http.request` | The request is **ended**: a read or a write it waits in, a TLS handshake, a redirect, which frees its thread. A TCP connect under way cannot be interrupted: it runs on to its end (at most 10 s), and counts until then among the operations that cannot be interrupted (the bound of 64 below). |
 | `tcp.accept`, and the accept of `http.serve` | The accept is woken and gives up; the listener stays usable. A client's connection that reached it is kept by the listener for the next accept. |
 | `postgres.query`, `postgres.execute`, `postgres.notify` and the cursor functions, the `BEGIN` of `postgres.transact`, the `LISTEN` of `postgres.listen` | One that has no connection yet is **never sent**, and the connection goes back to the pool. One that has it: on a pool it is left to finish; in a transaction the server is asked to cancel it, and the transaction is aborted (see [postgres](stdlib/postgres.md)). |
 | `postgres.connect`, `postgres.listen` that were done all the same | What they made is nobody's and is closed: the pool, the listener (its connection goes back to the pool). |
@@ -1503,14 +1503,18 @@ port on the loopback address; where that is not possible, say a packet
 filter forbids it, the thread stays until a client connects.
 
 An operation that cannot be interrupted (the files and standard input
-of the last row) no longer counts as one of the pool's while it runs
+of the last row, and an `http` request whose TCP connect is under way)
+no longer counts as one of the pool's while it runs
 on, so operations that never return (a read of a terminal nobody types
 at) do not use the pool up. Such stuck operations have a bound of their
 own, 64: while that many are still running unheard, every new I/O
 operation fails at once with an error that says so, instead of the
 program taking a thread for each without end. Operations that were told
-to stop (the rows above) do not count: they are on their way out, so
-requests that a deadline gives up, however many, never use the bound.
+to stop (the rows above) do not count: they are on their way out. So a
+program that gives up many requests to hosts that do not answer the
+connect (a link checker over hosts that are down) meets the bound for the
+seconds those connects take; requests to servers that accept and are slow
+to answer never do.
 
 ### Blocking operations
 

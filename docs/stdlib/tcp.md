@@ -167,8 +167,11 @@ with the connection. The same holds for the
 their I/O times out. A `tcp.accept` that nobody waits
 for is woken and gives up; the listener stays usable. A `tcp.connect`,
 and a connect or handshake of `tcp.connect_tls` or `tcp.tls_server`,
-that nobody waits for any more ends its connection the same way, also
-while it waits for the peer to answer. (The name lookup of a connect to
+that nobody waits for any more ends its connection the same way. A
+connect that still waits for the peer to answer is shut down: on Linux
+that ends it at once; elsewhere it may run on to the system's connect
+time, counted until then among the I/O operations that cannot be
+interrupted, whose number is bounded. (The name lookup of a connect to
 a host name cannot be interrupted: it ends by the system's own time,
 and the connect gives up after it.) (The whole rule, for every module:
 [the I/O pool](../concurrency.md#the-io-pool-and-operations-that-nobody-waits-for).)

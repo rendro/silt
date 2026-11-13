@@ -479,24 +479,108 @@ fn finish_http_response(
 /// silt task's SILT_IO_TIMEOUT unblocks the VM task, so we don't leak
 /// real file descriptors.
 #[cfg(feature = "http")]
-fn client() -> ureq::Agent {
+fn client() -> Client {
     client_with_times(Duration::from_secs(10), Duration::from_secs(60))
+}
+
+/// The client of one call of `http.get` or `http.request`, and what its
+/// TCP connects are doing ([`Connects`]).
+#[cfg(feature = "http")]
+struct Client {
+    agent: ureq::Agent,
+    connects: Arc<Connects>,
+}
+
+/// The TCP connects of a client: how many are under way, and whether the
+/// client was stopped. A connect cannot be interrupted (ureq does not
+/// end one when the client is shut down): a request given up while one
+/// is under way runs on until it ends, at most the connect time, and
+/// counts until then among the operations that cannot be interrupted,
+/// whose number is bounded (`vm::io_op::IO_POOL_UNHEARD_MAX`). A connect
+/// that would start after the stop does not start.
+#[cfg(feature = "http")]
+#[derive(Debug, Default)]
+struct Connects {
+    under_way: std::sync::atomic::AtomicUsize,
+    stopped: AtomicBool,
+}
+
+/// ureq's TCP connector, watched ([`Connects`]).
+#[cfg(feature = "http")]
+#[derive(Debug)]
+struct Watched(ureq::unversioned::transport::TcpConnector, Arc<Connects>);
+
+#[cfg(feature = "http")]
+impl<In: ureq::unversioned::transport::Transport> ureq::unversioned::transport::Connector<In>
+    for Watched
+{
+    type Out =
+        <ureq::unversioned::transport::TcpConnector as ureq::unversioned::transport::Connector<
+            In,
+        >>::Out;
+
+    fn connect(
+        &self,
+        details: &ureq::unversioned::transport::ConnectionDetails,
+        chained: Option<In>,
+    ) -> Result<Option<Self::Out>, ureq::Error> {
+        // (Counted before the look at the stop, which the stop sets
+        // before it reads the count: a connect is either refused here or
+        // seen there.)
+        self.1.under_way.fetch_add(1, Ordering::SeqCst);
+        let connected = match self.1.stopped.load(Ordering::SeqCst) {
+            true => Err(ureq::Error::Io(std::io::ErrorKind::NotConnected.into())),
+            false => self.0.connect(details, chained),
+        };
+        self.1.under_way.fetch_sub(1, Ordering::SeqCst);
+        connected
+    }
+}
+
+#[cfg(feature = "http")]
+impl Client {
+    /// What ends a request of this client that nobody waits for any
+    /// more (`Leave::Closes`): the client is shut down, which ends a
+    /// read, a write or a TLS handshake at once. `false` while a TCP
+    /// connect is under way, which runs on: the operation counts until
+    /// it ends.
+    fn stop(&self) -> impl FnOnce() -> bool + Send + 'static {
+        let (agent, connects) = (self.agent.clone(), self.connects.clone());
+        move || {
+            connects.stopped.store(true, Ordering::SeqCst);
+            agent.shutdown();
+            connects.under_way.load(Ordering::SeqCst) == 0
+        }
+    }
 }
 
 /// A client whose times to connect and in all are the given ones. Every
 /// request says `user-agent: silt/<version>` and `accept-encoding:
 /// gzip`, unless the program sets that header itself: ureq sends the
-/// request's header then.
+/// request's header then. Its connector is ureq's default (a CONNECT
+/// proxy, TCP, TLS), with the TCP connects watched ([`Connects`]).
 #[cfg(feature = "http")]
-fn client_with_times(connect: Duration, global: Duration) -> ureq::Agent {
-    ureq::Agent::config_builder()
+fn client_with_times(connect: Duration, global: Duration) -> Client {
+    use ureq::unversioned::transport::{
+        ConnectProxyConnector, Connector, RustlsConnector, TcpConnector,
+    };
+    let config = ureq::Agent::config_builder()
         .http_status_as_error(false)
         .timeout_connect(Some(connect))
         .timeout_global(Some(global))
         .user_agent(format!("silt/{}", crate::VERSION))
         .accept_encoding("gzip")
-        .build()
-        .into()
+        .build();
+    let connects = Arc::new(Connects::default());
+    let connector =
+        ().chain(ConnectProxyConnector::default())
+            .chain(Watched(TcpConnector::default(), connects.clone()))
+            .chain(RustlsConnector::default());
+    let resolver = ureq::unversioned::resolver::DefaultResolver::default();
+    Client {
+        agent: ureq::Agent::with_parts(config, connector, resolver),
+        connects,
+    }
 }
 
 /// Test-only: an HTTP GET as `http.get` makes it, with a client of its
@@ -520,7 +604,7 @@ fn do_http_request(
     body: &[u8],
     headers: &[(String, String)],
 ) -> Value {
-    do_http_request_on(&client(), method_tag, url, body, headers)
+    do_http_request_on(&client().agent, method_tag, url, body, headers)
 }
 
 /// Perform a synchronous HTTP request with the client `agent` and
@@ -2010,10 +2094,9 @@ builtins! {
         let url = url.to_string();
         // A request that nobody waits for any more (cancelled, ended
         // by its deadline) is ended: its client is shut down.
-        let agent = client();
-        let stop = agent.clone();
-        vm.io("http", http_timeout_err, Leave::interrupts(move |_| stop.shutdown()), move |_| {
-            do_http_request_on(&agent, "GET", &url, &[], &[])
+        let client = client();
+        vm.io("http", http_timeout_err, Leave::closes(client.stop()), move |_| {
+            do_http_request_on(&client.agent, "GET", &url, &[], &[])
         })
     }
 
@@ -2024,10 +2107,9 @@ builtins! {
             .iter()
             .filter_map(|(k, v)| Some((<&str>::take(k)?.to_string(), <&str>::take(v)?.to_string())))
             .collect();
-        let agent = client();
-        let stop = agent.clone();
-        vm.io("http", http_timeout_err, Leave::interrupts(move |_| stop.shutdown()), move |_| {
-            do_http_request_on(&agent, &method, &url, &body, &headers)
+        let client = client();
+        vm.io("http", http_timeout_err, Leave::closes(client.stop()), move |_| {
+            do_http_request_on(&client.agent, &method, &url, &body, &headers)
         })
     }
 
@@ -2398,7 +2480,7 @@ mod http_error_tests {
     /// A client whose times are `ms`, so that a test of a timeout does
     /// not wait for the times of `http.get`.
     fn agent(ms: u64) -> ureq::Agent {
-        client_with_times(Duration::from_millis(ms), Duration::from_millis(ms))
+        client_with_times(Duration::from_millis(ms), Duration::from_millis(ms)).agent
     }
 
     /// The URL of a server that takes one connection, reads what the

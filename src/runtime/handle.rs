@@ -992,6 +992,8 @@ struct Shut {
     socket: Option<(std::net::TcpStream, Option<usize>)>,
     /// The shutter was shut.
     shut: bool,
+    /// The socket's connect is under way ([`Shutter::connecting`]).
+    connecting: bool,
 }
 
 impl Shutter {
@@ -1012,6 +1014,23 @@ impl Shutter {
         true
     }
 
+    /// [`Shutter::set`], for a socket whose connect is about to begin:
+    /// until [`Shutter::connected`], a shut does not count as having
+    /// ended the operation. Whether a shutdown ends a connect that waits
+    /// for its peer depends on the system (Linux: it does), so the
+    /// operation counts among those that cannot be interrupted until its
+    /// connect has returned.
+    pub fn connecting(&self, socket: &std::net::TcpStream) -> bool {
+        let set = self.set(socket);
+        self.0.lock().connecting = set;
+        set
+    }
+
+    /// The connect begun at [`Shutter::connecting`] has returned.
+    pub fn connected(&self) {
+        self.0.lock().connecting = false;
+    }
+
     /// Whether the shutter was shut: the operation is to give up.
     pub fn is_shut(&self) -> bool {
         self.0.lock().shut
@@ -1019,16 +1038,17 @@ impl Shutter {
 
     /// Shut the operation's socket down, now or as soon as it has one:
     /// a read or a write that blocks on it returns. `false` if it has
-    /// none yet (and none was shut before).
+    /// none yet (and none was shut before), or if its connect is under
+    /// way ([`Shutter::connecting`]): the operation may run on then.
     pub fn shut(&self) -> bool {
         let mut shut = self.0.lock();
         let before = std::mem::replace(&mut shut.shut, true);
         match shut.socket.take() {
             Some((socket, used)) => {
                 shut_socket(&socket, used);
-                true
+                !shut.connecting
             }
-            None => before,
+            None => before && !shut.connecting,
         }
     }
 }

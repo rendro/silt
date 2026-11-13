@@ -571,3 +571,48 @@ fn main() {{
     let (_vm, out) = run(&source).expect("the program ended");
     assert_eq!(out, "read the file\n");
 }
+
+/// An `http.get` given up while its TCP connect waits (the listener's
+/// queue is full) cannot be interrupted there: it runs on until its
+/// connect ends, and counts until then among the operations that cannot
+/// be interrupted, of which there may be 64. A hundred of them do not
+/// take a thread each: from the 65th on an operation is refused, the
+/// file read at the end too. (They counted as stopped, and every one held
+/// a thread and a socket for its connect time.)
+#[test]
+#[cfg(all(feature = "tcp-tls", feature = "http", target_os = "linux"))]
+fn an_http_request_given_up_in_its_connect_counts_until_the_connect_ends() {
+    let (_listener, _held, addr) = full_listener();
+    let file = temp_file("http_connect_bound.txt", "text");
+    let source = format!(
+        r#"
+import http
+import io
+import task
+import time
+
+fn tries(n: Int) {{
+  match {{
+    n > 0 -> {{
+      let _ = task.deadline(time.ms(2)) {{ -> http.get("http://{addr}/") }}
+      tries(n - 1)
+    }}
+    _ -> ()
+  }}
+}}
+
+fn main() {{
+  tries(100)
+  match io.read_file("{file}") {{
+    Ok(_) -> println("read the file")
+    Err(e) -> println(Error.message(e))
+  }}
+}}
+"#
+    );
+    let (_vm, out) = run(&source).expect("the program ended");
+    assert!(
+        out.starts_with("too many I/O operations that nobody waits for are still running"),
+        "{out}"
+    );
+}

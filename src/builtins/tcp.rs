@@ -494,13 +494,18 @@ pub(crate) fn accept_op(
 }
 
 /// Connect to `addr` (as `TcpStream::connect` does: each address it
-/// names in turn) so that `shutter` ends the connect wherever it
-/// stands: each socket is made and given to the shutter before it
-/// connects, and a shut of it ends a connect that waits for its peer.
-/// The connect of `tcp.connect` and `tcp.connect_tls` is one, so a task
-/// that stops waiting for it (cancelled, ended by its deadline) leaves
-/// no thread behind. (The name lookup before it cannot be interrupted:
-/// it ends by the system's own time.)
+/// names in turn) so that `shutter` can end the connect: each socket is
+/// made and given to the shutter before it connects, and a shut of it
+/// shuts it down. On Linux that ends a connect that waits for its peer,
+/// so a task that stops waiting for `tcp.connect` or `tcp.connect_tls`
+/// (cancelled, ended by its deadline) leaves no thread behind. Whether
+/// other systems end the connect so is not known: there, and on Linux
+/// too until the connect has returned, the operation counts among those
+/// that cannot be interrupted ([`Shutter::connecting`]), whose number is
+/// bounded. (The name lookup before it cannot be interrupted: it ends
+/// by the system's own time.)
+///
+/// [`Shutter::connecting`]: crate::runtime::handle::Shutter::connecting
 pub(crate) fn connect_shuttered(
     addr: &str,
     shutter: &crate::runtime::handle::Shutter,
@@ -516,11 +521,12 @@ pub(crate) fn connect_shuttered(
         )?;
         let stream = TcpStream::from(socket);
         // Nobody waits for the connect any more: it ends here.
-        if !shutter.set(&stream) {
+        if !shutter.connecting(&stream) {
             return Err(given_up());
         }
         let socket = socket2::Socket::from(stream);
         let connected = socket.connect(&addr.into());
+        shutter.connected();
         if shutter.is_shut() {
             return Err(given_up());
         }
@@ -775,11 +781,17 @@ mod tests {
         }
     }
 
-    /// A connect that waits for its peer ends when its shutter is shut:
-    /// the connect of `tcp.connect` that nobody waits for any more frees
-    /// its thread. (It waited for the system's own time, two minutes on
-    /// Linux, for a peer that does not answer.)
+    /// A connect that waits for its peer ends when its shutter is shut
+    /// (Linux): the connect of `tcp.connect` that nobody waits for any
+    /// more frees its thread. (It waited for the system's own time, two
+    /// minutes, for a peer that does not answer.) While it waits, the
+    /// shut says that it did not end the operation: the operation counts
+    /// among those that cannot be interrupted until the connect returns.
+    /// (Where the system refuses a connect to a full queue instead of
+    /// letting it wait, as Windows does, there is no such connect to
+    /// make: the test is Linux's.)
     #[test]
+    #[cfg(target_os = "linux")]
     fn a_shut_ends_a_connect_that_waits_for_its_peer() {
         use std::net::SocketAddr;
         use std::time::Duration;
@@ -803,20 +815,21 @@ mod tests {
                     Err(e) => e.kind() == ErrorKind::TimedOut || e.kind() == ErrorKind::WouldBlock,
                 },
             );
-        // (A system that refuses a connect to a full queue has nothing
-        // to wait for.)
-        if !full {
-            return;
-        }
+        assert!(full, "a connect to the full queue waits");
         let shutter = crate::runtime::handle::Shutter::default();
         let (done, result) = std::sync::mpsc::channel();
         let connecting = shutter.clone();
         std::thread::spawn(move || {
             let _ = done.send(connect_shuttered(&addr.to_string(), &connecting));
         });
-        // While it waits, or before: either way it ends.
+        // While it waits, or before: either way it ends. (If the shut
+        // came before the connect began, it is not counted as ended
+        // either: the socket was given to the shutter first.)
         std::thread::sleep(Duration::from_millis(100));
-        shutter.shut();
+        assert!(
+            !shutter.shut(),
+            "a shut while the connect waits ends nothing yet"
+        );
         let connected = result
             .recv_timeout(Duration::from_secs(30))
             .expect("the connect ended when its shutter was shut");
