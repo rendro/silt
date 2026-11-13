@@ -404,7 +404,8 @@ that the cancel reached: their last steps (below) have run. What comes
 after the cancel (closing the channel the task sent on, counting what it
 sent, removing a file it wrote) sees everything they did. The wait is
 short: a cancelled task ends at its next wait or after at most 2,000
-steps. A task cannot wait for its own end: one that is cancelled itself
+steps (a step that is one long call, such as a sort of a long list or a
+function of the host, runs to its end first). A task cannot wait for its own end: one that is cancelled itself
 (it cancels itself, or a task it was spawned by) does not wait, its call
 returns at once, and it has the last steps of a cancelled task (below).
 
