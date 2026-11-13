@@ -85,7 +85,7 @@ impl TypeChecker {
         }
         // A type-decl whose name shadows a builtin
         // scalar/container type (Int, Float, Bool, String, Unit, List,
-        // Map, Set, Channel, Tuple, Fn, Fun, Handle, Bytes,
+        // Map, Set, Channel, Tuple, Fn, Handle, Bytes,
         // TcpListener, TcpStream — the authoritative list is
         // `BUILTIN_TYPES` in `src/types/builtins.rs`) is rejected at
         // the declaration with one diagnostic: it would overwrite the

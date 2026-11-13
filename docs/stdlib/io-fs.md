@@ -179,7 +179,8 @@ fn main() {
 io.read_line() -> Result(Option(String), IoError)
 ```
 
-Reads a single line from stdin (trailing newline stripped). Returns
+Reads a single line from stdin without its line end (`\n` or `\r\n`);
+spaces and tabs at the end of the line are kept. Returns
 `Ok(Some(line))` for a line, `Ok(None)` at the end of stdin (and on every read
 after it), as the end of a channel or of a stream is a value, and
 `Err(IoError)` on failure: a line that is not UTF-8 is `Err(InvalidInput(...))`,
