@@ -558,16 +558,18 @@ task.spawn(f: Fn() -> a) -> Handle(a)
 
 ```
 type RegexError { InvalidPattern(String, Int), TooBig }
-regex.captures(text: String, pattern: String) -> Result(Option(List(String)), RegexError)
-regex.captures_all(text: String, pattern: String) -> Result(List(List(String)), RegexError)
-regex.captures_named(text: String, pattern: String) -> Result(Option(Map(String, String)), RegexError)
-regex.find(text: String, pattern: String) -> Result(Option(String), RegexError)
-regex.find_all(text: String, pattern: String) -> Result(List(String), RegexError)
-regex.is_match(text: String, pattern: String) -> Result(Bool, RegexError)
-regex.replace(text: String, pattern: String, replacement: String) -> Result(String, RegexError)
-regex.replace_first(text: String, pattern: String, replacement: String) -> Result(String, RegexError)
-regex.replace_with(text: String, pattern: String, f: Fn(String) -> String) -> Result(String, RegexError)
-regex.split(text: String, pattern: String) -> Result(List(String), RegexError)
+type Regex  -- opaque
+regex.captures(text: String, re: Regex) -> Option(List(String))
+regex.captures_all(text: String, re: Regex) -> List(List(String))
+regex.captures_named(text: String, re: Regex) -> Option(Map(String, String))
+regex.compile(pattern: String) -> Result(Regex, RegexError)
+regex.find(text: String, re: Regex) -> Option(String)
+regex.find_all(text: String, re: Regex) -> List(String)
+regex.is_match(text: String, re: Regex) -> Bool
+regex.replace(text: String, re: Regex, replacement: String) -> String
+regex.replace_first(text: String, re: Regex, replacement: String) -> String
+regex.replace_with(text: String, re: Regex, f: Fn(String) -> String) -> String
+regex.split(text: String, re: Regex) -> List(String)
 ```
 
 ### json

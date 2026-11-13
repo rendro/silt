@@ -1,8 +1,10 @@
 import io
 import regex
-import result
 fn program() {
-  regex.replace_first("abc 123 def 456", "\\d+", "NUM") |> result.unwrap_or("")
+  match regex.compile("\\d+") {
+    Ok(re) -> regex.replace_first("abc 123 def 456", re, "NUM")
+    Err(_) -> ""
+  }
 }
 
 fn main() {

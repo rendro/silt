@@ -1,8 +1,10 @@
 import io
 import regex
-import result
 fn program() {
-  regex.split("hello   world   foo", "\\s+") |> result.unwrap_or([])
+  match regex.compile("\\s+") {
+    Ok(re) -> regex.split("hello   world   foo", re)
+    Err(_) -> []
+  }
 }
 
 fn main() {

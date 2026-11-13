@@ -1,8 +1,10 @@
 import io
 import regex
-import result
 fn program() {
-  regex.captures_all("alice@home bob@work", "(\\w+)@(\\w+)") |> result.unwrap_or([])
+  match regex.compile("(\\w+)@(\\w+)") {
+    Ok(re) -> regex.captures_all("alice@home bob@work", re)
+    Err(_) -> []
+  }
 }
 
 fn main() {

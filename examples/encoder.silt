@@ -26,21 +26,21 @@ fn shift_char(c, shift) {
   }
 }
 
-fn encode_caesar(text, shift) {
+fn encode_caesar(text, shift, letters) {
   let normalized = (shift % 26 + 26) % 26
-  regex.replace_with(text, "[a-zA-Z]") { m -> shift_char(m, normalized) } |> result.unwrap_or(text)
+  regex.replace_with(text, letters) { m -> shift_char(m, normalized) }
 }
 
-fn decode_caesar(text, shift) {
-  encode_caesar(text, -shift)
+fn decode_caesar(text, shift, letters) {
+  encode_caesar(text, -shift, letters)
 }
 
 -- ============================================================
 -- ROT13 (special case of Caesar with shift=13, via replace_with)
 -- ============================================================
 
-fn rot13(text) {
-  regex.replace_with(text, "[a-zA-Z]") { c ->
+fn rot13(text, letters) {
+  regex.replace_with(text, letters) { c ->
     match {
       string.is_upper(c) -> {
         let code = (string.char_code(c) |> option.unwrap_or(65)) - 65
@@ -52,7 +52,7 @@ fn rot13(text) {
       }
       _ -> c
     }
-  } |> result.unwrap_or(text)
+  }
 }
 
 -- ============================================================
@@ -81,9 +81,9 @@ fn rle_encode(text) {
   }
 }
 
-fn rle_decode(text) {
+fn rle_decode(text, runs) {
   -- Use regex to find all (count, char) pairs like "3a", "2b", "1c"
-  let pairs = regex.captures_all(text, "(\\d+)([a-zA-Z ])") |> result.unwrap_or([])
+  let pairs = regex.captures_all(text, runs)
   pairs
     |> list.map { capture ->
       let count_str = list.get(capture, 1) |> option.unwrap_or("1")
@@ -158,15 +158,17 @@ fn check_roundtrip(name, original, decoded) {
 -- Main
 -- ============================================================
 
-fn main() {
+fn main() -> Result((), regex.RegexError) {
+  let letters = regex.compile("[a-zA-Z]")?
+  let runs = regex.compile("(\\d+)([a-zA-Z ])")?
   let test_strings = ["Hello World", "Attack at dawn", "Silt is great", "ABCxyz"]
   -- ---- Caesar Cipher ----
   let shift = 7
   print_table_header("Caesar Cipher (shift={shift})")
   test_strings
     |> list.each { text ->
-      let encoded = encode_caesar(text, shift)
-      let decoded = decode_caesar(encoded, shift)
+      let encoded = encode_caesar(text, shift, letters)
+      let decoded = decode_caesar(encoded, shift, letters)
       print_table_row(text, encoded, decoded)
       check_roundtrip("Caesar", text, decoded)
     }
@@ -174,8 +176,8 @@ fn main() {
   print_table_header("ROT13 (shift=13, self-inverse)")
   test_strings
     |> list.each { text ->
-      let encoded = rot13(text)
-      let decoded = rot13(encoded)
+      let encoded = rot13(text, letters)
+      let decoded = rot13(encoded, letters)
       print_table_row(text, encoded, decoded)
       check_roundtrip("ROT13", text, decoded)
     }
@@ -185,7 +187,7 @@ fn main() {
   rle_strings
     |> list.each { text ->
       let encoded = rle_encode(text)
-      let decoded = rle_decode(encoded)
+      let decoded = rle_decode(encoded, runs)
       print_table_row(text, encoded, decoded)
       check_roundtrip("RLE", text, decoded)
     }
@@ -201,4 +203,5 @@ fn main() {
     }
   println("")
   println("All tests complete.")
+  Ok(())
 }

@@ -1,0 +1,18 @@
+true
+Some("22")
+["1", "22", "333"]
+["a", "b", "c"]
+a# b22
+a# b#
+a<1> b<22>
+Some(["user@host", "user", "host"])
+[["1-2", "1", "2"], ["3-4", "3", "4"]]
+Some(#{"key": "k", "value": "v"})
+["x", "y"]
+a#
+["a1", "c22"]
+true
+invalid regex pattern at position 1: unclosed group
+InvalidPattern: unclosed character class, at 2
+true
+TooBig

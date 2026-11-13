@@ -1,22 +1,23 @@
 import list
 import map
 import regex
-import result
 import string
 
 -- URL router/dispatcher that matches HTTP requests against route patterns,
 -- extracts path parameters, and dispatches to handler closures.
--- A route definition with handler closure stored directly in the record
+-- Compiled pattern info: the regex and the list of param names
+type CompiledPattern {
+  re: regex.Regex,
+  params: List(String),
+}
+
+-- A route definition with handler closure stored directly in the record,
+-- and its pattern compiled once, where the route is made
 type Route {
   method: String,
   pattern: String,
   handler: Fn(Map(String, String)) -> String,
-}
-
--- Compiled pattern info: regex string and list of param names
-type CompiledPattern {
-  regex_str: String,
-  params: List(String),
+  compiled: CompiledPattern,
 }
 
 -- A request to test
@@ -27,30 +28,34 @@ type Request {
 
 -- Convert a route pattern like "/users/:id/posts/:post_id" into a regex
 -- and extract param names.
-fn pattern_to_regex(pattern) {
+fn pattern_to_regex(pattern) -> Result(CompiledPattern, regex.RegexError) {
   let segments = pattern |> string.split("/")
-  let compiled = segments
-    |> list.fold(CompiledPattern { regex_str: "^", params: [] }) { acc, seg ->
+  let (source, params) = segments
+    |> list.fold(("^", [])) { acc, seg ->
+      let (source, params) = acc
       match {
         string.is_empty(seg) -> acc
         string.starts_with(seg, ":") -> {
           let param_name = string.slice(seg, 1, string.length(seg))
-          CompiledPattern {
-            regex_str: "{acc.regex_str}/([^/]+)",
-            params: list.append(acc.params, param_name),
-          }
+          ("{source}/([^/]+)", list.append(params, param_name))
         }
-        _ -> CompiledPattern { regex_str: "{acc.regex_str}/{seg}", params: acc.params }
+        _ -> ("{source}/{seg}", params)
       }
     }
-  CompiledPattern { regex_str: "{compiled.regex_str}$", params: compiled.params }
+  let re = regex.compile("{source}$")?
+  Ok(CompiledPattern { re: re, params: params })
 }
 
--- Extract path parameters from a URL path given a route pattern.
+-- A route, its pattern compiled.
+fn route(method, pattern, handler) -> Result(Route, regex.RegexError) {
+  let compiled = pattern_to_regex(pattern)?
+  Ok(Route { method: method, pattern: pattern, handler: handler, compiled: compiled })
+}
+
+-- Extract path parameters from a URL path given a compiled route pattern.
 -- Returns Some(map) with extracted params or None if no match.
-fn extract_params(pattern, path) {
-  let compiled = pattern_to_regex(pattern)
-  match (regex.captures(path, compiled.regex_str) |> result.unwrap_or(None)) {
+fn extract_params(compiled, path) {
+  match regex.captures(path, compiled.re) {
     None -> None
     Some(captures) -> {
       -- captures[0] is the full match, captures[1..] are the groups
@@ -73,10 +78,7 @@ fn match_route(method, path, routes) {
     |> list.find { route ->
       match {
         route.method != method -> false
-        _ -> {
-          let compiled = pattern_to_regex(route.pattern)
-          regex.is_match(path, compiled.regex_str) |> result.unwrap_or(false)
-        }
+        _ -> regex.is_match(path, route.compiled.re)
       }
     }
 }
@@ -98,32 +100,20 @@ fn make_handler(name) {
   }
 }
 
-fn main() {
+fn main() -> Result((), regex.RegexError) {
   -- Define routes with handler closures stored directly in Route records
   let routes = [
-    Route { method: "GET", pattern: "/users", handler: make_handler("list_users") },
-    Route { method: "GET", pattern: "/users/:id", handler: make_handler("get_user") },
-    Route { method: "POST", pattern: "/users", handler: make_handler("create_user") },
-    Route { method: "PUT", pattern: "/users/:id", handler: make_handler("update_user") },
-    Route { method: "DELETE", pattern: "/users/:id", handler: make_handler("delete_user") },
-    Route { method: "GET", pattern: "/posts", handler: make_handler("list_posts") },
-    Route { method: "GET", pattern: "/posts/:id", handler: make_handler("get_post") },
-    Route { method: "GET", pattern: "/posts/:id/comments", handler: make_handler("list_comments") },
-    Route {
-      method: "POST",
-      pattern: "/posts/:id/comments",
-      handler: make_handler("create_comment"),
-    },
-    Route {
-      method: "GET",
-      pattern: "/posts/:post_id/comments/:comment_id",
-      handler: make_handler("get_comment"),
-    },
-    Route {
-      method: "GET",
-      pattern: "/categories/:cat_id/items/:item_id",
-      handler: make_handler("get_cat_item"),
-    },
+    route("GET", "/users", make_handler("list_users"))?,
+    route("GET", "/users/:id", make_handler("get_user"))?,
+    route("POST", "/users", make_handler("create_user"))?,
+    route("PUT", "/users/:id", make_handler("update_user"))?,
+    route("DELETE", "/users/:id", make_handler("delete_user"))?,
+    route("GET", "/posts", make_handler("list_posts"))?,
+    route("GET", "/posts/:id", make_handler("get_post"))?,
+    route("GET", "/posts/:id/comments", make_handler("list_comments"))?,
+    route("POST", "/posts/:id/comments", make_handler("create_comment"))?,
+    route("GET", "/posts/:post_id/comments/:comment_id", make_handler("get_comment"))?,
+    route("GET", "/categories/:cat_id/items/:item_id", make_handler("get_cat_item"))?,
   ]
   -- Test requests
   let requests = [
@@ -149,7 +139,7 @@ fn main() {
         None -> println("  => 404 Not Found\n")
         Some(route) -> {
           -- Extract parameters
-          let params = match extract_params(route.pattern, req.path) {
+          let params = match extract_params(route.compiled, req.path) {
             Some(p) -> p
             None -> #{}
           }
@@ -184,4 +174,5 @@ fn main() {
       let depth = list.length(segments)
       println("  {string.left(route.method, 7)} {string.left(route.pattern, 45)} (depth: {depth})")
     }
+  Ok(())
 }

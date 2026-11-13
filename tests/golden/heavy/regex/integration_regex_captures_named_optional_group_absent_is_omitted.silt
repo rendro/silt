@@ -4,9 +4,11 @@
 -- to "".
 import io
 import regex
-import result
 fn program() {
-  regex.captures_named("file", "(?P<name>\\w+)(?:\\.(?P<ext>\\w+))?") |> result.unwrap_or(None)
+  match regex.compile("(?P<name>\\w+)(?:\\.(?P<ext>\\w+))?") {
+    Ok(re) -> regex.captures_named("file", re)
+    Err(_) -> None
+  }
 }
 
 fn main() {

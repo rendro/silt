@@ -120,7 +120,7 @@ type regex.RegexError {
 
 ---
 
-Returned by every `regex.*` function for a pattern that does not compile.
+Returned by `regex.compile` for a pattern that does not compile.
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|

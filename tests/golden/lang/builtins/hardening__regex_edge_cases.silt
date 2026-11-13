@@ -1,12 +1,14 @@
 import regex
-import result
-fn main() {
+fn main() -> Result((), regex.RegexError) {
+  let xyz = regex.compile("xyz")?
+  let empty = regex.compile("")?
   -- test_regex_find_no_match
-  println((regex.find("hello", "xyz") |> result.unwrap_or(None)))
+  println(regex.find("hello", xyz))
   -- test_regex_find_all_no_matches
-  println((regex.find_all("hello", "xyz") |> result.unwrap_or([])) == [])
+  println(regex.find_all("hello", xyz) == [])
   -- test_regex_is_match_empty_pattern
-  println((regex.is_match("hello", "") |> result.unwrap_or(false)))
+  println(regex.is_match("hello", empty))
   -- test_regex_split_no_match
-  println((regex.split("hello", "xyz") |> result.unwrap_or([])) == ["hello"])
+  println(regex.split("hello", xyz) == ["hello"])
+  Ok(())
 }

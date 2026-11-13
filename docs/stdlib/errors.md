@@ -196,7 +196,7 @@ Returned by `csv.split_line` and `csv.parse`.
 
 ### `RegexError` (requires `import regex`)
 
-Returned by every `regex.*` function for a pattern that does not compile.
+Returned by `regex.compile` for a pattern that does not compile.
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|

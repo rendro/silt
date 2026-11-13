@@ -86,6 +86,9 @@ pub enum Value {
     /// transparently — the TLS layer in v0.9 PR 3 will substitute a
     /// rustls-wrapped stream behind the same `Arc<Mutex<Box<dyn ReadWrite>>>`.
     TcpStream(Arc<TcpStreamHandle>),
+    /// A compiled regex pattern (`regex.compile`): equal to another of
+    /// the same pattern text.
+    Regex(Arc<crate::builtins::regex::Compiled>),
     /// A dictionary (`bytecode::dict`): no program value is one; the
     /// code passes it, hidden, to what has bounds of a program's trait.
     Dict(bytecode::dict::Dict),
@@ -248,6 +251,7 @@ impl Value {
             Value::Bytes(_) => "Bytes",
             Value::TcpListener(_) => "TcpListener",
             Value::TcpStream(_) => "TcpStream",
+            Value::Regex(_) => "Regex",
             Value::Dict(_) => "Dict",
             Value::Unit => "()",
         }

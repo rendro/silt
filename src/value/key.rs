@@ -73,6 +73,7 @@ fn rank(value: &Value) -> u8 {
         Value::PrimitiveDescriptor(_) => 20,
         Value::HostFn(_) => 21,
         Value::Dict(_) => 22,
+        Value::Regex(_) => 23,
     }
 }
 
@@ -126,6 +127,8 @@ fn cmp_other_heads(a: &Value, b: &Value) -> Ordering {
         (Value::Handle(a), Value::Handle(b)) => a.id.cmp(&b.id),
         (Value::TcpListener(a), Value::TcpListener(b)) => a.id.cmp(&b.id),
         (Value::TcpStream(a), Value::TcpStream(b)) => a.id.cmp(&b.id),
+        // A regex: its pattern text.
+        (Value::Regex(a), Value::Regex(b)) => a.pattern.cmp(&b.pattern),
         // A closure: which function it runs (two copies of one closure
         // run the one `Function`), then its captures, which are its
         // parts.
@@ -201,6 +204,7 @@ fn hash_head<H: Hasher>(value: &Value, state: &mut H) {
         }
         Value::TcpListener(listener) => listener.id.hash(state),
         Value::TcpStream(stream) => stream.id.hash(state),
+        Value::Regex(re) => re.pattern.hash(state),
         Value::BuiltinFn(id) => id.hash(state),
         Value::HostFn(host) => host.name.hash(state),
         Value::VariantConstructor(tag) => tag.hash(state),
