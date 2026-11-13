@@ -1,0 +1,27 @@
+import shapes
+import shapes.{ Pt, Size }
+
+type Pair(a) {
+  left: a,
+  right: a,
+  apply: Fn(a) -> a,
+}
+
+fn norm(p: Pt) -> Int {
+  match p {
+    Pt { x, y: 0 } -> x
+    Pt { x: a, y } -> a + y
+  }
+}
+
+fn main() {
+  let x = 3
+  let p = Pt { x, y: 4 }
+  let s = Size { x: 1, w: 2 }
+  let q = Pair { left: s.w, right: x, apply: { n -> n * 10 } }
+  println(norm(shapes.shift(p, s.x)))
+  println("{q.left} {q.right} {s.w} {q.apply(q.left)}")
+  let Pt { x: px, y } = shapes.origin()
+  println(px + y + norm(p.{ y: 0 }) + shapes.area(s.{ x }))
+  println(p)
+}

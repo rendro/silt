@@ -8,7 +8,9 @@
 //! is found as `mk`, as `geo.mk` and as the item of `import geo.{ mk }`,
 //! and a function `mk` of another module is not. A local binding (a
 //! parameter, a `let` in a body, a pattern's binder) is found in its
-//! document, by the binding a use resolves to.
+//! document, by the binding a use resolves to. A record field is found
+//! by its record type, which the checker knows at each place that names
+//! it: `x` of `P` is not `x` of `Q`.
 //!
 //! The modules searched are those the open documents' sessions have
 //! checked, and the workspace files that import the module of the
@@ -31,7 +33,7 @@ use super::Server;
 use super::ast_walk::written_general;
 use super::conversions::span_to_range;
 use super::local_bindings::nearest_local_binding_for;
-use super::names::{DefUse, Names};
+use super::names::{DefUse, FieldUse, Names};
 use super::project::{path_key, project_dir};
 use super::state::{DefInfo, Document};
 
@@ -62,6 +64,9 @@ pub(super) enum Target {
     /// trait, its impls' methods, its calls (`Tr.name(..)`,
     /// `T.name(..)`).
     Method { tr: DefKey, name: Symbol },
+    /// The field `name` of the record type `record`: its declaration,
+    /// the literals, updates and patterns that name it, its reads.
+    Field { record: DefKey, name: Symbol },
 }
 
 /// Whether byte `cursor` is in `span` or directly behind it.
@@ -112,6 +117,25 @@ fn in_recovery_stub(program: &Program, at: usize) -> bool {
         Decl::Trait(t) => t.methods.iter().any(stub_at),
         Decl::TraitImpl(ti) => ti.methods.iter().any(stub_at),
         _ => false,
+    })
+}
+
+/// Where the record type `record` of `session` declares its field
+/// `name`: the module and the span of the name.
+fn field_declared(session: &Session, record: DefId, name: Symbol) -> Option<(ModuleId, Span)> {
+    let def = session.defs().get(record);
+    if def.module.is_builtin() || !def.span.is_in_source() {
+        return None;
+    }
+    let analysis = session.module_analysis(def.module)?;
+    analysis.ast.decls.iter().find_map(|decl| match decl {
+        Decl::Type(td) if td.name_span == def.span => match &td.body {
+            TypeBody::Record(fields) => (fields.iter())
+                .find(|f| f.name == name)
+                .map(|f| (def.module, f.name_span)),
+            _ => None,
+        },
+        _ => None,
     })
 }
 
@@ -166,6 +190,7 @@ struct ModuleUses {
     uri: Option<Uri>,
     uses: Vec<(Span, DefId)>,
     punned: Vec<Span>,
+    fields: Vec<FieldUse>,
 }
 
 /// A place that names a target.
@@ -247,8 +272,27 @@ impl Server {
             let tr = def_key(session, tr);
             return Some((span, Target::Method { tr, name }));
         }
-        let local = names.locals.iter().find(|l| holds(l.span, cursor))?;
-        Some((local.span, Target::Local(local.binding(&doc.locals)?)))
+        // A field's name. One written without its value or pattern
+        // (`P { x }`) is also the name of what it holds: the local, or
+        // the definition, is what is meant there.
+        let field = |punned: bool| {
+            let used =
+                (names.fields.iter()).find(|f| f.punned == punned && holds(f.span, cursor))?;
+            let target = Target::Field {
+                record: def_key(session, used.record),
+                name: used.field,
+            };
+            Some((used.span, target))
+        };
+        if let Some(found) = field(false) {
+            return Some(found);
+        }
+        if let Some(local) = names.locals.iter().find(|l| holds(l.span, cursor))
+            && let Some(binding) = local.binding(&doc.locals)
+        {
+            return Some((local.span, Target::Local(binding)));
+        }
+        field(true)
     }
 
     /// What the name at byte `cursor` of the open document `uri` is: for
@@ -260,7 +304,7 @@ impl Server {
         };
         let keys = match target {
             Target::Local(_) => return Named::Local,
-            Target::Method { .. } => return Named::Other,
+            Target::Method { .. } | Target::Field { .. } => return Named::Other,
             Target::Defs(keys) => keys,
         };
         let info = keys.iter().find_map(|key| {
@@ -386,6 +430,7 @@ impl Server {
                 .then(|| "is a builtin and cannot be renamed".to_string()),
             Target::Method { tr, .. } => matches!(tr, DefKey::Builtin(_))
                 .then(|| "is a method of a builtin trait and cannot be renamed".to_string()),
+            Target::Field { record, .. } => self.field_not_renameable(uri, record),
             Target::Local(binding) => {
                 let doc = self.documents.get(uri)?;
                 let local = doc.locals.iter().find(|b| b.binding_offset == *binding)?;
@@ -418,11 +463,12 @@ impl Server {
                 .collect()
             }
             Target::Defs(keys) => {
-                if self.def_uses.is_none() {
-                    self.check_importers();
-                    self.def_uses = Some(self.walk_def_uses());
-                }
+                self.walk_if_needed();
                 self.def_places(keys, include_definition)
+            }
+            Target::Field { record, name } => {
+                self.walk_if_needed();
+                self.field_places(record, *name, include_definition)
             }
         };
         let key = |p: &Place| {
@@ -435,6 +481,15 @@ impl Server {
         places.sort_by_key(key);
         places.dedup_by(|a, b| a.location == b.location);
         places
+    }
+
+    /// Walk the workspace for the uses of definitions and fields, unless
+    /// that was done since the last analysis.
+    fn walk_if_needed(&mut self) {
+        if self.def_uses.is_none() {
+            self.check_importers();
+            self.def_uses = Some(self.walk_def_uses());
+        }
     }
 
     /// The locations of [`Server::places_of`].
@@ -497,6 +552,15 @@ impl Server {
                 .filter(|(_, declaration)| *declaration)
                 .map(|(place, _)| place.location)
                 .collect(),
+            Target::Field { record, name } => {
+                let found = self.projects.values().find_map(|project| {
+                    let session = &project.session;
+                    let (module, span) =
+                        field_declared(session, def_of_key(session, record)?, *name)?;
+                    self.location_in(session, module, span)
+                });
+                found.into_iter().collect()
+            }
             Target::Defs(keys) => {
                 let mut locations: Vec<Location> = Vec::new();
                 for key in keys {
@@ -594,6 +658,85 @@ impl Server {
         places
     }
 
+    /// Why the fields of the record type `record`, found in the open
+    /// document `uri`, cannot be renamed, if they cannot: the type is
+    /// one of silt's own, or a type of another package (a dependency),
+    /// whose files a rename does not edit.
+    fn field_not_renameable(&self, uri: &Uri, record: &DefKey) -> Option<String> {
+        if matches!(record, DefKey::Builtin(_)) {
+            return Some("is a field of a builtin type and cannot be renamed".to_string());
+        }
+        let module = self.documents.get(uri)?.module.as_ref()?;
+        let session = &self.projects.get(&module.project)?.session;
+        let def = session.defs().get(def_of_key(session, record)?);
+        let graph = session.graph();
+        let home = graph.module(def.module);
+        (home.package != graph.module(module.id).package).then(|| {
+            format!(
+                "is a field of `{}`, a type of the package `{}`: a rename edits the files of \
+                 this package only",
+                resolve_sym(def.name),
+                resolve_sym(home.package_name)
+            )
+        })
+    }
+
+    /// Every place in the checked modules of every session that names
+    /// the field `name` of the record type `record`, from what the last
+    /// walk found; with its declaration if `include_definition`.
+    fn field_places(&self, record: &DefKey, name: Symbol, include_definition: bool) -> Vec<Place> {
+        let mut places = Vec::new();
+        let Some(def_uses) = &self.def_uses else {
+            return places;
+        };
+        for (dir, modules) in &def_uses.projects {
+            let Some(project) = self.projects.get(dir) else {
+                continue;
+            };
+            let session = &project.session;
+            let Some(record) = def_of_key(session, record) else {
+                continue;
+            };
+            for module in modules {
+                let source = session
+                    .graph()
+                    .module(module.module)
+                    .file
+                    .and_then(|file| session.sources().get(file));
+                let (Some(uri), Some(source)) = (&module.uri, source) else {
+                    continue;
+                };
+                let named = module.fields.iter().filter(|f| {
+                    f.record == record && f.field == name && (include_definition || !f.declaration)
+                });
+                for used in named {
+                    places.push(Place {
+                        location: Location::new(uri.clone(), span_to_range(&used.span, source)),
+                        punned: used.punned,
+                    });
+                }
+            }
+        }
+        places
+    }
+
+    /// Why the field of the record type `record` cannot be called `new`:
+    /// the type has a field of that name already. (A method is no
+    /// rival: it is called through its trait, `Tr.m(p)`, never `p.m`.)
+    fn field_clash(&self, record: &DefKey, new: Symbol) -> Option<String> {
+        for project in self.projects.values() {
+            let session = &project.session;
+            let Some(id) = def_of_key(session, record) else {
+                continue;
+            };
+            let ty = resolve_sym(session.defs().get(id).name);
+            if field_declared(session, id, new).is_some() {
+                return Some(format!("`{ty}` already has a field `{new}`"));
+            }
+        }
+        None
+    }
+
     /// The declaration of the method whose name at a call holds byte
     /// `cursor` of the open document `uri`: the method of the impl the
     /// checker selected, when that impl writes it, else the trait's.
@@ -680,8 +823,8 @@ impl Server {
         self.location_in(session, module, declared.name_span)
     }
 
-    /// The field of a record pattern at byte `cursor` of the open
-    /// document `uri` (`x` in `Pt { x } ->`): its declaration.
+    /// The field named at byte `cursor` of the open document `uri` (`x`
+    /// in `Pt { x } ->`, in `P { x: 1 }`, in `p.x`): its declaration.
     pub(super) fn pattern_field_declaration_at(
         &self,
         uri: &Uri,
@@ -689,7 +832,14 @@ impl Server {
     ) -> Option<Location> {
         let doc = self.documents.get(uri)?;
         let (names, ..) = self.names_of(doc)?;
-        let used = names.fields.iter().find(|f| holds(f.span, cursor))?;
+        // (A field written alone in a literal or an update, `P { x }`,
+        // is a use of what it holds: its definition is that.)
+        let a_use = |span: Span| {
+            names.locals.iter().any(|l| !l.binder && l.span == span)
+                || names.defs.iter().any(|d| d.span == span)
+        };
+        let used = (names.fields.iter())
+            .find(|f| holds(f.span, cursor) && !(f.punned && a_use(f.span)))?;
         self.field_declaration(doc, crate::defs::TypeId(used.record), used.field)
     }
 
@@ -785,6 +935,7 @@ impl Server {
                         .or_else(|| super::path_to_file_uri(&module.path)),
                     uses: names.defs.iter().map(|used| (used.span, used.id)).collect(),
                     punned: names.punned,
+                    fields: names.fields,
                 });
             }
             projects.push((dir.clone(), modules));
@@ -889,7 +1040,9 @@ impl Server {
                     .is_some_and(|program| in_recovery_stub(program, *binding));
                 return own.filter(|_| in_stub);
             }
-            Target::Method { tr, .. } => std::slice::from_ref(tr),
+            Target::Method { tr, .. } | Target::Field { record: tr, .. } => {
+                std::slice::from_ref(tr)
+            }
             Target::Defs(keys) => keys,
         };
         if own.is_some() {
@@ -933,6 +1086,27 @@ impl Server {
                 return (self.method_places(tr, *name, true).into_iter())
                     .map(|(place, _)| place.location)
                     .filter(|location| location.uri == *uri)
+                    .collect();
+            }
+            Target::Field { record, name } => {
+                let Some(doc) = self.documents.get(uri) else {
+                    return Vec::new();
+                };
+                let Some((names, session, _)) = self.names_of(doc) else {
+                    return Vec::new();
+                };
+                let Some(record) = def_of_key(session, record) else {
+                    return Vec::new();
+                };
+                let mut spans: Vec<Span> = (names.fields.iter())
+                    .filter(|f| f.record == record && f.field == *name)
+                    .map(|f| f.span)
+                    .collect();
+                spans.sort_by_key(|span| span.start);
+                spans.dedup();
+                return spans
+                    .into_iter()
+                    .map(|span| Location::new(uri.clone(), span_to_range(&span, &doc.source)))
                     .collect();
             }
             Target::Defs(keys) => keys,
@@ -991,6 +1165,9 @@ impl Server {
                 })
             });
             return taken.then(|| format!("the trait already has a method `{new}`"));
+        }
+        if let Target::Field { record, .. } = target {
+            return self.field_clash(record, new_sym);
         }
         let places = self.places_of(uri, target, true);
         // One of silt's own names, visible in every module: a builtin

@@ -132,6 +132,34 @@ fn without_warnings(stderr: &str) -> String {
     out
 }
 
+/// `disasm` output without the number of each constant an instruction
+/// names (the constant itself is written behind the `;`). A field's name
+/// is a string constant, one for every use of the same text: a rename of
+/// a field to a name in use, or away from a name another field keeps,
+/// numbers the constants anew and is the same program.
+fn without_constant_numbers(disasm: &str) -> String {
+    let mut out = String::with_capacity(disasm.len());
+    for line in disasm.lines() {
+        match line.split_once(" ; ") {
+            Some((code, comment)) => {
+                let mut words: Vec<&str> = code.split_whitespace().collect();
+                // (The first word of an instruction is its offset.)
+                let operand =
+                    (1..words.len()).find(|at| words[*at].bytes().all(|b| b.is_ascii_digit()));
+                if let Some(at) = operand {
+                    words[at] = "#";
+                }
+                out.push_str(&words.join(" "));
+                out.push_str(" ; ");
+                out.push_str(comment);
+            }
+            None => out.push_str(line),
+        }
+        out.push('\n');
+    }
+    out
+}
+
 /// What is compared: the check of every file, the disasm of the entry,
 /// and the run of the entry when `run`, each without its warnings.
 fn verdict(dir: &Path, files: &[PathBuf], entry: &str, run: bool) -> Vec<String> {
@@ -143,7 +171,7 @@ fn verdict(dir: &Path, files: &[PathBuf], entry: &str, run: bool) -> Vec<String>
         out.push(format!("check {name}: {code:?}\n{stdout}{stderr}"));
     }
     let (code, stdout, stderr) = silt(dir, &["disasm", entry]);
-    let stderr = without_warnings(&stderr);
+    let (stdout, stderr) = (without_constant_numbers(&stdout), without_warnings(&stderr));
     out.push(format!("disasm: {code:?}\n{stdout}{stderr}"));
     if run {
         let (code, stdout, stderr) = silt(dir, &["run", entry]);
@@ -360,10 +388,13 @@ pub(crate) fn sweep(
                     let end = offset_of(&file_text, pos("end", "line"), pos("end", "character"));
                     let old = file_text.get(start..end).unwrap_or("");
                     // A punned field is renamed by writing the field
-                    // out: `x` becomes `x: new`.
+                    // out: `x` becomes `x: new` for a rename of what
+                    // it holds, `new: x` for a rename of the field.
                     let new_text = edit["newText"].as_str().unwrap_or("");
                     let plain = old == name && new_text == new.as_str();
-                    let unpunned = old == name && new_text == format!("{name}: {new}");
+                    let unpunned = old == name
+                        && (new_text == format!("{name}: {new}")
+                            || new_text == format!("{new}: {name}"));
                     if !plain && !unpunned {
                         problem = Some(format!(
                             "the edit {rel}:{}:{} replaces `{old}` by `{new_text}`",

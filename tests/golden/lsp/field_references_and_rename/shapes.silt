@@ -1,0 +1,21 @@
+pub type Pt {
+  x: Int,
+  y: Int,
+}
+
+pub type Size {
+  x: Int,
+  w: Int,
+}
+
+pub type Box(a) {
+  value: a,
+}
+
+pub fn origin() -> Pt {
+  Pt { x: 0, y: 0 }
+}
+
+pub fn shift(p: Pt, by: Int) -> Pt {
+  p.{ x: p.x + by }
+}

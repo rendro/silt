@@ -131,6 +131,9 @@ impl Server {
             }
             // A method of a value (`x.m(`): no signature here.
             Some((_, Target::Method { .. })) => Callee::Local(None),
+            // A field that holds a function (`p.f(`): its name has a
+            // dot, so it is no local either.
+            Some((_, Target::Field { .. })) => Callee::Unknown,
             Some((_, Target::Defs(_))) => match self.builtin_at(uri, at) {
                 Some(name) => Callee::Builtin(name),
                 None => match self.named_at(uri, at) {
