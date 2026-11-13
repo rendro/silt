@@ -81,6 +81,12 @@ where `T` is again one of these types. Anything else (a `Set`, a generic
 record or enum without its type arguments, a builtin enum such as `time.Weekday`, a function, a `Map`
 whose key is not `String`, a type parameter) has no decoder.
 
+An `Option` directly inside an `Option` (`Option(Option(Int))`, at any
+depth, also through an alias or a generic type's argument) has no decoder
+either: `None` and `Some(None)` are both written as `null`, so `Some(None)`
+would never read back. `Option(json.Value)` is decoded: there a `null`
+reads as `None`, not as `Some(json.Null)`.
+
 A number of the document goes into an `Int` when it is a whole number in
 `Int`'s range (`1`, `1.0`, `1e3`). A number with a fraction (`1.5`), or one out of
 that range, is `Err(TypeMismatch("Int", ...))`: nothing is cut off or rounded.
@@ -254,7 +260,8 @@ fn main() {
 A record field of type `json.Value` keeps that part of the document as it
 is, for [`json.decode`](#jsondecode-1) to read once its shape is known. Like
 any field that is no `Option`, it must be in the document (a JSON `null`
-is `json.Null`); a field of type `Option(json.Value)` may be left out.
+is `json.Null`); a field of type `Option(json.Value)` may be left out, and
+there a `null` reads as `None`.
 
 
 ## `json.Encode`

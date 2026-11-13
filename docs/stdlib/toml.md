@@ -79,6 +79,10 @@ where `T` is again one of these types. Anything else (a `Set`, a generic
 record or enum without its type arguments, a builtin enum such as `time.Weekday`, a function, a `Map`
 whose key is not `String`, a type parameter) has no decoder.
 
+An `Option` directly inside an `Option` (`Option(Option(Int))`, at any
+depth) has no decoder either: `None` and `Some(None)` are both written by
+leaving the key out, so `Some(None)` would never read back.
+
 A TOML integer goes into an `Int`, and into a `Float` where one is
 expected. A TOML float goes into a `Float` only: `x = 1.0` for an `Int`
 field is `Err(TypeMismatch("Int", "float at x"))`, because TOML says

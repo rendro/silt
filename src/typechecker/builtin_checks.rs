@@ -11,7 +11,9 @@
 use super::decodable::shown;
 use super::solve::Origin;
 use super::*;
-use crate::builtins::registry::decoding::{Decoding, Family, JSON_VALUE_ELSEWHERE, ROW_TYPE_HELP};
+use crate::builtins::registry::decoding::{
+    Decoding, Family, JSON_VALUE_ELSEWHERE, OPTION_IN_OPTION, ROW_TYPE_HELP,
+};
 use crate::defs::TypeId;
 use crate::types::canonical::canonicalize;
 
@@ -43,6 +45,31 @@ fn as_written(mut refusal: Diagnostic) -> Diagnostic {
         *line = word(line);
     }
     refusal
+}
+
+/// Whether `ty` is an `Option` of an `Option`, which no decoder has:
+/// `Some(None)` is written as `None` is.
+fn option_in_option(ty: &Type) -> bool {
+    matches!(ty, Type::Generic(head, args)
+        if head.is_builtin("Option")
+            && matches!(args.first(), Some(Type::Generic(inner, _)) if inner.is_builtin("Option")))
+}
+
+/// The refusal of `builtin`, which decodes as `decoding` says, of the
+/// type `shown` at `span`, which is or holds an `Option` of an
+/// `Option`.
+fn option_in_option_refusal(
+    builtin: &str,
+    shown: &str,
+    span: Span,
+    decoding: Decoding,
+) -> Diagnostic {
+    Diagnostic::error(
+        Code::Undecodable,
+        span,
+        format!("`{builtin}` cannot decode `{shown}`: {OPTION_IN_OPTION} has no decoder"),
+    )
+    .with_help(decoding.family.help())
 }
 
 /// Whether `ty` is a map whose key type is known and no `String`.
@@ -365,6 +392,16 @@ impl TypeChecker {
                 .find(|part| !matches!(part, Type::Var(_)) && self.holds_open_vars(part))
         {
             return self.decode_refusal(builtin_name, decoding, None, part, owner, span);
+        }
+        // (`None` and `Some(None)` are written alike: no decoder tells
+        // them apart.)
+        if decoding.primitives && option_in_option(ty) {
+            return Some(option_in_option_refusal(
+                builtin_name,
+                &self.show_type(ty),
+                span,
+                decoding,
+            ));
         }
         if decoding.primitives
             && let Some(parts) = decoded_parts(ty)
@@ -731,6 +768,14 @@ impl TypeChecker {
         use crate::builtins::registry::decoding::Leaf;
         use crate::typeinfo::ty as bt;
         let family = decoding.family.nested();
+        if option_in_option(part) {
+            return Some(option_in_option_refusal(
+                builtin,
+                &self.show_type(whole),
+                span,
+                decoding,
+            ));
+        }
         let leaf = match part {
             // (What a type variable stands for owes the check: see
             // `check_builtin_argument`.)
