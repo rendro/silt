@@ -3,11 +3,11 @@ error[type]: cannot infer the record type whose field 'name' this reads
    |
  9 |   p.name
    |   ^^^^^^ cannot infer the record type whose field 'name' this reads
-  = help: annotate the record: `r: SomeRecord`
+  = help: annotate the record: `p: P`
 
 error[type]: cannot infer the record type whose field 'run' this calls
  --> field_read__a_record_nothing_decides_needs_an_annotation.silt:13:3
     |
  13 |   p.run(1)
     |   ^^^^^ cannot infer the record type whose field 'run' this calls
-  = help: annotate the record: `r: SomeRecord`
+  = help: annotate the record: `p: P`

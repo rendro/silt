@@ -1,6 +1,42 @@
 use super::*;
 
 impl TypeChecker {
+    /// The help of a field read whose record nothing decides: the
+    /// annotation to write (`user: User`), with each record type of the
+    /// module that has the field, the receiver by its name when it is
+    /// one.
+    fn annotate_record_help(&self, field: Symbol, written: Option<Symbol>) -> String {
+        let name = written.map_or_else(|| "r".to_string(), resolve);
+        let mut types: Vec<String> = (self.tables.records.iter())
+            .filter(|(ty, rec)| {
+                rec.fields.iter().any(|(n, _)| *n == field)
+                    && self
+                        .def(ty.id.0)
+                        .is_some_and(|def| def.module == self.module)
+            })
+            .map(|(ty, _)| {
+                let params = (self.tables.record_param_var_ids.get(ty)).map_or(0, Vec::len);
+                let args: Vec<String> = (b'a'..)
+                    .take(params)
+                    .map(|c| (c as char).to_string())
+                    .collect();
+                match args.is_empty() {
+                    true => self.written_type(*ty),
+                    false => format!("{}({})", self.written_type(*ty), args.join(", ")),
+                }
+            })
+            .collect();
+        types.sort();
+        match types.as_slice() {
+            [] => format!("annotate the record: `{name}: SomeRecord`"),
+            types => {
+                let written: Vec<String> =
+                    types.iter().map(|ty| format!("`{name}: {ty}`")).collect();
+                format!("annotate the record: {}", written.join(" or "))
+            }
+        }
+    }
+
     // ── Generalization / Instantiation ──────────────────────────────
 
     /// Generalize a type into a scheme: quantify its unresolved variables
@@ -583,18 +619,24 @@ impl TypeChecker {
                     );
                     continue;
                 }
-                Goal::Select { name, args, .. } => {
+                Goal::Select {
+                    name,
+                    args,
+                    written,
+                    ..
+                } => {
                     let what = match args {
                         Some(_) => "this calls",
                         None => "this reads",
                     };
+                    let help = self.annotate_record_help(*name, *written);
                     self.errors.push(
                         Diagnostic::error(
                             Code::AmbiguousType,
                             wanted.origin.span,
                             format!("cannot infer the record type whose field '{name}' {what}"),
                         )
-                        .with_help("annotate the record: `r: SomeRecord`"),
+                        .with_help(help),
                     );
                     continue;
                 }

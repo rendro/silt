@@ -141,7 +141,7 @@ fn main() {
 
 ## Type inference
 
-The type checker infers everything. You get static type safety without writing annotations. Define records, enums, and traits when you need structure.
+The type checker infers the types of your values, closures and functions, so static type safety costs few annotations: a function that reads a field of a parameter names the parameter's record type (`user: User`), and the rest is inferred. Define records, enums, and traits when you need structure.
 
 ```silt
 type User {
@@ -149,7 +149,7 @@ type User {
   age: Int,
 }
 
-fn greet(user) {
+fn greet(user: User) {
   "hello, {user.name} ({user.age})"
 }
 

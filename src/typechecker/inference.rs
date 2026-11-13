@@ -3460,7 +3460,7 @@ impl TypeChecker {
         self.receiver_taken = false;
         // `x.f(args)` where the type of `x` is unknown: the call waits
         // for it.
-        if let Some((recv, name)) = self.unknown_receiver.take() {
+        if let Some((recv, name, written)) = self.unknown_receiver.take() {
             let args: Vec<Type> = args.iter_mut().map(|a| self.infer_expr(a, env)).collect();
             let result = self.fresh_var();
             self.want_goal(
@@ -3469,6 +3469,7 @@ impl TypeChecker {
                     name,
                     args: Some(args),
                     result: result.clone(),
+                    written,
                 },
                 Origin {
                     span: callee.span,
@@ -4818,7 +4819,7 @@ impl TypeChecker {
                             }
                             // `x.f(..)`: what it calls is decided with
                             // the type of `x` (`check_call`).
-                            self.unknown_receiver = Some((obj_ty.clone(), field));
+                            self.unknown_receiver = Some((obj_ty.clone(), field, name_of(obj)));
                             self.fresh_var()
                         } else {
                             // `x.f`: the field is read when the type of
@@ -4830,6 +4831,7 @@ impl TypeChecker {
                                     name: field,
                                     args: None,
                                     result: result.clone(),
+                                    written: name_of(obj),
                                 },
                                 Origin {
                                     span,
@@ -6328,6 +6330,14 @@ impl TypeChecker {
 }
 
 /// The name a callee is written by (`go`, `m.go`'s `go`).
+/// The name `e` is, when it is one (`x`, not `x.f`).
+fn name_of(e: &Expr) -> Option<Symbol> {
+    match e.kind {
+        ExprKind::Ident(name) => Some(name),
+        _ => None,
+    }
+}
+
 pub(super) fn written_name(e: &Expr) -> Option<Symbol> {
     match e.kind {
         ExprKind::Ident(name) | ExprKind::FieldAccess(_, name, _) => Some(name),

@@ -39,6 +39,9 @@ pub(crate) enum Goal {
         name: Symbol,
         args: Option<Vec<Type>>,
         result: Type,
+        /// The name the receiver is written by, when it is a name: what
+        /// the error's help annotates.
+        written: Option<Symbol>,
     },
     /// `base.{ field: value }` where the type of `base` was unknown at
     /// the update: the field is checked when it is known. It never
@@ -789,6 +792,7 @@ impl TypeChecker {
                         name,
                         args,
                         result,
+                        ..
                     } => {
                         if !matches!(self.apply(&recv), Type::Var(_)) {
                             self.wanted[i].solved = true;

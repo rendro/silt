@@ -384,7 +384,7 @@ pub struct TypeChecker {
     /// The receiver and the name of the callee just checked, when it is
     /// `x.m` and the type of `x` is unknown: `check_call` lets the call
     /// wait (`Goal::Select`).
-    pub(super) unknown_receiver: Option<(Type, Symbol)>,
+    pub(super) unknown_receiver: Option<(Type, Symbol, Option<Symbol>)>,
     /// How `x.m(..)` made a parameter of a function or closure be read
     /// (`x`'s, or one whose type it shares, also through a call that
     /// passes it on), by the callee and the parameter's place, with the

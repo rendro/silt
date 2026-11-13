@@ -1045,9 +1045,7 @@ fn correct_host_results_of_every_shape_pass() {
   host.give("{f(1)} {g(1)} {k(1.0)} {s("abc")} {list.length(fs)} {p} {m(3)} {rs |> list.map({ r -> r.age })}")"#;
     assert_eq!(
         run_probe(body, None),
-        Ok(Value::string(
-            "2 2 Circle(1.0) 0 2 2 Some(3) [2, 1, 3, 9]"
-        ))
+        Ok(Value::string("2 2 Circle(1.0) 0 2 2 Some(3) [2, 1, 3, 9]"))
     );
 }
 

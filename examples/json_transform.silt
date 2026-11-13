@@ -38,7 +38,7 @@ let employee_json = """
   """
 
 -- Compute average salary for a list of employees
-fn avg_salary(employees) {
+fn avg_salary(employees: List(Employee)) {
   let total = employees |> list.fold(0) { acc, e -> acc + e.salary }
   let count = list.length(employees)
   match count {
@@ -48,17 +48,17 @@ fn avg_salary(employees) {
 }
 
 -- Find top N earners from a list of employees
-fn top_earners(employees, n) {
+fn top_earners(employees: List(Employee), n) {
   employees |> list.sort_by { e -> -e.salary } |> list.take(n)
 }
 
 -- Filter employees who have a given skill
-fn with_skill(employees, skill) {
+fn with_skill(employees: List(Employee), skill) {
   employees |> list.filter { e -> list.contains(e.skills, skill) }
 }
 
 -- Flatten all skills from all employees into a unique list
-fn all_unique_skills(employees) {
+fn all_unique_skills(employees: List(Employee)) {
   employees |> list.flat_map { e -> e.skills } |> list.unique |> list.sort
 }
 
