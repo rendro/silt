@@ -53,8 +53,12 @@ A scheduled GitHub Actions workflow fires daily at 06:00 UTC and
 runs 15 minutes of real libfuzzer mutation per target (configurable
 up to the runner wall limit via `workflow_dispatch`). If a target
 crashes, the reproducer is uploaded as an artifact (30-day retention)
-and the workflow run fails. Nightly failures do **not** block
-merges; they show up as a bright signal on the Actions tab.
+and its job fails. Each failed job of a scheduled run opens a GitHub
+issue, "nightly: <job> failed" (a later failure is added to it while it
+is open). Nightly failures do **not** block merges, but they block a
+release: `release.yml` refuses to start while the newest finished
+nightly run on main is not green. Fix the cause, or run the workflow
+again until it is green.
 
 Trigger it on-demand with the "Run workflow" button if you want a
 deep sweep after a big parser or formatter change.
