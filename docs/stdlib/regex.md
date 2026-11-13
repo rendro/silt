@@ -77,6 +77,7 @@ next one, on each thread that searched with a pattern, is not counted in the
 | `captures_all` | `(String, Regex) -> List(List(String))` | Capture groups from all matches |
 | `captures_named` | `(String, Regex) -> Option(Map(String, String))` | Named capture groups from first match |
 | `compile` | `(String) -> Result(Regex, RegexError)` | Check a pattern and compile it, once |
+| `escape` | `(String) -> String` | The text as a pattern that matches it and nothing else |
 | `find` | `(String, Regex) -> Option(String)` | First match |
 | `find_all` | `(String, Regex) -> List(String)` | All matches |
 | `is_match` | `(String, Regex) -> Bool` | Test if pattern matches |
@@ -197,7 +198,29 @@ fn main() -> Result((), regex.RegexError) {
 ```
 
 
-## `regex.find`
+## `regex.escape`
+
+```
+regex.escape(text: String) -> String
+```
+
+The text with a `\` in front of every character that means something in a
+pattern (`.`, `*`, `(`, `[`, `{`, `$` and the others), so the result, as a
+pattern, matches the text and nothing else. Escape text a user gave before
+it goes into a pattern: a `.` in it would match any character, and a `(`
+would make the pattern fail to compile.
+
+```silt
+import regex
+
+fn main() -> Result((), regex.RegexError) {
+  println(regex.escape("1.5 (approx)")) -- 1\.5 \(approx\)
+  let price = regex.compile("^{regex.escape("$1.50")}$")?
+  println(regex.is_match("$1.50", price)) -- true
+  println(regex.is_match("$1x50", price)) -- false
+  Ok(())
+}
+```
 
 ```
 regex.find(text: String, re: Regex) -> Option(String)

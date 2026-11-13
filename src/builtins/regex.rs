@@ -168,6 +168,12 @@ builtins! {
         }
     }
 
+    // Every character that means something in a pattern gets a `\`,
+    // so the pattern matches the text as it is.
+    fn escape(text: &str) -> String {
+        regex_syntax::escape(text)
+    }
+
     fn is_match(text: &str, re: typed::Regex) -> bool {
         re.re.is_match(text)
     }

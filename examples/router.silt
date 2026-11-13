@@ -39,7 +39,7 @@ fn pattern_to_regex(pattern) -> Result(CompiledPattern, regex.RegexError) {
           let param_name = string.slice(seg, 1, string.length(seg))
           ("{source}/([^/]+)", list.append(params, param_name))
         }
-        _ -> ("{source}/{seg}", params)
+        _ -> ("{source}/{regex.escape(seg)}", params)
       }
     }
   let re = regex.compile("{source}$")?

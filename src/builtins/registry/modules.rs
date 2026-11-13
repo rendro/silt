@@ -353,6 +353,7 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn captures_all(text: String, re: Regex) -> List(List(String))", "Capture groups from all matches", regex::captures_all),
                 f("fn captures_named(text: String, re: Regex) -> Option(Map(String, String))", "Named capture groups from first match", regex::captures_named),
                 f("fn compile(pattern: String) -> Result(Regex, RegexError)", "Check a pattern and compile it, once", regex::compile),
+                f("fn escape(text: String) -> String", "The text as a pattern that matches it and nothing else", regex::escape),
                 f("fn find(text: String, re: Regex) -> Option(String)", "First match", regex::find),
                 f("fn find_all(text: String, re: Regex) -> List(String)", "All matches", regex::find_all),
                 f("fn is_match(text: String, re: Regex) -> Bool", "Test if pattern matches", regex::is_match),

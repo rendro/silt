@@ -563,6 +563,7 @@ regex.captures(text: String, re: Regex) -> Option(List(String))
 regex.captures_all(text: String, re: Regex) -> List(List(String))
 regex.captures_named(text: String, re: Regex) -> Option(Map(String, String))
 regex.compile(pattern: String) -> Result(Regex, RegexError)
+regex.escape(text: String) -> String
 regex.find(text: String, re: Regex) -> Option(String)
 regex.find_all(text: String, re: Regex) -> List(String)
 regex.is_match(text: String, re: Regex) -> Bool
