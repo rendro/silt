@@ -875,6 +875,8 @@ process.exit(code: Int) -> Never
 
 ```
 type CsvError { Syntax(String, Int), TypeMismatch(String, String), MissingField(String), Other(String) }
+csv.join_line(fields: List(String)) -> String
 csv.parse(text: String, type a) -> Result(List(a), CsvError)
 csv.split_line(line: String) -> Result(List(String), CsvError)
+csv.stringify(rows: List(a)) -> String
 ```

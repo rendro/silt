@@ -1,0 +1,21 @@
+name,age,score,member,email,born
+"Smith, John",42,1.5,true,john@example.com,
+"say ""hi""",-1,0.25,false,,2024-03-09
+"two
+lines",0,-3.0,true,,
+tab	here,7,100.0,false,"a,b",
+,1,0.0,true,,
+true
+true
+true
+at,start,points
+2024-03-09T07:30:00,07:30:00,2.5
+true
+Ok([Person {name: "x", age: 1, score: 1.0, member: true, email: None, born: None}])
+1,"Smith, John","say ""hi""",,"two
+lines"
+true
+a,b
+true
+true
+[] []

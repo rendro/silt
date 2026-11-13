@@ -19,6 +19,32 @@ use crate::types::canonical::canonicalize;
 /// JSON object or a TOML table are strings.
 const MAP_KEY: &str = "a decoded map's key type must be String";
 
+/// Whether the builtin `builtin_name` writes what a decoder reads back
+/// (`csv.stringify`): its refusals say "write" where a decoder's say
+/// "decode".
+fn writes(builtin_name: &str) -> bool {
+    crate::builtins::registry::registry()
+        .named(builtin_name)
+        .is_some_and(|row| row.writes.is_some())
+}
+
+/// `refusal`, a decoder's, in the words of a builtin that writes what
+/// the decoder reads back.
+fn as_written(mut refusal: Diagnostic) -> Diagnostic {
+    let word = |text: &str| {
+        text.replace("cannot decode", "cannot write")
+            .replace("has no decoder", "cannot be written in a cell")
+            .replace("have no decoder", "cannot be written in a cell")
+            .replace("decodable field types", "writable field types")
+            .replace("its type argument must be", "a row must be")
+    };
+    refusal.message = word(&refusal.message);
+    for line in refusal.help.iter_mut().chain(refusal.notes.iter_mut()) {
+        *line = word(line);
+    }
+    refusal
+}
+
 /// Whether `ty` is a map whose key type is known and no `String`.
 fn map_with_other_keys(ty: &Type) -> bool {
     matches!(ty, Type::Map(key, _) if !matches!(**key, Type::String | Type::Var(_)))
@@ -251,6 +277,23 @@ impl TypeChecker {
     /// looked into, at the top and as the type of a field. A definition
     /// of `owner` decodes that module's opaque types.
     pub(super) fn decode_refusal(
+        &self,
+        builtin_name: &str,
+        decoding: Decoding,
+        written: Option<Symbol>,
+        ty: &Type,
+        owner: &[crate::session::ModuleId],
+        span: Span,
+    ) -> Option<Diagnostic> {
+        let refusal = self.read_refusal(builtin_name, decoding, written, ty, owner, span)?;
+        Some(match writes(builtin_name) {
+            true => as_written(refusal),
+            false => refusal,
+        })
+    }
+
+    /// [`Self::decode_refusal`] in a decoder's words.
+    fn read_refusal(
         &self,
         builtin_name: &str,
         decoding: Decoding,

@@ -720,7 +720,9 @@ pub(super) fn modules() -> Vec<Module> {
             error: "CsvError" => csv::error_text,
             rows: [
                 f("fn parse(text: String, type a) -> Result(List(a), CsvError)", "Every row of a text with a header as a record of the type, its fields by their columns' names", csv::parse).decodes(Decoding::CSV),
+                f("fn join_line(fields: List(String)) -> String", "The fields as one line: a field with a comma, a quote or a line break quoted, its quotes doubled", csv::join_line),
                 f("fn split_line(line: String) -> Result(List(String), CsvError)", "The fields of one line: quoted fields and `\"\"` escapes as RFC 4180 writes them", csv::split_line),
+                f("fn stringify(rows: List(a)) -> String", "A header of the field names, then a line for each record: the text `csv.parse` reads back", csv::stringify).writes(Decoding::CSV),
             ],
         },
     ]
