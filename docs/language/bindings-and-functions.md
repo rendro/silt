@@ -439,6 +439,17 @@ let total = [1, 2, 3] |> list.fold(0) { acc, x -> acc + x }
 pairs |> list.each { (n, word) -> println("{n} is {word}") }
 ```
 
+In the header of a `match`, braces behind a call are the match's arms,
+unless another `{` follows them on their line: then they are the call's
+closure, and that `{` opens the arms.
+
+```silt
+match list.find(xs) { x -> x > 1 } {
+  Some(x) -> println(x)
+  None -> println("none")
+}
+```
+
 **Return type annotations:**
 
 ```silt

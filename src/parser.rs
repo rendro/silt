@@ -3764,12 +3764,15 @@ impl<'src> Parser<'src> {
                 HeaderKind::LoopInit => true,
                 // A match body has exactly the closure shape
                 // (`{ x -> ... }`), so in a scrutinee the braces are the
-                // match body. The one exception is the right operand of
-                // `|>`, where a closure is allowed as long as something
-                // that can be the rest of the scrutinee, or the match
-                // body, comes after it.
+                // match body, unless another `{` follows them on their
+                // line: then they are the closure of a call and the `{`
+                // is the body (`match list.find(xs) { x -> x > 1 } {`).
+                // Behind `|>` a closure is also allowed where something
+                // else that can be the rest of the scrutinee comes after
+                // it.
                 HeaderKind::MatchScrutinee => {
-                    header.in_pipe_rhs && self.scrutinee_continues_after_braces()
+                    self.brace_follows_braces_on_line()
+                        || header.in_pipe_rhs && self.scrutinee_continues_after_braces()
                 }
             },
         }
@@ -3783,13 +3786,19 @@ impl<'src> Parser<'src> {
         self.header_here().is_some()
     }
 
-    /// For closure-shaped braces at the current position: true when the
-    /// token after the matching `}` can continue the expression the
-    /// braces belong to, or open a further block. False when nothing of
-    /// the kind follows: in a match scrutinee the braces then have to be
-    /// the match body itself, as in
-    /// `match xs |> list.first { Some(x) -> x ... }`.
-    fn scrutinee_continues_after_braces(&self) -> bool {
+    /// For the braces at the current position: true when another `{`
+    /// follows their `}` on the same line.
+    fn brace_follows_braces_on_line(&self) -> bool {
+        let next = self.after_braces();
+        next < self.tokens.len()
+            && self.tokens[next].kind == Token::LBrace
+            && !self.starts_line.get(next).copied().unwrap_or(true)
+    }
+
+    /// The index of the token behind the `}` that closes the braces at
+    /// the current position (`tokens.len()` or more if they are not
+    /// closed).
+    fn after_braces(&self) -> usize {
         let inside = self.delim_depth_at(self.pos) + 1;
         let mut close = self.pos + 1;
         while close < self.tokens.len() {
@@ -3802,11 +3811,21 @@ impl<'src> Parser<'src> {
             }
             close += 1;
         }
-        if close >= self.tokens.len() {
+        close + 1
+    }
+
+    /// For closure-shaped braces at the current position: true when the
+    /// token after the matching `}` can continue the expression the
+    /// braces belong to, or open a further block. False when nothing of
+    /// the kind follows: in a match scrutinee the braces then have to be
+    /// the match body itself, as in
+    /// `match xs |> list.first { Some(x) -> x ... }`.
+    fn scrutinee_continues_after_braces(&self) -> bool {
+        let next = self.after_braces();
+        if next > self.tokens.len() {
             // Unclosed braces: leave the report to the closure parser.
             return true;
         }
-        let next = close + 1;
         let crossed_newline = self.starts_line.get(next).copied().unwrap_or(false);
         self.tokens
             .get(next)

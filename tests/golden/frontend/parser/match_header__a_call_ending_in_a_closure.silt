@@ -1,0 +1,28 @@
+-- In a `match` header, braces behind a call followed on their line by
+-- another `{` are the call's closure, and that `{` opens the arms, as
+-- behind `|>` and in a `loop` header. A match whose arms are followed
+-- by something else on their line keeps its meaning.
+import list
+import string
+import task
+import time
+
+fn main() {
+  let xs = [1, 2, 3]
+  match list.find(xs) { x -> x > 1 } {
+    Some(x) -> println(x)
+    None -> println("none")
+  }
+  match list.map(xs) { x -> x * 10 } {
+    [10, ..rest] -> println(rest)
+    _ -> println("no")
+  }
+  match task.deadline(time.ms(5000)) { -> 7 } {
+    Ok(v) -> println(v)
+    Err(_) -> println("late")
+  }
+  let n = 2
+  let r = match n { 1 -> "one"
+    _ -> "other" } |> string.length
+  println(r)
+}
