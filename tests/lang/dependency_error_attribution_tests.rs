@@ -154,7 +154,7 @@ fn sibling_module_attribution_still_correct() {
 // stays opt-in to keep default `cargo test` runs hermetic.
 
 fn skip_unless_git_integration() -> bool {
-    if std::env::var("SILT_GIT_INTEGRATION_TESTS").is_err() {
+    if !crate::env_switch::on("SILT_GIT_INTEGRATION_TESTS") {
         eprintln!("SKIP: git test skipped; set SILT_GIT_INTEGRATION_TESTS=1 to enable");
         true
     } else {

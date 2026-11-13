@@ -7,8 +7,10 @@
 //! such a message is answered with a JSON-RPC error and the session goes
 //! on: -32700 (parse error) for a body that is not JSON or a header with
 //! no length that can be read, and for a body over [`MAX_BODY`], whose
-//! bytes are skipped unread; -32600 (invalid request) for JSON that is no
-//! message. Only the end of stdin, or an error reading it, ends it.
+//! bytes are skipped unread after the answer; -32600 (invalid request)
+//! for JSON that is no message, also a request whose id lsp-server cannot
+//! hold (a number that is no 32-bit integer). Only the end of stdin, or an
+//! error reading it, ends it.
 
 use std::io::{self, BufRead, Read, Write};
 use std::thread;
@@ -42,6 +44,10 @@ pub(crate) enum Frame {
         id: Value,
         code: i64,
         message: String,
+        /// The bytes of the input to pass over after the answer: the
+        /// body of a message over the limit, which is answered before
+        /// it arrives (see [`pass_over`]).
+        skip: u64,
     },
     /// The end of the input.
     End,
@@ -91,15 +97,14 @@ fn read_frame_within(input: &mut impl BufRead, max_body: u64) -> io::Result<Fram
         }
     };
     if length > max_body {
-        // Skipped unread, so the next message is read from its start.
-        let skipped = io::copy(&mut input.by_ref().take(length), &mut io::sink())?;
-        if skipped < length {
-            return Ok(Frame::End);
-        }
-        return Ok(fault(
-            PARSE_ERROR,
-            &format!("a message of {length} bytes is over the limit of {max_body} bytes"),
-        ));
+        // Answered at once, then skipped unread, so the next message is
+        // read from its start. (A length near 2^64 is not waited for.)
+        return Ok(Frame::Fault {
+            id: Value::Null,
+            code: PARSE_ERROR,
+            message: format!("a message of {length} bytes is over the limit of {max_body} bytes"),
+            skip: length,
+        });
     }
     let mut body = Vec::new();
     let read = input.by_ref().take(length).read_to_end(&mut body)?;
@@ -119,16 +124,22 @@ fn read_frame_within(input: &mut impl BufRead, max_body: u64) -> io::Result<Fram
     // method is no string, or whose id is no number or string, would go
     // unanswered.
     if let Some(method) = value.get("method") {
-        let id_ok = value
-            .get("id")
-            .is_none_or(|id| matches!(id, Value::Number(_) | Value::String(_)));
+        // (lsp-server holds an id that is a 32-bit integer or a string;
+        // a request with another number, `1.5`, would be read as a
+        // notification and go unanswered.)
+        let id_ok = value.get("id").is_none_or(|id| match id {
+            Value::Number(n) => n.as_i64().is_some_and(|n| i32::try_from(n).is_ok()),
+            Value::String(_) => true,
+            _ => false,
+        });
         if !method.is_string() || !id_ok {
             return Ok(Frame::Fault {
                 id,
                 code: INVALID_REQUEST,
                 message: "the message is no request or notification: its method must be a \
-                          string, and its id a number or a string"
+                          string, and its id a whole number of 32 bits or a string"
                     .to_string(),
+                skip: 0,
             });
         }
     }
@@ -138,6 +149,7 @@ fn read_frame_within(input: &mut impl BufRead, max_body: u64) -> io::Result<Fram
             id,
             code: INVALID_REQUEST,
             message: format!("the message is no request, response or notification: {e}"),
+            skip: 0,
         }),
     }
 }
@@ -146,11 +158,22 @@ fn read_frame_within(input: &mut impl BufRead, max_body: u64) -> io::Result<Fram
 /// its last one, also where it does not start the line. After a message
 /// whose length was wrong, the rest of its body is read as a header line,
 /// and the next message's header is at its end: it is taken, so the
-/// reader finds the messages again.
+/// reader finds the messages again. A header whose name only ends in it
+/// (`X-Content-Length`) is another header: the name is not behind a
+/// letter, a digit, `-` or `_`.
 fn content_length(line: &str) -> Option<&str> {
     const NAME: &str = "content-length:";
-    let at = line.to_ascii_lowercase().rfind(NAME)?;
+    let lower = line.to_ascii_lowercase();
+    let at = lower.rmatch_indices(NAME).map(|(at, _)| at).find(|at| {
+        let before = lower.as_bytes()[..*at].last();
+        before.is_none_or(|b| !(b.is_ascii_alphanumeric() || *b == b'-' || *b == b'_'))
+    })?;
     Some(&line[at + NAME.len()..])
+}
+
+/// Pass over `bytes` bytes of `input`: whether there were that many.
+pub(crate) fn pass_over(input: &mut impl BufRead, bytes: u64) -> io::Result<bool> {
+    Ok(io::copy(&mut input.by_ref().take(bytes), &mut io::sink())? == bytes)
 }
 
 fn fault(code: i64, message: &str) -> Frame {
@@ -158,6 +181,7 @@ fn fault(code: i64, message: &str) -> Frame {
         id: Value::Null,
         code,
         message: message.to_string(),
+        skip: 0,
     }
 }
 
@@ -228,11 +252,21 @@ pub(crate) fn stdio() -> (Connection, IoThreads) {
                             return Ok(());
                         }
                     }
-                    Frame::Fault { id, code, message } => {
+                    Frame::Fault {
+                        id,
+                        code,
+                        message,
+                        skip,
+                    } => {
                         eprintln!("silt-lsp: a message could not be read: {message}");
-                        let mut out = io::stdout().lock();
-                        out.write_all(&fault_response(id, code, &message))?;
-                        out.flush()?;
+                        {
+                            let mut out = io::stdout().lock();
+                            out.write_all(&fault_response(id, code, &message))?;
+                            out.flush()?;
+                        }
+                        if !pass_over(&mut input, skip)? {
+                            return Ok(());
+                        }
                     }
                     Frame::End => return Ok(()),
                 }
@@ -256,7 +290,16 @@ mod tests {
         loop {
             match read_frame(&mut input).unwrap() {
                 Frame::End => return out,
-                frame => out.push(frame),
+                frame => {
+                    let skip = match &frame {
+                        Frame::Fault { skip, .. } => *skip,
+                        _ => 0,
+                    };
+                    out.push(frame);
+                    if !pass_over(&mut input, skip).unwrap() {
+                        return out;
+                    }
+                }
             }
         }
     }
@@ -297,10 +340,10 @@ mod tests {
             framed(PING)
         );
         let mut reader = io::BufReader::new(input.as_bytes());
-        assert_eq!(
-            code(&read_frame_within(&mut reader, 60).unwrap()),
-            Some(PARSE_ERROR)
-        );
+        let fault = read_frame_within(&mut reader, 60).unwrap();
+        assert_eq!(code(&fault), Some(PARSE_ERROR));
+        assert!(matches!(fault, Frame::Fault { skip: 61, .. }), "{fault:?}");
+        assert!(pass_over(&mut reader, 61).unwrap());
         assert!(matches!(
             read_frame_within(&mut reader, 60).unwrap(),
             Frame::Message(_)
@@ -356,6 +399,60 @@ mod tests {
                 (Some(INVALID_REQUEST), Value::Null),
             ]
         );
+    }
+
+    /// A length far over the limit (2^64 - 1) is answered at once, not
+    /// after that many bytes came: the answer does not wait for the body.
+    #[test]
+    fn a_length_over_the_limit_is_answered_before_its_body() {
+        let input = format!("Content-Length: {}\r\n\r\n{}", u64::MAX, framed(PING));
+        let mut reader = io::BufReader::new(input.as_bytes());
+        let fault = read_frame(&mut reader).unwrap();
+        assert_eq!(code(&fault), Some(PARSE_ERROR), "{fault:?}");
+        assert!(
+            matches!(fault, Frame::Fault { skip: u64::MAX, .. }),
+            "{fault:?}"
+        );
+        // Nothing of the body was read yet.
+        assert_eq!(reader.fill_buf().unwrap(), framed(PING).as_bytes());
+    }
+
+    /// A header whose name only ends in `Content-Length` is another
+    /// header, wherever it stands.
+    #[test]
+    fn a_header_named_like_the_length_is_not_the_length() {
+        let input = format!(
+            "Content-Length: {}\r\nX-Content-Length: 5\r\n\r\n{PING}",
+            PING.len()
+        );
+        let found = frames(&input);
+        assert!(matches!(&found[..], [Frame::Message(_)]), "{found:?}");
+        assert_eq!(content_length("}Content-Length: 3"), Some(" 3"));
+        assert_eq!(content_length("x-content-length: 3"), None);
+        assert_eq!(content_length("a_Content-Length: 4"), None);
+        assert_eq!(content_length("{}Content-Length: 4"), Some(" 4"));
+    }
+
+    /// A request whose id is a number lsp-server cannot hold (`1.5`, one
+    /// over 32 bits) is answered with -32600, not read as a notification.
+    #[test]
+    fn a_request_with_an_id_that_is_no_32_bit_integer_is_invalid() {
+        for id in ["1.5", "4294967296", "-1e3"] {
+            let body = format!(r#"{{"jsonrpc":"2.0","id":{id},"method":"textDocument/hover"}}"#);
+            let found = frames(&framed(&body));
+            assert!(
+                matches!(
+                    &found[..],
+                    [Frame::Fault {
+                        code: INVALID_REQUEST,
+                        ..
+                    }]
+                ),
+                "{id}: {found:?}"
+            );
+        }
+        let found = frames(&framed(PING));
+        assert!(matches!(&found[..], [Frame::Message(_)]), "{found:?}");
     }
 
     #[test]

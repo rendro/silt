@@ -2,7 +2,9 @@ name: Release
 
 # A release in one step: Actions -> Release -> "Run workflow" with the
 # version (or `gh workflow run release.yml -f version=0.17.1`). The
-# workflow checks that main is green and the version is new, writes the
+# workflow checks that main is green (its CI run, and the newest finished
+# runs of the scheduled fuzz-nightly.yml and audit.yml), and the version
+# is new, writes the
 # version into Cargo.toml and Cargo.lock, commits it to main, tags it,
 # builds every target and the playground, makes the GitHub release, and
 # moves the website's silt submodule to the tag.
@@ -76,6 +78,17 @@ jobs:
             --jq '.[0] | "\(.status) \(.conclusion)"')
           [ "$ci" = "completed success" ] \
             || fail "CI on main ($sha) is \"${ci:-not run}\", not green: wait for it, or fix main first."
+          # The scheduled checks: the newest finished run of each on main
+          # must be green too. One that was red is fixed, or run again
+          # from the Actions tab until it is green, before a release.
+          for workflow in fuzz-nightly.yml audit.yml; do
+            last=$(gh run list --workflow "$workflow" --branch main --status completed --limit 1 \
+              --json conclusion,url --jq '.[] | "\(.conclusion) \(.url)"')
+            case "$last" in
+              "" | "success "*) ;;
+              *) fail "The newest run of $workflow on main ended \"${last%% *}\", not green (${last#* }): fix the cause, or run it again until it is green." ;;
+            esac
+          done
           echo "Releasing $current -> $VERSION from $sha"
 
       - name: Write the version, commit and tag
@@ -86,11 +99,16 @@ jobs:
           set -euo pipefail
           current=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
           # The package's own version: the first `version =` line of
-          # Cargo.toml, and silt's entry in Cargo.lock.
+          # Cargo.toml, and silt's entry in each lock file: the root's and
+          # those of the playground and fuzz crates, which depend on silt
+          # by path (their --locked builds fail on a stale one).
+          locks="Cargo.lock playground/Cargo.lock fuzz/Cargo.lock"
           sed -i "0,/^version = \"$current\"$/s//version = \"$VERSION\"/" Cargo.toml
-          perl -0pi -e "s/name = \"silt\"\nversion = \"\Q$current\E\"/name = \"silt\"\nversion = \"$VERSION\"/" Cargo.lock
-          [ "$(git diff --numstat | wc -l)" = 2 ] || { git diff; echo "::error::The version was not written to exactly Cargo.toml and Cargo.lock."; exit 1; }
-          cargo metadata --locked --format-version 1 > /dev/null
+          perl -0pi -e "s/name = \"silt\"\nversion = \"\Q$current\E\"/name = \"silt\"\nversion = \"$VERSION\"/" $locks
+          [ "$(git diff --numstat | wc -l)" = 4 ] || { git diff; echo "::error::The version was not written to exactly Cargo.toml and the three Cargo.lock files."; exit 1; }
+          for manifest in Cargo.toml playground/Cargo.toml fuzz/Cargo.toml; do
+            cargo metadata --locked --manifest-path "$manifest" --format-version 1 > /dev/null
+          done
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -qam "Version $VERSION"

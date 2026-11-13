@@ -1,0 +1,5 @@
+error[parse]: the rest of a record pattern is `..` alone, `P { x, .. }`: it binds no name
+ --> record_pattern__three_dots_are_no_rest.silt:8:14
+   |
+ 8 |   let P { x, ... } = P { x: 1, y: 2 }
+   |              ^^^ the rest of a record pattern is `..` alone, `P { x, .. }`: it binds no name

@@ -1,6 +1,6 @@
 # Fuzzing silt
 
-silt ships eleven libfuzzer targets:
+silt ships thirteen libfuzzer targets:
 
 | Target             | Exercises                                          |
 |--------------------|----------------------------------------------------|
@@ -14,6 +14,8 @@ silt ships eleven libfuzzer targets:
 | `fuzz_decode`      | the decoder on any text (`src/fuzz_invariants.rs`): `json.parse`, `toml.parse`, `toml.parse_map` and `toml.parse_list` into each of a set of types, with and without written impls of a fixed set, as the VM's frame runs a decoding: no panic, the same result again, and `json.decode` of a JSON document's `json.Value` decodes alike (value or error, the impls' calls in order); the JSON and TOML text the input's bytes choose too |
 | `fuzz_package_files` | the readers of `silt.toml` and `silt.lock` on any text (`src/fuzz_invariants.rs`): no panic, an error's place inside the text, and a lockfile that reads is written to a text that reads back as the same lockfile and is written alike again |
 | `fuzz_csv`         | the csv reader of `csv.parse` and `csv.split_line` on any text (`src/fuzz_invariants.rs`): no panic, an error's place inside the text, and records that read, written again with every field quoted, read back the same |
+| `fuzz_http_response` | the client's reading of a response (`http.get`, `http.request`; `src/fuzz_invariants.rs`): any bytes as a response's head and body become a `Response` without a panic, with the status, headers and body sent (a gzip body unpacked, nothing to a `HEAD`), and a redirect goes to a URL without a fragment, on the same server for a path, with no `.` or `..` left |
+| `fuzz_lsp_messages` | `silt lsp` on any bytes from the editor (`src/fuzz_invariants.rs`): its transport (`src/lsp/transport.rs`) reads the same messages however the bytes arrive, and answers one that cannot be read with a JSON-RPC parse error or invalid request, and the server handles each without a panic and answers each request it handled once |
 | `fuzz_run`         | the differential oracle (`tests/oracle/oracle.rs`): a program that checks clean and stays inside the VM is run in slices of 2000 steps and of one step under a step budget; the runs agree, and none ends in a type confusion, an internal error or a panic |
 
 Invariant helpers live in `src/fuzz_invariants.rs` and are exercised
@@ -53,8 +55,12 @@ A scheduled GitHub Actions workflow fires daily at 06:00 UTC and
 runs 15 minutes of real libfuzzer mutation per target (configurable
 up to the runner wall limit via `workflow_dispatch`). If a target
 crashes, the reproducer is uploaded as an artifact (30-day retention)
-and the workflow run fails. Nightly failures do **not** block
-merges; they show up as a bright signal on the Actions tab.
+and its job fails. Each failed job of a scheduled run opens a GitHub
+issue, "nightly: <job> failed" (a later failure is added to it while it
+is open). Nightly failures do **not** block merges, but they block a
+release: `release.yml` refuses to start while the newest finished
+nightly run on main is not green. Fix the cause, or run the workflow
+again until it is green.
 
 Trigger it on-demand with the "Run workflow" button if you want a
 deep sweep after a big parser or formatter change.
@@ -66,7 +72,7 @@ While actively working on parser or formatter code, run
 ```sh
 fuzz/local.sh fuzz_formatter       # single target, 10 min
 fuzz/local.sh fuzz_formatter 60    # quick 1-minute sanity check
-fuzz/local.sh all 3600             # all nine targets in parallel, 1 hr
+fuzz/local.sh all 3600             # every target in parallel, 1 hr
 ```
 
 This is the fastest way to find new bugs — seconds of local
@@ -77,8 +83,8 @@ across all CPU cores when invoked with `all`.
 
 When a local run or the nightly job surfaces a new crash:
 
-1. **Reproduce it.** `cargo +nightly fuzz run <target> path/to/crash`
-2. **Minimise.** `cargo +nightly fuzz tmin <target> path/to/crash` —
+1. **Reproduce it.** `cargo +nightly fuzz run --target x86_64-unknown-linux-gnu <target> path/to/crash`
+2. **Minimise.** `cargo +nightly fuzz tmin --target x86_64-unknown-linux-gnu <target> path/to/crash` —
    produces a minimized input under `fuzz/artifacts/<target>/`.
 3. **Lock it.** Copy the (ideally minimised) input to
    `fuzz/corpus/<target>/<short-name>.silt`. The corpus-replay gate
@@ -100,6 +106,12 @@ fuzz/replay.sh fuzz_formatter
 
 Use it as a pre-push sanity check — if it fails locally, it will
 fail in CI.
+
+The fuzz crate is built from its own `fuzz/Cargo.lock`. cargo-fuzz takes
+no `--locked`, so the CI jobs first run
+`cargo metadata --locked --manifest-path fuzz/Cargo.toml`, which fails on
+a lock that no longer fits `fuzz/Cargo.toml`; a dependency change comes
+with the lock file's change.
 
 ## Seeding new corpora
 

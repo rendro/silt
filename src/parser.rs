@@ -838,6 +838,19 @@ impl<'src> Parser<'src> {
             && matches!(kind(i + 1), Some(Token::Colon))
     }
 
+    /// Whether the `{` at the cursor holds the fields of a record: a
+    /// field name then `,`, `:` or `}` (`{ x, y }`, `{ x }`), not a
+    /// header left open (`fn fa( {`).
+    fn braces_hold_fields(&self) -> bool {
+        let kind = |i: usize| self.tokens.get(i).map(|t| &t.kind);
+        self.at(&Token::LBrace)
+            && matches!(kind(self.pos + 1), Some(t) if matches!(t, Token::Ident(_)) || t.keyword().is_some())
+            && matches!(
+                kind(self.pos + 2),
+                Some(Token::Comma | Token::Colon | Token::RBrace)
+            )
+    }
+
     /// The error for a field named by the keyword at `span`, written
     /// alone, where `what` (a value or a pattern) belongs behind it.
     fn keyword_field_alone(span: Span, keyword: &str, what: &str, example: &str) -> Diagnostic {
@@ -1879,7 +1892,7 @@ impl<'src> Parser<'src> {
                     err.span,
                     format!("expected parameter name, found {}", self.found()),
                 );
-                match self.at(&Token::LBrace) {
+                match self.braces_hold_fields() {
                     true => refused.with_help(RECORD_PATTERN_HELP),
                     false => refused,
                 }
@@ -1902,7 +1915,7 @@ impl<'src> Parser<'src> {
                     self.span(),
                     format!("expected parameter name, found {}", self.found()),
                 );
-                Err(match self.at(&Token::LBrace) {
+                Err(match self.braces_hold_fields() {
                     true => refused.with_help(RECORD_PATTERN_HELP),
                     false => refused,
                 })
@@ -4445,14 +4458,15 @@ impl<'src> Parser<'src> {
                 |p| {
                     p.nothing_after_rest(has_rest, "..", '}', "a record pattern")?;
                     if p.at(&Token::DotDot) {
-                        p.advance();
+                        let dots = p.advance().span;
                         has_rest = true;
                         // (`..rest`, `...`: the rest of a record is not
                         // bound.)
                         if !p.nl_before() && matches!(p.peek(), Token::Dot | Token::Ident(_)) {
+                            let behind = p.span();
                             return Err(Diagnostic::error(
                                 Code::UnsupportedSyntax,
-                                p.span(),
+                                Span { end: behind.end, ..dots },
                                 "the rest of a record pattern is `..` alone, `P { x, .. }`: it binds no name",
                             ));
                         }

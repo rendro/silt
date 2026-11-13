@@ -38,7 +38,7 @@
 //! `silt::vm::submit_panicking_io_for_test` is exposed. Run with:
 //!
 //! ```sh
-//! cargo test --features test-hooks --test round76_iopool_panic_typed_err_tests
+//! cargo test --features test-hooks --test iopool_panic_typed_err_tests
 //! ```
 
 #![cfg(feature = "test-hooks")]

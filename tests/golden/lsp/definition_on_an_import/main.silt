@@ -1,0 +1,19 @@
+-- cmd: lsp
+-- lsp: definition 11:8
+-- lsp: definition 12:8
+-- lsp: definition 12:19
+-- lsp: definition 14:8
+-- lsp: definition 14:18
+-- lsp: definition 13:8
+-- Definition on the module an import names opens its file, also before
+-- `as` and before the items; on an item of `import m.{ f }` it goes to
+-- `f`. One of silt's own modules has no file.
+import geometry
+import geometry.{ double }
+import list
+import shapes as sh
+
+fn main() {
+  let p = sh.Pt { x: 1, y: 2 }
+  println(sh.area(p) + double(1) + geometry.triple(1) + list.length([p]))
+}
