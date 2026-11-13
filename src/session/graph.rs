@@ -136,23 +136,28 @@ pub enum ImportResolution {
 /// as far as they can be read, with their doc comments, and its lex and
 /// parse errors.
 pub fn parse_text(file: FileId, text: &str) -> (ast::Program, Vec<Diagnostic>) {
-    let (program, errors, ..) = parse_module(file, text, None);
+    let (program, errors, ..) = parse_module(file, text, None, false);
     (program, errors)
 }
 
-/// `parse_text` of a module file, or of the REPL entry `cell`; whether
-/// the text is cut short (`Lexed::is_cut_short`); and whether the
-/// declarations are not all of the text (`Module::incomplete`).
+/// `parse_text` of a module file, of the REPL entry `cell`, or of the
+/// signatures of a host module (`host`); whether the text is cut short
+/// (`Lexed::is_cut_short`); and whether the declarations are not all of
+/// the text (`Module::incomplete`).
 fn parse_module(
     file: FileId,
     text: &str,
     cell: Option<usize>,
+    host: bool,
 ) -> (ast::Program, Vec<Diagnostic>, bool, bool) {
     let lexed = Lexer::new(file, text).tokenize();
     let cut_short = lexed.is_cut_short();
     let mut parser = Parser::new(lexed, text);
     if cell.is_none() {
         parser = parser.with_docs();
+    }
+    if host {
+        parser = parser.with_signatures();
     }
     let (program, errors) = match cell {
         Some(n) => parser.parse_cell(intern(&cell_name(n))),
@@ -483,7 +488,8 @@ impl ModuleGraph {
         module.file = Some(file);
         module.imports.clear();
         module.load_error = None;
-        let (ast, problems, cut_short, incomplete) = parse_module(file, text, cell);
+        let host = module.host.is_some();
+        let (ast, problems, cut_short, incomplete) = parse_module(file, text, cell, host);
         module.ast = Some(ast);
         module.problems = problems;
         module.cut_short = cut_short;

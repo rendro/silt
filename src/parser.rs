@@ -409,6 +409,23 @@ pub struct Parser<'src> {
     /// "declaration" in a file, a "statement" in the REPL, whose entries
     /// are statements (see `parse_cell`).
     top_level_item: &'static str,
+    /// Whether a function at the top level may be a header with no
+    /// body: the signatures of a host module, and the builtin registry
+    /// (see `with_signatures`).
+    signatures: bool,
+}
+
+/// Where a function header is parsed, which says whether it may stand
+/// without a body.
+#[derive(Clone, Copy, PartialEq)]
+enum FnBody {
+    /// A method of a trait declaration, or a signature (see
+    /// `Parser::with_signatures`): the body may be left out.
+    Optional,
+    /// A function at the top level of a file.
+    Needed,
+    /// A method of an impl, which stands in for the trait's default.
+    NeededInImpl,
 }
 
 /// Delimiter depth before each token; see `Parser::delim_depth`.
@@ -471,6 +488,7 @@ impl<'src> Parser<'src> {
             depth: 0,
             docs: None,
             top_level_item: "declaration",
+            signatures: false,
         }
     }
 
@@ -480,6 +498,24 @@ impl<'src> Parser<'src> {
     pub fn with_docs(mut self) -> Self {
         self.docs = Some(std::mem::take(&mut self.comments));
         self
+    }
+
+    /// Read a function at the top level that has no body as a
+    /// signature: the text is a host module's signatures, or the builtin
+    /// registry. Anywhere else only a trait declaration's methods may
+    /// leave out the body.
+    pub fn with_signatures(mut self) -> Self {
+        self.signatures = true;
+        self
+    }
+
+    /// How the body of a function at the top level is read.
+    fn top_level_body(&self) -> FnBody {
+        if self.signatures {
+            FnBody::Optional
+        } else {
+            FnBody::Needed
+        }
     }
 
     /// Parse a REPL entry. One that starts with a declaration keyword is
@@ -1359,10 +1395,10 @@ impl<'src> Parser<'src> {
     /// trait or the impl fails with it.) Returns whether the body goes
     /// on. A line in the body that does not start with `fn` is no
     /// method: the error says what such a body holds.
-    fn parse_method(&mut self, methods: &mut Vec<FnDecl>) -> Result<bool> {
+    fn parse_method(&mut self, methods: &mut Vec<FnDecl>, body: FnBody) -> Result<bool> {
         let start = self.pos;
         self.fn_stub = None;
-        match self.parse_fn_decl() {
+        match self.parse_fn_decl(body) {
             Ok(method) => {
                 methods.push(method);
                 Ok(true)
@@ -1448,7 +1484,7 @@ impl<'src> Parser<'src> {
                 self.advance();
                 match self.peek() {
                     Token::Fn => {
-                        let parsed = self.parse_fn_decl();
+                        let parsed = self.parse_fn_decl(self.top_level_body());
                         // The function, or the stub that stands in for
                         // it, is public and starts at its `pub`. If
                         // pub's line carries a doc, that takes
@@ -1572,7 +1608,7 @@ impl<'src> Parser<'src> {
                     "'opaque' needs 'pub': a private type is not seen outside its module at all",
                 ))
             }
-            Token::Fn => Ok(Decl::Fn(self.parse_fn_decl()?)),
+            Token::Fn => Ok(Decl::Fn(self.parse_fn_decl(self.top_level_body())?)),
             Token::Type => Ok(Decl::Type(self.parse_type_decl()?)),
             Token::Trait => self.parse_trait_or_impl(),
             Token::Import => self.parse_import(),
@@ -1600,7 +1636,7 @@ impl<'src> Parser<'src> {
     /// with an empty body, which the checker trusts for its signature
     /// and does not check, so that uses of the name are not "undefined"
     /// errors of their own.
-    fn parse_fn_decl(&mut self) -> Result<FnDecl> {
+    fn parse_fn_decl(&mut self, body: FnBody) -> Result<FnDecl> {
         let span = self.span();
         let doc = self.doc_for_span(span);
         self.expect(&Token::Fn)?;
@@ -1618,7 +1654,7 @@ impl<'src> Parser<'src> {
             is_signature_only: false,
             doc,
         };
-        match self.parse_fn_rest(&mut decl) {
+        match self.parse_fn_rest(&mut decl, body) {
             Ok((where_clauses, body, is_signature_only)) => {
                 decl.where_clauses = where_clauses;
                 decl.body = body;
@@ -1638,8 +1674,13 @@ impl<'src> Parser<'src> {
 
     /// What follows the name of the function `decl`: its parameters and
     /// return type, which are entered in `decl` as they are read, then
-    /// its where clauses, its body, and whether it has none.
-    fn parse_fn_rest(&mut self, decl: &mut FnDecl) -> Result<(Vec<WhereClause>, Expr, bool)> {
+    /// its where clauses, its body, and whether it has none, which only
+    /// a header read under `FnBody::Optional` may.
+    fn parse_fn_rest(
+        &mut self,
+        decl: &mut FnDecl,
+        body_rule: FnBody,
+    ) -> Result<(Vec<WhereClause>, Expr, bool)> {
         self.fn_header_whole = false;
         decl.params = self.parse_fn_params()?;
         if self.peek() == &Token::Arrow {
@@ -1655,11 +1696,31 @@ impl<'src> Parser<'src> {
             self.fn_body = outer;
             self.bodies -= 1;
             Ok((where_clauses, body?, false))
-        } else {
-            // Abstract method — no body (e.g. trait method declarations).
+        } else if body_rule == FnBody::Optional
+            || !(self.nl_before() || self.at(&Token::RBrace) || self.at(&Token::Eof))
+        {
+            // A method of a trait declaration, or a signature: no body.
             // The Unit placeholder keeps the AST shape uniform; the
-            // is_signature_only flag is the authoritative signal.
+            // is_signature_only flag is the authoritative signal. (A
+            // token on the header's line that starts no body, `fn f() =
+            // 1` or `fn f(): Int`, is a mistake in the header, which the
+            // parse of what follows reports.)
             Ok((where_clauses, self.mk_expr(ExprKind::Unit, decl.span), true))
+        } else {
+            // Said at the header: what follows it may be lines below.
+            let name = intern::resolve(decl.name);
+            let err = Diagnostic::error(
+                Code::ExpectedToken,
+                self.close(decl.span),
+                format!("`{name}` has no body: a function needs a body in braces, `{{ ... }}`"),
+            );
+            Err(match body_rule {
+                FnBody::NeededInImpl => err.with_help(
+                    "only a trait's own methods may leave out the body; to keep the trait's \
+                     default, leave the method out of the impl",
+                ),
+                _ => err.with_help("only a trait's own methods may leave out the body"),
+            })
         }
     }
 
@@ -2202,7 +2263,7 @@ impl<'src> Parser<'src> {
                 if self.at(&Token::RBrace) {
                     break;
                 }
-                if !self.parse_method(&mut methods)? {
+                if !self.parse_method(&mut methods, FnBody::Optional)? {
                     closed = false;
                     break;
                 }
@@ -2318,7 +2379,7 @@ impl<'src> Parser<'src> {
                 if self.at(&Token::RBrace) {
                     break;
                 }
-                if !self.parse_method(&mut methods)? {
+                if !self.parse_method(&mut methods, FnBody::NeededInImpl)? {
                     closed = false;
                     break;
                 }

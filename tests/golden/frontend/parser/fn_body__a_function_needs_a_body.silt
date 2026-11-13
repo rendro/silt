@@ -1,0 +1,33 @@
+-- cmd: check
+-- exit: 1
+-- Only a trait's own methods may leave out the body. A function at the
+-- top level without one is refused (it used to return `()`), and so is
+-- a method of an impl without one (it used to replace the trait's
+-- default body with nothing), and a body forgotten on the next line.
+trait Tick {
+  fn tick(self) -> String
+  fn tock(self) {
+    println("default")
+  }
+}
+
+type T {
+  a: Int,
+}
+
+trait Tick for T {
+  fn tick(self) -> String {
+    "t"
+  }
+  fn tock(self)
+}
+
+fn helper()
+
+fn compute(x: Int) -> Int
+  x * 2
+
+fn main() {
+  println(helper())
+  println(compute(1))
+}
