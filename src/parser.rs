@@ -399,6 +399,8 @@ pub struct Parser<'src> {
     /// (`Program::unknown`).
     unknown: Vec<Symbol>,
     depth: usize,
+    /// How many of the `depth` levels are patterns.
+    pattern_depth: usize,
     /// The comments of the source, when the parser is asked to attach
     /// documentation (see `with_docs`): each top-level declaration and
     /// each trait or impl method gets its `doc` from the comments in
@@ -471,6 +473,7 @@ impl<'src> Parser<'src> {
             statements: StatementMarks::default(),
             errors: Vec::new(),
             depth: 0,
+            pattern_depth: 0,
             docs: None,
             top_level_item: "declaration",
         }
@@ -2510,6 +2513,19 @@ impl<'src> Parser<'src> {
             let fields = fields.into_iter().flatten().collect();
             return Ok(self.mk_type(TypeExprKind::AnonRecord { fields, tail }, start));
         }
+        // (Where a type is needed and something else stands: `x: )`,
+        // `type A = "s"`, `[Int]`.)
+        if !matches!(self.peek(), Token::Ident(_)) {
+            let d = Diagnostic::error(
+                Code::ExpectedType,
+                self.span(),
+                format!("expected a type, found {}", self.found()),
+            );
+            return Err(match self.peek() {
+                Token::LBracket => d.with_help("a list type is written `List(Int)`"),
+                _ => d,
+            });
+        }
         let (module, name, name_span) = self.parse_qualified_name("type name")?;
         if module.is_none() && name == intern::intern("Self") {
             // `Self(a)`: `Self` applied, in a trait of type constructors,
@@ -4131,13 +4147,18 @@ impl<'src> Parser<'src> {
         self.depth += 1;
         if self.depth > MAX_DEPTH {
             self.depth -= 1;
-            return Err(Diagnostic::error(
-                Code::NestingTooDeep,
-                self.span(),
-                "pattern nesting exceeds maximum depth",
-            ));
+            // (The depth is the nesting of expressions and patterns
+            // together: the first pattern past it, a closure's parameter
+            // say, is the expressions'.)
+            let what = match self.pattern_depth {
+                0 => "expression nesting exceeds maximum depth",
+                _ => "pattern nesting exceeds maximum depth",
+            };
+            return Err(Diagnostic::error(Code::NestingTooDeep, self.span(), what));
         }
+        self.pattern_depth += 1;
         let result = self.parse_pattern_inner();
+        self.pattern_depth -= 1;
         self.depth -= 1;
         result
     }
