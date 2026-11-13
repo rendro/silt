@@ -376,14 +376,11 @@ pub struct Module {
     /// program names in a type but that have no fields or variants to
     /// declare.
     pub opaque: &'static [(&'static str, usize)],
-    /// The module's error enum, which implements `Error`.
+    /// The module's error enum, which is shown as its message.
     pub error: Option<&'static str>,
-    /// The `message` of the error enum, which is its `Error` impl: a
-    /// row of no module's table (`IoError.message`), found by the
-    /// enum's type ([`Registry::error_module`]).
-    pub message: Option<Row>,
-    /// What each variant of the error enum reads as, in its `message`
-    /// and where it is shown; none where the module is not built.
+    /// What each variant of the error enum reads as where it is shown
+    /// (found by the enum's type, [`Registry::error_module`]); none
+    /// where the module is not built.
     pub text: Option<ErrorText>,
     pub rows: Vec<Row>,
 }
@@ -449,7 +446,7 @@ macro_rules! module {
         let mut opaque: &'static [(&'static str, usize)] = &[];
         $(opaque = &$opaque;)?
         #[allow(unused_mut, unused_assignments)]
-        let mut error: Option<(&'static str, &'static str, Option<$crate::builtins::registry::ErrorText>)> = None;
+        let mut error: Option<(&'static str, Option<$crate::builtins::registry::ErrorText>)> = None;
         module!(@error error, [$($feature)?], [$($error => $text)?]);
         let rows;
         module!(
@@ -465,20 +462,15 @@ macro_rules! module {
             rows,
         )
     }};
-    // The module's error enum: its name, the signature of its `message`
-    // and what its variants read as, which is compiled only where the
-    // module's feature is built.
+    // The module's error enum: its name and what its variants read as,
+    // which is compiled only where the module's feature is built.
     (@error $slot:ident, [$($of:literal)?], []) => {};
     (@error $slot:ident, [$($of:literal)?], [$error:literal => $text:expr]) => {{
         #[cfg(all($(feature = $of,)?))]
         let text: Option<$crate::builtins::registry::ErrorText> = Some($text);
         #[cfg(not(all($(feature = $of,)?)))]
         let text: Option<$crate::builtins::registry::ErrorText> = None;
-        $slot = Some((
-            $error,
-            concat!("fn message(error: ", $error, ") -> String"),
-            text,
-        ));
+        $slot = Some(($error, text));
     }};
     (@rows $slot:ident, [], [$({ $($row:tt)* })*]) => {
         $slot = vec![$(module!(@row [] $($row)*)),*];
@@ -610,19 +602,9 @@ fn build_module(
         &'static [(&'static str, &'static [&'static str])],
         &'static [(&'static str, usize)],
     ),
-    error: Option<(&'static str, &'static str, Option<ErrorText>)>,
+    error: Option<(&'static str, Option<ErrorText>)>,
     specs: Vec<RowSpec>,
 ) -> Module {
-    // The `message` of the error enum: a row of the enum, not of the
-    // module's table.
-    let message = error.map(|(error, signature, text)| {
-        let summary = "The error as text";
-        let spec = match text {
-            Some(_) => f(signature, summary, super::error_message),
-            None => off(signature, summary),
-        };
-        rows(error, enabled && text.is_some(), vec![spec]).remove(0)
-    });
     Module {
         name,
         feature,
@@ -635,9 +617,8 @@ fn build_module(
         trait_names: trait_names(traits),
         derives,
         opaque,
-        error: error.map(|(error, _, _)| error),
-        message,
-        text: error.and_then(|(_, _, text)| text),
+        error: error.map(|(error, _)| error),
+        text: error.and_then(|(_, text)| text),
         rows: rows(name, enabled, specs),
     }
 }
@@ -745,8 +726,6 @@ pub struct Registry {
 enum Place {
     /// The row of this place in the rows of the module of this place.
     Row(usize, usize),
-    /// The `message` of the error enum of the module of this place.
-    Message(usize),
     /// The function of the prelude of this place.
     Prelude(usize),
     /// The method of a built-in impl of this place.
@@ -758,7 +737,6 @@ impl Registry {
     pub fn builtin(&self, id: BuiltinId) -> Option<&Row> {
         match *self.by_id.get(usize::from(id.0))? {
             Place::Row(module, row) => self.modules[module].rows.get(row),
-            Place::Message(module) => self.modules[module].message.as_ref(),
             Place::Prelude(row) => self.prelude.get(row),
             Place::Impl(row) => self.impls.get(row),
         }
@@ -855,8 +833,7 @@ pub fn registry() -> &'static Registry {
             .map(|(k, m)| (m.name, k))
             .collect();
         // Every row's id: its place among all rows, the modules' in
-        // their order (each one's rows, then its error enum's
-        // `message`), then the prelude's, then the built-in impls'.
+        // their order, then the prelude's, then the built-in impls'.
         let mut by_id = Vec::new();
         let mut number = |row: &mut Row, place: Place| {
             let id = u16::try_from(by_id.len()).expect("more builtins than an id counts");
@@ -866,9 +843,6 @@ pub fn registry() -> &'static Registry {
         for (m, module) in modules.iter_mut().enumerate() {
             for (k, row) in module.rows.iter_mut().enumerate() {
                 number(row, Place::Row(m, k));
-            }
-            if let Some(message) = &mut module.message {
-                number(message, Place::Message(m));
             }
         }
         for (k, row) in prelude.iter_mut().enumerate() {
@@ -942,7 +916,7 @@ mod tests {
         let rows = registry
             .modules
             .iter()
-            .flat_map(|m| m.rows.iter().chain(&m.message))
+            .flat_map(|m| m.rows.iter())
             .chain(&registry.prelude)
             .chain(&registry.impls);
         let mut free = Vec::new();
@@ -985,13 +959,12 @@ mod tests {
         assert_eq!(listed, names);
     }
 
-    /// An error enum's `message` is a row of the enum, found by the
-    /// enum's type and by its own id, and its body gives what the
-    /// module says its variants read as.
+    /// An error enum is found by the enum's type, has no `message` of
+    /// any kind (a program shows it with `{e}`), and is shown as the
+    /// text its module says its variants read as.
     #[test]
-    fn an_error_enum_s_message_is_a_row_found_by_its_type() {
+    fn an_error_enum_is_found_by_its_type_and_shown_as_its_text() {
         let registry = registry();
-        let mut vm = Vm::new(crate::vm::HostIo::process());
         let mut seen = 0;
         for module in registry.enabled_modules() {
             let Some(error) = module.error else { continue };
@@ -999,39 +972,26 @@ mod tests {
             let ty = crate::types::TypeRef::builtin(error).id;
             let found = registry.error_module(ty).expect(error);
             assert_eq!(found.name, module.name);
-            let message = module.message.as_ref().expect(error);
-            assert_eq!(message.qualified(), format!("{error}.message"));
-            let by_id = registry.builtin(message.id).expect(error);
-            assert!(std::ptr::eq(by_id, message), "{error}");
-            // No row of the module's table: a program cannot name it.
-            assert!(
-                registry
-                    .named(&format!("{}.message", module.name))
-                    .is_none()
-            );
-            // What is no variant of the enum is the one error.
-            let Err(misfit) = message.call(&mut vm, &[Value::Int(1), Value::Int(2)]) else {
-                panic!("{error}.message of two Ints");
-            };
-            assert_eq!(
-                misfit.message,
-                format!("{error}.message takes (error: {error}), but was called with (Int, Int)")
-            );
+            assert!(module.text.is_some(), "{error}");
+            for name in [
+                format!("{}.message", module.name),
+                format!("{error}.message"),
+            ] {
+                assert!(registry.named(&name).is_none(), "{name}");
+            }
         }
         assert!(seen >= 8, "{seen} error enums");
         // A type that is no module's error enum has none.
         let option = crate::types::TypeRef::builtin("Option").id;
         assert!(registry.error_module(option).is_none());
-        // The text of a variant, and of a value shown.
+        // A variant is shown as its text.
         let interrupted = Value::variant(crate::typeinfo::bv::IO_INTERRUPTED, []);
-        let io = registry.module("io").expect("io");
-        let message = io.message.as_ref().expect("IoError.message");
-        let Ok(Step::Done(Value::String(text, _))) =
-            message.call(&mut vm, std::slice::from_ref(&interrupted))
-        else {
-            panic!("IoError.message");
+        let Value::Variant(variant) = &interrupted else {
+            unreachable!()
         };
-        assert_eq!(interrupted.to_string(), &*text);
+        let text = crate::builtins::error_text(variant).expect("IoError's text");
+        assert_eq!(interrupted.to_string(), text);
+        assert_ne!(text, "Interrupted");
     }
 
     /// A call whose arguments are not the row's (which no checked

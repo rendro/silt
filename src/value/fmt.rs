@@ -310,8 +310,7 @@ fn begin<'a>(
             (Parts::Fields(names, record.fields().iter()), "}")
         }
         Value::Variant(variant) => {
-            // A builtin error is shown as its message, the text its
-            // `Error.message` gives: one text for both.
+            // A builtin error is shown as its message.
             if shown && let Some(message) = crate::builtins::error_text(variant) {
                 return f.write_str(&message).map(|()| None);
             }

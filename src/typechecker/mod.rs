@@ -72,7 +72,6 @@ pub(super) const BUILTIN_TRAIT_NAMES: &[&str] = &[
     "Compare",
     "Hash",
     "Display",
-    "Error",
     "Number",
     "Functor",
     "Applicative",
@@ -84,9 +83,9 @@ pub(super) const BUILTIN_TRAIT_NAMES: &[&str] = &[
 pub(super) const SEALED_TRAIT_NAMES: &[&str] = &["Equal", "Compare", "Hash", "Number"];
 
 /// The traits of [`BUILTIN_TRAIT_NAMES`] a type has by its structure,
-/// with no impl (`Display` unless one is written for it). `Error` is
-/// not one: an impl of it is written. (`json.Encode` and `json.Decode`,
-/// traits of the json module, are too: [`WRITABLE_STRUCTURAL_TRAITS`].)
+/// with no impl (`Display` unless one is written for it). (`json.Encode`
+/// and `json.Decode`, traits of the json module, are too:
+/// [`WRITABLE_STRUCTURAL_TRAITS`].)
 pub(super) const STRUCTURAL_TRAIT_NAMES: &[&str] = &["Equal", "Compare", "Hash", "Display"];
 
 /// The builtin traits a type has by its structure unless an impl of
