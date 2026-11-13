@@ -602,6 +602,34 @@ fn test_a_file_name_that_is_no_utf8_fails_the_listing_and_names_its_directory() 
     );
 }
 
+// ── stream.file_lines: a line is as long as the file makes it ───────
+
+/// A line of a file longer than 10,000,000 bytes is read whole, as
+/// io.read_file reads the file whole: what limits a read is what comes
+/// from the network, not a file the person who runs the program chose.
+/// (It ended the source with "line 2 of <path> is longer than 10000000
+/// bytes".)
+#[test]
+fn test_a_line_of_a_file_longer_than_ten_million_bytes_is_read_whole() {
+    let dir = TempDir::new("long_line");
+    let file = dir.path().join("long.txt");
+    let mut text = b"ok\n".to_vec();
+    text.extend(std::iter::repeat_n(b'x', 10_000_001));
+    text.extend(b"\nafter\n");
+    std::fs::write(&file, text).unwrap();
+    let at = file.to_string_lossy().replace('\\', "/");
+    let input = format!(
+        "import list\nimport stream\nimport string\nimport host\nfn main() {{\n  \
+         let lengths = stream.collect(stream.file_lines(\"{at}\")) |> list.map {{ line ->\n    \
+         match line {{\n      Ok(text) -> string.length(text)\n      Err(_) -> -1\n    }}\n  }}\n  \
+         host.give(lengths)\n}}\n"
+    );
+    assert_eq!(
+        run(&input),
+        Value::list(vec![Value::Int(2), Value::Int(10_000_001), Value::Int(5)])
+    );
+}
+
 // ── fs.remove: a link is removed itself ─────────────────────────────
 
 /// A link to a directory, made as the system makes one: `None` where

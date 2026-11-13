@@ -850,23 +850,7 @@ fn stdin_line_reads() -> impl FnMut() -> Vec<Value> + Send + 'static {
 /// The lines of a source read a piece at a time by `read` (see
 /// [`stdin_line_reads`]). Each byte is looked at for a `\n` once: a line
 /// that many reads bring is not searched again from its start at each
-/// one.
-/// How long a line of a line source may be: as long as a string may be
-/// (`MAX_COLLECTION_LEN` bytes). A longer one ends the source with an
-/// error ([`line_too_long`]), before it is read whole: a peer that sends
-/// no newline does not grow the source without end.
-#[cfg(not(test))]
-const LINE_MAX: usize = crate::value::MAX_COLLECTION_LEN;
-/// (A test's line need not take ten megabytes.)
-#[cfg(test)]
-const LINE_MAX: usize = 4_000_000;
-
-/// What a line longer than [`LINE_MAX`] says: `line 3 of app.log is longer
-/// than 10000000 bytes`.
-fn line_too_long(number: u64, of: &str) -> String {
-    format!("line {number} of {of} is longer than {LINE_MAX} bytes")
-}
-
+/// one. A line is as long as stdin makes it, as for `io.read_line`.
 struct LineReads<R> {
     read: R,
     /// What was read and is no line yet.
@@ -944,15 +928,6 @@ impl<R: FnMut(&mut [u8]) -> std::io::Result<usize>> LineReads<R> {
             if held_back || !lines.is_empty() {
                 break;
             }
-            if self.pending.len() > LINE_MAX {
-                self.ended = true;
-                let why = line_too_long(self.given + 1, "stdin");
-                lines.push(Value::variant(
-                    bv::ERR,
-                    [Value::variant(bv::IO_INVALID_INPUT, [Value::string(why)])],
-                ));
-                break;
-            }
             if self.at_end {
                 self.ended = true;
                 if !self.pending.is_empty() {
@@ -983,6 +958,18 @@ impl<R: FnMut(&mut [u8]) -> std::io::Result<usize>> LineReads<R> {
         lines
     }
 }
+
+/// How long a line of `stream.tcp_lines` may be: as much as one read of
+/// what a peer sends may take ([`super::tcp::READ_MAX`]). A longer one
+/// ends the source with an error before it is read whole, so a peer that
+/// sends no newline does not decide how much memory the program takes.
+/// (A line of a file or of stdin has no such limit: the person who runs
+/// the program chose those.)
+#[cfg(all(feature = "tcp", not(test)))]
+const LINE_MAX: usize = super::tcp::READ_MAX;
+/// (A test's line need not take ten megabytes.)
+#[cfg(all(feature = "tcp", test))]
+const LINE_MAX: usize = 4_000_000;
 
 /// What one read of `stream.tcp_lines` asks for, the one that may wait
 /// for the peer and each that does not.
@@ -1380,21 +1367,10 @@ builtins! {
             };
             let mut bytes = 0;
             while bytes < READ_AT_ONCE {
-                use std::io::Read;
                 let mut line = String::new();
-                // No more of a line than a string may hold, and one byte
-                // to know it is longer.
-                let read = reader.by_ref().take(LINE_MAX as u64 + 1).read_line(&mut line);
-                if matches!(read, Ok(n) if n > LINE_MAX && !line.ends_with('\n')) {
-                    ended = true;
-                    let why = line_too_long(read_lines + 1, &path);
-                    lines.push(Value::variant(
-                        bv::ERR,
-                        [Value::variant(bv::IO_INVALID_INPUT, [Value::string(why)])],
-                    ));
-                    break;
-                }
-                match read {
+                // (A line is as long as the file makes it, as for
+                // `io.read_file`.)
+                match reader.read_line(&mut line) {
                     Ok(0) => {
                         ended = true;
                         break;
@@ -2199,12 +2175,13 @@ mod tests {
         }
     }
 
-    /// A line longer than a string may be ends a line source with an error,
-    /// when it is that long and before it is read whole: on stdin and on a
-    /// connection alike (the test's cap is 4,000,000 bytes). The lines before
-    /// it come first. (Such a line was read whole however long it grew.)
+    /// A line longer than a read of the network may take ends a source of
+    /// a connection's lines with an error, when it is that long and before
+    /// it is read whole (the test's limit is 4,000,000 bytes); the lines
+    /// before it come first. A line of stdin has no such limit: it is read
+    /// whole, as `io.read_line` reads it.
     #[test]
-    fn a_line_longer_than_a_string_may_be_ends_the_source() {
+    fn a_line_longer_than_a_network_read_may_take_ends_a_tcp_source_only() {
         let mut input = b"ok
 "
         .to_vec();
@@ -2214,8 +2191,10 @@ mod tests {
 after
 ",
         );
-        let (lines, _) = piece_lines_of(&input, 4096);
-        assert_eq!(lines, ["ok", "ERR"]);
+        let (lines, _) = piece_lines_of(&input, 64 * 1024);
+        assert_eq!(lines.len(), 3, "the lines of stdin");
+        assert_eq!((lines[0].as_str(), lines[1].len()), ("ok", 3 * LINE_MAX));
+        assert_eq!(lines[2], "after");
         let (conn, reads) = counted(&input, usize::MAX, None);
         let (items, _) = lines_of(&conn);
         assert_eq!(items.len(), 2, "{items:?}");

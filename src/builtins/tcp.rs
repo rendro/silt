@@ -476,6 +476,13 @@ pub(crate) fn tcp_io_err(doing: Doing, err: &std::io::Error) -> Value {
     Value::variant(bv::ERR, [variant])
 }
 
+/// The most that one read of what a peer sends may take: a call of
+/// `tcp.read_exact`, a line of `stream.tcp_lines` (10,000,000 bytes, as an
+/// http body). What comes from the network is limited, so that a peer
+/// does not decide how much memory the program takes; a file and stdin
+/// are not.
+pub(crate) const READ_MAX: usize = crate::value::MAX_COLLECTION_LEN;
+
 /// Build `Err(Other(msg))` for string-form failures (TLS stringly
 /// errors from the rustls code path; ad-hoc arg/validation failures).
 fn err(s: impl Into<Arc<str>>) -> Value {
@@ -774,10 +781,17 @@ builtins! {
         })
     }
 
+    // At most READ_MAX bytes: a length the peer sent cannot make the
+    // program wait for, and hold, more than that.
     fn read_exact(vm, stream: typed::TcpStream, n: i64) -> Result<Step, VmError> {
         let Ok(n @ 1..) = usize::try_from(n) else {
             return Err(VmError::new("tcp.read_exact: n must be positive".into()));
         };
+        if n > READ_MAX {
+            return Ok(Step::Done(err(format!(
+                "tcp.read_exact: {n} bytes is more than the {READ_MAX} one read may take"
+            ))));
+        }
         let stream = stream.clone();
         on_connection(vm, &stream.clone(), move || {
             match stream.read_exact(n) {

@@ -140,7 +140,11 @@ value hold at most 10,000,000 bytes where they are joined or built
 `string.replace`, `regex.replace`, `regex.replace_first`,
 `regex.replace_with`, `encoding.form_encode`, `json.stringify`,
 `json.pretty`, `toml.stringify`, `toml.pretty`, `bytes.concat`,
-`bytes.concat_all`), and a channel buffers at most
+`bytes.concat_all`). One read from a file or stdin (`io.read_file`,
+`io.read_bytes`, `io.read_line`, a line of `stream.file_lines`) is as
+large as the input, and can be larger. What comes from the network has a limit of its own,
+named where the function is (`tcp.read_exact`, a line of
+`stream.tcp_lines`, an http body). A channel buffers at most
 10,000,000 values (`channel.new`). A program that keeps
 adding to a collection in a loop ends with this error instead of
 taking the machine's memory. A function that turns text it was given

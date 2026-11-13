@@ -143,8 +143,9 @@ the server sent, with one exception:
   empty and nothing is read, whatever the headers say. They may say what
   a `GET` would get; of those, `content-encoding` and `content-length`
   are not in `resp.headers` when the answer says `gzip`.
-- A body of more than 10,000,000 bytes (the most a `Bytes` holds),
-  counted as the program would get it, is
+- A body of more than 10,000,000 bytes (the limit of what one read
+  from the network may take, as for `tcp.read_exact`), counted as the
+  program would get it, is
   `Err(InvalidResponse(_))`: no part of it is returned.
 
 Every request says who sends it, `user-agent: silt/<version>` (the
