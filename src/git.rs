@@ -333,7 +333,8 @@ pub fn validate_git_url(url: &str) -> Result<(), InvalidGitUrl> {
 /// Whether the git URL `url` names a repository on this machine: a
 /// `file://` URL or a local path (starting with `/`, `./` or `../`, or
 /// on Windows a drive or UNC path). On Windows, git takes any
-/// `<letter>:` in front for a drive, also with no slash after it
+/// one character and `:` in front for a drive (a letter, or any name
+/// `subst` gave one), also with no slash after it
 /// (`c:repo`, relative to the current directory of that drive), where
 /// elsewhere it is the host of an scp-like URL.
 pub fn is_local_git_url(url: &str) -> bool {
@@ -342,8 +343,10 @@ pub fn is_local_git_url(url: &str) -> bool {
 
 /// [`is_local_git_url`] as it is on Windows (`windows`) or elsewhere.
 fn is_local_git_url_on(url: &str, windows: bool) -> bool {
-    let bytes = url.as_bytes();
-    let drive = bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
+    // (Any one character, as Git for Windows takes a drive: `subst` can
+    // name one `1:` or `ä:`.)
+    let mut chars = url.chars();
+    let drive = chars.next().is_some() && chars.next() == Some(':');
     url.starts_with("file://")
         || url.starts_with('/')
         || url.starts_with("./")
@@ -1114,8 +1117,9 @@ mod tests {
     }
 
     /// A repository on this machine, as git takes the URL on each
-    /// platform: on Windows any `<letter>:` in front is a drive, also
-    /// `c:repo` and `c:../other`, which elsewhere are scp-like hosts.
+    /// platform: on Windows any one character and `:` in front is a drive,
+    /// also `c:repo`, `c:../other`, `1:repo` and `ä:repo`, which elsewhere
+    /// are scp-like hosts.
     #[test]
     fn a_local_git_url_is_told_on_each_platform() {
         for url in ["file:///srv/repo", "/srv/repo", "./repo", "../repo"] {
@@ -1128,10 +1132,12 @@ mod tests {
             r"C:\repo",
             "C:/repo",
             r"\\server\share",
+            "1:repo",
+            "ä:repo",
         ] {
             assert!(is_local_git_url_on(url, true), "{url}");
         }
-        for url in ["c:repo", "C:../other/repo"] {
+        for url in ["c:repo", "C:../other/repo", "1:repo", "ä:repo"] {
             assert!(!is_local_git_url_on(url, false), "{url}");
         }
         for url in [
