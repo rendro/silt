@@ -3226,13 +3226,21 @@ impl NotShown {
             at,
             UnjoinedFailures::not_shown_message(self.count),
         )
-        .with_help(NOT_SHOWN_HELP)
+        .with_help(not_shown_help(self.count))
     }
 }
 
-/// What the report of the failures that are not shown advises.
-const NOT_SHOWN_HELP: &str = "the first of them was spawned here: join each task with \
-     task.join, or cancel it with task.cancel if you don't need its result";
+/// What the report of `count` failures that are not shown advises.
+fn not_shown_help(count: usize) -> String {
+    let spawned = match count {
+        1 => "it was spawned here",
+        _ => "the first of them was spawned here",
+    };
+    format!(
+        "{spawned}: join each task with task.join, or cancel it with task.cancel if you \
+         don't need its result"
+    )
+}
 
 impl UnjoinedFailures {
     /// True if there is nothing to report.
@@ -3244,9 +3252,12 @@ impl UnjoinedFailures {
     /// not shown. It names no place: which tasks they were is not
     /// told.
     pub fn not_shown_message(count: usize) -> String {
+        let failed = match count {
+            1 => "task failed and was",
+            _ => "tasks failed and were",
+        };
         format!(
-            "{count} more task(s) failed and were never joined (at most \
-             {MAX_SHOWN_FAILURES} failures are shown)"
+            "{count} more {failed} never joined (at most {MAX_SHOWN_FAILURES} failures are shown)"
         )
     }
 }
@@ -3748,7 +3759,7 @@ fn main() {
         let printed = out.take();
         let shown = printed.matches(what).count();
         let counted: usize = printed
-            .split(" more task(s) failed")
+            .split(" more task")
             .filter_map(|before| before.rsplit(' ').next()?.parse::<usize>().ok())
             .sum();
         (printed, shown, counted, most)
