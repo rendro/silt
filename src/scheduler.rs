@@ -983,6 +983,9 @@ impl Scheduler {
             inner.give_panic_on();
             inner.deadlock.lock().take()
         } else {
+        // What the code let go of before it waits is stopped first, as
+        // for a task.
+        run_deferred();
             None
         };
         match resumed {
@@ -2300,6 +2303,10 @@ impl Inner {
                         group.parking.fetch_sub(1, Ordering::SeqCst);
                         task.vm.woken = Some(fired);
                         return Some(task);
+                // What the task let go of before it waits is stopped
+                // first (a stream it left): its stop comes before
+                // whatever the task's peer does in answer to the wait.
+                run_deferred();
                     }
                     Some((sleeper, resumed)) => self.ready(sleeper, resumed),
                     None => {

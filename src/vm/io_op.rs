@@ -520,6 +520,10 @@ impl IoPool {
         leave: Leave,
         f: impl FnOnce(&Wanted) -> Value + Send + 'static,
     ) -> IoOp {
+        // What the code let go of before this operation is stopped first
+        // (a stream it left, whose source still reads): a peer that
+        // answers the operation does not reach that source.
+        crate::scheduler::run_deferred();
         self.scheduler.begin();
         let state = OpState::new(Phase::Queued);
         let wanted = Wanted::new(state.clone(), task);
@@ -1010,6 +1014,31 @@ mod tests {
 
     /// An idle limit that no test reaches.
     const NEVER_IDLE: Duration = Duration::from_secs(3600);
+
+    /// What the code let go of before an operation is stopped before the
+    /// operation is handed to the pool (a stream it left, whose source
+    /// still reads: the stop must come before anything the operation
+    /// makes the peer send). The operation sees the stop done.
+    #[test]
+    fn a_deferred_stop_comes_before_the_next_operation() {
+        let pool = pool(4, NEVER_IDLE);
+        let stopped = Arc::new(AtomicBool::new(false));
+        let stop = stopped.clone();
+        crate::scheduler::defer(move || stop.store(true, Ordering::SeqCst));
+        let seen = stopped.clone();
+        let op = pool.submit(failure, Vec::new(), Leave::RunsOut, move |_| {
+            Value::Bool(seen.load(Ordering::SeqCst))
+        });
+        assert!(
+            stopped.load(Ordering::SeqCst),
+            "the stop ran as the operation was handed over"
+        );
+        until("the operation ends", || op.cell.get().is_some());
+        assert!(
+            matches!(op.cell.get(), Some(Value::Bool(true))),
+            "the operation saw the stop done"
+        );
+    }
 
     /// Wait, for at most ten seconds, until `done` holds.
     fn until(what: &str, done: impl Fn() -> bool) {
