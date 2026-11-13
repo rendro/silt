@@ -450,7 +450,7 @@ fn write_until_it_fails(tls: tcp.TcpStream, n: Int) -> String {{
         time.sleep(time.ms(20))
         write_until_it_fails(tls, n - 1)
       }}
-      Err(e) -> "a write failed: {{Error.message(e)}}"
+      Err(e) -> "a write failed: {{e}}"
     }}
     false -> "every write went"
   }}

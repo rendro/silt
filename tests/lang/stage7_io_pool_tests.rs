@@ -604,7 +604,7 @@ fn main() {{
   tries(100)
   match io.read_file("{file}") {{
     Ok(_) -> println("read the file")
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println("{{e}}")
   }}
 }}
 "#
