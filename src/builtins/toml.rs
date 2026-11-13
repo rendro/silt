@@ -93,7 +93,7 @@ pub(crate) fn toml_unknown_err<S: Into<Arc<str>>>(msg: S) -> Value {
     toml_err_wrap(Value::variant(bv::TOML_OTHER, [Value::string(msg)]))
 }
 
-/// What `TomlError`'s `message` says of the variant `tag` with `fields`:
+/// How `TomlError` shows the variant `tag` with `fields`:
 /// `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {

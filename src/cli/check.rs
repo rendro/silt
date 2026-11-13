@@ -352,8 +352,15 @@ fn check_files(programs: &[PackageFiles], format: OutputFormat, deny_warnings: b
         };
         failed |= checked.failed();
         let files = ProgramFiles::new(path, checked.session.sources());
+        // (One program's diagnostics are each once already: what two
+        // programs both found is told apart by its text, rendered once
+        // more, which a program with many thousands of warnings pays
+        // for. A single program does not.)
         let diagnostics: Vec<Diagnostic> = (checked.diagnostics.iter())
-            .filter(|d| shown.insert(render_human(&CanonicalFiles(checked.session.sources()), d)))
+            .filter(|d| {
+                programs.len() == 1
+                    || shown.insert(render_human(&CanonicalFiles(checked.session.sources()), d))
+            })
             .cloned()
             .collect();
         warnings += diagnostics.iter().filter(|d| d.is_warning()).count();

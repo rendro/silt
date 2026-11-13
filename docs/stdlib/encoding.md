@@ -70,7 +70,7 @@ fn main() {
 ## Errors
 
 The two decoders return `Result(_, EncodingError)`; the encoders are total
-functions. `Error.message(e)` (and `"{e}"`) is the text of the variant.
+functions. `"{e}"` is the text of the variant.
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|

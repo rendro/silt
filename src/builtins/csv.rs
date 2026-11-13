@@ -21,7 +21,7 @@ use crate::typeinfo::{FieldType, bv};
 use crate::value::{MAX_TEXT_LEN, Value};
 use crate::vm::{Source, Step, Vm, VmError};
 
-/// What `CsvError`'s `message` says of the variant `tag` with `fields`:
+/// How `CsvError` shows the variant `tag` with `fields`:
 /// `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
@@ -333,7 +333,7 @@ impl<'de> de::Deserializer<'de> for Row<'_> {
     }
 }
 
-/// The text of the decoder's error `message`, which ends with the path of
+/// The text of the decoder's error, which ends with the path of
 /// the value (` at [2].age`), with the line and the column instead
 /// (` at line 4, column age`).
 fn at_line(message: &str, lines: &[usize]) -> String {

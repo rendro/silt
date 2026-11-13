@@ -11,14 +11,13 @@ use super::*;
 /// builtins and the user traits one way (the duplicate-method check,
 /// supertraits, where clauses).
 ///
-/// The five built-ins:
-/// - `Display`: `fn display(self) -> String` (signature only).
-/// - `Compare`: `fn compare(self, other: Self) -> Int` (signature only).
-/// - `Equal`:   `fn equal(self, other: Self) -> Bool` (signature only).
-/// - `Hash`:    `fn hash(self) -> Int` (signature only).
-/// - `Error: Display { fn message(self) -> String { "{self}" } }`: an
-///   impl may leave `message` out, and its message is then the value
-///   shown as `display` shows it.
+/// The built-ins, each method a signature only:
+/// - `Display`: `fn display(self) -> String`.
+/// - `Compare`: `fn compare(self, other: Self) -> Int`.
+/// - `Equal`:   `fn equal(self, other: Self) -> Bool`.
+/// - `Hash`:    `fn hash(self) -> Int`.
+/// - `Number`:  `fn from_int(n: Int) -> Self`.
+/// - the traits of type constructors (`CONSTRUCTOR_TRAITS`).
 pub fn builtin_trait_decls() -> Vec<TraitDecl> {
     let dummy_span = Span::BUILTIN;
     let self_sym = intern("self");
@@ -68,32 +67,6 @@ pub fn builtin_trait_decls() -> Vec<TraitDecl> {
             doc: None,
         }
     }
-
-    // `Error.message` has a default: an impl may leave it out. It shows
-    // the value, as `display` does: `"{self}"`. (No program declares the
-    // trait, so the body is not checked; each program compiles it once,
-    // into the default's slot.)
-    let error_default_body = Expr::new(
-        ExprKind::StringInterp(vec![StringPart::Expr(Expr::new(
-            ExprKind::Ident(self_sym),
-            dummy_span,
-        ))]),
-        dummy_span,
-    );
-    let error_message_fn = FnDecl {
-        name: intern("message"),
-        params: vec![self_param(self_sym, dummy_span)],
-        return_type: named_ret("String", dummy_span),
-        where_clauses: Vec::new(),
-        body: error_default_body,
-        is_pub: true,
-        span: dummy_span,
-        // Synthesized built-in `Error.message`: no source ident — mirror span.
-        name_span: dummy_span,
-        is_recovery_stub: false,
-        is_signature_only: false,
-        doc: None,
-    };
 
     let mut decls = vec![
         // trait Display { fn display(self) -> String }
@@ -225,28 +198,6 @@ pub fn builtin_trait_decls() -> Vec<TraitDecl> {
                     .to_string(),
             ),
         },
-        // trait Error: Display { fn message(self) -> String { "{self}" } }
-        TraitDecl {
-            name: intern("Error"),
-            name_span: dummy_span,
-            params: Vec::new(),
-            supertraits: vec![TraitRef {
-                module: None,
-                name: intern("Display"),
-                args: Vec::new(),
-                span: dummy_span,
-                res: None,
-            }],
-            param_where_clauses: Vec::new(),
-            methods: vec![error_message_fn],
-            is_pub: true,
-            span: dummy_span,
-            doc: Some(
-                "An error a program reports: `message` says what went wrong. An impl\n\
-                 may leave it out: it is then the value as `display` shows it."
-                    .to_string(),
-            ),
-        },
     ];
     // The traits of type constructors, as HK14 writes them: their
     // impls are passed with dictionaries, like a program's traits.
@@ -346,7 +297,6 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
     }
 
     // ── The structural traits of the builtin types ──────────────
-    // (`Error` is not one: an impl of it is written.)
     let all_auto_traits: &[&str] = STRUCTURAL_TRAIT_NAMES;
     let non_ordering_traits: &[&str] = &["Equal", "Hash", "Display"];
 
@@ -373,8 +323,8 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
     // `Map`: no `Compare`; `channel.ChannelOp` holds a channel: none;
     // `channel.Selected` holds one too: `Equal` only, as a channel).
     // The stamps of a module's error enum add `Equal`/`Compare`/`Hash`
-    // to the `Error` and `Display` the builtin environment entered for
-    // it (insert is idempotent).
+    // to the `Display` the builtin environment entered for it (insert
+    // is idempotent).
     for (_, ty) in crate::builtins::registry::registry().types() {
         register_structural_traits_for(checker, &[ty.name], ty.derives);
     }

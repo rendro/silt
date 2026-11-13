@@ -34,7 +34,7 @@ fn url() -> String {
 fn said(answer: Result(a, postgres.PostgresError)) -> String {
   match answer {
     Ok(_) -> "Ok"
-    Err(e) -> Error.message(e)
+    Err(e) -> "{e}"
   }
 }
 
@@ -42,7 +42,7 @@ fn one(pool: postgres.PgPool, sql: String) -> String {
   match postgres.query(pool, sql, (), S) {
     Ok([row]) -> row.s
     Ok(rows) -> "{rows}"
-    Err(e) -> Error.message(e)
+    Err(e) -> "{e}"
   }
 }
 
@@ -75,7 +75,7 @@ fn the_type_look_ups(other: postgres.PgPool) {
       let _ = postgres.execute(other, drop, ())
       postgres.close(fresh)
     }
-    Err(e) -> println("connect: {Error.message(e)}")
+    Err(e) -> println("connect: {e}")
   }
 }
 

@@ -35,7 +35,7 @@ back, quoting what needs it.
 | `MissingField(name)` | `String` | `csv.parse`: the header has no column for a field that is no `Option` |
 | `Other(msg)` | `String` | unclassified failure |
 
-`CsvError` implements the built-in `Error` trait: `Error.message(e)` of a
+A `CsvError` is shown as its message: `"{e}"` of a
 `Syntax` error is `csv syntax error at byte 2: a quoted field is not closed`.
 
 ## `csv.join_line`
@@ -132,11 +132,11 @@ fn main() {
       println(list.length(people)) -- 2
       list.each(people) { p -> println("{p.name} is {p.age}") }
     }
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println("{e}")
   }
   match csv.parse("name,age\nBob,old\n", Person) {
     Ok(_) -> println("read")
-    Err(e) -> println(Error.message(e)) -- csv type mismatch: expected Int, got 'old' at line 2, column age
+    Err(e) -> println("{e}") -- csv type mismatch: expected Int, got 'old' at line 2, column age
   }
 }
 ```
@@ -175,7 +175,7 @@ fn main() {
   println(csv.split_line("a,,c")) -- Ok(["a", "", "c"])
   match csv.split_line("a,\"bc") {
     Ok(fields) -> println(fields)
-    Err(e) -> println(Error.message(e)) -- csv syntax error at byte 2: a quoted field is not closed
+    Err(e) -> println("{e}") -- csv syntax error at byte 2: a quoted field is not closed
   }
 }
 ```
@@ -194,7 +194,7 @@ fn main() {
       let rows = string.lines(text) |> list.map { line -> csv.split_line(line) }
       println(list.length(rows))
     }
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println("{e}")
   }
 }
 ```

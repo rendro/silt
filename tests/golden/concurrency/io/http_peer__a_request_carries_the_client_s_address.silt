@@ -22,7 +22,7 @@ fn ask(host: String, bind: String) -> String {
   let server = task.spawn { -> http.serve(listener, answer) }
   let said = match http.get("http://{host}:{port}/") {
     Ok(r) -> bytes.to_string(r.body) |> result.unwrap_or("(no text)")
-    Err(e) -> Error.message(e)
+    Err(e) -> "{e}"
   }
   task.cancel(server)
   match string.last_index_of(said, ":") {

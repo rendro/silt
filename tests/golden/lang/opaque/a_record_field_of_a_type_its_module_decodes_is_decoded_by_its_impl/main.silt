@@ -18,18 +18,18 @@ type L {
 fn main() {
   match json.parse("[\"a@x\"]", List(mail.Box(mail.Email))) {
     Ok(bs) -> println(list.map(bs, mail.addr))
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println("{e}")
   }
   match json.parse("\{\"b\": \"b@x\"}", W) {
     Ok(w) -> println(mail.addr(w.b))
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println("{e}")
   }
   match json.parse("\{\"bs\": [\"c@x\", \"d@x\"]}", L) {
     Ok(l) -> println(list.map(l.bs, mail.addr))
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println("{e}")
   }
   match json.parse("\{\"b\": 1}", W) {
     Ok(w) -> println(mail.addr(w.b))
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println("{e}")
   }
 }

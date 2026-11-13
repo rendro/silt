@@ -233,7 +233,6 @@ pub const PRELUDE_TRAITS: &[&str] = &[
     "Compare",
     "Display",
     "Equal",
-    "Error",
     "Hash",
     "Number",
     "Functor",
@@ -268,15 +267,13 @@ pub fn builtin_trait_of_id(id: DefId) -> Option<(&'static str, Option<&'static s
 }
 
 /// The builtin trait whose method `method` is (`display` of Display,
-/// `message` of Error, `encode` of json.Encode); `None` for any other
-/// name.
+/// `encode` of json.Encode); `None` for any other name.
 pub fn builtin_trait_of_method(method: &str) -> Option<TraitId> {
     let name = match method {
         "display" => "Display",
         "compare" => "Compare",
         "equal" => "Equal",
         "hash" => "Hash",
-        "message" => "Error",
         "encode" => "Encode",
         "decode" => "Decode",
         _ => return None,
@@ -292,9 +289,8 @@ pub fn builtin_trait_of_method(method: &str) -> Option<TraitId> {
 /// and `m.pure(x)` have no value of the type to find its impl by.
 /// (An operator on numbers is still found by the value: the VM's
 /// arithmetic reads it.)
-pub const VALUE_DRIVEN_TRAITS: &[&str] = &[
-    "Compare", "Display", "Equal", "Error", "Hash", "Encode", "Decode",
-];
+pub const VALUE_DRIVEN_TRAITS: &[&str] =
+    &["Compare", "Display", "Equal", "Hash", "Encode", "Decode"];
 
 /// Whether a value of a type with the trait `t` is passed with the
 /// trait's dictionary: a trait a program declares, or a builtin one that

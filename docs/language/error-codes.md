@@ -111,8 +111,8 @@ missing belong to codes that are gone.
 | `E0411` | A host module an embedder declared that a builtin module, a dependency or a module file of the same name hides or is hidden by. |
 | `E0412` | A host function whose signature is not one `fn` header, or a host type that is not one record or enum declaration. |
 | `E0501` | `silt run` of a program without a `main` function. |
-| `E0502` | A `main` that takes parameters, or returns something other than `()` or `Result((), e)`. |
-| `E0503` | A test function that cannot be called with no arguments, or returns something other than `()` or `Result((), e)`. |
+| `E0502` | A `main` that takes parameters, returns something other than `()` or `Result((), e)`, or returns an error type with no `Display`. |
+| `E0503` | A test function that cannot be called with no arguments, returns something other than `()` or `Result((), e)`, or returns an error type with no `Display`. |
 
 ## Packages (6xx)
 

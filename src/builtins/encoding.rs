@@ -28,7 +28,7 @@ use crate::typeinfo::bv;
 use crate::value::Value;
 use crate::vm::VmError;
 
-/// What `EncodingError`'s `message` says of the variant `tag` with
+/// How `EncodingError` shows the variant `tag` with
 /// `fields`: `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     match (tag, fields) {

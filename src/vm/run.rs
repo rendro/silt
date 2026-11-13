@@ -3,7 +3,6 @@
 use std::cmp::Ordering;
 use std::sync::Arc;
 
-use crate::builtins::registry::registry;
 use crate::bytecode::dict::Dict;
 use crate::bytecode::{Chunk, Instr, Op, Segment, Segments, VmClosure, decode};
 use crate::scheduler::{Blocks, SliceResult};
@@ -2186,16 +2185,6 @@ impl Vm {
             self.stack.truncate(receiver_slot);
             let step = self.encode_json("json.encode", &receiver)?;
             return self.enter_step(step);
-        }
-        // `message` of a builtin error enum (`IoError`, ...): the row
-        // of the enum, found by the type's id, called as any builtin.
-        if method_name == "message"
-            && let Value::Variant(variant) = &receiver
-            && let Some(module) = registry().error_module(variant.ty().id)
-            && let Some(row) = module.message.as_ref().filter(|row| row.enabled)
-        {
-            let entered = self.with_args(receiver_slot, |vm, args| vm.enter_row(row, args))?;
-            return Ok(self.entered(entered));
         }
         // A builtin trait's method the type has natively (display,
         // equal, compare, hash).

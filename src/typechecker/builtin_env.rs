@@ -310,27 +310,25 @@ fn enter_registry(checker: &mut TypeChecker, env: &mut TypeEnv) {
             }
             env.define(intern(&format!("{}.{name}", module.name)), scheme);
         }
-        // The module's error enum implements `Error` natively
-        // (`Vm::dispatch_trait_method`), and `Display` with it.
+        // The module's error enum implements `Display` natively
+        // (`Vm::dispatch_trait_method`): it is shown as its message.
         if let Some(error) = module.error {
             let ty = TypeRef::builtin(error);
             let self_ty = Type::Generic(ty, vec![]);
-            for (trait_name, method) in [("Error", "message"), ("Display", "display")] {
-                let key = TraitKey::builtin(trait_name);
-                checker.tables.trait_impl_set.insert((key, ty));
-                checker.tables.impl_methods.insert(
-                    ty,
-                    intern(method),
-                    key,
-                    ImplArgs::none(),
-                    MethodEntry {
-                        method_type: Type::Fun(vec![self_ty.clone()], Box::new(Type::String)),
-                        structural: false,
-                        trait_name: Some(key),
-                        preds: Vec::new(),
-                    },
-                );
-            }
+            let key = TraitKey::builtin("Display");
+            checker.tables.trait_impl_set.insert((key, ty));
+            checker.tables.impl_methods.insert(
+                ty,
+                intern("display"),
+                key,
+                ImplArgs::none(),
+                MethodEntry {
+                    method_type: Type::Fun(vec![self_ty], Box::new(Type::String)),
+                    structural: false,
+                    trait_name: Some(key),
+                    preds: Vec::new(),
+                },
+            );
         }
     }
 
