@@ -1558,6 +1558,8 @@ for room as one that prints to stdout does. A program that ends by a failure
 joined) waits for its output only while the reader takes some of it, about a
 second without progress at most; then the failure is reported on stderr, and
 the program ends with its status, also where the reader of stdout has gone.
+What was printed and not yet written then is dropped: a reader that pauses
+longer than that second loses up to the last 64 KiB of the output.
 
 I/O operations follow the same transparent yielding pattern as channel
 operations -- no special syntax needed. When code calls `io.read_file` or
