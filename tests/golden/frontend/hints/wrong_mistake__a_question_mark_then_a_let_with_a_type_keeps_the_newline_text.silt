@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- A `?` followed by a `let` with an annotation on its line is the "newline" mistake, not `cond ? a : b`, though a `:` follows.
+-- stderr-contains: expected a newline before 'let'
+-- stderr-not-contains: condition ? a : b
+fn g() -> Result(Int, String) { Ok(1) }
+fn f() -> Result(Int, String) {
+  let a = g()? let b: Int = 2
+  Ok(a + b)
+}
+fn main() { println(f()) }

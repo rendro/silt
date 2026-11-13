@@ -2415,10 +2415,25 @@ impl<'src> Parser<'src> {
         let import_span = self.expect(&Token::Import)?.span;
         // `import "list"`: the module is named, not quoted.
         if let Token::StringLit(text) = self.peek() {
+            // (The text echoed only where it is a module name.)
+            let is_name = |part: &str| {
+                part.starts_with(|c: char| c.is_ascii_lowercase() || c == '_')
+                    && part
+                        .chars()
+                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+            };
+            let message = match !text.is_empty() && text.split('.').all(is_name) {
+                true => {
+                    format!("a module is imported by its name, without quotes: `import {text}`")
+                }
+                false => "a module is imported by its name, without quotes, as in `import list`: \
+                          a module name is lowercase letters, digits and `_`"
+                    .to_string(),
+            };
             return Err(Diagnostic::error(
                 Code::UnsupportedSyntax,
                 self.span(),
-                format!("a module is imported by its name, without quotes: `import {text}`"),
+                message,
             ));
         }
         let (name, _) = self.expect_ident()?;
@@ -2756,6 +2771,7 @@ impl<'src> Parser<'src> {
             ..
         }) = self.pos.checked_sub(1).and_then(|i| self.tokens.get(i))
             && let Some(hint) = Self::foreign_keyword_hint(&intern::resolve(*prev))
+                .or_else(|| Self::newline_keyword_hint(&intern::resolve(*prev)))
         {
             return Self::with_no_if_help(Diagnostic::error(
                 Code::UnsupportedSyntax,
@@ -2784,13 +2800,21 @@ impl<'src> Parser<'src> {
             "while" | "for" => Some(
                 "silt has no 'while'/'for' keywords — use tail-recursive 'loop' or 'list.each' / 'list.map'",
             ),
+            _ => None,
+        }
+    }
+
+    /// The hint for a word of another language that ended a statement
+    /// (`new P { .. }`, `case x { .. }`, `switch x { .. }`): given only
+    /// where the parser already refuses what follows on the line
+    /// (`same_line_err`), never at the start of a statement, where each
+    /// is a name a program may bind (`let new = ...`).
+    fn newline_keyword_hint(text: &str) -> Option<&'static str> {
+        match text {
             "new" => Some("silt has no `new`: a record is built by its type's name, `P { x: 1 }`"),
             "case" | "switch" => Some(
                 "silt has no `case` or `switch`: write `match x {`, then one `pattern -> value` arm \
                  per line",
-            ),
-            "try" => Some(
-                "silt has no `try`: `?` passes an `Err` on, and `match` takes a `Result` apart",
             ),
             _ => None,
         }
@@ -2812,6 +2836,35 @@ impl<'src> Parser<'src> {
             )
             .with_help("a closure is written `{ x -> x + 1 }`, a match arm `pattern -> value`")
         })
+    }
+
+    /// Whether the token at `at` is a `{` that opens a closure: a `->`
+    /// stands inside it, outside any inner bracket, before its first
+    /// line ends.
+    fn closure_at(&self, at: usize) -> bool {
+        if self.tokens.get(at).map(|t| &t.kind) != Some(&Token::LBrace) {
+            return false;
+        }
+        let mut depth = 0usize;
+        for (i, tok) in self.tokens.iter().enumerate().skip(at + 1) {
+            if self.starts_line[i] {
+                return false;
+            }
+            match tok.kind {
+                Token::LParen
+                | Token::LBrace
+                | Token::LBracket
+                | Token::HashBrace
+                | Token::HashBracket => depth += 1,
+                Token::RParen | Token::RBracket => depth = depth.saturating_sub(1),
+                Token::RBrace if depth == 0 => return false,
+                Token::RBrace => depth -= 1,
+                Token::Arrow if depth == 0 => return true,
+                Token::Eof => return false,
+                _ => {}
+            }
+        }
+        false
     }
 
     /// The index of the token behind the `)` that closes the `(` at
@@ -3182,8 +3235,11 @@ impl<'src> Parser<'src> {
                     });
                 }
                 // `x > 0 ? 1 : 2`: a `:` follows on the line, outside
-                // brackets.
-                if !self.colon_on_line() {
+                // brackets, and the `?` is followed by no statement
+                // (`g()? let b: Int = 2`).
+                if matches!(cur.kind, Token::Let | Token::Return | Token::When)
+                    || !self.colon_on_line()
+                {
                     return None;
                 }
                 Some(
@@ -3241,10 +3297,13 @@ impl<'src> Parser<'src> {
                 }
             }
         }
-        let args = inner.filter(|a| !a.is_empty() && !a.contains(['<', '[']));
+        // (Arguments of arguments, `List<List<Int>>`, likewise.)
+        let args = inner
+            .filter(|a| !a.is_empty())
+            .map(|a| a.replace(['<', '['], "(").replace(['>', ']'], ")"));
         format!(
             "type arguments are written in parentheses: `{written}({})`",
-            args.unwrap_or("Int")
+            args.as_deref().unwrap_or("Int")
         )
     }
 
@@ -3365,6 +3424,9 @@ impl<'src> Parser<'src> {
                 && !self.starts_line[after]
                 && (Self::g1_next_starts_expression(&self.tokens[after].kind)
                     || matches!(self.tokens[after].kind, Token::Return))
+                // (`while(xs) { x -> .. }`: a call of a name `while` with a
+                // trailing closure, which parses.)
+                && !self.closure_at(after)
             {
                 let msg = Self::foreign_keyword_hint(&text).expect("a foreign keyword");
                 return Err(Self::with_no_if_help(Diagnostic::error(

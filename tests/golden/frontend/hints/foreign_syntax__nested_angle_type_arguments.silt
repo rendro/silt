@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- Type arguments written in `<..>` inside `<..>`: the example writes them all in parentheses.
+-- stderr-contains: type arguments are written in parentheses: `List(List(Int))`
+fn main() {
+  let xs: List<List<Int>> = []
+  println(xs)
+}

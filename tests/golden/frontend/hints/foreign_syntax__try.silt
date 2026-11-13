@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- Syntax of another language gets the text that says what silt writes (E0109).
+-- `try` is a name silt does not bind: the checker's undefined-name error gets the help (the parser parses `try { .. }`, as `let try = ()` before it would make it valid).
 -- stderr-contains: silt has no `try`
 fn main() {
   try {

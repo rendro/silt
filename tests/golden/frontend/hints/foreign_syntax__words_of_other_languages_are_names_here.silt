@@ -1,0 +1,37 @@
+-- The words and operators the hints for other languages look for are ordinary names, strings and comments where a program uses them so: each statement below parses and runs as on main (a hint fires only where main already gives an error).
+-- (`try`, `case`, `switch`, `new` bound to `()` and followed by a block on their line; functions named `new`, `and`, `not`, `while` called with a trailing closure; a field named `class`; names `in`, `mut`, `assert`, `catch`, `or`; the operators of other languages inside strings and comments.)
+import list
+
+type Course { class: String, seats: Int }
+
+fn new(n: Int) -> Course { Course { class: "c{n}", seats: n } }
+fn and(a: Bool, b: Bool) -> Bool { a && b }
+fn not(a: Bool) -> Bool { !a }
+
+fn main() {
+  let try = ()
+  try {
+    println("try is a name")
+  }
+  let case = ()
+  case {
+    println("case is a name")
+  }
+  let switch = ()
+  switch {
+    println("switch is a name")
+  }
+  let c = new(3)
+  println("{c.class} {c.seats}")
+  println(and(true, not(false)))
+  let while = list.map
+  println(while([1, 2]) { x -> x + 1 })
+  let in = 1
+  let mut = 2
+  let assert = 3
+  let catch = 4
+  let or = 5
+  println(in + mut + assert + catch + or)
+  -- a ?? b, x += 1, list::length, a <> b, /* c */, fn(x) { x }
+  println("a ?? b, x += 1, list::length, a <> b, a === b, 2 ** 3, /* c */")
+}
