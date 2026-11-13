@@ -1,0 +1,116 @@
+-- cmd: fmt
+-- `-> ()` of a function at the top level is left out when the body's
+-- value is `()` by its form (an empty body, a last `let`, `()` or
+-- `return ()`) and the signature names no type variable, or has a
+-- parameter without a type; a last line `()` is left out behind a
+-- `let`. Everything else stays: a body that ends in a call or a
+-- `match`, a type variable, a `type` parameter, a `where` clause, the
+-- `-> ()` of a method. A comment at a token left out stays, nearby.
+import list
+
+fn empty() {}
+
+fn last_let() {
+  let _x = 1
+}
+
+fn last_unit() {
+  println("u")
+  ()
+}
+
+fn unit_after_let() {
+  let _x = 1
+}
+
+fn return_unit_after_let() {
+  let _x = 1
+}
+
+fn typed(x: Int, y: List(String)) {
+  let _ = (x, y)
+}
+
+fn untyped(x, y: a) {
+  let _ = (x, y)
+}
+
+fn comment_behind() { -- why
+  let _x = 1
+}
+
+fn ends_in_a_call() -> () {
+  println("c")
+}
+
+fn ends_in_a_match(n: Int) -> () {
+  match n {
+    _ -> ()
+  }
+}
+
+fn variable(x: a) -> () {
+  let _ = x
+}
+
+fn type_param(type t) -> () {
+  let _ = t
+}
+
+fn bounded(x: a) -> () where a: Display {
+  let _ = "{x}"
+}
+
+fn comment_in_front() {- note -} {
+  let _x = 1
+}
+
+fn comment_inside() {- note -} {
+  let _x = 1
+}
+
+fn unit_with_a_comment_above() {
+  let _x = 1
+  -- the value
+}
+
+fn unit_with_a_comment_behind() {
+  let _x = 1
+  -- the value
+}
+
+trait Ping {
+  fn ping(self) -> ()
+}
+
+type P {
+  n: Int,
+}
+
+trait Ping for P {
+  fn ping(self) -> () {
+    let _x = self.n
+  }
+}
+
+fn main() {
+  empty()
+  last_let()
+  last_unit()
+  unit_after_let()
+  return_unit_after_let()
+  typed(1, ["a"])
+  untyped(1, 2)
+  comment_behind()
+  ends_in_a_call()
+  ends_in_a_match(1)
+  variable(1)
+  type_param(Int)
+  bounded(1)
+  comment_in_front()
+  comment_inside()
+  unit_with_a_comment_above()
+  unit_with_a_comment_behind()
+  Ping.ping(P { n: 1 })
+  let _ = list.length([1])
+}

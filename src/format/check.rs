@@ -605,7 +605,7 @@ impl ShapeWriter {
 
     fn decl(&mut self, decl: &Decl) {
         match decl {
-            Decl::Fn(f) => self.fn_decl(f),
+            Decl::Fn(f) => self.fn_decl(f, true),
             Decl::Type(t) => {
                 self.open("type");
                 self.flag(t.is_pub);
@@ -663,7 +663,7 @@ impl ShapeWriter {
                 self.where_clauses(&t.param_where_clauses);
                 self.open("methods");
                 for method in &t.methods {
-                    self.fn_decl(method);
+                    self.fn_decl(method, false);
                 }
                 self.close();
                 self.close();
@@ -681,7 +681,7 @@ impl ShapeWriter {
                 self.where_clauses(&t.where_clauses);
                 self.open("methods");
                 for method in &t.methods {
-                    self.fn_decl(method);
+                    self.fn_decl(method, false);
                 }
                 self.close();
                 self.close();
@@ -724,12 +724,15 @@ impl ShapeWriter {
         }
     }
 
-    fn fn_decl(&mut self, f: &FnDecl) {
+    /// A function; `top_level`: not a method of a trait or an impl,
+    /// whose `-> ()` the printer may leave out (`unit_return_dropped`).
+    fn fn_decl(&mut self, f: &FnDecl, top_level: bool) {
         self.open("fn");
         self.flag(f.is_pub);
         self.sym(f.name);
         self.params(&f.params);
-        self.opt_type_expr(f.return_type.as_ref());
+        let dropped = top_level && unit_return_dropped(f);
+        self.opt_type_expr(f.return_type.as_ref().filter(|_| !dropped));
         self.where_clauses(&f.where_clauses);
         if f.is_signature_only {
             self.word("#signature");
@@ -740,7 +743,8 @@ impl ShapeWriter {
     }
 
     /// A function's body, with a `return` on its last line compared as
-    /// its value: the printer does not write it.
+    /// its value, and a last line `()` behind a `let` as nothing: the
+    /// printer writes neither.
     fn fn_body(&mut self, body: &Expr) {
         let ExprKind::Block(stmts) = &body.kind else {
             return self.expr(body);
@@ -748,9 +752,21 @@ impl ShapeWriter {
         let Some((Stmt::Expr(last), front)) = stmts.split_last() else {
             return self.expr(body);
         };
-        let ExprKind::Return(Some(value)) = &last.kind else {
-            return self.expr(body);
+        let value = match &last.kind {
+            ExprKind::Return(Some(value)) => &**value,
+            _ => last,
         };
+        if value_is_unit_after_let(value, front) {
+            self.open("block");
+            for stmt in front {
+                self.stmt(stmt);
+            }
+            self.close();
+            return;
+        }
+        if !matches!(last.kind, ExprKind::Return(Some(_))) {
+            return self.expr(body);
+        }
         self.open("block");
         for stmt in front {
             self.stmt(stmt);
@@ -1203,6 +1219,81 @@ impl ShapeWriter {
     }
 }
 
+/// Whether `value`, the last line of a function's body (behind its
+/// `return`, if it has one), is a `()` behind a `let` (the last of
+/// `front`). The body's value is `()` with the line and without it, so
+/// the printer leaves it out: the checker reads the body the same.
+pub(super) fn value_is_unit_after_let(value: &Expr, front: &[Stmt]) -> bool {
+    matches!(value.kind, ExprKind::Unit) && matches!(front.last(), Some(Stmt::Let { .. }))
+}
+
+/// Whether the body of a function has `()` as its value by its form
+/// alone: it is empty, or its last line is a `let`, `()` or `return
+/// ()`. No type is needed to know it.
+fn unit_by_form(body: &Expr) -> bool {
+    let ExprKind::Block(stmts) = &body.kind else {
+        return false;
+    };
+    match stmts.last() {
+        None | Some(Stmt::Let { .. }) => true,
+        Some(Stmt::Expr(last)) => match &last.kind {
+            ExprKind::Unit => true,
+            ExprKind::Return(Some(value)) => matches!(value.kind, ExprKind::Unit),
+            _ => false,
+        },
+        Some(_) => false,
+    }
+}
+
+/// Whether a type names a type variable (a lower-case name: `a`,
+/// `List(a)`, `f(Int)`), or `Self`.
+fn names_a_variable(ty: &TypeExpr) -> bool {
+    match &ty.kind {
+        TypeExprKind::Named { module, name, .. } => {
+            module.is_none() && !resolve(*name).starts_with(|c: char| c.is_ascii_uppercase())
+        }
+        TypeExprKind::Generic {
+            module, name, args, ..
+        } => {
+            (module.is_none() && !resolve(*name).starts_with(|c: char| c.is_ascii_uppercase()))
+                || args.iter().any(names_a_variable)
+        }
+        TypeExprKind::Tuple(items) => items.iter().any(names_a_variable),
+        TypeExprKind::Function(params, ret) => {
+            params.iter().any(names_a_variable) || names_a_variable(ret)
+        }
+        TypeExprKind::SelfType => true,
+    }
+}
+
+/// Whether the printer leaves out the `-> ()` of `f`, a function at the
+/// top level: it is written, the body has `()` as its value by its form
+/// (`unit_by_form`), and leaving it out leaves the checker's reading of
+/// the signature as it is. That holds when a parameter has no type
+/// (the signature is not complete either way, so the function is
+/// checked with its body in both), or when no parameter's type, no
+/// `type` parameter and no `where` clause names a type variable (the
+/// function's type is `(..) -> ()` with no variable to make general: a
+/// complete signature and an incomplete one give the same type, and a
+/// recursive call reads it the same). With a variable and every
+/// parameter typed, `-> ()` completes the signature, which lets the
+/// body call the function at other types (`f(1)` and `f("s")` in `f`'s
+/// own body): left out, that program would be refused. The body's
+/// value is `()` with `-> ()` and without it, so a `return` or a `?`
+/// in the body meets the same return type `()` either way.
+pub(super) fn unit_return_dropped(f: &FnDecl) -> bool {
+    let unit = matches!(
+        &f.return_type,
+        Some(TypeExpr { kind: TypeExprKind::Tuple(items), .. }) if items.is_empty()
+    );
+    let untyped = (f.params.iter()).any(|p| p.kind == ParamKind::Data && p.ty.is_none());
+    let no_variable = f.where_clauses.is_empty()
+        && f.params.iter().all(|p| {
+            p.kind == ParamKind::Data && p.ty.as_ref().is_some_and(|ty| !names_a_variable(ty))
+        });
+    unit && !f.is_signature_only && unit_by_form(&f.body) && (untyped || no_variable)
+}
+
 /// A stage of a pipeline as it is compared: `f()`, a call of a name
 /// with no arguments, is `f`, which the printer writes for it.
 fn without_empty_call(stage: &Expr) -> &Expr {
@@ -1441,6 +1532,56 @@ mod tests {
         // The braces do not go anywhere else: a statement, an operand.
         let message = refusal(&arms("f({ x })", "0"), &arms("f(x)", "0"));
         assert!(message.contains("function `f`"), "{message}");
+    }
+
+    /// `-> ()` of a function at the top level whose body is `()` by its
+    /// form and whose signature has no type variable is compared as
+    /// none, and a last line `()` behind a `let` as nothing. Nothing else
+    /// is: `-> ()` with a body that ends in a call, with a type variable,
+    /// on a method; a `()` behind anything but a `let`.
+    #[test]
+    fn a_unit_return_and_a_unit_after_let_are_left_out_where_the_form_shows_it() {
+        let ok = |before: &str, after: &str| assert_eq!(judge(before, after), Ok(()), "{before}");
+        ok("fn f() -> () {}\n", "fn f() {}\n");
+        ok(
+            "fn f() -> () {\n  let x = 1\n}\n",
+            "fn f() {\n  let x = 1\n}\n",
+        );
+        ok(
+            "fn f(x: Int) -> () {\n  g()\n  ()\n}\n",
+            "fn f(x: Int) {\n  g()\n  ()\n}\n",
+        );
+        ok(
+            "fn f(x, y: a) -> () {\n  ()\n}\n",
+            "fn f(x, y: a) {\n  ()\n}\n",
+        );
+        ok(
+            "fn f() -> () {\n  let x = 1\n  ()\n}\n",
+            "fn f() {\n  let x = 1\n}\n",
+        );
+        ok(
+            "fn f() {\n  let x = 1\n  return ()\n}\n",
+            "fn f() {\n  let x = 1\n}\n",
+        );
+        for (before, after) in [
+            ("fn f() -> () {\n  g()\n}\n", "fn f() {\n  g()\n}\n"),
+            ("fn f(x: a) -> () {\n  ()\n}\n", "fn f(x: a) {\n  ()\n}\n"),
+            (
+                "fn f(type t) -> () {\n  ()\n}\n",
+                "fn f(type t) {\n  ()\n}\n",
+            ),
+            (
+                "fn f(x: Int) -> () where a: D {\n  ()\n}\n",
+                "fn f(x: Int) where a: D {\n  ()\n}\n",
+            ),
+            ("fn f() {\n  g()\n  ()\n}\n", "fn f() {\n  g()\n}\n"),
+        ] {
+            let message = refusal(before, after);
+            assert!(message.contains("function `f`"), "{before}: {message}");
+        }
+        let method =
+            |ret: &str| format!("trait T for Int {{\n  fn m(self){ret} {{\n    ()\n  }}\n}}\n");
+        assert!(judge(&method(" -> ()"), &method("")).is_err());
     }
 
     /// `xs |> f()` is compared as `xs |> f`, and a `return` on a

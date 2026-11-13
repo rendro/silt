@@ -858,7 +858,7 @@ impl Printer<'_> {
 
     fn decl(&mut self, decl: &Decl) -> Doc {
         match decl {
-            Decl::Fn(f) => self.fn_decl(f),
+            Decl::Fn(f) => self.fn_decl(f, true),
             Decl::Type(t) => self.type_decl(t),
             Decl::Trait(t) => self.trait_decl(t),
             Decl::TraitImpl(t) => self.trait_impl(t),
@@ -895,7 +895,9 @@ impl Printer<'_> {
         Doc::concat(docs)
     }
 
-    fn fn_decl(&mut self, f: &FnDecl) -> Doc {
+    /// A function declaration; `top_level`: not a method of a trait or
+    /// an impl.
+    fn fn_decl(&mut self, f: &FnDecl, top_level: bool) -> Doc {
         let mut docs = Vec::new();
         if f.is_pub {
             docs.push(self.tok(Token::Pub));
@@ -912,6 +914,19 @@ impl Printer<'_> {
             |p, param| p.param(param, false),
         );
         let returns = match &f.return_type {
+            // `-> ()` of a function at the top level whose body has `()`
+            // as its value by its form, and whose signature names no
+            // type variable, is not written: the checker reads the
+            // function the same with it and without it (see
+            // `check::unit_return_dropped`). Its comments are carried to
+            // the `{`: the choice is the tree's alone, so it is the same
+            // on the result.
+            Some(ty) if top_level && super::check::unit_return_dropped(f) => {
+                while self.cur.offset() < ty.span.end {
+                    self.cur.skip_any();
+                }
+                Doc::Nil
+            }
             Some(ty) => Doc::concat(vec![
                 space(),
                 self.tok(Token::Arrow),
@@ -934,8 +949,11 @@ impl Printer<'_> {
 
     /// The body of a function. A `return` on its last line is not
     /// written: the last line is the function's value either way, so
-    /// `return x` there has one spelling, `x`. (One with a comment
-    /// between `return` and its value stays as it is.)
+    /// `return x` there has one spelling, `x`. Nor is a last line `()`
+    /// behind a `let`: the body's value is `()` with it and without it
+    /// (see `check::value_is_unit_after_let`); its comments stay, in
+    /// front of the `}`. (A `return` with a comment between it and its
+    /// value stays.)
     fn fn_body(&mut self, body: &Expr) -> Doc {
         let ExprKind::Block(stmts) = &body.kind else {
             return self.block(body);
@@ -943,10 +961,20 @@ impl Printer<'_> {
         let Some((Stmt::Expr(last), front)) = stmts.split_last() else {
             return self.block(body);
         };
-        let ExprKind::Return(Some(value)) = &last.kind else {
-            return self.block(body);
+        // The value the last line is written as: behind its `return`, if
+        // that is not written.
+        let (value, returned) = match &last.kind {
+            ExprKind::Return(Some(value))
+                if !self.cur.comments_between(last.span.start, value.span.start) =>
+            {
+                (&**value, true)
+            }
+            _ => (last, false),
         };
-        if self.cur.comments_between(last.span.start, value.span.start) {
+        // (Whatever comments stand around it: the printer moves a
+        // comment, and the choice must be the same on the result.)
+        let dropped = super::check::value_is_unit_after_let(value, front);
+        if !returned && !dropped {
             return self.block(body);
         }
         let open = self.tok(Token::LBrace);
@@ -959,6 +987,15 @@ impl Printer<'_> {
                 return Some(p.stmt(&front[i], i == 0));
             }
             if i + 1 == count {
+                if dropped {
+                    // Its tokens are passed: their comments stand in
+                    // front of the `}`, as they do on the result.
+                    while p.cur.offset() < last.span.end {
+                        let kind = p.cur.peek().clone();
+                        p.cur.pass(&kind);
+                    }
+                    return None;
+                }
                 // (The comments above the `return` stay above the line.)
                 let leading = p.cur.leading();
                 let skipped = p.cur.skip(&Token::Return);
@@ -1185,7 +1222,7 @@ impl Printer<'_> {
             Doc::text("{")
         });
         let mut methods = t.methods.iter();
-        docs.push(self.lines(|p| Some(p.fn_decl(methods.next()?))));
+        docs.push(self.lines(|p| Some(p.fn_decl(methods.next()?, false))));
         if methods.next().is_some() {
             self.cur.fail("a trait member is not where the tree has it");
         }
@@ -1223,7 +1260,7 @@ impl Printer<'_> {
         docs.push(space());
         docs.push(self.tok(Token::LBrace));
         let mut methods = t.methods.iter();
-        docs.push(self.lines(|p| Some(p.fn_decl(methods.next()?))));
+        docs.push(self.lines(|p| Some(p.fn_decl(methods.next()?, false))));
         if methods.next().is_some() {
             self.cur.fail("an impl member is not where the tree has it");
         }
