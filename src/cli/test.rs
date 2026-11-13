@@ -191,7 +191,20 @@ fn run_tests(file: Option<&str>, filter: Option<String>) {
         // silt test file.silt — single file
         Some(PathArg::File(f)) => {
             let dir = Path::new(&f).parent().filter(|d| !d.as_os_str().is_empty());
-            check_package_first(dir.unwrap_or(Path::new(".")));
+            let dir = dir.unwrap_or(Path::new("."));
+            // A file reached through a link (to the file, or to a
+            // directory on its way) is run in the package of the file it
+            // leads to (`open_entry`), so that package is checked. Where
+            // the path as given finds the same package, it is looked for
+            // from there, so that its files are shown as given.
+            let real = silt::source::canonical_path(Path::new(&f));
+            let package_of = |dir: &Path| {
+                silt::manifest::Manifest::find(dir).map(|root| silt::source::canonical_path(&root))
+            };
+            match real.parent() {
+                Some(real) if package_of(dir) != package_of(real) => check_package_first(real),
+                _ => check_package_first(dir),
+            }
             vec![f]
         }
         Some(PathArg::NotSilt(f)) => refuse_path("test", &f, FILE_OR_DIRECTORY),

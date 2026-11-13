@@ -4,14 +4,17 @@
 
 use crate::rename_sweep::{Kind, repo, silt_files, sweep};
 
+use crate::fmt_property::env_switch;
+
 /// The examples, each as a case of its own directory: a fresh name at
 /// every identifier; every eighth distinct rename is applied and
 /// compared, every one with `SILT_RENAME_FULL=1`.
 #[test]
 fn every_example_renames_by_meaning() {
-    let every = match std::env::var_os("SILT_RENAME_FULL") {
-        Some(v) if v != "0" => 1,
-        _ => 8,
+    let every = if env_switch::on("SILT_RENAME_FULL") {
+        1
+    } else {
+        8
     };
     let dir = repo().join("examples");
     let mut broken = Vec::new();

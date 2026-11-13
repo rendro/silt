@@ -52,13 +52,20 @@ const POLL: Duration = Duration::from_millis(50);
 /// parity with the rest of silt's terminal-control gating (see
 /// `diagnostic::use_color`'s `is_terminal`-based color decision).
 fn clear_screen_seq() -> &'static str {
-    if std::env::var_os("NO_COLOR").is_some() {
-        return "";
-    }
-    if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
-        "\x1B[2J\x1B[H"
-    } else {
+    clear_screen_seq_for(
+        std::env::var_os("NO_COLOR").as_deref(),
+        std::io::IsTerminal::is_terminal(&std::io::stderr()),
+    )
+}
+
+/// [`clear_screen_seq`] for `NO_COLOR` holding `no_color` (`None`: not
+/// set) and stderr being a terminal or not. `NO_COLOR` counts when it is
+/// not empty, as <https://no-color.org/> and `diagnostic::use_color` say.
+fn clear_screen_seq_for(no_color: Option<&std::ffi::OsStr>, terminal: bool) -> &'static str {
+    if no_color.is_some_and(|v| !v.is_empty()) || !terminal {
         ""
+    } else {
+        "\x1B[2J\x1B[H"
     }
 }
 
@@ -492,6 +499,20 @@ mod tests {
     #[test]
     fn clear_screen_seq_empty_when_not_terminal() {
         assert_eq!(clear_screen_seq(), "");
+    }
+
+    /// An empty `NO_COLOR` does not count, as for colours. FAILS on the
+    /// base: any `NO_COLOR`, an empty one too, left the screen as it was.
+    #[test]
+    fn an_empty_no_color_still_clears_a_terminal() {
+        use std::ffi::OsStr;
+        assert_eq!(clear_screen_seq_for(None, true), "\x1B[2J\x1B[H");
+        assert_eq!(
+            clear_screen_seq_for(Some(OsStr::new("")), true),
+            "\x1B[2J\x1B[H"
+        );
+        assert_eq!(clear_screen_seq_for(Some(OsStr::new("1")), true), "");
+        assert_eq!(clear_screen_seq_for(None, false), "");
     }
 
     static COUNTER: AtomicUsize = AtomicUsize::new(0);

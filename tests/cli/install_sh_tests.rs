@@ -100,14 +100,19 @@ echo "unknown command \"$1\" for \"gh\"" >&2
 exit 1
 "#;
 
-/// The stub `wget`, for a machine without curl. The version lookup
-/// (`--spider`) is answered with a redirect to the tag; a download from
-/// github.com with a redirect to `$STUB_WGET_TO` followed by the file's
-/// name, as GitHub sends a release asset to its storage; any other URL is
-/// served as the stub curl serves it. Each call's arguments go to
-/// `$STUB_STATE/wget.log`.
+/// The stub `wget`, for a machine without curl. `--help` names
+/// `--max-redirect`, as GNU wget's does. The version lookup (`--spider`)
+/// is answered with a redirect to the tag; a download from github.com
+/// with a redirect to `$STUB_WGET_TO` followed by the file's name, as
+/// GitHub sends a release asset to its storage, unless the URL has a
+/// directory `via/`; any other URL is served as the stub curl serves it.
+/// Each call's arguments go to `$STUB_STATE/wget.log`.
 const STUB_WGET: &str = r#"#!/bin/sh
 echo "$*" >> "$STUB_STATE/wget.log"
+if [ "$1" = --help ]; then
+    echo "       --max-redirect=NUMBER       maximum redirections allowed per page"
+    exit 0
+fi
 url=""
 dest=""
 spider=""
@@ -124,6 +129,7 @@ if [ -n "$spider" ]; then
     exit 8
 fi
 case "$url" in
+    */via/*) ;;
     https://github.com/*)
         printf '  HTTP/1.1 302 Found\r\n  Location: %s%s\r\nLocation: %s%s [following]\n0 redirections exceeded.\n' \
             "$STUB_WGET_TO" "${url##*/}" "$STUB_WGET_TO" "${url##*/}" >&2
@@ -219,6 +225,13 @@ impl Sandbox {
     /// directory of links to the machine's tools that install.sh uses,
     /// curl not among them.
     fn run_with_wget(&self, env: &[(&str, &str)]) -> Output {
+        let path = self.wget_path();
+        self.run_on_path(&path, "", env)
+    }
+
+    /// The PATH of [`Sandbox::run_with_wget`], with the stub `wget` in
+    /// place and curl gone.
+    fn wget_path(&self) -> String {
         self.stub("wget", STUB_WGET);
         let _ = fs::remove_file(self.root.join("stubs/curl"));
         let tools = self.root.join("tools");
@@ -251,13 +264,27 @@ impl Sandbox {
                 let _ = std::os::unix::fs::symlink(found, tools.join(tool));
             }
         }
-        let path = format!("{}:{}", self.root.join("stubs").display(), tools.display());
-        self.run_on_path(&path, "", env)
+        format!("{}:{}", self.root.join("stubs").display(), tools.display())
     }
 
     fn run_on_path(&self, path: &str, fail_fetch: &str, env: &[(&str, &str)]) -> Output {
+        self.run_under_umask(None, path, fail_fetch, env)
+    }
+
+    /// Run with the stubs, under the umask `umask` when one is given.
+    fn run_under_umask(
+        &self,
+        umask: Option<&str>,
+        path: &str,
+        fail_fetch: &str,
+        env: &[(&str, &str)],
+    ) -> Output {
         let install_sh = Path::new(env!("CARGO_MANIFEST_DIR")).join("install.sh");
-        Command::new("sh")
+        let mut command = Command::new("sh");
+        if let Some(umask) = umask {
+            command.args(["-c", &format!("umask {umask}; exec sh \"$0\"")]);
+        }
+        command
             .arg(&install_sh)
             .env("PATH", path)
             .env("HOME", self.root.join("home"))
@@ -583,4 +610,111 @@ fn install_sh_interrupted_before_the_move_leaves_no_staged_copy() {
         .map(|e| e.file_name())
         .collect();
     assert_eq!(left, ["silt"], "{left:?}");
+}
+
+/// An install path that is a directory is refused: the new binary is not
+/// moved into it. FAILS on the base: `mv` put `.silt.new.<pid>` inside
+/// the directory and the script said "installed".
+#[test]
+fn install_sh_refuses_an_install_path_that_is_a_directory() {
+    let sb = Sandbox::new("dir_target");
+    fs::create_dir_all(sb.install_dir().join("silt")).unwrap();
+    let expected = format!(
+        "{}/silt is a directory: remove it",
+        sb.install_dir().display()
+    );
+    assert_branded_failure(&sb.run(""), &expected);
+    let inside: Vec<_> = fs::read_dir(sb.install_dir().join("silt"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name())
+        .collect();
+    assert!(inside.is_empty(), "{inside:?}");
+}
+
+/// The binary can be run by everyone whatever the umask, as one in a bin
+/// directory is. FAILS on the base: under umask 077 `chmod +x` gave 700.
+#[test]
+fn install_sh_installs_a_binary_everyone_can_run_whatever_the_umask() {
+    let sb = Sandbox::new("umask");
+    let path = format!(
+        "{}:{}",
+        sb.root.join("stubs").display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let out = sb.run_under_umask(Some("077"), &path, "", &[]);
+    assert!(out.status.success(), "{out:?}");
+    let mode = fs::metadata(sb.install_dir().join("silt"))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o755, "{mode:o}");
+}
+
+/// A Location without a scheme is followed as a browser reads it:
+/// `//host/path` over https on that host, a relative path beside the URL
+/// asked for. FAILS on the base: `//host` became a path on github.com and
+/// a relative path was refused as "not https".
+#[test]
+fn install_sh_with_wget_follows_a_redirect_without_a_scheme() {
+    for (tag, to, asked) in [
+        (
+            "wget_slashes",
+            "//release-assets.example/via/",
+            "https://release-assets.example/via/",
+        ),
+        (
+            "wget_relative",
+            "via/",
+            "https://github.com/rendro/silt/releases/download/v9.9.9/via/",
+        ),
+    ] {
+        let sb = Sandbox::new(tag);
+        let out = sb.run_with_wget(&[("STUB_WGET_TO", to)]);
+        assert!(
+            out.status.success(),
+            "{to}: stdout={}\nstderr={}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(sb.install_dir().join("silt").is_file());
+        let log = fs::read_to_string(sb.root.join("state/wget.log")).unwrap();
+        assert!(
+            log.lines()
+                .any(|call| call.ends_with(&format!("{asked}silt-v9.9.9-SHA256SUMS"))),
+            "{to}:\n{log}"
+        );
+    }
+}
+
+/// A download that is redirected again and again ends after ten hops,
+/// saying so. FAILS on the base: it ended without a word of its own.
+#[test]
+fn install_sh_with_wget_says_when_a_download_is_redirected_too_often() {
+    let sb = Sandbox::new("wget_loop");
+    let out = sb.run_with_wget(&[("STUB_WGET_TO", "https://github.com/loop/")]);
+    assert_branded_failure(&out, "failed to download binary");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("  error: a download was redirected more than 10 times"),
+        "{stderr}"
+    );
+}
+
+/// A wget that cannot be told not to follow a redirect (busybox's) is not
+/// used: the script says what it needs. FAILS on the base: "could not
+/// determine latest version".
+#[test]
+fn install_sh_with_a_busybox_wget_says_what_it_needs() {
+    let sb = Sandbox::new("wget_busybox");
+    let path = sb.wget_path();
+    sb.stub(
+        "wget",
+        "#!/bin/sh\necho 'BusyBox v1.36.1 multi-call binary.' >&2\n\
+         echo 'Usage: wget [-cqS] [-O FILE] URL' >&2\nexit 1\n",
+    );
+    let out = sb.run_on_path(&path, "", &[]);
+    assert_branded_failure(&out, "this wget cannot be kept to https");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("install curl or GNU wget"), "{stderr}");
 }
