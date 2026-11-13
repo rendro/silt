@@ -17,6 +17,10 @@ type Person {
 
 type Score = Float
 
+type One {
+  a: Option(Int),
+}
+
 type Entry {
   at: time.DateTime,
   start: time.Time,
@@ -79,4 +83,8 @@ fn main() {
   ]
   println(csv.parse(csv.stringify(returns), Person) == Ok(returns))
   println("[{csv.join_line([])}] [{csv.join_line([""])}]")
+  -- A row of one empty cell is the line "", which no reader skips.
+  let ones = [One { a: None }, One { a: Some(1) }]
+  print(csv.stringify(ones))
+  println(csv.parse(csv.stringify(ones), One) == Ok(ones))
 }

@@ -48,8 +48,9 @@ The fields as one line, a comma between two and no line break at its end,
 as RFC 4180 writes them: a field that holds a comma, a quote or a line
 break (`\n` or `\r`) is quoted, and a quote in it doubled; any other field
 is written as it is. `csv.split_line` reads the line back as the same
-fields. An empty list and a list of one empty field are both the empty
-line, which `csv.split_line` reads as `[""]`.
+fields. An empty list is the empty line; a list of one empty field is
+written `""` (an empty line would be skipped by most readers), which
+`csv.split_line` reads back as `[""]`.
 
 ```silt
 import csv
@@ -208,8 +209,9 @@ csv.stringify(rows: List(a)) -> String
 Writes a list of records as a CSV text that `csv.parse` reads back: a
 header of the field names of the records' type, in the order the type
 declares them, then one line for each record, in order. Every line ends
-in `\n`, and a field is quoted as `csv.join_line` quotes it. An empty list
-is the empty text, which `csv.parse` reads as `Ok([])`.
+in `\n`, and a field is quoted as `csv.join_line` quotes it, so a row of
+one empty cell is the line `""`, not an empty line. An empty list is the
+empty text, which `csv.parse` reads as `Ok([])`.
 
 The records' type is checked as `csv.parse`'s type argument is: a record
 type whose fields are `Int`, `Float`, `String`, `Bool`, `time.Date`,
@@ -224,7 +226,6 @@ too, which `csv.parse` reads as `None`.
 
 ```silt
 import csv
-import list
 
 type Person {
   name: String,

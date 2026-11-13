@@ -463,8 +463,14 @@ fn write_field(out: &mut String, field: &str) {
 }
 
 /// `fields` appended to `out` as one line, a comma between two, with
-/// no line break at its end.
+/// no line break at its end. One empty field is written `""`: as an
+/// empty line, most readers would skip it, and the row with it.
 fn write_line<'f>(out: &mut String, fields: impl IntoIterator<Item = &'f str>) {
+    let fields: Vec<&str> = fields.into_iter().collect();
+    if let [""] = fields[..] {
+        out.push_str("\"\"");
+        return;
+    }
     for (k, field) in fields.into_iter().enumerate() {
         if k > 0 {
             out.push(',');

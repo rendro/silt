@@ -18,4 +18,8 @@ true
 a,b
 true
 true
-[] []
+[] [""]
+a
+""
+1
+true
