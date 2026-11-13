@@ -50,7 +50,7 @@ fn main() {
   let client = task.spawn { ->
     match http.get("http://127.0.0.1:{port}/") {
       Ok(r) -> "{r.status} {bytes.to_string(r.body) |> result.unwrap_or("")}, connection {map.get(r.headers, "connection") |> option.unwrap_or("(none)")}"
-      Err(e) -> Error.message(e)
+      Err(e) -> "{e}"
     }
   }
   time.sleep(time.ms(100))
@@ -92,7 +92,7 @@ fn main() {
   let dclient = task.spawn { ->
     match http.get("http://127.0.0.1:{dport}/") {
       Ok(r) -> "{r.status}"
-      Err(e) -> Error.message(e)
+      Err(e) -> "{e}"
     }
   }
   time.sleep(time.ms(100))

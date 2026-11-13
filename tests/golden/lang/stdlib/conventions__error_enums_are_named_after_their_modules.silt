@@ -1,7 +1,7 @@
 -- Each module that can fail has one error enum, named after the module,
 -- with variants that carry no prefix and, where the platform can report more
 -- than the list, a last variant `Other(String)`.
--- Every one has a `message`.
+-- Every one is shown as its message.
 import bytes
 import float
 import http
@@ -14,7 +14,7 @@ import toml
 
 type Point { x: Int }
 
-fn show(e: a) -> String where a: Error { Error.message(e) }
+fn show(e: a) -> String where a: Display { "{e}" }
 
 fn main() {
   match io.read_file("no/such/file/anywhere") {

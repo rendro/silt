@@ -39,7 +39,7 @@ fn shown(got: Result(http.Response, http.HttpError)) -> String {
         _ -> agent
       }
     }
-    Err(e) -> Error.message(e)
+    Err(e) -> "{e}"
   }
 }
 

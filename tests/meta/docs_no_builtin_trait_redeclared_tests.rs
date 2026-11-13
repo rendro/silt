@@ -114,7 +114,7 @@ fn no_doc_fence_redeclares_a_builtin_trait() {
                             "{}:{} (```silt fence): redeclares \
                              built-in trait `{}` — built-in traits \
                              (`Equal`, `Compare`, `Hash`, `Display`, \
-                             `Error`) cannot be redefined per \
+                             ...) cannot be redefined per \
                              `src/typechecker/mod.rs::BUILTIN_TRAIT_NAMES`. \
                              Rename the local trait or use a \
                              distinct name.",

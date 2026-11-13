@@ -1,13 +1,13 @@
 -- requires-feature: http
 -- requires-feature: tcp
--- `Error.message(e)` dispatches for a variant of the error enums of `http`
--- and `tcp`, which a build without those cargo features does not have
+-- A variant of the error enums of `http` and `tcp`, which a build
+-- without those cargo features does not have, is shown as its message
 -- (the other stdlib error enums are in
--- round73_error_enum_registry_parity_tests__every_error_enum_message_dispatches).
+-- error_enums__every_stdlib_error_enum_is_shown_as_its_message).
 import http
 import tcp
 
 fn main() {
-  println(Error.message(http.Timeout))
-  println(Error.message(tcp.Closed))
+  println("{http.Timeout}")
+  println("{tcp.Closed}")
 }

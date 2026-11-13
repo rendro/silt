@@ -11,7 +11,7 @@ fn main() {
     Ok(rows) -> {
       println(rows)
     }
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println("{e}")
   }
   println(csv.parse("name,age\nBob,abc\n", P) |> show)
   println(csv.parse("name,age,score,ok,born\nBob,1,x,true,2020-01-01", P) |> show)
@@ -28,6 +28,6 @@ fn main() {
 fn show(r: Result(List(P), csv.CsvError)) -> String {
   match r {
     Ok(rows) -> "Ok({rows})"
-    Err(e) -> Error.message(e)
+    Err(e) -> "{e}"
   }
 }
