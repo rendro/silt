@@ -1,7 +1,8 @@
 -- In a `match` header, braces behind a call followed on their line by
 -- another `{` are the call's closure, and that `{` opens the arms, as
 -- behind `|>` and in a `loop` header. A match whose arms are followed
--- by something else on their line keeps its meaning.
+-- by something else on their line keeps its meaning, and so does a
+-- match in the header of another, whose arms that `{` opens.
 import list
 import string
 import task
@@ -25,4 +26,8 @@ fn main() {
   let r = match n { 1 -> "one"
     _ -> "other" } |> string.length
   println(r)
+  let inner = match match list.length(xs) { 3 -> 30
+    _ -> 0 } { 30 -> "nested"
+    _ -> "other" }
+  println(inner)
 }

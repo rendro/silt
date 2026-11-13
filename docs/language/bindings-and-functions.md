@@ -439,16 +439,20 @@ let total = [1, 2, 3] |> list.fold(0) { acc, x -> acc + x }
 pairs |> list.each { (n, word) -> println("{n} is {word}") }
 ```
 
-In the header of a `match`, braces behind a call are the match's arms,
-unless another `{` follows them on their line: then they are the call's
-closure, and that `{` opens the arms.
+In the header of a `match` or a `loop`, `silt fmt` writes a closure
+inside the call's parentheses:
 
 ```silt
-match list.find(xs) { x -> x > 1 } {
+match list.find(xs, { x -> x > 1 }) {
   Some(x) -> println(x)
   None -> println("none")
 }
 ```
+
+Written behind the call there, `match list.find(xs) { x -> x > 1 } {`,
+it is read the same: braces behind a call in a `match` header are the
+call's closure when another `{` follows them on their line, and that
+`{` opens the arms. Without one they are the arms.
 
 **Return type annotations:**
 

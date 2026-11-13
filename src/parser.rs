@@ -304,6 +304,10 @@ struct BlockHeader {
     depth: i32,
     /// True while the right operand of a `|>` in the header is parsed.
     in_pipe_rhs: bool,
+    /// The header stands in another header at its depth: `match match
+    /// f(x) { a -> 1 } { b -> 2 }`, where the `{` behind the inner
+    /// match's arms opens the outer one's.
+    nested: bool,
 }
 
 /// How a comma-separated list ends (see `Parser::comma_list`).
@@ -585,10 +589,12 @@ impl<'src> Parser<'src> {
     /// a header cannot leak the context into the rest of the file.
     fn parse_header_expr(&mut self, kind: HeaderKind) -> Result<Expr> {
         let depth = self.delim_depth_at(self.pos);
+        let nested = self.header.is_some_and(|outer| outer.depth == depth);
         let prev = self.header.replace(BlockHeader {
             kind,
             depth,
             in_pipe_rhs: false,
+            nested,
         });
         let result = self.parse_expr();
         self.header = prev;
@@ -3767,11 +3773,12 @@ impl<'src> Parser<'src> {
                 // match body, unless another `{` follows them on their
                 // line: then they are the closure of a call and the `{`
                 // is the body (`match list.find(xs) { x -> x > 1 } {`).
-                // Behind `|>` a closure is also allowed where something
-                // else that can be the rest of the scrutinee comes after
-                // it.
+                // (Not in a match that stands in another header, whose
+                // `{` that is.) Behind `|>` a closure is also allowed
+                // where something else that can be the rest of the
+                // scrutinee comes after it.
                 HeaderKind::MatchScrutinee => {
-                    self.brace_follows_braces_on_line()
+                    !header.nested && self.brace_follows_braces_on_line()
                         || header.in_pipe_rhs && self.scrutinee_continues_after_braces()
                 }
             },
