@@ -93,7 +93,7 @@ pub(super) fn format_symbol_set(set: &BTreeSet<Symbol>) -> String {
 /// passes the suggest-similar threshold, we emit the plain error.
 ///
 /// See `src/typechecker/suggest.rs`.
-/// Lock: tests/lang/diagnostic_suggestion_tests.rs.
+/// Lock: the goldens tests/golden/lang/errors/diagnostic_suggestion__*.
 pub(super) fn format_undefined_variable_message(
     name: Symbol,
     env: &TypeEnv,

@@ -35,10 +35,10 @@ use crate::runtime::sync::Wait;
 /// collection builtins that consume that ordering/equality (list.sort /
 /// unique / contains / index_of, set.from_list / insert / contains /
 /// remove and the set algebra ops) carry their own mirror of this gate:
-/// `ensure_no_fn` in src/builtins/collections.rs, locked by
-/// tests/lang/collection_builtin_fn_gate_tests.rs. Locked by
-/// tests/lang/round96_eq_fn_runtime_tests.rs and
-/// tests/typecheck/container_fn_compare_runtime_gate_tests.rs.
+/// `ensure_no_fn` in src/builtins/collections.rs, locked by the goldens
+/// tests/golden/lang/collections/collection_builtin_fn_gate__*. Locked by
+/// the goldens tests/golden/lang/traits/round96_eq_fn_runtime__* and
+/// tests/golden/typecheck/fn_compare/container_fn_compare_runtime_gate__*.
 fn equality_operand_violation(val: &Value) -> Option<&'static str> {
     if val.contains_fn() { Some("Fn") } else { None }
 }

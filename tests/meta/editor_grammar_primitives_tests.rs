@@ -1,5 +1,5 @@
 //! Regression lock: every primitive type name printed by
-//! `src/types.rs`'s `impl Display for Type` must appear in both editor
+//! `src/types/mod.rs`'s `impl Display for Type` must appear in both editor
 //! syntax-highlighting grammars. Without this lock a user typing
 //! `let x: Int = 1` in vim or VS Code sees `Int` rendered as a plain
 //! identifier — no distinction between "this is a type" and "this is a
@@ -8,7 +8,7 @@
 //! Round-60 GAP G5 lock: the 8 primitive type names
 //! (Int, Float, Bool, String, List, Map, Set, and the unit type) were
 //! absent from both grammars until this test was introduced. The
-//! authoritative source is `src/types.rs` — adding a new primitive
+//! authoritative source is `src/types/mod.rs` — adding a new primitive
 //! there without updating both grammars would regress editor
 //! highlighting silently; this test enforces the coupling.
 //!
@@ -26,7 +26,7 @@
 //!   - tests/meta/editor_grammar_constructors_tests.rs
 //!   - tests/meta/editor_grammar_modules_tests.rs
 //!
-//! If this test fails after adding a new primitive to `src/types.rs`,
+//! If this test fails after adding a new primitive to `src/types/mod.rs`,
 //! add the primitive name to:
 //!   - editors/vim/syntax/silt.vim           (siltType keyword list)
 //!   - editors/vscode/syntaxes/silt.tmLanguage.json ("primitives" match)
@@ -156,9 +156,9 @@ fn editor_grammars_include_all_primitive_type_names() {
     assert!(
         missing.is_empty(),
         "Editor syntax grammars are out of sync with the primitive type \
-         names printed by `src/types.rs::impl Display for Type`.\n\
+         names printed by `src/types/mod.rs::impl Display for Type`.\n\
          Add the following primitive name(s) to the grammar file(s) listed:\n  - {}\n\
-         Authoritative source: src/types.rs (Type enum + Display impl).",
+         Authoritative source: src/types/mod.rs (Type enum + Display impl).",
         missing.join("\n  - ")
     );
 }

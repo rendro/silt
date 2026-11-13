@@ -22,8 +22,8 @@
 //! `tests/golden/lang/modules/round94_qualified_paths__*`.
 //!
 //! Conservatism controls for the parser side (trailing closures,
-//! next-line braces, match bodies, record update) live in
-//! tests/lang/round93_qualified_record_literal_tests.rs.
+//! next-line braces, match bodies, record update) live in the goldens
+//! tests/golden/lang/records/round93_qualified_record_literal__*.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

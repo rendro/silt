@@ -292,8 +292,8 @@ impl Value {
     /// Asked by the VM's `compare` (src/vm/arithmetic.rs), the gate of
     /// `==` and `!=` (src/vm/run.rs), the `equal`, `compare` and
     /// `hash` methods (src/vm/dispatch.rs) and the collection builtins
-    /// (`ensure_no_fn`, src/builtins/collections.rs). Locked by
-    /// tests/typecheck/container_fn_compare_runtime_gate_tests.rs.
+    /// (`ensure_no_fn`, src/builtins/collections.rs). Locked by the goldens
+    /// tests/golden/typecheck/fn_compare/container_fn_compare_runtime_gate__*.
     pub fn contains_fn(&self) -> bool {
         // A value without parts answers by itself, before the worklist
         // is made: `==` on two Ints, Floats, Bools or Strings allocates

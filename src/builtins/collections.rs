@@ -127,7 +127,8 @@ fn none() -> Value {
 /// contains a function-shaped value. Mirrors the `Op::Eq` gate in
 /// src/vm/run.rs; deliberately NOT enforced as a static `where`
 /// bound on the builtin signatures because that would reject currently
-/// working programs (e.g. sorting tuples via `Value::cmp`). Locked by tests/lang/collection_builtin_fn_gate_tests.rs.
+/// working programs (e.g. sorting tuples via `Value::cmp`). Locked by the goldens
+/// tests/golden/lang/collections/collection_builtin_fn_gate__*.
 ///
 /// The walk is `Value::contains_fn` (src/value/mod.rs), the one answer
 /// of the run time for every such gate (operator, method and builtin).
@@ -359,8 +360,8 @@ fn fold_until_step(acc: &mut Value, _item: Value, result: Value) -> Flow {
 /// a key with a function in it would be ordered by the address of the
 /// function, differently from run to run. Same policy as
 /// [`ensure_no_fn`]; the signatures of these builtins have no bound, so
-/// the typechecker does not reject such keys. Locked by
-/// tests/lang/collection_fn_gate_sibling_surfaces_tests.rs.
+/// the typechecker does not reject such keys. Locked by the goldens
+/// tests/golden/lang/collections/collection_fn_gate_sibling_surfaces__*.
 fn key_without_fn(name: &str, trait_name: &str, key: &Value) -> Result<(), VmError> {
     ensure_no_fn(name, trait_name, [key])
 }

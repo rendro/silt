@@ -2735,7 +2735,7 @@ fn test_scheduler_task_failure_propagates() {
             "#,
     )
     .unwrap_err();
-    // Production message from src/vm/task.rs: the join-site wraps the
+    // Production message from src/builtins/concurrency.rs: the join-site wraps the
     // inner VmError as "joined task failed: <inner>".
     assert!(
         err.message == "joined task failed: division by zero",
