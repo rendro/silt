@@ -2240,14 +2240,17 @@ after
         );
         let (lines, _) = piece_lines_of(&input, 4096);
         assert_eq!(lines, ["ok", "ERR"]);
-        let (conn, reads) = counted(&input, usize::MAX, None);
-        let (items, _) = lines_of(&conn);
-        assert_eq!(items.len(), 2, "{items:?}");
-        assert_eq!(items[0], "ok");
-        assert!(items[1].starts_with("Err:"), "{items:?}");
-        // Not much more than the cap was read.
-        let read = reads[0].load(Ordering::SeqCst) * LINES_READ;
-        assert!(read <= LINE_MAX + 4 * LINES_READ, "{read} bytes read");
+        #[cfg(feature = "tcp")]
+        {
+            let (conn, reads) = counted(&input, usize::MAX, None);
+            let (items, _) = lines_of(&conn);
+            assert_eq!(items.len(), 2, "{items:?}");
+            assert_eq!(items[0], "ok");
+            assert!(items[1].starts_with("Err:"), "{items:?}");
+            // Not much more than the cap was read.
+            let read = reads[0].load(Ordering::SeqCst) * LINES_READ;
+            assert!(read <= LINE_MAX + 4 * LINES_READ, "{read} bytes read");
+        }
     }
 
     /// One rule for the length of a line in every line source: without its
