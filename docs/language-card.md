@@ -288,7 +288,8 @@ All infix operators are left-associative.
 ## Tools
 
 `silt run`, `check`, `test`, `fmt`, `repl` (`:type <expr>`, `:doc
-<name>`), `lsp`, `init`, `add`, `update`. `-w` re-runs `run`, `check`,
+<name>`), `lsp`, `disasm`, `init`, `add`, `remove`, `update`,
+`self-update`. `-w` re-runs `run`, `check`,
 `test` and `disasm` when a file changes.
 
 ## Standard library

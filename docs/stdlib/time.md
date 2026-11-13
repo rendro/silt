@@ -505,7 +505,7 @@ fn main() {
   let start = time.now()
   time.sleep(time.ms(100))
   let elapsed = time.since(start, time.now())
-  println(elapsed) -- 100ms
+  println(elapsed) -- e.g. 100.304408ms
 }
 ```
 
@@ -639,6 +639,6 @@ fn main() {
   let before = time.now()
   time.sleep(time.ms(100))
   let elapsed = time.since(before, time.now())
-  println(elapsed) -- ~100ms
+  println(elapsed) -- e.g. 100.304408ms
 }
 ```

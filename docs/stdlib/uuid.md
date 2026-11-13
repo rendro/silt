@@ -95,8 +95,7 @@ are total. It returns `Result(String, UuidError)`:
   wire format here avoids a combinatorial API surface.
 - `uuid.parse` is version-agnostic: it accepts v1 through v8 UUIDs and
   the nil UUID. If you need to *reject* particular versions, match on
-  the relevant substring of the returned canonical form; a dedicated
-  `uuid.version` accessor can land later if demand warrants it.
+  the relevant substring of the returned canonical form.
 - `uuid.v4` and `uuid.v7` collide with probability ~2^-122 and
   ~2^-74-per-ms respectively — treat collisions as impossible in
   practice, not as a case to handle at call sites.

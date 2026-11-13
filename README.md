@@ -186,7 +186,7 @@ silt test
 
 `silt init` writes a `silt.toml` manifest, a starter `src/main.silt` and a first test, `src/main_test.silt`; `silt run` (no arguments, inside a package) executes the entry point, and `silt test` runs the test. `silt init --lib` starts a library instead: `src/lib.silt` with its test `src/lib_test.silt`, for other packages to import.
 
-See `examples/` for runnable sample programs — start with `examples/hello.silt`, `examples/fizzbuzz.silt`, and `examples/records.silt`.
+See `examples/` for runnable sample programs; run them from the repository's root directory (`silt run examples/hello.silt`), as some read files under `examples/`. Start with `examples/hello.silt`, `examples/fizzbuzz.silt`, and `examples/records.silt`.
 
 ## Tooling
 

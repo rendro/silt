@@ -387,7 +387,7 @@ is `Maybe.None`, and the prelude's is still `Option.None`.
 A module's top-level `let`s are evaluated once, before the first module that
 imports it uses them. The modules a file imports are initialised in the order
 `silt fmt` writes the file's imports: by the name of the module (digits, then
-capital letters, then `_`, then small letters), each after the modules it
+`_`, then letters), each after the modules it
 imports itself. A file's own top-level `let`s run after its imports.
 
 Modules are read and checked in that order too. So the order in which the
