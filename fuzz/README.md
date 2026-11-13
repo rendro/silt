@@ -1,6 +1,6 @@
 # Fuzzing silt
 
-silt ships eleven libfuzzer targets:
+silt ships thirteen libfuzzer targets:
 
 | Target             | Exercises                                          |
 |--------------------|----------------------------------------------------|
@@ -14,6 +14,8 @@ silt ships eleven libfuzzer targets:
 | `fuzz_decode`      | the decoder on any text (`src/fuzz_invariants.rs`): `json.parse`, `toml.parse`, `toml.parse_map` and `toml.parse_list` into each of a set of types, with and without written impls of a fixed set, as the VM's frame runs a decoding: no panic, the same result again, and `json.decode` of a JSON document's `json.Value` decodes alike (value or error, the impls' calls in order); the JSON and TOML text the input's bytes choose too |
 | `fuzz_package_files` | the readers of `silt.toml` and `silt.lock` on any text (`src/fuzz_invariants.rs`): no panic, an error's place inside the text, and a lockfile that reads is written to a text that reads back as the same lockfile and is written alike again |
 | `fuzz_csv`         | the csv reader of `csv.parse` and `csv.split_line` on any text (`src/fuzz_invariants.rs`): no panic, an error's place inside the text, and records that read, written again with every field quoted, read back the same |
+| `fuzz_http_response` | the client's reading of a response (`http.get`, `http.request`; `src/fuzz_invariants.rs`): any bytes as a response's head and body become a `Response` without a panic, with the status, headers and body sent (a gzip body unpacked, nothing to a `HEAD`), and a redirect goes to a URL without a fragment, on the same server for a path, with no `.` or `..` left |
+| `fuzz_lsp_messages` | `silt lsp` on any bytes from the editor (`src/fuzz_invariants.rs`): the framed messages read the same however the bytes arrive, and the server handles each without a panic and answers each request it handled once |
 | `fuzz_run`         | the differential oracle (`tests/oracle/oracle.rs`): a program that checks clean and stays inside the VM is run in slices of 2000 steps and of one step under a step budget; the runs agree, and none ends in a type confusion, an internal error or a panic |
 
 Invariant helpers live in `src/fuzz_invariants.rs` and are exercised
@@ -70,7 +72,7 @@ While actively working on parser or formatter code, run
 ```sh
 fuzz/local.sh fuzz_formatter       # single target, 10 min
 fuzz/local.sh fuzz_formatter 60    # quick 1-minute sanity check
-fuzz/local.sh all 3600             # all nine targets in parallel, 1 hr
+fuzz/local.sh all 3600             # every target in parallel, 1 hr
 ```
 
 This is the fastest way to find new bugs — seconds of local

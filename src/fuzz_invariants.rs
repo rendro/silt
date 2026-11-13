@@ -1110,6 +1110,200 @@ pub fn check_csv(text: &str) -> Result<(), String> {
     Ok(())
 }
 
+// ── HTTP responses ──────────────────────────────────────────────────
+
+/// Where the responses of [`check_http_response`] came from: a redirect
+/// is resolved against it.
+#[cfg(feature = "http")]
+const RESPONSE_URL: &str = "http://example.com/a/b/c?q=1";
+
+/// What the client of `http.get` and `http.request` makes of any
+/// response a server sends. The bytes are read as a response's head (by
+/// httparse, as the transport library reads one) and the body after it;
+/// a text that is no head is nothing to check. The response then becomes
+/// the program's `Response`, to a `GET` and to a `HEAD`, without a panic:
+/// its status is the one sent, its headers are the ones sent (one entry a
+/// name, in lower case; without `content-encoding` and `content-length`
+/// when a gzip body was unpacked), its body the bytes sent (none to a
+/// `HEAD`, or for a status that has none); only an unpacked body can fail
+/// or be too large. A redirect is resolved to a URL without a fragment,
+/// on the same server for a location that is a path, with no `.` or `..`
+/// segment left in a path that was resolved.
+#[cfg(feature = "http")]
+pub fn check_http_response(bytes: &[u8]) -> Result<(), String> {
+    use crate::builtins::http::{redirect, ureq_response_to_value};
+    use crate::http_wire::{BODY_MAX, has_body};
+    use crate::value::Value;
+    let mut headers = [httparse::EMPTY_HEADER; 64];
+    let mut head = httparse::Response::new(&mut headers);
+    let (Ok(httparse::Status::Complete(head_len)), Some(status)) = (head.parse(bytes), head.code)
+    else {
+        return Ok(());
+    };
+    let body = &bytes[head_len..];
+    let sent: Vec<(String, &[u8])> = (head.headers.iter())
+        .map(|header| (header.name.to_ascii_lowercase(), header.value))
+        .collect();
+    let response = || {
+        let mut response = ureq::http::Response::builder().status(status);
+        for (name, value) in &sent {
+            response = response.header(name.as_str(), *value);
+        }
+        response
+            .body(ureq::Body::builder().data(body.to_vec()))
+            .ok()
+    };
+    // (A status or a header the http types refuse is refused by the
+    // transport library too: no response reaches the program.)
+    if response().is_none() {
+        return Ok(());
+    }
+    let codings: Vec<String> = (sent.iter())
+        .filter(|(name, _)| name == "content-encoding")
+        .map(|(_, value)| String::from_utf8_lossy(value).into_owned())
+        .collect();
+    let packed = codings == ["gzip"];
+    let mut names: Vec<&str> = (sent.iter())
+        .map(|(name, _)| name.as_str())
+        .filter(|name| !(packed && matches!(*name, "content-encoding" | "content-length")))
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    for to_head in [false, true] {
+        let response = response().ok_or("a response built once is refused the second time")?;
+        let value = match ureq_response_to_value(response, to_head) {
+            Err(_) if packed => continue,
+            Err(e) => return Err(format!("a body that is not packed failed: {e}")),
+            Ok(None) if packed || body.len() > BODY_MAX => continue,
+            Ok(None) => return Err(format!("a body of {} bytes is too large", body.len())),
+            Ok(Some(value)) => value,
+        };
+        let Value::Record(record) = &value else {
+            return Err(format!("the response is {value:?}"));
+        };
+        if record.get("status") != Some(&Value::Int(i64::from(status))) {
+            return Err(format!(
+                "the status {status} became {:?}",
+                record.get("status")
+            ));
+        }
+        let Some(Value::Map(map)) = record.get("headers") else {
+            return Err(format!("the headers are {:?}", record.get("headers")));
+        };
+        let got: Vec<&str> = (map.keys())
+            .map(|key| match key {
+                Value::String(name, _) => Ok(&**name),
+                other => Err(format!("a header name {other:?}")),
+            })
+            .collect::<Result<_, _>>()?;
+        if got != names {
+            return Err(format!("the headers {names:?} became {got:?}"));
+        }
+        let Some(Value::Bytes(got)) = record.get("body") else {
+            return Err(format!("the body is {:?}", record.get("body")));
+        };
+        let expected: Option<&[u8]> = match (to_head || !has_body(status), packed) {
+            (true, _) => Some(&[]),
+            (false, false) => Some(body),
+            (false, true) => None,
+        };
+        if expected.is_some_and(|expected| got.as_slice() != expected) {
+            return Err(format!(
+                "a body of {} bytes became {} bytes (to a HEAD: {to_head})",
+                body.len(),
+                got.len()
+            ));
+        }
+    }
+    let response = response().ok_or("a response built once is refused the second time")?;
+    let Some((code, url)) = redirect(&response, RESPONSE_URL) else {
+        return Ok(());
+    };
+    if !matches!(code, 301 | 302 | 303 | 307 | 308) || code != status {
+        return Err(format!(
+            "the response of status {status} redirected as {code}"
+        ));
+    }
+    if url.contains('#') {
+        return Err(format!("the redirect went to {url:?}, with a fragment"));
+    }
+    // (The first `location` header is the one followed.)
+    let location = (sent.iter())
+        .find(|(name, _)| name == "location")
+        .map(|(_, value)| String::from_utf8_lossy(value).into_owned())
+        .unwrap_or_default();
+    let location = location.split('#').next().unwrap_or_default();
+    if location.starts_with('/') && !location.starts_with("//") {
+        let Some(path) = url.strip_prefix("http://example.com") else {
+            return Err(format!(
+                "the location {location:?} went to another server: {url:?}"
+            ));
+        };
+        let path = path.split('?').next().unwrap_or_default();
+        if path.split('/').any(|segment| matches!(segment, "." | "..")) {
+            return Err(format!(
+                "the location {location:?} went to {url:?}, dots left"
+            ));
+        }
+    }
+    Ok(())
+}
+
+// ── The editor's messages ───────────────────────────────────────────
+
+/// The messages framed in `bytes` as `silt lsp` reads them from stdin,
+/// up to the end or the first that does not read (which ends a session
+/// there), the input given to the reader `piece` bytes at a time.
+#[cfg(feature = "lsp")]
+fn lsp_messages(bytes: &[u8], piece: usize) -> Vec<lsp_server::Message> {
+    let mut input = std::io::BufReader::with_capacity(piece, bytes);
+    let mut messages = Vec::new();
+    while let Ok(Some(message)) = lsp_server::Message::read(&mut input) {
+        messages.push(message);
+    }
+    messages
+}
+
+/// What `silt lsp` makes of any bytes from the editor. The messages read
+/// are the same however the bytes arrive; the server, as after the
+/// start, handles each without a panic (a handler's panic is caught and
+/// answered, but it is a fault all the same: libFuzzer reports it), and
+/// answers each request it handled once, and nothing else.
+#[cfg(feature = "lsp")]
+pub fn check_lsp_messages(bytes: &[u8]) -> Result<(), String> {
+    use lsp_server::{Message, RequestId};
+    use std::collections::BTreeMap;
+    let messages = lsp_messages(bytes, 8 * 1024);
+    let shown = |messages: &[Message]| -> Vec<String> {
+        (messages.iter())
+            .map(|message| serde_json::to_string(message).unwrap_or_default())
+            .collect()
+    };
+    for piece in [1, 7] {
+        if shown(&lsp_messages(bytes, piece)) != shown(&messages) {
+            return Err(format!("the messages read {piece} bytes at a time differ"));
+        }
+    }
+    let (sent, handled) = crate::lsp::in_memory::serve(messages);
+    let mut unanswered: BTreeMap<RequestId, usize> = BTreeMap::new();
+    for id in handled {
+        *unanswered.entry(id).or_default() += 1;
+    }
+    for message in &sent {
+        let Message::Response(response) = message else {
+            continue;
+        };
+        match unanswered.get_mut(&response.id) {
+            Some(count) if *count > 0 => *count -= 1,
+            _ => return Err(format!("an answer to no request: {response:?}")),
+        }
+    }
+    match unanswered.into_iter().find(|(_, count)| *count > 0) {
+        Some((id, _)) => Err(format!("the request {id} has no answer")),
+        None => Ok(()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1157,17 +1351,28 @@ mod tests {
         check_package_files(lock).unwrap();
     }
 
-    /// Each seed of the fuzz target `target` (`fuzz/corpus/<target>`),
-    /// as text, given to `check`.
-    fn check_seeds(target: &str, check: fn(&str) -> Result<(), String>) {
+    /// Each committed seed of the fuzz target `target`
+    /// (`fuzz/corpus/<target>/*.<one of extensions>`; what a local
+    /// libFuzzer run adds there has no extension) given to `check`.
+    fn check_seed_bytes(
+        target: &str,
+        extensions: &[&str],
+        check: &dyn Fn(&[u8]) -> Result<(), String>,
+    ) {
         let seeds = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("fuzz/corpus")
             .join(target);
         let mut read = 0;
         for seed in std::fs::read_dir(&seeds).expect("the seeds") {
             let path = seed.expect("a seed").path();
-            let text = std::fs::read_to_string(&path).expect("a seed's text");
-            if let Err(e) = check(&text) {
+            let committed = (path.extension())
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extensions.contains(&extension));
+            if !committed {
+                continue;
+            }
+            let bytes = std::fs::read(&path).expect("a seed's bytes");
+            if let Err(e) = check(&bytes) {
                 panic!("{}: {e}", path.display());
             }
             read += 1;
@@ -1175,10 +1380,67 @@ mod tests {
         assert!(read >= 4, "{read} seeds in {}", seeds.display());
     }
 
+    /// [`check_seed_bytes`] for a check of text.
+    fn check_seeds(target: &str, extensions: &[&str], check: fn(&str) -> Result<(), String>) {
+        check_seed_bytes(target, extensions, &|bytes| {
+            check(std::str::from_utf8(bytes).expect("a seed's text"))
+        });
+    }
+
     #[test]
     fn the_seeds_of_the_package_files_and_csv_targets_hold() {
-        check_seeds("fuzz_package_files", check_package_files);
-        check_seeds("fuzz_csv", check_csv);
+        check_seeds("fuzz_package_files", &["toml", "lock"], check_package_files);
+        check_seeds("fuzz_csv", &["csv"], check_csv);
+    }
+
+    #[cfg(feature = "http")]
+    #[test]
+    fn the_seeds_of_the_http_response_target_hold() {
+        check_seed_bytes("fuzz_http_response", &["http"], &check_http_response);
+    }
+
+    #[cfg(feature = "lsp")]
+    #[test]
+    fn the_seeds_of_the_lsp_messages_target_hold() {
+        check_seed_bytes("fuzz_lsp_messages", &["lsp"], &check_lsp_messages);
+    }
+
+    #[cfg(feature = "http")]
+    #[test]
+    fn the_http_response_check_holds_on_a_body_a_gzip_body_and_a_redirect() {
+        use std::io::Write;
+        check_http_response(b"HTTP/1.1 200 OK\r\nA: 1\r\na: 2\r\n\r\nbody").unwrap();
+        let mut packed = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        packed.write_all(b"unpacked").unwrap();
+        let mut response = b"HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\n\r\n".to_vec();
+        response.extend(packed.finish().unwrap());
+        check_http_response(&response).unwrap();
+        check_http_response(b"HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\n\r\nno gzip").unwrap();
+        check_http_response(b"HTTP/1.1 302 Found\r\nLocation: /x/../../y/.#f\r\n\r\n").unwrap();
+        check_http_response(b"HTTP/1.1 204 No Content\r\n\r\nignored").unwrap();
+        // No head: nothing to check.
+        check_http_response(b"HTTP/1.1 200 OK\r\nA: 1\r\n").unwrap();
+        check_http_response(b"\x00\xff").unwrap();
+    }
+
+    #[cfg(feature = "lsp")]
+    #[test]
+    fn the_lsp_check_answers_each_request_once() {
+        let frame = |body: &str| format!("Content-Length: {}\r\n\r\n{body}", body.len());
+        let open = r#"{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///fuzz/main.silt","languageId":"silt","version":1,"text":"fn main() {\n  let x = 1\n  x\n}\n"}}}"#;
+        let hover = r#"{"jsonrpc":"2.0","id":7,"method":"textDocument/hover","params":{"textDocument":{"uri":"file:///fuzz/main.silt"},"position":{"line":2,"character":2}}}"#;
+        let unknown = r#"{"jsonrpc":"2.0","id":"x","method":"no/such","params":null}"#;
+        let input = [open, hover, hover, unknown].map(frame).concat();
+        check_lsp_messages(input.as_bytes()).unwrap();
+        let (sent, handled) = crate::lsp::in_memory::serve(lsp_messages(input.as_bytes(), 64));
+        assert_eq!(handled.len(), 3);
+        let answers = (sent.iter())
+            .filter(|message| matches!(message, lsp_server::Message::Response(_)))
+            .count();
+        assert_eq!(answers, 3);
+        // What does not read ends the input; a truncated message is none.
+        check_lsp_messages(b"Content-Length: 99\r\n\r\n{}").unwrap();
+        check_lsp_messages(b"Content-Length: x\r\n\r\n").unwrap();
     }
 
     #[test]
