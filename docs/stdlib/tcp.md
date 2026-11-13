@@ -45,8 +45,8 @@ out the OS-specific noise. A variant says what failed:
 | `Timeout` | — | op exceeded its deadline |
 | `Other(msg)` | `String` | unclassified socket failure |
 
-`TcpError` implements the built-in `Error` trait, so `Error.message(e)`
-renders any variant as a string when you don't want to branch on it.
+A `TcpError` is shown as its message, so `"{e}"` renders any variant as
+a string when you don't want to branch on it.
 
 ## Echo server example
 
@@ -73,13 +73,13 @@ fn main() {
             loop(())
           }
           Err(e) -> {
-            println("accept error: {Error.message(e)}")
+            println("accept error: {e}")
             loop(())
           }
         }
       }
     }
-    Err(e) -> println("listen error: {Error.message(e)}")
+    Err(e) -> println("listen error: {e}")
   }
 }
 ```
@@ -223,7 +223,7 @@ fn main() {
       let _ = tcp.write(conn, bytes.from_string("hello"))
       tcp.close(conn)
     }
-    Err(e) -> println("connect_tls err: {Error.message(e)}")
+    Err(e) -> println("connect_tls err: {e}")
   }
 }
 ```
@@ -269,7 +269,7 @@ fn serve(conn, cert, key) {
       let _ = tcp.write(tls, bytes.from_string("hello over TLS\n"))
       tcp.close(tls)
     }
-    Ok(Err(e)) -> println("handshake failed: {Error.message(e)}")
+    Ok(Err(e)) -> println("handshake failed: {e}")
     Err(_) -> println("the client took too long")
   }
 }
@@ -292,7 +292,7 @@ fn main() {
         let _ = task.spawn { -> serve(conn, cert, key) }
         loop(())
       }
-      Err(e) -> println("accept failed: {Error.message(e)}")
+      Err(e) -> println("accept failed: {e}")
     }
   }
 }
@@ -346,7 +346,7 @@ fn main() {
       let _ = tcp.write(tls, bytes.from_string("hello, authenticated client"))
       tcp.close(tls)
     }
-    Err(e) -> println("mTLS handshake failed: {Error.message(e)}")
+    Err(e) -> println("mTLS handshake failed: {e}")
   }
 }
 ```

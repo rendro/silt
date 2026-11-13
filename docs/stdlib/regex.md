@@ -33,7 +33,7 @@ fn main() {
   match regex.find("abc 123", "(") {
     Ok(found) -> println(found)
     Err(regex.InvalidPattern(why, at)) -> println("{why} at {at}") -- unclosed group at 0
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println("{e}")
   }
 }
 ```
@@ -102,7 +102,7 @@ fn main() {
       println(list.get(groups, 2)) -- Some("host")
     }
     Ok(None) -> println("no match")
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println("{e}")
   }
 }
 ```
@@ -154,7 +154,7 @@ fn main() {
       println(map.get(groups, "host")) -- Some("example")
     }
     Ok(None) -> println("no match")
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println("{e}")
   }
 }
 ```

@@ -24,8 +24,7 @@ A document whose shape is not known in advance is read into a
 
 Every fallible `json.*` call returns `Result(T, JsonError)`. The `JsonError`
 enum has four variants you can pattern-match on, or fall back to
-`Error.message(e)` when you just want a rendered string (`trait Error for
-JsonError` is wired in):
+show it with `"{e}"` when you just want a rendered string:
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
@@ -45,7 +44,7 @@ an `Other` about a value (a tuple of the wrong length, a date that is none)
 ends with ` at <path>`. An error about the document itself, such as a
 `Syntax` error or an array where a record is expected, has no path.
 
-See [stdlib errors](errors.md) for the shared `Error` trait.
+See [stdlib errors](errors.md) for how every error enum is shown.
 
 
 ## Decodable types
@@ -592,7 +591,7 @@ fn main() {
   let input = """{"name": "Alice", "age": 30}"""
   match json.parse(input, User) {
     Ok(user) -> println(user.name)
-    Err(e) -> println("Error: {Error.message(e)}")
+    Err(e) -> println("Error: {e}")
   }
 }
 ```
