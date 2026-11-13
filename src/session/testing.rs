@@ -26,6 +26,7 @@ fn session(files: &[(&str, &str)], host: Vec<HostModule>) -> (Session, crate::so
         project: ProjectSetup::Script(dir.clone()),
         lock: LockPolicy::ReadOnly,
         host,
+        builtins: super::Builtins::All,
     });
     let mut entry = None;
     for (name, text) in files {

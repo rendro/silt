@@ -40,6 +40,7 @@ fn open(source: &str) -> (Session, FileId) {
         project: ProjectSetup::None,
         lock: LockPolicy::ReadOnly,
         host: Vec::new(),
+        builtins: silt::session::Builtins::All,
     });
     let file = session.set_overlay(Path::new(FILE), source.to_string());
     (session, file)

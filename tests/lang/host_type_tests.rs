@@ -501,7 +501,7 @@ fn main() {
 /// `main` that calls its `show`.
 #[test]
 fn docs_ffi_host_types() {
-    use silt::session::{Config, Entry, LockPolicy, ProjectSetup, Session};
+    use silt::session::{Builtins, Config, Entry, LockPolicy, ProjectSetup, Session};
     use silt::{Buffer, HostIo, Vm};
     use std::path::Path;
 
@@ -553,6 +553,7 @@ fn main() { show() }
         project: ProjectSetup::None,
         lock: LockPolicy::ReadOnly,
         host: vec![geo],
+        builtins: Builtins::All,
     });
     let file = session.set_overlay(Path::new("main.silt"), source.to_string());
     let program = session.compile(file, Entry::Main).expect("compiles");

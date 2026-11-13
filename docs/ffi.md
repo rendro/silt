@@ -18,7 +18,7 @@ typechecked against the signature the embedder declared.
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use silt::session::{Config, Entry, HostModule, LockPolicy, ProjectSetup, Session};
+use silt::session::{Builtins, Config, Entry, HostModule, LockPolicy, ProjectSetup, Session};
 use silt::{Buffer, HostIo, Vm};
 
 // 1. Declare the host module: each function by its silt signature. A
@@ -35,6 +35,7 @@ let mut session = Session::new(Config {
     project: ProjectSetup::None,
     lock: LockPolicy::ReadOnly,
     host: vec![mylib],
+    builtins: Builtins::All,
 });
 let source = "import mylib\nfn main() { mylib.give(mylib.double(21)) }";
 let file = session.set_overlay(Path::new("main.silt"), source.to_string());
@@ -438,7 +439,7 @@ A program with a clock of its own, whose output is collected:
 use std::path::Path;
 use std::time::Duration;
 
-use silt::session::{Config, Entry, LockPolicy, ProjectSetup, Session};
+use silt::session::{Builtins, Config, Entry, LockPolicy, ProjectSetup, Session};
 use silt::{Buffer, Clock, HostIo, Vm};
 
 // A clock that starts at a fixed time and moves only when the
@@ -462,6 +463,7 @@ let mut session = Session::new(Config {
     project: ProjectSetup::None,
     lock: LockPolicy::ReadOnly,
     host: vec![],
+    builtins: Builtins::All,
 });
 let source = r#"
 import time
@@ -578,6 +580,35 @@ several scripts in parallel from Rust, create one `Vm` per thread.
 
 ## Limits
 
+**Builtin modules.** `Config::builtins` says which builtin modules a
+program may import: `Builtins::All` (every one of the build), or
+`Builtins::Only(names)`. An `import` of any other, in any module of
+the program, is an error when the program is checked (`the builtin
+module 'fs' is not offered to this program: the application that runs
+it lets it import only list, string`). The prelude (`println`,
+`Option`, `Result`, ...) and the host modules are every program's.
+A host that runs programs it did not write offers the modules that
+compute (`list`, `string`, `map`, `math`, `json`, ...) and keeps
+the ones that reach out of the program: `fs`, `io` (files, stdin,
+the command line), `stream` (files, stdin), `env`, `process`,
+`tcp`, `http`, `postgres`. What a program prints goes to the
+`Vm`'s `HostIo`, and the time it reads comes from its `Clock`.
+
+```rust
+let session = Session::new(Config {
+    project: ProjectSetup::None,
+    lock: LockPolicy::ReadOnly,
+    host: vec![],
+    builtins: Builtins::Only(vec!["list".into(), "string".into(), "math".into()]),
+});
+```
+
+**Memory.** There is no limit on the memory a program uses: one call
+of a builtin can build a list of millions of elements within a step,
+so the step budget bounds the time a program runs, not its memory. A
+host that runs programs it did not write runs them in a process it can
+end, with the memory limit of the operating system.
+
 **Time slice.** `vm.set_time_slice(steps)` makes the program run in
 slices of that many steps: a task gives way to the other tasks after
 `steps` instructions (the scheduler's own slice is 2000), and the thread
@@ -660,7 +691,8 @@ match vm.run_program(&program) {
 ```
 
 Silt code has no access to the host filesystem, network or environment
-beyond what the stdlib and your host modules provide.
+beyond what the builtin modules it may import (see "Limits") and your
+host modules provide.
 
 **The environment.** `env.set` and `env.remove` change the environment
 of your whole process. A `Vm` refuses them once its program has started

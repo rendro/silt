@@ -5,7 +5,7 @@
 
 use silt::diagnostic::{Code, Diagnostic};
 use silt::session::testing::{check_with_host, run_with_host};
-use silt::session::{HostCall, HostModule};
+use silt::session::{Builtins, HostCall, HostModule};
 use silt::typeinfo::bv;
 use silt::value::{IntoValue, Value};
 use silt::vm::VmError;
@@ -735,11 +735,12 @@ import host
 
 #[test]
 fn compile_without_analyze_returns_the_analysis_errors() {
-    use silt::session::{Config, Entry, LockPolicy, ProjectSetup, Session};
+    use silt::session::{Builtins, Config, Entry, LockPolicy, ProjectSetup, Session};
     let mut session = Session::new(Config {
         project: ProjectSetup::None,
         lock: LockPolicy::ReadOnly,
         host: vec![mylib()],
+        builtins: Builtins::All,
     });
     let file = session.set_overlay(
         std::path::Path::new("main.silt"),
@@ -770,7 +771,7 @@ fn host_module_name_must_be_an_identifier() {
 
 #[test]
 fn host_module_named_like_a_dependency_key_is_rejected_at_the_import() {
-    use silt::session::{Config, LockPolicy, ProjectSetup, Session};
+    use silt::session::{Builtins, Config, LockPolicy, ProjectSetup, Session};
     let dir = std::env::temp_dir().join(format!("silt_host_dep_collision_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let dep = dir.join("dep");
@@ -797,6 +798,7 @@ fn host_module_named_like_a_dependency_key_is_rejected_at_the_import() {
         project: ProjectSetup::Discover(dir.join("src")),
         lock: LockPolicy::Update,
         host: vec![mylib()],
+        builtins: Builtins::All,
     });
     let file = session.open(&main).unwrap();
     let errors: Vec<Diagnostic> = session
@@ -845,7 +847,7 @@ fn host_module_named_like_a_module_file_is_rejected_at_the_import() {
 /// The Quick Start of docs/ffi.md, as written there.
 #[test]
 fn docs_ffi_quick_start() {
-    use silt::session::{Config, Entry, LockPolicy, ProjectSetup, Session};
+    use silt::session::{Builtins, Config, Entry, LockPolicy, ProjectSetup, Session};
     use silt::{Buffer, HostIo, Vm};
     use std::path::Path;
     use std::sync::{Arc, Mutex};
@@ -866,6 +868,7 @@ fn docs_ffi_quick_start() {
         project: ProjectSetup::None,
         lock: LockPolicy::ReadOnly,
         host: vec![mylib],
+        builtins: Builtins::All,
     });
     let source = "import mylib\nfn main() { mylib.give(mylib.double(21)) }";
     let file = session.set_overlay(Path::new("main.silt"), source.to_string());
@@ -1165,4 +1168,89 @@ fn a_parameter_written_as_a_pattern_is_named_by_its_place() {
             run_probe(&format!("  host.give({call})"), Some((signature, ret))).expect_err(call);
         assert!(err.contains(expected), "{signature}: {err}");
     }
+}
+
+/// The errors of the program `files` (the first is the entry) in a
+/// session whose programs may import only the builtin modules
+/// `builtins`.
+fn errors_with_builtins(files: &[(&str, &str)], builtins: Builtins) -> Vec<Diagnostic> {
+    use silt::session::{Config, LockPolicy, ProjectSetup, Session};
+    let dir = std::path::PathBuf::from("/silt-test");
+    let mut session = Session::new(Config {
+        project: ProjectSetup::Script(dir.clone()),
+        lock: LockPolicy::ReadOnly,
+        host: vec![mylib()],
+        builtins,
+    });
+    let mut entry = None;
+    for (name, text) in files {
+        let file = session.set_overlay(&dir.join(name), (*text).to_string());
+        entry.get_or_insert(file);
+    }
+    let entry = entry.expect("a program has a file");
+    (session.analyze(entry).diagnostics.iter())
+        .filter(|d| d.is_error())
+        .cloned()
+        .collect()
+}
+
+/// A host chooses the builtin modules a program may import: an import
+/// of any other is an error when the program is checked, in each of its
+/// modules; the prelude and the host modules stay the program's.
+#[test]
+fn a_host_chooses_the_builtin_modules_a_program_may_import() {
+    let only = || Builtins::Only(vec!["list".to_string(), "string".to_string()]);
+    let allowed = "import list\nimport string\nimport mylib\nfn main() { println(list.length([string.length(\"ab\"), mylib.double(1)])) }";
+    let errors = errors_with_builtins(&[("main.silt", allowed)], only());
+    assert!(errors.is_empty(), "{errors:?}");
+    for (files, module) in [
+        (
+            vec![(
+                "main.silt",
+                "import fs\nfn main() { let _ = fs.exists(\"x\") }",
+            )],
+            "fs",
+        ),
+        (
+            vec![
+                ("main.silt", "import helper\nfn main() { helper.go() }"),
+                (
+                    "helper.silt",
+                    "import env\npub fn go() { let _ = env.get(\"HOME\") }",
+                ),
+            ],
+            "env",
+        ),
+    ] {
+        let errors = errors_with_builtins(&files, only());
+        assert_eq!(errors.len(), 1, "{files:?}: {errors:?}");
+        assert_eq!(errors[0].code, Code::ModuleNotFound, "{errors:?}");
+        assert_eq!(
+            errors[0].message,
+            format!(
+                "the builtin module '{module}' is not offered to this program: the application \
+                 that runs it lets it import only list, string"
+            )
+        );
+    }
+    let errors = errors_with_builtins(
+        &[("main.silt", "import tcp\nfn main() { println(\"hi\") }")],
+        Builtins::Only(Vec::new()),
+    );
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(
+        errors[0]
+            .message
+            .ends_with("the application that runs it lets it import no builtin module"),
+        "{errors:?}"
+    );
+    // (Every builtin module is the program's by default.)
+    let errors = errors_with_builtins(
+        &[(
+            "main.silt",
+            "import fs\nfn main() { let _ = fs.exists(\"x\") }",
+        )],
+        Builtins::All,
+    );
+    assert!(errors.is_empty(), "{errors:?}");
 }

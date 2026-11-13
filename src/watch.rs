@@ -113,6 +113,7 @@ impl WatchSet {
                 project: ProjectSetup::Discover(dir.clone()),
                 lock,
                 host: Vec::new(),
+                builtins: crate::session::Builtins::All,
             });
             match session.packages().map(|packages| packages.lock) {
                 Ok(LockChange::Updated) => {

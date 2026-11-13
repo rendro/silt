@@ -121,6 +121,7 @@ pub(crate) fn open_entry(path: &str, lock: LockPolicy) -> std::io::Result<(Sessi
         project: ProjectSetup::Discover(dir),
         lock,
         host: Vec::new(),
+        builtins: silt::session::Builtins::All,
     });
     let file = session.open(Path::new(path))?;
     Ok(with_packages(session, file))
@@ -138,6 +139,7 @@ pub(crate) fn open_stdin(lock: LockPolicy) -> std::io::Result<(Session, FileId)>
         project: ProjectSetup::Discover(std::env::current_dir().unwrap_or_else(|_| ".".into())),
         lock,
         host: Vec::new(),
+        builtins: silt::session::Builtins::All,
     });
     let file = session.set_overlay(Path::new(STDIN_NAME), text);
     Ok(with_packages(session, file))

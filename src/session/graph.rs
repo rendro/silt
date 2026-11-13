@@ -171,6 +171,8 @@ pub struct ModuleGraph {
     by_path: HashMap<PathBuf, ModuleId>,
     /// The host modules, by name.
     hosts: HashMap<Symbol, ModuleId>,
+    /// The builtin modules a program may import.
+    builtins: super::Builtins,
 }
 
 /// The modules reachable from an entry, in the order they are checked.
@@ -187,6 +189,15 @@ pub struct Ordering {
 }
 
 impl ModuleGraph {
+    /// An empty graph, whose programs may import the builtin modules
+    /// `builtins`.
+    pub(super) fn new(builtins: super::Builtins) -> ModuleGraph {
+        ModuleGraph {
+            builtins,
+            ..ModuleGraph::default()
+        }
+    }
+
     /// The module `id`.
     pub fn module(&self, id: ModuleId) -> &Module {
         &self.modules[id.index()]
@@ -666,7 +677,10 @@ impl ModuleGraph {
                     .with_help(format!("rebuild silt with `--features {feature}`")),
                 )
             } else if module::is_builtin_module(&resolve(name)) {
-                ImportResolution::Builtin
+                match self.builtins.allows(&resolve(name)) {
+                    true => ImportResolution::Builtin,
+                    false => ImportResolution::Unresolved(self.builtins.refusal(name, span)),
+                }
             } else if let Some(cell) = self.cell_module(name) {
                 // (Before the name rule: a cell's name, `<repl:k>`, is
                 // one no program can write.)

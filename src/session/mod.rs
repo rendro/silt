@@ -50,6 +50,61 @@ pub struct Config {
     pub lock: LockPolicy,
     /// The modules of Rust functions an embedder offers the program.
     pub host: Vec<HostModule>,
+    /// The builtin modules the program may import.
+    pub builtins: Builtins,
+}
+
+/// The builtin modules a program may import: an `import` of any other
+/// is an error when the program is checked. The prelude (`println`,
+/// `Option`, ...) is every program's.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum Builtins {
+    /// Every builtin module of the build.
+    #[default]
+    All,
+    /// Only these (`["list", "string", "math"]`): a host that runs
+    /// programs it did not write keeps `fs`, `io`, `env`, `process`,
+    /// `tcp`, `http` and `postgres` from them so.
+    Only(Vec<String>),
+}
+
+impl Builtins {
+    /// Whether a program may import the builtin module `name`.
+    pub fn allows(&self, name: &str) -> bool {
+        match self {
+            Builtins::All => true,
+            Builtins::Only(names) => names.iter().any(|allowed| allowed == name),
+        }
+    }
+
+    /// The error for an `import` (at `span`) of the builtin module
+    /// `name`, which the program may not import.
+    fn refusal(&self, name: Symbol, span: crate::source::Span) -> Diagnostic {
+        let allowed = match self {
+            Builtins::All => Vec::new(),
+            Builtins::Only(names) => {
+                let mut names: Vec<&str> = (names.iter())
+                    .map(String::as_str)
+                    .filter(|name| crate::module::is_builtin_module(name))
+                    .collect();
+                names.sort_unstable();
+                names.dedup();
+                names
+            }
+        };
+        let offered = match allowed.as_slice() {
+            [] => "no builtin module".to_string(),
+            names => format!("only {}", names.join(", ")),
+        };
+        Diagnostic::error(
+            Code::ModuleNotFound,
+            span,
+            format!(
+                "the builtin module '{name}' is not offered to this program: the application \
+                 that runs it lets it import {offered}"
+            ),
+        )
+    }
 }
 
 /// What a program is compiled for.
@@ -198,7 +253,7 @@ pub struct Session {
 impl Session {
     pub fn new(config: Config) -> Session {
         let mut sources = SourceMap::new();
-        let mut graph = ModuleGraph::default();
+        let mut graph = ModuleGraph::new(config.builtins.clone());
         for (index, host) in config.host.iter().enumerate() {
             graph.enter_host(index, host, &mut sources);
         }
