@@ -823,7 +823,10 @@ fn do_http_request(
 /// HEAD) and without the program's `content-type` header, and so does
 /// a POST that gets a 301 or 302; any other request goes on with the
 /// same method and body. As ureq does, a
-/// redirect drops the `authorization` and `cookie` headers. A `content-length` header of the program's is not sent:
+/// redirect drops the `authorization` and `cookie` headers, and the user
+/// and password of the URL, which are sent as `authorization` (decoded,
+/// [`basic_of_url`]) where the program sets none. A `content-length`
+/// header of the program's is not sent:
 /// the body's own length is (an empty body of a method that takes
 /// none by default has none).
 ///
@@ -863,7 +866,17 @@ fn do_http_request_on(
         if let Some(refused) = refuse_port(&url) {
             return refused;
         }
-        let result = send_request(agent, method, &url, body, &headers);
+        // The user and password of the URL, when the program set no
+        // `authorization` itself.
+        let own = headers
+            .iter()
+            .any(|(key, _)| key.eq_ignore_ascii_case("authorization"));
+        let basic = (!own).then(|| basic_of_url(&url)).flatten();
+        let mut sent = headers.clone();
+        if let Some(basic) = &basic {
+            sent.push(("authorization", basic));
+        }
+        let result = send_request(agent, method, &url, body, &sent);
         let Some((status, next)) = result.as_ref().ok().and_then(|r| redirect(r, &url)) else {
             return finish_http_response(result, &url, method == "HEAD");
         };
@@ -889,6 +902,28 @@ fn do_http_request_on(
         url = next;
     }
     finish_http_response(Err(ureq::Error::TooManyRedirects), &url, false)
+}
+
+/// The `authorization` header of the user and password of `url`
+/// (`http://user:pa%20ss@host/`): `Basic` with `user:pa ss`, each
+/// percent-decoded first (RFC 3986 writes a `@`, `:`, `/` or a space in
+/// them so, RFC 7617 sends them as they are). The user ends at the first
+/// `:`, the password at the last `@`, as ureq reads them. `None` for a
+/// URL without them.
+#[cfg(feature = "http")]
+fn basic_of_url(url: &str) -> Option<String> {
+    use base64::Engine;
+    let uri = url.parse::<ureq::http::Uri>().ok()?;
+    let authority = uri.authority()?.as_str();
+    let (userinfo, _) = authority.rsplit_once('@')?;
+    let (user, password) = userinfo.split_once(':').unwrap_or((userinfo, ""));
+    let mut pair: Vec<u8> = percent_encoding::percent_decode_str(user).collect();
+    pair.push(b':');
+    pair.extend(percent_encoding::percent_decode_str(password));
+    Some(format!(
+        "Basic {}",
+        base64::engine::general_purpose::STANDARD.encode(pair)
+    ))
 }
 
 /// Send one request of `http.request`, following no redirect. Every
@@ -972,8 +1007,14 @@ fn resolve_location(base: &str, location: &str) -> String {
     let Ok(uri) = base.parse::<ureq::http::Uri>() else {
         return location.to_string();
     };
+    // (Without the user and password of the base: they are not sent to
+    // where a redirect leads, as the `authorization` header is not.)
     let origin = match (uri.scheme_str(), uri.authority()) {
-        (Some(scheme), Some(authority)) => format!("{scheme}://{authority}"),
+        (Some(scheme), Some(authority)) => {
+            let host = authority.as_str().rsplit_once('@');
+            let host = host.map_or(authority.as_str(), |(_, host)| host);
+            format!("{scheme}://{host}")
+        }
         _ => String::new(),
     };
     if location.starts_with("//") {
@@ -2813,6 +2854,57 @@ mod http_error_tests {
     fn a_host_that_is_not_found_is_connect() {
         let failed = failure(&do_http_get("http://no-such-host.invalid/"));
         assert!(failed.starts_with("Connect("), "{failed}");
+    }
+
+    /// What a server that answers 200 got as the head of the request to
+    /// `url` with `headers`: the url is a template, `{}` for the server's
+    /// `host:port`.
+    fn head_sent(url: &str, headers: &[(String, String)]) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a listener");
+        let addr = listener.local_addr().expect("its address");
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut head = Vec::new();
+                let mut buf = [0u8; 1024];
+                while !head.ends_with(b"\r\n\r\n") {
+                    match stream.read(&mut buf) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => head.extend_from_slice(&buf[..n]),
+                    }
+                }
+                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n");
+                let _ = tx.send(String::from_utf8_lossy(&head).into_owned());
+            }
+        });
+        let url = url.replace("{}", &addr.to_string());
+        let done = do_http_request("GET", &url, &[], headers);
+        assert!(failure(&done).starts_with("no error"), "{}", failure(&done));
+        rx.recv_timeout(Duration::from_secs(10)).expect("the head")
+    }
+
+    /// The user and password of a URL are sent as `Basic`, each
+    /// percent-decoded first: `al%40ice:p%3Aw%2Fd%21%20x` is the user
+    /// `al@ice` with the password `p:w/d! x` (they were sent encoded, and
+    /// a server read another password). An `authorization` of the
+    /// program's is sent instead.
+    #[test]
+    fn the_user_and_password_of_a_url_are_sent_decoded() {
+        use base64::Engine;
+        let basic = |pair: &str| {
+            format!(
+                "authorization: Basic {}\r\n",
+                base64::engine::general_purpose::STANDARD.encode(pair)
+            )
+        };
+        let head = head_sent("http://al%40ice:p%3Aw%2Fd%21%20x@{}/x", &[]);
+        assert!(head.contains(&basic("al@ice:p:w/d! x")), "{head}");
+        let head = head_sent("http://caf%C3%A9@{}/x", &[]);
+        assert!(head.contains(&basic("café:")), "{head}");
+        let own = [("Authorization".to_string(), "Bearer t".to_string())];
+        let head = head_sent("http://user:pw@{}/x", &own);
+        assert!(head.contains("authorization: Bearer t\r\n"), "{head}");
+        assert_eq!(head.matches("uthorization").count(), 1, "{head}");
     }
 
     #[test]

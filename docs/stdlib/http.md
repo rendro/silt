@@ -212,12 +212,19 @@ say, in a `Content-Type` header among `headers`: none is added. A
 `user-agent` among `headers` is sent instead of `silt/<version>`. A
 `Content-Length` among `headers` is not sent: the body's own length is.
 
+A user and password in the URL (`https://user:pa%20ss@host/`) are sent
+as `authorization: Basic ...` (RFC 7617), unless `headers` has an
+`authorization` of its own, for `http.get` too. They are percent-decoded
+first: write a `@`, `:`, `/` or a space in them encoded (`pa%20ss` is the
+password `pa ss`). No error shows them: the URL of an `InvalidUrl` has
+`***` in their place.
+
 A redirect is followed, up to ten of them: after a 307 or 308 with the
 same method and body; after a 303 as a `GET` without a body and without
 the `Content-Type` among `headers` (a `HEAD` stays a `HEAD`); after a 301
 or 302 a `POST` as such a `GET`, and any other method with the same
-method and body. The `authorization` and `cookie` headers are not sent to where
-a redirect leads. A location that is no full URL is resolved against
+method and body. The `authorization` and `cookie` headers, and the user
+and password of the URL, are not sent to where a redirect leads. A location that is no full URL is resolved against
 the URL that answered: `?y=2` on its path, `//host/x` on its scheme.
 
 Like `http.get`, this transparently yields to the scheduler when called from
