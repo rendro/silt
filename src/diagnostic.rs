@@ -622,24 +622,40 @@ pub fn render_human(view: &dyn SourceView, d: &Diagnostic) -> String {
         bold = c.bold,
         reset = c.reset,
         phase = d.phase().word(),
-        msg = d.message,
+        msg = visible_text(&d.message),
     );
     if let Some(located) = view.locate(d.span) {
-        write_snippet(&mut out, c, "-->", &located, '^', &d.message, color);
+        write_snippet(
+            &mut out,
+            c,
+            "-->",
+            &located,
+            '^',
+            &visible_text(&d.message),
+            color,
+        );
     }
     let runtime = d.phase() == Phase::Runtime;
     if !runtime {
         for (span, label) in &d.labels {
             if let Some(located) = view.locate(*span) {
-                write_snippet(&mut out, c, ":::", &located, '-', label, c.cyan);
+                write_snippet(
+                    &mut out,
+                    c,
+                    ":::",
+                    &located,
+                    '-',
+                    &visible_text(label),
+                    c.cyan,
+                );
             }
         }
     }
     for note in &d.notes {
-        write_body(&mut out, c, "= note:", note);
+        write_body(&mut out, c, "= note:", &visible_text(note));
     }
     for help in &d.help_lines(view) {
-        write_body(&mut out, c, "= help:", help);
+        write_body(&mut out, c, "= help:", &visible_text(help));
     }
     if runtime {
         let frames: Vec<(String, Span)> = d
@@ -845,7 +861,19 @@ pub(crate) fn visible_line(line: &str) -> String {
             '\t' => ch,
             '\u{0}'..='\u{1f}' => char::from_u32(0x2400 + ch as u32).unwrap_or('\u{fffd}'),
             '\u{7f}' => '\u{2421}',
-            '\u{80}'..='\u{9f}'
+            _ if hidden_in_text(ch) => '\u{fffd}',
+            _ => ch,
+        })
+        .collect()
+}
+
+/// Whether `ch` acts on a terminal or shows as nothing outside ASCII: a
+/// C1 control, a bidirectional control, a character that shows as
+/// nothing or breaks the line (see `visible_line`).
+fn hidden_in_text(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{80}'..='\u{9f}'
             | '\u{ad}'
             | '\u{61c}'
             | '\u{200b}'..='\u{200f}'
@@ -855,10 +883,24 @@ pub(crate) fn visible_line(line: &str) -> String {
             | '\u{2060}'..='\u{2064}'
             | '\u{2066}'..='\u{206f}'
             | '\u{feff}'
-            | '\u{e0000}'..='\u{e007f}' => '\u{fffd}',
-            _ => ch,
-        })
-        .collect()
+            | '\u{e0000}'..='\u{e007f}'
+    )
+}
+
+/// A message, a label, a note or a help as a terminal is given it: the
+/// characters of `hidden_in_text` stand as `�`, wherever a text of the
+/// program reached it (a string or a name that a message quotes). The
+/// C0 controls in a message are escaped where it is made (`\u{1b}`),
+/// and its line breaks are its own.
+pub(crate) fn visible_text(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.chars().any(hidden_in_text) {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    std::borrow::Cow::Owned(
+        text.chars()
+            .map(|ch| if hidden_in_text(ch) { '\u{fffd}' } else { ch })
+            .collect(),
+    )
 }
 
 /// The padding that puts a caret under the `col`-th char of `src_line`
@@ -1133,6 +1175,10 @@ mod tests {
         assert_eq!(
             visible_line("a\u{61c}b\u{200e}c\u{200f}d"),
             "a\u{fffd}b\u{fffd}c\u{fffd}d"
+        );
+        assert_eq!(
+            visible_text("a\u{202e}b\u{2028}c\n\td"),
+            "a\u{fffd}b\u{fffd}c\n\td"
         );
         // What shows as nothing or breaks the line stands as one too.
         assert_eq!(
