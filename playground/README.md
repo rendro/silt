@@ -13,6 +13,10 @@ bash build.sh                   # the module, into pkg/ (needs wasm-pack)
 node tests/wasm.mjs             # the module, as a page runs it
 ```
 
+The crate is built from its own `Cargo.lock` (CI and `build.sh` pass
+`--locked`): a dependency change comes with the lock file's change
+(`cargo update -p <crate>` here).
+
 ## What a page calls
 
 `pkg/silt_playground.js` is an ES module. Its default export loads

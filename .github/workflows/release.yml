@@ -99,11 +99,16 @@ jobs:
           set -euo pipefail
           current=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
           # The package's own version: the first `version =` line of
-          # Cargo.toml, and silt's entry in Cargo.lock.
+          # Cargo.toml, and silt's entry in each lock file: the root's and
+          # those of the playground and fuzz crates, which depend on silt
+          # by path (their --locked builds fail on a stale one).
+          locks="Cargo.lock playground/Cargo.lock fuzz/Cargo.lock"
           sed -i "0,/^version = \"$current\"$/s//version = \"$VERSION\"/" Cargo.toml
-          perl -0pi -e "s/name = \"silt\"\nversion = \"\Q$current\E\"/name = \"silt\"\nversion = \"$VERSION\"/" Cargo.lock
-          [ "$(git diff --numstat | wc -l)" = 2 ] || { git diff; echo "::error::The version was not written to exactly Cargo.toml and Cargo.lock."; exit 1; }
-          cargo metadata --locked --format-version 1 > /dev/null
+          perl -0pi -e "s/name = \"silt\"\nversion = \"\Q$current\E\"/name = \"silt\"\nversion = \"$VERSION\"/" $locks
+          [ "$(git diff --numstat | wc -l)" = 4 ] || { git diff; echo "::error::The version was not written to exactly Cargo.toml and the three Cargo.lock files."; exit 1; }
+          for manifest in Cargo.toml playground/Cargo.toml fuzz/Cargo.toml; do
+            cargo metadata --locked --manifest-path "$manifest" --format-version 1 > /dev/null
+          done
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -qam "Version $VERSION"
