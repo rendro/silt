@@ -6,13 +6,15 @@ use super::Server;
 use super::ast_walk::find_field_access_at;
 use super::conversions::position_to_offset;
 use super::modules::module_qualifier_at;
+use super::workspace::Target;
 
 impl Server {
     /// Where the name under the cursor is declared: a local's binder, a
     /// definition's name in its file, a method's declaration in the impl
     /// or the trait (see `workspace.rs`), a record field's declaration,
-    /// the file of the module a qualifier names. Nothing for one of
-    /// silt's own names.
+    /// the file of the module a qualifier, an alias or an import names
+    /// (an item of `import m.{ f }` is `f`). Nothing for one of silt's
+    /// own names.
     pub(super) fn goto_definition(
         &self,
         params: lsp_types::GotoDefinitionParams,
@@ -29,6 +31,23 @@ impl Server {
         // (`Pt { x } ->`): the field's declaration.
         if let Some(location) = self.pattern_field_declaration_at(uri, cursor) {
             return Some(GotoDefinitionResponse::Scalar(location));
+        }
+        // A module's alias (`sh` of `import shapes as sh`, also in
+        // `sh.area`): the module's file.
+        if let Some((_, Target::Alias { name, .. })) = self.target_at(uri, cursor) {
+            let view = self.imported_module(doc, name)?;
+            return Some(GotoDefinitionResponse::Scalar(Location::new(
+                view.uri,
+                Range::default(),
+            )));
+        }
+        // The module an import names (`geometry` in `import geometry`):
+        // its file.
+        if let Some(file) = self.imported_module_file_at(doc, cursor) {
+            return Some(GotoDefinitionResponse::Scalar(Location::new(
+                file,
+                Range::default(),
+            )));
         }
         if let Some((_, target)) = self.target_at(uri, cursor) {
             let mut locations = self.declarations_of(uri, &target);

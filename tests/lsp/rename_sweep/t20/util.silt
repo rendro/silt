@@ -1,0 +1,13 @@
+import shapes as sh
+
+pub fn label(p: sh.Pt) -> String {
+  match p {
+    sh.Pt { x: 0, y } -> "on y {y}"
+    _ -> "at {p.x}"
+  }
+}
+
+pub fn make(n: Int) -> sh.Pt {
+  let size = sh.Size { x: n, w: 2 }
+  sh.Pt { x: n, y: sh.area(size) }
+}
