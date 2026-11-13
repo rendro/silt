@@ -295,7 +295,11 @@ a temporary table, function or type, a session's advisory lock, a
 pool, and to the end of the transaction inside `postgres.transact`: it
 never reaches the next statement that takes the connection. What the
 connection string sets (`application_name`, `options=-c name=value`)
-stays. A connection is not used again, but closed by the next statement
+stays. What `DISCARD ALL` leaves, the reset leaves too: a library loaded
+with `LOAD`, the session data of PL/Perl or PL/Python, a `dblink`
+connection, and the seed of `random()`: after `SELECT setseed(0.42)`, the
+next statement that takes the connection, whoever runs it, draws the same
+numbers. A connection is not used again, but closed by the next statement
 that takes it, which takes another (a new login), when its session holds
 a statement prepared with SQL's `PREPARE`, or a `DEALLOCATE ALL` or
 `DISCARD ALL` dropped the statements the connection keeps prepared for
@@ -323,8 +327,13 @@ callback, issues `BEGIN` up-front, and either `COMMIT`s on `Ok(_)` or
 handle; queries that should participate in the transaction must go
 through that handle — calling `postgres.query(pool, ...)` with the
 enclosing pool would pick a different connection and miss the
-transaction entirely. Nested `postgres.transact` calls are rejected;
-use `postgres.execute(tx, "SAVEPOINT ...")` manually instead.
+transaction entirely. A transaction does not nest: `postgres.transact`
+takes a pool, not a `PgTx`, and `postgres.transact(pool, ...)` called
+inside the callback takes another connection and runs a second
+transaction of its own, which commits or rolls back apart from the first
+(with `max_pool_size` 1 it waits the pool's 30 seconds and is `Timeout`).
+For a part of a transaction that may fail alone, use a savepoint through
+the handle: `postgres.execute(tx, "SAVEPOINT a", ())`.
 
 `postgres.transact` is the one way into a transaction. A statement that
 begins or ends one (`BEGIN`, `START TRANSACTION`, `COMMIT`, `END`,
