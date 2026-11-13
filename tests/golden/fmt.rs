@@ -60,7 +60,7 @@ pub(crate) fn check(
             expected_path.display()
         ));
     }
-    if std::env::var_os("SILT_BLESS").is_some() {
+    if crate::env_switch::on("SILT_BLESS") {
         std::fs::write(&expected_path, &formatted).expect("write blessed formatted file");
     } else {
         let expected = std::fs::read_to_string(&expected_path).unwrap_or_default();

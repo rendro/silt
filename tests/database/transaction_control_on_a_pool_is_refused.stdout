@@ -1,0 +1,21 @@
+BEGIN: postgres: BEGIN cannot run on a pool, where each statement runs on its own; run a transaction with postgres.transact
+begin work: postgres: BEGIN cannot run on a pool, where each statement runs on its own; run a transaction with postgres.transact
+START TRANSACTION ISOLATION LEVEL SERIALIZABLE: postgres: START TRANSACTION cannot run on a pool, where each statement runs on its own; run a transaction with postgres.transact
+COMMIT: postgres: COMMIT cannot run on a pool, where each statement runs on its own; run a transaction with postgres.transact
+END: postgres: END cannot run on a pool, where each statement runs on its own; run a transaction with postgres.transact
+ROLLBACK: postgres: ROLLBACK cannot run on a pool, where each statement runs on its own; run a transaction with postgres.transact
+ABORT: postgres: ABORT cannot run on a pool, where each statement runs on its own; run a transaction with postgres.transact
+PREPARE TRANSACTION 'silt_database_pool_control': postgres: PREPARE TRANSACTION cannot run on a pool, where each statement runs on its own; run a transaction with postgres.transact
+SAVEPOINT a: postgres: SAVEPOINT cannot run on a pool, where each statement runs on its own; run a transaction with postgres.transact
+RELEASE SAVEPOINT a: postgres: RELEASE cannot run on a pool, where each statement runs on its own; run a transaction with postgres.transact
+ROLLBACK TO SAVEPOINT a: postgres: ROLLBACK TO cannot run on a pool, where each statement runs on its own; run a transaction with postgres.transact
+  -- a comment
+  /* and /* another */ one */ ; BeGiN;: postgres: BEGIN cannot run on a pool, where each statement runs on its own; run a transaction with postgres.transact
+query: postgres: BEGIN cannot run on a pool, where each statement runs on its own; run a transaction with postgres.transact
+stream: postgres: BEGIN cannot run on a pool, where each statement runs on its own; run a transaction with postgres.transact
+insert: Ok
+seen from the other pool: 1
+a failed statement: postgres query error [22012]: division by zero
+the statement after it: Ok
+a transaction that rolls back: give up
+seen from the other pool: 1

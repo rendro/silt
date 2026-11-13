@@ -15,7 +15,7 @@ fn fuzz_corpus_dirs_have_seeds() {
     use std::fs;
     // Iterate fuzz/corpus/<target>/ subdirs; each must have >= 1 file other than .gitkeep.
     let base = corpus_root();
-    if std::env::var("SILT_CI_NO_FUZZ").is_ok() {
+    if crate::env_switch::on("SILT_CI_NO_FUZZ") {
         return;
     }
     assert!(

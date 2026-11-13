@@ -189,6 +189,13 @@ What is compared, per door:
 - `test` on a file without `test_*` functions still analyses the whole
   file and reports its diagnostics (then "0 tests"), so it has a verdict
   like the others.
+- `test` given a file of a package checks the package first: its entry
+  and every module of `src/`, imported or not, and runs no test when
+  that fails. `check`, `run` and the LSP given the same file see only it
+  and what it imports. So a package case with an error in a module of
+  `src/` that the entry does not import is `known-divergent test` by
+  design, not by a fault (`repros/architecture/mod1_app`,
+  `repros/packages/t10_app`).
 - The LSP: the error diagnostics last published for each file of the
   case (what an editor's problem list shows after opening the entry
   file). A session that publishes nothing for the entry file is a failed
@@ -318,4 +325,7 @@ the case.
 / `.stderr` / `.formatted` file and every `-- verdict:` mark from the current binary
 (with `SILT_GOLDEN_FULL_CORPUS=1` for the marks of the whole repro
 corpus). Only the integrator uses it,
-after reviewing the diff.
+after reviewing the diff. A switch like this one (`SILT_BLESS`,
+`SILT_GOLDEN_FULL_CORPUS`, `SILT_GOLDEN_SKIP_VERDICT`) is on only when its
+variable holds a value other than the empty one and `0`: `SILT_BLESS=`
+checks, it does not bless (`tests/support/env_switch.rs`).

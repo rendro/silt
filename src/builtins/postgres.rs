@@ -49,9 +49,11 @@ use crate::typeinfo::{BuiltinVariant, bv, ty};
 use crate::value::Value;
 use crate::vm::{IoOp, Leave, Limit, Native, Runtime, Step, Vm, VmError, Wanted};
 
+mod control;
 mod rows;
 
 use crate::bytecode::Globals;
+use control::Control;
 use rows::{Fill, Filling, Plan, Row, RowType, Rows, TextParam, Unsendable};
 
 /// The error of a `postgres` function whose operation has no value
@@ -105,6 +107,11 @@ fn block_on_within<F: std::future::Future>(
 struct Driver {
     runtime: Option<tokio::runtime::Runtime>,
     task: Option<tokio::task::JoinHandle<()>>,
+    /// How long its `drop` drives the protocol task at most.
+    ending: Duration,
+    /// Its `drop` does not drive the protocol task at all: the server did
+    /// not answer the connection's reset ([`Conn::reset`]).
+    abandoned: std::sync::atomic::AtomicBool,
 }
 
 impl Driver {
@@ -115,15 +122,35 @@ impl Driver {
             .expect("the runtime lives as long as its driver");
         runtime.block_on(future)
     }
+
+    /// [`Driver::block_on`], `limit` at most: `None` when the time ran
+    /// out, and `future` was dropped.
+    fn block_on_within<F: std::future::Future>(
+        &self,
+        limit: Duration,
+        future: F,
+    ) -> Option<F::Output> {
+        let runtime = self
+            .runtime
+            .as_ref()
+            .expect("the runtime lives as long as its driver");
+        block_on_within(runtime, limit, future)
+    }
 }
 
 impl Drop for Driver {
     /// The client is gone (`Conn` drops it first): the protocol task
     /// ends the session once the answers it waits for have come, and is
-    /// driven here until it has.
+    /// driven here until it has, `ending` at most. Then it is dropped,
+    /// and its socket with it: the server ends a session whose socket
+    /// closed as one that ended, and rolls back its transaction.
     fn drop(&mut self) {
         if let (Some(runtime), Some(task)) = (self.runtime.take(), self.task.take()) {
-            let _ = runtime.block_on(task);
+            let ending = match self.abandoned.load(std::sync::atomic::Ordering::SeqCst) {
+                true => Duration::ZERO,
+                false => self.ending,
+            };
+            let _ = block_on_within(&runtime, ending, task);
             runtime.shutdown_background();
         }
     }
@@ -257,7 +284,23 @@ struct Conn {
     /// back. (One for which a cancel request was sent does not go back
     /// either: `Canceller::sent`.)
     broken: bool,
+    /// Where its reset is ([`Conn::reset`]): `RESET_DUE`, `RESET_DONE`,
+    /// `RESET_SENT`, `RESET_FAILED` (then it is broken).
+    reset: std::sync::atomic::AtomicU8,
+    /// The answer of a reset that was sent and not yet read
+    /// (`RESET_SENT`).
+    pending: Mutex<Option<std::pin::Pin<Box<tokio_postgres::SimpleQueryStream>>>>,
 }
+
+/// The reset of a connection taken from the pool is still to come.
+const RESET_DUE: u8 = 0;
+/// It found the session clean.
+const RESET_DONE: u8 = 1;
+/// It did not: the connection is closed.
+const RESET_FAILED: u8 = 2;
+/// It went with the statement's last operation ([`Conn::wait_last`]),
+/// and its answer has not been read ([`Conn::settle`]).
+const RESET_SENT: u8 = 3;
 
 impl Conn {
     fn client(&self) -> &Client {
@@ -295,7 +338,8 @@ impl r2d2::ManageConnection for Manager {
 
     /// Whether a connection taken from the pool is still open: a round
     /// trip, which finds a session the server has ended, also one whose
-    /// end is still on its way to the client.
+    /// end is still on its way to the client. (The pool does not ask: a
+    /// statement's first operation finds that out, see [`live`].)
     fn is_valid(&self, conn: &mut Conn) -> Result<(), ConnectFailure> {
         conn.wait(conn.client.simple_query(""))
             .map(|_| ())
@@ -310,7 +354,237 @@ impl r2d2::ManageConnection for Manager {
 impl Conn {
     /// It must not go back to the pool.
     fn is_broken(&self) -> bool {
-        self.broken || self.canceller.was_sent() || self.client.is_closed()
+        self.broken
+            || self.canceller.was_sent()
+            || self.client.is_closed()
+            || self.reset.load(std::sync::atomic::Ordering::SeqCst) == RESET_FAILED
+    }
+
+    /// Wait for `op`, the last operation of a statement on the pool or of
+    /// a transaction (its `COMMIT` or `ROLLBACK`), with the connection's
+    /// reset ([`RESET`]) sent right after it: the server runs it as soon
+    /// as `op` is done, and nobody waits for its answer now. The next
+    /// statement that takes the connection reads it ([`Conn::settle`]),
+    /// before anything else. `op` sends its messages when it is first
+    /// polled (a statement already prepared), so it is polled first, and
+    /// both go out before `op`'s answer can come. A connection that is
+    /// broken gets no reset.
+    fn wait_last<F: std::future::Future>(&self, op: F) -> F::Output {
+        use std::sync::atomic::Ordering::SeqCst;
+        if self.is_broken() {
+            return self.wait(op);
+        }
+        let (done, sent) = self.driver.block_on(async {
+            let mut op = std::pin::pin!(op);
+            let mut send = std::pin::pin!(self.client.simple_query_raw(RESET));
+            let mut sent = None;
+            let done = std::future::poll_fn(|cx| {
+                let done = op.as_mut().poll(cx);
+                if sent.is_none()
+                    && let std::task::Poll::Ready(stream) = send.as_mut().poll(cx)
+                {
+                    sent = Some(stream);
+                }
+                done
+            })
+            .await;
+            let sent = match sent {
+                Some(sent) => sent,
+                None => send.await,
+            };
+            (done, sent)
+        });
+        match sent {
+            Ok(answer) => {
+                *self.pending.lock().unwrap_or_else(|e| e.into_inner()) = Some(Box::pin(answer));
+                self.reset.store(RESET_SENT, SeqCst);
+            }
+            Err(_) => self.reset.store(RESET_FAILED, SeqCst),
+        }
+        done
+    }
+
+    /// Read the answer of the reset that went with the last operation
+    /// of the connection's last statement ([`Conn::wait_last`]), if it
+    /// has not been read: [`RESET_LIMIT`] at most (or the connect limit,
+    /// if that is shorter), which the server has had since.
+    fn settle(&self) {
+        use futures_util::TryStreamExt;
+        use std::sync::atomic::Ordering::SeqCst;
+        if self.reset.load(SeqCst) != RESET_SENT {
+            return;
+        }
+        let answer = self
+            .pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        let Some(answer) = answer else {
+            return;
+        };
+        let limit = self.canceller.limit.min(RESET_LIMIT);
+        let answer = self
+            .driver
+            .block_on_within(limit, answer.try_collect::<Vec<_>>());
+        self.after_reset(answer);
+    }
+
+    /// The reset's answer `reset` (`None`: none came in time), marked on
+    /// the connection.
+    fn after_reset(
+        &self,
+        reset: Option<Result<Vec<tokio_postgres::SimpleQueryMessage>, tokio_postgres::Error>>,
+    ) {
+        use std::sync::atomic::Ordering::SeqCst;
+        if reset.is_none() {
+            self.driver.abandoned.store(true, SeqCst);
+        }
+        let mut verdict = verdict_of(reset);
+        if verdict == Verdict::Rest {
+            // The session holds what the reset undoes only where the check
+            // finds it: undo that, and check again.
+            let limit = self.canceller.limit.min(RESET_LIMIT);
+            let rest = self
+                .driver
+                .block_on_within(limit, self.client.simple_query(RESET_REST));
+            if rest.is_none() {
+                self.driver.abandoned.store(true, SeqCst);
+            }
+            verdict = verdict_of(rest);
+        }
+        let state = match verdict {
+            Verdict::Clean => RESET_DONE,
+            _ => RESET_FAILED,
+        };
+        self.reset.store(state, SeqCst);
+    }
+
+    /// The reset that went with an operation that failed is not the
+    /// connection's verdict (in a transaction that failed it fails too):
+    /// it is due again, unless its answer never came.
+    fn reset_again(&self) {
+        use std::sync::atomic::Ordering::SeqCst;
+        self.settle();
+        if !self.driver.abandoned.load(SeqCst) {
+            self.reset.store(RESET_DUE, SeqCst);
+        }
+    }
+
+    /// Make the session what the next statement of the pool finds: what
+    /// a statement or a transaction set in it is undone, as `DISCARD ALL`
+    /// does, but for the statements the client prepared itself (which it
+    /// keeps). A session that is inside a transaction, or holds a
+    /// statement the program prepared with `PREPARE`, or lost the
+    /// client's prepared statements (`DEALLOCATE ALL`, `DISCARD ALL`:
+    /// the check of [`mark`] is gone with them), is marked broken: it is closed,
+    /// and the server rolls its transaction back. So is one that does
+    /// not answer within [`RESET_LIMIT`] (or the connect limit, if that
+    /// is shorter), and it is closed without waiting for its answer.
+    /// (This is the reset of a connection given back whose last
+    /// operation did not send one: a stream's, a listener's, one that was
+    /// taken and not used. The thread that gives it back waits for it.)
+    fn reset(&self) {
+        let limit = self.canceller.limit.min(RESET_LIMIT);
+        let reset = self
+            .driver
+            .block_on_within(limit, self.client.simple_query(RESET));
+        self.after_reset(reset);
+    }
+}
+
+/// How long the reset of a connection given back to the pool may take
+/// ([`Conn::reset`]), or its answer may take to come once it was sent
+/// ([`Conn::settle`]), at most: a server answers it at once.
+const RESET_LIMIT: Duration = Duration::from_secs(1);
+
+/// The statement every connection prepares when it is made, through
+/// SQL, under a name of its own ([`mark`]): the check of its reset
+/// ([`RESET`]), which says what the session holds. Prepared once, it is
+/// planned once.
+///
+/// - `f`: it cannot go back to the pool. It is inside a transaction (only
+///   the first statement of its own transaction finds `now()` equal to
+///   its start; in a transaction that failed the check is an error), or
+///   holds a statement prepared by `PREPARE`, which the reset leaves
+///   alone. The client's prepared statements (the look-ups of types it
+///   keeps) go with the check itself: `DEALLOCATE ALL` and `DISCARD ALL`
+///   drop them all, also in a `DO` block, and a session that has lost
+///   them, on which every later look-up of a type would fail, has no
+///   check to run: its reset is an error.
+/// - `r`: it holds what the rest of the reset undoes ([`RESET_REST`]): a
+///   cursor `WITH HOLD` (the one kind of cursor that outlives its
+///   transaction), a role set (also the login role itself), or a session
+///   user other than the login.
+/// - `t`: it is clean once the rest of [`RESET`] has run.
+///
+/// The session's advisory locks are let go in the check itself.
+fn mark(login: &str) -> String {
+    format!(
+        "PREPARE silt_pool_mark AS SELECT CASE \
+         WHEN pg_catalog.now() OPERATOR(pg_catalog.<>) pg_catalog.statement_timestamp() \
+           OR (SELECT pg_catalog.array_agg(name) FROM pg_catalog.pg_prepared_statements WHERE from_sql) \
+           IS DISTINCT FROM ARRAY['silt_pool_mark']::pg_catalog.text[] THEN 'f' \
+         WHEN EXISTS (SELECT FROM pg_catalog.pg_cursors WHERE is_holdable) \
+           OR pg_catalog.current_setting('role') OPERATOR(pg_catalog.<>) 'none' \
+           OR CURRENT_USER OPERATOR(pg_catalog.<>) SESSION_USER \
+           OR SESSION_USER OPERATOR(pg_catalog.<>) {}::pg_catalog.name THEN 'r' \
+         ELSE 't' END FROM pg_catalog.pg_advisory_unlock_all() AS unlocked",
+        dollar_quoted(login)
+    )
+}
+
+/// `text` as a string constant, in dollar quotes whose tag it does not
+/// hold (so neither quotes nor backslashes in it matter).
+fn dollar_quoted(text: &str) -> String {
+    let mut tag = String::from("silt");
+    while text.contains(&format!("${tag}$")) {
+        tag.push('_');
+    }
+    format!("${tag}${text}${tag}$")
+}
+
+/// What resets a session given back to the pool ([`Conn::reset`]): the
+/// check of [`mark`], then what every session may hold and the check
+/// cannot see at little cost: settings, `LISTEN`, the state of
+/// sequences, and every object of the session's temporary schema, of
+/// any kind (a table, a type, a function; a type there comes before
+/// `pg_catalog`'s). With [`RESET_REST`] it is `DISCARD ALL` (which cannot run
+/// with other statements in one string) in parts, without its
+/// `DEALLOCATE ALL`, which would drop the statements the client keeps
+/// prepared for its look-ups of types, and its `DISCARD PLANS`: plans
+/// are kept only to save the server work.
+const RESET: &str =
+    "EXECUTE silt_pool_mark; RESET ALL; UNLISTEN *; DISCARD SEQUENCES; DISCARD TEMP";
+
+/// The rest of the reset, for a session whose check says it holds what
+/// this undoes (`r`), and the check again, which must then say `t`.
+const RESET_REST: &str =
+    "CLOSE ALL; SET SESSION AUTHORIZATION DEFAULT; RESET ROLE; RESET ALL; EXECUTE silt_pool_mark";
+
+/// What the check of a reset said ([`mark`]).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Verdict {
+    Clean,
+    Rest,
+    /// It said `f`, failed, or did not answer.
+    Closes,
+}
+
+/// The verdict of the answer `reset` of a reset: its first row.
+fn verdict_of(
+    reset: Option<Result<Vec<tokio_postgres::SimpleQueryMessage>, tokio_postgres::Error>>,
+) -> Verdict {
+    let Some(Ok(messages)) = reset else {
+        return Verdict::Closes;
+    };
+    let said = messages.iter().find_map(|message| match message {
+        tokio_postgres::SimpleQueryMessage::Row(row) => Some(row.get(0)),
+        _ => None,
+    });
+    match said {
+        Some(Some("t")) => Verdict::Clean,
+        Some(Some("r")) => Verdict::Rest,
+        _ => Verdict::Closes,
     }
 }
 
@@ -319,18 +593,81 @@ type PgPool = Pool<Manager>;
 /// A connection taken from its pool, which it goes back to when it is
 /// dropped.
 struct PinnedConn {
-    conn: Option<r2d2::PooledConnection<Manager>>,
+    conn: Option<Settled>,
     pool: PgPool,
+}
+
+/// A connection of the pool whose last reset found its session clean,
+/// or that has had none (a new one): the only kind [`PinnedConn::take`]
+/// hands out. [`Settled::of`] is the only way to make one.
+struct Settled(r2d2::PooledConnection<Manager>);
+
+impl Settled {
+    /// `conn`, once the answer of the reset sent when it was last given
+    /// back is read ([`Conn::settle`]); `None` if that, or anything else,
+    /// made it broken: then it is closed.
+    fn of(mut conn: r2d2::PooledConnection<Manager>) -> Option<Settled> {
+        conn.settle();
+        if conn.is_broken() {
+            conn.broken = true;
+            return None;
+        }
+        conn.reset
+            .store(RESET_DUE, std::sync::atomic::Ordering::SeqCst);
+        Some(Settled(conn))
+    }
+}
+
+impl std::ops::Deref for Settled {
+    type Target = Conn;
+
+    fn deref(&self) -> &Conn {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Settled {
+    fn deref_mut(&mut self) -> &mut Conn {
+        &mut self.0
+    }
 }
 
 impl PinnedConn {
     /// A connection of `pool`: an idle one, or one it opens, waiting
     /// for one 30 seconds at most.
-    fn take(pool: &PgPool) -> Result<PinnedConn, r2d2::Error> {
-        Ok(PinnedConn {
-            conn: Some(pool.get()?),
-            pool: pool.clone(),
-        })
+    ///
+    /// The answer of the reset sent when the connection was last given
+    /// back is read first ([`Settled::of`]): a connection whose session
+    /// it did not find clean is closed, and another is taken, until one
+    /// is clean (a new one has no reset to read) or the pool's wait for a
+    /// connection is over: a connection that is not clean is never handed
+    /// out. That is the `PostgresError` `Timeout`, as a pool that has no
+    /// free connection in that time answers.
+    fn take(pool: &PgPool) -> Result<PinnedConn, Value> {
+        let until = std::time::Instant::now() + pool.connection_timeout();
+        loop {
+            let left = until.saturating_duration_since(std::time::Instant::now());
+            let conn = pool.get_timeout(left).map_err(|e| pool_error_value(&e))?;
+            if let Some(conn) = Settled::of(conn) {
+                return Ok(PinnedConn {
+                    conn: Some(conn),
+                    pool: pool.clone(),
+                });
+            }
+            if left.is_zero() {
+                return Err(Value::variant(bv::PG_TIMEOUT, []));
+            }
+        }
+    }
+}
+
+impl PinnedConn {
+    /// Close the connection, whose session the server has ended, and open
+    /// none in its place: the statement takes another itself ([`live`]).
+    fn discard(mut self) {
+        if let Some(mut conn) = self.conn.take() {
+            conn.broken = true;
+        }
     }
 }
 
@@ -353,6 +690,10 @@ impl std::ops::DerefMut for PinnedConn {
 }
 
 impl Drop for PinnedConn {
+    /// A connection is reset before it goes back ([`Conn::reset`]), if
+    /// that did not go with its last operation ([`Conn::wait_last`]): a
+    /// setting, a temporary table, a lock, a `LISTEN` of a statement or a
+    /// transaction does not reach the next statement that takes it.
     /// A broken connection is closed, not given back
     /// (`Manager::has_broken`). The pool keeps no idle connection in
     /// reserve, so it would not open one in its place, and a statement
@@ -363,6 +704,10 @@ impl Drop for PinnedConn {
         let Some(conn) = self.conn.take() else {
             return;
         };
+        let due = conn.reset.load(std::sync::atomic::Ordering::SeqCst) == RESET_DUE;
+        if due && !conn.is_broken() {
+            conn.reset();
+        }
         let broken = conn.is_broken();
         drop(conn);
         if broken && self.pool.state().idle_connections == 0 {
@@ -516,7 +861,9 @@ impl TxConn {
     /// transaction did not end so is not given back to the pool.
     fn roll_back(&mut self) -> Result<(), tokio_postgres::Error> {
         self.ended = true;
-        let ended = self.conn.wait(self.conn.client().batch_execute("ROLLBACK"));
+        let ended = self
+            .conn
+            .wait_last(self.conn.client().batch_execute("ROLLBACK"));
         if ended.is_err() {
             self.conn.broken = true;
         }
@@ -542,8 +889,9 @@ impl TxConn {
         self.ended = true;
         let committed = self
             .conn
-            .wait(self.conn.client().batch_execute("SELECT 1; COMMIT"));
+            .wait_last(self.conn.client().batch_execute("SELECT 1; COMMIT"));
         if committed.is_err() {
+            self.conn.reset_again();
             let _ = self.roll_back();
         }
         committed.map_err(|e| pg_error_to_variant(&e))
@@ -637,7 +985,7 @@ fn pool_conn(pool: &PgPool, wanted: &Wanted) -> Result<PinnedConn, Value> {
     if wanted.gone() {
         return Err(not_wanted());
     }
-    let conn = PinnedConn::take(pool).map_err(|e| pool_error_value(&e))?;
+    let conn = PinnedConn::take(pool)?;
     match wanted.claim() {
         true => Ok(conn),
         false => Err(not_wanted()),
@@ -1326,6 +1674,32 @@ fn resolve_executor(conn: &Value) -> Result<ExecutorRef, Value> {
     )))
 }
 
+/// The `PostgresError` of the statement `sql` on `conn`, if it is one
+/// the program may not send there ([`control`]): one that begins or
+/// ends a transaction, and on a pool one that works only inside a
+/// transaction. It is not sent; inside a transaction, the transaction
+/// goes on.
+fn refused_control(conn: &Value, sql: &str) -> Option<Value> {
+    let in_tx = match (PoolHandle::take(conn), TxHandle::take(conn)) {
+        (Some(_), _) => false,
+        (None, Some(_)) => true,
+        (None, None) => return None,
+    };
+    let why = match (control::control(sql)?, in_tx) {
+        (Control::Savepoint(_), true) => return None,
+        (Control::Ends(name), true) => format!(
+            "postgres: {name} cannot run inside postgres.transact, which begins and ends \
+             the transaction itself: it commits when the callback returns Ok and rolls back \
+             when it returns Err"
+        ),
+        (Control::Ends(name) | Control::Savepoint(name), false) => format!(
+            "postgres: {name} cannot run on a pool, where each statement runs on its own; \
+             run a transaction with postgres.transact"
+        ),
+    };
+    Some(other_error(why))
+}
+
 // ── Blocking workers (run inside io_pool) ───────────────────────────
 
 fn do_connect(url: String) -> Value {
@@ -1650,7 +2024,7 @@ fn open_pool(
 /// idle for 10 minutes, or open for 30, is closed while it is idle
 /// (r2d2's defaults), and not opened again until one is needed.
 fn pool_of(manager: Manager, opts: &ConnectOpts) -> PgPool {
-    let mut builder = Pool::builder().min_idle(Some(0));
+    let mut builder = Pool::builder().min_idle(Some(0)).test_on_check_out(false);
     if let Some(n) = opts.max_pool_size {
         builder = builder.max_size(n);
     }
@@ -1726,8 +2100,22 @@ fn connect_first(cfg: &Config, tls: Tls, limit: Duration) -> Result<(Tls, Conn),
 /// stays behind.
 fn connect_within(cfg: &Config, tls: &Tls, limit: Duration) -> Result<Conn, ConnectFailure> {
     let runtime = new_runtime()?;
-    let attempt =
-        std::panic::AssertUnwindSafe(|| block_on_within(&runtime, limit, tls.connect(cfg)));
+    // The login, then the statement that marks the session (`mark`),
+    // which names the role it logged in as.
+    let marked = async {
+        let connected = tls.connect(cfg).await?;
+        let login = connected.0.simple_query("SELECT SESSION_USER").await?;
+        let login = login.iter().find_map(|message| match message {
+            tokio_postgres::SimpleQueryMessage::Row(row) => row.get(0).map(str::to_string),
+            _ => None,
+        });
+        connected
+            .0
+            .batch_execute(&mark(login.as_deref().unwrap_or("")))
+            .await?;
+        Ok::<_, tokio_postgres::Error>(connected)
+    };
+    let attempt = std::panic::AssertUnwindSafe(|| block_on_within(&runtime, limit, marked));
     let (client, told, task) = match crate::scheduler::catch_as_error(attempt) {
         Ok(Some(Ok(connected))) => connected,
         failed => {
@@ -1750,9 +2138,13 @@ fn connect_within(cfg: &Config, tls: &Tls, limit: Duration) -> Result<Conn, Conn
         driver: Driver {
             runtime: Some(runtime),
             task: Some(task),
+            ending: limit,
+            abandoned: std::sync::atomic::AtomicBool::new(false),
         },
         told,
         broken: false,
+        reset: std::sync::atomic::AtomicU8::new(RESET_DUE),
+        pending: Mutex::new(None),
     })
 }
 
@@ -1824,26 +2216,98 @@ fn binding(params: &[TextParam]) -> Vec<&(dyn ToSql + Sync)> {
         .collect()
 }
 
-/// `f` on the connection of `target`: one of the pool, or the
-/// transaction's. A transaction's `Mutex<TxConn>` is held while `f`
-/// runs, never across a VM yield. The value is `Ok` of `f`'s, or `Err`
-/// of the `PostgresError`.
-fn with_conn(
+/// A statement on the connection of `target`: one of the pool, or the
+/// transaction's. `first` is its first operation, which runs nothing in
+/// the server (it prepares the statement), and `rest` the rest, with
+/// what `first` gave; `rest` waits for its last operation with
+/// [`finish`], which on the pool sends the connection's reset with it.
+/// A transaction's `Mutex<TxConn>` is held while they run, never across
+/// a VM yield. The value is `Ok` of `rest`'s, or `Err` of the
+/// `PostgresError`.
+fn with_conn<A>(
     target: ExecutorRef,
     wanted: &Wanted,
-    f: impl FnOnce(&Conn) -> Result<Value, Value>,
+    first: impl FnMut(&Conn) -> Result<A, tokio_postgres::Error>,
+    rest: impl FnOnce(&Conn, A, Last) -> Result<Value, Value>,
 ) -> Value {
     let done = match target {
-        ExecutorRef::Pool(pool) => match pool_conn(&pool, wanted) {
-            Ok(conn) => f(&conn),
+        ExecutorRef::Pool(pool) => match live(&pool, Some(wanted), first) {
+            Ok((conn, given)) => rest(&conn, given, Last::Reset),
             Err(e) => Err(e),
         },
         ExecutorRef::Tx(cell) => match tx_conn(&cell, Some(wanted)) {
-            Ok(conn) => f(conn.conn()),
+            Ok(conn) => {
+                let mut first = first;
+                match first(conn.conn()) {
+                    Ok(given) => rest(conn.conn(), given, Last::Plain),
+                    Err(e) => Err(pg_error_to_variant(&e)),
+                }
+            }
             Err(e) => Err(e),
         },
     };
     done.map_or_else(err, ok)
+}
+
+/// How a statement waits for its last operation ([`finish`]).
+#[derive(Clone, Copy)]
+enum Last {
+    /// On the pool: with the connection's reset ([`Conn::wait_last`]).
+    Reset,
+    /// In a transaction.
+    Plain,
+}
+
+/// Wait for `op`, the last operation of a statement, on `conn`, as
+/// `last` says.
+fn finish<F: std::future::Future>(conn: &Conn, last: Last, op: F) -> F::Output {
+    match last {
+        Last::Reset => conn.wait_last(op),
+        Last::Plain => conn.wait(op),
+    }
+}
+
+/// A connection of `pool` whose session the server has not ended, and
+/// what `first`, the first operation of a statement, gave on it. The
+/// pool does not check a connection when it hands it out: `first` runs
+/// nothing in the server (it prepares the statement, or is a `BEGIN`, a
+/// `LISTEN`, an empty query), and one that fails because the server had
+/// ended the session while it was idle in the pool (its end may still
+/// be on its way to the client) is tried on another connection, as many
+/// times as the pool may hold connections, and one more. A statement
+/// whose waiter is `wanted` takes its first connection as [`pool_conn`]
+/// says.
+fn live<A>(
+    pool: &PgPool,
+    wanted: Option<&Wanted>,
+    mut first: impl FnMut(&Conn) -> Result<A, tokio_postgres::Error>,
+) -> Result<(PinnedConn, A), Value> {
+    let took = |pool: &PgPool| PinnedConn::take(pool);
+    let mut conn = match wanted {
+        Some(wanted) => pool_conn(pool, wanted)?,
+        None => took(pool)?,
+    };
+    let mut tries = pool.max_size();
+    loop {
+        match first(&conn) {
+            Ok(given) => return Ok((conn, given)),
+            Err(e) if tries > 0 && session_ended(&conn, &e) => {
+                tries -= 1;
+                conn.discard();
+                conn = took(pool)?;
+            }
+            Err(e) => return Err(pg_error_to_variant(&e)),
+        }
+    }
+}
+
+/// Whether `e`, the error of an operation on `conn`, says that the server
+/// had ended the session: the connection is closed, or the server's
+/// error is `FATAL` (it ends the session it sends it on).
+fn session_ended(conn: &Conn, e: &tokio_postgres::Error) -> bool {
+    e.is_closed()
+        || conn.client().is_closed()
+        || e.as_db_error().is_some_and(|db| db.severity() == "FATAL")
 }
 
 /// How the rows of a statement are decoded: into `row`, by the runtime
@@ -1949,24 +2413,33 @@ fn do_query(
     wanted: &Wanted,
 ) -> Value {
     let bind = binding(&params);
-    with_conn(target, wanted, |conn| {
-        let (statement, plan) = prepare(conn, &decoding, &sql)?;
-        let rows = conn.wait(conn.client().query(&statement, &bind));
-        let rows = rows.map_err(|e| pg_error_to_variant(&e))?;
-        let rows = plan.rows(&decoding.1, rows.iter())?;
-        Ok(to_fill.give(&decoding.1, &plan, rows, None))
-    })
+    let (row, rt, impls) = &decoding;
+    with_conn(
+        target,
+        wanted,
+        |conn| conn.wait(conn.client().prepare(&sql)),
+        |conn, statement, last| {
+            let plan = Plan::new(rt, impls.clone(), row, statement.columns())?;
+            let rows = finish(conn, last, conn.client().query(&statement, &bind));
+            let rows = rows.map_err(|e| pg_error_to_variant(&e))?;
+            let rows = plan.rows(rt, rows.iter())?;
+            Ok(to_fill.give(rt, &plan, rows, None))
+        },
+    )
 }
 
 /// Run a statement and give the number of rows it affected.
 fn do_execute(target: ExecutorRef, sql: String, params: Vec<TextParam>, wanted: &Wanted) -> Value {
     let bind = binding(&params);
-    with_conn(target, wanted, |conn| {
-        match conn.wait(conn.client().execute(sql.as_str(), &bind)) {
+    with_conn(
+        target,
+        wanted,
+        |conn| conn.wait(conn.client().prepare(&sql)),
+        |conn, statement, last| match finish(conn, last, conn.client().execute(&statement, &bind)) {
             Ok(n) => Ok(Value::Int(i64::try_from(n).unwrap_or(i64::MAX))),
             Err(e) => Err(pg_error_to_variant(&e)),
-        }
-    })
+        },
+    )
 }
 
 // ── Streaming worker (postgres.stream) ─────────────────────────────
@@ -2348,8 +2821,10 @@ fn do_stream_worker(
     };
 
     match target {
-        ExecutorRef::Pool(pool) => match PinnedConn::take(&pool) {
-            Ok(conn) => {
+        ExecutorRef::Pool(pool) => match live(&pool, None, |conn| {
+            conn.wait(conn.client().simple_query("")).map(|_| ())
+        }) {
+            Ok((conn, ())) => {
                 // Left with rows unread, the connection is not given
                 // back: a cancel request was sent for it.
                 if !pump(&conn, &sql, &bind) {
@@ -2357,8 +2832,7 @@ fn do_stream_worker(
                 }
             }
             Err(e) => {
-                let wrapped = Value::variant(bv::ERR, [pool_error_value(&e)]);
-                let _ = send_or_stop(wrapped);
+                let _ = send_or_stop(Value::variant(bv::ERR, [e]));
             }
         },
         ExecutorRef::Tx(cell) => match tx_conn(&cell, None) {
@@ -2653,28 +3127,16 @@ fn do_notify(
 ) -> Value {
     let sql = "SELECT pg_notify($1, $2)";
     let params: [&(dyn ToSql + Sync); 2] = [&channel_name, &payload];
-    match target {
-        ExecutorRef::Pool(pool) => {
-            let conn = match pool_conn(&pool, wanted) {
-                Ok(c) => c,
-                Err(e) => return err(e),
-            };
-            match conn.wait(conn.client().execute(sql, &params)) {
-                Ok(_) => ok(Value::Unit),
-                Err(e) => err(pg_error_to_variant(&e)),
-            }
-        }
-        ExecutorRef::Tx(cell) => {
-            let conn = match tx_conn(&cell, Some(wanted)) {
-                Ok(conn) => conn,
-                Err(e) => return err(e),
-            };
-            match conn.conn().wait(conn.conn().client().execute(sql, &params)) {
-                Ok(_) => ok(Value::Unit),
-                Err(e) => err(pg_error_to_variant(&e)),
-            }
-        }
-    }
+    with_conn(
+        target,
+        wanted,
+        |conn| conn.wait(conn.client().prepare(sql)),
+        |conn, statement, last| match finish(conn, last, conn.client().execute(&statement, &params))
+        {
+            Ok(_) => Ok(Value::Unit),
+            Err(e) => Err(pg_error_to_variant(&e)),
+        },
+    )
 }
 
 // ── How a PostgresError is shown ──────────────────────────────────────────
@@ -2872,6 +3334,9 @@ builtins! {
     }
 
     fn query(vm, conn: &Value, sql: &str, params: &Value, ty: Type) -> Result<Step, VmError> {
+        if let Some(refused) = refused_control(conn, sql) {
+            return Ok(Step::Done(err(refused)));
+        }
         let impls = vm.decoding_table();
         let row = RowType::of(&vm.runtime, &QUERY, ty, &impls)?;
         let (conn, sql) = (conn.clone(), sql.to_string());
@@ -2887,6 +3352,9 @@ builtins! {
     }
 
     fn execute(vm, conn: &Value, sql: &str, params: &Value) -> Result<Step, VmError> {
+        if let Some(refused) = refused_control(conn, sql) {
+            return Ok(Step::Done(err(refused)));
+        }
         let (conn, sql) = (conn.clone(), sql.to_string());
         with_params(vm, "postgres.execute", params, move |vm, (params, unsendable)| {
             let target = resolve_executor(&conn)?;
@@ -2957,6 +3425,9 @@ builtins! {
     // bounded capacity; cancellation is via `channel.close` (checked
     // between rows).
     fn stream(vm, conn: &Value, sql: &str, params: &Value, ty: Type) -> Result<Step, VmError> {
+        if let Some(refused) = refused_control(conn, sql) {
+            return Ok(Step::Done(err(refused)));
+        }
         let impls = vm.decoding_table();
         let row = RowType::of(&vm.runtime, &STREAM, ty, &impls)?;
         let (conn, sql) = (conn.clone(), sql.to_string());
@@ -3035,8 +3506,11 @@ builtins! {
         let runtime = vm.runtime.clone();
         let channel_name = channel.to_string();
         let work = move |wanted: &Wanted| -> Value {
-            let conn = match pool_conn(&pool, wanted) {
-                Ok(c) => c,
+            let checked = live(&pool, Some(wanted), |conn| {
+                conn.wait(conn.client().simple_query("")).map(|_| ())
+            });
+            let conn = match checked {
+                Ok((c, ())) => c,
                 Err(e) => return err(e),
             };
             // The notifications of the connection go to the worker from
@@ -3260,14 +3734,12 @@ impl Native for Transact {
 /// On the I/O pool: a connection of `pool`, and `BEGIN` on it. The
 /// value is `Ok(PgTx)` of the transaction, or `Err` of what failed.
 fn begin_tx(pool: &PgPool, wanted: &Wanted) -> Value {
-    let conn = match pool_conn(pool, wanted) {
-        Ok(conn) => conn,
-        Err(e) => return err(e),
-    };
-    if let Err(e) = conn.wait(conn.client().batch_execute("BEGIN")) {
-        return err(pg_error_to_variant(&e));
+    match live(pool, Some(wanted), |conn| {
+        conn.wait(conn.client().batch_execute("BEGIN"))
+    }) {
+        Ok((conn, ())) => ok(make_tx_handle(insert_tx(conn))),
+        Err(e) => err(e),
     }
-    ok(make_tx_handle(insert_tx(conn)))
 }
 
 /// Take the transaction `tx_id` out of the registry, for its end: its
@@ -3635,8 +4107,10 @@ mod tests {
     }
 
     /// A server that logs every client in and answers each simple query
-    /// with an empty result: how many connections it took, and how many
-    /// queries came, counted as they come.
+    /// with an empty result, or, for the reset of a connection that goes
+    /// back to the pool ([`RESET`]), with a row that says the session is
+    /// clean: how many connections it took, and how many queries came,
+    /// counted as they come.
     struct Counting {
         port: u16,
         taken: Arc<std::sync::atomic::AtomicUsize>,
@@ -3645,6 +4119,12 @@ mod tests {
 
     impl Counting {
         fn start() -> Counting {
+            Counting::serving(false)
+        }
+
+        /// The server, which holds back its answer to a reset for a
+        /// minute where `stalls`.
+        fn serving(stalls: bool) -> Counting {
             use std::io::{Read, Write};
             use std::sync::atomic::Ordering;
             let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
@@ -3688,8 +4168,33 @@ mod tests {
                             }
                             if tag[0] == b'Q' {
                                 asked.fetch_add(1, Ordering::SeqCst);
-                                // EmptyQueryResponse, ReadyForQuery.
-                                let mut answer = b"I\0\0\0\x04".to_vec();
+                                let message = |tag: u8, body: &[u8]| {
+                                    let mut message = vec![tag];
+                                    let length = u32::try_from(body.len() + 4).expect("short");
+                                    message.extend_from_slice(&length.to_be_bytes());
+                                    message.extend_from_slice(body);
+                                    message
+                                };
+                                if stalls && body.starts_with(b"EXECUTE silt_pool_mark") {
+                                    std::thread::sleep(Duration::from_secs(60));
+                                    return;
+                                }
+                                let mut answer = match body.as_slice() {
+                                    // EmptyQueryResponse.
+                                    [0] => message(b'I', b""),
+                                    // RowDescription (one bool column),
+                                    // DataRow (`t`), CommandComplete.
+                                    _ => [
+                                        message(
+                                            b'T',
+                                            b"\0\x01clean\0\0\0\0\0\0\0\0\0\0\x10\0\x01\xff\xff\xff\xff\0\0",
+                                        ),
+                                        message(b'D', b"\0\x01\0\0\0\x01t"),
+                                        message(b'C', b"SELECT 1\0"),
+                                    ]
+                                    .concat(),
+                                };
+                                // ReadyForQuery.
                                 answer.extend_from_slice(ready);
                                 if stream.write_all(&answer).is_err() {
                                     return;
@@ -3708,8 +4213,10 @@ mod tests {
     }
 
     /// A pool opens its first connection only: two statements one after
-    /// the other run on that connection, which is checked with one
-    /// round trip each time it is taken.
+    /// the other run on that connection, which is not checked when it is
+    /// taken (a statement's first operation finds a session that ended),
+    /// and is reset with one round trip each time it goes back (and marked
+    /// with one when it is made).
     #[test]
     fn a_pool_opens_its_first_connection_only() {
         use std::sync::atomic::Ordering;
@@ -3738,7 +4245,37 @@ mod tests {
         // (Time for connections the pool would open at once.)
         std::thread::sleep(Duration::from_millis(300));
         assert_eq!(server.taken.load(Ordering::SeqCst), 1, "connections");
-        assert_eq!(server.queries.load(Ordering::SeqCst), 2, "queries");
+        assert_eq!(server.queries.load(Ordering::SeqCst), 4, "queries");
+    }
+
+    /// A connection whose reset gets no answer is closed, and the
+    /// statement whose connection it was does not wait for the server:
+    /// one second at most, though the server holds the answer back for a
+    /// minute (and the connect limit is 10 seconds). The pool's next
+    /// connection is a new one.
+    #[test]
+    fn a_reset_that_gets_no_answer_closes_its_connection_at_once() {
+        use std::sync::atomic::Ordering;
+        let server = Counting::serving(true);
+        let config: Config = format!("postgres://u@127.0.0.1:{}/db?sslmode=disable", server.port)
+            .parse()
+            .expect("config");
+        let limit = Duration::from_secs(10);
+        let first = connect_within(&config, &Tls::Off, limit).expect("the first connection");
+        let manager = Manager {
+            config,
+            tls: Tls::Off,
+            limit,
+            first: Mutex::new(Some(first)),
+        };
+        let pool = pool_of(manager, &ConnectOpts::default());
+        let conn = PinnedConn::take(&pool).expect("a connection");
+        let started = std::time::Instant::now();
+        drop(conn);
+        let took = started.elapsed();
+        assert!(took < Duration::from_secs(5), "the drop took {took:?}");
+        drop(PinnedConn::take(&pool).expect("a connection"));
+        assert!(server.taken.load(Ordering::SeqCst) >= 2, "connections");
     }
 
     /// What a client did with a server without TLS, which answers a
