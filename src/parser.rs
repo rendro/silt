@@ -688,6 +688,19 @@ impl<'src> Parser<'src> {
         }
     }
 
+    /// Where the current token is, as an error that names it with
+    /// `found` points at it: both colons of a `::`.
+    fn found_span(&self) -> Span {
+        let span = self.span();
+        match self.found().as_str() {
+            "::" => Span {
+                end: span.end + 1,
+                ..span
+            },
+            _ => span,
+        }
+    }
+
     fn at(&self, tok: &Token) -> bool {
         std::mem::discriminant(self.peek()) == std::mem::discriminant(tok)
     }
@@ -772,7 +785,7 @@ impl<'src> Parser<'src> {
         } else {
             let d = Diagnostic::error(
                 Code::ExpectedToken,
-                self.span(),
+                self.found_span(),
                 format!("expected {expected}, found {}", self.found()),
             );
             Err(self.with_line_start_help(d))
@@ -934,7 +947,7 @@ impl<'src> Parser<'src> {
             }
             _ => Err(Diagnostic::error(
                 Code::ExpectedIdentifier,
-                self.span(),
+                self.found_span(),
                 format!("expected identifier, found {}", self.found()),
             )),
         }
@@ -960,7 +973,7 @@ impl<'src> Parser<'src> {
     ) -> Diagnostic {
         Diagnostic::error(
             Code::UnclosedDelimiter,
-            self.span(),
+            self.found_span(),
             format!(
                 "expected '{closer}' to close {construct}, found {}",
                 self.found()
@@ -1045,7 +1058,7 @@ impl<'src> Parser<'src> {
     fn unclosed_list_err(&self, what: &str, open: Span, close: &Token) -> Diagnostic {
         let d = Diagnostic::error(
             Code::UnclosedDelimiter,
-            self.span(),
+            self.found_span(),
             format!(
                 "expected '{close}' or ',' to continue {what}, found {}",
                 self.found()
@@ -1069,7 +1082,7 @@ impl<'src> Parser<'src> {
     fn arrow_fn_type_error(&mut self, start: Span, param: &TypeExpr) -> Diagnostic {
         let err = Diagnostic::error(
             Code::UnclosedDelimiter,
-            self.span(),
+            self.found_span(),
             format!(
                 "expected ')' or ',' to continue tuple type, found {}",
                 self.found()
@@ -1717,7 +1730,7 @@ impl<'src> Parser<'src> {
                 }
                 Err(Diagnostic::error(
                     Code::ExpectedDeclaration,
-                    self.span(),
+                    self.found_span(),
                     format!("expected declaration, found {}", self.found()),
                 ))
             }
@@ -1912,7 +1925,7 @@ impl<'src> Parser<'src> {
             _ => {
                 let refused = Diagnostic::error(
                     Code::ExpectedIdentifier,
-                    self.span(),
+                    self.found_span(),
                     format!("expected parameter name, found {}", self.found()),
                 );
                 Err(match self.braces_hold_fields() {
@@ -2584,7 +2597,7 @@ impl<'src> Parser<'src> {
         if !self.nl_before() && self.found() == "::" {
             return Err(Diagnostic::error(
                 Code::ExpectedToken,
-                self.span(),
+                self.found_span(),
                 "expected the end of the type, found ::",
             )
             .with_help(
@@ -3653,7 +3666,7 @@ impl<'src> Parser<'src> {
                 }
                 let d = Diagnostic::error(
                     Code::ExpectedExpression,
-                    self.span(),
+                    self.found_span(),
                     format!("expected expression, found {}", self.found()),
                 );
                 if let Some(help) = self.nested_fn_help() {
@@ -4282,7 +4295,7 @@ impl<'src> Parser<'src> {
         }
         Err(Diagnostic::error(
             Code::ExpectedToken,
-            self.span(),
+            self.found_span(),
             format!(
                 "expected '{close}' after `{rest}` in {list}, found {}",
                 self.found()
@@ -4762,7 +4775,7 @@ impl<'src> Parser<'src> {
             }
             _ => Err(Diagnostic::error(
                 Code::ExpectedPattern,
-                self.span(),
+                self.found_span(),
                 format!("expected pattern, found {}", self.found()),
             )),
         }
