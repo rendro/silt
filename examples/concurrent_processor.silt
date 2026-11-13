@@ -2,7 +2,6 @@ import channel
 import io
 import list
 import regex
-import result
 import string
 import task
 
@@ -14,15 +13,12 @@ fn count_lines(content) {
   content |> string.split("\n") |> list.filter { l -> !string.is_empty(l) } |> list.length
 }
 
-fn count_words(content) {
+fn count_words(content, spaces) {
   content
     |> string.split("\n")
     |> list.filter { l -> !string.is_empty(l) }
     |> list.map { line ->
-      regex.split(line, "\\s+")
-        |> result.unwrap_or([])
-        |> list.filter { w -> !string.is_empty(w) }
-        |> list.length
+      regex.split(line, spaces) |> list.filter { w -> !string.is_empty(w) } |> list.length
     }
     |> list.fold(0) { acc, n -> acc + n }
 }
@@ -42,12 +38,12 @@ fn extract_field(content, field_name) {
   }
 }
 
-fn worker(id, jobs, results) {
+fn worker(id, jobs, results, spaces) {
   channel.each(jobs) { path ->
     let outcome = match io.read_file(path) {
       Ok(content) -> {
         let lines = count_lines(content)
-        let words = count_words(content)
+        let words = count_words(content, spaces)
         let dept = extract_field(content, "Department")
         let revenue = extract_field(content, "Revenue")
         Ok((path, lines, words, dept, revenue))
@@ -58,7 +54,8 @@ fn worker(id, jobs, results) {
   }
 }
 
-fn main() {
+fn main() -> Result((), regex.RegexError) {
+  let spaces = regex.compile("\\s+")?
   let file_paths = [
     "examples/data/report_q1.txt",
     "examples/data/report_q2.txt",
@@ -73,9 +70,9 @@ fn main() {
   let results_2 = channel.new(10)
   -- Spawn 3 workers: 2 sending to results_1, 1 sending to results_2
   -- This lets us demonstrate channel.select with wildcard matching
-  let w1 = task.spawn { -> worker(1, jobs, results_1) }
-  let w2 = task.spawn { -> worker(2, jobs, results_1) }
-  let w3 = task.spawn { -> worker(3, jobs, results_2) }
+  let w1 = task.spawn { -> worker(1, jobs, results_1, spaces) }
+  let w2 = task.spawn { -> worker(2, jobs, results_1, spaces) }
+  let w3 = task.spawn { -> worker(3, jobs, results_2, spaces) }
   -- Send all file paths to the jobs channel
   file_paths |> list.each { path -> channel.send(jobs, path) }
   -- Close jobs channel to signal workers: no more work
@@ -134,4 +131,5 @@ fn main() {
   println("Successes: {total_ok}")
   println("Failures: {total_err}")
   println("All workers shut down gracefully.")
+  Ok(())
 }

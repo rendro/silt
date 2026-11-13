@@ -54,6 +54,21 @@ pub(crate) fn json_error_to_variant(err: &serde_json::Error, text: &[u8]) -> Val
     }
 }
 
+/// `error`, a `JsonError` of the text after a byte order mark of `mark`
+/// bytes, with a `Syntax` error's byte counted from before the mark.
+fn after_mark(error: Value, mark: usize) -> Value {
+    match &error {
+        Value::Variant(v) if mark > 0 && v.is(bv::JSON_SYNTAX) => match v.fields() {
+            [message, Value::Int(at)] => Value::variant(
+                bv::JSON_SYNTAX,
+                [message.clone(), Value::Int(at + mark as i64)],
+            ),
+            _ => error,
+        },
+        _ => error,
+    }
+}
+
 /// Build a full `Err(JsonError)` from a `serde_json::Error` of reading
 /// `text`.
 pub(crate) fn json_result_err(err: &serde_json::Error, text: &[u8]) -> Value {
@@ -437,11 +452,18 @@ builtins! {
         decode_value(vm, value, ty)
     }
 
+    // One byte order mark before the document is dropped, as toml and
+    // csv drop it; a syntax error's byte is still counted in `s`.
     fn parse(vm, s: &str, ty: Type) -> Result<Step, VmError> {
-        let text = s.as_bytes();
+        let mark = match s.starts_with('\u{feff}') {
+            true => '\u{feff}'.len_utf8(),
+            false => 0,
+        };
+        let text = &s.as_bytes()[mark..];
         let expected = decode::target(&PARSE, ty)?.element();
         let read = |r: &decode::Reader, expected: &FieldType, parts: &decode::seed::Parts| {
-            decode::seed::json_text(r, expected, text, parts).map_err(|e| json_result_err(&e, text))
+            decode::seed::json_text(r, expected, text, parts)
+                .map_err(|e| json_err_wrap(after_mark(json_error_to_variant(&e, text), mark)))
         };
         let source = || -> Box<dyn Source> { Box::new(Text(text.into())) };
         vm.decode_read("json.decode", &RULES, expected, read, source)

@@ -1,7 +1,6 @@
 import io
 import list
 import regex
-import result
 import string
 
 -- Unix-pipe-style text processing pipeline.
@@ -37,10 +36,10 @@ fn sort_by_length(lines) {
 
 -- word_count: replace each line with "N words: <line>"
 -- Uses regex.split to correctly split on runs of whitespace
-fn word_count(lines) {
+fn word_count(lines, spaces) {
   lines
     |> list.map { line ->
-      let words = regex.split(string.trim(line), "\\s+") |> result.unwrap_or([])
+      let words = regex.split(string.trim(line), spaces)
       let count = list.length(words)
       "{count} words: {line}"
     }
@@ -65,9 +64,9 @@ fn reject(lines, pattern) {
   lines |> list.filter { line -> !string.contains(line, pattern) }
 }
 
--- redact: replace all matches of a regex pattern with "[REDACTED]" in each line
-fn redact(lines, pattern) {
-  lines |> list.map { line -> regex.replace(line, pattern, "[REDACTED]") |> result.unwrap_or(line) }
+-- redact: replace all matches of a regex with "[REDACTED]" in each line
+fn redact(lines, re) {
+  lines |> list.map { line -> regex.replace(line, re, "[REDACTED]") }
 }
 
 -- ============================================================
@@ -109,11 +108,8 @@ fn make_truncate(max_len) {
 }
 
 -- make_replace: returns a closure that applies regex.replace_with to each line
-fn make_replace(pattern, transform) {
-  { lines ->
-    lines
-      |> list.map { line -> regex.replace_with(line, pattern, transform) |> result.unwrap_or(line) }
-  }
+fn make_replace(re, transform) {
+  { lines -> lines |> list.map { line -> regex.replace_with(line, re, transform) } }
 }
 
 -- ============================================================
@@ -130,11 +126,18 @@ fn print_section(title, lines) {
 -- Main entry point
 -- ============================================================
 
-fn main() {
+fn main() -> Result((), regex.RegexError) {
+  let spaces = regex.compile("\\s+")?
+  let level = regex.compile("(INFO|DEBUG|WARN|ERROR)")?
+  let time_of_day = regex.compile("""\d{2}:\d{2}:\d{2}""")?
+  let host_port = regex.compile("localhost:\\d+")?
   -- Read the log file; `return` in an Err arm bails out of main.
   let content = match io.read_file("examples/log.txt") {
     Ok(c) -> c
-    Err(e) -> return println("Error reading log file: {e}")
+    Err(e) -> {
+      println("Error reading log file: {e}")
+      return Ok(())
+    }
   }
   let lines = content |> string.split("\n") |> list.filter { line -> !string.is_empty(line) }
   println("Loaded {list.length(lines)} log lines")
@@ -156,7 +159,7 @@ fn main() {
   -- --------------------------------------------------------
   -- Pipeline 4: grep WARN, sort by length, add word count
   -- --------------------------------------------------------
-  let result4 = lines |> grep("WARN") |> sort_by_length |> word_count
+  let result4 = lines |> grep("WARN") |> sort_by_length |> word_count(spaces)
   print_section("Pipeline 4: WARN sorted by length with word count", result4)
   -- --------------------------------------------------------
   -- Pipeline 5: higher-order factory -- make_grep
@@ -180,14 +183,14 @@ fn main() {
   -- Pipeline 8: make_contains_any factory for ERROR or WARN
   -- --------------------------------------------------------
   let filter_problems = make_contains_any(["ERROR", "WARN"])
-  let result8 = lines |> filter_problems |> sort_by_length |> word_count
+  let result8 = lines |> filter_problems |> sort_by_length |> word_count(spaces)
   print_section("Pipeline 8: ERROR or WARN lines, sorted, with word count", result8)
   -- --------------------------------------------------------
   -- Pipeline 9: extract log levels using regex.split on whitespace, unique + sort
   -- --------------------------------------------------------
   let result9 = lines
     |> list.map { line ->
-      let parts = regex.split(line, "\\s+") |> result.unwrap_or([])
+      let parts = regex.split(line, spaces)
       match list.get(parts, 2) {
         Some(level) -> level
         None -> "UNKNOWN"
@@ -206,7 +209,7 @@ fn main() {
   -- Pipeline 11: make_prefix factory + word count pipeline
   -- --------------------------------------------------------
   let add_arrow = make_prefix(">> ")
-  let result11 = lines |> grep("INFO") |> list.take(3) |> add_arrow |> word_count
+  let result11 = lines |> grep("INFO") |> list.take(3) |> add_arrow |> word_count(spaces)
   print_section("Pipeline 11: first 3 INFO lines with prefix and word count", result11)
   -- --------------------------------------------------------
   -- Pipeline 12: full pipeline -- filter, transform, sort, number
@@ -227,23 +230,21 @@ fn main() {
   -- --------------------------------------------------------
   let result13 = lines
     |> list.take(5)
-    |> list.map { line ->
-      regex.replace_with(line, "(INFO|DEBUG|WARN|ERROR)") { m -> "[{string.to_upper(m)}]" }
-        |> result.unwrap_or(line)
-    }
+    |> list.map { line -> regex.replace_with(line, level) { m -> "[{string.to_upper(m)}]" } }
     |> numbered
   print_section("Pipeline 13: log levels bracketed via replace_with", result13)
   -- --------------------------------------------------------
   -- Pipeline 14: make_replace factory -- redact timestamps with callback
   -- --------------------------------------------------------
-  let censor_times = make_replace("""\d{2}:\d{2}:\d{2}""") { m -> "XX:XX:XX" }
+  let censor_times = make_replace(time_of_day) { m -> "XX:XX:XX" }
   let result14 = lines |> grep("ERROR") |> censor_times |> numbered
   print_section("Pipeline 14: ERROR lines with timestamps redacted via replace_with", result14)
   -- --------------------------------------------------------
   -- Pipeline 15: redact IP-like patterns and hostnames, word count
   -- --------------------------------------------------------
-  let result15 = lines |> grep("connection") |> redact("localhost:\\d+") |> word_count
+  let result15 = lines |> grep("connection") |> redact(host_port) |> word_count(spaces)
   print_section("Pipeline 15: connection lines with host:port redacted", result15)
   println("")
   println("All 15 pipelines completed successfully.")
+  Ok(())
 }

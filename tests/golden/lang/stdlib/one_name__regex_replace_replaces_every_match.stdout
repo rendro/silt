@@ -1,9 +1,9 @@
-Ok("a# b# c#")
+a# b# c#
 # #
-Ok("a# b22 c333")
-Ok("ba ba")
-Ok("ba ab")
-Ok("xyz")
-Ok("")
-Ok("h_llo w_rld")
-Ok("h_llo wörld")
+a# b22 c333
+ba ba
+ba ab
+xyz
+
+h_llo w_rld
+h_llo wörld

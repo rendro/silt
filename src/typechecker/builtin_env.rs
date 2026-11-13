@@ -384,6 +384,18 @@ fn argument_checks(row: &crate::builtins::registry::Row, ty: &Type) -> Vec<Pred>
             checks.push(pred(check, subject));
         }
     }
+    // The elements of the list a writer writes: a decoder of what it
+    // writes reads them back, so they are of a type it decodes.
+    if let Some(decoding) = row.writes
+        && let Some(Type::List(element)) = params.first()
+    {
+        let check = BuiltinCheck::Decodes {
+            builtin,
+            decoding,
+            written: None,
+        };
+        checks.push(pred(check, element));
+    }
     if row.connection
         && let Some(subject) = params.first()
     {

@@ -14,7 +14,7 @@ import json.{ JsonError, Value }
 import toml.{ TomlError }
 import int.{ IntError }
 import float.{ FloatError }
-import regex.{ RegexError }
+import regex.{ RegexError, Regex }
 import bytes.{ BytesError }
 import postgres.{ PostgresError, PgPool, PgTx, PgCursor, Notification }
 import tcp.{ TcpError, TcpStream, TcpListener }

@@ -2,6 +2,6 @@
 import regex
 import result
 fn main() {
-  println("caaat" |> regex.replace_first("a+", "X"))
-  println((regex.replace_first("caaat", "a+", "X") |> result.unwrap_or("")))
+  println(regex.compile("a+") |> result.map { compiled_re -> "caaat" |> regex.replace_first(compiled_re, "X") })
+  println(((regex.compile("a+") |> result.map { compiled_re -> regex.replace_first("caaat", compiled_re, "X") }) |> result.unwrap_or("")))
 }

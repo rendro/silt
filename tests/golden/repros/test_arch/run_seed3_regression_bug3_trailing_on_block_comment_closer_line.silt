@@ -36,7 +36,7 @@ ocs, filtedroprpcs, filterpimpowhenath
 
 -esaLary  and Pedng.split("\n")
   |> list.filter { l -> !string.is_empty(l) }
-  |> list.map { line -> regex.split(line, "\\s+") |> result.unwrap_or([])
+  |> list.map { line -> (regex.compile("\\s+") |> result.map { compiled_re -> regex.split(line, compiled_re) }) |> result.unwrap_or([])
   |> list.filter { w -> !string.is_empty(w) }
   |> list.length }
   |> list.fold(0) { acc, n -> acc + n }

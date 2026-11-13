@@ -258,18 +258,19 @@ fn main() {
     println!("── Regex ──────────────────────────────────────────────────────");
 
     bench(
-        "regex: is_match 1K (cached)",
+        "regex: is_match 1K (compiled once)",
         r#"
 import regex
-import result
 import list
-fn main() {
-  list.fold(1..1001, 0) { acc, n ->
-    match (regex.is_match("{n}", "\\d+") |> result.unwrap_or(false)) {
+fn main() -> Result((), regex.RegexError) {
+  let digits = regex.compile("\\d+")?
+  let _ = list.fold(1..1001, 0) { acc, n ->
+    match regex.is_match("{n}", digits) {
       true -> acc + 1
       false -> acc
     }
   }
+  Ok(())
 }
     "#,
     );
@@ -278,12 +279,13 @@ fn main() {
         "regex: find_all 1K",
         r#"
 import regex
-import result
 import list
-fn main() {
-  list.map(1..1001) { n ->
-    regex.find_all("abc{n}def{n}ghi", "[0-9]+") |> result.unwrap_or([]) |> list.length
+fn main() -> Result((), regex.RegexError) {
+  let digits = regex.compile("[0-9]+")?
+  let _ = list.map(1..1001) { n ->
+    regex.find_all("abc{n}def{n}ghi", digits) |> list.length
   } |> list.fold(0) { acc, x -> acc + x }
+  Ok(())
 }
     "#,
     );
@@ -292,12 +294,13 @@ fn main() {
         "regex: replace 1K",
         r#"
 import regex
-import result
 import list
-fn main() {
-  list.map(1..1001) { n ->
-    regex.replace("hello world {n}", "[aeiou]", "_") |> result.unwrap_or("")
+fn main() -> Result((), regex.RegexError) {
+  let vowel = regex.compile("[aeiou]")?
+  let _ = list.map(1..1001) { n ->
+    regex.replace("hello world {n}", vowel, "_")
   } |> list.length
+  Ok(())
 }
     "#,
     );

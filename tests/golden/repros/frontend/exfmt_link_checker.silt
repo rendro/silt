@@ -33,7 +33,7 @@ fn main() {
   println("")
   -- Extract all [text](url) links using regex capture groups
   let pattern = """\[([^\]]*)\]\(([^)]*)\)"""
-  let matches = regex.captures_all(content, pattern) |> result.unwrap_or([])
+  let matches = (regex.compile(pattern) |> result.map { compiled_re -> regex.captures_all(content, compiled_re) }) |> result.unwrap_or([])
   let total = list.length(matches)
   println("Found {total} links")
   println("")

@@ -177,6 +177,18 @@ impl<'a> Arg<'a> for &'a Arc<TcpListenerHandle> {
     }
 }
 
+/// A `Regex` argument: a compiled pattern.
+pub(crate) type Regex<'a> = &'a Arc<crate::builtins::regex::Compiled>;
+
+impl<'a> Arg<'a> for &'a Arc<crate::builtins::regex::Compiled> {
+    fn take(value: &'a Value) -> Option<Self> {
+        match value {
+            Value::Regex(re) => Some(re),
+            _ => None,
+        }
+    }
+}
+
 /// A `Map` argument.
 pub(crate) type Map<'a> = &'a crate::value::Map;
 

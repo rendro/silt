@@ -16,7 +16,7 @@ type Bin { b: Bytes }
 fn main() {
   let n: Int = "not a number"
   let _ = json.parse("\{}", Blob)
-  let _ = toml.parse("", json.Value)
+  let _ = toml.parse("", Int)
   let _ = json.parse("\{}", SetBox)
   let t = Blob
   let _ = json.parse("\{}", t)

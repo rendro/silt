@@ -28,7 +28,7 @@ fn get_filename() {
 fn get_words(text) {
   text
   |> string.split("\n")
-  |> list.flat_map { line -> regex.split(line, """\s+""") |> result.unwrap_or([])
+  |> list.flat_map { line -> (regex.compile("""\s+""") |> result.map { compiled_re -> regex.split(line, compiled_re) }) |> result.unwrap_or([])
   |> list.filter { w -> !string.is_empty(w) } }
 }
 
