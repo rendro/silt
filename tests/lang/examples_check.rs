@@ -1066,16 +1066,22 @@ fn all_doc_fn_main_blocks_run_if_safe() {
     let failures: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
     par_for_each(&jobs, |job| {
-        let file = tmp_dir.join(format!(
-            "{}_line{}.silt",
+        // Each block runs in a directory of its own: the files it writes
+        // stay there, out of the repository and of the other blocks' way.
+        let name = format!(
+            "{}_line{}",
             job.file_stem.to_lowercase().replace('-', "_"),
             job.opener_line
-        ));
+        );
+        let dir = tmp_dir.join(&name);
+        std::fs::create_dir_all(&dir).expect("create the block's directory");
+        let file = dir.join(format!("{name}.silt"));
         std::fs::write(&file, &job.src).expect("write temp silt file");
 
         let output = silt_cmd()
             .arg("run")
             .arg(&file)
+            .current_dir(&dir)
             .output()
             .expect("failed to spawn silt");
 
