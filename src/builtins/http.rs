@@ -880,6 +880,15 @@ fn do_http_request_on(
         let Some((status, next)) = result.as_ref().ok().and_then(|r| redirect(r, &url)) else {
             return finish_http_response(result, &url, method == "HEAD");
         };
+        // A redirect to another scheme is not followed: `file:`, `ftp:`
+        // and the like are no URL of http's.
+        if !scheme_of(&next).is_some_and(|scheme| {
+            scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
+        }) {
+            let next = redact_http_url_userinfo(&next);
+            let invalid = Value::variant(bv::HTTP_INVALID_URL, [Value::string(next)]);
+            return Value::variant(bv::ERR, [invalid]);
+        }
         // A 303 goes on without a body, as a GET (a HEAD stays a HEAD);
         // a 301 or 302 so only for a POST (RFC 9110); a 307 or 308
         // keeps the request as it is.
@@ -977,19 +986,44 @@ fn send_request(
 
 /// The status of a redirect and where it goes, `url` being where the
 /// response came from; `None` for any other response, and for a
-/// redirect without a location that is text.
+/// redirect without a location. A byte of the location that is not
+/// printable ASCII (a space, the bytes of `é`, which a URL cannot hold)
+/// is percent-encoded first, as browsers and curl do (`%20`, `%C3%A9`).
 #[cfg(feature = "http")]
 fn redirect(response: &ureq::http::Response<ureq::Body>, url: &str) -> Option<(u16, String)> {
+    use std::fmt::Write;
     let status = response.status().as_u16();
     if !matches!(status, 301 | 302 | 303 | 307 | 308) {
         return None;
     }
-    let location = response.headers().get("location")?.to_str().ok()?;
-    Some((status, resolve_location(url, location)))
+    let location = response.headers().get("location")?.as_bytes().trim_ascii();
+    let mut text = String::with_capacity(location.len());
+    for &byte in location {
+        match byte {
+            b'!'..=b'~' => text.push(byte as char),
+            _ => {
+                let _ = write!(text, "%{byte:02X}");
+            }
+        }
+    }
+    Some((status, resolve_location(url, &text)))
+}
+
+/// The scheme of `reference` (RFC 3986: a letter, then letters, digits,
+/// `+`, `-` and `.`, up to a `:` that comes before any `/`, `?` or `#`),
+/// or `None` for a reference that has none (`/x`, `//host/x`, `x/y:z`).
+#[cfg(feature = "http")]
+fn scheme_of(reference: &str) -> Option<&str> {
+    let end = reference.find([':', '/', '?', '#'])?;
+    let scheme = &reference[..end];
+    let mut chars = scheme.chars();
+    let lettered = chars.next().is_some_and(|c| c.is_ascii_alphabetic());
+    let rest = chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+    (reference[end..].starts_with(':') && lettered && rest).then_some(scheme)
 }
 
 /// `location` resolved against `base` (RFC 3986): a URL with a scheme
-/// as it is, one without (`//host/x`) on the base's scheme, a path from
+/// ([`scheme_of`]) as it is, one without (`//host/x`) on the base's scheme, a path from
 /// the root on the base's scheme and host, a query alone (`?y=2`) on
 /// the base's path, any other path next to the base's; a path's `.` and
 /// `..` segments are taken away, and its query is left as it is. A
@@ -998,10 +1032,9 @@ fn redirect(response: &ureq::http::Response<ureq::Body>, url: &str) -> Option<(u
 #[cfg(feature = "http")]
 fn resolve_location(base: &str, location: &str) -> String {
     let location = location.split('#').next().unwrap_or_default();
-    let has_scheme = location
-        .parse::<ureq::http::Uri>()
-        .is_ok_and(|uri| uri.scheme().is_some());
-    if has_scheme {
+    // (By its form, not by whether it is an http URL: `file:///x` is a
+    // URL with a scheme, never a path on the base's host.)
+    if scheme_of(location).is_some() {
         return with_dot_segments_taken_away(location);
     }
     let Ok(uri) = base.parse::<ureq::http::Uri>() else {
@@ -2905,6 +2938,27 @@ mod http_error_tests {
         let head = head_sent("http://user:pw@{}/x", &own);
         assert!(head.contains("authorization: Bearer t\r\n"), "{head}");
         assert_eq!(head.matches("uthorization").count(), 1, "{head}");
+    }
+
+    /// A scheme is told by its form (RFC 3986), whatever follows its colon.
+    #[test]
+    fn a_scheme_is_told_by_its_form() {
+        for (reference, scheme) in [
+            ("http://h/x", Some("http")),
+            ("HTTPS://h", Some("HTTPS")),
+            ("file:///etc/passwd", Some("file")),
+            ("mailto:a@b", Some("mailto")),
+            ("svn+ssh://h", Some("svn+ssh")),
+            ("/x", None),
+            ("//h/x", None),
+            ("x/y:z", None),
+            ("?a:b", None),
+            ("1x:y", None),
+            (":x", None),
+            ("x", None),
+        ] {
+            assert_eq!(scheme_of(reference), scheme, "{reference}");
+        }
     }
 
     #[test]
