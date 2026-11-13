@@ -1007,9 +1007,10 @@ impl<R: FnMut(&mut [u8]) -> std::io::Result<usize>> LineReads<R> {
             }
             if self.at_end {
                 self.ended = true;
+                // Only a `\n` or a `\r\n` is a line end: a last `\r` with
+                // no `\n` after it is the line's, as in a file.
                 if !self.pending.is_empty() {
-                    let line = self.pending.strip_suffix(b"\r").unwrap_or(&self.pending);
-                    lines.push(match line_text(line) {
+                    lines.push(match line_text(&self.pending) {
                         Ok(line) => ok(Value::string(line)),
                         Err(why) => bad_line(why, self.given + 1, "stdin"),
                     });
@@ -2364,7 +2365,29 @@ after
     /// time, however the bytes come: `\n` and `\r\n` end a line, a lone
     /// `\r` is kept, an empty line is one, a final `\n` makes no empty
     /// last line, and what follows the last `\n` is the last line (a
-    /// final `\r` with it).
+    /// final `\r` with it). The same of stdin, however its reads come.
+    #[test]
+    fn stdin_lines_gives_the_lines_tcp_lines_gives() {
+        let cases: [(&[u8], &[&str]); 5] = [
+            (b"a\r\nb\n\nc\rd\ne\r", &["a", "b", "", "c\rd", "e\r"]),
+            (b"x\n", &["x"]),
+            (b"", &[]),
+            (b"\n\r\n", &["", ""]),
+            ("é\n日本\r\nz".as_bytes(), &["é", "日本", "z"]),
+        ];
+        for (data, want) in cases {
+            for piece in [1, 2, 3, 7, 4096] {
+                assert_eq!(
+                    piece_lines_of(data, piece).0,
+                    want,
+                    "{data:?} read {piece} at a time"
+                );
+            }
+        }
+    }
+
+    /// The lines of a connection are those of stdin, however the bytes
+    /// come.
     #[test]
     #[cfg(feature = "tcp")]
     fn tcp_lines_gives_the_same_lines_however_the_bytes_come() {

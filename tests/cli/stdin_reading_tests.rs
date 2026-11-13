@@ -53,11 +53,13 @@ fn main() {
 }
 "#;
 
+/// Only a `\n` or a `\r\n` ends a line: a last `\r` with no `\n` after
+/// it is the line's, as in a file and on a connection.
 #[test]
 fn stdin_lines_drops_crlf_line_ends() {
     let (out, err, ok) = run_with("crlf", LINES, b"a\r\nb\r\n\r\nc\r");
     assert!(ok, "{err}");
-    assert_eq!(out, "[Ok(\"a\"), Ok(\"b\"), Ok(\"\"), Ok(\"c\")]\n");
+    assert_eq!(out, "[Ok(\"a\"), Ok(\"b\"), Ok(\"\"), Ok(\"c\\r\")]\n");
 }
 
 #[test]
