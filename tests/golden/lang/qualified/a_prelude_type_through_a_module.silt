@@ -1,0 +1,21 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: module 'channel' has no type 'Channel'
+-- stderr-contains: `Channel` is in the prelude: write `Channel` without a module
+-- stderr-contains: `List` is in the prelude: write `List` without a module
+-- stderr-contains: `Result` is in the prelude: write `Result` without a module
+-- stderr-not-contains: ChannelOp
+-- stderr-contains: did you mean `Duration`?
+-- A type of the prelude written through a module is told to drop the
+-- module; a misspelt type of a module still gets the nearest name.
+import channel
+import list
+import result
+import time
+
+fn f(c: channel.Channel(Int), xs: list.List(Int), r: result.Result(Int, String)) -> Int { 1 }
+fn g(d: time.Durration) -> Int { 1 }
+
+fn main() {
+  println(1)
+}

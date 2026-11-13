@@ -2186,7 +2186,18 @@ impl Resolver<'_> {
                         span,
                         format!("module '{}' has no {what} '{name}'", module.name),
                     );
-                    if let Some(c) = suggest_similar(&resolve(name), candidates.iter()) {
+                    let name_str = resolve(name);
+                    // A type of the prelude (`channel.Channel`, `list.List`,
+                    // `result.Result`): no module has it, the bare name is it.
+                    let in_prelude = !is_trait
+                        && (matches!(name_str.as_str(), "Option" | "Result")
+                            || (crate::types::builtins::lookup(&name_str).is_some()
+                                && self.elsewhere(name).is_empty()));
+                    if in_prelude {
+                        d = d.with_help(format!(
+                            "`{name}` is in the prelude: write `{name}` without a module"
+                        ));
+                    } else if let Some(c) = suggest_similar(&name_str, candidates.iter()) {
                         d = d.with_help(format!("did you mean `{c}`?"));
                     }
                     d
