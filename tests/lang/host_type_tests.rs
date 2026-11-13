@@ -630,3 +630,17 @@ fn main() {
         ]))
     );
 }
+
+/// A host type has Display by its structure, as every record and enum
+/// has: a `main` that returns one as its error is shown so. (A program
+/// cannot give a host type an impl of its own: an impl lives in the
+/// module of its type or of its trait.)
+#[test]
+fn a_host_type_is_shown_by_its_structure() {
+    let source = "import geo\nfn main() -> Result((), geo.Shape) {\n  println(\"{geo.origin()}\")\n  Err(geo.circle(2))\n}\n";
+    let err = run(source, geo()).expect_err("main returns Err");
+    assert!(err.contains("Circle(2)"), "{err}");
+    let source = "import geo\ntrait Display for geo.Point {\n  fn display(self) -> String { \"p\" }\n}\nfn main() { }\n";
+    let found = errors(source, geo());
+    assert_eq!(found.len(), 1, "{found:?}");
+}

@@ -247,6 +247,13 @@ type of the prelude. `pub opaque type Conn { id: Int }` declares a
 type a program can pass on but not build or read: only the host
 functions build one and read its fields.
 
+A host type is shown by its structure, as every record and enum is:
+`"{p}"` gives `Point {x: 3, y: -4}`, and a `main` that returns
+`Err(geo.circle(2))` fails with `Circle(2)`. That is its `Display`, so
+it can be an error type. A program cannot give it a `Display` of its
+own: an impl lives in the module of its type or of its trait, and a
+host module has no impls.
+
 A function reads a record it is given with `record.get("x")`, and
 builds a value with the call:
 
