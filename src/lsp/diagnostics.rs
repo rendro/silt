@@ -103,6 +103,56 @@ fn dependency_manifest_with_errors(
     Some(shown)
 }
 
+/// The places in the project's own `silt.toml` (in `dir`) of the
+/// dependency lines that lead to the package errors `found`, which are
+/// in the manifests of dependencies: the labels the resolver put there
+/// (`` `app` depends on `geom` here ``).
+fn own_lines_leading_there(
+    dir: &std::path::Path,
+    sources: &SourceMap,
+    found: &[crate::diagnostic::Diagnostic],
+) -> Vec<(crate::source::Span, String)> {
+    let own = path_key(&dir.join("silt.toml"));
+    let is_own = |file: FileId| match sources.get(file).map(|f| &f.path) {
+        Some(SourceName::Manifest(path) | SourceName::Path(path)) => path_key(path) == own,
+        _ => false,
+    };
+    let mut lines = Vec::new();
+    for d in found.iter().filter(|d| !is_own(d.span.file)) {
+        for (span, label) in d.labels.iter().filter(|(span, _)| is_own(span.file)) {
+            if !lines
+                .iter()
+                .any(|(s, _): &(crate::source::Span, String)| s == span)
+            {
+                lines.push((*span, label.clone()));
+            }
+        }
+    }
+    lines
+}
+
+/// The note published on the project's own dependency line at `span`,
+/// labelled `label` by the resolver, that leads to the errors in the
+/// dependency's manifest `manifest`.
+fn leading_line_note(
+    sources: &SourceMap,
+    span: crate::source::Span,
+    label: &str,
+    manifest: &str,
+) -> Diagnostic {
+    let range = match sources.get(span.file) {
+        Some(file) => Range::new(file.lsp_position(span.start), file.lsp_position(span.end)),
+        None => Range::default(),
+    };
+    Diagnostic {
+        range,
+        severity: Some(DiagnosticSeverity::INFORMATION),
+        source: Some("silt".to_string()),
+        message: format!("{label}, and the silt.toml of a dependency has errors (see {manifest})"),
+        ..Diagnostic::default()
+    }
+}
+
 /// The text of the file at `path` and the document made of it, indexed
 /// as a workspace file (not open): its declarations as parsed.
 pub(super) fn indexed_document(path: PathBuf, text: Arc<str>) -> Document {
@@ -362,8 +412,30 @@ impl Server {
                     // The cascade an unresolved project causes is not
                     // shown; its errors are in the manifest.
                     found.retain(|d| d.phase() == Phase::Package);
-                    let elsewhere =
-                        dependency_manifest_with_errors(dir, project.session.sources(), &found);
+                    let sources = project.session.sources();
+                    let elsewhere = dependency_manifest_with_errors(dir, sources, &found);
+                    // The project's own lines that lead to that manifest.
+                    if let Some(manifest) = &elsewhere {
+                        let own = dir.join("silt.toml");
+                        let own_uri = (uris_by_key.get(&path_key(&own)).cloned())
+                            .or_else(|| super::path_to_file_uri(&own));
+                        for (span, label) in own_lines_leading_there(dir, sources, &found) {
+                            let Some(own_uri) = own_uri.clone() else {
+                                break;
+                            };
+                            let note = leading_line_note(sources, span, &label, manifest);
+                            let r = note.range;
+                            let key = (
+                                own_uri.as_str().to_string(),
+                                (r.start.line, r.start.character, r.end.line, r.end.character),
+                                note.message.clone(),
+                                format!("{:?}{:?}", note.severity, note.code),
+                            );
+                            if seen.insert(key) {
+                                diagnostics.entry(own_uri).or_default().push(note);
+                            }
+                        }
+                    }
                     diagnostics
                         .entry(uri.clone())
                         .or_default()

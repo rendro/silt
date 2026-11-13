@@ -220,11 +220,13 @@ pub fn resolve_packages(
             .map(|(k, e)| (*k, e.clone()))
             .collect();
         for (key, entry) in entries {
+            let reported = resolver.diagnostics.len();
             if let Some(dep) = resolver.resolve_dependency(id, key, &entry) {
                 resolver.nodes[id.0 as usize]
                     .deps
                     .push((key, dep, entry.key));
             }
+            resolver.lead_to(id, key, &entry, reported);
         }
     }
     resolver.check_duplicate_names();
@@ -699,6 +701,41 @@ impl Resolver<'_> {
                  point at the same source"
             ));
             self.diagnostics.push(d);
+        }
+    }
+
+    /// Each problem reported from `diagnostics[reported..]` while the
+    /// dependency `key` (`entry`) of `from` was resolved gets the way to
+    /// it from the project: the dependency lines from the project's
+    /// `silt.toml` down to `from`, and the line of `key` itself when the
+    /// problem is in the dependency's own files (its `silt.toml`). So
+    /// the project's own line that leads to an error in a dependency is
+    /// marked too.
+    fn lead_to(&mut self, from: PackageId, key: Symbol, entry: &DependencyEntry, reported: usize) {
+        let own = self.nodes[from.0 as usize].manifest;
+        let mut way = match self.via[from.0 as usize] {
+            Some(_) => self.chain(from),
+            None => Vec::new(),
+        };
+        way.push((
+            entry.key,
+            format!(
+                "`{}` depends on `{}` here",
+                intern::resolve(self.nodes[from.0 as usize].name),
+                intern::resolve(key)
+            ),
+        ));
+        for d in &mut self.diagnostics[reported..] {
+            // (A problem at the dependency's line of `from` is at that
+            // line already.)
+            let at_line = d.span.file == own;
+            let labels = way
+                .iter()
+                .take(if at_line { way.len() - 1 } else { way.len() })
+                .filter(|(span, _)| *span != d.span && !d.labels.iter().any(|(s, _)| s == span))
+                .cloned()
+                .collect::<Vec<_>>();
+            d.labels.extend(labels);
         }
     }
 
