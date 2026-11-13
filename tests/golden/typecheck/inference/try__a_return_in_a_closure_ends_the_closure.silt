@@ -1,0 +1,27 @@
+-- cmd: check
+-- exit: 1
+-- A `return` in a closure ends the closure: where its value does not fit, one error at the `return` says so and how to stop early, not two type mismatches at the closure. A `?` in a closure says the closure returns the body's type, and names list.traverse.
+-- stderr-contains: error[type]: `return` here ends the closure, not `has_neg`: the value it returns is the closure's
+-- stderr-contains: help: to stop early, use `list.find`, `list.any` or `list.fold_until`, or a `loop`
+-- stderr-contains: note: the ?-ed expression is Result(Int, int.IntError), but the closure it is in returns Int
+-- stderr-contains: help: a `?` in a closure ends the closure, not the function: to stop at the first `Err` of a list, use `list.traverse(xs) { x -> ... }?`
+-- stderr-not-contains: expected (), got Bool
+-- stderr-not-contains: expected Bool, got ()
+import int
+import list
+fn has_neg(xs: List(Int)) -> Bool {
+  list.each(xs) { x ->
+    match x < 0 {
+      true -> return true
+      false -> ()
+    }
+  }
+  false
+}
+fn parse_all(xs: List(String)) -> Result(List(Int), int.IntError) {
+  Ok(list.map(xs) { s -> int.parse(s)? })
+}
+fn main() {
+  println(has_neg([1, -2]))
+  println(parse_all(["1"]))
+}

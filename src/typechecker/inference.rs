@@ -2749,6 +2749,7 @@ impl TypeChecker {
         self.current_return_type = Some(ret_type.clone());
         let never = matches!(ret_type, Type::Never);
         let prev_never_fn = std::mem::replace(&mut self.never_fn, never.then_some(f.name));
+        let prev_fn = self.current_fn.replace(f.name);
         // Fresh `?`-site tracking per fn body, so a failed
         // body/return unify can point back at the `?` that demanded a
         // Result/Option return.
@@ -2787,8 +2788,10 @@ impl TypeChecker {
         }
         self.unify_body_result(&f.body, &body_type, &ret_type);
         self.settle_open_bound_uses();
+        self.settle_closure_returns();
 
         self.never_fn = prev_never_fn;
+        self.current_fn = prev_fn;
         self.current_return_type = prev_return_type;
         self.current_qmark_spans = prev_qmark_spans;
         self.sig_names = prev_names;
@@ -2851,20 +2854,37 @@ impl TypeChecker {
             && !wrapper(&body_resolved)
             && !matches!(body_resolved, Type::Var(_) | Type::Error | Type::Never)
         {
+            // (A closure's `?` ends the closure, which is what returns
+            // the body's type.)
+            let closure = !self.closure_returns.is_empty();
             let note = format!(
-                "the ?-ed expression is {}, but the enclosing function returns {}",
+                "the ?-ed expression is {}, but the {} returns {}",
                 self.show_type(&self.apply(&operand)),
+                if closure {
+                    "closure it is in"
+                } else {
+                    "enclosing function"
+                },
                 self.show_type(&body_resolved)
             );
             self.errors.truncate(err_count_before);
-            self.errors.push(
-                Diagnostic::error(
-                    Code::InvalidQuestion,
-                    qspan,
-                    "? operator can only be used inside a function that returns Result or Option",
-                )
-                .with_note(note),
-            );
+            let mut diagnostic = Diagnostic::error(
+                Code::InvalidQuestion,
+                qspan,
+                "? operator can only be used inside a function that returns Result or Option",
+            )
+            .with_note(note);
+            if closure {
+                let fails = match self.apply(&operand) {
+                    Type::Generic(n, _) if n.is_builtin("Option") => "None",
+                    _ => "Err",
+                };
+                diagnostic = diagnostic.with_help(format!(
+                    "a `?` in a closure ends the closure, not the function: to stop at the \
+                     first `{fails}` of a list, use `list.traverse(xs) {{ x -> ... }}?`"
+                ));
+            }
+            self.errors.push(diagnostic);
             return;
         }
         // Only when the return type is actually Result/Option-shaped —
@@ -2887,6 +2907,47 @@ impl TypeChecker {
             // The `?` made the return type a `Result`; wrapping the body
             // in `Ok(...)` would not fix the function.
             err.fixes.clear();
+        }
+    }
+
+    /// The mismatches of each closure whose `return` did not fit (its
+    /// body's value with the `return`'s, the closure with the place it
+    /// is given to) as one error, at the `return`: it ends the closure,
+    /// not the function it is written in.
+    fn settle_closure_returns(&mut self) {
+        for (closure, at, returned, misfits) in std::mem::take(&mut self.closure_return_misfits) {
+            // (At the closure: of the type the `return` gives, not of a
+            // parameter's.)
+            let of_return = |e: &Diagnostic| {
+                e.message.ends_with(&format!("got {returned}"))
+                    || e.message.contains(&format!("expected {returned}, got"))
+            };
+            let misfit = |e: &Diagnostic| {
+                e.code == Code::TypeMismatch
+                    && (misfits.contains(&e.span) || (e.span == closure && of_return(e)))
+            };
+            if !self.errors.iter().any(misfit) {
+                continue;
+            }
+            self.errors.retain(|e| !misfit(e));
+            let function = match self.current_fn {
+                Some(name) => format!("`{name}`"),
+                None => "the function around it".to_string(),
+            };
+            self.errors.push(
+                Diagnostic::error(
+                    Code::InvalidControlFlow,
+                    at,
+                    format!(
+                        "`return` here ends the closure, not {function}: the value it returns \
+                         is the closure's"
+                    ),
+                )
+                .with_help(
+                    "to stop early, use `list.find`, `list.any` or `list.fold_until`, or a \
+                     `loop`",
+                ),
+            );
         }
     }
 
@@ -5215,10 +5276,22 @@ impl TypeChecker {
                     names,
                     read_fields,
                 });
+                self.closure_returns.push(Vec::new());
                 let body_type = self.infer_expr(body, env);
                 self.fn_frames.pop();
                 env.pop();
+                let before = self.errors.len();
                 self.unify_body_result(body, &body_type, &lambda_ret);
+                let returns = self.closure_returns.pop().unwrap_or_default();
+                if let Some((first, returned)) = returns.first() {
+                    let misfits = (self.errors[before..].iter())
+                        .filter(|e| e.code == Code::TypeMismatch)
+                        .map(|e| e.span)
+                        .collect();
+                    let returned = self.show_type(&self.apply(returned));
+                    self.closure_return_misfits
+                        .push((span, *first, returned, misfits));
+                }
 
                 self.current_return_type = prev_return_type;
                 self.current_qmark_spans = prev_qmark_spans;
@@ -5753,6 +5826,9 @@ impl TypeChecker {
                 } else {
                     Type::Unit
                 };
+                if let Some(returns) = self.closure_returns.last_mut() {
+                    returns.push((span, ret_val_ty.clone()));
+                }
                 match (&self.current_return_type, self.never_fn) {
                     // (A closure's `return` ends the closure: its body
                     // has a return type of its own.)

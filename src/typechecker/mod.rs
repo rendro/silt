@@ -441,6 +441,17 @@ pub struct TypeChecker {
     /// of leaving a bare header-located mismatch. Saved/restored around
     /// each fn body and lambda body, like `current_return_type`.
     pub(super) current_qmark_spans: Vec<Span>,
+    /// The `return`s of each closure whose body is being checked, the
+    /// innermost last: a closure's `return` ends the closure.
+    pub(super) closure_returns: Vec<Vec<(Span, Type)>>,
+    /// The closures with a `return`: the closure, its first `return`
+    /// and the type it returns, and the mismatches of the closure's body
+    /// with it. At the end of the function a mismatch of that type at
+    /// the closure is one error, at the `return`
+    /// (`settle_closure_returns`).
+    pub(super) closure_return_misfits: Vec<(Span, Span, String, Vec<Span>)>,
+    /// The function whose body is being checked.
+    pub(super) current_fn: Option<Symbol>,
     /// The `?` uses that decided an open return type (an unannotated
     /// function's or a closure's), with the operand's type: a body that
     /// gives no Result or Option is then the `?`'s error.
@@ -896,6 +907,9 @@ impl TypeChecker {
             tuple_spelling: None,
             type_holders: HashMap::new(),
             current_qmark_spans: Vec::new(),
+            closure_returns: Vec::new(),
+            closure_return_misfits: Vec::new(),
+            current_fn: None,
             qmark_decided: HashMap::new(),
             open_bound_uses: Vec::new(),
             recovery_stub_names: std::collections::HashSet::new(),
