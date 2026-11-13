@@ -421,3 +421,81 @@ import host
     );
     drop(silent);
 }
+
+/// A TLS client that goes away while a server written in silt writes to
+/// it does not end the server: the writes fail with an error. (The TLS
+/// library wrote with `writev`, which raises SIGPIPE, and the `silt`
+/// command, which sets that signal to its default for stdout, died by
+/// it: status 141, no message.) Run as the `silt` command runs programs.
+#[test]
+#[cfg(unix)]
+fn a_tls_peer_that_goes_away_does_not_end_the_program() {
+    let pki = generate_pki();
+    let port_file = PortFile::new();
+    let dir = std::env::temp_dir().join(format!("silt_tls_sigpipe_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("main.silt");
+    std::fs::write(
+        &file,
+        format!(
+            r#"import bytes
+import io
+import tcp
+import time
+
+fn write_until_it_fails(tls: tcp.TcpStream, n: Int) -> String {{
+  match n > 0 {{
+    true -> match tcp.write(tls, bytes.from_string("data that nobody reads any more\n")) {{
+      Ok(_) -> {{
+        time.sleep(time.ms(20))
+        write_until_it_fails(tls, n - 1)
+      }}
+      Err(e) -> "a write failed: {{Error.message(e)}}"
+    }}
+    false -> "every write went"
+  }}
+}}
+
+fn main() {{
+  when let Ok(listener) = tcp.listen("127.0.0.1:0") else {{ panic("cannot listen") }}
+  when let Ok(_) = io.write_file("{port_path}", "{{tcp.local_port(listener)}}\n") else {{
+    panic("cannot write the port")
+  }}
+  when let Ok(cert) = bytes.from_hex("{cert_hex}") else {{ panic("no cert") }}
+  when let Ok(key) = bytes.from_hex("{key_hex}") else {{ panic("no key") }}
+  when let Ok(conn) = tcp.accept(listener) else {{ panic("no client") }}
+  when let Ok(tls) = tcp.tls_server(conn, cert, key) else {{ panic("no handshake") }}
+  time.sleep(time.ms(200))
+  println(write_until_it_fails(tls, 200))
+  println("the server is still running")
+}}
+"#,
+            port_path = port_file.path(),
+            cert_hex = hex_encode(pki.server_cert_pem.as_bytes()),
+            key_hex = hex_encode(pki.server_key_pem.as_bytes()),
+        ),
+    )
+    .unwrap();
+    let server = std::process::Command::new(env!("CARGO_BIN_EXE_silt"))
+        .arg("run")
+        .arg(&file)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("the server starts");
+    let addr = format!("127.0.0.1:{}", port_file.wait());
+    // The handshake, then the client goes away at once.
+    rustls_client_handshake(&addr, "localhost", &pki.ca_cert_pem, None).expect("handshake");
+    let output = server.wait_with_output().expect("the server ends");
+    let _ = std::fs::remove_dir_all(&dir);
+    let out = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stdout: {out}; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(out.starts_with("a write failed: "), "{out}");
+    assert!(out.ends_with("the server is still running\n"), "{out}");
+}

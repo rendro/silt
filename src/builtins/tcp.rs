@@ -213,7 +213,7 @@ mod tls {
                     let conn = ServerConnection::new(Arc::new(config))
                         .map_err(|e| format!("server connection setup: {e}"))?;
                     TcpStreamHandle::whole(next_id, &socket, &shut, move || {
-                        let stream = rustls::StreamOwned::new(conn, sock);
+                        let stream = rustls::StreamOwned::new(conn, NoSigpipe(sock));
                         let mut wrapper = ServerStreamWrapper { inner: stream };
                         // The handshake fails here rather than at the first read.
                         wrapper.complete_io_handshake()?;
@@ -270,7 +270,7 @@ mod tls {
             .try_clone()
             .map_err(|e| format!("tcp connect {addr}: {e}"))?;
         let whole = TcpStreamHandle::whole(next_id, &socket, shutter, move || {
-            let stream = rustls::StreamOwned::new(conn, sock);
+            let stream = rustls::StreamOwned::new(conn, NoSigpipe(sock));
             let mut wrapper = ClientStreamWrapper { inner: stream };
             // The handshake fails here rather than at the first read.
             wrapper.complete_io_handshake()?;
@@ -329,7 +329,7 @@ mod tls {
     macro_rules! stream_wrapper {
         ($name:ident, $conn:ty) => {
             struct $name {
-                inner: rustls::StreamOwned<$conn, TcpStream>,
+                inner: rustls::StreamOwned<$conn, NoSigpipe>,
             }
             impl $name {
                 fn complete_io_handshake(&mut self) -> Result<(), String> {
@@ -365,10 +365,37 @@ mod tls {
             // was added.
             impl ReadWrite for $name {
                 fn raw_socket(&self) -> Option<usize> {
-                    self.inner.sock.raw_socket()
+                    self.inner.sock.0.raw_socket()
                 }
             }
         };
+    }
+
+    /// The socket under the TLS library. The library writes with
+    /// `write_vectored`, which std makes a `writev`: a write to a peer
+    /// that has closed or reset the connection then raises SIGPIPE, and
+    /// the `silt` command, which sets the signal to its default for
+    /// stdout's sake, dies by it (status 141, no message). Here every
+    /// write is a `write` of std's socket, a `send` that raises no
+    /// signal (MSG_NOSIGNAL on Linux; SO_NOSIGPIPE, set on every socket,
+    /// on Apple's systems): the peer's close is an `Err` of the write.
+    struct NoSigpipe(TcpStream);
+
+    impl Read for NoSigpipe {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.0.read(buf)
+        }
+    }
+
+    impl Write for NoSigpipe {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.write(buf)
+        }
+        // (`write_vectored` is the default: a `write` of the first
+        // buffer that is not empty.)
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.0.flush()
+        }
     }
 
     stream_wrapper!(ClientStreamWrapper, ClientConnection);
