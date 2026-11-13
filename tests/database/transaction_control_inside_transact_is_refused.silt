@@ -1,0 +1,76 @@
+-- `postgres.transact` begins and ends its transaction itself: a
+-- statement of the callback that would begin or end it is refused,
+-- before it is sent, and the transaction goes on. A callback that sent
+-- `COMMIT` and then returns `Err` rolls back everything it wrote. A
+-- savepoint works inside a transaction.
+import env
+import list
+import postgres
+
+type N { n: Int }
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+fn said(answer: Result(a, postgres.PostgresError)) -> String {
+  match answer {
+    Ok(_) -> "Ok"
+    Err(e) -> Error.message(e)
+  }
+}
+
+fn count(pool: postgres.PgPool) -> String {
+  match postgres.query(pool, "SELECT count(*)::int8 AS n FROM silt_database_tx_control", (), N) {
+    Ok([row]) -> "{row.n}"
+    Ok(rows) -> "{rows}"
+    Err(e) -> Error.message(e)
+  }
+}
+
+fn main() {
+  match postgres.connect(url()) {
+    Ok(pool) -> {
+      let _ = postgres.execute(pool, "DROP TABLE IF EXISTS silt_database_tx_control", ())
+      let _ = postgres.execute(pool, "CREATE TABLE silt_database_tx_control (n int)", ())
+      let rolled_back = postgres.transact(pool) { tx ->
+        let _ = postgres.execute(tx, "INSERT INTO silt_database_tx_control VALUES (1)", ())?
+        [
+          "COMMIT",
+          "commit and chain",
+          "END",
+          "ROLLBACK",
+          "ABORT",
+          "BEGIN",
+          "START TRANSACTION",
+          "PREPARE TRANSACTION 'silt_database_tx_control'",
+          "/* first */ COMMIT",
+        ]
+          |> list.each { sql -> println("{sql}: {said(postgres.execute(tx, sql, ()))}") }
+        println("query: {said(postgres.query(tx, "COMMIT", (), N))}")
+        println("stream: {said(postgres.stream(tx, "COMMIT", (), N))}")
+        println("the transaction goes on: {said(postgres.query(tx, "SELECT 1::int8 AS n", (), N))}")
+        Err(postgres.Other("give up"))
+      }
+      println("the transaction: {said(rolled_back)}")
+      println("its rows in the table: {count(pool)}")
+      let kept = postgres.transact(pool) { tx ->
+        let _ = postgres.execute(tx, "INSERT INTO silt_database_tx_control VALUES (1)", ())?
+        let _ = postgres.execute(tx, "SAVEPOINT a", ())?
+        let _ = postgres.execute(tx, "INSERT INTO silt_database_tx_control VALUES (2)", ())?
+        let _ = postgres.execute(tx, "ROLLBACK TO SAVEPOINT a", ())?
+        let _ = postgres.execute(tx, "SAVEPOINT b", ())?
+        let _ = postgres.execute(tx, "RELEASE SAVEPOINT b", ())?
+        Ok(())
+      }
+      println("a transaction with savepoints: {said(kept)}")
+      println("its rows in the table: {count(pool)}")
+      let _ = postgres.execute(pool, "DROP TABLE silt_database_tx_control", ())
+      postgres.close(pool)
+    }
+    Err(e) -> println("connect: {Error.message(e)}")
+  }
+}

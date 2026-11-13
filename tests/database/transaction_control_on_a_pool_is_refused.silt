@@ -1,0 +1,75 @@
+-- A statement on a pool runs on its own: one that begins or ends a
+-- transaction, or works only inside one, is refused, before it is
+-- sent, however it is written. The statements after it run as they
+-- would without it: an insert that answers `Ok` is committed, a failed
+-- statement aborts nothing, and a `postgres.transact` that rolls back
+-- takes no earlier statement of the pool with it. (A pool of one
+-- connection, so that every statement gets the connection the refused
+-- one would have had; a second pool looks from outside.)
+import env
+import list
+import postgres
+
+type N { n: Int }
+
+fn url() -> String {
+  match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+}
+
+fn said(answer: Result(a, postgres.PostgresError)) -> String {
+  match answer {
+    Ok(_) -> "Ok"
+    Err(e) -> Error.message(e)
+  }
+}
+
+fn count(pool: postgres.PgPool) -> String {
+  match postgres.query(pool, "SELECT count(*)::int8 AS n FROM silt_database_pool_control", (), N) {
+    Ok([row]) -> "{row.n}"
+    Ok(rows) -> "{rows}"
+    Err(e) -> Error.message(e)
+  }
+}
+
+fn main() {
+  match (postgres.connect_with(url(), #{"max_pool_size": 1}), postgres.connect(url())) {
+    (Ok(pool), Ok(other)) -> {
+      let _ = postgres.execute(pool, "DROP TABLE IF EXISTS silt_database_pool_control", ())
+      let _ = postgres.execute(pool, "CREATE TABLE silt_database_pool_control (n int)", ())
+      [
+        "BEGIN",
+        "begin work",
+        "START TRANSACTION ISOLATION LEVEL SERIALIZABLE",
+        "COMMIT",
+        "END",
+        "ROLLBACK",
+        "ABORT",
+        "PREPARE TRANSACTION 'silt_database_pool_control'",
+        "SAVEPOINT a",
+        "RELEASE SAVEPOINT a",
+        "ROLLBACK TO SAVEPOINT a",
+        "  -- a comment\n  /* and /* another */ one */ ; BeGiN;",
+      ]
+        |> list.each { sql -> println("{sql}: {said(postgres.execute(pool, sql, ()))}") }
+      println("query: {said(postgres.query(pool, "BEGIN", (), N))}")
+      println("stream: {said(postgres.stream(pool, "BEGIN", (), N))}")
+      println("insert: {said(postgres.execute(pool, "INSERT INTO silt_database_pool_control VALUES (1)", ()))}")
+      println("seen from the other pool: {count(other)}")
+      println("a failed statement: {said(postgres.execute(pool, "SELECT 1/0", ()))}")
+      println("the statement after it: {said(postgres.query(pool, "SELECT 1::int8 AS n", (), N))}")
+      let rolled_back = postgres.transact(pool) { tx ->
+        let _ = postgres.execute(tx, "INSERT INTO silt_database_pool_control VALUES (2)", ())?
+        Err(postgres.Other("give up"))
+      }
+      println("a transaction that rolls back: {said(rolled_back)}")
+      println("seen from the other pool: {count(other)}")
+      let _ = postgres.execute(pool, "DROP TABLE silt_database_pool_control", ())
+      postgres.close(pool)
+      postgres.close(other)
+    }
+    _ -> println("connect failed")
+  }
+}
