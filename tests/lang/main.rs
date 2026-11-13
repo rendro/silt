@@ -2,7 +2,6 @@
 //!
 //! One test binary; each module was a separate test crate before.
 
-mod anon_record_resolve_recursion_tests;
 mod builtin_module_constant_value_access_runtime_tests;
 mod builtin_module_dispatch_tests;
 mod builtin_structural_traits_tests;
@@ -42,8 +41,6 @@ mod property_tests;
 mod qualified_type_paths_tests;
 #[path = "../support/quiet.rs"]
 mod quiet;
-mod round76_row_tail_merge_tests;
-mod row_polymorphism_tests;
 mod session_tests;
 mod stage7_io_pool_tests;
 mod stale_method_row_test;

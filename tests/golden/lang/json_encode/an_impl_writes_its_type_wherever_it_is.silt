@@ -23,6 +23,7 @@ trait json.Encode for Job {
 type Order { id: Int, total: Money, jobs: List(Job) }
 type Paid { Cash(Money), Card(String, Money), Nothing }
 type Box(a) { v: a }
+type Total { total: Money }
 
 trait json.Encode for Box(a) where a: json.Encode {
   fn encode(self) -> json.Value { json.Array([json.String("box")]) }
@@ -38,5 +39,5 @@ fn main() {
   println(json.stringify(Some(m)))
   println(json.stringify((m, None)))
   println(json.stringify(Box { v: m }))
-  println(json.pretty({ total: m }))
+  println(json.pretty(Total { total: m }))
 }

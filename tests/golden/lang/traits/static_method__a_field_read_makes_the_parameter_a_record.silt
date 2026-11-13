@@ -1,8 +1,9 @@
--- A parameter whose field the function reads (`r.n`) is a record, in any
--- order: `r.zero()` calls its field, though one trait in sight has a
--- method `zero` that makes a value. Also in a closure, through a call of
--- the parameter (`first(r).zero()`), and not for a parameter whose name
--- a closure, a `let` or a match arm hides where the field is read.
+-- A record parameter (`r: Rec`) whose field the function reads is a
+-- record, in any order: `r.zero()` calls its field, though one trait in
+-- sight has a method `zero` that makes a value. Also in a closure, through
+-- a call of the parameter (`first(r).zero()`), and not for a parameter
+-- whose name a closure, a `let` or a match arm hides where the field is
+-- read: that one is a type, and `t.zero()` makes a value of it.
 import list
 
 trait Zero {
@@ -24,32 +25,32 @@ fn first(x: a) -> a {
   x
 }
 
-fn field_first(r) {
+fn field_first(r: Rec) -> Int {
   let n = r.n
   n + r.zero()
 }
 
-fn call_first(r) {
+fn call_first(r: Rec) -> Int {
   let z = r.zero()
   z + r.n
 }
 
-fn through(r) {
+fn through(r: Rec) -> Int {
   first(r).zero() + r.n
 }
 
-fn hidden_by_closure(t, recs) {
+fn hidden_by_closure(t, recs: List(Rec)) {
   let ns = recs |> list.map { t -> t.n }
   (t.zero(), ns)
 }
 
-fn hidden_by_let(t, rec) {
+fn hidden_by_let(t, rec: Rec) {
   let z = t.zero()
   let t = rec
   (z, t.n)
 }
 
-fn hidden_by_arm(t, o) {
+fn hidden_by_arm(t, o: Option(Rec)) {
   let z = t.zero()
   match o {
     Some(t) -> (z, t.n)

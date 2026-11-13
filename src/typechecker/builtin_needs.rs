@@ -898,7 +898,6 @@ impl TypeChecker {
             Type::Generic(_, ts) | Type::Tuple(ts) => ts.iter().any(|t| self.has_variable(t)),
             Type::List(t) | Type::Set(t) | Type::Channel(t) => self.has_variable(t),
             Type::Map(k, v) => self.has_variable(k) || self.has_variable(v),
-            Type::AnonRecord { .. } => true,
             _ => false,
         }
     }
@@ -1233,8 +1232,7 @@ impl TypeChecker {
     }
 
     /// The predicates of a scheme as another module reads them: what a
-    /// body does to a row variable of its signature, and what it asks of
-    /// an annotation variable of it, is decided.
+    /// body asks of an annotation variable of its signature is decided.
     pub(super) fn settled_preds(&self, preds: &[Pred]) -> Vec<Pred> {
         // The types the scheme gives its signature's variables.
         let given: HashMap<TyVar, Type> = (preds.iter())
@@ -1248,23 +1246,6 @@ impl TypeChecker {
         let mut settled = Vec::new();
         for pred in preds {
             match pred {
-                Pred::Anon {
-                    row,
-                    given: Some(given),
-                } => {
-                    if self.is_anon_row(*given) {
-                        settled.push(Pred::Anon {
-                            row: row.clone(),
-                            given: None,
-                        });
-                        for field in self.adds_of(*given) {
-                            settled.push(Pred::Lacks {
-                                row: row.clone(),
-                                field,
-                            });
-                        }
-                    }
-                }
                 // (A decoded type a parameter holding a type gives parts
                 // of: judged at each use, `owe_held_decode`.)
                 Pred::Given { given: var, .. } if self.tables.held_needs.contains_key(var) => {
@@ -1327,7 +1308,6 @@ fn mentions_type_of(ty: &Type, subject: &Type, apply: &dyn Fn(&Type) -> Type) ->
         Type::Fun(params, ret) => params.iter().any(within) || within(ret),
         Type::List(t) | Type::Set(t) | Type::Channel(t) => within(t),
         Type::Map(k, v) => within(k) || within(v),
-        Type::AnonRecord { fields, .. } => fields.values().any(within),
         _ => false,
     }
 }

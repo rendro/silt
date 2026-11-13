@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- A field read on a name a plain `let` binds, whose type nothing decides:
+-- the help writes the annotation on the `let`.
+type A { x: Int }
+fn fail(m: String) -> a { panic(m) }
+fn f() -> Int {
+  let v = fail("x")
+  v.x
+}
+fn main() { println(f()) }

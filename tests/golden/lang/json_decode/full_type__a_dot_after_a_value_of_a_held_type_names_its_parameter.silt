@@ -1,7 +1,6 @@
 -- cmd: check
 -- exit: 1
 -- stderr-not-contains: -> _
--- stderr-not-contains: anonymous record
 -- A dot after a value of the type a parameter holds (`t.zero().show2()`,
 -- after `t.zero()` made `t` a type) names a field, which the value has
 -- none of: the error names the parameter's type as a `type t` parameter

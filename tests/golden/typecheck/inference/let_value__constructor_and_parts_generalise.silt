@@ -1,13 +1,15 @@
 -- A `let` generalises a syntactic value: a constructor applied to values,
--- an anonymous record of values, and each name a pattern binds to a part
--- of a value.
+-- a record of values, and each name a pattern binds to a part of a
+-- value.
+type Pack(a) { tag: Option(a), items: List(a) }
+
 fn main() {
   let e = Err("x")
   let a: Result(Int, String) = e
   let b: Result(String, String) = e
-  let r = { tag: None, items: [] }
-  let r1: { tag: Option(Int), items: List(Int) } = r
-  let r2: { tag: Option(String), items: List(String) } = r
+  let r = Pack { tag: None, items: [] }
+  let r1: Pack(Int) = r
+  let r2: Pack(String) = r
   let (f, g) = ({ x -> x }, { x -> [x] })
   println(f(1))
   println(f("s"))

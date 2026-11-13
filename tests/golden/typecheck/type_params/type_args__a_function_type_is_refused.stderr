@@ -1,0 +1,9 @@
+error[parse]: expected ')' or ',' to continue function call argument list, found ->
+ --> type_args__a_function_type_is_refused.silt:27:21
+    |
+ 27 |   let _ = f(Fn(Int) -> Int)
+    |                     ^^ expected ')' or ',' to continue function call argument list, found ->
+ ::: type_args__a_function_type_is_refused.silt:27:12
+    |
+ 27 |   let _ = f(Fn(Int) -> Int)
+    |            - the function call argument list starts here

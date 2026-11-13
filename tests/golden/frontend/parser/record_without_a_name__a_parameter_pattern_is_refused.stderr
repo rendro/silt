@@ -1,0 +1,6 @@
+error[parse]: expected parameter name, found {
+ --> record_without_a_name__a_parameter_pattern_is_refused.silt:5:6
+   |
+ 5 | fn f({ x, y }) {
+   |      ^ expected parameter name, found {
+  = help: a record pattern starts with the name of its type: `P { x, .. }`

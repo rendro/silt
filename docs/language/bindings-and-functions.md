@@ -302,8 +302,11 @@ when let [a, b, c] = xs else {
 use(a, b, c)
 ```
 
-**Type annotations** are optional (Hindley-Milner infers everything) but
-useful for documentation:
+**Type annotations** are mostly optional (Hindley-Milner infers the
+rest) and useful for documentation. One place needs one: a function that
+reads a field of a parameter names the parameter's record type,
+`fn age(u: User) -> Int { u.age }`, since no field name tells the
+record's type.
 
 ```silt
 let x: Int = 42
