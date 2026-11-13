@@ -10,6 +10,7 @@ mod cli_fmt_write_tests;
 mod cli_global_flags_parity_tests;
 mod cli_help_and_unknown_subcommand_tests;
 mod cli_init_tests;
+mod cli_one_path_rule_tests;
 mod cli_positional_gate_tests;
 mod cli_project_root_tests;
 mod cli_remove_tests;

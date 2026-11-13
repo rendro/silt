@@ -10,7 +10,9 @@ use std::process;
 use silt::source::{SourceMap, SourceName};
 
 use crate::cli::package::{die_on_manifest_error_with, find_project_root};
-use crate::cli::paths::find_silt_files;
+use crate::cli::paths::{
+    FILE_OR_DIRECTORY, PathArg, find_silt_files, once_each, path_arg, refuse_path,
+};
 
 /// Dispatch `silt fmt [--check] [files...]`.
 pub(crate) fn dispatch(args: &[String]) {
@@ -100,17 +102,18 @@ pub(crate) fn dispatch(args: &[String]) {
     {
         let mut expanded: Vec<String> = Vec::with_capacity(files.len());
         for f in files.drain(..) {
-            let p = Path::new(&f);
-            if p.is_dir() {
-                let found = find_silt_files(p);
-                if found.is_empty() {
-                    eprintln!("error: silt fmt: no .silt files found in {f}");
-                    process::exit(1);
+            match path_arg(&f) {
+                PathArg::Package(dir) | PathArg::Dir(dir) => {
+                    let found = find_silt_files(Path::new(&dir));
+                    if found.is_empty() {
+                        eprintln!("error: silt fmt: no .silt files found in {dir}");
+                        process::exit(1);
+                    }
+                    walked = true;
+                    expanded.extend(found);
                 }
-                walked = true;
-                expanded.extend(found);
-            } else {
-                expanded.push(f);
+                PathArg::File(file) => expanded.push(file),
+                PathArg::NotSilt(file) => refuse_path("fmt", &file, FILE_OR_DIRECTORY),
             }
         }
         files = once_each(expanded);
@@ -226,14 +229,6 @@ fn count_line(files: usize, done: usize, what: &str, failed: usize) -> String {
 }
 
 type Tamper = (String, String);
-
-/// `files` with each file once: two paths of one file (two spellings,
-/// or a link and what it points to) are the first of them.
-fn once_each(mut files: Vec<String>) -> Vec<String> {
-    let mut seen = std::collections::HashSet::new();
-    files.retain(|f| seen.insert(fs::canonicalize(f).unwrap_or_else(|_| PathBuf::from(f))));
-    files
-}
 
 /// Format `source`, the text of the file at `path`. An error is the
 /// rendered diagnostic: the lexer's or the parser's, as `silt check`

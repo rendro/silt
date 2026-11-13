@@ -439,13 +439,13 @@ fn test_silt_test_checks_the_package_first() {
     )
     .unwrap();
     failed(&dir, "src/other.silt");
-    // Given a path, the file or the directory is what is tested.
+    // Given a path in the package, the package is checked first too.
     let out = silt_cmd()
         .args(["test", "src/main_test.silt"])
         .current_dir(&dir)
         .output()
         .unwrap();
-    assert!(out.status.success(), "{out:?}");
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
 
     // Outside a package there is no package to check.
     let plain = temp_dir_named("no_pkg");
