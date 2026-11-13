@@ -331,7 +331,8 @@ pub fn validate_git_url(url: &str) -> Result<(), InvalidGitUrl> {
 }
 
 /// Whether the git URL `url` names a repository on this machine: a
-/// `file://` URL or a local path ([`is_local_path`]).
+/// `file://` URL or a local path (starting with `/`, `./` or `../`, or
+/// on Windows a drive or UNC path).
 pub fn is_local_git_url(url: &str) -> bool {
     url.starts_with("file://") || is_local_path(url)
 }
