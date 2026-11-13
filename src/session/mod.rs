@@ -36,6 +36,7 @@ use crate::typechecker::{self, ModuleContext, Tables};
 use crate::types::Type;
 use crate::value::HostFn;
 
+pub use crate::value::HostCall;
 pub use entry::{ENTRY_POINT, TestFn, TestKind, selected_tests, test_functions, test_kind};
 pub(crate) use graph::is_cell_name;
 pub use graph::{Import, ImportResolution, Module, ModuleGraph, ModuleId, Ordering, parse_text};
@@ -918,9 +919,7 @@ impl Session {
                             (false, name) => format!("{}.{name}", module.package_name),
                         },
                         imports: unit_imports(module, &index),
-                        host: module
-                            .host
-                            .map_or_else(HashMap::new, |host| self.host_functions(module, host)),
+                        host: (module.host).map(|host| self.host_functions(module, host)),
                     }
                 })
                 .collect(),
@@ -952,24 +951,62 @@ impl Session {
     /// configuration, by name, as the program installs them.
     fn host_functions(&self, module: &Module, host: usize) -> HashMap<Symbol, Arc<HostFn>> {
         let decls = module.ast.as_ref().map_or(&[][..], |ast| &ast.decls[..]);
+        let scope = self
+            .analyses
+            .get(&module.id)
+            .map(|analysis| &analysis.scope);
+        // The types the signatures name: the module's own, and the
+        // builtin ones (`Int`, `time.Date`).
+        let lookup = |qualifier: Option<Symbol>, name: Symbol| {
+            if qualifier.is_none()
+                && let Some(names::Binding::Def(def)) = scope.and_then(|s| s.types.get(&name))
+                && self.defs.get(*def).module == module.id
+            {
+                let decl = decls.iter().find_map(|decl| match decl {
+                    ast::Decl::Type(t) if t.name == name => Some(t),
+                    _ => None,
+                })?;
+                return Some(host::Named {
+                    id: crate::defs::TypeId(*def),
+                    decl: Some(decl),
+                    checked: true,
+                });
+            }
+            let id = crate::defs::builtin_type_id(&resolve(name))?;
+            let home = crate::defs::builtin_types()[id.0.0 as usize].1;
+            if home != qualifier.map(resolve).as_deref() {
+                return None;
+            }
+            let checked = matches!(
+                crate::typeinfo::builtin_type(id).shape,
+                crate::typeinfo::Shape::Record(_) | crate::typeinfo::Shape::Enum(_)
+            );
+            Some(host::Named {
+                id,
+                decl: None,
+                checked,
+            })
+        };
         decls
             .iter()
-            .zip(&self.config.host[host].fns)
-            .filter_map(|(decl, f)| match decl {
-                ast::Decl::Fn(decl) => {
-                    let (returns, vars) = host::returns(decl);
-                    Some((
-                        decl.name,
-                        Arc::new(HostFn {
-                            name: format!("{}.{}", module.name, decl.name),
-                            call: f.call.clone(),
-                            returns,
-                            vars,
-                            arity: decl.params.len(),
-                        }),
-                    ))
-                }
+            .filter_map(|decl| match decl {
+                ast::Decl::Fn(decl) => Some(decl),
                 _ => None,
+            })
+            .zip(&self.config.host[host].fns)
+            .map(|(decl, f)| {
+                let (returns, vars) = host::returns(decl, &lookup);
+                (
+                    decl.name,
+                    Arc::new(HostFn {
+                        name: format!("{}.{}", module.name, decl.name),
+                        call: f.call.clone(),
+                        returns,
+                        vars,
+                        arity: decl.params.len(),
+                        types: Default::default(),
+                    }),
+                )
             })
             .collect()
     }

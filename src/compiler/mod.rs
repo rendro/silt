@@ -316,8 +316,9 @@ pub struct ModuleUnit {
     /// name written after `import`. Builtin modules are not in it.
     pub imports: HashMap<Symbol, usize>,
     /// For a host module, the function each of its signatures declares,
-    /// by name: the module's globals are these functions.
-    pub host: HashMap<Symbol, Arc<HostFn>>,
+    /// by name: the module's globals are these functions. `None` for a
+    /// module of silt code.
+    pub host: Option<HashMap<Symbol, Arc<HostFn>>>,
 }
 
 /// The modules of a program, indexed by the session's module ids, and
@@ -1181,33 +1182,52 @@ impl<'a> Compiler<'a> {
         self.compiled_modules.insert(target);
         let program = self.units.modules[target].program.clone();
         self.unit_stack.push(target);
-        let result = if self.units.modules[target].host.is_empty() {
-            self.compile_file_module_inner(written, &program, span)
-        } else {
-            self.compile_host_module(target, &program, span)
+        let result = match self.units.modules[target].host {
+            None => self.compile_file_module_inner(written, &program, span),
+            Some(_) => self.compile_host_module(target, &program, span),
         };
         self.unit_stack.pop();
         result
     }
 
     /// Install the functions of the host module `target`, one per
-    /// signature of `program`, in their global slots.
+    /// signature of `program`, in their global slots, each with the
+    /// types the module declares.
     fn compile_host_module(
         &mut self,
         target: usize,
         program: &Program,
         span: Span,
     ) -> Result<(), Diagnostic> {
+        let mut types = Vec::new();
+        for decl in &program.decls {
+            if let Decl::Type(t) = decl {
+                let Some(id) = self.declared_type(t.name) else {
+                    return Err(checker_missed(
+                        t.span,
+                        &format!("the host type '{}' with no definition", t.name),
+                    ));
+                };
+                types.push((resolve(t.name), self.type_info(id)));
+            }
+        }
+        let types = Arc::new(crate::value::HostTypes::new(types));
         for decl in &program.decls {
             let Decl::Fn(f) = decl else {
                 continue;
             };
-            let Some(function) = self.units.modules[target].host.get(&f.name).cloned() else {
+            let function =
+                (self.units.modules[target].host.as_ref()).and_then(|host| host.get(&f.name));
+            let Some(function) = function else {
                 return Err(checker_missed(
                     span,
                     &format!("a host signature without a function: '{}'", f.name),
                 ));
             };
+            let function = Arc::new(HostFn {
+                types: types.clone(),
+                ..HostFn::clone(function)
+            });
             let fi = self.add_constant(Value::HostFn(function), span)?;
             self.emit(Asm::Constant { k: fi }, span)?;
             let slot = self.own_slot(f.name, span)?;

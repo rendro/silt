@@ -18,6 +18,7 @@ mod fuzz_target_invariants_tests;
 mod hardening;
 mod host_io_tests;
 mod host_module_tests;
+mod host_type_tests;
 mod http_bind_address_tests;
 mod http_hardening_tests;
 mod http_server_tests;

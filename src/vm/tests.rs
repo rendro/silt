@@ -5245,7 +5245,7 @@ mod seen_drops {
     pub(super) fn maker() -> (Value, Log) {
         let log = Log::default();
         let (made, seen) = (AtomicUsize::new(0), log.clone());
-        let make = move |_: &[Value]| {
+        let make = move |_: &crate::value::HostCall<'_>| {
             let probe = Probe(made.fetch_add(1, Ordering::SeqCst) + 1, seen.clone());
             Ok(Value::HostFn(Arc::new(HostFn {
                 name: "probe".to_string(),
@@ -5256,6 +5256,7 @@ mod seen_drops {
                 returns: HostShape::Any,
                 vars: Vec::new(),
                 arity: 0,
+                types: Default::default(),
             })))
         };
         let maker = Value::HostFn(Arc::new(HostFn {
@@ -5264,6 +5265,7 @@ mod seen_drops {
             returns: HostShape::Any,
             vars: Vec::new(),
             arity: 0,
+            types: Default::default(),
         }));
         (maker, log)
     }
@@ -5288,6 +5290,7 @@ mod seen_drops {
                     returns: HostShape::Any,
                     vars: Vec::new(),
                     arity: 0,
+                    types: Default::default(),
                 }))
             }
         };
@@ -5298,6 +5301,7 @@ mod seen_drops {
                 returns: HostShape::Any,
                 vars: Vec::new(),
                 arity: 0,
+                types: Default::default(),
             }))
         };
         let probes = {
@@ -5323,7 +5327,7 @@ mod seen_drops {
     pub(super) fn channels() -> (Value, Arc<Mutex<Vec<std::sync::Weak<Channel>>>>) {
         let given = Arc::new(Mutex::new(Vec::new()));
         let (made, seen) = (AtomicUsize::new(0), given.clone());
-        let make = move |_: &[Value]| {
+        let make = move |_: &crate::value::HostCall<'_>| {
             let channel = Channel::new(made.fetch_add(1, Ordering::SeqCst), 0);
             seen.lock().unwrap().push(Arc::downgrade(&channel));
             Ok(Value::Channel(channel))
@@ -5334,6 +5338,7 @@ mod seen_drops {
             returns: HostShape::Any,
             vars: Vec::new(),
             arity: 0,
+            types: Default::default(),
         }));
         (maker, given)
     }
@@ -5950,10 +5955,11 @@ mod calls_and_returns {
         )));
         let host = Value::HostFn(Arc::new(HostFn {
             name: "same".to_string(),
-            call: Arc::new(|args| Ok(args[0].clone())),
+            call: Arc::new(|call| Ok(call.args[0].clone())),
             returns: HostShape::Any,
             vars: Vec::new(),
             arity: 0,
+            types: Default::default(),
         }));
         for callee in [closure, host] {
             for argument in results() {
@@ -6152,10 +6158,11 @@ mod parts_in_place {
     fn holder(name: &str, make: fn(&[Value]) -> Value) -> Value {
         Value::HostFn(Arc::new(HostFn {
             name: name.to_string(),
-            call: Arc::new(move |parts| Ok(make(parts))),
+            call: Arc::new(move |call| Ok(make(call.args))),
             returns: HostShape::Any,
             vars: Vec::new(),
             arity: 0,
+            types: Default::default(),
         }))
     }
 
@@ -6361,10 +6368,11 @@ mod methods_in_place {
     fn lister() -> Value {
         Value::HostFn(Arc::new(HostFn {
             name: "lister".to_string(),
-            call: Arc::new(|args| Ok(Value::list(args.to_vec()))),
+            call: Arc::new(|call| Ok(Value::list(call.args.to_vec()))),
             returns: HostShape::Any,
             vars: Vec::new(),
             arity: 0,
+            types: Default::default(),
         }))
     }
 
@@ -7174,6 +7182,7 @@ mod interpolation {
                 returns: HostShape::Any,
                 vars: Vec::new(),
                 arity: 0,
+                types: Default::default(),
             }))
         };
         let script = make_function(|e| {

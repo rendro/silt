@@ -90,15 +90,16 @@ error.
 
 ### Functions on values
 
-`function` takes the arguments as a `&[Value]` and returns
-`Result<Value, VmError>`. Use it for more arguments, or for a generic
-signature:
+`function` takes the call, a `&HostCall`, and returns
+`Result<Value, VmError>`. The arguments are `call.args`, a `&[Value]`.
+Use it for more arguments, for a generic signature, or for a function
+that builds a value of a record or enum type (see "Host types" below):
 
 ```rust
 let lists = HostModule::new("lists").function(
     "fn first(xs: List(a)) -> Option(a)",
-    |args: &[Value]| {
-        let Value::List(xs) = &args[0] else {
+    |call: &HostCall| {
+        let Value::List(xs) = &call.args[0] else {
             return Err(VmError::new("expected a list".into()));
         };
         xs.first().cloned().into_value().map_err(VmError::new)
@@ -113,17 +114,26 @@ parameter (`fn pick(s: String, type a) -> Option(a)`).
 call asks for.
 
 A signature writes a record by the name of its type: braces of fields
-are no type. A host module declares no types of its own, so a record of
-the program reaches a host function through a type variable
-(`fn same(x: a) -> a` given a `Person` gives back a `Person`), and a
-builtin record by its name (`time.Date`).
+are no type. It names the types the host module declares (see "Host
+types"), the types of the prelude, and the types of the builtin
+modules, qualified by the module and without an import (a signature
+has no file to write one in): `time.Date`, `json.Value`,
+`http.Request`, `io.IoError`. A record of the program reaches a host
+function through a type variable (`fn same(x: a) -> a` given a
+`Person` gives back a `Person`): a host module cannot name the
+program's types.
 
 The checker has already made sure the arguments have the declared types
 and number, so a function can rely on its signature. When the function
 returns, its result is checked against its return type, as far as a
 value shows it: `Int`, `Float`, `Bool`, `String`, `Bytes` and `()`;
-`List`, `Set`, `Map`, `Option`, `Result` and tuples of them; and a
-`Channel`. A `-> Int` function that returns a
+`List`, `Set`, `Map`, `Option`, `Result` and tuples of them; a
+`Channel`; and a record or enum type by its type, with, for a type the
+host module declares, the types of its fields and of the fields of
+each variant (`Box(Int)` at its argument: its `value: a` is an `Int`).
+Of a builtin record or enum type (`time.Date`, `json.Value`) the type
+is checked; a builtin type whose values are neither (`tcp.TcpStream`,
+`postgres.PgPool`) is not checked. A `-> Int` function that returns a
 `String` is a runtime error that names it (`mylib.count: its signature
 returns Int, but it returned String "three"`). No value is of `Never`:
 a `-> Never` function that returns a value is that error too, and it
@@ -162,6 +172,88 @@ lies beyond them is the function's to get right.
 A host function cannot take or return a function (`fn f(g: Fn(Int) ->
 Int) -> Int` is an error): a host function has no way to call one.
 
+## Host types
+
+A host module declares record and enum types with `declare_type`, each
+by its silt declaration. Its signatures name them, and a program names
+them as `geo.Point`: it builds, reads, updates and matches them like
+the types of any module.
+
+```rust
+use silt::session::{HostCall, HostModule};
+use silt::{Value, VmError};
+
+// The field `name` of the record `value`, an Int.
+fn int(value: &Value, name: &str) -> Result<i64, VmError> {
+    match value {
+        Value::Record(record) => match record.get(name) {
+            Some(Value::Int(n)) => Ok(*n),
+            _ => Err(VmError::new(format!("no Int field `{name}`"))),
+        },
+        _ => Err(VmError::new("expected a record".into())),
+    }
+}
+
+let geo = HostModule::new("geo")
+    .declare_type("type Point { x: Int, y: Int }")
+    .declare_type("type Shape { Circle(Int), Rect(Point, Point) }")
+    .function("fn origin() -> Point", |call: &HostCall| {
+        call.record("Point", [("x", Value::Int(0)), ("y", Value::Int(0))])
+    })
+    .function("fn norm1(p: Point) -> Int", |call: &HostCall| {
+        let p = &call.args[0];
+        Ok(Value::Int(int(p, "x")?.abs() + int(p, "y")?.abs()))
+    })
+    .function("fn circle(r: Int) -> Shape", |call: &HostCall| {
+        call.variant("Shape", "Circle", vec![call.args[0].clone()])
+    });
+```
+
+From silt:
+
+```silt
+import geo
+
+fn area(s: geo.Shape) -> Int {
+  match s {
+    geo.Circle(r) -> 3 * r * r
+    geo.Rect(a, b) -> (b.x - a.x) * (b.y - a.y)
+  }
+}
+
+fn show() {
+  let p = geo.Point { x: 3, y: -4 }
+  println(geo.norm1(p)) -- 7
+  println(geo.origin() == p.{ x: 0, y: 0 }) -- true
+  println(area(geo.Rect(geo.origin(), p.{ y: 4 }))) -- 12
+  println(area(geo.circle(2))) -- 12
+}
+```
+
+A declaration is one `type` declaration of a record or an enum, with
+type parameters if it has them (`type Box(a) { value: a }`); its
+fields name the module's types, the prelude's and those of the builtin
+modules (`type Stamp { at: time.Date }`). A type is not named like a
+type of the prelude. `pub opaque type Conn { id: Int }` declares a
+type a program can pass on but not build or read: only the host
+functions build one and read its fields.
+
+A function reads a record it is given with `record.get("x")`, and
+builds a value with the call:
+
+- `call.record(type, fields)`: the record of the type with the fields,
+  each given by name, in any order, every field once.
+- `call.variant(type, variant, fields)`: the variant with its fields,
+  in the order the variant declares them.
+
+The type is one the module declares (`"Point"`), or a builtin one,
+qualified by its module where it has one (`"time.Date"`). A type, field
+or variant that is not there, or a field missing or given twice, is a
+runtime error that names the function (`geo.origin: a `Point` has the
+fields x, y, each once; given: x`). The typed functions `fn0`, `fn1`
+and `fn2` take a record as a `Value` and cannot build one: use
+`function` for that.
+
 ## Checking
 
 A host module is checked from its signatures, like a module's `pub fn`s:
@@ -182,7 +274,15 @@ whether or not the program imports it, at `<host:mylib>`:
   introduces (`fn any() -> a`);
 - a typed function (`fn0`, `fn1`, `fn2`) whose signature declares another
   number of parameters;
-- a type the signature names that does not exist;
+- a type the signature names that does not exist, or one of a builtin
+  module this build lacks (`postgres.PgPool` without the `postgres`
+  feature);
+- a type declaration that is not one `type` declaration of a record or
+  an enum (an alias, a function, two types in one `declare_type`), a
+  type with a function in a field, and what is wrong with it as with
+  any module's type: a type it names that does not exist, a field
+  written twice, a type named like another of the module, like a
+  function of it or like a type of the prelude;
 - a host module whose name is not an identifier (`my-lib`), one named
   like a builtin module (`list`), or two host modules with one name.
 

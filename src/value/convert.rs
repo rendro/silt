@@ -1,18 +1,130 @@
 use std::cell::OnceCell;
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
-use super::{Float, Value};
-use crate::typeinfo::bv;
+use super::{Float, Record, Value};
+use crate::defs::TypeId;
+use crate::typeinfo::{Tag, TypeInfo, bv};
 use crate::vm::VmError;
 
 // ── Host functions ─────────────────────────────────────────────────
 
-/// The Rust side of a host function: it takes the call's arguments and
-/// gives its result.
-pub type HostImpl = Arc<dyn Fn(&[Value]) -> Result<Value, VmError> + Send + Sync>;
+/// The Rust side of a host function: it takes the call, with its
+/// arguments, and gives its result.
+pub type HostImpl = Arc<dyn Fn(&HostCall<'_>) -> Result<Value, VmError> + Send + Sync>;
+
+/// One call of a host function, as its Rust side is given it: the
+/// arguments, and the record and enum types it can build values of.
+pub struct HostCall<'a> {
+    /// The arguments, of the types the signature declares.
+    pub args: &'a [Value],
+    types: &'a HostTypes,
+}
+
+/// The record and enum types a host module declares, by name, as its
+/// functions build values of them ([`HostCall::record`]).
+#[derive(Debug, Default)]
+pub struct HostTypes(HashMap<String, Arc<TypeInfo>>);
+
+impl HostTypes {
+    /// The types `types`, each by its name in its module.
+    pub fn new(types: impl IntoIterator<Item = (String, Arc<TypeInfo>)>) -> HostTypes {
+        HostTypes(types.into_iter().collect())
+    }
+}
+
+impl<'a> HostCall<'a> {
+    /// The call with the arguments `args`, of a function of the module
+    /// that declares `types`.
+    pub fn new(args: &'a [Value], types: &'a HostTypes) -> HostCall<'a> {
+        HostCall { args, types }
+    }
+
+    /// The type `name`: one the host module declares (`Point`), or a
+    /// builtin one, qualified by its module where it has one
+    /// (`time.Date`).
+    fn type_named(&self, name: &str) -> Result<Arc<TypeInfo>, VmError> {
+        if let Some(info) = self.types.0.get(name) {
+            return Ok(info.clone());
+        }
+        let (module, bare) = match name.split_once('.') {
+            Some((module, bare)) => (Some(module), bare),
+            None => (None, name),
+        };
+        crate::defs::builtin_type_id(bare)
+            .filter(|id| crate::defs::builtin_types()[id.0.0 as usize].1 == module)
+            .map(|id| crate::typeinfo::builtin_type(id).clone())
+            .ok_or_else(|| {
+                VmError::new(format!(
+                    "there is no type `{name}`: name a type the host module declares, or a \
+                     builtin one with its module (`time.Date`)"
+                ))
+            })
+    }
+
+    /// The record of the type `ty` (see [`HostCall::variant`] for how a
+    /// type is named) with the fields `fields`, by name, in any order:
+    /// each field of the type once.
+    pub fn record<'f>(
+        &self,
+        ty: &str,
+        fields: impl IntoIterator<Item = (&'f str, Value)>,
+    ) -> Result<Value, VmError> {
+        let info = self.type_named(ty)?;
+        if !matches!(info.shape, crate::typeinfo::Shape::Record(_)) {
+            return Err(VmError::new(format!("`{ty}` is not a record type")));
+        }
+        let (names, values): (Vec<&str>, Vec<Value>) = fields.into_iter().unzip();
+        let declared: Vec<&str> = info.fields().iter().map(|(name, _)| &**name).collect();
+        Record::written(info.clone(), names.iter().copied(), values)
+            .map(Value::Record)
+            .ok_or_else(|| {
+                VmError::new(format!(
+                    "a `{ty}` has the fields {}, each once; given: {}",
+                    declared.join(", "),
+                    if names.is_empty() {
+                        "none".to_string()
+                    } else {
+                        names.join(", ")
+                    }
+                ))
+            })
+    }
+
+    /// The variant `variant` of the enum type `ty`, with the fields
+    /// `fields` in the order the variant declares them. `ty` is a type
+    /// the host module declares (`Shape`), or a builtin one, qualified by
+    /// its module where it has one (`io.IoError`).
+    pub fn variant(&self, ty: &str, variant: &str, fields: Vec<Value>) -> Result<Value, VmError> {
+        let info = self.type_named(ty)?;
+        let names = || {
+            let names: Vec<&str> = info.variants().iter().map(|v| &*v.name).collect();
+            names.join(", ")
+        };
+        let Some(tag) = Tag::named(&info, variant) else {
+            return Err(VmError::new(match info.variants().is_empty() {
+                true => format!("`{ty}` is not an enum type"),
+                false => format!(
+                    "`{ty}` has no variant `{variant}`: its variants are {}",
+                    names()
+                ),
+            }));
+        };
+        let arity = tag.arity();
+        if fields.len() != arity {
+            return Err(VmError::new(format!(
+                "`{ty}.{variant}` has {arity} field{}, given {}",
+                if arity == 1 { "" } else { "s" },
+                fields.len()
+            )));
+        }
+        Ok(Value::variant(tag, fields))
+    }
+}
 
 /// A function of a host module, as the VM calls it.
+#[derive(Clone)]
 pub struct HostFn {
     /// The function's name, qualified by its module (`mylib.double`).
     pub name: String,
@@ -26,6 +138,8 @@ pub struct HostFn {
     /// The number of parameters its signature declares: a call with
     /// another number of arguments shows no variable.
     pub arity: usize,
+    /// The types its module declares, which a call can build values of.
+    pub types: Arc<HostTypes>,
 }
 
 /// A type variable (`a`) of a host function's return type, with the
@@ -66,6 +180,10 @@ pub enum HostStep {
     Err,
     /// The `n`th part of a tuple.
     Part(usize),
+    /// The `n`th field of a record, in the order its type declares them.
+    Field(usize),
+    /// The `n`th field of the variant of that ordinal.
+    Variant(u16, usize),
 }
 
 /// What a call's arguments show of a variable: a value of the type, or
@@ -111,6 +229,23 @@ pub enum HostShape {
     /// The type variable of that index among the function's variables,
     /// and its name.
     Var(usize, String),
+    /// A record or enum type by its id, as written (`Point`,
+    /// `Box(Int)`, `time.Date`), with what is checked of its parts: for a
+    /// type of the host module, the fields of the record (one list), or
+    /// the fields of each variant of the enum (a list per variant, in
+    /// declaration order), each of the type its declaration gives at the
+    /// signature's type arguments. Of a builtin type, and of a type met
+    /// again inside itself at other arguments, the id is checked (no
+    /// list).
+    Named {
+        id: TypeId,
+        name: String,
+        parts: Vec<Vec<HostShape>>,
+    },
+    /// The type of that id met again inside itself, at the same type
+    /// arguments (`Node(Tree, Int, Tree)` of `type Tree`): checked as the
+    /// `Named` shape of that id around it.
+    Again(TypeId, String),
 }
 
 impl HostFn {
@@ -219,6 +354,14 @@ fn found_at(value: &Value, path: &[HostStep], budget: &mut usize) -> Option<Valu
             found_at(variant.fields().first()?, rest, budget)
         }
         (HostStep::Part(n), Value::Tuple(parts)) => found_at(parts.get(*n)?, rest, budget),
+        (HostStep::Field(n), Value::Record(record)) => {
+            found_at(record.fields().get(*n)?, rest, budget)
+        }
+        (HostStep::Variant(ordinal, n), Value::Variant(variant))
+            if variant.ordinal() == *ordinal =>
+        {
+            found_at(variant.fields().get(*n)?, rest, budget)
+        }
         _ => None,
     }
 }
@@ -592,26 +735,30 @@ impl HostShape {
     /// whatever the size of its result, and what lies beyond them
     /// passes.
     pub fn check(&self, value: &Value, witnesses: &Witnesses<'_, '_>) -> Result<(), HostFault> {
-        self.check_in(value, witnesses, &mut { SAME_TYPE_PARTS })
+        self.check_in(value, witnesses, &mut { SAME_TYPE_PARTS }, &mut Vec::new())
     }
 
-    /// `check`, of the parts `budget` still lets it look at.
-    fn check_in(
-        &self,
+    /// `check`, of the parts `budget` still lets it look at, inside the
+    /// types `outer` (the `Named` shapes around this one, innermost
+    /// last).
+    fn check_in<'s>(
+        &'s self,
         value: &Value,
         witnesses: &Witnesses<'_, '_>,
         budget: &mut usize,
+        outer: &mut Vec<&'s HostShape>,
     ) -> Result<(), HostFault> {
-        fn all<'v>(
-            shapes: impl Iterator<Item = (&'v HostShape, &'v Value)>,
+        fn all<'v, 's: 'v>(
+            shapes: impl Iterator<Item = (&'s HostShape, &'v Value)>,
             witnesses: &Witnesses<'_, '_>,
             budget: &mut usize,
+            outer: &mut Vec<&'s HostShape>,
         ) -> Result<(), HostFault> {
             for (shape, v) in shapes {
                 if *budget == 0 {
                     break;
                 }
-                shape.check_in(v, witnesses, budget)?;
+                shape.check_in(v, witnesses, budget, outer)?;
             }
             Ok(())
         }
@@ -637,11 +784,12 @@ impl HostShape {
                     items.runs().flatten().map(|v| (&**item, v)),
                     witnesses,
                     budget,
+                    outer,
                 ),
-                Some((lo, _)) => item.check_in(&Value::Int(lo), witnesses, budget),
+                Some((lo, _)) => item.check_in(&Value::Int(lo), witnesses, budget, outer),
             },
             (HostShape::Set(item), Value::Set(items)) => {
-                all(items.iter().map(|v| (&**item, v)), witnesses, budget)
+                all(items.iter().map(|v| (&**item, v)), witnesses, budget, outer)
             }
             (HostShape::Map(k, v), Value::Map(entries)) => all(
                 entries
@@ -649,20 +797,56 @@ impl HostShape {
                     .flat_map(|(key, value)| [(&**k, key), (&**v, value)]),
                 witnesses,
                 budget,
+                outer,
             ),
             (HostShape::Option(item), Value::Variant(variant)) => match variant.fields() {
-                [v] if variant.is(bv::SOME) => item.check_in(v, witnesses, budget),
+                [v] if variant.is(bv::SOME) => item.check_in(v, witnesses, budget, outer),
                 [] => yes(variant.is(bv::NONE)),
                 _ => Err(HostFault::Shape),
             },
             (HostShape::Result(ok, err), Value::Variant(variant)) => match variant.fields() {
-                [v] if variant.is(bv::OK) => ok.check_in(v, witnesses, budget),
-                [v] if variant.is(bv::ERR) => err.check_in(v, witnesses, budget),
+                [v] if variant.is(bv::OK) => ok.check_in(v, witnesses, budget, outer),
+                [v] if variant.is(bv::ERR) => err.check_in(v, witnesses, budget, outer),
                 _ => Err(HostFault::Shape),
             },
             (HostShape::Tuple(items), Value::Tuple(values)) => {
                 yes(items.len() == values.len())?;
-                all(items.iter().zip(values.iter()), witnesses, budget)
+                all(items.iter().zip(values.iter()), witnesses, budget, outer)
+            }
+            (HostShape::Named { id, parts, .. }, Value::Record(record)) => {
+                yes(record.type_id() == *id)?;
+                let Some(fields) = parts.first() else {
+                    return Ok(());
+                };
+                outer.push(self);
+                let checked = all(fields.iter().zip(record.fields()), witnesses, budget, outer);
+                outer.pop();
+                checked
+            }
+            (HostShape::Named { id, parts, .. }, Value::Variant(variant)) => {
+                yes(variant.type_id() == *id)?;
+                let Some(fields) = parts.get(usize::from(variant.ordinal())) else {
+                    return Ok(());
+                };
+                outer.push(self);
+                let checked = all(
+                    fields.iter().zip(variant.fields()),
+                    witnesses,
+                    budget,
+                    outer,
+                );
+                outer.pop();
+                checked
+            }
+            (HostShape::Again(id, _), value) => {
+                let around = outer
+                    .iter()
+                    .rev()
+                    .find(|shape| matches!(shape, HostShape::Named { id: of, .. } if of == id));
+                match around {
+                    Some(around) => around.check_in(value, witnesses, budget, outer),
+                    None => Ok(()),
+                }
             }
             (HostShape::Var(at, _), value) => match witnesses.get(*at) {
                 Some(witness) => {
@@ -710,7 +894,9 @@ impl fmt::Display for HostShape {
             HostShape::Result(ok, err) => list(f, "Result", &[ok, err]),
             HostShape::Tuple(items) => list(f, "", &items.iter().collect::<Vec<_>>()),
             HostShape::Channel(item) => list(f, "Channel", &[item]),
-            HostShape::Var(_, name) => write!(f, "{name}"),
+            HostShape::Var(_, name) | HostShape::Named { name, .. } | HostShape::Again(_, name) => {
+                write!(f, "{name}")
+            }
         }
     }
 }

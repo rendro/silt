@@ -284,7 +284,7 @@ impl ModuleGraph {
             imports: Vec::new(),
             host: Some(index),
         });
-        let text = host.signatures();
+        let (text, parts) = host.text();
         self.parse(id, SourceName::Host(host.name.clone()), &text, sources);
         let file = self.module(id).file.expect("the text was registered");
         let module = &mut self.modules[id.index()];
@@ -321,9 +321,70 @@ impl ModuleGraph {
             ));
         }
         let help = "write it as `fn double(x: Int) -> Int`";
+        let type_help = "write it as `type Point { x: Int, y: Int }`";
+        // The part of the text a declaration is in.
+        let part_of = |decl: &Decl| {
+            let at = decl_span(decl).start as usize;
+            (parts.iter())
+                .find(|(range, _)| range.contains(&at))
+                .map(|(_, part)| *part)
+        };
         if let Some(ast) = module.ast.as_mut().filter(|_| parsed) {
             let mut signature_problems = Vec::new();
+            let mut declared = vec![0_usize; host.types.len()];
             for decl in &mut ast.decls {
+                let part = part_of(decl);
+                if let Some(super::host::Part::Type(n)) = part {
+                    declared[n] += 1;
+                    let span = decl_span(decl);
+                    match decl {
+                        Decl::Type(t) if matches!(t.body, ast::TypeBody::Alias(_)) => {
+                            signature_problems.push(
+                                Diagnostic::error(
+                                    Code::HostSignature,
+                                    t.span,
+                                    format!(
+                                        "the host type `{}` is an alias: a host module declares \
+                                         record and enum types",
+                                        t.name
+                                    ),
+                                )
+                                .with_help("write the type it stands for in the signatures"),
+                            );
+                        }
+                        Decl::Type(t) => {
+                            t.is_pub = true;
+                            let holds_function = match &t.body {
+                                ast::TypeBody::Record(fields) => (fields.iter())
+                                    .any(|field| super::host::mentions_function(&field.ty)),
+                                ast::TypeBody::Enum(variants) => (variants.iter())
+                                    .flat_map(|variant| &variant.fields)
+                                    .any(super::host::mentions_function),
+                                ast::TypeBody::Alias(_) => false,
+                            };
+                            if holds_function {
+                                signature_problems.push(Diagnostic::error(
+                                    Code::HostSignature,
+                                    t.span,
+                                    format!(
+                                        "the host type `{}` cannot hold a function: a host \
+                                         function has no way to call one",
+                                        t.name
+                                    ),
+                                ));
+                            }
+                        }
+                        _ => signature_problems.push(
+                            Diagnostic::error(
+                                Code::HostSignature,
+                                span,
+                                "a host type is declared by a `type` declaration",
+                            )
+                            .with_help(type_help),
+                        ),
+                    }
+                    continue;
+                }
                 let Decl::Fn(f) = decl else {
                     signature_problems.push(
                         Diagnostic::error(
@@ -413,19 +474,44 @@ impl ModuleGraph {
                     ));
                 }
             }
-            let declared = ast.decls.len();
-            if declared != host.fns.len() {
+            for (n, count) in declared.iter().enumerate() {
+                if *count != 1 {
+                    let at = parts
+                        .iter()
+                        .find(|(_, part)| *part == super::host::Part::Type(n));
+                    let start = at.map_or(0, |(range, _)| range.start as u32);
+                    signature_problems.push(
+                        Diagnostic::error(
+                            Code::HostSignature,
+                            Span::point(file, start),
+                            format!(
+                                "a host type is declared by one `type` declaration, but the \
+                                 declaration of type {} of the host module `{}` has {count}",
+                                n + 1,
+                                host.name
+                            ),
+                        )
+                        .with_help(type_help),
+                    );
+                }
+            }
+            // (The declarations of the signatures, in their order.)
+            let signed: Vec<&Decl> = (ast.decls.iter())
+                .filter(|decl| !matches!(part_of(decl), Some(super::host::Part::Type(_))))
+                .collect();
+            if signed.len() != host.fns.len() {
                 signature_problems.push(Diagnostic::error(
                     Code::HostSignature,
                     at_start,
                     format!(
-                        "the host module `{}` has {} but its signatures declare {declared}",
+                        "the host module `{}` has {} but its signatures declare {}",
                         host.name,
-                        plural(host.fns.len(), "function")
+                        plural(host.fns.len(), "function"),
+                        signed.len()
                     ),
                 ));
             } else {
-                for (decl, function) in ast.decls.iter().zip(&host.fns) {
+                for (decl, function) in signed.iter().zip(&host.fns) {
                     if let (Decl::Fn(f), Some(arity)) = (decl, function.arity)
                         && f.params.len() != arity
                     {
@@ -444,6 +530,24 @@ impl ModuleGraph {
                 }
             }
             problems.extend(signature_problems);
+            // A host signature names the types of builtin modules
+            // without an import (the resolver sees them): of one this
+            // build lacks, that is the error.
+            for (qualifier, span) in builtin_qualifiers(ast) {
+                if let Some(feature) = module::missing_feature(&resolve(qualifier)) {
+                    problems.push(
+                        Diagnostic::error(
+                            Code::ModuleNotFound,
+                            span,
+                            module::needs_feature(
+                                &format!("the builtin module '{qualifier}'"),
+                                feature,
+                            ),
+                        )
+                        .with_help(format!("rebuild silt with `--features {feature}`")),
+                    );
+                }
+            }
         }
         module.problems.extend(problems);
         id
@@ -985,6 +1089,59 @@ fn is_module_name(name: &str) -> bool {
 }
 
 /// The span of the declaration `decl`.
+/// The builtin modules whose types the declarations of a host module
+/// name (`time` of `time.Date`), each once, in the order first written,
+/// with the span of that first qualifier.
+fn builtin_qualifiers(ast: &ast::Program) -> Vec<(Symbol, Span)> {
+    fn walk(ty: &ast::TypeExpr, out: &mut Vec<(Symbol, Span)>) {
+        match &ty.kind {
+            ast::TypeExprKind::Named { module, .. } | ast::TypeExprKind::Generic { module, .. } => {
+                if let Some(q) = module
+                    && module::is_builtin_module(&resolve(q.name))
+                    && !out.iter().any(|(name, _)| *name == q.name)
+                {
+                    out.push((q.name, q.span));
+                }
+                if let ast::TypeExprKind::Generic { args, .. } = &ty.kind {
+                    args.iter().for_each(|arg| walk(arg, out));
+                }
+            }
+            ast::TypeExprKind::Tuple(parts) => parts.iter().for_each(|part| walk(part, out)),
+            ast::TypeExprKind::Function(params, ret) => {
+                params.iter().for_each(|param| walk(param, out));
+                walk(ret, out);
+            }
+            ast::TypeExprKind::SelfType => {}
+        }
+    }
+    let mut out = Vec::new();
+    for decl in &ast.decls {
+        match decl {
+            Decl::Fn(f) => {
+                for ty in f.params.iter().filter_map(|p| p.ty.as_ref()) {
+                    walk(ty, &mut out);
+                }
+                if let Some(ty) = &f.return_type {
+                    walk(ty, &mut out);
+                }
+            }
+            Decl::Type(t) => match &t.body {
+                ast::TypeBody::Record(fields) => {
+                    fields.iter().for_each(|field| walk(&field.ty, &mut out));
+                }
+                ast::TypeBody::Enum(variants) => {
+                    for variant in variants {
+                        variant.fields.iter().for_each(|ty| walk(ty, &mut out));
+                    }
+                }
+                ast::TypeBody::Alias(ty) => walk(ty, &mut out),
+            },
+            _ => {}
+        }
+    }
+    out
+}
+
 fn decl_span(decl: &Decl) -> Span {
     match decl {
         Decl::Fn(f) => f.span,
