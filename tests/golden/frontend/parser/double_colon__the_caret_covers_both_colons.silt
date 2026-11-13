@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- An error that names `::` puts its caret under both colons.
+trait Has {
+  fn item(self) -> Int
+}
+
+fn g(x: Has::Item) -> Int {
+  0
+}
+
+fn main() {
+  println(g(1))
+}

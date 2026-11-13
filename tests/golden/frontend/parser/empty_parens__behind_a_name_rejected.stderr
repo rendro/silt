@@ -1,0 +1,41 @@
+error[parse]: empty parentheses behind `T`: a type without parameters is declared `type T`
+ --> empty_parens__behind_a_name_rejected.silt:12:7
+    |
+ 12 | type T() {
+    |       ^^ empty parentheses behind `T`: a type without parameters is declared `type T`
+
+error[parse]: empty parentheses behind `A`: a variant without fields is written `A`
+ --> empty_parens__behind_a_name_rejected.silt:17:4
+    |
+ 17 |   A(),
+    |    ^^ empty parentheses behind `A`: a variant without fields is written `A`
+
+error[parse]: empty parentheses behind `Q`: write the trait's arguments in them, or `Q` alone for a trait that takes none
+ --> empty_parens__behind_a_name_rejected.silt:21:8
+    |
+ 21 | trait Q() {
+    |        ^^ empty parentheses behind `Q`: write the trait's arguments in them, or `Q` alone for a trait that takes none
+
+error[parse]: empty parentheses behind `W`: write the type's arguments in them, or `W` alone for a type that takes none
+ --> empty_parens__behind_a_name_rejected.silt:25:14
+    |
+ 25 | trait Q for W() {
+    |              ^^ empty parentheses behind `W`: write the type's arguments in them, or `W` alone for a type that takes none
+
+error[parse]: empty parentheses behind `W`: write the type's arguments in them, or `W` alone for a type that takes none
+ --> empty_parens__behind_a_name_rejected.silt:31:10
+    |
+ 31 | fn f(w: W(), x: a) -> Int where a: Display() {
+    |          ^^ empty parentheses behind `W`: write the type's arguments in them, or `W` alone for a type that takes none
+
+error[parse]: empty parentheses behind `Display`: write the trait's arguments in them, or `Display` alone for a trait that takes none
+ --> empty_parens__behind_a_name_rejected.silt:31:43
+    |
+ 31 | fn f(w: W(), x: a) -> Int where a: Display() {
+    |                                           ^^ empty parentheses behind `Display`: write the trait's arguments in them, or `Display` alone for a trait that takes none
+
+error[parse]: empty parentheses behind `B`: write a pattern for each field in them, or `B` alone for a variant without fields
+ --> empty_parens__behind_a_name_rejected.silt:37:6
+    |
+ 37 |     B() -> 1
+    |      ^^ empty parentheses behind `B`: write a pattern for each field in them, or `B` alone for a variant without fields

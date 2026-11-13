@@ -4,15 +4,15 @@
 -- qualified names, closures in every place.
 import a.{ }
 import b . { x , y , }
-pub trait T ( a , ) : m.S ( a ) + U ( ) where a : m.V + W ( Int , ) + X
+pub trait T ( a , ) : m.S ( a ) + U where a : m.V + W ( Int , ) + X
   fn f ( self ) -> m.Q ( a , )
 }
 trait m.T ( Int ) for m.Box ( a , ) where a : T ( Int ) { }
 pub let ( a , b ) : ( Int , ) = ( 1 , )
-type A ( ) { B ( ) , C ( Int , ) , }
+type A { B , C ( Int , ) , }
 type R ( a ) { }
 pub type F = Fn ( ) -> Fn ( Int , ) -> R ( Int , )
-fn g ( Q { x , y : P { z , .. } , .. } : R ( a ) , [ ] , [ a , .. b ] , ( ) , ( ( c ) , ) , #{ } , #{ "k" : ^ v , } , - 1 .. - 2 , 1.5 .. 2.5 , m.E.V ( ) , m.P { } , type t , ) -> Self where t : D , u : E { }
+fn g ( Q { x , y : P { z , .. } , .. } : R ( a ) , [ ] , [ a , .. b ] , ( ) , ( ( c ) , ) , #{ } , #{ "k" : ^ v , } , - 1 .. - 2 , 1.5 .. 2.5 , m.E.V , m.P { } , type t , ) -> Self where t : D , u : E { }
 fn h ( ) {
   let f = { x -> { x } }
   let g = { x -> { } }

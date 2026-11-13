@@ -1,0 +1,20 @@
+error[parse]: expected a newline before '{': each statement must start on its own line
+ --> statement_newline__a_block_behind_a_name_rejected.silt:14:22
+    |
+ 14 |   let _ = task.spawn { work() }
+    |                      ^ expected a newline before '{': each statement must start on its own line
+  = help: a closure without parameters is written `{ -> ... }`; a block of its own starts on a new line
+
+error[parse]: expected a newline before '{': each statement must start on its own line
+ --> statement_newline__a_block_behind_a_name_rejected.silt:19:14
+    |
+ 19 |   let _k = n {}
+    |              ^ expected a newline before '{': each statement must start on its own line
+  = help: a closure without parameters is written `{ -> ... }`; a block of its own starts on a new line
+
+error[parse]: expected a newline before '{': each statement must start on its own line
+ --> statement_newline__a_block_behind_a_name_rejected.silt:23:20
+    |
+ 23 |   let _y = x |> id { work() }
+    |                    ^ expected a newline before '{': each statement must start on its own line
+  = help: a closure without parameters is written `{ -> ... }`; a block of its own starts on a new line
