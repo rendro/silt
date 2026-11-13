@@ -330,43 +330,12 @@ import io
 import list
 ```
 
-Each built-in module has a page in the
-[standard library reference](../stdlib/globals.md), and the LSP shows
-the same text: hover
-any qualified built-in name (`list.map`, `math.cos`, `Result`, …) in
-your editor. The built-in modules:
-
-| Module | Purpose |
-| --- | --- |
-| `io` | File I/O and stdout (`io.read_file`, `io.write_file`, `println`) |
-| `string` | String inspection, slicing, and conversion helpers |
-| `int` | Integer parsing, formatting, and bounded arithmetic |
-| `float` | Floating-point parsing, classification, and numeric helpers |
-| `list` | List construction, traversal, and transformation |
-| `map` | Hash-map insertion, lookup, and iteration |
-| `result` | `Result` combinators (`map`, `map_err`, `unwrap_or`, …) |
-| `option` | `Option` combinators (`map`, `unwrap_or`, `flat_map`, …) |
-| `test` | Assertion harness used by `silt test` (`test.assert_eq`, …) |
-| `channel` | Bounded MPMC channels for CSP-style messaging |
-| `task` | Tasks: `task.spawn`, `task.join`, `task.cancel`, `task.deadline` |
-| `regex` | Compiled regular expressions and replacement helpers |
-| `json` | Type-directed JSON parsing and emission |
-| `toml` | TOML parsing and emission |
-| `set` | Hash-set construction and bulk operations |
-| `math` | Trigonometry, exponentials, and numeric constants |
-| `time` | Instants, durations, calendar dates, and weekdays |
-| `http` | HTTP client and server (`http.get`, `http.request`, `http.serve`, `http.segments`, `http.parse_query`) |
-| `fs` | Filesystem queries (`fs.list_dir`, `fs.stat`, `fs.read_link`, `fs.walk`, `fs.glob`, `fs.mkdir`, `fs.remove`, `fs.rename`, `fs.copy`, `fs.exists`, `fs.is_file`, `fs.is_dir`, `fs.is_symlink`) |
-| `env` | Process environment access (`env.get`, `env.set`, `env.remove`, `env.vars`) |
-| `postgres` | PostgreSQL client with typed parameters (opt-in feature; build with `cargo build --features postgres`, not enabled in the default release binary) |
-| `bytes` | Byte-buffer construction, slicing, and conversion |
-| `crypto` | Hashing, HMAC, and constant-time comparison |
-| `encoding` | Hex / base64 / URL encoding helpers |
-| `tcp` | TCP listener and stream primitives |
-| `stream` | Lazy iterators backed by tasks and channels |
-| `uuid` | UUID generation and parsing |
-| `process` | The running process: `process.exit` |
-| `csv` | Comma-separated values: `csv.parse` into records, `csv.split_line` |
+Each built-in module has a page of its own, listed in the
+[Language Guide](../language-guide.md#standard-library), and the editor
+shows the same text when you hover a qualified built-in name
+(`list.map`, `math.cos`, `Result`, ...). The
+[language card](../language-card.md#standard-library) lists every
+module with its types and the signature of each function.
 
 The types and enums of a built-in module are its members like any
 other: `time.Weekday` and `time.Monday`, `channel.Message(v)` and

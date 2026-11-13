@@ -9,7 +9,8 @@ description: "All of silt on one page: the syntax in brief, then the signature o
 
 silt on one page: the syntax in brief, then every function, constant,
 type and trait of the standard library. The [Language Guide](language-guide.md)
-and the reference pages of the standard library say more about each.
+and the [reference pages of the standard library](language-guide.md#standard-library)
+say more about each.
 
 ## A program
 
@@ -295,7 +296,11 @@ All infix operators are left-associative.
 ## Standard library
 
 Everything but the prelude is reached through its module after `import
-m`: `list.map(xs, f)`, `io.NotFound(path)`, `time.Weekday`. Each module
+m`: `list.map(xs, f)`, `io.NotFound(path)`, `time.Weekday`. The prelude's
+types need no module: `Int`, `Float`, `Bool`, `String`, `()`, `Bytes`,
+`List(a)`, `Map(k, v)`, `Set(a)`, `Channel(a)`, `Fn(a) -> b`, `Option(a)`
+and `Result(a, e)`; a type of a module is written with it,
+`task.Handle(a)`, `time.Duration`. Each module
 lists its types, traits and opaque types first, then its functions and
 constants. A function of a cargo feature is in builds with that feature.
 
