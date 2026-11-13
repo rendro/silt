@@ -24,7 +24,7 @@ pub(crate) use decode::Source;
 pub use error::VmError;
 pub use io::{Buffer, Clock, HostIo, Output, SystemClock};
 pub(crate) use io::{NO_PANIC_TEXT, panic_message, write_stderr};
-pub(crate) use io::{Printed, Stream, drain_process_output};
+pub(crate) use io::{Printed, Stream, drain_process_output, unraised_process_stdout_failure};
 pub use io_op::IoFailure;
 pub(crate) use io_op::{ErrFactory, IoOp, Leave, Limit, Wanted};
 pub(crate) use iter::{Flow, call_then, item_arg, iterate, next, stop};

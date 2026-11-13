@@ -246,26 +246,29 @@ pub(crate) enum Printed {
 }
 
 /// Which output of a [`HostIo`].
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Stream {
     Stdout,
     Stderr,
 }
 
-/// One output and the thread that writes to it: the program's prints
-/// are put in its queue, in the order of the calls, and the thread
-/// writes them out, whole and in that order. A print does not wait for
-/// the output: one that finds the queue full waits for room as any
-/// wait of a task does, and the other tasks run. So a reader that is
-/// slow, or gone quiet, holds up the tasks that print, and nothing
-/// else.
+/// The two outputs of a [`HostIo`] and the one thread that writes to
+/// them: the program's prints, to stdout and to stderr, are put in one
+/// queue, in the order of the calls, and the thread writes them out,
+/// whole and in that order, each to its output. So a line on stderr
+/// stays between the stdout lines it was printed between (`2>&1`). A
+/// print does not wait for the outputs: one that finds the queue full
+/// waits for room as any wait of a task does, and the other tasks run.
+/// So a reader that is slow, or gone quiet, holds up the tasks that
+/// print, and nothing else.
 ///
 /// The process's stdout and stderr are written so ([`HostIo::process`]);
-/// their threads start at the first text and sleep while there is
+/// the thread starts at the first text and sleeps while there is
 /// nothing to write. An embedder's outputs ([`HostIo::new`]) are written
 /// by the print itself, as is everything where there are no threads.
 pub(crate) struct Lane {
-    output: Arc<dyn Output>,
+    /// stdout and stderr.
+    outputs: [Arc<dyn Output>; 2],
     /// Whether a writer thread writes the texts; else the print does.
     queued: bool,
     /// Test-only: the writer thread ends when it has had nothing to
@@ -281,8 +284,9 @@ pub(crate) struct Lane {
 
 #[derive(Default)]
 struct LaneState {
-    /// The texts the writer has, oldest first, and their bytes.
-    queue: std::collections::VecDeque<String>,
+    /// The texts the writer has, oldest first, each with its output, and
+    /// their bytes.
+    queue: std::collections::VecDeque<(Stream, String)>,
     queued: usize,
     /// The texts that wait for room, oldest first.
     waiting: std::collections::VecDeque<Waiting>,
@@ -296,7 +300,9 @@ struct LaneState {
     /// How many batches have been written: a drain that sees it move
     /// knows the reader takes them.
     written: u64,
-    /// The first failure of a write, which every later print gives.
+    /// The first failure of a write to stdout, which every later print
+    /// to stdout gives. (One to stderr is dropped: there is nowhere left
+    /// to report it.)
     failed: Option<String>,
     /// Whether a print has given that failure.
     raised: bool,
@@ -304,6 +310,7 @@ struct LaneState {
 
 /// A text that waits for room ([`Printed::Waits`]).
 struct Waiting {
+    stream: Stream,
     text: String,
     room: Arc<Cell<()>>,
     /// Who wakes the print, and what keeps its program from being seen
@@ -314,9 +321,9 @@ struct Waiting {
 }
 
 impl Lane {
-    fn new(output: Arc<dyn Output>, queued: bool) -> Arc<Lane> {
+    fn new(stdout: Arc<dyn Output>, stderr: Arc<dyn Output>, queued: bool) -> Arc<Lane> {
         Arc::new(Lane {
-            output,
+            outputs: [stdout, stderr],
             queued,
             #[cfg(test)]
             ends_when_idle: false,
@@ -326,46 +333,67 @@ impl Lane {
         })
     }
 
-    /// Put `text` in the queue, or have it wait for room. A runtime's
-    /// report (`room` none) never waits: it goes in the queue whatever
-    /// it holds, after what is there.
+    /// The output a text of `stream` goes to.
+    fn output(&self, stream: Stream) -> &dyn Output {
+        match stream {
+            Stream::Stdout => &*self.outputs[0],
+            Stream::Stderr => &*self.outputs[1],
+        }
+    }
+
+    /// Write `text` to its output, here: a failure of a write to
+    /// stdout is kept.
+    fn write_one(&self, stream: Stream, text: &str, failed: &mut Option<String>) {
+        if let Err(e) = write_caught(self.output(stream), text)
+            && stream == Stream::Stdout
+        {
+            failed.get_or_insert(crate::diagnostic::io_error_text(&e));
+        }
+    }
+
+    /// Put `text` for `stream` in the queue, or have it wait for room. A
+    /// runtime's report (`room` none) never waits: it goes in the queue
+    /// whatever it holds, after what is there.
     fn print(
         self: &Arc<Self>,
+        stream: Stream,
         text: String,
         room: Option<&Arc<crate::scheduler::Scheduler>>,
     ) -> Printed {
         if !self.queued || cfg!(target_arch = "wasm32") {
-            return match write_caught(&*self.output, &text) {
-                Ok(()) => Printed::Queued,
-                Err(e) => Printed::Failed(crate::diagnostic::io_error_text(&e)),
+            let mut failed = None;
+            self.write_one(stream, &text, &mut failed);
+            return match failed {
+                None => Printed::Queued,
+                Some(why) => Printed::Failed(why),
             };
         }
+        let mut state = self.state.lock();
+        if stream == Stream::Stdout
+            && room.is_some()
+            && let Some(failed) = state.failed.clone()
         {
-            let mut state = self.state.lock();
-            if let Some(failed) = state.failed.clone()
-                && room.is_some()
-            {
-                state.raised = true;
-                return Printed::Failed(failed);
+            state.raised = true;
+            return Printed::Failed(failed);
+        }
+        let fits = state.queued == 0 || state.queued + text.len() <= QUEUED_MAX;
+        match room {
+            Some(scheduler) if !(state.waiting.is_empty() && fits) => {
+                let cell = Cell::new();
+                state.waiting.push_back(Waiting {
+                    stream,
+                    text,
+                    room: cell.clone(),
+                    scheduler: scheduler.clone(),
+                    external: scheduler.external(),
+                });
+                Printed::Waits(cell)
             }
-            let fits = state.queued == 0 || state.queued + text.len() <= QUEUED_MAX;
-            match room {
-                Some(scheduler) if !(state.waiting.is_empty() && fits) => {
-                    let cell = Cell::new();
-                    state.waiting.push_back(Waiting {
-                        text,
-                        room: cell.clone(),
-                        scheduler: scheduler.clone(),
-                        external: scheduler.external(),
-                    });
-                    Printed::Waits(cell)
-                }
-                _ => {
-                    state.queued += text.len();
-                    state.queue.push_back(text);
-                    self.start(&mut state);
-                    Printed::Queued
-                }
+            _ => {
+                state.queued += text.len();
+                state.queue.push_back((stream, text));
+                self.start(&mut state);
+                Printed::Queued
             }
         }
     }
@@ -387,19 +415,17 @@ impl Lane {
             // No thread: the texts are written here, in their order.
             Err(_) => {
                 state.queued = 0;
-                for text in std::mem::take(&mut state.queue) {
-                    if let Err(e) = write_caught(&*self.output, &text) {
-                        state
-                            .failed
-                            .get_or_insert(crate::diagnostic::io_error_text(&e));
-                    }
+                let mut failed = state.failed.take();
+                for (stream, text) in std::mem::take(&mut state.queue) {
+                    self.write_one(stream, &text, &mut failed);
                 }
+                state.failed = failed;
             }
         }
     }
 
     /// The writer thread: write what is queued, one text a call, oldest
-    /// first.
+    /// first, each to its output.
     fn write_out(self: Arc<Self>) {
         loop {
             let mut state = self.state.lock();
@@ -424,11 +450,9 @@ impl Lane {
             drop(state);
             let mut failed = None;
             let mut bytes = 0;
-            for text in batch {
+            for (stream, text) in batch {
                 bytes += text.len();
-                if let Err(e) = write_caught(&*self.output, &text) {
-                    failed.get_or_insert(crate::diagnostic::io_error_text(&e));
-                }
+                self.write_one(stream, &text, &mut failed);
             }
             let mut state = self.state.lock();
             state.writing = false;
@@ -453,13 +477,14 @@ impl Lane {
                     break;
                 };
                 let Waiting {
+                    stream,
                     text,
                     room,
                     scheduler,
                     external,
                 } = next;
                 state.queued += text.len();
-                state.queue.push_back(text);
+                state.queue.push_back((stream, text));
                 given.push((room, scheduler, external));
             }
             drop(state);
@@ -470,6 +495,18 @@ impl Lane {
                 drop(external);
             }
         }
+    }
+
+    /// The failure of a write to stdout that no print has given yet.
+    /// Given once.
+    fn unraised_stdout_failure(&self) -> Option<String> {
+        let mut state = self.state.lock();
+        if state.raised {
+            return None;
+        }
+        let failed = state.failed.clone()?;
+        state.raised = true;
+        Some(failed)
     }
 
     /// Wait until what is queued has been written. `stall`: give up
@@ -495,16 +532,11 @@ impl Lane {
     }
 }
 
-/// The lanes of the process's stdout and stderr, one each for every
-/// program of the process ([`HostIo::process`]).
-fn process_lanes() -> &'static (Arc<Lane>, Arc<Lane>) {
-    static LANES: OnceLock<(Arc<Lane>, Arc<Lane>)> = OnceLock::new();
-    LANES.get_or_init(|| {
-        (
-            Lane::new(Arc::new(ProcessStdout), true),
-            Lane::new(Arc::new(ProcessStderr), true),
-        )
-    })
+/// The lane of the process's stdout and stderr, one for every program
+/// of the process ([`HostIo::process`]).
+fn process_lane() -> &'static Arc<Lane> {
+    static LANE: OnceLock<Arc<Lane>> = OnceLock::new();
+    LANE.get_or_init(|| Lane::new(Arc::new(ProcessStdout), Arc::new(ProcessStderr), true))
 }
 
 /// Write out what the programs of the process have printed and is
@@ -512,17 +544,22 @@ fn process_lanes() -> &'static (Arc<Lane>, Arc<Lane>) {
 /// writes nothing for `stall` (its reader takes nothing) is not waited
 /// for longer.
 pub(crate) fn drain_process_output(stall: Duration) {
-    let (stdout, stderr) = process_lanes();
-    stdout.drain(Some(stall));
-    stderr.drain(Some(stall));
+    process_lane().drain(Some(stall));
+}
+
+/// The failure of a write to the process's stdout that no print has
+/// given yet ([`Lane::unraised_stdout_failure`]): `process.exit` ends
+/// the program with it, as the end of `run_program` does.
+pub(crate) fn unraised_process_stdout_failure() -> Option<String> {
+    process_lane().unraised_stdout_failure()
 }
 
 /// The output and the clock of a [`Vm`](super::Vm), set when the VM is
 /// made. See the module documentation.
 #[derive(Clone)]
 pub struct HostIo {
-    stdout: Arc<Lane>,
-    stderr: Arc<Lane>,
+    /// stdout and stderr, and who writes them.
+    lane: Arc<Lane>,
     clock: Arc<dyn Clock>,
     /// Whether `clock` is [`SystemClock`], on which a duration takes
     /// that long: the runtime's threads then wait a deadline out
@@ -540,30 +577,23 @@ impl HostIo {
     /// Output to `stdout` and `stderr`, and the system clock. A print
     /// writes to them itself.
     pub fn new(stdout: impl Output + 'static, stderr: impl Output + 'static) -> HostIo {
-        HostIo::of_lanes(
-            Lane::new(Arc::new(stdout), false),
-            Lane::new(Arc::new(stderr), false),
-        )
+        HostIo::of_lane(Lane::new(Arc::new(stdout), Arc::new(stderr), false))
     }
 
-    /// Test-only: output to `stdout` and `stderr` through writer threads,
-    /// as the process's output goes ([`HostIo::process`]).
+    /// Test-only: output to `stdout` and `stderr` through one writer
+    /// thread, as the process's output goes ([`HostIo::process`]).
     #[cfg(test)]
     pub(crate) fn queued(stdout: impl Output + 'static, stderr: impl Output + 'static) -> HostIo {
-        let lane = |output: Arc<dyn Output>| {
-            let mut lane = Lane::new(output, true);
-            if let Some(lane) = Arc::get_mut(&mut lane) {
-                lane.ends_when_idle = true;
-            }
-            lane
-        };
-        HostIo::of_lanes(lane(Arc::new(stdout)), lane(Arc::new(stderr)))
+        let mut lane = Lane::new(Arc::new(stdout), Arc::new(stderr), true);
+        if let Some(lane) = Arc::get_mut(&mut lane) {
+            lane.ends_when_idle = true;
+        }
+        HostIo::of_lane(lane)
     }
 
-    fn of_lanes(stdout: Arc<Lane>, stderr: Arc<Lane>) -> HostIo {
+    fn of_lane(lane: Arc<Lane>) -> HostIo {
         HostIo {
-            stdout,
-            stderr,
+            lane,
             clock: Arc::new(SystemClock),
             system_clock: true,
             clock_panic: Arc::default(),
@@ -580,10 +610,9 @@ impl HostIo {
     /// what the `silt` command runs programs with. A program that
     /// writes to a closed stdout pipe ends the process, quietly, with
     /// status 141. Every program of the process prints through the
-    /// same two writers.
+    /// same writer, which keeps the order of the prints to the two.
     pub fn process() -> HostIo {
-        let (stdout, stderr) = process_lanes();
-        HostIo::of_lanes(stdout.clone(), stderr.clone())
+        HostIo::of_lane(process_lane().clone())
     }
 
     /// The same output, with `clock` instead of the system clock.
@@ -611,7 +640,7 @@ impl HostIo {
         text: String,
         scheduler: &Arc<crate::scheduler::Scheduler>,
     ) -> Printed {
-        self.lane(stream).print(text, Some(scheduler))
+        self.lane.print(stream, text, Some(scheduler))
     }
 
     /// Write `text` to stderr: a report of the runtime's for the
@@ -619,33 +648,19 @@ impl HostIo {
     /// there. A write error, or a panic of the output, is ignored:
     /// there is nowhere left to report it.
     pub(crate) fn err(&self, text: &str) {
-        let _ = self.stderr.print(text.to_string(), None);
+        let _ = self.lane.print(Stream::Stderr, text.to_string(), None);
     }
 
     /// The failure of a write to stdout that no print has given yet: the
     /// last text the writer had failed. Given once.
     pub(crate) fn unraised_stdout_failure(&self) -> Option<String> {
-        let mut state = self.stdout.state.lock();
-        if state.raised {
-            return None;
-        }
-        let failed = state.failed.clone()?;
-        state.raised = true;
-        Some(failed)
+        self.lane.unraised_stdout_failure()
     }
 
     /// Wait until what the program has printed has been written out,
     /// to stdout and to stderr, however long the readers take.
     pub(crate) fn drain(&self) {
-        self.stdout.drain(None);
-        self.stderr.drain(None);
-    }
-
-    fn lane(&self, stream: Stream) -> &Arc<Lane> {
-        match stream {
-            Stream::Stdout => &self.stdout,
-            Stream::Stderr => &self.stderr,
-        }
+        self.lane.drain(None);
     }
 
     /// Call the clock with a panic caught: the first one is kept as

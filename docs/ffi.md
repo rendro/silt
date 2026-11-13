@@ -257,7 +257,7 @@ let vm = Vm::new(HostIo::buffer(&out));
 |-------------|-------------------|-------|
 | `HostIo::buffer(&buffer)` | both into `buffer`, in memory | system |
 | `HostIo::new(stdout, stderr)` | any two `Output`s | system |
-| `HostIo::process()` | the process's stdout and stderr (what the `silt` command uses), each written by a thread of its own, so that a print does not wait for a slow reader (see [Blocking operations](concurrency.md#blocking-operations)) | system |
+| `HostIo::process()` | the process's stdout and stderr (what the `silt` command uses), written by one thread of their own, in the order of the prints, so that a print does not wait for a slow reader (see [Blocking operations](concurrency.md#blocking-operations)) | system |
 | `.clock(clock)` on any of them | unchanged | `clock` |
 
 **Output.** `print` and `println` write to stdout, `io.eprint` and

@@ -1534,15 +1534,17 @@ running other tasks.
 
 What a program prints to the process's output (the `silt` command's
 `HostIo::process()`; an embedder's own outputs are written by the print
-itself, see [the FFI](ffi.md#output-and-clock)) goes to a writer, one for stdout and one
-for stderr, which writes it out in the order of the calls, each text whole: two tasks'
-lines never mix. A print does not wait for the reader. Only when the reader
+itself, see [the FFI](ffi.md#output-and-clock)) goes to one writer for stdout and stderr together,
+which writes it out in the order of the calls, each text whole: two tasks'
+lines never mix, and a line on stderr stays between the stdout lines it was
+printed between (as `2>&1` shows them). A print does not wait for the reader. Only when the reader
 has not taken 64 KiB of what was printed (a slow log shipper, a pager, a pipe
 nobody reads yet) does a print wait for room, as any wait of a task: the other
 tasks, their timers and deadlines go on, and a `task.deadline` around a print
 that waits ends it (its text is not written). Everything printed is written out
 before the program ends, and before `process.exit` ends it, as long as the
-reader takes it.
+reader takes it. (A process ended by a signal, such as Ctrl-C, loses what the
+writer still held: up to 64 KiB of prints that had returned.)
 
 I/O operations follow the same transparent yielding pattern as channel
 operations -- no special syntax needed. When code calls `io.read_file` or

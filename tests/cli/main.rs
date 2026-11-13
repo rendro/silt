@@ -49,6 +49,7 @@ mod stage5_package_graph_tests;
 mod stage7_io_timeout_tests;
 mod stage7_stdin_reader_tests;
 mod stdin_reading_tests;
+mod stdout_failure_tests;
 mod trait_init_parity_tests;
 mod watch;
 mod watch_double_dash_separator_tests;

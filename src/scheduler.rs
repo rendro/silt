@@ -1401,6 +1401,19 @@ pub(crate) fn exit_from_the_program(code: u8) -> ! {
     // What the program printed and the writers still hold goes first,
     // as long as their readers take it.
     crate::vm::drain_process_output(LAST_WORDS);
+    // A print to stdout that failed after it had returned is the
+    // program's failure, as it would have been at the print: reported,
+    // and the status is 1.
+    let code = match crate::vm::unraised_process_stdout_failure() {
+        Some(why) => {
+            let _ = crate::vm::write_stderr(&format!(
+                "error[runtime]: cannot write to stdout: {why}
+"
+            ));
+            1
+        }
+        None => code,
+    };
     let (locked, has_lock) = std::sync::mpsc::channel();
     let (done, flushed) = std::sync::mpsc::channel();
     let flushes = move || {
@@ -4011,6 +4024,47 @@ fn main() {
         assert!(left <= 64, "{left} stages of left streams are still there");
     }
 
+    /// One output that takes both streams of a program, as `2>&1` does:
+    /// each write is noted with the stream it came by.
+    #[derive(Clone)]
+    struct Joined(Arc<Mutex<Vec<String>>>, &'static str);
+
+    impl Output for Joined {
+        fn write(&self, text: &str) -> std::io::Result<()> {
+            self.0.lock().push(format!("{}{}", self.1, text));
+            Ok(())
+        }
+    }
+
+    /// The writer keeps the order of the prints to stdout and to stderr:
+    /// a line of each, in turn, come out in turn. (There were two
+    /// writers, one for each stream, and with `2>&1` the lines of one
+    /// stream came first.)
+    #[test]
+    fn prints_to_stdout_and_stderr_keep_their_order() {
+        let (program, _) = crate::session::testing::compile_given(
+            r#"
+import io
+import list
+fn main() {
+  list.each(1..300) { i ->
+    println("out {i}")
+    io.eprintln("err {i}")
+  }
+}
+"#,
+        )
+        .expect("the program compiles");
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        let io = HostIo::queued(Joined(lines.clone(), "1:"), Joined(lines.clone(), "2:"));
+        Vm::new(io).run_program(&program).expect("the program runs");
+        let got = lines.lock().clone();
+        let expected: Vec<String> = (1..=300)
+            .flat_map(|i| [format!("1:out {i}\n"), format!("2:err {i}\n")])
+            .collect();
+        assert_eq!(got, expected);
+    }
+
     /// An output whose writes wait until the gate is opened: a reader
     /// that takes nothing for now.
     #[derive(Clone, Default)]
@@ -4054,15 +4108,16 @@ fn main() {
     task.spawn { -> list.each(1..100) { i -> println("{p} {i} {line}") } }
   }
   let sum = task.spawn { -> list.fold(1..1000, 0) { acc, i -> acc + i } }
-  io.eprintln("computed {task.join(sum)}")
+  let computed = task.join(sum)
   let cut = task.deadline(time.ms(50)) { -> list.each(1..100) { _ -> println(line) } }
-  io.eprintln("the deadline: {cut}")
+  host.give("computed {computed}; the deadline: {cut}")
+  io.eprintln("on stderr, after them all")
   list.each(printers, task.join)
 }
+import host
 "#,
         )
         .expect("the program compiles");
-        drop(given);
         let out = Gated::default();
         let err = Timed::default();
         let ran = {
@@ -4073,24 +4128,24 @@ fn main() {
             })
         };
         // The task that computes, and the deadline, while the output
-        // takes nothing.
+        // takes nothing. (Told through the host: stderr goes through the
+        // same writer, after stdout, and waits with it.)
         let limit = Instant::now() + Duration::from_secs(60);
-        let said = |err: &Timed| {
-            let lines: Vec<String> = err.0.lock().iter().map(|(text, _)| text.clone()).collect();
-            lines.concat()
-        };
-        while !said(&err).contains("the deadline:") {
+        let said = loop {
+            if let Some(Value::String(text, _)) = given.last() {
+                break text.to_string();
+            }
             assert!(
                 Instant::now() < limit,
-                "the program stopped while its output took nothing: {:?}",
-                said(&err)
+                "the program stopped while its output took nothing"
             );
             std::thread::sleep(Duration::from_millis(5));
-        }
+        };
         assert_eq!(
-            said(&err),
-            "computed 500500\nthe deadline: Err(the function was ended by its deadline)\n"
+            said,
+            "computed 500500; the deadline: Err(the function was ended by its deadline)"
         );
+        assert!(err.0.lock().is_empty(), "stderr waits behind stdout");
         // The reader takes it all.
         {
             let (open, opened) = &*out.open;
@@ -4098,6 +4153,8 @@ fn main() {
             opened.notify_all();
         }
         ran.join().unwrap().expect("the program ends");
+        let said: Vec<String> = err.0.lock().iter().map(|(text, _)| text.clone()).collect();
+        assert_eq!(said, ["on stderr, after them all\n"]);
         let text = out.text.lock().clone();
         let mut next = [1; 13];
         for line in text.lines() {
