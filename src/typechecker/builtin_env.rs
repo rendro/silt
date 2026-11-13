@@ -43,10 +43,8 @@ impl BuiltinEnv {
 }
 
 thread_local! {
-    /// The builtin environment of this thread, with the interner
-    /// generation it was built in. Symbols are per thread, and
-    /// `intern::reset` invalidates them, so the cache is too.
-    static BUILTIN_ENV: std::cell::RefCell<Option<(u64, Rc<BuiltinEnv>)>> =
+    /// The builtin environment of this thread (an `Rc`: one per thread).
+    static BUILTIN_ENV: std::cell::RefCell<Option<Rc<BuiltinEnv>>> =
         const { std::cell::RefCell::new(None) };
 }
 
@@ -55,18 +53,13 @@ pub(super) fn builtin_env_has(name: Symbol) -> bool {
     builtin_env().root.bindings.contains_key(&name)
 }
 
-/// The builtin environment, built on first use and after each
-/// `intern::reset`.
+/// The builtin environment, built on a thread's first use.
 pub(super) fn builtin_env() -> Rc<BuiltinEnv> {
-    let generation = crate::intern::generation();
-    if let Some(env) = BUILTIN_ENV.with(|cell| match &*cell.borrow() {
-        Some((built_in, env)) if *built_in == generation => Some(env.clone()),
-        _ => None,
-    }) {
+    if let Some(env) = BUILTIN_ENV.with(|cell| cell.borrow().clone()) {
         return env;
     }
     let env = Rc::new(BuiltinEnv::build());
-    BUILTIN_ENV.with(|cell| *cell.borrow_mut() = Some((generation, env.clone())));
+    BUILTIN_ENV.with(|cell| *cell.borrow_mut() = Some(env.clone()));
     env
 }
 

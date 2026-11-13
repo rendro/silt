@@ -125,7 +125,6 @@ pub(crate) fn dispatch(args: &[String]) {
 /// Run a file using the bytecode VM (default path): the session analyses
 /// it and compiles it for `main`, and the VM runs what it compiled.
 pub(crate) fn vm_run_file(path: &str) {
-    silt::intern::reset();
     let (mut session, file) = open_entry_or_exit(path, LockPolicy::Update);
     let compiled = session.compile(file, Entry::Main);
     let diagnostics = door_diagnostics(&mut session, file, &compiled);

@@ -573,8 +573,6 @@ pub fn run(jobs: &[Job<'_>], workers: usize) -> Report {
                         if index > 0 && index.is_multiple_of(50_000) {
                             eprintln!("fmt property: {index} of {} jobs", jobs.len());
                         }
-                        // The interner is per thread; keep it small.
-                        silt::intern::reset();
                         let text = job.text();
                         let started = std::time::Instant::now();
                         let outcome = std::panic::catch_unwind(|| check(&text));

@@ -345,6 +345,11 @@ Host functions must be `Send + Sync`, since they may be called from any
 thread in the task scheduler's pool. The type system enforces this. Use
 `Arc<Mutex<T>>` for shared mutable state in a host function.
 
+A `Session` and what it gives (an analysis, a compiled `Program`) can
+be made on one thread and used on another: a session made at start can
+compile in a worker thread, and the program it compiled runs on a
+third. A name means the same on every thread.
+
 ## Output and clock
 
 A `Vm` is made with a `HostIo`: where the program's output goes, and the

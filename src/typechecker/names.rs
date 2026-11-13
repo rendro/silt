@@ -183,25 +183,15 @@ pub struct BuiltinScopes {
     pub modules: HashMap<ModuleId, Exports>,
 }
 
-thread_local! {
-    static BUILTINS: RefCell<Option<(u64, Arc<BuiltinDefs>, Arc<BuiltinScopes>)>> =
-        const { RefCell::new(None) };
-}
-
-/// The builtin definitions and scopes, built once per thread (and again
-/// after each `intern::reset`).
+/// The builtin definitions and scopes, built once for the process.
 pub fn builtins() -> (Arc<BuiltinDefs>, Arc<BuiltinScopes>) {
-    let generation = crate::intern::generation();
-    if let Some(found) = BUILTINS.with(|cell| match &*cell.borrow() {
-        Some((built, defs, scopes)) if *built == generation => Some((defs.clone(), scopes.clone())),
-        _ => None,
-    }) {
-        return found;
-    }
-    let (defs, scopes) = build_builtins();
-    let (defs, scopes) = (Arc::new(defs), Arc::new(scopes));
-    BUILTINS.with(|cell| *cell.borrow_mut() = Some((generation, defs.clone(), scopes.clone())));
-    (defs, scopes)
+    static BUILTINS: std::sync::OnceLock<(Arc<BuiltinDefs>, Arc<BuiltinScopes>)> =
+        std::sync::OnceLock::new();
+    let (defs, scopes) = BUILTINS.get_or_init(|| {
+        let (defs, scopes) = build_builtins();
+        (Arc::new(defs), Arc::new(scopes))
+    });
+    (defs.clone(), scopes.clone())
 }
 
 /// The builtin definition `id`; `None` for the id of a module's

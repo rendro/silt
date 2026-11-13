@@ -178,7 +178,6 @@ fn check_package_first(dir: &Path) {
 }
 
 fn run_tests(file: Option<&str>, filter: Option<String>) {
-    silt::intern::reset();
     // The path given is what the five commands that take one make of
     // it (`paths::path_arg`). The package it is in (or the working
     // directory is in) is checked first.

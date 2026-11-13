@@ -1254,3 +1254,52 @@ fn a_host_chooses_the_builtin_modules_a_program_may_import() {
     );
     assert!(errors.is_empty(), "{errors:?}");
 }
+
+/// A session made and analysed on one thread is compiled on another,
+/// and a program compiled there runs here: a name means the same on
+/// every thread (AR-1: the interner was per thread, and the second
+/// thread panicked or read other names).
+#[test]
+fn a_session_is_used_on_another_thread() {
+    use silt::session::{Config, Entry, LockPolicy, ProjectSetup, Session};
+    use std::path::Path;
+    let mut session = Session::new(Config {
+        project: ProjectSetup::None,
+        lock: LockPolicy::ReadOnly,
+        host: vec![mylib()],
+        builtins: Builtins::All,
+    });
+    let source = "import mylib\nimport list\nfn main() { println(list.map([1, 2]) { x -> mylib.double(x) }) }";
+    let file = session.set_overlay(Path::new("main.silt"), source.to_string());
+    assert!(!session.analyze(file).has_errors());
+    let program = std::thread::spawn(move || {
+        // (Names of this thread's own first.)
+        let other = "type Weekday2 { Mon }\nfn main() { let _ = Mon }";
+        let mut elsewhere = Session::new(Config {
+            project: ProjectSetup::None,
+            lock: LockPolicy::ReadOnly,
+            host: vec![],
+            builtins: Builtins::All,
+        });
+        let other = elsewhere.set_overlay(Path::new("other.silt"), other.to_string());
+        assert!(!elsewhere.analyze(other).has_errors());
+        // A second file with one type error: the analysis says that one only.
+        let wrong = session.set_overlay(
+            Path::new("wrong.silt"),
+            "import mylib\nfn main() { let _ = mylib.double(\"x\") }".to_string(),
+        );
+        let messages: Vec<String> = (session.analyze(wrong).diagnostics.iter())
+            .filter(|d| d.is_error())
+            .map(|d| d.message.clone())
+            .collect();
+        assert_eq!(messages, ["type mismatch: expected Int, got String"]);
+        session.compile(file, Entry::Main).expect("compiles")
+    })
+    .join()
+    .expect("the other thread compiles");
+    let out = silt::Buffer::new();
+    silt::Vm::new(silt::HostIo::buffer(&out))
+        .run_program(&program)
+        .unwrap();
+    assert_eq!(out.contents(), "[2, 4]\n");
+}
