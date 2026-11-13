@@ -36,6 +36,7 @@ mod round62_cleanup_lock_tests;
 mod round86_editor_grammar_operators_lexer_parity_tests;
 mod rustdoc_warnings_lock_tests;
 mod scheduled_run_failure_tests;
+mod side_crate_lock_tests;
 mod stdlib_reference_tests;
 mod tcp_tls_stream_wrapper_tests;
 mod vscode_metadata_and_primitive_partition_tests;

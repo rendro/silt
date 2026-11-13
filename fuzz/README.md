@@ -107,6 +107,12 @@ fuzz/replay.sh fuzz_formatter
 Use it as a pre-push sanity check — if it fails locally, it will
 fail in CI.
 
+The fuzz crate is built from its own `fuzz/Cargo.lock`. cargo-fuzz takes
+no `--locked`, so the CI jobs first run
+`cargo metadata --locked --manifest-path fuzz/Cargo.toml`, which fails on
+a lock that no longer fits `fuzz/Cargo.toml`; a dependency change comes
+with the lock file's change.
+
 ## Seeding new corpora
 
 `fuzz/seed.sh` copies every file from `examples/` into each
