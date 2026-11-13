@@ -1,0 +1,19 @@
+SET: Ok
+  a statement after it: Ok
+set_config: 1ms
+  a statement after it: Ok
+SET application_name: Ok
+  after it: silt_reset_case
+SET in a transaction, seen in it: Ok([S {s: "silt_nowhere"}])
+  after it: "$user", public
+  its cursor WITH HOLD after it: 0
+CREATE TEMP TABLE: Ok
+  after it: 0
+pg_advisory_lock: taken
+  the other pool takes it: true
+LISTEN: Ok
+  after it: 0
+the same session all along: true
+PREPARE: Ok
+  again: Ok
+  another session: true

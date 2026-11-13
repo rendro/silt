@@ -1,0 +1,16 @@
+COMMIT: postgres: COMMIT cannot run inside postgres.transact, which begins and ends the transaction itself: it commits when the callback returns Ok and rolls back when it returns Err
+commit and chain: postgres: COMMIT cannot run inside postgres.transact, which begins and ends the transaction itself: it commits when the callback returns Ok and rolls back when it returns Err
+END: postgres: END cannot run inside postgres.transact, which begins and ends the transaction itself: it commits when the callback returns Ok and rolls back when it returns Err
+ROLLBACK: postgres: ROLLBACK cannot run inside postgres.transact, which begins and ends the transaction itself: it commits when the callback returns Ok and rolls back when it returns Err
+ABORT: postgres: ABORT cannot run inside postgres.transact, which begins and ends the transaction itself: it commits when the callback returns Ok and rolls back when it returns Err
+BEGIN: postgres: BEGIN cannot run inside postgres.transact, which begins and ends the transaction itself: it commits when the callback returns Ok and rolls back when it returns Err
+START TRANSACTION: postgres: START TRANSACTION cannot run inside postgres.transact, which begins and ends the transaction itself: it commits when the callback returns Ok and rolls back when it returns Err
+PREPARE TRANSACTION 'silt_database_tx_control': postgres: PREPARE TRANSACTION cannot run inside postgres.transact, which begins and ends the transaction itself: it commits when the callback returns Ok and rolls back when it returns Err
+/* first */ COMMIT: postgres: COMMIT cannot run inside postgres.transact, which begins and ends the transaction itself: it commits when the callback returns Ok and rolls back when it returns Err
+query: postgres: COMMIT cannot run inside postgres.transact, which begins and ends the transaction itself: it commits when the callback returns Ok and rolls back when it returns Err
+stream: postgres: COMMIT cannot run inside postgres.transact, which begins and ends the transaction itself: it commits when the callback returns Ok and rolls back when it returns Err
+the transaction goes on: Ok
+the transaction: give up
+its rows in the table: 0
+a transaction with savepoints: Ok
+its rows in the table: 1

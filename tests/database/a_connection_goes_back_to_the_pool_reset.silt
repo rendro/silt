@@ -1,0 +1,85 @@
+-- A connection is reset when it goes back to the pool: what a statement
+-- on the pool, or a transaction, set in its session does not reach the
+-- next statement that takes it. A setting (by `SET` or by `set_config`),
+-- a temporary table, an advisory lock, a `LISTEN`, a cursor `WITH HOLD`
+-- are gone; what the connection string sets stays. A session that holds
+-- a statement prepared with `PREPARE` is closed instead, and the pool
+-- opens another. (A pool of one connection; a second pool looks from
+-- outside.)
+import env
+import postgres
+import string
+
+type N { n: Int }
+
+type S { s: String }
+
+fn url() -> String {
+  let url = match env.get("SILT_TEST_POSTGRES_URL") {
+    Some(url) -> url
+    None -> ""
+  }
+  let name = "application_name=silt_reset_case"
+  match string.contains(url, "?") {
+    true -> "{url}&{name}"
+    false -> "{url}?{name}"
+  }
+}
+
+fn said(answer: Result(a, postgres.PostgresError)) -> String {
+  match answer {
+    Ok(_) -> "Ok"
+    Err(e) -> Error.message(e)
+  }
+}
+
+fn one(pool: postgres.PgPool, sql: String) -> String {
+  match postgres.query(pool, sql, (), S) {
+    Ok([row]) -> row.s
+    Ok(rows) -> "{rows}"
+    Err(e) -> Error.message(e)
+  }
+}
+
+fn session(pool: postgres.PgPool) -> Int {
+  match postgres.query(pool, "SELECT pg_backend_pid()::int8 AS n", (), N) {
+    Ok([row]) -> row.n
+    _ -> 0
+  }
+}
+
+fn main() {
+  match (postgres.connect_with(url(), #{"max_pool_size": 1}), postgres.connect(url())) {
+    (Ok(pool), Ok(other)) -> {
+      let first = session(pool)
+      let sleep = "SELECT pg_sleep(0.05)::text AS s"
+      println("SET: {said(postgres.execute(pool, "SET statement_timeout = 1", ()))}")
+      println("  a statement after it: {said(postgres.query(pool, sleep, (), S))}")
+      println("set_config: {one(pool, "SELECT set_config('statement_timeout', '1', false) AS s")}")
+      println("  a statement after it: {said(postgres.query(pool, sleep, (), S))}")
+      println("SET application_name: {said(postgres.execute(pool, "SET application_name = 'other'", ()))}")
+      println("  after it: {one(pool, "SELECT current_setting('application_name') AS s")}")
+      let in_tx = postgres.transact(pool) { tx ->
+        let _ = postgres.execute(tx, "SET search_path = silt_nowhere", ())?
+        let _ = postgres.execute(tx, "DECLARE silt_held CURSOR WITH HOLD FOR SELECT 1", ())?
+        postgres.query(tx, "SELECT current_setting('search_path') AS s", (), S)
+      }
+      println("SET in a transaction, seen in it: {in_tx}")
+      println("  after it: {one(pool, "SELECT current_setting('search_path') AS s")}")
+      println("  its cursor WITH HOLD after it: {one(pool, "SELECT count(*)::text AS s FROM pg_cursors WHERE name = 'silt_held'")}")
+      println("CREATE TEMP TABLE: {said(postgres.execute(pool, "CREATE TEMP TABLE silt_reset_temp (n int)", ()))}")
+      println("  after it: {one(pool, "SELECT count(*)::text AS s FROM pg_class WHERE relname = 'silt_reset_temp'")}")
+      println("pg_advisory_lock: {one(pool, "SELECT 'taken' AS s FROM pg_advisory_lock(7310)")}")
+      println("  the other pool takes it: {one(other, "SELECT (pg_try_advisory_lock(7310) AND pg_advisory_unlock(7310))::text AS s")}")
+      println("LISTEN: {said(postgres.execute(pool, "LISTEN silt_reset_channel", ()))}")
+      println("  after it: {one(pool, "SELECT count(*)::text AS s FROM pg_listening_channels()")}")
+      println("the same session all along: {session(pool) == first}")
+      println("PREPARE: {said(postgres.execute(pool, "PREPARE silt_reset_p AS SELECT 1", ()))}")
+      println("  again: {said(postgres.execute(pool, "PREPARE silt_reset_p AS SELECT 1", ()))}")
+      println("  another session: {session(pool) != first}")
+      postgres.close(pool)
+      postgres.close(other)
+    }
+    _ -> println("connect failed")
+  }
+}

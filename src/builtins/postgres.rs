@@ -49,9 +49,11 @@ use crate::typeinfo::{BuiltinVariant, bv, ty};
 use crate::value::Value;
 use crate::vm::{IoOp, Leave, Limit, Native, Runtime, Step, Vm, VmError, Wanted};
 
+mod control;
 mod rows;
 
 use crate::bytecode::Globals;
+use control::Control;
 use rows::{Fill, Filling, Plan, Row, RowType, Rows, TextParam, Unsendable};
 
 /// The error of a `postgres` function whose operation has no value
@@ -114,6 +116,20 @@ impl Driver {
             .as_ref()
             .expect("the runtime lives as long as its driver");
         runtime.block_on(future)
+    }
+
+    /// [`Driver::block_on`], `limit` at most: `None` when the time ran
+    /// out, and `future` was dropped.
+    fn block_on_within<F: std::future::Future>(
+        &self,
+        limit: Duration,
+        future: F,
+    ) -> Option<F::Output> {
+        let runtime = self
+            .runtime
+            .as_ref()
+            .expect("the runtime lives as long as its driver");
+        block_on_within(runtime, limit, future)
     }
 }
 
@@ -312,7 +328,44 @@ impl Conn {
     fn is_broken(&self) -> bool {
         self.broken || self.canceller.was_sent() || self.client.is_closed()
     }
+
+    /// Make the session what the next statement of the pool finds: what
+    /// a statement or a transaction set in it is undone, as `DISCARD ALL`
+    /// does, but for the statements the client prepared itself (which it
+    /// keeps). A session that is inside a transaction, or holds a
+    /// statement the program prepared with `PREPARE`, or that does not
+    /// answer within the connect limit, is marked broken: it is closed,
+    /// and the server rolls its transaction back.
+    fn reset(&mut self) {
+        let reset = self
+            .driver
+            .block_on_within(self.canceller.limit, self.client.simple_query(RESET));
+        let clean = match reset {
+            Some(Ok(messages)) => messages.iter().find_map(|message| match message {
+                tokio_postgres::SimpleQueryMessage::Row(row) => Some(row.get(0) == Some("t")),
+                _ => None,
+            }),
+            _ => None,
+        };
+        if clean != Some(true) {
+            self.broken = true;
+        }
+    }
 }
+
+/// What resets a session given back to the pool ([`Conn::reset`]). Its
+/// first statement says whether the session is clean: outside a
+/// transaction, as only the first statement of its own transaction
+/// finds `now()` equal to its start, and without a statement prepared
+/// by `PREPARE`, which the reset leaves alone. In a transaction that
+/// failed it is an error. The rest is `DISCARD ALL` (which cannot run
+/// with other statements in one string) in parts, without its
+/// `DEALLOCATE ALL`: that would drop the statements the client keeps
+/// prepared for its look-ups of types.
+const RESET: &str = "SELECT pg_catalog.now() = pg_catalog.statement_timestamp() \
+     AND NOT EXISTS (SELECT FROM pg_catalog.pg_prepared_statements WHERE from_sql); \
+     CLOSE ALL; SET SESSION AUTHORIZATION DEFAULT; RESET ROLE; RESET ALL; UNLISTEN *; \
+     SELECT pg_catalog.pg_advisory_unlock_all(); DISCARD PLANS; DISCARD SEQUENCES; DISCARD TEMP";
 
 type PgPool = Pool<Manager>;
 
@@ -353,6 +406,9 @@ impl std::ops::DerefMut for PinnedConn {
 }
 
 impl Drop for PinnedConn {
+    /// A connection is reset before it goes back ([`Conn::reset`]): a
+    /// setting, a temporary table, a lock, a `LISTEN` of a statement or a
+    /// transaction does not reach the next statement that takes it.
     /// A broken connection is closed, not given back
     /// (`Manager::has_broken`). The pool keeps no idle connection in
     /// reserve, so it would not open one in its place, and a statement
@@ -360,9 +416,12 @@ impl Drop for PinnedConn {
     /// pool has no idle connection, one is opened for it, as for a
     /// checkout that finds none. (Where it has one, nobody waits.)
     fn drop(&mut self) {
-        let Some(conn) = self.conn.take() else {
+        let Some(mut conn) = self.conn.take() else {
             return;
         };
+        if !conn.is_broken() {
+            conn.reset();
+        }
         let broken = conn.is_broken();
         drop(conn);
         if broken && self.pool.state().idle_connections == 0 {
@@ -1324,6 +1383,32 @@ fn resolve_executor(conn: &Value) -> Result<ExecutorRef, Value> {
             other => other.kind(),
         }
     )))
+}
+
+/// The `PostgresError` of the statement `sql` on `conn`, if it is one
+/// the program may not send there ([`control`]): one that begins or
+/// ends a transaction, and on a pool one that works only inside a
+/// transaction. It is not sent; inside a transaction, the transaction
+/// goes on.
+fn refused_control(conn: &Value, sql: &str) -> Option<Value> {
+    let in_tx = match (PoolHandle::take(conn), TxHandle::take(conn)) {
+        (Some(_), _) => false,
+        (None, Some(_)) => true,
+        (None, None) => return None,
+    };
+    let why = match (control::control(sql)?, in_tx) {
+        (Control::Savepoint(_), true) => return None,
+        (Control::Ends(name), true) => format!(
+            "postgres: {name} cannot run inside postgres.transact, which begins and ends \
+             the transaction itself: it commits when the callback returns Ok and rolls back \
+             when it returns Err"
+        ),
+        (Control::Ends(name) | Control::Savepoint(name), false) => format!(
+            "postgres: {name} cannot run on a pool, where each statement runs on its own; \
+             run a transaction with postgres.transact"
+        ),
+    };
+    Some(other_error(why))
 }
 
 // ── Blocking workers (run inside io_pool) ───────────────────────────
@@ -2872,6 +2957,9 @@ builtins! {
     }
 
     fn query(vm, conn: &Value, sql: &str, params: &Value, ty: Type) -> Result<Step, VmError> {
+        if let Some(refused) = refused_control(conn, sql) {
+            return Ok(Step::Done(err(refused)));
+        }
         let impls = vm.decoding_table();
         let row = RowType::of(&vm.runtime, &QUERY, ty, &impls)?;
         let (conn, sql) = (conn.clone(), sql.to_string());
@@ -2887,6 +2975,9 @@ builtins! {
     }
 
     fn execute(vm, conn: &Value, sql: &str, params: &Value) -> Result<Step, VmError> {
+        if let Some(refused) = refused_control(conn, sql) {
+            return Ok(Step::Done(err(refused)));
+        }
         let (conn, sql) = (conn.clone(), sql.to_string());
         with_params(vm, "postgres.execute", params, move |vm, (params, unsendable)| {
             let target = resolve_executor(&conn)?;
@@ -2957,6 +3048,9 @@ builtins! {
     // bounded capacity; cancellation is via `channel.close` (checked
     // between rows).
     fn stream(vm, conn: &Value, sql: &str, params: &Value, ty: Type) -> Result<Step, VmError> {
+        if let Some(refused) = refused_control(conn, sql) {
+            return Ok(Step::Done(err(refused)));
+        }
         let impls = vm.decoding_table();
         let row = RowType::of(&vm.runtime, &STREAM, ty, &impls)?;
         let (conn, sql) = (conn.clone(), sql.to_string());
@@ -3635,8 +3729,10 @@ mod tests {
     }
 
     /// A server that logs every client in and answers each simple query
-    /// with an empty result: how many connections it took, and how many
-    /// queries came, counted as they come.
+    /// with an empty result, or, for the reset of a connection that goes
+    /// back to the pool ([`RESET`]), with a row that says the session is
+    /// clean: how many connections it took, and how many queries came,
+    /// counted as they come.
     struct Counting {
         port: u16,
         taken: Arc<std::sync::atomic::AtomicUsize>,
@@ -3688,8 +3784,29 @@ mod tests {
                             }
                             if tag[0] == b'Q' {
                                 asked.fetch_add(1, Ordering::SeqCst);
-                                // EmptyQueryResponse, ReadyForQuery.
-                                let mut answer = b"I\0\0\0\x04".to_vec();
+                                let message = |tag: u8, body: &[u8]| {
+                                    let mut message = vec![tag];
+                                    let length = u32::try_from(body.len() + 4).expect("short");
+                                    message.extend_from_slice(&length.to_be_bytes());
+                                    message.extend_from_slice(body);
+                                    message
+                                };
+                                let mut answer = match body.as_slice() {
+                                    // EmptyQueryResponse.
+                                    [0] => message(b'I', b""),
+                                    // RowDescription (one bool column),
+                                    // DataRow (`t`), CommandComplete.
+                                    _ => [
+                                        message(
+                                            b'T',
+                                            b"\0\x01clean\0\0\0\0\0\0\0\0\0\0\x10\0\x01\xff\xff\xff\xff\0\0",
+                                        ),
+                                        message(b'D', b"\0\x01\0\0\0\x01t"),
+                                        message(b'C', b"SELECT 1\0"),
+                                    ]
+                                    .concat(),
+                                };
+                                // ReadyForQuery.
                                 answer.extend_from_slice(ready);
                                 if stream.write_all(&answer).is_err() {
                                     return;
@@ -3709,7 +3826,8 @@ mod tests {
 
     /// A pool opens its first connection only: two statements one after
     /// the other run on that connection, which is checked with one
-    /// round trip each time it is taken.
+    /// round trip each time it is taken, and reset with one each time it
+    /// goes back.
     #[test]
     fn a_pool_opens_its_first_connection_only() {
         use std::sync::atomic::Ordering;
@@ -3738,7 +3856,7 @@ mod tests {
         // (Time for connections the pool would open at once.)
         std::thread::sleep(Duration::from_millis(300));
         assert_eq!(server.taken.load(Ordering::SeqCst), 1, "connections");
-        assert_eq!(server.queries.load(Ordering::SeqCst), 2, "queries");
+        assert_eq!(server.queries.load(Ordering::SeqCst), 4, "queries");
     }
 
     /// What a client did with a server without TLS, which answers a

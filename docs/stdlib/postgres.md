@@ -283,6 +283,17 @@ only when a statement needs it. A statement that finds no free connection in the
 pool, which has opened as many as `max_pool_size` allows, waits 30
 seconds for one, and is then `Timeout`.
 
+A connection is reset before it goes back to the pool, with one more
+round trip: what a statement or a transaction set in its session is
+undone, as `DISCARD ALL` does. So a `SET` (or `set_config`), a
+temporary table, a session's advisory lock, a `LISTEN` or a cursor
+`WITH HOLD` lasts to the end of the statement on a pool, and to the end
+of the transaction inside `postgres.transact`: it never reaches the
+next statement that takes the connection. What the connection string
+sets (`application_name`, `options=-c name=value`) stays. A connection
+whose session holds a statement prepared with SQL's `PREPARE` is
+closed instead, and the pool opens another when it needs one.
+
 ## Cooperative I/O
 
 Every function above that talks to the server cooperates with silt's
@@ -302,6 +313,16 @@ through that handle — calling `postgres.query(pool, ...)` with the
 enclosing pool would pick a different connection and miss the
 transaction entirely. Nested `postgres.transact` calls are rejected;
 use `postgres.execute(tx, "SAVEPOINT ...")` manually instead.
+
+`postgres.transact` is the one way into a transaction. A statement that
+begins or ends one (`BEGIN`, `START TRANSACTION`, `COMMIT`, `END`,
+`ROLLBACK`, `ABORT`, `PREPARE TRANSACTION`) is refused on a pool and
+inside `postgres.transact`, and `SAVEPOINT`, `RELEASE` and
+`ROLLBACK TO` are refused on a pool, which has no transaction for them:
+`postgres.query`, `postgres.execute` and `postgres.stream` answer
+`Err(Other(msg))`, and the statement is not sent. Inside a transaction
+a refused statement aborts nothing, and the savepoint statements work.
+`COMMIT PREPARED` and `ROLLBACK PREPARED` run on a pool as they are.
 
 A statement of the transaction that fails aborts it in the server:
 the transaction's later statements are `Err(TxnAborted)`, and if the
