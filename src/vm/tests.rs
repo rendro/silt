@@ -2920,10 +2920,14 @@ fn test_regex_cache_eviction_correctness() {
         r#"
             import list
             import regex
+            import result
+            fn matches(text, pattern) {
+                regex.compile(pattern) |> result.map { re -> regex.is_match(text, re) }
+            }
             fn main() {
                 -- Force compilation of 260 distinct patterns.
                 1..260 |> list.each({ n ->
-                    let _ = regex.is_match("pat{n}", "pat{n}")
+                    let _ = regex.compile("pat{n}")
                 })
                 -- After eviction, verify correct match results on
                 -- patterns spanning the full range:
@@ -2931,10 +2935,10 @@ fn test_regex_cache_eviction_correctness() {
                 --   pat130: middle, possibly cached
                 --   pat259: newest, definitely cached
                 --   "pat1" vs "pat2": must NOT match
-                let early_ok = regex.is_match("pat1", "pat1") == Ok(true)
-                let mid_ok = regex.is_match("pat130", "pat130") == Ok(true)
-                let late_ok = regex.is_match("pat259", "pat259") == Ok(true)
-                let no_match = regex.is_match("pat2", "pat1") == Ok(true)
+                let early_ok = matches("pat1", "pat1") == Ok(true)
+                let mid_ok = matches("pat130", "pat130") == Ok(true)
+                let late_ok = matches("pat259", "pat259") == Ok(true)
+                let no_match = matches("pat2", "pat1") == Ok(true)
                 host.give([early_ok, mid_ok, late_ok, no_match])
             }
             import host
@@ -3088,6 +3092,7 @@ fn test_builtin_panic_converted_to_vm_error() {
         feature: None,
         enabled: true,
         decoding: None,
+        writes: None,
         statement: false,
         connection: false,
         id: println.id,
@@ -4150,6 +4155,7 @@ mod builtin_args {
             feature: None,
             enabled: true,
             decoding: None,
+            writes: None,
             statement: false,
             connection: false,
             id: registry().named("println").expect("println").id,

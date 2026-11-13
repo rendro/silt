@@ -1,0 +1,20 @@
+-- A program's own trait may have an impl for `regex.Regex`, as for any
+-- builtin type (`tcp.TcpListener`, `Bytes`), called with a compiled
+-- pattern.
+import regex
+
+trait Named {
+  fn name(self) -> String
+}
+
+trait Named for regex.Regex {
+  fn name(self) -> String {
+    "a regex"
+  }
+}
+
+fn main() -> Result((), regex.RegexError) {
+  let digits = regex.compile("\\d+")?
+  println(Named.name(digits))
+  Ok(())
+}

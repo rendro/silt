@@ -1,8 +1,10 @@
 import io
 import regex
-import result
 fn program() {
-  regex.captures_named("alice@example", "(?P<user>\\w+)@(?P<host>\\w+)") |> result.unwrap_or(None)
+  match regex.compile("(?P<user>\\w+)@(?P<host>\\w+)") {
+    Ok(re) -> regex.captures_named("alice@example", re)
+    Err(_) -> None
+  }
 }
 
 fn main() {

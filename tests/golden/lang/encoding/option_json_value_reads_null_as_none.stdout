@@ -1,0 +1,4 @@
+Ok(W {v: None})
+Ok(W {v: None})
+Ok(W {v: Some(Array([Int(1), Null]))})
+Ok(None)

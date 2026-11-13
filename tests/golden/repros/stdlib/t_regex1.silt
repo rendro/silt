@@ -1,9 +1,10 @@
 -- verdict: same
 import regex
+import result
 import string
 fn main() {
-  println("caaat" |> regex.replace_first("a+", "X"))
+  println(regex.compile("a+") |> result.map { compiled_re -> "caaat" |> regex.replace_first(compiled_re, "X") })
   println("caaat" |> string.replace("aaa", "X"))
-  println("a,b;c" |> regex.split("[,;]"))
+  println(regex.compile("[,;]") |> result.map { compiled_re -> "a,b;c" |> regex.split(compiled_re) })
   println("a,b;c" |> string.split(","))
 }

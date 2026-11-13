@@ -1,8 +1,10 @@
 import io
 import regex
-import result
 fn program() {
-  regex.captures("no numbers", "(\\d+)") |> result.unwrap_or(None)
+  match regex.compile("(\\d+)") {
+    Ok(re) -> regex.captures("no numbers", re)
+    Err(_) -> None
+  }
 }
 
 fn main() {

@@ -8,9 +8,11 @@ import list
 import regex
 import string
 
-fn main() {
+fn main() -> Result((), regex.RegexError) {
+  let a = regex.compile("a")?
   let big = string.repeat("x", 3000000)
   let many = list.map(1..5) { _ -> big }
-  let _ = regex.replace_with(string.repeat("ab", 10), "a") { _ -> big }
+  let _ = regex.replace_with(string.repeat("ab", 10), a) { _ -> big }
   println("not reached")
+  Ok(())
 }

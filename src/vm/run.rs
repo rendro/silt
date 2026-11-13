@@ -148,6 +148,7 @@ fn put(slot: &mut Value, value: Value) {
         | Value::Bytes(_)
         | Value::TcpListener(_)
         | Value::TcpStream(_)
+        | Value::Regex(_)
         | Value::Dict(_) => *slot = value,
     }
 }
@@ -201,6 +202,7 @@ fn sort(value: &Value) -> Sort<'_> {
         | Value::Bytes(_)
         | Value::TcpListener(_)
         | Value::TcpStream(_)
+        | Value::Regex(_)
         | Value::Dict(Dict::Built(_)) => Sort::Other(value),
         Value::Dict(Dict::Of(index)) => Sort::Dict(*index),
     }

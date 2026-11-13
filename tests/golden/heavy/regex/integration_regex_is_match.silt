@@ -1,8 +1,10 @@
 import io
 import regex
-import result
 fn program() {
-  regex.is_match("abc 123 def", "\\d+") |> result.unwrap_or(false)
+  match regex.compile("\\d+") {
+    Ok(re) -> regex.is_match("abc 123 def", re)
+    Err(_) -> false
+  }
 }
 
 fn main() {
