@@ -752,8 +752,10 @@ impl ShapeWriter {
         let Some((Stmt::Expr(last), front)) = stmts.split_last() else {
             return self.expr(body);
         };
+        // (`return return x` stays as it is: one `return` left out
+        // would leave the other on the last line.)
         let value = match &last.kind {
-            ExprKind::Return(Some(value)) => &**value,
+            ExprKind::Return(Some(value)) if !matches!(value.kind, ExprKind::Return(_)) => &**value,
             _ => last,
         };
         if value_is_unit_after_let(value, front) {
@@ -764,7 +766,7 @@ impl ShapeWriter {
             self.close();
             return;
         }
-        if !matches!(last.kind, ExprKind::Return(Some(_))) {
+        if std::ptr::eq(value, last) {
             return self.expr(body);
         }
         self.open("block");

@@ -30,6 +30,7 @@ pub fn program(source: &str, lexed: &Lexed, program: &Program) -> Result<Doc, Mi
         closure_alternatives: false,
         hold_closure: false,
         closure_held: false,
+        stage_call: None,
     };
     let doc = printer.program(program);
     match printer.cur.error {
@@ -630,6 +631,10 @@ struct Printer<'a> {
     /// says in `closure_held` that it did (see `chain`).
     hold_closure: bool,
     closure_held: bool,
+    /// The place of the stage of a pipeline being printed, whose call
+    /// with no arguments `call_args` writes without its parentheses
+    /// (`xs |> f()` as `xs |> f`; see `pipeline`).
+    stage_call: Option<crate::source::Span>,
 }
 
 /// Whether the parser reads `pattern`, without parentheses around it,
@@ -965,7 +970,8 @@ impl Printer<'_> {
         // that is not written.
         let (value, returned) = match &last.kind {
             ExprKind::Return(Some(value))
-                if !self.cur.comments_between(last.span.start, value.span.start) =>
+                if !matches!(value.kind, ExprKind::Return(_))
+                    && !self.cur.comments_between(last.span.start, value.span.start) =>
             {
                 (&**value, true)
             }
@@ -998,6 +1004,10 @@ impl Printer<'_> {
                 }
                 // (The comments above the `return` stay above the line.)
                 let leading = p.cur.leading();
+                // Parentheses around the whole line, `(return x)`, group
+                // nothing: they go with the `return`.
+                let around = p.cur.wrappers(last.span.end);
+                p.cur.skip_n(&Token::LParen, around);
                 let skipped = p.cur.skip(&Token::Return);
                 let value = p.expr(
                     value,
@@ -1006,7 +1016,9 @@ impl Printer<'_> {
                         ..Ctx::top()
                     },
                 );
-                return Some(Doc::concat(vec![leading, skipped, value]));
+                p.cur.skip_n(&Token::RParen, around);
+                let behind = p.cur.carried();
+                return Some(Doc::concat(vec![leading, skipped, value, behind]));
             }
             None
         });
@@ -1829,26 +1841,11 @@ impl Printer<'_> {
             } else {
                 ctx.stage()
             };
-            // `xs |> f()` is written `xs |> f`: a stage that calls a name
-            // with the piped value alone has one spelling, the name.
-            // (Not a call of a call, `f()()`, whose `()` is the stage's
-            // call; nor one with a comment between the parentheses.)
-            match &stage.kind {
-                ExprKind::Call(callee, args)
-                    if args.is_empty()
-                        && matches!(
-                            callee.kind,
-                            ExprKind::Ident(_) | ExprKind::FieldAccess(..)
-                        )
-                        && !self.cur.comments_between(callee.span.end, stage.span.end)
-                        && self.cur.wrappers(stage.span.end) == 0 =>
-                {
-                    rest.push(self.expr(callee, stage_ctx));
-                    self.cur.skip_empty_parens();
-                    rest.push(self.cur.carried());
-                }
-                _ => rest.push(self.expr(stage, stage_ctx)),
-            }
+            // `xs |> f()` is written `xs |> f` (`call_args` leaves the
+            // parentheses out), whatever parentheses stand around it.
+            let outer = self.stage_call.replace(stage.span);
+            rest.push(self.expr(stage, stage_ctx));
+            self.stage_call = outer;
             if closes > 0 {
                 self.cur.skip_n(&Token::RParen, closes);
                 rest.push(self.cur.carried());
@@ -2147,7 +2144,16 @@ impl Printer<'_> {
         // How many arguments stand between the parentheses of the result.
         let inside = if trailing { count - 1 } else { count };
         // `f({ x -> x })` becomes `f { x -> x }`: no parentheses.
-        let bare = inside == 0 && trailing && !at_open;
+        // `xs |> f()`, the stage of a pipeline that calls a name with the
+        // piped value alone, has one spelling, `xs |> f`: the pipe gives
+        // the value as the first argument to the call either way. (Not a
+        // call of a call, `f()()`, whose `()` is the stage's call; nor
+        // one with a comment between its parentheses.)
+        let empty_stage = count == 0
+            && self.stage_call == Some(call.span)
+            && matches!(callee.kind, ExprKind::Ident(_) | ExprKind::FieldAccess(..))
+            && !self.cur.comments_between(callee.span.end, call.span.end);
+        let bare = (inside == 0 && trailing && !at_open) || empty_stage;
         // Whether the source's `)` is behind the cursor (or there is
         // none).
         let mut closed = !has_open;
