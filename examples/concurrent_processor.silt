@@ -100,7 +100,7 @@ fn main() -> Result((), regex.RegexError) {
               }
               Err(err_info) -> {
                 let (path, err) = err_info
-                println("[Worker {worker_id}] FAILED {path}: {Error.message(err)}")
+                println("[Worker {worker_id}] FAILED {path}: {err}")
                 loop(collected + 1, successes, failures + 1)
               }
             }

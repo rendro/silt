@@ -27,8 +27,7 @@
 //!    stored it, which runs too. So every such body is reached by
 //!    mentions.
 //! 3. Code the module does not write: another module's functions,
-//!    methods and default methods, the builtin traits' default methods,
-//!    the impls of builtin container types. It cannot name this module's
+//!    methods and default methods, the impls of builtin container types. It cannot name this module's
 //!    `let`s. It can call back in two ways only: a function value it is
 //!    handed (covered by 2: someone mentioned it), and a method of a
 //!    trait it knows on a value it is handed. The traits it knows are

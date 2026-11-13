@@ -30,14 +30,14 @@ fn count(pool: postgres.PgPool, sql: String) -> Int {
       match channel.receive(rows) {
         Some(Ok(_)) -> loop(n + 1)
         Some(Err(e)) -> {
-          println("count: {Error.message(e)}")
+          println("count: {e}")
           -1
         }
         _ -> n
       }
     }
     Err(e) -> {
-      println("count: {Error.message(e)}")
+      println("count: {e}")
       -1
     }
   }
@@ -76,13 +76,13 @@ fn main() {
             (),
           ) {
             Ok(_) -> "the statement's answer"
-            Err(e) -> Error.message(e)
+            Err(e) -> "{e}"
           }
         }
         println(
           match late {
             Ok(said) -> "the function ended with {said}"
-            Err(e) -> "task.deadline: {Error.message(e)}"
+            Err(e) -> "task.deadline: {e}"
           },
         )
         println("statements that wait for the lock in the server: {until(pool, waiting(), 1)}")
@@ -97,6 +97,6 @@ fn main() {
       let _ = postgres.execute(pool, "DROP TABLE silt_database_deadline", ())
       postgres.close(pool)
     }
-    Err(e) -> println("connect: {Error.message(e)}")
+    Err(e) -> println("connect: {e}")
   }
 }

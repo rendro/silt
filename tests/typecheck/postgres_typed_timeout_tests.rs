@@ -24,8 +24,8 @@ mod with_feature {
     /// silt-side `Result(_, PostgresError)` signature expects: an outer `Err`
     /// variant wrapping a nullary `Timeout` constructor. The message
     /// argument is intentionally dropped because `Timeout` carries no
-    /// payload (the trait `e.message()` impl in
-    /// `src/builtins/postgres.rs` synthesises the user-visible string).
+    /// payload (how a `PostgresError` is shown, in
+    /// `src/builtins/postgres.rs`, gives the user-visible string).
     #[test]
     fn pg_timeout_err_returns_typed_pg_error_variant() {
         let v = pg_timeout_err_for_tests("watchdog: deadline exceeded");

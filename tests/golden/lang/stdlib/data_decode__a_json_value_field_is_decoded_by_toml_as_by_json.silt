@@ -19,10 +19,10 @@ fn from_toml(text: String, type a) -> Result(a, toml.TomlError) where a: json.De
   toml.parse(text, a)
 }
 
-fn show(r: Result(a, e)) where a: Display, e: Error {
+fn show(r: Result(a, e)) where a: Display, e: Display {
   match r {
     Ok(v) -> println(v)
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println("{e}")
   }
 }
 

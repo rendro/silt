@@ -159,7 +159,7 @@ fn enums_with_arity(
 
 /// The `(variant_name, arity)` listing of every builtin module's error
 /// enum (`IoError`, `JsonError`, ...), built or not: the enums that
-/// implement `Error` natively.
+/// are shown as their message.
 pub fn builtin_error_enum_variants_with_arity()
 -> &'static [(&'static str, &'static [(&'static str, usize)])] {
     static ENUMS: OnceLock<Vec<(&'static str, &'static [(&'static str, usize)])>> = OnceLock::new();

@@ -34,7 +34,7 @@ use crate::vm::VmError;
 /// security boundary.
 const RANDOM_BYTES_CAP: i64 = 1_048_576;
 
-/// What `CryptoError`'s `message` says of the variant `tag` with
+/// How `CryptoError` shows the variant `tag` with
 /// `fields`: `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {

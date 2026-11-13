@@ -5,7 +5,7 @@ fn main() {
   io.write_file(path, "hello silt")?
   match io.read_file(path) {
     Ok(content) -> println(content)
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println("{e}")
   }
   fs.remove(path)
 }

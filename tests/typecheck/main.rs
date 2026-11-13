@@ -2,7 +2,7 @@
 //!
 //! One test binary; each module was a separate test crate before.
 
-mod error_enum_message_rows_tests;
+mod error_enums_are_shown_as_their_text_tests;
 mod fuzz_typechecker_target_tests;
 mod hash_eq_ord_contract_tests;
 mod interp_display_runtime_tests;

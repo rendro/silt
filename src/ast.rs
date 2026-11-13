@@ -46,7 +46,7 @@ pub enum Selection {
         ty: crate::defs::TypeId,
     },
     /// The method `name` of the builtin trait `tr` (Compare, Hash,
-    /// Error, json's) for a receiver whose type has no written impl of
+    /// json's) for a receiver whose type has no written impl of
     /// it: the VM's own.
     Native { tr: crate::defs::TraitId },
     /// The method `name` of the trait `tr`, for a receiver whose type is

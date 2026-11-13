@@ -1,4 +1,4 @@
 -- cmd: repl
--- stdin: Compare.compare\nlet f = Hash.hash\nf\nError.message\n[Compare.compare]\n:quit\n
+-- stdin: Compare.compare\nlet f = Hash.hash\nf\n[Compare.compare]\n:quit\n
 -- A method the language has for a type, taken as a value through its
 -- trait, is shown under the method's name, as a written method is.

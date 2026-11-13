@@ -44,10 +44,10 @@ fn main() {
       let sql = "SELECT to_jsonb(3 - g) AS code FROM generate_series(1, 4) g"
       match postgres.stream(db, sql, (), R) {
         Ok(rows) -> drain(rows)
-        Err(e) -> println(Error.message(e))
+        Err(e) -> println("{e}")
       }
       println("not reached")
     }
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println("{e}")
   }
 }
