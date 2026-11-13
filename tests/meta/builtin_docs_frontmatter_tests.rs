@@ -59,22 +59,31 @@ fn a_prelude_name_s_doc_is_its_own_section() {
     }
 }
 
-/// Same for a function with no section of its own: it shows its
-/// module's whole page, minus frontmatter.
+/// A function's doc is its own section (every function has one); a name
+/// with no section of its own (an opaque type such as `tcp.TcpListener`)
+/// shows its module's whole page, minus frontmatter.
 #[test]
 fn module_overview_doc_starts_with_prose_not_frontmatter() {
     let docs = silt::builtins::registry::docs::builtin_docs();
-    let doc = docs
+    let own = docs
         .get("crypto.sha256")
-        .expect("`crypto.sha256` has a builtin doc: the crypto page");
+        .expect("`crypto.sha256` has a builtin doc");
+    assert!(
+        own.starts_with("```\ncrypto.sha256(data: Bytes) -> Bytes\n```"),
+        "crypto.sha256's hover doc is not its own section:\n{}",
+        own.chars().take(120).collect::<String>()
+    );
+    let doc = docs
+        .get("tcp.TcpListener")
+        .expect("`tcp.TcpListener` has a builtin doc: the tcp page");
     assert!(
         !doc.starts_with("---"),
-        "crypto.sha256's hover doc still starts with frontmatter:\n{}",
+        "tcp.TcpListener's hover doc still starts with frontmatter:\n{}",
         doc.chars().take(120).collect::<String>()
     );
     assert!(
-        doc.contains("# crypto"),
-        "crypto.sha256's overview doc lost the module heading — \
+        doc.contains("# tcp"),
+        "tcp.TcpListener's overview doc lost the module heading — \
          strip_frontmatter over-stripped? got:\n{}",
         doc.chars().take(120).collect::<String>()
     );

@@ -281,7 +281,12 @@ fn main() {
 ```
 
 
-## Int Constants
+## `int.max_value`, `int.min_value`
+
+```
+int.max_value: Int
+int.min_value: Int
+```
 
 | Constant | Type | Value |
 |----------|------|-------|
@@ -547,7 +552,14 @@ fn main() {
 ```
 
 
-## Float Constants
+## `float.max_value`, `float.min_value`, `float.epsilon`, `float.min_positive`
+
+```
+float.max_value: Float
+float.min_value: Float
+float.epsilon: Float
+float.min_positive: Float
+```
 
 | Constant | Type | Value |
 |----------|------|-------|
@@ -555,3 +567,17 @@ fn main() {
 | `float.min_value` | `Float` | `-1.7976931348623157e+308` |
 | `float.epsilon` | `Float` | `2.220446049250313e-16` |
 | `float.min_positive` | `Float` | `2.2250738585072014e-308` |
+
+The largest and the smallest `Float`, the gap between `1.0` and the next
+`Float` above it, and the smallest positive `Float` at full precision. A
+result past `max_value` or `min_value` is a runtime error.
+
+```silt
+import float
+
+fn main() {
+  println(float.max_value > 1.0e308) -- true
+  println(1.0 + float.epsilon > 1.0) -- true
+  println(float.min_positive > 0.0) -- true
+}
+```

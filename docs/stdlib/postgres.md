@@ -50,6 +50,317 @@ call of a function or method that passes its own parameter on as the
 connection:
 ``the connection of `postgres.query` must be a postgres.PgPool or a postgres.PgTx``.
 
+## `postgres.connect`
+
+```
+postgres.connect(url: String) -> Result(PgPool, PostgresError)
+```
+
+Opens a pool of connections to the server `url` names (a `postgresql://` URL or `key=value` text) and makes its first connection, so a server that cannot be reached, a role it refuses or a failed TLS handshake is an `Err` here. See [Connecting](#connecting) and [TLS](#tls-secure-by-default).
+
+```silt
+import postgres
+
+fn main() -> Result((), postgres.PostgresError) {
+  let pool = postgres.connect("postgresql://app@localhost/app")?
+  let n = postgres.execute(pool, "SELECT 1", ())?
+  println("connected ({n} row)")
+  postgres.close(pool)
+  Ok(())
+}
+```
+
+
+## `postgres.connect_with`
+
+```
+postgres.connect_with(url: String, opts: Map(String, Int)) -> Result(PgPool, PostgresError)
+```
+
+As `postgres.connect`, with the options of [Connect options](#connect-options) in a map: `#{"max_pool_size": 32}`. A key that is no option, or a value it cannot have, is `Err(Connect(msg))`, and nothing is sent.
+
+```silt
+import postgres
+
+fn main() -> Result((), postgres.PostgresError) {
+  let pool = postgres.connect_with("postgresql://app@localhost/app", #{ "max_pool_size": 32 })?
+  postgres.close(pool)
+  Ok(())
+}
+```
+
+
+## `postgres.query`
+
+```
+postgres.query(conn: a, sql: String, params: p, type r) -> Result(List(r), PostgresError)
+```
+
+Runs `sql` with `params` (a tuple, `$1` its first element) on a pool or in a transaction, and decodes each row into `type r`: a record whose fields are the columns, or `json.Value`. See [Parameters and rows](#parameters-and-rows).
+
+```silt
+import list
+import postgres
+
+type User {
+  id: Int,
+  name: String,
+}
+
+fn main() -> Result((), postgres.PostgresError) {
+  let pool = postgres.connect("postgresql://app@localhost/app")?
+  let users = postgres.query(pool, "SELECT id, name FROM users WHERE id > $1", (10,), User)?
+  users |> list.each { u -> println("{u.id} {u.name}") }
+  Ok(())
+}
+```
+
+
+## `postgres.execute`
+
+```
+postgres.execute(conn: a, sql: String, params: p) -> Result(Int, PostgresError)
+```
+
+Runs `sql` with `params` on a pool or in a transaction and gives the number of rows it changed (0 for a statement that changes none).
+
+```silt
+import postgres
+
+fn main() -> Result((), postgres.PostgresError) {
+  let pool = postgres.connect("postgresql://app@localhost/app")?
+  let n = postgres.execute(
+    pool,
+    "UPDATE users SET active = $1 WHERE last_seen < now() - interval '1 year'",
+    (false,),
+  )?
+  println("{n} users made inactive")
+  Ok(())
+}
+```
+
+
+## `postgres.transact`
+
+```
+postgres.transact(pool: PgPool, f: Fn(PgTx) -> Result(a, PostgresError)) -> Result(a, PostgresError)
+```
+
+Runs `f` in a transaction on one connection: `BEGIN`, then `COMMIT` when `f` returns `Ok`, `ROLLBACK` when it returns `Err` or fails. The statements of the transaction go through the `PgTx` that `f` is given. See [Transactions](#transactions).
+
+```silt
+import postgres
+
+fn main() -> Result((), postgres.PostgresError) {
+  let pool = postgres.connect("postgresql://app@localhost/app")?
+  let moved = postgres.transact(pool) { tx ->
+    let a = postgres.execute(
+      tx,
+      "UPDATE accounts SET balance = balance - $1 WHERE id = $2",
+      (100, 1),
+    )?
+    let b = postgres.execute(
+      tx,
+      "UPDATE accounts SET balance = balance + $1 WHERE id = $2",
+      (100, 2),
+    )?
+    Ok(a + b)
+  }?
+  println("{moved} rows")
+  Ok(())
+}
+```
+
+
+## `postgres.close`
+
+```
+postgres.close(pool: PgPool) -> ()
+```
+
+Closes the pool: its connections are closed, and a statement on it afterwards is an `Err`.
+
+```silt
+import postgres
+
+fn main() -> Result((), postgres.PostgresError) {
+  let pool = postgres.connect("postgresql://app@localhost/app")?
+  postgres.close(pool)
+  Ok(())
+}
+```
+
+
+## `postgres.stream`
+
+```
+postgres.stream(conn: a, sql: String, params: p, type r) -> Result(Channel(Result(r, PostgresError)), PostgresError)
+```
+
+Runs `sql` and gives a channel of its rows, each `Ok(row)` decoded into `type r` or the `Err` that ends it; the channel is closed after the last row. A worker reads the rows as the channel has room. See [Streaming and cursors](#streaming-and-cursors).
+
+```silt
+import channel
+import postgres
+
+type Event {
+  id: Int,
+}
+
+fn main() -> Result((), postgres.PostgresError) {
+  let pool = postgres.connect("postgresql://app@localhost/app")?
+  let rows = postgres.stream(pool, "SELECT id FROM events ORDER BY id", (), Event)?
+  channel.each(rows) { row ->
+    match row {
+      Ok(e) -> println(e.id)
+      Err(e) -> println("{e}")
+    }
+  }
+  Ok(())
+}
+```
+
+
+## `postgres.cursor`
+
+```
+postgres.cursor(tx: PgTx, sql: String, params: p, batch_size: Int, type r) -> Result(PgCursor(r), PostgresError)
+```
+
+Declares a cursor for `sql` in the transaction `tx`, which `postgres.cursor_next` reads `batch_size` rows at a time, decoded into `type r`. Its columns are checked against `r` here.
+
+```silt
+import list
+import postgres
+
+type Row {
+  n: Int,
+}
+
+fn count(tx: postgres.PgTx) -> Result(Int, postgres.PostgresError) {
+  let c = postgres.cursor(tx, "SELECT n FROM generate_series(1, 1000) AS n", (), 100, Row)?
+  let total = loop total = 0 {
+    match postgres.cursor_next(c)? {
+      [] -> total
+      batch -> loop(total + list.length(batch))
+    }
+  }
+  postgres.cursor_close(c)?
+  Ok(total)
+}
+
+fn main() -> Result((), postgres.PostgresError) {
+  let pool = postgres.connect("postgresql://app@localhost/app")?
+  println(postgres.transact(pool, count)?)
+  Ok(())
+}
+```
+
+
+## `postgres.cursor_next`
+
+```
+postgres.cursor_next(cursor: PgCursor(r)) -> Result(List(r), PostgresError)
+```
+
+The next rows of the cursor, at most its batch size; an empty list once every row has been read. A batch that cannot be decoded, or that the server fails, is an `Err` and ends the cursor: every later call gives the same `Err`. The example of `postgres.cursor` reads a cursor to its end.
+
+```silt
+import postgres
+
+type Row {
+  n: Int,
+}
+
+fn first_batch(tx: postgres.PgTx) -> Result(List(Row), postgres.PostgresError) {
+  let c = postgres.cursor(tx, "SELECT n FROM generate_series(1, 10) AS n", (), 3, Row)?
+  postgres.cursor_next(c)
+}
+
+fn main() -> Result((), postgres.PostgresError) {
+  let pool = postgres.connect("postgresql://app@localhost/app")?
+  println(postgres.transact(pool, first_batch)?)
+  Ok(())
+}
+```
+
+
+## `postgres.cursor_close`
+
+```
+postgres.cursor_close(cursor: PgCursor(r)) -> Result((), PostgresError)
+```
+
+Closes the cursor before its transaction ends. The end of the transaction closes it too.
+
+```silt
+import list
+import postgres
+
+type Row {
+  n: Int,
+}
+
+fn peek(tx: postgres.PgTx) -> Result(Int, postgres.PostgresError) {
+  let c = postgres.cursor(tx, "SELECT n FROM generate_series(1, 10) AS n", (), 2, Row)?
+  let batch = postgres.cursor_next(c)?
+  postgres.cursor_close(c)?
+  Ok(list.length(batch))
+}
+
+fn main() -> Result((), postgres.PostgresError) {
+  let pool = postgres.connect("postgresql://app@localhost/app")?
+  println(postgres.transact(pool, peek)?)
+  Ok(())
+}
+```
+
+
+## `postgres.listen`
+
+```
+postgres.listen(pool: PgPool, channel: String) -> Result(Channel(Notification), PostgresError)
+```
+
+Listens on the PostgreSQL channel `channel` and gives a channel that receives a `Notification` (`channel`, `payload`, and `pid`, the session that sent it) for each `NOTIFY` on it. The listener holds one of the pool's connections until its channel is closed. See [LISTEN / NOTIFY](#listen--notify).
+
+```silt
+import channel
+import postgres
+
+fn main() -> Result((), postgres.PostgresError) {
+  let pool = postgres.connect("postgresql://app@localhost/app")?
+  let events = postgres.listen(pool, "orders")?
+  postgres.notify(pool, "orders", "order 42 paid")?
+  match channel.receive(events) {
+    Some(n) -> println("{n.channel}: {n.payload}")
+    None -> println("the listener ended")
+  }
+  channel.close(events)
+  Ok(())
+}
+```
+
+
+## `postgres.notify`
+
+```
+postgres.notify(conn: a, channel: String, payload: String) -> Result((), PostgresError)
+```
+
+Sends `payload` to the listeners of the PostgreSQL channel `channel`, on a pool or in a transaction (where it is sent when the transaction commits). The example of `postgres.listen` sends and receives one.
+
+```silt
+import postgres
+
+fn main() -> Result((), postgres.PostgresError) {
+  let pool = postgres.connect("postgresql://app@localhost/app")?
+  postgres.notify(pool, "cache", "users")?
+  Ok(())
+}
+```
+
+
 ## Parameters and rows
 
 ```text

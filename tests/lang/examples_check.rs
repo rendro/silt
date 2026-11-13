@@ -903,6 +903,11 @@ fn all_doc_fn_main_blocks_run_if_safe() {
         // `tcp.connect_tls` reaches a host on the internet.
         "tcp.accept",
         "tcp.connect_tls",
+        // A connection to a server that is not there, and a database.
+        "tcp.connect",
+        "stream.tcp_",
+        "stream.write_to_tcp",
+        "postgres.",
         // Concurrency — can block forever on unbounded
         // send/receive, and task scheduling is non-deterministic
         // under subprocess timing. Blocks using these are doc-only.

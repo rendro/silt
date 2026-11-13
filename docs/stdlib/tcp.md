@@ -350,3 +350,325 @@ fn main() {
   }
 }
 ```
+
+
+## `tcp.listen`
+
+```
+tcp.listen(addr: String) -> Result(TcpListener, TcpError)
+```
+
+Binds a listener to `addr` (`host:port`). Port `0` lets the system choose a free port, which `tcp.local_port` gives. An address that is taken or cannot be bound is `Err(Bind(msg))`.
+
+```silt
+import tcp
+
+fn main() -> Result((), tcp.TcpError) {
+  let listener = tcp.listen("127.0.0.1:0")?
+  println("listening on port {tcp.local_port(listener)}")
+  tcp.close_listener(listener)
+  Ok(())
+}
+```
+
+
+## `tcp.accept`
+
+```
+tcp.accept(listener: TcpListener) -> Result(TcpStream, TcpError)
+```
+
+Waits for the next connection to `listener` and gives it. The task waits; other tasks run. A closed listener gives `Err(Closed)`.
+
+```silt
+import bytes
+import tcp
+
+fn main() -> Result((), tcp.TcpError) {
+  let listener = tcp.listen("127.0.0.1:7000")?
+  let conn = tcp.accept(listener)?
+  tcp.write(conn, bytes.from_string("hello\n"))?
+  tcp.close(conn)
+  Ok(())
+}
+```
+
+
+## `tcp.connect`
+
+```
+tcp.connect(addr: String) -> Result(TcpStream, TcpError)
+```
+
+Opens a connection to `addr` (`host:port`). A connection that cannot be made is `Err(Connect(msg))`.
+
+```silt
+import bytes
+import tcp
+
+fn main() -> Result((), tcp.TcpError) {
+  let conn = tcp.connect("example.com:80")?
+  tcp.write(conn, bytes.from_string("HEAD / HTTP/1.0\r\nHost: example.com\r\n\r\n"))?
+  let reply = tcp.read(conn, 4096)?
+  println(bytes.to_string_lossy(reply))
+  tcp.close(conn)
+  Ok(())
+}
+```
+
+
+## `tcp.read`
+
+```
+tcp.read(stream: TcpStream, max: Int) -> Result(Bytes, TcpError)
+```
+
+Waits for data and gives what has come, at most `max` bytes. `Ok` of no bytes is the end: the other end has closed its side.
+
+```silt
+import bytes
+import tcp
+
+fn main() -> Result((), tcp.TcpError) {
+  let listener = tcp.listen("127.0.0.1:7000")?
+  let conn = tcp.accept(listener)?
+  let got = tcp.read(conn, 1024)?
+  match bytes.is_empty(got) {
+    true -> println("the client closed")
+    false -> println("got {bytes.length(got)} bytes")
+  }
+  tcp.close(conn)
+  Ok(())
+}
+```
+
+
+## `tcp.read_exact`
+
+```
+tcp.read_exact(stream: TcpStream, n: Int) -> Result(Bytes, TcpError)
+```
+
+Waits until `n` bytes have come and gives them. A connection that ends before that is `Err(Closed)`.
+
+```silt
+import bytes
+import tcp
+
+fn main() -> Result((), tcp.TcpError) {
+  let conn = tcp.connect("127.0.0.1:7000")?
+  let header = tcp.read_exact(conn, 4)?
+  println(bytes.to_hex(header))
+  tcp.close(conn)
+  Ok(())
+}
+```
+
+
+## `tcp.write`
+
+```
+tcp.write(stream: TcpStream, data: Bytes) -> Result((), TcpError)
+```
+
+Writes all of `data` to the connection.
+
+```silt
+import bytes
+import tcp
+
+fn main() -> Result((), tcp.TcpError) {
+  let conn = tcp.connect("127.0.0.1:7000")?
+  tcp.write(conn, bytes.from_string("ping\n"))?
+  tcp.close(conn)
+  Ok(())
+}
+```
+
+
+## `tcp.close`
+
+```
+tcp.close(stream: TcpStream) -> ()
+```
+
+Shuts the connection down. An operation in flight on it returns, and a later one gives `Err(Closed)`. See [Stream lifetime](#stream-lifetime).
+
+```silt
+import bytes
+import tcp
+
+fn main() -> Result((), tcp.TcpError) {
+  let conn = tcp.connect("127.0.0.1:7000")?
+  tcp.close(conn)
+  println(tcp.write(conn, bytes.from_string("late")))
+  Ok(())
+}
+```
+
+
+## `tcp.close_listener`
+
+```
+tcp.close_listener(listener: TcpListener) -> ()
+```
+
+Stops listening: a later connect is refused, an accept that waits gives `Err(Closed)`, and an `http.serve` on the listener answers what is in flight and returns. See [Listener lifetime](#listener-lifetime).
+
+```silt
+import tcp
+
+fn main() -> Result((), tcp.TcpError) {
+  let listener = tcp.listen("127.0.0.1:0")?
+  tcp.close_listener(listener)
+  match tcp.accept(listener) {
+    Ok(_) -> println("a connection")
+    Err(e) -> println("{e}")
+  }
+  Ok(())
+}
+```
+
+
+## `tcp.local_port`
+
+```
+tcp.local_port(listener: TcpListener) -> Int
+```
+
+The port `listener` is bound to: the one the system chose when the address asked for port `0`.
+
+```silt
+import tcp
+
+fn main() -> Result((), tcp.TcpError) {
+  let listener = tcp.listen("127.0.0.1:0")?
+  println(tcp.local_port(listener) > 0)
+  tcp.close_listener(listener)
+  Ok(())
+}
+```
+
+
+## `tcp.peer_addr`
+
+```
+tcp.peer_addr(stream: TcpStream) -> Result(String, TcpError)
+```
+
+The address of the other end of the connection, as `ip:port`.
+
+```silt
+import tcp
+
+fn main() -> Result((), tcp.TcpError) {
+  let listener = tcp.listen("127.0.0.1:7000")?
+  let conn = tcp.accept(listener)?
+  println("a client from {tcp.peer_addr(conn)?}")
+  tcp.close(conn)
+  Ok(())
+}
+```
+
+
+## `tcp.set_nodelay`
+
+```
+tcp.set_nodelay(stream: TcpStream, on: Bool) -> Result((), TcpError)
+```
+
+With `true`, a small write is sent at once instead of being held to gather more (Nagle's algorithm, which is on by default). For a protocol of small requests and answers.
+
+```silt
+import bytes
+import tcp
+
+fn main() -> Result((), tcp.TcpError) {
+  let conn = tcp.connect("127.0.0.1:7000")?
+  tcp.set_nodelay(conn, true)?
+  tcp.write(conn, bytes.from_string("k"))?
+  tcp.close(conn)
+  Ok(())
+}
+```
+
+
+## `tcp.connect_tls`
+
+```
+tcp.connect_tls(addr: String, hostname: String) -> Result(TcpStream, TcpError)
+```
+
+Opens a connection to `addr` and makes the TLS handshake as a client of `hostname`, whose certificate must be valid for it. A failed handshake is `Err(Tls(msg))`. See [TLS](#tls).
+
+```silt
+import bytes
+import tcp
+
+fn main() -> Result((), tcp.TcpError) {
+  let conn = tcp.connect_tls("example.com:443", "example.com")?
+  tcp.write(conn, bytes.from_string("HEAD / HTTP/1.0\r\nHost: example.com\r\n\r\n"))?
+  println(bytes.to_string_lossy(tcp.read(conn, 4096)?))
+  tcp.close(conn)
+  Ok(())
+}
+```
+
+
+## `tcp.tls_server`
+
+```
+tcp.tls_server(conn: TcpStream, cert_pem: Bytes, key_pem: Bytes) -> Result(TcpStream, TcpError)
+```
+
+Makes the TLS handshake as a server on an accepted connection, with the certificate chain and the private key in PEM, and gives the encrypted connection; `conn` is taken by it. See [A TLS server](#a-tls-server).
+
+```silt
+import bytes
+import io
+import result
+import tcp
+
+fn main() -> Result((), tcp.TcpError) {
+  let cert = io.read_bytes("cert.pem") |> result.map_err { e -> tcp.Other("{e}") }
+  let key = io.read_bytes("key.pem") |> result.map_err { e -> tcp.Other("{e}") }
+  let listener = tcp.listen("127.0.0.1:8443")?
+  let conn = tcp.tls_server(tcp.accept(listener)?, cert?, key?)?
+  tcp.write(conn, bytes.from_string("hello over TLS\n"))?
+  tcp.close(conn)
+  Ok(())
+}
+```
+
+
+## `tcp.tls_server_mtls`
+
+```
+tcp.tls_server_mtls(conn: TcpStream, cert_pem: Bytes, key_pem: Bytes, client_ca_pem: Bytes) -> Result(TcpStream, TcpError)
+```
+
+As `tcp.tls_server`, and the client must show a certificate that chains to one of the CA certificates `client_ca_pem` holds (mutual TLS). See [Mutual TLS](#mutual-tls-mtls).
+
+```silt
+import bytes
+import io
+import result
+import tcp
+
+fn pem(path: String) -> Result(Bytes, tcp.TcpError) {
+  io.read_bytes(path) |> result.map_err { e -> tcp.Other("{e}") }
+}
+
+fn main() -> Result((), tcp.TcpError) {
+  let listener = tcp.listen("127.0.0.1:8443")?
+  let conn = tcp.tls_server_mtls(
+    tcp.accept(listener)?,
+    pem("cert.pem")?,
+    pem("key.pem")?,
+    pem("clients-ca.pem")?,
+  )?
+  tcp.write(conn, bytes.from_string("hello, known client\n"))?
+  tcp.close(conn)
+  Ok(())
+}
+```

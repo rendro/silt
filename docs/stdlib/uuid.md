@@ -39,6 +39,102 @@ allocation.
 | `nil` | `() -> String` | The all-zero UUID sentinel |
 | `is_valid` | `(String) -> Bool` | Predicate form of `parse` |
 
+## `uuid.v4`
+
+```
+uuid.v4() -> String
+```
+
+A random (version 4) UUID from the operating system's secure random number generator, in the lowercase hyphenated form.
+
+```silt
+import string
+import uuid
+
+fn main() {
+  let id = uuid.v4()
+  println(id) -- e.g. 550e8400-e29b-41d4-a716-446655440000
+  println(string.slice(id, 14, 15)) -- 4
+}
+```
+
+
+## `uuid.v7`
+
+```
+uuid.v7() -> String
+```
+
+A version 7 UUID (RFC 9562): the current time in milliseconds, then random bits. A value made in a later millisecond sorts after an earlier one, as text too, which suits a key that is inserted in order.
+
+```silt
+import string
+import uuid
+
+fn main() {
+  let id = uuid.v7()
+  println(id) -- e.g. 019a7d3c-5b2e-7c41-9f0a-3d2b8e6f1a47
+  println(string.slice(id, 14, 15)) -- 7
+}
+```
+
+
+## `uuid.parse`
+
+```
+uuid.parse(s: String) -> Result(String, UuidError)
+```
+
+Checks `s` and gives it in the canonical form: lowercase, hyphenated. Any version is accepted, and the nil UUID; upper case, braces and the `urn:uuid:` prefix are read. Other text is `Err(Invalid(why))`.
+
+```silt
+import uuid
+
+fn main() {
+  println(uuid.parse("urn:uuid:550E8400-E29B-41D4-A716-446655440000")) -- Ok("550e8400-e29b-41d4-a716-446655440000")
+  match uuid.parse("not-a-uuid") {
+    Ok(id) -> println(id)
+    Err(e) -> println("{e}") -- invalid uuid: invalid character: found `n` at 1
+  }
+}
+```
+
+
+## `uuid.nil`
+
+```
+uuid.nil() -> String
+```
+
+The nil UUID, all zeros.
+
+```silt
+import uuid
+
+fn main() {
+  println(uuid.nil()) -- 00000000-0000-0000-0000-000000000000
+}
+```
+
+
+## `uuid.is_valid`
+
+```
+uuid.is_valid(s: String) -> Bool
+```
+
+Whether `uuid.parse` would accept `s`.
+
+```silt
+import uuid
+
+fn main() {
+  println(uuid.is_valid("550e8400-e29b-41d4-a716-446655440000")) -- true
+  println(uuid.is_valid("550e8400")) -- false
+}
+```
+
+
 ## Examples
 
 ```silt

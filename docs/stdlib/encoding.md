@@ -38,6 +38,78 @@ RFC 3986: `encoding.form_encode` and `encoding.form_decode` follow it.
 | `form_encode` | `(List((String, String))) -> String` | Build an `application/x-www-form-urlencoded` body |
 | `form_decode` | `(String) -> Result(List((String, String)), EncodingError)` | Parse an `application/x-www-form-urlencoded` body into pairs |
 
+## `encoding.url_encode`
+
+```
+encoding.url_encode(s: String) -> String
+```
+
+Percent-encodes `s` as RFC 3986 says: every byte of its UTF-8 but the letters, digits and `-._~` becomes `%HH`. A space is `%20`.
+
+```silt
+import encoding
+
+fn main() {
+  println(encoding.url_encode("a b&c/é")) -- a%20b%26c%2F%C3%A9
+}
+```
+
+
+## `encoding.url_decode`
+
+```
+encoding.url_decode(s: String) -> Result(String, EncodingError)
+```
+
+Decodes `%HH` sequences. A `%` without two hex digits, or bytes that are no UTF-8 once decoded, is an `Err`. A `+` stays a `+`: `encoding.form_decode` reads it as a space.
+
+```silt
+import encoding
+
+fn main() {
+  println(encoding.url_decode("a%20b%26c")) -- Ok("a b&c")
+  match encoding.url_decode("100%") {
+    Ok(s) -> println(s)
+    Err(e) -> println("{e}") -- truncated percent-escape at offset 3
+  }
+}
+```
+
+
+## `encoding.form_encode`
+
+```
+encoding.form_encode(pairs: List((String, String))) -> String
+```
+
+An `application/x-www-form-urlencoded` body of `pairs`, in their order: `key=value` joined by `&`, a space as `+`.
+
+```silt
+import encoding
+
+fn main() {
+  println(encoding.form_encode([("q", "silt lang"), ("page", "2")])) -- q=silt+lang&page=2
+}
+```
+
+
+## `encoding.form_decode`
+
+```
+encoding.form_decode(body: String) -> Result(List((String, String)), EncodingError)
+```
+
+The pairs of an `application/x-www-form-urlencoded` body, in their order, `+` read as a space. A segment with no `=` is `(key, "")`; empty segments are skipped.
+
+```silt
+import encoding
+
+fn main() {
+  println(encoding.form_decode("q=silt+lang&page=2&flag")) -- Ok([("q", "silt lang"), ("page", "2"), ("flag", "")])
+}
+```
+
+
 ## Examples
 
 ```silt
