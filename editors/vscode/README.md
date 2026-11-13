@@ -50,11 +50,12 @@ Mirrors the canonical feature list in `docs/editor-setup.md`:
   triple-quoted strings, `--` and nestable `{- -}` comments, numbers, operators)
 - Diagnostics (lex, parse, and type errors on every edit)
 - Hover (inferred types)
-- Go to definition
+- Go to definition (also from an import to the module's file)
 - Go to type definition (jump from a value to the definition of its type)
 - Go to implementation (jump from a trait method to its implementations)
-- Find references (locate every use of a definition across the workspace)
-- Rename (rename a definition and update every reference)
+- Find references (locate every use of a definition, a record field or a local across the workspace)
+- Rename (rename a definition, a record field, a local or a module's alias and update every reference;
+  see docs/editor-setup.md for what is not renamed)
 - Workspace symbol search (find any definition across the entire workspace by name)
 - Document highlight (highlight every occurrence of the symbol under the cursor)
 - Completion (keywords, stdlib, user definitions; `.` triggers member completion)

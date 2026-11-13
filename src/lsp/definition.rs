@@ -12,8 +12,9 @@ impl Server {
     /// Where the name under the cursor is declared: a local's binder, a
     /// definition's name in its file, a method's declaration in the impl
     /// or the trait (see `workspace.rs`), a record field's declaration,
-    /// the file of the module a qualifier or an alias names. Nothing for
-    /// one of silt's own names.
+    /// the file of the module a qualifier, an alias or an import names
+    /// (an item of `import m.{ f }` is `f`). Nothing for one of silt's
+    /// own names.
     pub(super) fn goto_definition(
         &self,
         params: lsp_types::GotoDefinitionParams,
@@ -37,6 +38,14 @@ impl Server {
             let view = self.imported_module(doc, name)?;
             return Some(GotoDefinitionResponse::Scalar(Location::new(
                 view.uri,
+                Range::default(),
+            )));
+        }
+        // The module an import names (`geometry` in `import geometry`):
+        // its file.
+        if let Some(file) = self.imported_module_file_at(doc, cursor) {
+            return Some(GotoDefinitionResponse::Scalar(Location::new(
+                file,
                 Range::default(),
             )));
         }
