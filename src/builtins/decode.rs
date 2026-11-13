@@ -1105,13 +1105,11 @@ mod tests {
             ["V {v: None}"; 2]
         );
         assert_eq!(shown(&F::String, "null", "")[0], "TypeMismatch at v");
-        // A `json.Value` is decoded from JSON only.
+        // A `json.Value` is decoded from both: TOML's array is a
+        // `json.Array` of its values.
         assert_eq!(
             shown(&F::JsonValue, "[1, 2.5]", "v = [1, 2.5]"),
-            [
-                "V {v: Array([Int(1), Float(2.5)])}",
-                "Other cannot decode field `v` of `V`: a value of type json.Value cannot be decoded"
-            ]
+            ["V {v: Array([Int(1), Float(2.5)])}"; 2]
         );
     }
 }

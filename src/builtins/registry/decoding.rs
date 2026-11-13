@@ -108,7 +108,7 @@ impl Family {
         use Leaf::*;
         match self {
             Family::Json => &[Int, Float, String, Bool, Date, Time, DateTime, JsonValue],
-            Family::Toml => &[Int, Float, String, Bool, Date, Time, DateTime],
+            Family::Toml => &[Int, Float, String, Bool, Date, Time, DateTime, JsonValue],
             // `Bytes` from a `bytea` column.
             Family::Postgres => &[
                 Int, Float, String, Bool, Bytes, Date, Time, DateTime, JsonValue,

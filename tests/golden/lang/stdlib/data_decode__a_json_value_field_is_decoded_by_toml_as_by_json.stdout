@@ -1,0 +1,7 @@
+Doc {n: 1, j: Array([Int(1), String("a")])}
+Maybe {n: 1, j: None}
+Many {n: 1, js: []}
+Outer {n: 1, inner: Some(Inner {j: Bool(true)})}
+Maybe {n: 1, j: None}
+Many {n: 1, js: []}
+Outer {n: 1, inner: None}

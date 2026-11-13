@@ -2,12 +2,13 @@
 -- exit: 1
 -- A decoder's refusal names the field's type as the program writes a
 -- type of the json module, with the module's own name, whatever name
--- the module is imported under: `json.Value`, never `Value` or `j.Value`.
+-- the module is imported under: `json.JsonError`, never `JsonError` or
+-- `j.JsonError`.
 import json as j
 import toml as t
 
-type Q { q: j.Value }
-type P { p: Option(List(j.Value)) }
+type Q { q: j.JsonError }
+type P { p: Option(List(j.JsonError)) }
 
 fn d() {
   let _ = t.parse_map("", Q)

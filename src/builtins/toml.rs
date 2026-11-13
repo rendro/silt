@@ -236,7 +236,8 @@ fn top_level(caller: &str, data: Data) -> Result<Data, VmError> {
 /// How a TOML document decodes: TOML says which kind a number is, so a
 /// float is no `Int` whatever its value; a date and a time are TOML's
 /// literals or strings; TOML has no null (a key left out is a `None`);
-/// no `json.Value` is decoded.
+/// a `json.Value` is decoded as a written `json.Decode` impl is given
+/// its part of the document.
 pub(crate) const RULES: Rules = Rules {
     caller: "toml.parse",
     table: "table",
