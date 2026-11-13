@@ -2,7 +2,9 @@ name: Release
 
 # A release in one step: Actions -> Release -> "Run workflow" with the
 # version (or `gh workflow run release.yml -f version=0.17.1`). The
-# workflow checks that main is green and the version is new, writes the
+# workflow checks that main is green (its CI run, and the newest finished
+# runs of the scheduled fuzz-nightly.yml and audit.yml), and the version
+# is new, writes the
 # version into Cargo.toml and Cargo.lock, commits it to main, tags it,
 # builds every target and the playground, makes the GitHub release, and
 # moves the website's silt submodule to the tag.
@@ -76,6 +78,17 @@ jobs:
             --jq '.[0] | "\(.status) \(.conclusion)"')
           [ "$ci" = "completed success" ] \
             || fail "CI on main ($sha) is \"${ci:-not run}\", not green: wait for it, or fix main first."
+          # The scheduled checks: the newest finished run of each on main
+          # must be green too. One that was red is fixed, or run again
+          # from the Actions tab until it is green, before a release.
+          for workflow in fuzz-nightly.yml audit.yml; do
+            last=$(gh run list --workflow "$workflow" --branch main --status completed --limit 1 \
+              --json conclusion,url --jq '.[] | "\(.conclusion) \(.url)"')
+            case "$last" in
+              "" | "success "*) ;;
+              *) fail "The newest run of $workflow on main ended \"${last%% *}\", not green (${last#* }): fix the cause, or run it again until it is green." ;;
+            esac
+          done
           echo "Releasing $current -> $VERSION from $sha"
 
       - name: Write the version, commit and tag

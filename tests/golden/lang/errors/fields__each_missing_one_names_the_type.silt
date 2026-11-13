@@ -1,0 +1,9 @@
+-- exit: 1
+-- Two fields a record lacks: each read names the type and its field.
+-- stderr-contains: error[type]: type 'Person' has no field 'email'
+-- stderr-contains: error[type]: type 'Person' has no field 'phone'
+type Person { name: String }
+fn f(p: Person) -> String { "{p.email} {p.phone}" }
+fn main() {
+  println(f(Person { name: "a" }))
+}

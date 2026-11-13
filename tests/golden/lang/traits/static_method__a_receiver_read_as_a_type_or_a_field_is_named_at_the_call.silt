@@ -1,9 +1,10 @@
 -- cmd: check
 -- exit: 1
 -- A function whose `x.m()` reads its parameter as a type (one trait in
--- sight has a method `m` that makes a value) or as a record (several
--- have one) says so at a call that gives the other kind of argument,
--- and what to write instead.
+-- sight has a method `m` that makes a value) says so at a call that
+-- gives a value, and what to write instead. One whose `t.m()` would read
+-- it as a record (several traits have one) that nothing decides is
+-- refused where it is written, with the type parameter that says which.
 trait Monoid {
   fn empty() -> Self
 }

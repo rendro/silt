@@ -1,8 +1,8 @@
 -- A record value holds its fields in the order its type declares
 -- them, and code that knows the type reads a field at its place:
 -- whatever order a literal, an update or a pattern writes the fields
--- in, and whether the record is read where its type is known, behind
--- an open row, or as an anonymous record, the same field is read.
+-- in, and whether the type is known where the field is read or later,
+-- the same field is read.
 import json
 import list
 import map
@@ -27,16 +27,19 @@ type Op {
   apply: Fn(Int) -> Int,
 }
 
-fn major(r: { major: Int, ...rest }) -> Int {
+fn major(r: Ver) -> Int {
   r.major
 }
 
-fn build(r) {
-  r.build
+-- (The type of `r` is decided after its field is read.)
+fn build(r) -> Int {
+  let n = r.build
+  let _: Ver = r
+  n
 }
 
-fn pass(r: { build: Int, ...rest }) -> { build: Int, ...rest } {
-  let { build: seen } = r
+fn pass(r: Ver) -> Ver {
+  let Ver { build: seen, .. } = r
   match r.build == seen {
     true -> r
     false -> r
@@ -74,30 +77,11 @@ fn main() {
   let Ver { label, major: m, build: n } = d
   println("{label} {m} {n}")
 
-  -- Behind an open row the record is itself, and its fields are found
-  -- by their names; so are an anonymous record's.
+  -- Through a function, the record is itself.
   println(major(a))
   println(build(a))
   println(pass(a))
   println(pass(a).label)
-  let anon = { major: 7, label: "anon", build: 3 }
-  println(anon)
-  println("{anon.major} {anon.build} {anon.label}")
-  println(major(anon))
-  println(build(anon))
-  println(pass(anon).label)
-
-  -- The rest of a record and a spread are anonymous records.
-  let { build: left_out, ...others } = a
-  println(left_out)
-  println(others)
-  println(others.label)
-  let wider = { ...a, patch: 4 }
-  println(wider)
-  println("{wider.major} {wider.patch}")
-  let over = { ...a }.{ build: 30 }
-  println(over)
-  println({ ...a } == { label: "a", major: 1, build: 9 })
 
   -- A record of a type with parameters, of records, and of a function.
   let p = Pair { left: a, right: d }

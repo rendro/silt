@@ -552,15 +552,5 @@ fn type_expr(q: Option<&Qualify>, te: &TypeExpr) -> String {
             format!("Fn({}) -> {}", all(params).join(", "), type_expr(q, ret))
         }
         TypeExprKind::SelfType => "Self".to_string(),
-        TypeExprKind::AnonRecord { fields, tail } => {
-            let mut parts: Vec<String> = fields
-                .iter()
-                .map(|(name, ty)| format!("{name}: {}", type_expr(q, ty)))
-                .collect();
-            if let Some((rest, _)) = tail {
-                parts.push(format!("...{rest}"));
-            }
-            format!("{{{}}}", parts.join(", "))
-        }
     }
 }

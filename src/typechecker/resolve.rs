@@ -126,14 +126,6 @@ impl TypeChecker {
                     Self::collect_sub_spans(e, out);
                 }
             }
-            ExprKind::AnonRecord { spread, fields } => {
-                if let Some(s) = spread {
-                    Self::collect_sub_spans(s, out);
-                }
-                for (_, e) in fields {
-                    Self::collect_sub_spans(e, out);
-                }
-            }
             ExprKind::StringInterp(parts) => {
                 for part in parts {
                     if let StringPart::Expr(e) = part {
@@ -306,14 +298,6 @@ impl TypeChecker {
                     self.check_unresolved_in_expr(e);
                 }
             }
-            ExprKind::AnonRecord { spread, fields } => {
-                if let Some(s) = spread {
-                    self.check_unresolved_in_expr(s);
-                }
-                for (_, e) in fields {
-                    self.check_unresolved_in_expr(e);
-                }
-            }
             ExprKind::StringInterp(parts) => {
                 for part in parts {
                     if let StringPart::Expr(e) = part {
@@ -477,15 +461,6 @@ impl TypeChecker {
                 .any(|(_, e)| Self::expr_references_name(e, name)),
             ExprKind::RecordUpdate { expr, fields, .. } => {
                 Self::expr_references_name(expr, name)
-                    || fields
-                        .iter()
-                        .any(|(_, e)| Self::expr_references_name(e, name))
-            }
-            ExprKind::AnonRecord { spread, fields } => {
-                spread
-                    .as_ref()
-                    .map(|s| Self::expr_references_name(s, name))
-                    .unwrap_or(false)
                     || fields
                         .iter()
                         .any(|(_, e)| Self::expr_references_name(e, name))
@@ -730,14 +705,6 @@ pub(super) fn each_child_mut(expr: &mut Expr, f: &mut impl FnMut(&mut Expr)) {
         }
         ExprKind::RecordUpdate { expr, fields, .. } => {
             f(expr);
-            for (_, e) in fields {
-                f(e);
-            }
-        }
-        ExprKind::AnonRecord { spread, fields } => {
-            if let Some(s) = spread {
-                f(s);
-            }
             for (_, e) in fields {
                 f(e);
             }

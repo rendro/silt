@@ -5,8 +5,8 @@
 -- `Run.run(h, 1)` the impl's method, written or the trait's default, on
 -- a known type, through a bound, on a generic record and where the
 -- record's type is decided after the call is read (a closure's
--- parameter). An impl for an enum, a function named like a field and an
--- anonymous record are as before.
+-- parameter). An impl for an enum and a function named like a field are
+-- as before.
 import list
 type Shape { Circle(Int), Square(Int) }
 trait Area { fn area(self) -> Int }
@@ -47,8 +47,6 @@ fn main() {
   println(Run.run(3, 4))
   println(run(5))
   println(Area.area(Circle(2)))
-  let anon = {run: { x -> x - 1 }}
-  println(anon.run(0))
   let hs = [h, H { run: { x -> x * 10 }, area: 0 }]
   println(list.map(hs, { r -> r.run(7) }))
   println(list.map(hs, { r -> Run.run(r, 7) }))

@@ -1,6 +1,6 @@
-error[type]: 'k' takes a record with a field `pure` as `m`, not the type `Option`: `m.pure(..)` in it is read as a field, since a trait of type constructors ('Applicative') is not inferred
- --> static_method__a_closure_that_takes_a_type_constructor_is_told_to_be_a_function.silt:10:13
+error[type]: type mismatch: expected a value with a field `pure`, got the type `Option(_)`
+ --> static_method__a_closure_that_takes_a_type_constructor_is_told_to_be_a_function.silt:10:18
     |
- 10 |   println(k(Option))
-    |             ^^^^^^ 'k' takes a record with a field `pure` as `m`, not the type `Option`: `m.pure(..)` in it is read as a field, since a trait of type constructors ('Applicative') is not inferred
-  = help: a closure cannot take a type parameter: declare a named function with one and its bound, as in `fn wrap(x: a, type m) -> m(a) where m: Applicative`
+ 10 |   let k = { m -> m.pure(3) }
+    |                  ^^^^^^ type mismatch: expected a value with a field `pure`, got the type `Option(_)`
+  = help: for the method of trait 'Applicative': a closure cannot take a type parameter: declare a named function with one and its bound, as in `fn wrap(x: a, type m) -> m(a) where m: Applicative`

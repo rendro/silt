@@ -31,11 +31,16 @@ fn numbers(n) {
   }
 }
 
-fn records(r, f) {
-  match r {
-    { a: 1 } -> f
-    { a: 2 } -> Wrap
-    { a: _ } -> f
+fn blocks(r, f) {
+  match {
+    r == 1 -> f
+    {
+      r
+    } == 2 -> Wrap
+    {
+      r
+    } > 2 -> f
+    _ -> f
   }
 }
 
@@ -52,6 +57,6 @@ fn conditions(n, f) {
 fn main() {
   let f = tuples((1, 2), Wrap)
   let g = lists([1], f)
-  let h = records({ a: 1 }, g)
+  let h = blocks(1, g)
   println((conditions(1, h)(1), numbers(1)))
 }

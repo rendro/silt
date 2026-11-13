@@ -1,6 +1,6 @@
--- A parameter the function updates as a record (`t.{ n: 3 }`) is a
--- record, as one whose field it reads is: `t.zero()` calls its field,
--- though a trait in sight has a method `zero` that makes a value.
+-- A record parameter the function updates (`t.{ n: 3 }`) is a record, as
+-- one whose field it reads is: `t.zero()` calls its field, though a trait
+-- in sight has a method `zero` that makes a value.
 trait Zero {
   fn zero() -> Self
 }
@@ -14,7 +14,7 @@ type Rec {
   zero: Fn() -> Int,
 }
 
-fn f(t) {
+fn f(t: Rec) {
   let z = t.zero()
   let r = t.{ n: 3 }
   (z, r.n)

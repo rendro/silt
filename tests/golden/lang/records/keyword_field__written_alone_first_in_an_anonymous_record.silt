@@ -1,8 +1,0 @@
--- cmd: check
--- exit: 1
--- A keyword written alone as the first field of an anonymous record gets
--- the keyword text.
-fn main() {
-  let r = { type, y: 2 }
-  println("{r.y}")
-}

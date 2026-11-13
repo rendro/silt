@@ -1,0 +1,27 @@
+-- cmd: check
+-- exit: 1
+-- A field read, or a call of the function a field holds, on a value
+-- whose type nothing in the function decides needs an annotation, as an
+-- update does. A type decided later in the function is enough (`later`).
+type P { name: String, run: Fn(Int) -> Int }
+
+fn name_of(p) {
+  p.name
+}
+
+fn call(p) {
+  p.run(1)
+}
+
+fn later(p) -> String {
+  let n = p.name
+  let _: P = p
+  n
+}
+
+fn main() {
+  let p = P { name: "a", run: { x -> x } }
+  println(later(p))
+  println(name_of(p))
+  println(call(p))
+}

@@ -34,7 +34,7 @@ import string
 type P { name: String }
 fn twice(xs) { Mapping.map(xs) { x -> x * 2 } }
 fn lens(xs) { Mapping.map(xs) { x -> string.length(x) } }
-fn names(xs) { Mapping.map(xs) { x -> x.name } }
+fn names(xs) { Mapping.map(xs) { x: P -> x.name } }
 fn applied(xs) { Mapping.map(xs) { f -> f(1) } }
 fn t2(xs: m(a)) where m: Mapping { Mapping.map(xs) { x -> x * 2 } }
 fn main() {

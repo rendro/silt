@@ -24,20 +24,43 @@ pub(crate) struct Wanted {
     pub(super) ev: super::evidence::EvRef,
 }
 
+/// Where a field read whose receiver's type is unknown is written: what
+/// the help of its error writes when nothing decides the type.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ReadAt {
+    /// The name the receiver is written by, when it is a name, with
+    /// whether it is a parameter of the function or closure the read is
+    /// in (an annotation can stand there).
+    pub(super) name: Option<(Symbol, bool)>,
+    /// For a call `x.m(..)`: the traits whose method `m` makes a value,
+    /// which the call does not choose between (`Reading::Field`).
+    pub(super) traits: Vec<TraitKey>,
+    /// The function the read is in, with whether it is a named function
+    /// (`fn`), which can take a type parameter, and not a closure.
+    pub(super) function: Option<(Symbol, bool)>,
+    /// The name of the plain `let` without an annotation that the
+    /// receiver's type comes from (`let v = fail("x")`), which can take
+    /// one (`let v: A`).
+    pub(super) let_name: Option<Symbol>,
+}
+
 /// What waits for a type to be known.
 #[derive(Debug, Clone)]
 pub(crate) enum Goal {
     /// A predicate a use owes.
     Pred(Pred),
-    /// `recv.name(args)`, with the result `result`, where the receiver's
-    /// type was unknown at the call: the function-typed field it calls
-    /// is checked when the receiver's type is known (`select_call`), and
-    /// when the definition is generalised if it still is not.
+    /// `recv.name` (`args` none), or the call `recv.name(args)`, with
+    /// the result `result`, where the receiver's type was unknown: the
+    /// field is read when the receiver's type is known (`select_call`).
+    /// Like an update, it never enters a scheme: a field of a record
+    /// nothing decides needs an annotation.
     Select {
         recv: Type,
         name: Symbol,
-        args: Vec<Type>,
+        args: Option<Vec<Type>>,
         result: Type,
+        /// Where the read is: what the error's help writes.
+        at: ReadAt,
     },
     /// `base.{ field: value }` where the type of `base` was unknown at
     /// the update: the field is checked when it is known. It never
@@ -56,30 +79,6 @@ pub(crate) enum Goal {
         ok: Type,
         ret: Option<Type>,
     },
-    /// `result` is the anonymous record made from the record `base`:
-    /// its fields but those named `without`, and the fields `with`
-    /// (a spread `{...base, f: e}`; the rest binder of a record pattern,
-    /// `{f, ...rest}`). What it is waits until the type of `base` is
-    /// decided: a declared record gives its fields, an anonymous one
-    /// its own. A base that is still unknown, or an open row, when its
-    /// scope closes is a record over a row that no declared record may
-    /// stand for (`Pred::Anon`).
-    Rebuild {
-        base: Type,
-        without: Vec<Symbol>,
-        with: Vec<(Symbol, Type)>,
-        result: Type,
-        /// Whether it is a pattern's rest (the pattern has reported a
-        /// scrutinee that is no record).
-        rest: bool,
-    },
-    /// A use of a scheme writes the record type `{fields, ...row}` and
-    /// another with the same row: if a declared record stands for the
-    /// row, each of `fields` is that record's field, at its type.
-    Listed {
-        fields: std::collections::BTreeMap<Symbol, Type>,
-        row: Type,
-    },
 }
 
 impl Goal {
@@ -90,9 +89,6 @@ impl Goal {
             Goal::Select { recv, .. } => recv,
             Goal::Update { base, .. } => base,
             Goal::Try { operand, .. } => operand,
-            Goal::Listed { row, .. } => row,
-            // (Or the row of an open record: `rebuild_waits`.)
-            Goal::Rebuild { base, .. } => base,
         }
     }
 }
@@ -113,13 +109,6 @@ fn replace_part(ty: &Type, part: &Type) -> Type {
         Type::Tuple(ts) => Type::Tuple(each(ts)),
         Type::Generic(name, args) => Type::Generic(*name, each(args)),
         Type::Map(k, v) => Type::Map(one(k), one(v)),
-        Type::AnonRecord { fields, tail } => Type::AnonRecord {
-            fields: fields
-                .iter()
-                .map(|(n, t)| (*n, replace_part(t, part)))
-                .collect(),
-            tail: tail.clone(),
-        },
         _ => ty.clone(),
     }
 }
@@ -817,72 +806,16 @@ impl TypeChecker {
                         }
                         self.note_trait_outcome(tr, &subject, reported);
                     }
-                    Goal::Pred(Pred::Anon { row, given }) => match self.apply(&row) {
-                        Type::Var(_) => {}
-                        // (The row of an open record is the rest of
-                        // the row; the fields it has by now are looked
-                        // at when the signature's body is known.)
-                        Type::AnonRecord {
-                            fields,
-                            tail: RowTail::Var(rest),
-                        } => {
-                            if let Some(given) = given {
-                                let seen = Type::AnonRecord {
-                                    fields,
-                                    tail: RowTail::Closed,
-                                };
-                                self.anon_waiting.push((given, seen, origin));
-                            }
-                            self.wanted[i].goal = Goal::Pred(Pred::Anon {
-                                row: Type::Var(rest),
-                                given,
-                            });
-                        }
-                        row => {
-                            self.wanted[i].solved = true;
-                            match given {
-                                Some(given) => self.anon_waiting.push((given, row, origin)),
-                                None => self.row_is_anon(&row, origin),
-                            }
-                        }
-                    },
-                    Goal::Rebuild {
-                        base,
-                        without,
-                        with,
-                        result,
-                        rest,
-                    } => {
-                        if self.rebuild_waits(&base).is_none() {
-                            self.wanted[i].solved = true;
-                            self.rebuild(&base, &without, &with, &result, rest, origin);
-                        }
-                    }
-                    Goal::Listed { fields, row } => match self.apply(&row) {
-                        Type::Var(_) => {}
-                        Type::AnonRecord {
-                            tail: RowTail::Var(rest),
-                            ..
-                        } => {
-                            self.wanted[i].goal = Goal::Listed {
-                                fields,
-                                row: Type::Var(rest),
-                            };
-                        }
-                        row => {
-                            self.wanted[i].solved = true;
-                            self.listed_fields_are(&fields, &row, origin);
-                        }
-                    },
                     Goal::Select {
                         recv,
                         name,
                         args,
                         result,
+                        at,
                     } => {
                         if !matches!(self.apply(&recv), Type::Var(_)) {
                             self.wanted[i].solved = true;
-                            self.select_call(&recv, name, args, result, origin.span);
+                            self.select_call(&recv, name, args, result, &at, origin.span);
                         }
                     }
                     Goal::Try { operand, ok, ret } => {
@@ -919,13 +852,6 @@ impl TypeChecker {
                     Goal::Pred(Pred::Via { .. }) => {}
                     // (Never wanted: `given_waiting`.)
                     Goal::Pred(Pred::Given { .. }) => self.wanted[i].solved = true,
-                    Goal::Pred(Pred::Lacks { row, field }) => {
-                        let row = self.apply(&row);
-                        if !matches!(row, Type::Var(_)) {
-                            self.wanted[i].solved = true;
-                            self.row_lacks(&row, field, origin);
-                        }
-                    }
                     Goal::Update { base, field, value } => {
                         let base = self.apply(&base);
                         if !matches!(base, Type::Var(_)) {
@@ -939,37 +865,51 @@ impl TypeChecker {
         }
     }
 
-    /// Decide what `recv.field(args)` calls, now that the receiver's type
-    /// is known: the function a field of the record holds.
+    /// Read the field of `recv.field`, or decide what `recv.field(args)`
+    /// calls, now that the receiver's type is known: a field of the
+    /// record, or the function it holds.
     fn select_call(
         &mut self,
         recv: &Type,
         field: Symbol,
-        args: Vec<Type>,
+        args: Option<Vec<Type>>,
         result: Type,
+        at: &ReadAt,
         span: Span,
     ) {
-        let result_ty = Type::Fun(args, Box::new(result));
+        let result_ty = match args {
+            Some(args) => Type::Fun(args, Box::new(result)),
+            None => result,
+        };
         let resolved =
             crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(recv));
         match &resolved {
             Type::Error | Type::Never => {}
             Type::Var(_) => unreachable!("a selection waits while its receiver is unknown"),
-            Type::AnonRecord { fields: af, tail } => {
-                if let Some(field_ty) = af.get(&field) {
-                    let ft = field_ty.clone();
-                    self.unify(&result_ty, &ft, span);
-                } else if let RowTail::Var(_) = tail {
-                    let extended = Type::AnonRecord {
-                        fields: std::collections::BTreeMap::from([(field, result_ty.clone())]),
-                        tail: RowTail::Var(self.fresh_tyvar_id()),
-                    };
-                    self.unify(&resolved, &extended, span);
-                } else {
-                    let candidates: Vec<(Symbol, Type)> =
-                        af.iter().map(|(k, v)| (*k, v.clone())).collect();
-                    self.no_field(&resolved, field, None, &candidates, span);
-                }
+            // A type given where a value with fields is read: said in
+            // those words, not as `type Rec`; a call read as a field
+            // because traits have a method of the name says how to call
+            // the method (`{ m -> m.pure(3) }` given `Option`).
+            Type::Generic(name, args) if name.is_builtin(crate::defs::TYPE_OF) => {
+                let shown = self.show_type(&self.apply(&args[0]));
+                let message = format!(
+                    "type mismatch: expected a value with a field `{field}`, got the type \
+                     `{shown}`"
+                );
+                let help = self.type_parameter_help(at);
+                self.error_help(Code::TypeMismatch, (message, help), span);
+            }
+            Type::Generic(type_name, _)
+                if let Some(module) = self.opaque_outside(*type_name)
+                    && (self.tables.records.get(type_name))
+                        .is_some_and(|rec| rec.fields.iter().any(|(n, _)| *n == field)) =>
+            {
+                let message = format!(
+                    "cannot read field '{field}' of a '{}' outside module '{module}': the type \
+                     is opaque",
+                    super::opaque::opaque_name(*type_name, module)
+                );
+                self.opaque_error(message, module, span);
             }
             Type::Generic(type_name, type_args) => {
                 // User-declared records with or without type parameters
@@ -1091,448 +1031,11 @@ impl TypeChecker {
         }
     }
 
-    /// Report that the record a spread extends with `field` has the
-    /// field already: the one wording.
-    pub(super) fn extends_existing(&mut self, field: Symbol, span: Span) {
-        if !self.lacking.insert((span, format!("field {field}"))) {
-            return;
-        }
-        self.errors.push(
-            Diagnostic::error(
-                Code::TypeMismatch,
-                span,
-                format!("cannot extend the record with field '{field}': it has one already"),
-            )
-            .with_help(format!(
-                "a record is extended, never overwritten: update the field with `r.{{ {field}: ... }}`"
-            )),
-        );
-    }
-
-    /// Report that the declared record `record` is given for a row a
-    /// definition makes an anonymous record from: once for one record at
-    /// one place.
-    fn spread_through(&mut self, record: &Type, origin: Origin) {
-        let shown = self.show_type(record);
-        if !self.lacking.insert((origin.span, shown.clone())) {
-            return;
-        }
-        let through = match origin.callee {
-            Some(callee) => format!("'{callee}'"),
-            None => "this function".to_string(),
-        };
-        self.errors.push(Diagnostic::error(
-            Code::TypeMismatch,
-            origin.span,
-            format!(
-                "cannot spread a `{shown}` through {through}: convert it where its type is known, `{{...p}}`"
-            ),
-        ));
-    }
-
-    /// Check that no declared record stands for `row`, known now
-    /// (`Pred::Anon`).
-    fn row_is_anon(&mut self, row: &Type, origin: Origin) {
-        match row {
-            Type::AnonRecord {
-                tail: RowTail::Rigid(r),
-                ..
-            }
-            | Type::Rigid(r) => self.anon_rigid(*r, origin),
-            Type::Generic(name, _) if self.tables.records.contains_key(name) => {
-                self.spread_through(row, origin)
-            }
-            _ => {}
-        }
-    }
-
-    /// Whether a body makes an anonymous record from the row variable
-    /// `var` of its function's signature.
-    pub(super) fn is_anon_row(&self, var: TyVar) -> bool {
-        self.anon_rows.contains(&var) || self.anon_rows.contains(&self.rigid_rep_var(var))
-    }
-
-    /// Whether `var` is a row variable of a function's signature.
-    fn is_sig_row(&self, var: TyVar) -> bool {
-        self.sig_rows.contains(&var) || self.sig_rows.contains(&self.rigid_rep_var(var))
-    }
-
-    /// The fields a body adds over the row variable `var` of its
-    /// function's signature.
-    pub(super) fn adds_of(&self, var: TyVar) -> Vec<Symbol> {
-        let mut adds = self.row_adds.get(&var).cloned().unwrap_or_default();
-        if let Some(more) = self.row_adds.get(&self.rigid_rep_var(var)) {
-            adds.extend(
-                more.iter()
-                    .filter(|f| !adds.contains(f))
-                    .copied()
-                    .collect::<Vec<_>>(),
-            );
-        }
-        adds
-    }
-
-    /// A body makes an anonymous record from a record whose row is the
-    /// annotation variable `r`, with the fields `adds` added. For a row
-    /// variable of a function's signature, the function's uses owe that
-    /// no declared record stands for it and that what does has none of
-    /// the fields; no other annotation can ask that. Whether it is news.
-    fn mark_sig_row(&mut self, var: TyVar, adds: &[Symbol]) -> bool {
-        let rep = self.rigid_rep_var(var);
-        let mut news = self.anon_rows.insert(var);
-        news |= self.anon_rows.insert(rep);
-        for key in [var, rep] {
-            let known = self.row_adds.entry(key).or_default();
-            for field in adds {
-                if !known.contains(field) {
-                    known.push(*field);
-                    news = true;
-                }
-            }
-        }
-        news
-    }
-
-    /// See `mark_sig_row`: reports the row of another annotation.
-    pub(super) fn anon_rigid(&mut self, r: RigidId, origin: Origin) {
-        if self.is_sig_row(r.var) {
-            self.mark_sig_row(r.var, &[]);
-            return;
-        }
-        if !self
-            .lacking
-            .insert((origin.span, format!("row {}", r.name)))
-        {
-            return;
-        }
-        self.errors.push(
-            Diagnostic::error(
-                Code::TypeMismatch,
-                origin.span,
-                format!(
-                    "cannot spread a record of the row `{}` here: a declared record may stand for the row, and a spread makes an anonymous record",
-                    r.name
-                ),
-            )
-            .with_help(
-                "only a function's own signature keeps declared records from a row its body spreads: do the spread in a function",
-            ),
-        );
-    }
-
-    /// Decide what waited for the bodies of the module's functions:
-    /// whether what stands for a row variable of a signature is spread
-    /// by the body, and with which fields added.
-    pub(super) fn settle_rows(&mut self) {
-        let waiting = std::mem::take(&mut self.anon_waiting);
-        // What a body does to its row it does to the row of a signature
-        // that is given for it.
-        loop {
-            let mut news = false;
-            for (given, row, _) in &waiting {
-                if !self.is_anon_row(*given) {
-                    continue;
-                }
-                let (fields, to) = match row {
-                    Type::AnonRecord {
-                        fields,
-                        tail: RowTail::Rigid(r),
-                    } => (fields.keys().copied().collect(), r.var),
-                    Type::Rigid(r) => (Vec::new(), r.var),
-                    _ => continue,
-                };
-                if self.is_sig_row(to) {
-                    let adds: Vec<Symbol> = self
-                        .adds_of(*given)
-                        .into_iter()
-                        .filter(|f| !fields.contains(f))
-                        .collect();
-                    news |= self.mark_sig_row(to, &adds);
-                }
-            }
-            if !news {
-                break;
-            }
-        }
-        for (given, row, origin) in waiting {
-            if !self.is_anon_row(given) {
-                continue;
-            }
-            self.row_is_anon(&row, origin);
-            if let Type::AnonRecord { fields, .. } = &row {
-                for field in self.adds_of(given) {
-                    if fields.contains_key(&field) {
-                        self.extends_existing(field, origin.span);
-                    }
-                }
-            }
-        }
-    }
-
-    /// The variable a `Goal::Rebuild` over `base` waits for: the type
-    /// of the base, or the row of the open record it is.
-    pub(super) fn rebuild_waits(&self, base: &Type) -> Option<TyVar> {
-        match self.apply(base) {
-            Type::Var(v) => Some(v),
-            Type::AnonRecord {
-                tail: RowTail::Var(v),
-                ..
-            } => Some(v),
-            _ => None,
-        }
-    }
-
-    /// Decide `Goal::Rebuild`: the type of `base` is decided, or its
-    /// scope closes.
-    fn rebuild(
-        &mut self,
-        base: &Type,
-        without: &[Symbol],
-        with: &[(Symbol, Type)],
-        result: &Type,
-        rest: bool,
-        origin: Origin,
-    ) {
-        use std::collections::BTreeMap;
-        let span = origin.span;
-        let mut base_ty =
-            crate::types::canonical::canonicalize(&self.tables.resolver, &self.apply(base));
-        // A base nothing has decided is a record with a row of its own.
-        if matches!(base_ty, Type::Var(_)) {
-            let open = Type::AnonRecord {
-                fields: BTreeMap::new(),
-                tail: RowTail::Var(self.fresh_tyvar_id()),
-            };
-            self.unify(&base_ty, &open, span);
-            base_ty = self.apply(&open);
-        }
-        let (mut fields, tail): (BTreeMap<Symbol, Type>, RowTail) = match &base_ty {
-            // An opaque record of another module gives nothing.
-            Type::Generic(name, _) if let Some(module) = self.opaque_outside(*name) => {
-                let message = format!(
-                    "cannot spread a '{}' outside module '{module}': the type is opaque",
-                    super::opaque::opaque_name(*name, module)
-                );
-                self.opaque_error(message, module, span);
-                let _ = self.unify_types(result, &Type::Error);
-                return;
-            }
-            // A declared record gives its fields.
-            Type::Generic(name, args) if self.tables.records.contains_key(name) => (
-                self.instantiate_record_fields_with_args(*name, args)
-                    .into_iter()
-                    .collect(),
-                RowTail::Closed,
-            ),
-            Type::AnonRecord { fields, tail } => (fields.clone(), tail.clone()),
-            other => {
-                if !rest && !matches!(other, Type::Error | Type::Never) {
-                    self.error(
-                        Code::TypeMismatch,
-                        format!(
-                            "spread requires a record base, but '{}' is not a record type",
-                            self.show_type(other)
-                        ),
-                        span,
-                    );
-                }
-                let _ = self.unify_types(result, &Type::Error);
-                return;
-            }
-        };
-        for name in without {
-            fields.remove(name);
-        }
-        // A record is extended, never overwritten.
-        for (name, ty) in with {
-            if fields.insert(*name, ty.clone()).is_some() {
-                self.extends_existing(*name, span);
-            }
-        }
-        // What is made is anonymous whatever the row turns out to be: a
-        // place that wants a declared record is not given one.
-        let wanted = self.apply(result);
-        if let Type::Generic(name, _) = &wanted
-            && self.tables.records.contains_key(name)
-            && matches!(tail, RowTail::Var(_))
-        {
-            let made = Type::AnonRecord { fields, tail };
-            let shown = self.written_type(*name);
-            self.errors.push(
-                Diagnostic::error(
-                    Code::TypeMismatch,
-                    span,
-                    format!(
-                        "type mismatch: expected {}, got {}",
-                        self.show_type(&wanted),
-                        self.show_type(&made)
-                    ),
-                )
-                .with_help(format!(
-                    "an anonymous record is not a `{shown}`: write `{shown} {{ ... }}`"
-                )),
-            );
-            return;
-        }
-        match &tail {
-            RowTail::Closed => {}
-            RowTail::Rigid(r) => {
-                self.anon_rigid(*r, origin);
-                for (name, _) in with {
-                    self.lacks_rigid(*r, *name);
-                }
-            }
-            RowTail::Var(row) => {
-                for (name, _) in with {
-                    self.want(
-                        Pred::Lacks {
-                            row: Type::Var(*row),
-                            field: *name,
-                        },
-                        origin,
-                    );
-                }
-                self.want(
-                    Pred::Anon {
-                        row: Type::Var(*row),
-                        given: None,
-                    },
-                    origin,
-                );
-            }
-        }
-        self.unify(&Type::AnonRecord { fields, tail }, result, span);
-    }
-
-    /// Give each `Goal::Rebuild` of the scope just left whose base is
-    /// still undecided, and the scope's to generalise, a row of its
-    /// own, in the order they were written (a rest binder before the
-    /// spread over it).
-    pub(super) fn default_rebuilds(&mut self) {
-        let mut i = self.closed_mark;
-        while i < self.wanted.len() {
-            if !self.wanted[i].solved
-                && let Goal::Rebuild {
-                    base,
-                    without,
-                    with,
-                    result,
-                    rest,
-                } = self.wanted[i].goal.clone()
-                && self
-                    .rebuild_waits(&base)
-                    .is_none_or(|v| self.tables.vars.is_generalizable(v))
-            {
-                let origin = self.wanted[i].origin;
-                self.wanted[i].solved = true;
-                // The variables this makes are the scope's.
-                self.reopen_level();
-                self.rebuild(&base, &without, &with, &result, rest, origin);
-                self.solve_wanted(self.closed_mark);
-                self.close_level();
-            }
-            i += 1;
-        }
-    }
-
-    /// Check a record type a scheme's use writes over a row a declared
-    /// record stands for (`Goal::Listed`).
-    fn listed_fields_are(
-        &mut self,
-        fields: &std::collections::BTreeMap<Symbol, Type>,
-        row: &Type,
-        origin: Origin,
-    ) {
-        let Type::Generic(name, args) = row else {
-            return;
-        };
-        if !self.tables.records.contains_key(name) {
-            return;
-        }
-        let declared = self.instantiate_record_fields_with_args(*name, args);
-        for (field, ty) in fields {
-            let Some((_, declared_ty)) = declared.iter().find(|(n, _)| n == field) else {
-                continue;
-            };
-            if self.unify_types(ty, declared_ty).is_err() {
-                let shown = self.show_type(row);
-                // (One error for one record at one place: it may be
-                // spread there as well.)
-                if !self.lacking.insert((origin.span, shown.clone())) {
-                    return;
-                }
-                self.error(
-                    Code::TypeMismatch,
-                    format!(
-                        "a `{shown}` cannot be the record here: its field '{field}' is of type {}, and this use also has the record with a field '{field}' of type {}",
-                        self.show_type(&self.apply(declared_ty)),
-                        self.show_type(&self.apply(ty)),
-                    ),
-                    origin.span,
-                );
-            }
-        }
-    }
-
-    /// The record over the annotation variable `r` is extended with
-    /// `field`: for a row variable of a function's signature, the
-    /// function's uses owe that what stands for it has no such field.
-    /// (For another annotation's, the spread itself is the error:
-    /// `anon_rigid`.)
-    fn lacks_rigid(&mut self, r: RigidId, field: Symbol) {
-        if self.is_sig_row(r.var) {
-            self.mark_sig_row(r.var, &[field]);
-        }
-    }
-
-    /// Check that the row `row`, known now, has no field `field`
-    /// (`Pred::Lacks`). A declared record cannot stand for a row that
-    /// is extended at all.
-    fn row_lacks(&mut self, row: &Type, field: Symbol, origin: Origin) {
-        match row {
-            Type::AnonRecord { fields, tail } => {
-                if fields.contains_key(&field) {
-                    self.extends_existing(field, origin.span);
-                    return;
-                }
-                match tail {
-                    RowTail::Var(rest) => {
-                        self.want(
-                            Pred::Lacks {
-                                row: Type::Var(*rest),
-                                field,
-                            },
-                            origin,
-                        );
-                    }
-                    RowTail::Rigid(r) => self.lacks_rigid(*r, field),
-                    RowTail::Closed => {}
-                }
-            }
-            Type::Rigid(r) => self.lacks_rigid(*r, field),
-            Type::Generic(name, _) if self.tables.records.contains_key(name) => {
-                self.spread_through(row, origin);
-            }
-            _ => {}
-        }
-    }
-
     /// Check `base.{ field: value }` now that the type of `base` is
     /// known.
     fn update_field(&mut self, base: &Type, field: Symbol, value: &Type, span: Span) {
         let declared: Vec<(Symbol, Type)> = match base {
             Type::Error | Type::Never => return,
-            Type::AnonRecord { fields, tail } => {
-                if !fields.contains_key(&field) && matches!(tail, RowTail::Var(_)) {
-                    let extended = Type::AnonRecord {
-                        fields: std::collections::BTreeMap::from([(field, value.clone())]),
-                        tail: RowTail::Var(self.fresh_tyvar_id()),
-                    };
-                    self.unify(base, &extended, span);
-                    return;
-                }
-                fields.iter().map(|(k, v)| (*k, v.clone())).collect()
-            }
             Type::Generic(name, args) if self.tables.records.contains_key(name) => {
                 self.instantiate_record_fields_with_args(*name, args)
             }
@@ -1593,54 +1096,6 @@ impl TypeChecker {
         }
         self.solve_wanted(self.closed_mark);
         self.close_level();
-    }
-
-    /// Decide each call `x.f(args)` of the scope just left whose
-    /// receiver is still unknown and is the scope's to generalise: `x` is
-    /// a record with a function in its field `m`.
-    pub(super) fn default_selects(&mut self) {
-        let mine: Vec<usize> = (self.closed_mark..self.wanted.len())
-            .filter(|&i| {
-                !self.wanted[i].solved
-                    && matches!(self.wanted[i].goal, Goal::Select { .. })
-                    && matches!(
-                        self.apply(self.wanted[i].goal.waits_on()),
-                        Type::Var(var) if self.tables.vars.is_generalizable(var)
-                    )
-            })
-            .collect();
-        // The variables this makes are the scope's.
-        self.reopen_level();
-        for i in mine {
-            let origin = self.wanted[i].origin;
-            let Goal::Select {
-                recv,
-                name,
-                args,
-                result,
-            } = self.wanted[i].goal.clone()
-            else {
-                continue;
-            };
-            // (An earlier one of these may have decided this receiver.)
-            if matches!(self.apply(&recv), Type::Var(_)) {
-                self.wanted[i].solved = true;
-                let call_ty = Type::Fun(args, Box::new(result));
-                self.default_select(&recv, name, call_ty, origin.span);
-            }
-        }
-        self.solve_wanted(self.closed_mark);
-        self.close_level();
-    }
-
-    /// `x.name(..)` whose receiver nothing decided: `x` is a record with
-    /// a function of the call's type in its field `name`.
-    fn default_select(&mut self, recv: &Type, name: Symbol, call_ty: Type, span: Span) {
-        let row = Type::AnonRecord {
-            fields: std::collections::BTreeMap::from([(name, call_ty)]),
-            tail: RowTail::Var(self.fresh_tyvar_id()),
-        };
-        self.unify(recv, &row, span);
     }
 
     /// Report that `method`, called on `on` (`type 'Int'`, `a value
@@ -1867,27 +1322,14 @@ impl TypeChecker {
     /// This is the single source of truth for the dispatch-name oracle
     /// on the typechecker side.
     pub(super) fn type_name_for_impl(&self, ty: &Type) -> Option<TypeRef> {
-        let ty = crate::types::canonical::canonicalize(&self.tables.resolver, ty);
-        match &ty {
-            // Anonymous (structural) records are CONCRETE types — they
-            // carry a definite shape — but no user impl can ever target
-            // them (impls bind to nominal heads only).
-            // Returning `None` here would let `verify_trait_obligation` and
-            // its callers in inference.rs treat AnonRecord receivers as
-            // "still polymorphic, defer", which silently bypasses
-            // user-trait `where` constraints — a soundness hole.
-            // Returning the builtin `<anon>` type makes the existing
-            // `trait_impl_set.contains(...)` check fire the "does not
-            // implement trait 'X'" diagnostic (which writes the record's
-            // type); no program can name that type, so no impl targets
-            // it.
-            Type::AnonRecord { .. } => Some(TypeRef::builtin(crate::defs::ANON_RECORD)),
-            // Function values resolve to `Fn`, and `Unit` is `Unit`, so
-            // `where a: Trait` constraints route into the same impl
-            // table the compiler keys impl methods by and
-            // `dispatch_type_for_value` returns at runtime.
-            _ => head_of(&ty),
-        }
+        // Function values resolve to `Fn`, and `Unit` is `Unit`, so
+        // `where a: Trait` constraints route into the same impl table the
+        // compiler keys impl methods by and `dispatch_type_for_value`
+        // returns at runtime.
+        head_of(&crate::types::canonical::canonicalize(
+            &self.tables.resolver,
+            ty,
+        ))
     }
 
     /// Return the positional type arguments of a (concrete) type. Mirrors
@@ -2516,30 +1958,6 @@ impl TypeChecker {
                 };
                 first(self, walk, parts)
             }
-            Type::AnonRecord { fields, tail } => {
-                if tr.is_builtin("Compare") {
-                    return leaf(self, None);
-                }
-                // The fields behind an open row have the trait when the
-                // row does: a row variable owes it like a type variable
-                // (and stands for the record's other fields, or for the
-                // nominal record itself, at a use).
-                let rest = match tail {
-                    RowTail::Closed => None,
-                    RowTail::Var(v) => Some(Type::Var(*v)),
-                    RowTail::Rigid(r) => Some(Type::Rigid(*r)),
-                };
-                if let Some(rest) = rest
-                    && !walk.open.contains(&rest)
-                {
-                    walk.open.push(rest);
-                }
-                let parts = fields
-                    .iter()
-                    .map(|(n, t)| (format!("field '{n}'"), t.clone()))
-                    .collect();
-                first(self, walk, parts)
-            }
             Type::Generic(name, _) => {
                 let head = canonical_head(&self.tables.resolver, *name);
                 // A written `Display` or `json.Encode` impl answers for
@@ -2681,14 +2099,7 @@ impl TypeChecker {
                 );
                 return;
             }
-            // (An anonymous record has no name: the message writes its
-            // type, and says why it has no impl.)
             let message = match &resolved {
-                Type::AnonRecord { .. } => format!(
-                    "type '{}' does not implement trait '{}': an anonymous record has the traits its fields give it, and no impl is written for one",
-                    self.show_type(&resolved),
-                    self.show_bound(trait_name, bound_trait_args)
-                ),
                 // The `()` is no type the program wrote: it is what a
                 // statement's call was given (`fix_statement_calls`).
                 Type::Unit if self.in_fixed_statement(span) => format!(
@@ -2854,8 +2265,7 @@ impl TypeChecker {
                 .iter()
                 .map(|t| substitute_vars(t, &fresh))
                 .collect();
-            // (An impl that fits the use was found so; a record is
-            // compared again, by its fields and its row as written.)
+            // (An impl that fits the use was found so.)
             let fitted = !fitting.is_empty();
             // (An argument built from a variable of the impl's type is
             // decided by the subject's parts: the message names them.)
@@ -2874,9 +2284,7 @@ impl TypeChecker {
             for (bound_arg, impl_arg) in bound_trait_args.iter().zip(&impl_trait_args) {
                 let b = self.apply(bound_arg);
                 let i = self.apply(impl_arg);
-                if (!fitted || holds_record(&b) || holds_record(&i))
-                    && !self.trait_arg_compatible(&b, &i)
-                {
+                if !fitted && !self.trait_arg_compatible(&b, &i) {
                     self.error(
                         Code::MissingTraitImpl,
                         format!(
@@ -3077,22 +2485,6 @@ impl TypeChecker {
                         .zip(a2.iter())
                         .all(|(x, y)| Self::impl_arg_matches_canon(x, y, bindings))
             }
-            (
-                Type::AnonRecord {
-                    fields: f1,
-                    tail: t1,
-                },
-                Type::AnonRecord {
-                    fields: f2,
-                    tail: t2,
-                },
-            ) => {
-                t1 == t2
-                    && f1.len() == f2.len()
-                    && f1.iter().zip(f2.iter()).all(|((k1, v1), (k2, v2))| {
-                        k1 == k2 && Self::impl_arg_matches_canon(v1, v2, bindings)
-                    })
-            }
             _ => Self::trait_arg_compatible_canon(ob, im),
         }
     }
@@ -3147,27 +2539,6 @@ impl TypeChecker {
                         .iter()
                         .zip(a2.iter())
                         .all(|(x, y)| Self::trait_arg_compatible_canon(x, y))
-            }
-            // Structurally compare anonymous records so
-            // bounds like `where a: Convert({a: Int, b: String})` accept
-            // an impl whose trait-arg is the byte-equal record. Without
-            // this arm two equal `AnonRecord` values would fall through to
-            // the `_ => false` catch-all and the obligation be rejected.
-            (
-                Type::AnonRecord {
-                    fields: f1,
-                    tail: t1,
-                },
-                Type::AnonRecord {
-                    fields: f2,
-                    tail: t2,
-                },
-            ) => {
-                t1 == t2
-                    && f1.len() == f2.len()
-                    && f1.iter().zip(f2.iter()).all(|((k1, v1), (k2, v2))| {
-                        k1 == k2 && Self::trait_arg_compatible_canon(v1, v2)
-                    })
             }
             // `Never` is uninhabited; only equal to itself. Symmetry arm
             // for completeness — entry-point `canonicalize` doesn't
@@ -3466,24 +2837,6 @@ fn probe_unify(a: &Type, b: &Type, subst: &mut HashMap<TyVar, Type>) -> bool {
         (Type::Tuple(xs), Type::Tuple(ys)) => all(xs, ys, subst),
         (Type::Fun(xs, x), Type::Fun(ys, y)) => all(xs, ys, subst) && probe_unify(x, y, subst),
         (Type::Generic(x, xs), Type::Generic(y, ys)) => x == y && all(xs, ys, subst),
-        // Records field by field: a field one of them lacks is in the
-        // other's open row, if it has one.
-        (
-            Type::AnonRecord {
-                fields: xs,
-                tail: x_tail,
-            },
-            Type::AnonRecord {
-                fields: ys,
-                tail: y_tail,
-            },
-        ) => {
-            let open = |tail: &RowTail| matches!(tail, RowTail::Var(_));
-            (xs.iter()).all(|(name, x)| match ys.get(name) {
-                Some(y) => probe_unify(x, y, subst),
-                None => open(y_tail),
-            }) && (ys.keys()).all(|name| xs.contains_key(name) || open(x_tail))
-        }
         _ => a == b,
     }
 }
@@ -3525,21 +2878,6 @@ pub(super) fn match_one_way(pattern: &Type, ty: &Type, mapping: &mut HashMap<TyV
             all(xs, ys, mapping) && match_one_way(x, y, mapping)
         }
         (Type::Generic(x, xs), Type::Generic(y, ys)) => x == y && all(xs, ys, mapping),
-        (
-            Type::AnonRecord {
-                fields: xs,
-                tail: x_tail,
-            },
-            Type::AnonRecord {
-                fields: ys,
-                tail: y_tail,
-            },
-        ) => {
-            x_tail == y_tail
-                && xs.len() == ys.len()
-                && (xs.iter())
-                    .all(|(name, x)| ys.get(name).is_some_and(|y| match_one_way(x, y, mapping)))
-        }
         _ => pattern == ty,
     }
 }
@@ -3548,18 +2886,6 @@ pub(super) fn match_one_way(pattern: &Type, ty: &Type, mapping: &mut HashMap<TyV
 fn dedup_in_order(items: &mut Vec<String>) {
     let mut seen = std::collections::HashSet::new();
     items.retain(|item| seen.insert(item.clone()));
-}
-
-/// Whether `ty` has an anonymous record in it.
-fn holds_record(ty: &Type) -> bool {
-    match ty {
-        Type::AnonRecord { .. } => true,
-        Type::Generic(_, ts) | Type::Tuple(ts) => ts.iter().any(holds_record),
-        Type::Fun(params, ret) => params.iter().any(holds_record) || holds_record(ret),
-        Type::List(t) | Type::Set(t) | Type::Channel(t) => holds_record(t),
-        Type::Map(k, v) => holds_record(k) || holds_record(v),
-        _ => false,
-    }
 }
 
 /// The outer type of a trait argument, as `impls_fitting` tells impls
@@ -3574,7 +2900,6 @@ pub(crate) enum OuterHead {
     Map,
     Tuple(usize),
     Fun(usize),
-    Record,
 }
 
 pub(super) fn outer_head(ty: &Type) -> Option<OuterHead> {
@@ -3591,7 +2916,6 @@ pub(super) fn outer_head(ty: &Type) -> Option<OuterHead> {
         Type::Map(..) => OuterHead::Map,
         Type::Tuple(parts) => OuterHead::Tuple(parts.len()),
         Type::Fun(params, _) => OuterHead::Fun(params.len()),
-        Type::AnonRecord { .. } => OuterHead::Record,
         _ => return None,
     })
 }

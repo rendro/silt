@@ -17,6 +17,11 @@ type P {
   kind: Option(Int),
 }
 
+type Q {
+  a: Bool,
+  b: Int,
+}
+
 fn partly(o: Option(Option(Int))) -> Int {
   match o {
     Some(Some(n)) -> n
@@ -106,9 +111,9 @@ fn field(p: P) -> Int {
   }
 }
 
-fn anon(r: { a: Bool, b: Int }) -> Int {
+fn two(r: Q) -> Int {
   match r {
-    { a: true, b: _ } -> 1
+    Q { a: true, b: _ } -> 1
   }
 }
 
@@ -136,6 +141,6 @@ fn main() {
   println(text("a"))
   println(record(P { on: true, kind: None }))
   println(field(P { on: true, kind: None }))
-  println(anon({ a: true, b: 1 }))
+  println(two(Q { a: true, b: 1 }))
   println(nested((Dot, [])))
 }

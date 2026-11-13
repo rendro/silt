@@ -958,7 +958,7 @@ impl Vm {
     /// skipped (`type_name_for_impl` returns `None`); `Op::DisplayValue`
     /// consults this predicate at the execution site to reject the same
     /// set rather than silently rendering a debug string. Locked by
-    /// tests/typecheck/round95_interp_display_runtime_tests.rs.
+    /// tests/typecheck/interp_display_runtime_tests.rs.
     pub fn value_implements_display(val: &Value) -> bool {
         !matches!(
             val,
@@ -990,13 +990,12 @@ impl Vm {
     ///     ``"TypeDescriptor `name`"`` / ``"PrimitiveDescriptor `name`"``.
     ///
     /// The `pub` visibility is required by
-    /// `tests/typecheck/round75_kind_naming_canonical_tests.rs`, which pins
+    /// `tests/typecheck/kind_naming_tests.rs`, which pins
     /// the alignment matrix.
     pub fn user_facing_type_name(&self, val: &Value) -> String {
         match val {
             // Variants that carry semantic content into the user-facing
             // diagnostic. Each is a deliberate alias documented above.
-            Value::Record(record) if record.ty().is_anon() => "an anonymous record".to_string(),
             Value::Record(record) => record.ty().name.clone(),
             Value::Variant(variant) => variant.ty().name.clone(),
             Value::VariantConstructor(tag) => {
