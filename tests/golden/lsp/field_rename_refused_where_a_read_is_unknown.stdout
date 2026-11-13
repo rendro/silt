@@ -1,0 +1,9 @@
+> references 9:11
+field_rename_refused_where_a_read_is_unknown.silt:9:11-9:12
+field_rename_refused_where_a_read_is_unknown.silt:16:20-16:21
+field_rename_refused_where_a_read_is_unknown.silt:16:41-16:42
+field_rename_refused_where_a_read_is_unknown.silt:16:54-16:55
+> prepare-rename 9:11
+(nothing)
+> rename 9:11 left
+error: `x` cannot be renamed now: field_rename_refused_where_a_read_is_unknown.silt:12:5 reads a field `x` of a value whose type is not known, which may be this field; fix that first, so the rename can find every place of the field

@@ -1,0 +1,17 @@
+-- cmd: lsp
+-- lsp: references 9:11
+-- lsp: prepare-rename 9:11
+-- lsp: rename 9:11 left
+-- A field read on a value whose record type the checker does not know
+-- (`p.x` of a parameter nothing decides) may be a place of any field `x`:
+-- a rename of a field `x` is refused while it is there, so it cannot
+-- leave a read behind. References still list what is known.
+type Pt { x: Int, y: Int }
+
+fn get(p) {
+  p.x
+}
+
+fn main() {
+  println(get(Pt { x: 1, y: 2 }) + Pt { x: 3, y: 4 }.x)
+}

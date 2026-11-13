@@ -90,6 +90,11 @@ pub(super) struct Names<'a> {
     pub(super) locals: Vec<LocalName>,
     pub(super) methods: Vec<MethodUse>,
     pub(super) fields: Vec<FieldUse>,
+    /// The field reads on a value whose record type is not known (a
+    /// type error, an anonymous record): the span of the name and the
+    /// name. A field of that name cannot be renamed while one is there,
+    /// since the read may be one of its places.
+    pub(super) unknown_reads: Vec<(Span, Symbol)>,
     /// The module names written before a dot: `geo` in `geo.mk(1)`, in
     /// `geo.Pt { x: 1 }`, in a type `geo.Pt`, in a pattern
     /// `geo.Shape.Circle(r)`, in `where a: geo.Sized`. A name in an
@@ -159,6 +164,7 @@ impl<'a> Names<'a> {
             punned: Vec::new(),
             fields: Vec::new(),
             qualifiers: Vec::new(),
+            unknown_reads: Vec::new(),
             declares: false,
             text: session
                 .graph()
@@ -468,8 +474,13 @@ impl<'a> Names<'a> {
                 // field access is its receiver's.) After a trait
                 // (`Sized.size`) the name is the method the checker
                 // selected; on a value it is a field.
+                // (A record literal names its type too, `Pt { x: 1 }.x`,
+                // but it is a value: `.x` behind it is a field.)
                 let qualified = match receiver.res {
                     Some(Res::Module(_)) => true,
+                    Some(Res::Def(_)) if matches!(receiver.kind, ExprKind::RecordCreate { .. }) => {
+                        false
+                    }
                     Some(Res::Def(id)) => self.table().get(id).is_type(),
                     Some(Res::Local | Res::Error) | None => false,
                 };
@@ -509,6 +520,8 @@ impl<'a> Names<'a> {
                     && let Some(record) = self.record_of(receiver.ty.as_ref())
                 {
                     self.field(*field_span, record, *field, false);
+                } else if field_span.is_in_source() {
+                    self.unknown_reads.push((*field_span, *field));
                 }
                 self.expr(receiver);
             }

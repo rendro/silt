@@ -220,6 +220,7 @@ struct ModuleUses {
     uses: Vec<(Span, DefId)>,
     punned: Vec<Span>,
     fields: Vec<FieldUse>,
+    unknown_reads: Vec<(Span, Symbol)>,
 }
 
 /// A place that names a target.
@@ -1052,6 +1053,7 @@ impl Server {
                     uses: names.defs.iter().map(|used| (used.span, used.id)).collect(),
                     punned: names.punned,
                     fields: names.fields,
+                    unknown_reads: names.unknown_reads,
                 });
             }
             projects.push((dir.clone(), modules));
@@ -1185,6 +1187,55 @@ impl Server {
             }
         }
         // (A file with an edit is one of those: it names the target.)
+        None
+    }
+
+    /// Why the places of the field `name` of the record type `record`
+    /// cannot all be known, if they cannot: a module that can see the
+    /// type (its own, or one that imports it, also through others) was
+    /// not checked, or reads a field `name` of a value whose record type
+    /// is not known (a type error there). Such a read may be a place of
+    /// the field; a rename that left it would break the program, so it
+    /// is refused. Every other read has its record type from the checker
+    /// and is found. Call after [`Server::places_of`] for the target.
+    pub(super) fn field_places_unknown(&self, record: &DefKey, name: Symbol) -> Option<String> {
+        let def_uses = self.def_uses.as_ref()?;
+        for (dir, modules) in &def_uses.projects {
+            let Some(project) = self.projects.get(dir) else {
+                continue;
+            };
+            let session = &project.session;
+            let Some(id) = def_of_key(session, record) else {
+                continue;
+            };
+            let home = session.defs().get(id).module;
+            let file_of = |m: ModuleId| {
+                let path = &session.graph().module(m).path;
+                (path.file_name())
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            };
+            for module in session.graph().modules() {
+                let sees_it = module.id == home || session.graph().reach(module.id).contains(&home);
+                if !sees_it {
+                    continue;
+                }
+                if session.module_analysis(module.id).is_none() {
+                    return Some(format!("{} was not checked", file_of(module.id)));
+                }
+                let reads = (modules.iter())
+                    .find(|m| m.module == module.id)
+                    .map_or(&[][..], |m| &m.unknown_reads[..]);
+                if let Some((span, _)) = reads.iter().find(|(_, read)| *read == name) {
+                    let (line, col) = session.sources().line_col((span.file, span.start));
+                    return Some(format!(
+                        "{}:{line}:{col} reads a field `{}` of a value whose type is not known",
+                        file_of(module.id),
+                        resolve_sym(name)
+                    ));
+                }
+            }
+        }
         None
     }
 

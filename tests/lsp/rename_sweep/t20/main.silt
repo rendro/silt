@@ -25,5 +25,6 @@ fn main() {
   let Pt { x: px, y } = shapes.origin()
   println(px + y + norm(p.{ y: 0 }) + shapes.area(s.{ x }))
   println(p)
+  println("{Pt { x: 1, y: 2 }.x} {(Size { x: 5, w: 6 }).x} {shapes.origin().x}")
   println("{util.label(util.make(0))} {util.label(util.make(2))}")
 }

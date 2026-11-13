@@ -34,4 +34,6 @@ fn main() {
   println("{b.value.x} {s.w}")
   let Pt { x: px, y: _ } = shapes.origin()
   println(px + b.value.y)
+  println(Pt { x: 7, y: 8 }.x + (Pt { x: 9, y: 0 }).x)
+  println("{Size { x: 1, w: 1 }.x} {Pt { x: 2, y: 3 }.x}")
 }

@@ -52,6 +52,7 @@ impl Server {
         let range = span_to_range(&span, &doc.source);
         if self.not_renameable(uri, &target).is_some()
             || self.incomplete_for_rename(uri, &target).is_some()
+            || self.unknown_field_reads(&target).is_some()
         {
             return None;
         }
@@ -110,6 +111,12 @@ impl Server {
                  that holds it mean is not known, and a rename would leave them as they are"
             )));
         }
+        if let Some(unknown) = self.unknown_field_reads(&target) {
+            return Err(invalid(format!(
+                "`{old_name}` cannot be renamed now: {unknown}, which may be this field; fix \
+                 that first, so the rename can find every place of the field"
+            )));
+        }
         if let Some(clash) = self.rename_clash(uri, &target, &new_name) {
             // (A field is named after its value only: no other name
             // can capture it.)
@@ -151,6 +158,19 @@ impl Server {
             document_changes: None,
             change_annotations: None,
         }))
+    }
+}
+
+impl Server {
+    /// For a field: why not every place of it can be known now (see
+    /// `field_places_unknown`). The places are looked up first.
+    fn unknown_field_reads(&self, target: &Target) -> Option<String> {
+        let Target::Field { record, name } = target else {
+            return None;
+        };
+        // (`incomplete_for_rename` walked the workspace already; the
+        // walk is kept until the next analysis.)
+        self.field_places_unknown(record, *name)
     }
 }
 
