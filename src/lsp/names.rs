@@ -90,6 +90,11 @@ pub(super) struct Names<'a> {
     pub(super) locals: Vec<LocalName>,
     pub(super) methods: Vec<MethodUse>,
     pub(super) fields: Vec<FieldUse>,
+    /// The module names written before a dot: `geo` in `geo.mk(1)`, in
+    /// `geo.Pt { x: 1 }`, in a type `geo.Pt`, in a pattern
+    /// `geo.Shape.Circle(r)`, in `where a: geo.Sized`. A name in an
+    /// expression is one only when the resolver took it for a module.
+    pub(super) qualifiers: Vec<crate::ast::Qualifier>,
     /// The names of definitions written as a field without a pattern
     /// or a value: declared by a top-level `let` (`let P { x } = p`), or
     /// used in a record literal or update (`P { x }`).
@@ -153,6 +158,7 @@ impl<'a> Names<'a> {
             methods: Vec::new(),
             punned: Vec::new(),
             fields: Vec::new(),
+            qualifiers: Vec::new(),
             declares: false,
             text: session
                 .graph()
@@ -211,6 +217,15 @@ impl<'a> Names<'a> {
         }
     }
 
+    /// A module name before a dot.
+    fn qualifier(&mut self, qualifier: &Option<crate::ast::Qualifier>) {
+        if let Some(q) = qualifier
+            && q.span.is_in_source()
+        {
+            self.qualifiers.push(*q);
+        }
+    }
+
     /// Where the name of the field `field` is written in front of its
     /// value `value` (`x` in `x: 1`), in a record literal or update that
     /// starts at byte `from`: the last `field :` before the value, as the
@@ -262,6 +277,8 @@ impl<'a> Names<'a> {
         match decl {
             Decl::Fn(f) => self.fn_decl(f),
             Decl::TraitImpl(ti) => {
+                self.qualifier(&ti.trait_module);
+                self.qualifier(&ti.target_module);
                 self.name(ti.trait_name_span, ti.trait_res);
                 self.name(ti.target_type_span, ti.target_res);
                 self.where_clauses(&ti.where_clauses);
@@ -347,6 +364,7 @@ impl<'a> Names<'a> {
 
     fn where_clauses(&mut self, clauses: &[WhereClause]) {
         for clause in clauses {
+            self.qualifier(&clause.trait_module);
             self.name(clause.trait_name_span, clause.trait_res);
             for arg in &clause.trait_args {
                 self.type_expr(arg);
@@ -355,6 +373,7 @@ impl<'a> Names<'a> {
     }
 
     fn trait_ref(&mut self, r: &TraitRef) {
+        self.qualifier(&r.module);
         self.name(r.span, r.res);
         for arg in &r.args {
             self.type_expr(arg);
@@ -363,10 +382,19 @@ impl<'a> Names<'a> {
 
     fn type_expr(&mut self, te: &TypeExpr) {
         match &te.kind {
-            TypeExprKind::Named { name_span, .. } => self.name(*name_span, te.res),
-            TypeExprKind::Generic {
-                name_span, args, ..
+            TypeExprKind::Named {
+                module, name_span, ..
             } => {
+                self.qualifier(module);
+                self.name(*name_span, te.res);
+            }
+            TypeExprKind::Generic {
+                module,
+                name_span,
+                args,
+                ..
+            } => {
+                self.qualifier(module);
                 self.name(*name_span, te.res);
                 for arg in args {
                     self.type_expr(arg);
@@ -428,6 +456,10 @@ impl<'a> Names<'a> {
             }
             ExprKind::Ident(name) => match expr.res {
                 Some(Res::Local) => self.local(expr.span, *name, false, false),
+                Some(Res::Module(_)) => self.qualifier(&Some(crate::ast::Qualifier {
+                    name: *name,
+                    span: expr.span,
+                })),
                 res => self.name(expr.span, res),
             },
             ExprKind::FieldAccess(receiver, field, field_span) => {
@@ -509,11 +541,13 @@ impl<'a> Names<'a> {
                 self.expr(body);
             }
             ExprKind::RecordCreate {
+                module,
                 name_span,
                 fields,
                 punned,
                 ..
             } => {
+                self.qualifier(module);
                 self.name(*name_span, expr.res);
                 let record = match expr.res {
                     Some(Res::Def(id)) => self.record(id),
@@ -619,6 +653,12 @@ impl<'a> Names<'a> {
                 args,
                 ..
             } => {
+                // (A module's name is lower-case, an enum's is not.)
+                for segment in qualifier {
+                    if resolve_sym(segment.name).starts_with(|c: char| c.is_ascii_lowercase()) {
+                        self.qualifier(&Some(*segment));
+                    }
+                }
                 self.name(*name_span, pattern.res);
                 // `m.Shape.Circle(r)`, `Shape.Circle(r)`: the segment
                 // that names the variant's enum.
@@ -635,8 +675,12 @@ impl<'a> Names<'a> {
                 }
             }
             PatternKind::Record {
-                name_span, fields, ..
+                module,
+                name_span,
+                fields,
+                ..
             } => {
+                self.qualifier(module);
                 self.name(*name_span, pattern.res);
                 if let Some(Res::Def(record)) = pattern.res
                     && let Some(record) = self.record(record)

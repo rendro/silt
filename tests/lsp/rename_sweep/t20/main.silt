@@ -1,5 +1,6 @@
 import shapes
 import shapes.{ Pt, Size }
+import util
 
 type Pair(a) {
   left: a,
@@ -24,4 +25,5 @@ fn main() {
   let Pt { x: px, y } = shapes.origin()
   println(px + y + norm(p.{ y: 0 }) + shapes.area(s.{ x }))
   println(p)
+  println("{util.label(util.make(0))} {util.label(util.make(2))}")
 }

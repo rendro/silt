@@ -10,7 +10,8 @@
 //! parameter, a `let` in a body, a pattern's binder) is found in its
 //! document, by the binding a use resolves to. A record field is found
 //! by its record type, which the checker knows at each place that names
-//! it: `x` of `P` is not `x` of `Q`.
+//! it: `x` of `P` is not `x` of `Q`. The alias of `import m as a` is
+//! found in its document: the import and each `a.` before a name.
 //!
 //! The modules searched are those the open documents' sessions have
 //! checked, and the workspace files that import the module of the
@@ -67,6 +68,10 @@ pub(super) enum Target {
     /// The field `name` of the record type `record`: its declaration,
     /// the literals, updates and patterns that name it, its reads.
     Field { record: DefKey, name: Symbol },
+    /// The name `import m as name` of the open document gives a module,
+    /// which the import writes at byte `at`: the import and each
+    /// `name.` before a name of the module.
+    Alias { at: u32, name: Symbol },
 }
 
 /// Whether byte `cursor` is in `span` or directly behind it.
@@ -137,6 +142,30 @@ fn field_declared(session: &Session, record: DefId, name: Symbol) -> Option<(Mod
         },
         _ => None,
     })
+}
+
+/// The alias of an import of `program` at byte `cursor`, as the import
+/// writes it (`sh` in `import shapes as sh`) or before a dot (`sh` in
+/// `sh.area(s)`, in a type `sh.Pt`): its span there and the alias.
+fn alias_at(program: &Program, names: &Names, cursor: usize) -> Option<(Span, Target)> {
+    let aliases = || {
+        program.decls.iter().filter_map(|decl| match decl {
+            Decl::Import(ImportTarget::Alias(_, alias, span), _) => Some((*alias, *span)),
+            _ => None,
+        })
+    };
+    if let Some((name, span)) = aliases().find(|(_, span)| holds(*span, cursor)) {
+        return Some((
+            span,
+            Target::Alias {
+                at: span.start,
+                name,
+            },
+        ));
+    }
+    let used = names.qualifiers.iter().find(|q| holds(q.span, cursor))?;
+    let (name, at) = aliases().find(|(alias, _)| *alias == used.name)?;
+    Some((used.span, Target::Alias { at: at.start, name }))
 }
 
 /// The method whose name a trait or an impl of `program` declares at
@@ -292,7 +321,7 @@ impl Server {
         {
             return Some((local.span, Target::Local(binding)));
         }
-        field(true)
+        field(true).or_else(|| alias_at(doc.program.as_ref()?, &names, cursor))
     }
 
     /// What the name at byte `cursor` of the open document `uri` is: for
@@ -304,7 +333,9 @@ impl Server {
         };
         let keys = match target {
             Target::Local(_) => return Named::Local,
-            Target::Method { .. } | Target::Field { .. } => return Named::Other,
+            Target::Method { .. } | Target::Field { .. } | Target::Alias { .. } => {
+                return Named::Other;
+            }
             Target::Defs(keys) => keys,
         };
         let info = keys.iter().find_map(|key| {
@@ -431,6 +462,7 @@ impl Server {
             Target::Method { tr, .. } => matches!(tr, DefKey::Builtin(_))
                 .then(|| "is a method of a builtin trait and cannot be renamed".to_string()),
             Target::Field { record, .. } => self.field_not_renameable(uri, record),
+            Target::Alias { .. } => None,
             Target::Local(binding) => {
                 let doc = self.documents.get(uri)?;
                 let local = doc.locals.iter().find(|b| b.binding_offset == *binding)?;
@@ -470,6 +502,13 @@ impl Server {
                 self.walk_if_needed();
                 self.field_places(record, *name, include_definition)
             }
+            Target::Alias { at, name } => (self.alias_places(uri, *at, *name, include_definition))
+                .into_iter()
+                .map(|location| Place {
+                    location,
+                    punned: false,
+                })
+                .collect(),
         };
         let key = |p: &Place| {
             (
@@ -561,6 +600,14 @@ impl Server {
                 });
                 found.into_iter().collect()
             }
+            Target::Alias { at, name } => (self.alias_places(uri, *at, *name, true).into_iter())
+                .filter(|location| {
+                    (self.documents.get(uri)).is_some_and(|doc| {
+                        super::conversions::position_to_offset(&doc.source, &location.range.start)
+                            == *at as usize
+                    })
+                })
+                .collect(),
             Target::Defs(keys) => {
                 let mut locations: Vec<Location> = Vec::new();
                 for key in keys {
@@ -735,6 +782,75 @@ impl Server {
             }
         }
         None
+    }
+
+    /// The places of the open document `uri` that name the alias `name`
+    /// that an import writes at byte `at`: each `name.` before a name,
+    /// and with `include_declaration` the alias in the import.
+    fn alias_places(
+        &self,
+        uri: &Uri,
+        at: u32,
+        name: Symbol,
+        include_declaration: bool,
+    ) -> Vec<Location> {
+        let Some(doc) = self.documents.get(uri) else {
+            return Vec::new();
+        };
+        let Some((names, ..)) = self.names_of(doc) else {
+            return Vec::new();
+        };
+        let declared = doc.program.as_ref().and_then(|program| {
+            program.decls.iter().find_map(|decl| match decl {
+                Decl::Import(ImportTarget::Alias(_, alias, span), _)
+                    if *alias == name && span.start == at =>
+                {
+                    Some(*span)
+                }
+                _ => None,
+            })
+        });
+        let mut spans: Vec<Span> = (names.qualifiers.iter())
+            .filter(|q| q.name == name)
+            .map(|q| q.span)
+            .chain(declared.filter(|_| include_declaration))
+            .collect();
+        spans.sort_by_key(|span| span.start);
+        spans.dedup();
+        spans
+            .into_iter()
+            .map(|span| Location::new(uri.clone(), span_to_range(&span, &doc.source)))
+            .collect()
+    }
+
+    /// Why an alias of an import of the open document `uri` cannot be
+    /// called `new`: `new` is the name of one of silt's own modules, or
+    /// another import of the file names a module so.
+    fn alias_clash(&self, uri: &Uri, new: Symbol) -> Option<String> {
+        let name = resolve_sym(new);
+        if crate::module::is_builtin_module(&name) {
+            return Some(format!("`{name}` is the name of one of silt's own modules"));
+        }
+        let doc = self.documents.get(uri)?;
+        let import = doc
+            .program
+            .as_ref()?
+            .decls
+            .iter()
+            .find_map(|decl| match decl {
+                Decl::Import(
+                    ImportTarget::Module(module) | ImportTarget::Items(module, _),
+                    span,
+                ) if *module == new => Some(*span),
+                Decl::Import(ImportTarget::Alias(_, alias, _), span) if *alias == new => {
+                    Some(*span)
+                }
+                _ => None,
+            })?;
+        Some(format!(
+            "`{name}` already names the module imported at line {}",
+            line_of(&doc.source, import.start)
+        ))
     }
 
     /// The declaration of the method whose name at a call holds byte
@@ -1043,6 +1159,8 @@ impl Server {
             Target::Method { tr, .. } | Target::Field { record: tr, .. } => {
                 std::slice::from_ref(tr)
             }
+            // (An alias is named in its own file only.)
+            Target::Alias { .. } => return own,
             Target::Defs(keys) => keys,
         };
         if own.is_some() {
@@ -1088,6 +1206,7 @@ impl Server {
                     .filter(|location| location.uri == *uri)
                     .collect();
             }
+            Target::Alias { at, name } => return self.alias_places(uri, *at, *name, true),
             Target::Field { record, name } => {
                 let Some(doc) = self.documents.get(uri) else {
                     return Vec::new();
@@ -1168,6 +1287,11 @@ impl Server {
         }
         if let Target::Field { record, .. } = target {
             return self.field_clash(record, new_sym);
+        }
+        if let Target::Alias { .. } = target
+            && let Some(clash) = self.alias_clash(uri, new_sym)
+        {
+            return Some(clash);
         }
         let places = self.places_of(uri, target, true);
         // One of silt's own names, visible in every module: a builtin
