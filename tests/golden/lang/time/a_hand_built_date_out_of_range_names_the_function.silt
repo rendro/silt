@@ -1,0 +1,8 @@
+-- exit: 1
+-- A part of a hand-built `Date` past what any date has is a runtime error that names the function, in silt's words.
+-- stderr-contains: error[runtime]: time.add_days: year 9999999999 is out of range
+-- stderr-not-contains: i32
+import time
+fn main() {
+  println(time.add_days(time.Date { year: 9999999999, month: 1, day: 1 }, 1))
+}

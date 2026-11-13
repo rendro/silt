@@ -1,0 +1,7 @@
+-- exit: 1
+-- A hand-built `Date` that is no date (February 31) is a runtime error that names the function it was given to.
+-- stderr-contains: error[runtime]: time.weekday: invalid date: 2023-2-31
+import time
+fn main() {
+  println(time.weekday(time.Date { year: 2023, month: 2, day: 31 }))
+}

@@ -349,7 +349,24 @@ fn http_error(error: &ureq::Error, url: &str) -> Value {
     use std::io::ErrorKind;
     use ureq::Error;
 
-    let why = || vec![Value::string(redact_http_url_userinfo(&error.to_string()))];
+    // (Without the library's name of the kind, `io: `, `protocol: `,
+    // which the variant says; a TLS reason in the program's words.)
+    let text = match error {
+        Error::Io(io) => io.to_string(),
+        Error::Protocol(protocol) => protocol.to_string(),
+        Error::Http(http) => http.to_string(),
+        Error::Rustls(tls) => tls.to_string(),
+        Error::Other(other) => other.to_string(),
+        _ => error.to_string(),
+    };
+    let why = || vec![Value::string(redact_http_url_userinfo(&text))];
+    let tls = || {
+        let reason = super::common::tls_reason(&text, "the server");
+        Value::variant(
+            bv::HTTP_TLS,
+            [Value::string(redact_http_url_userinfo(&reason))],
+        )
+    };
     let invalid_url = || {
         let url = redact_http_url_userinfo(url);
         Value::variant(bv::HTTP_INVALID_URL, [Value::string(url)])
@@ -398,7 +415,7 @@ fn http_error(error: &ureq::Error, url: &str) -> Value {
             | ErrorKind::ConnectionAborted
             | ErrorKind::BrokenPipe
             | ErrorKind::NotConnected => Value::variant(bv::HTTP_CLOSED_EARLY, []),
-            ErrorKind::InvalidData if https => Value::variant(bv::HTTP_TLS, why()),
+            ErrorKind::InvalidData if https => tls(),
             _ => Value::variant(bv::HTTP_OTHER, why()),
         },
         Error::HostNotFound | Error::ConnectionFailed | Error::ConnectProxyFailed(_) => {
@@ -410,9 +427,7 @@ fn http_error(error: &ureq::Error, url: &str) -> Value {
         Error::Protocol(_) | Error::LargeResponseHeader(..) => {
             Value::variant(bv::HTTP_INVALID_RESPONSE, why())
         }
-        Error::Tls(_) | Error::Rustls(_) | Error::Pem(_) | Error::TlsRequired => {
-            Value::variant(bv::HTTP_TLS, why())
-        }
+        Error::Tls(_) | Error::Rustls(_) | Error::Pem(_) | Error::TlsRequired => tls(),
         // (A status is no failure: silt asks the library for it as a
         // response, and the library's error for one is never made.)
         _ => Value::variant(bv::HTTP_OTHER, why()),
@@ -2498,6 +2513,8 @@ mod http_error_tests {
         drop(listener);
         let got = failure(&do_http_get(&url));
         assert!(got.starts_with("Connect("), "{got}");
+        // (In silt's words: without the library's `io: `.)
+        assert!(!got.contains("io: "), "{got}");
     }
 
     #[test]
@@ -2550,7 +2567,7 @@ mod http_error_tests {
             let _ = wait.recv();
         });
         let got = get(&plain.replace("http://", "https://"), 5000);
-        assert!(got.starts_with("Tls("), "{got}");
+        assert_eq!(got, "Tls(what the server sent is not TLS)");
         drop(done);
     }
 
@@ -2698,8 +2715,8 @@ mod http_body_tests {
             let message = format!("HTTP/1.1 200 OK\r\n{lengths}\r\n\r\nabc").into_bytes();
             do_http_request(method, &says(message), b"", &[])
         };
-        let disagree = "InvalidResponse(protocol: conflicting content-length headers)";
-        let no_number = "InvalidResponse(protocol: content-length header not a number)";
+        let disagree = "InvalidResponse(conflicting content-length headers)";
+        let no_number = "InvalidResponse(content-length header not a number)";
         for (lengths, expected) in [
             ("Content-Length: 2\r\nContent-Length: 3", disagree),
             ("Content-Length: 2\r\nContent-Length: 2, 3", disagree),

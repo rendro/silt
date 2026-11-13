@@ -117,3 +117,121 @@ pub(crate) fn nibble_to_hex(n: u8, uppercase: bool) -> char {
         _ => unreachable!("nibble_to_hex called with n > 15"),
     }
 }
+
+/// The reason of a failed TLS handshake in the program's words, from the
+/// text of the TLS library's error (`raw`), which writes the library's
+/// own names (`invalid peer certificate: Other(OtherError(
+/// CaUsedAsEndEntity))`). `peer` is who sent what was refused: "the
+/// server" or "the client". A text this does not know is kept.
+#[cfg(any(feature = "http", feature = "tcp-tls"))]
+pub(crate) fn tls_reason(raw: &str, peer: &str) -> String {
+    if let Some(cert) = raw.strip_prefix("invalid peer certificate: ") {
+        // (The library writes some of its reasons in words, `certificate
+        // expired: ...`, and the others by name, `Expired`.)
+        let is = |name: &str, words: &str| cert.starts_with(name) || cert.starts_with(words);
+        let why = if cert.contains("CaUsedAsEndEntity") {
+            "is self-signed, not signed by an authority this program trusts".to_string()
+        } else if is("UnknownIssuer", "certificate issuer unknown") {
+            "is not signed by an authority this program trusts".to_string()
+        } else if is("Expired", "certificate expired") {
+            "has expired".to_string()
+        } else if is("NotValidYet", "certificate not valid yet") {
+            "is not valid yet".to_string()
+        } else if is("NotValidForName", "certificate not valid for name") {
+            "is not for this host name".to_string()
+        } else if is("Revoked", "certificate revoked") {
+            "is revoked".to_string()
+        } else if is("BadSignature", "certificate bad signature") {
+            "has a signature that does not verify".to_string()
+        } else if is("BadEncoding", "certificate bad encoding") {
+            "cannot be read".to_string()
+        } else if is("InvalidPurpose", "certificate does not allow") {
+            "is not for this use".to_string()
+        } else if cert.starts_with("certificate ") {
+            format!("is refused: {cert}")
+        } else {
+            let name = cert.trim_start_matches("Other(OtherError(");
+            format!("is refused: {}", library_name_in_words(name))
+        };
+        return format!("{peer}'s certificate {why}");
+    }
+    if raw.starts_with("received corrupt message") {
+        return format!("what {peer} sent is not TLS");
+    }
+    for (prefix, said) in [
+        ("received fatal alert: ", "ended the handshake"),
+        ("peer is incompatible: ", "is incompatible"),
+        ("peer misbehaved: ", "broke the protocol"),
+    ] {
+        if let Some(name) = raw.strip_prefix(prefix) {
+            return format!("{peer} {said}: {}", library_name_in_words(name));
+        }
+    }
+    raw.to_string()
+}
+
+/// A name of the TLS library's (`HandshakeFailure`) in words
+/// (`handshake failure`); any part after the name is dropped.
+#[cfg(any(feature = "http", feature = "tcp-tls"))]
+fn library_name_in_words(name: &str) -> String {
+    let name = name
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .next()
+        .unwrap_or(name);
+    let mut words = String::new();
+    for (i, c) in name.char_indices() {
+        if c.is_ascii_uppercase() && i > 0 {
+            words.push(' ');
+        }
+        words.push(c.to_ascii_lowercase());
+    }
+    words
+}
+
+#[cfg(all(test, any(feature = "http", feature = "tcp-tls")))]
+mod tls_reason_tests {
+    use super::tls_reason;
+
+    #[test]
+    fn the_library_s_names_are_said_in_words() {
+        let cases = [
+            (
+                "invalid peer certificate: Other(OtherError(CaUsedAsEndEntity))",
+                "the server's certificate is self-signed, not signed by an authority this \
+                 program trusts",
+            ),
+            (
+                "invalid peer certificate: UnknownIssuer",
+                "the server's certificate is not signed by an authority this program trusts",
+            ),
+            (
+                "invalid peer certificate: certificate expired: verification time 1 (UNIX), but certificate is not valid after 0 (1 seconds ago)",
+                "the server's certificate has expired",
+            ),
+            (
+                "invalid peer certificate: certificate not valid for name \"a\"; certificate is not valid for any names (according to its subjectAltName extension)",
+                "the server's certificate is not for this host name",
+            ),
+            (
+                "invalid peer certificate: Other(OtherError(SomethingElse))",
+                "the server's certificate is refused: something else",
+            ),
+            (
+                "received corrupt message of type InvalidContentType",
+                "what the server sent is not TLS",
+            ),
+            (
+                "received fatal alert: HandshakeFailure",
+                "the server ended the handshake: handshake failure",
+            ),
+            (
+                "peer is incompatible: NoCipherSuitesInCommon",
+                "the server is incompatible: no cipher suites in common",
+            ),
+            ("connection reset", "connection reset"),
+        ];
+        for (raw, want) in cases {
+            assert_eq!(tls_reason(raw, "the server"), want, "{raw}");
+        }
+    }
+}
