@@ -1251,40 +1251,48 @@ pub fn check_http_response(bytes: &[u8]) -> Result<(), String> {
 
 // ── The editor's messages ───────────────────────────────────────────
 
-/// The messages framed in `bytes` as `silt lsp` reads them from stdin,
-/// up to the end or the first that does not read (which ends a session
-/// there), the input given to the reader `piece` bytes at a time.
-#[cfg(feature = "lsp")]
-fn lsp_messages(bytes: &[u8], piece: usize) -> Vec<lsp_server::Message> {
-    let mut input = std::io::BufReader::with_capacity(piece, bytes);
-    let mut messages = Vec::new();
-    while let Ok(Some(message)) = lsp_server::Message::read(&mut input) {
-        messages.push(message);
-    }
-    messages
-}
-
-/// What `silt lsp` makes of any bytes from the editor. The messages read
-/// are the same however the bytes arrive; the server, as after the
-/// start, handles each without a panic (a handler's panic is caught and
-/// answered, but it is a fault all the same: libFuzzer reports it), and
-/// answers each request it handled once, and nothing else.
+/// What `silt lsp` makes of any bytes from the editor (stdin). The
+/// transport reads the same messages, and the same that cannot be read,
+/// however the bytes arrive; one that cannot be read is answered with a
+/// parse error or an invalid request, with its id or `null`. The server,
+/// as after the start, handles each message without a panic (a handler's
+/// panic is caught and answered, but it is a fault all the same:
+/// libFuzzer reports it), and answers each request it handled once, and
+/// nothing else.
 #[cfg(feature = "lsp")]
 pub fn check_lsp_messages(bytes: &[u8]) -> Result<(), String> {
+    use crate::lsp::in_memory::{read, serve};
     use lsp_server::{Message, RequestId};
     use std::collections::BTreeMap;
-    let messages = lsp_messages(bytes, 8 * 1024);
-    let shown = |messages: &[Message]| -> Vec<String> {
-        (messages.iter())
-            .map(|message| serde_json::to_string(message).unwrap_or_default())
+    let frames = read(bytes, 8 * 1024);
+    let shown = |frames: &[Result<Message, (serde_json::Value, i64)>]| -> Vec<String> {
+        (frames.iter())
+            .map(|frame| match frame {
+                Ok(message) => serde_json::to_string(message).unwrap_or_default(),
+                Err(fault) => format!("{fault:?}"),
+            })
             .collect()
     };
     for piece in [1, 7] {
-        if shown(&lsp_messages(bytes, piece)) != shown(&messages) {
+        if shown(&read(bytes, piece)) != shown(&frames) {
             return Err(format!("the messages read {piece} bytes at a time differ"));
         }
     }
-    let (sent, handled) = crate::lsp::in_memory::serve(messages);
+    let mut messages = Vec::new();
+    for frame in frames {
+        match frame {
+            Ok(message) => messages.push(message),
+            Err((id, code)) => {
+                use serde_json::Value::{Null, Number, String};
+                if !matches!(code, -32700 | -32600) || !matches!(id, Null | Number(_) | String(_)) {
+                    return Err(format!(
+                        "a message that cannot be read is answered {code} {id}"
+                    ));
+                }
+            }
+        }
+    }
+    let (sent, handled) = serve(messages);
     let mut unanswered: BTreeMap<RequestId, usize> = BTreeMap::new();
     for id in handled {
         *unanswered.entry(id).or_default() += 1;
@@ -1432,13 +1440,22 @@ mod tests {
         let unknown = r#"{"jsonrpc":"2.0","id":"x","method":"no/such","params":null}"#;
         let input = [open, hover, hover, unknown].map(frame).concat();
         check_lsp_messages(input.as_bytes()).unwrap();
-        let (sent, handled) = crate::lsp::in_memory::serve(lsp_messages(input.as_bytes(), 64));
+        let read = || crate::lsp::in_memory::read(input.as_bytes(), 64);
+        let (sent, handled) = crate::lsp::in_memory::serve(read().into_iter().flatten().collect());
         assert_eq!(handled.len(), 3);
         let answers = (sent.iter())
             .filter(|message| matches!(message, lsp_server::Message::Response(_)))
             .count();
         assert_eq!(answers, 3);
-        // What does not read ends the input; a truncated message is none.
+        // A message that cannot be read is answered by the transport, and
+        // the next one is read; a truncated message ends the input.
+        let input = [frame("not json"), frame(hover)].concat();
+        let read = crate::lsp::in_memory::read(input.as_bytes(), 64);
+        assert!(
+            matches!(&read[..], [Err((serde_json::Value::Null, -32700)), Ok(_)]),
+            "{read:?}"
+        );
+        check_lsp_messages(input.as_bytes()).unwrap();
         check_lsp_messages(b"Content-Length: 99\r\n\r\n{}").unwrap();
         check_lsp_messages(b"Content-Length: x\r\n\r\n").unwrap();
     }
