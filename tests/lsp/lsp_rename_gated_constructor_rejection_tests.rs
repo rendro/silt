@@ -110,7 +110,7 @@ fn rename_on_user_ident_in_doc_mentioning_gated_ctor_succeeds() {
 ///
 /// This unit test exercises the same boolean expression used in
 /// `rename_on_gated_constructor_is_rejected` and
-/// `round81_lsp_rename_user_shadow_tests::rename_use_site_of_actual_builtin_int_is_rejected`,
+/// `lsp_rename_user_shadow_tests::rename_use_site_of_actual_builtin_int_is_rejected`,
 /// against a `{}` value. If anyone relaxes that expression back to
 /// the old shape, this test fires.
 #[test]

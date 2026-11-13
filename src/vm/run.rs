@@ -32,7 +32,7 @@ use crate::runtime::sync::Wait;
 /// keeping the runtime and compile-time
 /// layers in parity. Rust-level collection keying / dedup uses `PartialEq
 /// for Value` directly, not this operator path (see
-/// tests/typecheck/round74_hash_eq_ord_contract_tests.rs) — but the silt-visible
+/// tests/typecheck/hash_eq_ord_contract_tests.rs) — but the silt-visible
 /// collection builtins that consume that ordering/equality (list.sort /
 /// unique / contains / index_of, set.from_list / insert / contains /
 /// remove and the set algebra ops) carry their own mirror of this gate:
@@ -916,7 +916,7 @@ impl Vm {
                         // `value_implements_display` (below) so the runtime gate
                         // and the surface-name reporting cannot drift from
                         // `Value::kind`. Parity is locked by
-                        // tests/typecheck/round95_interp_display_runtime_tests.rs.
+                        // tests/typecheck/interp_display_runtime_tests.rs.
                         _ if !Self::value_implements_display(&val) => {
                             // Report the canonical surface name so the runtime
                             // message matches the typechecker's compile-time one
