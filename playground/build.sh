@@ -5,6 +5,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 rm -rf pkg
-wasm-pack build --release --target web --out-dir pkg --no-pack
+# `--locked`: the module is built from the versions in Cargo.lock.
+wasm-pack build --release --target web --out-dir pkg --no-pack -- --locked
 # wasm-pack's own ignore file would keep the files out of an archive.
 rm -f pkg/.gitignore
