@@ -1,0 +1,69 @@
+error[lex]: a raw text-direction control character, U+202E: it can make the text show otherwise than it reads
+ --> direction_controls__refused_in_strings_and_comments.silt:8:19
+   |
+ 8 |   -- check access � } �if is_admin� � begin admins only 
+   |                   ^ a raw text-direction control character, U+202E: it can make the text show otherwise than it reads
+  = help: write `\u{202E}` in a string
+
+error[lex]: a raw text-direction control character, U+2066: it can make the text show otherwise than it reads
+ --> direction_controls__refused_in_strings_and_comments.silt:8:23
+   |
+ 8 |   -- check access � } �if is_admin� � begin admins only 
+   |                       ^ a raw text-direction control character, U+2066: it can make the text show otherwise than it reads
+  = help: write `\u{2066}` in a string
+
+error[lex]: a raw text-direction control character, U+2069: it can make the text show otherwise than it reads
+ --> direction_controls__refused_in_strings_and_comments.silt:8:35
+   |
+ 8 |   -- check access � } �if is_admin� � begin admins only 
+   |                                   ^ a raw text-direction control character, U+2069: it can make the text show otherwise than it reads
+  = help: write `\u{2069}` in a string
+
+error[lex]: a raw text-direction control character, U+2066: it can make the text show otherwise than it reads
+ --> direction_controls__refused_in_strings_and_comments.silt:8:37
+   |
+ 8 |   -- check access � } �if is_admin� � begin admins only 
+   |                                     ^ a raw text-direction control character, U+2066: it can make the text show otherwise than it reads
+  = help: write `\u{2066}` in a string
+
+error[lex]: a raw text-direction control character, U+202E: it can make the text show otherwise than it reads
+ --> direction_controls__refused_in_strings_and_comments.silt:9:16
+   |
+ 9 |   let s = "user� �// admin�"
+   |                ^ a raw text-direction control character, U+202E: it can make the text show otherwise than it reads
+  = help: write `\u{202E}` in a string
+
+error[lex]: a raw text-direction control character, U+2066: it can make the text show otherwise than it reads
+ --> direction_controls__refused_in_strings_and_comments.silt:9:18
+   |
+ 9 |   let s = "user� �// admin�"
+   |                  ^ a raw text-direction control character, U+2066: it can make the text show otherwise than it reads
+  = help: write `\u{2066}` in a string
+
+error[lex]: a raw text-direction control character, U+2069: it can make the text show otherwise than it reads
+ --> direction_controls__refused_in_strings_and_comments.silt:9:27
+   |
+ 9 |   let s = "user� �// admin�"
+   |                           ^ a raw text-direction control character, U+2069: it can make the text show otherwise than it reads
+  = help: write `\u{2069}` in a string
+
+error[lex]: a raw text-direction control character, U+2067: it can make the text show otherwise than it reads
+ --> direction_controls__refused_in_strings_and_comments.silt:10:15
+    |
+ 10 |   let r = """a�b"""
+    |               ^ a raw text-direction control character, U+2067: it can make the text show otherwise than it reads
+  = help: write `\u{2067}` in a string
+
+error[lex]: a raw text-direction control character, U+202A: it can make the text show otherwise than it reads
+ --> direction_controls__refused_in_strings_and_comments.silt:12:15
+    |
+ 12 |   let t = "{n}�x"
+    |               ^ a raw text-direction control character, U+202A: it can make the text show otherwise than it reads
+  = help: write `\u{202A}` in a string
+
+error[lex]: a raw text-direction control character, U+202D: it can make the text show otherwise than it reads
+ --> direction_controls__refused_in_strings_and_comments.silt:13:12
+    |
+ 13 |   {- block � -}
+    |            ^ a raw text-direction control character, U+202D: it can make the text show otherwise than it reads
+  = help: write `\u{202D}` in a string

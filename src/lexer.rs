@@ -683,8 +683,38 @@ impl Lexer {
             if ch == '\n' {
                 break;
             }
+            self.refuse_direction_control();
             self.advance_char();
         }
+    }
+
+    /// In a string or a comment, where any character may stand: the
+    /// character at the current position, if it is a raw text-direction
+    /// control, is an error. Such a character can make the text show
+    /// otherwise than the compiler reads it ("Trojan Source"); written
+    /// as an escape in a string it shows as what it is. (Between tokens
+    /// it is an invisible character, refused as one.)
+    fn refuse_direction_control(&mut self) {
+        let Some(c) = self.peek().filter(|c| is_direction_control(*c)) else {
+            return;
+        };
+        let start = self.span();
+        let at = Span {
+            end: start.end + c.len_utf8() as u32,
+            ..start
+        };
+        let code = c as u32;
+        self.error(|| {
+            Diagnostic::error(
+                Code::UnexpectedChar,
+                at,
+                format!(
+                    "a raw text-direction control character, U+{code:04X}: it can make the \
+                     text show otherwise than it reads"
+                ),
+            )
+            .with_help(format!("write `\\u{{{code:X}}}` in a string"))
+        });
     }
 
     /// Skip to the end of the block comment whose `{-` was just read, and
@@ -695,6 +725,7 @@ impl Lexer {
         let mut depth = 1;
         let start = self.span();
         while depth > 0 {
+            self.refuse_direction_control();
             match self.advance_char() {
                 Some('{') if self.peek() == Some('-') => {
                     self.advance_char();
@@ -858,6 +889,7 @@ impl Lexer {
                     self.advance_char();
                 }
                 Some(ch) => {
+                    self.refuse_direction_control();
                     self.advance_char();
                     text.push(ch);
                 }
@@ -939,6 +971,7 @@ impl Lexer {
                     break;
                 }
                 Some(ch) => {
+                    self.refuse_direction_control();
                     self.advance_char();
                     raw.push(ch);
                 }
@@ -1551,6 +1584,13 @@ impl Lexer {
         self.error(|| Diagnostic::error(Code::UnexpectedChar, span, message()));
         (Token::Error, start)
     }
+}
+
+/// Whether `c` is a text-direction control: an embedding, an override
+/// or their end (U+202A to U+202E), an isolate or its end (U+2066 to
+/// U+2069).
+fn is_direction_control(c: char) -> bool {
+    matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
 }
 
 /// Whether `c` shows as nothing or as white space: the spaces outside
@@ -2180,6 +2220,34 @@ mod tests {
     #[test]
     fn test_scientific_with_sign() {
         assert_eq!(lex("1e-3"), vec![Token::Float(1e-3)]);
+    }
+
+    /// A raw text-direction control is refused in a string, a raw
+    /// string and a comment; its escape is a character like any.
+    #[test]
+    fn a_raw_direction_control_is_refused() {
+        for c in ['\u{202A}', '\u{202E}', '\u{2066}', '\u{2069}'] {
+            for src in [
+                format!("\"a{c}b\""),
+                format!("\"{{x}}{c}\""),
+                format!("\"\"\"a{c}b\"\"\""),
+                format!("-- a{c}b\n1"),
+                format!("{{- a{c}b -}} 1"),
+            ] {
+                let error = Lexer::new(crate::source::FileId::default(), &src)
+                    .tokenize()
+                    .checked()
+                    .map(|_| ())
+                    .expect_err(&src);
+                assert_eq!(error.code, Code::UnexpectedChar, "{src}");
+                assert_eq!(
+                    error.help,
+                    vec![format!("write `\\u{{{:X}}}` in a string", c as u32)],
+                    "{src}"
+                );
+            }
+        }
+        assert_eq!(lex("\"\\u{202E}\""), vec![Token::StringLit("\u{202E}".into())]);
     }
 
     /// A number has one spelling; each other one is an error that

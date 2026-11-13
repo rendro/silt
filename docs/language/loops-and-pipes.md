@@ -128,6 +128,11 @@ fn main() {
 Any other character behind a backslash is an error. Triple-quoted
 strings take no escapes: a backslash in one is a backslash.
 
+A text-direction control character (U+202A to U+202E, U+2066 to
+U+2069) is an error anywhere in a file, in a string or a comment too:
+it can make the text show otherwise than the compiler reads it. In a
+string, write it as an escape, `"\u{202E}"`.
+
 ### Triple-Quoted Strings
 
 No escape processing, no interpolation, indentation stripping:
