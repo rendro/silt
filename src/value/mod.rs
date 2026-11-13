@@ -29,10 +29,10 @@ pub use convert::{
 pub(crate) use deep::drop_held;
 pub use float::Float;
 pub use fmt::{Shown, Written};
-pub(crate) use list::MAX_COLLECTION_LEN;
 #[cfg(feature = "test-hooks")]
 pub use list::copies as list_copies;
 pub use list::{IntTotal, IntoIter, Iter, List, TooLong};
+pub(crate) use list::{MAX_COLLECTION_LEN, MAX_TEXT_LEN};
 #[cfg(feature = "test-hooks")]
 pub use map::copies as map_copies;
 pub use map::{Map, MapIntoIter, MapIter, Set, SetIntoIter, SetIter};

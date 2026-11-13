@@ -38,9 +38,9 @@ pub const HEADERS_MAX: usize = 100;
 /// The longest body that is read off the wire, given by its length or
 /// in chunks: a request's by the server (beyond it: 413), and a
 /// response's by the client (beyond it: `Err(InvalidResponse(_))`).
-/// It is the most a `Bytes` may hold (`MAX_COLLECTION_LEN`): a body is
+/// It is the most a `Bytes` may hold (`MAX_TEXT_LEN`): a body is
 /// one, and a program can make every body it can be given.
-pub const BODY_MAX: usize = crate::value::MAX_COLLECTION_LEN;
+pub const BODY_MAX: usize = crate::value::MAX_TEXT_LEN;
 
 /// The longest method. A connection whose first bytes are no method
 /// and a space is refused at once (400), not waited out: a TLS

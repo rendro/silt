@@ -253,7 +253,7 @@ builtins! {
             out.push('=');
             out.push_str(&form_escape_component(value));
             // The pairs can hold one long string many times.
-            if out.len() > crate::value::MAX_COLLECTION_LEN {
+            if out.len() > crate::value::MAX_TEXT_LEN {
                 return Err(too_long_text("encoding.form_encode", out.len()));
             }
         }

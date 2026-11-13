@@ -2,7 +2,7 @@
 
 use super::common::cut;
 use super::typed::{List, Text, builtins};
-use crate::value::{MAX_COLLECTION_LEN, Value};
+use crate::value::{MAX_TEXT_LEN, Value};
 use crate::vm::{Step, Vm, VmError};
 
 /// The one character `pad` is, for `string.<name>`.
@@ -32,9 +32,9 @@ fn padding(name: &str, s: &str, width: i64, pad: &str) -> Result<String, VmError
 
 /// `width` is no wider than a string may be, for `string.<name>`.
 fn fits_width(name: &str, width: i64) -> Result<(), VmError> {
-    match width as i128 > MAX_COLLECTION_LEN as i128 {
+    match width as i128 > MAX_TEXT_LEN as i128 {
         true => Err(VmError::new(format!(
-            "string.{name}: width {width} exceeds maximum of {MAX_COLLECTION_LEN}"
+            "string.{name}: width {width} exceeds maximum of {MAX_TEXT_LEN}"
         ))),
         false => Ok(()),
     }
@@ -169,7 +169,7 @@ builtins! {
         // producing `(|s| + 1) * |to| + |s|` bytes and can trivially
         // blow out RAM. Sibling builtins (`string.repeat`,
         // `string.pad_left`, `string.pad_right`) cap at
-        // `MAX_COLLECTION_LEN`; mirror that exactly.
+        // `MAX_TEXT_LEN`; mirror that exactly.
         let s_len = s.len() as u128;
         let from_len = from.len() as u128;
         let to_len = to.len() as u128;
@@ -191,10 +191,10 @@ builtins! {
                 s_len.saturating_sub(shrink)
             }
         };
-        if result_len > MAX_COLLECTION_LEN as u128 {
+        if result_len > MAX_TEXT_LEN as u128 {
             return Err(VmError::new(format!(
                 "string.replace: result would exceed maximum string size ({} bytes > {} limit)",
-                result_len, MAX_COLLECTION_LEN
+                result_len, MAX_TEXT_LEN
             )));
         }
         Ok(s.replace(from, to))
@@ -211,10 +211,10 @@ builtins! {
                 result_len = result_len.saturating_add(s.len() as u128);
             }
         }
-        if result_len > MAX_COLLECTION_LEN as u128 {
+        if result_len > MAX_TEXT_LEN as u128 {
             return Err(VmError::new(format!(
                 "string.join: result would exceed maximum string size ({} bytes > {} limit)",
-                result_len, MAX_COLLECTION_LEN
+                result_len, MAX_TEXT_LEN
             )));
         }
         let shown: Vec<String> = xs.iter().map(|item| item.to_string()).collect();
@@ -257,10 +257,10 @@ builtins! {
     fn repeat(s: &str, n: i64) -> Result<String, VmError> {
         let n = cut(n);
         let result_len = (n as u128) * (s.len() as u128);
-        if result_len > MAX_COLLECTION_LEN as u128 {
+        if result_len > MAX_TEXT_LEN as u128 {
             return Err(VmError::new(format!(
                 "string.repeat: result would exceed maximum string size ({} bytes > {} limit)",
-                result_len, MAX_COLLECTION_LEN
+                result_len, MAX_TEXT_LEN
             )));
         }
         Ok(s.repeat(n))

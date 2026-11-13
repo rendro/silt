@@ -16,15 +16,15 @@ use base64::Engine;
 use super::common::{cut, nibble_to_hex, ok};
 use super::typed::{Bytes, List, builtins, unsound};
 use crate::typeinfo::bv;
-use crate::value::{MAX_COLLECTION_LEN, Value};
+use crate::value::{MAX_TEXT_LEN, Value};
 use crate::vm::VmError;
 
-/// Refuses Bytes of `size` that `name` would make: more than a list
-/// may hold elements ([`MAX_COLLECTION_LEN`]).
+/// Refuses Bytes of `size` that `name` would make: more than a string
+/// or a `Bytes` may hold ([`MAX_TEXT_LEN`]).
 fn fits(name: &str, size: usize) -> Result<(), VmError> {
-    match size > MAX_COLLECTION_LEN {
+    match size > MAX_TEXT_LEN {
         true => Err(VmError::new(format!(
-            "{name}: result would exceed maximum size ({size} bytes > {MAX_COLLECTION_LEN} limit)"
+            "{name}: result would exceed maximum size ({size} bytes > {MAX_TEXT_LEN} limit)"
         ))),
         false => Ok(()),
     }

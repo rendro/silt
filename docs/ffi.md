@@ -508,6 +508,10 @@ source of randomness of its own, so the embedder supplies them:
   thing to happen is a deadline (a task's sleep, a timeout), the thread
   cannot be put to sleep: it calls the clock's `sleep` for the time that
   is left, and looks at the clock again when the call returns.
+- **Sizes.** A string or a `Bytes` holds at most 1,000,000 bytes
+  there (10,000,000 elsewhere): a builtin or an interpolation that would
+  make a longer one is a runtime error, as one past the larger limit
+  is elsewhere.
 - **Randomness.** `getrandom` and `uuid` refuse to build for the target
   until the embedder's crate picks a source: in a browser, add
   `getrandom = { version = "0.2", features = ["js"] }` and

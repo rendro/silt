@@ -46,6 +46,14 @@ Every offset counts UTF-16 code units, as a JavaScript string does.
   and reads a time one hour later from then on.
 - **A program ends after 200,000,000 steps**, with a runtime error: a
   program that loops for ever would hold the page for ever.
+- **Output and values are smaller.** A run keeps 1,000,000 bytes of
+  output: a `print` past them is a runtime error (`cannot write to
+  stdout: the playground shows at most 1000000 bytes of output`), and
+  what goes to stderr past them is dropped. A string or a `Bytes` holds
+  at most 1,000,000 bytes (10,000,000 elsewhere): a builtin or an
+  interpolation that would make a longer one is a runtime error. A
+  page's memory is still not bounded as a whole: many values of that
+  size can fill it.
 - **A panic of silt itself is a trap.** The call throws, and the module
   is of no use afterwards: read `panic_message()`, then load the module
   again.
