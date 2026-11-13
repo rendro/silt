@@ -140,6 +140,9 @@ pub struct HostFn {
     pub arity: usize,
     /// The types its module declares, which a call can build values of.
     pub types: Arc<HostTypes>,
+    /// The declared fields of the types its result type names, which a
+    /// result is checked against.
+    pub templates: Arc<HostTemplates>,
 }
 
 /// A type variable (`a`) of a host function's return type, with the
@@ -230,22 +233,35 @@ pub enum HostShape {
     /// and its name.
     Var(usize, String),
     /// A record or enum type by its id, as written (`Point`,
-    /// `Box(Int)`, `time.Date`), with what is checked of its parts: for a
-    /// type of the host module, the fields of the record (one list), or
-    /// the fields of each variant of the enum (a list per variant, in
-    /// declaration order), each of the type its declaration gives at the
-    /// signature's type arguments. Of a builtin type, and of a type met
-    /// again inside itself at other arguments, the id is checked (no
-    /// list).
+    /// `Box(Int)`, `time.Date`), at the type arguments `args`: a value
+    /// of it is of that type, and its fields (those of the record, or of
+    /// the variant it is) are of the types the declaration gives them at
+    /// those arguments ([`HostTemplates`]).
     Named {
         id: TypeId,
         name: String,
-        parts: Vec<Vec<HostShape>>,
+        args: Vec<HostShape>,
     },
-    /// The type of that id met again inside itself, at the same type
-    /// arguments (`Node(Tree, Int, Tree)` of `type Tree`): checked as the
-    /// `Named` shape of that id around it.
-    Again(TypeId, String),
+    /// In the declared fields of a type ([`HostTemplates`]): the type
+    /// argument at that place of the type the field is of.
+    Param(u16),
+}
+
+/// The declared fields of the record and enum types a host function's
+/// result type names, by type: for a record, one list of its fields'
+/// shapes; for an enum, one list per variant, in declaration order. A
+/// type parameter of the type is [`HostShape::Param`]. Each type is
+/// here once, whatever its depth in the result type or the number of its
+/// uses, so a check is no larger than the result it looks at.
+pub type HostTemplates = HashMap<TypeId, Vec<Vec<HostShape>>>;
+
+/// The type arguments of the `Named` shapes a check is inside of, the
+/// innermost first: `Param(i)` there is `args[i]`, which is read in the
+/// frame around it (`up`).
+#[derive(Clone, Copy)]
+struct Frame<'f> {
+    args: &'f [HostShape],
+    up: Option<&'f Frame<'f>>,
 }
 
 impl HostFn {
@@ -736,30 +752,29 @@ impl HostShape {
     /// whatever the size of its result, and what lies beyond them
     /// passes.
     pub fn check(&self, value: &Value, witnesses: &Witnesses<'_, '_>) -> Result<(), HostFault> {
-        self.check_in(value, witnesses, &mut { SAME_TYPE_PARTS }, &mut Vec::new())
+        self.check_in(value, witnesses, &mut { SAME_TYPE_PARTS }, None)
     }
 
     /// `check`, of the parts `budget` still lets it look at, inside the
-    /// types `outer` (the `Named` shapes around this one, innermost
-    /// last).
-    fn check_in<'s>(
-        &'s self,
+    /// types whose arguments `env` gives.
+    fn check_in(
+        &self,
         value: &Value,
         witnesses: &Witnesses<'_, '_>,
         budget: &mut usize,
-        outer: &mut Vec<&'s HostShape>,
+        env: Option<&Frame<'_>>,
     ) -> Result<(), HostFault> {
         fn all<'v, 's: 'v>(
             shapes: impl Iterator<Item = (&'s HostShape, &'v Value)>,
             witnesses: &Witnesses<'_, '_>,
             budget: &mut usize,
-            outer: &mut Vec<&'s HostShape>,
+            env: Option<&Frame<'_>>,
         ) -> Result<(), HostFault> {
             for (shape, v) in shapes {
                 if *budget == 0 {
                     break;
                 }
-                shape.check_in(v, witnesses, budget, outer)?;
+                shape.check_in(v, witnesses, budget, env)?;
             }
             Ok(())
         }
@@ -785,12 +800,12 @@ impl HostShape {
                     items.runs().flatten().map(|v| (&**item, v)),
                     witnesses,
                     budget,
-                    outer,
+                    env,
                 ),
-                Some((lo, _)) => item.check_in(&Value::Int(lo), witnesses, budget, outer),
+                Some((lo, _)) => item.check_in(&Value::Int(lo), witnesses, budget, env),
             },
             (HostShape::Set(item), Value::Set(items)) => {
-                all(items.iter().map(|v| (&**item, v)), witnesses, budget, outer)
+                all(items.iter().map(|v| (&**item, v)), witnesses, budget, env)
             }
             (HostShape::Map(k, v), Value::Map(entries)) => all(
                 entries
@@ -798,57 +813,46 @@ impl HostShape {
                     .flat_map(|(key, value)| [(&**k, key), (&**v, value)]),
                 witnesses,
                 budget,
-                outer,
+                env,
             ),
             (HostShape::Option(item), Value::Variant(variant)) => match variant.fields() {
-                [v] if variant.is(bv::SOME) => item.check_in(v, witnesses, budget, outer),
+                [v] if variant.is(bv::SOME) => item.check_in(v, witnesses, budget, env),
                 [] => yes(variant.is(bv::NONE)),
                 _ => Err(HostFault::Shape),
             },
             (HostShape::Result(ok, err), Value::Variant(variant)) => match variant.fields() {
-                [v] if variant.is(bv::OK) => ok.check_in(v, witnesses, budget, outer),
-                [v] if variant.is(bv::ERR) => err.check_in(v, witnesses, budget, outer),
+                [v] if variant.is(bv::OK) => ok.check_in(v, witnesses, budget, env),
+                [v] if variant.is(bv::ERR) => err.check_in(v, witnesses, budget, env),
                 _ => Err(HostFault::Shape),
             },
             (HostShape::Tuple(items), Value::Tuple(values)) => {
                 yes(items.len() == values.len())?;
-                all(items.iter().zip(values.iter()), witnesses, budget, outer)
+                all(items.iter().zip(values.iter()), witnesses, budget, env)
             }
-            (HostShape::Named { id, parts, .. }, Value::Record(record)) => {
-                yes(record.type_id() == *id)?;
-                let Some(fields) = parts.first() else {
+            (HostShape::Named { id, args, .. }, value) => {
+                let (of, ordinal, fields) = match value {
+                    Value::Record(record) => (record.type_id(), 0, record.fields()),
+                    Value::Variant(variant) => {
+                        (variant.type_id(), variant.ordinal(), variant.fields())
+                    }
+                    _ => return Err(HostFault::Shape),
+                };
+                yes(of == *id)?;
+                let declared = (witnesses.host.templates.get(id))
+                    .and_then(|parts| parts.get(usize::from(ordinal)));
+                let Some(declared) = declared else {
                     return Ok(());
                 };
-                outer.push(self);
-                let checked = all(fields.iter().zip(record.fields()), witnesses, budget, outer);
-                outer.pop();
-                checked
+                let inner = Frame { args, up: env };
+                all(declared.iter().zip(fields), witnesses, budget, Some(&inner))
             }
-            (HostShape::Named { id, parts, .. }, Value::Variant(variant)) => {
-                yes(variant.type_id() == *id)?;
-                let Some(fields) = parts.get(usize::from(variant.ordinal())) else {
-                    return Ok(());
-                };
-                outer.push(self);
-                let checked = all(
-                    fields.iter().zip(variant.fields()),
-                    witnesses,
-                    budget,
-                    outer,
-                );
-                outer.pop();
-                checked
-            }
-            (HostShape::Again(id, _), value) => {
-                let around = outer
-                    .iter()
-                    .rev()
-                    .find(|shape| matches!(shape, HostShape::Named { id: of, .. } if of == id));
-                match around {
-                    Some(around) => around.check_in(value, witnesses, budget, outer),
+            (HostShape::Param(at), value) => match env {
+                Some(frame) => match frame.args.get(usize::from(*at)) {
+                    Some(arg) => arg.check_in(value, witnesses, budget, frame.up),
                     None => Ok(()),
-                }
-            }
+                },
+                None => Ok(()),
+            },
             (HostShape::Var(at, _), value) => match witnesses.get(*at) {
                 Some(witness) => {
                     let fits = match witness.source.of_type {
@@ -895,9 +899,8 @@ impl fmt::Display for HostShape {
             HostShape::Result(ok, err) => list(f, "Result", &[ok, err]),
             HostShape::Tuple(items) => list(f, "", &items.iter().collect::<Vec<_>>()),
             HostShape::Channel(item) => list(f, "Channel", &[item]),
-            HostShape::Var(_, name) | HostShape::Named { name, .. } | HostShape::Again(_, name) => {
-                write!(f, "{name}")
-            }
+            HostShape::Var(_, name) | HostShape::Named { name, .. } => write!(f, "{name}"),
+            HostShape::Param(at) => write!(f, "_{at}"),
         }
     }
 }

@@ -103,7 +103,7 @@ let lists = HostModule::new("lists").function(
         let Value::List(xs) = &call.args[0] else {
             return Err(VmError::new("expected a list".into()));
         };
-        xs.first().cloned().into_value().map_err(VmError::new)
+        xs.first().into_value().map_err(VmError::new)
     },
 );
 ```
@@ -129,12 +129,15 @@ and number, so a function can rely on its signature. When the function
 returns, its result is checked against its return type, as far as a
 value shows it: `Int`, `Float`, `Bool`, `String`, `Bytes` and `()`;
 `List`, `Set`, `Map`, `Option`, `Result` and tuples of them; a
-`Channel`; and a record or enum type by its type, with, for a type the
-host module declares, the types of its fields and of the fields of
-each variant (`Box(Int)` at its argument: its `value: a` is an `Int`).
-Of a builtin record or enum type (`time.Date`, `json.Value`) the type
-is checked; a builtin type whose values are neither (`regex.Regex`,
-`tcp.TcpStream`, `postgres.PgPool`) is not checked. A `-> Int` function that returns a
+`Channel`; and a record or enum type, the host module's or a builtin
+one (`time.Date`, `json.Value`): its type, and the types of the fields
+of the record or of the variant it is, as the declaration gives them
+at the type's arguments (`Box(Int)`: its `value: a` is an `Int`),
+inside it as deep as the check goes. A builtin type whose values are
+neither (`regex.Regex`, `tcp.TcpStream`, `postgres.PgPool`) is not
+checked. A value belongs to the program it was made in: one a host keeps
+from another session's program is not told apart from a value of the
+same type id in this one. A `-> Int` function that returns a
 `String` is a runtime error that names it (`mylib.count: its signature
 returns Int, but it returned String "three"`). No value is of `Never`:
 a `-> Never` function that returns a value is that error too, and it
@@ -243,9 +246,12 @@ A declaration is one `type` declaration of a record or an enum, with
 type parameters if it has them (`type Box(a) { value: a }`); its
 fields name the module's types, the prelude's and those of the builtin
 modules (`type Stamp { at: time.Date }`). A type is not named like a
-type of the prelude. `pub opaque type Conn { id: Int }` declares a
-type a program can pass on but not build or read: only the host
-functions build one and read its fields.
+type or trait of the prelude (`Option`, `Never`, `Display`): that is
+an error. Everything a host module declares is public, and no
+declaration says so: `pub` in front of one is an error.
+`opaque type Conn { id: Int }` declares a type a program can pass on
+but not build or read: only the host functions build one and read its
+fields.
 
 A host type is shown by its structure, as every record and enum is:
 `"{p}"` gives `Point {x: 3, y: -4}`, and a `main` that returns
@@ -297,8 +303,9 @@ whether or not the program imports it, at `<host:mylib>`:
   an enum (an alias, a function, two types in one `declare_type`), a
   type with a function in a field, and what is wrong with it as with
   any module's type: a type it names that does not exist, a field
-  written twice, a type named like another of the module, like a
-  function of it or like a type of the prelude;
+  written twice, a type named like another of the module or like a
+  function of it; a type named like a type or trait of the prelude; a
+  declaration written with `pub`;
 - a host module whose name is not an identifier (`my-lib`), one named
   like a builtin module (`list`), or two host modules with one name.
 

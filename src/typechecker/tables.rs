@@ -598,6 +598,23 @@ impl Tables {
         self.records.get(&ty).map_or(&[], |info| &info.fields)
     }
 
+    /// The record or enum type `ty` as its declaration gives it: its type
+    /// parameters, and the types of its fields (one list for a record,
+    /// one per variant of an enum, in declaration order). `None` for a
+    /// type that is neither.
+    pub(crate) fn declared_parts(&self, ty: TypeRef) -> Option<(Vec<TyVar>, Vec<Vec<Type>>)> {
+        if let Some(info) = self.enums.get(&ty) {
+            let parts = (info.variants.iter())
+                .map(|v| v.field_types.clone())
+                .collect();
+            return Some((info.param_var_ids.clone(), parts));
+        }
+        let info = self.records.get(&ty)?;
+        let params = (self.record_param_var_ids.get(&ty).cloned()).unwrap_or_default();
+        let fields = info.fields.iter().map(|(_, ty)| ty.clone()).collect();
+        Some((params, vec![fields]))
+    }
+
     /// The variants of the enum type `ty`, each with the types of its
     /// fields, in declaration order; none for a type that is no enum.
     pub fn variant_fields_of(&self, ty: TypeRef) -> Vec<(Symbol, &[Type])> {

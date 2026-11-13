@@ -405,6 +405,9 @@ pub struct Parser<'src> {
     docs: Option<Vec<Comment>>,
     /// The comments the lexer found, kept for `with_docs`.
     comments: Vec<Comment>,
+    /// Whether the text is a host module's declarations (`for_host`):
+    /// all public, so `opaque type` is written without `pub`.
+    host: bool,
     /// What a top-level item is called in the same-line error: a
     /// "declaration" in a file, a "statement" in the REPL, whose entries
     /// are statements (see `parse_cell`).
@@ -470,8 +473,16 @@ impl<'src> Parser<'src> {
             errors: Vec::new(),
             depth: 0,
             docs: None,
+            host: false,
             top_level_item: "declaration",
         }
+    }
+
+    /// Parse a host module's declarations: everything in one is public,
+    /// and an opaque type is written `opaque type` (docs/ffi.md).
+    pub fn for_host(mut self) -> Self {
+        self.host = true;
+        self
     }
 
     /// Also attach documentation: each top-level declaration (and each
@@ -1574,6 +1585,14 @@ impl<'src> Parser<'src> {
                         "expected fn, type, trait, or let after pub",
                     )),
                 }
+            }
+            // A host module's opaque type: its declarations are public.
+            Token::Opaque if self.host => {
+                let opaque = self.span();
+                let mut t = self.parse_type_decl_after_opaque()?;
+                t.is_opaque = true;
+                t.span = opaque.to(t.span);
+                Ok(Decl::Type(t))
             }
             // `opaque type T { .. }`: a private type has nothing to hide.
             Token::Opaque => {

@@ -5263,6 +5263,7 @@ mod seen_drops {
                 vars: Vec::new(),
                 arity: 0,
                 types: Default::default(),
+                templates: Default::default(),
             })))
         };
         let maker = Value::HostFn(Arc::new(HostFn {
@@ -5272,6 +5273,7 @@ mod seen_drops {
             vars: Vec::new(),
             arity: 0,
             types: Default::default(),
+            templates: Default::default(),
         }));
         (maker, log)
     }
@@ -5297,6 +5299,7 @@ mod seen_drops {
                     vars: Vec::new(),
                     arity: 0,
                     types: Default::default(),
+                    templates: Default::default(),
                 }))
             }
         };
@@ -5308,6 +5311,7 @@ mod seen_drops {
                 vars: Vec::new(),
                 arity: 0,
                 types: Default::default(),
+                templates: Default::default(),
             }))
         };
         let probes = {
@@ -5345,6 +5349,7 @@ mod seen_drops {
             vars: Vec::new(),
             arity: 0,
             types: Default::default(),
+            templates: Default::default(),
         }));
         (maker, given)
     }
@@ -5966,6 +5971,7 @@ mod calls_and_returns {
             vars: Vec::new(),
             arity: 0,
             types: Default::default(),
+            templates: Default::default(),
         }));
         for callee in [closure, host] {
             for argument in results() {
@@ -6169,6 +6175,7 @@ mod parts_in_place {
             vars: Vec::new(),
             arity: 0,
             types: Default::default(),
+            templates: Default::default(),
         }))
     }
 
@@ -6379,6 +6386,7 @@ mod methods_in_place {
             vars: Vec::new(),
             arity: 0,
             types: Default::default(),
+            templates: Default::default(),
         }))
     }
 
@@ -7189,6 +7197,7 @@ mod interpolation {
                 vars: Vec::new(),
                 arity: 0,
                 types: Default::default(),
+                templates: Default::default(),
             }))
         };
         let script = make_function(|e| {

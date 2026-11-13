@@ -308,7 +308,7 @@ fn building_a_value_of_a_type_that_does_not_fit_is_a_runtime_error() {
 #[test]
 fn an_opaque_host_type_is_built_and_read_by_the_host_only() {
     let host = HostModule::new("db")
-        .declare_type("pub opaque type Conn { id: Int }")
+        .declare_type("opaque type Conn { id: Int }")
         .function("fn open(id: Int) -> Conn", |call: &HostCall| {
             call.record("Conn", [("id", call.args[0].clone())])
         })
@@ -351,6 +351,36 @@ fn a_malformed_host_type_is_reported() {
         (
             HostModule::new("h").function("type P { x: Int }", |_: &HostCall| Ok(Value::Unit)),
             "a host function is declared by a `fn` header with no body",
+        ),
+        (
+            HostModule::new("h").declare_type("type Option(a) { x: a }"),
+            "the host type `Option` has the name of a type of the prelude: a host type has a \
+             name of its own",
+        ),
+        (
+            HostModule::new("h").declare_type("type Result(a, e) { Fine(a), Bad(e) }"),
+            "the host type `Result` has the name of a type of the prelude",
+        ),
+        (
+            HostModule::new("h").declare_type("type Never { x: Int }"),
+            "the host type `Never` has the name of a type of the prelude",
+        ),
+        (
+            HostModule::new("h").declare_type("type Display { x: Int }"),
+            "the host type `Display` has the name of a type of the prelude",
+        ),
+        (
+            HostModule::new("h").declare_type("pub type P { x: Int }"),
+            "a host module's declarations are public: write it without `pub`",
+        ),
+        (
+            HostModule::new("h").declare_type("pub opaque type P { x: Int }"),
+            "a host module's declarations are public: write it without `pub`",
+        ),
+        (
+            HostModule::new("h")
+                .function("pub fn f(x: Int) -> Int", |_: &HostCall| Ok(Value::Int(1))),
+            "a host module's declarations are public: write it without `pub`",
         ),
         (
             HostModule::new("h").declare_type("type P { f: Fn(Int) -> Int }"),
@@ -643,4 +673,140 @@ fn a_host_type_is_shown_by_its_structure() {
     let source = "import geo\ntrait Display for geo.Point {\n  fn display(self) -> String { \"p\" }\n}\nfn main() { }\n";
     let found = errors(source, geo());
     assert_eq!(found.len(), 1, "{found:?}");
+}
+
+/// A host type named like a type of the prelude is refused, so a
+/// signature's `Option(Int)` is the prelude's, and its result is checked
+/// as one (review of #336: a host `Option` was typed as the host's and
+/// checked as the prelude's, and a prelude `Some` reached the program
+/// as a host record).
+#[test]
+fn a_prelude_name_is_no_host_type_and_the_check_reads_the_prelude_type() {
+    let host = HostModule::new("h")
+        .declare_type("type Option(a) { x: a }")
+        .fn0("fn f() -> Option(Int)", || Some(5_i64));
+    let found = errors("import h\nfn main() { let o = h.f()\n println(o) }", host);
+    assert!(
+        found
+            .iter()
+            .any(|e| e.message.contains("has the name of a type of the prelude")),
+        "{found:?}"
+    );
+    let host = HostModule::new("h").fn0("fn f() -> Option(Int)", || Some(5_i64));
+    let source = "import h\nimport host\nfn main() { host.give(h.f()) }";
+    assert_eq!(
+        run(source, host),
+        Ok(Value::variant(silt::typeinfo::bv::SOME, [Value::Int(5)]))
+    );
+}
+
+/// The fields of a builtin record or enum a host function builds are
+/// checked against the type's declaration, as a host type's are, and so
+/// are those of a host type met inside itself at other type arguments.
+#[test]
+fn the_fields_of_every_record_and_enum_of_a_result_are_checked() {
+    let host = HostModule::new("h")
+        .declare_type("type Stamp { at: time.Date }")
+        .declare_type("type Poly(a) { v: a, next: Option(Poly(List(a))) }")
+        .function("fn date() -> time.Date", |call: &HostCall| {
+            call.record(
+                "time.Date",
+                [
+                    ("year", Value::string("y")),
+                    ("month", Value::Int(1)),
+                    ("day", Value::Int(1)),
+                ],
+            )
+        })
+        .function("fn stamp() -> Stamp", |call: &HostCall| {
+            let at = call.record(
+                "time.Date",
+                [
+                    ("year", Value::Int(1)),
+                    ("month", Value::string("m")),
+                    ("day", Value::Int(1)),
+                ],
+            )?;
+            call.record("Stamp", [("at", at)])
+        })
+        .function("fn json() -> json.Value", |call: &HostCall| {
+            call.variant("json.Value", "Int", vec![Value::string("7")])
+        })
+        .function("fn bad_poly() -> Poly(Int)", |call: &HostCall| {
+            let none = Value::variant(silt::typeinfo::bv::NONE, []);
+            let inner = call.record(
+                "Poly",
+                [("v", Value::list(vec![Value::string("s")])), ("next", none)],
+            )?;
+            let next = Value::variant(silt::typeinfo::bv::SOME, [inner]);
+            call.record("Poly", [("v", Value::Int(1)), ("next", next)])
+        })
+        .function("fn good_poly() -> Poly(Int)", |call: &HostCall| {
+            let none = Value::variant(silt::typeinfo::bv::NONE, []);
+            let inner = call.record(
+                "Poly",
+                [("v", Value::list(vec![Value::Int(2)])), ("next", none)],
+            )?;
+            let next = Value::variant(silt::typeinfo::bv::SOME, [inner]);
+            call.record("Poly", [("v", Value::Int(1)), ("next", next)])
+        });
+    for (call, expected) in [
+        (
+            "h.date()",
+            "h.date: its signature returns time.Date, but it returned Record",
+        ),
+        (
+            "h.stamp()",
+            "h.stamp: its signature returns Stamp, but it returned Record",
+        ),
+        (
+            "h.json()",
+            "h.json: its signature returns json.Value, but it returned",
+        ),
+        (
+            "h.bad_poly()",
+            "h.bad_poly: its signature returns Poly(Int), but it returned Record",
+        ),
+    ] {
+        let source = format!("import h\nimport host\nfn main() {{ host.give({call}) }}");
+        let err = run(&source, host.clone()).expect_err(call);
+        assert!(err.contains(expected), "{call}: {err}");
+    }
+    let source = "import h\nimport host\nfn main() { host.give(h.good_poly().v) }";
+    assert_eq!(run(source, host), Ok(Value::Int(1)));
+}
+
+/// A deeply nested generic host type in a signature costs no more than
+/// its size: each type's declared fields are kept once. (They were
+/// copied into every use of a parameter: 3^depth shapes, which at this
+/// depth would not end.)
+#[test]
+fn a_deeply_nested_generic_host_type_is_registered_at_once() {
+    let mut ty = "Int".to_string();
+    for _ in 0..24 {
+        ty = format!("T3({ty})");
+    }
+    let host = HostModule::new("h")
+        .declare_type("type T3(a) { x: a, y: a, z: a }")
+        .function(format!("fn f(n: Int) -> Option({ty})"), |_: &HostCall| {
+            Ok(Value::variant(silt::typeinfo::bv::NONE, []))
+        });
+    let source = "import h\nimport host\nfn main() { host.give(h.f(1)) }";
+    assert_eq!(
+        run(source, host),
+        Ok(Value::variant(silt::typeinfo::bv::NONE, []))
+    );
+}
+
+/// A host type that shares its name with another type of the program
+/// prints qualified by its module, as the program names it.
+#[test]
+fn a_host_type_prints_by_its_module() {
+    let source = "import geo\nimport host\ntype Point { x: Int, y: Int }\nfn main() {\n  host.give(\"{geo.Point { x: 1, y: 2 }} {Point { x: 3, y: 4 }}\")\n}";
+    assert_eq!(
+        run(source, geo()),
+        Ok(Value::string(
+            "geo.Point {x: 1, y: 2} main.Point {x: 3, y: 4}"
+        ))
+    );
 }

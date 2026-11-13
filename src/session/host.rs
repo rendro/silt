@@ -28,7 +28,8 @@ use crate::defs::TypeId;
 use crate::intern::{Symbol, resolve};
 use crate::typechecker::names::type_vars_of;
 use crate::value::{
-    FromValue, HostCall, HostImpl, HostShape, HostSource, HostStep, HostVar, IntoValue, Value,
+    FromValue, HostCall, HostImpl, HostShape, HostSource, HostStep, HostTemplates, HostVar,
+    IntoValue, Value,
 };
 use crate::vm::VmError;
 
@@ -171,26 +172,18 @@ impl HostModule {
 pub(super) struct Named<'a> {
     pub id: TypeId,
     pub decl: Option<&'a TypeDecl>,
-    /// Whether its values are records or variants (a builtin type such
-    /// as `Int` or `tcp.TcpStream` is neither): only those are checked
-    /// by the type.
-    pub checked: bool,
 }
 
 /// How a host module's text names its types: `lookup(module, name)` is
 /// the type `name` (`module.name` with a qualifier).
 pub(super) type Lookup<'a> = dyn Fn(Option<Symbol>, Symbol) -> Option<Named<'a>> + 'a;
 
-/// How many types of the host module the shape of one result type
-/// opens at most (their fields are checked; past it, a type is checked
-/// by its id).
-const OPENED_TYPES: usize = 256;
-
 /// What the host function `f` returns, which each result is checked
 /// against: the shape of its return type, and the variables of that
 /// type, each with the places among the parameters that show it. The
-/// types it names are found by `lookup`.
-pub(super) fn returns(f: &FnDecl, lookup: &Lookup<'_>) -> (HostShape, Vec<HostVar>) {
+/// types it names are found and entered into the templates by `shapes`.
+pub(super) fn returns(f: &FnDecl, shapes: &mut Shapes<'_, '_>) -> (HostShape, Vec<HostVar>) {
+    let lookup = shapes.lookup;
     let Some(ret) = &f.return_type else {
         return (HostShape::Any, Vec::new());
     };
@@ -234,11 +227,6 @@ pub(super) fn returns(f: &FnDecl, lookup: &Lookup<'_>) -> (HostShape, Vec<HostVa
     let var = |name: Symbol| match index(name) {
         Some(var) => HostShape::Var(var, resolve(name)),
         None => HostShape::Any,
-    };
-    let mut shapes = Shapes {
-        lookup,
-        opening: Vec::new(),
-        opened: 0,
     };
     (shapes.shape(ret, &var), vars)
 }
@@ -343,8 +331,9 @@ impl Sources<'_, '_, '_> {
             } if matches!(
                 (resolve(*name).as_str(), args.len()),
                 ("List" | "Set" | "Option", 1) | ("Map" | "Result", 2)
-            ) =>
+            ) && (self.lookup)(None, *name).is_some_and(|found| found.decl.is_none()) =>
             {
+                // (The prelude's: the name is no type of the host module.)
                 match (resolve(*name).as_str(), args.as_slice()) {
                     ("List" | "Set", [item]) => step(self, HostStep::Element, item, source),
                     ("Map", [k, v]) => {
@@ -411,65 +400,33 @@ impl Sources<'_, '_, '_> {
     }
 }
 
-/// What builds the shapes of a host function's result type: the types
-/// of the host module whose declarations it is in (`opening`, each with
-/// the shapes of its type arguments), and how many it has opened.
-struct Shapes<'l, 'a> {
-    lookup: &'l Lookup<'a>,
-    opening: Vec<(TypeId, Vec<HostShape>)>,
-    opened: usize,
+/// What builds the shapes of a host module's result types: the types
+/// are found by `lookup`, the declared fields of each record and enum
+/// type they name by `tables`, entered once each into `templates`.
+pub(super) struct Shapes<'l, 'a> {
+    pub lookup: &'l Lookup<'a>,
+    pub tables: &'l crate::typechecker::Tables,
+    pub templates: &'l mut HostTemplates,
 }
 
 impl Shapes<'_, '_> {
-    /// The shape of the values of the type `ty`, which a host function's
-    /// result is checked against, each type variable's shape `var` of
-    /// it.
+    /// The shape of the values of the type `ty` of a signature, which a
+    /// host function's result is checked against, each type variable's
+    /// shape `var` of it.
     fn shape(&mut self, ty: &TypeExpr, var: &dyn Fn(Symbol) -> HostShape) -> HostShape {
-        let mut boxed = |ty: &TypeExpr| Box::new(self.shape(ty, var));
         match &ty.kind {
             TypeExprKind::Named {
                 module: None, name, ..
             } if is_variable(*name) => var(*name),
-            TypeExprKind::Named {
-                module: None, name, ..
-            } if matches!(
-                resolve(*name).as_str(),
-                "Int" | "Float" | "Bool" | "String" | "Bytes" | "Never"
-            ) =>
-            {
-                match resolve(*name).as_str() {
-                    "Int" => HostShape::Int,
-                    "Float" => HostShape::Float,
-                    "Bool" => HostShape::Bool,
-                    "String" => HostShape::String,
-                    "Bytes" => HostShape::Bytes,
-                    _ => HostShape::Never,
-                }
+            TypeExprKind::Named { module, name, .. } => {
+                self.written(ty, *module, *name, Vec::new())
             }
-            TypeExprKind::Generic {
-                module: None,
-                name,
-                args,
-                ..
-            } if matches!(
-                (resolve(*name).as_str(), args.len()),
-                ("List" | "Set" | "Option" | "Channel", 1) | ("Map" | "Result", 2)
-            ) =>
-            {
-                match (resolve(*name).as_str(), args.as_slice()) {
-                    ("List", [item]) => HostShape::List(boxed(item)),
-                    ("Set", [item]) => HostShape::Set(boxed(item)),
-                    ("Map", [k, v]) => HostShape::Map(boxed(k), boxed(v)),
-                    ("Option", [item]) => HostShape::Option(boxed(item)),
-                    ("Result", [ok, err]) => HostShape::Result(boxed(ok), boxed(err)),
-                    ("Channel", [item]) => HostShape::Channel(boxed(item)),
-                    _ => HostShape::Any,
-                }
-            }
-            TypeExprKind::Named { module, name, .. } => self.named(ty, *module, *name, &[], var),
             TypeExprKind::Generic {
                 module, name, args, ..
-            } => self.named(ty, *module, *name, args, var),
+            } => {
+                let args = args.iter().map(|arg| self.shape(arg, var)).collect();
+                self.written(ty, *module, *name, args)
+            }
             TypeExprKind::Tuple(items) if items.is_empty() => HostShape::Unit,
             TypeExprKind::Tuple(items) => {
                 HostShape::Tuple(items.iter().map(|item| self.shape(item, var)).collect())
@@ -478,72 +435,139 @@ impl Shapes<'_, '_> {
         }
     }
 
-    /// The shape of the record or enum type `module.name` applied to
-    /// `args`, written `ty`: of a type of the host module, with the
-    /// shapes of its fields at those arguments.
-    fn named(
+    /// The shape of the type `module.name` written `ty`, at the shapes
+    /// `args` of its arguments: the type the name stands for in the host
+    /// module, found by its identity.
+    fn written(
         &mut self,
         ty: &TypeExpr,
         module: Option<crate::ast::Qualifier>,
         name: Symbol,
-        args: &[TypeExpr],
-        var: &dyn Fn(Symbol) -> HostShape,
+        args: Vec<HostShape>,
     ) -> HostShape {
-        let Some(found) = (self.lookup)(module.map(|m| m.name), name) else {
-            return HostShape::Any;
-        };
-        if !found.checked {
-            return HostShape::Any;
+        // (`Never` is the language's, with no definition; no host type
+        // has its name.)
+        if module.is_none() && resolve(name) == "Never" && args.is_empty() {
+            return HostShape::Never;
         }
-        let written = crate::typechecker::typeexpr::type_expr_text(ty);
-        let head = |parts| HostShape::Named {
-            id: found.id,
-            name: written.clone(),
-            parts,
-        };
-        let Some(decl) = found.decl else {
-            return head(Vec::new());
-        };
-        let given: Vec<(Symbol, HostShape)> = (decl.params.iter().zip(args))
-            .map(|(param, arg)| (*param, self.shape(arg, var)))
-            .collect();
-        let at: Vec<HostShape> = given.iter().map(|(_, shape)| shape.clone()).collect();
-        // (A type met again inside itself is checked as the one around
-        // it, at the same arguments; at others, and past the bound, by
-        // its id.)
-        if let Some((_, around)) = self.opening.iter().rev().find(|(id, _)| *id == found.id) {
-            return match *around == at {
-                true => HostShape::Again(found.id, written),
-                false => head(Vec::new()),
+        match (self.lookup)(module.map(|m| m.name), name) {
+            Some(found) => {
+                let written = crate::typechecker::typeexpr::type_expr_text(ty);
+                self.of_id(found.id, written, args)
+            }
+            None => HostShape::Any,
+        }
+    }
+
+    /// The shape of the type `id` at `args`: a type of the prelude that
+    /// values show by what they are (`Int`, `List`, `Option`) as that;
+    /// a record or enum type as itself, its declared fields entered into
+    /// the templates; any other type admits anything.
+    fn of_id(&mut self, id: TypeId, name: String, mut args: Vec<HostShape>) -> HostShape {
+        let prelude = (crate::defs::builtin_types().get(id.0.0 as usize))
+            .filter(|(_, module)| module.is_none())
+            .map(|(name, _)| *name);
+        if let Some(prelude) = prelude {
+            let mut take = |n: usize| match args.len() == n {
+                true => Some(std::mem::take(&mut args)),
+                false => None,
             };
+            let shape = match prelude {
+                "Int" => take(0).map(|_| HostShape::Int),
+                "Float" => take(0).map(|_| HostShape::Float),
+                "Bool" => take(0).map(|_| HostShape::Bool),
+                "String" => take(0).map(|_| HostShape::String),
+                "Bytes" => take(0).map(|_| HostShape::Bytes),
+                "Never" => take(0).map(|_| HostShape::Never),
+                "List" => take(1).map(|mut a| HostShape::List(Box::new(a.remove(0)))),
+                "Set" => take(1).map(|mut a| HostShape::Set(Box::new(a.remove(0)))),
+                "Option" => take(1).map(|mut a| HostShape::Option(Box::new(a.remove(0)))),
+                "Channel" => take(1).map(|mut a| HostShape::Channel(Box::new(a.remove(0)))),
+                "Map" => take(2).map(|mut a| {
+                    let v = a.remove(1);
+                    HostShape::Map(Box::new(a.remove(0)), Box::new(v))
+                }),
+                "Result" => take(2).map(|mut a| {
+                    let err = a.remove(1);
+                    HostShape::Result(Box::new(a.remove(0)), Box::new(err))
+                }),
+                _ => None,
+            };
+            if let Some(shape) = shape {
+                return shape;
+            }
         }
-        if self.opened >= OPENED_TYPES {
-            return head(Vec::new());
+        match self.template(id) {
+            true => HostShape::Named { id, name, args },
+            false => HostShape::Any,
         }
-        self.opened += 1;
-        let of_param = |name: Symbol| {
-            (given.iter())
-                .find(|(param, _)| *param == name)
-                .map_or(HostShape::Any, |(_, shape)| shape.clone())
+    }
+
+    /// Enter the declared fields of the type `id` into the templates,
+    /// once; whether it is a record or an enum type.
+    fn template(&mut self, id: TypeId) -> bool {
+        if self.templates.contains_key(&id) {
+            return true;
+        }
+        let tref = crate::types::TypeRef {
+            id,
+            name: crate::intern::intern("_"),
         };
-        self.opening.push((found.id, at));
-        let parts = match &decl.body {
-            TypeBody::Record(fields) => vec![
+        let Some((params, parts)) = self.tables.declared_parts(tref) else {
+            return false;
+        };
+        // (Entered first: a field of the type itself finds it.)
+        self.templates.insert(id, Vec::new());
+        let parts = (parts.iter())
+            .map(|fields| {
                 (fields.iter())
-                    .map(|field| self.shape(&field.ty, &of_param))
-                    .collect(),
-            ],
-            TypeBody::Enum(variants) => (variants.iter())
-                .map(|variant| {
-                    (variant.fields.iter())
-                        .map(|field| self.shape(field, &of_param))
-                        .collect()
-                })
-                .collect(),
-            TypeBody::Alias(_) => Vec::new(),
+                    .map(|ty| self.of_type(ty, &params))
+                    .collect()
+            })
+            .collect();
+        self.templates.insert(id, parts);
+        true
+    }
+
+    /// The shape of the declared field type `ty`, whose type parameters
+    /// are `params`.
+    fn of_type(&mut self, ty: &crate::types::Type, params: &[crate::types::TyVar]) -> HostShape {
+        use crate::types::Type;
+        let param = |var: &crate::types::TyVar| {
+            (params.iter().position(|p| p == var))
+                .and_then(|at| u16::try_from(at).ok())
+                .map_or(HostShape::Any, HostShape::Param)
         };
-        self.opening.pop();
-        head(parts)
+        let mut boxed = |ty: &Type| Box::new(self.of_type(ty, params));
+        match ty {
+            Type::Int => HostShape::Int,
+            Type::Float => HostShape::Float,
+            Type::Bool => HostShape::Bool,
+            Type::String => HostShape::String,
+            Type::Unit => HostShape::Unit,
+            Type::Never => HostShape::Never,
+            Type::Var(var) => param(var),
+            Type::Rigid(rigid) => param(&rigid.var),
+            Type::List(item) => HostShape::List(boxed(item)),
+            Type::Set(item) => HostShape::Set(boxed(item)),
+            Type::Channel(item) => HostShape::Channel(boxed(item)),
+            Type::Map(k, v) => {
+                let k = boxed(k);
+                HostShape::Map(k, boxed(v))
+            }
+            Type::Tuple(items) if items.is_empty() => HostShape::Unit,
+            Type::Tuple(items) => HostShape::Tuple(
+                items
+                    .iter()
+                    .map(|item| self.of_type(item, params))
+                    .collect(),
+            ),
+            Type::Generic(tref, args) => {
+                let args = args.iter().map(|arg| self.of_type(arg, params)).collect();
+                self.of_id(tref.id, resolve(tref.name), args)
+            }
+            _ => HostShape::Any,
+        }
     }
 }
 

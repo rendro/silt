@@ -128,21 +128,26 @@ pub enum ImportResolution {
 /// as far as they can be read, with their doc comments, and its lex and
 /// parse errors.
 pub fn parse_text(file: FileId, text: &str) -> (ast::Program, Vec<Diagnostic>) {
-    let (program, errors, ..) = parse_module(file, text, None);
+    let (program, errors, ..) = parse_module(file, text, None, false);
     (program, errors)
 }
 
-/// `parse_text` of a module file, or of the REPL entry `cell`; whether
-/// the text is cut short (`Lexed::is_cut_short`); and whether the
-/// declarations are not all of the text (`Module::incomplete`).
+/// `parse_text` of a module file, of the REPL entry `cell`, or of a
+/// host module's declarations (`host`); whether the text is cut short
+/// (`Lexed::is_cut_short`); and whether the declarations are not all of
+/// the text (`Module::incomplete`).
 fn parse_module(
     file: FileId,
     text: &str,
     cell: Option<usize>,
+    host: bool,
 ) -> (ast::Program, Vec<Diagnostic>, bool, bool) {
     let lexed = Lexer::new(file, text).tokenize();
     let cut_short = lexed.is_cut_short();
     let mut parser = Parser::new(lexed, text);
+    if host {
+        parser = parser.for_host();
+    }
     if cell.is_none() {
         parser = parser.with_docs();
     }
@@ -337,6 +342,28 @@ impl ModuleGraph {
             let mut declared = vec![0_usize; host.types.len()];
             for decl in &mut ast.decls {
                 let part = part_of(decl);
+                // One spelling: a host module's declarations are all
+                // public, and none says so.
+                let at = decl_span(decl);
+                if text
+                    .get(at.start as usize..)
+                    .is_some_and(|t| t.starts_with("pub "))
+                {
+                    signature_problems.push(
+                        Diagnostic::error(
+                            Code::HostSignature,
+                            Span {
+                                file,
+                                start: at.start,
+                                end: at.start + 3,
+                            },
+                            "a host module's declarations are public: write it without `pub`",
+                        )
+                        .with_help(
+                            "write `type Point { .. }`, `opaque type Conn { .. }`, `fn f(..) -> T`",
+                        ),
+                    );
+                }
                 if let Some(super::host::Part::Type(n)) = part {
                     declared[n] += 1;
                     let span = decl_span(decl);
@@ -353,6 +380,20 @@ impl ModuleGraph {
                                     ),
                                 )
                                 .with_help("write the type it stands for in the signatures"),
+                            );
+                        }
+                        Decl::Type(t) if is_prelude_name(t.name) => {
+                            signature_problems.push(
+                                Diagnostic::error(
+                                    Code::HostSignature,
+                                    t.name_span,
+                                    format!(
+                                        "the host type `{}` has the name of a type of the \
+                                         prelude: a host type has a name of its own",
+                                        t.name
+                                    ),
+                                )
+                                .with_help(type_help),
                             );
                         }
                         Decl::Type(t) => {
@@ -572,6 +613,7 @@ impl ModuleGraph {
             SourceName::Repl(n) => Some(n),
             _ => None,
         };
+        let host = matches!(name, SourceName::Host(_));
         let file = sources.add(name, text.into());
         // A module that could not be read and has a text now (an editor
         // opened the file): what each importer recorded about the failed
@@ -590,7 +632,7 @@ impl ModuleGraph {
         module.file = Some(file);
         module.imports.clear();
         module.load_error = None;
-        let (ast, problems, cut_short, incomplete) = parse_module(file, text, cell);
+        let (ast, problems, cut_short, incomplete) = parse_module(file, text, cell, host);
         module.ast = Some(ast);
         module.problems = problems;
         module.cut_short = cut_short;
@@ -1095,6 +1137,15 @@ fn is_module_name(name: &str) -> bool {
 }
 
 /// The span of the declaration `decl`.
+/// Whether `name` is the name of a type or a trait of the prelude
+/// (`Option`, `Never`, `Display`), which a host type cannot take: the
+/// program and the result check would read it as two types.
+fn is_prelude_name(name: Symbol) -> bool {
+    // (`Never` is the language's, with no definition of its own.)
+    let (_, scopes) = crate::typechecker::names::builtins();
+    scopes.prelude.types.contains_key(&name) || resolve(name) == "Never"
+}
+
 /// The builtin modules whose types the declarations of a host module
 /// name (`time` of `time.Date`), each once, in the order first written,
 /// with the span of that first qualifier.

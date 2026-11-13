@@ -948,7 +948,9 @@ impl Session {
                         id: *m,
                         program: self.analyses[m].ast.clone(),
                         let_order: self.analyses[m].let_order.clone(),
+                        // (A host module is imported by its name alone.)
                         qualifier: match (module.package == entry_package, resolve(module.name)) {
+                            (_, name) if module.host.is_some() => name,
                             (true, name) => name,
                             (false, name) if name == "lib" => resolve(module.package_name),
                             (false, name) => format!("{}.{name}", module.package_name),
@@ -1004,7 +1006,6 @@ impl Session {
                 return Some(host::Named {
                     id: crate::defs::TypeId(*def),
                     decl: Some(decl),
-                    checked: true,
                 });
             }
             let id = crate::defs::builtin_type_id(&resolve(name))?;
@@ -1012,25 +1013,26 @@ impl Session {
             if home != qualifier.map(resolve).as_deref() {
                 return None;
             }
-            let checked = matches!(
-                crate::typeinfo::builtin_type(id).shape,
-                crate::typeinfo::Shape::Record(_) | crate::typeinfo::Shape::Enum(_)
-            );
-            Some(host::Named {
-                id,
-                decl: None,
-                checked,
-            })
+            Some(host::Named { id, decl: None })
         };
-        decls
-            .iter()
+        let mut templates = crate::value::HostTemplates::new();
+        let mut shapes = host::Shapes {
+            lookup: &lookup,
+            tables: &self.tables,
+            templates: &mut templates,
+        };
+        let signed: Vec<_> = (decls.iter())
             .filter_map(|decl| match decl {
                 ast::Decl::Fn(decl) => Some(decl),
                 _ => None,
             })
             .zip(&self.config.host[host].fns)
-            .map(|(decl, f)| {
-                let (returns, vars) = host::returns(decl, &lookup);
+            .map(|(decl, f)| (decl, f, host::returns(decl, &mut shapes)))
+            .collect();
+        // (One table of the types' fields for the module's functions.)
+        let templates = Arc::new(templates);
+        (signed.into_iter())
+            .map(|(decl, f, (returns, vars))| {
                 (
                     decl.name,
                     Arc::new(HostFn {
@@ -1040,6 +1042,7 @@ impl Session {
                         vars,
                         arity: decl.params.len(),
                         types: Default::default(),
+                        templates: templates.clone(),
                     }),
                 )
             })

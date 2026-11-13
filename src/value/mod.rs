@@ -23,8 +23,8 @@ mod map_tests;
 mod tests;
 
 pub use convert::{
-    FromValue, HostCall, HostFault, HostFn, HostImpl, HostShape, HostSource, HostStep, HostTypes,
-    HostVar, IntoValue, Witness, Witnesses, given_type, witness_type,
+    FromValue, HostCall, HostFault, HostFn, HostImpl, HostShape, HostSource, HostStep,
+    HostTemplates, HostTypes, HostVar, IntoValue, Witness, Witnesses, given_type, witness_type,
 };
 pub(crate) use deep::drop_held;
 pub use float::Float;
