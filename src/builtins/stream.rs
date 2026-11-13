@@ -851,6 +851,22 @@ fn stdin_line_reads() -> impl FnMut() -> Vec<Value> + Send + 'static {
 /// [`stdin_line_reads`]). Each byte is looked at for a `\n` once: a line
 /// that many reads bring is not searched again from its start at each
 /// one.
+/// How long a line of a line source may be: as long as a string may be
+/// (`MAX_COLLECTION_LEN` bytes). A longer one ends the source with an
+/// error ([`line_too_long`]), before it is read whole: a peer that sends
+/// no newline does not grow the source without end.
+#[cfg(not(test))]
+const LINE_MAX: usize = crate::value::MAX_COLLECTION_LEN;
+/// (A test's line need not take ten megabytes.)
+#[cfg(test)]
+const LINE_MAX: usize = 4_000_000;
+
+/// What a line longer than [`LINE_MAX`] says: `line 3 of app.log is longer
+/// than 10000000 bytes`.
+fn line_too_long(number: u64, of: &str) -> String {
+    format!("line {number} of {of} is longer than {LINE_MAX} bytes")
+}
+
 struct LineReads<R> {
     read: R,
     /// What was read and is no line yet.
@@ -926,6 +942,15 @@ impl<R: FnMut(&mut [u8]) -> std::io::Result<usize>> LineReads<R> {
             self.pending.drain(..taken);
             self.scanned = if held_back { 0 } else { self.pending.len() };
             if held_back || !lines.is_empty() {
+                break;
+            }
+            if self.pending.len() > LINE_MAX {
+                self.ended = true;
+                let why = line_too_long(self.given + 1, "stdin");
+                lines.push(Value::variant(
+                    bv::ERR,
+                    [Value::variant(bv::IO_INVALID_INPUT, [Value::string(why)])],
+                ));
                 break;
             }
             if self.at_end {
@@ -1054,6 +1079,19 @@ fn tcp_line_reads(held: Arc<Held>) -> impl FnMut() -> Vec<Value> + Send + 'stati
             scanned = if held_back { 0 } else { pending.len() };
             if held_back || closed {
                 break;
+            }
+            // A line longer than a string may be ends the source, as one
+            // that is no UTF-8 does.
+            if lines.is_empty() && pending.len() > LINE_MAX {
+                ended = true;
+                conn.shut_down();
+                let too_long = std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("a line is longer than {LINE_MAX} bytes"),
+                );
+                lines.push(super::tcp::tcp_io_err(super::tcp::Doing::Using, &too_long));
+                held.release();
+                return lines;
             }
             // Wait only for a first line; with one in hand, read on what
             // is there.
@@ -1342,8 +1380,21 @@ builtins! {
             };
             let mut bytes = 0;
             while bytes < READ_AT_ONCE {
+                use std::io::Read;
                 let mut line = String::new();
-                match reader.read_line(&mut line) {
+                // No more of a line than a string may hold, and one byte
+                // to know it is longer.
+                let read = reader.by_ref().take(LINE_MAX as u64 + 1).read_line(&mut line);
+                if matches!(read, Ok(n) if n > LINE_MAX && !line.ends_with('\n')) {
+                    ended = true;
+                    let why = line_too_long(read_lines + 1, &path);
+                    lines.push(Value::variant(
+                        bv::ERR,
+                        [Value::variant(bv::IO_INVALID_INPUT, [Value::string(why)])],
+                    ));
+                    break;
+                }
+                match read {
                     Ok(0) => {
                         ended = true;
                         break;
@@ -2146,6 +2197,33 @@ mod tests {
                 });
             }
         }
+    }
+
+    /// A line longer than a string may be ends a line source with an error,
+    /// when it is that long and before it is read whole: on stdin and on a
+    /// connection alike (the test's cap is 4,000,000 bytes). The lines before
+    /// it come first. (Such a line was read whole however long it grew.)
+    #[test]
+    fn a_line_longer_than_a_string_may_be_ends_the_source() {
+        let mut input = b"ok
+"
+        .to_vec();
+        input.extend(std::iter::repeat_n(b'x', 3 * LINE_MAX));
+        input.extend(
+            b"
+after
+",
+        );
+        let (lines, _) = piece_lines_of(&input, 4096);
+        assert_eq!(lines, ["ok", "ERR"]);
+        let (conn, reads) = counted(&input, usize::MAX, None);
+        let (items, _) = lines_of(&conn);
+        assert_eq!(items.len(), 2, "{items:?}");
+        assert_eq!(items[0], "ok");
+        assert!(items[1].starts_with("Err:"), "{items:?}");
+        // Not much more than the cap was read.
+        let read = reads[0].load(Ordering::SeqCst) * LINES_READ;
+        assert!(read <= LINE_MAX + 4 * LINES_READ, "{read} bytes read");
     }
 
     /// `stream.tcp_lines` reads a buffer at a time, not a byte: 10,000
