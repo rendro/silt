@@ -31,15 +31,15 @@ use parking_lot::Mutex;
 /// `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
-        ("Connect", [Value::String(m)]) => format!("http connect failed: {m}"),
-        ("Tls", [Value::String(m)]) => format!("http TLS error: {m}"),
+        ("Connect", [Value::String(m, _)]) => format!("http connect failed: {m}"),
+        ("Tls", [Value::String(m, _)]) => format!("http TLS error: {m}"),
         ("Timeout", []) => "http request timed out".to_string(),
-        ("InvalidUrl", [Value::String(u)]) => format!("http invalid url: {u}"),
-        ("InvalidResponse", [Value::String(m)]) => {
+        ("InvalidUrl", [Value::String(u, _)]) => format!("http invalid url: {u}"),
+        ("InvalidResponse", [Value::String(m, _)]) => {
             format!("http invalid response: {m}")
         }
         ("ClosedEarly", []) => "http connection closed before response completed".to_string(),
-        ("Other", [Value::String(m)]) => m.to_string(),
+        ("Other", [Value::String(m, _)]) => m.to_string(),
         _ => return None,
     })
 }
@@ -71,11 +71,11 @@ fn make_http_request_value(
         ty::REQUEST,
         [
             ("method", Value::variant(method, [])),
-            ("path", Value::String(path.into())),
-            ("query", Value::String(query.into())),
+            ("path", Value::string(path)),
+            ("query", Value::string(query)),
             ("headers", Value::Map(headers)),
             ("body", Value::Bytes(Arc::new(body))),
-            ("peer", Value::String(peer.into())),
+            ("peer", Value::string(peer)),
         ],
     )
 }
@@ -188,7 +188,7 @@ fn header_map(headers: impl IntoIterator<Item = (String, String)>) -> crate::val
         }
     }
     (joined.into_iter())
-        .map(|(name, value)| (Value::String(name.into()), Value::String(value.into())))
+        .map(|(name, value)| (Value::string(name), Value::string(value)))
         .collect()
 }
 
@@ -309,7 +309,7 @@ fn http_timeout_err(failure: crate::vm::IoFailure<'_>) -> Value {
     let error = match failure {
         IoFailure::Timeout(_) => Value::variant(bv::HTTP_TIMEOUT, []),
         IoFailure::Panicked(why) | IoFailure::Refused(why) => {
-            Value::variant(bv::HTTP_OTHER, [Value::String(why.into())])
+            Value::variant(bv::HTTP_OTHER, [Value::string(why)])
         }
     };
     Value::variant(bv::ERR, [error])
@@ -349,14 +349,10 @@ fn http_error(error: &ureq::Error, url: &str) -> Value {
     use std::io::ErrorKind;
     use ureq::Error;
 
-    let why = || {
-        vec![Value::String(
-            redact_http_url_userinfo(&error.to_string()).into(),
-        )]
-    };
+    let why = || vec![Value::string(redact_http_url_userinfo(&error.to_string()))];
     let invalid_url = || {
         let url = redact_http_url_userinfo(url);
-        Value::variant(bv::HTTP_INVALID_URL, [Value::String(url.into())])
+        Value::variant(bv::HTTP_INVALID_URL, [Value::string(url)])
     };
     let https = url
         .get(.."https://".len())
@@ -368,9 +364,9 @@ fn http_error(error: &ureq::Error, url: &str) -> Value {
     if let Some(unpacking) = unpacking {
         let under = &unpacking.0;
         let why = || {
-            vec![Value::String(
-                redact_http_url_userinfo(&unpacking.to_string()).into(),
-            )]
+            vec![Value::string(redact_http_url_userinfo(
+                &unpacking.to_string(),
+            ))]
         };
         return match under.kind() {
             ErrorKind::ConnectionReset
@@ -450,7 +446,7 @@ fn refuse_port(url: &str) -> Option<Value> {
         return None;
     }
     let url = redact_http_url_userinfo(url);
-    let invalid = Value::variant(bv::HTTP_INVALID_URL, [Value::String(url.into())]);
+    let invalid = Value::variant(bv::HTTP_INVALID_URL, [Value::string(url)]);
     Some(Value::variant(bv::ERR, [invalid]))
 }
 
@@ -470,7 +466,7 @@ fn finish_http_response(
         Ok(Some(response)) => Value::variant(bv::OK, [response]),
         Ok(None) => {
             let why = format!("the body is larger than {} bytes", wire::BODY_MAX);
-            let error = Value::variant(bv::HTTP_INVALID_RESPONSE, [Value::String(why.into())]);
+            let error = Value::variant(bv::HTTP_INVALID_RESPONSE, [Value::string(why)]);
             Value::variant(bv::ERR, [error])
         }
         Err(error) => Value::variant(bv::ERR, [http_error(&error, url)]),
@@ -559,9 +555,7 @@ fn do_http_request_on(
             bv::ERR,
             [Value::variant(
                 bv::HTTP_INVALID_URL,
-                [Value::String(
-                    format!("unknown method: {method_tag}").into(),
-                )],
+                [Value::string(format!("unknown method: {method_tag}"))],
             )],
         );
     }
@@ -1151,7 +1145,7 @@ fn handler_response(vm: &Vm, returned: &Value, reply: Reply) -> Vec<u8> {
             let mut headers = Vec::new();
             if let Some(Value::Map(given)) = fields.get("headers") {
                 for (name, value) in given.iter() {
-                    if let (Value::String(name), Value::String(value)) = (name, value) {
+                    if let (Value::String(name, _), Value::String(value, _)) = (name, value) {
                         headers.push((name.to_string(), value.to_string()));
                     }
                 }
@@ -2078,7 +2072,7 @@ builtins! {
     fn segments(path: &str) -> Vec<Value> {
         path.split('/')
             .filter(|s| !s.is_empty())
-            .map(|s| Value::String(s.into()))
+            .map(Value::string)
             .collect()
     }
 
@@ -2115,7 +2109,7 @@ builtins! {
                 Ok(val) => val,
                 Err(error) => return error.err(&format!("pair {i}: value: ")),
             };
-            out.entry(Value::String(key.into())).or_default().push(Value::String(val.into()));
+            out.entry(Value::string(key)).or_default().push(Value::string(val));
         }
         let pairs = out.into_iter().map(|(key, values)| (key, Value::list(values)));
         Value::variant(bv::OK, [Value::map(pairs)])
@@ -2143,8 +2137,8 @@ mod http_response_tests {
     #[test]
     fn the_records_of_the_module_have_their_types_fields() {
         let headers = || {
-            let name = Value::String("accept".into());
-            crate::value::Map::from_iter([(name, Value::String("*/*".into()))])
+            let name = Value::string("accept");
+            crate::value::Map::from_iter([(name, Value::string("*/*"))])
         };
         let response = make_http_response(204, headers(), vec![0, 0xff, b'd']);
         assert_eq!(
@@ -2170,8 +2164,8 @@ mod http_response_tests {
         let Value::Record(record) = &request else {
             panic!("a record");
         };
-        assert_eq!(record.get("path"), Some(&Value::String("/jobs".into())));
-        assert_eq!(record.fields()[1], Value::String("/jobs".into()));
+        assert_eq!(record.get("path"), Some(&Value::string("/jobs")));
+        assert_eq!(record.fields()[1], Value::string("/jobs"));
     }
 
     #[test]

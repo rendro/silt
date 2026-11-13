@@ -37,6 +37,7 @@ and [channel / task](channel-task.md) for the primitive channel operations.
 | `unfold` | `(a, Fn(a) -> Option((b, a))) -> Channel(b)` | Generator (closes on `None`) |
 | `file_chunks` | `(String, Int) -> Channel(Result(Bytes, IoError))` | Read file in chunks |
 | `file_lines` | `(String) -> Channel(Result(String, IoError))` | Read file line-by-line |
+| `stdin_lines` | `() -> Channel(Result(String, IoError))` | Read stdin line-by-line |
 | `tcp_chunks` | `(TcpStream, Int) -> Channel(Result(Bytes, TcpError))` | Read TCP in chunks |
 | `tcp_lines` | `(TcpStream) -> Channel(Result(String, TcpError))` | Read TCP line-by-line |
 
@@ -48,6 +49,16 @@ connection up to 64 KiB at a time and emits the lines that read
 completed one by one; what came after the last of them waits for the
 next read. Under a step budget, a program reading this way uses fewer
 steps, since the source waits once per read, not once per line.
+
+`stdin_lines` gives the lines of stdin, without their `\n` or `\r\n`, and
+ends at the end of stdin; the text after the last `\n` is the last line. A
+read takes what stdin has at that moment, up to 64 KiB, so a pipe gives many
+lines a read and a line typed at a terminal comes as soon as it is typed. A
+line that is not UTF-8 ends the stream with `Err(InvalidInput(...))` after
+the lines before it, as for `file_lines`; its number counts the lines this
+stream gave. A stream reads ahead of what it gives: once a program has made one,
+the rest of stdin is its own, and an `io.read_line` or `io.read_stdin` after it
+does not see what the stream has read but not given.
 
 ### Transforms
 
@@ -108,6 +119,26 @@ fn main() {
     |> stream.take(5)
     |> stream.collect
   println(squares)
+}
+```
+
+### The lines of stdin
+
+```silt
+import stream
+import string
+
+fn main() {
+  -- Count the lines of stdin that are not empty.
+  let filled = stream.stdin_lines()
+    |> stream.filter { line ->
+      match line {
+        Ok(text) -> !string.is_empty(string.trim(text))
+        Err(_) -> true
+      }
+    }
+    |> stream.length
+  println("{filled} lines with text")
 }
 ```
 

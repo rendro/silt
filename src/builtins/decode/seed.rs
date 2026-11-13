@@ -392,7 +392,7 @@ impl<'de> de::Deserializer<'de> for JsonValueDe {
             [Value::Bool(b)] => visitor.visit_bool(*b),
             [Value::Int(n)] => visitor.visit_i64(*n),
             [Value::Float(f)] => visitor.visit_f64(f.get()),
-            [Value::String(s)] => visitor.visit_str(s),
+            [Value::String(s, _)] => visitor.visit_str(s),
             [Value::List(items)] => {
                 let items = items.iter().map(|value| JsonValueDe { value, level });
                 let mut seq = SeqDeserializer::new(items);
@@ -403,7 +403,7 @@ impl<'de> de::Deserializer<'de> for JsonValueDe {
             [Value::Map(members)] => {
                 fn key(key: &Value) -> Cow<'_, str> {
                     match key {
-                        Value::String(key) => Cow::Borrowed(key),
+                        Value::String(key, _) => Cow::Borrowed(key),
                         other => Cow::Owned(other.to_string()),
                     }
                 }
@@ -673,7 +673,7 @@ impl Scalar<'_> {
             },
             // (A format with such literals decodes no `json.Value`.)
             Scalar::String(s) | Scalar::Datetime(s) => {
-                Value::variant(bv::JSON_STRING, [Value::String(s.into())])
+                Value::variant(bv::JSON_STRING, [Value::string(s)])
             }
         }
     }
@@ -1018,7 +1018,7 @@ impl<'s> Seed<'s> {
             // (A datetime literal is no string, as a float is no `Int`.)
             FieldType::String => match scalar {
                 Scalar::String(_) if !self.build() => Ok(Value::Unit),
-                Scalar::String(s) => Ok(Value::String(s.into())),
+                Scalar::String(s) => Ok(Value::string(s)),
                 _ => Err(mismatch("String")),
             },
             // A number is an `Int` when it is held as one; else, where the
@@ -1240,7 +1240,7 @@ impl<'s> Seed<'s> {
         }
         if parts.mark() == start && all_ok {
             let read = read.into_iter().filter_map(|(key, decoded, _)| {
-                decoded.ok().map(|value| (Value::String(key), value))
+                decoded.ok().map(|value| (Value::string(key), value))
             });
             return Ok(Ok(Value::map(read)));
         }
@@ -1256,7 +1256,7 @@ impl<'s> Seed<'s> {
         for (key, (decoded, found)) in sorted {
             ranges.push(found);
             match decoded {
-                Ok(value) => values.push((Value::String(key), value)),
+                Ok(value) => values.push((Value::string(key), value)),
                 Err(e) => {
                     error = Some(e);
                     break;
@@ -2229,7 +2229,7 @@ impl JsonSeed<'_> {
         }
         let members = members
             .into_iter()
-            .map(|(key, member)| (Value::String(key), member.expect("no member failed")));
+            .map(|(key, member)| (Value::string(key), member.expect("no member failed")));
         Ok(Ok(Value::variant(bv::JSON_OBJECT, [Value::map(members)])))
     }
 }

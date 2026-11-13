@@ -120,10 +120,10 @@ fn main() {
   loop store = #{} {
     print("kvstore> ")
     match io.read_line() {
-      Err(_) -> {
+      Err(_) | Ok(None) -> {
         println("Goodbye!")
       }
-      Ok(line) -> {
+      Ok(Some(line)) -> {
         let trimmed = string.trim(line)
         match string.is_empty(trimmed) {
           true -> loop(store)

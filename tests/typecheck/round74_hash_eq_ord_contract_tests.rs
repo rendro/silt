@@ -185,7 +185,7 @@ fn vm_closure_reflexive_eq_hash_dedup() {
 fn vm_closures_of_one_function_with_equal_captures_are_equal() {
     let func = Arc::new(Function::returning_unit("f".into(), 0));
     assert_one_value(closure_of(&func, Vec::new()), closure_of(&func, Vec::new()));
-    let captures = || vec![Value::Int(1), Value::String("a".into())];
+    let captures = || vec![Value::Int(1), Value::string("a")];
     assert_one_value(closure_of(&func, captures()), closure_of(&func, captures()));
     // The captures are compared as values: a closure among them too.
     let inner = Arc::new(Function::returning_unit("g".into(), 0));

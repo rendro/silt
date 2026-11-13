@@ -130,7 +130,7 @@ fn put(slot: &mut Value, value: Value) {
         | Value::Dict(Dict::Of(_)) => {
             std::mem::forget(std::mem::replace(slot, value));
         }
-        Value::String(_)
+        Value::String(_, _)
         | Value::List(_)
         | Value::Map(_)
         | Value::Set(_)
@@ -184,7 +184,7 @@ fn sort(value: &Value) -> Sort<'_> {
         Value::Bool(b) => Sort::Bool(*b),
         Value::Unit => Sort::Unit,
         Value::VmClosure(closure) => Sort::Closure(closure),
-        Value::String(_)
+        Value::String(_, _)
         | Value::List(_)
         | Value::Map(_)
         | Value::Set(_)
@@ -350,7 +350,8 @@ fn interpolate(
     chunk: &Chunk,
 ) -> Result<(), Unwritten> {
     let start = stack.len() - segments.values();
-    if segments.len() == 1 && segments.values() == 1 && matches!(stack[start], Value::String(_)) {
+    if segments.len() == 1 && segments.values() == 1 && matches!(stack[start], Value::String(_, _))
+    {
         return Ok(());
     }
     let mut buffer = std::mem::take(text);
@@ -373,7 +374,7 @@ fn interpolate(
         return Err(Unwritten::TooLong(buffer.len()));
     }
     stack.truncate(start);
-    stack.push(Value::String(buffer.as_str().into()));
+    stack.push(Value::string(buffer.as_str()));
     // (A buffer an outsized string grew is not kept.)
     if buffer.capacity() <= KEPT_TEXT {
         *text = buffer;
@@ -889,7 +890,7 @@ impl Vm {
                 Instr::DisplayValue => {
                     let val = pop(&mut self.stack);
                     match &val {
-                        Value::String(_) | Value::Int(_) | Value::Float(_) | Value::Bool(_) => {
+                        Value::String(_, _) | Value::Int(_) | Value::Float(_) | Value::Bool(_) => {
                             self.stack.push(val)
                         }
                         // Mirror the typechecker's string-interpolation Display

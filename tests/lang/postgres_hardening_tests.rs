@@ -82,11 +82,7 @@ fn empty_map_value() -> Value {
 }
 
 fn map_with(pairs: &[(&str, Value)]) -> Value {
-    Value::map(
-        pairs
-            .iter()
-            .map(|(k, v)| (Value::String((*k).into()), v.clone())),
-    )
+    Value::map(pairs.iter().map(|(k, v)| (Value::string(*k), v.clone())))
 }
 
 /// `connect_with(url, #{})` accepts the empty opts bag — i.e. the
@@ -230,7 +226,7 @@ fn connect_limit_reads_the_key_value_form() {
 /// `builtins::registry`), not an error of this function.
 #[test]
 fn connect_with_opts_of_another_kind_are_not_the_argument() {
-    let opts = map_with(&[("max_pool_size", Value::String("lots".into()))]);
+    let opts = map_with(&[("max_pool_size", Value::string("lots"))]);
     assert_eq!(read_max_pool_size_for_tests(&opts), None);
     assert_eq!(read_max_pool_size_for_tests(&Value::Int(1)), None);
 }

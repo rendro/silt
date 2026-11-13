@@ -1,4 +1,0 @@
--- exit: 1
--- stderr-contains: negative count
-import string
-fn main() { let _ = string.repeat("x", -1) }

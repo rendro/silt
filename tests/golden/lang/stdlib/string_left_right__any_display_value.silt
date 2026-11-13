@@ -1,0 +1,36 @@
+-- string.left and string.right pad any value that has Display with
+-- spaces: text, numbers, a record with a written Display impl, a list,
+-- characters beyond ASCII; a width at or below the text adds nothing,
+-- a negative width counts as 0.
+import list
+import string
+
+type Temp {
+  degrees: Int,
+}
+
+trait Display for Temp {
+  fn display(self) -> String {
+    "{self.degrees}C"
+  }
+}
+
+fn main() {
+  println("[{string.left("ab", 5)}]")
+  println("[{string.right("ab", 5)}]")
+  println("[{string.right(42, 6)}]")
+  println("[{string.left(-1.5, 6)}]")
+  println("[{string.right(true, 6)}]")
+  println("[{string.right(Temp { degrees: 21 }, 6)}]")
+  println("[{string.left([Temp { degrees: 3 }], 7)}]")
+  println("[{string.left(Some(1), 9)}]")
+  println("[{string.right("héllo", 7)}]")
+  println("[{string.left("日本", 4)}]")
+  println("[{string.right("toolong", 3)}]")
+  println("[{string.left("exact", 5)}]")
+  println("[{string.right(7, -3)}]")
+  println("[{string.left("", 3)}]")
+  println("[{string.right("", 0)}]")
+  let rows = [("apples", 12), ("kiwis", 1500)]
+  list.each(rows) { (name, n) -> println("{string.left(name, 8)}{string.right(n, 6)}|") }
+}

@@ -1,0 +1,22 @@
+Some(("key", "value"))
+Some(("a", "=b"))
+Some(("", "x"))
+Some(("x", ""))
+None
+Some(("", "abc"))
+Some(("", ""))
+Some(("héllo", "wörld→!"))
+None
+Some("top=5")
+Some("")
+Some("abc")
+None
+Some("-x")
+None
+Some("report")
+Some("")
+Some("abc")
+None
+Some("na")
+None
+port: 8080

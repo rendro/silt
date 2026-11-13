@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::common::cut;
 use super::typed::{List, Map, Set, builtins, unsound};
 use crate::bytecode::dict::Dict;
 use crate::typeinfo::bv;
@@ -538,12 +539,6 @@ impl Native for SortWith {
     }
 }
 
-/// A non-negative `Int` argument as a position or a count, for
-/// `name`'s `what` ("index", "count").
-fn natural(name: &str, what: &str, n: i64) -> Result<usize, VmError> {
-    usize::try_from(n).map_err(|_| VmError::new(format!("{name}: negative {what} {n}")))
-}
-
 /// `list.*`
 pub(crate) mod list {
     use super::*;
@@ -969,14 +964,14 @@ pub(crate) mod list {
             Ok(xs.set(index, value.clone())?.map(Value::List))
         }
 
-        fn take(xs: List, n: i64) -> Result<Value, VmError> {
-            let count = natural("list.take", "count", n)?;
-            Ok(Value::List(xs.slice(0, count)))
+        // A count is cut to the list: a negative one is 0, one past
+        // the end is the length.
+        fn take(xs: List, n: i64) -> Value {
+            Value::List(xs.slice(0, cut(n)))
         }
 
-        fn drop(xs: List, n: i64) -> Result<Value, VmError> {
-            let count = natural("list.drop", "count", n)?;
-            Ok(Value::List(xs.slice(count, xs.len())))
+        fn drop(xs: List, n: i64) -> Value {
+            Value::List(xs.slice(cut(n), xs.len()))
         }
 
         // The lists of `n` elements in order, the last one shorter if

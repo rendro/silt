@@ -1,0 +1,8 @@
+-- exit: 1
+-- stderr-contains: int.pow: negative exponent -1
+-- A negative exponent has no Int result.
+import int
+
+fn main() {
+  println(int.pow(2, -1))
+}

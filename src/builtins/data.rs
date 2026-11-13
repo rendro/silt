@@ -367,7 +367,7 @@ impl<'c> Writer<'c> {
             Value::Int(n) => Data::Int(*n),
             Value::Float(f) => Data::Float(f.get()),
             Value::Bool(b) => Data::Bool(*b),
-            Value::String(s) => Data::String(s.clone()),
+            Value::String(s, _) => Data::String(s.clone()),
             Value::Bytes(bytes) if self.format == Format::Postgres && place == Place::Value => {
                 Data::Bytes(bytes.clone())
             }
@@ -380,7 +380,7 @@ impl<'c> Writer<'c> {
                     .iter()
                     .map(|(k, v)| {
                         let key = match k {
-                            Value::String(s) => s.to_string(),
+                            Value::String(s, _) => s.to_string(),
                             other => other.to_string(),
                         };
                         Ok((key, inner(v, Place::Member)?))
@@ -480,7 +480,7 @@ mod tests {
             ("Int", Value::Int(1)),
             ("Float", Value::Float(Float::new(1.5).expect("finite"))),
             ("Bool", Value::Bool(true)),
-            ("String", Value::String("s".into())),
+            ("String", Value::string("s")),
             ("()", Value::Unit),
             ("List", Value::list(vec![Value::Int(1)])),
             ("Tuple", Value::tuple(vec![Value::Int(1)])),

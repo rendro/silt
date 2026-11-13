@@ -115,7 +115,7 @@ fn value_implements_display_predicate_covers_every_no_display_value() {
     // Accepted: the printable built-ins still pass.
     for v in [
         Value::Int(1),
-        Value::String("x".into()),
+        Value::string("x"),
         Value::Bool(true),
         Value::list(vec![Value::Int(1)]),
         Value::Unit,

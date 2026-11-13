@@ -123,7 +123,7 @@ fn main() {
   loop todos = [] {
     print("todo> ")
     match io.read_line() {
-      Ok(input) -> {
+      Ok(Some(input)) -> {
         let (cmd, rest) = parse_command(input)
         match cmd {
           "add" -> match rest {
@@ -191,7 +191,7 @@ fn main() {
           }
         }
       }
-      Err(_) -> println("Goodbye!")
+      Err(_) | Ok(None) -> println("Goodbye!")
     }
   }
 }
