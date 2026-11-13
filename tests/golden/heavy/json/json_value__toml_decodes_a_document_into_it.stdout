@@ -1,0 +1,7 @@
+Ok(Object(#{"at": String("07:32:00.25"), "day": String("1979-05-27"), "f": Float(1.5), "list": Array([Int(1), Int(2), String("three")]), "n": Int(1), "on": Bool(true), "owner": Object(#{"name": String("Tom")}), "title": String("x"), "when": String("1979-05-27T07:32:00Z")}))
+Ok(#{"a": Int(1), "b": Array([Int(1), Int(2)])})
+Ok(#{"a": Some(Int(1))})
+Ok(#{"a": [Int(1), Bool(true)]})
+Ok([Object(#{"n": Int(1)}), Object(#{"n": Int(2)})])
+Ok(Conf {name: "a", extra: Object(#{"k": Array([Int(1)])}), more: None})
+Err(toml type mismatch: expected json.Value, got a non-finite float at a)

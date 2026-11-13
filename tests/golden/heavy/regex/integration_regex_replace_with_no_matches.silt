@@ -1,8 +1,10 @@
 import io
 import regex
-import result
 fn program() {
-  regex.replace_with("no numbers here", "\\d+", { m -> "X" }) |> result.unwrap_or("")
+  match regex.compile("\\d+") {
+    Ok(re) -> regex.replace_with("no numbers here", re, { m -> "X" })
+    Err(_) -> ""
+  }
 }
 
 fn main() {

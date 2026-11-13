@@ -133,7 +133,7 @@ value shows it: `Int`, `Float`, `Bool`, `String`, `Bytes` and `()`;
 host module declares, the types of its fields and of the fields of
 each variant (`Box(Int)` at its argument: its `value: a` is an `Int`).
 Of a builtin record or enum type (`time.Date`, `json.Value`) the type
-is checked; a builtin type whose values are neither (`tcp.TcpStream`,
+is checked; a builtin type whose values are neither (`regex.Regex`, `tcp.TcpStream`,
 `postgres.PgPool`) is not checked. A `-> Int` function that returns a
 `String` is a runtime error that names it (`mylib.count: its signature
 returns Int, but it returned String "three"`). No value is of `Never`:
@@ -155,6 +155,14 @@ the result could be checked against. Take `type a`, and build
 ``mylib.same: its signature returns a, here String (the type of its
 argument `x`), but it returned Int 5``. A record is checked so too: a
 `Person` given back where the argument was a `Pet` is that error.
+
+The constructors a function builds values with check them against their
+types, in every build: `Value::record` takes the number of fields its type
+declares, `Tag::new` a place its enum has a variant at, and
+`Value::variant` the number of fields that variant declares. Anything else
+panics inside the function, which is the runtime error ``host function
+'mylib.f' panicked: Value::record: `Person` declares 2 fields, given 1``
+(see "Error Surfacing"); no malformed value reaches the program.
 
 What no argument shows stays the function's to get right: a variable
 whose arguments hold no value of it (`first([])`), the parts of two

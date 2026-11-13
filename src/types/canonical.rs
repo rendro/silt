@@ -411,6 +411,7 @@ pub fn dispatch_type_for_value(val: &Value) -> TypeId {
         Value::Handle(_) => kinds.handle,
         Value::TcpListener(_) => kinds.tcp_listener,
         Value::TcpStream(_) => kinds.tcp_stream,
+        Value::Regex(_) => kinds.regex,
         // (No method is found by a dictionary.)
         Value::Dict(_) => kinds.unit,
     }
@@ -435,6 +436,7 @@ struct KindTypes {
     handle: TypeId,
     tcp_listener: TypeId,
     tcp_stream: TypeId,
+    regex: TypeId,
 }
 
 fn kind_types() -> &'static KindTypes {
@@ -458,6 +460,7 @@ fn kind_types() -> &'static KindTypes {
             handle: TypeRef::builtin("Handle").id,
             tcp_listener: TypeRef::builtin("TcpListener").id,
             tcp_stream: TypeRef::builtin("TcpStream").id,
+            regex: TypeRef::builtin("Regex").id,
         }
     })
 }

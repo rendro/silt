@@ -1,0 +1,41 @@
+-- `%f` reads its digits as the fraction of a second they write after a
+-- point: `.5` is half a second, `.123` 123 milliseconds, nine digits the
+-- nanoseconds they write; digits past the ninth are cut. It still writes
+-- nine digits, which it reads back. `%.f`, `%3f` and `%.3f` are as before.
+import time
+
+fn show(text: String, pattern: String) {
+  match time.parse(text, pattern) {
+    Ok(dt) -> println("{text} -> {dt}")
+    Err(e) -> println("{text} -> {e}")
+  }
+}
+
+fn main() {
+  let p = "%Y-%m-%d %H:%M:%S.%f"
+  show("2024-01-01 23:59:59.5", p)
+  show("2024-01-01 23:59:59.123", p)
+  show("2024-01-01 23:59:59.000000005", p)
+  show("2024-01-01 23:59:59.500000000", p)
+  show("2024-01-01 23:59:59.1234567891", p)
+  show("2024-01-01 23:59:59.", p)
+  show("2024-01-01 23:59:59.x", p)
+  show("2024-01-01 23:59:59.123", "%Y-%m-%d %H:%M:%S%.f")
+  show("2024-01-01 23:59:59", "%Y-%m-%d %H:%M:%S%.f")
+  show("2024-01-01 23:59:59.123", "%Y-%m-%d %H:%M:%S.%3f")
+  show("2024-01-01 23:59:59.12", "%Y-%m-%d %H:%M:%S.%3f")
+  show("2024-01-01 23:59:59.123", "%Y-%m-%d %H:%M:%S%.3f")
+  println(time.parse_instant("2024-01-01T23:59:59.25Z", "%Y-%m-%dT%H:%M:%S.%f%:z"))
+  -- Written by `%f`, read back by it.
+  match time.parse("2024-01-01 23:59:59.5", p) {
+    Ok(dt) -> {
+      let text = time.format(dt, p)
+      println(text)
+      match text {
+        Ok(t) -> println(time.parse(t, p) == Ok(dt))
+        Err(e) -> println(e)
+      }
+    }
+    Err(e) -> println(e)
+  }
+}

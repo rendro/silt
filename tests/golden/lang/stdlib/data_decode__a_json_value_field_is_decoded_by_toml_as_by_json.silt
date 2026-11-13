@@ -1,11 +1,7 @@
--- cmd: check
--- exit: 1
--- A field whose type holds json.Value has no decoder in toml, so toml
--- refuses it whatever the document would hold there: its key left out
--- (an Option too), an empty array, and in a record type the field
--- names. json decodes the same records.
--- (Through a `type a` parameter: the checker asks of each type a call
--- gives it what the decoder the function gives it to asks.)
+-- A field whose type holds json.Value is decoded by toml as by json:
+-- the part of the document as it is, its key left out for an Option, an
+-- empty array, and in a record type a field names. (Through a `type a`
+-- parameter, which passes the type on to the decoder.)
 import json
 import toml
 
@@ -23,18 +19,18 @@ fn from_toml(text: String, type a) -> Result(a, toml.TomlError) where a: json.De
   toml.parse(text, a)
 }
 
-fn show(r: Result(a, e)) where e: Error {
+fn show(r: Result(a, e)) where a: Display, e: Error {
   match r {
-    Ok(_) -> println("ok")
+    Ok(v) -> println(v)
     Err(e) -> println(Error.message(e))
   }
 }
 
 fn main() {
-  show(from_toml("n = 1", Doc))
+  show(from_toml("n = 1\nj = [1, 'a']", Doc))
   show(from_toml("n = 1", Maybe))
   show(from_toml("n = 1\njs = []", Many))
-  show(from_toml("n = 1", Outer))
+  show(from_toml("n = 1\n[inner]\nj = true", Outer))
   show(from_json("""{"n": 1}""", Maybe))
   show(from_json("""{"n": 1, "js": []}""", Many))
   show(from_json("""{"n": 1}""", Outer))

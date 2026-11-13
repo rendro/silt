@@ -106,6 +106,11 @@ pub struct Row {
     /// What a decoding builtin decodes into: the type its last
     /// argument names.
     pub decoding: Option<Decoding>,
+    /// What a writing builtin writes so that the decoder of `decoding`
+    /// reads it back: the elements of the list its first argument is
+    /// (`csv.stringify(rows)`). Their type is checked as that decoder's
+    /// type argument is.
+    pub writes: Option<Decoding>,
     /// Whether the row runs a statement: its third argument is the
     /// statement's parameters, a tuple.
     pub statement: bool,
@@ -227,6 +232,7 @@ pub struct RowSpec {
     constant: Option<Value>,
     feature: Option<(&'static str, bool)>,
     decoding: Option<Decoding>,
+    writes: Option<Decoding>,
     statement: bool,
     connection: bool,
 }
@@ -248,6 +254,7 @@ fn off(signature: &'static str, summary: &'static str) -> RowSpec {
         constant: None,
         feature: None,
         decoding: None,
+        writes: None,
         statement: false,
         connection: false,
     }
@@ -292,6 +299,13 @@ impl RowSpec {
     /// `decoding` says.
     fn decodes(mut self, decoding: Decoding) -> RowSpec {
         self.decoding = Some(decoding);
+        self
+    }
+
+    /// The row writes the elements of the list its first argument is, so
+    /// that a decoder of `decoding` reads them back.
+    fn writes(mut self, decoding: Decoding) -> RowSpec {
+        self.writes = Some(decoding);
         self
     }
 
@@ -659,6 +673,7 @@ fn rows(name: &'static str, enabled: bool, specs: Vec<RowSpec>) -> Vec<Row> {
                 feature: spec.feature.map(|(feature, _)| feature),
                 enabled: on,
                 decoding: spec.decoding,
+                writes: spec.writes,
                 statement: spec.statement,
                 connection: spec.connection,
                 // (Its place among all rows: the registry's to say.)

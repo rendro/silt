@@ -1,0 +1,14 @@
+-- A field of a type that holds json.Value is decoded by toml: its part
+-- of the document as it is, a key left out as None.
+import json
+import toml
+
+type Config {
+  name: String,
+  extra: Option(List(json.Value)),
+}
+
+fn main() {
+  println(toml.parse("name = 'x'", Config))
+  println(toml.parse("name = 'x'\nextra = [1, 'two', [3.5]]", Config))
+}

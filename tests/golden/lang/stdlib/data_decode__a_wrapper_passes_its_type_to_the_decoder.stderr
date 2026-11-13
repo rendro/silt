@@ -6,10 +6,10 @@ error[type]: `json.parse` cannot decode `Blob`: field `data` has type `Set(Int)`
   = note: `load` passes it to `json.parse`
   = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
 
-error[type]: `toml.parse` cannot decode `json.Value`, a type of the json decoders
+error[type]: `toml.parse` cannot decode `Int`: its type argument must be a record type, json.Value, an enum type, or a type with a `json.Decode` impl
  --> data_decode__a_wrapper_passes_its_type_to_the_decoder.silt:24:26
     |
- 24 |   let _ = load_twice("", json.Value)
-    |                          ^^^^^^^^^^ `toml.parse` cannot decode `json.Value`, a type of the json decoders
+ 24 |   let _ = load_twice("", Int)
+    |                          ^^^ `toml.parse` cannot decode `Int`: its type argument must be a record type, json.Value, an enum type, or a type with a `json.Decode` impl
   = note: `load_twice` passes it to `toml.parse`
-  = help: decode into a record type
+  = help: declare a record type with a field of the type you want, and decode into the record

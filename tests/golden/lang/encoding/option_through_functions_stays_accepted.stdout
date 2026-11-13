@@ -1,0 +1,6 @@
+Ok(Some(5))
+Ok(None)
+Ok(Some([1, 2]))
+Ok(None)
+Ok(Some(Object(#{"a": Null})))
+Ok([Some(1), None, Some(3)])

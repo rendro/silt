@@ -424,9 +424,16 @@ fn a_function_named_like_a_builtin_module_does_not_hide_it() {
         })
         .function("fn io(e: io.IoError) -> Int", |_: &HostCall| {
             Ok(Value::Int(1))
-        });
-    let found = errors("fn main() { let _ = 1 }", host);
+        })
+        // (An opaque builtin type, given and given back.)
+        .function(
+            "fn regex(r: regex.Regex) -> regex.Regex",
+            |call: &HostCall| Ok(call.args[0].clone()),
+        );
+    let found = errors("fn main() { let _ = 1 }", host.clone());
     assert!(found.is_empty(), "{found:?}");
+    let source = "import h\nimport host\nimport regex\nfn main() {\n  match regex.compile(\"a+\") {\n    Ok(r) -> host.give(regex.is_match(\"caat\", h.regex(r)))\n    Err(_) -> host.give(false)\n  }\n}";
+    assert_eq!(run(source, host), Ok(Value::Bool(true)));
     #[cfg(feature = "http")]
     {
         let host = HostModule::new("web").function(

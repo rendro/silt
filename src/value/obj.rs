@@ -72,8 +72,18 @@ enum Of {
 
 impl Variant {
     /// The variant `tag` with the fields `fields` ([`Value::variant`]).
+    /// The number of fields is the variant's, or this panics, in every
+    /// build: a host function builds values with it, and a variant
+    /// without its fields would reach the program (a panic inside a host
+    /// function is an error of its call).
     pub(super) fn new(tag: Tag, mut fields: impl ExactSizeIterator<Item = Value>) -> Variant {
-        debug_assert_eq!(tag.arity(), fields.len(), "the fields of {tag}");
+        let (arity, given) = (tag.arity(), fields.len());
+        assert!(
+            arity == given,
+            "Value::variant: the variant `{tag}` of `{}` takes {}, given {given}",
+            tag.ty().name,
+            fields_text(arity),
+        );
         let ordinal = tag.ordinal();
         let ty = tag.into_ty();
         let of = match fields.len() {
@@ -147,6 +157,14 @@ impl Variant {
     }
 }
 
+/// `n` fields, in words: `1 field`, `2 fields`.
+fn fields_text(n: usize) -> String {
+    match n {
+        1 => "1 field".to_string(),
+        n => format!("{n} fields"),
+    }
+}
+
 /// A record: `Pt { x: 1, y: 2 }`.
 #[derive(Clone)]
 pub struct Record(Arc<Obj>);
@@ -154,8 +172,16 @@ pub struct Record(Arc<Obj>);
 impl Record {
     /// The record of the type `ty` with the fields `fields`, in the
     /// order the type declares them ([`Value::record`]).
+    /// The number of fields is the type's, or this panics, in every
+    /// build, as [`Variant::new`] does.
     pub(super) fn new(ty: Arc<TypeInfo>, fields: Vec<Value>) -> Record {
-        debug_assert_eq!(ty.fields().len(), fields.len(), "the fields of {}", ty.name);
+        let (declared, given) = (ty.fields().len(), fields.len());
+        assert!(
+            declared == given,
+            "Value::record: `{}` declares {}, given {given}",
+            ty.name,
+            fields_text(declared),
+        );
         Record(Arc::new(Obj {
             ty,
             fields: fields.into_boxed_slice(),
