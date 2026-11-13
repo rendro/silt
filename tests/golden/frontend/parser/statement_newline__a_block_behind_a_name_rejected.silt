@@ -1,0 +1,34 @@
+-- cmd: check
+-- exit: 1
+-- A block behind a name on the same line is not the name's argument:
+-- `task.spawn { work() }` would run the block on the spot and spawn
+-- nothing. It is refused like any two statements on one line, with a
+-- help that names the closure without parameters.
+import task
+
+fn work() {
+  println("work")
+}
+
+fn spawned() {
+  let _ = task.spawn { work() }
+}
+
+fn behind_a_value() {
+  let n = 1
+  let _k = n {}
+}
+
+fn behind_a_pipe(x: Int) {
+  let _y = x |> id { work() }
+}
+
+fn id(x: Int) -> Int {
+  x
+}
+
+fn main() {
+  spawned()
+  behind_a_value()
+  behind_a_pipe(1)
+}

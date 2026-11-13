@@ -2577,22 +2577,44 @@ impl<'src> Parser<'src> {
         while !self.at(terminator) && !self.at(&Token::Eof) {
             stmts.push(self.parse_stmt()?);
             if !self.nl_before() && Self::starts_statement(self.peek()) {
-                if !self.at_lowercase_record_literal_brace() {
-                    return Err(self.same_line_err("statement"));
+                if self.at_braced_fields() {
+                    // `point { x: 1 }`: the next statement's parse
+                    // reports the record without a type name.
+                    continue;
                 }
-                self.statements.brace_after_name.push(self.span());
+                let mut err = self.same_line_err("statement");
+                if err.code == Code::MissingNewline && self.at_block_behind_a_name() {
+                    // `task.spawn { work() }`: a block behind a name,
+                    // where a closure without parameters was meant.
+                    err = err.with_help(
+                        "a closure without parameters is written `{ -> ... }`; a block of its \
+                         own starts on a new line",
+                    );
+                }
+                return Err(err);
             }
         }
         Ok(stmts)
     }
 
-    /// True at the `{` of `point { x: 1 }` or `util.pt { x: 1 }`: a
-    /// statement that ended at a name followed by `{` on the same line.
-    /// That is a record literal with a lowercase type name, not two
-    /// statements on one line, so the newline error is skipped and the
-    /// name is left to the typechecker's "undefined variable" (and the
-    /// lowercase type-name error where a `type point` exists).
-    fn at_lowercase_record_literal_brace(&self) -> bool {
+    /// True at a `{` that holds the fields of a record: `{ x: ...` or
+    /// `{ x, ...`.
+    fn at_braced_fields(&self) -> bool {
+        self.at(&Token::LBrace)
+            && self
+                .tokens
+                .get(self.pos + 1)
+                .is_some_and(|t| matches!(t.kind, Token::Ident(_)) || t.kind.keyword().is_some())
+            && matches!(
+                self.tokens.get(self.pos + 2).map(|t| &t.kind),
+                Some(Token::Comma | Token::Colon)
+            )
+    }
+
+    /// True at the `{` of `n { ... }` or `task.spawn { ... }`: a
+    /// statement that ended at a name, followed by a block on the same
+    /// line.
+    fn at_block_behind_a_name(&self) -> bool {
         self.at(&Token::LBrace)
             && matches!(
                 self.pos.checked_sub(1).and_then(|i| self.tokens.get(i)),
