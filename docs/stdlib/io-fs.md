@@ -751,6 +751,11 @@ returns `Err(Other("fs.walk: exceeded 1000000 entries (cap)"))` rather than
 silently truncating — callers can then narrow the root or paginate at
 a higher layer.
 
+**A directory that cannot be read fails the walk.** The error names that
+directory, as `fs.list_dir` would: `Err(PermissionDenied("src/locked"))`
+for `fs.walk("src")`. No partial list is returned, so a list that comes
+back is complete.
+
 ```silt
 import fs
 
@@ -788,7 +793,9 @@ pattern, with no wildcard before it, names the path through it
 directory.
 
 Returns `Err(InvalidInput(msg))` if the pattern itself is malformed. The result
-is subject to the same `1_000_000`-entry cap as `fs.walk`.
+is subject to the same `1_000_000`-entry cap as `fs.walk`. A directory the
+pattern has to list and cannot read fails the call, as for `fs.walk`, and the
+error names that directory, not the pattern.
 
 ```silt
 import fs

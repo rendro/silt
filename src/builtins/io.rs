@@ -596,13 +596,15 @@ pub(crate) mod fs {
             for entry in walker {
                 let entry = match entry {
                     Ok(entry) => entry,
-                    // walkdir::Error -> reconstruct an io::Error when
-                    // possible so variant classification is accurate;
-                    // fall back to Other when walkdir wraps a
-                    // non-io cause (cycle detection etc.).
+                    // The error names the path that failed, as walkdir
+                    // made it from `root` (`w/locked`, not `w`): one
+                    // directory that cannot be read fails the whole walk.
+                    // A cause that is no io error (a loop of links, which
+                    // a walk that follows none does not meet) is Other.
                     Err(err) => {
+                        let at = err.path().map_or(root.into(), |at| at.to_string_lossy());
                         return match err.io_error() {
-                            Some(io_error) => path_err(io_error, root),
+                            Some(io_error) => path_err(io_error, &at),
                             None => io_result_err_unknown(err.to_string()),
                         };
                     }
@@ -644,7 +646,9 @@ pub(crate) mod fs {
                 }
                 match entry {
                     Ok(path) => out.push(Value::string(path.to_string_lossy().into_owned())),
-                    Err(e) => return path_err(&e, pattern),
+                    // The directory that could not be listed, not the
+                    // pattern: one fails the whole call.
+                    Err((dir, e)) => return path_err(&e, &dir.to_string_lossy()),
                 }
             }
             fs_ok(Value::list(out))

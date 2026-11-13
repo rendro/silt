@@ -512,6 +512,51 @@ import host
     );
 }
 
+// ── fs.walk, fs.glob: a directory that cannot be read ───────────────
+
+/// One directory that cannot be read fails fs.walk and fs.glob, and the
+/// error names that directory, as fs.list_dir does: not the root of the
+/// walk, not the pattern. (Unix: a directory is made unreadable by its
+/// mode; a test run as root reads it anyway, and then has nothing to
+/// show.)
+#[cfg(unix)]
+#[test]
+fn test_fs_walk_and_glob_name_the_directory_they_cannot_read() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = TempDir::new("walk_denied");
+    let root = dir.path().join("w");
+    let locked = root.join("locked");
+    std::fs::create_dir_all(&locked).unwrap();
+    std::fs::write(root.join("a.txt"), "a").unwrap();
+    std::fs::write(locked.join("b.txt"), "b").unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let readable = std::fs::read_dir(&locked).is_ok();
+    let call = |expr: String| {
+        err_msg(run(&format!(
+            "import fs\nimport host\nfn main() {{\n  host.give({expr})\n}}\n"
+        )))
+    };
+    let (root_str, locked_str) = (root.to_string_lossy(), locked.to_string_lossy());
+    let outcomes = (!readable).then(|| {
+        (
+            call(format!("fs.walk(\"{root_str}\")")),
+            call(format!("fs.glob(\"{root_str}/**/*.txt\")")),
+            call(format!("fs.glob(\"{root_str}/*/*\")")),
+            call(format!("fs.list_dir(\"{locked_str}\")")),
+        )
+    });
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let Some((walked, globbed, starred, listed)) = outcomes else {
+        eprintln!("skipped: the test runs as a user that reads any directory");
+        return;
+    };
+    let denied = format!("permission denied: {locked_str}");
+    assert_eq!(listed, denied);
+    assert_eq!(walked, denied);
+    assert_eq!(globbed, denied);
+    assert_eq!(starred, denied);
+}
+
 // ── fs.remove: a link is removed itself ─────────────────────────────
 
 /// A link to a directory, made as the system makes one: `None` where

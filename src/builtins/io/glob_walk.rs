@@ -74,11 +74,14 @@ struct Part {
 /// [`MATCHED`] when it matched the last.
 const MATCHED: usize = usize::MAX;
 
-/// What is still to be looked at, the next one last.
-type Todo = Vec<Result<(Found, usize), std::io::Error>>;
+/// A directory that could not be listed, and why.
+pub(super) type Unlisted = (PathBuf, std::io::Error);
 
-/// The paths `pattern` matches, in the glob crate's order, or why a
-/// directory could not be listed.
+/// What is still to be looked at, the next one last.
+type Todo = Vec<Result<(Found, usize), Unlisted>>;
+
+/// The paths `pattern` matches, in the glob crate's order, or the
+/// directory that could not be listed and why.
 pub(super) struct Matches {
     parts: Vec<Part>,
     /// The pattern ends in a separator: only directories match.
@@ -160,7 +163,7 @@ fn unsupported_verbatim(_: &Path) -> bool {
 }
 
 impl Iterator for Matches {
-    type Item = Result<PathBuf, std::io::Error>;
+    type Item = Result<PathBuf, Unlisted>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(scope) = self.scope.take()
@@ -267,7 +270,7 @@ fn fill_todo(todo: &mut Todo, parts: &[Part], index: usize, found: &Found) {
                         }
                     }
                 }
-                Err(e) => todo.push(Err(e)),
+                Err(e) => todo.push(Err((found.path.clone(), e))),
             }
         }
     }
