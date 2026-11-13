@@ -277,7 +277,7 @@ impl std::error::Error for InvalidGitUrl {}
 /// (`silt add --git ./lib` stores such a path made from the working
 /// directory). Elsewhere `C:/repo` is the scp-like `host:path`.
 pub fn validate_git_url(url: &str) -> Result<(), InvalidGitUrl> {
-    let local = url.starts_with("file://") || is_local_path(url);
+    let local = is_local_git_url(url);
     let is_forbidden: fn(char) -> bool = if local {
         is_forbidden_in_local_form
     } else {
@@ -328,6 +328,30 @@ pub fn validate_git_url(url: &str) -> Result<(), InvalidGitUrl> {
         url: escape_for_display(url),
         reason: format!("{problem}; expected {ACCEPTED_GIT_URL_FORMS}"),
     })
+}
+
+/// Whether the git URL `url` names a repository on this machine: a
+/// `file://` URL or a local path (starting with `/`, `./` or `../`, or
+/// on Windows a drive or UNC path). On Windows, git takes any
+/// one character and `:` in front for a drive (a letter, or any name
+/// `subst` gave one), also with no slash after it
+/// (`c:repo`, relative to the current directory of that drive), where
+/// elsewhere it is the host of an scp-like URL.
+pub fn is_local_git_url(url: &str) -> bool {
+    is_local_git_url_on(url, cfg!(windows))
+}
+
+/// [`is_local_git_url`] as it is on Windows (`windows`) or elsewhere.
+fn is_local_git_url_on(url: &str, windows: bool) -> bool {
+    // (Any one character, as Git for Windows takes a drive: `subst` can
+    // name one `1:` or `ä:`.)
+    let mut chars = url.chars();
+    let drive = chars.next().is_some() && chars.next() == Some(':');
+    url.starts_with("file://")
+        || url.starts_with('/')
+        || url.starts_with("./")
+        || url.starts_with("../")
+        || (windows && (drive || url.starts_with(r"\\")))
 }
 
 /// A local path: a value starting with `/`, `./` or `../`, and on
@@ -695,6 +719,21 @@ pub fn cache_for(url: &str, commit: &str) -> Result<PathBuf, GitError> {
     }
     let root = cache_dir()?;
     Ok(root.join(url_hash(url)).join(commit.to_lowercase()))
+}
+
+/// The checkout of `url` at the full commit id `commit` in the cache,
+/// when it is there ([`cache_for`]). Nothing is fetched, and nothing is
+/// created: the language server, which fetches nothing, reads the cache
+/// with it.
+pub fn cached_checkout(url: &str, commit: &str) -> Option<PathBuf> {
+    if !is_full_commit_id(commit) {
+        return None;
+    }
+    let dir = compute_cache_root()
+        .ok()?
+        .join(url_hash(url))
+        .join(commit.to_lowercase());
+    dir.is_dir().then_some(dir)
 }
 
 fn url_hash(url: &str) -> String {
@@ -1075,6 +1114,42 @@ mod tests {
         assert!(!is_windows_absolute_path("git@host:repo"));
         // A local path on Windows only, as git takes it.
         assert_eq!(is_local_path("C:/repo"), cfg!(windows));
+    }
+
+    /// A repository on this machine, as git takes the URL on each
+    /// platform: on Windows any one character and `:` in front is a drive,
+    /// also `c:repo`, `c:../other`, `1:repo` and `ä:repo`, which elsewhere
+    /// are scp-like hosts.
+    #[test]
+    fn a_local_git_url_is_told_on_each_platform() {
+        for url in ["file:///srv/repo", "/srv/repo", "./repo", "../repo"] {
+            assert!(is_local_git_url_on(url, false), "{url}");
+            assert!(is_local_git_url_on(url, true), "{url}");
+        }
+        for url in [
+            "c:repo",
+            "C:../other/repo",
+            r"C:\repo",
+            "C:/repo",
+            r"\\server\share",
+            "1:repo",
+            "ä:repo",
+        ] {
+            assert!(is_local_git_url_on(url, true), "{url}");
+        }
+        for url in ["c:repo", "C:../other/repo", "1:repo", "ä:repo"] {
+            assert!(!is_local_git_url_on(url, false), "{url}");
+        }
+        for url in [
+            "https://example.com/repo",
+            "ssh://git@example.com/repo",
+            "git://example.com/repo",
+            "git@example.com:repo",
+            "example.com:repo",
+        ] {
+            assert!(!is_local_git_url_on(url, false), "{url}");
+            assert!(!is_local_git_url_on(url, true), "{url}");
+        }
     }
 
     const RULE_SPACE: &str = "must not contain whitespace or control characters";
