@@ -769,15 +769,6 @@ impl TypeChecker {
                 }
                 let ty = self.named_type(te.res, *name);
                 let shown = Qualifier::written(*module, *name);
-                // (`Bytes()`, `Box()`: empty parentheses are no spelling
-                // of a type.)
-                if let Some(ty) = ty
-                    && args.is_empty()
-                {
-                    let message = self.type_arguments_message(&shown, ty);
-                    self.error(Code::ArityMismatch, message, te.span);
-                    return Type::Error;
-                }
                 if let Some(builtin) = ty.and_then(builtin_type_name) {
                     let n = resolved_args.len();
                     let mut it = resolved_args.clone().into_iter();

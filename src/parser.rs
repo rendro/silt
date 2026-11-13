@@ -888,6 +888,24 @@ impl<'src> Parser<'src> {
         Diagnostic::error(Code::UnsupportedSyntax, span, message)
     }
 
+    /// Report the empty parentheses that `open` starts (the last token
+    /// consumed is their `)`) behind the name `name`: `W()`, a second
+    /// spelling of `W`. `fix` says what to write instead. The parse goes
+    /// on as if they were not there, so nothing else is said of the
+    /// declaration.
+    fn empty_parens(&mut self, open: Span, name: Symbol, fix: &str) {
+        if self.cut_short {
+            return;
+        }
+        let name = intern::resolve(name);
+        let fix = fix.replace("{name}", &name);
+        self.keep_or_count(Diagnostic::error(
+            Code::UnsupportedSyntax,
+            self.close(open),
+            format!("empty parentheses behind `{name}`: {fix}"),
+        ));
+    }
+
     fn expect_ident(&mut self) -> Result<(Symbol, Span)> {
         match self.peek().clone() {
             Token::Ident(name) => {
@@ -1861,6 +1879,9 @@ impl<'src> Parser<'src> {
                 ListEnd::Close(&Token::RParen),
                 Self::expect_ident,
             )?;
+            if written.is_empty() {
+                self.empty_parens(open, name, "a type without parameters is declared `type {name}`");
+            }
             for (param, param_span) in written {
                 let text = intern::resolve(param);
                 if !text.starts_with(char::is_lowercase) {
@@ -1987,12 +2008,16 @@ impl<'src> Parser<'src> {
                 let (name, name_span) = p.expect_ident()?;
                 let fields = if p.at_on_line(&Token::LParen) {
                     let open = p.advance().span;
-                    p.comma_list(
+                    let fields = p.comma_list(
                         "enum variant field list",
                         open,
                         ListEnd::Close(&Token::RParen),
                         Self::parse_type_expr,
-                    )?
+                    )?;
+                    if fields.is_empty() {
+                        p.empty_parens(open, name, "a variant without fields is written `{name}`");
+                    }
+                    fields
                 } else {
                     Vec::new()
                 };
@@ -2126,7 +2151,7 @@ impl<'src> Parser<'src> {
     fn parse_trait_ref(&mut self) -> Result<TraitRef> {
         let (module, name, name_span) = self.parse_qualified_name("trait name")?;
         let args = if self.at_on_line(&Token::LParen) {
-            self.parse_trait_args()?
+            self.parse_trait_args(name)?
         } else {
             Vec::new()
         };
@@ -2141,14 +2166,23 @@ impl<'src> Parser<'src> {
 
     /// The argument list of a trait: `(Int)` in `TryInto(Int)`, `(a, b)`
     /// in `trait Convert(a, b)`.
-    fn parse_trait_args(&mut self) -> Result<Vec<TypeExpr>> {
+    /// The argument list of the trait `name`.
+    fn parse_trait_args(&mut self, name: Symbol) -> Result<Vec<TypeExpr>> {
         let open = self.expect(&Token::LParen)?.span;
-        self.comma_list(
+        let args = self.comma_list(
             "trait argument list",
             open,
             ListEnd::Close(&Token::RParen),
             Self::parse_type_expr,
-        )
+        )?;
+        if args.is_empty() {
+            self.empty_parens(
+                open,
+                name,
+                "write the trait's arguments in them, or `{name}` alone for a trait that takes none",
+            );
+        }
+        Ok(args)
     }
 
     fn parse_trait_or_impl(&mut self) -> Result<Decl> {
@@ -2169,7 +2203,7 @@ impl<'src> Parser<'src> {
         // expression (concrete types, generics, or tyvars from a
         // parameterized impl target).
         let trait_args: Vec<TypeExpr> = if self.at_on_line(&Token::LParen) {
-            self.parse_trait_args()?
+            self.parse_trait_args(name)?
         } else {
             Vec::new()
         };
@@ -2598,6 +2632,23 @@ impl<'src> Parser<'src> {
                 ListEnd::Close(&Token::RParen),
                 Self::parse_type_expr,
             )?;
+            if args.is_empty() {
+                self.empty_parens(
+                    open,
+                    name,
+                    "write the type's arguments in them, or `{name}` alone for a type that takes none",
+                );
+                let kind = if module.is_none() && name == intern::intern("Self") {
+                    TypeExprKind::SelfType
+                } else {
+                    TypeExprKind::Named {
+                        module,
+                        name,
+                        name_span,
+                    }
+                };
+                return Ok(self.mk_type(kind, start));
+            }
             Ok(self.mk_type(
                 TypeExprKind::Generic {
                     module,
@@ -4282,6 +4333,14 @@ impl<'src> Parser<'src> {
                 ListEnd::Close(&Token::RParen),
                 Self::parse_pattern,
             )?;
+            if pats.is_empty() {
+                self.empty_parens(
+                    open,
+                    name,
+                    "write a pattern for each field in them, or `{name}` alone for a variant \
+                     without fields",
+                );
+            }
             Ok(mk(PatternKind::Constructor {
                 qualifier,
                 name,

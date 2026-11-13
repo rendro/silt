@@ -1692,18 +1692,6 @@ impl TypeChecker {
     /// (`trait Functor for Result(_, e)`), an impl of a trait of types
     /// names every type argument. What does not fit is reported.
     fn impl_header_fits(&mut self, ti: &TraitImpl, tr: TraitKey, written: TypeRef) -> bool {
-        // (`trait Q for W()`: empty parentheses, which the header ends
-        // with, are no spelling of a type, as in an annotation.)
-        if ti.target_type_args.is_empty() && ti.header_span.end > ti.target_type_span.end {
-            let shown = Qualifier::written(ti.target_module, ti.target_type);
-            let message = self.type_arguments_message(&shown, written);
-            let span = Span {
-                start: ti.target_type_span.start,
-                ..ti.header_span
-            };
-            self.error(Code::ArityMismatch, message, span);
-            return false;
-        }
         let holes: Vec<usize> = (ti.target_type_args.iter().enumerate())
             .filter(|(_, arg)| is_hole(arg))
             .map(|(i, _)| i)
