@@ -10,10 +10,3 @@ error[type]: operator '+' requires Int or Float, got 'String'; build strings wit
    |
  9 |   let s = "a␇␈␛[2J�b␡" + 1
    |           ^^^^^^^^^^^^ operator '+' requires Int or Float, got 'String'; build strings with interpolation, e.g. "{a}{b}"
-
-warning[type]: 's' is never used
- --> control_characters_in_the_echoed_line_are_shown_visibly.silt:9:7
-   |
- 9 |   let s = "a␇␈␛[2J�b␡" + 1
-   |       ^ 's' is never used
-  = help: remove it, or name it `_s`

@@ -1141,9 +1141,28 @@ impl<'src> Parser<'src> {
             self.fn_stub = None;
             match self.parse_decl() {
                 Ok(decl) => {
-                    decls.push(decl);
                     if let Some(err) = self.same_line_decl_err() {
+                        decls.push(decl);
                         self.keep_or_count(err);
+                    } else if self.cut_short_by_its_line() {
+                        // The parse of the rest of the line reports it;
+                        // the declaration is a damaged one, of which
+                        // nothing more is said: a function is a recovery
+                        // stub, another declaration binds its names as
+                        // unknown ones.
+                        self.skipped = true;
+                        match decl {
+                            Decl::Fn(mut f) => {
+                                f.is_recovery_stub = true;
+                                f.is_signature_only = false;
+                                f.where_clauses = Vec::new();
+                                f.body = Expr::new(ExprKind::Block(Vec::new()), f.span);
+                                decls.push(Decl::Fn(f));
+                            }
+                            _ => self.names_of_failed(start..self.pos),
+                        }
+                    } else {
+                        decls.push(decl);
                     }
                 }
                 Err(e) => {
@@ -1266,6 +1285,24 @@ impl<'src> Parser<'src> {
     /// that starts a declaration is a second declaration on the line;
     /// any other token (`with`, `5`, `!`, ...) is left to the plain
     /// "expected declaration" error the next `parse_decl` reports.
+    /// Whether the declaration just parsed, which ended in front of the
+    /// current token, was cut short by the rest of its line: a token
+    /// that starts no declaration stands behind it on its line, and the
+    /// declaration does not end with a brace that closes it. `type C =
+    /// A | B`, `fn f() -> Result<Int, String>`, `const X = 1` behind a
+    /// `let`: what the declaration was meant to be is not known.
+    fn cut_short_by_its_line(&self) -> bool {
+        !self.nl_before()
+            && !self.at(&Token::Eof)
+            && !matches!(
+                self.pos.checked_sub(1).and_then(|i| self.tokens.get(i)),
+                Some(Tok {
+                    kind: Token::RBrace,
+                    ..
+                })
+            )
+    }
+
     fn same_line_decl_err(&self) -> Option<Diagnostic> {
         if self.nl_before() {
             return None;
@@ -1364,26 +1401,7 @@ impl<'src> Parser<'src> {
         match rest.first().map(|tok| &tok.kind) {
             Some(Token::Type) => {
                 names.extend(rest.get(1).and_then(name));
-                // The variants of an enum: the upper-case names that
-                // stand behind a comma or the brace in its braces. (A
-                // type among a variant's fields can be taken for one:
-                // the resolver leaves a name that is declared, imported
-                // or silt's own what it is.)
-                let mut depth = 0;
-                for (i, tok) in rest.iter().enumerate() {
-                    match tok.kind {
-                        Token::LBrace => depth += 1,
-                        Token::RBrace => depth -= 1,
-                        Token::Ident(variant)
-                            if depth == 1
-                                && upper(variant)
-                                && matches!(rest[i - 1].kind, Token::LBrace | Token::Comma) =>
-                        {
-                            names.push(variant);
-                        }
-                        _ => {}
-                    }
-                }
+                Self::variants_of_failed(rest, &mut names);
             }
             // A trait declaration, not an impl (`trait T for X`).
             Some(Token::Trait) => {
@@ -1405,9 +1423,48 @@ impl<'src> Parser<'src> {
                     .filter_map(name)
                     .filter(|name| !upper(*name)),
             ),
+            // A declaration of another language, `const X = 1`, `struct
+            // P {`, `enum C { A, B }`, `def f(`: the name behind its
+            // first word, and the variants in its braces.
+            Some(Token::Ident(_)) => {
+                if let Some(bound) = rest.get(1).and_then(name) {
+                    names.push(bound);
+                    Self::variants_of_failed(rest, &mut names);
+                }
+            }
             _ => {}
         }
         self.unknown.extend(names);
+    }
+
+    /// The variants a failed type declaration `tokens` would have had:
+    /// the upper-case names in its braces that stand behind the brace, a
+    /// comma, or a variant before them that has no comma behind it
+    /// (`{ Circle(Int) Rect(Int, Int) }`, `{ A B }`). (A type among a
+    /// variant's fields can be taken for one: the resolver leaves a name
+    /// that is declared, imported or silt's own what it is.)
+    fn variants_of_failed(tokens: &[Tok], names: &mut Vec<Symbol>) {
+        let upper =
+            |name: Symbol| intern::resolve(name).starts_with(|c: char| c.is_ascii_uppercase());
+        let mut depth = 0;
+        for (i, tok) in tokens.iter().enumerate() {
+            match tok.kind {
+                Token::LBrace => depth += 1,
+                Token::RBrace => depth -= 1,
+                Token::Ident(variant)
+                    if depth == 1
+                        && upper(variant)
+                        && match tokens[i - 1].kind {
+                            Token::LBrace | Token::Comma | Token::RParen => true,
+                            Token::Ident(before) => upper(before),
+                            _ => false,
+                        } =>
+                {
+                    names.push(variant);
+                }
+                _ => {}
+            }
+        }
     }
 
     /// A method of the body of a trait or an impl. One that fails in its
@@ -5548,6 +5605,17 @@ fn main() {
             "A B C E"
         );
         assert_eq!(names("trait T {\n  fn m(self) ->\n}\n"), "T");
+        // A variant behind another without a comma; a declaration of
+        // another language (the name behind its first word).
+        assert_eq!(
+            names("type Shape { Circle(Int) Rect(Int, Int) }\n"),
+            "Circle Int Rect Shape"
+        );
+        assert_eq!(names("const X = 1\n"), "X");
+        assert_eq!(names("enum C { A, B }\n"), "A B C");
+        // A declaration that the rest of its line cuts short.
+        assert_eq!(names("type C = A | B\n"), "C");
+        assert_eq!(names("let x = 1 2\n"), "x");
         assert_eq!(names("trait T for Int {\n  fn m(self) ->\n}\n"), "");
         assert_eq!(names("import geo.{ mk, area, 5 }\n"), "area geo mk");
         // Rejected text in the place of an element is the element.

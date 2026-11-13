@@ -614,6 +614,12 @@ impl Session {
             .into_iter()
             .partition(Diagnostic::is_warning);
         warnings.sort_by_key(|d| d.span.start);
+        // While the text has syntax errors, nothing is said to be never
+        // used: the use may be in what did not parse.
+        let module = self.graph.module(id);
+        if module.incomplete || module.problems.iter().any(|p| !p.is_warning()) {
+            warnings.retain(|d| !matches!(d.code, Code::UnusedName | Code::UnusedImport));
+        }
         let diagnostics = match self.graph.module(id).cut_short {
             true => bugs,
             false => bugs

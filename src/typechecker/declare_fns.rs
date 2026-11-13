@@ -258,9 +258,22 @@ impl TypeChecker {
         // Recovery-stub special case (Option B): record the name and bind
         // its signature just like a real fn, so downstream references in
         // unrelated code do not cascade into "undefined variable" errors.
+        // What is wrong with the signature of one is not said: the
+        // syntax error that cut it short is its error, and what was read
+        // of it may be a part of what was meant (`-> Result` of `->
+        // Result<Int, String>`).
         if f.is_recovery_stub {
             self.recovery_stub_names.insert(f.name);
+            let said = self.errors.len();
+            let sig = self.register_fn_signature(f, env);
+            self.errors.truncate(said);
+            return sig;
         }
+        self.register_fn_signature(f, env)
+    }
+
+    /// `register_fn_decl` of any function.
+    fn register_fn_signature(&mut self, f: &FnDecl, env: &mut TypeEnv) -> FnSig {
         // A function of more parameters and bounds than a function can
         // have does not run: its signature is read for its own errors,
         // and its body is not checked (`refuse_past_bounds`).
