@@ -333,6 +333,7 @@ fn a_type_of_around_more_than_a_variable_is_refused() {
     for (signature, written) in [
         ("fn oft(v: b, t: TypeOf(List(a))) -> a", "TypeOf(List(a))"),
         ("fn opt(t: Option(TypeOf(List(a)))) -> a", "TypeOf(List(a))"),
+        ("fn lst(ts: List(TypeOf(List(a)))) -> a", "TypeOf(List(a))"),
         (
             "fn pair(t: (Int, TypeOf(Map(k, v)))) -> Int",
             "TypeOf(Map(k, v))",
