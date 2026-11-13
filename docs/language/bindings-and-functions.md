@@ -82,7 +82,7 @@ fn main() {
   let _ = task.spawn { -> println("in the background") }
   match io.write_file("out.txt", "data") {
     Ok(_) -> println("saved")
-    Err(e) -> println("not saved: {Error.message(e)}")
+    Err(e) -> println("not saved: {e}")
   }
 }
 ```

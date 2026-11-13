@@ -1884,11 +1884,27 @@ impl TypeChecker {
         };
         let target_type = canonical_head(&self.tables.resolver, written);
         let Some(trait_key) = self.impl_trait(ti) else {
-            self.error(
-                Code::UnknownTrait,
-                format!("trait '{}' is not declared", ti.trait_name),
-                ti.span,
-            );
+            let message = format!("trait '{}' is not declared", ti.trait_name);
+            // (An error type of another language's kind: an error is
+            // shown as any value is.)
+            // An impl of Display can be written only for a type of this
+            // module; any other type is shown by the Display it has.
+            let own = matches!(ti.target_res, Some(crate::defs::Res::Def(id))
+                if self.defs.as_ref().is_some_and(|defs| defs.get(id).module == self.module));
+            let help = (ti.trait_module.is_none() && resolve(ti.trait_name) == "Error").then(|| {
+                let ty = Qualifier::written(ti.target_module, ti.target_type);
+                match own {
+                    true => format!(
+                        "an error is shown as any value is: to say how `{ty}` is shown (by \
+                         `{{e}}`, and as the error of main), write `trait Display for {ty}`"
+                    ),
+                    false => format!(
+                        "an error is shown as any value is: `{ty}` is shown (by `{{e}}`, and as \
+                         the error of main) by the Display it has"
+                    ),
+                }
+            });
+            self.error_help(Code::UnknownTrait, (message, help), ti.span);
             return;
         };
         if !self.impl_header_fits(ti, trait_key, written) {
@@ -2113,7 +2129,7 @@ impl TypeChecker {
                 let shown = self.show_trait(impl_trait);
                 let message = format!(
                     "an impl of '{shown}' can ask only 'Display', 'Equal', 'Compare', 'Hash', \
-                     'json.Encode', 'json.Decode', 'Error' or 'Number' of its type's variables: \
+                     'json.Encode', 'json.Decode' or 'Number' of its type's variables: \
                      the runtime runs it with nothing else"
                 );
                 // (Each help points at what the impl can do instead.)
@@ -2130,7 +2146,6 @@ impl TypeChecker {
                         "Decode",
                         "decode the part with `json.decode` and bound it by json.Decode",
                     ),
-                    ("Error", "show the part with `{x}` and bound it by Display"),
                 ]
                 .iter()
                 .find(|(tr, _)| impl_trait.is_builtin(tr))

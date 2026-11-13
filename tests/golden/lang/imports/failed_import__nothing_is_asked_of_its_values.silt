@@ -13,7 +13,7 @@ fn pass(x) { x }
 fn main() {
   match nosuchmodule.connect("x") {
     Ok(c) -> println(c.name)
-    Err(e) -> println(e.message())
+    Err(e) -> println("{e}")
   }
   let v = nosuchmodule.thing()
   println(v.show())

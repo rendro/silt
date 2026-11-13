@@ -107,7 +107,7 @@ pub(crate) fn json_unknown_err<S: Into<Arc<str>>>(msg: S) -> Value {
     json_err_wrap(Value::variant(bv::JSON_OTHER, [Value::string(msg)]))
 }
 
-/// What `JsonError`'s `message` says of the variant `tag` with `fields`:
+/// How `JsonError` shows the variant `tag` with `fields`:
 /// `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
@@ -363,9 +363,9 @@ pub(crate) const RULES: Rules = Rules {
 /// The value of the field type `expected` that the JSON text `text` is,
 /// for a decoder of a format that holds JSON documents (postgres's
 /// `json` and `jsonb` columns), read by `r` (a part of a type with a
-/// written `json.Decode` impl is its hole): `Err` of what `JsonError`'s
-/// `message` says of why there is none, or `None` where the text is no
-/// document.
+/// written `json.Decode` impl is its hole): `Err` of how the
+/// `JsonError` of why there is none is shown, or `None` where the text
+/// is no document.
 #[cfg(feature = "postgres")]
 pub(crate) fn decode_field(
     r: &decode::Reader,
@@ -376,7 +376,7 @@ pub(crate) fn decode_field(
     Ok(decoded.map_err(|e| message(&e.variant(&RULES))))
 }
 
-/// What `JsonError`'s `message` says of `error`.
+/// How the `JsonError` `error` is shown.
 #[cfg(feature = "postgres")]
 pub(crate) fn message(error: &Value) -> std::string::String {
     let text = match error {

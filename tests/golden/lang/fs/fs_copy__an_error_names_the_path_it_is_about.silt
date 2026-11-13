@@ -12,7 +12,7 @@ fn main() {
   println(fs.rename("gone.txt", "b.txt"))
   match fs.copy("a.txt", "missing/b.txt") {
     Ok(_) -> println("copied")
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println("{e}")
   }
   -- Nothing was written, and the source is still there.
   println(fs.exists("missing"))

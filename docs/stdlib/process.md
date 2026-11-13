@@ -50,7 +50,7 @@ fn main() {
     [n] -> match int.parse(n) {
       Ok(n) -> println(n * 2)
       Err(e) -> {
-        io.eprintln("count: {Error.message(e)}")
+        io.eprintln("count: {e}")
         process.exit(2)
       }
     }

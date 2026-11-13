@@ -20,6 +20,6 @@ fn main() {
       println(send_it(db, bytes.from_string("ab")))
       println(send_inferred(db, bytes.from_string("cd")))
     }
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println("{e}")
   }
 }

@@ -111,6 +111,10 @@ pub struct ModuleAnalysis {
     pub let_order: Vec<crate::source::Span>,
     /// The module's type errors and warnings.
     pub diagnostics: Vec<Diagnostic>,
+    /// For each top-level `main` and test function whose error type
+    /// has no `Display`, the error reported where it is an entry point:
+    /// `main` of a file run or checked, a test of a file tested.
+    pub entry_display: HashMap<crate::intern::Symbol, Diagnostic>,
 }
 
 /// What the VM runs: the compiled functions, the first of which is the
@@ -638,6 +642,7 @@ impl Session {
             signatures: check.signatures,
             let_order: check.let_order,
             diagnostics,
+            entry_display: check.entry_display,
         }
     }
 
@@ -801,6 +806,7 @@ impl Session {
                     )),
                     Some(ty) => entry::check_main(&analysis.ast, ty),
                 });
+                entry_errors.extend(analysis.entry_display.get(&main).cloned());
                 EntryPoint::Main {
                     span: entry::main_span(&analysis.ast),
                 }
@@ -810,10 +816,16 @@ impl Session {
                 // must have a `main` that can start.
                 if let Some(ty) = analysis.top_level.get(&main) {
                     entry_errors.extend(entry::check_main(&analysis.ast, ty));
+                    entry_errors.extend(analysis.entry_display.get(&main).cloned());
                 }
                 let (tests, errors) =
                     entry::select_tests(&analysis.ast, &analysis.top_level, filter.as_deref());
                 entry_errors.extend(errors);
+                // (A test whose error type has no Display: also one
+                // whose signature is refused above.)
+                for (f, _, _) in entry::selected_tests(&analysis.ast, filter.as_deref()) {
+                    entry_errors.extend(analysis.entry_display.get(&f.name).cloned());
+                }
                 EntryPoint::Tests(tests)
             }
             Entry::Cell => EntryPoint::Cell,

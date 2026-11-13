@@ -181,9 +181,8 @@ fn main() -> Result((), io.IoError) {
 }
 ```
 
-Use `match` to handle the result. Every stdlib error enum (here `IoError`) implements the built-in
-`Error` trait, so you can pattern-match on specific variants and fall back to `Error.message` for
-anything else:
+Use `match` to handle the result. Every stdlib error enum (here `IoError`) is shown as its
+message, so you can pattern-match on specific variants and show anything else with `"{e}"`:
 
 ```silt
 import io
@@ -193,7 +192,7 @@ fn main() {
   match io.read_file("app.json") {
     Ok(content) -> println("loaded {string.length(content)} characters")
     Err(io.NotFound(path)) -> println("file does not exist: {path}")
-    Err(e) -> println("error: {Error.message(e)}")
+    Err(e) -> println("error: {e}")
   }
 }
 ```

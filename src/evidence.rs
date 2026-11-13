@@ -50,9 +50,8 @@ pub enum Evidence {
     /// Display and the json traits where no impl is written).
     Structural { tr: TraitId },
     /// An impl the runtime provides for a builtin type: the impl of
-    /// `tr` for `ty` that no program writes (`Error` of a builtin
-    /// module's error enum), answered by the type's row of the builtin
-    /// registry.
+    /// `tr` for `ty` that no program writes (`Display` of a builtin
+    /// module's error enum, which shows its message).
     Native { tr: TraitId, ty: TypeId },
     /// The checker accepted the predicate with nothing to show for it.
     Missing,
