@@ -371,6 +371,76 @@ pub fn same_type(witness: &Value, value: &Value) -> bool {
     true
 }
 
+/// What is wrong in `value`, a value a host function built, if a record
+/// or a variant in it is not as its type declares it: a record with
+/// another number of fields than its type has, a variant at a place its
+/// enum has none, or with another number of fields than its variant
+/// has. The public constructors (`Value::record`, `Value::variant`,
+/// `Tag::new`) check that only in a debug build, where the VM calls
+/// them in its loops; a host function's result is checked here, before
+/// anything reads it. As [`same_type`], it looks at the first
+/// `SAME_TYPE_PARTS` parts at most.
+pub fn malformed(value: &Value) -> Option<String> {
+    let mut budget = SAME_TYPE_PARTS;
+    let mut work: Vec<Value> = vec![value.clone()];
+    let fields = |n: usize| match n {
+        1 => "1 field".to_string(),
+        n => format!("{n} fields"),
+    };
+    while let Some(value) = work.pop() {
+        if budget == 0 {
+            break;
+        }
+        budget -= 1;
+        let room = budget.saturating_sub(work.len());
+        match &value {
+            Value::Record(record) => {
+                let declared = record.ty().fields().len();
+                let given = record.fields().len();
+                if declared != given {
+                    return Some(format!(
+                        "a record of `{}` with {}, and the type declares {}",
+                        record.ty().name,
+                        fields(given),
+                        fields(declared)
+                    ));
+                }
+                work.extend(record.fields().iter().take(room).cloned());
+            }
+            Value::Variant(variant) => {
+                let ty = variant.ty();
+                let Some(declared) = ty.variants().get(usize::from(variant.ordinal())) else {
+                    return Some(format!(
+                        "a variant of `{}` at place {}, and the type has {} variants",
+                        ty.name,
+                        variant.ordinal(),
+                        ty.variants().len()
+                    ));
+                };
+                let given = variant.fields().len();
+                if usize::from(declared.arity) != given {
+                    return Some(format!(
+                        "the variant `{}` of `{}` with {}, and it declares {}",
+                        declared.name,
+                        ty.name,
+                        fields(given),
+                        fields(usize::from(declared.arity))
+                    ));
+                }
+                work.extend(variant.fields().iter().take(room).cloned());
+            }
+            Value::List(items) => work.extend(items.iter().take(room)),
+            Value::Set(items) => work.extend(items.iter().take(room).cloned()),
+            Value::Map(entries) => work.extend(
+                (entries.iter().take(room / 2 + 1)).flat_map(|(k, v)| [k.clone(), v.clone()]),
+            ),
+            Value::Tuple(parts) => work.extend(parts.iter().take(room).cloned()),
+            _ => {}
+        }
+    }
+    None
+}
+
 /// Whether the parts `a` and `b` are one, shared: those of one value.
 fn shares(a: &[Value], b: &[Value]) -> bool {
     !a.is_empty() && std::ptr::eq(a.as_ptr(), b.as_ptr()) && a.len() == b.len()

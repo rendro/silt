@@ -93,6 +93,28 @@ impl Variant {
         Variant { of }
     }
 
+    /// A variant of `ty` at `ordinal` with `fields`, whatever the type
+    /// declares: what a faulty host function could build in a release
+    /// build, for the tests of [`crate::value::malformed`].
+    #[cfg(test)]
+    pub(crate) fn unchecked(ty: Arc<TypeInfo>, ordinal: u16, fields: Vec<Value>) -> Variant {
+        let of = match fields.len() {
+            0 => Of::Type(ty, ordinal),
+            1 => {
+                let field = fields.into_iter().next().expect("one field");
+                Of::One(Arc::new(One { ty, field }), ordinal)
+            }
+            _ => Of::Obj(
+                Arc::new(Obj {
+                    ty,
+                    fields: fields.into_boxed_slice(),
+                }),
+                ordinal,
+            ),
+        };
+        Variant { of }
+    }
+
     /// The type the variant is of.
     pub fn ty(&self) -> &Arc<TypeInfo> {
         match &self.of {
@@ -161,6 +183,17 @@ impl Record {
     /// order the type declares them ([`Value::record`]).
     pub(super) fn new(ty: Arc<TypeInfo>, fields: Vec<Value>) -> Record {
         debug_assert_eq!(ty.fields().len(), fields.len(), "the fields of {}", ty.name);
+        Record(Arc::new(Obj {
+            ty,
+            fields: fields.into_boxed_slice(),
+        }))
+    }
+
+    /// A record of `ty` with `fields`, whatever the type declares: what a
+    /// faulty host function could build in a release build, for the
+    /// tests of [`crate::value::malformed`].
+    #[cfg(test)]
+    pub(crate) fn unchecked(ty: Arc<TypeInfo>, fields: Vec<Value>) -> Record {
         Record(Arc::new(Obj {
             ty,
             fields: fields.into_boxed_slice(),

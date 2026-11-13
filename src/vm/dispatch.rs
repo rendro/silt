@@ -18,6 +18,14 @@ use crate::value::{HostFault, HostFn, HostShape, Value, given_type, witness_type
 pub(super) fn invoke_host_fn(host: &HostFn, args: &[Value]) -> Result<Value, VmError> {
     match crate::scheduler::catch_as_error(AssertUnwindSafe(|| (host.call)(args))) {
         Ok(Ok(value)) => {
+            // (Before anything reads it: a variant at a place its enum
+            // has none has no name to show.)
+            if let Some(why) = crate::value::malformed(&value) {
+                return Err(VmError::new(format!(
+                    "{}: it returned a value its type does not allow: {why}",
+                    host.name
+                )));
+            }
             let witnesses = host.witnesses(args);
             let Err(fault) = host.returns.check(&value, &witnesses) else {
                 return Ok(value);
