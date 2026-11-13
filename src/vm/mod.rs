@@ -405,8 +405,12 @@ impl Vm {
     fn report_unjoined_failures(&self) {
         self.runtime.scheduler.report_unjoined_failures();
         // What the tasks printed, and the report, are written out before
-        // whoever settled says more.
-        self.runtime.io.drain();
+        // whoever settled says more; where a task failed, as at any end
+        // by a failure, only while the reader takes some of it.
+        match self.runtime.io.is_failing() || self.runtime.scheduler.has_unhandled_failures() {
+            true => self.runtime.io.drain_failing(crate::scheduler::LAST_WORDS),
+            false => self.runtime.io.drain(),
+        }
     }
 
     /// Run a compiled program: take in its tables, then run its script.

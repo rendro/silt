@@ -1796,7 +1796,21 @@ impl Vm {
         start: impl FnOnce(&mut Vm) -> Result<Slice, VmError>,
     ) -> Result<Slice, VmError> {
         let scheduler = self.runtime.scheduler.clone();
-        let _running = scheduler.enter();
+        let mut running = scheduler.enter();
+        let ran = self.run_thread_counted(floor, start);
+        if ran.is_err() {
+            running.failed();
+        }
+        ran
+    }
+
+    /// [`Vm::run_thread`], with the thread counted.
+    fn run_thread_counted(
+        &mut self,
+        floor: usize,
+        start: impl FnOnce(&mut Vm) -> Result<Slice, VmError>,
+    ) -> Result<Slice, VmError> {
+        let scheduler = self.runtime.scheduler.clone();
         let program = self.is_program();
         if program {
             scheduler.give_panic_on();

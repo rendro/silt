@@ -73,14 +73,22 @@ impl Output for Buffer {
 /// The stdout of the process. A closed pipe (`silt run x.silt | head
 /// -1`) ends the process quietly, with the status a death by SIGPIPE
 /// gives (141), whatever the signal's disposition or mask: `println!`
-/// would panic there.
+/// would panic there. Not once the program ends by a failure
+/// ([`HostIo::drain_failing`]): the failure is reported then, and the
+/// write is an error.
 struct ProcessStdout;
+
+/// The program ends by a failure ([`HostIo::drain_failing`]).
+static FAILING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 impl Output for ProcessStdout {
     fn write(&self, text: &str) -> io::Result<()> {
         use std::io::Write;
         match io::stdout().lock().write_all(text.as_bytes()) {
-            Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {
+            Err(e)
+                if e.kind() == io::ErrorKind::BrokenPipe
+                    && !FAILING.load(std::sync::atomic::Ordering::SeqCst) =>
+            {
                 crate::scheduler::exit_with_status(141)
             }
             result => result,
@@ -661,6 +669,20 @@ impl HostIo {
     /// to stdout and to stderr, however long the readers take.
     pub(crate) fn drain(&self) {
         self.lane.drain(None);
+    }
+
+    /// The program ends by a failure: wait for what it printed only while
+    /// the reader takes some of it within `stall`, and from now on a
+    /// reader of stdout that has gone ends the process no more (the
+    /// failure is reported, with its own status, not 141).
+    pub(crate) fn drain_failing(&self, stall: Duration) {
+        FAILING.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.lane.drain(Some(stall));
+    }
+
+    /// Whether the program ends by a failure ([`HostIo::drain_failing`]).
+    pub(crate) fn is_failing(&self) -> bool {
+        FAILING.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Call the clock with a panic caught: the first one is kept as

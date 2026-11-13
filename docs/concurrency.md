@@ -1552,6 +1552,14 @@ before the program ends, and before `process.exit` ends it, as long as the
 reader takes it. (A process ended by a signal, such as Ctrl-C, loses what the
 writer still held: up to 64 KiB of prints that had returned.)
 
+One order has a price: while stdout is stuck, the program's own
+`io.eprintln` lines wait behind it too, and a task that logs to stderr waits
+for room as one that prints to stdout does. A program that ends by a failure
+(a runtime error, a panic, a deadlock, a task that failed and that nobody
+joined) waits for its output only while the reader takes some of it, about a
+second without progress at most; then the failure is reported on stderr, and
+the program ends with its status, also where the reader of stdout has gone.
+
 I/O operations follow the same transparent yielding pattern as channel
 operations -- no special syntax needed. When code calls `io.read_file` or
 `http.get`, the operation is dispatched to an I/O pool and the task is

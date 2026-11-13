@@ -514,6 +514,17 @@ pub(crate) struct Running {
     /// The tasks it counts with; `None` for a guard taken on a thread
     /// that was counted already.
     counted: Option<Arc<Group>>,
+    /// The code ended by a failure ([`Running::failed`]).
+    failed: bool,
+}
+
+impl Running {
+    /// The code ended by a failure: what it printed is waited for only
+    /// while the reader takes some of it, so that the failure is said
+    /// even where the output is stuck (a pipe nobody reads).
+    pub(crate) fn failed(&mut self) {
+        self.failed = true;
+    }
 }
 
 impl Drop for Running {
@@ -522,7 +533,9 @@ impl Drop for Running {
             // What the code printed is written out before the call
             // that ran it returns (and the thread still counts while
             // it waits for that).
-            if !thread::panicking() {
+            if thread::panicking() || self.failed {
+                self.inner.io.drain_failing(LAST_WORDS);
+            } else {
                 self.inner.io.drain();
             }
             let _ = COUNTED.try_with(|counted| counted.set(false));
@@ -652,6 +665,17 @@ impl Scheduler {
     /// end takes them with `take_unjoined_failures` and reports them.
     pub fn report_unjoined_failures(&self) -> usize {
         report_unjoined_failures(&self.inner)
+    }
+
+    /// Whether a task of the program has failed and nobody has joined
+    /// or cancelled it: the program ends by a failure then.
+    pub(crate) fn has_unhandled_failures(&self) -> bool {
+        let unhandled = |tasks: &FailedTasks| {
+            tasks.owners.values().any(|failed| {
+                failed.counted > 0 || failed.handles.iter().any(|h| h.has_unjoined_failure())
+            })
+        };
+        unhandled(&self.inner.failed_tasks.lock()) || unhandled(&collected_failures().lock())
     }
 
     /// Start the task `id`, whose VM `vm` has its first frame and
@@ -793,6 +817,7 @@ impl Scheduler {
         Running {
             inner: self.inner.clone(),
             counted,
+            failed: false,
         }
     }
 
@@ -958,6 +983,9 @@ impl Scheduler {
         group.parking.fetch_add(1, Ordering::SeqCst);
         // (A thread of a program that has exited begins no wait.)
         let exited = || inner.exit.get().is_some();
+        // What the code let go of before it waits is stopped first, as
+        // for a task.
+        run_deferred();
         let resumed = match inner.parking.park(id, sleeper, wait, exited) {
             Some((_, resumed)) => {
                 group.parking.fetch_sub(1, Ordering::SeqCst);
@@ -983,9 +1011,6 @@ impl Scheduler {
             inner.give_panic_on();
             inner.deadlock.lock().take()
         } else {
-        // What the code let go of before it waits is stopped first, as
-        // for a task.
-        run_deferred();
             None
         };
         match resumed {
@@ -1526,7 +1551,7 @@ pub fn exit_with_internal_error(payload: &Box<dyn Any + Send>) -> ! {
 /// is lost is the last text the program printed without a line end,
 /// or, where stderr is what is blocked, the line itself. (A stderr that
 /// is a file is waited for without a bound: [`stderr_is_a_file`].)
-const LAST_WORDS: Duration = Duration::from_secs(1);
+pub(crate) const LAST_WORDS: Duration = Duration::from_secs(1);
 
 /// Set by the thread that says the last words: there is one
 /// ([`InternalError::end`]).
@@ -2278,6 +2303,10 @@ impl Inner {
                 self.end_task(task);
             }
             SliceResult::Blocked(wait) => {
+                // What the task let go of before it waits is stopped
+                // first (a stream it left): its stop comes before
+                // whatever the task's peer does in answer to the wait.
+                run_deferred();
                 // The task's own: its cancel flag and its deadline.
                 // Every wait of a task comes through here, whichever
                 // frame of it waits.
@@ -2303,10 +2332,6 @@ impl Inner {
                         group.parking.fetch_sub(1, Ordering::SeqCst);
                         task.vm.woken = Some(fired);
                         return Some(task);
-                // What the task let go of before it waits is stopped
-                // first (a stream it left): its stop comes before
-                // whatever the task's peer does in answer to the wait.
-                run_deferred();
                     }
                     Some((sleeper, resumed)) => self.ready(sleeper, resumed),
                     None => {
