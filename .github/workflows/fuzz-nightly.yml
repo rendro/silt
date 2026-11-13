@@ -78,10 +78,8 @@ jobs:
             fuzz
 
       - name: Install cargo-fuzz
-        # See ci.yml `fuzz-corpus` for the rationale on dropping
-        # `--locked`: cargo-fuzz's published Cargo.lock pins a rustix
-        # release that no longer compiles on current nightly.
-        run: cargo install cargo-fuzz
+        # A fixed version, its prebuilt binary checked by its SHA-256.
+        run: bash .github/scripts/install-cargo-fuzz.sh
 
       - name: Seed corpus
         run: ./fuzz/seed.sh
