@@ -318,11 +318,11 @@ fn main() {
 /// that names the likely mistake.
 #[test]
 fn no_discard_quickfix_for_a_brace_behind_a_name() {
-    let source = "type Point {\n  x: Int,\n}\n\nfn main() {\n  let point = Point { x: 0 }\n  let p = point { x: 1 }\n  println(p.x)\n}\n";
+    let source = "type Point {\n  x: Int,\n}\n\nfn main() {\n  let point = Point { x: 0 }\n  let x = 1\n  let p = point { x }\n  println(p.x)\n}\n";
     let mut client = LspClient::spawn();
     let uri = "file:///tmp/silt_ca_unused_brace.silt";
     let (unused, offered, fixed) = apply_discard_fixes(&mut client, uri, source);
-    assert_eq!(unused, 1, "the `{{ x: 1 }}` is an unused value");
+    assert_eq!(unused, 1, "the `{{ x }}` is an unused value");
     assert_eq!(offered, 0, "no fix is offered");
     assert_eq!(fixed, source);
     let diags = client.did_open_and_collect_diagnostics(uri, source);

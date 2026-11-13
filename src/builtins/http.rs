@@ -196,7 +196,7 @@ fn header_map(headers: impl IntoIterator<Item = (String, String)>) -> crate::val
 /// if its body is larger than a body may be ([`wire::BODY_MAX`]).
 /// `head` says that the request was `HEAD`.
 #[cfg(feature = "http")]
-fn ureq_response_to_value(
+pub(crate) fn ureq_response_to_value(
     mut response: ureq::http::Response<ureq::Body>,
     head: bool,
 ) -> Result<Option<Value>, ureq::Error> {
@@ -650,7 +650,10 @@ fn send_request(
 /// response came from; `None` for any other response, and for a
 /// redirect without a location that is text.
 #[cfg(feature = "http")]
-fn redirect(response: &ureq::http::Response<ureq::Body>, url: &str) -> Option<(u16, String)> {
+pub(crate) fn redirect(
+    response: &ureq::http::Response<ureq::Body>,
+    url: &str,
+) -> Option<(u16, String)> {
     let status = response.status().as_u16();
     if !matches!(status, 301 | 302 | 303 | 307 | 308) {
         return None;

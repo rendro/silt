@@ -487,7 +487,6 @@ fn kind_of(token: &Token) -> Option<u32> {
         | Token::Question
         | Token::Caret
         | Token::DotDot
-        | Token::DotDotDot
         | Token::Arrow => OPERATOR,
         Token::LParen
         | Token::RParen

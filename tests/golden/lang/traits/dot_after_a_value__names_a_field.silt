@@ -4,15 +4,12 @@
 -- the name, the error says so; the help names the trait in sight that
 -- has a method of the name and the call to write, with the receiver as
 -- written when it is a name (`Greet.greet(n)`) and `x` otherwise; or
--- the builtin module of the type with a function of the name. Also
--- through a function whose parameter's type is unknown, which takes a
--- record with the field.
+-- the builtin module of the type with a function of the name.
 import list
 trait Greet { fn greet(self) -> String }
 trait Greet for Int { fn greet(self) -> String { "g" } }
 trait Pair { fn pair(self, other: Self) -> String }
 trait Pair for Int { fn pair(self, other: Self) -> String { "p" } }
-fn h(x) { x.frobnicate() }
 fn main() {
   let n = 5
   println(n.frobnicate())
@@ -23,6 +20,5 @@ fn main() {
   println(xs.length())
   println([1].length())
   println("s".length())
-  println(h(1))
   let g = n.greet
 }

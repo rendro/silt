@@ -1,89 +1,89 @@
 error[type]: non-exhaustive match: `Some(None)` is not covered
- --> missing_case__a_value_no_arm_matches.silt:21:9
+ --> missing_case__a_value_no_arm_matches.silt:26:9
     |
- 21 |   match o {
+ 26 |   match o {
     |         ^ non-exhaustive match: `Some(None)` is not covered
 
 error[type]: non-exhaustive match: missing variant Dot; `Circle(1)`, `Rect(_, 0)` are not covered
- --> missing_case__a_value_no_arm_matches.silt:28:9
+ --> missing_case__a_value_no_arm_matches.silt:33:9
     |
- 28 |   match s {
+ 33 |   match s {
     |         ^ non-exhaustive match: missing variant Dot; `Circle(1)`, `Rect(_, 0)` are not covered
 
 error[type]: non-exhaustive match: `(true, false)` is not covered
- --> missing_case__a_value_no_arm_matches.silt:35:9
+ --> missing_case__a_value_no_arm_matches.silt:40:9
     |
- 35 |   match t {
+ 40 |   match t {
     |         ^ non-exhaustive match: `(true, false)` is not covered
 
 error[type]: non-exhaustive match: `[_, _, ..]` is not covered
- --> missing_case__a_value_no_arm_matches.silt:42:9
+ --> missing_case__a_value_no_arm_matches.silt:47:9
     |
- 42 |   match xs {
+ 47 |   match xs {
     |         ^^ non-exhaustive match: `[_, _, ..]` is not covered
 
 error[type]: non-exhaustive match: `[false, ..]` is not covered
- --> missing_case__a_value_no_arm_matches.silt:49:9
+ --> missing_case__a_value_no_arm_matches.silt:54:9
     |
- 49 |   match xs {
+ 54 |   match xs {
     |         ^^ non-exhaustive match: `[false, ..]` is not covered
 
 error[type]: non-exhaustive match: `2` is not covered
- --> missing_case__a_value_no_arm_matches.silt:56:9
+ --> missing_case__a_value_no_arm_matches.silt:61:9
     |
- 56 |   match n {
+ 61 |   match n {
     |         ^ non-exhaustive match: `2` is not covered
 
 error[type]: non-exhaustive match: `21` is not covered
- --> missing_case__a_value_no_arm_matches.silt:63:9
+ --> missing_case__a_value_no_arm_matches.silt:68:9
     |
- 63 |   match n {
+ 68 |   match n {
     |         ^ non-exhaustive match: `21` is not covered
 
 error[type]: non-exhaustive match: `(1, false)` is not covered
- --> missing_case__a_value_no_arm_matches.silt:70:9
+ --> missing_case__a_value_no_arm_matches.silt:75:9
     |
- 70 |   match (n, b) {
+ 75 |   match (n, b) {
     |         ^^^^^^ non-exhaustive match: `(1, false)` is not covered
 
 error[type]: non-exhaustive match: `Ok(0)` is not covered
- --> missing_case__a_value_no_arm_matches.silt:77:9
+ --> missing_case__a_value_no_arm_matches.silt:82:9
     |
- 77 |   match r {
+ 82 |   match r {
     |         ^ non-exhaustive match: `Ok(0)` is not covered
 
 error[type]: non-exhaustive match: `Some(_)` is covered only in part
- --> missing_case__a_value_no_arm_matches.silt:84:9
+ --> missing_case__a_value_no_arm_matches.silt:89:9
     |
- 84 |   match o {
+ 89 |   match o {
     |         ^ non-exhaustive match: `Some(_)` is covered only in part
 
 error[type]: non-exhaustive match: not all patterns are covered
- --> missing_case__a_value_no_arm_matches.silt:91:9
+ --> missing_case__a_value_no_arm_matches.silt:96:9
     |
- 91 |   match s {
+ 96 |   match s {
     |         ^ non-exhaustive match: not all patterns are covered
 
 error[type]: non-exhaustive match: `P { on: true, kind: None }` is not covered
- --> missing_case__a_value_no_arm_matches.silt:97:9
-    |
- 97 |   match p {
-    |         ^ non-exhaustive match: `P { on: true, kind: None }` is not covered
+ --> missing_case__a_value_no_arm_matches.silt:102:9
+     |
+ 102 |   match p {
+     |         ^ non-exhaustive match: `P { on: true, kind: None }` is not covered
 
 error[type]: non-exhaustive match: `P { kind: None, .. }` is not covered
- --> missing_case__a_value_no_arm_matches.silt:104:9
+ --> missing_case__a_value_no_arm_matches.silt:109:9
      |
- 104 |   match p {
+ 109 |   match p {
      |         ^ non-exhaustive match: `P { kind: None, .. }` is not covered
 
-error[type]: non-exhaustive match: `{ a: false }` is not covered
- --> missing_case__a_value_no_arm_matches.silt:110:9
+error[type]: non-exhaustive match: `Q { a: false, .. }` is not covered
+ --> missing_case__a_value_no_arm_matches.silt:115:9
      |
- 110 |   match r {
-     |         ^ non-exhaustive match: `{ a: false }` is not covered
+ 115 |   match r {
+     |         ^ non-exhaustive match: `Q { a: false, .. }` is not covered
 
 error[type]: non-exhaustive match: `(Dot, [Some(false), ..])` is not covered
- --> missing_case__a_value_no_arm_matches.silt:116:9
+ --> missing_case__a_value_no_arm_matches.silt:121:9
      |
- 116 |   match t {
+ 121 |   match t {
      |         ^ non-exhaustive match: `(Dot, [Some(false), ..])` is not covered

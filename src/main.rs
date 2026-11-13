@@ -15,7 +15,7 @@ use crate::cli::watch::maybe_handle_watch;
 
 // Windows defaults to a 1 MiB main-thread stack which is too tight for
 // silt's recursive walks (type canonicalization, the structural judgement,
-// row-polymorphic field unification, supertrait obligation chasing).
+// supertrait obligation chasing).
 // Linux/macOS default to 8 MiB. Spawn the entire dispatcher on a worker
 // thread with an explicit reserve so the build behaves identically
 // across platforms — same trick rustc uses.

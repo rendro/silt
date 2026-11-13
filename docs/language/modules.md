@@ -121,13 +121,10 @@ pub fn parse(text: String) -> Option(Email) {
 ```
 
 In another module, a value of `mail.Email` cannot be built, taken
-apart in a pattern, updated, read, spread, or passed where an open row
-is taken (`{ name: String, ...rest }`): each is an error that says to
-use the functions of module `mail`. The module of the code is what
-counts. A function of a third module that reads a field of what it is
-given refuses an opaque value where it is called; a function of the
-type's own module may read it, wherever it is called from. An impl
-sees what its module sees, and a test file is a module like any other.
+apart in a pattern, updated or read: each is an error that says to use
+the functions of module `mail`. The module of the code is what counts.
+An impl sees what its module sees, and a test file is a module like any
+other.
 
 Decoding (`json.parse`, `toml.parse`, a postgres row) builds a value as
 a constructor does, and json encoding reads what is in it. Outside its

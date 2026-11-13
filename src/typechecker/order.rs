@@ -232,14 +232,6 @@ pub(super) fn references_in_expr<'a>(expr: &'a Expr, note: &mut impl FnMut(Menti
                 references_in_expr(e, note);
             }
         }
-        ExprKind::AnonRecord { spread, fields } => {
-            if let Some(base) = spread {
-                references_in_expr(base, note);
-            }
-            for (_, e) in fields {
-                references_in_expr(e, note);
-            }
-        }
         ExprKind::Match {
             expr: scrutinee,
             arms,
@@ -318,13 +310,6 @@ pub(super) fn references_in_pattern<'a>(pattern: &'a Pattern, note: &mut impl Fn
             }
         }
         PatternKind::Record { fields, .. } => {
-            for (_, _, p) in fields {
-                if let Some(p) = p {
-                    references_in_pattern(p, note);
-                }
-            }
-        }
-        PatternKind::AnonRecord { fields, .. } => {
             for (_, _, p) in fields {
                 if let Some(p) = p {
                     references_in_pattern(p, note);

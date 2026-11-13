@@ -33,9 +33,11 @@ fi
 # Build the target binary once via cargo-fuzz, then invoke it
 # directly with corpus files as args. libfuzzer treats explicit file
 # args as "reproduce these inputs and exit" — exactly the mode we
-# want.
+# want. The target is named: the pinned cargo-fuzz of CI is a musl
+# build, whose own triple would be the default, and the sanitizer
+# needs the gnu one.
 echo "replay.sh: building $target"
-cargo +nightly fuzz build "$target"
+cargo +nightly fuzz build --target x86_64-unknown-linux-gnu "$target"
 
 bin="fuzz/target/x86_64-unknown-linux-gnu/release/$target"
 if [ ! -x "$bin" ]; then
@@ -43,12 +45,14 @@ if [ ! -x "$bin" ]; then
   exit 1
 fi
 
-# The committed seeds: silt sources, for the target that reads HTTP
-# requests, requests, for the one that reads JSON and TOML, such texts,
-# for the one that reads a package's files, silt.toml and silt.lock texts,
-# and for the csv reader's, csv texts.
+# The committed seeds: silt sources; for the targets that read HTTP
+# requests and responses, requests and responses (*.http); for the one
+# that reads JSON and TOML, such texts; for the one that reads a
+# package's files, silt.toml and silt.lock texts; for the csv reader's,
+# csv texts; and for the server of the editor's messages, framed
+# messages (*.lsp).
 seeds() {
-  find "$corpus_dir" -type f \( -name '*.silt' -o -name '*.http' -o -name '*.json' -o -name '*.toml' -o -name '*.lock' -o -name '*.csv' \) "$@"
+  find "$corpus_dir" -type f \( -name '*.silt' -o -name '*.http' -o -name '*.json' -o -name '*.toml' -o -name '*.lock' -o -name '*.csv' -o -name '*.lsp' \) "$@"
 }
 
 count=$(seeds | wc -l)

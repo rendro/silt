@@ -1,7 +1,9 @@
 -- A keyword may name a field where only a field name stands: in a record
 -- type's body, before `:` in a literal or an update, in a record
--- pattern, after a dot, and the same in anonymous records.
+-- pattern, after a dot.
 type Event { type: String, match: Int, fn: Bool }
+type At { when: String, as: Int }
+type Loop { loop: Int }
 
 fn kind(e: Event) -> String {
   match e {
@@ -20,9 +22,9 @@ fn main() {
   match Event { type: "scroll", match: 3, fn: false } {
     Event { type: t, .. } -> println(t)
   }
-  let a = { when: "now", as: 1 }
-  let { when: w, as: n } = a
+  let a = At { when: "now", as: 1 }
+  let At { when: w, as: n } = a
   println("{a.when} {w} {n}")
-  let f = { r: { loop: Int } -> r.loop + 1 }
-  println(f({ loop: 41 }))
+  let f = { r: Loop -> r.loop + 1 }
+  println(f(Loop { loop: 41 }))
 }

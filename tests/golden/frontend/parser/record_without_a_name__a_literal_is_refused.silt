@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- Braces holding fields where an expression starts are no record: a
+-- record literal starts with the name of its type.
+fn main() {
+  let p = { x: 1, y: 2 }
+  println(p)
+}

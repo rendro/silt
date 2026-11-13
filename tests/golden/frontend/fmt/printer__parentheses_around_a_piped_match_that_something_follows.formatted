@@ -46,7 +46,9 @@ fn stays_before_a_brace(xs) {
   let e = -(match (xs |> first) {
     y -> 6
   })
-  { a: 6 }
+  {
+    6
+  }
   match (match (xs |> first) {
     y -> 7
   }) {

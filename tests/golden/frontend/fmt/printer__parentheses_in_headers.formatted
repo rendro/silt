@@ -2,8 +2,8 @@
 -- In a `match` or `loop` header a `{` outside brackets is the block of
 -- the header, and `match {` is a match without a scrutinee. So the
 -- parentheses stay around a scrutinee that would show a block, a
--- closure, a record without a name or a record literal without fields;
--- and around `_` as a condition, which without them is the last arm.
+-- closure or a record literal without fields; and around `_` as a
+-- condition, which without them is the last arm.
 type P {
   x: Int,
 }
@@ -23,7 +23,9 @@ fn main() {
   let d = match (a > { -> 1 }()) {
     _ -> 3
   }
-  let e = match ({ x: 1 }).x {
+  let e = match ({
+    P { x: 1 }
+  }).x {
     _ -> 4
   }
   let f = loop i = 0, e = (E {}) {

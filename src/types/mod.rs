@@ -6,7 +6,7 @@
 pub mod builtins;
 pub mod canonical;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 use crate::defs::{TraitId, TypeId};
 use crate::intern::{Symbol, intern};
@@ -29,23 +29,6 @@ impl PartialEq for RigidId {
     fn eq(&self, other: &Self) -> bool {
         self.var == other.var
     }
-}
-
-/// Tail of a row (record) type. Either closed (no extra fields) or
-/// open with a unification variable that may bind to a record holding
-/// the remaining fields. See `Type::AnonRecord`.
-#[derive(Debug, Clone, PartialEq)]
-pub enum RowTail {
-    /// The record is closed: it has exactly the listed fields and no more.
-    Closed,
-    /// The record may have additional fields. The TyVar is a row variable
-    /// that unification can bind to a record carrying the leftover fields.
-    Var(TyVar),
-    /// The record has the fields a row variable of an annotation stands
-    /// for, inside the declaration that writes it: whatever they are,
-    /// they are the same ones wherever the variable is written, and
-    /// nothing in the declaration may assume what they are.
-    Rigid(RigidId),
 }
 
 /// A record, enum or alias type, or a builtin type that has no variant of
@@ -200,14 +183,6 @@ pub enum Type {
     Error,
     /// A bottom type for expressions that never produce a value (return, panic).
     Never,
-    /// An anonymous structural record type (row-polymorphic capable).
-    /// `{name: String, age: Int}` is closed; `{name: String, ...r}` has
-    /// a row-tail variable. Field order is irrelevant for equality —
-    /// `BTreeMap` gives stable ordering for canonicalisation/rendering.
-    AnonRecord {
-        fields: BTreeMap<Symbol, Type>,
-        tail: RowTail,
-    },
     /// A type constructor variable applied to a type, `m(Int)`: the head
     /// is a variable (a unification variable or an annotation's) that
     /// stands for a type constructor. Once the head is a constructor the
@@ -351,7 +326,6 @@ impl Type {
             Type::Fun(params, ret) => params.iter().any(Type::holds_error) || ret.holds_error(),
             Type::List(t) | Type::Set(t) | Type::Channel(t) => t.holds_error(),
             Type::Map(k, v) => k.holds_error() || v.holds_error(),
-            Type::AnonRecord { fields, .. } => fields.values().any(Type::holds_error),
             Type::App(head, arg) => head.holds_error() || arg.holds_error(),
             Type::Con(_, rest) => rest.iter().any(Type::holds_error),
             Type::Int
@@ -387,11 +361,6 @@ impl Type {
             }
             Type::Tuple(ts) => {
                 for t in ts {
-                    t.collect_refs(out);
-                }
-            }
-            Type::AnonRecord { fields, .. } => {
-                for t in fields.values() {
                     t.collect_refs(out);
                 }
             }
@@ -536,31 +505,6 @@ impl std::fmt::Display for Shown<'_> {
             // suggesting a second, distinct failure.
             Type::Error => write!(f, "_"),
             Type::Never => write!(f, "Never"),
-            Type::AnonRecord { fields, tail } => {
-                write!(f, "{{")?;
-                let mut first = true;
-                for (n, t) in fields.iter() {
-                    if !first {
-                        write!(f, ", ")?;
-                    }
-                    first = false;
-                    write!(f, "{n}: {}", self.of(t))?;
-                }
-                if !matches!(tail, RowTail::Closed) {
-                    if !first {
-                        write!(f, ", ")?;
-                    }
-                    // A row variable is written `...`: "more fields
-                    // possible" (its id is internal). An annotation's
-                    // row variable, inside its declaration, has its
-                    // name.
-                    match tail {
-                        RowTail::Rigid(r) => write!(f, "...{}", r.name)?,
-                        _ => write!(f, "...")?,
-                    }
-                }
-                write!(f, "}}")
-            }
             // A constructor variable applied is written as written:
             // `m(Int)`.
             Type::App(head, arg) => write!(f, "{}({})", self.of(head), self.of(arg)),
@@ -604,18 +548,6 @@ pub enum Pred {
         /// function that passes the type on).
         asker: Option<Asker>,
     },
-    /// The row `row` (a row variable, as a type) is not the rest of a
-    /// declared record: the definition spreads a record over the row, or
-    /// binds the rest of one, and what that makes is an anonymous
-    /// record. With `given`, the row variable of a function's signature,
-    /// only if the body of that function does so to that variable
-    /// (which is known once the body is checked).
-    Anon { row: Type, given: Option<TyVar> },
-    /// The row `row` (a row variable, as a type) has no field `field`:
-    /// the definition extends a record over the row with the field
-    /// (`{...p, age: 30}`), whether or not what it makes reaches the
-    /// definition's type.
-    Lacks { row: Type, field: Symbol },
     /// `subject` is a type the builtin of `check` takes where its
     /// signature cannot say so: one the decoder decodes, a connection,
     /// a statement's parameters. `passer`: the function or method that
@@ -811,14 +743,6 @@ impl Pred {
                 subject: substitute_vars(subject, mapping),
                 asker: *asker,
             },
-            Pred::Anon { row, given } => Pred::Anon {
-                row: substitute_vars(row, mapping),
-                given: *given,
-            },
-            Pred::Lacks { row, field } => Pred::Lacks {
-                row: substitute_vars(row, mapping),
-                field: *field,
-            },
             Pred::Builtin {
                 check,
                 subject,
@@ -868,7 +792,6 @@ impl Pred {
             | Pred::Builtin { subject, .. }
             | Pred::Given { subject, .. } => subject,
             Pred::Via { receiver, .. } => receiver,
-            Pred::Anon { row, .. } | Pred::Lacks { row, .. } => row,
         }
     }
 
@@ -885,9 +808,7 @@ impl Pred {
         match self {
             Pred::Trait { args, .. } => args,
             Pred::Via { method_ty, .. } => std::slice::from_ref(method_ty),
-            Pred::Anon { .. } | Pred::Lacks { .. } | Pred::Builtin { .. } | Pred::Given { .. } => {
-                &[]
-            }
+            Pred::Builtin { .. } | Pred::Given { .. } => &[],
         }
     }
 }
@@ -965,7 +886,6 @@ pub fn constructor_heads(ty: &Type) -> Vec<TyVar> {
             Type::Tuple(ts) | Type::Generic(_, ts) | Type::Con(_, ts) => {
                 ts.iter().for_each(|t| walk(t, out))
             }
-            Type::AnonRecord { fields, .. } => fields.values().for_each(|t| walk(t, out)),
             _ => {}
         }
     }
@@ -993,12 +913,6 @@ pub fn free_vars_in(ty: &Type) -> Vec<TyVar> {
             }
             Type::Tuple(ts) | Type::Generic(_, ts) | Type::Con(_, ts) => {
                 ts.iter().for_each(|t| walk(t, out))
-            }
-            Type::AnonRecord { fields, tail } => {
-                fields.values().for_each(|t| walk(t, out));
-                if let RowTail::Var(v) = tail {
-                    out.push(*v);
-                }
             }
             Type::App(head, arg) => {
                 walk(head, out);
@@ -1129,17 +1043,6 @@ pub fn map_rigid(ty: &Type, f: &mut impl FnMut(RigidId) -> Type) -> Type {
             Type::Generic(*name, args.iter().map(|a| map_rigid(a, f)).collect())
         }
         Type::Map(k, v) => Type::Map(Box::new(map_rigid(k, f)), Box::new(map_rigid(v, f))),
-        Type::AnonRecord { fields, tail } => Type::AnonRecord {
-            fields: fields.iter().map(|(n, t)| (*n, map_rigid(t, f))).collect(),
-            tail: match tail {
-                RowTail::Rigid(r) => match f(*r) {
-                    Type::Var(v) => RowTail::Var(v),
-                    Type::Rigid(other) => RowTail::Rigid(other),
-                    _ => tail.clone(),
-                },
-                _ => tail.clone(),
-            },
-        },
         Type::App(head, arg) => Type::applied(map_rigid(head, f), map_rigid(arg, f)),
         Type::Con(head, rest) => Type::Con(*head, rest.iter().map(|t| map_rigid(t, f)).collect()),
         Type::Int
@@ -1187,21 +1090,6 @@ pub fn instance_of(general: &Type, at: &Type, stands: &mut HashMap<TyVar, Type>)
             instance_of(gh, ah, stands) && instance_of(ga, aa, stands)
         }
         (Type::Con(gh, g), Type::Con(ah, a)) => gh == ah && all(g, a),
-        (
-            Type::AnonRecord {
-                fields: g,
-                tail: RowTail::Closed,
-            },
-            Type::AnonRecord {
-                fields: a,
-                tail: RowTail::Closed,
-            },
-        ) => {
-            g.len() == a.len()
-                && g.iter()
-                    .zip(a)
-                    .all(|((gn, g), (an, a))| gn == an && instance_of(g, a, stands))
-        }
         _ => general == at,
     }
 }
@@ -1235,75 +1123,6 @@ pub fn substitute_vars(ty: &Type, mapping: &HashMap<TyVar, Type>) -> Type {
         ),
         Type::Set(inner) => Type::Set(Box::new(substitute_vars(inner, mapping))),
         Type::Channel(inner) => Type::Channel(Box::new(substitute_vars(inner, mapping))),
-        Type::AnonRecord { fields, tail } => {
-            let new_fields: BTreeMap<Symbol, Type> = fields
-                .iter()
-                .map(|(n, t)| (*n, substitute_vars(t, mapping)))
-                .collect();
-            let new_tail = match tail {
-                RowTail::Closed => RowTail::Closed,
-                RowTail::Var(v) => match mapping.get(v) {
-                    // If the row var resolved to a record, merge its
-                    // fields and propagate its tail.
-                    Some(Type::AnonRecord {
-                        fields: extra_fields,
-                        tail: extra_tail,
-                    }) => {
-                        let mut merged = new_fields.clone();
-                        for (n, t) in extra_fields.iter() {
-                            // Align with the
-                            // companion `apply` site (typechecker/
-                            // mod.rs ~line 922) which uses
-                            // `or_insert` (existing wins). The
-                            // unifier's invariant guarantees
-                            // overlapping fields have already been
-                            // pairwise-unified before any tail
-                            // binding fires (`unify_anon_anon` runs
-                            // the common-key pass at line ~1017
-                            // before binding the tail), so the
-                            // existing field is canonical and the
-                            // substituted record's same-name field
-                            // would only re-introduce a stale type
-                            // pre-merge. Pre-fix this site used
-                            // `merged.insert` (substitution wins),
-                            // diverging from `apply` and producing
-                            // different results for any caller that
-                            // exercised overlap. Aligning on
-                            // `or_insert` matches the unifier
-                            // invariant.
-                            merged
-                                .entry(*n)
-                                .or_insert_with(|| substitute_vars(t, mapping));
-                        }
-                        return Type::AnonRecord {
-                            fields: merged,
-                            tail: extra_tail.clone(),
-                        };
-                    }
-                    // Generic instantiation maps row tail var `v` to
-                    // a fresh `Type::Var(w)`; carry the freshening
-                    // through by re-tailing on `w`. Without this we
-                    // silently kept `RowTail::Var(*v)`, leaving the
-                    // unifier with a bound row var (`v`) that the
-                    // caller had already instantiated away — which
-                    // tripped the `apply` chain and surfaced as
-                    // missing-binding crashes.
-                    Some(Type::Var(w)) => RowTail::Var(*w),
-                    // Inside its declaration an annotation's row
-                    // variable is rigid.
-                    Some(Type::Rigid(r)) => RowTail::Rigid(*r),
-                    // The row is a nominal record: the type is that
-                    // record's (see `TypeChecker::apply`).
-                    Some(other) => return other.clone(),
-                    None => RowTail::Var(*v),
-                },
-                RowTail::Rigid(r) => RowTail::Rigid(*r),
-            };
-            Type::AnonRecord {
-                fields: new_fields,
-                tail: new_tail,
-            }
-        }
         Type::App(head, arg) => Type::applied(
             substitute_vars(head, mapping),
             substitute_vars(arg, mapping),
@@ -1377,13 +1196,6 @@ pub fn substitute_enum_params(
             param_var_ids,
             type_args,
         ))),
-        Type::AnonRecord { fields, tail } => Type::AnonRecord {
-            fields: fields
-                .iter()
-                .map(|(n, t)| (*n, substitute_enum_params(t, param_var_ids, type_args)))
-                .collect(),
-            tail: tail.clone(),
-        },
         _ => field_ty.clone(),
     }
 }

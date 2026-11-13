@@ -62,11 +62,6 @@ pub enum Token {
     Question, // ?
     Caret,    // ^
     DotDot,   // ..
-    /// `...` — three-dot spread/rest operator used for row-polymorphic
-    /// records. Distinct from `..` (DotDot) which is used for ranges and
-    /// list spread; the three-dot form is reserved for record/row syntax
-    /// (`{...other, age: 30}`, `{name: String, ...r}`, `{name: n, ...rest}`).
-    DotDotDot, // ...
     Arrow,    // ->
 
     // Delimiters
@@ -177,7 +172,6 @@ impl fmt::Display for Token {
             Token::Question => write!(f, "?"),
             Token::Caret => write!(f, "^"),
             Token::DotDot => write!(f, ".."),
-            Token::DotDotDot => write!(f, "..."),
             Token::Arrow => write!(f, "->"),
             Token::LParen => write!(f, "("),
             Token::RParen => write!(f, ")"),
@@ -1388,12 +1382,7 @@ impl Lexer {
             '.' => {
                 if self.peek() == Some('.') {
                     self.advance_char();
-                    if self.peek() == Some('.') {
-                        self.advance_char();
-                        (Token::DotDotDot, start)
-                    } else {
-                        (Token::DotDot, start)
-                    }
+                    (Token::DotDot, start)
                 } else {
                     (Token::Dot, start)
                 }

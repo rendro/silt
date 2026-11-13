@@ -302,20 +302,6 @@ pub struct TypeChecker {
     /// The alias a use names the type a decoder is given by, at the
     /// place of the type argument.
     pub(super) decode_aliases: HashMap<Span, Symbol>,
-    /// The row variables of the signatures of the module's functions
-    /// (each by the variable it is in the function's scheme).
-    pub(super) sig_rows: std::collections::HashSet<TyVar>,
-    /// Those of them a body spreads a record over, or binds the rest
-    /// of: no declared record may stand for one (`Pred::Anon`).
-    pub(super) anon_rows: std::collections::HashSet<TyVar>,
-    /// What stands for a signature's row variable whose body may not be
-    /// checked yet: decided when the module's bodies are
-    /// (`settle_rows`).
-    pub(super) anon_waiting: Vec<(TyVar, Type, Origin)>,
-    /// The fields a body adds to a record over a row variable of its
-    /// signature: what stands for the row has none of them
-    /// (`Pred::Lacks`).
-    pub(super) row_adds: HashMap<TyVar, Vec<Symbol>>,
     /// What the bodies ask of the annotation variables of their
     /// signatures for the builtins they give them to (`Pred::Builtin`),
     /// each by the variable's representative (`rigid_rep_var`).
@@ -398,7 +384,11 @@ pub struct TypeChecker {
     /// The receiver and the name of the callee just checked, when it is
     /// `x.m` and the type of `x` is unknown: `check_call` lets the call
     /// wait (`Goal::Select`).
-    pub(super) unknown_receiver: Option<(Type, Symbol)>,
+    pub(super) unknown_receiver: Option<(Type, Symbol, solve::ReadAt)>,
+    /// The type variables of the plain `let`s without an annotation
+    /// (`let v = fail("x")`), by the name each binds: what a field read
+    /// that nothing decides says to annotate.
+    pub(super) plain_let_vars: HashMap<TyVar, Symbol>,
     /// How `x.m(..)` made a parameter of a function or closure be read
     /// (`x`'s, or one whose type it shares, also through a call that
     /// passes it on), by the callee and the parameter's place, with the
@@ -698,8 +688,7 @@ pub struct TypeChecker {
     /// The module checked.
     pub(super) module: crate::session::ModuleId,
     /// The variables of the uses of another module's definitions, each
-    /// with that module: an opaque type of it may pass into such a row,
-    /// which the module's own code reads, and be decoded for such a
+    /// with that module: an opaque type of it may be decoded for such a
     /// variable, which the module's own code decodes.
     pub(super) use_owners: HashMap<TyVar, crate::session::ModuleId>,
     /// The predicates, by their evidence, that a use of another module's
@@ -868,10 +857,6 @@ impl TypeChecker {
             impl_decode_vars: HashMap::new(),
             let_links: HashMap::new(),
             decode_aliases: HashMap::new(),
-            sig_rows: std::collections::HashSet::new(),
-            anon_rows: std::collections::HashSet::new(),
-            anon_waiting: Vec::new(),
-            row_adds: HashMap::new(),
             builtin_needs: HashMap::new(),
             need_paths: HashMap::new(),
             need_owners: HashMap::new(),
@@ -898,6 +883,7 @@ impl TypeChecker {
             method_values: HashMap::new(),
             method_value_lets: HashMap::new(),
             unknown_receiver: None,
+            plain_let_vars: HashMap::new(),
             readings: HashMap::new(),
             closure_readings: Vec::new(),
             held_params: Vec::new(),
@@ -1831,14 +1817,6 @@ impl TypeChecker {
                         subject: rep(subject),
                         asker,
                     },
-                    Pred::Anon { row, given } => Pred::Anon {
-                        row: rep(row),
-                        given: given.map(|var| self.rigid_rep_var(var)),
-                    },
-                    Pred::Lacks { row, field } => Pred::Lacks {
-                        row: rep(row),
-                        field,
-                    },
                     Pred::Builtin {
                         check,
                         subject,
@@ -2097,45 +2075,6 @@ pub(super) fn builtin_type_name(ty: TypeRef) -> Option<&'static str> {
         .map(|(name, _)| *name)
 }
 
-/// The row variables of the anonymous record types in `ty`, which stand
-/// for fields, not for a type.
-fn row_tail_vars(ty: &Type, out: &mut Vec<TyVar>) {
-    match ty {
-        Type::AnonRecord { fields, tail } => {
-            if let RowTail::Var(v) = tail {
-                out.push(*v);
-            }
-            fields.values().for_each(|t| row_tail_vars(t, out));
-        }
-        Type::Generic(_, args) | Type::Tuple(args) => {
-            args.iter().for_each(|t| row_tail_vars(t, out))
-        }
-        Type::Fun(params, ret) => {
-            params.iter().for_each(|t| row_tail_vars(t, out));
-            row_tail_vars(ret, out);
-        }
-        Type::List(t) | Type::Set(t) | Type::Channel(t) => row_tail_vars(t, out),
-        Type::Map(k, v) => {
-            row_tail_vars(k, out);
-            row_tail_vars(v, out);
-        }
-        Type::App(head, arg) => {
-            row_tail_vars(head, out);
-            row_tail_vars(arg, out);
-        }
-        Type::Con(_, rest) => rest.iter().for_each(|t| row_tail_vars(t, out)),
-        Type::Int
-        | Type::Float
-        | Type::Bool
-        | Type::String
-        | Type::Unit
-        | Type::Var(_)
-        | Type::Rigid(_)
-        | Type::Error
-        | Type::Never => {}
-    }
-}
-
 /// The definitions the type names written in `te` resolve to.
 fn written_defs(te: &TypeExpr, out: &mut std::collections::HashSet<crate::defs::DefId>) {
     if let Some(crate::defs::Res::Def(id)) = te.res {
@@ -2147,9 +2086,6 @@ fn written_defs(te: &TypeExpr, out: &mut std::collections::HashSet<crate::defs::
         TypeExprKind::Function(params, ret) => {
             params.iter().for_each(|p| written_defs(p, out));
             written_defs(ret, out);
-        }
-        TypeExprKind::AnonRecord { fields, .. } => {
-            fields.iter().for_each(|(_, t)| written_defs(t, out))
         }
         TypeExprKind::Named { .. } | TypeExprKind::SelfType => {}
     }
@@ -2296,7 +2232,6 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
         checker.leave_waiting(program);
         program.run_refusals = std::mem::take(&mut checker.run_refusals);
     }
-    checker.settle_rows();
     checker.settle_builtin_needs();
     checker.settle_decode_gaps();
     checker.settle_encode_owners();

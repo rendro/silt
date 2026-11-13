@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- A field read nothing decides is the one error of its function: what its
+-- result leaves undecided (`p.a + p.d` owes trait 'Number') is not
+-- refused again, in the function or at its call.
+type A { a: Int, d: Int }
+fn i(p) { p.a + p.d }
+fn main() { println(i(A { a: 1, d: 2 })) }

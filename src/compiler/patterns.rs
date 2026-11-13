@@ -10,9 +10,7 @@ use crate::intern::{Symbol, intern};
 use crate::source::Span;
 use crate::value::Value;
 
-use super::{
-    BindDestructKind, Compiler, FieldRead, MATCH_ARM, checker_missed, name_without_binding,
-};
+use super::{BindDestructKind, Compiler, MATCH_ARM, checker_missed, name_without_binding};
 use crate::diagnostic::Diagnostic;
 
 /// The most ways an or-pattern under a guard is taken apart into (see
@@ -28,9 +26,9 @@ impl Compiler<'_> {
         span: Span,
     ) -> Result<Option<std::sync::Arc<crate::typeinfo::TypeInfo>>, Diagnostic> {
         match &pattern.kind {
-            PatternKind::Record {
-                name: Some(name), ..
-            } => self.record_type(pattern.res, *name, span).map(Some),
+            PatternKind::Record { name, .. } => {
+                self.record_type(pattern.res, *name, span).map(Some)
+            }
             _ => Ok(None),
         }
     }
@@ -358,13 +356,11 @@ impl Compiler<'_> {
                 Ok(all_jumps)
             }
 
-            PatternKind::Record { name, fields, .. } => {
+            PatternKind::Record { fields, .. } => {
                 let mut all_jumps = Vec::new();
 
                 let ty = self.pattern_record_type(pattern, span)?;
-                if name.is_some()
-                    && let Some(ty) = &ty
-                {
+                if let Some(ty) = &ty {
                     let idx = self.add_constant(Value::TypeDescriptor(ty.clone()), span)?;
                     self.emit(Asm::TestRecordTag { ty: idx }, span)?;
                     let tag_jump = self.jump_if_false(span)?;
@@ -377,7 +373,7 @@ impl Compiler<'_> {
                         None => continue,
                     };
                     if !sub_pattern.irrefutable {
-                        let field = Self::field_read(ty.as_deref(), *field_name);
+                        let field = Self::field_read(ty.as_deref(), *field_name, span)?;
                         self.emit_destruct_field(field, span)?;
                         let sub_fails =
                             self.compile_pattern_test_tracked(sub_pattern, span, base_depth + 1)?;
@@ -386,24 +382,6 @@ impl Compiler<'_> {
                     }
                 }
 
-                Ok(all_jumps)
-            }
-
-            PatternKind::AnonRecord { fields, .. } => {
-                let mut all_jumps = Vec::new();
-                for (field_name, _, sub_pat) in fields {
-                    let sub_pattern = match sub_pat {
-                        Some(p) => p,
-                        None => continue,
-                    };
-                    if !sub_pattern.irrefutable {
-                        self.emit_destruct_field(FieldRead::Named(*field_name), span)?;
-                        let sub_fails =
-                            self.compile_pattern_test_tracked(sub_pattern, span, base_depth + 1)?;
-                        self.emit(Asm::Pop, span)?;
-                        all_jumps.extend(sub_fails);
-                    }
-                }
                 Ok(all_jumps)
             }
 
@@ -692,7 +670,7 @@ impl Compiler<'_> {
                 let ty = self.pattern_record_type(pattern, span)?;
                 let mut items: Vec<(BindDestructKind, Pattern)> = Vec::new();
                 for (field_name, _, sub_pat) in fields {
-                    let field = Self::field_read(ty.as_deref(), *field_name);
+                    let field = Self::field_read(ty.as_deref(), *field_name, span)?;
                     match sub_pat {
                         Some(pat) => {
                             if self.pattern_has_bindings(pat) {
@@ -707,43 +685,6 @@ impl Compiler<'_> {
                             ));
                         }
                     }
-                }
-                self.compile_compound_bind(items, span)?;
-            }
-
-            PatternKind::AnonRecord { fields, rest } => {
-                let mut items: Vec<(BindDestructKind, Pattern)> = Vec::new();
-                for (field_name, _, sub_pat) in fields {
-                    match sub_pat {
-                        Some(pat) => {
-                            if self.pattern_has_bindings(pat) {
-                                items.push((
-                                    BindDestructKind::RecordField(FieldRead::Named(*field_name)),
-                                    pat.clone(),
-                                ));
-                            }
-                        }
-                        None => {
-                            items.push((
-                                BindDestructKind::RecordField(FieldRead::Named(*field_name)),
-                                Pattern::new(PatternKind::Ident(*field_name), pattern.span),
-                            ));
-                        }
-                    }
-                }
-                if let Some((rest_name, _)) = rest {
-                    // The rest-capture must run against the parent record,
-                    // not against any per-field sub-value. Funnel it through
-                    // `compile_compound_bind` so it shares the
-                    // `__bind_parent__` slot used by every other field
-                    // destructure — that way the rest opcode is fed the
-                    // actual parent on every iteration regardless of which
-                    // sub-value happens to be on TOS.
-                    let names: Vec<Symbol> = fields.iter().map(|(n, _, _)| *n).collect();
-                    items.push((
-                        BindDestructKind::RecordRest(names),
-                        Pattern::new(PatternKind::Ident(*rest_name), pattern.span),
-                    ));
                 }
                 self.compile_compound_bind(items, span)?;
             }
@@ -948,21 +889,6 @@ impl Compiler<'_> {
                 BindDestructKind::RecordField(field) => {
                     self.emit_destruct_field(*field, span)?;
                 }
-                BindDestructKind::RecordRest(names) => {
-                    // `Op::DestructRecordRest` pops its input and pushes the
-                    // remainder record. The surrounding loop expects each
-                    // destruct opcode to peek+push so that
-                    // `[parent_copy, sub_value]` is on the stack afterwards.
-                    // Dup the parent_copy first to bridge the contract gap.
-                    self.emit(Asm::Dup, span)?;
-                    let excluded = self.name_constants(names, span)?;
-                    self.emit(
-                        Asm::DestructRecordRest {
-                            excluded: &excluded,
-                        },
-                        span,
-                    )?;
-                }
                 BindDestructKind::MapValue(key) => {
                     let key_idx = self.add_constant(Value::string(key.clone()), span)?;
                     self.emit(Asm::DestructMapValue { key: key_idx }, span)?;
@@ -1033,7 +959,7 @@ impl Compiler<'_> {
             PatternKind::Constructor { args, .. } => product(&mut args.iter()),
             PatternKind::Tuple(parts) => product(&mut parts.iter()),
             PatternKind::List(elems, _) => product(&mut elems.iter()),
-            PatternKind::Record { fields, .. } | PatternKind::AnonRecord { fields, .. } => {
+            PatternKind::Record { fields, .. } => {
                 product(&mut fields.iter().filter_map(|(_, _, part)| part.as_ref()))
             }
             PatternKind::Map(entries) => product(&mut entries.iter().map(|(_, part)| part)),
@@ -1123,14 +1049,6 @@ impl Compiler<'_> {
                         name_span: *name_span,
                         fields,
                         has_rest: *has_rest,
-                    })
-                })
-                .collect(),
-            PatternKind::AnonRecord { fields, rest } => (field_ways(fields).into_iter())
-                .map(|fields| {
-                    rebuilt(PatternKind::AnonRecord {
-                        fields,
-                        rest: *rest,
                     })
                 })
                 .collect(),
@@ -1387,13 +1305,6 @@ impl Compiler<'_> {
                     None => true, // shorthand {name} always binds
                 }
             }),
-            PatternKind::AnonRecord { fields, rest } => {
-                rest.is_some()
-                    || fields.iter().any(|(_, _, p)| match p {
-                        Some(pat) => self.pattern_has_bindings(pat),
-                        None => true,
-                    })
-            }
             PatternKind::Or(alts) => alts.iter().any(|p| self.pattern_has_bindings(p)),
             PatternKind::Map(entries) => entries.iter().any(|(_, p)| self.pattern_has_bindings(p)),
         }
@@ -1452,19 +1363,6 @@ impl Compiler<'_> {
                             names(*field_name);
                         }
                     }
-                }
-            }
-            PatternKind::AnonRecord { fields, rest } => {
-                for (field_name, _, sub_pat) in fields {
-                    match sub_pat {
-                        Some(pat) => Self::collect_binding_names(pat, names),
-                        None => {
-                            names(*field_name);
-                        }
-                    }
-                }
-                if let Some((r, _)) = rest {
-                    names(*r);
                 }
             }
             PatternKind::Or(alts) => {
@@ -1718,16 +1616,15 @@ mod tests {
     #[test]
     fn test_irrefutable_binding_has_no_test() {
         let f = compiled(
-            "fn f((a, {x, y}), ()) -> Int {\n  let (c, (d, _)) = (x, (y, a))\n  a + c + d\n}\n",
+            "type P { x: Int, y: Int }\n\
+             fn f((a, P { x, y }), ()) -> Int {\n  let (c, (d, _)) = (x, (y, a))\n  a + c + d\n}\n",
             "f",
         );
         for op in [Op::TestTupleLen, Op::TestEqual, Op::Panic] {
             assert!(!has_op(&f, op), "{op:?} emitted for an irrefutable binding");
         }
         assert!(has_op(&f, Op::DestructTuple));
-        // (An anonymous record's fields are read by their names.)
-        assert!(has_op(&f, Op::DestructRecordFieldNamed));
-        assert!(!has_op(&f, Op::DestructRecordField));
+        assert!(has_op(&f, Op::DestructRecordField));
     }
 
     /// The one variant of an enum and a record type are irrefutable too:
@@ -1743,9 +1640,8 @@ mod tests {
             assert!(!has_op(&f, op), "{op:?} emitted for an irrefutable binding");
         }
         assert!(has_op(&f, Op::DestructVariant));
-        // (A declared record's fields are read at their places.)
+        // (A record's fields are read at their places.)
         assert!(has_op(&f, Op::DestructRecordField));
-        assert!(!has_op(&f, Op::DestructRecordFieldNamed));
 
         let g = compiled(
             &format!(

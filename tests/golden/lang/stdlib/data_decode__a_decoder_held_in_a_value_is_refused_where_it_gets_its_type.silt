@@ -18,7 +18,7 @@ fn mk() {
   D { f: json.parse }
 }
 
-fn use_it(d, t) {
+fn use_it(d: D(Fn(String, TypeOf(a)) -> Result(a, json.JsonError)), t: TypeOf(a)) {
   let g = d.f
   g("\{}", t)
 }

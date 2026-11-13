@@ -997,10 +997,6 @@ ops! {
     /// The field at `index` of TOS, a record of a declared type: the
     /// field the type declares there.
     GetField { index: U16("fields of a record") } => pops 1, pushes 1;
-    /// The named field of TOS, a record whose type is not known where
-    /// the code is compiled: an anonymous record, or a record behind an
-    /// open row.
-    GetFieldNamed { name: Str } => pops 1, pushes 1;
 
     // ── Control flow ───────────────────────────────────────────
     /// Jump, forward or back.
@@ -1056,15 +1052,6 @@ ops! {
     /// Extract the field at `index` of a record of a declared type.
     /// Peek record, push value.
     DestructRecordField { index: U16("fields of a record") } => pops 1, pushes 2;
-    /// Extract the named field of a record whose type is not known
-    /// where the code is compiled. Peek record, push value.
-    DestructRecordFieldNamed { name: Str } => pops 1, pushes 2;
-    /// Construct a new record from TOS by removing the listed field
-    /// names. The record on TOS is consumed (popped) and a new
-    /// anonymous `Value::Record` of the fields minus the excluded ones is
-    /// pushed. Used by row-polymorphic anon-record patterns to bind
-    /// the `...rest` portion.
-    DestructRecordRest { excluded: Strs("fields of an anonymous record pattern") } => pops 1, pushes 1;
     /// Test if TOS is a record of the type whose descriptor the
     /// constant is. Peek, push bool.
     TestRecordTag { ty: Type } => pops 1, pushes 2;

@@ -1,8 +1,0 @@
--- cmd: check
--- exit: 1
--- Syntax of another language gets the text that says what silt writes (E0109).
--- stderr-contains: the rest of a list is written `..rest`
-fn main() {
-  let [h, ...t] = [1, 2]
-  println(h)
-}

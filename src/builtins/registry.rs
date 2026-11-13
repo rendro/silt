@@ -935,9 +935,6 @@ mod tests {
                     params.iter().for_each(|param| variables(param, out));
                     variables(result, out);
                 }
-                TypeExprKind::AnonRecord { fields, .. } => {
-                    fields.iter().for_each(|(_, field)| variables(field, out));
-                }
                 TypeExprKind::SelfType => {}
             }
         }

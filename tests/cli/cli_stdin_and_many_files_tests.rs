@@ -30,12 +30,12 @@ fn silt(dir: &Path, args: &[&str], stdin: &str) -> Output {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(stdin.as_bytes())
-        .unwrap();
+    // A command refused before it reads stdin may have ended already:
+    // writing to it then fails with a broken pipe, which is no fault.
+    let written = child.stdin.take().unwrap().write_all(stdin.as_bytes());
+    if let Err(e) = written {
+        assert_eq!(e.kind(), std::io::ErrorKind::BrokenPipe, "{e}");
+    }
     child.wait_with_output().unwrap()
 }
 
