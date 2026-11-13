@@ -235,6 +235,7 @@ impl Sandbox {
             "cp",
             "mkdir",
             "chmod",
+            "mv",
             "sha256sum",
             "shasum",
             "tr",
@@ -495,4 +496,91 @@ fn install_sh_with_wget_refuses_a_redirect_to_http() {
         "a plain http URL was asked for:\n{log}"
     );
     assert!(!sb.install_dir().join("silt").exists());
+}
+
+#[test]
+fn install_sh_mv_binary_failure_is_branded() {
+    let sb = Sandbox::new("mv");
+    sb.fail_tool("mv");
+    assert_branded_failure(&sb.run(""), "failed to replace");
+    // The copy staged beside it is removed.
+    let left: Vec<_> = fs::read_dir(sb.install_dir())
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name())
+        .collect();
+    assert!(left.is_empty(), "{left:?}");
+}
+
+/// A silt that is running (an editor's `silt lsp`) is replaced: the new
+/// binary is copied beside it and moved onto its name, and nothing else
+/// is left in the install directory. FAILS on the base: `cp` onto the
+/// running binary failed with "Text file busy" (reported as permission
+/// denied). Linux only: there, writing to a running binary is refused.
+#[cfg(target_os = "linux")]
+#[test]
+fn install_sh_replaces_a_running_binary() {
+    let sb = Sandbox::new("busy");
+    // A real executable as the released `silt`: `sleep`, which runs as
+    // long as it is told.
+    let sleep = ["/bin/sleep", "/usr/bin/sleep"]
+        .into_iter()
+        .map(Path::new)
+        .find(|p| p.is_file())
+        .expect("a sleep binary");
+    fs::copy(sleep, sb.root.join("asset/silt")).unwrap();
+    let status = Command::new("tar")
+        .args(["czf", "release.tar.gz", "-C", "asset", "silt"])
+        .current_dir(&sb.root)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let out = sb.run("");
+    assert!(out.status.success(), "{out:?}");
+    let installed = sb.install_dir().join("silt");
+    let mut running = Command::new(&installed).arg("30").spawn().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    if running.try_wait().unwrap().is_some() {
+        // (A multi-call `sleep` does not run under another name.)
+        eprintln!("SKIP: the copied sleep binary does not run as `silt`");
+        return;
+    }
+    let out = sb.run("");
+    let _ = running.kill();
+    let _ = running.wait();
+    assert!(
+        out.status.success(),
+        "stdout={}\nstderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let mode = fs::metadata(&installed).unwrap().permissions().mode();
+    assert_eq!(mode & 0o111, 0o111, "not executable: {mode:o}");
+    let left: Vec<_> = fs::read_dir(sb.install_dir())
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name())
+        .collect();
+    assert_eq!(left, ["silt"], "{left:?}");
+}
+
+/// A signal between the copy and the move ends the script with its
+/// EXIT trap: the staged copy is removed and the old binary stays.
+/// FAILS on the base of this fix: under dash, which runs no EXIT trap
+/// when a signal ends the script, `.silt.new.<pid>` was left behind.
+#[test]
+fn install_sh_interrupted_before_the_move_leaves_no_staged_copy() {
+    let sb = Sandbox::new("signal");
+    let out = sb.run("");
+    assert!(out.status.success(), "{out:?}");
+    // `mv` signals the script (its parent) and fails.
+    sb.stub("mv", "#!/bin/sh\nkill -TERM $PPID\nsleep 1\nexit 1\n");
+    let out = sb.run("");
+    assert_ne!(out.status.code(), Some(0), "{out:?}");
+    let left: Vec<_> = fs::read_dir(sb.install_dir())
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name())
+        .collect();
+    assert_eq!(left, ["silt"], "{left:?}");
 }

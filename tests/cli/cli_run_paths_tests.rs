@@ -63,7 +63,7 @@ fn a_directory_that_is_no_package_is_not_read() {
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(
         String::from_utf8_lossy(&output.stderr),
-        "error reading plain: it is a directory\n"
+        "error: silt run: plain is not a .silt file or a package directory\n"
     );
     let _ = fs::remove_dir_all(&dir);
 }

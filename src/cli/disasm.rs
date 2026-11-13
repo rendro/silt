@@ -1,6 +1,7 @@
 //! `silt disasm [<file>]` — show bytecode disassembly without running.
 
 use std::io::Write;
+use std::path::Path;
 use std::process;
 
 use silt::diagnostic::Diagnostic;
@@ -9,8 +10,13 @@ use silt::intern::intern;
 use silt::session::{ENTRY_POINT, Entry, LockPolicy};
 
 use crate::cli::help::{asks_for_help, disasm_usage_banner};
-use crate::cli::package::resolve_package_entry_point;
-use crate::cli::paths::{ProgramFiles, door_diagnostics, open_entry_or_exit};
+use crate::cli::package::{
+    EntryPointKind, resolve_package_entry_point, resolve_package_entry_point_in,
+};
+use crate::cli::paths::{
+    FILE_OR_PACKAGE, PathArg, ProgramFiles, door_diagnostics, open_entry_or_exit, path_arg,
+    refuse_path,
+};
 
 /// Dispatch `silt disasm [<file>]`.
 pub(crate) fn dispatch(args: &[String]) {
@@ -18,7 +24,8 @@ pub(crate) fn dispatch(args: &[String]) {
         println!("Usage: {}", disasm_usage_banner());
         println!();
         println!("Prints the compiled bytecode disassembly for <file.silt>.");
-        println!("Inside a package with no file argument, disassembles src/main.silt.");
+        println!("A package's directory, or no file inside a package, disassembles");
+        println!("the package's src/main.silt.");
         println!();
         println!("Options:");
         println!("  --watch, -w     Re-run on file changes");
@@ -51,8 +58,18 @@ pub(crate) fn dispatch(args: &[String]) {
             }
         }
     }
-    let path = match positional {
-        Some(p) => p,
+    // The path given is what the five commands that take one make of
+    // it (`paths::path_arg`): a package's directory is its program.
+    let path = match positional.as_deref().map(path_arg) {
+        Some(PathArg::File(p)) => p,
+        Some(PathArg::Package(dir)) => {
+            match resolve_package_entry_point_in(Path::new(&dir), EntryPointKind::RequireMain) {
+                Ok(Some(p)) => p.to_string_lossy().into_owned(),
+                Ok(None) => dir,
+                Err(()) => process::exit(1),
+            }
+        }
+        Some(PathArg::Dir(p) | PathArg::NotSilt(p)) => refuse_path("disasm", &p, FILE_OR_PACKAGE),
         None => match resolve_package_entry_point() {
             Ok(Some(p)) => p.to_string_lossy().into_owned(),
             Ok(None) => {

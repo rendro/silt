@@ -35,6 +35,9 @@ main() {
 
     tmpdir="$(mktemp -d)" || err "mktemp -d failed"
     trap 'rm -rf "$tmpdir"' EXIT
+    # A signal ends the script through `exit`, so that the EXIT trap
+    # runs (dash runs none when a signal ends it).
+    trap 'exit 130' INT TERM HUP
 
     printf "  Downloading %s\n" "$url"
     fetch "$url" "$tmpdir/silt.$ext" \
@@ -75,10 +78,17 @@ main() {
 
     mkdir -p "$INSTALL_DIR" \
         || err "failed to create install dir $INSTALL_DIR (permission denied?)"
-    cp "$tmpdir/$bin" "$INSTALL_DIR/$bin" \
+    # The new binary is copied beside the old one and then moved onto
+    # its name: a running silt (an editor's `silt lsp`) keeps running,
+    # and an interrupted install leaves the old binary whole.
+    staged="$INSTALL_DIR/.$bin.new.$$"
+    trap 'rm -rf "$tmpdir"; rm -f "$staged"' EXIT
+    cp "$tmpdir/$bin" "$staged" \
         || err "failed to install binary to $INSTALL_DIR (permission denied?)"
-    chmod +x "$INSTALL_DIR/$bin" \
+    chmod +x "$staged" \
         || err "failed to mark $INSTALL_DIR/$bin executable (permission denied?)"
+    mv -f "$staged" "$INSTALL_DIR/$bin" \
+        || err "failed to replace $INSTALL_DIR/$bin (permission denied?)"
 
     printf "\n  silt %s installed to %s\n\n" "$version" "$INSTALL_DIR/$bin"
 

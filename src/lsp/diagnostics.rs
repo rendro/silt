@@ -88,6 +88,10 @@ pub(super) fn indexed_document(path: PathBuf, text: Arc<str>) -> Document {
     }
 }
 
+/// The directory under which [`uri_to_path`] puts a document that is no
+/// file.
+const UNSAVED: &str = "\0unsaved";
+
 /// The path a document's URI names. A URI that names no file by a
 /// rooted path (`untitled:wb.silt`, `file:wb.silt`) gets a path that no
 /// file has, by its scheme and its own path: such a document is never
@@ -99,7 +103,7 @@ pub(super) fn uri_to_path(uri: &Uri) -> PathBuf {
         _ => {
             let (scheme, rest) = uri.as_str().split_once(':').unwrap_or(("", uri.as_str()));
             // No file name holds a NUL: nothing on disk is at this path.
-            PathBuf::from("\0unsaved")
+            PathBuf::from(UNSAVED)
                 .join(scheme)
                 .join(rest.trim_start_matches('/'))
         }
@@ -111,10 +115,14 @@ impl Server {
     /// its analysis.
     ///
     /// Only silt files are analysed: a `silt.toml` the editor opens is
-    /// not a module. Each edit moves the analysis [`DEBOUNCE`] later.
+    /// not a module. A document that is no file (an unsaved buffer such
+    /// as `untitled:Untitled-1`) has no file name to tell by: the editor
+    /// gave it to the silt server, so it is silt, analysed as a file
+    /// outside any package. Each edit moves the analysis [`DEBOUNCE`]
+    /// later.
     pub(super) fn update_document(&mut self, uri: Uri, text: String) {
         let path = uri_to_path(&uri);
-        if path.extension().is_none_or(|ext| ext != "silt") {
+        if !path.starts_with(UNSAVED) && path.extension().is_none_or(|ext| ext != "silt") {
             return;
         }
         let source = SourceFile::new(SourceName::Overlay(path.clone()), text.into());
