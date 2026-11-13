@@ -1,5 +1,5 @@
 //! Stdout-parity walker for `println(...)  -- <expected>` annotations
-//! inside markdown doc files (`docs/**/*.md`, `README.md`).
+//! inside the markdown doc files (`docs/**/*.md`).
 //!
 //! `tests/lang/examples_check.rs::all_doc_fn_main_blocks_run_if_safe`
 //! compiles and runs the markdown ```silt fences but does not compare
@@ -9,12 +9,19 @@
 //!
 //! ## What this walker does
 //!
-//! 1. Recursively walks `README.md` plus every `docs/**/*.md`.
-//! 2. Extracts each ```silt fence whose body contains `fn main`.
-//! 3. For each fence, parses every line containing `println(` looking
+//! 1. Recursively walks every `docs/**/*.md`.
+//! 2. Extracts each ```silt fence. A fence with `fn main` is a whole
+//!    program. A fence without one that has an annotated `println` is a
+//!    fragment: it is wrapped in `fn main() { ... }`, with an `import`
+//!    of each builtin module it names, and taken when that program
+//!    checks (a fragment that uses the names of an earlier fence does
+//!    not, and cannot be run on its own).
+//! 3. For each program, parses every line containing `println(` looking
 //!    for an `-- <expected>` trailing annotation.
-//! 4. Writes the fence body to a temp `.silt` file and runs `silt run`,
-//!    capturing stdout.
+//! 4. Writes the program to a directory of its own and runs `silt run`
+//!    there (files it writes and reads stay in that directory; an
+//!    environment variable it sets is its process's), capturing stdout,
+//!    with a time limit.
 //! 5. Walks stdout in source order, locating each annotated expected
 //!    value within a small skip window so unannotated `println` calls
 //!    or branch-only output don't break alignment.
@@ -23,12 +30,11 @@
 //!
 //! ## Skip rules
 //!
-//! Same conservative deny list as the examples check (and as
-//! `all_doc_fn_main_blocks_run_if_safe`). The deny list intentionally
-//! avoids blanket-skipping concurrency / time / fs APIs unless the
-//! block actually invokes them — the round-62 regression appeared in
-//! a fence that imported `channel`/`task`, so leaving those out of
-//! the skip set would defeat the lock.
+//! A fence is not run when it reaches the network or a database, reads
+//! stdin, ends the process, loops for ever, or prints random values (the
+//! deny list below). Files, the environment, tasks, channels, streams
+//! and the clock are run: a value that depends on the clock or on timing
+//! is written as an example (`-- e.g. 100.304408ms`), see below.
 //!
 //! Per-block opt-out is supported via:
 //!   - First non-empty line equal to `// noexec` or `-- noexec`
@@ -42,59 +48,40 @@
 //! don't byte-compare.
 
 use std::collections::HashSet;
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
-/// The deny list. A
-/// block that's safe to *run* under the existing markdown walker is
-/// also safe to *stdout-diff* here. If you tighten one list, tighten
-/// the other in the same patch.
+/// What a fence that is run must not do: reach the network or a
+/// database, read stdin, end the process, loop for ever, or print
+/// random values.
 const DENY_SUBSTRINGS: &[&str] = &[
     // Networked.
     "http.get",
     "http.post",
     "http.put",
     "http.delete",
+    "http.request",
     "http.serve",
     "http.Server",
-    // Concurrency.
-    "task.spawn",
-    "task.deadline",
-    "task.sleep",
-    "channel.new",
-    "channel.send",
-    "channel.receive",
-    "channel.recv",
-    "channel.select",
-    "channel.close",
+    "tcp.connect",
+    "tcp.listen",
+    "tcp.accept",
+    "stream.tcp_",
+    "stream.write_to_tcp",
+    "postgres.",
     // Interactive IO.
     "io.read_line",
+    "io.read_stdin",
     "io.stdin",
+    "stream.stdin_lines",
     "read_line",
-    // File system.
-    "fs.read",
-    "fs.write",
-    "fs.append",
-    "fs.list",
-    "fs.delete",
-    "fs.remove",
-    "fs.exists",
-    "fs.create_dir",
-    "fs.copy",
-    "fs.move",
-    "fs.metadata",
-    // Environment.
-    "env.get",
-    "env.set",
-    "env.args",
-    // Time — non-deterministic sources.
-    "time.sleep",
-    "time.now",
-    "time.today",
     // Random sources.
     "math.random",
+    "crypto.random_bytes",
     "uuid.v4",
     "uuid.v7",
     // Infinite loops.
@@ -106,13 +93,15 @@ const DENY_SUBSTRINGS: &[&str] = &[
 
 const NOEXEC_MARKERS: &[&str] = &["// noexec", "-- noexec"];
 
+/// How long one run of a fence may take.
+const RUN_LIMIT: Duration = Duration::from_secs(60);
+
 fn silt_cmd() -> Command {
     Command::new(env!("CARGO_BIN_EXE_silt"))
 }
 
 /// Decide whether a block should be excluded from the stdout-diff
-/// walker. Mirrors `all_doc_fn_main_blocks_run_if_safe::skip_reason`
-/// in `examples_check.rs`.
+/// walker.
 fn is_unsafe_to_run(src: &str) -> bool {
     let first_nonempty = src.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
     let trimmed = first_nonempty.trim();
@@ -120,6 +109,101 @@ fn is_unsafe_to_run(src: &str) -> bool {
         return true;
     }
     DENY_SUBSTRINGS.iter().any(|needle| src.contains(needle))
+}
+
+/// Whether `src` names the module `module` (`list.map`), not as a part of
+/// a longer name or of a string.
+fn names_module(src: &str, module: &str) -> bool {
+    let needle = format!("{module}.");
+    let mut from = 0;
+    while let Some(at) = src[from..].find(&needle) {
+        let at = from + at;
+        let before = src[..at].chars().next_back();
+        let after = src[at + needle.len()..].chars().next();
+        let starts_a_name = !before.is_some_and(|c| c.is_alphanumeric() || "_.\"".contains(c));
+        if starts_a_name && after.is_some_and(|c| c.is_ascii_alphabetic()) {
+            return true;
+        }
+        from = at + needle.len();
+    }
+    false
+}
+
+/// A fragment as a program: its `import` lines, an `import` of each
+/// builtin module it names and does not import, and the rest of it as
+/// the body of `main`.
+fn wrap_fragment(src: &str) -> String {
+    let (imports, body): (Vec<&str>, Vec<&str>) =
+        src.lines().partition(|l| l.starts_with("import "));
+    let mut out = String::new();
+    for line in &imports {
+        out.push_str(line);
+        out.push('\n');
+    }
+    for module in &silt::builtins::registry::registry().modules {
+        let imported = imports.iter().any(|l| {
+            l.strip_prefix("import ")
+                .and_then(|rest| rest.strip_prefix(module.name))
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with([' ', '.']))
+        });
+        if !imported && names_module(src, module.name) {
+            out.push_str(&format!("import {}\n", module.name));
+        }
+    }
+    out.push_str("\nfn main() {\n");
+    for line in body {
+        out.push_str("  ");
+        out.push_str(line);
+        out.push('\n');
+    }
+    out.push_str("}\n");
+    out
+}
+
+/// The output of `silt <args> <file>` run in the directory of `file`, or
+/// `None` when it took longer than [`RUN_LIMIT`] (and was ended).
+fn run_in_dir(subcommand: &str, file: &Path) -> Option<std::process::Output> {
+    let mut child = silt_cmd()
+        .arg(subcommand)
+        .arg(file.file_name().expect("a file name"))
+        .current_dir(file.parent().expect("a directory"))
+        .env("NO_COLOR", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn silt");
+    let mut stdout = child.stdout.take().expect("stdout");
+    let mut stderr = child.stderr.take().expect("stderr");
+    let out_reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stdout.read_to_end(&mut buf);
+        buf
+    });
+    let err_reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stderr.read_to_end(&mut buf);
+        buf
+    });
+    let start = Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("wait for silt") {
+            break Some(status);
+        }
+        if start.elapsed() > RUN_LIMIT {
+            let _ = child.kill();
+            let _ = child.wait();
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let stdout = out_reader.join().expect("stdout reader");
+    let stderr = err_reader.join().expect("stderr reader");
+    status.map(|status| std::process::Output {
+        status,
+        stdout,
+        stderr,
+    })
 }
 
 /// Recursively collect every `*.md` file under `dir`.
@@ -233,6 +317,14 @@ fn is_illustrative(expected: &str) -> bool {
         || expected.contains("...")
 }
 
+/// The message of an annotation that says the line ends the program
+/// with an error: `error: float overflow`, `runtime error: ...`.
+fn error_annotation(expected: &str) -> Option<&str> {
+    (expected.strip_prefix("runtime error: "))
+        .or_else(|| expected.strip_prefix("error: "))
+        .map(str::trim)
+}
+
 /// Strip parenthesised commentary from the expected, e.g.
 /// `42 (the answer)` -> `42`.
 fn strip_trailing_commentary(expected: &str) -> &str {
@@ -326,14 +418,8 @@ fn diff_println_pairs(pairs: &[PrintlnPair], stdout: &str) -> DiffOutcome {
 fn docs_markdown_println_annotations_match_silt_run_stdout() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
 
-    // Universe: every .md under docs/. We deliberately leave README.md
-    // out of this walker because README annotations are typically
-    // narrative ("record update", "the answer", etc.) rather than
-    // exact stdout. The stdlib + docs/ walkers cover the
-    // strict-stdout-diff case; mixing the two conventions creates
-    // false positives on README without adding regression coverage
-    // (README has zero `fn main` fences with strict-stdout
-    // annotations as of round 62).
+    // Universe: every .md under docs/. README.md is left out: its
+    // annotations are narrative ("record update", "the answer").
     let mut targets: Vec<PathBuf> = Vec::new();
     collect_md_files(&manifest_dir.join("docs"), &mut targets);
     targets.sort();
@@ -354,7 +440,11 @@ fn docs_markdown_println_annotations_match_silt_run_stdout() {
     struct Job {
         doc_path: PathBuf,
         opener_line: usize,
+        /// The program run: the fence, or a fragment wrapped in `main`.
         src: String,
+        /// Whether `src` is a wrapped fragment, which is run only when it
+        /// checks.
+        fragment: bool,
         file_stem: String,
         pairs: Vec<PrintlnPair>,
     }
@@ -366,9 +456,6 @@ fn docs_markdown_println_annotations_match_silt_run_stdout() {
             .unwrap_or_else(|e| panic!("failed to read {}: {}", doc_path.display(), e));
         let blocks = extract_silt_blocks(&body);
         for (opener_line, src) in blocks {
-            if !src.contains("fn main") {
-                continue;
-            }
             if is_unsafe_to_run(&src) {
                 continue;
             }
@@ -382,7 +469,9 @@ fn docs_markdown_println_annotations_match_silt_run_stdout() {
                 continue;
             }
 
-            let pairs = extract_println_pairs(&src);
+            let fragment = !src.contains("fn main");
+            let program = if fragment { wrap_fragment(&src) } else { src };
+            let pairs = extract_println_pairs(&program);
             let annotated_count = pairs.iter().filter(|p| p.expected.is_some()).count();
             if annotated_count == 0 {
                 continue;
@@ -396,7 +485,8 @@ fn docs_markdown_println_annotations_match_silt_run_stdout() {
             jobs.push(Job {
                 doc_path: doc_path.clone(),
                 opener_line,
-                src,
+                src: program,
+                fragment,
                 file_stem,
                 pairs,
             });
@@ -415,11 +505,13 @@ fn docs_markdown_println_annotations_match_silt_run_stdout() {
 
     let failures: Mutex<Vec<String>> = Mutex::new(Vec::new());
     let checked_pairs = AtomicUsize::new(0);
+    let not_alone = AtomicUsize::new(0);
     let next_job = AtomicUsize::new(0);
     let jobs_ref = &jobs;
     let tmp_dir_ref = &tmp_dir;
     let failures_ref = &failures;
     let checked_pairs_ref = &checked_pairs;
+    let not_alone_ref = &not_alone;
     let next_job_ref = &next_job;
 
     std::thread::scope(|scope| {
@@ -431,30 +523,80 @@ fn docs_markdown_println_annotations_match_silt_run_stdout() {
                         return;
                     }
                     let job = &jobs_ref[idx];
-                    // (A doc's name such as `channel-task` is no module
-                    // name: `-` becomes `_`.)
-                    let file = tmp_dir_ref.join(format!(
-                        "{}_line{}.silt",
+                    // Each fence runs in a directory of its own, so the
+                    // files it writes meet no other fence's. (A doc's
+                    // name such as `channel-task` is no module name: `-`
+                    // becomes `_`.)
+                    let name = format!(
+                        "{}_line{}",
                         job.file_stem.to_lowercase().replace('-', "_"),
                         job.opener_line
-                    ));
+                    );
+                    let dir = tmp_dir_ref.join(&name);
+                    std::fs::create_dir_all(&dir).expect("create the fence's directory");
+                    let file = dir.join(format!("{name}.silt"));
                     std::fs::write(&file, &job.src).expect("write temp silt file");
+                    let place = format!("{}:{}", job.doc_path.display(), job.opener_line);
 
-                    let output = silt_cmd()
-                        .arg("run")
-                        .arg(&file)
-                        .output()
-                        .expect("failed to spawn silt");
+                    // A fragment that does not stand alone (it uses the
+                    // names of an earlier fence) cannot be run.
+                    if job.fragment {
+                        match run_in_dir("check", &file) {
+                            Some(out) if out.status.success() => {}
+                            _ => {
+                                not_alone_ref.fetch_add(1, Ordering::SeqCst);
+                                continue;
+                            }
+                        }
+                    }
 
-                    if !output.status.success() {
-                        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+                    let Some(output) = run_in_dir("run", &file) else {
+                        failures_ref.lock().unwrap().push(format!(
+                            "{place} (```silt fence): `silt run` took longer than \
+                             {RUN_LIMIT:?} and was ended"
+                        ));
+                        continue;
+                    };
+
+                    // A line annotated `-- error: <message>` (or `--
+                    // runtime error: ...`) ends the program: the lines
+                    // before it are compared with stdout, and the message
+                    // must be in stderr. The lines after it never run.
+                    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+                    let first_error = job.pairs.iter().position(|p| {
+                        p.expected.as_deref().and_then(error_annotation).is_some()
+                    });
+                    let pairs = match first_error {
+                        Some(k) => {
+                            let message = (job.pairs[k].expected.as_deref())
+                                .and_then(error_annotation)
+                                .unwrap_or_default();
+                            if output.status.success() || !stderr.contains(message) {
+                                failures_ref.lock().unwrap().push(format!(
+                                    "{place} (```silt fence, line {} of the program run): \
+                                     expected the run to end with the error `{message}`; \
+                                     exit={:?}\nstderr:\n{stderr}",
+                                    job.pairs[k].block_line,
+                                    output.status.code(),
+                                ));
+                                continue;
+                            }
+                            &job.pairs[..k]
+                        }
+                        None => &job.pairs[..],
+                    };
+
+                    if first_error.is_none() && !output.status.success() {
                         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
                         failures_ref.lock().unwrap().push(format!(
-                            "{}:{} (```silt fence): `silt run` exited non-zero \
+                            "{place} (```silt fence{}): `silt run` exited non-zero \
                              while the walker was trying to verify println \
                              annotations. exit={:?}\nstdout:\n{}\nstderr:\n{}",
-                            job.doc_path.display(),
-                            job.opener_line,
+                            if job.fragment {
+                                ", wrapped in main"
+                            } else {
+                                ""
+                            },
                             output.status.code(),
                             stdout,
                             stderr
@@ -463,7 +605,7 @@ fn docs_markdown_println_annotations_match_silt_run_stdout() {
                     }
 
                     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-                    match diff_println_pairs(&job.pairs, &stdout) {
+                    match diff_println_pairs(pairs, &stdout) {
                         DiffOutcome::Ok { matched } => {
                             checked_pairs_ref.fetch_add(matched, Ordering::SeqCst);
                         }
@@ -488,13 +630,16 @@ fn docs_markdown_println_annotations_match_silt_run_stdout() {
                                 .map(|p| p.block_line)
                                 .unwrap_or(0);
                             failures_ref.lock().unwrap().push(format!(
-                                "{}:{} (```silt fence, block line {}): \
+                                "{place} (```silt fence{}, line {} of the program run): \
                                  expected `{}` but got mismatch — could not find \
                                  annotated value in remaining stdout.\n  \
                                  searched: {:?}\n\
                                  full stdout:\n{}",
-                                job.doc_path.display(),
-                                job.opener_line,
+                                if job.fragment {
+                                    " wrapped in main"
+                                } else {
+                                    ""
+                                },
                                 pointer,
                                 expected,
                                 searched,
@@ -509,33 +654,21 @@ fn docs_markdown_println_annotations_match_silt_run_stdout() {
 
     let failures: Vec<String> = failures.into_inner().unwrap();
     let checked_pairs = checked_pairs.load(Ordering::SeqCst);
+    let not_alone = not_alone.load(Ordering::SeqCst);
 
-    // The walker is a regression LOCK, not a coverage gate. As of
-    // round 62 the docs/ tree has very few fences that are
-    // simultaneously (a) safe to run under the deny list, (b)
-    // contain `fn main`, and (c) carry `-- <expected>` annotations
-    // on a `println(...)` line. A dormant walker is still useful:
-    // the moment a doc author adds such an annotation (the natural
-    // way to document expected output), this walker locks it
-    // against drift. Zero pairs is therefore acceptable — what we
-    // require is that the extraction + diff machinery is exercised
-    // by SOME path, which the synthetic sanity test below
-    // (`walker_extraction_distinguishes_quoted_from_unquoted_println_output`)
-    // guarantees.
-    //
-    // We do still emit a one-line note when zero pairs were seen so
-    // a human inspecting CI output can tell whether this walker did
-    // any real work this run.
-    if checked_pairs == 0 {
-        eprintln!(
-            "[docs_markdown_println_parity] walker scanned {} runnable \
-             fence(s) but found 0 annotated `println(...) -- <expected>` \
-             pairs. The walker is armed but dormant — it will activate \
-             the moment a doc author adds a strict-stdout annotation \
-             to a runnable ```silt fn main``` fence under docs/.",
-            checked_blocks,
-        );
-    }
+    eprintln!(
+        "[docs_markdown_println_parity] compared {checked_pairs} annotated println \
+         line(s) in {checked_blocks} fence(s); {not_alone} fragment(s) that do not \
+         check on their own were not run"
+    );
+    // The fences of docs/ hold hundreds of annotated println lines; a
+    // run that compared none has lost its way (an extraction or a deny
+    // rule that matches everything).
+    assert!(
+        checked_pairs >= 300,
+        "the walker compared only {checked_pairs} annotated println line(s) \
+         in {checked_blocks} fence(s); expected hundreds"
+    );
 
     if failures.is_empty() {
         let _ = std::fs::remove_dir_all(&tmp_dir);
@@ -554,6 +687,21 @@ fn docs_markdown_println_annotations_match_silt_run_stdout() {
          value is illustrative.\n\n{}",
         failures.len(),
         failures.join("\n---\n")
+    );
+}
+
+/// A fragment is wrapped in `main` with the imports it needs: the
+/// modules it names and does not import, and none it names only inside
+/// a longer name or a string.
+#[test]
+fn a_fragment_is_wrapped_with_the_imports_it_needs() {
+    let wrapped = wrap_fragment(
+        "import list.{ map }\nprintln(http.segments(\"/a/b\")) -- [\"a\", \"b\"]\nlet s = \"io.x\"\n",
+    );
+    assert_eq!(
+        wrapped,
+        "import list.{ map }\nimport http\n\nfn main() {\n  \
+         println(http.segments(\"/a/b\")) -- [\"a\", \"b\"]\n  let s = \"io.x\"\n}\n"
     );
 }
 

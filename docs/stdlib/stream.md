@@ -218,9 +218,9 @@ fn main() {
   let good = stream.from_list([Ok("a,1"), Ok("b,2")])
   println(write_rows(good, "out.csv")) -- Ok(2)
   let bad = stream.from_list([Ok("a,1"), Err("row 2: no price"), Ok("c,3")])
-  println(write_rows(bad, "out.csv")) -- Err(BadRow(row 2: no price))
+  println(write_rows(bad, "out.csv")) -- Err(BadRow("row 2: no price"))
   -- The rows before the Err are in the file.
-  println(io.read_file("out.csv") |> result.map(string.lines)) -- Ok([a,1])
+  println(io.read_file("out.csv") |> result.map(string.lines)) -- Ok(["a,1"])
 }
 ```
 

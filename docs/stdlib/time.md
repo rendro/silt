@@ -119,7 +119,7 @@ import time
 
 fn main() {
   let t = time.now()
-  println(t.epoch_ns) -- 1775501213453369259
+  println(t.epoch_ns) -- e.g. 1775501213453369259
 }
 ```
 
@@ -136,7 +136,7 @@ Returns the current date in the system's local timezone.
 import time
 
 fn main() {
-  println(time.today()) -- 2026-04-06
+  println(time.today()) -- e.g. 2026-04-06
 }
 ```
 
