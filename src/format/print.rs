@@ -1799,7 +1799,10 @@ impl Printer<'_> {
             match &stage.kind {
                 ExprKind::Call(callee, args)
                     if args.is_empty()
-                        && matches!(callee.kind, ExprKind::Ident(_) | ExprKind::FieldAccess(..))
+                        && matches!(
+                            callee.kind,
+                            ExprKind::Ident(_) | ExprKind::FieldAccess(..)
+                        )
                         && !self.cur.comments_between(callee.span.end, stage.span.end)
                         && self.cur.wrappers(stage.span.end) == 0 =>
                 {

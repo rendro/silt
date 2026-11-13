@@ -1943,7 +1943,11 @@ impl<'src> Parser<'src> {
                 Self::expect_ident,
             )?;
             if written.is_empty() {
-                self.empty_parens(open, name, "a type without parameters is declared `type {name}`");
+                self.empty_parens(
+                    open,
+                    name,
+                    "a type without parameters is declared `type {name}`",
+                );
             }
             for (param, param_span) in written {
                 let text = intern::resolve(param);

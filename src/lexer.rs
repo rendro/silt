@@ -2247,7 +2247,10 @@ mod tests {
                 );
             }
         }
-        assert_eq!(lex("\"\\u{202E}\""), vec![Token::StringLit("\u{202E}".into())]);
+        assert_eq!(
+            lex("\"\\u{202E}\""),
+            vec![Token::StringLit("\u{202E}".into())]
+        );
     }
 
     /// A number has one spelling; each other one is an error that
@@ -2255,22 +2258,55 @@ mod tests {
     #[test]
     fn a_number_has_one_spelling() {
         for (src, message) in [
-            ("1_", "a `_` in a number stands between two digits: write `1`"),
-            ("1__0", "a `_` in a number stands between two digits: write `1_0`"),
-            ("0x_F", "a `_` in a number stands between two digits: write `0xF`"),
-            ("1_.0", "a `_` in a number stands between two digits: write `1.0`"),
-            ("1.0_", "a `_` in a number stands between two digits: write `1.0`"),
-            ("1e3_", "a `_` in a number stands between two digits: write `1e3`"),
-            ("0b_1", "a `_` in a number stands between two digits: write `0b1`"),
-            ("0XFF", "the prefix of a number is written in lower case: write `0xFF`"),
-            ("0B11", "the prefix of a number is written in lower case: write `0b11`"),
-            ("1E3", "the exponent of a number is written with a lower-case `e`: write `1e3`"),
+            (
+                "1_",
+                "a `_` in a number stands between two digits: write `1`",
+            ),
+            (
+                "1__0",
+                "a `_` in a number stands between two digits: write `1_0`",
+            ),
+            (
+                "0x_F",
+                "a `_` in a number stands between two digits: write `0xF`",
+            ),
+            (
+                "1_.0",
+                "a `_` in a number stands between two digits: write `1.0`",
+            ),
+            (
+                "1.0_",
+                "a `_` in a number stands between two digits: write `1.0`",
+            ),
+            (
+                "1e3_",
+                "a `_` in a number stands between two digits: write `1e3`",
+            ),
+            (
+                "0b_1",
+                "a `_` in a number stands between two digits: write `0b1`",
+            ),
+            (
+                "0XFF",
+                "the prefix of a number is written in lower case: write `0xFF`",
+            ),
+            (
+                "0B11",
+                "the prefix of a number is written in lower case: write `0b11`",
+            ),
+            (
+                "1E3",
+                "the exponent of a number is written with a lower-case `e`: write `1e3`",
+            ),
             ("1e+3", "an exponent is written without `+`: write `1e3`"),
             ("007", "a number has no leading zero: write `7`"),
             ("00.5", "a number has no leading zero: write `0.5`"),
             ("0_7", "a number has no leading zero: write `7`"),
             ("00", "a number has no leading zero: write `0`"),
-            ("0X_1E+3", "the prefix of a number is written in lower case: write `0x1E`"),
+            (
+                "0X_1E+3",
+                "the prefix of a number is written in lower case: write `0x1E`",
+            ),
         ] {
             let errors = Lexer::new(crate::source::FileId::default(), src)
                 .tokenize()

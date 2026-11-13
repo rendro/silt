@@ -95,8 +95,8 @@ const REJECTED: &[&str] = &[
     "1e_5", // exponent must START with a digit, not `_`
     "_1",   // identifier, not a number
     // Other spellings of a number (audit R9 FE-8).
-    "0XFF", "0B10", "1E5", "1.5E-3", "1e+5", "1_", "1__0", "0x_F", "0b_1", "1_.5", "1.5_",
-    "007", "00.5", "01e3",
+    "0XFF", "0B10", "1E5", "1.5E-3", "1e+5", "1_", "1__0", "0x_F", "0b_1", "1_.5", "1.5_", "007",
+    "00.5", "01e3",
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

@@ -1453,7 +1453,10 @@ mod tests {
         assert_eq!(judge(&body("xs |> m.g()"), &body("xs |> m.g")), Ok(()));
         assert_eq!(judge(&body("return xs"), &body("xs")), Ok(()));
         let lines = |a: &str, b: &str| format!("fn f(xs) {{\n  {a}\n  {b}\n}}\n");
-        assert_eq!(judge(&lines("g(xs)", "return xs"), &lines("g(xs)", "xs")), Ok(()));
+        assert_eq!(
+            judge(&lines("g(xs)", "return xs"), &lines("g(xs)", "xs")),
+            Ok(())
+        );
         for (before, after) in [
             (body("xs |> g()()"), body("xs |> g()")),
             (body("g()"), body("g")),
