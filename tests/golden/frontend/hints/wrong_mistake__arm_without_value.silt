@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- The error names the mistake that was made, not another one.
+-- stderr-contains: this match arm has no value: write it after the `->`
+-- stderr-not-contains: each match arm must start
+fn main() {
+  match 1 {
+    1 ->
+    2 -> "b"
+    _ -> "c"
+  }
+}

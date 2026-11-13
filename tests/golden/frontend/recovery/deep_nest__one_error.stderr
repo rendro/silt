@@ -1,5 +1,6 @@
-error[parse]: expected expression, found fn
+error[parse]: a closure is not written with `fn`
  --> deep_nest__one_error.silt:6:11
    |
  6 |   let f = fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) { fn(x) …
-   |           ^^ expected expression, found fn
+   |           ^^ a closure is not written with `fn`
+  = help: a closure is written `{ x -> x + 1 }`

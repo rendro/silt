@@ -3169,6 +3169,10 @@ impl Resolver<'_> {
                  'list.map'",
             ),
             "_" => Some(PLACEHOLDER_VALUE_HELP),
+            "nil" | "null" | "undefined" => Some(
+                "silt has no null: a value that may be absent is an `Option`, `None` or \
+                 `Some(x)`",
+            ),
             _ => None,
         };
         let help = match foreign {

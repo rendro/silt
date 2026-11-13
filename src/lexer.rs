@@ -693,13 +693,21 @@ impl Lexer {
         }
     }
 
-    /// Skip to the end of the block comment whose `{-` was just read, and
-    /// say whether it is closed. One that is not is an error and runs to
-    /// the end of the text.
-    fn skip_block_comment(&mut self) -> bool {
+    /// Skip to the end of the block comment whose `{-` was just read, at
+    /// `start`, and say whether it is closed. One that is not is an error
+    /// at its `{-` and runs to the end of the text. A `{-` right before
+    /// a `>`, a digit or a name was meant as a `{` and a `-` (`{-> 42}`,
+    /// `{-x}`): the help says so.
+    fn skip_block_comment(&mut self, start: Span) -> bool {
         // We've already consumed `{-`
         let mut depth = 1;
-        let start = self.span();
+        let meant_brace = self
+            .peek()
+            .is_some_and(|c| c == '>' || c.is_ascii_alphanumeric() || c == '_');
+        let start = Span {
+            end: start.start + 2,
+            ..start
+        };
         while depth > 0 {
             match self.advance_char() {
                 Some('{') if self.peek() == Some('-') => {
@@ -714,11 +722,18 @@ impl Lexer {
                 None => {
                     self.cut_short = true;
                     self.error(|| {
-                        Diagnostic::error(
+                        let d = Diagnostic::error(
                             Code::UnterminatedComment,
                             start,
                             "unterminated block comment",
-                        )
+                        );
+                        match meant_brace {
+                            true => d.with_help(
+                                "`{-` starts a block comment, closed by `-}`: for a `{` and a \
+                                 `-`, write `{ -`",
+                            ),
+                            false => d.with_help("a block comment is closed by `-}`"),
+                        }
                     });
                     return false;
                 }
@@ -1246,7 +1261,7 @@ impl Lexer {
                     let comment_span = self.span();
                     self.advance_char();
                     self.advance_char();
-                    let closed = self.skip_block_comment();
+                    let closed = self.skip_block_comment(comment_span);
                     // One that is not closed, with an error that is not
                     // kept, is no comment: it is text that is no token,
                     // with which the tokens end (see `tokenize`).
@@ -1479,7 +1494,18 @@ impl Lexer {
             // mark of its kind stands behind it on that line to read it
             // again.
             '\'' | '`' | '“' | '”' | '‘' | '’' => {
+                let before = self.errors.len();
                 let error = self.unexpected(start, || format!("unexpected character: '{ch}'"));
+                if self.errors.len() > before
+                    && matches!(ch, '\'' | '`')
+                    && let Some(d) = self.errors.last_mut()
+                {
+                    d.help.push(
+                        "a string is written in double quotes, with `{x}` for a value: \
+                         `\"hello {name}\"`"
+                            .to_string(),
+                    );
+                }
                 let is_partner = |c: char| match ch {
                     '\'' | '`' => c == ch,
                     _ => matches!(c, '“' | '”' | '‘' | '’'),
@@ -1505,6 +1531,7 @@ impl Lexer {
             // first.
             _ => {
                 self.quotes_off |= ch == '\\';
+                let before = self.errors.len();
                 let error = self.unexpected(start, || match ch {
                     // A BOM after the start of the file (the leading one
                     // is skipped in `Lexer::new`) is invisible and
@@ -1530,6 +1557,12 @@ impl Lexer {
                     }
                     _ => format!("unexpected character: '{ch}'"),
                 });
+                if ch == '#'
+                    && self.errors.len() > before
+                    && let Some(d) = self.errors.last_mut()
+                {
+                    d.help.push("a comment starts with `--`".to_string());
+                }
                 while self.peek().is_some_and(is_stray) {
                     self.advance_char();
                 }

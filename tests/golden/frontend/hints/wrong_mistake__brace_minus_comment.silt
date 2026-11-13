@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- The error names the mistake that was made, not another one.
+-- stderr-contains: `{-` starts a block comment, closed by `-}`: for a `{` and a `-`, write `{ -`
+fn main() {
+  let f = {-> 42}
+  println(f())
+}
