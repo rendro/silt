@@ -133,8 +133,8 @@ value shows it: `Int`, `Float`, `Bool`, `String`, `Bytes` and `()`;
 host module declares, the types of its fields and of the fields of
 each variant (`Box(Int)` at its argument: its `value: a` is an `Int`).
 Of a builtin record or enum type (`time.Date`, `json.Value`) the type
-is checked; a builtin type whose values are neither (`regex.Regex`, `tcp.TcpStream`,
-`postgres.PgPool`) is not checked. A `-> Int` function that returns a
+is checked; a builtin type whose values are neither (`regex.Regex`,
+`tcp.TcpStream`, `postgres.PgPool`) is not checked. A `-> Int` function that returns a
 `String` is a runtime error that names it (`mylib.count: its signature
 returns Int, but it returned String "three"`). No value is of `Never`:
 a `-> Never` function that returns a value is that error too, and it

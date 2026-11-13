@@ -125,8 +125,10 @@ windows-sys = { version = "0.59", features = [
 proptest = "1.4"
 rcgen = "0.13"
 # The tests, benches and examples are built with the test API
-# (`test-hooks`): the crate as its own dev-dependency turns it on.
-silt = { path = ".", features = ["test-hooks"] }
+# (`test-hooks`): the crate as its own dev-dependency turns it on. It
+# adds no other feature: `--no-default-features` still builds the tests
+# without the default ones.
+silt = { path = ".", default-features = false, features = ["test-hooks"] }
 
 # A release binary carries no symbol table: a smaller download. (A
 # panic's backtrace then names no functions.)
