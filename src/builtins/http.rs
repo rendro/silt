@@ -518,9 +518,9 @@ impl std::fmt::Debug for Connects {
 /// The TCP connector of the http client: in place of ureq's, it makes the
 /// connection with `tcp::connect_shuttered`, so that a request given up
 /// while its connect waits is ended there, and hands ureq the connected
-/// socket ([`Connected`]). What it does besides is what ureq's does: each
-/// resolved address in turn within the connect's time, the next after
-/// one that only that address refuses, `TCP_NODELAY` as configured.
+/// socket ([`Connected`]). What it does besides is what ureq's (3.5)
+/// does: each resolved address in turn with its share of the connect's
+/// time ([`connect_each`]), `TCP_NODELAY` as configured.
 #[cfg(feature = "http")]
 #[derive(Debug)]
 struct Connecting(Arc<Connects>);
@@ -541,73 +541,120 @@ impl<In: ureq::unversioned::transport::Transport> ureq::unversioned::transport::
         if chained.is_some() {
             return Ok(chained.map(Either::A));
         }
-        if self.0.stopped.load(Ordering::SeqCst) {
-            return Err(ureq::Error::Io(std::io::ErrorKind::NotConnected.into()));
-        }
-        let started = std::time::Instant::now();
-        let budget = details.timeout.not_zero().map(|t| *t);
-        let mut last = None;
-        for addr in details.addrs.iter() {
-            let left = match budget {
-                Some(budget) => match budget.checked_sub(started.elapsed()) {
-                    Some(left) if !left.is_zero() => Some(left),
-                    _ => return Err(ureq::Error::Timeout(details.timeout.reason)),
-                },
-                None => None,
-            };
-            match super::tcp::connect_shuttered_to(*addr, &self.0.shutter, left) {
-                Ok(stream) => {
-                    if details.config.no_delay() {
-                        stream.set_nodelay(true)?;
-                    }
-                    let config = details.config;
-                    let stream = Arc::new(stream);
-                    let transport = Connected {
-                        stream: stream.clone(),
-                        buffers: ureq::unversioned::transport::LazyBuffers::new(
-                            config.input_buffer_size(),
-                            config.output_buffer_size(),
-                        ),
-                    };
-                    let handle: std::sync::Weak<dyn ureq::unversioned::transport::ShutdownHandle> =
-                        Arc::downgrade(&stream) as _;
-                    (details.register_shutdown)(handle)?;
-                    return Ok(Some(Either::B(transport)));
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                    last = Some(ureq::Error::Timeout(ureq::Timeout::Connect));
-                }
-                // What concerns this address only: the next may answer.
-                Err(e)
-                    if matches!(
-                        e.kind(),
-                        std::io::ErrorKind::ConnectionRefused
-                            | std::io::ErrorKind::HostUnreachable
-                            | std::io::ErrorKind::NetworkUnreachable
-                            | std::io::ErrorKind::AddrNotAvailable
-                    ) =>
-                {
-                    last = Some(ureq::Error::Io(e));
-                }
-                Err(e) => return Err(ureq::Error::Io(e)),
+        let stream = connect_each(&details.addrs, details.timeout, |addr, time| {
+            // A connect that would begin after the stop does not begin.
+            if self.0.stopped.load(Ordering::SeqCst) {
+                return Err(std::io::ErrorKind::NotConnected.into());
             }
+            super::tcp::connect_shuttered_to(addr, &self.0.shutter, time)
+        })?;
+        if details.config.no_delay() {
+            stream.set_nodelay(true)?;
         }
-        Err(last.unwrap_or_else(|| {
-            ureq::Error::Io(std::io::Error::new(
-                std::io::ErrorKind::ConnectionRefused,
-                "Connection refused",
-            ))
-        }))
+        let config = details.config;
+        let stream = Arc::new(stream);
+        let transport = Connected {
+            stream: stream.clone(),
+            buffers: ureq::unversioned::transport::LazyBuffers::new(
+                config.input_buffer_size(),
+                config.output_buffer_size(),
+            ),
+            timeout_read: None,
+            timeout_write: None,
+        };
+        let handle: std::sync::Weak<dyn ureq::unversioned::transport::ShutdownHandle> =
+            Arc::downgrade(&stream) as _;
+        (details.register_shutdown)(handle)?;
+        Ok(Some(Either::B(transport)))
     }
 }
 
+/// The resolved addresses `addrs` tried in turn with `connect`, as
+/// ureq's TCP connector tries them: each has a share of the connect's
+/// time `timeout`, the first half as much again as the next (with two
+/// addresses and 10 s, 6.7 s and 3.3 s; one address has all of it; no
+/// share is under 10 ms; after an address that refused, the next has
+/// the same share). The next address is tried after a connect
+/// that ran out of its share while the connect's time is not over, and
+/// after a failure that concerns only that address
+/// ([`only_this_address`]); any other failure ends the connect. When
+/// every address failed, the last failure is the connect's.
+#[cfg(feature = "http")]
+fn connect_each<T>(
+    addrs: &[std::net::SocketAddr],
+    timeout: ureq::unversioned::transport::NextTimeout,
+    mut connect: impl FnMut(std::net::SocketAddr, Option<Duration>) -> std::io::Result<T>,
+) -> Result<T, ureq::Error> {
+    const LEAST: Duration = Duration::from_millis(10);
+    let started = std::time::Instant::now();
+    let total_weight = 2.0 * (1.0 - 0.5_f64.powi(addrs.len() as i32));
+    let mut weight = 1.0_f64;
+    let mut last = None;
+    for addr in addrs {
+        let share = timeout.not_zero().map(|t| {
+            let secs = t.as_secs_f64() * weight / total_weight;
+            Duration::from_millis((secs * 1000.0) as u64).max(LEAST)
+        });
+        match connect(*addr, share) {
+            Ok(connected) => return Ok(connected),
+            Err(e) if only_this_address(&e) => {
+                last = Some(ureq::Error::Io(e));
+                continue;
+            }
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                ) =>
+            {
+                if started.elapsed() > *timeout.after {
+                    return Err(ureq::Error::Timeout(timeout.reason));
+                }
+                last = Some(ureq::Error::Timeout(ureq::Timeout::Connect));
+            }
+            Err(e) => return Err(ureq::Error::Io(e)),
+        }
+        weight /= 2.0;
+    }
+    Err(last.unwrap_or_else(|| {
+        ureq::Error::Io(std::io::Error::new(
+            std::io::ErrorKind::ConnectionRefused,
+            "Connection refused",
+        ))
+    }))
+}
+
+/// Whether a connect failed for a reason of the address tried only, so
+/// that the next resolved address may still answer, as ureq decides it:
+/// the address refused, or the system has no route to it (a host whose
+/// first addresses are IPv6 where no IPv6 route is). On Windows, a VPN
+/// or firewall that blocks an address family says `WSAEACCES`.
+#[cfg(feature = "http")]
+fn only_this_address(e: &std::io::Error) -> bool {
+    #[cfg(windows)]
+    if e.raw_os_error() == Some(10013) {
+        return true;
+    }
+    matches!(
+        e.kind(),
+        std::io::ErrorKind::ConnectionRefused
+            | std::io::ErrorKind::HostUnreachable
+            | std::io::ErrorKind::NetworkUnreachable
+            | std::io::ErrorKind::NetworkDown
+            | std::io::ErrorKind::AddrNotAvailable
+    )
+}
+
 /// A connection the http client made itself ([`Connecting`]), as ureq's
-/// transport for TCP is: its buffers, and the socket, shared with the
-/// client's shutdown.
+/// transport for TCP is: its buffers, the socket, shared with the
+/// client's shutdown, and the read and write timeouts it has (set only
+/// when they change).
 #[cfg(feature = "http")]
 struct Connected {
     stream: Arc<std::net::TcpStream>,
     buffers: ureq::unversioned::transport::LazyBuffers,
+    timeout_read: Option<Duration>,
+    timeout_write: Option<Duration>,
 }
 
 #[cfg(feature = "http")]
@@ -628,6 +675,27 @@ fn time_of(
         return Err(ureq::Error::Timeout(timeout.reason));
     }
     Ok(timeout.not_zero().map(|t| *t))
+}
+
+/// Gives the socket the timeout `time` with `set`, unless it has it
+/// (`had`), as ureq does. macOS may refuse a change of a timeout after
+/// the peer closed with request data unread; the answer may still be
+/// read, so the read or write says what happened, not the refusal.
+#[cfg(feature = "http")]
+fn set_timeout(
+    had: &mut Option<Duration>,
+    time: Option<Duration>,
+    set: impl FnOnce(Option<Duration>) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    if *had == time {
+        return Ok(());
+    }
+    match set(time) {
+        Ok(()) => *had = time,
+        Err(e) if cfg!(target_os = "macos") && e.kind() == std::io::ErrorKind::InvalidInput => {}
+        Err(e) => return Err(e),
+    }
+    Ok(())
 }
 
 /// An I/O error of the socket, with a timeout as ureq's timeout.
@@ -655,7 +723,10 @@ impl ureq::unversioned::transport::Transport for Connected {
         use std::io::Write;
         use ureq::unversioned::transport::Buffers;
         let timeout = timeout.for_write();
-        self.stream.set_write_timeout(time_of(timeout)?)?;
+        let stream = &self.stream;
+        set_timeout(&mut self.timeout_write, time_of(timeout)?, |t| {
+            stream.set_write_timeout(t)
+        })?;
         let output = &self.buffers.output()[..amount];
         (&*self.stream)
             .write_all(output)
@@ -669,11 +740,28 @@ impl ureq::unversioned::transport::Transport for Connected {
         use std::io::Read;
         use ureq::unversioned::transport::Buffers;
         let timeout = timeout.for_read();
-        self.stream.set_read_timeout(time_of(timeout)?)?;
+        let time = time_of(timeout)?;
+        let stream = &self.stream;
+        set_timeout(&mut self.timeout_read, time, |t| stream.set_read_timeout(t))?;
         let input = self.buffers.input_append_buf();
+        let started = std::time::Instant::now();
+        // A read a signal interrupted is read again within what is left
+        // of its time (Linux does not restart it); without a time, the
+        // interruption is the read's.
         let read = loop {
-            match (&*self.stream).read(input) {
-                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            match (&**stream).read(input) {
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
+                    let Some(time) = time else {
+                        break Err(e);
+                    };
+                    let left = time.saturating_sub(started.elapsed());
+                    if left.is_zero() {
+                        break Err(std::io::ErrorKind::TimedOut.into());
+                    }
+                    set_timeout(&mut self.timeout_read, Some(left), |t| {
+                        stream.set_read_timeout(t)
+                    })?;
+                }
                 read => break read,
             }
         };
@@ -726,6 +814,21 @@ impl Client {
 /// proxy, TCP, TLS) with its own TCP connector ([`Connecting`]).
 #[cfg(feature = "http")]
 fn client_with_times(connect: Duration, global: Duration) -> Client {
+    client_resolving(
+        connect,
+        global,
+        ureq::unversioned::resolver::DefaultResolver::default(),
+    )
+}
+
+/// A client as [`client_with_times`] makes it, whose host names
+/// `resolver` resolves.
+#[cfg(feature = "http")]
+fn client_resolving(
+    connect: Duration,
+    global: Duration,
+    resolver: impl ureq::unversioned::resolver::Resolver,
+) -> Client {
     use ureq::unversioned::transport::{ConnectProxyConnector, Connector, RustlsConnector};
     let config = ureq::Agent::config_builder()
         .http_status_as_error(false)
@@ -739,7 +842,6 @@ fn client_with_times(connect: Duration, global: Duration) -> Client {
         ().chain(ConnectProxyConnector::default())
             .chain(Connecting(connects.clone()))
             .chain(RustlsConnector::default());
-    let resolver = ureq::unversioned::resolver::DefaultResolver::default();
     Client {
         agent: ureq::Agent::with_parts(config, connector, resolver),
         connects,
@@ -3142,5 +3244,179 @@ mod user_agent_tests {
             assert_eq!(got.len(), 1, "{got:?}");
             assert!(got[0].ends_with(": probe/1"), "{got:?}");
         }
+    }
+}
+
+/// The http client's connector tries the resolved addresses of a host as
+/// ureq's own TCP connector does (it made the connection before the
+/// client made it itself, so that a stop ends a connect that waits).
+#[cfg(all(test, feature = "http"))]
+mod connect_each_tests {
+    use super::*;
+    use std::io::ErrorKind;
+    use std::net::SocketAddr;
+
+    fn connect_time(ms: u64) -> ureq::unversioned::transport::NextTimeout {
+        ureq::unversioned::transport::NextTimeout {
+            after: Duration::from_millis(ms).into(),
+            reason: ureq::Timeout::Connect,
+            per_read: None,
+            per_write: None,
+        }
+    }
+
+    fn addrs(n: u16) -> Vec<SocketAddr> {
+        (1..=n)
+            .map(|port| SocketAddr::from(([127, 0, 0, 1], port)))
+            .collect()
+    }
+
+    /// Each address has a share of the connect's time, the first half as
+    /// much again as the next: all of it for one address, 6.7 s and 3.3 s
+    /// of 10 s for two; 5.3, 2.7, 1.3 and 0.7 s for four. An address that
+    /// refused at once used none of its share: the next has the same.
+    #[test]
+    fn each_address_has_its_share_of_the_connect_time() {
+        let shares = |n: u16, ms: u64, failure: ErrorKind| {
+            let mut given = Vec::new();
+            let _ = connect_each(&addrs(n), connect_time(ms), |_, share| {
+                given.push(share.map(|s| s.as_millis()));
+                Err::<(), _>(failure.into())
+            });
+            given
+        };
+        let timed_out = ErrorKind::TimedOut;
+        assert_eq!(shares(1, 10_000, timed_out), [Some(10_000)]);
+        assert_eq!(shares(2, 10_000, timed_out), [Some(6_666), Some(3_333)]);
+        assert_eq!(
+            shares(4, 10_000, timed_out),
+            [Some(5_333), Some(2_666), Some(1_333), Some(666)]
+        );
+        let refused = ErrorKind::ConnectionRefused;
+        assert_eq!(shares(2, 10_000, refused), [Some(6_666), Some(6_666)]);
+        // No share is under 10 ms.
+        assert_eq!(shares(2, 3, refused), [Some(10), Some(10)]);
+    }
+
+    /// The next address is tried after a connect that ran out of its
+    /// share, and after a failure of that address only (refused, no
+    /// route, no network); any other failure ends the connect, and so does
+    /// a connect that ran out of the whole time.
+    #[test]
+    fn the_next_address_is_tried_after_a_failure_of_one_address() {
+        let tried = |failure: ErrorKind, ms: u64| {
+            let mut tried = Vec::new();
+            let got = connect_each(&addrs(2), connect_time(ms), |addr, _| {
+                tried.push(addr.port());
+                match addr.port() {
+                    1 => Err(failure.into()),
+                    _ => Ok(addr.port()),
+                }
+            });
+            (tried, got.ok())
+        };
+        for failure in [
+            ErrorKind::TimedOut,
+            ErrorKind::ConnectionRefused,
+            ErrorKind::HostUnreachable,
+            ErrorKind::NetworkUnreachable,
+            ErrorKind::NetworkDown,
+            ErrorKind::AddrNotAvailable,
+        ] {
+            assert_eq!(tried(failure, 10_000), (vec![1, 2], Some(2)), "{failure:?}");
+        }
+        assert_eq!(tried(ErrorKind::PermissionDenied, 10_000), (vec![1], None));
+        // A first address that took the whole time: the connect timed out.
+        let got = connect_each(&addrs(2), connect_time(1), |addr, _| match addr.port() {
+            1 => {
+                std::thread::sleep(Duration::from_millis(5));
+                Err(ErrorKind::TimedOut.into())
+            }
+            _ => Ok(()),
+        });
+        assert!(
+            matches!(got, Err(ureq::Error::Timeout(ureq::Timeout::Connect))),
+            "{got:?}"
+        );
+        // Every address failed: the last failure is the connect's.
+        let got = connect_each(&addrs(2), connect_time(10_000), |addr, _| {
+            Err::<(), _>(match addr.port() {
+                1 => ErrorKind::ConnectionRefused.into(),
+                _ => std::io::Error::new(ErrorKind::NetworkUnreachable, "the last"),
+            })
+        });
+        assert!(
+            matches!(&got, Err(ureq::Error::Io(e)) if e.to_string() == "the last"),
+            "{got:?}"
+        );
+    }
+
+    /// Resolves every host name to the given addresses, in order.
+    #[derive(Debug)]
+    struct Resolves(Vec<SocketAddr>);
+
+    impl ureq::unversioned::resolver::Resolver for Resolves {
+        fn resolve(
+            &self,
+            _: &ureq::http::Uri,
+            _: &ureq::config::Config,
+            _: ureq::unversioned::transport::NextTimeout,
+        ) -> Result<ureq::unversioned::resolver::ResolvedSocketAddrs, ureq::Error> {
+            let mut addrs = self.empty();
+            for addr in &self.0 {
+                addrs.push(*addr);
+            }
+            Ok(addrs)
+        }
+    }
+
+    /// A host name whose first address does not answer (a listener whose
+    /// queue is full: a connect to it waits) and whose second does is
+    /// reached through the second, within the connect time: the first
+    /// has two thirds of it. (Before, the first took all of it, and the
+    /// request timed out.)
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn a_host_whose_first_address_does_not_answer_is_reached_through_the_next() {
+        use std::io::{Read, Write};
+        let full = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None)
+            .expect("a socket");
+        let any: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        full.bind(&any.into()).expect("bound");
+        full.listen(0).expect("listening");
+        let dead = full.local_addr().unwrap().as_socket().unwrap();
+        let mut held = Vec::new();
+        let waits = (0..64).any(|_| {
+            match std::net::TcpStream::connect_timeout(&dead, Duration::from_millis(200)) {
+                Ok(conn) => {
+                    held.push(conn);
+                    false
+                }
+                Err(e) => matches!(e.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock),
+            }
+        });
+        assert!(waits, "a connect to the full queue waits");
+        let live = std::net::TcpListener::bind("127.0.0.1:0").expect("a listener");
+        let live_addr = live.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((mut conn, _)) = live.accept() {
+                let _ = conn.read(&mut [0u8; 1024]);
+                let _ = conn.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok");
+            }
+        });
+        let client = client_resolving(
+            Duration::from_millis(1500),
+            Duration::from_secs(20),
+            Resolves(vec![dead, live_addr]),
+        );
+        let started = std::time::Instant::now();
+        let got = client.agent.get("http://two.test/").call();
+        let took = started.elapsed();
+        let mut response = got.expect("the second address answers");
+        assert_eq!(response.status(), 200);
+        assert_eq!(response.body_mut().read_to_string().expect("the body"), "ok");
+        // The first address had its share, 1 s of the 1.5 s.
+        assert!(took >= Duration::from_millis(900), "{took:?}");
+        drop(held);
     }
 }
