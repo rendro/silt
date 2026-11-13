@@ -44,6 +44,8 @@ mod folding;
 mod formatting;
 mod hover;
 mod implementation;
+// (Only what the fuzz invariants run, the test API, uses it.)
+#[cfg(any(test, feature = "test-hooks"))]
 pub(crate) mod in_memory;
 mod inlay_hints;
 mod local_bindings;
