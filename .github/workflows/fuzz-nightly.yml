@@ -90,11 +90,15 @@ jobs:
       # after the steps below have saved the crash file and said where
       # it is. Triage by copying the crash into fuzz/corpus/<target>/
       # so the regression gate (`fuzz-corpus` in ci.yml) locks it.
+      # The target is named: the pinned cargo-fuzz is a musl build, and
+      # its own triple, the default, is one the sanitizer refuses.
       - name: Fuzz ${{ matrix.target }}
         id: fuzz
+        env:
+          FUZZ_TARGET: ${{ matrix.target }}
+          SECONDS_PER_TARGET: ${{ github.event.inputs.seconds_per_target || 900 }}
         run: |
-          secs=${{ github.event.inputs.seconds_per_target || 900 }}
-          cargo +nightly fuzz run ${{ matrix.target }} -- -max_total_time=$secs
+          cargo +nightly fuzz run --target x86_64-unknown-linux-gnu "$FUZZ_TARGET" -- -max_total_time="$SECONDS_PER_TARGET"
 
       - name: Upload reproducers if any
         if: always()

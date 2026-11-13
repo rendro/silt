@@ -33,9 +33,11 @@ fi
 # Build the target binary once via cargo-fuzz, then invoke it
 # directly with corpus files as args. libfuzzer treats explicit file
 # args as "reproduce these inputs and exit" — exactly the mode we
-# want.
+# want. The target is named: the pinned cargo-fuzz of CI is a musl
+# build, whose own triple would be the default, and the sanitizer
+# needs the gnu one.
 echo "replay.sh: building $target"
-cargo +nightly fuzz build "$target"
+cargo +nightly fuzz build --target x86_64-unknown-linux-gnu "$target"
 
 bin="fuzz/target/x86_64-unknown-linux-gnu/release/$target"
 if [ ! -x "$bin" ]; then

@@ -32,7 +32,9 @@ run_one() {
   t="$1"
   s="$2"
   echo "[$t] fuzzing for ${s}s"
-  cargo +nightly fuzz run "$t" -- -max_total_time="$s"
+  # (The target is named as in replay.sh: a cargo-fuzz built for musl
+  # would default to musl, which the sanitizer refuses.)
+  cargo +nightly fuzz run --target x86_64-unknown-linux-gnu "$t" -- -max_total_time="$s"
 }
 
 if [ "$target" = "all" ]; then

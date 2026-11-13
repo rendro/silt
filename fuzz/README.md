@@ -83,8 +83,8 @@ across all CPU cores when invoked with `all`.
 
 When a local run or the nightly job surfaces a new crash:
 
-1. **Reproduce it.** `cargo +nightly fuzz run <target> path/to/crash`
-2. **Minimise.** `cargo +nightly fuzz tmin <target> path/to/crash` —
+1. **Reproduce it.** `cargo +nightly fuzz run --target x86_64-unknown-linux-gnu <target> path/to/crash`
+2. **Minimise.** `cargo +nightly fuzz tmin --target x86_64-unknown-linux-gnu <target> path/to/crash` —
    produces a minimized input under `fuzz/artifacts/<target>/`.
 3. **Lock it.** Copy the (ideally minimised) input to
    `fuzz/corpus/<target>/<short-name>.silt`. The corpus-replay gate

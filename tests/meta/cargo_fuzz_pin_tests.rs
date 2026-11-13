@@ -47,3 +47,32 @@ fn every_workflow_installs_the_one_pinned_cargo_fuzz() {
     );
     assert!(script.contains("sha256sum -c -"), "the archive is checked");
 }
+
+/// The pinned binary is cargo-fuzz's musl build, whose default target is
+/// its own triple: a sanitizer build for musl fails ("sanitizer is
+/// incompatible with statically linked libc"). So every build or run of
+/// a fuzz target names the gnu target.
+#[test]
+fn every_fuzz_build_names_the_gnu_target() {
+    let mut calls = 0;
+    for file in [
+        ".github/workflows/ci.yml",
+        ".github/workflows/fuzz-nightly.yml",
+        "fuzz/replay.sh",
+        "fuzz/local.sh",
+        "fuzz/seed.sh",
+        "fuzz/README.md",
+    ] {
+        let text = repo_file(file);
+        for (at, _) in text.match_indices("cargo +nightly fuzz ") {
+            let call = text[at..].lines().next().unwrap_or_default();
+            assert!(
+                call.contains(" --target x86_64-unknown-linux-gnu "),
+                "{file}: `{call}` builds for the default target of cargo-fuzz"
+            );
+            calls += 1;
+        }
+    }
+    // replay.sh's build, local.sh's run, the nightly's run, the README's two.
+    assert_eq!(calls, 5);
+}

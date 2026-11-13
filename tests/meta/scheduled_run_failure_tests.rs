@@ -125,6 +125,15 @@ fn a_fuzz_crash_fails_its_job_after_the_crash_file_is_saved() {
         step("Upload reproducers"),
     );
     assert!(run < upload, "the crash file is saved after the run");
+    // The fuzz step's failure is the job's: nothing in it lets a crash
+    // pass as a success.
+    let fuzz_step = &fuzz[run..upload];
+    for hides in ["continue-on-error", "|| true", "set +e", "|| :"] {
+        assert!(
+            !fuzz_step.contains(hides),
+            "the fuzz step holds `{hides}`: a crash would not fail its job"
+        );
+    }
     assert!(
         fuzz[upload..].contains("if: always()"),
         "the upload runs after a failed run"
