@@ -454,6 +454,12 @@ it is read the same: braces behind a call in a `match` header are the
 call's closure when another `{` follows them on their line, and that
 `{` opens the arms. Without one they are the arms.
 
+A `match` that stands in another header, `match match f(x) { .. } { .. }`,
+`loop v = match f(x) { .. } { .. } {`, or in the value of a `when`, reads
+the braces behind a call as its arms, whatever follows them: there the
+`{` behind them belongs to the outer header (or is a closure given to the
+match's value), as it always has.
+
 **Return type annotations:**
 
 ```silt

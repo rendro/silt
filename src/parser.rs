@@ -304,9 +304,12 @@ struct BlockHeader {
     depth: i32,
     /// True while the right operand of a `|>` in the header is parsed.
     in_pipe_rhs: bool,
-    /// The header stands in another header at its depth: `match match
-    /// f(x) { a -> 1 } { b -> 2 }`, where the `{` behind the inner
-    /// match's arms opens the outer one's.
+    /// The header stands in another header at its depth, or in the
+    /// value of a `when`: `match match f(x) { a -> 1 } { b -> 2 }`, where
+    /// the `{` behind the inner match's arms opens the outer one's, and
+    /// `loop v = match f(x) { a -> a } { b -> b } {`, where the braces
+    /// behind the arms have been a closure given to the match's value.
+    /// Such a match keeps that reading.
     nested: bool,
 }
 
@@ -413,6 +416,9 @@ pub struct Parser<'src> {
     /// "declaration" in a file, a "statement" in the REPL, whose entries
     /// are statements (see `parse_cell`).
     top_level_item: &'static str,
+    /// The depth of the value of the `when` being parsed (see
+    /// `parse_when_value`).
+    when_value_depth: Option<i32>,
     /// Whether a function at the top level may be a header with no
     /// body: the signatures of a host module, and the builtin registry
     /// (see `with_signatures`).
@@ -493,6 +499,7 @@ impl<'src> Parser<'src> {
             docs: None,
             top_level_item: "declaration",
             signatures: false,
+            when_value_depth: None,
         }
     }
 
@@ -589,7 +596,8 @@ impl<'src> Parser<'src> {
     /// a header cannot leak the context into the rest of the file.
     fn parse_header_expr(&mut self, kind: HeaderKind) -> Result<Expr> {
         let depth = self.delim_depth_at(self.pos);
-        let nested = self.header.is_some_and(|outer| outer.depth == depth);
+        let nested = self.header.is_some_and(|outer| outer.depth == depth)
+            || self.when_value_depth == Some(depth);
         let prev = self.header.replace(BlockHeader {
             kind,
             depth,
@@ -3096,7 +3104,7 @@ impl<'src> Parser<'src> {
             self.advance(); // consume `let`
             let pattern = self.parse_pattern()?;
             self.expect(&Token::Eq)?;
-            let expr = self.parse_expr()?;
+            let expr = self.parse_when_value()?;
             self.expect(&Token::Else)?;
             let else_body = self.parse_block()?;
             return Ok(Stmt::When {
@@ -3107,7 +3115,7 @@ impl<'src> Parser<'src> {
         }
 
         // Boolean form: when <expr> else { <block> }
-        let condition = self.parse_expr()?;
+        let condition = self.parse_when_value()?;
         self.expect(&Token::Else)?;
         let else_body = self.parse_block()?;
         Ok(Stmt::WhenBool {
@@ -3117,6 +3125,17 @@ impl<'src> Parser<'src> {
     }
 
     // ── Expressions (Pratt parser) ───────────────────────────────────
+
+    /// The value of a `when let` or the condition of a `when`. A `match`
+    /// that stands in it at its depth is a nested header (see
+    /// `BlockHeader::nested`), as one in a `loop` header is.
+    fn parse_when_value(&mut self) -> Result<Expr> {
+        let depth = self.delim_depth_at(self.pos);
+        let outer = self.when_value_depth.replace(depth);
+        let result = self.parse_expr();
+        self.when_value_depth = outer;
+        result
+    }
 
     pub fn parse_expr(&mut self) -> Result<Expr> {
         self.parse_expr_bp(0)
