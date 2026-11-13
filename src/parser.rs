@@ -1001,6 +1001,18 @@ impl<'src> Parser<'src> {
         self.semicolons.get(at).is_some_and(|s| *s < to)
     }
 
+    /// The error for the body of a trait or an impl (`what`), opened by
+    /// the `{` at `open`, that the text ends in: its `}` is missing (the
+    /// next `fn` was read as one of its methods).
+    fn unclosed_body_err(&self, what: &str, open: Span) -> Diagnostic {
+        Diagnostic::error(
+            Code::UnclosedDelimiter,
+            self.span(),
+            format!("expected `}}` to close the {what}, found {}", self.found()),
+        )
+        .with_label(open, format!("the {what} starts here"))
+    }
+
     /// The error for a comma-separated list that is not closed; see
     /// `comma_list`.
     fn unclosed_list_err(&self, what: &str, open: Span, close: &Token) -> Diagnostic {
@@ -2231,9 +2243,10 @@ impl<'src> Parser<'src> {
             // `trait Foo(a) where a: Display { ... }`. Each impl must
             // supply a concrete type arg satisfying the bounds.
             let param_where_clauses = self.parse_where_clauses_opt()?;
-            if self.at(&Token::LBrace) {
-                self.advance();
-            }
+            let open = match self.at(&Token::LBrace) {
+                true => Some(self.advance().span),
+                false => None,
+            };
             // Trait body: methods (`fn ...`).
             let mut methods = Vec::new();
             let mut closed = true;
@@ -2241,6 +2254,11 @@ impl<'src> Parser<'src> {
                 self.skip_rejected();
                 if self.at(&Token::RBrace) {
                     break;
+                }
+                if let Some(open) = open
+                    && self.at(&Token::Eof)
+                {
+                    return Err(self.unclosed_body_err("trait body", open));
                 }
                 if !self.parse_method(&mut methods)? {
                     closed = false;
@@ -2349,7 +2367,7 @@ impl<'src> Parser<'src> {
             // (appended to each method's scheme during register_trait_impl).
             // Multi-trait bounds via `+` are supported: `where a: Show + Hash`.
             let where_clauses = self.parse_where_clauses_opt()?;
-            self.expect(&Token::LBrace)?;
+            let open = self.expect(&Token::LBrace)?.span;
             // Impl body: methods (`fn ...`).
             let mut methods = Vec::new();
             let mut closed = true;
@@ -2357,6 +2375,9 @@ impl<'src> Parser<'src> {
                 self.skip_rejected();
                 if self.at(&Token::RBrace) {
                     break;
+                }
+                if self.at(&Token::Eof) {
+                    return Err(self.unclosed_body_err("impl body", open));
                 }
                 if !self.parse_method(&mut methods)? {
                     closed = false;

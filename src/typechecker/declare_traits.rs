@@ -188,9 +188,20 @@ impl TypeChecker {
                                 .collect()
                         })
                         .unwrap_or_default();
-                    let found = match found.is_empty() {
-                        true => "there is no impl of it".to_string(),
-                        false => format!("found {}", found.join(" and ")),
+                    // (The innermost part that lacks it, where it is a
+                    // part of the argument: the impl of the argument's own
+                    // head fits, `Box(a)` inside does not.)
+                    let part = self
+                        .lacking_part(*bound, &bound_args, &self.apply(arg), 0)
+                        .filter(|part| *part != self.apply(arg));
+                    let found = match (part, found.is_empty()) {
+                        (Some(part), _) => format!(
+                            "its part '{}' has no impl of '{}'",
+                            self.show_type(&substitute_vars(&part, &mapping)),
+                            self.show_bound(*bound, &shown(&bound_args, &mapping))
+                        ),
+                        (None, true) => "there is no impl of it".to_string(),
+                        (None, false) => format!("found {}", found.join(" and ")),
                     };
                     let message = format!(
                         "type '{}' implements '{}', whose argument '{arg_shown}' must implement \
@@ -430,6 +441,37 @@ impl TypeChecker {
         (names, named, mapping)
     }
 
+    /// The innermost part of `ty` (itself, or a type argument of it at
+    /// any depth) that lacks the trait `tr` at `args` (`trait_needs`),
+    /// for a message to name it. None where `ty` has it.
+    fn lacking_part(&self, tr: TraitKey, args: &[Type], ty: &Type, depth: usize) -> Option<Type> {
+        if depth > 16 || self.trait_needs(tr, args, ty, 0, &mut Vec::new()) {
+            return None;
+        }
+        // (A part is looked into only where the impl of the type's head
+        // asks something of its parts, by its header or by structure:
+        // `Box(Int)` lacks `Conv(a)` itself when `Conv(a) for Box(a)` asks
+        // nothing of `Int`.)
+        let asks_parts = self.type_name_for_impl(ty).is_some_and(|head| {
+            self.by_structure(tr, head)
+                || (self.tables.impl_args_of(tr, head).iter()).any(|at| {
+                    (self.tables.impl_preds.get(&(tr, head, *at))).is_some_and(|p| !p.is_empty())
+                })
+        });
+        if !asks_parts {
+            return Some(ty.clone());
+        }
+        let parts: Vec<&Type> = match ty {
+            Type::List(t) | Type::Set(t) | Type::Channel(t) => vec![&**t],
+            Type::Map(k, v) => vec![&**k, &**v],
+            Type::Tuple(ts) | Type::Generic(_, ts) => ts.iter().collect(),
+            _ => Vec::new(),
+        };
+        (parts.into_iter())
+            .find_map(|part| self.lacking_part(tr, args, &self.apply(part), depth + 1))
+            .or_else(|| Some(ty.clone()))
+    }
+
     /// What the trait `tr` at the trait arguments `args` asks of the
     /// type variables of `ty` for `ty` to have it, gathered into
     /// `needs`: the variable itself; a part of a type that has the trait
@@ -654,11 +696,27 @@ impl TypeChecker {
                     continue;
                 }
                 if !self.head_has_trait(*supertrait, *type_name) {
-                    let (ty, tr, sup) = (
-                        self.impl_type_shown(impl_key),
-                        self.show_trait(*trait_name),
-                        self.show_trait(*supertrait),
-                    );
+                    // (The supertrait with its arguments, `Conv(Int)`, as
+                    // the trait declares it for this impl.)
+                    let sup_args: Vec<Type> = (trait_info.supertrait_args.get(i))
+                        .into_iter()
+                        .flatten()
+                        .map(|te| {
+                            crate::typechecker::inference::resolve_supertrait_arg(
+                                te,
+                                &trait_info,
+                                &enclosing_args,
+                            )
+                        })
+                        .collect();
+                    let (ty, tr, sup) = {
+                        let named = self.impl_args_named(*impl_key);
+                        (
+                            self.impl_type_shown(impl_key),
+                            self.show_bound(*trait_name, &named(&enclosing_args)),
+                            self.show_bound(*supertrait, &named(&sup_args)),
+                        )
+                    };
                     self.error(Code::MissingTraitImpl,
                         format!(
                             "type '{ty}' implements '{tr}' but does not implement supertrait '{sup}'"

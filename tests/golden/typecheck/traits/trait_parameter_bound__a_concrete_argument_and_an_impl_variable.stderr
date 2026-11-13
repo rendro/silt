@@ -4,8 +4,8 @@ error[type]: type 'Z(a)' implements 'Tbl(Q, a)', whose argument 'Q' must impleme
  54 | trait Tbl(Q, a) for Z(a) {
     | ^^^^^^^^^^^^^^^^^^^^^^^^^^ type 'Z(a)' implements 'Tbl(Q, a)', whose argument 'Q' must implement 'Conv(a)' (trait 'Tbl' declares `where k: Conv(v)`) for every type the impl stands for, but found impl Conv(Int) for Q
 
-error[type]: type 'Z2(a)' implements 'Tbl(W(Box(Int)), a)', whose argument 'W(Box(Int))' must implement 'Conv(a)' (trait 'Tbl' declares `where k: Conv(v)`) for every type the impl stands for, but found impl Conv(r) for W(a)
+error[type]: type 'Z2(a)' implements 'Tbl(W(Box(Int)), a)', whose argument 'W(Box(Int))' must implement 'Conv(a)' (trait 'Tbl' declares `where k: Conv(v)`) for every type the impl stands for, but its part 'Box(Int)' has no impl of 'Conv(a)'
  --> trait_parameter_bound__a_concrete_argument_and_an_impl_variable.silt:64:1
     |
  64 | trait Tbl(W(Box(Int)), a) for Z2(a) {
-    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type 'Z2(a)' implements 'Tbl(W(Box(Int)), a)', whose argument 'W(Box(Int))' must implement 'Conv(a)' (trait 'Tbl' declares `where k: Conv(v)`) for every type the impl stands for, but found impl Conv(r) for W(a)
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ type 'Z2(a)' implements 'Tbl(W(Box(Int)), a)', whose argument 'W(Box(Int))' must implement 'Conv(a)' (trait 'Tbl' declares `where k: Conv(v)`) for every type the impl stands for, but its part 'Box(Int)' has no impl of 'Conv(a)'
