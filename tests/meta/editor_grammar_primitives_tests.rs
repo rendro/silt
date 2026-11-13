@@ -14,7 +14,7 @@
 //!
 //! Round-61 extension: the set was widened to include the builtin
 //! container / callable / resource types (Channel, Tuple, Fn,
-//! Fun, Handle). These are legal in type-annotation position (see
+//! Handle). These are legal in type-annotation position (see
 //! docs/language/operators.md and the pages of docs/stdlib/) and must
 //! highlight as types. Authoritative source of the widened list: the
 //! `BUILTIN_TYPES` table in `src/types/builtins.rs` (container-kind

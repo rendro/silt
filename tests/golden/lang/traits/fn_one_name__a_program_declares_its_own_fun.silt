@@ -1,0 +1,11 @@
+-- `Fun` is an ordinary name: a program may declare its own type `Fun`.
+type Fun(a) = List(a)
+fn first(xs: Fun(Int)) -> Int {
+  match xs {
+    [x, ..] -> x
+    _ -> 0
+  }
+}
+fn main() {
+  println(first([4, 5]))
+}

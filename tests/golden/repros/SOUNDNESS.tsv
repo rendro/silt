@@ -318,7 +318,7 @@ repros/typechecker_arch/perf_nest50.silt	holds	accept	TCA-12: 50 nested blocks
 repros/typechecker_arch/perfmod_main0.silt	holds	accept	control
 repros/typechecker_arch/recheck_alias_impl.silt	holds	reject E0301	TCA-3: an error in the body of an impl for an alias
 repros/typechecker_arch/recheck_alias_impl_nonarrow.silt	holds	reject E0301	TCA-3: control for recheck_alias_impl
-repros/typechecker_arch/recheck_fun_impl.silt	holds	reject E0201	TCA-3: an error in the body of an impl for `Fun`
+repros/typechecker_arch/recheck_fn_impl.silt	holds	reject E0201	TCA-3: an error in the body of an impl for `Fn`
 repros/typechecker_arch/recheck_list_impl.silt	holds	reject E0301	TCA-3: control, an impl for `List(a)`
 repros/typechecker_arch/recheck_unit_impl.silt	-	obsolete	an impl for `()` is not syntax
 repros/typechecker_arch/repl_rec.silt	holds	accept	control: a recursive enum (the REPL's case, as a file)

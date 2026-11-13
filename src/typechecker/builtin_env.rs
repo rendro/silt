@@ -478,7 +478,7 @@ pub fn __builtin_trait_registration_fingerprint() -> Vec<(
         let (method_sym, method_ty) = &info.methods[0];
         let (arity, ret_str) = match method_ty {
             Type::Fun(params, ret) => (params.len(), format!("{ret:?}")),
-            other => panic!("built-in trait {name} method type is not Fun: {other:?}"),
+            other => panic!("built-in trait {name} method type is not a function: {other:?}"),
         };
         out.push((
             name.to_string(),
