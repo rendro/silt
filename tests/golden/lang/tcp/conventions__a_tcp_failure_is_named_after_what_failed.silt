@@ -24,7 +24,7 @@ fn main() {
     Ok(_) -> println("nobody listens, and yet connected")
   }
   match tcp.listen("127.0.0.1:{port}") {
-    Err(e) -> println(Error.message(e) != "")
+    Err(e) -> println("{e}" != "")
     Ok(_) -> println("bound")
   }
 }

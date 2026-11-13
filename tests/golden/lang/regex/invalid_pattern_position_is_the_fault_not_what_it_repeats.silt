@@ -5,12 +5,13 @@ import string
 -- group of a name, a flag given twice), the position is the fault's,
 -- not that of what it repeats.
 fn show(pattern) {
-  match regex.is_match("x", pattern) {
+  match regex.compile(pattern) {
     Err(regex.InvalidPattern(why, at)) -> {
       let found = string.slice(pattern, at, at + 1)
       println("{pattern}: {string.length(pattern)} characters, at {at} `{found}`: {why}")
     }
-    other -> println(other)
+    Err(other) -> println(other)
+    Ok(_) -> println("compiles")
   }
 }
 

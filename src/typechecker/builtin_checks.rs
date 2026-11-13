@@ -11,13 +11,78 @@
 use super::decodable::shown;
 use super::solve::Origin;
 use super::*;
-use crate::builtins::registry::decoding::{Decoding, Family, JSON_VALUE_ELSEWHERE, ROW_TYPE_HELP};
+use crate::builtins::registry::decoding::{
+    Decoding, Family, JSON_VALUE_ELSEWHERE, OPTION_IN_OPTION, ROW_TYPE_HELP,
+};
 use crate::defs::TypeId;
 use crate::types::canonical::canonicalize;
 
 /// Why a map whose keys are no `String`s has no decoder: the keys of a
 /// JSON object or a TOML table are strings.
 const MAP_KEY: &str = "a decoded map's key type must be String";
+
+/// Whether the builtin `builtin_name` writes what a decoder reads back
+/// (`csv.stringify`): its refusals say "write" where a decoder's say
+/// "decode".
+fn writes(builtin_name: &str) -> bool {
+    crate::builtins::registry::registry()
+        .named(builtin_name)
+        .is_some_and(|row| row.writes.is_some())
+}
+
+/// `refusal`, a decoder's, in the words of a builtin that writes what
+/// the decoder reads back.
+fn as_written(mut refusal: Diagnostic) -> Diagnostic {
+    let word = |text: &str| {
+        text.replace("cannot decode", "cannot write")
+            .replace("has no decoder", "cannot be written in a cell")
+            .replace("have no decoder", "cannot be written in a cell")
+            .replace("decodable field types", "writable field types")
+            .replace("its type argument must be", "a row must be")
+    };
+    refusal.message = word(&refusal.message);
+    for line in refusal.help.iter_mut().chain(refusal.notes.iter_mut()) {
+        *line = word(line);
+    }
+    refusal
+}
+
+/// Whether `ty` is an `Option` of an `Option`, which no decoder has:
+/// `Some(None)` is written as `None` is.
+fn option_in_option(ty: &Type) -> bool {
+    matches!(ty, Type::Generic(head, args)
+        if head.is_builtin("Option")
+            && matches!(args.first(), Some(Type::Generic(inner, _)) if inner.is_builtin("Option")))
+}
+
+/// Whether `ty` holds an `Option` of an `Option` anywhere: in a list,
+/// a set, a map, a tuple or a type's arguments.
+pub(super) fn nests_option(ty: &Type) -> bool {
+    option_in_option(ty)
+        || match ty {
+            Type::Generic(_, args) | Type::Tuple(args) => args.iter().any(nests_option),
+            Type::List(t) | Type::Set(t) => nests_option(t),
+            Type::Map(k, v) => nests_option(k) || nests_option(v),
+            _ => false,
+        }
+}
+
+/// The refusal of `builtin`, which decodes as `decoding` says, of the
+/// type `shown` at `span`, which is or holds an `Option` of an
+/// `Option`.
+fn option_in_option_refusal(
+    builtin: &str,
+    shown: &str,
+    span: Span,
+    decoding: Decoding,
+) -> Diagnostic {
+    Diagnostic::error(
+        Code::Undecodable,
+        span,
+        format!("`{builtin}` cannot decode `{shown}`: {OPTION_IN_OPTION} has no decoder"),
+    )
+    .with_help(decoding.family.help())
+}
 
 /// Whether `ty` is a map whose key type is known and no `String`.
 fn map_with_other_keys(ty: &Type) -> bool {
@@ -259,6 +324,23 @@ impl TypeChecker {
         owner: &[crate::session::ModuleId],
         span: Span,
     ) -> Option<Diagnostic> {
+        let refusal = self.read_refusal(builtin_name, decoding, written, ty, owner, span)?;
+        Some(match writes(builtin_name) {
+            true => as_written(refusal),
+            false => refusal,
+        })
+    }
+
+    /// [`Self::decode_refusal`] in a decoder's words.
+    fn read_refusal(
+        &self,
+        builtin_name: &str,
+        decoding: Decoding,
+        written: Option<Symbol>,
+        ty: &Type,
+        owner: &[crate::session::ModuleId],
+        span: Span,
+    ) -> Option<Diagnostic> {
         // (A generic alias written alone that reaches the decoder through
         // a value, `id(L)`: named as written.)
         let written = written.or_else(|| {
@@ -322,6 +404,16 @@ impl TypeChecker {
                 .find(|part| !matches!(part, Type::Var(_)) && self.holds_open_vars(part))
         {
             return self.decode_refusal(builtin_name, decoding, None, part, owner, span);
+        }
+        // (`None` and `Some(None)` are written alike: no decoder tells
+        // them apart.)
+        if decoding.primitives && option_in_option(ty) {
+            return Some(option_in_option_refusal(
+                builtin_name,
+                &self.show_type(ty),
+                span,
+                decoding,
+            ));
         }
         if decoding.primitives
             && let Some(parts) = decoded_parts(ty)
@@ -688,6 +780,14 @@ impl TypeChecker {
         use crate::builtins::registry::decoding::Leaf;
         use crate::typeinfo::ty as bt;
         let family = decoding.family.nested();
+        if option_in_option(part) {
+            return Some(option_in_option_refusal(
+                builtin,
+                &self.show_type(whole),
+                span,
+                decoding,
+            ));
+        }
         let leaf = match part {
             // (What a type variable stands for owes the check: see
             // `check_builtin_argument`.)

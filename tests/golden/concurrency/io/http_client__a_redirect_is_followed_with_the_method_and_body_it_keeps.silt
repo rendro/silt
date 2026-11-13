@@ -67,7 +67,7 @@ fn main() {
     println("{method} {path}")
     match http.request(method, "{url}{path}", bytes.from_string("abc"), #{"authorization": "secret"}) {
       Ok(resp) -> println("  the client:  {resp.status} [{text(resp.body)}]")
-      Err(e) -> println("  the client: {Error.message(e)}")
+      Err(e) -> println("  the client: {e}")
     }
   }
   task.cancel(server)

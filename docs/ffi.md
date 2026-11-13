@@ -145,6 +145,14 @@ the result could be checked against. Take `type a`, and build
 argument `x`), but it returned Int 5``. A record is checked so too: a
 `Person` given back where the argument was a `Pet` is that error.
 
+The constructors a function builds values with check them against their
+types, in every build: `Value::record` takes the number of fields its type
+declares, `Tag::new` a place its enum has a variant at, and
+`Value::variant` the number of fields that variant declares. Anything else
+panics inside the function, which is the runtime error ``host function
+'mylib.f' panicked: Value::record: `Person` declares 2 fields, given 1``
+(see "Error Surfacing"); no malformed value reaches the program.
+
 What no argument shows stays the function's to get right: a variable
 whose arguments hold no value of it (`first([])`), the parts of two
 values that only one of them shows (the elements of an empty list, the

@@ -114,7 +114,7 @@ pub(crate) fn toml_unknown_err<S: Into<Arc<str>>>(msg: S) -> Value {
     toml_err_wrap(Value::variant(bv::TOML_OTHER, [Value::string(msg)]))
 }
 
-/// What `TomlError`'s `message` says of the variant `tag` with `fields`:
+/// How `TomlError` shows the variant `tag` with `fields`:
 /// `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {
@@ -257,7 +257,8 @@ fn top_level(caller: &str, data: Data) -> Result<Data, VmError> {
 /// How a TOML document decodes: TOML says which kind a number is, so a
 /// float is no `Int` whatever its value; a date and a time are TOML's
 /// literals or strings; TOML has no null (a key left out is a `None`);
-/// no `json.Value` is decoded.
+/// a `json.Value` is decoded as a written `json.Decode` impl is given
+/// its part of the document.
 pub(crate) const RULES: Rules = Rules {
     caller: "toml.parse",
     table: "table",

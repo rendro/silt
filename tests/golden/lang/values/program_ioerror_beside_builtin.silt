@@ -1,18 +1,9 @@
--- A program's type named like the builtin io.IoError, with impls of its
--- own: its impls do not replace the builtin type's, and each prints as
--- itself (`println` of a value shows its fields; `Error.message` runs
--- the impl).
+-- A program's type named like the builtin io.IoError, with a Display
+-- impl of its own: the impl does not replace the builtin type's, and
+-- each prints as itself.
 import io
 
 type IoError { Oops(String) }
-
-trait Error for IoError {
-  fn message(self) -> String {
-    match self {
-      Oops(m) -> "mine: {m}"
-    }
-  }
-}
 
 trait Display for IoError {
   fn display(self) -> String { "my IoError" }
@@ -20,13 +11,11 @@ trait Display for IoError {
 
 fn main() {
   let mine = Oops("x")
-  println(Error.message(mine))
   println("{mine}")
   println(mine)
   match io.read_file("does-not-exist.txt") {
     Ok(_) -> println("read")
     Err(e) -> {
-      println(Error.message(e))
       println("{e}")
       println(e)
     }

@@ -47,6 +47,6 @@ fn main() {
   println(g("b", "a"))
   match io.read_file("/nonexistent") {
     Ok(_) -> println("?")
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println("{e}")
   }
 }

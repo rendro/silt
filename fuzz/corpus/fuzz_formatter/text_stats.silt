@@ -26,7 +26,7 @@ fn get_filename() {
 fn get_words(text) {
   text
   |> string.split("\n")
-  |> list.flat_map { line -> regex.split(line, """\s+""") |> result.unwrap_or([])
+  |> list.flat_map { line -> (regex.compile("""\s+""") |> result.map { compiled_re -> regex.split(line, compiled_re) }) |> result.unwrap_or([])
   |> list.filter { w -> !string.is_empty(w) } }
 }
 
@@ -95,7 +95,7 @@ fn main() {
   let filename = get_filename()
   match io.read_file(filename) {
     Err(e) -> {
-      println("Error reading file '{filename}': {Error.message(e)}")
+      println("Error reading file '{filename}': {e}")
     }
     Ok(content) -> {
       let lines = content

@@ -8,7 +8,7 @@ fn day() -> time.Date {
 fn main() {
   let t = time.Time { hour: 10, minute: 30, second: 0, ns: 0 }
   match time.format(time.datetime(day(), t), "%z") {
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println("{e}")
     Ok(text) -> println("formatted: {text}")
   }
 }

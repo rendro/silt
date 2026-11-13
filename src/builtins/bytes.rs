@@ -30,7 +30,7 @@ fn fits(name: &str, size: usize) -> Result<(), VmError> {
     }
 }
 
-/// What `BytesError`'s `message` says of the variant `tag` with `fields`:
+/// How `BytesError` shows the variant `tag` with `fields`:
 /// `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {

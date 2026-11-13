@@ -45,18 +45,18 @@ fn main() {
       let sql = """SELECT g AS id, ('[' || g || ']')::jsonb AS b, '[["x"], ["y"]]'::jsonb AS bs FROM generate_series(1, 2) g"""
       match postgres.query(db, sql, (), Row) {
         Ok(rows) -> list.each(rows) { r -> println(r) }
-        Err(e) -> println("query: {Error.message(e)}")
+        Err(e) -> println("query: {e}")
       }
       match postgres.query(db, "SELECT 7 AS v", (), Box(Int)) {
         Ok(rows) -> println(rows)
-        Err(e) -> println("query: {Error.message(e)}")
+        Err(e) -> println("query: {e}")
       }
       match postgres.query(db, "SELECT '[true]'::jsonb AS b, 1 AS id, '[]'::jsonb AS bs", (), Row) {
         Ok(rows) -> println(rows)
-        Err(e) -> println("query: {Error.message(e)}")
+        Err(e) -> println("query: {e}")
       }
       postgres.close(db)
     }
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println("{e}")
   }
 }

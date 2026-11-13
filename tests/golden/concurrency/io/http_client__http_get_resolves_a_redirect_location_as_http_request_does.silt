@@ -53,7 +53,7 @@ fn main() {
     println("GET {path}")
     match http.get("{url}{path}") {
       Ok(resp) -> println("  the client: {resp.status}")
-      Err(e) -> println("  the client: {Error.message(e)}")
+      Err(e) -> println("  the client: {e}")
     }
   }
   task.cancel(one)

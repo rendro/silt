@@ -1,0 +1,37 @@
+-- A field whose type holds json.Value is decoded by toml as by json:
+-- the part of the document as it is, its key left out for an Option, an
+-- empty array, and in a record type a field names. (Through a `type a`
+-- parameter, which passes the type on to the decoder.)
+import json
+import toml
+
+type Doc { n: Int, j: json.Value }
+type Maybe { n: Int, j: Option(json.Value) }
+type Many { n: Int, js: List(json.Value) }
+type Inner { j: json.Value }
+type Outer { n: Int, inner: Option(Inner) }
+
+fn from_json(text: String, type a) -> Result(a, json.JsonError) where a: json.Decode {
+  json.parse(text, a)
+}
+
+fn from_toml(text: String, type a) -> Result(a, toml.TomlError) where a: json.Decode {
+  toml.parse(text, a)
+}
+
+fn show(r: Result(a, e)) where a: Display, e: Display {
+  match r {
+    Ok(v) -> println(v)
+    Err(e) -> println("{e}")
+  }
+}
+
+fn main() {
+  show(from_toml("n = 1\nj = [1, 'a']", Doc))
+  show(from_toml("n = 1", Maybe))
+  show(from_toml("n = 1\njs = []", Many))
+  show(from_toml("n = 1\n[inner]\nj = true", Outer))
+  show(from_json("""{"n": 1}""", Maybe))
+  show(from_json("""{"n": 1, "js": []}""", Many))
+  show(from_json("""{"n": 1}""", Outer))
+}

@@ -17,8 +17,6 @@ trait Compare: Equal { fn compare(self, other: Self) -> Int }
 The order of values: `<`, `>`, `<=` and `>=` need it.
 trait Hash { fn hash(self) -> Int }
 A value as a map's key or a set's element.
-trait Error: Display { fn message(self) -> String }
-An error a program reports: `message` says what went wrong.
 trait Number { fn from_int(n: Int) -> Self }
 The types arithmetic is on, `Int` and `Float`: `+`, `-`, `*`, `/`, `%` and unary `-` need it.
 type Option(a) { Some(a), None }

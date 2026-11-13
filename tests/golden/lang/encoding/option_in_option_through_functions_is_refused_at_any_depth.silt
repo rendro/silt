@@ -1,0 +1,58 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: `json.parse` cannot decode `Option(Option(Int))`: an Option in an Option has no decoder
+-- stderr-contains: `outer` passes it to `read`, which passes it to `json.parse`
+-- stderr-contains: `outer2` passes it to `outer`, which passes it to `read`, which passes it to `json.parse`
+-- stderr-contains: `json.parse` cannot decode `List(Option(Option(Int)))`: an Option in an Option has no decoder
+-- stderr-contains: `list_outer` passes it to `read_list`, which passes it to `json.parse`
+-- stderr-contains: `json.parse` cannot decode `Option(Option(u))`: an Option in an Option has no decoder
+-- stderr-contains: `toml.parse_map` cannot decode `Option(Option(Int))`: an Option in an Option has no decoder
+-- stderr-contains: `toml_outer` passes it to `tread`, which passes it to `toml.parse_map`
+-- An Option around a type argument that a function passes on is judged
+-- at each use, however many functions the type goes through before it is
+-- given: two, three; and a function that itself puts an Option around a
+-- type it passes to such a function is refused where it does.
+import json
+import toml
+
+fn read(s: String, type t) -> Result(Option(t), json.JsonError) where t: json.Decode {
+  json.parse(s, Option(t))
+}
+
+fn outer(s: String, type u) -> Result(Option(u), json.JsonError) where u: json.Decode {
+  read(s, u)
+}
+
+fn outer2(s: String, type w) -> Result(Option(w), json.JsonError) where w: json.Decode {
+  outer(s, w)
+}
+
+fn read_list(s: String, type t) -> Result(List(Option(t)), json.JsonError) where t: json.Decode {
+  json.parse(s, List(Option(t)))
+}
+
+fn list_outer(s: String, type u) -> Result(List(Option(u)), json.JsonError) where u: json.Decode {
+  read_list(s, u)
+}
+
+fn wraps(s: String, type u) -> Result(Option(Option(u)), json.JsonError) where u: json.Decode {
+  read(s, Option(u))
+}
+
+fn tread(s: String, type t) -> Result(Map(String, Option(t)), toml.TomlError) where t: json.Decode {
+  toml.parse_map(s, Option(t))
+}
+
+fn toml_outer(s: String, type u) -> Result(Map(String, Option(u)), toml.TomlError)
+  where
+    u: json.Decode {
+  tread(s, u)
+}
+
+fn main() {
+  println(outer("null", Option(Int)))
+  println(outer2("null", Option(Int)))
+  println(list_outer("[null]", Option(Int)))
+  println(wraps("5", Int))
+  println(toml_outer("a = 1", Option(Int)))
+}

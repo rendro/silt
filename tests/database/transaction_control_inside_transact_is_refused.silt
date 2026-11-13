@@ -19,7 +19,7 @@ fn url() -> String {
 fn said(answer: Result(a, postgres.PostgresError)) -> String {
   match answer {
     Ok(_) -> "Ok"
-    Err(e) -> Error.message(e)
+    Err(e) -> "{e}"
   }
 }
 
@@ -27,7 +27,7 @@ fn count(pool: postgres.PgPool) -> String {
   match postgres.query(pool, "SELECT count(*)::int8 AS n FROM silt_database_tx_control", (), N) {
     Ok([row]) -> "{row.n}"
     Ok(rows) -> "{rows}"
-    Err(e) -> Error.message(e)
+    Err(e) -> "{e}"
   }
 }
 
@@ -71,6 +71,6 @@ fn main() {
       let _ = postgres.execute(pool, "DROP TABLE silt_database_tx_control", ())
       postgres.close(pool)
     }
-    Err(e) -> println("connect: {Error.message(e)}")
+    Err(e) -> println("connect: {e}")
   }
 }

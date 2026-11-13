@@ -1,0 +1,23 @@
+-- A variant of every stdlib error enum is shown as its message (the
+-- text the registry gives each enum's variants).
+-- The enums of modules a build may leave out are in cases of their own:
+-- HttpError and TcpError in
+-- error_enums__the_http_and_tcp_error_enums_are_shown_as_their_message;
+-- PostgresError is left out.
+import io
+import json
+import toml
+import int
+import regex
+import time
+import bytes
+
+fn main() {
+  println(io.NotFound("missing.txt"))
+  println(json.MissingField("name"))
+  println(toml.MissingField("key"))
+  println("{int.Empty}")
+  println("{regex.TooBig}")
+  println(time.OutOfRange("month 13"))
+  println(bytes.InvalidHex("zz"))
+}

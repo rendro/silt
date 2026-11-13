@@ -8,7 +8,7 @@ type P { x: Int, y: json.Value }
 fn show(r: Result(a, json.JsonError)) -> String {
   match r {
     Ok(_) -> "read"
-    Err(e) -> Error.message(e)
+    Err(e) -> "{e}"
   }
 }
 

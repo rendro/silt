@@ -120,7 +120,7 @@ type regex.RegexError {
 
 ---
 
-Returned by every `regex.*` function for a pattern that does not compile.
+Returned by `regex.compile` for a pattern that does not compile.
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
@@ -198,7 +198,8 @@ fn main() {
 A record field of type `json.Value` keeps that part of the document as it
 is, for [`json.decode`](#jsondecode-1) to read once its shape is known. Like
 any field that is no `Option`, it must be in the document (a JSON `null`
-is `json.Null`); a field of type `Option(json.Value)` may be left out.
+is `json.Null`); a field of type `Option(json.Value)` may be left out, and
+there a `null` reads as `None`.
 > hover 67:16
 ```silt
 type toml.TomlError {

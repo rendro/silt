@@ -1699,6 +1699,10 @@ impl TypeChecker {
                 if self.held_instance_in(&resolved) {
                     self.owe_held_decode(&resolved, origin);
                 }
+                // (An Option directly around an annotation variable,
+                // `Option(t)`: each use judges the whole at the type it
+                // gives `t`, which is no Option there.)
+                self.owe_option_around_rigid(&resolved, origin, &owners);
                 // What a type variable in a decoded list, option, map or
                 // tuple stands for is decoded too. (Not of a type written
                 // alone, `Map`: refused as one.)

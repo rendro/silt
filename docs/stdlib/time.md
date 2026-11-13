@@ -70,8 +70,8 @@ pattern that is no format are the structural failure modes:
 | `OutOfRange(msg)` | `String` | field out of valid range (e.g. `month=13`) |
 | `InvalidFormat(msg)` | `String` | the pattern is at fault, whatever the value or the text: an unknown specifier, or one the type has nothing for (a time of day for a `Date`, a time zone), in a format and in its parse alike; for a parse also fields that are not enough for the value (no time of day for a `DateTime`, no date, an empty pattern) |
 
-`TimeError` implements the built-in `Error` trait, so `Error.message(e)`
-yields a rendered string when variant branching isn't needed.
+A `TimeError` is shown as its message, so `"{e}"` yields a rendered
+string when variant branching isn't needed.
 
 ## Summary
 
@@ -327,12 +327,29 @@ A numeric field also reads fewer digits than it writes: `%m`, `%d`, `%H`,
 `%M` and `%S` take one digit as well as two (`"2025-1-5"` by `"%Y-%m-%d"`
 is 2025-01-05), and `%Y` takes a year of fewer than four digits.
 
+The fraction of a second has four specifiers. Each reads the digits as the
+digits after a decimal point (`5` is half a second, `123` is 123
+milliseconds; digits past the ninth are cut), and they differ in the point
+and in how many digits they write and read:
+
+| Specifier | Writes | Reads |
+|-----------|--------|-------|
+| `%f` | nine digits, no point (`500000000`) | one digit or more, no point |
+| `%.f` | a point and three, six or nine digits, as many as the value needs (`.500`), and nothing for a whole second | a point and its digits, or nothing |
+| `%3f` (`%6f`, `%9f`) | three (six, nine) digits, no point (`500`) | exactly that many digits |
+| `%.3f` (`%.6f`, `%.9f`) | a point and three (six, nine) digits (`.500`) | a point and exactly that many digits |
+
+So `"23:59:59.5"` by `"%H:%M:%S.%f"` is half a second past 23:59:59, and a
+time written by a pattern reads back by the same pattern.
+
 ```silt
 import time
 
 fn main() {
   let dt = time.parse("2024-07-04 12:00:00", "%Y-%m-%d %H:%M:%S")
   println(dt) -- Ok(2024-07-04T12:00:00)
+  let half = time.parse("2024-07-04 12:00:00.5", "%Y-%m-%d %H:%M:%S.%f")
+  println(half) -- Ok(2024-07-04T12:00:00.500000000)
 }
 ```
 
@@ -406,7 +423,7 @@ fn main() {
   let pattern = "%Y-%m-%dT%H:%M:%S%:z"
   match time.parse_instant("2026-11-01T08:00:00+02:00", pattern) {
     Ok(at) -> println(time.to_datetime(at, 0)) -- 2026-11-01T06:00:00
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println("{e}")
   }
   let utc = time.parse_instant("2026-11-01T06:00:00Z", pattern)
   println(utc == time.parse_instant("2026-11-01T08:00:00+02:00", pattern)) -- true

@@ -27,7 +27,7 @@ use crate::vm::{Leave, Limit, Step, Vm, VmError};
 #[cfg(feature = "http")]
 use parking_lot::Mutex;
 
-/// What `HttpError`'s `message` says of the variant `tag` with `fields`:
+/// How `HttpError` shows the variant `tag` with `fields`:
 /// `None` if they are no variant of it.
 pub(crate) fn error_text(tag: &str, fields: &[Value]) -> Option<String> {
     Some(match (tag, fields) {

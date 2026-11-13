@@ -1,0 +1,16 @@
+-- exit: 1
+-- An error type of the program is shown through Display: with an impl
+-- written for it, main's error line is what the impl says; without
+-- one, its structure. (An error type has no trait of its own.)
+type MyErr { Bad(String) }
+trait Display for MyErr {
+  fn display(self) -> String {
+    match self {
+      Bad(s) -> "bad input: {s}"
+    }
+  }
+}
+fn main() -> Result((), MyErr) {
+  println("{Bad("y")}")
+  Err(Bad("x"))
+}

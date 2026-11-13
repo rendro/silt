@@ -1,17 +1,22 @@
 import regex
 import string
 
-fn main() {
+fn main() -> Result((), regex.RegexError) {
+  let digits = regex.compile("\\d+")?
+  let pair = regex.compile("(a)(b)")?
+  let digit = regex.compile("\\d")?
+  let accent = regex.compile("[éö]")?
   -- replace means every match, as string.replace means every occurrence
-  println(regex.replace("a1 b22 c333", "\\d+", "#"))
+  println(regex.replace("a1 b22 c333", digits, "#"))
   println(string.replace("a1 a1", "a1", "#"))
   -- the first match only
-  println(regex.replace_first("a1 b22 c333", "\\d+", "#"))
+  println(regex.replace_first("a1 b22 c333", digits, "#"))
   -- groups, no match, an empty text, non-ASCII text
-  println(regex.replace("ab ab", "(a)(b)", "$2$1"))
-  println(regex.replace_first("ab ab", "(a)(b)", "$2$1"))
-  println(regex.replace("xyz", "\\d", "#"))
-  println(regex.replace_first("", "\\d", "#"))
-  println(regex.replace("héllo wörld", "[éö]", "_"))
-  println(regex.replace_first("héllo wörld", "[éö]", "_"))
+  println(regex.replace("ab ab", pair, "$2$1"))
+  println(regex.replace_first("ab ab", pair, "$2$1"))
+  println(regex.replace("xyz", digit, "#"))
+  println(regex.replace_first("", digit, "#"))
+  println(regex.replace("héllo wörld", accent, "_"))
+  println(regex.replace_first("héllo wörld", accent, "_"))
+  Ok(())
 }

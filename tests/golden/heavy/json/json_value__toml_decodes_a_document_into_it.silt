@@ -1,0 +1,35 @@
+-- toml.parse, parse_list and parse_map decode into json.Value and its
+-- containers, with the mapping a json.Decode impl is given: a table is
+-- a json.Object, an array a json.Array, an integer a json.Int, a float a
+-- json.Float, a date or a time a json.String of its text.
+import json
+import toml
+
+type Conf {
+  name: String,
+  extra: json.Value,
+  more: Option(json.Value),
+}
+
+fn main() {
+  let doc = """
+title = "x"
+n = 1
+f = 1.5
+on = true
+day = 1979-05-27
+at = 07:32:00.25
+when = 1979-05-27T07:32:00Z
+list = [1, 2, "three"]
+[owner]
+name = "Tom"
+"""
+  println(toml.parse(doc, json.Value))
+  println(toml.parse_map("a = 1\nb = [1, 2]", json.Value))
+  println(toml.parse_map("a = 1", Option(json.Value)))
+  println(toml.parse_map("a = [1, true]", List(json.Value)))
+  println(toml.parse_list("[[items]]\nn = 1\n[[items]]\nn = 2", json.Value))
+  println(toml.parse("name = 'a'\nextra = \{ k = [1] }", Conf))
+  -- A float that is no number has no json.Value.
+  println(toml.parse_map("a = nan", json.Value))
+}

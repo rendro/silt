@@ -22,8 +22,7 @@ Parse TOML documents into typed silt values and serialize values to TOML.
 
 Every fallible `toml.*` call returns `Result(T, TomlError)`. The `TomlError`
 enum has four variants you can pattern-match on, or fall back to
-`Error.message(e)` when you just want a rendered string (`trait Error for
-TomlError` is wired in):
+show it with `"{e}"` when you just want a rendered string:
 
 | Variant | Fields | Meaning |
 |---------|--------|---------|
@@ -45,7 +44,7 @@ ends with ` at <path>`. An error about the document itself, such as a
 `Syntax` error or a document `toml.parse_list` finds no one array in, has
 no path.
 
-See [stdlib errors](errors.md) for the shared `Error` trait.
+See [stdlib errors](errors.md) for how every error enum is shown.
 
 
 ## Decodable types
@@ -55,9 +54,9 @@ names the type to decode into:
 
 | Function | Type argument |
 |----------|---------------|
-| `toml.parse` | a record type, an enum type, or a type with a `json.Decode` impl |
-| `toml.parse_list` | `Int`, `Float`, `String`, `Bool`, a record type, an enum type, a type with a `json.Decode` impl, or `List(T)`, `Option(T)`, `Map(String, T)` or a tuple of decodable types |
-| `toml.parse_map` | `Int`, `Float`, `String`, `Bool`, a record type, an enum type, a type with a `json.Decode` impl, or `List(T)`, `Option(T)`, `Map(String, T)` or a tuple of decodable types |
+| `toml.parse` | a record type, `json.Value`, an enum type, or a type with a `json.Decode` impl |
+| `toml.parse_list` | `Int`, `Float`, `String`, `Bool`, `json.Value`, a record type, an enum type, a type with a `json.Decode` impl, or `List(T)`, `Option(T)`, `Map(String, T)` or a tuple of decodable types |
+| `toml.parse_map` | `Int`, `Float`, `String`, `Bool`, `json.Value`, a record type, an enum type, a type with a `json.Decode` impl, or `List(T)`, `Option(T)`, `Map(String, T)` or a tuple of decodable types |
 
 A type argument is written in full (`toml.parse_list(text, List(Int))`,
 `toml.parse_map(text, (Int, String))`). An alias of one of these is the
@@ -69,6 +68,7 @@ record and enum type nested in them), may have these types:
 - `Int`, `Float`, `String`, `Bool`
 - `time.Date`, `time.Time`, `time.DateTime`
 - `time.Instant` and `time.Duration`, as `toml.stringify` writes them: `{ epoch_ns = n }`, `{ ns = n }`
+- `json.Value`, which keeps that part of the document as it is (see below)
 - `List(T)`, `Option(T)`, `Map(String, T)`
 - tuples, such as `(Int, String)`
 - record types, a generic one with its type arguments (`Box(Int)`)
@@ -78,6 +78,17 @@ record and enum type nested in them), may have these types:
 where `T` is again one of these types. Anything else (a `Set`, a generic
 record or enum without its type arguments, a builtin enum such as `time.Weekday`, a function, a `Map`
 whose key is not `String`, a type parameter) has no decoder.
+
+An `Option` directly inside an `Option` (`Option(Option(Int))`, at any
+depth) has no decoder either: `None` and `Some(None)` are both written by
+leaving the key out, so `Some(None)` would never read back.
+
+A `json.Value`, as the type argument or in a field, holds its part of the
+document as a [`json.Decode` impl](#types-with-a-jsondecode-impl) is given
+it: a table is a `json.Object`, an array a `json.Array`, an integer a
+`json.Int`, a float a `json.Float`, a date or a time a `json.String` of its
+text. `toml.parse(text, json.Value)` reads any document, for a tool that
+looks at a file whose shape it does not know.
 
 A TOML integer goes into an `Int`, and into a `Float` where one is
 expected. A TOML float goes into a `Float` only: `x = 1.0` for an `Int`
@@ -249,7 +260,7 @@ fn main() {
   let input = "name = \"Alice\"\nage = 30\nactive = true\n"
   match toml.parse(input, User) {
     Ok(user) -> println(user.name)
-    Err(e) -> println("Error: {Error.message(e)}")
+    Err(e) -> println("Error: {e}")
   }
 }
 ```
@@ -283,7 +294,7 @@ fn main() {
   let input = "[[points]]\nx = 1\ny = 2\n\n[[points]]\nx = 3\ny = 4\n"
   match toml.parse_list(input, Point) {
     Ok(points) -> list.each(points) { p -> println("{p.x}, {p.y}") }
-    Err(e) -> println("Error: {Error.message(e)}")
+    Err(e) -> println("Error: {e}")
   }
 }
 ```
@@ -310,7 +321,7 @@ fn main() {
   let input = "x = 10\ny = 20\n"
   match toml.parse_map(input, Int) {
     Ok(m) -> println(map.get(m, "x")) -- Some(10)
-    Err(e) -> println("Error: {Error.message(e)}")
+    Err(e) -> println("Error: {e}")
   }
 }
 ```
@@ -355,7 +366,7 @@ fn main() {
   let data = #{ "name": "silt", "version": "1.0" }
   match toml.pretty(data) {
     Ok(s) -> println(s)
-    Err(e) -> println("Error: {Error.message(e)}")
+    Err(e) -> println("Error: {e}")
   }
 }
 ```
@@ -409,7 +420,7 @@ fn main() {
   let data = Package { name: "silt", version: "1.0" }
   match toml.stringify(data) {
     Ok(s) -> println(s)
-    Err(e) -> println("Error: {Error.message(e)}")
+    Err(e) -> println("Error: {e}")
   }
 }
 ```

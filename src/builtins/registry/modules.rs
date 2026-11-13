@@ -346,18 +346,21 @@ pub(super) fn modules() -> Vec<Module> {
             types: "\
                 pub type RegexError { InvalidPattern(String, Int), TooBig }\n\
             ",
+            opaque: [("Regex", 0)],
             error: "RegexError" => regex::error_text,
             rows: [
-                f("fn captures(text: String, pattern: String) -> Result(Option(List(String)), RegexError)", "Capture groups from first match", regex::captures),
-                f("fn captures_all(text: String, pattern: String) -> Result(List(List(String)), RegexError)", "Capture groups from all matches", regex::captures_all),
-                f("fn captures_named(text: String, pattern: String) -> Result(Option(Map(String, String)), RegexError)", "Named capture groups from first match", regex::captures_named),
-                f("fn find(text: String, pattern: String) -> Result(Option(String), RegexError)", "First match", regex::find),
-                f("fn find_all(text: String, pattern: String) -> Result(List(String), RegexError)", "All matches", regex::find_all),
-                f("fn is_match(text: String, pattern: String) -> Result(Bool, RegexError)", "Test if pattern matches", regex::is_match),
-                f("fn replace(text: String, pattern: String, replacement: String) -> Result(String, RegexError)", "Replace all matches", regex::replace),
-                f("fn replace_first(text: String, pattern: String, replacement: String) -> Result(String, RegexError)", "Replace first match", regex::replace_first),
-                f("fn replace_with(text: String, pattern: String, f: Fn(String) -> String) -> Result(String, RegexError)", "Replace all with callback", regex::replace_with),
-                f("fn split(text: String, pattern: String) -> Result(List(String), RegexError)", "Split on pattern", regex::split),
+                f("fn captures(text: String, re: Regex) -> Option(List(String))", "Capture groups from first match", regex::captures),
+                f("fn captures_all(text: String, re: Regex) -> List(List(String))", "Capture groups from all matches", regex::captures_all),
+                f("fn captures_named(text: String, re: Regex) -> Option(Map(String, String))", "Named capture groups from first match", regex::captures_named),
+                f("fn compile(pattern: String) -> Result(Regex, RegexError)", "Check a pattern and compile it, once", regex::compile),
+                f("fn escape(text: String) -> String", "The text as a pattern that matches it and nothing else", regex::escape),
+                f("fn find(text: String, re: Regex) -> Option(String)", "First match", regex::find),
+                f("fn find_all(text: String, re: Regex) -> List(String)", "All matches", regex::find_all),
+                f("fn is_match(text: String, re: Regex) -> Bool", "Test if pattern matches", regex::is_match),
+                f("fn replace(text: String, re: Regex, replacement: String) -> String", "Replace all matches", regex::replace),
+                f("fn replace_first(text: String, re: Regex, replacement: String) -> String", "Replace first match", regex::replace_first),
+                f("fn replace_with(text: String, re: Regex, f: Fn(String) -> String) -> String", "Replace all with callback", regex::replace_with),
+                f("fn split(text: String, re: Regex) -> List(String)", "Split on pattern", regex::split),
             ],
         },
         module! {
@@ -717,7 +720,9 @@ pub(super) fn modules() -> Vec<Module> {
             error: "CsvError" => csv::error_text,
             rows: [
                 f("fn parse(text: String, type a) -> Result(List(a), CsvError)", "Every row of a text with a header as a record of the type, its fields by their columns' names", csv::parse).decodes(Decoding::CSV),
+                f("fn join_line(fields: List(String)) -> String", "The fields as one line: a field with a comma, a quote or a line break quoted, its quotes doubled", csv::join_line),
                 f("fn split_line(line: String) -> Result(List(String), CsvError)", "The fields of one line: quoted fields and `\"\"` escapes as RFC 4180 writes them", csv::split_line),
+                f("fn stringify(rows: List(a)) -> String", "A header of the field names, then a line for each record: the text `csv.parse` reads back", csv::stringify).writes(Decoding::CSV),
             ],
         },
     ]

@@ -1,0 +1,13 @@
+-- requires-feature: http
+-- requires-feature: tcp
+-- A variant of the error enums of `http` and `tcp`, which a build
+-- without those cargo features does not have, is shown as its message
+-- (the other stdlib error enums are in
+-- error_enums__every_stdlib_error_enum_is_shown_as_its_message).
+import http
+import tcp
+
+fn main() {
+  println("{http.Timeout}")
+  println("{tcp.Closed}")
+}

@@ -72,8 +72,8 @@ fn ok_inner(v: Value) -> Value {
 ///
 /// Phase 1 of the stdlib error redesign replaced the old
 /// `Err(String)` shape with `Err(IoError)`, so this helper now walks the
-/// `IoError` variant and reconstructs the message the same way
-/// `trait Error for IoError` does at runtime.
+/// `IoError` variant and reconstructs the message the same way an
+/// `IoError` is shown at runtime.
 fn err_msg(v: Value) -> String {
     match v {
         Value::Variant(err) if err.is(bv::ERR) => match err.fields().first() {
@@ -279,7 +279,7 @@ import string
 fn main() {{
     host.give(match {call} {{
         Ok(paths) -> string.join(list.sort(paths), "\n")
-        Err(e) -> "Err: {{Error.message(e)}}"
+        Err(e) -> "Err: {{e}}"
     }})
 }}
 import host
@@ -500,7 +500,7 @@ import host
     // ENOTSUP-style phrasing on macOS, different again on Windows), so
     // we do not lock the inner `err.to_string()` text. On unix the
     // kernel returns EINVAL, which std classifies as `InvalidInput`,
-    // and silt's `IoError.message` renders that with the `"invalid
+    // and silt shows that `IoError` with the `"invalid
     // input:"` prefix — lock that prefix under cfg(unix). Everywhere
     // else we still pin non-empty, so a regression that swallows the
     // error to "" or panics with a bare Rust message would fail.

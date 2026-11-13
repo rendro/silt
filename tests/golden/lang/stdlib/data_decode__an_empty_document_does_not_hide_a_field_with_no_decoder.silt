@@ -22,10 +22,10 @@ fn toml_list(text: String, type a) -> Result(List(a), toml.TomlError) where a: j
   toml.parse_list(text, a)
 }
 
-fn show(r: Result(a, e)) where e: Error {
+fn show(r: Result(a, e)) where e: Display {
   match r {
     Ok(_) -> println("ok")
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println("{e}")
   }
 }
 

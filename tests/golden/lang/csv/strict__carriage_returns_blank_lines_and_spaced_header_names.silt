@@ -9,7 +9,7 @@ type One { id: String }
 fn show(r: Result(List(P), csv.CsvError)) -> String {
   match r {
     Ok(rows) -> "Ok({rows})"
-    Err(e) -> Error.message(e)
+    Err(e) -> "{e}"
   }
 }
 fn main() {
@@ -24,7 +24,7 @@ fn main() {
   println(show(csv.parse("name,age , email\nA,1,x\n", P)))
   match csv.parse("id\na\n\nb\n", One) {
     Ok(rows) -> println(rows)
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println("{e}")
   }
   println(csv.split_line("a,b\r"))
   println(csv.split_line("\"a\",\"b\"\r"))

@@ -1,0 +1,10 @@
+-- cmd: test
+-- exit: 1
+-- A test's `Err(e)` is shown in its failure through Display: an error
+-- type with none is refused before any test runs.
+-- stderr-contains: error[compile]: the test function 'test_a' must return an error that can be shown, but type 'List(Fn(Int) -> Int)' does not implement trait 'Display': element is of type 'Fn(Int) -> Int', which does not implement trait 'Display'
+-- stderr-contains: help: a test's `Err(e)` is shown in its failure: return a String, or a type that has Display (by its structure, or by `trait Display for ...`)
+-- stderr-contains: 0 tests: 0 passed, 0 failed, 0 skipped (1 file failed to compile)
+fn test_a() -> Result((), List(Fn(Int) -> Int)) {
+  Ok(())
+}

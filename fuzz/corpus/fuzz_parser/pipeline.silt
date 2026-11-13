@@ -48,7 +48,7 @@ fn sort_by_length(lines) {
 fn word_count(lines) {
   lines
   |> list.map { line ->
-    let words = regex.split(string.trim(line), "\\s+") |> result.unwrap_or([])
+    let words = (regex.compile("\\s+") |> result.map { compiled_re -> regex.split(string.trim(line), compiled_re) }) |> result.unwrap_or([])
     let count = list.length(words)
     "{count} words: {line}"
   }
@@ -78,7 +78,7 @@ fn reject(lines, pattern) {
 
 fn redact(lines, pattern) {
   lines
-  |> list.map { line -> (regex.replace(line, pattern, "[REDACTED]") |> result.unwrap_or("")) }
+  |> list.map { line -> ((regex.compile(pattern) |> result.map { compiled_re -> regex.replace(line, compiled_re, "[REDACTED]") }) |> result.unwrap_or("")) }
 }
 
 -- ============================================================
@@ -136,7 +136,7 @@ fn make_truncate(max_len) {
 fn make_replace(pattern, transform) {
   fn(lines) {
     lines
-    |> list.map { line -> (regex.replace_with(line, pattern, transform) |> result.unwrap_or("")) }
+    |> list.map { line -> ((regex.compile(pattern) |> result.map { compiled_re -> regex.replace_with(line, compiled_re, transform) }) |> result.unwrap_or("")) }
   }
 }
 
@@ -159,7 +159,7 @@ fn main() {
   -- Read the log file; `return` in an Err arm bails out of main.
   let content = match io.read_file("examples/log.txt") {
     Ok(c) -> c
-    Err(e) -> return println("Error reading log file: {Error.message(e)}")
+    Err(e) -> return println("Error reading log file: {e}")
   }
   let lines = content
   |> string.split("\n")
@@ -234,7 +234,7 @@ fn main() {
   -- --------------------------------------------------------
   let result9 = lines
   |> list.map { line ->
-    let parts = regex.split(line, "\\s+") |> result.unwrap_or([])
+    let parts = (regex.compile("\\s+") |> result.map { compiled_re -> regex.split(line, compiled_re) }) |> result.unwrap_or([])
     match list.get(parts, 2) {
       Some(level) -> level
       None -> "UNKNOWN"
@@ -278,7 +278,7 @@ fn main() {
   -- --------------------------------------------------------
   let result13 = lines
   |> list.take(5)
-  |> list.map { line -> (regex.replace_with(line, "(INFO|DEBUG|WARN|ERROR)") { m -> "[{string.to_upper(m)}]" } |> result.unwrap_or("")) }
+  |> list.map { line -> ((regex.compile("(INFO|DEBUG|WARN|ERROR)") |> result.map { compiled_re -> regex.replace_with(line, compiled_re) { m -> "[{string.to_upper(m)}]" } }) |> result.unwrap_or("")) }
   |> numbered
   print_section("Pipeline 13: log levels bracketed via replace_with", result13)
   -- --------------------------------------------------------

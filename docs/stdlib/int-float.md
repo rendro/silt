@@ -140,7 +140,7 @@ int.parse(s: String) -> Result(Int, IntError)
 Parses a string as an integer. Leading/trailing whitespace is trimmed. Returns
 `Ok(n)` on success, `Err(IntError)` on failure — a typed enum with variants
 `Empty`, `InvalidDigit(offset)`, `Overflow` and `Underflow`.
-Match on the variant to handle specific cases, or fall back to `Error.message(e)` for
+Match on the variant to handle specific cases, or show it with `"{e}"` for
 a human-readable default.
 
 `offset` is the byte of `s` as written, the whitespace in front counted,
@@ -155,7 +155,7 @@ import int
 fn main() {
   match int.parse("42") {
     Ok(n) -> println(n)
-    Err(e) -> println("parse error: {Error.message(e)}")
+    Err(e) -> println("parse error: {e}")
   }
 
   -- Pattern-match on specific failure modes:
@@ -504,7 +504,7 @@ import float
 fn main() {
   match float.parse("3.14") {
     Ok(f) -> println(f)
-    Err(e) -> println("error: {Error.message(e)}")
+    Err(e) -> println("error: {e}")
   }
 }
 ```

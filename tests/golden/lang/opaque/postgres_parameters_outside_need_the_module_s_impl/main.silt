@@ -17,6 +17,6 @@ fn main() {
       println(postgres.execute(db, "select $1", (mail.user("secret"),)))
       println(postgres.execute(db, "select $1", (mail.email(),)))
     }
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println("{e}")
   }
 }
