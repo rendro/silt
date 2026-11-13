@@ -142,12 +142,18 @@ type Stop = Arc<dyn Fn() -> bool + Send + Sync>;
 struct On {
     failure: crate::vm::ErrFactory,
     stop: Option<Stop>,
+    /// What a wait for I/O that ended at `SILT_IO_TIMEOUT` does first:
+    /// on a connection, shut it down, as every tcp operation that times
+    /// out does. (A source that is stopped lets go of its connection;
+    /// one whose read timed out shuts it.)
+    timed_out: Option<Stop>,
 }
 
 /// What a source or a sink of a file works on.
 const ON_A_FILE: On = On {
     failure: io_failure,
     stop: None,
+    timed_out: None,
 };
 
 type Logic = Box<dyn FnMut(Got) -> Result<Next, VmError> + Send>;
@@ -193,6 +199,9 @@ struct Pipe {
     /// called when the pipe is stopped before its end, whether an
     /// operation is in flight then or not.
     stop: Option<Stop>,
+    /// What its operation does when its wait ends at `SILT_IO_TIMEOUT`
+    /// ([`On::timed_out`]).
+    timed_out: Option<Stop>,
     /// For a source on a connection: its stop (it lets go of the
     /// connection, [`Held::let_go`]) that its output's reader runs when
     /// it stops reading, also before the source has run. It is disarmed
@@ -258,6 +267,7 @@ impl Pipe {
             drains: false,
             finished: false,
             stop: None,
+            timed_out: None,
             armed: None,
         }
     }
@@ -411,7 +421,15 @@ impl Pipe {
                     self.state = State::Calling;
                     return Ok(vm.call(callee, args));
                 }
-                Next::Io(operation, On { failure, stop }) => {
+                Next::Io(
+                    operation,
+                    On {
+                        failure,
+                        stop,
+                        timed_out,
+                    },
+                ) => {
+                    self.timed_out = timed_out;
                     // An operation on a connection that ends without its
                     // value reaching the pipe ends the connection, as a
                     // `tcp.read` does.
@@ -460,7 +478,15 @@ impl Native for Pipe {
                 _ => return Err(internal("was woken without a value")),
             },
             // The value, or the module's error at `SILT_IO_TIMEOUT`.
-            State::Io(op) => Got::Io(op.value(&vm.woken()?)),
+            State::Io(op) => {
+                let fired = vm.woken()?;
+                if matches!(fired, Fired::Deadline)
+                    && let Some(timed_out) = self.timed_out.take()
+                {
+                    let _ = timed_out();
+                }
+                Got::Io(op.value(&fired))
+            }
             State::Asking(take) => match vm.woken()? {
                 Fired::Arm(_, Outcome::Asked) => return self.run(vm, take),
                 // Nobody reads the output.
@@ -628,12 +654,14 @@ fn err_io_unknown(s: impl Into<Arc<str>>) -> Value {
 #[cfg(feature = "tcp")]
 fn on_tcp(stream: &Arc<crate::runtime::handle::TcpStreamHandle>) -> On {
     let stream = stream.clone();
+    let shut: Stop = Arc::new(move || {
+        stream.shut_down();
+        true
+    });
     On {
         failure: super::tcp::tcp_timeout_err,
-        stop: Some(Arc::new(move || {
-            stream.shut_down();
-            true
-        })),
+        stop: Some(shut.clone()),
+        timed_out: Some(shut),
     }
 }
 
@@ -730,10 +758,16 @@ impl Drop for Reading<'_> {
 /// ([`Held::let_go`]).
 #[cfg(feature = "tcp")]
 fn on_held(held: &Arc<Held>) -> On {
-    let held = held.clone();
+    let (stops, times_out) = (held.clone(), held.clone());
     On {
         failure: super::tcp::tcp_timeout_err,
-        stop: Some(Arc::new(move || held.let_go())),
+        stop: Some(Arc::new(move || stops.let_go())),
+        timed_out: Some(Arc::new(move || {
+            if let Some(conn) = times_out.conn.upgrade() {
+                conn.shut_down();
+            }
+            true
+        })),
     }
 }
 
@@ -1968,6 +2002,7 @@ mod tests {
         let on = On {
             failure: io_failure,
             stop: Some(stop),
+            timed_out: None,
         };
         let started = reading(
             &mut vm,

@@ -283,7 +283,9 @@ fn main() {
   connection while their stream is read. When the stream is stopped
   (left, closed with `channel.close`, cut short by `stream.first` or
   `stream.take`), the source stops reading and lets go of the
-  connection; it does not shut it. The connection is closed when its
+  connection; it does not shut it. (A read of the source that times out,
+  at `SILT_IO_TIMEOUT`, shuts it, as every tcp operation that times out
+  does.) The connection is closed when its
   last holder is gone, as every value is: a handler that reads the head
   of a request through `stream.tcp_lines(conn)` in a helper can answer
   on `conn` afterwards, and one that reads lines and returns, holding
@@ -306,8 +308,8 @@ fn main() {
   `SILT_IO_TIMEOUT` ends it as it ends any wait for I/O (see
   [I/O timeouts](../concurrency.md#io-timeouts-silt_io_timeout)): a
   source ends with its module's timeout error as its last item
-  (`Err(Timeout)` of a connection, which the source lets go of then, as
-  a stopped one does), a sink returns it. So does a read or a write that the I/O pool could not run:
+  (`Err(Timeout)` of a connection, which is shut down then, as after any
+  tcp operation that times out), a sink returns it. So does a read or a write that the I/O pool could not run:
   the source ends with that error, not as if its input had ended.
 - **A stream that you stop reading stops taking.** A stream that is read
   by hand (`channel.receive`, `channel.select`) and then left takes

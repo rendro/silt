@@ -165,9 +165,9 @@ moment in which its task stops waiting: what the read had taken is gone
 with the connection. The same holds for `stream.write_to_tcp` when its
 task is cancelled or its I/O times out. A `stream.tcp_lines` or
 `stream.tcp_chunks` source is different: it holds the connection as any
-other name does, and when its stream is stopped or its read times out it
-lets go of the connection without shutting it; the connection closes when
-its last holder is gone (see
+other name does, and when its stream is stopped it lets go of the
+connection without shutting it (a read of it that times out shuts it, as
+above); the connection closes when its last holder is gone (see
 [stream](stream.md)). A `tcp.accept` that nobody waits
 for is woken and gives up; the listener stays usable. A `tcp.connect`,
 and a connect or handshake of `tcp.connect_tls` or `tcp.tls_server`,
