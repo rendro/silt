@@ -1,6 +1,6 @@
-error[type]: type mismatch: expected a value with a field `mk`, got the type `W`
- --> static_method__the_help_names_the_type_a_value_holds.silt:24:15
+error[type]: cannot infer the record type whose field 'mk' this reads
+ --> static_method__the_help_names_the_type_a_value_holds.silt:20:3
     |
- 24 |   let f = get(W)
-    |               ^ type mismatch: expected a value with a field `mk`, got the type `W`
-  = help: `mk` is a method of trait `A` that makes a value: call it on the type, `W.mk()`
+ 20 |   x.mk
+    |   ^^^^ cannot infer the record type whose field 'mk' this reads
+  = help: annotate the record: `x: SomeRecord`

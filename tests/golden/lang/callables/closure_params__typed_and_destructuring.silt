@@ -19,9 +19,6 @@ fn main() {
   -- record pattern
   let area = { Point { x, y } -> x * y }
   println(area(Point { x: 3, y: 4 }))
-  -- anonymous record pattern with a rest binder
-  let name_of = { { name, ...rest } -> name }
-  println(name_of({ name: "ada", age: 36 }))
   -- a function type in the annotation
   let at_ten = { f: Fn(Int) -> Int -> f(10) }
   println(at_ten({ z -> z * 2 }))

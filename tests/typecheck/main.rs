@@ -9,7 +9,6 @@ mod interp_display_runtime_tests;
 mod iopool_panic_typed_err_tests;
 mod kind_naming_tests;
 mod postgres_typed_timeout_tests;
-mod round74_infinite_type_canonical_form_tests;
 mod typeof_head_display_tests;
 mod typeof_render_tests;
 mod unified_trait_registration_tests;

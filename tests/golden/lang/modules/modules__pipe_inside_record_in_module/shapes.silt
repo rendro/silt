@@ -1,6 +1,6 @@
 pub type Point { x: Int, y: Int }
 pub fn make(n) { Point { x: n, y: n } }
-pub fn double_x(p) { p.{ x: p.x * 2 } }
+pub fn double_x(p: Point) -> Point { p.{ x: p.x * 2 } }
 
 pub type Box { name: String, label: String, points: List(Point) }
 

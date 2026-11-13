@@ -4,6 +4,7 @@ type Wrap { W(Int) }
 type Pt { x: Int, y: Int }
 type Box(a) { Boxed(a) }
 type Pair(a, b) { first: a, second: b }
+type Person { name: String, age: Int }
 
 fn main() {
   let (a, b) = (1, "s")
@@ -30,7 +31,7 @@ fn main() {
   println(w)
   let () = ()
   let _ = 5
-  let {name, age} = {name: "A", age: 3}
+  let Person { name, age } = Person { name: "A", age: 3 }
   println("{name}{age}")
   let [..rest] = [1, 2, 3]
   println(rest)

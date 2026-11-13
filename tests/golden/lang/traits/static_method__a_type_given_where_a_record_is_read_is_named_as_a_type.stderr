@@ -1,17 +1,33 @@
+error[type]: cannot infer the record type whose field 'zero' this calls
+ --> static_method__a_type_given_where_a_record_is_read_is_named_as_a_type.silt:25:12
+    |
+ 25 |   let _z = t.zero()
+    |            ^^^^^^ cannot infer the record type whose field 'zero' this calls
+  = help: annotate the record: `t: SomeRecord`
+
+error[type]: cannot infer the record type whose field 'n' this reads
+ --> static_method__a_type_given_where_a_record_is_read_is_named_as_a_type.silt:26:3
+    |
+ 26 |   t.n
+    |   ^^^ cannot infer the record type whose field 'n' this reads
+  = help: annotate the record: `t: Rec`
+
+error[type]: cannot infer the record type whose field 'zero' this calls
+ --> static_method__a_type_given_where_a_record_is_read_is_named_as_a_type.silt:30:12
+    |
+ 30 |   let _z = t.zero()
+    |            ^^^^^^ cannot infer the record type whose field 'zero' this calls
+  = help: annotate the record: `t: SomeRecord`
+
+error[type]: cannot infer the record type whose field 'n' this update sets
+ --> static_method__a_type_given_where_a_record_is_read_is_named_as_a_type.silt:31:3
+    |
+ 31 |   t.{ n: 3 }
+    |   ^^^^^^^^^^ cannot infer the record type whose field 'n' this update sets
+  = help: annotate the record: `r: SomeRecord`
+
 error[type]: record update requires a record base, got the type `t`
  --> static_method__a_type_given_where_a_record_is_read_is_named_as_a_type.silt:37:3
     |
  37 |   u.{ n: 3 }
     |   ^ record update requires a record base, got the type `t`
-
-error[type]: type mismatch: expected a value with a field `n`, got the type `Rec`
- --> static_method__a_type_given_where_a_record_is_read_is_named_as_a_type.silt:41:16
-    |
- 41 |   let _ = read(Rec)
-    |                ^^^ type mismatch: expected a value with a field `n`, got the type `Rec`
-
-error[type]: type mismatch: expected a value with a field `n`, got the type `Rec`
- --> static_method__a_type_given_where_a_record_is_read_is_named_as_a_type.silt:42:19
-    |
- 42 |   println(updated(Rec))
-    |                   ^^^ type mismatch: expected a value with a field `n`, got the type `Rec`

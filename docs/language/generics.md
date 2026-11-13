@@ -68,7 +68,6 @@ declaration body, including in constructor argument types, record
 fields, and recursive self-references. Every type variable of the body
 is one of them: `type Maybe { Some(a), None }` is an error ("type
 variable 'a' is not a parameter of 'Maybe'"), and so is `type Cell(T)`.
-A record type in a declaration is closed: it has no `...r` row.
 
 At use sites, types are applied positionally: `Option(Int)`,
 `Result(String, ParseError)`, `Pair(User, List(Role))`.

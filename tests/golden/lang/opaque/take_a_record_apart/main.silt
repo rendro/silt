@@ -1,12 +1,11 @@
 -- cmd: check
 -- exit: 1
--- Outside its module, neither a record pattern nor an anonymous record
--- pattern takes an opaque record apart.
+-- Outside its module, a record pattern does not take an opaque record
+-- apart.
 import mail
 
 fn main() {
   let u = mail.user("a")
   let mail.User { name, .. } = u
-  let { age, ..._rest } = u
-  println("{name}{age}")
+  println(name)
 }

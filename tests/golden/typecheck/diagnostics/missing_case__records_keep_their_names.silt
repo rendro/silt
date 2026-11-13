@@ -3,14 +3,15 @@
 -- A value no arm matches is written as a pattern one could write: a
 -- declared record keeps its name wherever it stands (alone, in a tuple,
 -- under a variant, in a list) and says `..` only when it leaves fields
--- out; an anonymous record names the fields it tests. One wording for a
+-- out. One wording for a
 -- miss inside a record: the whole value. Where no value can be written
 -- (a record tested by a string) the record is said not to be covered.
 type U { U(Bool) }
 type R { p: Bool, q: U }
-fn anon(v: { a: Bool, b: Option(U) }) -> Int {
+type S { a: Bool, b: Option(U) }
+fn two(v: S) -> Int {
   match v {
-    { a: false, b: _ } -> 0
+    S { a: false, b: _ } -> 0
   }
 }
 fn top(v: R) -> Int {
