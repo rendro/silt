@@ -14,7 +14,7 @@
 //! which exercises only the happy `--help` path. The sibling
 //! flag-suggestion paths for `silt run` / `silt --version` ARE tested
 //! (see `cli_help_and_unknown_subcommand_tests.rs` and
-//! `round73_cli_help_gaps_tests.rs::silt_verison_typo_suggests_version_flag`),
+//! `cli_help_gaps_tests.rs::silt_verison_typo_suggests_version_flag`),
 //! so the absence of self-update coverage was a tooling gap.
 //!
 //! These tests exercise the binary via subprocess so the unknown-flag

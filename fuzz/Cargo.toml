@@ -13,8 +13,9 @@ libfuzzer-sys = "0.4"
 [dependencies.silt]
 path = ".."
 default-features = false
-# The reader of HTTP requests is the `http` feature's.
-features = ["http"]
+# The readers of HTTP requests and responses are the `http` feature's,
+# the server of the editor's messages the `lsp` feature's.
+features = ["http", "lsp"]
 
 # Disable workspace auto-discovery
 [workspace]
@@ -72,4 +73,14 @@ doc = false
 [[bin]]
 name = "fuzz_csv"
 path = "fuzz_targets/fuzz_csv.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_http_response"
+path = "fuzz_targets/fuzz_http_response.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_lsp_messages"
+path = "fuzz_targets/fuzz_lsp_messages.rs"
 doc = false

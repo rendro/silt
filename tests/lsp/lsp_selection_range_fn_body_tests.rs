@@ -11,7 +11,7 @@
 //! that the chain is anchored inside the cursor's enclosing decl — not
 //! at the file's first decl's keyword span.
 //!
-//! Pattern mirrors `tests/lsp/round83_lsp_selection_range_decl_bounds_tests.rs`;
+//! Pattern mirrors `tests/lsp/lsp_selection_range_decl_bounds_tests.rs`;
 //! uses the shared LSP client in `support.rs`.
 
 use serde_json::{Value, json};
