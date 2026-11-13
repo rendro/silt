@@ -318,21 +318,14 @@ pub fn canonical_name(ty: &Type) -> String {
 }
 
 /// The type a dispatch table knows `ty` by: the type itself, or for a
-/// surface alias of a builtin type, the builtin type, or for a user
-/// alias, the head of the type it stands for.
+/// user alias, the head of the type it stands for.
 ///
-/// - `Fun` -> `Fn` (the surface alias of the function-type name — the
-///   VM dispatches closures under `"Fn"`, so a `trait T for Fun` impl
-///   must register there too).
-/// - Registered user aliases route to the canonical head of their
-///   target: `type Bytes = List(Int)` collapses to `List`; chained
-///   aliases collapse fully via recursion.
+/// Registered user aliases route to the canonical head of their
+/// target: `type Bytes = List(Int)` collapses to `List`; chained
+/// aliases collapse fully via recursion.
 ///
 /// Any other type is its own head.
 pub fn canonical_head(resolver: &Resolver, ty: TypeRef) -> TypeRef {
-    if ty.is_builtin("Fun") {
-        return TypeRef::builtin("Fn");
-    }
     if let Some(info) = resolver.lookup_alias(ty) {
         let canon_target = canonicalize(resolver, &info.target);
         if let Some(head) = head_of_canon(&canon_target) {
@@ -512,7 +505,7 @@ mod tests {
             "Set" => Some(Type::Set(Box::new(Type::Int))),
             "Channel" => Some(Type::Channel(Box::new(Type::Int))),
             "Tuple" => Some(Type::Tuple(vec![Type::Int, Type::Int])),
-            "Fn" | "Fun" => Some(Type::Fun(vec![Type::Int], Box::new(Type::Int))),
+            "Fn" => Some(Type::Fun(vec![Type::Int], Box::new(Type::Int))),
             // Handle is a runtime-only resource type with no Type
             // variant; it does not participate in canonicalisation.
             "Handle" => None,
@@ -704,10 +697,7 @@ mod tests {
                 continue; // e.g. Handle: no Type variant
             };
             let got = canonical_name(&t);
-            let expected = match b.name {
-                "Fun" => "Fn", // Fn and Fun are surface aliases for Type::Fun
-                other => other,
-            };
+            let expected = b.name;
             assert_eq!(
                 got, expected,
                 "canonical_name mismatch for builtin {} (kind={:?}): got {got:?}, expected {expected:?}",

@@ -37,7 +37,7 @@ byte-order mark and before any code, each `-- key: value`:
 | `-- stdout-contains: TEXT` | stdout must contain TEXT (repeatable) | — |
 | `-- stderr-contains: TEXT` | stderr must contain TEXT (repeatable) | — |
 | `-- stderr-not-contains: TEXT` | stderr must not contain TEXT (repeatable) | — |
-| `-- stdin: TEXT` | text fed on stdin (`\n` for newlines) | empty |
+| `-- stdin: TEXT` | text fed on stdin (`\n` for a newline, `\r` for a carriage return, `\t` for a tab) | empty |
 | `-- repeat: N` | run N times, every run must pass (timing-sensitive cases) | 1 |
 | `-- requires-feature: NAME` | skip the case unless the cargo feature is enabled (repeatable). `debug-build` is accepted as a name too: the case needs a debug build of `silt` (see "Format cases") | — |
 | `-- without-feature: NAME` | skip the case when the cargo feature is enabled: what a build that lacks it does (repeatable). Such a case runs in the default-features CI job, not under `--all-features` | — |

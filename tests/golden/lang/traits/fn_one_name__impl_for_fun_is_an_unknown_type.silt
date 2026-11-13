@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- stderr-contains: trait impl target 'Fun' is not a declared type
+-- stderr-contains: unknown type 'Fun'
+-- `Fn` is the one name for the function type: `Fun` is no type at all,
+-- in the header of an impl or in a type.
+trait Show { fn show(self) -> String }
+trait Show for Fun { fn show(self) -> String { "a function" } }
+fn takes(f: Fun) -> Int { 1 }
+fn main() {}

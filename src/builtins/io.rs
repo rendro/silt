@@ -299,6 +299,13 @@ fn read_all_stdin() -> std::io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
+/// A line as read, without its line end: `\n` or `\r\n`. A last line
+/// with no line end is whole.
+fn without_line_end(line: &str) -> &str {
+    line.strip_suffix('\n')
+        .map_or(line, |rest| rest.strip_suffix('\r').unwrap_or(rest))
+}
+
 /// The error of an `io` function whose operation has no value of its
 /// own: its wait timed out, or the operation could not run. Either
 /// way `Other` with the reason.
@@ -362,9 +369,11 @@ builtins! {
             let mut line = String::new();
             match std::io::stdin().read_line(&mut line) {
                 Ok(0) => fs_ok(Value::variant(bv::NONE, [])),
+                // Only the line end goes, as in `stream.stdin_lines`:
+                // spaces and tabs at the end of the line are its own.
                 Ok(_) => fs_ok(Value::variant(
                     bv::SOME,
-                    [Value::string(line.trim_end())],
+                    [Value::string(without_line_end(&line))],
                 )),
                 // As `read_stdin` and `stream.stdin_lines` say it.
                 Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
@@ -715,6 +724,30 @@ pub(crate) mod env {
                 .filter_map(|(k, v)| Some((k.into_string().ok()?, v.into_string().ok()?)))
                 .map(|(k, v)| Value::tuple(vec![Value::string(k), Value::string(v)]))
                 .collect()
+        }
+    }
+}
+
+#[cfg(test)]
+mod line_end_tests {
+    use super::without_line_end;
+
+    /// `io.read_line` drops the line end and nothing else: spaces and
+    /// tabs at the end of a line are kept, as `stream.stdin_lines`
+    /// keeps them.
+    #[test]
+    fn only_the_line_end_is_dropped() {
+        for (read, line) in [
+            ("  padded \t\n", "  padded \t"),
+            ("quit \r\n", "quit "),
+            ("\t\r\n", "\t"),
+            ("\n", ""),
+            ("\r\n", ""),
+            ("last line  ", "last line  "),
+            ("a\r", "a\r"),
+            ("a\r\r\n", "a\r"),
+        ] {
+            assert_eq!(without_line_end(read), line, "{read:?}");
         }
     }
 }

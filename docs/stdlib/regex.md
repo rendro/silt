@@ -69,6 +69,13 @@ the error comes back without compiling it again. What a search keeps for its
 next one, on each thread that searched with a pattern, is not counted in the
 128 MiB: it grows with the searching, up to a few MiB a pattern and thread.
 
+The 256 patterns and 128 MiB bound that store only. A `Regex` the program
+keeps, in a list, a map or a record, is not counted: each one holds its
+compiled pattern, at most 4 MiB, for as long as the program holds it, and
+nothing limits how many the program keeps, as nothing limits how many strings
+it keeps. A program that compiles patterns given by its users should cap how
+many of them it keeps.
+
 ## Summary
 
 | Function | Signature | Description |
