@@ -12,14 +12,19 @@ writes them. Fields are separated by commas, records end at a line break
 quoted, `"Smith, John"`, and a quote inside a quoted field is doubled:
 `"say ""hi"""` is `say "hi"`. `string.split(line, ",")` breaks such a field
 in two; `csv.split_line` does not, and `csv.parse` reads a whole text into
-a list of records, as `json.parse` reads a document into a type.
+a list of records, as `json.parse` reads a document into a type. The other
+way, `csv.stringify` writes a list of records as a text that `csv.parse`
+reads back, and `csv.join_line` writes one line that `csv.split_line` reads
+back, quoting what needs it.
 
 ## Summary
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
+| `join_line` | `(List(String)) -> String` | The fields as one line: a field with a comma, a quote or a line break quoted, its quotes doubled |
 | `parse` | `(String, type a) -> Result(List(a), CsvError)` | Every row of a text with a header as a record of the type, its fields by their columns' names |
 | `split_line` | `(String) -> Result(List(String), CsvError)` | The fields of one line: quoted fields and `""` escapes as RFC 4180 writes them |
+| `stringify` | `(List(a)) -> String` | A header of the field names, then a line for each record: the text `csv.parse` reads back |
 
 ## Errors
 
@@ -32,6 +37,30 @@ a list of records, as `json.parse` reads a document into a type.
 
 `CsvError` implements the built-in `Error` trait: `Error.message(e)` of a
 `Syntax` error is `csv syntax error at byte 2: a quoted field is not closed`.
+
+## `csv.join_line`
+
+```
+csv.join_line(fields: List(String)) -> String
+```
+
+The fields as one line, a comma between two and no line break at its end,
+as RFC 4180 writes them: a field that holds a comma, a quote or a line
+break (`\n` or `\r`) is quoted, and a quote in it doubled; any other field
+is written as it is. `csv.split_line` reads the line back as the same
+fields. An empty list is the empty line; a list of one empty field is
+written `""` (an empty line would be skipped by most readers), which
+`csv.split_line` reads back as `[""]`.
+
+```silt
+import csv
+
+fn main() {
+  println(csv.join_line(["1", "Smith, John", "say \"hi\""])) -- 1,"Smith, John","say ""hi"""
+  println(csv.join_line(["a", "", "c"])) -- a,,c
+  println(csv.split_line(csv.join_line(["a,b", "c"]))) -- Ok(["a,b", "c"])
+}
+```
 
 ## `csv.parse`
 
@@ -167,5 +196,53 @@ fn main() {
     }
     Err(e) -> println(Error.message(e))
   }
+}
+```
+
+
+## `csv.stringify`
+
+```
+csv.stringify(rows: List(a)) -> String
+```
+
+Writes a list of records as a CSV text that `csv.parse` reads back: a
+header of the field names of the records' type, in the order the type
+declares them, then one line for each record, in order. Every line ends
+in `\n`, and a field is quoted as `csv.join_line` quotes it, so a row of
+one empty cell is the line `""`, not an empty line. An empty list is the
+empty text, which `csv.parse` reads as `Ok([])`.
+
+The records' type is checked as `csv.parse`'s type argument is: a record
+type whose fields are `Int`, `Float`, `String`, `Bool`, `time.Date`,
+`time.Time`, `time.DateTime`, an `Option` of these or an alias of these.
+Anything else is a compile error (`csv.stringify cannot write ...`).
+
+A cell is written as `csv.parse` reads it: a number as silt shows it
+(`42`, `1.5`), a `Bool` as `true` or `false`, a date or a time as
+`json.stringify` writes one (`2024-03-09`), a `String` as it is, and `None`
+as an empty cell. So `Some("")` of an `Option(String)` is an empty cell
+too, which `csv.parse` reads as `None`.
+
+```silt
+import csv
+
+type Person {
+  name: String,
+  age: Int,
+  email: Option(String),
+}
+
+fn main() {
+  let people = [
+    Person { name: "Smith, John", age: 42, email: Some("john@example.com") },
+    Person { name: "Ada", age: 36, email: None },
+  ]
+  let text = csv.stringify(people)
+  print(text)
+  -- name,age,email
+  -- "Smith, John",42,john@example.com
+  -- Ada,36,
+  println(csv.parse(text, Person) == Ok(people)) -- true
 }
 ```

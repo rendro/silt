@@ -1,0 +1,2 @@
+Ok(Config {name: "x", extra: None})
+Ok(Config {name: "x", extra: Some([Int(1), String("two"), Array([Float(3.5)])])})

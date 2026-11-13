@@ -14,6 +14,10 @@ use crate::typeinfo::FieldType;
 /// into that is no record type and no `json.Value`.
 pub const ROW_TYPE_HELP: &str = "declare a record type with a field for each column";
 
+/// The part of a type no decoder has: `Option(Option(T))`, whose
+/// `Some(None)` is written as `None` is.
+pub const OPTION_IN_OPTION: &str = "an Option in an Option";
+
 /// What the compile error says of `json.Value` given to a family that
 /// does not decode it.
 pub const JSON_VALUE_ELSEWHERE: &str = "a type of the json decoders";
@@ -104,7 +108,7 @@ impl Family {
         use Leaf::*;
         match self {
             Family::Json => &[Int, Float, String, Bool, Date, Time, DateTime, JsonValue],
-            Family::Toml => &[Int, Float, String, Bool, Date, Time, DateTime],
+            Family::Toml => &[Int, Float, String, Bool, Date, Time, DateTime, JsonValue],
             // `Bytes` from a `bytea` column.
             Family::Postgres => &[
                 Int, Float, String, Bool, Bytes, Date, Time, DateTime, JsonValue,
@@ -179,6 +183,11 @@ impl Family {
             return self.lacks_in_a_cell(field_type);
         }
         match field_type {
+            // `None` and `Some(None)` are both written as nothing (a
+            // `null`, no key): `Some(None)` never reads back.
+            FieldType::Option(inner) if matches!(**inner, FieldType::Option(_)) => {
+                Some(OPTION_IN_OPTION)
+            }
             FieldType::List(t) | FieldType::Option(t) => self.lacks(t),
             FieldType::Map(t) => self.nested().lacks(t),
             FieldType::Tuple(ts) => ts.iter().find_map(|t| self.nested().lacks(t)),
@@ -194,7 +203,7 @@ impl Family {
     fn lacks_in_a_cell(self, field_type: &FieldType) -> Option<&'static str> {
         let cell = match field_type {
             FieldType::Option(inner) if matches!(**inner, FieldType::Option(_)) => {
-                return Some("an Option in an Option");
+                return Some(OPTION_IN_OPTION);
             }
             FieldType::Option(inner) => inner,
             other => other,

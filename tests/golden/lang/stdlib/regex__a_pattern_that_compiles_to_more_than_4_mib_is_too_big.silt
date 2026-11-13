@@ -6,13 +6,18 @@ import regex
 -- the regex crate's own limit of 10 MiB let them compile. A pattern for
 -- a name of 3 to 32 word characters is about 1.8 MB, and compiles.
 fn main() {
-  match regex.is_match("x", """\w{100}""") {
+  match regex.compile("""\w{100}""") {
     Err(regex.TooBig) -> println("TooBig")
-    other -> println(other)
+    Err(e) -> println(e)
+    Ok(_) -> println("compiles")
   }
-  match regex.is_match("password1", """^.{8,4096}$""") {
+  match regex.compile("""^.{8,4096}$""") {
     Err(regex.TooBig) -> println("TooBig")
-    other -> println(other)
+    Err(e) -> println(e)
+    Ok(_) -> println("compiles")
   }
-  println(regex.is_match("silt_lang", """^\w{3,32}$"""))
+  match regex.compile("""^\w{3,32}$""") {
+    Ok(name) -> println(regex.is_match("silt_lang", name))
+    Err(e) -> println(e)
+  }
 }

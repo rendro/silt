@@ -1,8 +1,10 @@
 import io
 import regex
-import result
 fn program() {
-  regex.find("abc 123 def 456", "\\d+") |> result.unwrap_or(None)
+  match regex.compile("\\d+") {
+    Ok(re) -> regex.find("abc 123 def 456", re)
+    Err(_) -> None
+  }
 }
 
 fn main() {

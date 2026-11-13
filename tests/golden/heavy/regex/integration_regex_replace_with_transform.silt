@@ -1,8 +1,10 @@
 import io
 import regex
-import result
 fn program() {
-  regex.replace_with("hello world", "[a-z]+", { m -> "[{m}]" }) |> result.unwrap_or("")
+  match regex.compile("[a-z]+") {
+    Ok(re) -> regex.replace_with("hello world", re, { m -> "[{m}]" })
+    Err(_) -> ""
+  }
 }
 
 fn main() {

@@ -1,0 +1,30 @@
+-- `regex.escape` puts a `\` in front of every character that means
+-- something in a pattern, so a pattern built from text a user gave
+-- matches that text and nothing else, and always compiles.
+import list
+import regex
+
+fn main() -> Result((), regex.RegexError) {
+  println(regex.escape("a.b"))
+  println(regex.escape("""\.+*?()|[]{}^$#&-~"""))
+  println(regex.escape("plain text, é ü"))
+  println(regex.escape(""))
+  let texts = ["a.b", "(", "[x]", "1+1=2", "$5", """\d""", "\{2}", "a|b", "^start$"]
+  list.each(texts) { text ->
+    match regex.compile("^{regex.escape(text)}$") {
+      Ok(exact) -> println("{text}: {regex.is_match(text, exact)}")
+      Err(e) -> println("{text}: {e}")
+    }
+  }
+  -- Without it a `.` matches any character.
+  let loose = regex.compile("a.b")?
+  let strict = regex.compile(regex.escape("a.b"))?
+  println(regex.is_match("axb", loose))
+  println(regex.is_match("axb", strict))
+  -- And a `(` breaks the pattern.
+  match regex.compile("(") {
+    Err(e) -> println(e)
+    Ok(_) -> println("compiles")
+  }
+  Ok(())
+}

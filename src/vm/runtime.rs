@@ -703,7 +703,7 @@ impl Runtime {
 /// A pattern that does not compile is remembered with why
 /// ([`RegexCache::REFUSALS_MOST`] of them, their texts at most
 /// [`RegexCache::REFUSED_TEXT_MOST`] bytes together, the oldest going
-/// first), so it is not compiled again on every call.
+/// first), so it is not compiled again by every `regex.compile` of it.
 ///
 /// What a search keeps between calls, the lazy DFA's cache of each
 /// thread that searched with a pattern, is not counted: it grows with

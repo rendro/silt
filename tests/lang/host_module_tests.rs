@@ -1160,3 +1160,66 @@ fn a_parameter_written_as_a_pattern_is_named_by_its_place() {
         assert!(err.contains(expected), "{signature}: {err}");
     }
 }
+
+/// A host function that builds a record or a variant its type does not
+/// allow (a record with another number of fields than its type declares,
+/// a variant without its field, a variant at a place its enum has none)
+/// fails in the constructor, in every build: the panic is caught as an
+/// error of the call, and nothing malformed reaches the program. (In a
+/// release build the constructors checked nothing, and showing the last
+/// value panicked out of the VM.)
+#[test]
+fn a_host_function_that_builds_a_malformed_value_fails_in_every_build() {
+    use silt::typeinfo::Tag;
+    let host = HostModule::new("h")
+        .function("fn first_field(x: a) -> a", |args: &[Value]| {
+            match &args[0] {
+                Value::Record(r) => Ok(Value::record(r.ty().clone(), vec![r.fields()[0].clone()])),
+                other => Ok(other.clone()),
+            }
+        })
+        .function("fn no_fields(x: a) -> a", |args: &[Value]| match &args[0] {
+            Value::Variant(v) => Ok(Value::variant(v.tag(), [])),
+            other => Ok(other.clone()),
+        })
+        .function("fn far(x: a) -> List(a)", |args: &[Value]| match &args[0] {
+            Value::Variant(v) => Ok(Value::list(vec![
+                args[0].clone(),
+                Value::variant(Tag::new(v.ty().clone(), 9), []),
+            ])),
+            other => Ok(Value::list(vec![other.clone()])),
+        });
+    let run = |body: &str| {
+        let source = format!(
+            "import h\nimport host\ntype Pt {{ x: Int, y: Int }}\ntype Sh {{ Circle(Int), Dot }}\n\
+             fn main() {{\n  {body}\n}}\n"
+        );
+        run_with_host(&[("main.silt", &source)], vec![host.clone()])
+    };
+    let cases = [
+        (
+            "println(h.first_field(Pt { x: 1, y: 2 }))",
+            "host function 'h.first_field' panicked: Value::record: `Pt` declares 2 fields, given 1",
+        ),
+        (
+            "println(h.no_fields(Circle(3)))",
+            "host function 'h.no_fields' panicked: Value::variant: the variant `Circle` of `Sh` takes 1 field, given 0",
+        ),
+        (
+            "println(h.far(Dot))",
+            "host function 'h.far' panicked: Tag::new: `Sh` has 2 variants, none at place 9",
+        ),
+    ];
+    for (body, expected) in cases {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(body)));
+        let Ok(result) = result else {
+            panic!("{body}: a panic came out of the VM");
+        };
+        match result {
+            Err(message) => assert!(message.contains(expected), "{body}: {message}"),
+            Ok(value) => panic!("{body}: ran, gave {value:?}"),
+        }
+    }
+    // A well-formed value passes.
+    assert!(run("host.give(h.far(5))").is_ok());
+}
