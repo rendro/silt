@@ -1059,6 +1059,15 @@ impl TypeChecker {
             Type::Generic(n, _) if n.is_builtin("Result") || n.is_builtin("Option") => {
                 let before = self.errors.len();
                 self.unify(&ret_resolved, &expected_wrapper, span);
+                // A `Result`'s `?` in a function that returns a `Result`
+                // of another error: the one text, which says what `?`
+                // returns and how to convert it.
+                if head == "Result" && n.is_builtin("Result") && self.errors.len() > before {
+                    self.errors.truncate(before);
+                    let diagnostic = self.other_error_of_try(&args[1], &ret_resolved, span);
+                    self.errors.push(diagnostic);
+                    return;
+                }
                 // An Option's `?` in a function that returns a Result:
                 // the None has no error to return.
                 if head == "Option" && n.is_builtin("Result") {
@@ -1089,6 +1098,44 @@ impl TypeChecker {
                 );
             }
         }
+    }
+
+    /// The error of a `?` of a `Result` whose error is `error` in a
+    /// function that returns `ret`, a `Result` of another error: `?`
+    /// converts nothing, so the help converts it, with the variant of
+    /// the function's error enum that holds this error where there is
+    /// one (`result.map_err(Io)`).
+    fn other_error_of_try(&self, error: &Type, ret: &Type, span: Span) -> Diagnostic {
+        let error = self.apply(error);
+        let wanted = match ret {
+            Type::Generic(_, args) if args.len() == 2 => self.apply(&args[1]),
+            _ => Type::Error,
+        };
+        let message = format!(
+            "`?` returns this `{}` from the function, which returns `{}`",
+            self.show_type(&error),
+            self.show_type(ret)
+        );
+        let holder = match &wanted {
+            Type::Generic(name, _) => (self.tables.enums.get(name).into_iter())
+                .flat_map(|info| info.variants.iter())
+                .filter(|v| matches!(v.field_types.as_slice(), [field] if *field == error))
+                .map(|v| v.name)
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
+        };
+        let help = match holder.as_slice() {
+            [variant] => {
+                format!("`?` converts nothing: add `|> result.map_err({variant})` before the `?`")
+            }
+            _ => format!(
+                "`?` converts nothing: turn the `{}` into the function's `{}` before the `?`, \
+                 `|> result.map_err {{ e -> ... }}`",
+                self.show_type(&error),
+                self.show_type(&wanted)
+            ),
+        };
+        Diagnostic::error(Code::TypeMismatch, span, message).with_help(help)
     }
 
     /// Report that the record a spread extends with `field` has the
