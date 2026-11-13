@@ -491,49 +491,210 @@ struct Client {
     connects: Arc<Connects>,
 }
 
-/// The TCP connects of a client: how many are under way, and whether the
-/// client was stopped. A connect cannot be interrupted (ureq does not
-/// end one when the client is shut down): a request given up while one
-/// is under way runs on until it ends, at most the connect time, and
-/// counts until then among the operations that cannot be interrupted,
-/// whose number is bounded (`vm::io_op::IO_POOL_UNHEARD_MAX`). A connect
-/// that would start after the stop does not start.
+/// The TCP connects of a client, which the client makes itself
+/// ([`Connecting`]): their [`Shutter`], which the client's stop shuts, and
+/// whether the client was stopped. A connect that waits for its peer is
+/// shut down so (on Linux that ends it at once, see
+/// `tcp::connect_shuttered`); a connect that would begin after the stop
+/// does not begin.
+///
+/// [`Shutter`]: crate::runtime::handle::Shutter
 #[cfg(feature = "http")]
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct Connects {
-    under_way: std::sync::atomic::AtomicUsize,
+    shutter: crate::runtime::handle::Shutter,
     stopped: AtomicBool,
 }
 
-/// ureq's TCP connector, watched ([`Connects`]).
+#[cfg(feature = "http")]
+impl std::fmt::Debug for Connects {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Connects")
+            .field("stopped", &self.stopped)
+            .finish()
+    }
+}
+
+/// The TCP connector of the http client: in place of ureq's, it makes the
+/// connection with `tcp::connect_shuttered`, so that a request given up
+/// while its connect waits is ended there, and hands ureq the connected
+/// socket ([`Connected`]). What it does besides is what ureq's does: each
+/// resolved address in turn within the connect's time, the next after
+/// one that only that address refuses, `TCP_NODELAY` as configured.
 #[cfg(feature = "http")]
 #[derive(Debug)]
-struct Watched(ureq::unversioned::transport::TcpConnector, Arc<Connects>);
+struct Connecting(Arc<Connects>);
 
 #[cfg(feature = "http")]
 impl<In: ureq::unversioned::transport::Transport> ureq::unversioned::transport::Connector<In>
-    for Watched
+    for Connecting
 {
-    type Out =
-        <ureq::unversioned::transport::TcpConnector as ureq::unversioned::transport::Connector<
-            In,
-        >>::Out;
+    type Out = ureq::unversioned::transport::Either<In, Connected>;
 
     fn connect(
         &self,
         details: &ureq::unversioned::transport::ConnectionDetails,
         chained: Option<In>,
     ) -> Result<Option<Self::Out>, ureq::Error> {
-        // (Counted before the look at the stop, which the stop sets
-        // before it reads the count: a connect is either refused here or
-        // seen there.)
-        self.1.under_way.fetch_add(1, Ordering::SeqCst);
-        let connected = match self.1.stopped.load(Ordering::SeqCst) {
-            true => Err(ureq::Error::Io(std::io::ErrorKind::NotConnected.into())),
-            false => self.0.connect(details, chained),
+        use ureq::unversioned::transport::Either;
+        // A connection made before (a proxy's) is used as it is.
+        if chained.is_some() {
+            return Ok(chained.map(Either::A));
+        }
+        if self.0.stopped.load(Ordering::SeqCst) {
+            return Err(ureq::Error::Io(std::io::ErrorKind::NotConnected.into()));
+        }
+        let started = std::time::Instant::now();
+        let budget = details.timeout.not_zero().map(|t| *t);
+        let mut last = None;
+        for addr in details.addrs.iter() {
+            let left = match budget {
+                Some(budget) => match budget.checked_sub(started.elapsed()) {
+                    Some(left) if !left.is_zero() => Some(left),
+                    _ => return Err(ureq::Error::Timeout(details.timeout.reason)),
+                },
+                None => None,
+            };
+            match super::tcp::connect_shuttered_to(*addr, &self.0.shutter, left) {
+                Ok(stream) => {
+                    if details.config.no_delay() {
+                        stream.set_nodelay(true)?;
+                    }
+                    let config = details.config;
+                    let stream = Arc::new(stream);
+                    let transport = Connected {
+                        stream: stream.clone(),
+                        buffers: ureq::unversioned::transport::LazyBuffers::new(
+                            config.input_buffer_size(),
+                            config.output_buffer_size(),
+                        ),
+                    };
+                    let handle: std::sync::Weak<dyn ureq::unversioned::transport::ShutdownHandle> =
+                        Arc::downgrade(&stream) as _;
+                    (details.register_shutdown)(handle)?;
+                    return Ok(Some(Either::B(transport)));
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                    last = Some(ureq::Error::Timeout(ureq::Timeout::Connect));
+                }
+                // What concerns this address only: the next may answer.
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::ConnectionRefused
+                            | std::io::ErrorKind::HostUnreachable
+                            | std::io::ErrorKind::NetworkUnreachable
+                            | std::io::ErrorKind::AddrNotAvailable
+                    ) =>
+                {
+                    last = Some(ureq::Error::Io(e));
+                }
+                Err(e) => return Err(ureq::Error::Io(e)),
+            }
+        }
+        Err(last.unwrap_or_else(|| {
+            ureq::Error::Io(std::io::Error::new(
+                std::io::ErrorKind::ConnectionRefused,
+                "Connection refused",
+            ))
+        }))
+    }
+}
+
+/// A connection the http client made itself ([`Connecting`]), as ureq's
+/// transport for TCP is: its buffers, and the socket, shared with the
+/// client's shutdown.
+#[cfg(feature = "http")]
+struct Connected {
+    stream: Arc<std::net::TcpStream>,
+    buffers: ureq::unversioned::transport::LazyBuffers,
+}
+
+#[cfg(feature = "http")]
+impl std::fmt::Debug for Connected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Connected")
+            .field("peer", &self.stream.peer_addr().ok())
+            .finish()
+    }
+}
+
+/// The time of one read or write, or its end: an `Err` when none is left.
+#[cfg(feature = "http")]
+fn time_of(
+    timeout: ureq::unversioned::transport::NextTimeout,
+) -> Result<Option<std::time::Duration>, ureq::Error> {
+    if timeout.after.is_zero() {
+        return Err(ureq::Error::Timeout(timeout.reason));
+    }
+    Ok(timeout.not_zero().map(|t| *t))
+}
+
+/// An I/O error of the socket, with a timeout as ureq's timeout.
+#[cfg(feature = "http")]
+fn io_of(e: std::io::Error, timeout: &ureq::unversioned::transport::NextTimeout) -> ureq::Error {
+    match e.kind() {
+        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => {
+            ureq::Error::Timeout(timeout.reason)
+        }
+        _ => ureq::Error::Io(e),
+    }
+}
+
+#[cfg(feature = "http")]
+impl ureq::unversioned::transport::Transport for Connected {
+    fn buffers(&mut self) -> &mut dyn ureq::unversioned::transport::Buffers {
+        &mut self.buffers
+    }
+
+    fn transmit_output(
+        &mut self,
+        amount: usize,
+        timeout: ureq::unversioned::transport::NextTimeout,
+    ) -> Result<(), ureq::Error> {
+        use std::io::Write;
+        use ureq::unversioned::transport::Buffers;
+        let timeout = timeout.for_write();
+        self.stream.set_write_timeout(time_of(timeout)?)?;
+        let output = &self.buffers.output()[..amount];
+        (&*self.stream)
+            .write_all(output)
+            .map_err(|e| io_of(e, &timeout))
+    }
+
+    fn await_input(
+        &mut self,
+        timeout: ureq::unversioned::transport::NextTimeout,
+    ) -> Result<bool, ureq::Error> {
+        use std::io::Read;
+        use ureq::unversioned::transport::Buffers;
+        let timeout = timeout.for_read();
+        self.stream.set_read_timeout(time_of(timeout)?)?;
+        let input = self.buffers.input_append_buf();
+        let read = loop {
+            match (&*self.stream).read(input) {
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                read => break read,
+            }
         };
-        self.1.under_way.fetch_sub(1, Ordering::SeqCst);
-        connected
+        let read = read.map_err(|e| io_of(e, &timeout))?;
+        self.buffers.input_appended(read);
+        Ok(read > 0)
+    }
+
+    fn is_open(&mut self) -> bool {
+        use std::io::Read;
+        // Nothing may wait to be read on a connection that is kept: a read
+        // that would wait says it is open.
+        if self.stream.set_nonblocking(true).is_err() {
+            return false;
+        }
+        let mut byte = [0u8; 1];
+        let open = matches!(
+            (&*self.stream).read(&mut byte),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock
+        );
+        open && self.stream.set_nonblocking(false).is_ok()
     }
 }
 
@@ -541,15 +702,19 @@ impl<In: ureq::unversioned::transport::Transport> ureq::unversioned::transport::
 impl Client {
     /// What ends a request of this client that nobody waits for any
     /// more (`Leave::Closes`): the client is shut down, which ends a
-    /// read, a write or a TLS handshake at once. `false` while a TCP
-    /// connect is under way, which runs on: the operation counts until
-    /// it ends.
+    /// read, a write or a TLS handshake at once, and so is the socket of
+    /// its connect. `false` while a connect is under way: whether a
+    /// shutdown ends it depends on the system (Linux: it does), and the
+    /// operation counts among those that cannot be interrupted until the
+    /// connect has returned (at once, on Linux).
     fn stop(&self) -> impl FnOnce() -> bool + Send + 'static {
         let (agent, connects) = (self.agent.clone(), self.connects.clone());
         move || {
             connects.stopped.store(true, Ordering::SeqCst);
+            let ended = !connects.shutter.is_connecting();
+            connects.shutter.shut();
             agent.shutdown();
-            connects.under_way.load(Ordering::SeqCst) == 0
+            ended
         }
     }
 }
@@ -558,12 +723,10 @@ impl Client {
 /// request says `user-agent: silt/<version>` and `accept-encoding:
 /// gzip`, unless the program sets that header itself: ureq sends the
 /// request's header then. Its connector is ureq's default (a CONNECT
-/// proxy, TCP, TLS), with the TCP connects watched ([`Connects`]).
+/// proxy, TCP, TLS) with its own TCP connector ([`Connecting`]).
 #[cfg(feature = "http")]
 fn client_with_times(connect: Duration, global: Duration) -> Client {
-    use ureq::unversioned::transport::{
-        ConnectProxyConnector, Connector, RustlsConnector, TcpConnector,
-    };
+    use ureq::unversioned::transport::{ConnectProxyConnector, Connector, RustlsConnector};
     let config = ureq::Agent::config_builder()
         .http_status_as_error(false)
         .timeout_connect(Some(connect))
@@ -574,7 +737,7 @@ fn client_with_times(connect: Duration, global: Duration) -> Client {
     let connects = Arc::new(Connects::default());
     let connector =
         ().chain(ConnectProxyConnector::default())
-            .chain(Watched(TcpConnector::default(), connects.clone()))
+            .chain(Connecting(connects.clone()))
             .chain(RustlsConnector::default());
     let resolver = ureq::unversioned::resolver::DefaultResolver::default();
     Client {

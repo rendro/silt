@@ -573,15 +573,14 @@ fn main() {{
 }
 
 /// An `http.get` given up while its TCP connect waits (the listener's
-/// queue is full) cannot be interrupted there: it runs on until its
-/// connect ends, and counts until then among the operations that cannot
-/// be interrupted, of which there may be 64. A hundred of them do not
-/// take a thread each: from the 65th on an operation is refused, the
-/// file read at the end too. (They counted as stopped, and every one held
-/// a thread and a socket for its connect time.)
+/// queue is full) is shut down there: the client makes its connection
+/// itself, so the stop ends the connect, and its thread with it. A
+/// hundred of them leave nothing behind, and the file read at the end
+/// runs. (ureq's connect could not be interrupted: each ran on for its
+/// connect time, and they used up the bound of 64.)
 #[test]
 #[cfg(all(feature = "tcp-tls", feature = "http", target_os = "linux"))]
-fn an_http_request_given_up_in_its_connect_counts_until_the_connect_ends() {
+fn an_http_request_given_up_in_its_connect_frees_its_thread() {
     let (_listener, _held, addr) = full_listener();
     let file = temp_file("http_connect_bound.txt", "text");
     let source = format!(
@@ -611,8 +610,5 @@ fn main() {{
 "#
     );
     let (_vm, out) = run(&source).expect("the program ended");
-    assert!(
-        out.starts_with("too many I/O operations that nobody waits for are still running"),
-        "{out}"
-    );
+    assert_eq!(out, "read the file\n");
 }

@@ -570,27 +570,13 @@ pub(crate) fn connect_shuttered(
     shutter: &crate::runtime::handle::Shutter,
 ) -> std::io::Result<TcpStream> {
     use std::net::ToSocketAddrs;
-    let given_up = || std::io::Error::from(std::io::ErrorKind::NotConnected);
     let mut last = None;
     for addr in addr.to_socket_addrs()? {
-        let socket = socket2::Socket::new(
-            socket2::Domain::for_address(addr),
-            socket2::Type::STREAM,
-            Some(socket2::Protocol::TCP),
-        )?;
-        let stream = TcpStream::from(socket);
-        // Nobody waits for the connect any more: it ends here.
-        if !shutter.connecting(&stream) {
-            return Err(given_up());
-        }
-        let socket = socket2::Socket::from(stream);
-        let connected = socket.connect(&addr.into());
-        shutter.connected();
-        if shutter.is_shut() {
-            return Err(given_up());
-        }
-        match connected {
-            Ok(()) => return Ok(socket.into()),
+        match connect_shuttered_to(addr, shutter, None) {
+            Ok(stream) => return Ok(stream),
+            Err(e) if e.kind() == std::io::ErrorKind::NotConnected && shutter.is_shut() => {
+                return Err(e);
+            }
             Err(e) => last = Some(e),
         }
     }
@@ -600,6 +586,37 @@ pub(crate) fn connect_shuttered(
             "could not resolve to any addresses",
         )
     }))
+}
+
+/// [`connect_shuttered`] to the one address `addr`, within `time` if
+/// one is given (`TimedOut` after it). `NotConnected` when the shutter
+/// was shut.
+pub(crate) fn connect_shuttered_to(
+    addr: std::net::SocketAddr,
+    shutter: &crate::runtime::handle::Shutter,
+    time: Option<std::time::Duration>,
+) -> std::io::Result<TcpStream> {
+    let given_up = || std::io::Error::from(std::io::ErrorKind::NotConnected);
+    let socket = socket2::Socket::new(
+        socket2::Domain::for_address(addr),
+        socket2::Type::STREAM,
+        Some(socket2::Protocol::TCP),
+    )?;
+    let stream = TcpStream::from(socket);
+    // Nobody waits for the connect any more: it ends here.
+    if !shutter.connecting(&stream) {
+        return Err(given_up());
+    }
+    let socket = socket2::Socket::from(stream);
+    let connected = match time {
+        Some(time) => socket.connect_timeout(&addr.into(), time),
+        None => socket.connect(&addr.into()),
+    };
+    shutter.connected();
+    if shutter.is_shut() {
+        return Err(given_up());
+    }
+    connected.map(|()| socket.into())
 }
 
 /// What makes an operation on `stream` return when nobody waits for

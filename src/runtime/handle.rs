@@ -1113,6 +1113,11 @@ impl Shutter {
         set
     }
 
+    /// Whether a connect begun at [`Shutter::connecting`] is under way.
+    pub fn is_connecting(&self) -> bool {
+        self.0.lock().connecting
+    }
+
     /// The connect begun at [`Shutter::connecting`] has returned.
     pub fn connected(&self) {
         self.0.lock().connecting = false;

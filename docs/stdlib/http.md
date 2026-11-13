@@ -106,12 +106,13 @@ To bound a request by a time of your own, put a `task.deadline` around
 it. A request that nobody waits for any more (its deadline passed, its
 task was cancelled) is ended at once, wherever it waits: for the
 server's answer, in its body, in a TLS handshake, and holds no thread.
-A TCP connect under way cannot be interrupted: it runs on to its end, at
-most 10 s, and counts until then among the I/O operations that cannot be
-interrupted, of which 64 may run unheard (see [the I/O
-pool](../concurrency.md#the-io-pool-and-operations-that-nobody-waits-for)):
-a program that gives up more requests than that to hosts that do not
-answer at all finds its next I/O operations refused for those seconds.
+So is a connect that waits for a host that does not answer: on Linux it
+ends at once; elsewhere it may run on to its connect time, at most 10 s,
+counted until then among the I/O operations that cannot be interrupted
+(see [the I/O
+pool](../concurrency.md#the-io-pool-and-operations-that-nobody-waits-for)).
+The name lookup of a host name cannot be interrupted: it ends by the
+system's own time.
 
 
 ## `http.get`
