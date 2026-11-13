@@ -683,7 +683,7 @@ impl Lexer {
             if ch == '\n' {
                 break;
             }
-            self.refuse_direction_control();
+            self.refuse_direction_control(false);
             self.advance_char();
         }
     }
@@ -693,8 +693,9 @@ impl Lexer {
     /// control, is an error. Such a character can make the text show
     /// otherwise than the compiler reads it ("Trojan Source"); written
     /// as an escape in a string it shows as what it is. (Between tokens
-    /// it is an invisible character, refused as one.)
-    fn refuse_direction_control(&mut self) {
+    /// it is an invisible character, refused as one.) `in_string`: the
+    /// help offers the escape; a comment has none.
+    fn refuse_direction_control(&mut self, in_string: bool) {
         let Some(c) = self.peek().filter(|c| is_direction_control(*c)) else {
             return;
         };
@@ -713,7 +714,10 @@ impl Lexer {
                      text show otherwise than it reads"
                 ),
             )
-            .with_help(format!("write `\\u{{{code:X}}}` in a string"))
+            .with_help(match in_string {
+                true => format!("write `\\u{{{code:X}}}` in a string"),
+                false => "leave it out of the comment".to_string(),
+            })
         });
     }
 
@@ -725,7 +729,7 @@ impl Lexer {
         let mut depth = 1;
         let start = self.span();
         while depth > 0 {
-            self.refuse_direction_control();
+            self.refuse_direction_control(false);
             match self.advance_char() {
                 Some('{') if self.peek() == Some('-') => {
                     self.advance_char();
@@ -889,7 +893,7 @@ impl Lexer {
                     self.advance_char();
                 }
                 Some(ch) => {
-                    self.refuse_direction_control();
+                    self.refuse_direction_control(true);
                     self.advance_char();
                     text.push(ch);
                 }
@@ -971,7 +975,7 @@ impl Lexer {
                     break;
                 }
                 Some(ch) => {
-                    self.refuse_direction_control();
+                    self.refuse_direction_control(true);
                     self.advance_char();
                     raw.push(ch);
                 }
@@ -2240,11 +2244,11 @@ mod tests {
                     .map(|_| ())
                     .expect_err(&src);
                 assert_eq!(error.code, Code::UnexpectedChar, "{src}");
-                assert_eq!(
-                    error.help,
-                    vec![format!("write `\\u{{{:X}}}` in a string", c as u32)],
-                    "{src}"
-                );
+                let help = match src.starts_with('"') {
+                    true => format!("write `\\u{{{:X}}}` in a string", c as u32),
+                    false => "leave it out of the comment".to_string(),
+                };
+                assert_eq!(error.help, vec![help], "{src}");
             }
         }
         assert_eq!(
