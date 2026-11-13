@@ -414,9 +414,16 @@ pub struct Tag {
 }
 
 impl Tag {
-    /// The `ordinal`th variant of the enum `ty`.
+    /// The `ordinal`th variant of the enum `ty`, which has one there, or
+    /// this panics, in every build: a host function builds values with
+    /// it, and a variant at a place its enum has none has no name to show.
     pub fn new(ty: Arc<TypeInfo>, ordinal: u16) -> Tag {
-        debug_assert!((ordinal as usize) < ty.variants().len());
+        assert!(
+            (ordinal as usize) < ty.variants().len(),
+            "Tag::new: `{}` has {} variants, none at place {ordinal}",
+            ty.name,
+            ty.variants().len()
+        );
         Tag { ty, ordinal }
     }
 

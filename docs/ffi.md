@@ -143,14 +143,13 @@ record is checked so too: `fn keep(p: {name: String, ...r}) -> {name:
 String, ...r}` gives back the fields of the record it is given, and a
 record of a declared type (`Person`) as a record of that type.
 
-Every record and variant of a result is also checked against its own
-type, as far as the check looks: a record built with `Value::record` has
-the number of fields its type declares, and a variant built with
-`Value::variant` (and `Tag::new`) is one its enum has, with the number of
-fields that variant declares. These constructors check that only in a
-debug build (as a panic inside the function); a result that breaks it is
-the runtime error ``mylib.f: it returned a value its type does not allow:
-a record of `Person` with 1 field, and the type declares 2 fields``.
+The constructors a function builds values with check them against their
+types, in every build: `Value::record` takes the number of fields its type
+declares, `Tag::new` a place its enum has a variant at, and
+`Value::variant` the number of fields that variant declares. Anything else
+panics inside the function, which is the runtime error ``host function
+'mylib.f' panicked: Value::record: `Person` declares 2 fields, given 1``
+(see "Error Surfacing"); no malformed value reaches the program.
 
 What no argument shows stays the function's to get right: a variable
 whose arguments hold no value of it (`first([])`), the parts of two
@@ -537,8 +536,7 @@ fault of the program itself, a division by zero or a `panic`, keeps it
 - **An `Err` from a host function** becomes a runtime error whose message
   starts with the function's name: `mylib.parse: bad input`. So does a
   result whose checked parts (see "Functions on values") are not of the
-  type its signature returns, or whose records and variants are not as
-  their types declare them.
+  type its signature returns.
 - **A panic inside a host function** is caught and becomes a runtime
   error (`host function 'mylib.parse' panicked: ...`). The scheduler
   worker survives and other tasks keep running. Returning `Err` is still
