@@ -67,6 +67,40 @@ pub(crate) const FILE_OR_PACKAGE: &str = "a .silt file or a package directory";
 /// package stands for the files under it.
 pub(crate) const FILE_OR_DIRECTORY: &str = "a .silt file or a directory";
 
+/// The usage error of `silt <command>` (`check` or `fmt`) when the walk
+/// of `dir` (`shown`: how it is named) found no `.silt` file: exit 1.
+/// Where the files under it are those of packages below it, which the
+/// walk leaves to their packages, the message names one.
+pub(crate) fn refuse_empty_walk(command: &str, dir: &Path, shown: &str) -> ! {
+    let enter = |path: &Path| !silt::file_discovery::should_skip_dir(path);
+    let manifest = |path: &Path| path.file_name().is_some_and(|name| name == "silt.toml");
+    let packages: Vec<String> = files_under(dir, &enter, &manifest)
+        .iter()
+        .filter_map(|toml| toml.parent())
+        .filter(|package| *package != dir)
+        .map(|package| {
+            let package = package.to_string_lossy();
+            let package = package.strip_prefix("./").unwrap_or(&package);
+            silt::git::escape_for_display(package)
+        })
+        .collect();
+    let verb = if command == "fmt" { "format" } else { command };
+    let shown = silt::git::escape_for_display(shown);
+    match packages.as_slice() {
+        [] => eprintln!("error: silt {command}: no .silt files found in {shown}"),
+        [one] => eprintln!(
+            "error: silt {command}: no .silt files found in {shown}, but for those of the \
+             package in {one}: name its directory to {verb} it"
+        ),
+        [first, ..] => eprintln!(
+            "error: silt {command}: no .silt files found in {shown}, but for those of {} \
+             packages, such as the one in {first}: name a package's directory to {verb} it",
+            packages.len()
+        ),
+    }
+    std::process::exit(1);
+}
+
 /// Recursively find all .silt files in a directory, as `silt fmt` does:
 /// in the directories [`enters_package_dir`] lets the walk into.
 pub(crate) fn find_silt_files(dir: &Path) -> Vec<String> {
