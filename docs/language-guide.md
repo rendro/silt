@@ -8,7 +8,7 @@ description: "A complete reference to silt's features: pattern matching, types, 
 # Silt Language Guide
 
 Silt is a statically-typed, expression-based programming language with full
-immutability, pattern matching as the sole branching construct, and CSP-style
+immutability, pattern matching as the way to branch, and CSP-style
 concurrency. File extension: `.silt`.
 
 This guide is split into focused pages:

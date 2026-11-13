@@ -17,16 +17,17 @@ Three design commitments shape everything:
 
 1. **Full immutability.** No mutation anywhere. Every value is safe to
    share across tasks.
-2. **Pattern matching is the only way to branch.** No `if`, no early
-   `return` outside of error flow. The exhaustiveness checker makes sure
-   every case is handled.
+2. **Branching is pattern matching.** There is no `if`: a choice is a
+   `match`, and `when ... else` leaves a block early when a condition
+   fails. The exhaustiveness checker makes sure every case is handled.
 3. **CSP concurrency with real parallelism.** Lightweight tasks on a
    thread pool, communicating through channels. I/O inside a task
    transparently yields — no `async` / `await` colouring.
 
 ## vs. Rust
 
-- You don't manage memory or lifetimes. silt uses a garbage collector.
+- You don't manage memory or lifetimes. silt frees memory by
+  reference counting; there is no garbage collector.
 - You don't write type annotations. Inference is complete for idiomatic
   code.
 - You don't get zero-cost abstractions — silt is an interpreter, not a

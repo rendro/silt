@@ -7,7 +7,7 @@ description: "Install silt, write your first program, and tour the language thro
 
 # Getting Started
 
-Silt is a statically-typed, expression-based language with a small, fixed keyword set, full immutability, and CSP-style concurrency. Pattern matching is the only way to branch. Types are inferred. Errors are values.
+Silt is a statically-typed, expression-based language with a small, fixed keyword set, full immutability, and CSP-style concurrency. Branching is pattern matching: there is no `if`. Types are inferred. Errors are values.
 
 This guide walks you through the essentials. For the complete reference, see the [Language Guide](language-guide.md).
 
@@ -68,7 +68,7 @@ let add = { x: Int, y: Int -> x + y }
 
 ## 3. Pattern matching
 
-The only branching construct. Match on constructors, tuples, lists, records, guards, ranges, or-patterns.
+How silt branches: there is no `if`. Match on constructors, tuples, lists, records, guards, ranges, or-patterns.
 
 ```silt
 fn describe(n) {

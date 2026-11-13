@@ -6,8 +6,9 @@ order: 3
 
 # Pattern Matching
 
-Pattern matching is the only branching construct. No `if`, no ternary, no
-`switch`. Every branch uses `match`, and the compiler checks exhaustiveness.
+Pattern matching is how silt branches. No `if`, no ternary, no `switch`: a
+choice is a `match`, and the compiler checks exhaustiveness. `when ... else`
+(below) leaves a block early when a pattern or a condition fails.
 
 ## Match with Scrutinee
 

@@ -21,7 +21,7 @@ fn main() {
 
 ## Pattern matching
 
-The only way to branch. Define your types, then match on their shape. The compiler verifies every case is handled.
+How silt branches: there is no `if`. Define your types, then match on their shape. The compiler verifies every case is handled.
 
 ```silt
 type Shape {
@@ -223,7 +223,7 @@ LSP server with diagnostics, hover types, go-to-definition, go-to-type-definitio
 | **keywords** | `as else fn import let loop match opaque pub return trait type when where` |
 | **types** | inferred, with ADTs, records, and traits |
 | **literals** | `42`, `0xFF`, `0b1010`, `1e5`, `1_000`, `"hi {x}"` |
-| **branching** | match only |
+| **branching** | `match`; `when ... else` leaves early |
 | **mutability** | none |
 | **errors** | Result / Option / ? |
 | **concurrency** | CSP with real parallelism |

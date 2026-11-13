@@ -135,7 +135,8 @@ called as `json.parse(text, User)`.
 
 ## Branching and loops
 
-`match` is the only branching construct, and it must be exhaustive.
+`match` is how silt branches (there is no `if`), and it must be
+exhaustive. `when ... else`, below, leaves a block early.
 
 ```silt
 fn describe(xs: List(Int)) -> String {
