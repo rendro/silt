@@ -17,6 +17,56 @@ use silt::source::FileId;
 
 use crate::cli::package::{PackageFailure, die_on_manifest_error};
 
+/// What a path given to `silt run`, `check`, `test`, `fmt` or `disasm`
+/// names. One rule for the five: a `.silt` file, or a directory; a
+/// directory that holds a `silt.toml` is the directory of that package.
+/// Any other file is no program ([`PathArg::NotSilt`]). A path that
+/// names nothing is taken for a file: reading it says it is not there
+/// (a misspelt name, most likely).
+pub(crate) enum PathArg {
+    /// A `.silt` file, or a path that names nothing.
+    File(String),
+    /// The directory of a package: it holds a `silt.toml`.
+    Package(String),
+    /// Any other directory.
+    Dir(String),
+    /// A file that is not a `.silt` file (`prog.txt`, `silt.toml`).
+    NotSilt(String),
+}
+
+/// What the path `arg` names: see [`PathArg`].
+pub(crate) fn path_arg(arg: &str) -> PathArg {
+    let path = Path::new(arg);
+    if path.is_dir() {
+        match path.join("silt.toml").is_file() {
+            true => PathArg::Package(arg.to_string()),
+            false => PathArg::Dir(arg.to_string()),
+        }
+    } else if arg.ends_with(".silt") || !path.exists() {
+        PathArg::File(arg.to_string())
+    } else {
+        PathArg::NotSilt(arg.to_string())
+    }
+}
+
+/// The usage error of `silt <command>` given the path `arg`, which is
+/// not what it takes (`takes`: "a .silt file or a package directory"):
+/// exit 1.
+pub(crate) fn refuse_path(command: &str, arg: &str, takes: &str) -> ! {
+    eprintln!(
+        "error: silt {command}: {} is not {takes}",
+        silt::git::escape_for_display(arg)
+    );
+    std::process::exit(1);
+}
+
+/// What `silt run` and `silt disasm` take: they need one program.
+pub(crate) const FILE_OR_PACKAGE: &str = "a .silt file or a package directory";
+
+/// What `silt check`, `test` and `fmt` take: a directory that is no
+/// package stands for the files under it.
+pub(crate) const FILE_OR_DIRECTORY: &str = "a .silt file or a directory";
+
 /// Recursively find all .silt files in a directory, as `silt fmt` does:
 /// in the directories [`enters_package_dir`] lets the walk into.
 pub(crate) fn find_silt_files(dir: &Path) -> Vec<String> {
@@ -158,6 +208,35 @@ pub(crate) fn door_diagnostics(
         Err(errors) => diagnostics.extend(errors.iter().cloned()),
     }
     diagnostics
+}
+
+/// `paths` with each file once: two paths of one file (two spellings,
+/// or a link and what it points to) are the first of them.
+pub(crate) fn once_each(mut paths: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    paths.retain(|p| seen.insert(silt::source::canonical_path(Path::new(p))));
+    paths
+}
+
+/// The files of a source map named by their canonical paths: what a
+/// diagnostic is rendered with to tell whether it was shown already,
+/// whichever spelling of a file's path the program it was found in was
+/// given.
+pub(crate) struct CanonicalFiles<'a>(pub(crate) &'a silt::source::SourceMap);
+
+impl silt::diagnostic::SourceView for CanonicalFiles<'_> {
+    fn locate(&self, span: silt::source::Span) -> Option<silt::diagnostic::Located> {
+        use silt::source::SourceName;
+        let file = self.0.get(span.file)?;
+        let name = match &file.path {
+            SourceName::Path(p) => silt::source::canonical_path(p).display().to_string(),
+            other => silt::diagnostic::source_name_for_display(other).unwrap_or_default(),
+        };
+        Some(silt::diagnostic::Located {
+            file: name,
+            position: self.0.position(span),
+        })
+    }
 }
 
 /// How the files of a program are named in its diagnostics, static and

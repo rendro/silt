@@ -15,7 +15,7 @@
 //!                                               // span of the key in silt.toml
 //! }
 //! pub struct PackageGraph { pub root: PackageId, pub packages: Vec<PackageNode>, pub lock: LockChange }
-//! pub enum LockPolicy { Update, ReadOnly, Refresh }
+//! pub enum LockPolicy { Update, ReadOnly, Offline, Refresh }
 //! pub enum LockChange { Unchanged, Created, Updated }
 //! pub fn resolve_packages(project_root: &Path, policy: LockPolicy, sources: &mut SourceMap)
 //!     -> Result<PackageGraph, Vec<Diagnostic>>;
@@ -50,9 +50,20 @@
 //!   [`LockPolicy::Update`] a stale lock is rewritten; under
 //!   [`LockPolicy::ReadOnly`] a stale entry is `LockfileStale`. The lock
 //!   lives next to the project's `silt.toml`.
+//! - Under [`LockPolicy::Offline`] (the language server) nothing is
+//!   fetched: no git command runs. A git dependency is taken from the
+//!   cache at the commit the lock pins (or a full `rev` names); one that
+//!   is not there is `GitDependency`, "not fetched: run `silt check`".
+//! - A package fetched over git reaches only its own files: a path
+//!   dependency it names (or a path dependency of it names) must be
+//!   inside its checkout, and it may name no repository on this machine
+//!   (a local path or `file://` URL). Either is
+//!   `DependencyOutsideCheckout`. The project's own manifest, and its
+//!   path dependencies', may name both.
 //! - A symbolic link in a dependency's `silt.toml` or `src/` is
 //!   `SymlinkInDependency`; a git checkout that holds one is not cached.
-//! - Under [`LockPolicy::Update`] and [`LockPolicy::ReadOnly`], the
+//! - Under [`LockPolicy::Update`], [`LockPolicy::ReadOnly`] and
+//!   [`LockPolicy::Offline`], the
 //!   checkout of a git dependency must have the checksum the lock pins
 //!   for its URL and commit, whether it came from the cache or was just
 //!   fetched, or it is `LockfileChecksum`. [`LockPolicy::Refresh`]
@@ -125,13 +136,26 @@ pub enum LockPolicy {
     /// still the manifest's, resolve the rest, and rewrite the lock when
     /// it changed.
     Update,
-    /// `fmt`, `disasm`, the LSP: never write. A lock entry that is not
-    /// what the manifest resolves to is an error; with no lock at all
-    /// the graph is resolved in memory.
+    /// `disasm`: never write. A lock entry that is not what the
+    /// manifest resolves to is an error; with no lock at all the graph
+    /// is resolved in memory.
     ReadOnly,
+    /// The language server: as [`LockPolicy::ReadOnly`], and nothing is
+    /// fetched, so opening a folder in an editor runs no git and
+    /// connects to no host. A git dependency comes from the cache, at
+    /// the commit the lock pins or a full `rev` names; one that is not
+    /// there is an error that says to run `silt check`, which fetches it.
+    Offline,
     /// `silt update`: ignore the lock's pins, resolve every branch and
     /// tag again, and write the lock.
     Refresh,
+}
+
+impl LockPolicy {
+    /// Whether `silt.lock` is only read: a stale entry is an error.
+    fn reads_only(self) -> bool {
+        matches!(self, LockPolicy::ReadOnly | LockPolicy::Offline)
+    }
 }
 
 /// What resolving did to `silt.lock`.
@@ -162,7 +186,7 @@ pub fn resolve_packages(
     let lock_path = root_dir.join("silt.lock");
     let existing = match policy {
         LockPolicy::Refresh => None,
-        LockPolicy::Update | LockPolicy::ReadOnly => {
+        LockPolicy::Update | LockPolicy::ReadOnly | LockPolicy::Offline => {
             Lockfile::load(&lock_path, sources).map_err(|d| vec![d])?
         }
     };
@@ -175,6 +199,7 @@ pub fn resolve_packages(
         manifests: Vec::new(),
         locked: Vec::new(),
         via: Vec::new(),
+        inside: Vec::new(),
         by_source: HashMap::new(),
         failed: HashSet::new(),
         diagnostics: Vec::new(),
@@ -211,7 +236,7 @@ pub fn resolve_packages(
 
     let fresh = resolver.lockfile();
     let lock = match (policy, &resolver.existing) {
-        (LockPolicy::ReadOnly, _) => LockChange::Unchanged,
+        (LockPolicy::ReadOnly | LockPolicy::Offline, _) => LockChange::Unchanged,
         (LockPolicy::Update, Some(old)) if old.same_pins(&fresh) => LockChange::Unchanged,
         (_, existing) => {
             let created = existing.is_none() && !lock_path.exists();
@@ -264,6 +289,10 @@ struct Resolver<'a> {
     /// The dependency that first reached each package: the package that
     /// declares it and the span of its key. `None` for the root.
     via: Vec<Option<(PackageId, Span)>>,
+    /// The checkout of the git package each package came in: its own
+    /// root for a git package, its parent's for a path dependency of
+    /// one. `None` for the project and its path dependencies.
+    inside: Vec<Option<PathBuf>>,
     by_source: HashMap<SourceKey, PackageId>,
     /// Sources whose manifest or sources failed already: reported once.
     failed: HashSet<SourceKey>,
@@ -293,6 +322,7 @@ impl Resolver<'_> {
         self.manifests.push(manifest);
         self.locked.push((locked, checksum));
         self.via.push(via);
+        self.inside.push(None);
         self.by_source.insert(key, id);
         self.queue.push_back(id);
         id
@@ -308,10 +338,22 @@ impl Resolver<'_> {
     ) -> Option<PackageId> {
         let base = self.nodes[from.0 as usize].root.clone();
         let key_name = intern::resolve(key);
+        // The checkout of the git package `from` came in, if it did.
+        let inside = self.inside[from.0 as usize].clone();
         match &entry.source {
             Dependency::Path { path } => {
                 let dir = normalize_path(&base.join(path));
                 let shown = escape_for_display(&path.display().to_string());
+                if let Some(checkout) = &inside
+                    && !dir.starts_with(checkout)
+                {
+                    self.diagnostics.push(outside_checkout_diagnostic(
+                        entry.value,
+                        &key_name,
+                        &shown,
+                    ));
+                    return None;
+                }
                 if !dir.exists() {
                     let mut d = Diagnostic::error(
                         Code::DependencyNotFound,
@@ -344,6 +386,18 @@ impl Resolver<'_> {
                     return None;
                 }
                 let root = crate::source::canonical_path(&dir);
+                // (Through a link, a path inside the checkout can lead
+                // out of it.)
+                if let Some(checkout) = &inside
+                    && !root.starts_with(checkout)
+                {
+                    self.diagnostics.push(outside_checkout_diagnostic(
+                        entry.value,
+                        &key_name,
+                        &shown,
+                    ));
+                    return None;
+                }
                 // Written relative to the project's directory, which the
                 // lockfile is in.
                 let project = &self.nodes[0].root;
@@ -362,6 +416,14 @@ impl Resolver<'_> {
             }
             Dependency::Git { url, ref_spec } => {
                 let written = url;
+                if inside.is_some() && git::is_local_git_url(written) {
+                    self.diagnostics.push(local_repository_diagnostic(
+                        entry.value,
+                        &key_name,
+                        written,
+                    ));
+                    return None;
+                }
                 let url = resolve_git_url(written, &base);
                 // The lock names the repository as the manifest does: a
                 // relative local URL relative to the project's directory,
@@ -369,7 +431,7 @@ impl Resolver<'_> {
                 let lock_url = locked_git_url(written, &url, &self.nodes[0].root);
                 let commit = match self.pinned_commit(&lock_url, ref_spec) {
                     Some(commit) => commit,
-                    None if self.policy == LockPolicy::ReadOnly && self.existing.is_some() => {
+                    None if self.policy.reads_only() && self.existing.is_some() => {
                         self.diagnostics.push(stale_diagnostic(
                             entry.value,
                             &key_name,
@@ -377,6 +439,20 @@ impl Resolver<'_> {
                         ));
                         return None;
                     }
+                    // A branch, a tag or a short rev is resolved over
+                    // the network.
+                    None if self.policy == LockPolicy::Offline => match ref_spec {
+                        GitRef::Rev(rev) if git::is_full_commit_id(rev) => rev.to_lowercase(),
+                        _ => {
+                            self.diagnostics.push(not_fetched_diagnostic(
+                                entry.value,
+                                &key_name,
+                                &url,
+                                ref_spec,
+                            ));
+                            return None;
+                        }
+                    },
                     None => match git::resolve_ref(&url, ref_spec) {
                         Ok(commit) => commit,
                         Err(e) => {
@@ -410,6 +486,18 @@ impl Resolver<'_> {
                         git::fetch_to_cache(&url, &commit),
                         self.locked_checksum(&lock_url, &commit),
                     ),
+                    LockPolicy::Offline => match git::cached_checkout(&url, &commit) {
+                        Some(dir) => (Ok(dir), self.locked_checksum(&lock_url, &commit)),
+                        None => {
+                            self.diagnostics.push(not_fetched_diagnostic(
+                                entry.value,
+                                &key_name,
+                                &url,
+                                ref_spec,
+                            ));
+                            return None;
+                        }
+                    },
                 };
                 let root = match fetched {
                     Ok(root) => crate::source::canonical_path(&root),
@@ -502,7 +590,7 @@ impl Resolver<'_> {
                 return None;
             }
         };
-        if self.policy == LockPolicy::ReadOnly
+        if self.policy.reads_only()
             && let Some(lock) = &self.existing
         {
             let name = intern::resolve(manifest.package.name);
@@ -527,19 +615,25 @@ impl Resolver<'_> {
             }
         }
         // Only a git dependency's checksum is pinned: a path dependency
-        // is live, its sources change as you work on them.
-        let pinned = match locked {
-            LockedSource::Git { .. } => checksum,
-            LockedSource::Local | LockedSource::Path { .. } => String::new(),
+        // is live, its sources change as you work on them. A git
+        // package's dependencies stay inside its checkout, a path
+        // dependency's inside the checkout its parent came in.
+        let (pinned, inside) = match locked {
+            LockedSource::Git { .. } => (checksum, Some(root.clone())),
+            LockedSource::Local | LockedSource::Path { .. } => {
+                (String::new(), self.inside[from.0 as usize].clone())
+            }
         };
-        Some(self.add(
+        let id = self.add(
             source,
             root,
             manifest,
             locked,
             pinned,
             Some((from, entry.key)),
-        ))
+        );
+        self.inside[id.0 as usize] = inside;
+        Some(id)
     }
 
     /// The checksum the existing lock pins the checkout of `url` at
@@ -801,6 +895,60 @@ fn git_diagnostic(at: Span, key: &str, url: &str, ref_spec: &GitRef, err: &GitEr
     d.notes
         .extend(lines.map(|line| line.trim_start().to_string()));
     d
+}
+
+/// The git dependency `key` on `url` at `ref_spec` is not in the cache,
+/// and the language server fetches nothing.
+fn not_fetched_diagnostic(at: Span, key: &str, url: &str, ref_spec: &GitRef) -> Diagnostic {
+    Diagnostic::error(
+        Code::GitDependency,
+        at,
+        format!(
+            "git dependency `{key}` (`{}`, {} = `{}`): not fetched: run `silt check`",
+            escape_for_display(url),
+            ref_spec.kind(),
+            escape_for_display(ref_spec.as_ref_string())
+        ),
+    )
+    .with_note(
+        "the language server fetches nothing; `silt check`, `silt run` and `silt test` \
+         fetch the dependencies of silt.toml",
+    )
+}
+
+/// The path dependency `key`, written `shown`, of a package that came
+/// over git leads out of its checkout.
+fn outside_checkout_diagnostic(at: Span, key: &str, shown: &str) -> Diagnostic {
+    Diagnostic::error(
+        Code::DependencyOutsideCheckout,
+        at,
+        format!(
+            "dependency `{key}`: path `{shown}` is outside the checkout of this package, \
+             which was fetched over git"
+        ),
+    )
+    .with_help(
+        "a package fetched over git reads only its own files: its path dependencies must be \
+         inside its checkout",
+    )
+}
+
+/// The git dependency `key` of a package that came over git names a
+/// repository on this machine, `url`.
+fn local_repository_diagnostic(at: Span, key: &str, url: &str) -> Diagnostic {
+    Diagnostic::error(
+        Code::DependencyOutsideCheckout,
+        at,
+        format!(
+            "git dependency `{key}`: `{}` is a repository on this machine, and this package \
+             was fetched over git",
+            escape_for_display(url)
+        ),
+    )
+    .with_help(
+        "a package fetched over git reads only its own files: its git dependencies must be \
+         network URLs (`https://`, `ssh://`, `git://`)",
+    )
 }
 
 fn symlink_diagnostic(at: Span, key: &str, path: &Path) -> Diagnostic {

@@ -130,6 +130,7 @@ missing belong to codes that are gone.
 | `E0610` | A package file that cannot be read or written. |
 | `E0611` | A git dependency's checkout whose checksum is not the one `silt.lock` pins. |
 | `E0612` | A package that depends on itself, or names one package by two dependency keys. |
+| `E0613` | A dependency that a package fetched over git names outside its own checkout: a path that leaves it, or a repository on this machine. |
 
 ## Running (7xx)
 
