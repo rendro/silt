@@ -1109,3 +1109,123 @@ fn a_dependency_taken_out_rewrites_the_lock_for_the_dependencies() {
     assert!(!lock.contains("calc"), "{lock}");
     let _ = fs::remove_dir_all(&ws);
 }
+
+// ── A git dependency stays inside its checkout ────────────────────────
+
+/// A repository `lib` beside the app holding the package `remote`,
+/// whose manifest names the dependencies `deps`, and a package `private`
+/// at `ws/private`, outside every checkout. The app depends on `remote`
+/// by git.
+fn app_with_a_remote_naming(ws: &Path, deps: &[&str]) -> PathBuf {
+    write_package(
+        &ws.join("private"),
+        "private",
+        &[],
+        "lib.silt",
+        "pub fn secret() { \"PRIVATE\" }\n",
+    );
+    let repo = ws.join("lib");
+    write_package(
+        &repo,
+        "remote",
+        deps,
+        "lib.silt",
+        "pub fn v() { \"from lib\" }\n",
+    );
+    commit_all(ws, &repo, "one");
+    let app = ws.join("app");
+    write_package(
+        &app,
+        "app",
+        &["remote = { git = \"../lib\", branch = \"main\" }"],
+        "main.silt",
+        "import remote\nfn main() { println(remote.v()) }\n",
+    );
+    app
+}
+
+/// FAILS on the base: the package fetched over git read `ws/private`
+/// through its path dependency, by an absolute path or by `..`, and
+/// through a git dependency on a repository of this machine.
+#[test]
+fn a_git_dependency_reaches_nothing_outside_its_checkout() {
+    if !git_installed() {
+        return;
+    }
+    let private = |ws: &Path| ws.join("private").display().to_string().replace('\\', "/");
+    let cases: Vec<(&str, Box<dyn Fn(&Path) -> String>, &str)> = vec![
+        (
+            "absolute",
+            Box::new(move |ws| format!("private = {{ path = \"{}\" }}", private(ws))),
+            "is outside the checkout of this package, which was fetched over git",
+        ),
+        (
+            "dotdot",
+            Box::new(|_| "private = { path = \"../../../../../../../../private\" }".to_string()),
+            "is outside the checkout of this package, which was fetched over git",
+        ),
+        (
+            "local_git",
+            Box::new(move |ws| {
+                let url = ws.join("lib").display().to_string().replace('\\', "/");
+                format!("again = {{ git = \"{url}\", branch = \"main\" }}")
+            }),
+            "is a repository on this machine, and this package was fetched over git",
+        ),
+        (
+            "file_url",
+            Box::new(|_| "again = { git = \"file:///nowhere/lib\", branch = \"main\" }".into()),
+            "is a repository on this machine, and this package was fetched over git",
+        ),
+    ];
+    for (tag, dep, expected) in cases {
+        let ws = fresh_workspace(&format!("outside_{tag}"));
+        let app = app_with_a_remote_naming(&ws, &[&dep(&ws)]);
+        let out = silt(&ws, &app, &["check"]);
+        let err = stderr(&out);
+        assert_eq!(out.status.code(), Some(1), "{tag}: {err}");
+        assert!(err.contains(expected), "{tag}: {err}");
+        assert!(
+            err.contains("a package fetched over git reads only its own files"),
+            "{tag}: {err}"
+        );
+        let _ = fs::remove_dir_all(&ws);
+    }
+}
+
+/// A path dependency inside the checkout is the package's own; the
+/// project's own manifest may name any path and any repository.
+#[test]
+fn a_git_dependency_may_name_a_path_inside_its_checkout() {
+    if !git_installed() {
+        return;
+    }
+    let ws = fresh_workspace("inside_checkout");
+    write_package(
+        &ws.join("lib").join("inner"),
+        "inner",
+        &[],
+        "lib.silt",
+        "pub fn w() { \"inner\" }\n",
+    );
+    let app = app_with_a_remote_naming(&ws, &["inner = { path = \"inner\" }"]);
+    let out = silt(&ws, &app, &["run"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "from lib\n");
+    // The project names the package outside by an absolute path.
+    let private = ws.join("private").display().to_string().replace('\\', "/");
+    write_package(
+        &app,
+        "app",
+        &[
+            "remote = { git = \"../lib\", branch = \"main\" }",
+            &format!("private = {{ path = \"{private}\" }}"),
+        ],
+        "main.silt",
+        "import private\nfn main() { println(private.secret()) }\n",
+    );
+    let out = silt(&ws, &app, &["run"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "PRIVATE\n");
+    let _ = fs::remove_dir_all(&ws);
+}
