@@ -2,7 +2,7 @@
 //! operator list lives next to the lexer rather than next to the
 //! grammars, so a token added to the lexer without the grammars is
 //! flagged (the symmetric lock in
-//! `tests/meta/round62_cleanup_lock_tests.rs` compares the two grammars
+//! `tests/meta/editor_grammars_operator_parity_tests.rs` compares the two grammars
 //! only).
 //!
 //! ## What this test locks
@@ -39,7 +39,7 @@ use silt::lexer::{Lexer, Token};
 /// Single-char operators (`+`, `-`, `*`, `/`, `%`, `=`, `<`, `>`,
 /// `!`, `?`, `^`, `|`, `:`, `,`, `.`, `(`, `)`, `[`, `]`, `{`, `}`)
 /// are intentionally excluded — round 62's lock at
-/// `tests/meta/round62_cleanup_lock_tests.rs` already covers the
+/// `tests/meta/editor_grammars_operator_parity_tests.rs` already covers the
 /// subset of those that participate in `siltOperator` matches, and
 /// the delimiters are not grammar-highlighted as operators.
 ///

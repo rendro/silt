@@ -1,0 +1,8 @@
+-- `Error` is no builtin trait: a program may declare a trait of that
+-- name, and its impls and calls are the program's own.
+trait Error { fn code(self) -> Int }
+type E { E(Int) }
+trait Error for E {
+  fn code(self) -> Int { match self { E(n) -> n } }
+}
+fn main() { println(Error.code(E(7))) }

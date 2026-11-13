@@ -78,15 +78,15 @@ fn main() {
   match io.read_file("settings.json") {
     Ok(content) -> match json.parse(content, Config) {
       Ok(cfg) -> println("loaded: {cfg.name}")
-      Err(e) -> println("parse error: {Error.message(e)}")
+      Err(e) -> println("parse error: {e}")
     }
     Err(io.NotFound(path)) -> println("no config at {path} — run `silt init` first")
-    Err(e) -> println("read error: {Error.message(e)}")
+    Err(e) -> println("read error: {e}")
   }
 }
 ```
 
-Stdlib errors are typed enums — `IoError`, `JsonError`, `HttpError`, and so on — so `match` can fork on specific failures like `NotFound(path)` and still fall back to `Error.message` for the long tail.
+Stdlib errors are typed enums — `IoError`, `JsonError`, `HttpError`, and so on — so `match` can fork on specific failures like `NotFound(path)` and still show the long tail with `"{e}"`, which gives its message.
 
 ## HTTP
 
@@ -129,9 +129,9 @@ fn main() {
       (http.POST, ["todos"]) -> match bytes.to_string(req.body) {
         Ok(text) -> match json.parse(text, Todo) {
           Ok(todo) -> reply(201, todo)
-          Err(e) -> reply(400, #{ "error": Error.message(e) })
+          Err(e) -> reply(400, #{ "error": "{e}" })
         }
-        Err(e) -> reply(400, #{ "error": Error.message(e) })
+        Err(e) -> reply(400, #{ "error": "{e}" })
       }
       _ -> reply(404, #{ "error": "Not found" })
     }

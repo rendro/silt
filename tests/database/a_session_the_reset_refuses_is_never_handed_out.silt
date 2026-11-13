@@ -28,7 +28,7 @@ fn one(pool: postgres.PgPool, sql: String) -> String {
   match postgres.query(pool, sql, (), S) {
     Ok([row]) -> row.s
     Ok(rows) -> "{rows}"
-    Err(e) -> "Err: {Error.message(e)}"
+    Err(e) -> "Err: {e}"
   }
 }
 
@@ -59,7 +59,7 @@ fn round(size: Int) {
       bad |> list.unique |> list.take(3) |> list.each { s -> println("   {s}") }
       postgres.close(pool)
     }
-    Err(e) -> println("connect: {Error.message(e)}")
+    Err(e) -> println("connect: {e}")
   }
 }
 

@@ -30,7 +30,7 @@ fn main() {
   println("GET /a/b?x=1")
   match http.request(http.GET, url, bytes.empty(), #{}) {
     Ok(resp) -> println("  the client: {resp.status}")
-    Err(e) -> println("  the client: {Error.message(e)}")
+    Err(e) -> println("  the client: {e}")
   }
   task.cancel(server)
 }

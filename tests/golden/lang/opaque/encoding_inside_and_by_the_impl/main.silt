@@ -10,6 +10,6 @@ fn main() {
   println(mail.mshow(mail.user("d")))
   match mail.mload("""{"name": "e", "age": 2}""", mail.User) {
     Ok(u) -> println(mail.mshow(u))
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println("{e}")
   }
 }

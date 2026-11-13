@@ -72,7 +72,6 @@ pub(super) const BUILTIN_TRAIT_NAMES: &[&str] = &[
     "Compare",
     "Hash",
     "Display",
-    "Error",
     "Number",
     "Functor",
     "Applicative",
@@ -84,9 +83,9 @@ pub(super) const BUILTIN_TRAIT_NAMES: &[&str] = &[
 pub(super) const SEALED_TRAIT_NAMES: &[&str] = &["Equal", "Compare", "Hash", "Number"];
 
 /// The traits of [`BUILTIN_TRAIT_NAMES`] a type has by its structure,
-/// with no impl (`Display` unless one is written for it). `Error` is
-/// not one: an impl of it is written. (`json.Encode` and `json.Decode`,
-/// traits of the json module, are too: [`WRITABLE_STRUCTURAL_TRAITS`].)
+/// with no impl (`Display` unless one is written for it). (`json.Encode`
+/// and `json.Decode`, traits of the json module, are too:
+/// [`WRITABLE_STRUCTURAL_TRAITS`].)
 pub(super) const STRUCTURAL_TRAIT_NAMES: &[&str] = &["Equal", "Compare", "Hash", "Display"];
 
 /// The builtin traits a type has by its structure unless an impl of
@@ -2102,6 +2101,122 @@ pub struct ModuleCheck {
     /// they are initialised in: each after the `let`s its initialiser
     /// can reach, and in source order where nothing orders two.
     pub let_order: Vec<Span>,
+    /// For each top-level `main` and test function whose error type has
+    /// no `Display`, the error the session reports where it is an entry
+    /// point (`TypeChecker::entry_errors_shown`).
+    pub entry_display: HashMap<Symbol, Diagnostic>,
+}
+
+impl TypeChecker {
+    /// The error an entry point returns, `main`'s or a test's `Err(e)`,
+    /// is shown through `Display` (`error: <e>`, the test's failure):
+    /// its type must have it, as `"{e}"` would ask, a written impl's
+    /// bounds included. For each top-level `main` or `test_*` /
+    /// `skip_test_*` (a `fn` or a `let`) whose error type lacks it, the
+    /// error to report, by name. It is not reported here: the session
+    /// reports it where the function is an entry point (`main` of the
+    /// file run, a test of the file tested). A type the checker could
+    /// not decide, or one left to the caller (`Result((), e)` with
+    /// nothing deciding `e`), is let through.
+    fn entry_errors_shown(
+        &mut self,
+        program: &Program,
+        env: &TypeEnv,
+    ) -> HashMap<Symbol, Diagnostic> {
+        let mut found = HashMap::new();
+        for decl in &program.decls {
+            let (name, span) = match decl {
+                Decl::Fn(f) => (
+                    f.name,
+                    f.return_type.as_ref().map_or(f.name_span, |ty| ty.span),
+                ),
+                Decl::Let { pattern, ty, .. } => match pattern.kind {
+                    PatternKind::Ident(name) => {
+                        (name, ty.as_ref().map_or(pattern.span, |ty| ty.span))
+                    }
+                    _ => continue,
+                },
+                _ => continue,
+            };
+            let text = resolve(name);
+            let who = match () {
+                _ if text == crate::session::ENTRY_POINT => EntryWho::Main,
+                _ if crate::session::test_kind(&text).is_some() => EntryWho::Test(text),
+                _ => continue,
+            };
+            let Some(scheme) = env.lookup(name) else {
+                continue;
+            };
+            let Type::Fun(params, ret) = self.apply(&scheme.ty) else {
+                continue;
+            };
+            let Type::Generic(result, args) = *ret else {
+                continue;
+            };
+            let [_, error] = args.as_slice() else {
+                continue;
+            };
+            if !params.is_empty() || !result.is_builtin("Result") || !free_vars_in(error).is_empty()
+            {
+                continue;
+            }
+            // The judgement `"{e}"` makes: by the type's structure, or
+            // by its written impl and what that impl's header asks.
+            let before = self.errors.len();
+            self.want(
+                Pred::Trait {
+                    tr: TraitKey::builtin("Display"),
+                    args: Vec::new(),
+                    subject: error.clone(),
+                    asker: None,
+                },
+                solve::Origin {
+                    span,
+                    callee: None,
+                    op: None,
+                    header: None,
+                },
+            );
+            let lacks: Vec<Diagnostic> = self.errors.drain(before..).collect();
+            let Some(first) = lacks.into_iter().next() else {
+                continue;
+            };
+            let (code, message, help) = match who {
+                EntryWho::Main => (
+                    Code::MainSignature,
+                    format!(
+                        "the entry point 'main' must return an error that can be shown, but {}",
+                        first.message
+                    ),
+                    "main's `Err(e)` is shown as `error: {e}`: return a String, or a type that \
+                     has Display (by its structure, or by `trait Display for ...`)",
+                ),
+                EntryWho::Test(name) => (
+                    Code::TestSignature,
+                    format!(
+                        "the test function '{name}' must return an error that can be shown, but \
+                         {}",
+                        first.message
+                    ),
+                    "a test's `Err(e)` is shown in its failure: return a String, or a type that \
+                     has Display (by its structure, or by `trait Display for ...`)",
+                ),
+            };
+            let mut d = Diagnostic::error(code, span, message);
+            d.notes.extend(first.notes);
+            d.help.extend(first.help);
+            d.help_at = first.help_at;
+            d.help.push(help.to_string());
+            found.insert(name, d);
+        }
+        found
+    }
+}
+
+/// Which entry point [`TypeChecker::entry_errors_shown`] looks at.
+enum EntryWho {
+    Main,
+    Test(String),
 }
 
 /// The context a module is checked in, from the session.
@@ -2210,6 +2325,10 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
         checker.take_up_waiting(program, earlier);
     }
     let env = checker.check_program_in(program, env);
+    let entry_display = match kind {
+        names::ModuleKind::File => checker.entry_errors_shown(program, &env),
+        _ => HashMap::new(),
+    };
     if checker.is_cell {
         checker.report_at_cell(program);
         checker.leave_waiting(program);
@@ -2309,6 +2428,7 @@ pub fn check_module(program: &mut Program, context: ModuleContext<'_>) -> Module
         top_level,
         signatures,
         let_order: checker.let_order,
+        entry_display,
     }
 }
 

@@ -6,10 +6,10 @@ fn main() {
   }
   match bytes.from_list([10, 256, 30]) {
     Ok(_) -> println("wrong: should error")
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println("{e}")
   }
   match bytes.from_list([0, -1, 0]) {
     Ok(_) -> println("wrong: should error")
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println("{e}")
   }
 }

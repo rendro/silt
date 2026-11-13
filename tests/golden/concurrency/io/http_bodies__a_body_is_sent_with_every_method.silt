@@ -36,7 +36,7 @@ fn main() {
       println("{method} [{body}]")
       match http.request(method, url, bytes.from_string(body), #{}) {
         Ok(resp) -> println("  the client:  {resp.status} [{text(resp.body)}]")
-        Err(e) -> println("  the client: {Error.message(e)}")
+        Err(e) -> println("  the client: {e}")
       }
     }
   }

@@ -48,7 +48,7 @@ fn main() {
       ]
     """, List(Person)) {
     Ok(p) -> p
-    Err(e) -> panic("Failed to parse people: {Error.message(e)}")
+    Err(e) -> panic("Failed to parse people: {e}")
   }
   people
   |> list.each { p ->

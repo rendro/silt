@@ -102,7 +102,7 @@ fn main() {
   list.each(lines) { line ->
     match line {
       Ok(text) -> println("{string.length(text)} {string.slice(text, string.length(text) - 4, string.length(text))}")
-      Err(e) -> println("error: {Error.message(e)}")
+      Err(e) -> println("error: {e}")
     }
   }
 }
@@ -139,7 +139,7 @@ import io
 fn main() {
   match io.read_stdin_bytes() {
     Ok(b) -> println(bytes.to_list(b))
-    Err(e) -> println("error: {Error.message(e)}")
+    Err(e) -> println("error: {e}")
   }
 }
 "#;
@@ -182,7 +182,7 @@ fn main() {
   match io.read_line() {
     Ok(Some(line)) -> println("then {line}")
     Ok(None) -> println("then the end")
-    Err(e) -> println("error: {Error.message(e)}")
+    Err(e) -> println("error: {e}")
   }
 }
 "#;

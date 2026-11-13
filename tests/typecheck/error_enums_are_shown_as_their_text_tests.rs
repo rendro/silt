@@ -1,20 +1,20 @@
-//! `.message()` of a builtin error enum is a row of the builtin
-//! registry, found by the enum's type (`Registry::error_module`).
+//! A builtin error enum is shown as its text, which its module gives,
+//! found by the enum's type (`Registry::error_module`).
 //!
 //! Behavioural lock: every error enum of
-//! `builtin_error_enum_variants_with_arity` has a `.message()` that
-//! gives a text. The test iterates the registry, so a newly registered
-//! enum whose module says nothing of its variants fails.
+//! `builtin_error_enum_variants_with_arity` is shown (`"{e}"`) as a
+//! text, not as its constructor. The test iterates the registry, so a
+//! newly registered enum whose module says nothing of its variants
+//! fails.
 
 use silt::module::builtin_error_enum_variants_with_arity;
 
 // ── Behavioural lock ────────────────────────────────────────────────
 
-/// Calling `.message()` on a variant of every registered enum gives a
-/// non-empty `String`: the enum has a row, and its module a text for
-/// the variant.
+/// A variant of every registered enum is shown as a non-empty text
+/// that is not its constructor: its module has a text for the variant.
 #[test]
-fn every_builtin_error_enum_has_a_message_row() {
+fn every_builtin_error_enum_is_shown_as_its_text() {
     use std::fs;
     use std::path::PathBuf;
     use std::process::Command;
@@ -75,16 +75,15 @@ fn every_builtin_error_enum_has_a_message_row() {
         };
         let variant = call.split('(').next().unwrap_or(call);
 
-        // The script prints the raw `.message()` output. We don't pin
-        // the exact wording (that is the module's `error_text`) — we
-        // only require that the call gave *some* non-empty string and
-        // exited cleanly. An enum with no text would surface as a
-        // non-zero exit or empty stdout.
+        // The script prints the variant shown. We don't pin the exact
+        // wording (that is the module's `error_text`) — we only require
+        // some non-empty text that is not the constructor form, which
+        // an enum with no text would be shown as.
         let src = format!(
             "import {module}\n\
              fn main() {{\n\
                  let e = {module}.{call}\n\
-                 println(Error.message(e))\n\
+                 println(\"{{e}}\")\n\
              }}\n"
         );
         let path = temp_silt_file(&format!("trait_{}", enum_name.to_lowercase()), &src);
@@ -99,7 +98,7 @@ fn every_builtin_error_enum_has_a_message_row() {
         assert!(
             output.status.success(),
             "`silt run` failed for {enum_name}.{variant}: every \
-             registered enum has a `.message()`.\nsrc:\n{src}\n\
+             registered enum is shown as its text.\nsrc:\n{src}\n\
              stdout: {stdout}\nstderr: {stderr}"
         );
         // The stdout should be non-empty (the typed message). println
@@ -108,8 +107,12 @@ fn every_builtin_error_enum_has_a_message_row() {
         let trimmed = stdout.trim();
         assert!(
             !trimmed.is_empty(),
-            "{enum_name}.{variant}.message() produced empty stdout. \
+            "{enum_name}.{variant} was shown as nothing. \
              Full stdout: {stdout:?}, stderr: {stderr:?}"
+        );
+        assert!(
+            trimmed != variant && !trimmed.starts_with(&format!("{variant}(")),
+            "{enum_name}.{variant} was shown as its constructor: {trimmed:?}"
         );
     }
 }

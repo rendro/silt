@@ -135,7 +135,7 @@ fn main() -> Result((), regex.RegexError) {
   let content = match io.read_file("examples/log.txt") {
     Ok(c) -> c
     Err(e) -> {
-      println("Error reading log file: {Error.message(e)}")
+      println("Error reading log file: {e}")
       return Ok(())
     }
   }

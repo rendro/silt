@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- silt has no trait `Error`: an impl of it is an impl of an undeclared
+-- trait, and the help says to write the type's Display, which is how an
+-- error is shown.
+-- stderr-contains: error[type]: trait 'Error' is not declared
+-- stderr-contains: help: an error is shown as any value is: to say how `MyErr` is shown (by `{e}`, and as the error of main), write `trait Display for MyErr`
+type MyErr { Bad(String) }
+trait Error for MyErr {
+  fn message(self) -> String { "bad" }
+}
+fn main() -> Result((), MyErr) {
+  Err(Bad("x"))
+}

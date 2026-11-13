@@ -9,7 +9,7 @@ import string
 fn show(line: String) -> String {
   match csv.split_line(line) {
     Ok(fields) -> "{list.length(fields)}: <{string.join(fields, "|")}>"
-    Err(e) -> Error.message(e)
+    Err(e) -> "{e}"
   }
 }
 

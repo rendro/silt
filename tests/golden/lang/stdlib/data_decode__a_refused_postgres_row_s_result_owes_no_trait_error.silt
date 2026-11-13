@@ -10,6 +10,6 @@ type R { f: Fn(Int) -> Int }
 fn main() {
   match postgres.connect("postgres://nobody@127.0.0.1/none") {
     Ok(db) -> println(postgres.query(db, "select 1", (), R))
-    Err(e) -> println(Error.message(e))
+    Err(e) -> println("{e}")
   }
 }
