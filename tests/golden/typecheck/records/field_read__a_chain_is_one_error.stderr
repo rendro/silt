@@ -1,0 +1,6 @@
+error[type]: cannot infer the record type whose field 'a' this reads
+ --> field_read__a_chain_is_one_error.silt:10:3
+    |
+ 10 |   o.a.b.c
+    |   ^^^ cannot infer the record type whose field 'a' this reads
+  = help: annotate the record: `o: Out`

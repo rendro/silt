@@ -418,11 +418,6 @@ impl<'a> Names<'a> {
                 self.type_expr(ret);
             }
             TypeExprKind::SelfType => {}
-            TypeExprKind::AnonRecord { fields, .. } => {
-                for (_, ty) in fields {
-                    self.type_expr(ty);
-                }
-            }
         }
     }
 
@@ -578,14 +573,6 @@ impl<'a> Names<'a> {
                     (self.record_of(base.ty.as_ref())).or_else(|| self.record_of(expr.ty.as_ref()));
                 self.field_values(record, base.span.start, fields, punned);
             }
-            ExprKind::AnonRecord { spread, fields } => {
-                if let Some(spread) = spread {
-                    self.expr(spread);
-                }
-                for (_, value) in fields {
-                    self.expr(value);
-                }
-            }
             ExprKind::Match {
                 expr: scrutinee,
                 arms,
@@ -703,12 +690,6 @@ impl<'a> Names<'a> {
                     }
                 }
                 self.field_patterns(fields);
-            }
-            PatternKind::AnonRecord { fields, rest } => {
-                self.field_patterns(fields);
-                if let Some((name, span)) = rest {
-                    self.local(*span, *name, true, false);
-                }
             }
             PatternKind::Tuple(pats) | PatternKind::Or(pats) => {
                 for p in pats {

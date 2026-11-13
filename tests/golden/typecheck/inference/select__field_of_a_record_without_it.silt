@@ -1,8 +1,11 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: error[type]
+-- `r.x` on a record without the field `x` is refused, though a trait
+-- declares a method `x`.
+-- stderr-contains: error[type]: type 'R' has no field 'x'
 trait HasX { fn x(self) -> Int }
-fn getx(r) { r.x }
+type R { y: Int }
+fn getx(r: R) -> Int { r.x }
 fn main() {
-  println(getx({ y: 1 }))
+  println(getx(R { y: 1 }))
 }

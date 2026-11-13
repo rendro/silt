@@ -1,0 +1,41 @@
+error[type]: cannot infer the record type whose field 'radius' this reads
+ --> main.silt:14:3
+    |
+ 14 |   c.radius
+    |   ^^^^^^^^ cannot infer the record type whose field 'radius' this reads
+  = help: annotate the record: `c: shapes.Circle`
+
+error[type]: cannot infer the record type whose field 'year' this reads
+ --> main.silt:18:3
+    |
+ 18 |   d.year
+    |   ^^^^^^ cannot infer the record type whose field 'year' this reads
+  = help: annotate the record: `d: time.Date`
+
+error[type]: cannot infer the record type whose field 'x' this reads
+ --> main.silt:22:3
+    |
+ 22 |   p.x
+    |   ^^^ cannot infer the record type whose field 'x' this reads
+  = help: annotate the record: `p: A` or `p: B`
+
+error[type]: cannot infer the record type whose field 'y' this reads
+ --> main.silt:27:16
+    |
+ 27 |     Some(a) -> a.y
+    |                ^^^ cannot infer the record type whose field 'y' this reads
+  = help: annotate the value `a` comes from with its record type, `B`
+
+warning[type]: unused import 'shapes'
+ --> main.silt:7:1
+   |
+ 7 | import shapes
+   | ^^^^^^^^^^^^^ unused import 'shapes'
+  = help: remove the line `import shapes`
+
+warning[type]: unused import 'time'
+ --> main.silt:8:1
+   |
+ 8 | import time
+   | ^^^^^^^^^^^ unused import 'time'
+  = help: remove the line `import time`

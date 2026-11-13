@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- Braces of fields where a parameter stands are no pattern: a record
+-- pattern starts with the name of its type.
+fn f({ x, y }) {
+  x + y
+}
+
+fn main() {
+  println(1)
+}

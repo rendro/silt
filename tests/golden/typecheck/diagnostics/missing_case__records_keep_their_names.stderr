@@ -1,53 +1,53 @@
-error[type]: non-exhaustive match: `{ a: true }` is not covered
- --> missing_case__records_keep_their_names.silt:12:9
+error[type]: non-exhaustive match: `S { a: true, .. }` is not covered
+ --> missing_case__records_keep_their_names.silt:13:9
     |
- 12 |   match v {
-    |         ^ non-exhaustive match: `{ a: true }` is not covered
+ 13 |   match v {
+    |         ^ non-exhaustive match: `S { a: true, .. }` is not covered
 
 error[type]: non-exhaustive match: `R { p: false, .. }` is not covered
- --> missing_case__records_keep_their_names.silt:17:9
+ --> missing_case__records_keep_their_names.silt:18:9
     |
- 17 |   match v {
+ 18 |   match v {
     |         ^ non-exhaustive match: `R { p: false, .. }` is not covered
 
 error[type]: non-exhaustive match: `R { p: true, q: U(false) }` is not covered
- --> missing_case__records_keep_their_names.silt:22:9
+ --> missing_case__records_keep_their_names.silt:23:9
     |
- 22 |   match v {
+ 23 |   match v {
     |         ^ non-exhaustive match: `R { p: true, q: U(false) }` is not covered
 
 error[type]: non-exhaustive match: `(R { p: false, .. }, _)` is not covered
- --> missing_case__records_keep_their_names.silt:28:9
+ --> missing_case__records_keep_their_names.silt:29:9
     |
- 28 |   match v {
+ 29 |   match v {
     |         ^ non-exhaustive match: `(R { p: false, .. }, _)` is not covered
 
 error[type]: non-exhaustive match: `Some(R { p: true, .. })` is not covered
- --> missing_case__records_keep_their_names.silt:33:9
+ --> missing_case__records_keep_their_names.silt:34:9
     |
- 33 |   match v {
+ 34 |   match v {
     |         ^ non-exhaustive match: `Some(R { p: true, .. })` is not covered
 
 error[type]: non-exhaustive match: `Some(R { p: false, q: U(true) })` is not covered
- --> missing_case__records_keep_their_names.silt:39:9
+ --> missing_case__records_keep_their_names.silt:40:9
     |
- 39 |   match v {
+ 40 |   match v {
     |         ^ non-exhaustive match: `Some(R { p: false, q: U(true) })` is not covered
 
 error[type]: non-exhaustive match: `[R { p: false, .. }, ..]` is not covered
- --> missing_case__records_keep_their_names.silt:46:9
+ --> missing_case__records_keep_their_names.silt:47:9
     |
- 46 |   match v {
+ 47 |   match v {
     |         ^ non-exhaustive match: `[R { p: false, .. }, ..]` is not covered
 
 error[type]: non-exhaustive match: `R { p: true, q: U(true) }` is not covered
- --> missing_case__records_keep_their_names.silt:52:9
+ --> missing_case__records_keep_their_names.silt:53:9
     |
- 52 |   match v {
+ 53 |   match v {
     |         ^ non-exhaustive match: `R { p: true, q: U(true) }` is not covered
 
 error[type]: non-exhaustive match: not all patterns of Named are covered
- --> missing_case__records_keep_their_names.silt:60:9
+ --> missing_case__records_keep_their_names.silt:61:9
     |
- 60 |   match v {
+ 61 |   match v {
     |         ^ non-exhaustive match: not all patterns of Named are covered

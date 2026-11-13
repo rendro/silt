@@ -24,7 +24,7 @@ seconds="${2:-600}"
 
 if [ -z "$target" ]; then
   echo "usage: fuzz/local.sh <target|all> [seconds]" >&2
-  echo "targets: fuzz_lexer fuzz_parser fuzz_formatter fuzz_roundtrip fuzz_typechecker fuzz_compiler fuzz_http_request fuzz_run fuzz_decode fuzz_package_files fuzz_csv" >&2
+  echo "targets: fuzz_lexer fuzz_parser fuzz_formatter fuzz_roundtrip fuzz_typechecker fuzz_compiler fuzz_http_request fuzz_run fuzz_decode fuzz_package_files fuzz_csv fuzz_http_response fuzz_lsp_messages" >&2
   exit 1
 fi
 
@@ -32,15 +32,17 @@ run_one() {
   t="$1"
   s="$2"
   echo "[$t] fuzzing for ${s}s"
-  cargo +nightly fuzz run "$t" -- -max_total_time="$s"
+  # (The target is named as in replay.sh: a cargo-fuzz built for musl
+  # would default to musl, which the sanitizer refuses.)
+  cargo +nightly fuzz run --target x86_64-unknown-linux-gnu "$t" -- -max_total_time="$s"
 }
 
 if [ "$target" = "all" ]; then
   # Each target gets its own background process; wait for all.
   # libfuzzer defaults to one worker per invocation; it saturates one
-  # core. Running nine in parallel saturates nine cores, which is the
-  # intended "use the whole machine" behaviour.
-  for t in fuzz_lexer fuzz_parser fuzz_formatter fuzz_roundtrip fuzz_typechecker fuzz_compiler fuzz_http_request fuzz_run fuzz_decode fuzz_package_files fuzz_csv; do
+  # core. Running every target at once takes one core each, which is
+  # the intended "use the whole machine" behaviour.
+  for t in fuzz_lexer fuzz_parser fuzz_formatter fuzz_roundtrip fuzz_typechecker fuzz_compiler fuzz_http_request fuzz_run fuzz_decode fuzz_package_files fuzz_csv fuzz_http_response fuzz_lsp_messages; do
     run_one "$t" "$seconds" &
   done
   wait

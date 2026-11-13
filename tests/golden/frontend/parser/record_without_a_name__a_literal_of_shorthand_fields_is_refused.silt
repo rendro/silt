@@ -1,0 +1,9 @@
+-- cmd: check
+-- exit: 1
+-- Braces holding fields written alone where an expression starts are no
+-- record either.
+fn main() {
+  let x = 1
+  let y = 2
+  println({ x, y })
+}

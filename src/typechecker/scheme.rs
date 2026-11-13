@@ -1,41 +1,130 @@
 use super::*;
 
-/// Each record type `ty` writes over a row variable it writes more than
-/// once, with the fields it lists there.
-fn row_listings(ty: &Type) -> Vec<(TyVar, std::collections::BTreeMap<Symbol, Type>)> {
-    fn walk(ty: &Type, out: &mut Vec<(TyVar, std::collections::BTreeMap<Symbol, Type>)>) {
-        match ty {
-            Type::AnonRecord { fields, tail } => {
-                if let RowTail::Var(v) = tail {
-                    out.push((*v, fields.clone()));
+impl TypeChecker {
+    /// Whether the module checked sees the record type `ty`: its own (in
+    /// a REPL cell, an earlier cell's), a public one of a module it
+    /// imports, a builtin module's it imports.
+    fn sees_record(&self, ty: TypeRef) -> bool {
+        let Some(def) = self.def(ty.id.0) else {
+            return false;
+        };
+        // (In a REPL cell, also an earlier cell's not declared again.)
+        if def.module == self.module || (self.is_cell && self.named_types.contains(&ty.id.0)) {
+            return true;
+        }
+        if def.module.builtin_name().is_some() {
+            return self.builtin_imports.contains(&def.module);
+        }
+        def.module.is_builtin()
+            || (def.vis == crate::defs::Vis::Pub && self.seen_modules.contains(&def.module))
+    }
+
+    /// The help of a field read whose record nothing decides: the
+    /// annotation to write (`user: User`), with each record type in sight
+    /// that has the field; for a call the checker read as a field
+    /// because traits have a method of the name that makes a value, also
+    /// the type parameter that calls the method.
+    fn annotate_record_help(&self, field: Symbol, at: &super::solve::ReadAt) -> String {
+        let mut types: Vec<String> = (self.tables.records.iter())
+            .filter(|(ty, rec)| {
+                rec.fields.iter().any(|(n, _)| *n == field) && self.sees_record(**ty)
+            })
+            .map(|(ty, _)| {
+                let params = (self.tables.record_param_var_ids.get(ty)).map_or(0, Vec::len);
+                let args: Vec<String> = (b'a'..)
+                    .take(params)
+                    .map(|c| (c as char).to_string())
+                    .collect();
+                match args.is_empty() {
+                    true => self.written_type(*ty),
+                    false => format!("{}({})", self.written_type(*ty), args.join(", ")),
                 }
-                fields.values().for_each(|t| walk(t, out));
+            })
+            .collect();
+        types.sort();
+        types.dedup();
+        let record = match (at.name, types.as_slice()) {
+            // (A name a plain `let` binds takes the annotation there.)
+            (Some((_, false)), types) if let Some(name) = at.let_name => {
+                let written: Vec<String> = match types {
+                    [] => vec![format!("`let {name}: SomeRecord`")],
+                    types => types
+                        .iter()
+                        .map(|ty| format!("`let {name}: {ty}`"))
+                        .collect(),
+                };
+                format!("annotate the record: {}", written.join(" or "))
             }
-            Type::Fun(params, ret) => {
-                params.iter().for_each(|t| walk(t, out));
-                walk(ret, out);
+            // (A name bound by a pattern takes no annotation where it is
+            // bound: the value it comes from is annotated.)
+            (Some((name, false)), []) => {
+                format!("annotate the value `{name}` comes from with its record type")
             }
-            Type::List(t) | Type::Set(t) | Type::Channel(t) => walk(t, out),
-            Type::Map(k, v) => {
-                walk(k, out);
-                walk(v, out);
+            (Some((name, false)), types) => format!(
+                "annotate the value `{name}` comes from with its record type, `{}`",
+                types.join("` or `")
+            ),
+            (name, types) => {
+                let name = name.map_or_else(|| "r".to_string(), |(name, _)| resolve(name));
+                let written: Vec<String> = match types {
+                    [] => vec![format!("`{name}: SomeRecord`")],
+                    types => types.iter().map(|ty| format!("`{name}: {ty}`")).collect(),
+                };
+                format!("annotate the record: {}", written.join(" or "))
             }
-            Type::Tuple(ts) | Type::Generic(_, ts) => ts.iter().for_each(|t| walk(t, out)),
-            _ => {}
+        };
+        match self.type_parameter_help(at) {
+            Some(how) => format!("{record}; or, {how}"),
+            None => record,
         }
     }
-    let mut all = Vec::new();
-    walk(ty, &mut all);
-    let once: Vec<TyVar> = all
-        .iter()
-        .map(|(v, _)| *v)
-        .filter(|v| all.iter().filter(|(w, _)| w == v).count() == 1)
-        .collect();
-    all.retain(|(v, fields)| !once.contains(v) && !fields.is_empty());
-    all
-}
 
-impl TypeChecker {
+    /// For a call the checker read as a field because traits have a
+    /// method of the name that makes a value (`t.mk()`): the type
+    /// parameter that calls the method instead, "for the method of trait
+    /// 'A': give 'go' a type parameter ...".
+    pub(super) fn type_parameter_help(&self, at: &super::solve::ReadAt) -> Option<String> {
+        let first = at.traits.first().copied()?;
+        let param = at
+            .name
+            .map_or_else(|| "t".to_string(), |(name, _)| resolve(name));
+        let of: Vec<String> = (at.traits.iter())
+            .map(|t| format!("trait '{}'", self.show_trait(*t)))
+            .collect();
+        let bound = self.show_trait(first);
+        let named = at
+            .function
+            .filter(|(_, declared)| *declared)
+            .map(|(name, _)| name);
+        let how = match (self.of_constructors_trait(first), named) {
+            (true, function) => {
+                let a = if param == "a" { "b" } else { "a" };
+                let example = format!(
+                    "`fn wrap(x: {a}, type {param}) -> {param}({a}) where {param}: {bound}`"
+                );
+                match function {
+                    Some(function) => format!(
+                        "give '{function}' a type parameter with its bound, and write it with \
+                         its type argument, as in {example}"
+                    ),
+                    None => format!(
+                        "a closure cannot take a type parameter: declare a named function with \
+                         one and its bound, as in {example}"
+                    ),
+                }
+            }
+            (false, Some(function)) => format!(
+                "give '{function}' a type parameter with its bound, \
+                 `fn {function}(type {param}) where {param}: {bound}`"
+            ),
+            (false, None) => format!(
+                "a closure cannot take a type parameter: declare a named function with one and \
+                 its bound, `where {param}: {bound}`"
+            ),
+        };
+        Some(format!("for the method of {}: {how}", of.join(" or of ")))
+    }
+
     // ── Generalization / Instantiation ──────────────────────────────
 
     /// Generalize a type into a scheme: quantify its unresolved variables
@@ -51,9 +140,9 @@ impl TypeChecker {
         self.generalize_decided(ty)
     }
 
-    /// The scheme of a `let` inside a function. A `?`, an update or a
-    /// call of a method several traits declare that still waits for its
-    /// type is not decided here: the function goes on, and a use of the
+    /// The scheme of a `let` inside a function. A `?`, an update, a
+    /// field read or a call of a method several traits declare that
+    /// still waits for its type is not decided here: the function goes on, and a use of the
     /// `let` may decide it. So the `let` is not general in what such a
     /// goal mentions.
     pub(super) fn generalize_local(&mut self, ty: &Type) -> Scheme {
@@ -64,8 +153,6 @@ impl TypeChecker {
         // anywhere: the `let` is general in a receiver bounded by the
         // trait.)
         self.decide_tries();
-        self.default_rebuilds();
-        self.default_selects();
         for i in self.closed_mark..self.wanted.len() {
             if self.wanted[i].solved {
                 continue;
@@ -84,21 +171,14 @@ impl TypeChecker {
                 Goal::Pred(_) => continue,
                 Goal::Select {
                     recv, args, result, ..
-                } => args.iter().chain([recv, result]).cloned().collect(),
+                } => (args.iter().flatten())
+                    .chain([recv, result])
+                    .cloned()
+                    .collect(),
                 Goal::Update { base, value, .. } => vec![base.clone(), value.clone()],
                 Goal::Try { operand, ok, ret } => {
                     ret.iter().chain([operand, ok]).cloned().collect()
                 }
-                Goal::Listed { .. } => continue,
-                // (One that waits is over a record of an outer scope.)
-                Goal::Rebuild {
-                    base, with, result, ..
-                } => with
-                    .iter()
-                    .map(|(_, ty)| ty)
-                    .chain([base, result])
-                    .cloned()
-                    .collect(),
             };
             for ty in mentioned {
                 self.keep_monomorphic(&ty);
@@ -271,14 +351,6 @@ impl TypeChecker {
                         args: args.iter().map(|t| self.apply(t)).collect(),
                         subject: Type::Var(subject),
                         asker,
-                    },
-                    Pred::Anon { given, .. } => Pred::Anon {
-                        row: Type::Var(subject),
-                        given: *given,
-                    },
-                    Pred::Lacks { field, .. } => Pred::Lacks {
-                        row: Type::Var(subject),
-                        field: *field,
                     },
                     // The definition passes the type on to the builtin;
                     // each use names its own type (`written`).
@@ -584,15 +656,14 @@ impl TypeChecker {
                 _ => None,
             })
             .collect();
+        // The results of the reads refused below: a read of a field of
+        // one (`o.a.b`, behind `o.a`) is refused with it, not again.
+        let mut refused_reads: std::collections::HashSet<TyVar> = std::collections::HashSet::new();
         for wanted in recorded {
             if wanted.solved {
                 continue;
             }
-            let waits_on = match &wanted.goal {
-                Goal::Rebuild { base, .. } => self.rebuild_waits(base).map(Type::Var),
-                goal => Some(goal.waits_on().clone()),
-            };
-            if waits_on.is_some_and(|ty| self.waits_for_outer(&ty)) {
+            if self.waits_for_outer(wanted.goal.waits_on()) {
                 self.wanted.push(wanted);
                 continue;
             }
@@ -600,11 +671,6 @@ impl TypeChecker {
                 Goal::Pred(Pred::Trait {
                     tr, args, subject, ..
                 }) => (tr, args, subject),
-                // (A row nothing gives fields to has none to clash, and
-                // is no declared record.)
-                Goal::Listed { .. }
-                | Goal::Rebuild { .. }
-                | Goal::Pred(Pred::Anon { .. } | Pred::Lacks { .. }) => continue,
                 // A type nothing decides is no type a builtin is given:
                 // nothing to check.
                 Goal::Pred(Pred::Builtin { .. } | Pred::Given { .. }) => continue,
@@ -644,8 +710,36 @@ impl TypeChecker {
                     );
                     continue;
                 }
-                // (Each is decided when the scope is generalised.)
-                Goal::Select { .. } => continue,
+                Goal::Select {
+                    name,
+                    args,
+                    at,
+                    recv,
+                    result,
+                } => {
+                    let behind_a_refused =
+                        matches!(self.apply(recv), Type::Var(v) if refused_reads.contains(&v));
+                    if let Type::Var(v) = self.apply(result) {
+                        refused_reads.insert(v);
+                    }
+                    if behind_a_refused {
+                        continue;
+                    }
+                    let what = match args {
+                        Some(_) => "this calls",
+                        None => "this reads",
+                    };
+                    let help = self.annotate_record_help(*name, at);
+                    self.errors.push(
+                        Diagnostic::error(
+                            Code::AmbiguousType,
+                            wanted.origin.span,
+                            format!("cannot infer the record type whose field '{name}' {what}"),
+                        )
+                        .with_help(help),
+                    );
+                    continue;
+                }
                 Goal::Update { field, .. } => {
                     self.errors.push(
                         Diagnostic::error(
@@ -1190,19 +1284,6 @@ impl TypeChecker {
                 self.ev.use_ev = Some(owed);
             }
         }
-        // A row variable the type writes more than once: what a declared
-        // record that stands for it says of each field holds for each
-        // writing.
-        for (row, fields) in row_listings(&scheme.ty) {
-            if let Some(row) = mapping.get(&row).cloned() {
-                let origin = self.use_origin();
-                let fields = fields
-                    .iter()
-                    .map(|(name, ty)| (*name, substitute_vars(ty, &mapping)))
-                    .collect();
-                self.want_goal(Goal::Listed { fields, row }, origin);
-            }
-        }
         self.named_use = None;
         substitute_vars(&scheme.ty, &mapping)
     }
@@ -1236,11 +1317,9 @@ impl TypeChecker {
                     && !self.is_cell
                 {
                     let ty = self.apply(&scheme.ty);
-                    let mut rows = Vec::new();
-                    row_tail_vars(&ty, &mut rows);
                     let unknown: HashMap<TyVar, Type> = free_vars_in(&ty)
                         .into_iter()
-                        .filter(|v| !scheme.vars.contains(v) && !rows.contains(v))
+                        .filter(|v| !scheme.vars.contains(v))
                         .map(|v| (v, Type::Error))
                         .collect();
                     if !unknown.is_empty() {

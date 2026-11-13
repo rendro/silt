@@ -36,7 +36,7 @@ fn unique_uri(tag: &str) -> String {
     format!("file:///tmp/silt_lsp_enum_variant_rename_{tag}_{n}.silt")
 }
 
-// ── Edit helpers (mirrors round71_lsp_rename_let_and_field_tests) ─────
+// ── Edit helpers (mirrors lsp_rename_let_and_field_tests) ─────
 
 fn apply_edit(source: &str, edit: &Value) -> String {
     let new_text = edit

@@ -1,0 +1,9 @@
+-- cmd: fmt
+-- Braces behind the arrow that are no block are the body itself: a
+-- closure. Nothing changes; a block around a closure goes and the
+-- closure stays.
+fn main() {
+  let closure = { x -> { y -> x + y } }
+  let wrapped = { x -> { y -> x * y } }
+  println((closure(1)(2), wrapped(2)(3)))
+}

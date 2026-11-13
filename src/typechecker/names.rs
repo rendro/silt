@@ -32,8 +32,7 @@ use std::sync::Arc;
 
 use crate::ast::*;
 use crate::defs::{
-    ANON_RECORD, BuiltinDefs, Def, DefId, DefKind, DefTable, Res, TraitId, TypeId, Vis,
-    builtin_types,
+    BuiltinDefs, Def, DefId, DefKind, DefTable, Res, TraitId, TypeId, Vis, builtin_types,
 };
 use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{Symbol, intern, resolve};
@@ -255,7 +254,7 @@ fn build_builtins() -> (BuiltinDefs, BuiltinScopes) {
         debug_assert_eq!(id, ty.0);
         // (The unit type `()` is written as punctuation, never as a
         // name a scope binds.)
-        if resolve(name) != ANON_RECORD && resolve(name) != "()" {
+        if resolve(name) != "()" {
             let exports = match module {
                 None => &mut prelude_exports,
                 Some(_) => module_exports.entry(module_id).or_default(),
@@ -881,9 +880,6 @@ fn report_private_in_public(
                 params.iter().for_each(|p| type_names(p, out));
                 type_names(ret, out);
             }
-            TypeExprKind::AnonRecord { fields, .. } => {
-                fields.iter().for_each(|(_, t)| type_names(t, out))
-            }
             TypeExprKind::SelfType => {}
         }
     }
@@ -1025,19 +1021,12 @@ fn pattern_binders(pattern: &Pattern, out: &mut Vec<(Symbol, Span)>) {
                 pattern_binders(part, out);
             }
         }
-        PatternKind::Record { fields, .. } | PatternKind::AnonRecord { fields, .. } => {
+        PatternKind::Record { fields, .. } => {
             for (field, field_span, sub) in fields {
                 match sub {
                     Some(sub) => pattern_binders(sub, out),
                     None => out.push((*field, *field_span)),
                 }
-            }
-            if let PatternKind::AnonRecord {
-                rest: Some((rest, rest_span)),
-                ..
-            } = &pattern.kind
-            {
-                out.push((*rest, *rest_span));
             }
         }
         PatternKind::List(elems, rest) => {
@@ -1289,7 +1278,7 @@ fn binder_renames(pattern: &Pattern) -> Vec<(Symbol, Span, Vec<(Span, std::strin
             PatternKind::Tuple(parts) | PatternKind::Constructor { args: parts, .. } => {
                 parts.iter().for_each(|part| walk(part, out));
             }
-            PatternKind::Record { fields, .. } | PatternKind::AnonRecord { fields, .. } => {
+            PatternKind::Record { fields, .. } => {
                 for (field, field_span, sub) in fields {
                     match sub {
                         Some(sub) => walk(sub, out),
@@ -1299,13 +1288,6 @@ fn binder_renames(pattern: &Pattern) -> Vec<(Symbol, Span, Vec<(Span, std::strin
                             vec![(*field_span, format!("{field}: _{field}"))],
                         )),
                     }
-                }
-                if let PatternKind::AnonRecord {
-                    rest: Some((rest, rest_span)),
-                    ..
-                } = &p.kind
-                {
-                    out.push((*rest, *rest_span, vec![(*rest_span, format!("_{rest}"))]));
                 }
             }
             PatternKind::List(elems, rest) => {
@@ -1391,9 +1373,6 @@ pub(crate) fn type_vars_of(te: &TypeExpr, out: &mut Vec<Symbol>) {
             TypeExprKind::Function(params, ret) => {
                 params.iter().for_each(|t| walk(t, out));
                 walk(ret, out);
-            }
-            TypeExprKind::AnonRecord { fields, .. } => {
-                fields.iter().for_each(|(_, t)| walk(t, out));
             }
         }
     }
@@ -2113,11 +2092,6 @@ impl Resolver<'_> {
                 self.type_expr(ret);
             }
             TypeExprKind::SelfType => {}
-            TypeExprKind::AnonRecord { fields, .. } => {
-                for (_, t) in fields {
-                    self.type_expr(t);
-                }
-            }
         }
     }
 
@@ -2298,20 +2272,11 @@ impl Resolver<'_> {
                         self.pattern(sub);
                     }
                 }
-                if let Some(name) = name {
-                    pattern.res = self.record_name(module, name, name_span, span, true);
-                }
+                pattern.res = self.record_name(module, name, name_span, span, true);
             }
             PatternKind::Tuple(parts) | PatternKind::Or(parts) => {
                 for p in parts {
                     self.pattern(p);
-                }
-            }
-            PatternKind::AnonRecord { fields, .. } => {
-                for (_, _, sub) in fields {
-                    if let Some(sub) = sub {
-                        self.pattern(sub);
-                    }
                 }
             }
             PatternKind::List(elems, rest) => {
@@ -2949,14 +2914,6 @@ impl Resolver<'_> {
                 expr: base, fields, ..
             } => {
                 self.expr(base);
-                for (_, e) in fields {
-                    self.expr(e);
-                }
-            }
-            ExprKind::AnonRecord { spread, fields } => {
-                if let Some(s) = spread {
-                    self.expr(s);
-                }
                 for (_, e) in fields {
                     self.expr(e);
                 }

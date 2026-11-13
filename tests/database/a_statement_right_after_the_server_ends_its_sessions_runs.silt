@@ -2,10 +2,11 @@
 -- program terminates them), and a statement on the pool follows at
 -- once, 40 times over: the first time without waiting for anything,
 -- then once the sessions have left pg_stat_activity. Each statement
--- runs: the round trip with which the pool checks the connection it
--- takes finds the session ended, also where the end is still on its
--- way to the client, and the pool opens another. (A check that only
--- read what had come failed about one statement in three here.)
+-- runs: the statement's first message (which prepares it, and runs
+-- nothing) finds the session ended, also where the end is still on its
+-- way to the client, and the statement goes to another connection. (A
+-- check that only read what had come failed about one statement in
+-- three here.)
 -- Probes of the verifier f1v.
 import env
 import list

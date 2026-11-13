@@ -1,0 +1,14 @@
+-- cmd: fmt
+-- Braces that are a closure are no block: they are the body. A block
+-- around them goes.
+fn adder(n) {
+  match n {
+    1 -> { m -> m + 1 }
+    2 -> { { m -> { m + 2 } } }
+    _ -> { { m -> m } }
+  }
+}
+
+fn main() {
+  println(adder(1)(1))
+}

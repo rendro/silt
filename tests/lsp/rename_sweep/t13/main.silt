@@ -5,6 +5,11 @@ type P {
   y: Int,
 }
 
+type Person {
+  name: String,
+  age: Int,
+}
+
 fn nested(n: Int) -> Int {
   let r = {
     let n = n * 2
@@ -13,11 +18,11 @@ fn nested(n: Int) -> Int {
   n + r
 }
 
-fn anon(p: {name: String, age: Int}) -> String {
-  let { name, ...rest } = p
-  let q = { ...rest, name: name }
+fn named(p: Person) -> String {
+  let Person { name, .. } = p
+  let q = p.{ name: name }
   match q {
-    {name: nm, ...others} -> "{nm} {others.age} {rest.age}"
+    Person { name: nm, age } -> "{nm} {age} {p.age}"
   }
 }
 
@@ -74,6 +79,6 @@ fn whens(a: Option(Int), n: Int) -> Int {
 
 fn main() {
   println(nested(1) + maps(#{ "a": 1, "b": 2 }) + lists([1, 2, 3]) + recs(P { x: 1, y: 2 }))
-  println(anon({ name: "a", age: 3 }))
+  println(named(Person { name: "a", age: 3 }))
   println(loops(3) + pipes(1) + whens(Some(2), 1) + whens(None, 5))
 }

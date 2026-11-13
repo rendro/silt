@@ -40,7 +40,6 @@ missing belong to codes that are gone.
 | `E0108` | Two declarations, or two statements, on one line. |
 | `E0109` | Syntax of another language, or of an older silt, that silt does not have. |
 | `E0110` | A name bound twice at the top level of a file. |
-| `E0111` | A field named twice in an anonymous record type or literal. |
 | `E0112` | Expressions, patterns or types nested deeper than the parser follows. |
 | `E0113` | A declaration whose parts are not allowed together (a supertrait on an impl, an annotated `type` parameter, a lowercase type name, `opaque` on an alias or on a private type, ...). |
 | `E0114` | The count of the lex and parse errors of a file that are not shown, at the first of them. |
@@ -61,7 +60,7 @@ missing belong to codes that are gone.
 |------|---------|
 | `E0301` | A value of one type where another type is needed. |
 | `E0302` | A name in a pin pattern (`^x`) that nothing binds. |
-| `E0303` | A constructor that no enum declares, or a record literal written through the name of an anonymous record type. |
+| `E0303` | A constructor that no enum declares. |
 | `E0304` | A record literal or pattern whose type name names no record type. |
 | `E0305` | A field or method that the type at hand does not have: `p.b` on a record without `b`, a field a record literal or update gives that its type does not declare. |
 | `E0306` | A field that the record at hand does not declare. |
@@ -98,7 +97,7 @@ missing belong to codes that are gone.
 | `E0340` | A statement whose value nothing uses. |
 | `E0342` | A type given to a decoder that has no decoder for it (a field of a type no decoder exists for, an enum, a generic type without its type arguments, ...), or an opaque type decoded or json-encoded outside its module without the module's impl. |
 | `E0343` | A type constructor where a type is needed, or a type where a type constructor is needed. |
-| `E0344` | A value of an opaque type built, taken apart, updated, read, spread or passed into an open row outside its module. |
+| `E0344` | A value of an opaque type built, taken apart, updated or read outside its module. |
 
 ## Compiling and the entry point (4xx, 5xx)
 

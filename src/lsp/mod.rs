@@ -44,6 +44,7 @@ mod folding;
 mod formatting;
 mod hover;
 mod implementation;
+pub(crate) mod in_memory;
 mod inlay_hints;
 mod local_bindings;
 mod locals;

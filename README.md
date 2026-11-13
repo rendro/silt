@@ -141,7 +141,7 @@ fn main() {
 
 ## Type inference
 
-The type checker infers everything. You get static type safety without writing annotations. Define records, enums, and traits when you need structure.
+The type checker infers the types of your values, closures and functions, so static type safety costs few annotations: a function that reads a field of a parameter names the parameter's record type (`user: User`), and the rest is inferred. Define records, enums, and traits when you need structure.
 
 ```silt
 type User {
@@ -149,7 +149,7 @@ type User {
   age: Int,
 }
 
-fn greet(user) {
+fn greet(user: User) {
   "hello, {user.name} ({user.age})"
 }
 
@@ -166,7 +166,7 @@ fn main() {
 curl -fsSL https://silt-lang.com/install.sh | sh
 ```
 
-The installer downloads over https only (with curl, or with wget, whose redirects it follows itself and only to https) and verifies the downloaded binary against the release's `SHA256SUMS` file before extracting — a mismatch aborts the install so a corrupted archive can't land on disk. The checksum comes from the same release as the archive; when the GitHub CLI (`gh`, 2.49 or later) is installed and logged in to github.com, the installer also checks the build attestation the release workflow signed, which a replaced release fails, and refuses an archive that does not verify. Without such a `gh`, it says in one line that the attestation was not checked; `gh attestation verify silt-<version>-<target>.tar.gz --repo rendro/silt` checks a downloaded archive by hand. To upgrade an existing install without re-running the curl pipe, use `silt self-update` (which performs the same verification).
+The installer downloads over https only (with curl, or with GNU wget, whose redirects it follows itself and only to https; a wget that cannot be told to stop at a redirect, as busybox's, is not used) and verifies the downloaded binary against the release's `SHA256SUMS` file before extracting — a mismatch aborts the install so a corrupted archive can't land on disk. The checksum comes from the same release as the archive; when the GitHub CLI (`gh`, 2.49 or later) is installed and logged in to github.com, the installer also checks the build attestation the release workflow signed, which a replaced release fails, and refuses an archive that does not verify. Without such a `gh`, it says in one line that the attestation was not checked; `gh attestation verify silt-<version>-<target>.tar.gz --repo rendro/silt` checks a downloaded archive by hand. To upgrade an existing install without re-running the curl pipe, use `silt self-update` (which performs the same verification).
 
 Or build from source:
 
