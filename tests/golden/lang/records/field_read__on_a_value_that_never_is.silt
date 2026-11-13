@@ -1,0 +1,39 @@
+-- A field read, a call of a field, an update and a record pattern on a value that
+-- never is (a panic, a return, a loop without end) check and compile: the
+-- read never runs.
+type A { x: Int, run: Fn(Int) -> Int }
+fn a() -> Int { panic("a").x }
+fn b() -> Int {
+  let v = panic("b")
+  v.x
+}
+fn c(n: Int) -> Int {
+  let v = return n
+  v.x
+}
+fn d() -> Int {
+  let v = panic("d")
+  v.run(1)
+}
+fn e() -> String {
+  let v = panic("e")
+  "{v.x}"
+}
+fn f() -> A {
+  let v = panic("f")
+  v.{ x: 1 }
+}
+fn g() -> Int {
+  let A { x, .. } = panic("g")
+  x
+}
+fn h() -> Int {
+  let v = loop {
+    loop()
+  }
+  v.x
+}
+fn main() {
+  println(c(3))
+  println("ok")
+}

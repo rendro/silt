@@ -3,7 +3,7 @@ error[type]: cannot infer the record type whose field 'mk' this calls
     |
  49 |   t.mk()
     |   ^^^^ cannot infer the record type whose field 'mk' this calls
-  = help: annotate the record: `t: SomeRecord`
+  = help: annotate the record: `t: SomeRecord`; or, for the method of trait 'A' or of trait 'B': give 'pick' a type parameter with its bound, `fn pick(type t) where t: A`
 
 error[type]: 'again' takes a type as `y`, not a value of type `Int`: `x.total()` in 'go' reads as the method of trait 'Vals' that makes a value
  --> static_method__a_misread_parameter_passed_on_is_named_at_the_call.silt:59:17

@@ -471,7 +471,7 @@ impl TypeChecker {
     /// Unify the type of a pattern (`got`) with the type of what it
     /// matches (`expected`) and report at the pattern (`span`) why they
     /// do not unify. A pattern's mismatch has no help and no fix: those
-    /// say what to do with an expression (`?`, `Ok(...)`, a spread). In
+    /// say what to do with an expression (`?`, `Ok(...)`). In
     /// an arm of a `match`, a mismatch an earlier arm's pattern reported
     /// with the same text is not reported again (`arm_mismatches`).
     pub(super) fn unify_pattern(&mut self, got: &Type, expected: &Type, span: Span) {

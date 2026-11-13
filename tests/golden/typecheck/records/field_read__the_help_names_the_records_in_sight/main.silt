@@ -1,0 +1,34 @@
+-- cmd: check
+-- exit: 1
+-- The help of a field read nothing decides names each record type in
+-- sight with the field: the module's own, a public one of an imported
+-- module, a builtin module's that is imported (not a private one of
+-- another module); for a name a pattern binds, the value it comes from.
+import shapes
+import time
+
+type A { x: Int }
+type B { x: Int, y: Int }
+
+fn r(c) {
+  c.radius
+}
+
+fn year(d) {
+  d.year
+}
+
+fn two(p) {
+  p.x
+}
+
+fn first(o) {
+  match o {
+    Some(a) -> a.y
+    None -> 0
+  }
+}
+
+fn main() {
+  println(1)
+}

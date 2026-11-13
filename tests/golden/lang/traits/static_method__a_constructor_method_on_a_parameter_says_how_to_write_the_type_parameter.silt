@@ -3,9 +3,9 @@
 -- stderr-not-contains: type 'type
 -- stderr-not-contains: call it on the type
 -- `m.pure(1)` on an unannotated parameter is not read as a type's method
--- (the trait is of type constructors), so `m` is a record with a field
--- `pure`. A call that gives it a type constructor says so, and how to
--- write the type parameter.
+-- (the trait is of type constructors), so `m` would be a record with a
+-- field `pure`, which nothing decides: the function is refused, and the
+-- help says to annotate the record or how to write the type parameter.
 fn go(m) {
   m.pure(1)
 }

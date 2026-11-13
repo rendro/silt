@@ -1,27 +1,27 @@
 error[type]: cannot infer the record type whose field 'mk' this calls
- --> static_method__a_receiver_read_as_a_type_or_a_field_is_named_at_the_call.silt:44:3
+ --> static_method__a_receiver_read_as_a_type_or_a_field_is_named_at_the_call.silt:45:3
     |
- 44 |   t.mk()
+ 45 |   t.mk()
     |   ^^^^ cannot infer the record type whose field 'mk' this calls
-  = help: annotate the record: `t: SomeRecord`
+  = help: annotate the record: `t: SomeRecord`; or, for the method of trait 'A' or of trait 'B': give 'go' a type parameter with its bound, `fn go(type t) where t: A`
 
 error[type]: 'r' takes a type as `x`, not a value of type `Rec`: `x.empty()` in it reads as the method of trait 'Monoid' that makes a value
- --> static_method__a_receiver_read_as_a_type_or_a_field_is_named_at_the_call.silt:48:13
+ --> static_method__a_receiver_read_as_a_type_or_a_field_is_named_at_the_call.silt:49:13
     |
- 48 |   println(r(Rec { empty: { -> 5 } }))
+ 49 |   println(r(Rec { empty: { -> 5 } }))
     |             ^^^^^^^^^^^^^^^^^^^^^^^ 'r' takes a type as `x`, not a value of type `Rec`: `x.empty()` in it reads as the method of trait 'Monoid' that makes a value
   = help: to call the field `empty` of the `Rec`, annotate the parameter: `fn r(x: Rec)`
 
 error[type]: 'r' takes a type as `x`, not a value of type `Int`: `x.empty()` in it reads as the method of trait 'Monoid' that makes a value
- --> static_method__a_receiver_read_as_a_type_or_a_field_is_named_at_the_call.silt:49:13
+ --> static_method__a_receiver_read_as_a_type_or_a_field_is_named_at_the_call.silt:50:13
     |
- 49 |   println(r(7))
+ 50 |   println(r(7))
     |             ^ 'r' takes a type as `x`, not a value of type `Int`: `x.empty()` in it reads as the method of trait 'Monoid' that makes a value
   = help: pass the type itself: `Int`
 
 error[type]: 'r' takes a type as `x`, not a value of type `String`: `x.empty()` in it reads as the method of trait 'Monoid' that makes a value
- --> static_method__a_receiver_read_as_a_type_or_a_field_is_named_at_the_call.silt:50:13
+ --> static_method__a_receiver_read_as_a_type_or_a_field_is_named_at_the_call.silt:51:13
     |
- 50 |   println(r("s"))
+ 51 |   println(r("s"))
     |             ^^^ 'r' takes a type as `x`, not a value of type `String`: `x.empty()` in it reads as the method of trait 'Monoid' that makes a value
   = help: pass a type that has trait 'Monoid'

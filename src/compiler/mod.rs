@@ -2732,6 +2732,9 @@ impl<'a> Compiler<'a> {
     ) -> Result<usize, Diagnostic> {
         let declared = match &receiver.ty {
             Some(Type::Generic(ty, _)) => Some(self.type_info(ty.id)),
+            // A value that never is (`panic("a").x`): the read never
+            // runs, and any place keeps the stack as a read does.
+            Some(Type::Never) => return Ok(0),
             _ => None,
         };
         Self::field_read(declared.as_deref(), field, span)

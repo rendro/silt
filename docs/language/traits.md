@@ -783,16 +783,17 @@ A dot after a value names a field, whatever methods traits declare, with
 one exception (the third point):
 
 - `p.name` is the record's field; `r.f(..)` calls the function the field
-  `f` holds.
-- In a function whose parameter has no annotation, `fn name_of(p) {
-  p.name }` takes any record with a field `name`.
-- In such a function a call `t.zero()`, where exactly one trait in sight
-  has a method `zero` that makes a value, takes `t` as a type that has
-  that trait, as `json.parse(s, t)` takes one that has `json.Decode`:
-  `fn zeros(t) { t.zero() }` is `fn zeros(type a) -> a where a: Zero`.
-  Annotate the parameter (`fn get(r: Rec)`) to call a record's field of
-  that name. If the function also reads a field of `t`, `t` is a record,
-  and `t.zero()` calls its field.
+  `f` holds. The record's type is the one the function decides: a
+  parameter that is read so is annotated, `fn name_of(p: Person) {
+  p.name }`; without it the read is an error that asks for the
+  annotation.
+- In a function whose parameter has no annotation, a call `t.zero()`,
+  where exactly one trait in sight has a method `zero` that makes a
+  value, takes `t` as a type that has that trait, as `json.parse(s, t)`
+  takes one that has `json.Decode`: `fn zeros(t) { t.zero() }` is
+  `fn zeros(type a) -> a where a: Zero`. Annotate the parameter
+  (`fn get(r: Rec)`) to call a record's field of that name; once the
+  function decides that `t` is a record, `t.zero()` calls its field.
 - A trait's method is called through the trait: `fn g(x) {
   Greet.greet(x) }` is `fn g(x: a) -> String where a: Greet`, the bound
   coming from the trait the call names.

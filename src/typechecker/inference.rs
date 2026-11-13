@@ -1650,13 +1650,36 @@ impl TypeChecker {
     }
 
     /// Whether `tr` is a trait of type constructors.
-    fn of_constructors_trait(&self, tr: TraitKey) -> bool {
+    pub(super) fn of_constructors_trait(&self, tr: TraitKey) -> bool {
         (self.tables.traits.get(&tr)).is_some_and(|info| info.constructor)
     }
 
     /// Whether `ty` is the type of a parameter of an enclosing function
     /// or closure whose body reads a field of it (`FnFrame::read_fields`):
     /// a record, whose `t.zero()` calls its field.
+    /// Where the read of a field of `obj`, whose type is unknown, is:
+    /// `obj`'s name and whether it is a parameter, and the function the
+    /// read is in (`traits`: see `ReadAt::traits`).
+    fn read_at(&self, obj: &Expr, traits: Vec<TraitKey>) -> super::solve::ReadAt {
+        let name = match obj.kind {
+            ExprKind::Ident(name) => Some((
+                name,
+                (self.fn_frames.iter()).any(|frame| frame.names.contains(&Some(name))),
+            )),
+            _ => None,
+        };
+        let function = (self.fn_frames.last()).and_then(|frame| match frame.owner {
+            Some(super::unused::FrameOwner::TopLevel(name)) => Some((name, true)),
+            Some(super::unused::FrameOwner::Local(name)) => Some((name, false)),
+            None => None,
+        });
+        super::solve::ReadAt {
+            name,
+            traits,
+            function,
+        }
+    }
+
     fn read_as_record(&self, ty: &Type) -> bool {
         let ty = self.apply(ty);
         (self.fn_frames.iter()).any(|frame| {
@@ -3460,7 +3483,7 @@ impl TypeChecker {
         self.receiver_taken = false;
         // `x.f(args)` where the type of `x` is unknown: the call waits
         // for it.
-        if let Some((recv, name, written)) = self.unknown_receiver.take() {
+        if let Some((recv, name, at)) = self.unknown_receiver.take() {
             let args: Vec<Type> = args.iter_mut().map(|a| self.infer_expr(a, env)).collect();
             let result = self.fresh_var();
             self.want_goal(
@@ -3469,7 +3492,7 @@ impl TypeChecker {
                     name,
                     args: Some(args),
                     result: result.clone(),
-                    written,
+                    at,
                 },
                 Origin {
                     span: callee.span,
@@ -4808,9 +4831,9 @@ impl TypeChecker {
                                 (0, true) => self.constructor_makers(field),
                                 _ => makers,
                             };
-                            if makers.len() > 1
-                                || (!makers.is_empty() && self.of_constructors_trait(makers[0]))
-                            {
+                            let read_as_field = makers.len() > 1
+                                || (!makers.is_empty() && self.of_constructors_trait(makers[0]));
+                            if read_as_field {
                                 self.note_reading(obj, &obj_ty, |receiver| Reading::Field {
                                     receiver,
                                     traits: makers.clone(),
@@ -4819,7 +4842,9 @@ impl TypeChecker {
                             }
                             // `x.f(..)`: what it calls is decided with
                             // the type of `x` (`check_call`).
-                            self.unknown_receiver = Some((obj_ty.clone(), field, name_of(obj)));
+                            let traits = if read_as_field { makers } else { Vec::new() };
+                            let at = self.read_at(obj, traits);
+                            self.unknown_receiver = Some((obj_ty.clone(), field, at));
                             self.fresh_var()
                         } else {
                             // `x.f`: the field is read when the type of
@@ -4831,7 +4856,7 @@ impl TypeChecker {
                                     name: field,
                                     args: None,
                                     result: result.clone(),
-                                    written: name_of(obj),
+                                    at: self.read_at(obj, Vec::new()),
                                 },
                                 Origin {
                                     span,
@@ -6330,14 +6355,6 @@ impl TypeChecker {
 }
 
 /// The name a callee is written by (`go`, `m.go`'s `go`).
-/// The name `e` is, when it is one (`x`, not `x.f`).
-fn name_of(e: &Expr) -> Option<Symbol> {
-    match e.kind {
-        ExprKind::Ident(name) => Some(name),
-        _ => None,
-    }
-}
-
 pub(super) fn written_name(e: &Expr) -> Option<Symbol> {
     match e.kind {
         ExprKind::Ident(name) | ExprKind::FieldAccess(_, name, _) => Some(name),

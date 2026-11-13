@@ -264,6 +264,11 @@ pub(crate) const NO_IF: &str =
 pub(crate) const NO_IF_HELP: &str = "write `match {`, then one `condition -> value` arm per \
      line, and last `_ -> value` for when no condition is true";
 
+/// The help of braces of fields where a pattern starts: a record pattern
+/// names its type.
+const RECORD_PATTERN_HELP: &str =
+    "a record pattern starts with the name of its type: `P { x, .. }`";
+
 /// The help of the error of `t.0`: a tuple is taken apart where it is
 /// bound, and a closure's parameter is such a place.
 pub(crate) const TUPLE_INDEX_HELP: &str =
@@ -1727,11 +1732,15 @@ impl<'src> Parser<'src> {
         let start = self.pos;
         self.parse_pattern().map_err(|err| {
             if self.pos == start && err.code == Code::ExpectedPattern {
-                Diagnostic::error(
+                let refused = Diagnostic::error(
                     Code::ExpectedIdentifier,
                     err.span,
                     format!("expected parameter name, found {}", self.found()),
-                )
+                );
+                match self.at(&Token::LBrace) {
+                    true => refused.with_help(RECORD_PATTERN_HELP),
+                    false => refused,
+                }
             } else {
                 err
             }
@@ -1745,11 +1754,17 @@ impl<'src> Parser<'src> {
                 self.advance();
                 Ok(self.mk_pattern(PatternKind::Ident(name), start))
             }
-            _ => Err(Diagnostic::error(
-                Code::ExpectedIdentifier,
-                self.span(),
-                format!("expected parameter name, found {}", self.found()),
-            )),
+            _ => {
+                let refused = Diagnostic::error(
+                    Code::ExpectedIdentifier,
+                    self.span(),
+                    format!("expected parameter name, found {}", self.found()),
+                );
+                Err(match self.at(&Token::LBrace) {
+                    true => refused.with_help(RECORD_PATTERN_HELP),
+                    false => refused,
+                })
+            }
         }
     }
 
@@ -4203,6 +4218,15 @@ impl<'src> Parser<'src> {
                     if p.at(&Token::DotDot) {
                         p.advance();
                         has_rest = true;
+                        // (`..rest`, `...`: the rest of a record is not
+                        // bound.)
+                        if !p.nl_before() && matches!(p.peek(), Token::Dot | Token::Ident(_)) {
+                            return Err(Diagnostic::error(
+                                Code::UnsupportedSyntax,
+                                p.span(),
+                                "the rest of a record pattern is `..` alone, `P { x, .. }`: it binds no name",
+                            ));
+                        }
                         return Ok(None);
                     }
                     p.parse_field_pattern().map(Some)
@@ -4402,7 +4426,7 @@ impl<'src> Parser<'src> {
                 self.span(),
                 "expected pattern, found {",
             )
-            .with_help("a record pattern starts with the name of its type: `P { x, .. }`")),
+            .with_help(RECORD_PATTERN_HELP)),
             Token::LBracket => {
                 self.advance(); // consume [
                 let mut rest = None;

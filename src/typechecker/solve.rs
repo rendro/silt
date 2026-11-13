@@ -24,6 +24,22 @@ pub(crate) struct Wanted {
     pub(super) ev: super::evidence::EvRef,
 }
 
+/// Where a field read whose receiver's type is unknown is written: what
+/// the help of its error writes when nothing decides the type.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ReadAt {
+    /// The name the receiver is written by, when it is a name, with
+    /// whether it is a parameter of the function or closure the read is
+    /// in (an annotation can stand there).
+    pub(super) name: Option<(Symbol, bool)>,
+    /// For a call `x.m(..)`: the traits whose method `m` makes a value,
+    /// which the call does not choose between (`Reading::Field`).
+    pub(super) traits: Vec<TraitKey>,
+    /// The function the read is in, with whether it is a named function
+    /// (`fn`), which can take a type parameter, and not a closure.
+    pub(super) function: Option<(Symbol, bool)>,
+}
+
 /// What waits for a type to be known.
 #[derive(Debug, Clone)]
 pub(crate) enum Goal {
@@ -39,9 +55,8 @@ pub(crate) enum Goal {
         name: Symbol,
         args: Option<Vec<Type>>,
         result: Type,
-        /// The name the receiver is written by, when it is a name: what
-        /// the error's help annotates.
-        written: Option<Symbol>,
+        /// Where the read is: what the error's help writes.
+        at: ReadAt,
     },
     /// `base.{ field: value }` where the type of `base` was unknown at
     /// the update: the field is checked when it is known. It never

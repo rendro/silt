@@ -1,6 +1,0 @@
-error[type]: cannot infer the record type whose field 'pure' this calls
- --> static_method__a_constructor_method_on_a_parameter_is_named_at_the_call.silt:10:3
-    |
- 10 |   m.pure(1)
-    |   ^^^^^^ cannot infer the record type whose field 'pure' this calls
-  = help: annotate the record: `m: SomeRecord`

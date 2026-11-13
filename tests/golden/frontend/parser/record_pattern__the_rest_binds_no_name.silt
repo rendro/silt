@@ -1,0 +1,10 @@
+-- cmd: check
+-- exit: 1
+-- The rest of a record pattern is `..` alone: it binds no name.
+type P { x: Int, y: Int }
+
+fn main() {
+  match P { x: 1, y: 2 } {
+    P { x, ..rest } -> println(x)
+  }
+}

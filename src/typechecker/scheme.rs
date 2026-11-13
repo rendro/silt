@@ -1,18 +1,31 @@
 use super::*;
 
 impl TypeChecker {
+    /// Whether the module checked sees the record type `ty`: its own, a
+    /// public one of a module it imports, a builtin module's it imports.
+    fn sees_record(&self, ty: TypeRef) -> bool {
+        let Some(def) = self.def(ty.id.0) else {
+            return false;
+        };
+        if def.module == self.module {
+            return true;
+        }
+        if def.module.builtin_name().is_some() {
+            return self.builtin_imports.contains(&def.module);
+        }
+        def.module.is_builtin()
+            || (def.vis == crate::defs::Vis::Pub && self.seen_modules.contains(&def.module))
+    }
+
     /// The help of a field read whose record nothing decides: the
-    /// annotation to write (`user: User`), with each record type of the
-    /// module that has the field, the receiver by its name when it is
-    /// one.
-    fn annotate_record_help(&self, field: Symbol, written: Option<Symbol>) -> String {
-        let name = written.map_or_else(|| "r".to_string(), resolve);
+    /// annotation to write (`user: User`), with each record type in sight
+    /// that has the field; for a call the checker read as a field
+    /// because traits have a method of the name that makes a value, also
+    /// the type parameter that calls the method.
+    fn annotate_record_help(&self, field: Symbol, at: &super::solve::ReadAt) -> String {
         let mut types: Vec<String> = (self.tables.records.iter())
             .filter(|(ty, rec)| {
-                rec.fields.iter().any(|(n, _)| *n == field)
-                    && self
-                        .def(ty.id.0)
-                        .is_some_and(|def| def.module == self.module)
+                rec.fields.iter().any(|(n, _)| *n == field) && self.sees_record(**ty)
             })
             .map(|(ty, _)| {
                 let params = (self.tables.record_param_var_ids.get(ty)).map_or(0, Vec::len);
@@ -27,14 +40,70 @@ impl TypeChecker {
             })
             .collect();
         types.sort();
-        match types.as_slice() {
-            [] => format!("annotate the record: `{name}: SomeRecord`"),
-            types => {
-                let written: Vec<String> =
-                    types.iter().map(|ty| format!("`{name}: {ty}`")).collect();
+        types.dedup();
+        let record = match (at.name, types.as_slice()) {
+            // (A name bound by a pattern takes no annotation where it is
+            // bound: the value it comes from is annotated.)
+            (Some((name, false)), []) => {
+                format!("annotate the value `{name}` comes from with its record type")
+            }
+            (Some((name, false)), types) => format!(
+                "annotate the value `{name}` comes from with its record type, `{}`",
+                types.join("` or `")
+            ),
+            (name, types) => {
+                let name = name.map_or_else(|| "r".to_string(), |(name, _)| resolve(name));
+                let written: Vec<String> = match types {
+                    [] => vec![format!("`{name}: SomeRecord`")],
+                    types => types.iter().map(|ty| format!("`{name}: {ty}`")).collect(),
+                };
                 format!("annotate the record: {}", written.join(" or "))
             }
-        }
+        };
+        let Some(first) = at.traits.first().copied() else {
+            return record;
+        };
+        let param = at
+            .name
+            .map_or_else(|| "t".to_string(), |(name, _)| resolve(name));
+        let of: Vec<String> = (at.traits.iter())
+            .map(|t| format!("trait '{}'", self.show_trait(*t)))
+            .collect();
+        let bound = self.show_trait(first);
+        let named = at
+            .function
+            .filter(|(_, declared)| *declared)
+            .map(|(name, _)| name);
+        let how = match (self.of_constructors_trait(first), named) {
+            (true, function) => {
+                let a = if param == "a" { "b" } else { "a" };
+                let example = format!(
+                    "`fn wrap(x: {a}, type {param}) -> {param}({a}) where {param}: {bound}`"
+                );
+                match function {
+                    Some(function) => format!(
+                        "give '{function}' a type parameter with its bound, and write it with \
+                         its type argument, as in {example}"
+                    ),
+                    None => format!(
+                        "a closure cannot take a type parameter: declare a named function with \
+                         one and its bound, as in {example}"
+                    ),
+                }
+            }
+            (false, Some(function)) => format!(
+                "give '{function}' a type parameter with its bound, \
+                 `fn {function}(type {param}) where {param}: {bound}`"
+            ),
+            (false, None) => format!(
+                "a closure cannot take a type parameter: declare a named function with one and \
+                 its bound, `where {param}: {bound}`"
+            ),
+        };
+        format!(
+            "{record}; or, for the method of {}: {how}",
+            of.join(" or of ")
+        )
     }
 
     // ── Generalization / Instantiation ──────────────────────────────
@@ -568,6 +637,9 @@ impl TypeChecker {
                 _ => None,
             })
             .collect();
+        // The results of the reads refused below: a read of a field of
+        // one (`o.a.b`, behind `o.a`) is refused with it, not again.
+        let mut refused_reads: std::collections::HashSet<TyVar> = std::collections::HashSet::new();
         for wanted in recorded {
             if wanted.solved {
                 continue;
@@ -622,14 +694,23 @@ impl TypeChecker {
                 Goal::Select {
                     name,
                     args,
-                    written,
-                    ..
+                    at,
+                    recv,
+                    result,
                 } => {
+                    let behind_a_refused =
+                        matches!(self.apply(recv), Type::Var(v) if refused_reads.contains(&v));
+                    if let Type::Var(v) = self.apply(result) {
+                        refused_reads.insert(v);
+                    }
+                    if behind_a_refused {
+                        continue;
+                    }
                     let what = match args {
                         Some(_) => "this calls",
                         None => "this reads",
                     };
-                    let help = self.annotate_record_help(*name, *written);
+                    let help = self.annotate_record_help(*name, at);
                     self.errors.push(
                         Diagnostic::error(
                             Code::AmbiguousType,

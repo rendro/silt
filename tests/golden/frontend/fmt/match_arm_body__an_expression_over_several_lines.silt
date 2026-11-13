@@ -11,7 +11,7 @@ type Name {
   length: Int,
 }
 
-fn pick(n, xs, name) {
+fn pick(n, xs, name: Name) {
   match n {
     1 -> { xs
       |> list.map { x -> x + 1 }

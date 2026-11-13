@@ -251,7 +251,7 @@ fn needs_parens(expr: &Expr, ctx: Ctx) -> bool {
 
 /// Whether `expr`, printed in a `match` or `loop` header without
 /// parentheses around it, would show a `{` that is not in brackets: a
-/// block, a closure that is not an argument, a record without a name, or
+/// block, a closure that is not an argument, or
 /// a record literal without fields or with one field written alone
 /// (`Q { x }`). The parser takes such a `{` for the block of the header
 /// (or the `match` for one without a scrutinee), so parentheses around
