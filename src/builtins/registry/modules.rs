@@ -551,7 +551,7 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn query(conn: a, sql: String, params: p, type r) -> Result(List(r), PostgresError)", "Run a statement and decode its rows into a record type (or json.Value)", postgres::query).connection().statement().decodes(Decoding::POSTGRES),
                 f("fn execute(conn: a, sql: String, params: p) -> Result(Int, PostgresError)", "Run a statement and return the number of rows it affected", postgres::execute).connection().statement(),
                 f("fn transact(pool: PgPool, f: Fn(PgTx) -> Result(a, PostgresError)) -> Result(a, PostgresError)", "Pin a single connection for a transaction; callback runs inside BEGIN/COMMIT", postgres::transact),
-                f("fn close(pool: PgPool) -> ()", "Drop the pool; future ops on it error", postgres::close),
+                f("fn close(pool: PgPool) -> ()", "Drop the pool; a later statement on it is `Err(Closed)`", postgres::close),
                 f("fn stream(conn: a, sql: String, params: p, type r) -> Result(Channel(Result(r, PostgresError)), PostgresError)", "Stream decoded rows through a bounded channel (backpressured)", postgres::stream).connection().statement().decodes(Decoding::POSTGRES),
                 f("fn cursor(tx: PgTx, sql: String, params: p, batch_size: Int, type r) -> Result(PgCursor(r), PostgresError)", "Declare a server-side cursor with batch size", postgres::cursor).statement().decodes(Decoding::POSTGRES),
                 f("fn cursor_next(cursor: PgCursor(r)) -> Result(List(r), PostgresError)", "Fetch the next batch of decoded rows from a cursor", postgres::cursor_next),

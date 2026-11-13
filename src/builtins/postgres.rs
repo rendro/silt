@@ -567,6 +567,12 @@ impl Drop for TxConn {
 /// The `PostgresError` of a statement on a transaction that has ended:
 /// `Closed`, as the connection is, for the transaction.
 fn tx_ended() -> Value {
+    pg_closed()
+}
+
+/// The `PostgresError` `Closed`: of a connection that dropped, and of a
+/// pool, a transaction or a cursor used after its end.
+fn pg_closed() -> Value {
     Value::variant(bv::PG_CLOSED, [])
 }
 
@@ -1131,14 +1137,11 @@ impl<'a> Arg<'a> for PoolHandle {
 }
 
 impl PoolHandle {
-    /// The pool, or the `PostgresError` of one that is closed.
+    /// The pool, or the `PostgresError` of one that is closed: `Closed`
+    /// (a pool comes only from `postgres.connect`, so one that is not
+    /// there was closed with `postgres.close`).
     fn open(self) -> Result<Arc<PgPool>, Value> {
-        lookup_pool(self.0).ok_or_else(|| {
-            pg_connect(format!(
-                "postgres: pool handle {} is not registered (closed or never opened)",
-                self.0
-            ))
-        })
+        lookup_pool(self.0).ok_or_else(pg_closed)
     }
 }
 
@@ -2430,11 +2433,8 @@ fn do_cursor_next(cursor_id: u64, rt: Arc<Runtime>, to_fill: ToFill, wanted: &Wa
     let entry = match lookup_cursor(cursor_id) {
         Some(e) => e,
         None if cursor_tx_ended(cursor_id) => return err(tx_ended()),
-        None => {
-            return err(other_error(format!(
-                "postgres: cursor {cursor_id} is not registered (closed or tx ended)"
-            )));
-        }
+        // (A cursor closed with `postgres.cursor_close`.)
+        None => return err(pg_closed()),
     };
     if let Some(error) = entry.failed {
         return err(error);
@@ -3278,7 +3278,7 @@ fn take_tx(tx_id: u64, wake: &dyn crate::runtime::sync::Wake) -> Option<TxEntry>
     // PG drops server-side cursors at tx end, so we only need to reap
     // the local registry entries. Do this before running COMMIT /
     // ROLLBACK so a subsequent `cursor_next` with the same id sees a
-    // clean "not registered" error rather than racing with the reap.
+    // clean `Closed` rather than racing with the reap.
     drain_cursors_for_tx(tx_id);
     remove_tx(tx_id)
 }

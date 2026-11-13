@@ -1,4 +1,4 @@
-a cursor closed in it, again: another error: postgres: cursor 2 is not registered (closed or tx ended)
+a cursor closed in it, again: Closed
 the transaction: Ok
 a statement on it afterwards: Closed
 an execute: Closed

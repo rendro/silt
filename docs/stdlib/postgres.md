@@ -35,7 +35,7 @@ its result are decoded into a record type the program declares (or into
 | `query` | `(a, String, p, type r) -> Result(List(r), PostgresError)` | Run a statement and decode its rows into a record type (or json.Value) |
 | `execute` | `(a, String, p) -> Result(Int, PostgresError)` | Run a statement and return the number of rows it affected |
 | `transact` | `(PgPool, Fn(PgTx) -> Result(a, PostgresError)) -> Result(a, PostgresError)` | Pin a single connection for a transaction; callback runs inside BEGIN/COMMIT |
-| `close` | `(PgPool) -> ()` | Drop the pool; future ops on it error |
+| `close` | `(PgPool) -> ()` | Drop the pool; a later statement on it is `Err(Closed)` |
 | `stream` | `(a, String, p, type r) -> Result(Channel(Result(r, PostgresError)), PostgresError)` | Stream decoded rows through a bounded channel (backpressured) |
 | `cursor` | `(PgTx, String, p, Int, type r) -> Result(PgCursor(r), PostgresError)` | Declare a server-side cursor with batch size |
 | `cursor_next` | `(PgCursor(r)) -> Result(List(r), PostgresError)` | Fetch the next batch of decoded rows from a cursor |
@@ -599,7 +599,7 @@ needed) are:
 | `Query(msg, sqlstate)` | `String, String` | Any other DbError; `sqlstate` is the 5-char code |
 | `TypeMismatch(col, expected, actual)` | `String, String, String` | A column whose type, or a cell whose value, does not fit its field (see [Rows](#rows)) |
 | `NoSuchColumn(col)` | `String` | A field with no column in the result; SQLSTATE `42703` (undefined_column), the column the server names |
-| `Closed` | — | Connection dropped, or a transaction used after it ended |
+| `Closed` | — | Connection dropped, or a pool, transaction or cursor used after it was closed or ended |
 | `Timeout` | — | SQLSTATE `57014`, a server that does not answer a connect, no free connection in the pool's 30 s |
 | `TxnAborted` | — | SQLSTATE `25P02` (in_failed_sql_transaction) |
 | `Other(msg)` | `String` | Catch-all for shapes we can't classify |
