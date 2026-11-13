@@ -1,0 +1,11 @@
+-- cmd: check
+-- exit: 1
+-- An impl of a trait with `json.Decode` as a supertrait, for a generic type, names the type parameter that lacks the bound and the fix.
+-- stderr-contains: trait `Dec` for `Pair(a, b)` needs `json.Decode` of each type parameter, as `Dec` has `json.Decode` as a supertrait: `a` is not bounded by it
+-- stderr-contains: help: add `a: json.Decode` to the impl's `where` clause
+-- stderr-not-contains: cannot be implemented for the generic type
+import json
+type Pair(a, b) { l: a, r: b }
+trait Dec: json.Decode { fn again(self, s: String) -> Result(Self, json.JsonError) { json.parse(s, Self) } }
+trait Dec for Pair(a, b) where b: json.Decode {}
+fn main() { println("x") }

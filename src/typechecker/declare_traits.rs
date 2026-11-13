@@ -2019,29 +2019,51 @@ impl TypeChecker {
         // then carries the type in full, `Box(Int)`, which the decoder
         // builds. An instance, `Box(Int)`, is the decoder's to judge
         // (`decode_impl_refusal`).)
-        let each_decoded = (ti.target_param_names.iter()).all(|param| {
-            (ti.where_clauses.iter()).any(|wc| {
-                wc.type_param == *param
-                    && self
-                        .named_trait(wc.trait_res, wc.trait_name)
-                        .is_some_and(Self::is_decode)
+        let undecoded: Vec<String> = (ti.target_param_names.iter())
+            .filter(|param| {
+                !(ti.where_clauses.iter()).any(|wc| {
+                    wc.type_param == **param
+                        && self
+                            .named_trait(wc.trait_res, wc.trait_name)
+                            .is_some_and(Self::is_decode)
+                })
             })
-        });
+            .map(|param| resolve(*param))
+            .collect();
         if self.generic_for_decode(target_type)
             && self.implies_decode(trait_key)
             && !free_vars_in(&self.apply(&self_type)).is_empty()
-            && !each_decoded
+            && !undecoded.is_empty()
         {
-            self.error(
-                Code::InvalidTraitImpl,
-                format!(
-                    "trait `{}` cannot be implemented for the generic type `{}`: it has \
-                     `json.Decode` as a supertrait, and a decoder builds a value of one type",
-                    self.impl_trait_name(ti),
-                    target_type.name
-                ),
-                ti.span,
+            // (Named: the parameters without the bound, and the bounds
+            // that are the fix.)
+            let trait_name = self.impl_trait_name(ti);
+            let header = format!(
+                "{}({})",
+                Qualifier::written(ti.target_module, ti.target_type),
+                (ti.target_type_args.iter())
+                    .map(type_expr_text)
+                    .collect::<Vec<_>>()
+                    .join(", ")
             );
+            let missing = (undecoded.iter())
+                .map(|param| format!("`{param}`"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let bounds = (undecoded.iter())
+                .map(|param| format!("{param}: json.Decode"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let message = format!(
+                "trait `{trait_name}` for `{header}` needs `json.Decode` of each type parameter, \
+                 as `{trait_name}` has `json.Decode` as a supertrait: {missing} {} not bounded by it",
+                if undecoded.len() == 1 { "is" } else { "are" }
+            );
+            let help = match ti.where_clauses.is_empty() {
+                true => format!("write `trait {trait_name} for {header} where {bounds}`"),
+                false => format!("add `{bounds}` to the impl's `where` clause"),
+            };
+            self.error_help(Code::InvalidTraitImpl, (message, Some(help)), ti.span);
             return;
         }
 

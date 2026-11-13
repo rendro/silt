@@ -10,8 +10,9 @@ error[type]: trait `Dec` cannot be implemented for `List(Set(Int))`: it has `jso
  21 | trait Dec for List(Set(Int)) {}
     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ trait `Dec` cannot be implemented for `List(Set(Int))`: it has `json.Decode` as a supertrait, and `List(Set(Int))` cannot be decoded: `Set(Int)` has no decoder
 
-error[type]: trait `Dec` cannot be implemented for the generic type `Pair`: it has `json.Decode` as a supertrait, and a decoder builds a value of one type
+error[type]: trait `Dec` for `Pair(a)` needs `json.Decode` of each type parameter, as `Dec` has `json.Decode` as a supertrait: `a` is not bounded by it
  --> generic_instance__an_impl_for_an_instance_without_a_decoder_is_refused.silt:23:1
     |
  23 | trait Dec for Pair(a) {}
-    | ^^^^^^^^^^^^^^^^^^^^^^^^ trait `Dec` cannot be implemented for the generic type `Pair`: it has `json.Decode` as a supertrait, and a decoder builds a value of one type
+    | ^^^^^^^^^^^^^^^^^^^^^^^^ trait `Dec` for `Pair(a)` needs `json.Decode` of each type parameter, as `Dec` has `json.Decode` as a supertrait: `a` is not bounded by it
+  = help: write `trait Dec for Pair(a) where a: json.Decode`
