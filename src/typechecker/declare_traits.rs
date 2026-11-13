@@ -3313,7 +3313,7 @@ impl TypeChecker {
             // `_ => Type::Generic(..)` below, silently producing a phantom
             // type that no value has. Derive fixed-arity builtin entries
             // from the authoritative table. Variadic shapes (`Tuple`,
-            // `Fn`, `Fun`, `Handle`) carry `arity: None` and are
+            // `Fn`, `Handle`) carry `arity: None` and are
             // intentionally skipped — they do not participate in this
             // trait-impl arity check.
             let builtin_arity: Option<usize> = builtin_type_name(written)

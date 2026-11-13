@@ -195,11 +195,11 @@ fn repl_builtin_names_includes_primitive_types() {
         );
     }
 
-    // Sanity: the 15 user-typeable type names of the round-62 audit, but
+    // Sanity: the 14 user-typeable type names of the round-62 audit, but
     // the three that live in builtin modules.
     assert!(
-        expected.len() >= 12,
-        "BUILTIN_TYPES is expected to have at least 12 prelude entries; got {} — \
+        expected.len() >= 11,
+        "BUILTIN_TYPES is expected to have at least 11 prelude entries; got {} — \
          the authoritative list shrank, update this test.",
         expected.len()
     );
@@ -207,7 +207,7 @@ fn repl_builtin_names_includes_primitive_types() {
     // Spot-check every primitive (audit's "primitive type names") and a
     // representative slice of containers.
     for required in &[
-        "Int", "Float", "Bool", "String", "List", "Map", "Set", "Channel", "Tuple", "Fn", "Fun",
+        "Int", "Float", "Bool", "String", "List", "Map", "Set", "Channel", "Tuple", "Fn",
     ] {
         assert!(
             names.iter().any(|n| n == required),

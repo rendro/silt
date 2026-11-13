@@ -1958,7 +1958,7 @@ impl TypeChecker {
     /// An impl's method is checked against the signature its trait
     /// gives it (`register_trait_impl` keeps it in `impl_sigs`, by the
     /// canonical head of the impl's target: `List` for a
-    /// user alias of `List(..)`, `Fn` for `Fun`, `()` for the unit type).
+    /// user alias of `List(..)`, `()` for the unit type).
     ///
     /// A default method is checked once, in its trait: `Self` is rigid
     /// there, bounded by the trait and its supertraits, so the body may
