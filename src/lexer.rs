@@ -1680,7 +1680,7 @@ fn escaped_in_quotes(c: char, first: bool) -> bool {
 /// a `{` (which opens an interpolation) are escaped, `\n`, `\r`, `\t`
 /// and `\0` are written so, and any other control character, and any
 /// character a reader cannot see or tell from another
-/// ([`escaped_in_quotes`]), as `\u{..}`. A string shown inside a
+/// (`escaped_in_quotes`), as `\u{..}`. A string shown inside a
 /// structure (`["a", "b, c"]`) and a string token in a message are
 /// written by it. Nothing is allocated: a text none of whose bytes can
 /// need an escape is one write, and any other is written as the slices
