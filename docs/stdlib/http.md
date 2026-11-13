@@ -223,8 +223,11 @@ A redirect is followed, up to ten of them: after a 307 or 308 with the
 same method and body; after a 303 as a `GET` without a body and without
 the `Content-Type` among `headers` (a `HEAD` stays a `HEAD`); after a 301
 or 302 a `POST` as such a `GET`, and any other method with the same
-method and body. The `authorization` and `cookie` headers, and the user
-and password of the URL, are not sent to where a redirect leads. A location that is no full URL is resolved against
+method and body. The credentials are not sent to where a redirect leads,
+also when it leads to the same host: the `authorization`,
+`proxy-authorization` and `cookie` headers, and the user and password of
+the URL. Every other header among `headers` is, and so is the body after
+a 307 or 308, also to another host, as curl and Go send them. A location that is no full URL is resolved against
 the URL that answered: `?y=2` on its path, `//host/x` on its scheme. A
 location with a scheme other than `http` and `https` (`file:///x`,
 `ftp://host/x`, `mailto:a@b`) is not followed: it is

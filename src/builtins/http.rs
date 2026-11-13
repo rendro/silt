@@ -823,7 +823,8 @@ fn do_http_request(
 /// HEAD) and without the program's `content-type` header, and so does
 /// a POST that gets a 301 or 302; any other request goes on with the
 /// same method and body. As ureq does, a
-/// redirect drops the `authorization` and `cookie` headers, and the user
+/// redirect drops the `authorization`, `proxy-authorization` and `cookie`
+/// headers, and the user
 /// and password of the URL, which are sent as `authorization` (decoded,
 /// [`basic_of_url`]) where the program sets none. A `content-length`
 /// header of the program's is not sent:
@@ -905,8 +906,11 @@ fn do_http_request_on(
             // (What the body was is no part of a request without one.)
             headers.retain(|(key, _)| !key.eq_ignore_ascii_case("content-type"));
         }
+        // The credentials do not go on: to the same host neither.
         headers.retain(|(key, _)| {
-            !key.eq_ignore_ascii_case("authorization") && !key.eq_ignore_ascii_case("cookie")
+            !["authorization", "proxy-authorization", "cookie"]
+                .iter()
+                .any(|credential| key.eq_ignore_ascii_case(credential))
         });
         url = next;
     }
