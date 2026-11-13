@@ -1,0 +1,14 @@
+-- cmd: check
+-- exit: 1
+-- `Fn`, `Fun` and `Tuple` name a type only in an impl header; in a type each says how the type is written (one text, bare or applied).
+-- stderr-contains: `Fun` names a type only in the header of an impl (`trait Show for Fun`): a function type is written with its parts: `Fn(Int) -> String`
+-- stderr-contains: `Fn` names a type only in the header of an impl
+-- stderr-contains: `Tuple` names a type only in the header of an impl (`trait Show for Tuple`): a tuple type is written with its parts: `(Int, String)`
+-- stderr-not-contains: unknown type
+-- stderr-not-contains: takes no type arguments
+fn a(x: Fun) -> Int { 1 }
+fn b(x: Fun(Int)) -> Int { 1 }
+fn c(x: Fn) -> Int { 1 }
+fn d(x: Tuple) -> Int { 1 }
+fn e(x: Tuple(Int)) -> Int { 1 }
+fn main() {}
