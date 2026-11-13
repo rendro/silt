@@ -733,6 +733,11 @@ impl TypeChecker {
                     return Type::Error;
                 }
                 let name_str = resolve(*name);
+                // `W()`: empty parentheses, which the parser refused. What
+                // type was meant is not known, and nothing more is said.
+                if args.is_empty() {
+                    return Type::Error;
+                }
                 // `Never(..)`: `Never` takes no arguments, and is no type
                 // where it has them (unless a type of that name is
                 // declared). One error: its arguments are not looked at.

@@ -2731,16 +2731,8 @@ impl<'src> Parser<'src> {
                     name,
                     "write the type's arguments in them, or `{name}` alone for a type that takes none",
                 );
-                let kind = if module.is_none() && name == intern::intern("Self") {
-                    TypeExprKind::SelfType
-                } else {
-                    TypeExprKind::Named {
-                        module,
-                        name,
-                        name_span,
-                    }
-                };
-                return Ok(self.mk_type(kind, start));
+                // (The type stays applied to nothing, which the checker
+                // reads as a type it says nothing more about.)
             }
             Ok(self.mk_type(
                 TypeExprKind::Generic {
