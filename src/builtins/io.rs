@@ -445,9 +445,24 @@ pub(crate) mod fs {
             result(std::fs::create_dir_all(path), path, unit)
         }
 
+        // The path itself is removed, never what a link leads to: a link
+        // to a directory is unlinked as a link to a file is (on Windows
+        // such a link is removed as a directory is, which is how the
+        // system removes it).
         fn remove(path: &str) -> Value {
             let at = Path::new(path);
-            let removed = match at.is_dir() {
+            let directory = std::fs::symlink_metadata(at).is_ok_and(|md| {
+                #[cfg(windows)]
+                {
+                    use std::os::windows::fs::FileTypeExt;
+                    md.is_dir() || md.file_type().is_symlink_dir()
+                }
+                #[cfg(not(windows))]
+                {
+                    md.is_dir()
+                }
+            });
+            let removed = match directory {
                 true => std::fs::remove_dir(at),
                 false => std::fs::remove_file(at),
             };

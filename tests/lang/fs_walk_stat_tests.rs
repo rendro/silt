@@ -512,6 +512,72 @@ import host
     );
 }
 
+// ── fs.remove: a link is removed itself ─────────────────────────────
+
+/// A link to a directory, made as the system makes one: `None` where
+/// the system does not let the test make it (Windows without the
+/// privilege for links).
+fn dir_link(target: &Path, link: &Path) -> Option<()> {
+    #[cfg(unix)]
+    let made = std::os::unix::fs::symlink(target, link);
+    #[cfg(windows)]
+    let made = std::os::windows::fs::symlink_dir(target, link);
+    made.ok()
+}
+
+/// fs.remove removes a link to a directory as it removes a link to a
+/// file: the link goes, the directory and what is in it stay. (It was
+/// refused with "not a directory", the link left in place.)
+#[test]
+fn test_fs_remove_removes_a_link_to_a_directory_not_the_directory() {
+    let dir = TempDir::new("remove_dir_link");
+    let target = dir.path().join("target");
+    std::fs::create_dir(&target).unwrap();
+    std::fs::write(target.join("keep.txt"), "keep").unwrap();
+    let link = dir.path().join("link");
+    if dir_link(&target, &link).is_none() {
+        eprintln!("skipped: the system does not let this test make a link");
+        return;
+    }
+    let link_str = link.to_string_lossy().replace('\\', "/");
+    let input = format!(
+        "import fs\nimport host\nfn main() {{\n  host.give(fs.remove(\"{link_str}\"))\n}}\n"
+    );
+    assert_eq!(ok_inner(run(&input)), Value::Unit);
+    assert!(
+        std::fs::symlink_metadata(&link).is_err(),
+        "the link is gone"
+    );
+    assert_eq!(
+        std::fs::read_to_string(target.join("keep.txt")).unwrap(),
+        "keep"
+    );
+    // A link to a file and a link that leads nowhere go as before, and
+    // a directory with something in it is still refused.
+    #[cfg(unix)]
+    {
+        let file_link = dir.path().join("file_link");
+        std::os::unix::fs::symlink(target.join("keep.txt"), &file_link).unwrap();
+        let dangling = dir.path().join("dangling");
+        std::os::unix::fs::symlink(dir.path().join("nowhere"), &dangling).unwrap();
+        for gone in [&file_link, &dangling] {
+            let at = gone.to_string_lossy();
+            let input = format!(
+                "import fs\nimport host\nfn main() {{\n  host.give(fs.remove(\"{at}\"))\n}}\n"
+            );
+            assert_eq!(ok_inner(run(&input)), Value::Unit, "{at}");
+            assert!(std::fs::symlink_metadata(gone).is_err(), "{at} is gone");
+        }
+        let full = target.to_string_lossy();
+        let input = format!(
+            "import fs\nimport host\nfn main() {{\n  host.give(fs.remove(\"{full}\"))\n}}\n"
+        );
+        let refused = err_msg(run(&input));
+        assert!(refused.contains(&*full), "{refused}");
+        assert!(target.join("keep.txt").exists());
+    }
+}
+
 // ── fs.copy, fs.rename: a fault of a directory ──────────────────────
 
 /// A fault of `fs.copy` or `fs.rename` that comes of a directory names

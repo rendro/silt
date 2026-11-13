@@ -573,7 +573,9 @@ fs.remove(path: String) -> Result((), IoError)
 ```
 
 Removes a file or an empty directory. Returns `Ok(())` on success or
-`Err(IoError)` on failure.
+`Err(IoError)` on failure. A symlink is removed itself, never what it
+points to: a link to a directory is removed as a link to a file is,
+and the directory stays.
 
 ```silt
 import fs
