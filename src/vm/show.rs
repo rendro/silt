@@ -235,9 +235,12 @@ impl Vm {
     pub(crate) fn show(
         &mut self,
         value: &Value,
+        name: &'static str,
         then: impl FnOnce(&mut Vm, String) -> Result<Step, VmError> + Send + 'static,
     ) -> Result<Step, VmError> {
-        self.show_within(value, None, then)
+        // (No longer than a string may be: `println` of a list that holds
+        // one long string many times would otherwise build all of it.)
+        self.show_within(value, Some(name), then)
     }
 
     /// [`Vm::show`], with a text no longer than a string may hold when
@@ -349,7 +352,9 @@ impl Vm {
 
     /// [`Vm::show`] for what gives the text as its value.
     pub(crate) fn shown(&mut self, value: &Value) -> Result<Step, VmError> {
-        self.show(value, |_, text| Ok(Step::Done(Value::string(text))))
+        self.show(value, "showing a value", |_, text| {
+            Ok(Step::Done(Value::string(text)))
+        })
     }
 
     /// [`Vm::shown`] for the builtin `name`, whose text is a string a

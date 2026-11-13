@@ -30,6 +30,14 @@ fn padding(name: &str, s: &str, width: i64, pad: &str) -> Result<String, VmError
     Ok(fill(s, width, pad))
 }
 
+/// `text`, which `name` made, if it is no longer than a string may be.
+fn within(name: &str, text: String) -> Result<String, VmError> {
+    match text.len() > MAX_TEXT_LEN {
+        true => Err(super::common::too_long_text(name, text.len())),
+        false => Ok(text),
+    }
+}
+
 /// `width` is no wider than a string may be, for `string.<name>`.
 fn fits_width(name: &str, width: i64) -> Result<(), VmError> {
     match width as i128 > MAX_TEXT_LEN as i128 {
@@ -233,12 +241,12 @@ builtins! {
         s.len() as i64
     }
 
-    fn to_upper(s: &str) -> String {
-        s.to_uppercase()
+    fn to_upper(s: &str) -> Result<String, VmError> {
+        within("string.to_upper", s.to_uppercase())
     }
 
-    fn to_lower(s: &str) -> String {
-        s.to_lowercase()
+    fn to_lower(s: &str) -> Result<String, VmError> {
+        within("string.to_lower", s.to_lowercase())
     }
 
     fn starts_with(s: &str, prefix: &str) -> bool {

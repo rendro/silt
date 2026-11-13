@@ -16,14 +16,14 @@ fn write_stdout(vm: &Vm, text: &str) -> Result<(), VmError> {
 
 builtins! {
     fn print(vm, value: &Value) -> Result<Step, VmError> {
-        vm.show(value, |vm, text| {
+        vm.show(value, "print", |vm, text| {
             write_stdout(vm, &text)?;
             Ok(Step::Done(Value::Unit))
         })
     }
 
     fn println(vm, value: &Value) -> Result<Step, VmError> {
-        vm.show(value, |vm, mut text| {
+        vm.show(value, "println", |vm, mut text| {
             text.push('\n');
             write_stdout(vm, &text)?;
             Ok(Step::Done(Value::Unit))
@@ -31,6 +31,6 @@ builtins! {
     }
 
     fn panic(vm, message: &Value) -> Result<Step, VmError> {
-        vm.show(message, |_, text| Err(VmError::new(format!("panic: {text}"))))
+        vm.show(message, "panic", |_, text| Err(VmError::new(format!("panic: {text}"))))
     }
 }

@@ -212,8 +212,12 @@ builtins! {
     // in `RFC3986_RESERVED` with its upper-case `%HH` form. The
     // `percent-encoding` crate always emits upper-case hex, which
     // satisfies our contract.
-    fn url_encode(s: &str) -> String {
-        utf8_percent_encode(s, RFC3986_RESERVED).collect()
+    fn url_encode(s: &str) -> Result<String, VmError> {
+        let out: String = utf8_percent_encode(s, RFC3986_RESERVED).collect();
+        match out.len() > crate::value::MAX_TEXT_LEN {
+            true => Err(too_long_text("encoding.url_encode", out.len())),
+            false => Ok(out),
+        }
     }
 
     fn url_decode(s: &str) -> Value {
