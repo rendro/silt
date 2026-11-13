@@ -31,9 +31,3 @@ error[type]: record update requires a record base, got the type `t`
     |
  37 |   u.{ n: 3 }
     |   ^ record update requires a record base, got the type `t`
-
-error[type]: `Rec` is a type, and a type given as a value cannot be shown
- --> static_method__a_type_given_where_a_record_is_read_is_named_as_a_type.silt:42:11
-    |
- 42 |   println(updated(Rec))
-    |           ^^^^^^^^^^^^ `Rec` is a type, and a type given as a value cannot be shown

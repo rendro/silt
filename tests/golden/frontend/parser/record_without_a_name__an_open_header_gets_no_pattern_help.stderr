@@ -1,0 +1,5 @@
+error[parse]: expected parameter name, found {
+ --> record_without_a_name__an_open_header_gets_no_pattern_help.silt:5:12
+   |
+ 5 | pub fn fa( {
+   |            ^ expected parameter name, found {

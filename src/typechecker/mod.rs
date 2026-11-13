@@ -385,6 +385,10 @@ pub struct TypeChecker {
     /// `x.m` and the type of `x` is unknown: `check_call` lets the call
     /// wait (`Goal::Select`).
     pub(super) unknown_receiver: Option<(Type, Symbol, solve::ReadAt)>,
+    /// The type variables of the plain `let`s without an annotation
+    /// (`let v = fail("x")`), by the name each binds: what a field read
+    /// that nothing decides says to annotate.
+    pub(super) plain_let_vars: HashMap<TyVar, Symbol>,
     /// How `x.m(..)` made a parameter of a function or closure be read
     /// (`x`'s, or one whose type it shares, also through a call that
     /// passes it on), by the callee and the parameter's place, with the
@@ -868,6 +872,7 @@ impl TypeChecker {
             method_values: HashMap::new(),
             method_value_lets: HashMap::new(),
             unknown_receiver: None,
+            plain_let_vars: HashMap::new(),
             readings: HashMap::new(),
             closure_readings: Vec::new(),
             held_params: Vec::new(),

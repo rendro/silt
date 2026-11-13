@@ -1,6 +1,7 @@
 -- cmd: check
 -- exit: 1
--- The rest of a record pattern is `..` alone: it binds no name.
+-- The rest of a record pattern is `..` alone: it binds no name. The
+-- caret starts at the first dot.
 type P { x: Int, y: Int }
 
 fn main() {
