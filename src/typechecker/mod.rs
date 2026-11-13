@@ -1739,6 +1739,9 @@ impl TypeChecker {
                     let owed_from = self.wanted.len();
                     let is_value =
                         self.check_top_level_let(pattern, ty.as_ref(), value, *span, env);
+                    // (A `return` in a closure of a top-level `let` is
+                    // settled here, not at the next function.)
+                    self.settle_closure_returns();
                     // A closure whose decode only its parameters' values
                     // decide is of one type, which its later use decides,
                     // as in a function's body (`infer_stmt`).

@@ -1128,6 +1128,11 @@ impl TypeChecker {
             [variant] => {
                 format!("`?` converts nothing: add `|> result.map_err({variant})` before the `?`")
             }
+            // (A function generic in its error takes no other one.)
+            _ if matches!(wanted, Type::Var(_) | Type::Rigid(_)) => format!(
+                "`?` converts nothing: give the function this `{}` as its error type",
+                self.show_type(&error)
+            ),
             _ => format!(
                 "`?` converts nothing: turn the `{}` into the function's `{}` before the `?`, \
                  `|> result.map_err {{ e -> ... }}`",

@@ -928,9 +928,6 @@ impl TypeChecker {
     }
 }
 
-/// The number of type arguments of the builtin type `name` when it is
-/// opaque (`Bytes`, `tcp.TcpStream`, `task.Handle(a)`, `TypeOf(a)`): it
-/// has no variants and no fields. `None` for any other builtin type.
 /// What is wrong with a builtin type name that names a kind of type
 /// only in the header of an impl (`trait T for Tuple`, `trait T for
 /// Fn`), written in a type: a tuple type and a function type are
@@ -947,6 +944,9 @@ fn impl_only_type_message(ty: TypeRef) -> Option<String> {
     ))
 }
 
+/// The number of type arguments of the builtin type `name` when it is
+/// opaque (`Bytes`, `tcp.TcpStream`, `task.Handle(a)`, `TypeOf(a)`): it
+/// has no variants and no fields. `None` for any other builtin type.
 fn opaque_arity(name: &str) -> Option<usize> {
     crate::defs::opaque_type_arity(name)
 }

@@ -1452,9 +1452,18 @@ impl Lexer {
                     self.advance_char();
                     (Token::AndAnd, start)
                 } else {
-                    self.unexpected(start, || {
+                    let before = self.errors.len();
+                    let error = self.unexpected(start, || {
                         "unexpected character '&', did you mean '&&'?".to_string()
-                    })
+                    });
+                    if self.errors.len() > before
+                        && let Some(d) = self.errors.last_mut()
+                    {
+                        d.help.push(
+                            "the bits of both of two Ints are `int.bit_and(a, b)`".to_string(),
+                        );
+                    }
+                    error
                 }
             }
 

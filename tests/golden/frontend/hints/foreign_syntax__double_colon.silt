@@ -1,7 +1,7 @@
 -- cmd: check
 -- exit: 1
 -- Syntax of another language gets the text that says what silt writes (E0109).
--- stderr-contains: silt writes `.` between a module and its names, not `::`
+-- stderr-contains: silt writes `.` between a module or a type and its names, not `::`: `list.length`
 import list
 fn main() {
   println(list::length([1]))

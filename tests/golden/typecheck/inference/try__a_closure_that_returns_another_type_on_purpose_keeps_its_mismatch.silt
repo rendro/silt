@@ -1,0 +1,25 @@
+-- cmd: check
+-- exit: 1
+-- A closure whose `return` and last value agree, of a type its place does not take, keeps the plain type mismatch (the `return` is not the mistake); a closure of a top-level `let` is not blamed on the next function.
+-- stderr-contains: type mismatch: expected String, got Int
+-- stderr-contains: `return` here ends the closure, not the function around it: the value becomes the closure's result
+-- stderr-contains: note: the closure returns `String` by its `return`, and `Int` by its last expression
+-- stderr-not-contains: not `user`
+-- stderr-not-contains: not `later`
+fn apply(f: Fn(Int) -> String) -> String { f(1) }
+fn user() -> String {
+  apply({ x ->
+    match x {
+      0 -> return 5
+      _ -> 6
+    }
+  })
+}
+let g = { x: Int ->
+  match x {
+    0 -> return "zero"
+    _ -> x
+  }
+}
+fn later(y: Int) -> Int { y }
+fn main() { println(user()) }

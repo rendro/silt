@@ -907,6 +907,15 @@ impl TypeChecker {
                 let ty = self.apply(ty);
                 !free_vars_in(&ty).is_empty() && free_vars_in(&ty).iter().all(|v| open.contains(v))
             });
+            // (An argument the impl leaves open is written as an example
+            // type, `Int`: a `_` is no annotation a program can write.)
+            let example = |ty: &Type| {
+                let open: HashMap<_, _> = free_vars_in(ty)
+                    .into_iter()
+                    .map(|v| (v, Type::Int))
+                    .collect();
+                crate::types::substitute_vars(ty, &open)
+            };
             let help = match param {
                 Some((_, name, ty)) => {
                     let mut mapping = HashMap::new();
@@ -914,12 +923,12 @@ impl TypeChecker {
                     let at = crate::types::substitute_vars(&self.apply(ty), &mapping);
                     format!(
                         "annotate the value it is given, `{name}: {}`",
-                        self.show_type(&at)
+                        self.show_type(&example(&at))
                     )
                 }
                 None => format!(
                     "annotate the value it is given, `let x: {} = ...`",
-                    self.show_type(instance)
+                    self.show_type(&example(instance))
                 ),
             };
             let diagnostic =

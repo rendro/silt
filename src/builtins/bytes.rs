@@ -93,8 +93,8 @@ fn base64_reason(s: &str, error: &base64::DecodeError) -> String {
             format!("{len} characters, which is no whole number of groups of 4")
         }
         DecodeError::InvalidPadding => {
-            "invalid padding: the text is padded with `=` to a whole number of groups of 4 \
-             characters"
+            "invalid padding: a base64 text must be padded with `=` to a whole number of groups \
+             of 4 characters"
                 .to_string()
         }
     }

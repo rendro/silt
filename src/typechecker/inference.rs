@@ -2880,8 +2880,8 @@ impl TypeChecker {
                     _ => "Err",
                 };
                 diagnostic = diagnostic.with_help(format!(
-                    "a `?` in a closure ends the closure, not the function: to stop at the \
-                     first `{fails}` of a list, use `list.traverse(xs) {{ x -> ... }}?`"
+                    "a `?` in a closure ends the closure, not the function; over a list, \
+                     `list.traverse(xs) {{ x -> ... }}?` stops at the first `{fails}`"
                 ));
             }
             self.errors.push(diagnostic);
@@ -2914,21 +2914,55 @@ impl TypeChecker {
     /// body's value with the `return`'s, the closure with the place it
     /// is given to) as one error, at the `return`: it ends the closure,
     /// not the function it is written in.
-    fn settle_closure_returns(&mut self) {
+    pub(super) fn settle_closure_returns(&mut self) {
         for (closure, at, returned, misfits) in std::mem::take(&mut self.closure_return_misfits) {
+            // (Only where the `return` and the closure's body disagree:
+            // a `return` meant to leave the function. A closure that
+            // returns a value on purpose, of a type its place does not
+            // take, keeps its type mismatch.)
+            if !self
+                .errors
+                .iter()
+                .any(|e| e.code == Code::TypeMismatch && misfits.contains(&e.span))
+            {
+                continue;
+            }
             // (At the closure: of the type the `return` gives, not of a
             // parameter's.)
             let of_return = |e: &Diagnostic| {
                 e.message.ends_with(&format!("got {returned}"))
                     || e.message.contains(&format!("expected {returned}, got"))
             };
+            let at_closure =
+                |e: &Diagnostic| e.code == Code::TypeMismatch && e.span == closure && of_return(e);
             let misfit = |e: &Diagnostic| {
-                e.code == Code::TypeMismatch
-                    && (misfits.contains(&e.span) || (e.span == closure && of_return(e)))
+                e.code == Code::TypeMismatch && (misfits.contains(&e.span) || at_closure(e))
             };
-            if !self.errors.iter().any(misfit) {
-                continue;
-            }
+            // The types, kept as a note: what the place of the closure
+            // expects, or else what its body gives.
+            let mismatch = |e: &Diagnostic| {
+                let rest = e.message.strip_prefix("type mismatch: expected ")?;
+                let (expected, got) = rest.split_once(", got ")?;
+                Some((expected.to_string(), got.to_string()))
+            };
+            let pairs: Vec<(String, String)> = self
+                .errors
+                .iter()
+                .filter(|e| misfit(e))
+                .filter_map(mismatch)
+                .collect();
+            let expected = pairs.iter().find(|(e, g)| *g == returned && *e != returned);
+            let body = pairs.iter().find(|(e, g)| *e == returned && *g != returned);
+            let note = match (expected, body) {
+                (Some((expected, _)), _) => format!(
+                    "the closure returns `{returned}` by its `return`, where `{expected}` is expected"
+                ),
+                (None, Some((_, body))) => format!(
+                    "the closure returns `{returned}` by its `return`, and `{body}` by its last \
+                     expression"
+                ),
+                (None, None) => format!("the closure returns `{returned}` by its `return`"),
+            };
             self.errors.retain(|e| !misfit(e));
             let function = match self.current_fn {
                 Some(name) => format!("`{name}`"),
@@ -2936,13 +2970,14 @@ impl TypeChecker {
             };
             self.errors.push(
                 Diagnostic::error(
-                    Code::InvalidControlFlow,
+                    Code::TypeMismatch,
                     at,
                     format!(
-                        "`return` here ends the closure, not {function}: the value it returns \
-                         is the closure's"
+                        "`return` here ends the closure, not {function}: the value becomes the \
+                         closure's result"
                     ),
                 )
+                .with_note(note)
                 .with_help(
                     "to stop early, use `list.find`, `list.any` or `list.fold_until`, or a \
                      `loop`",

@@ -4,4 +4,4 @@ error[type]: ? operator can only be used inside a function that returns Result o
  9 |   let f = { x: Result(Int, String) -> x? + 1 }
    |                                       ^^ ? operator can only be used inside a function that returns Result or Option
   = note: the ?-ed expression is Result(Int, String), but the closure it is in returns Int
-  = help: a `?` in a closure ends the closure, not the function: to stop at the first `Err` of a list, use `list.traverse(xs) { x -> ... }?`
+  = help: a `?` in a closure ends the closure, not the function; over a list, `list.traverse(xs) { x -> ... }?` stops at the first `Err`

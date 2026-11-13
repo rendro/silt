@@ -7,5 +7,5 @@ Err(toml syntax error at byte 4: invalid floating-point number: expected leading
 Err(toml syntax error at byte 7: invalid escape sequence: expected `b`, `f`, `n`, `r`, `t`, `u`, `U`, `\`, `"`)
 Err(invalid base64: invalid character at position 4: '\n')
 Err(invalid base64: invalid last character at position 6: '9': its unused bits are not zero)
-Err(invalid base64: invalid padding: the text is padded with `=` to a whole number of groups of 4 characters)
+Err(invalid base64: invalid padding: a base64 text must be padded with `=` to a whole number of groups of 4 characters)
 Err(invalid base64: 5 characters, which is no whole number of groups of 4)

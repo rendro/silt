@@ -1,6 +1,6 @@
 -- exit: 1
--- stderr-contains: time: year
--- stderr-contains: out of range for i32
+-- stderr-contains: time.weekday: year
+-- stderr-contains: is out of range
 import time
 fn main() {
   let d = time.Date { year: 4294967296 + 1999, month: 1, day: 1 }

@@ -263,9 +263,6 @@ const MAX_DEPTH: usize = 128;
 /// both inside the reserve.
 const MAX_EXPR_OPERATIONS: usize = 2048;
 
-/// The error for an `if`, wherever one is met: silt branches on a
-/// condition with a `match` without a scrutinee, and the help shows its
-/// shape.
 /// Where the parser found what it cannot read, for the hints of
 /// [`Parser::foreign_syntax`]: at the start of a declaration, of an
 /// expression, of a pattern, in place of a token it expected, in a
@@ -281,6 +278,9 @@ enum Foreign<'a> {
     NextStatement,
 }
 
+/// The error for an `if`, wherever one is met: silt branches on a
+/// condition with a `match` without a scrutinee, and the help shows its
+/// shape.
 pub(crate) const NO_IF: &str =
     "silt has no `if`; a `match` without a scrutinee branches on conditions";
 pub(crate) const NO_IF_HELP: &str = "write `match {`, then one `condition -> value` arm per \
@@ -2349,6 +2349,14 @@ impl<'src> Parser<'src> {
 
     fn parse_import(&mut self) -> Result<Decl> {
         let import_span = self.expect(&Token::Import)?.span;
+        // `import "list"`: the module is named, not quoted.
+        if let Token::StringLit(text) = self.peek() {
+            return Err(Diagnostic::error(
+                Code::UnsupportedSyntax,
+                self.span(),
+                format!("a module is imported by its name, without quotes: `import {text}`"),
+            ));
+        }
         let (name, _) = self.expect_ident()?;
 
         // `.{ ... }` and `as` may continue the import on the next line;
@@ -2805,29 +2813,60 @@ impl<'src> Parser<'src> {
             Some(Token::Ident(s)) => Some(intern::resolve(*s)),
             _ => None,
         };
-        let error = |message: &str, help: Option<&str>| {
-            let d = Diagnostic::error(Code::UnsupportedSyntax, cur.span, message);
+        let capital = |tok: Option<&Tok>| {
+            name(tok).is_some_and(|n| n.starts_with(|c: char| c.is_ascii_uppercase()))
+        };
+        // The text the program wrote from `from` to `to`, both tokens.
+        let written = |from: &Tok, to: &Tok| {
+            self.source
+                .get(from.span.start_offset()..to.span.end_offset())
+                .unwrap_or("")
+                .to_string()
+        };
+        // The error, underlined over the foreign tokens (`from` to the
+        // current one).
+        let error_at = |from: &Tok, message: String, help: Option<&str>| {
+            let d = Diagnostic::error(Code::UnsupportedSyntax, from.span.to(cur.span), message);
             Some(match help {
                 Some(help) => d.with_help(help),
                 None => d,
             })
         };
+        let error = |message: &str, help: Option<&str>| error_at(cur, message.to_string(), help);
         let closure = "a closure is written `{ x -> x + 1 }`";
+        // An operator of two glued tokens, the previous one and this one.
+        let operator = |message: String| error_at(prev.expect("a previous token"), message, None);
         // (Anywhere: operators of other languages.)
         match &cur.kind {
             Token::Colon if before(Token::Colon) => {
-                return error(
-                    "silt writes `.` between a module and its names, not `::`: `list.length(xs)`",
-                    None,
+                let to = self
+                    .tokens
+                    .get(self.pos + 2)
+                    .filter(|t| matches!(t.kind, Token::Ident(_)));
+                let example = match (name(prev), to.and_then(|t| name(Some(t)))) {
+                    (Some(left), Some(right)) => format!("`{left}.{right}`"),
+                    _ => "`list.length`".to_string(),
+                };
+                let d = Diagnostic::error(
+                    Code::UnsupportedSyntax,
+                    cur.span.to(next.expect("a second colon").span),
+                    format!(
+                        "silt writes `.` between a module or a type and its names, not `::`: {example}"
+                    ),
                 );
+                return Some(d);
             }
-            Token::Eq if after(Token::EqEq) => return error("silt writes `==`, not `===`", None),
-            Token::Eq if after(Token::NotEq) => return error("silt writes `!=`, not `!==`", None),
+            Token::Eq if after(Token::EqEq) => {
+                return operator("silt writes `==`, not `===`".into());
+            }
+            Token::Eq if after(Token::NotEq) => {
+                return operator("silt writes `!=`, not `!==`".into());
+            }
             Token::Gt if after(Token::Lt) => {
-                return error(
+                return operator(
                     "silt has no `<>`: `!=` is not equal, and strings are joined by \
-                     interpolation, `\"{a}{b}\"`",
-                    None,
+                     interpolation, `\"{a}{b}\"`"
+                        .into(),
                 );
             }
             Token::Eq if before(Token::Gt) => {
@@ -2844,30 +2883,44 @@ impl<'src> Parser<'src> {
                 .into_iter()
                 .any(&after) =>
             {
-                return error(
-                    "silt has no `+=`: a binding never changes; give the new value a name, \
-                     `let x = x + 1`",
-                    None,
-                );
+                let op = written(prev.expect("an operator"), cur);
+                let sign = &op[..op.len() - 1];
+                return operator(format!(
+                    "silt has no `{op}`: a binding never changes; give the new value a name, \
+                     `let x = x {sign} 1`"
+                ));
             }
             Token::Plus if after(Token::Plus) => {
-                return error(
+                return operator(
                     "silt has no `++`: write `x + 1`, `list.concat(xs, ys)` for two lists and \
-                     `\"{a}{b}\"` for two strings",
-                    None,
+                     `\"{a}{b}\"` for two strings"
+                        .into(),
                 );
             }
             Token::Star if after(Token::Star) => {
-                return error(
-                    "silt has no `**`: write `int.pow(x, 2)` or `math.pow(x, 2.0)`",
-                    None,
+                return operator(
+                    "silt has no `**`: write `int.pow(x, 2)` or `math.pow(x, 2.0)`".into(),
                 );
             }
+            Token::Star if after(Token::Slash) => {
+                return operator("a block comment is written `{- ... -}`".into());
+            }
+            Token::Slash if before(Token::Star) => {
+                return error("a block comment is written `{- ... -}`", None);
+            }
             Token::Lt if after(Token::Lt) => {
-                return error("silt has no `<<`: write `int.shift_left(x, 2)`", None);
+                return operator("silt has no `<<`: write `int.shift_left(x, 2)`".into());
             }
             Token::Gt if after(Token::Gt) && !matches!(place, Foreign::Expect(Token::Arrow)) => {
-                return error("silt has no `>>`: write `int.shift_right(x, 2)`", None);
+                return operator("silt has no `>>`: write `int.shift_right(x, 2)`".into());
+            }
+            // `x | 2`: no closure, an operator of another language.
+            Token::Bar if place != Foreign::Decl && self.prev_ends_value() => {
+                return error(
+                    "silt has no `|` operator: `||` is or, and `int.bit_or(a, b)` the bits of \
+                     either",
+                    None,
+                );
             }
             _ => {}
         }
@@ -2885,65 +2938,82 @@ impl<'src> Parser<'src> {
                 && prev.is_some_and(|p| !self.starts_line[self.pos] || p.span.end == cur.span.start)
                 && Self::g1_next_starts_expression(&cur.kind)
             {
-                return error("silt writes `!x`, not `not x`", None);
+                return error_at(prev?, "silt writes `!x`, not `not x`".into(), None);
             }
+        }
+        // A number that runs into a name or into more digits: `0o17`,
+        // `0b12`, `123abc`.
+        if place == Foreign::NextStatement
+            && matches!(prev.map(|p| &p.kind), Some(Token::Int(_) | Token::Float(_)))
+            && matches!(cur.kind, Token::Ident(_) | Token::Int(_))
+            && prev.is_some_and(|p| glued(p, cur))
+        {
+            let text = written(prev?, cur);
+            return error_at(
+                prev?,
+                format!(
+                    "`{text}` is not a number: a number is digits, `0x1f` or `0b101`, and a name \
+                     starts with a letter"
+                ),
+                None,
+            );
         }
         match place {
             Foreign::Decl => {
                 let word = name(Some(cur));
                 let message = match word.as_deref() {
-                    Some("struct" | "class") => {
-                        "silt has no `struct`: a record type is `type P { x: Int, y: Int }`"
+                    Some(w @ ("struct" | "class")) => {
+                        format!("silt has no `{w}`: a record type is `type P {{ x: Int, y: Int }}`")
                     }
                     Some("enum") => {
                         "silt has no `enum`: a type with variants is `type Color { Red, Green }`"
+                            .into()
                     }
-                    Some("const") => "silt has no `const`: a constant is `let x = 1`",
-                    Some("def" | "function" | "func" | "fun") => {
-                        "a function is declared with `fn`: `fn add(x: Int, y: Int) -> Int { x + y }`"
-                    }
-                    Some("use") => "silt has no `use`: write `import list`",
-                    Some("mod" | "module") => {
-                        "silt has no `mod`: a module is a file, which another imports with `import name`"
-                    }
-                    Some("export") => "silt has no `export`: write `pub` before the declaration",
+                    Some("const") => "silt has no `const`: a constant is `let x = 1`".into(),
+                    Some(w @ ("def" | "function" | "func" | "fun")) => format!(
+                        "silt has no `{w}`: a function is declared with `fn`, \
+                         `fn add(x: Int, y: Int) -> Int {{ x + y }}`"
+                    ),
+                    Some("use") => "silt has no `use`: write `import list`".into(),
+                    Some(w @ ("mod" | "module")) => format!(
+                        "silt has no `{w}`: a module is a file, which another imports with \
+                         `import name`"
+                    ),
+                    Some("export") => "silt has no `export`: write `pub` before the declaration".into(),
                     Some("interface") => {
                         "silt has no `interface`: a trait is `trait Show { fn show(self) -> String }`"
+                            .into()
                     }
                     Some("impl") => {
-                        "silt has no `impl`: an implementation is `trait Show for Point { ... }`"
+                        "silt has no `impl`: an implementation is `trait Show for Point { ... }`".into()
                     }
-                    Some("async") => "silt has no `async`: a task is started with `task.spawn`",
+                    Some("async") => "silt has no `async`: a task is started with `task.spawn`".into(),
                     _ => match &cur.kind {
-                        Token::Lt
-                            if name(prev).is_some_and(|n| {
-                                n.starts_with(|c: char| c.is_ascii_uppercase())
-                            }) && prev.is_some_and(|p| glued(p, cur)) =>
+                        Token::Lt | Token::LBracket
+                            if capital(prev) && prev.is_some_and(|p| glued(p, cur)) =>
                         {
-                            "type arguments are written in parentheses: `Result(Int, String)`"
+                            self.type_arguments_text(prev?)
                         }
                         Token::Eq if prev.is_some_and(|p| p.kind == Token::RParen) => {
                             "a function's body is a block: `fn add(x: Int, y: Int) -> Int { x + y }`"
+                                .into()
                         }
                         Token::Bar => {
-                            "a type with variants is written in braces: `type C { A, B }`"
+                            "a type with variants is written in braces: `type C { A, B }`".into()
                         }
                         Token::Colon if prev.is_some_and(|p| p.kind == Token::RParen) => {
-                            "a function's result type follows `->`: `fn add(x: Int) -> Int {`"
+                            "a function's result type follows `->`: `fn add(x: Int) -> Int {`".into()
                         }
                         _ => return None,
                     },
                 };
-                error(message, None)
+                error(&message, None)
             }
             Foreign::Expr => match &cur.kind {
                 Token::Fn if next.is_some_and(|n| n.kind == Token::LParen) => {
                     error("a closure is not written with `fn`", Some(closure))
                 }
                 Token::Bar => error("silt has no `|x| ..` closure", Some(closure)),
-                Token::Slash if before(Token::Star) => {
-                    error("a block comment is written `{- ... -}`", None)
-                }
                 _ => None,
             },
             Foreign::Expect(expected) => match &cur.kind {
@@ -2957,22 +3027,19 @@ impl<'src> Parser<'src> {
                     )
                 }
                 Token::Lt | Token::LBracket
-                    if name(prev)
-                        .is_some_and(|n| n.starts_with(|c: char| c.is_ascii_uppercase()))
-                        && prev.is_some_and(|p| glued(p, cur)) =>
+                    if capital(prev) && prev.is_some_and(|p| glued(p, cur)) =>
                 {
-                    error(
-                        "type arguments are written in parentheses: `List(Int)`",
-                        None,
-                    )
+                    error(&self.type_arguments_text(prev?), None)
                 }
                 Token::Ident(_)
                     if *expected == Token::Eq
                         && name(prev).as_deref() == Some("assert")
                         && prev2.is_some_and(|t| t.kind == Token::Let) =>
                 {
-                    error(
-                        "silt has no `let assert`: write `when let Ok(x) = value else { ... }`",
+                    error_at(
+                        prev?,
+                        "silt has no `let assert`: write `when let Ok(x) = value else { ... }`"
+                            .into(),
                         None,
                     )
                 }
@@ -2989,11 +3056,12 @@ impl<'src> Parser<'src> {
                         && name(prev).as_deref() == Some("mut")
                         && prev2.is_some_and(|t| t.kind == Token::Let) =>
                 {
-                    error(
-                        "silt has no `mut`: a binding never changes; give a new value a new \
-                         `let`",
-                        None,
-                    )
+                    let d = Diagnostic::error(
+                        Code::UnsupportedSyntax,
+                        prev?.span,
+                        "silt has no `mut`: a binding never changes; give a new value a new `let`",
+                    );
+                    Some(d)
                 }
                 _ => None,
             },
@@ -3013,7 +3081,6 @@ impl<'src> Parser<'src> {
                 {
                     error("a field is written with `:`: `P { x: 1 }`", None)
                 }
-                Token::Bar if self.prev_ends_value() => error("silt writes `||`, not `|`", None),
                 Token::Colon
                     if what == "enum variant field list"
                         && matches!(prev.map(|p| &p.kind), Some(Token::Ident(_))) =>
@@ -3057,24 +3124,116 @@ impl<'src> Parser<'src> {
                 "silt has no `let ... in`: a `let` holds for the rest of its block",
                 None,
             ),
-            Foreign::NextStatement => match &prev?.kind {
-                Token::Question
-                    if prev2
-                        .zip(prev)
-                        .is_some_and(|(t, p)| t.kind == Token::Question && glued(t, p)) =>
-                {
-                    error(
-                        "silt has no `??`: write `option.unwrap_or(value, default)`",
-                        None,
-                    )
+            Foreign::NextStatement => {
+                let question = prev.filter(|p| p.kind == Token::Question)?;
+                // `x ?? 1`: two `?` glued, apart from what is before them
+                // (a `?` that ends a value is glued to it, `r??`).
+                let first = prev2.filter(|t| t.kind == Token::Question && glued(t, question));
+                if let Some(first) = first {
+                    let spaced = self
+                        .pos
+                        .checked_sub(3)
+                        .and_then(|i| self.tokens.get(i))
+                        .is_some_and(|t| !glued(t, first));
+                    return spaced.then(|| {
+                        Diagnostic::error(
+                            Code::UnsupportedSyntax,
+                            first.span.to(question.span),
+                            "silt has no `??`: write `option.unwrap_or(value, default)`",
+                        )
+                    });
                 }
-                Token::Question => error(
-                    "silt has no `condition ? a : b`: a `?` passes on an `Err` or a `None`",
-                    Some(NO_IF_HELP),
-                ),
-                _ => None,
-            },
+                // `x > 0 ? 1 : 2`: a `:` follows on the line, outside
+                // brackets.
+                if !self.colon_on_line() {
+                    return None;
+                }
+                Some(
+                    Diagnostic::error(
+                        Code::UnsupportedSyntax,
+                        question.span,
+                        "silt has no `condition ? a : b`: a `?` passes on an `Err` or a `None`",
+                    )
+                    .with_help(NO_IF_HELP),
+                )
+            }
         }
+    }
+
+    /// The text for type arguments written in `<..>` or `[..]` behind the
+    /// type name `name`: they are written in parentheses (and a
+    /// declaration's parameters are lowercase names).
+    fn type_arguments_text(&self, name: &Tok) -> String {
+        let written = match &name.kind {
+            Token::Ident(s) => intern::resolve(*s),
+            _ => "List".to_string(),
+        };
+        let declaring = self
+            .tokens
+            .get(self.pos.saturating_sub(2))
+            .is_some_and(|t| t.kind == Token::Type);
+        if declaring {
+            return format!(
+                "a type's parameters are written in parentheses, lowercase: `type {written}(t)`"
+            );
+        }
+        // The arguments as written between the `<` or `[` at hand and its
+        // partner on the line, if it has one there.
+        let (open, close) = match self.peek() {
+            Token::Lt => (Token::Lt, Token::Gt),
+            _ => (Token::LBracket, Token::RBracket),
+        };
+        let mut depth = 0usize;
+        let mut inner = None;
+        for (i, tok) in self.tokens.iter().enumerate().skip(self.pos) {
+            if i > self.pos && self.starts_line[i] {
+                break;
+            }
+            if tok.kind == open {
+                depth += 1;
+            } else if tok.kind == close {
+                depth -= 1;
+                if depth == 0 {
+                    let from = self.tokens[self.pos].span.end_offset();
+                    inner = self
+                        .source
+                        .get(from..tok.span.start_offset())
+                        .map(str::trim);
+                    break;
+                }
+            }
+        }
+        let args = inner.filter(|a| !a.is_empty() && !a.contains(['<', '[']));
+        format!(
+            "type arguments are written in parentheses: `{written}({})`",
+            args.unwrap_or("Int")
+        )
+    }
+
+    /// Whether a `:` stands on the line from the current token, outside
+    /// brackets.
+    fn colon_on_line(&self) -> bool {
+        let mut depth = 0usize;
+        for (i, tok) in self.tokens.iter().enumerate().skip(self.pos) {
+            if i > self.pos && self.starts_line[i] {
+                return false;
+            }
+            match tok.kind {
+                Token::LParen
+                | Token::LBrace
+                | Token::LBracket
+                | Token::HashBrace
+                | Token::HashBracket => depth += 1,
+                Token::RParen | Token::RBrace | Token::RBracket => match depth.checked_sub(1) {
+                    Some(d) => depth = d,
+                    None => return false,
+                },
+                Token::Colon if depth == 0 => return true,
+                Token::Eof => return false,
+                _ => {}
+            }
+        }
+        false
     }
 
     /// The `if` hint comes with the shape of the `match` to write.
@@ -4358,44 +4517,22 @@ impl<'src> Parser<'src> {
         })
     }
 
-    /// The value of a match arm, behind its `->` (at `arrow`). An arm
-    /// whose line ends at its `->` while the next line is another arm
-    /// (`2 -> "b"`) has no value: that is the error, at the `->`.
+    /// The value of a match arm, behind its `->` (at `arrow`). Where the
+    /// arm's line ends at its `->`, and what was read as its value on the
+    /// next line is followed there by a `->` (`2 -> "b"`, which no value
+    /// is followed by), that line is the next arm: this arm has no value,
+    /// which is the error, at its `->`.
     fn arm_body(&mut self, arrow: Span) -> Result<Expr> {
-        if self.nl_before() && self.line_is_an_arm() {
+        let on_next_line = self.nl_before();
+        let body = self.parse_expr()?;
+        if on_next_line && self.at(&Token::Arrow) && !self.nl_before() {
             return Err(Diagnostic::error(
                 Code::ExpectedExpression,
                 arrow,
                 "this match arm has no value: write it after the `->`",
             ));
         }
-        self.parse_expr()
-    }
-
-    /// Whether the line from the current token holds a `->` outside any
-    /// bracket: it is a match arm, not an arm's value.
-    fn line_is_an_arm(&self) -> bool {
-        let mut depth = 0usize;
-        for (i, tok) in self.tokens.iter().enumerate().skip(self.pos) {
-            if i > self.pos && self.starts_line[i] {
-                return false;
-            }
-            match tok.kind {
-                Token::LParen
-                | Token::LBrace
-                | Token::LBracket
-                | Token::HashBrace
-                | Token::HashBracket => depth += 1,
-                Token::RParen | Token::RBrace | Token::RBracket => match depth.checked_sub(1) {
-                    Some(d) => depth = d,
-                    None => return false,
-                },
-                Token::Arrow if depth == 0 => return true,
-                Token::Eof => return false,
-                _ => {}
-            }
-        }
-        false
+        Ok(body)
     }
 
     // ── Loop expression ──────────────────────────────────────────────
