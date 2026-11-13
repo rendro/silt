@@ -10,6 +10,9 @@
 -- stderr-contains: `toml.parse` cannot decode `R`: field `n` has type `Option(Option(Int))`, and an Option in an Option has no decoder
 -- stderr-contains: `toml.parse_list` cannot decode `Option(Option(Int))`: an Option in an Option has no decoder
 -- stderr-contains: `read` passes it to `json.parse`
+-- stderr-contains: `json.parse` cannot decode `List(Option(Option(Int)))`: an Option in an Option has no decoder
+-- stderr-contains: `read_options` passes it to `json.parse`
+-- stderr-contains: `read_option` passes it to `json.parse`
 -- stderr-not-contains: `W`
 -- `None` and `Some(None)` are written alike (json's `null`, toml's left-out
 -- key), so `Some(None)` never reads back: json and toml refuse an Option
@@ -28,6 +31,16 @@ fn read(s: String, type t) -> Result(t, json.JsonError) where t: json.Decode {
   json.parse(s, t)
 }
 
+-- A function that wraps its own type argument in an Option: each use
+-- judges the whole at the type it gives.
+fn read_option(s: String, type t) -> Result(Option(t), json.JsonError) where t: json.Decode {
+  json.parse(s, Option(t))
+}
+
+fn read_options(s: String, type t) -> Result(List(Option(t)), json.JsonError) where t: json.Decode {
+  json.parse(s, List(Option(t)))
+}
+
 fn main() {
   println(json.parse("null", Option(Option(Int))))
   println(json.parse("""{}""", R))
@@ -40,4 +53,7 @@ fn main() {
   println(toml.parse_list("", Option(Option(Int))))
   println(read("null", Option(Option(Int))))
   println(json.parse("""{"v": null}""", W))
+  println(read_option("null", Option(Int)))
+  println(read_options("[null]", Option(Int)))
+  println(read_option("1", Int))
 }

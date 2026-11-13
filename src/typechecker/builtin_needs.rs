@@ -1178,13 +1178,13 @@ impl TypeChecker {
                 owners.extend(use_.also.iter().copied());
                 owners.extend(self.need_owners_of(use_.given, use_.body, index));
                 // (The type the body gives the decoder, judged whole where
-                // it refuses the type: the decoder's own refusal of it.)
+                // it refuses it: the decoder's own refusal of it. Also
+                // where the type given alone has a decoder and the whole
+                // has none: `Option(t)` of `Option(Int)` is an Option in
+                // an Option.)
                 let (check, subject) =
                     match self.within_at(use_.given, use_.body, index, &use_.subject) {
-                        Some(whole)
-                            if self.decodes_whole_refused(check, &use_.subject, &owners)
-                                && self.decodes_whole_refused(check, &whole, &owners) =>
-                        {
+                        Some(whole) if self.decodes_whole_refused(check, &whole, &owners) => {
                             (check.unwritten(), whole)
                         }
                         _ => (check, use_.subject.clone()),
