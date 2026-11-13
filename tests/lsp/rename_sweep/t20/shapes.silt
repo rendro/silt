@@ -1,0 +1,22 @@
+pub type Pt {
+  x: Int,
+  y: Int,
+}
+
+pub type Size {
+  x: Int,
+  w: Int,
+}
+
+pub fn origin() -> Pt {
+  Pt { x: 1, y: 2 }
+}
+
+pub fn shift(p: Pt, by: Int) -> Pt {
+  p.{ x: p.x + by }
+}
+
+pub fn area(s: Size) -> Int {
+  let Size { x, w } = s
+  x * w
+}
