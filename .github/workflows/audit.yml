@@ -1,7 +1,8 @@
 name: Audit
 
-# Once a week, Cargo.lock is checked against the RustSec advisory
-# database (https://rustsec.org). The run fails when a dependency has a
+# Once a week, the lock files (the root's, and those of the playground,
+# from which the released module is built, and of the fuzz crate) are
+# checked against the RustSec advisory database (https://rustsec.org). The run fails when a dependency has a
 # known vulnerability; the warnings (unmaintained, unsound, yanked) are
 # printed and do not fail it. A failed scheduled run opens a GitHub
 # issue (the `report` job), and a release is refused while the newest
@@ -30,7 +31,11 @@ jobs:
           tool: cargo-audit
 
       - name: cargo audit
-        run: cargo audit
+        run: |
+          set -euo pipefail
+          cargo audit
+          cargo audit --file playground/Cargo.lock
+          cargo audit --file fuzz/Cargo.lock
 
   # A failed scheduled run opens one issue, "weekly: cargo audit failed",
   # or adds the run to it while it is open (see fuzz-nightly.yml).
