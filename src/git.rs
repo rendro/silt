@@ -414,7 +414,7 @@ fn is_forbidden_in_local_form(c: char) -> bool {
 ///   - U+1D173 to U+1D17A, the musical format controls;
 ///   - U+E0000 to U+E0FFF, the tag characters and the variation
 ///     selectors supplement.
-fn is_invisible_format_char(c: char) -> bool {
+pub(crate) fn is_invisible_format_char(c: char) -> bool {
     matches!(
         c,
         '\u{00AD}'

@@ -1606,55 +1606,74 @@ fn int_magnitude(digits: &str, radix: u32) -> Option<i64> {
 
 /// Whether a byte of `bytes` is or may begin a character that
 /// [`escape_into`] escapes: an ASCII control, `\`, `"`, `{`, DEL, or
-/// 0xC2, the first byte of the C1 controls (U+0080 to U+009F) and of
-/// other characters, which `escape_into` tells apart. The test of a
-/// chunk has no branch, so that it runs many bytes at a time: a string
-/// shown inside a structure mostly has nothing to escape.
+/// any byte of a character past ASCII, which `escape_into` looks at
+/// whole. The test of a chunk has no branch, so that it runs many bytes
+/// at a time: a string shown inside a structure mostly has nothing to
+/// escape.
 fn may_need_escape(bytes: &[u8]) -> bool {
     bytes.chunks(32).any(|chunk| {
         chunk.iter().fold(false, |found, &b| {
-            found
-                | (b < 0x20)
-                | (b == b'\\')
-                | (b == b'"')
-                | (b == b'{')
-                | (b == 0x7f)
-                | (b == 0xc2)
+            found | (b < 0x20) | (b == b'\\') | (b == b'"') | (b == b'{') | (b >= 0x7f)
         })
     })
+}
+
+/// Whether the character `c` past ASCII is written as `\u{..}` in a
+/// quoted string, so that two strings that differ look different: a C1
+/// control; a character that shows nothing or turns the text around
+/// (the format characters, the line and paragraph separators, the
+/// fillers of [`crate::git::is_invisible_format_char`]); a private-use
+/// character or a noncharacter, which a reader cannot know. A
+/// variation selector and the combining grapheme joiner change the
+/// character before them, so they are escaped only where there is none
+/// (`first`), as Rust's `escape_debug` does.
+fn escaped_in_quotes(c: char, first: bool) -> bool {
+    let attached = matches!(c, '\u{034F}' | '\u{180B}'..='\u{180D}' | '\u{FE00}'..='\u{FE0F}')
+        || matches!(c, '\u{E0100}'..='\u{E01EF}');
+    if attached {
+        return first;
+    }
+    let code = c as u32;
+    c.is_control()
+        || crate::git::is_invisible_format_char(c)
+        || matches!(c, '\u{2028}' | '\u{2029}')
+        || matches!(code, 0xE000..=0xF8FF | 0xF0000..=0xFFFFD | 0x100000..=0x10FFFD)
+        || matches!(code, 0xFDD0..=0xFDEF)
+        || code & 0xFFFE == 0xFFFE
 }
 
 /// Write the text `s` as a string literal writes it between its quotes
 /// to `out`: what the lexer reads back as `s`. A backslash, a quote and
 /// a `{` (which opens an interpolation) are escaped, `\n`, `\r`, `\t`
-/// and `\0` are written so, and any other control character as
-/// `\u{..}`. A string shown inside a structure (`["a", "b, c"]`) and a
-/// string token in a message are written by it. Nothing is allocated: a
-/// text none of whose bytes can need an escape is one write, and any
-/// other is written as the slices between its escapes.
+/// and `\0` are written so, and any other control character, and any
+/// character a reader cannot see or tell from another
+/// ([`escaped_in_quotes`]), as `\u{..}`. A string shown inside a
+/// structure (`["a", "b, c"]`) and a string token in a message are
+/// written by it. Nothing is allocated: a text none of whose bytes can
+/// need an escape is one write, and any other is written as the slices
+/// between its escapes.
 pub fn escape_into(out: &mut impl fmt::Write, s: &str) -> fmt::Result {
     if !may_need_escape(s.as_bytes()) {
         return out.write_str(s);
     }
-    // By bytes: every character escaped is ASCII but the C1 controls,
-    // whose UTF-8 is 0xC2 and the code point itself (0x80 to 0x9F). An
-    // escape starts at a character's first byte, so each slice written
-    // in between is whole characters.
-    let bytes = s.as_bytes();
+    // By characters, at byte offsets: an escape starts at a character's
+    // first byte, so each slice written in between is whole characters.
     let (mut written, mut at) = (0, 0);
-    while at < bytes.len() {
-        let (escape, len) = match bytes[at] {
-            b'\\' => (Ok("\\\\"), 1),
-            b'"' => (Ok("\\\""), 1),
-            b'{' => (Ok("\\{"), 1),
-            b'\n' => (Ok("\\n"), 1),
-            b'\r' => (Ok("\\r"), 1),
-            b'\t' => (Ok("\\t"), 1),
-            0 => (Ok("\\0"), 1),
-            b @ (0..0x20 | 0x7f) => (Err(b), 1),
-            0xc2 if matches!(bytes.get(at + 1), Some(0x80..=0x9f)) => (Err(bytes[at + 1]), 2),
+    while let Some(c) = s[at..].chars().next() {
+        let len = c.len_utf8();
+        let escape = match c {
+            '\\' => Ok("\\\\"),
+            '"' => Ok("\\\""),
+            '{' => Ok("\\{"),
+            '\n' => Ok("\\n"),
+            '\r' => Ok("\\r"),
+            '\t' => Ok("\\t"),
+            '\0' => Ok("\\0"),
+            c if c.is_ascii_control() || (!c.is_ascii() && escaped_in_quotes(c, at == 0)) => {
+                Err(c as u32)
+            }
             _ => {
-                at += 1;
+                at += len;
                 continue;
             }
         };
@@ -1695,6 +1714,22 @@ mod tests {
             ("\u{1}\u{1f}\u{7f}", "\\u{1}\\u{1f}\\u{7f}"),
             ("x\u{85}y\u{9f}", "x\\u{85}y\\u{9f}"),
             ("\u{a0}\u{bf}é\"", "\u{a0}\u{bf}é\\\""),
+            // What shows nothing, turns the text around, or is no
+            // character a reader can know.
+            ("a\u{200b}", "a\\u{200b}"),
+            ("\u{202e}abc", "\\u{202e}abc"),
+            (
+                "\u{feff}\u{2028}\u{2029}\u{ad}",
+                "\\u{feff}\\u{2028}\\u{2029}\\u{ad}",
+            ),
+            (
+                "\u{e000}\u{10fffd}\u{fdd0}\u{ffff}",
+                "\\u{e000}\\u{10fffd}\\u{fdd0}\\u{ffff}",
+            ),
+            // A variation selector after a character is part of it; with
+            // none before it, it is escaped.
+            ("\u{2764}\u{fe0f}", "\u{2764}\u{fe0f}"),
+            ("\u{fe0f}x", "\\u{fe0f}x"),
         ];
         for (text, want) in cases {
             assert_eq!(escaped(text), want, "{text:?}");
