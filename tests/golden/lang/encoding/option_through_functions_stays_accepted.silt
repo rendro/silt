@@ -1,0 +1,33 @@
+-- What has a decoder stays accepted through any number of functions: an
+-- Option of a type that is no Option, Option(json.Value) (a null is
+-- None), and List(Option(t)) given Int.
+import json
+
+fn read(s: String, type t) -> Result(Option(t), json.JsonError) where t: json.Decode {
+  json.parse(s, Option(t))
+}
+
+fn outer(s: String, type u) -> Result(Option(u), json.JsonError) where u: json.Decode {
+  read(s, u)
+}
+
+fn outer2(s: String, type w) -> Result(Option(w), json.JsonError) where w: json.Decode {
+  outer(s, w)
+}
+
+fn read_list(s: String, type t) -> Result(List(Option(t)), json.JsonError) where t: json.Decode {
+  json.parse(s, List(Option(t)))
+}
+
+fn list_outer(s: String, type u) -> Result(List(Option(u)), json.JsonError) where u: json.Decode {
+  read_list(s, u)
+}
+
+fn main() {
+  println(outer("5", Int))
+  println(outer2("null", Int))
+  println(outer2("[1, 2]", List(Int)))
+  println(outer2("null", json.Value))
+  println(outer2("""{"a": null}""", json.Value))
+  println(list_outer("[1, null, 3]", Int))
+}

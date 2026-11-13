@@ -55,6 +55,18 @@ fn option_in_option(ty: &Type) -> bool {
             && matches!(args.first(), Some(Type::Generic(inner, _)) if inner.is_builtin("Option")))
 }
 
+/// Whether `ty` holds an `Option` of an `Option` anywhere: in a list,
+/// a set, a map, a tuple or a type's arguments.
+pub(super) fn nests_option(ty: &Type) -> bool {
+    option_in_option(ty)
+        || match ty {
+            Type::Generic(_, args) | Type::Tuple(args) => args.iter().any(nests_option),
+            Type::List(t) | Type::Set(t) => nests_option(t),
+            Type::Map(k, v) => nests_option(k) || nests_option(v),
+            _ => false,
+        }
+}
+
 /// The refusal of `builtin`, which decodes as `decoding` says, of the
 /// type `shown` at `span`, which is or holds an `Option` of an
 /// `Option`.

@@ -196,6 +196,26 @@ impl TypeChecker {
         index: usize,
         subject: &Type,
     ) -> Option<Type> {
+        let whole = self.within_given(var, body, index, subject)?;
+        let mut rigid = false;
+        map_rigid(&whole, &mut |r| {
+            rigid = true;
+            Type::Rigid(r)
+        });
+        (free_vars_in(&whole).is_empty() && !rigid).then_some(whole)
+    }
+
+    /// The type the body gives a decoder with `var` inside it, of its
+    /// need `index`, with `subject` for `var`, whatever else in it is
+    /// left open (another annotation variable: `Option(u)` of a body
+    /// that passes its own `u` on).
+    fn within_given(
+        &self,
+        var: TyVar,
+        body: Option<Symbol>,
+        index: usize,
+        subject: &Type,
+    ) -> Option<Type> {
         let rep = self.rigid_rep_var(var);
         let within = (self.need_within.get(&(rep, body)))
             .and_then(|within| within.get(index).cloned().flatten())?;
@@ -203,13 +223,7 @@ impl TypeChecker {
             true => subject.clone(),
             false => Type::Rigid(r),
         });
-        let whole = self.apply(&whole);
-        let mut rigid = false;
-        map_rigid(&whole, &mut |r| {
-            rigid = true;
-            Type::Rigid(r)
-        });
-        (free_vars_in(&whole).is_empty() && !rigid).then_some(whole)
+        Some(self.apply(&whole))
     }
 
     /// Whether the decoder of `check` refuses `ty`, given whole.
@@ -311,12 +325,15 @@ impl TypeChecker {
     /// The body `in_body` gives its annotation variable `r` to a builtin
     /// that asks `check` of it, through the functions and methods `path`.
     /// Whether that is news.
+    /// `within` is the type the builtin is given with `r` inside it,
+    /// if the need came with one (`need_within`).
     fn add_builtin_need(
         &mut self,
         r: RigidId,
         check: BuiltinCheck,
         in_body: Option<Symbol>,
         (path, owners): (Vec<Symbol>, Vec<crate::session::ModuleId>),
+        within: Option<Type>,
     ) -> bool {
         let key = (self.rigid_rep_var(r.var), in_body);
         let needs = self.builtin_needs.entry(key).or_default();
@@ -326,7 +343,7 @@ impl TypeChecker {
         needs.push(check.unwritten());
         self.need_paths.entry(key).or_default().push(path);
         self.need_owners.entry(key).or_default().push(owners);
-        self.need_within.entry(key).or_default().push(None);
+        self.need_within.entry(key).or_default().push(within);
         self.grown_needs.push(key);
         true
     }
@@ -362,6 +379,7 @@ impl TypeChecker {
                                     *check,
                                     in_body,
                                     (Vec::new(), Vec::new()),
+                                    None,
                                 )
                             }
                             Type::Var(_) | Type::Error | Type::Never => {}
@@ -984,7 +1002,13 @@ impl TypeChecker {
                             use_.owner.into_iter().collect();
                         owners.extend(use_.also.iter().copied());
                         owners.extend(self.need_owners_of(use_.given, use_.body, index));
-                        self.add_builtin_need(r, check, use_.in_body, (path, owners));
+                        // (The type the builtin is given, with this
+                        // body's own variable for the one passed on:
+                        // `Option(u)` where `read` decodes `Option(t)`
+                        // and is given `u`.)
+                        let within =
+                            self.within_given(use_.given, use_.body, index, &Type::Rigid(r));
+                        self.add_builtin_need(r, check, use_.in_body, (path, owners), within);
                     }
                 }
                 // (A call on types that name no annotation variable owes
@@ -1186,7 +1210,15 @@ impl TypeChecker {
                         Some(whole) if self.decodes_whole_refused(check, &whole, &owners) => {
                             (check.unwritten(), whole)
                         }
-                        _ => (check, use_.subject.clone()),
+                        // (An Option in an Option whatever else is open:
+                        // `read(s, Option(u))` where `read` decodes
+                        // `Option(t)`.)
+                        _ => match self.within_given(use_.given, use_.body, index, &use_.subject) {
+                            Some(whole) if super::builtin_checks::nests_option(&whole) => {
+                                (check.unwritten(), whole)
+                            }
+                            _ => (check, use_.subject.clone()),
+                        },
                     };
                 self.check_builtin_argument(check, &subject, passer, &owners, use_.origin);
             }
