@@ -475,6 +475,9 @@ fn get_or_die(opt) {
 }
 ```
 
+The last line of a function is its value, so a `return` there says
+nothing more: `silt fmt` writes `x` for a last line `return x`.
+
 `return` leaves the function it is written in, and a closure is a
 function of its own: a `return` inside a closure ends that call of the
 closure, not the function around it. So a callback cannot end a

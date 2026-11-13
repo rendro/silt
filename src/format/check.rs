@@ -734,8 +734,28 @@ impl ShapeWriter {
         if f.is_signature_only {
             self.word("#signature");
         } else {
-            self.expr(&f.body);
+            self.fn_body(&f.body);
         }
+        self.close();
+    }
+
+    /// A function's body, with a `return` on its last line compared as
+    /// its value: the printer does not write it.
+    fn fn_body(&mut self, body: &Expr) {
+        let ExprKind::Block(stmts) = &body.kind else {
+            return self.expr(body);
+        };
+        let Some((Stmt::Expr(last), front)) = stmts.split_last() else {
+            return self.expr(body);
+        };
+        let ExprKind::Return(Some(value)) = &last.kind else {
+            return self.expr(body);
+        };
+        self.open("block");
+        for stmt in front {
+            self.stmt(stmt);
+        }
+        self.expr(value);
         self.close();
     }
 
@@ -1096,7 +1116,7 @@ impl ShapeWriter {
             ExprKind::Pipe(left, right) => {
                 self.open("pipe");
                 self.expr(left);
-                self.expr(right);
+                self.expr(without_empty_call(right));
             }
             ExprKind::Range(start, end) => {
                 self.open("range");
@@ -1180,6 +1200,20 @@ impl ShapeWriter {
             ExprKind::Unit => self.open("unit"),
         }
         self.close();
+    }
+}
+
+/// A stage of a pipeline as it is compared: `f()`, a call of a name
+/// with no arguments, is `f`, which the printer writes for it.
+fn without_empty_call(stage: &Expr) -> &Expr {
+    match &stage.kind {
+        ExprKind::Call(callee, args)
+            if args.is_empty()
+                && matches!(callee.kind, ExprKind::Ident(_) | ExprKind::FieldAccess(..)) =>
+        {
+            callee
+        }
+        _ => stage,
     }
 }
 
@@ -1407,5 +1441,27 @@ mod tests {
         // The braces do not go anywhere else: a statement, an operand.
         let message = refusal(&arms("f({ x })", "0"), &arms("f(x)", "0"));
         assert!(message.contains("function `f`"), "{message}");
+    }
+
+    /// `xs |> f()` is compared as `xs |> f`, and a `return` on a
+    /// function's last line as its value: the printer writes them so.
+    /// Nothing else is: a call of a call, a `return` elsewhere.
+    #[test]
+    fn an_empty_stage_call_and_a_last_return_are_their_short_forms() {
+        let body = |text: &str| format!("fn f(xs) {{\n  {text}\n}}\n");
+        assert_eq!(judge(&body("xs |> g()"), &body("xs |> g")), Ok(()));
+        assert_eq!(judge(&body("xs |> m.g()"), &body("xs |> m.g")), Ok(()));
+        assert_eq!(judge(&body("return xs"), &body("xs")), Ok(()));
+        let lines = |a: &str, b: &str| format!("fn f(xs) {{\n  {a}\n  {b}\n}}\n");
+        assert_eq!(judge(&lines("g(xs)", "return xs"), &lines("g(xs)", "xs")), Ok(()));
+        for (before, after) in [
+            (body("xs |> g()()"), body("xs |> g()")),
+            (body("g()"), body("g")),
+            (lines("return xs", "g(xs)"), lines("xs", "g(xs)")),
+            (body("{ -> return xs }"), body("{ -> xs }")),
+        ] {
+            let message = refusal(&before, &after);
+            assert!(message.contains("function `f`"), "{before}: {message}");
+        }
     }
 }

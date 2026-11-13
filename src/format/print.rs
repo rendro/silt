@@ -385,12 +385,19 @@ fn ends_in_stage(expr: &Expr) -> bool {
 }
 
 /// Whether the last operand of `expr` is a stage of a pipeline written as
-/// a bare name (`list.first` of `xs |> list.first`), not called.
+/// a bare name (`list.first` of `xs |> list.first`), not called. A call
+/// of a name with no arguments, `xs |> list.first()`, is one: the
+/// pipeline writes it so.
 fn ends_in_bare_stage(expr: &Expr) -> bool {
     match &expr.kind {
-        ExprKind::Pipe(_, stage) => {
-            matches!(stage.kind, ExprKind::Ident(_) | ExprKind::FieldAccess(..))
-        }
+        ExprKind::Pipe(_, stage) => match &stage.kind {
+            ExprKind::Ident(_) | ExprKind::FieldAccess(..) => true,
+            ExprKind::Call(callee, args) => {
+                args.is_empty()
+                    && matches!(callee.kind, ExprKind::Ident(_) | ExprKind::FieldAccess(..))
+            }
+            _ => false,
+        },
         // (An operator that binds looser than `|>`: the pipeline is
         // printed without parentheses behind it. A tighter one, `-` or
         // `..`, has them around the pipeline.)
@@ -920,9 +927,54 @@ impl Printer<'_> {
             // (A comment between the signature and its `{` belongs to
             // the signature, indented as a `where` clause is.)
             docs.push(Doc::nest(self.dangling()));
-            docs.push(self.block(&f.body));
+            docs.push(self.fn_body(&f.body));
         }
         Doc::concat(docs)
+    }
+
+    /// The body of a function. A `return` on its last line is not
+    /// written: the last line is the function's value either way, so
+    /// `return x` there has one spelling, `x`. (One with a comment
+    /// between `return` and its value stays as it is.)
+    fn fn_body(&mut self, body: &Expr) -> Doc {
+        let ExprKind::Block(stmts) = &body.kind else {
+            return self.block(body);
+        };
+        let Some((Stmt::Expr(last), front)) = stmts.split_last() else {
+            return self.block(body);
+        };
+        let ExprKind::Return(Some(value)) = &last.kind else {
+            return self.block(body);
+        };
+        if self.cur.comments_between(last.span.start, value.span.start) {
+            return self.block(body);
+        }
+        let open = self.tok(Token::LBrace);
+        let count = stmts.len();
+        let mut at = 0;
+        let lines = self.lines(|p| {
+            let i = at;
+            at += 1;
+            if i + 1 < count {
+                return Some(p.stmt(&front[i], i == 0));
+            }
+            if i + 1 == count {
+                // (The comments above the `return` stay above the line.)
+                let leading = p.cur.leading();
+                let skipped = p.cur.skip(&Token::Return);
+                let value = p.expr(
+                    value,
+                    Ctx {
+                        line_start: i > 0,
+                        ..Ctx::top()
+                    },
+                );
+                return Some(Doc::concat(vec![leading, skipped, value]));
+            }
+            None
+        });
+        let close = self.tok(Token::RBrace);
+        Doc::concat(vec![open, lines, close])
     }
 
     /// A parameter. `in_closure`: a closure is recognised by the tokens
@@ -1740,7 +1792,23 @@ impl Printer<'_> {
             } else {
                 ctx.stage()
             };
-            rest.push(self.expr(stage, stage_ctx));
+            // `xs |> f()` is written `xs |> f`: a stage that calls a name
+            // with the piped value alone has one spelling, the name.
+            // (Not a call of a call, `f()()`, whose `()` is the stage's
+            // call; nor one with a comment between the parentheses.)
+            match &stage.kind {
+                ExprKind::Call(callee, args)
+                    if args.is_empty()
+                        && matches!(callee.kind, ExprKind::Ident(_) | ExprKind::FieldAccess(..))
+                        && !self.cur.comments_between(callee.span.end, stage.span.end)
+                        && self.cur.wrappers(stage.span.end) == 0 =>
+                {
+                    rest.push(self.expr(callee, stage_ctx));
+                    self.cur.skip_empty_parens();
+                    rest.push(self.cur.carried());
+                }
+                _ => rest.push(self.expr(stage, stage_ctx)),
+            }
             if closes > 0 {
                 self.cur.skip_n(&Token::RParen, closes);
                 rest.push(self.cur.carried());

@@ -18,7 +18,9 @@ let b = xs |> list.filter { x -> x > 0 }
 
 The right side is a call like any other, so the rule is the same for a
 call through a trait: `5 |> Greet.greet` is `Greet.greet(5)`, and
-`5 |> Adder.add(3)` is `Adder.add(5, 3)`.
+`5 |> Adder.add(3)` is `Adder.add(5, 3)`. A stage that takes the piped
+value alone is written as the name: `xs |> list.sum`, which `silt fmt`
+writes for `xs |> list.sum()`.
 
 Without pipes, function composition nests inside-out. With pipes, it reads
 top-to-bottom:
