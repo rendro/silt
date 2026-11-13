@@ -7,8 +7,8 @@
 -- lsp: prepare-rename 23:22
 -- lsp: rename 23:22 code
 -- A field of a type of a dependency is found in this package and in the
--- dependency, but a rename edits the files of this package only, so it
--- is refused; so is a rename of a field of one of silt's own types.
+-- dependency; its rename is asked in a file of the dependency, and here
+-- it is refused; so is a rename of a field of one of silt's own types.
 import bytes
 import geom
 import http
