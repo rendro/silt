@@ -38,6 +38,10 @@ pub(crate) struct ReadAt {
     /// The function the read is in, with whether it is a named function
     /// (`fn`), which can take a type parameter, and not a closure.
     pub(super) function: Option<(Symbol, bool)>,
+    /// The name of the plain `let` without an annotation that the
+    /// receiver's type comes from (`let v = fail("x")`), which can take
+    /// one (`let v: A`).
+    pub(super) let_name: Option<Symbol>,
 }
 
 /// What waits for a type to be known.

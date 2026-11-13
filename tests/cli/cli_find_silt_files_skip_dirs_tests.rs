@@ -29,7 +29,7 @@ use std::process::Command;
 /// Construct a fresh fixture tree under `std::env::temp_dir()`. The
 /// returned path is leaked (no cleanup) so the subprocess can read
 /// it; the OS reaps on test-process exit, matching the leak shape used
-/// in `tests/lang/round86_check_json_no_ansi_under_force_color_tests.rs`.
+/// in `tests/lang/check_json_no_ansi_under_force_color_tests.rs`.
 fn build_fixture() -> PathBuf {
     let tmp = std::env::temp_dir().join(format!(
         "silt-round87-skipdirs-{}-{}",

@@ -6,7 +6,7 @@
 //! non-deterministic.
 //!
 //! Round 79 already locked the docs/language/ subtree
-//! (round79_doc_frontmatter_parity_tests.rs::doc_language_order_uniqueness).
+//! (docs_frontmatter_parity_tests.rs::doc_language_order_uniqueness).
 //! This file extends the parity invariant to the top-level docs/ tree:
 //!   (a) every top-level docs/*.md must declare `order:`
 //!   (b) the declared `order:` values must be pairwise unique
@@ -22,7 +22,7 @@ fn repo_root() -> PathBuf {
 /// Returns the value of the first `key:` line in the leading YAML
 /// frontmatter of `path`, or `None` if no such line exists in the
 /// first ~20 lines. Mirrors the helper in
-/// round79_doc_frontmatter_parity_tests.rs.
+/// docs_frontmatter_parity_tests.rs.
 fn frontmatter_value(path: &Path, key: &str) -> Option<String> {
     let body = fs::read_to_string(path).ok()?;
     let prefix = format!("{}:", key);

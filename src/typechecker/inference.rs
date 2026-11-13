@@ -1660,7 +1660,7 @@ impl TypeChecker {
     /// Where the read of a field of `obj`, whose type is unknown, is:
     /// `obj`'s name and whether it is a parameter, and the function the
     /// read is in (`traits`: see `ReadAt::traits`).
-    fn read_at(&self, obj: &Expr, traits: Vec<TraitKey>) -> super::solve::ReadAt {
+    fn read_at(&self, obj: &Expr, obj_ty: &Type, traits: Vec<TraitKey>) -> super::solve::ReadAt {
         let name = match obj.kind {
             ExprKind::Ident(name) => Some((
                 name,
@@ -1673,10 +1673,15 @@ impl TypeChecker {
             Some(super::unused::FrameOwner::Local(name)) => Some((name, false)),
             None => None,
         });
+        let let_name = match self.apply(obj_ty) {
+            Type::Var(v) => self.plain_let_vars.get(&v).copied(),
+            _ => None,
+        };
         super::solve::ReadAt {
             name,
             traits,
             function,
+            let_name,
         }
     }
 
@@ -4843,7 +4848,7 @@ impl TypeChecker {
                             // `x.f(..)`: what it calls is decided with
                             // the type of `x` (`check_call`).
                             let traits = if read_as_field { makers } else { Vec::new() };
-                            let at = self.read_at(obj, traits);
+                            let at = self.read_at(obj, &obj_ty, traits);
                             self.unknown_receiver = Some((obj_ty.clone(), field, at));
                             self.fresh_var()
                         } else {
@@ -4856,7 +4861,7 @@ impl TypeChecker {
                                     name: field,
                                     args: None,
                                     result: result.clone(),
-                                    at: self.read_at(obj, Vec::new()),
+                                    at: self.read_at(obj, &obj_ty, Vec::new()),
                                 },
                                 Origin {
                                     span,
@@ -5879,6 +5884,11 @@ impl TypeChecker {
                     self.infer_expr(value, env)
                 };
 
+                if let (PatternKind::Ident(name), None, Type::Var(v)) =
+                    (&pattern.kind, &ty, self.apply(&val_ty))
+                {
+                    self.plain_let_vars.entry(v).or_insert(*name);
+                }
                 // The type variables the annotation introduces.
                 let mut own: Vec<RigidId> = Vec::new();
                 if let Some(te) = &ty {

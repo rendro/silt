@@ -1,0 +1,8 @@
+-- cmd: lsp
+-- A dependency whose silt.toml has an error: the note on the file names
+-- that manifest, not the project's own, which has no error.
+import geom
+
+fn main() {
+  println(geom.two())
+}

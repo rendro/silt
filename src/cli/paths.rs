@@ -67,16 +67,68 @@ pub(crate) const FILE_OR_PACKAGE: &str = "a .silt file or a package directory";
 /// package stands for the files under it.
 pub(crate) const FILE_OR_DIRECTORY: &str = "a .silt file or a directory";
 
+/// The usage error of `silt <command>` (`check` or `fmt`) when the walk
+/// of `dir` (`shown`: how it is named) found no `.silt` file: exit 1.
+/// Where the files under it are those of packages below it, which the
+/// walk leaves to their packages, the message names one (a package that
+/// holds no `.silt` file either is not named).
+pub(crate) fn refuse_empty_walk(command: &str, dir: &Path, shown: &str) -> ! {
+    let enter = |path: &Path| !silt::file_discovery::should_skip_dir(path);
+    let manifest = |path: &Path| path.file_name().is_some_and(|name| name == "silt.toml");
+    let silt_file = |path: &Path| path.to_string_lossy().ends_with(".silt");
+    let packages: Vec<String> = files_under(dir, &enter, &manifest)
+        .iter()
+        .filter_map(|toml| toml.parent())
+        .filter(|package| *package != dir)
+        .filter(|package| !files_under(package, &enter, &silt_file).is_empty())
+        .map(|package| {
+            // `./pk` (`.\pk` on Windows) is shown as `pk`.
+            let package = package.strip_prefix(".").unwrap_or(package);
+            silt::git::escape_for_display(&package.to_string_lossy())
+        })
+        .collect();
+    let verb = if command == "fmt" { "format" } else { command };
+    let shown = silt::git::escape_for_display(shown);
+    match packages.as_slice() {
+        [] => eprintln!("error: silt {command}: no .silt files found in {shown}"),
+        [one] => eprintln!(
+            "error: silt {command}: no .silt files found in {shown}, but for those of the \
+             package in {one}: name its directory to {verb} it"
+        ),
+        [first, ..] => eprintln!(
+            "error: silt {command}: no .silt files found in {shown}, but for those of {} \
+             packages, such as the one in {first}: name a package's directory to {verb} it",
+            packages.len()
+        ),
+    }
+    std::process::exit(1);
+}
+
 /// Recursively find all .silt files in a directory, as `silt fmt` does:
 /// in the directories [`enters_package_dir`] lets the walk into.
 pub(crate) fn find_silt_files(dir: &Path) -> Vec<String> {
     let wanted = |path: &Path| path.to_string_lossy().ends_with(".silt");
     let names = files_under(dir, &enters_package_dir, &wanted).into_iter();
-    let mut results: Vec<String> = names
-        .map(|path| path.to_string_lossy().to_string())
-        .collect();
+    let mut results: Vec<String> = names.map(unicode_path).collect();
     results.sort();
     results
+}
+
+/// The path of a file a walk found, as text. A file whose path is not
+/// Unicode (its own name, or a directory's on the way) cannot be named to
+/// read it, nor is its name a module name: as for such an argument, a
+/// usage error (exit 1).
+pub(crate) fn unicode_path(path: std::path::PathBuf) -> String {
+    match path.into_os_string().into_string() {
+        Ok(path) => path,
+        Err(path) => {
+            eprintln!(
+                "error: silt: the path {path:?} is not valid Unicode: rename the file or \
+                 directory whose name is not"
+            );
+            std::process::exit(1);
+        }
+    }
 }
 
 /// Whether a walk of a package's files goes into the directory `path`
@@ -99,9 +151,7 @@ pub(crate) fn package_test_files(root: &Path) -> Vec<String> {
         name.ends_with("_test.silt")
     };
     let names = files_under(root, &enters_package_dir, &wanted).into_iter();
-    let mut out: Vec<String> = names
-        .map(|path| path.to_string_lossy().into_owned())
-        .collect();
+    let mut out: Vec<String> = names.map(unicode_path).collect();
     out.sort();
     out
 }

@@ -617,7 +617,7 @@ fn test_add_git_invalid_rev_format_errors() {
 // ── Network-gated tests (require SILT_GIT_INTEGRATION_TESTS=1) ────────
 
 fn skip_unless_network() -> bool {
-    if std::env::var("SILT_GIT_INTEGRATION_TESTS").is_err() {
+    if !crate::env_switch::on("SILT_GIT_INTEGRATION_TESTS") {
         eprintln!("SKIP: network test skipped; set SILT_GIT_INTEGRATION_TESTS=1 to enable");
         true
     } else {

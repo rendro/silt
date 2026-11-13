@@ -11,7 +11,8 @@ use silt::source::{SourceMap, SourceName};
 
 use crate::cli::package::{die_on_manifest_error_with, find_project_root};
 use crate::cli::paths::{
-    FILE_OR_DIRECTORY, PathArg, find_silt_files, once_each, path_arg, refuse_path,
+    FILE_OR_DIRECTORY, PathArg, find_silt_files, once_each, path_arg, refuse_empty_walk,
+    refuse_path,
 };
 
 /// Dispatch `silt fmt [--check] [files...]`.
@@ -106,8 +107,7 @@ pub(crate) fn dispatch(args: &[String]) {
                 PathArg::Package(dir) | PathArg::Dir(dir) => {
                     let found = find_silt_files(Path::new(&dir));
                     if found.is_empty() {
-                        eprintln!("error: silt fmt: no .silt files found in {dir}");
-                        process::exit(1);
+                        refuse_empty_walk("fmt", Path::new(&dir), &dir);
                     }
                     walked = true;
                     expanded.extend(found);
@@ -133,8 +133,7 @@ pub(crate) fn dispatch(args: &[String]) {
         // (A file reached twice, through a link, is handled once.)
         files = once_each(find_silt_files(Path::new(".")));
         if files.is_empty() {
-            eprintln!("error: silt fmt: no .silt files found in current directory");
-            process::exit(1);
+            refuse_empty_walk("fmt", Path::new("."), "current directory");
         }
         if !has_anchor && !explicit_dot {
             eprintln!(

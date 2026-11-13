@@ -4,17 +4,23 @@
 //! names (see `workspace.rs`): the declaration, each use, each item of
 //! an `import m.{ item }`. A function of another module with the same
 //! name, or a local that shadows it, is something else and is left as
-//! it is.
+//! it is. A record field is renamed in its type, its literals, updates,
+//! reads and patterns; a field of the same name of another record type
+//! is another field.
 //!
 //! What cannot be renamed: one of silt's own definitions (`Some`,
-//! `list.map`, `Int`), `self`, and anything the resolver gave no meaning
-//! (a field, a method, a keyword). The new name must be one identifier
-//! to the lexer, of the same kind as the old one (a type, a variant or a
-//! trait starts with an upper-case letter, anything else does not), and
-//! free where the old one is written: a rename that would capture
-//! another name, or be captured by one, is refused with the clash.
-//! A record field written without its value (`P { x }`) is written out
-//! (`P { x: new }`), since the field keeps its name.
+//! `list.map`, `Int`) and their fields, a field of a type of another
+//! package, `self`, and anything the resolver gave no meaning (a
+//! keyword). The new name must be one identifier to the lexer, of the
+//! same kind as the old one (a type, a variant or a trait starts with
+//! an upper-case letter, anything else does not), and free where the
+//! old one is written: a rename that would capture another name, or be
+//! captured by one, is refused with the clash; so is a field name the
+//! type has already.
+//! A record field written without its value (`P { x }`) is written out:
+//! renaming what it holds gives `P { x: new }`, since the field keeps
+//! its name; renaming the field gives `P { new: x }`, since the local
+//! keeps its.
 //!
 //! The files edited are the open documents, the modules they import,
 //! and the workspace files that import the definition's module.
@@ -28,6 +34,7 @@ use crate::lexer;
 
 use super::Server;
 use super::conversions::{position_to_offset, span_to_range};
+use super::workspace::Target;
 
 impl Server {
     /// `textDocument/prepareRename`: the range of the name under the
@@ -45,6 +52,7 @@ impl Server {
         let range = span_to_range(&span, &doc.source);
         if self.not_renameable(uri, &target).is_some()
             || self.incomplete_for_rename(uri, &target).is_some()
+            || self.unknown_field_reads(&target).is_some()
         {
             return None;
         }
@@ -103,7 +111,20 @@ impl Server {
                  that holds it mean is not known, and a rename would leave them as they are"
             )));
         }
+        if let Some(unknown) = self.unknown_field_reads(&target) {
+            return Err(invalid(format!(
+                "`{old_name}` cannot be renamed now: {unknown}; fix that first, so the rename \
+                 can find every place of the field"
+            )));
+        }
         if let Some(clash) = self.rename_clash(uri, &target, &new_name) {
+            // (A field is named after its value only: no other name
+            // can capture it.)
+            if let Target::Field { .. } = target {
+                return Err(invalid(format!(
+                    "`{old_name}` cannot be renamed to `{new_name}`: {clash}"
+                )));
+            }
             return Err(invalid(format!(
                 "`{old_name}` cannot be renamed to `{new_name}`: {clash}, and the rename would \
                  change what a name means"
@@ -111,12 +132,15 @@ impl Server {
         }
 
         let mut changes: HashMap<Uri, Vec<TextEdit>> = HashMap::new();
+        let field = matches!(target, Target::Field { .. });
         for place in self.places_of(uri, &target, true) {
-            // A field written without its value is written out:
-            // `P { x }` becomes `P { x: new }`.
-            let new_text = match place.punned {
-                true => format!("{old_name}: {new_name}"),
-                false => new_name.clone(),
+            // A field written without its value is written out: for a
+            // rename of what it holds, `P { x }` becomes `P { x: new }`;
+            // for a rename of the field, `P { new: x }`.
+            let new_text = match (place.punned, field) {
+                (true, false) => format!("{old_name}: {new_name}"),
+                (true, true) => format!("{new_name}: {old_name}"),
+                (false, _) => new_name.clone(),
             };
             changes
                 .entry(place.location.uri)
@@ -134,6 +158,19 @@ impl Server {
             document_changes: None,
             change_annotations: None,
         }))
+    }
+}
+
+impl Server {
+    /// For a field: why not every place of it can be known now (see
+    /// `field_places_unknown`). The places are looked up first.
+    fn unknown_field_reads(&self, target: &Target) -> Option<String> {
+        let Target::Field { record, name } = target else {
+            return None;
+        };
+        // (`incomplete_for_rename` walked the workspace already; the
+        // walk is kept until the next analysis.)
+        self.field_places_unknown(record, *name)
     }
 }
 

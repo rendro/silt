@@ -1,0 +1,7 @@
+-- cmd: check
+-- exit: 1
+-- A parameter list left open before a brace (`fn fa( {`) gets no record
+-- pattern help: the brace holds no fields.
+pub fn fa( {
+}
+fn main() {}

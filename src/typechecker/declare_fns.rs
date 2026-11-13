@@ -74,6 +74,25 @@ impl TypeChecker {
             return;
         }
         let given: Vec<TyVar> = params.iter().flat_map(free_vars_in).collect();
+        // A field read in it that nothing decides is refused with its
+        // annotation at the scope's end, the cause of what its result
+        // leaves undecided (`fn i(p) { p.a + p.d }`): its result is an
+        // error, which its callers do not judge again.
+        let undecided_read = (self.wanted.iter()).any(|w| {
+            !w.solved
+                && matches!(&w.goal, Goal::Select { recv, .. }
+                    if matches!(self.apply(recv), Type::Var(v) if scheme.vars.contains(&v)))
+                && w.origin.span.file == span.file
+                && w.origin.span.start >= span.start
+                && w.origin.span.end <= span.end
+        });
+        if undecided_read {
+            scheme.ty = Type::Fun(params.clone(), Box::new(Type::Error));
+            scheme
+                .preds
+                .retain(|pred| given.iter().any(|v| pred.mentions(*v)));
+            return;
+        }
         // (A variable the scheme does not quantify is an outer
         // definition's, which a later one may decide.)
         if let Type::Var(v) = **ret

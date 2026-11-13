@@ -13,7 +13,8 @@ use crate::cli::help::check_usage_banner;
 use crate::cli::package::{EntryPointKind, resolve_package_entry_point_in};
 use crate::cli::paths::{
     CanonicalFiles, FILE_OR_DIRECTORY, PathArg, ProgramFiles, STDIN_NAME, door_diagnostics,
-    find_silt_files, open_entry, open_stdin, package_test_files, path_arg, refuse_path,
+    find_silt_files, open_entry, open_stdin, package_test_files, path_arg, refuse_empty_walk,
+    refuse_path, unicode_path,
 };
 
 /// Output format for `silt check` — human-readable by default, or
@@ -151,8 +152,7 @@ fn programs_of(paths: &[String]) -> Vec<PackageFiles> {
             PathArg::Dir(dir) => {
                 let found = find_silt_files(Path::new(&dir));
                 if found.is_empty() {
-                    eprintln!("error: silt check: no .silt files found in {dir}");
-                    process::exit(1);
+                    refuse_empty_walk("check", Path::new(&dir), &dir);
                 }
                 programs.extend(found.into_iter().map(file));
             }
@@ -239,7 +239,7 @@ fn package_modules(root: &Path, entry: &Path, tests: &[String]) -> Vec<String> {
         .filter(|p| p.extension().is_some_and(|x| x == "silt") && p.is_file())
         .filter(|p| !same(p, entry))
         .filter(|p| !tests.iter().any(|t| same(p, Path::new(t))))
-        .map(|p| p.to_string_lossy().into_owned())
+        .map(unicode_path)
         .collect();
     modules.sort();
     modules

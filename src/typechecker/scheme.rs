@@ -44,6 +44,17 @@ impl TypeChecker {
         types.sort();
         types.dedup();
         let record = match (at.name, types.as_slice()) {
+            // (A name a plain `let` binds takes the annotation there.)
+            (Some((_, false)), types) if let Some(name) = at.let_name => {
+                let written: Vec<String> = match types {
+                    [] => vec![format!("`let {name}: SomeRecord`")],
+                    types => types
+                        .iter()
+                        .map(|ty| format!("`let {name}: {ty}`"))
+                        .collect(),
+                };
+                format!("annotate the record: {}", written.join(" or "))
+            }
             // (A name bound by a pattern takes no annotation where it is
             // bound: the value it comes from is annotated.)
             (Some((name, false)), []) => {
