@@ -1,7 +1,8 @@
 -- A connection is reset when it goes back to the pool: what a statement
 -- on the pool, or a transaction, set in its session does not reach the
 -- next statement that takes it. A setting (by `SET` or by `set_config`),
--- a temporary table, an advisory lock, a `LISTEN`, a cursor `WITH HOLD`
+-- a role, a temporary table, function or type (one named like a type of
+-- pg_catalog comes first), an advisory lock, a `LISTEN`, a cursor `WITH HOLD`
 -- are gone; what the connection string sets stays. A session that holds
 -- a statement prepared with `PREPARE` is closed instead, and the pool
 -- opens another; so is one whose `DEALLOCATE ALL` or `DISCARD ALL`
@@ -103,6 +104,15 @@ fn main() {
       println("  the other pool takes it: {one(other, "SELECT (pg_try_advisory_lock(7310) AND pg_advisory_unlock(7310))::text AS s")}")
       println("LISTEN: {said(postgres.execute(pool, "LISTEN silt_reset_channel", ()))}")
       println("  after it: {one(pool, "SELECT count(*)::text AS s FROM pg_listening_channels()")}")
+      let temp = [
+        "CREATE FUNCTION pg_temp.silt_reset_f() RETURNS text LANGUAGE sql AS $$ SELECT 'left' $$",
+        "CREATE DOMAIN pg_temp.silt_reset_d AS int CHECK (VALUE > 100)",
+        "CREATE TYPE pg_temp.text AS ENUM ('left')",
+      ]
+      temp |> list.each { sql -> println("{sql}: {said(postgres.execute(pool, sql, ()))}") }
+      println("  after them: {one(pool, "SELECT 'ok'::text AS s")}, functions {one(pool, "SELECT count(*)::pg_catalog.text AS s FROM pg_proc WHERE proname = 'silt_reset_f'")}, types {one(pool, "SELECT count(*)::pg_catalog.text AS s FROM pg_type WHERE typname IN ('silt_reset_d', 'text') AND typnamespace <> 'pg_catalog'::regnamespace")}")
+      println("the role set to the login role: {one(pool, "SELECT 'set' AS s FROM set_config('role', current_user, false)")}")
+      println("  after it: {one(pool, "SELECT current_setting('role') AS s")}")
       println("the same session all along: {session(pool) == first}")
       println("PREPARE: {said(postgres.execute(pool, "PREPARE silt_reset_p AS SELECT 1", ()))}")
       println("  again: {said(postgres.execute(pool, "PREPARE silt_reset_p AS SELECT 1", ()))}")

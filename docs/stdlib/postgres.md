@@ -289,17 +289,22 @@ or a transaction set in its session is undone, as `DISCARD ALL` does.
 The reset goes to the server with the statement's last message (or with
 the `COMMIT` or `ROLLBACK` of `postgres.transact`), and the statement
 does not wait for its answer, which the next statement that takes the
-connection reads first. So a `SET` (or `set_config`), a
-temporary table, a session's advisory lock, a `LISTEN` or a cursor
-`WITH HOLD` lasts to the end of the statement on a pool, and to the end
-of the transaction inside `postgres.transact`: it never reaches the
-next statement that takes the connection. What the connection string
-sets (`application_name`, `options=-c name=value`) stays. A connection
-is closed instead, and the pool opens another when it needs one (a new
-login), when its session holds a statement prepared with SQL's
-`PREPARE`, or a `DEALLOCATE ALL` or `DISCARD ALL` dropped the statements
-the connection keeps prepared for itself, or the reset's answer does
-not come within a second.
+connection reads first. So a `SET` (or `set_config`), a `SET ROLE`,
+a temporary table, function or type, a session's advisory lock, a
+`LISTEN` or a cursor `WITH HOLD` lasts to the end of the statement on a
+pool, and to the end of the transaction inside `postgres.transact`: it
+never reaches the next statement that takes the connection. What the
+connection string sets (`application_name`, `options=-c name=value`)
+stays. A connection is not used again, but closed by the next statement
+that takes it, which takes another (a new login), when its session holds
+a statement prepared with SQL's `PREPARE`, or a `DEALLOCATE ALL` or
+`DISCARD ALL` dropped the statements the connection keeps prepared for
+itself, or the reset's answer does not come within a second (a server
+that stalls so costs each statement on the pool that second and a new
+login). Each connection keeps one statement prepared through SQL for its
+reset, which a pooler between silt and the server that hands out a
+connection per transaction (PgBouncer's transaction mode) does not keep:
+there every connection is closed after one statement.
 
 ## Cooperative I/O
 

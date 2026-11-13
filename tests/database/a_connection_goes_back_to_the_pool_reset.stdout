@@ -13,6 +13,12 @@ pg_advisory_lock: taken
   the other pool takes it: true
 LISTEN: Ok
   after it: 0
+CREATE FUNCTION pg_temp.silt_reset_f() RETURNS text LANGUAGE sql AS $$ SELECT 'left' $$: Ok
+CREATE DOMAIN pg_temp.silt_reset_d AS int CHECK (VALUE > 100): Ok
+CREATE TYPE pg_temp.text AS ENUM ('left'): Ok
+  after them: ok, functions 0, types 0
+the role set to the login role: set
+  after it: none
 the same session all along: true
 PREPARE: Ok
   again: Ok

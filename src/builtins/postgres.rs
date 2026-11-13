@@ -512,8 +512,9 @@ const RESET_LIMIT: Duration = Duration::from_secs(1);
 ///   them, on which every later look-up of a type would fail, has no
 ///   check to run: its reset is an error.
 /// - `r`: it holds what the rest of the reset undoes ([`RESET_REST`]): a
-///   cursor `WITH HOLD`, a temporary table, a role or a session user of
-///   its own.
+///   cursor `WITH HOLD` (the one kind of cursor that outlives its
+///   transaction), a role set (also the login role itself), or a session
+///   user other than the login.
 /// - `t`: it is clean once the rest of [`RESET`] has run.
 ///
 /// The session's advisory locks are let go in the check itself.
@@ -524,9 +525,7 @@ fn mark(login: &str) -> String {
            OR (SELECT pg_catalog.array_agg(name) FROM pg_catalog.pg_prepared_statements WHERE from_sql) \
            IS DISTINCT FROM ARRAY['silt_pool_mark']::pg_catalog.text[] THEN 'f' \
          WHEN EXISTS (SELECT FROM pg_catalog.pg_cursors WHERE is_holdable) \
-           OR (pg_catalog.pg_my_temp_schema() OPERATOR(pg_catalog.<>) 0::pg_catalog.oid \
-             AND EXISTS (SELECT FROM pg_catalog.pg_class \
-               WHERE relnamespace OPERATOR(pg_catalog.=) pg_catalog.pg_my_temp_schema())) \
+           OR pg_catalog.current_setting('role') OPERATOR(pg_catalog.<>) 'none' \
            OR CURRENT_USER OPERATOR(pg_catalog.<>) SESSION_USER \
            OR SESSION_USER OPERATOR(pg_catalog.<>) {}::pg_catalog.name THEN 'r' \
          ELSE 't' END FROM pg_catalog.pg_advisory_unlock_all() AS unlocked",
@@ -547,17 +546,20 @@ fn dollar_quoted(text: &str) -> String {
 /// What resets a session given back to the pool ([`Conn::reset`]): the
 /// check of [`mark`], then what every session may hold and the check
 /// cannot see at little cost: settings, `LISTEN`, the state of
-/// sequences. With [`RESET_REST`] it is `DISCARD ALL` (which cannot run
+/// sequences, and every object of the session's temporary schema, of
+/// any kind (a table, a type, a function; a type there comes before
+/// `pg_catalog`'s). With [`RESET_REST`] it is `DISCARD ALL` (which cannot run
 /// with other statements in one string) in parts, without its
 /// `DEALLOCATE ALL`, which would drop the statements the client keeps
 /// prepared for its look-ups of types, and its `DISCARD PLANS`: plans
 /// are kept only to save the server work.
-const RESET: &str = "EXECUTE silt_pool_mark; RESET ALL; UNLISTEN *; DISCARD SEQUENCES";
+const RESET: &str =
+    "EXECUTE silt_pool_mark; RESET ALL; UNLISTEN *; DISCARD SEQUENCES; DISCARD TEMP";
 
 /// The rest of the reset, for a session whose check says it holds what
 /// this undoes (`r`), and the check again, which must then say `t`.
-const RESET_REST: &str = "CLOSE ALL; SET SESSION AUTHORIZATION DEFAULT; RESET ROLE; RESET ALL; \
-     DISCARD TEMP; EXECUTE silt_pool_mark";
+const RESET_REST: &str =
+    "CLOSE ALL; SET SESSION AUTHORIZATION DEFAULT; RESET ROLE; RESET ALL; EXECUTE silt_pool_mark";
 
 /// What the check of a reset said ([`mark`]).
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -591,8 +593,43 @@ type PgPool = Pool<Manager>;
 /// A connection taken from its pool, which it goes back to when it is
 /// dropped.
 struct PinnedConn {
-    conn: Option<r2d2::PooledConnection<Manager>>,
+    conn: Option<Settled>,
     pool: PgPool,
+}
+
+/// A connection of the pool whose last reset found its session clean,
+/// or that has had none (a new one): the only kind [`PinnedConn::take`]
+/// hands out. [`Settled::of`] is the only way to make one.
+struct Settled(r2d2::PooledConnection<Manager>);
+
+impl Settled {
+    /// `conn`, once the answer of the reset sent when it was last given
+    /// back is read ([`Conn::settle`]); `None` if that, or anything else,
+    /// made it broken: then it is closed.
+    fn of(mut conn: r2d2::PooledConnection<Manager>) -> Option<Settled> {
+        conn.settle();
+        if conn.is_broken() {
+            conn.broken = true;
+            return None;
+        }
+        conn.reset
+            .store(RESET_DUE, std::sync::atomic::Ordering::SeqCst);
+        Some(Settled(conn))
+    }
+}
+
+impl std::ops::Deref for Settled {
+    type Target = Conn;
+
+    fn deref(&self) -> &Conn {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Settled {
+    fn deref_mut(&mut self) -> &mut Conn {
+        &mut self.0
+    }
 }
 
 impl PinnedConn {
@@ -600,29 +637,26 @@ impl PinnedConn {
     /// for one 30 seconds at most.
     ///
     /// The answer of the reset sent when the connection was last given
-    /// back is read first ([`Conn::settle`]): a connection whose session
-    /// it did not find clean is closed, and another is taken, as many
-    /// times as the pool may hold connections (a new one has no reset to
-    /// read).
-    fn take(pool: &PgPool) -> Result<PinnedConn, r2d2::Error> {
-        let mut tries = pool.max_size();
+    /// back is read first ([`Settled::of`]): a connection whose session
+    /// it did not find clean is closed, and another is taken, until one
+    /// is clean (a new one has no reset to read) or the pool's wait for a
+    /// connection is over: a connection that is not clean is never handed
+    /// out. That is the `PostgresError` `Timeout`, as a pool that has no
+    /// free connection in that time answers.
+    fn take(pool: &PgPool) -> Result<PinnedConn, Value> {
+        let until = std::time::Instant::now() + pool.connection_timeout();
         loop {
-            let mut conn = pool.get()?;
-            conn.settle();
-            if conn.is_broken() {
-                conn.broken = true;
-                if tries > 0 {
-                    tries -= 1;
-                    drop(conn);
-                    continue;
-                }
+            let left = until.saturating_duration_since(std::time::Instant::now());
+            let conn = pool.get_timeout(left).map_err(|e| pool_error_value(&e))?;
+            if let Some(conn) = Settled::of(conn) {
+                return Ok(PinnedConn {
+                    conn: Some(conn),
+                    pool: pool.clone(),
+                });
             }
-            conn.reset
-                .store(RESET_DUE, std::sync::atomic::Ordering::SeqCst);
-            return Ok(PinnedConn {
-                conn: Some(conn),
-                pool: pool.clone(),
-            });
+            if left.is_zero() {
+                return Err(Value::variant(bv::PG_TIMEOUT, []));
+            }
         }
     }
 }
@@ -951,7 +985,7 @@ fn pool_conn(pool: &PgPool, wanted: &Wanted) -> Result<PinnedConn, Value> {
     if wanted.gone() {
         return Err(not_wanted());
     }
-    let conn = PinnedConn::take(pool).map_err(|e| pool_error_value(&e))?;
+    let conn = PinnedConn::take(pool)?;
     match wanted.claim() {
         true => Ok(conn),
         false => Err(not_wanted()),
@@ -2248,7 +2282,7 @@ fn live<A>(
     wanted: Option<&Wanted>,
     mut first: impl FnMut(&Conn) -> Result<A, tokio_postgres::Error>,
 ) -> Result<(PinnedConn, A), Value> {
-    let took = |pool: &PgPool| PinnedConn::take(pool).map_err(|e| pool_error_value(&e));
+    let took = |pool: &PgPool| PinnedConn::take(pool);
     let mut conn = match wanted {
         Some(wanted) => pool_conn(pool, wanted)?,
         None => took(pool)?,

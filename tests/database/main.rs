@@ -268,4 +268,5 @@ cases!(
     transaction_control_on_a_pool_is_refused,
     transaction_control_inside_transact_is_refused,
     a_connection_goes_back_to_the_pool_reset,
+    a_session_the_reset_refuses_is_never_handed_out,
 );
