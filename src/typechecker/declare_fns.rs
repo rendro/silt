@@ -339,6 +339,10 @@ impl TypeChecker {
                 ParamKind::Data => {
                     if let Some(te) = &param.ty {
                         self.resolve_type_expr(te, &mut param_map)
+                    } else if f.is_recovery_stub {
+                        // What a recovery stub was meant to take is not
+                        // known: no use of it is judged.
+                        Type::Error
                     } else {
                         self.fresh_var()
                     }
@@ -364,6 +368,10 @@ impl TypeChecker {
             let resolved = self.resolve_type_expr(te, &mut param_map);
             self.never_return = prev_never;
             resolved
+        } else if f.is_recovery_stub {
+            // Nor what it was meant to give: `inc(1) + inc(2)` of a
+            // stub `inc` asks no bound of its result.
+            Type::Error
         } else {
             self.fresh_var()
         };
