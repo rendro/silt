@@ -22,7 +22,7 @@ pub struct VmError {
     /// The help lines that name a place of the program: the line at the
     /// index has `{at}` where the place of the span is shown (see
     /// [`Diagnostic::help_at`]).
-    pub help_at: Vec<(usize, Span)>,
+    pub help_at: Box<[(usize, Span)]>,
     /// If true, an instruction met a value of a kind it cannot work on
     /// (see [`VmError::type_confusion`]).
     pub type_confusion: bool,
@@ -55,7 +55,8 @@ pub struct VmError {
     pub returned: Option<String>,
     /// With [`VmError::returned`]: the `Display` impl that showed the
     /// `Err` failed, and the text is the payload's structure. What
-    /// failed, for the note after the text.
+    /// failed, for the note a front door writes after the text
+    /// ([`DisplayFailure::note`]).
     pub display_failure: Option<Box<DisplayFailure>>,
     /// The task whose failure this is, when a `task.join` took it from
     /// that task: a cancel that dismisses it hands it back to the task,
@@ -73,7 +74,7 @@ impl VmError {
         VmError {
             message,
             help: Vec::new(),
-            help_at: Vec::new(),
+            help_at: Box::default(),
             type_confusion: false,
             out_of_steps: false,
             exit: None,
@@ -167,7 +168,9 @@ impl VmError {
     /// The error with `help` as a help line that names the place `at`:
     /// its `{at}` shows where that is.
     pub fn with_help_at(mut self, help: impl Into<String>, at: Span) -> Self {
-        self.help_at.push((self.help.len(), at));
+        let mut help_at = std::mem::take(&mut self.help_at).into_vec();
+        help_at.push((self.help.len(), at));
+        self.help_at = help_at.into_boxed_slice();
         self.help.push(help.into());
         self
     }
@@ -192,11 +195,8 @@ impl VmError {
         };
         let mut d = Diagnostic::error(code, self.span.unwrap_or(Span::BUILTIN), head);
         d.notes.extend(rest.map(str::to_string));
-        if let Some(failure) = &self.display_failure {
-            d = failure.noted(d);
-        }
         d.help = self.help.clone();
-        d.help_at = self.help_at.clone().into_boxed_slice();
+        d.help_at = self.help_at.clone();
         d.labels = self
             .call_stack
             .iter()
@@ -238,22 +238,6 @@ impl DisplayFailure {
             Some(place) => format!("{head} ({place})"),
             None => head,
         }
-    }
-
-    /// `d` with the note, whose place the view that shows it fills in.
-    pub(crate) fn noted(&self, mut d: Diagnostic) -> Diagnostic {
-        let head = format!(
-            "the Display impl of {} failed: {}",
-            self.type_name, self.message
-        );
-        match self.span.filter(|span| *span != Span::BUILTIN) {
-            Some(span) => {
-                d.note_at.push((d.notes.len(), span));
-                d.notes.push(format!("{head} ({{at}})"));
-            }
-            None => d.notes.push(head),
-        }
-        d
     }
 }
 

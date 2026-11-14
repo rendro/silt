@@ -320,9 +320,6 @@ pub struct Diagnostic {
     /// call stack is (`file:line:col`). The place is known only where
     /// the diagnostic is shown, to the [`SourceView`].
     pub help_at: Box<[(usize, Span)]>,
-    /// The notes that name a place, as [`Diagnostic::help_at`] the help
-    /// lines that do.
-    pub note_at: Vec<(usize, Span)>,
     pub fixes: Vec<Fix>,
 }
 
@@ -348,7 +345,6 @@ impl Diagnostic {
             notes: Vec::new(),
             help: Vec::new(),
             help_at: Box::default(),
-            note_at: Vec::new(),
             fixes: Vec::new(),
         }
     }
@@ -379,13 +375,13 @@ impl Diagnostic {
     /// The help lines as `view` shows them: each that names a place
     /// ([`Diagnostic::help_at`]) with the place in it.
     pub fn help_lines(&self, view: &dyn SourceView) -> Vec<String> {
-        placed(&self.help, &self.help_at, view)
-    }
-
-    /// The notes as `view` shows them: each that names a place
-    /// ([`Diagnostic::note_at`]) with the place in it.
-    pub fn note_lines(&self, view: &dyn SourceView) -> Vec<String> {
-        placed(&self.notes, &self.note_at, view)
+        let mut lines = self.help.clone();
+        for (index, span) in &self.help_at {
+            if let Some(line) = lines.get_mut(*index) {
+                *line = line.replace("{at}", &view.frame(*span));
+            }
+        }
+        lines
     }
 
     pub fn with_fix(mut self, title: impl Into<String>, edits: Vec<(Span, String)>) -> Self {
@@ -407,18 +403,6 @@ impl Diagnostic {
     pub fn phase(&self) -> Phase {
         self.code.phase()
     }
-}
-
-/// `lines` with the place of each span of `at` in its line, as `view`
-/// shows it.
-fn placed(lines: &[String], at: &[(usize, Span)], view: &dyn SourceView) -> Vec<String> {
-    let mut lines = lines.to_vec();
-    for (index, span) in at {
-        if let Some(line) = lines.get_mut(*index) {
-            *line = line.replace("{at}", &view.frame(*span));
-        }
-    }
-    lines
 }
 
 // ── Where a span is shown ───────────────────────────────────────────
@@ -665,7 +649,7 @@ pub fn render_human(view: &dyn SourceView, d: &Diagnostic) -> String {
             }
         }
     }
-    for note in &d.note_lines(view) {
+    for note in &d.notes {
         write_body(&mut out, c, "= note:", &visible_text(note));
     }
     for help in &d.help_lines(view) {
@@ -995,7 +979,7 @@ pub fn render_json(view: &dyn SourceView, d: &Diagnostic) -> serde_json::Value {
         })
         .collect();
     out.insert("labels".into(), labels.into());
-    out.insert("notes".into(), d.note_lines(view).into());
+    out.insert("notes".into(), d.notes.clone().into());
     out.insert("help".into(), d.help_lines(view).into());
     serde_json::Value::Object(out)
 }
@@ -1063,7 +1047,7 @@ pub fn to_lsp(
         shown
     };
     let mut message = d.message.clone();
-    for note in &d.note_lines(sources) {
+    for note in &d.notes {
         message.push_str("\nnote: ");
         message.push_str(note);
     }

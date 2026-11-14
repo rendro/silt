@@ -268,5 +268,12 @@ fn task_failure_texts(path: &str, sources: &SourceMap) -> (Vec<String>, bool) {
 /// meaningful frame. `silt test` renders the failures of tasks with it as
 /// well.
 pub(crate) fn render_runtime_error(e: &VmError, path: &str, sources: &SourceMap) -> String {
-    render_human(&ProgramFiles::new(path, sources), &e.to_diagnostic())
+    let view = ProgramFiles::new(path, sources);
+    let mut d = e.to_diagnostic();
+    // (A test that returned an `Err` whose `Display` impl failed: what
+    // failed, as a note.)
+    if let Some(failure) = &e.display_failure {
+        d.notes.push(failure.note(&view));
+    }
+    render_human(&view, &d)
 }
