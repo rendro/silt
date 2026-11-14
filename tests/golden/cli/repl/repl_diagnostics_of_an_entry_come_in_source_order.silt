@@ -1,0 +1,6 @@
+-- cmd: repl
+-- stdin: fn g() -> Int {\n  let w = true / 1\n  println(zz)\n  let u = (\n    yy\n  )\n  1\n}\n:quit\n
+-- exit: 0
+-- An entry of several lines shows its diagnostics in source order, as
+-- `silt check` shows those of a file: by line, the errors of a line before
+-- its warnings.

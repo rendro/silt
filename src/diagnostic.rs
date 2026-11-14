@@ -11,7 +11,6 @@
 
 use std::fmt::Write as _;
 
-#[cfg(any(test, feature = "lsp"))]
 use crate::source::FileId;
 use crate::source::{SourceMap, SourceName, Span};
 
@@ -617,6 +616,24 @@ pub fn io_error_text(err: &std::io::Error) -> String {
 }
 
 // ── Human rendering ─────────────────────────────────────────────────
+
+/// Sort `diagnostics`, of files of `sources`, into the order every
+/// printer of them shows (the commands, the REPL, the playground): each
+/// file's by line, the errors of a line before its warnings (`let x =
+/// true / 1`: the operator's error, then "'x' is never used"), then by
+/// place. The files come in the order of the first of their diagnostics;
+/// one place keeps its order of finding.
+pub fn in_source_order(sources: &SourceMap, diagnostics: &mut [Diagnostic]) {
+    let mut files: std::collections::HashMap<FileId, usize> = Default::default();
+    for d in diagnostics.iter() {
+        let next = files.len();
+        files.entry(d.span.file).or_insert(next);
+    }
+    diagnostics.sort_by_cached_key(|d| {
+        let line = (sources.get(d.span.file)).map(|file| file.line_col(d.span.start).0);
+        (files[&d.span.file], line, !d.is_error(), d.span.start)
+    });
+}
 
 /// `d` as a terminal shows it, colored when stderr takes color:
 ///
