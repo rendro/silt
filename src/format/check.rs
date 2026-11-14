@@ -1304,10 +1304,10 @@ pub(super) fn unit_return_dropped(f: &FnDecl) -> bool {
 }
 
 /// Whether `body` holds a `return` of a value that is not `()` written
-/// as such (one in a closure counts too: the rule stays on the safe
-/// side).
+/// as such. A `return` in a closure ends the closure, not the function:
+/// it is not looked at.
 fn returns_a_value(body: &Expr) -> bool {
-    crate::compiler::any_expr(
+    crate::compiler::any_expr_outside_closures(
         body,
         &mut |e| matches!(&e.kind, ExprKind::Return(Some(value)) if !matches!(value.kind, ExprKind::Unit)),
     )
@@ -1581,6 +1581,12 @@ mod tests {
         ok(
             "fn f() {\n  let x = 1\n  return ()\n}\n",
             "fn f() {\n  let x = 1\n}\n",
+        );
+        // (A `return` in a closure ends the closure: the function's
+        // `-> ()` is left out as without it.)
+        ok(
+            "fn f(n: Int) -> () {\n  let g = { x -> return 5 }\n  ()\n}\n",
+            "fn f(n: Int) {\n  let g = { x -> return 5 }\n}\n",
         );
         for (before, after) in [
             ("fn f() -> () {\n  g()\n}\n", "fn f() {\n  g()\n}\n"),

@@ -3,7 +3,9 @@
 -- `()`: with it, that `return` is the error ("expected (), got Int");
 -- left out, the first such `return` would set the result's type and the
 -- error would move to the last line. (Both programs are refused; fmt
--- keeps which error they get.)
+-- keeps which error they get.) A `return` in a closure, in a match arm
+-- or nested in another closure, ends that closure: `-> ()` is left out
+-- as without it; beside a function's own `return 5` it stays.
 fn early(n: Int) -> () {
   match n {
     0 -> return 5
@@ -19,6 +21,35 @@ fn bound() -> () {
 fn unit_only(n: Int) -> () {
   match n {
     0 -> return ()
+    _ -> ()
+  }
+  ()
+}
+
+fn in_a_closure(n: Int) -> () {
+  let g = { x -> return 5 }
+  println(g(n))
+  ()
+}
+
+fn in_a_closure_in_an_arm(n: Int) -> () {
+  match n {
+    0 -> println({ x -> return 5 }(n))
+    _ -> ()
+  }
+  ()
+}
+
+fn in_a_nested_closure(n: Int) -> () {
+  let g = { x -> { y -> return y + 1 }(x) }
+  println(g(n))
+  ()
+}
+
+fn beside_a_closure(n: Int) -> () {
+  let g = { x -> return 5 }
+  match n {
+    0 -> return g(1)
     _ -> ()
   }
   ()

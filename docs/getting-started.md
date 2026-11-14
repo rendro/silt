@@ -270,7 +270,7 @@ The `--watch` / `-w` flag works with `run`, `check`, `disasm`, and `test` to re-
 - `xs |> f()` is written `xs |> f`;
 - a `return x` on the last line of a function is written `x`;
 - a last line `()` behind a `let` in a function's body is left out;
-- `-> ()` of a function at the top level is left out when the body's value is `()` by its form (the body is empty, or its last line is a `let`, `()` or `return ()`) and the signature names no type variable, or a parameter has no type. Anywhere else `-> ()` stays: it is a return type, like `-> Int`, that the checker holds the function to, and leaving it out could change what the checker says (a body that ends in a call might return a value by mistake; with a type variable, the signature is what lets the body call the function at another type). The methods of traits and impls keep theirs.
+- `-> ()` of a function at the top level is left out when the body's value is `()` by its form (the body is empty, or its last line is a `let`, `()` or `return ()`) and the signature names no type variable, or a parameter has no type; it stays when the function's own body has a `return` of anything but a written `()` (a `return` in a closure is the closure's; `return u` with `let u = ()` keeps `-> ()`, since the form shows no `()`). Anywhere else `-> ()` stays: it is a return type, like `-> Int`, that the checker holds the function to, and leaving it out could change what the checker says (a body that ends in a call might return a value by mistake; with a type variable, the signature is what lets the body call the function at another type). The methods of traits and impls keep theirs.
 
 A comment at a token that is left out stays, next to where the token was.
 
