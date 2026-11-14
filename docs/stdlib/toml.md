@@ -351,15 +351,25 @@ toml.pretty(value: a) -> Result(String, TomlError) where a: json.Encode
 Serialises a silt record or map to a multi-line, human-friendly TOML document.
 TOML's default output is already readable (one key per line, nested tables as
 `[section]` headers, arrays of tables as `[[section]]` blocks), so
-`toml.pretty` differs from `toml.stringify` only in writing an array of plain
-values one element per line:
+`toml.pretty` differs from `toml.stringify` only in writing an array of two or
+more plain values one element per line, an array inside it one level deeper:
 
 ```text
 p = [
     1,
     2,
 ]
+nested = [
+    [1],
+    [
+        2,
+        3,
+    ],
+]
 ```
+
+An array inside an inline table stays on its line: TOML writes an inline table
+on one line.
 
 Note: the top-level value must be a record, a map or a variant with fields;
 TOML cannot represent a bare scalar or array at top level (nor a variant
