@@ -54,7 +54,10 @@ pub(crate) fn usage_text() -> String {
         &check_desc,
     ));
     out.push_str(&line(test_usage_banner(), &test_desc));
-    out.push_str(&line("silt fmt [--check] [files...]", "Format source code"));
+    out.push_str(&line(
+        "silt fmt [--check] [<path>...]",
+        "Format source code",
+    ));
     out.push_str(&line("silt repl", "Interactive REPL  [feature: repl]"));
     out.push_str(&line(
         "silt init [--lib]",
@@ -192,7 +195,7 @@ pub(crate) fn test_usage_banner() -> &'static str {
 /// resolved from the manifest). `tests/cli/cli_help_rows_and_banners_tests.rs`
 /// locks this helper so the three banners can't drift apart.
 pub(crate) fn disasm_usage_banner() -> &'static str {
-    "silt disasm [<file.silt>]"
+    "silt disasm [--watch] [<file.silt>]"
 }
 
 /// Full body of `silt run --help`, rendered to stdout.
