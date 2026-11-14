@@ -1,5 +1,5 @@
 -- exit: 1
--- stderr-contains: assertion failed: false
+-- stderr-contains: assertion failed: the condition is false
 import test
 fn main() {
   test.assert(false)

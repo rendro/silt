@@ -1,0 +1,32 @@
+  FAIL test_assert__long_values_are_shown_where_they_differ.silt::test_false
+    error[runtime]: assertion failed: the condition is false
+     --> test_assert__long_values_are_shown_where_they_differ.silt:10:3
+        |
+     10 |   test.assert(1 > 2)
+        |   ^^^^^^^^^^^^^^^^^^ assertion failed: the condition is false
+  FAIL test_assert__long_values_are_shown_where_they_differ.silt::test_long_strings_differ
+    error[runtime]: assertion failed: ...aaaaaaaaaaaaaaaaaaaaxaaaaaaaaaaaaaaaaaaa... != ...aaaaaaaaaaaaaaaaaaaayaaaaaaaaaaaaaaaaaaa... (they first differ at character 1502 of how they are written)
+     --> test_assert__long_values_are_shown_where_they_differ.silt:15:3
+        |
+     15 |   test.assert_eq("{a}x{a}", "{a}y{a}")
+        |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ assertion failed: ...aaaaaaaaaaaaaaaaaaaaxaaaaaaaaaaaaaaaaaaa... != ...aaaaaaaaaaaaaaaaaaaayaaaaaaaaaaaaaaaaaaa... (they first differ at character 1502 of how they are written)
+  FAIL test_assert__long_values_are_shown_where_they_differ.silt::test_one_is_the_start_of_the_other
+    error[runtime]: assertion failed: ...aaaaaaaaaaaaaaaaaaaa" != ...aaaaaaaaaaaaaaaaaaaab" (they first differ at character 1502 of how they are written)
+     --> test_assert__long_values_are_shown_where_they_differ.silt:20:3
+        |
+     20 |   test.assert_eq(a, "{a}b")
+        |   ^^^^^^^^^^^^^^^^^^^^^^^^^ assertion failed: ...aaaaaaaaaaaaaaaaaaaa" != ...aaaaaaaaaaaaaaaaaaaab" (they first differ at character 1502 of how they are written)
+  FAIL test_assert__long_values_are_shown_where_they_differ.silt::test_long_strings_the_same
+    error[runtime]: assertion failed: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa... == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa... (the same long value)
+     --> test_assert__long_values_are_shown_where_they_differ.silt:25:3
+        |
+     25 |   test.assert_ne(a, a)
+        |   ^^^^^^^^^^^^^^^^^^^^ assertion failed: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa... == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa... (the same long value)
+  FAIL test_assert__long_values_are_shown_where_they_differ.silt::test_short_values
+    error[runtime]: assertion failed: [1, 2] != [1, 3]
+     --> test_assert__long_values_are_shown_where_they_differ.silt:29:3
+        |
+     29 |   test.assert_eq([1, 2], [1, 3])
+        |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ assertion failed: [1, 2] != [1, 3]
+
+5 tests: 0 passed, 5 failed, 0 skipped
