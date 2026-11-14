@@ -1,6 +1,6 @@
 -- cmd: check
 -- exit: 1
--- stderr-contains: error[parse]: expected declaration, found struct
+-- stderr-contains: error[parse]: silt has no `struct`: a record type is `type P { x: Int, y: Int }`
 -- stderr-contains: error[type]: undefined variable 'nothere'
 -- stderr-not-contains: undefined variable 'f'
 -- stderr-not-contains: did you mean
