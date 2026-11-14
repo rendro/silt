@@ -992,9 +992,12 @@ fn do_http_request_on(
     let mut method = method_tag;
     let mut url = url.to_string();
     let mut body = body;
+    // How the body goes and what becomes of the connection are the
+    // client's to say: the body is sent whole, with its length.
+    let framing = ["content-length", "transfer-encoding", "connection"];
     let mut headers: Vec<(&str, &str)> = headers
         .iter()
-        .filter(|(key, _)| !key.eq_ignore_ascii_case("content-length"))
+        .filter(|(key, _)| !framing.iter().any(|own| key.eq_ignore_ascii_case(own)))
         .map(|(key, val)| (key.as_str(), val.as_str()))
         .collect();
     for _ in 0..=REDIRECTS_MAX {
@@ -3128,6 +3131,29 @@ mod http_error_tests {
         let done = do_http_request("GET", &url, &[], headers);
         assert!(failure(&done).starts_with("no error"), "{}", failure(&done));
         rx.recv_timeout(Duration::from_secs(10)).expect("the head")
+    }
+
+    /// The client's own headers are its own: a `Transfer-Encoding` and a
+    /// `Connection` among the program's are not sent (a `chunked` made
+    /// the request chunked, and a `Connection` went through), as a
+    /// `Content-Length` is not. A `Host` of the program's is sent.
+    #[test]
+    fn the_framing_headers_of_the_program_are_not_sent() {
+        let own = [
+            ("Transfer-Encoding".to_string(), "chunked".to_string()),
+            ("Connection".to_string(), "keep-alive".to_string()),
+            ("Content-Length".to_string(), "99".to_string()),
+        ];
+        let head = head_sent("http://{}/x", &own);
+        let lower = head.to_ascii_lowercase();
+        assert!(!lower.contains("transfer-encoding"), "{head}");
+        assert!(!lower.contains("connection: keep-alive"), "{head}");
+        assert!(!lower.contains("content-length: 99"), "{head}");
+        let host = [("Host".to_string(), "example.test".to_string())];
+        let head = head_sent("http://{}/x", &host);
+        let lower = head.to_ascii_lowercase();
+        assert!(lower.contains("host: example.test\r\n"), "{head}");
+        assert_eq!(lower.matches("host:").count(), 1, "{head}");
     }
 
     /// A path and a query that are no ASCII go out percent-encoded, as a

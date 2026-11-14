@@ -209,8 +209,10 @@ Makes an HTTP request with full control over method, body, and headers. Use this
 The body is sent as it is, with its length: `bytes.from_string("...")` for
 a text, `bytes.empty()` for none. What the bytes are is the request's to
 say, in a `Content-Type` header among `headers`: none is added. A
-`user-agent` among `headers` is sent instead of `silt/<version>`. A
-`Content-Length` among `headers` is not sent: the body's own length is.
+`user-agent` among `headers` is sent instead of `silt/<version>`, and a
+`Host` instead of the URL's host. A `Content-Length`, a
+`Transfer-Encoding` and a `Connection` among `headers` are not sent: the
+body goes whole, with its own length, and the connection is the client's.
 
 A user and password in the URL (`https://user:pa%20ss@host/`) are sent
 as `authorization: Basic ...` (RFC 7617), unless `headers` has an
