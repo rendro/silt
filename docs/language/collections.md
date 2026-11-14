@@ -50,9 +50,9 @@ Key functions: `list.map`, `list.filter`, `list.fold`, `list.each`,
 `list.reverse`, `list.get`, `list.take`, `list.drop`, `list.enumerate`,
 `list.group_by`, `list.fold_until`, `list.unfold`.
 
-For the full reference, hover over any `list.*` call in your editor
-(the LSP renders the inlined builtin docs), or browse the LSP's
-completion popup on `list.` to scan the full menu of entry points.
+The [list reference](../stdlib/list.md) has every function of `list`, each
+with an example; an editor shows the same text when you hover a `list.*`
+name.
 
 ## Maps
 
@@ -89,9 +89,9 @@ Key functions: `map.get`, `map.set`, `map.remove`, `map.contains`,
 `map.keys`, `map.values`, `map.entries`, `map.from_entries`, `map.length`,
 `map.merge`, `map.filter`, `map.map`, `map.each`, `map.update`.
 
-For the full reference, hover over any `map.*` call in your editor
-(the LSP renders the inlined builtin docs), or browse the LSP's
-completion popup on `map.` to scan the full menu of entry points.
+The [map reference](../stdlib/map.md) has every function of `map`, each
+with an example; an editor shows the same text when you hover a `map.*`
+name.
 
 ## Sets
 
@@ -114,9 +114,9 @@ Key functions: `set.from_list`, `set.to_list`, `set.contains`,
 `set.difference`, `set.is_subset`, `set.map`, `set.filter`, `set.each`,
 `set.fold`.
 
-For the full reference, hover over any `set.*` call in your editor
-(the LSP renders the inlined builtin docs), or browse the LSP's
-completion popup on `set.` to scan the full menu of entry points.
+The [set reference](../stdlib/set.md) has every function of `set`, each
+with an example; an editor shows the same text when you hover a `set.*`
+name.
 
 ## How large a collection can be
 
@@ -140,7 +140,11 @@ value hold at most 10,000,000 bytes where they are joined or built
 `string.replace`, `regex.replace`, `regex.replace_first`,
 `regex.replace_with`, `encoding.form_encode`, `json.stringify`,
 `json.pretty`, `toml.stringify`, `toml.pretty`, `bytes.concat`,
-`bytes.concat_all`), and a channel buffers at most
+`bytes.concat_all`). One read from a file or stdin (`io.read_file`,
+`io.read_bytes`, `io.read_line`, a line of `stream.file_lines`) is as
+large as the input, and can be larger. What comes from the network has a limit of its own,
+named where the function is (`tcp.read_exact`, a line of
+`stream.tcp_lines`, an http body). A channel buffers at most
 10,000,000 values (`channel.new`). A program that keeps
 adding to a collection in a loop ends with this error instead of
 taking the machine's memory. A function that turns text it was given

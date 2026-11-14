@@ -9,6 +9,23 @@ order: 3
 Functions for working with immutable strings. Strings use `"..."` literal syntax
 with `{expr}` interpolation.
 
+A character, on this page, is one Unicode code point. What a reader sees
+as one letter can be several: `"e\u{301}"`, an `e` followed by a
+combining accent, is shown as `é` and has two. The emoji of a family of
+three is three people and two invisible joiners: five.
+`string.length`, `string.chars`, `string.slice` and every offset count code
+points, so a slice can cut an accent from its letter.
+
+```silt
+import string
+
+fn main() {
+  println(string.length("e\u{301}")) -- 2
+  println(string.length("\u{e9}")) -- 1
+  println(string.slice("e\u{301}x", 0, 1)) -- e
+}
+```
+
 Offsets and lengths count characters, not bytes. A string of ASCII text only
 (source code, logs, CSV) knows that each of its characters is one byte, so
 `string.length`, `string.slice`, `string.split_at`, `string.starts_with_at`

@@ -852,54 +852,57 @@ fn stdin_line_reads() -> impl FnMut() -> Vec<Value> + Send + 'static {
 /// The lines of a source read a piece at a time by `read` (see
 /// [`stdin_line_reads`]). Each byte is looked at for a `\n` once: a line
 /// that many reads bring is not searched again from its start at each
-/// one.
-/// How long a line of a line source may be: as long as a string may be
-/// (`MAX_COLLECTION_LEN` bytes). A longer one ends the source with an
-/// error ([`line_too_long`]), before it is read whole: a peer that sends
-/// no newline does not grow the source without end.
-#[cfg(not(test))]
-const LINE_MAX: usize = crate::value::MAX_COLLECTION_LEN;
+/// one. A line is as long as stdin makes it, as for `io.read_line`.
+/// How long a line of `stream.tcp_lines` may be: as much as one read of
+/// what a peer sends may take ([`super::tcp::READ_MAX`]). A longer one
+/// ends the source with an error before it is read whole, so a peer that
+/// sends no newline does not decide how much memory the program takes.
+/// (A line of a file or of stdin has no such limit: the person who runs
+/// the program chose those.)
+#[cfg(all(feature = "tcp", not(test)))]
+const LINE_MAX: usize = super::tcp::READ_MAX;
 /// (A test's line need not take ten megabytes.)
-#[cfg(test)]
+#[cfg(all(feature = "tcp", test))]
 const LINE_MAX: usize = 4_000_000;
-
-/// What a line longer than [`LINE_MAX`] says: `line 3 of app.log is longer
-/// than 10000000 bytes`.
-fn line_too_long(number: u64, of: &str) -> String {
-    format!("line {number} of {of} is longer than {LINE_MAX} bytes")
-}
 
 /// Why the bytes of a line are no line of a line source.
 #[derive(Debug, PartialEq)]
 enum BadLine {
-    /// Longer than [`LINE_MAX`] bytes, its line end not counted.
+    /// Longer than [`LINE_MAX`] bytes, its line end not counted: a line
+    /// of a connection only.
+    #[cfg(feature = "tcp")]
     TooLong,
     NotUtf8,
 }
 
-/// The text of a line, its `\n` or `\r\n` taken off: one rule for every
-/// line source, a line of [`LINE_MAX`] bytes is one, a longer one is not.
+/// The text of a line of a file or of stdin, its `\n` or `\r\n` taken
+/// off: any length, UTF-8.
 fn line_text(line: &[u8]) -> Result<&str, BadLine> {
-    if line.len() > LINE_MAX {
-        return Err(BadLine::TooLong);
-    }
     std::str::from_utf8(line).map_err(|_| BadLine::NotUtf8)
 }
 
-/// Whether the bytes of a line whose end has not come are more than a
-/// line may be already: a last `\r` is not counted, as it may begin the
-/// line end.
+/// The text of a line of a connection: as [`line_text`], and a line of
+/// [`LINE_MAX`] bytes is one, a longer one is not.
+#[cfg(feature = "tcp")]
+fn tcp_line_text(line: &[u8]) -> Result<&str, BadLine> {
+    if line.len() > LINE_MAX {
+        return Err(BadLine::TooLong);
+    }
+    line_text(line)
+}
+
+/// Whether the bytes of a line of a connection whose end has not come are
+/// more than a line may be already: a last `\r` is not counted, as it may
+/// begin the line end.
+#[cfg(feature = "tcp")]
 fn too_long_already(pending: &[u8]) -> bool {
     pending.strip_suffix(b"\r").unwrap_or(pending).len() > LINE_MAX
 }
 
-/// What line `number` of `of` (a path, or `stdin`) that is no line
-/// gives: an `IoInvalidInput` that says why.
-fn bad_line(why: BadLine, number: u64, of: &str) -> Value {
-    let why = match why {
-        BadLine::TooLong => line_too_long(number, of),
-        BadLine::NotUtf8 => format!("line {number} of {of} is not UTF-8"),
-    };
+/// What line `number` of `of` (a path, or `stdin`) that is no UTF-8
+/// gives: an `IoInvalidInput` that says so.
+fn bad_line(number: u64, of: &str) -> Value {
+    let why = format!("line {number} of {of} is not UTF-8");
     Value::variant(
         bv::ERR,
         [Value::variant(bv::IO_INVALID_INPUT, [Value::string(why)])],
@@ -907,14 +910,13 @@ fn bad_line(why: BadLine, number: u64, of: &str) -> Value {
 }
 
 /// The next line of a file read by `reader`, without its `\n` or `\r\n`,
-/// and how many bytes it took; `None` at the end. No more of a line is
-/// read than a line may be with its line end, and one byte more.
+/// and how many bytes it took; `None` at the end. A line is as long as
+/// the file makes it, as for `io.read_file`.
 fn next_file_line(
     reader: &mut impl std::io::BufRead,
 ) -> std::io::Result<Option<(Result<String, BadLine>, usize)>> {
-    use std::io::{BufRead, Read};
     let mut line = Vec::new();
-    let read = Read::take(&mut *reader, LINE_MAX as u64 + 2).read_until(b'\n', &mut line)?;
+    let read = reader.read_until(b'\n', &mut line)?;
     if read == 0 {
         return Ok(None);
     }
@@ -981,9 +983,9 @@ impl<R: FnMut(&mut [u8]) -> std::io::Result<usize>> LineReads<R> {
                         self.given += 1;
                         lines.push(ok(Value::string(line)));
                     }
-                    Err(why) if lines.is_empty() => {
+                    Err(_) if lines.is_empty() => {
                         self.ended = true;
-                        lines.push(bad_line(why, self.given + 1, "stdin"));
+                        lines.push(bad_line(self.given + 1, "stdin"));
                         return lines;
                     }
                     // The lines before it are given first: the next read
@@ -1000,11 +1002,6 @@ impl<R: FnMut(&mut [u8]) -> std::io::Result<usize>> LineReads<R> {
             if held_back || !lines.is_empty() {
                 break;
             }
-            if too_long_already(&self.pending) {
-                self.ended = true;
-                lines.push(bad_line(BadLine::TooLong, self.given + 1, "stdin"));
-                break;
-            }
             if self.at_end {
                 self.ended = true;
                 // Only a `\n` or a `\r\n` is a line end: a last `\r` with
@@ -1012,7 +1009,7 @@ impl<R: FnMut(&mut [u8]) -> std::io::Result<usize>> LineReads<R> {
                 if !self.pending.is_empty() {
                     lines.push(match line_text(&self.pending) {
                         Ok(line) => ok(Value::string(line)),
-                        Err(why) => bad_line(why, self.given + 1, "stdin"),
+                        Err(_) => bad_line(self.given + 1, "stdin"),
                     });
                 }
                 break;
@@ -1113,7 +1110,7 @@ fn tcp_line_reads(held: Arc<Held>) -> impl FnMut() -> Vec<Value> + Send + 'stati
                 };
                 let line = &pending[taken..from + at];
                 let line = line.strip_suffix(b"\r").unwrap_or(line);
-                match line_text(line) {
+                match tcp_line_text(line) {
                     Ok(line) => lines.push(ok(Value::string(line))),
                     Err(why) if lines.is_empty() => {
                         ended = true;
@@ -1135,8 +1132,8 @@ fn tcp_line_reads(held: Arc<Held>) -> impl FnMut() -> Vec<Value> + Send + 'stati
             if held_back || closed {
                 break;
             }
-            // A line longer than a string may be ends the source, as one
-            // that is no UTF-8 does.
+            // A line longer than a read of the network may take ends the
+            // source, as one that is no UTF-8 does.
             if lines.is_empty() && too_long_already(&pending) {
                 ended = true;
                 lines.push(bad(&conn, BadLine::TooLong));
@@ -1200,7 +1197,7 @@ fn tcp_line_reads(held: Arc<Held>) -> impl FnMut() -> Vec<Value> + Send + 'stati
             ended = true;
             held.release();
             if !pending.is_empty() {
-                lines.push(match line_text(&pending) {
+                lines.push(match tcp_line_text(&pending) {
                     Ok(line) => ok(Value::string(line)),
                     Err(why) => bad(&conn, why),
                 });
@@ -1439,11 +1436,11 @@ builtins! {
                         read_lines += 1;
                         lines.push(ok(Value::string(line)));
                     }
-                    // A line that is no line (no UTF-8, too long) is
-                    // `InvalidInput`, named by its number and the path.
-                    Ok(Some((Err(why), _))) => {
+                    // A line that is no UTF-8 is `InvalidInput`, named by
+                    // its number and the path.
+                    Ok(Some((Err(_), _))) => {
                         ended = true;
-                        lines.push(bad_line(why, read_lines + 1, &path));
+                        lines.push(bad_line(read_lines + 1, &path));
                         break;
                     }
                     Err(e) => {
@@ -2223,12 +2220,14 @@ mod tests {
         }
     }
 
-    /// A line longer than a string may be ends a line source with an error,
-    /// when it is that long and before it is read whole: on stdin and on a
-    /// connection alike (the test's cap is 4,000,000 bytes). The lines before
-    /// it come first. (Such a line was read whole however long it grew.)
+    /// A line longer than a read of the network may take ends a source of
+    /// a connection's lines with an error, when it is that long and before
+    /// it is read whole (the test's limit is 4,000,000 bytes); the lines
+    /// before it come first. A line of stdin has no such limit: it is read
+    /// whole, as `io.read_line` reads it.
     #[test]
-    fn a_line_longer_than_a_string_may_be_ends_the_source() {
+    #[cfg(feature = "tcp")]
+    fn a_line_longer_than_a_network_read_may_take_ends_a_tcp_source_only() {
         let mut input = b"ok
 "
         .to_vec();
@@ -2238,29 +2237,29 @@ mod tests {
 after
 ",
         );
-        let (lines, _) = piece_lines_of(&input, 4096);
-        assert_eq!(lines, ["ok", "ERR"]);
-        #[cfg(feature = "tcp")]
-        {
-            let (conn, reads) = counted(&input, usize::MAX, None);
-            let (items, _) = lines_of(&conn);
-            assert_eq!(items.len(), 2, "{items:?}");
-            assert_eq!(items[0], "ok");
-            assert!(items[1].starts_with("Err:"), "{items:?}");
-            // Not much more than the cap was read.
-            let read = reads[0].load(Ordering::SeqCst) * LINES_READ;
-            assert!(read <= LINE_MAX + 4 * LINES_READ, "{read} bytes read");
-        }
+        let (lines, _) = piece_lines_of(&input, 64 * 1024);
+        assert_eq!(lines.len(), 3, "the lines of stdin");
+        assert_eq!((lines[0].as_str(), lines[1].len()), ("ok", 3 * LINE_MAX));
+        assert_eq!(lines[2], "after");
+        let (conn, reads) = counted(&input, usize::MAX, None);
+        let (items, _) = lines_of(&conn);
+        assert_eq!(items.len(), 2, "{items:?}");
+        assert_eq!(items[0], "ok");
+        assert!(items[1].starts_with("Err:"), "{items:?}");
+        // Not much more than the limit was read.
+        let read = reads[0].load(Ordering::SeqCst) * LINES_READ;
+        assert!(read <= LINE_MAX + 4 * LINES_READ, "{read} bytes read");
     }
 
-    /// One rule for the length of a line in every line source: without its
-    /// line end (`\n` or `\r\n`) a line may be the cap (the test's is
-    /// 4,000,000 bytes); one byte more ends the source with an error. The
-    /// same at the end of the input without a line end. (stdin took a line
-    /// one byte longer whose `\n` came with the read past the cap, and a file
-    /// refused a line of the cap that ended in `\r\n`.)
+    /// A line of a connection may be the limit without its line end (`\n`
+    /// or `\r\n`; the test's limit is 4,000,000 bytes); one byte more ends
+    /// the source with an error, also at the end of the input without a
+    /// line end. A file and stdin give the same input's lines whole, the
+    /// longer one too, each without its line end: what comes from the
+    /// network is limited, local input is not.
     #[test]
-    fn a_line_of_the_cap_is_a_line_and_one_byte_more_is_not_in_every_source() {
+    #[cfg(feature = "tcp")]
+    fn a_line_of_the_limit_is_a_line_of_a_connection_and_one_byte_more_is_not() {
         // What each source makes of `input`: a line's length, or "ERR".
         let kinds = |items: Vec<String>| -> Vec<String> {
             items
@@ -2285,32 +2284,31 @@ after
             }
             items
         };
-        let cap = LINE_MAX.to_string();
-        let mut cases: Vec<(Vec<u8>, Vec<String>)> = Vec::new();
+        let (cap, over) = (LINE_MAX.to_string(), (LINE_MAX + 1).to_string());
+        let err = "ERR".to_string();
+        // The input, what a connection gives, what a file and stdin give.
+        let mut cases: Vec<(Vec<u8>, Vec<String>, Vec<String>)> = Vec::new();
         for end in ["\n", "\r\n"] {
             let mut input = "a".repeat(LINE_MAX).into_bytes();
             input.extend(end.as_bytes());
             input.extend("b".repeat(LINE_MAX + 1).into_bytes());
             input.extend(end.as_bytes());
             input.extend(b"after\n");
-            cases.push((input, vec![cap.clone(), "ERR".to_string()]));
+            let local = vec![cap.clone(), over.clone(), "5".to_string()];
+            cases.push((input, vec![cap.clone(), err.clone()], local));
         }
-        cases.push(("a".repeat(LINE_MAX).into_bytes(), vec![cap.clone()]));
-        cases.push((
-            "a".repeat(LINE_MAX + 1).into_bytes(),
-            vec!["ERR".to_string()],
-        ));
-        for (input, expected) in cases {
-            assert_eq!(kinds(file_of(&input)), expected, "file");
+        let input = "a".repeat(LINE_MAX).into_bytes();
+        cases.push((input, vec![cap.clone()], vec![cap.clone()]));
+        let input = "a".repeat(LINE_MAX + 1).into_bytes();
+        cases.push((input, vec![err.clone()], vec![over.clone()]));
+        for (input, network, local) in cases {
+            let (conn, _) = counted(&input, usize::MAX, None);
+            let (items, _) = lines_of(&conn);
+            assert_eq!(kinds(items), network, "tcp");
+            assert_eq!(kinds(file_of(&input)), local, "file");
             for piece in [4096, 65536] {
                 let (lines, _) = piece_lines_of(&input, piece);
-                assert_eq!(kinds(lines), expected, "stdin, reads of {piece}");
-            }
-            #[cfg(feature = "tcp")]
-            {
-                let (conn, _) = counted(&input, usize::MAX, None);
-                let (items, _) = lines_of(&conn);
-                assert_eq!(kinds(items), expected, "tcp");
+                assert_eq!(kinds(lines), local, "stdin, reads of {piece}");
             }
         }
     }

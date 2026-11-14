@@ -24,7 +24,7 @@ The crate is built from its own `Cargo.lock` (CI and `build.sh` pass
 
 | Function | Returns |
 |---|---|
-| `version()` | silt's version, `"0.16.0"` |
+| `version()` | the version of the silt crate it was built from, as `silt --version` shows it |
 | `run(source)` | JSON `{diagnostics, output, error, ok}`: what `silt run` prints for the program, in the three parts a terminal shows one after the other |
 | `check(source)` | JSON `[{from, to, severity, message}]`: what `silt check` finds |
 | `format(source)` | JSON `{Ok: text}` as `silt fmt` writes it, or `{Err: report}` |

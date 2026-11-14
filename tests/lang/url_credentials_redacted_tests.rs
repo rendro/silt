@@ -78,6 +78,34 @@ fn f12_redactor_handles_both_schemes_in_one_message() {
     );
 }
 
+/// The userinfo is read as the client reads it: up to the last `@` of the
+/// authority (a password with a raw `@` was cut at the first, and its
+/// rest shown), and after a scheme in any case (`HTTP://`, which the
+/// client sends with the credentials, showed them whole). Text that is
+/// no ASCII around a URL stays as it is.
+#[cfg(feature = "http")]
+#[test]
+fn f12_redactor_reads_the_authority_as_the_client_does() {
+    for (input, expected) in [
+        ("fail: http://user:p@ss@host/x", "fail: http://***@host/x"),
+        (
+            "fail: HTTP://user:pw@host/x and hTtPs://u:p@h2",
+            "fail: HTTP://***@host/x and hTtPs://***@h2",
+        ),
+        ("café http://u:pé@h/ü", "café http://***@h/ü"),
+        // White space that is no space, tab or line feed is in the
+        // password, as the client reads it.
+        ("http://u:a\u{a0}b@h/", "http://***@h/"),
+        ("http://u:a\u{2028}b@h/", "http://***@h/"),
+        ("http://u:a\u{85}b@h/", "http://***@h/"),
+        ("http://@host/x", "http://@host/x"),
+        ("http://host/a@b", "http://host/a@b"),
+        ("ends with http://", "ends with http://"),
+    ] {
+        assert_eq!(redact_http_url_userinfo(input), expected, "{input}");
+    }
+}
+
 #[cfg(feature = "http")]
 #[test]
 fn f12_http_get_unreachable_does_not_leak_password_in_err() {
@@ -104,4 +132,135 @@ fn f12_http_get_unreachable_does_not_leak_password_in_err() {
         !scrubbed.contains("spyuser"),
         "wiring test: scrubber must strip user: {scrubbed}"
     );
+}
+
+/// The redaction of 0.42 (main before this change), kept as the oracle of
+/// the test below: what it hid must stay hidden. One change: it looks for
+/// a scheme in the bytes, where 0.42 panicked on text that is no ASCII.
+#[cfg(feature = "http")]
+fn redaction_of_0_42(msg: &str) -> String {
+    let mut out = String::with_capacity(msg.len());
+    let bytes = msg.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        // Look for scheme prefix at position `i`.
+        // (0.42 sliced the text here, `&msg[i..]`, and panicked inside a
+        // character that is no ASCII; the oracle reads the bytes.)
+        let rest = &bytes[i..];
+        let scheme_len = if rest.starts_with(b"https://") {
+            8
+        } else if rest.starts_with(b"http://") {
+            7
+        } else {
+            out.push(bytes[i] as char);
+            i += 1;
+            continue;
+        };
+        // Scan forward for `@` before any URL terminator char.
+        // Valid userinfo chars: alphanumeric, `%`, `.`, `_`, `~`, `-`, `+`, `:`.
+        let host_start = i + scheme_len;
+        let mut j = host_start;
+        let mut at_pos: Option<usize> = None;
+        while j < bytes.len() {
+            let b = bytes[j];
+            // Terminators for the authority component.
+            if b == b'@' {
+                at_pos = Some(j);
+                break;
+            }
+            if b == b'/' || b == b'?' || b == b'#' || b == b' ' || b == b'\t' || b == b'\n' {
+                break;
+            }
+            // Accept any non-terminator byte (covers alphanumeric, `%`
+            // escapes, `:` separator, and the `._~-+` URL-safe set).
+            j += 1;
+        }
+        // Copy scheme verbatim.
+        out.push_str(&msg[i..host_start]);
+        if let Some(at) = at_pos {
+            // Only scrub if we actually have content before the `@`
+            // (otherwise `scheme://@host` stays as-is).
+            if at > host_start {
+                out.push_str("***@");
+                i = at + 1; // skip the original userinfo + `@`
+                continue;
+            }
+        }
+        i = host_start;
+    }
+    out
+}
+
+/// Over a generated set of texts (schemes in any case; userinfo with no,
+/// one or many `@`, `%40`, no password, white space that is no ASCII;
+/// hosts with a port and IPv6; paths with `@`; two URLs in one text; text
+/// that is no ASCII around), every marker of a secret that the redaction
+/// of 0.42 hid is hidden now, and every user and password that the client
+/// sends as credentials is hidden.
+#[cfg(feature = "http")]
+#[test]
+fn f12_redactor_hides_all_that_the_old_one_hid_and_what_the_client_sends() {
+    let schemes = ["http://", "https://", "HTTP://", "HtTpS://"];
+    let userinfos = [
+        "",
+        "U0@",
+        "U0:P0@",
+        "U0:@",
+        ":P0@",
+        "U0:P0@P1@",
+        "U0@P1@P2@",
+        "U0%40x:P0@",
+        "U0:P0%40P1@",
+        "U0:P0\u{a0}P1@",
+        "U0:P0\u{2028}P1@",
+        "U0:P0\u{85}P1@",
+        "U0:P0\rP1@",
+        "U0:P0\u{c}P1@",
+        "U0:P0é@",
+    ];
+    let hosts = [
+        "h",
+        "h.example:8080",
+        "127.0.0.1:0",
+        "[::1]:80",
+        "[fe80::1]",
+    ];
+    let tails = ["", "/x", "/a@b?c=d@e#f@g", "?q=1", "#top", " died"];
+    let befores = ["", "fail: ", "café ", "GET "];
+    let afters = ["", " and https://U9:P9@h2/", " ü", ": http://U8@h3"];
+    let markers = ["U0", "P0", "P1", "P2", "U8", "U9", "P9"];
+    let mut checked = 0;
+    for scheme in schemes {
+        for userinfo in userinfos {
+            for host in hosts {
+                for tail in tails {
+                    for before in befores {
+                        for after in afters {
+                            let text = format!("{before}{scheme}{userinfo}{host}{tail}{after}");
+                            let old = redaction_of_0_42(&text);
+                            let new = redact_http_url_userinfo(&text);
+                            for marker in markers {
+                                if text.contains(marker) && !old.contains(marker) {
+                                    assert!(
+                                        !new.contains(marker),
+                                        "{marker} shown: {text:?} -> {new:?}"
+                                    );
+                                }
+                            }
+                            // What the client sends as credentials: all of
+                            // the userinfo, to its last `@`.
+                            for marker in ["U0", "P0", "P1", "P2", "U8", "U9", "P9"] {
+                                assert!(
+                                    !new.contains(marker),
+                                    "{marker} shown: {text:?} -> {new:?}"
+                                );
+                            }
+                            checked += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(checked, 4 * 15 * 5 * 6 * 4 * 4);
 }

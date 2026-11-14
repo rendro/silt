@@ -60,11 +60,12 @@ pub(crate) fn dispatch(args: &[String]) {
             println!("  --filter <pat>      Only run tests whose name contains <pat>");
             println!("  --watch, -w         Re-run on file changes");
             println!();
-            println!("Auto-discovery: when no file is given, recursively runs tests");
+            println!("Auto-discovery: when no path is given, recursively runs tests");
             println!("from files matching *_test.silt; a directory given is searched");
-            println!("the same way. In a package (also when the path given is in one),");
-            println!("it first checks the package as 'silt check' does, and runs no test");
-            println!("when the package has an error.");
+            println!("the same way. A file given is run whatever its name. In a package");
+            println!("(also when the path given is in one), it first checks the package");
+            println!("as 'silt check' does, and runs no test when the package has an");
+            println!("error.");
             process::exit(0);
         } else if args[i].starts_with('-') {
             // Unknown flag — don't silently treat as a filename.

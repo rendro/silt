@@ -82,6 +82,16 @@ ignored: there is nowhere left to say it. Each call's text reaches stderr whole
 (a text of any length, as `println`'s), so the texts of two tasks never mix
 inside one call's text.
 
+```silt
+import io
+
+fn main() {
+  io.eprint("loading... ")
+  io.eprintln("done")
+  println("the output")
+}
+```
+
 
 ## `io.eprintln`
 
@@ -351,7 +361,7 @@ import env
 
 fn main() {
   env.set("MY_VAR", "hello")
-  println(env.get("MY_VAR")) -- Some(hello)
+  println(env.get("MY_VAR")) -- Some("hello")
 }
 ```
 
@@ -535,6 +545,13 @@ or `Err(IoError)` if the path does not exist or is not a directory. The
 entries come in the order the file system gives them, which is no order
 in particular: sort the list where the order matters.
 
+A file name that is not UTF-8 (some systems allow any bytes in a name)
+cannot be a `String`, and a name with its bytes replaced would name no
+file. So a directory that holds one cannot be listed: `fs.list_dir`,
+`fs.walk` and `fs.glob` return
+`Err(InvalidInput("a name in <dir> is not UTF-8: <name>"))`, with U+FFFD
+for the bytes in `<name>`, until the file is renamed.
+
 ```silt
 import fs
 import list
@@ -576,7 +593,9 @@ fs.remove(path: String) -> Result((), IoError)
 ```
 
 Removes a file or an empty directory. Returns `Ok(())` on success or
-`Err(IoError)` on failure.
+`Err(IoError)` on failure. A symlink is removed itself, never what it
+points to: a link to a directory is removed as a link to a file is,
+and the directory stays.
 
 ```silt
 import fs
@@ -625,7 +644,7 @@ record FileStat {
     is_symlink: Bool,            // true if the path itself is a symlink
     modified: Option(DateTime),  // last-modified time, or None if unsupported
     readonly: Bool,              // true if the OS reports the path as read-only
-    mode: Int,                   // Unix permission bits (e.g. 0o755); 0 on Windows
+    mode: Int,                   // Unix file-type and permission bits; 0 on Windows
     accessed: Option(DateTime),  // last-access time, or None if unsupported / noatime
     created: Option(DateTime),   // creation (birth) time, or None if unsupported
 }
@@ -637,11 +656,15 @@ is `true` and `is_file` / `is_dir` both report on the link rather than
 its target. To stat the target, call `fs.read_link` and then `fs.stat`
 on the result.
 
-`mode` carries the raw Unix permission/type bits as an integer — mask
-with `0o777` for permission bits, or compare against `0o040000`,
-`0o100000`, etc. for file-type bits. On Windows `mode` is always `0`
-because NTFS does not expose a Unix-style permission triple; use
-`readonly` / `is_dir` / `is_file` instead for portable code.
+`mode` carries the Unix file-type and permission bits as the system
+gives them: a regular file with the permissions `rw-r--r--` (octal 644)
+has the mode 33188, which is octal 100644. silt has no octal literal;
+take the permission bits with `int.bit_and` and a hex mask:
+`int.bit_and(s.mode, 0x1FF)` is 420 for octal 644 (so `== 0x1A4` tests for
+`rw-r--r--`), and the mask `0xFFF` adds the setuid, setgid and sticky bits.
+The file type is in `is_file`, `is_dir` and `is_symlink`. On Windows `mode`
+is always `0` because NTFS does not expose a Unix-style permission
+triple; use `readonly` / `is_dir` / `is_file` instead for portable code.
 
 `modified`, `accessed` and `created` are `Option(DateTime)` because no
 timestamp is universally available:
@@ -752,6 +775,12 @@ returns `Err(Other("fs.walk: exceeded 1000000 entries (cap)"))` rather than
 silently truncating — callers can then narrow the root or paginate at
 a higher layer.
 
+**A directory that cannot be read fails the walk.** The error names that
+directory, as `fs.list_dir` would: `Err(PermissionDenied("src/locked"))`
+for `fs.walk("src")`. No partial list is returned, so a list that comes
+back is complete. A file name that is not UTF-8 fails the walk too (see
+`fs.list_dir`).
+
 ```silt
 import fs
 
@@ -789,7 +818,10 @@ pattern, with no wildcard before it, names the path through it
 directory.
 
 Returns `Err(InvalidInput(msg))` if the pattern itself is malformed. The result
-is subject to the same `1_000_000`-entry cap as `fs.walk`.
+is subject to the same `1_000_000`-entry cap as `fs.walk`. A directory the
+pattern has to list and cannot read fails the call, as for `fs.walk`, and the
+error names that directory, not the pattern. So does a directory it lists
+that holds a file name that is not UTF-8 (see `fs.list_dir`).
 
 ```silt
 import fs

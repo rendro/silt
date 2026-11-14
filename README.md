@@ -21,7 +21,7 @@ fn main() {
 
 ## Pattern matching
 
-The only way to branch. Define your types, then match on their shape. The compiler verifies every case is handled.
+How silt branches: there is no `if`. Define your types, then match on their shape. The compiler verifies every case is handled.
 
 ```silt
 type Shape {
@@ -186,14 +186,16 @@ silt test
 
 `silt init` writes a `silt.toml` manifest, a starter `src/main.silt` and a first test, `src/main_test.silt`; `silt run` (no arguments, inside a package) executes the entry point, and `silt test` runs the test. `silt init --lib` starts a library instead: `src/lib.silt` with its test `src/lib_test.silt`, for other packages to import.
 
-See `examples/` for runnable sample programs — start with `examples/hello.silt`, `examples/fizzbuzz.silt`, and `examples/records.silt`.
+See `examples/` for runnable sample programs; run them from the repository's root directory (`silt run examples/hello.silt`), as some read files under `examples/`. Start with `examples/hello.silt`, `examples/fizzbuzz.silt`, and `examples/records.silt`.
 
 ## Tooling
 
 ```
 silt run <file.silt>       Run a program
+silt run                   Run the package's src/main.silt (inside a package)
 silt run -w <file.silt>    Run and re-run on file changes
 silt check <file.silt>...  Type-check without running, each file on its own
+silt check                 Type-check the package (inside a package)
 silt check -               Type-check the program read from stdin
 silt check --format json <file.silt>   Type-check with JSON output (for CI/editors)
 silt check --deny-warnings <file.silt>   Also fail on warnings (for CI)
@@ -204,7 +206,7 @@ silt fmt --check           Check formatting without modifying files
 silt repl                  Interactive REPL
 silt init [--lib]          Create a new silt package (a library with --lib) in this directory
 silt lsp                   Start the language server
-silt disasm <file.silt>    Show bytecode disassembly
+silt disasm [<file.silt>]  Show bytecode disassembly
 silt self-update           Update the silt binary to the latest release
 silt update                Regenerate silt.lock for the current package's dependencies
 silt add <name> --path <path>                             Add a path-based dependency to silt.toml
@@ -223,7 +225,7 @@ LSP server with diagnostics, hover types, go-to-definition, go-to-type-definitio
 | **keywords** | `as else fn import let loop match opaque pub return trait type when where` |
 | **types** | inferred, with ADTs, records, and traits |
 | **literals** | `42`, `0xFF`, `0b1010`, `1e5`, `1_000`, `"hi {x}"` |
-| **branching** | match only |
+| **branching** | `match`; `when ... else` leaves early |
 | **mutability** | none |
 | **errors** | Result / Option / ? |
 | **concurrency** | CSP with real parallelism |
@@ -233,7 +235,7 @@ LSP server with diagnostics, hover types, go-to-definition, go-to-type-definitio
 
 ## Documentation
 
-New here? Read **[Why silt](docs/why-silt.md)** to see how it compares to Rust, Go, Gleam, and OCaml. Then start with **[Getting Started](docs/getting-started.md)** to install silt and walk through the essentials, and see the **[Language Guide](docs/language-guide.md)** for the complete reference. The **[Language card](docs/language-card.md)** puts the syntax in brief and the signature of every builtin function on one page. Stdlib documentation is delivered through the LSP — hover any built-in name (`list.map`, `math.cos`, `Result`, …) in your editor to see its docs.
+New here? Read **[Why silt](docs/why-silt.md)** to see how it compares to Rust, Go, Gleam, and OCaml. Then start with **[Getting Started](docs/getting-started.md)** to install silt and walk through the essentials, and see the **[Language Guide](docs/language-guide.md)** for the complete reference. The **[Language card](docs/language-card.md)** puts the syntax in brief and the signature of every builtin function on one page. Each module of the standard library has a reference page, listed in the guide's **[Standard Library](docs/language-guide.md#standard-library)** section; an editor shows the same text when you hover a built-in name (`list.map`, `math.cos`, `Result`, …).
 
 Deeper dives: **[Concurrency](docs/concurrency.md)**, **[FFI](docs/ffi.md)** (embedding silt in Rust), and **[Editor Setup](docs/editor-setup.md)**.
 

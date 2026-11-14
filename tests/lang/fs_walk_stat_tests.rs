@@ -512,6 +512,190 @@ import host
     );
 }
 
+// ── fs.walk, fs.glob: a directory that cannot be read ───────────────
+
+/// One directory that cannot be read fails fs.walk and fs.glob, and the
+/// error names that directory, as fs.list_dir does: not the root of the
+/// walk, not the pattern. (Unix: a directory is made unreadable by its
+/// mode; a test run as root reads it anyway, and then has nothing to
+/// show.)
+#[cfg(unix)]
+#[test]
+fn test_fs_walk_and_glob_name_the_directory_they_cannot_read() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = TempDir::new("walk_denied");
+    let root = dir.path().join("w");
+    let locked = root.join("locked");
+    std::fs::create_dir_all(&locked).unwrap();
+    std::fs::write(root.join("a.txt"), "a").unwrap();
+    std::fs::write(locked.join("b.txt"), "b").unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let readable = std::fs::read_dir(&locked).is_ok();
+    let call = |expr: String| {
+        err_msg(run(&format!(
+            "import fs\nimport host\nfn main() {{\n  host.give({expr})\n}}\n"
+        )))
+    };
+    let (root_str, locked_str) = (root.to_string_lossy(), locked.to_string_lossy());
+    let outcomes = (!readable).then(|| {
+        (
+            call(format!("fs.walk(\"{root_str}\")")),
+            call(format!("fs.glob(\"{root_str}/**/*.txt\")")),
+            call(format!("fs.glob(\"{root_str}/*/*\")")),
+            call(format!("fs.list_dir(\"{locked_str}\")")),
+        )
+    });
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let Some((walked, globbed, starred, listed)) = outcomes else {
+        eprintln!("skipped: the test runs as a user that reads any directory");
+        return;
+    };
+    let denied = format!("permission denied: {locked_str}");
+    assert_eq!(listed, denied);
+    assert_eq!(walked, denied);
+    assert_eq!(globbed, denied);
+    assert_eq!(starred, denied);
+}
+
+// ── fs.list_dir, fs.walk, fs.glob: a name that is no UTF-8 ──────────
+
+/// A file name that is no UTF-8 fails fs.list_dir, fs.walk and fs.glob
+/// alike, and the error names the directory it is in: no String can
+/// hold the name, and the name with U+FFFD in it (which list_dir and
+/// walk gave) names no file, while glob left the file out without a
+/// word. A pattern that lists no such directory is not touched. (Not on
+/// macOS, whose file system refuses such a name, nor on Windows.)
+#[cfg(all(unix, not(target_os = "macos")))]
+#[test]
+fn test_a_file_name_that_is_no_utf8_fails_the_listing_and_names_its_directory() {
+    use std::os::unix::ffi::OsStrExt;
+    let dir = TempDir::new("names");
+    let names = dir.path().join("names");
+    std::fs::create_dir_all(names.join("sub")).unwrap();
+    std::fs::write(names.join("ok.txt"), "ok").unwrap();
+    std::fs::write(names.join("sub/fine.txt"), "fine").unwrap();
+    let bad = std::ffi::OsStr::from_bytes(b"bad\xffname.txt");
+    if std::fs::write(names.join(bad), "bad").is_err() {
+        eprintln!("skipped: the file system refuses a name that is no UTF-8");
+        return;
+    }
+    let (base, at) = (dir.as_silt_str(), names.to_string_lossy());
+    let call = |expr: String| {
+        err_msg(run(&format!(
+            "import fs\nimport host\nfn main() {{\n  host.give({expr})\n}}\n"
+        )))
+    };
+    let refused = format!("invalid input: a name in {at} is not UTF-8: bad\u{FFFD}name.txt");
+    assert_eq!(call(format!("fs.list_dir(\"{at}\")")), refused);
+    assert_eq!(call(format!("fs.walk(\"{at}\")")), refused);
+    assert_eq!(call(format!("fs.walk(\"{base}\")")), refused);
+    assert_eq!(call(format!("fs.glob(\"{at}/*.txt\")")), refused);
+    assert_eq!(call(format!("fs.glob(\"{base}/**/fine.txt\")")), refused);
+    // A pattern that lists only other directories, or names its path.
+    assert_eq!(
+        sorted_paths(&format!("fs.glob(\"{at}/sub/*.txt\")")),
+        format!("{at}/sub/fine.txt")
+    );
+    assert_eq!(
+        sorted_paths(&format!("fs.glob(\"{at}/ok.txt\")")),
+        format!("{at}/ok.txt")
+    );
+}
+
+// ── stream.file_lines: a line is as long as the file makes it ───────
+
+/// A line of a file longer than 10,000,000 bytes is read whole, as
+/// io.read_file reads the file whole: what limits a read is what comes
+/// from the network, not a file the person who runs the program chose.
+/// (It ended the source with "line 2 of <path> is longer than 10000000
+/// bytes".)
+#[test]
+fn test_a_line_of_a_file_longer_than_ten_million_bytes_is_read_whole() {
+    let dir = TempDir::new("long_line");
+    let file = dir.path().join("long.txt");
+    let mut text = b"ok\n".to_vec();
+    text.extend(std::iter::repeat_n(b'x', 10_000_001));
+    text.extend(b"\nafter\n");
+    std::fs::write(&file, text).unwrap();
+    let at = file.to_string_lossy().replace('\\', "/");
+    let input = format!(
+        "import list\nimport stream\nimport string\nimport host\nfn main() {{\n  \
+         let lengths = stream.collect(stream.file_lines(\"{at}\")) |> list.map {{ line ->\n    \
+         match line {{\n      Ok(text) -> string.length(text)\n      Err(_) -> -1\n    }}\n  }}\n  \
+         host.give(lengths)\n}}\n"
+    );
+    assert_eq!(
+        run(&input),
+        Value::list(vec![Value::Int(2), Value::Int(10_000_001), Value::Int(5)])
+    );
+}
+
+// ── fs.remove: a link is removed itself ─────────────────────────────
+
+/// A link to a directory, made as the system makes one: `None` where
+/// the system does not let the test make it (Windows without the
+/// privilege for links).
+fn dir_link(target: &Path, link: &Path) -> Option<()> {
+    #[cfg(unix)]
+    let made = std::os::unix::fs::symlink(target, link);
+    #[cfg(windows)]
+    let made = std::os::windows::fs::symlink_dir(target, link);
+    made.ok()
+}
+
+/// fs.remove removes a link to a directory as it removes a link to a
+/// file: the link goes, the directory and what is in it stay. (It was
+/// refused with "not a directory", the link left in place.)
+#[test]
+fn test_fs_remove_removes_a_link_to_a_directory_not_the_directory() {
+    let dir = TempDir::new("remove_dir_link");
+    let target = dir.path().join("target");
+    std::fs::create_dir(&target).unwrap();
+    std::fs::write(target.join("keep.txt"), "keep").unwrap();
+    let link = dir.path().join("link");
+    if dir_link(&target, &link).is_none() {
+        eprintln!("skipped: the system does not let this test make a link");
+        return;
+    }
+    let link_str = link.to_string_lossy().replace('\\', "/");
+    let input = format!(
+        "import fs\nimport host\nfn main() {{\n  host.give(fs.remove(\"{link_str}\"))\n}}\n"
+    );
+    assert_eq!(ok_inner(run(&input)), Value::Unit);
+    assert!(
+        std::fs::symlink_metadata(&link).is_err(),
+        "the link is gone"
+    );
+    assert_eq!(
+        std::fs::read_to_string(target.join("keep.txt")).unwrap(),
+        "keep"
+    );
+    // A link to a file and a link that leads nowhere go as before, and
+    // a directory with something in it is still refused.
+    #[cfg(unix)]
+    {
+        let file_link = dir.path().join("file_link");
+        std::os::unix::fs::symlink(target.join("keep.txt"), &file_link).unwrap();
+        let dangling = dir.path().join("dangling");
+        std::os::unix::fs::symlink(dir.path().join("nowhere"), &dangling).unwrap();
+        for gone in [&file_link, &dangling] {
+            let at = gone.to_string_lossy();
+            let input = format!(
+                "import fs\nimport host\nfn main() {{\n  host.give(fs.remove(\"{at}\"))\n}}\n"
+            );
+            assert_eq!(ok_inner(run(&input)), Value::Unit, "{at}");
+            assert!(std::fs::symlink_metadata(gone).is_err(), "{at} is gone");
+        }
+        let full = target.to_string_lossy();
+        let input = format!(
+            "import fs\nimport host\nfn main() {{\n  host.give(fs.remove(\"{full}\"))\n}}\n"
+        );
+        let refused = err_msg(run(&input));
+        assert!(refused.contains(&*full), "{refused}");
+        assert!(target.join("keep.txt").exists());
+    }
+}
+
 // ── fs.copy, fs.rename: a fault of a directory ──────────────────────
 
 /// A fault of `fs.copy` or `fs.rename` that comes of a directory names

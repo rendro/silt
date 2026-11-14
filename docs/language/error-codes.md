@@ -72,7 +72,6 @@ missing belong to codes that are gone.
 | `E0312` | A type name in an annotation that names no type. |
 | `E0313` | A trait name that names no trait. |
 | `E0314` | A type has no impl of a trait it is required to have. |
-| `E0315` | A type cannot have the derived `Equal`, `Compare` or `Hash` it is used with: one of its fields has none. (No diagnostic has this code today.) |
 | `E0316` | A call needs a trait bound the enclosing function does not declare. |
 | `E0317` | The wrong number of arguments, fields, bindings or type arguments. |
 | `E0318` | A type that would have to contain itself. |

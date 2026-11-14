@@ -6,8 +6,9 @@ order: 3
 
 # Pattern Matching
 
-Pattern matching is the only branching construct. No `if`, no ternary, no
-`switch`. Every branch uses `match`, and the compiler checks exhaustiveness.
+Pattern matching is how silt branches. No `if`, no ternary, no `switch`: a
+choice is a `match`, and the compiler checks exhaustiveness. `when ... else`
+(below) leaves a block early when a pattern or a condition fails.
 
 ## Match with Scrutinee
 
@@ -302,8 +303,8 @@ of `?`.
 ## Exhaustiveness Checking
 
 The compiler checks that your match covers all possible cases. Missing a
-variant produces a compile-time error. This is one of the strongest benefits
-of `match` as the sole branching construct.
+variant produces a compile-time error. Since silt has no `if`, every choice
+between values is a `match`, and every one of them is checked.
 
 The check looks inside patterns: the fields of constructors, tuples and
 records, the elements of list patterns, the alternatives of or-patterns.

@@ -93,7 +93,7 @@ rendered string.
 | `Connect(msg)` | `String` | no connection was made: refused, no route, no such host |
 | `Tls(msg)` | `String` | TLS handshake / cert failure |
 | `Timeout` | — | one of the request's times passed (10 s to connect, 60 s in all), or `SILT_IO_TIMEOUT` |
-| `InvalidUrl(url)` | `String` | the URL, as it was written, cannot be read as one, has no host, has a scheme other than `http` and `https`, or names a port that is none (not a number in 1..65535); no connection is made |
+| `InvalidUrl(url)` | `String` | the URL, as it was written, cannot be read as one, has no host, has a scheme other than `http` and `https`, or names a port that is none (not a number in 1..65535); no connection is made. Also the location of a redirect with such a scheme, which is not followed |
 | `InvalidResponse(msg)` | `String` | what the server sent is no HTTP (a status line that is none, a chunk length that is no number, `content-length` headers that disagree or a length that is no number, a head that is too large, a body that says it is packed and, though all of it arrived, does not unpack: no bytes at all among them), or its body is larger than 10,000,000 bytes |
 | `ClosedEarly` | — | the server went away before the response was complete, head or body, packed or not |
 | `Other(msg)` | `String` | any other failure: a header name or value of the request that is none, too many redirects |
@@ -143,8 +143,9 @@ the server sent, with one exception:
   empty and nothing is read, whatever the headers say. They may say what
   a `GET` would get; of those, `content-encoding` and `content-length`
   are not in `resp.headers` when the answer says `gzip`.
-- A body of more than 10,000,000 bytes (the most a `Bytes` holds),
-  counted as the program would get it, is
+- A body of more than 10,000,000 bytes (the limit of what one read
+  from the network may take, as for `tcp.read_exact`), counted as the
+  program would get it, is
   `Err(InvalidResponse(_))`: no part of it is returned.
 
 Every request says who sends it, `user-agent: silt/<version>` (the
@@ -211,13 +212,33 @@ say, in a `Content-Type` header among `headers`: none is added. A
 `user-agent` among `headers` is sent instead of `silt/<version>`. A
 `Content-Length` among `headers` is not sent: the body's own length is.
 
+A user and password in the URL (`https://user:pa%20ss@host/`) are sent
+as `authorization: Basic ...` (RFC 7617), unless `headers` has an
+`authorization` of its own, for `http.get` too. They are percent-decoded
+first: write a `@`, `:`, `/` or a space in them encoded (`pa%20ss` is the
+password `pa ss`). No error shows them: the URL of an `InvalidUrl` has
+`***` in their place.
+
 A redirect is followed, up to ten of them: after a 307 or 308 with the
 same method and body; after a 303 as a `GET` without a body and without
 the `Content-Type` among `headers` (a `HEAD` stays a `HEAD`); after a 301
 or 302 a `POST` as such a `GET`, and any other method with the same
-method and body. The `authorization` and `cookie` headers are not sent to where
-a redirect leads. A location that is no full URL is resolved against
-the URL that answered: `?y=2` on its path, `//host/x` on its scheme.
+method and body. The credentials are not sent to where a redirect leads,
+also when it leads to the same host: the `authorization`,
+`proxy-authorization` and `cookie` headers, and the user and password of
+the URL. Every other header among `headers` is, and so is the body after
+a 307 or 308, also to another host, as curl and Go send them. A location that is no full URL is resolved against
+the URL that answered: `?y=2` on its path, `//host/x` on its scheme. An
+empty location, or one that is a fragment alone (`#top`), is the URL that
+answered itself, as RFC 3986 reads it: after a 303 that is a `GET` of the
+same URL, and a server that answers it so every time ends in
+`Err(Other("too many redirects"))`. A response without a location is
+handed back as it is, its status 3xx. A
+location with a scheme other than `http` and `https` (`file:///x`,
+`ftp://host/x`, `mailto:a@b`) is not followed: it is
+`Err(InvalidUrl(location))`. A byte of a location that a URL cannot hold
+(a space, the bytes of `é`) is sent percent-encoded (`%20`, `%C3%A9`), as
+browsers send it.
 
 Like `http.get`, this transparently yields to the scheduler when called from
 a spawned task.
@@ -270,6 +291,20 @@ stop it (see [Stopping a server](#stopping-a-server)):
 what it has begun, then `http.serve` returns `()`; `task.cancel` of its
 task ends the server at once and leaves the listener bound, to be served
 again (see [When a program ends](../concurrency.md#when-a-program-ends)).
+
+```silt
+import bytes
+import http
+import tcp
+
+fn main() -> Result((), tcp.TcpError) {
+  let listener = tcp.listen("127.0.0.1:8080")?
+  http.serve(listener) { req ->
+    http.Response { status: 200, body: bytes.from_string("you asked for {req.path}"), headers: #{} }
+  }
+  Ok(())
+}
+```
 
 ### Connections and handlers
 
@@ -543,9 +578,9 @@ http.segments(path: String) -> List(String)
 Splits a URL path into non-empty segments. Useful for pattern-matched routing.
 
 ```silt
-println(http.segments("/api/users/42")) -- [api, users, 42]
+println(http.segments("/api/users/42")) -- ["api", "users", "42"]
 println(http.segments("/")) -- []
-println(http.segments("//foo//bar/")) -- [foo, bar]
+println(http.segments("//foo//bar/")) -- ["foo", "bar"]
 ```
 
 This function has no dependencies and works even with `--no-default-features`.
