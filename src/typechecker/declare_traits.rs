@@ -2789,7 +2789,15 @@ impl TypeChecker {
                 Some(expected) => {
                     let unified = self.unify_types(&written, expected);
                     match unified {
-                        Ok(()) => expected.clone(),
+                        Ok(()) => {
+                            self.refuse_variables_the_trait_types(
+                                ti,
+                                method,
+                                &param_map,
+                                &impl_names,
+                            );
+                            expected.clone()
+                        }
                         Err(mismatch) => {
                             self.report_mismatch(mismatch, method.span);
                             written
@@ -3071,6 +3079,50 @@ impl TypeChecker {
                     },
                 );
             }
+        }
+    }
+
+    /// Refuse each type variable the impl method `method` writes of its
+    /// own (`fn mk(self) -> b`) where its trait declares a type (`->
+    /// Int`): the two agree only because the variable takes the type,
+    /// and a variable of a signature stands for any type. `names` are
+    /// the variables of the method's signature, `impl_names` the impl
+    /// header's.
+    fn refuse_variables_the_trait_types(
+        &mut self,
+        ti: &TraitImpl,
+        method: &FnDecl,
+        names: &HashMap<Symbol, Type>,
+        impl_names: &HashMap<Symbol, Type>,
+    ) {
+        let mut own: Vec<(Symbol, TyVar)> = (names.iter())
+            .filter(|(name, _)| !impl_names.contains_key(*name))
+            .filter_map(|(name, ty)| match ty {
+                Type::Var(var) => Some((*name, *var)),
+                _ => None,
+            })
+            .collect();
+        own.sort_by_key(|(_, var)| self.var_written.get(var).map(|s| (s.start, s.end)));
+        for (name, var) in own {
+            let declared = self.apply(&Type::Var(var));
+            if matches!(declared, Type::Var(_) | Type::Rigid(_) | Type::Error) {
+                continue;
+            }
+            let declared = self.show_type(&declared);
+            self.error_help(
+                Code::TypeMismatch,
+                (
+                    format!(
+                        "method '{}' writes the type variable `{name}` where trait '{}' declares \
+                         `{declared}`",
+                        method.name, ti.trait_name
+                    ),
+                    Some(format!(
+                        "a type variable stands for any type: write `{declared}`, as the trait does"
+                    )),
+                ),
+                self.var_written.get(&var).copied().unwrap_or(method.span),
+            );
         }
     }
 
