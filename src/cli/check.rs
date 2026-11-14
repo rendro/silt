@@ -471,18 +471,18 @@ fn report_unreadable(unreadable: &[(String, std::io::Error)]) {
 
 /// A file that could not be read as an entry of the JSON array: the
 /// fields of a diagnostic (`diagnostic::render_json`), with the file as
-/// its place and no position in it.
+/// its place, at its line 1, column 1 (it has no position in it).
 fn unreadable_json(path: &str, e: &std::io::Error) -> serde_json::Value {
     serde_json::json!({
         "code": silt::diagnostic::Code::ModuleNotFound.id(),
-        "col": 0,
-        "end_col": 0,
-        "end_line": 0,
+        "col": 1,
+        "end_col": 1,
+        "end_line": 1,
         "file": path,
         "help": [],
         "kind": "compile",
         "labels": [],
-        "line": 0,
+        "line": 1,
         "message": format!("error reading {path}: {}", silt::diagnostic::io_error_text(e)),
         "notes": [],
         "severity": "error",

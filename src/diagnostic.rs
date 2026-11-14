@@ -939,7 +939,9 @@ fn mark_width<'a>(chars: impl Iterator<Item = &'a char>) -> usize {
 
 /// `d` as `silt check --format json` prints it: the file, the start and
 /// end of the span, the message, the code, and labels, notes and help as
-/// data. A span in no file has file `"<unknown>"` and line 0.
+/// data. Lines and columns are 1-based, as the terminal shows them; a
+/// span at no place of a file (one that could not be read) is at line 1,
+/// column 1, and a span in no file also has file `"<unknown>"`.
 pub fn render_json(view: &dyn SourceView, d: &Diagnostic) -> serde_json::Value {
     let place = |span: Span| -> serde_json::Map<String, serde_json::Value> {
         let located = view.locate(span);
@@ -948,7 +950,7 @@ pub fn render_json(view: &dyn SourceView, d: &Diagnostic) -> serde_json::Value {
             .map_or("<unknown>".to_string(), |l| l.file.clone());
         let p = located.and_then(|l| l.position);
         let (line, col, end_line, end_col) =
-            p.map_or((0, 0, 0, 0), |p| (p.line, p.col, p.end_line, p.end_col));
+            p.map_or((1, 1, 1, 1), |p| (p.line, p.col, p.end_line, p.end_col));
         let mut map = serde_json::Map::new();
         map.insert("file".into(), file.into());
         map.insert("line".into(), line.into());

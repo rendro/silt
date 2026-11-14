@@ -1,0 +1,7 @@
+-- cmd: check --format json nosuch.silt
+-- exit: 1
+-- A file that cannot be read has no place in it: its diagnostic is at
+-- line 1, column 1, as lines and columns count from 1 everywhere.
+fn main() {
+  println(1)
+}
