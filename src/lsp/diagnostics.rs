@@ -92,26 +92,31 @@ fn dependency_manifest_with_errors(
     if manifests.clone().any(|path| in_own(&path)) {
         return None;
     }
-    let path = manifests.next()?;
-    let shown = match path_key(&path).strip_prefix(path_key(dir)) {
+    Some(shown_manifest(dir, &manifests.next()?))
+}
+
+/// The manifest at `path` as a note names it: inside the project in
+/// `dir` as a path relative to it, written with `/`.
+fn shown_manifest(dir: &std::path::Path, path: &std::path::Path) -> String {
+    match path_key(path).strip_prefix(path_key(dir)) {
         Ok(inside) => (inside.components())
             .map(|c| c.as_os_str().to_string_lossy().into_owned())
             .collect::<Vec<_>>()
             .join("/"),
         Err(_) => path.display().to_string(),
-    };
-    Some(shown)
+    }
 }
 
 /// The places in the project's own `silt.toml` (in `dir`) of the
 /// dependency lines that lead to the package errors `found`, which are
 /// in the manifests of dependencies: the labels the resolver put there
-/// (`` `app` depends on `geom` here ``).
+/// (`` `app` depends on `geom` here ``), each with the manifest of the
+/// error it leads to, as a note names it.
 fn own_lines_leading_there(
     dir: &std::path::Path,
     sources: &SourceMap,
     found: &[crate::diagnostic::Diagnostic],
-) -> Vec<(crate::source::Span, String)> {
+) -> Vec<(crate::source::Span, String, String)> {
     let own = path_key(&dir.join("silt.toml"));
     let is_own = |file: FileId| match sources.get(file).map(|f| &f.path) {
         Some(SourceName::Manifest(path) | SourceName::Path(path)) => path_key(path) == own,
@@ -119,12 +124,13 @@ fn own_lines_leading_there(
     };
     let mut lines = Vec::new();
     for d in found.iter().filter(|d| !is_own(d.span.file)) {
+        let manifest = match sources.get(d.span.file).map(|f| &f.path) {
+            Some(SourceName::Manifest(path) | SourceName::Path(path)) => shown_manifest(dir, path),
+            _ => continue,
+        };
         for (span, label) in d.labels.iter().filter(|(span, _)| is_own(span.file)) {
-            if !lines
-                .iter()
-                .any(|(s, _): &(crate::source::Span, String)| s == span)
-            {
-                lines.push((*span, label.clone()));
+            if !lines.iter().any(|(s, ..): &(_, _, _)| s == span) {
+                lines.push((*span, label.clone(), manifest.clone()));
             }
         }
     }
@@ -415,15 +421,16 @@ impl Server {
                     let sources = project.session.sources();
                     let elsewhere = dependency_manifest_with_errors(dir, sources, &found);
                     // The project's own lines that lead to that manifest.
-                    if let Some(manifest) = &elsewhere {
+                    if elsewhere.is_some() {
                         let own = dir.join("silt.toml");
                         let own_uri = (uris_by_key.get(&path_key(&own)).cloned())
                             .or_else(|| super::path_to_file_uri(&own));
-                        for (span, label) in own_lines_leading_there(dir, sources, &found) {
+                        for (span, label, manifest) in own_lines_leading_there(dir, sources, &found)
+                        {
                             let Some(own_uri) = own_uri.clone() else {
                                 break;
                             };
-                            let note = leading_line_note(sources, span, &label, manifest);
+                            let note = leading_line_note(sources, span, &label, &manifest);
                             let r = note.range;
                             let key = (
                                 own_uri.as_str().to_string(),
