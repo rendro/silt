@@ -651,7 +651,7 @@ pub fn render_human(view: &dyn SourceView, d: &Diagnostic) -> String {
             "-->",
             &located,
             '^',
-            &caret_label(&visible_text(&d.message)),
+            caret_label(&visible_text(&d.message)),
             color,
         );
     }
