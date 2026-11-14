@@ -286,11 +286,29 @@ impl TypeChecker {
     /// package whose library it is, a builtin module's name, or the name
     /// of a module of the same package. None for any other module (a
     /// module of a dependency's dependency, a dependency's module other
-    /// than its library: no import written here reaches it).
+    /// than its library: no import written here reaches it), and for a
+    /// path the file binds already (`bound_here`): that import would
+    /// bind it twice. The one rule of every "after `import X`" a help
+    /// offers.
     pub(super) fn import_path(&self, module: crate::session::ModuleId) -> Option<Symbol> {
         if let Some(path) = self.import_paths.get(&module) {
             return Some(*path);
         }
+        self.path_to_import(module)
+            .filter(|path| !self.bound_here(*path))
+    }
+
+    /// Whether the file binds the name `name` at its top level: to a
+    /// module it imports (`import da as errs`), to an item it imports, or
+    /// to a definition of its own.
+    pub(super) fn bound_here(&self, name: Symbol) -> bool {
+        (self.module_spelled.values().chain(self.spelled.values())).any(|b| *b == name)
+            || (self.defs.as_ref()).is_some_and(|defs| !defs.named(self.module, name).is_empty())
+    }
+
+    /// The path of `import_path` before the file's own names are
+    /// looked at.
+    fn path_to_import(&self, module: crate::session::ModuleId) -> Option<Symbol> {
         // (A dependency's library that another module of the package
         // imports: by its key.)
         if let Some(key) = self.dependency_keys.get(&module) {

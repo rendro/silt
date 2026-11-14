@@ -1861,6 +1861,14 @@ impl Resolver<'_> {
             .map(|(module, _)| *module)
             .collect();
         let Some(&(module, _)) = bound.first() else {
+            // (No `import first` where the file binds `first`: it would
+            // bind it twice.)
+            if self.scope.values.contains_key(&first) {
+                return format!(
+                    "`{name}` is in {}: add `import {first}.{{ {name} }}`",
+                    modules(others)
+                );
+            }
             return format!(
                 "`{name}` is in {}: write `{first}.{name}` after `import {first}`, \
                  or add `import {first}.{{ {name} }}`",
@@ -3185,6 +3193,14 @@ impl Resolver<'_> {
                         .map(|hint| format!("did you mean `{hint}`?"))
                         .or_else(|| {
                             let module = self.builtin_function_module(name)?;
+                            // (No `import module` where the file binds
+                            // the name: it would bind it twice.)
+                            if self.scope.values.contains_key(&intern(module)) {
+                                return Some(format!(
+                                    "`{name}` is in module `{module}`: add `import \
+                                     {module}.{{ {name} }}`"
+                                ));
+                            }
                             Some(format!(
                                 "`{name}` is in module `{module}`: write `{module}.{name}` \
                                  after `import {module}`, or add `import {module}.{{ {name} }}`"

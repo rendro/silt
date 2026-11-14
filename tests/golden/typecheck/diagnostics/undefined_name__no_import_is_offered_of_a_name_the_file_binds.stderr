@@ -1,0 +1,13 @@
+error[type]: undefined variable 'map'
+ --> undefined_name__no_import_is_offered_of_a_name_the_file_binds.silt:12:11
+    |
+ 12 |   println(map([1], { x -> x }))
+    |           ^^^ undefined variable 'map'
+  = help: `map` is in module `list`: add `import list.{ map }`
+
+error[type]: undefined variable 'Null'
+ --> undefined_name__no_import_is_offered_of_a_name_the_file_binds.silt:13:11
+    |
+ 13 |   println(Null)
+    |           ^^^^ undefined variable 'Null'
+  = help: `Null` is in module `json`: add `import json.{ Null }`
