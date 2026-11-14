@@ -1,0 +1,21 @@
+-- cmd: lsp
+-- lsp: rename 13:6 Self
+-- lsp: rename 15:4 main
+-- lsp: rename 19:4 start
+-- lsp: rename 15:4 test_helper
+-- lsp: rename 17:4 one
+-- lsp: rename 17:4 skip_test_one
+-- lsp: rename 17:4 test_two
+-- lsp: rename 15:4 assist
+-- A rename that would give a name, or take from it, a meaning no other
+-- name has is refused: `Self`, a top-level function to or from `main`,
+-- one into or out of the tests (`test_`, `skip_test_`). Others go on.
+type Pattern { n: Int }
+
+fn helper() -> Int { 1 }
+
+fn test_one() -> Int { 2 }
+
+fn main() {
+  println(helper() + test_one() + Pattern { n: 1 }.n)
+}
