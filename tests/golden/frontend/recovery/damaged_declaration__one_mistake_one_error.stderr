@@ -1,0 +1,33 @@
+error[parse]: expected declaration, found const
+ --> damaged_declaration__one_mistake_one_error.silt:9:1
+   |
+ 9 | const X = 1
+   | ^^^^^ expected declaration, found const
+
+error[parse]: expected declaration, found |
+ --> damaged_declaration__one_mistake_one_error.silt:11:12
+    |
+ 11 | type C = A | B
+    |            ^ expected declaration, found |
+
+error[parse]: expected declaration, found <
+ --> damaged_declaration__one_mistake_one_error.silt:13:17
+    |
+ 13 | fn f() -> Result<Int, String> { Ok(1) }
+    |                 ^ expected declaration, found <
+
+error[parse]: expected '}' or ',' to continue enum variant list, found Rect
+ --> damaged_declaration__one_mistake_one_error.silt:15:26
+    |
+ 15 | type Shape { Circle(Int) Rect(Int, Int) }
+    |                          ^^^^ expected '}' or ',' to continue enum variant list, found Rect
+ ::: damaged_declaration__one_mistake_one_error.silt:15:12
+    |
+ 15 | type Shape { Circle(Int) Rect(Int, Int) }
+    |            - the enum variant list starts here
+
+error[type]: type mismatch: expected Int, got String
+ --> damaged_declaration__one_mistake_one_error.silt:26:3
+    |
+ 26 |   "not an Int"
+    |   ^^^^^^^^^^^^ type mismatch: expected Int, got String

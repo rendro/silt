@@ -262,6 +262,9 @@ A trait can mix default and abstract methods freely:
   they do, the default body is used.
 - Methods without a body are **abstract**. Impls must provide them.
 
+Only the methods of a trait declaration may leave out the body. A
+method of an impl, like any other function, has one.
+
 Overriding a default is just writing the method in the impl as usual:
 
 ```silt

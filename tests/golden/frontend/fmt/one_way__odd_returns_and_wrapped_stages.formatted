@@ -1,0 +1,54 @@
+-- cmd: fmt
+-- The two rewrites of a stage call and a last-line `return` reach their
+-- end in one pass, whatever wraps them: a stage call in parentheses
+-- (`1 |> (id())`), a `return` of a `return` (which stays: leaving out
+-- one would leave the other on the last line), a `return` in an arm, a
+-- closure or a block (which stay). `5 |> adder()` is `adder(5)`, as
+-- `5 |> adder` is: the pipe gives the value as the first argument, it
+-- never calls the stage's result.
+fn id(x) {
+  x
+}
+
+fn adder(n: Int) -> Fn(Int) -> Int {
+  { x -> x + n }
+}
+
+fn wrapped() -> Int {
+  let a = 1 |> id
+  let b = 1 |> id
+  let c = 1 |> id
+  a + b + c |> id
+}
+
+fn twice() -> Int {
+  return return 1
+}
+
+fn grouped() -> Int {
+  return return 1
+}
+
+fn in_arms(n: Int) -> Int {
+  match n {
+    0 -> return 1
+    _ -> {
+      let f = { x -> return x }
+      f(n)
+    }
+  }
+}
+
+fn curried() -> Int {
+  let g = 5 |> adder
+  let h = 5 |> adder
+  g(1) + h(2)
+}
+
+fn main() {
+  println(wrapped())
+  println(twice())
+  println(grouped())
+  println(in_arms(3))
+  println(curried())
+}

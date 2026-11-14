@@ -369,7 +369,7 @@ fixed thread pool and run in parallel. They communicate through channels.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `cancel` | `(Handle(a)) -> ()` | Request cancellation of a task (cooperative; see details below) |
+| `cancel` | `(Handle(a)) -> ()` | Cancel a task, and wait until it has ended (see details below) |
 | `deadline` | `(Duration, Fn() -> a) -> Result(a, TaskError)` | Run a function, and end it where it waits when the duration has passed |
 | `join` | `(Handle(a)) -> a` | Wait for a task to complete |
 | `spawn` | `(Fn() -> a) -> Handle(a)` | Spawn a new lightweight task |
@@ -397,7 +397,18 @@ task that has already failed also dismisses that failure: it is not
 reported as unjoined, does not make `silt run` exit 1 and does not fail
 the test that spawned it. A failure the task took with a `task.join` is
 not its own: the cancel hands it back to the task that failed, which is
-then reported as never joined, unless that task was cancelled too. The cancel does not wait for the task to stop.
+then reported as never joined, unless that task was cancelled too.
+
+`task.cancel` returns when the task has ended, and every task below it
+that the cancel reached: their last steps (below) have run. What comes
+after the cancel (closing the channel the task sent on, counting what it
+sent, removing a file it wrote) sees everything they did. The wait is
+short: a cancelled task ends at its next wait or after at most 2,000
+steps (a step that is one long call, such as a sort of a long list or a
+function of the host, runs to its end first). A task cannot wait for its own end: one that is cancelled itself
+(it cancels itself, or a task it was spawned by) does not wait, its call
+returns at once, and it has the last steps of a cancelled task (below).
+
 Its effect on the task depends on where the task is at that moment:
 
 - **The task is waiting** (parked in a channel receive or send, a
@@ -470,11 +481,8 @@ and join it.
 
 `task.join` on a cancelled handle does **not** return `Err("cancelled")`
 as a value — it raises the failure as a runtime error of the form
-`joined task failed: cancelled`. Silt has no `try`/`catch`, so when
-cancellation is an expected outcome you typically either (a) signal
-completion through a sentinel channel and wait on that instead of joining,
-or (b) scope the join to a boundary where the raised error is the expected
-exit path. See
+`joined task failed: cancelled`. A task you cancelled is not joined: the
+cancel is the wait for it. See
 [Concurrency: Cancelling](../concurrency.md#cancelling-taskcancelhandle) for
 the canonical treatment.
 
@@ -484,15 +492,15 @@ import channel
 import task
 
 fn main() {
-  let done = channel.new(1)
+  let results = channel.new(16)
   let h = task.spawn { ->
-    -- long-running work
-    channel.send(done, 42)
+    -- long-running work that sends what it finds
+    channel.send(results, 42)
   }
   task.cancel(h)
+  -- The task has ended: closing its channel loses nothing it sent.
   -- `task.join(h)` here would raise `joined task failed: cancelled`.
-  -- Use the sentinel channel for a non-raising "settled" signal, or
-  -- only call `task.join` at a boundary that tolerates the raise.
+  channel.close(results)
 }
 ```
 

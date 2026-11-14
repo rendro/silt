@@ -21,8 +21,8 @@ type Student {
 fn parse_student(line) {
   let fields = line |> string.split(",")
   let name = fields |> list.get(0) |> option.unwrap_or("")
-  let age = fields |> list.get(1) |> option.unwrap_or("0") |> int.parse() |> result.unwrap_or(0)
-  let score = fields |> list.get(2) |> option.unwrap_or("0") |> int.parse() |> result.unwrap_or(0)
+  let age = fields |> list.get(1) |> option.unwrap_or("0") |> int.parse |> result.unwrap_or(0)
+  let score = fields |> list.get(2) |> option.unwrap_or("0") |> int.parse |> result.unwrap_or(0)
   let grade = fields |> list.get(3) |> option.unwrap_or("")
   Student { name: name, age: age, score: score, grade: grade }
 }

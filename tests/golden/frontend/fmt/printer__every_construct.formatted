@@ -74,5 +74,5 @@ fn h() {
   when x else {
     return
   }
-  return P { x: 1 }.x
+  P { x: 1 }.x
 }

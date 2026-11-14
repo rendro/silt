@@ -11,7 +11,7 @@ fn parse_config(text) {
     return Err("missing port in config")
   }
   let host = host_line |> string.replace("host=", "")
-  let port_result = port_line |> string.replace("port=", "") |> int.parse()
+  let port_result = port_line |> string.replace("port=", "") |> int.parse
   when let Ok(port) = port_result else {
     return Err("invalid port number")
   }

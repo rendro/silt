@@ -41,6 +41,10 @@ and [channel / task](channel-task.md) for the primitive channel operations.
 | `tcp_chunks` | `(TcpStream, Int) -> Channel(Result(Bytes, TcpError))` | Read TCP in chunks |
 | `tcp_lines` | `(TcpStream) -> Channel(Result(String, TcpError))` | Read TCP line-by-line |
 
+A stream's channel is only read: a send into it (`channel.send`,
+`channel.try_send`, a `Send` arm of `channel.select`) is a runtime error,
+`cannot send into a stream: channel 4 is the output of stream.from_range`.
+
 `file_lines` reads the file up to 64 KiB of lines at a time and emits
 them one by one, so it can be up to about 64 KiB ahead of what has been
 received: a file that changes while it is read gives lines from before
@@ -278,30 +282,56 @@ fn main() {
   `zip` or a `channel.select` over several streams asks each of them, so
   each stage that feeds it may hold one value for a later read; when
   nothing reads it any more, that value is gone: at most one per input.
-- **A TCP source or sink that is stopped closes its connection.** When
-  `stream.tcp_lines` or `stream.tcp_chunks` is stopped before the peer has
-  closed (`stream.tcp_lines(conn) |> stream.first`), or the task in
+- **A TCP source holds its connection as any other name does.**
+  `stream.tcp_lines(conn)` and `stream.tcp_chunks(conn, n)` keep the
+  connection while their stream is read. When the stream is stopped
+  (left, closed with `channel.close`, cut short by `stream.first` or
+  `stream.take`), the source stops reading and lets go of the
+  connection; it does not shut it. (A read of the source that times out,
+  at `SILT_IO_TIMEOUT`, shuts it, as every tcp operation that times out
+  does.) The connection is closed when its
+  last holder is gone, as every value is: a handler that reads the head
+  of a request through `stream.tcp_lines(conn)` in a helper can answer
+  on `conn` afterwards, and one that reads lines and returns, holding
+  `conn` no more, closes it (the client sees the end). `tcp.close(conn)`
+  shuts a connection whoever else holds it.
+  The source reads ahead: what it had read and nobody took (the rest of
+  the lines of its last read, up to 64 KiB) is gone with the stream, and
+  a later `tcp.read(conn, ..)` gets what comes after it. A read the
+  source had in flight ends at once without taking anything, on a plain
+  connection and on a TLS one alike; on a TLS connection the source
+  waits for the peer's bytes without holding the connection, so a
+  write on it does not wait for the source. (A source has a descriptor
+  of its own for this, which it gives back when its stream is gone. A
+  process that has none left gets a stream whose one item is the
+  error.)
+- **A TCP sink that is stopped closes its connection.** When the task in
   `stream.write_to_tcp` is cancelled, the connection is shut down, as by
-  `tcp.close`: a read that may be in flight has to end, and what the
-  source had read ahead is gone anyway. That holds at whatever moment
-  the source is stopped: in a read, with an item that nobody takes any
-  more, or before it has read anything. Read with `tcp.read` if the
-  connection is to be used afterwards.
+  `tcp.close`: a write that may be in flight has to end, and the peer
+  must not take a part of a write for the whole.
 - **A read or a write of a source or a sink waits for I/O**, and
   `SILT_IO_TIMEOUT` ends it as it ends any wait for I/O (see
   [I/O timeouts](../concurrency.md#io-timeouts-silt_io_timeout)): a
   source ends with its module's timeout error as its last item
-  (`Err(Timeout)` of a connection, which is shut down then), a sink
-  returns it. So does a read or a write that the I/O pool could not run:
+  (`Err(Timeout)` of a connection, which is shut down then, as after any
+  tcp operation that times out), a sink returns it. So does a read or a write that the I/O pool could not run:
   the source ends with that error, not as if its input had ended.
 - **A stream that you stop reading stops taking.** A stream that is read
   by hand (`channel.receive`, `channel.select`) and then left takes
   nothing more from what feeds it: its transforms wait for a reader. Its
   source and a `stream.buffered` work on until their outputs are full or
-  the source is at its end, and the program does not end before they have
-  stopped (see [When a program
-  ends](../concurrency.md#when-a-program-ends)). `channel.close(s)` on the
-  stream stops them at once.
+  the source is at its end. `channel.close(s)` on the stream stops them
+  at once.
+- **A stream that nothing can read any more is closed.** When the last
+  name of a stream goes (the function that read it returned, the loop
+  went round to its next stream), it is closed as `channel.close(s)`
+  closes it: its stages stop, a TCP source lets go of its connection
+  (above), and the tasks of the stages are gone. So a handler that reads
+  a few lines of `stream.tcp_lines(conn)` and returns leaves nothing
+  behind (the connection, held by nothing else, closes: the client sees
+  the end), and neither does a loop that reads one value of each of a
+  million streams. A stream that a later stage reads, or that
+  a channel or a task holds, is not left.
 - **Errors flow through the stream.** File sources emit
   `Channel(Result(_, IoError))`; TCP sources emit
   `Channel(Result(_, TcpError))`. Each chunk can fail independently;

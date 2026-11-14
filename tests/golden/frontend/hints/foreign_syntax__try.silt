@@ -1,9 +1,9 @@
 -- cmd: check
 -- exit: 1
--- `try` is a name silt does not bind: the checker's undefined-name error gets the help (the parser parses `try { .. }`, as `let try = ()` before it would make it valid).
--- stderr-contains: silt has no `try`
+-- `try` is a name silt does not bind: the checker's undefined-name error gets the help (where nothing named `try` is in scope).
+-- stderr-contains: undefined variable 'try'
+-- stderr-contains: help: silt has no `try`: `?` passes an `Err` on, and `match` takes a `Result` apart
 fn main() {
-  try {
-    1
-  }
+  let r = try
+  println(r)
 }

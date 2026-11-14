@@ -334,7 +334,7 @@ pub(super) fn modules() -> Vec<Module> {
             opaque: [("Handle", 1)],
             error: "TaskError" => concurrency::task_error_text,
             rows: [
-                f("fn cancel(handle: Handle(a)) -> ()", "Request cancellation of a task (cooperative; see details below)", concurrency::task::cancel),
+                f("fn cancel(handle: Handle(a)) -> ()", "Cancel a task, and wait until it has ended (see details below)", concurrency::task::cancel),
                 f("fn deadline(dur: Duration, f: Fn() -> a) -> Result(a, TaskError)", "Run a function, and end it where it waits when the duration has passed", concurrency::task::deadline),
                 f("fn join(handle: Handle(a)) -> a", "Wait for a task to complete", concurrency::task::join),
                 f("fn spawn(f: Fn() -> a) -> Handle(a)", "Spawn a new lightweight task", concurrency::task::spawn),

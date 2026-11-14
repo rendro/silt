@@ -3536,7 +3536,9 @@ impl TypeChecker {
             for arg in args {
                 let _ = self.infer_expr(arg, env);
             }
-            return self.fresh_var();
+            // (What it gives is not known either: the error type, of
+            // which nothing more is asked, `inc(1) + inc(2)`.)
+            return Type::Error;
         }
         let owed_before = self.wanted.len();
         let given_before = self.given_waiting.len();

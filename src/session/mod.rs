@@ -618,6 +618,20 @@ impl Session {
             .into_iter()
             .partition(Diagnostic::is_warning);
         warnings.sort_by_key(|d| d.span.start);
+        // While the text has syntax errors, nothing is said to be never
+        // used: the use may be in what did not parse. (A name bound twice
+        // at the top level is no syntax error: everything parsed.)
+        let module = self.graph.module(id);
+        let syntax_error = |p: &Diagnostic| {
+            matches!(
+                p.phase(),
+                crate::diagnostic::Phase::Lex | crate::diagnostic::Phase::Parse
+            ) && p.code != Code::DuplicateTopLevel
+                && !p.is_warning()
+        };
+        if module.incomplete || module.problems.iter().any(syntax_error) {
+            warnings.retain(|d| !matches!(d.code, Code::UnusedName | Code::UnusedImport));
+        }
         let diagnostics = match self.graph.module(id).cut_short {
             true => bugs,
             false => bugs

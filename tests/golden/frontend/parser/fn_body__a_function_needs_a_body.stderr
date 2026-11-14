@@ -1,0 +1,20 @@
+error[parse]: `tock` has no body: a function needs a body in braces, `{ ... }`
+ --> fn_body__a_function_needs_a_body.silt:22:3
+    |
+ 22 |   fn tock(self)
+    |   ^^^^^^^^^^^^^ `tock` has no body: a function needs a body in braces, `{ ... }`
+  = help: only a trait's own methods may leave out the body; to keep the trait's default, leave the method out of the impl
+
+error[parse]: `helper` has no body: a function needs a body in braces, `{ ... }`
+ --> fn_body__a_function_needs_a_body.silt:25:1
+    |
+ 25 | fn helper()
+    | ^^^^^^^^^^^ `helper` has no body: a function needs a body in braces, `{ ... }`
+  = help: only a trait's own methods may leave out the body
+
+error[parse]: `compute` has no body: a function needs a body in braces, `{ ... }`
+ --> fn_body__a_function_needs_a_body.silt:27:1
+    |
+ 27 | fn compute(x: Int) -> Int
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^ `compute` has no body: a function needs a body in braces, `{ ... }`
+  = help: only a trait's own methods may leave out the body

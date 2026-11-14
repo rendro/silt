@@ -1,7 +1,7 @@
 -- cmd: check
 -- exit: 1
 -- An impl header that gives a type another number of type arguments
--- than it takes (`W()`, `W`, `W(Int, Int)`) is one error, in the one form
+-- than it takes (`W`, `W(Int, Int)`) is one error, in the one form
 -- for a number of type arguments; a use of the trait for the type owes
 -- no second one. In the header of a trait of type constructors the form
 -- writes `_` first (`W(_)`, `V(_, b)`). A supertrait with another number
@@ -23,20 +23,12 @@ type T(a) {
   v: a,
 }
 
-trait C {
-  fn c(self) -> Int
-}
-
 trait D {
   fn d(self) -> Int
 }
 
 trait E {
   fn e(self) -> Int
-}
-
-trait C for W() {
-  fn c(self) -> Int { 1 }
 }
 
 trait D for U {
@@ -72,7 +64,6 @@ trait Sub2: Holds {
 }
 
 fn main() {
-  println(C.c(W { v: 1 }))
   println(D.d(U { v: 1 }))
   println(E.e(T { v: 1 }))
 }
