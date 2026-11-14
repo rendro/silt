@@ -1,0 +1,25 @@
+-- cmd: check
+-- exit: 1
+-- What an impl method writes agrees with its trait: a type variable of the
+-- method's own where the trait declares a type is refused, in the result
+-- and in a parameter (it stands for any type, and agreed only by taking the
+-- trait's), also where the type comes from the trait's argument. A variable
+-- of the impl's header is no such variable.
+trait Mk { fn mk(self) -> Int }
+
+trait Mk for Int { fn mk(self) -> b { self } }
+
+trait Take { fn take(self, x: Int) -> Int }
+
+trait Take for Int { fn take(self, x: b) -> Int { self } }
+
+trait Conv(a) { fn conv(self) -> a }
+
+trait Conv(Int) for String { fn conv(self) -> c { 1 } }
+
+trait Mk for List(a) { fn mk(self) -> Int { 0 } }
+
+fn main() {
+  let n: Int = Conv.conv("s")
+  println((Mk.mk(1), Take.take(1, 2), n, Mk.mk([1])))
+}

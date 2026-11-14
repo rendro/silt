@@ -36,7 +36,7 @@ use crate::defs::{
 };
 use crate::diagnostic::{Code, Diagnostic};
 use crate::intern::{Symbol, intern, resolve};
-use crate::parser::{NO_IF, NO_IF_HELP};
+use crate::parser::{NO_BREAK, NO_IF, NO_IF_HELP, NO_WHILE_FOR};
 use crate::session::ModuleId;
 use crate::source::Span;
 
@@ -1861,6 +1861,14 @@ impl Resolver<'_> {
             .map(|(module, _)| *module)
             .collect();
         let Some(&(module, _)) = bound.first() else {
+            // (No `import first` where the file binds `first`: it would
+            // bind it twice.)
+            if self.scope.values.contains_key(&first) {
+                return format!(
+                    "`{name}` is in {}: add `import {first}.{{ {name} }}`",
+                    modules(others)
+                );
+            }
             return format!(
                 "`{name}` is in {}: write `{first}.{name}` after `import {first}`, \
                  or add `import {first}.{{ {name} }}`",
@@ -3134,17 +3142,12 @@ impl Resolver<'_> {
         }
         let mut message = format!("undefined variable '{name_str}'");
         let foreign = match name_str.as_str() {
-            "break" | "continue" => {
-                Some("silt has no 'break'/'continue' — return early or restructure the recursion")
-            }
+            "break" | "continue" => Some(NO_BREAK),
             "self" => Some(
                 "`self` is bound only as the first parameter of a trait method; name the \
                  value as a parameter instead",
             ),
-            "while" | "for" => Some(
-                "silt has no 'while'/'for' keywords — use tail-recursive 'loop' or 'list.each' / \
-                 'list.map'",
-            ),
+            "while" | "for" => Some(NO_WHILE_FOR),
             "_" => Some(PLACEHOLDER_VALUE_HELP),
             "try" => Some(
                 "silt has no `try`: `?` passes an `Err` on, and `match` takes a `Result` apart",
@@ -3190,6 +3193,14 @@ impl Resolver<'_> {
                         .map(|hint| format!("did you mean `{hint}`?"))
                         .or_else(|| {
                             let module = self.builtin_function_module(name)?;
+                            // (No `import module` where the file binds
+                            // the name: it would bind it twice.)
+                            if self.scope.values.contains_key(&intern(module)) {
+                                return Some(format!(
+                                    "`{name}` is in module `{module}`: add `import \
+                                     {module}.{{ {name} }}`"
+                                ));
+                            }
                             Some(format!(
                                 "`{name}` is in module `{module}`: write `{module}.{name}` \
                                  after `import {module}`, or add `import {module}.{{ {name} }}`"

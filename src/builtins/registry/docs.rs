@@ -997,7 +997,7 @@ mod tests {
         ))
         .expect("a page");
         assert!(
-            page.contains("| `toml.parse` | a record type, `json.Value`, an enum type, or a type with a `json.Decode` impl |"),
+            page.contains("| `toml.parse` | a record type, `json.Value`, an enum type that has a variant with fields, or a type with a `json.Decode` impl |"),
             "{page}"
         );
         assert!(

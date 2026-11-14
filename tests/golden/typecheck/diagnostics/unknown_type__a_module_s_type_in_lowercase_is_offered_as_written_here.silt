@@ -1,0 +1,16 @@
+-- cmd: check
+-- exit: 1
+-- A type of a builtin module written in lowercase is offered as this module
+-- can write it: `regex.Regex` where `regex` is imported, and with the import
+-- to add where it is not (`time.Weekday`); a prelude type stays bare.
+import regex
+
+fn f(x: regex) -> Int { 1 }
+
+fn g(d: weekday) -> Int { 1 }
+
+fn h(n: int) -> Int { n }
+
+fn main() {
+  println((f(1), g(1), h(1)))
+}

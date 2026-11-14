@@ -1,0 +1,17 @@
+-- toml.stringify writes a Float with the digits json.stringify writes: a
+-- large or a small one with an exponent, not hundreds of digits; it reads
+-- back as the number.
+import json
+import toml
+
+type F { big: Float, small: Float, mid: Float, whole: Float, neg: Float }
+
+fn main() {
+  let v = F { big: 1.0e300, small: 1.0e-7, mid: 123456.5, whole: 1.0e15, neg: -2.5e20 }
+  println(toml.stringify(v))
+  println(json.stringify(v))
+  match toml.stringify(v) {
+    Ok(s) -> println(toml.parse(s, F) == Ok(v))
+    Err(e) -> println(e)
+  }
+}

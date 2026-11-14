@@ -1,0 +1,13 @@
+error[type]: cannot infer the type of the rows this use of 'c.stringify' writes
+ --> stringify__rows_of_a_type_nothing_decides_are_refused_in_its_words.silt:11:23
+    |
+ 11 |   println(c.stringify([Ph { n: 1 }]))
+    |                       ^^^^^^^^^^^^^ cannot infer the type of the rows this use of 'c.stringify' writes
+  = help: annotate the list it is given
+
+error[type]: cannot infer the type of the rows this use of 'c.stringify' writes
+ --> stringify__rows_of_a_type_nothing_decides_are_refused_in_its_words.silt:12:11
+    |
+ 12 |   println([Ph { n: 1 }] |> c.stringify)
+    |           ^^^^^^^^^^^^^ cannot infer the type of the rows this use of 'c.stringify' writes
+  = help: annotate the list it is given

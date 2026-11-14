@@ -519,6 +519,10 @@ pub struct Tables {
     pub(super) module_names: HashMap<crate::session::ModuleId, Symbol>,
     /// The package of each module checked.
     pub(super) module_packages: HashMap<crate::session::ModuleId, crate::package_graph::PackageId>,
+    /// The name of each package a checked module is of, from its
+    /// `silt.toml`: a type of a module no import reaches is described by
+    /// it (`InErr of package inner`).
+    pub(super) package_names: HashMap<crate::package_graph::PackageId, Symbol>,
 }
 
 /// The checks a REPL cell made on a type still unknown when its check

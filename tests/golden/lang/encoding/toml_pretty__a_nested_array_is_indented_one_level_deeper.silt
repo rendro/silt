@@ -1,0 +1,18 @@
+-- toml.pretty writes an array of two or more values a line for each, an
+-- array inside it one level deeper, and reads back as the value.
+import toml
+
+type In { xs: List(List(Int)) }
+
+type O { nested: List(List(Int)), deep: List(List(List(Int))), rows: List(In) }
+
+fn main() {
+  let v = O { nested: [[1], [2, 3]], deep: [[[1, 2], [3]], [[4]]], rows: [In { xs: [[1, 2], [3]] }] }
+  match toml.pretty(v) {
+    Ok(s) -> {
+      println(s)
+      println(toml.parse(s, O) == Ok(v))
+    }
+    Err(e) -> println(e)
+  }
+}

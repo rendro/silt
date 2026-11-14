@@ -93,14 +93,20 @@ pub(crate) fn toml_de_error_to_variant(err: &::toml::de::Error, text: &str) -> V
 /// comment), and a number too large worded as `int.parse` words it.
 /// `rest` is the text from where the error is: an empty reason there,
 /// with nothing but white space left, is a value missing at the end
-/// (`a = `).
+/// (`a = `); a string the crate looked for where nothing but white space
+/// or a comment is left on the line, a value missing at the end of the
+/// line (`a = ⏎`).
 fn toml_reason(message: &str, rest: &str) -> String {
     let lines: Vec<&str> = (message.lines())
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .collect();
+    let line_rest = rest.split('\n').next().unwrap_or("").trim();
     match lines.as_slice() {
         [] if rest.trim().is_empty() => "a value is missing at the end of the text".to_string(),
+        ["invalid string", ..] if line_rest.is_empty() || line_rest.starts_with('#') => {
+            "a value is missing at the end of the line".to_string()
+        }
         [] => "a character that is not allowed here".to_string(),
         ["number too large to fit in target type"] => "number too large".to_string(),
         ["number too small to fit in target type"] => "number too small".to_string(),
@@ -354,17 +360,120 @@ fn text(caller: &str, data: Result<Data, VmError>, pretty: bool) -> Result<Value
     if least > crate::value::MAX_TEXT_LEN {
         return Err(super::common::too_long_text(caller, least));
     }
-    let text = match pretty {
-        true => ::toml::to_string_pretty(&Toml(&data)),
-        false => ::toml::to_string(&Toml(&data)),
-    };
-    match text {
+    match toml_text(&data, pretty) {
         Ok(s) if s.len() > crate::value::MAX_TEXT_LEN => {
             Err(super::common::too_long_text(caller, s.len()))
         }
         Ok(s) => Ok(Value::variant(bv::OK, [Value::string(s)])),
         Err(e) => Ok(toml_unknown_err(format!("{caller}: {e}"))),
     }
+}
+
+/// The TOML text of `data`, a table, as the `toml` crate writes a
+/// document (each value that holds tables as a `[table]` or
+/// `[[array]]` of its own), but for two things: a Float is written as
+/// `json.stringify` writes it (`1e+300`, not 301 digits), and in the
+/// `pretty` form an array of two or more values has a line for each,
+/// indented one level deeper than the array it is in (the crate
+/// indents every one by four spaces, an array in an array too). An
+/// array in an inline table stays on its line: an inline table is one
+/// line in TOML.
+fn toml_text(data: &Data, pretty: bool) -> Result<String, ::toml_edit::ser::Error> {
+    use serde::Serialize;
+    use toml_edit::visit_mut::VisitMut;
+    let value = Toml(data).serialize(toml_edit::ser::ValueSerializer::new())?;
+    let mut table = toml_edit::Item::Value(value)
+        .into_table()
+        .map_err(|_| toml_edit::ser::Error::UnsupportedType(None))?;
+    Layout {
+        pretty,
+        ..Layout::default()
+    }
+    .visit_table_mut(&mut table);
+    Ok(toml_edit::DocumentMut::from(table).to_string())
+}
+
+/// How [`toml_text`] lays a document out.
+#[derive(Default)]
+struct Layout {
+    pretty: bool,
+    /// In a value: no table in it becomes a `[table]` of its own.
+    in_value: bool,
+    /// In an inline table: every array in it stays on one line.
+    inline: bool,
+    /// The arrays around, each on lines of its own.
+    depth: usize,
+}
+
+impl toml_edit::visit_mut::VisitMut for Layout {
+    fn visit_item_mut(&mut self, node: &mut toml_edit::Item) {
+        let outer = self.in_value;
+        if !outer {
+            let item = std::mem::take(node);
+            let item = item.into_table().map_or_else(|i| i, toml_edit::Item::Table);
+            let item =
+                (item.into_array_of_tables()).map_or_else(|i| i, toml_edit::Item::ArrayOfTables);
+            self.in_value = item.is_value();
+            *node = item;
+        }
+        toml_edit::visit_mut::visit_item_mut(self, node);
+        self.in_value = outer;
+    }
+
+    fn visit_table_mut(&mut self, node: &mut toml_edit::Table) {
+        node.decor_mut().clear();
+        // (An empty table may mean something: it is written.)
+        if !node.is_empty() {
+            node.set_implicit(true);
+        }
+        toml_edit::visit_mut::visit_table_mut(self, node);
+    }
+
+    fn visit_value_mut(&mut self, node: &mut toml_edit::Value) {
+        if let toml_edit::Value::Float(f) = node
+            && let Some(written) = json_float(*f.value())
+            && let Ok(value) = written.parse::<toml_edit::Value>()
+        {
+            *node = value;
+        }
+        node.decor_mut().clear();
+        toml_edit::visit_mut::visit_value_mut(self, node);
+    }
+
+    fn visit_inline_table_mut(&mut self, node: &mut toml_edit::InlineTable) {
+        let outer = std::mem::replace(&mut self.inline, true);
+        toml_edit::visit_mut::visit_inline_table_mut(self, node);
+        self.inline = outer;
+    }
+
+    fn visit_array_mut(&mut self, node: &mut toml_edit::Array) {
+        let lines = self.pretty && !self.inline && node.len() > 1;
+        let depth = self.depth;
+        self.depth += usize::from(lines);
+        toml_edit::visit_mut::visit_array_mut(self, node);
+        self.depth = depth;
+        match lines {
+            true => {
+                let indent = "    ".repeat(depth + 1);
+                for item in node.iter_mut() {
+                    item.decor_mut().set_prefix(format!("\n{indent}"));
+                }
+                node.set_trailing(format!("\n{}", "    ".repeat(depth)));
+                node.set_trailing_comma(true);
+            }
+            false => {
+                node.set_trailing("");
+                node.set_trailing_comma(false);
+            }
+        }
+    }
+}
+
+/// The text `json.stringify` writes of the Float `f` where it is not
+/// the crate's (an exponent: `1e+300`, `1e-7`); None where it is.
+fn json_float(f: f64) -> Option<String> {
+    let text = serde_json::to_string(&f).ok()?;
+    (f.is_finite() && text.contains('e')).then_some(text)
 }
 
 /// The TOML text `s` decoded by `r` as `top` says, read once

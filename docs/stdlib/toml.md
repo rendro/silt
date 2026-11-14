@@ -54,7 +54,7 @@ names the type to decode into:
 
 | Function | Type argument |
 |----------|---------------|
-| `toml.parse` | a record type, `json.Value`, an enum type, or a type with a `json.Decode` impl |
+| `toml.parse` | a record type, `json.Value`, an enum type that has a variant with fields, or a type with a `json.Decode` impl |
 | `toml.parse_list` | `Int`, `Float`, `String`, `Bool`, `json.Value`, a record type, an enum type, a type with a `json.Decode` impl, or `List(T)`, `Option(T)`, `Map(String, T)` or a tuple of decodable types |
 | `toml.parse_map` | `Int`, `Float`, `String`, `Bool`, `json.Value`, a record type, an enum type, a type with a `json.Decode` impl, or `List(T)`, `Option(T)`, `Map(String, T)` or a tuple of decodable types |
 
@@ -90,8 +90,9 @@ impl that decodes its type parameter inside an `Option` (a record field
 `v: Option(t)`), given an `Option` that way, decodes an `Option` in an
 `Option`. Nothing crashes. In a field of a record or a variant, or anywhere
 inside a field's type (`v: Option(t)`, `items: List(Option(t))`), the
-decoder refuses the field when it runs: `Err(Other(...))`, "a value of
-type Option(Option(Int)) cannot be decoded". Outside every field, as the
+decoder refuses that record or enum type when it runs, whatever the document
+holds (the key left out, another variant of the enum): `Err(Other(...))`,
+"a value of type Option(Option(Int)) cannot be decoded". Outside every field, as the
 element type of `toml.parse_list` or the value type of `toml.parse_map`, a
 value reads as `Some(Some(...))`; an array or a table of TOML leaves no
 value out there.
@@ -350,15 +351,25 @@ toml.pretty(value: a) -> Result(String, TomlError) where a: json.Encode
 Serialises a silt record or map to a multi-line, human-friendly TOML document.
 TOML's default output is already readable (one key per line, nested tables as
 `[section]` headers, arrays of tables as `[[section]]` blocks), so
-`toml.pretty` differs from `toml.stringify` only in writing an array of plain
-values one element per line:
+`toml.pretty` differs from `toml.stringify` only in writing an array of two or
+more plain values one element per line, an array inside it one level deeper:
 
 ```text
 p = [
     1,
     2,
 ]
+nested = [
+    [1],
+    [
+        2,
+        3,
+    ],
+]
 ```
+
+An array inside an inline table stays on its line: TOML writes an inline table
+on one line.
 
 Note: the top-level value must be a record, a map or a variant with fields;
 TOML cannot represent a bare scalar or array at top level (nor a variant
@@ -398,7 +409,7 @@ follows:
 
 | Value | Written as |
 |-------|------------|
-| `Int`, `Float`, `String`, `Bool` | an integer, a float, a string, `true` or `false` |
+| `Int`, `Float`, `String`, `Bool` | an integer, a float, a string, `true` or `false`; a `Float` with the digits `json.stringify` writes (`1e+300`, `1e-7`, `0.5`) |
 | `List(a)`, a tuple | an array: `(1, "a")` is `[1, "a"]` |
 | `Map(k, v)` | a table; a key that is no `String` is written as its shown text (the `Float` key `1.0` reads `"1.0"`); a string inside a key is quoted (`["a", "b"]` reads `'["a", "b"]'`); two keys shown as one text (two `Bytes` longer than the 32 bytes their text shows, alike in those) are `Err(Other("toml.stringify: two keys of a map show as the same text: bytes(...)"))`; a key whose value is `None` is left out (TOML has no null), so a round trip loses the key: the map read back has no such key |
 | a record | a table of its fields, in the order the type declares them; a field that is `None` is left out (TOML has no null), and reads back as `None` |

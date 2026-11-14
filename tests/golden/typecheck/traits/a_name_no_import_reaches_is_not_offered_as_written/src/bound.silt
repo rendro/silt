@@ -1,0 +1,5 @@
+import mid
+
+fn da() -> Int { 1 }
+
+pub fn bound(x: apperror) -> Int { mid.two() + da() }

@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- A block given as a value that assigns a name and then goes on with another
+-- statement is no record: the error says that a let cannot be assigned.
+fn main() {
+  let count = 1
+  let total = {
+    count = count + 1
+    count * 2
+  }
+  println(total)
+}

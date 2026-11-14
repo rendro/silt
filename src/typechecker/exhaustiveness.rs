@@ -555,6 +555,28 @@ impl TypeChecker {
                      with an arm without one (`_ -> ...`)"
                         .to_string()
                 });
+                // (Variants this module cannot write, of a type of a
+                // module no import here reaches: matched by `_` only.)
+                let help = help.or_else(|| {
+                    let Type::Generic(enum_ty, _) = &scrutinee_ty else {
+                        return None;
+                    };
+                    let info = self.tables.enums.get(enum_ty)?;
+                    let first = info.variants.first()?;
+                    let (these, them) = match msg.starts_with("missing variants ") {
+                        true => ("these are variants", "them"),
+                        false => ("this is a variant", "it"),
+                    };
+                    (msg.starts_with("missing variant")
+                        && self.variant_out_of_reach(*enum_ty, first.name))
+                    .then(|| {
+                        let ty = self.show_type(&Type::Generic(*enum_ty, Vec::new()));
+                        format!(
+                            "{these} of {ty}, whose module no import here reaches, so no \
+                             pattern here can name {them}: an arm `_ -> ...` matches {them}"
+                        )
+                    })
+                });
                 self.error_help(
                     Code::NonExhaustive,
                     (format!("non-exhaustive match: {msg}"), help),
