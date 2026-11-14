@@ -179,6 +179,15 @@ fn every_example_type_checks_and_has_no_warnings() {
     );
 }
 
+/// Whether a block shows a program the compiler refuses, on purpose: a
+/// line of it ends in `-- error: <message>`. Such a block is no program
+/// to copy and run; the docs walker
+/// (tests/meta/docs_markdown_println_parity_tests.rs) runs it and
+/// compares the message with the error the run ends with.
+fn shows_a_refusal(src: &str) -> bool {
+    src.lines().any(|line| line.contains(" -- error: "))
+}
+
 /// Extracts every ```silt fenced block from a markdown file. Returns a
 /// vector of `(opener_line_number_1indexed, block_source)` tuples. The
 /// opener line is the line of the ```silt fence (not the first content
@@ -239,7 +248,9 @@ fn feature_is_built(name: &str) -> bool {
 /// This locks in the convergent decision that every runnable code block
 /// shipped in user-facing docs must be copy-paste-able: a reader should
 /// be able to select the block, save it to a `.silt` file, and have the
-/// type checker accept it without edits.
+/// type checker accept it without edits. A block that shows a refusal on
+/// purpose (a line ends in `-- error: <message>`) is no such program: the
+/// docs walker of tests/meta compares its message instead.
 ///
 /// Snippet blocks (type signatures, REPL-style one-liners, partial
 /// programs without a `fn main`) are intentionally skipped — those are
@@ -292,7 +303,8 @@ fn all_doc_fn_main_blocks_type_check() {
             .unwrap_or_else(|e| panic!("failed to read {}: {}", doc_path.display(), e));
         let blocks = extract_silt_blocks(&body);
         for (opener_line, src) in blocks {
-            if !src.contains("fn main") {
+            // (A block that shows a refusal is checked by the docs walker.)
+            if !src.contains("fn main") || shows_a_refusal(&src) {
                 continue;
             }
             let file_stem = doc_path
@@ -663,7 +675,8 @@ fn test_doc_fn_main_blocks_emit_no_compile_warnings() {
             .unwrap_or_else(|e| panic!("failed to read {}: {}", doc_path.display(), e));
         let blocks = extract_silt_blocks(&body);
         for (opener_line, src) in blocks {
-            if !src.contains("fn main") {
+            // (A block that shows a refusal is checked by the docs walker.)
+            if !src.contains("fn main") || shows_a_refusal(&src) {
                 continue;
             }
             let file_stem = doc_path
@@ -861,7 +874,11 @@ fn test_getting_started_tooling_block_matches_main_help() {
 ///    cleanly but deliberately demonstrate runtime behavior the
 ///    walker cannot validate.
 ///
-/// 2. The block body contains any substring from `DENY_SUBSTRINGS`
+/// 2. A line of it ends in `-- error: <message>` (`shows_a_refusal`):
+///    it shows a program the compiler refuses, and the docs walker
+///    compares the message.
+///
+/// 3. The block body contains any substring from `DENY_SUBSTRINGS`
 ///    below. This is the heuristic opt-out. Each entry documents why.
 ///    The deny list is intentionally conservative — a false positive
 ///    (block skipped when it could have run) is far cheaper than a
@@ -976,7 +993,13 @@ fn all_doc_fn_main_blocks_run_if_safe() {
             }
         }
 
-        // 2. Heuristic deny list.
+        // 2. A block that shows a refusal on purpose: the docs walker
+        //    runs it and compares its `-- error:` message.
+        if shows_a_refusal(src) {
+            return Some("shows a refusal (`-- error:`)".to_string());
+        }
+
+        // 3. Heuristic deny list.
         for needle in DENY_SUBSTRINGS {
             if src.contains(needle) {
                 return Some(format!("contains `{needle}`"));

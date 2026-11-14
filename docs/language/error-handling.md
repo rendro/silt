@@ -332,13 +332,15 @@ stub stands for the value it will be, and the code after it is checked
 as for that value:
 
 ```silt
+import string
+
 fn todo() -> Never {
   panic("todo")
 }
 
 fn port() -> Int {
   let port: Int = todo()
-  let name: String = port -- error: type mismatch: expected String, got Int
+  println(string.length(port)) -- error: type mismatch: expected String, got Int
   port
 }
 
