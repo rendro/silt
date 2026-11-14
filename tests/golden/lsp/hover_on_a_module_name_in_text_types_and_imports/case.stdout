@@ -19,8 +19,10 @@ String
 ```
 > hover 40:12
 ```silt
-()
+module shapes
 ```
+
+shapes.silt
 > hover 40:10
 ```silt
 module shapes
@@ -35,8 +37,10 @@ module json
 Parse JSON strings into typed silt values and serialize values to JSON.
 > hover 38:14
 ```silt
-()
+module json
 ```
+
+Parse JSON strings into typed silt values and serialize values to JSON.
 > hover 39:26
 ```silt
 Box
