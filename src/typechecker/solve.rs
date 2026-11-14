@@ -950,7 +950,9 @@ impl TypeChecker {
             .map(|r| resolve(r.name))
             .filter(|name| name == "Result" || name == "Option");
         if let Some(name) = &named {
-            message.push_str(&format!(", a type of this program that is not the builtin {name}"));
+            message.push_str(&format!(
+                ", a type of this program that is not the builtin {name}"
+            ));
         }
         let help = named.map(|_| "give the type another name".to_string());
         self.error_help(Code::InvalidQuestion, (message, help), span);

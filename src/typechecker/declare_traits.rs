@@ -460,7 +460,8 @@ impl TypeChecker {
         // following it would bind the name twice.)
         let bound_here = |path: Symbol| {
             (self.module_spelled.values().chain(self.spelled.values())).any(|b| *b == path)
-                || (self.defs.as_ref()).is_some_and(|defs| !defs.named(self.module, path).is_empty())
+                || (self.defs.as_ref())
+                    .is_some_and(|defs| !defs.named(self.module, path).is_empty())
         };
         let spelled = |module: crate::session::ModuleId, name: &str| -> Option<String> {
             match self.spelling_in_reach(module, name) {
