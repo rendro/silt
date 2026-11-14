@@ -1,0 +1,25 @@
+-- cmd: fmt
+-- `-> ()` stays over a body that holds a `return` of another value than
+-- `()`: with it, that `return` is the error ("expected (), got Int");
+-- left out, the first such `return` would set the result's type and the
+-- error would move to the last line. (Both programs are refused; fmt
+-- keeps which error they get.)
+fn early(n: Int) -> () {
+  match n {
+    0 -> return 5
+    _ -> ()
+  }
+  ()
+}
+
+fn bound() -> () {
+  let _x = return 5
+}
+
+fn unit_only(n: Int) {
+  match n {
+    0 -> return ()
+    _ -> ()
+  }
+  ()
+}
