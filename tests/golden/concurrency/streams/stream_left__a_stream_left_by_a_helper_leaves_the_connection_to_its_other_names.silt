@@ -1,0 +1,41 @@
+-- requires-feature: tcp
+-- A stream holds its connection as any other name does. A helper reads
+-- the head of a request through stream.tcp_lines(conn) and returns: its
+-- stream is left, and lets go of the connection, which `conn` still
+-- holds. The handler then answers on `conn`, and the client reads the
+-- answer. (Leaving the stream shut the connection, and the answer could
+-- not be written.)
+import bytes
+import channel
+import list
+import result
+import stream
+import task
+import tcp
+
+fn head(conn: tcp.TcpStream) -> List(String) {
+  let lines = stream.tcp_lines(conn)
+  loop got = [] {
+    match channel.receive(lines) {
+      Some(Ok("")) -> got
+      Some(Ok(line)) -> loop(list.append(got, line))
+      _ -> got
+    }
+  }
+}
+
+fn main() {
+  when let Ok(l) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let port = tcp.local_port(l)
+  let server = task.spawn { ->
+    when let Ok(conn) = tcp.accept(l) else { panic("no accept") }
+    let got = head(conn)
+    let w = tcp.write(conn, bytes.from_string("got {list.length(got)} lines\n"))
+    "server wrote: {w}"
+  }
+  when let Ok(c) = tcp.connect("127.0.0.1:{port}") else { panic("no connect") }
+  let _ = tcp.write(c, bytes.from_string("a\nb\n\n"))
+  let answer = tcp.read(c, 100) |> result.map { b -> bytes.to_string(b) |> result.unwrap_or("") }
+  println("client read: {answer}")
+  println(task.join(server))
+}

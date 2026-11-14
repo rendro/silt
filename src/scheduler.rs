@@ -119,17 +119,13 @@ pub const WORKER_STACK_BYTES: usize = if cfg!(target_pointer_width = "64") {
 /// whose tasks keep failing must not grow without bound.
 const MAX_SHOWN_FAILURES: usize = 64;
 
-/// Parse a duration string like `"30s"`, `"500ms"`, `"5m"`, `"2h"`, or
-/// `"none"`/empty. Returns `None` for disabled/invalid input — the caller
-/// treats `None` as "no timeout configured" (infinite wait).
+/// A duration like `"30s"`, `"500ms"`, `"5m"`, `"2h"`: a whole number
+/// above 0 with a unit. `None` for anything else.
 fn parse_duration(s: &str) -> Option<Duration> {
     let s = s.trim();
-    if s.is_empty() || s.eq_ignore_ascii_case("none") || s.eq_ignore_ascii_case("off") {
-        return None;
-    }
     let unit_start = s.find(|c: char| c.is_alphabetic())?;
     let (num_part, unit) = s.split_at(unit_start);
-    let n: u64 = num_part.trim().parse().ok()?;
+    let n: u64 = num_part.trim().parse().ok().filter(|n| *n > 0)?;
     match unit.trim().to_lowercase().as_str() {
         "ms" => Some(Duration::from_millis(n)),
         "s" | "sec" | "secs" => Some(Duration::from_secs(n)),
@@ -137,6 +133,52 @@ fn parse_duration(s: &str) -> Option<Duration> {
         "h" | "hr" | "hrs" => Some(Duration::from_secs(n.checked_mul(3600)?)),
         _ => None,
     }
+}
+
+/// The value of the environment variable `name`; `None` where it is
+/// not set or empty.
+fn setting(name: &str) -> Option<String> {
+    std::env::var_os(name)
+        .map(|value| value.to_string_lossy().into_owned())
+        .filter(|value| !value.trim().is_empty())
+}
+
+/// `SILT_IO_TIMEOUT`: `Ok(None)` where it is not set, the error's text
+/// where silt cannot read it.
+fn io_timeout_setting() -> Result<Option<Duration>, String> {
+    let Some(value) = setting("SILT_IO_TIMEOUT") else {
+        return Ok(None);
+    };
+    match parse_duration(&value) {
+        Some(timeout) => Ok(Some(timeout)),
+        None => Err(format!(
+            "SILT_IO_TIMEOUT='{value}' is not a duration: write a whole number above 0 with a unit, as in 500ms, 5s, 2m or 1h"
+        )),
+    }
+}
+
+/// `SILT_TIME_SLICE`: `Ok(None)` where it is not set, the error's text
+/// where silt cannot read it.
+fn time_slice_setting() -> Result<Option<usize>, String> {
+    let Some(value) = setting("SILT_TIME_SLICE") else {
+        return Ok(None);
+    };
+    match value.trim().parse::<usize>() {
+        Ok(slice) if slice > 0 => Ok(Some(slice)),
+        _ => Err(format!(
+            "SILT_TIME_SLICE='{value}' is not a number of steps: write a whole number above 0, as in 500"
+        )),
+    }
+}
+
+/// What is wrong with the runtime's settings in the environment
+/// (`SILT_IO_TIMEOUT`, `SILT_TIME_SLICE`), if anything. `silt run` and
+/// `silt test` refuse to start then: a safety setting with a typo would
+/// otherwise be silently not there.
+pub fn settings_error() -> Option<String> {
+    io_timeout_setting()
+        .err()
+        .or_else(|| time_slice_setting().err())
 }
 
 /// What the error of an I/O operation says when the wait for it ended
@@ -272,6 +314,9 @@ struct Inner {
     /// The verdict, between the check that gave it and the program's
     /// thread that raises it.
     deadlock: Mutex<Option<VmError>>,
+    /// Test-only: the event whose check gave the verdict ([`GivenAt`]).
+    #[cfg(test)]
+    verdict_given_at: Mutex<Option<&'static str>>,
     /// The names of the waits of threads.
     next_thread_wait: AtomicU64,
     /// The owner tag of the tasks spawned outside any task
@@ -470,11 +515,30 @@ pub(crate) struct Running {
     /// The tasks it counts with; `None` for a guard taken on a thread
     /// that was counted already.
     counted: Option<Arc<Group>>,
+    /// The code ended by a failure ([`Running::failed`]).
+    failed: bool,
+}
+
+impl Running {
+    /// The code ended by a failure: what it printed is waited for only
+    /// while the reader takes some of it, so that the failure is said
+    /// even where the output is stuck (a pipe nobody reads).
+    pub(crate) fn failed(&mut self) {
+        self.failed = true;
+    }
 }
 
 impl Drop for Running {
     fn drop(&mut self) {
         if let Some(group) = &self.counted {
+            // What the code printed is written out before the call
+            // that ran it returns (and the thread still counts while
+            // it waits for that).
+            if thread::panicking() || self.failed {
+                self.inner.io.drain_failing(LAST_WORDS);
+            } else {
+                self.inner.io.drain();
+            }
             let _ = COUNTED.try_with(|counted| counted.set(false));
             group.live.fetch_sub(1, Ordering::SeqCst);
             self.inner.check(group);
@@ -487,9 +551,9 @@ impl Scheduler {
     /// deadlines are read on the clock of `io`, and its reports go to
     /// the stderr of `io`.
     pub fn new(io: HostIo) -> Self {
-        let global_io_timeout = std::env::var("SILT_IO_TIMEOUT")
-            .ok()
-            .and_then(|s| parse_duration(&s));
+        // (A value silt cannot read is refused before the program
+        // starts: `settings_error`.)
+        let global_io_timeout = io_timeout_setting().ok().flatten();
         let timer = sync::Timer::new(io.clone());
         let inner = Arc::new_cyclic(|inner: &Weak<Inner>| {
             let ready = inner.clone();
@@ -513,6 +577,8 @@ impl Scheduler {
                 }),
                 main: Mutex::new(None),
                 deadlock: Mutex::new(None),
+                #[cfg(test)]
+                verdict_given_at: Mutex::new(None),
                 next_thread_wait: AtomicU64::new(0),
                 owner: AtomicU64::new(0),
                 outer: AtomicU64::new(0),
@@ -602,6 +668,17 @@ impl Scheduler {
         report_unjoined_failures(&self.inner)
     }
 
+    /// Whether a task of the program has failed and nobody has joined
+    /// or cancelled it: the program ends by a failure then.
+    pub(crate) fn has_unhandled_failures(&self) -> bool {
+        let unhandled = |tasks: &FailedTasks| {
+            tasks.owners.values().any(|failed| {
+                failed.counted > 0 || failed.handles.iter().any(|h| h.has_unjoined_failure())
+            })
+        };
+        unhandled(&self.inner.failed_tasks.lock()) || unhandled(&collected_failures().lock())
+    }
+
     /// Start the task `id`, whose VM `vm` has its first frame and
     /// whose result goes to `handle`.
     ///
@@ -614,6 +691,8 @@ impl Scheduler {
         handle: Arc<TaskHandle>,
     ) -> Result<(), String> {
         self.begin();
+        // The stages that were stopped first: their slots count.
+        run_deferred();
         vm.cancelled = Some(handle.cancel_flag());
         vm.deadline = handle.deadline();
         vm.late = handle.deadline().map(|_| handle.late());
@@ -739,6 +818,7 @@ impl Scheduler {
         Running {
             inner: self.inner.clone(),
             counted,
+            failed: false,
         }
     }
 
@@ -904,6 +984,9 @@ impl Scheduler {
         group.parking.fetch_add(1, Ordering::SeqCst);
         // (A thread of a program that has exited begins no wait.)
         let exited = || inner.exit.get().is_some();
+        // What the code let go of before it waits is stopped first, as
+        // for a task.
+        run_deferred();
         let resumed = match inner.parking.park(id, sleeper, wait, exited) {
             Some((_, resumed)) => {
                 group.parking.fetch_sub(1, Ordering::SeqCst);
@@ -913,7 +996,11 @@ impl Scheduler {
                 if timed {
                     inner.timer_armed();
                 }
+                #[cfg(test)]
+                let at = GivenAt::event("a thread parked");
                 inner.check(&group);
+                #[cfg(test)]
+                drop(at);
                 inner.wait_thread(&park)
             }
         };
@@ -1322,7 +1409,9 @@ pub fn claim_program_failure() {
 /// calling thread waits for that end instead.
 ///
 /// What the program printed and stdout still holds is written out
-/// first, all of it, waiting for the reader as a normal end does.
+/// first, all of it, waiting for the reader as a normal end does: what
+/// the output's writers hold (`vm::io`'s lanes), as long as their
+/// reader takes some of it within [`LAST_WORDS`], then stdout's buffer.
 /// stdout's lock is taken for that and kept until the process is gone,
 /// so nothing is printed after the exit. Only the wait for the lock is
 /// bounded: another task's write that holds it, held up by a full
@@ -1338,6 +1427,22 @@ pub(crate) fn exit_from_the_program(code: u8) -> ! {
         }
     }
     end_as(WITH_STATUS);
+    // What the program printed and the writers still hold goes first,
+    // as long as their readers take it.
+    crate::vm::drain_process_output(LAST_WORDS);
+    // A print to stdout that failed after it had returned is the
+    // program's failure, as it would have been at the print: reported,
+    // and the status is 1.
+    let code = match crate::vm::unraised_process_stdout_failure() {
+        Some(why) => {
+            let _ = crate::vm::write_stderr(&format!(
+                "error[runtime]: cannot write to stdout: {why}
+"
+            ));
+            1
+        }
+        None => code,
+    };
     let (locked, has_lock) = std::sync::mpsc::channel();
     let (done, flushed) = std::sync::mpsc::channel();
     let flushes = move || {
@@ -1447,7 +1552,7 @@ pub fn exit_with_internal_error(payload: &Box<dyn Any + Send>) -> ! {
 /// is lost is the last text the program printed without a line end,
 /// or, where stderr is what is blocked, the line itself. (A stderr that
 /// is a file is waited for without a bound: [`stderr_is_a_file`].)
-const LAST_WORDS: Duration = Duration::from_secs(1);
+pub(crate) const LAST_WORDS: Duration = Duration::from_secs(1);
 
 /// Set by the thread that says the last words: there is one
 /// ([`InternalError::end`]).
@@ -1490,8 +1595,11 @@ impl InternalError {
         // held up. The program's text comes after the line, if the
         // line is written within half the time.
         let flushes = move || {
-            let mut stdout = std::io::stdout().lock();
             let _ = line_waits.recv_timeout(LAST_WORDS / 2);
+            // What the output's writers still hold first (they take
+            // stdout's lock to write it).
+            crate::vm::drain_process_output(LAST_WORDS / 4);
+            let mut stdout = std::io::stdout().lock();
             let _ = stdout.flush();
             let _ = done.send(());
             loop {
@@ -1801,6 +1909,7 @@ impl Inner {
         // end. (The task is in hand here: it spawns nothing meanwhile.)
         self.cancel_below(&handle);
         handle.expire(&self.parking);
+        handle.stop(&self.parking);
         drop(handle);
         self.ended(&group);
     }
@@ -1886,6 +1995,9 @@ impl Inner {
             vm, handle, group, ..
         } = task;
         drop(vm);
+        // Then whoever waits for its end (`task.cancel`) is told,
+        // while it still counts: a wait for it is never seen as stuck.
+        handle.stop(&self.parking);
         drop(handle);
         self.ended(&group);
     }
@@ -1894,6 +2006,8 @@ impl Inner {
     fn ended(&self, group: &Group) {
         self.spawned.fetch_sub(1, Ordering::SeqCst);
         group.live.fetch_sub(1, Ordering::SeqCst);
+        #[cfg(test)]
+        let _at = GivenAt::event("a task ended");
         self.check(group);
     }
 
@@ -2190,6 +2304,10 @@ impl Inner {
                 self.end_task(task);
             }
             SliceResult::Blocked(wait) => {
+                // What the task let go of before it waits is stopped
+                // first (a stream it left): its stop comes before
+                // whatever the task's peer does in answer to the wait.
+                run_deferred();
                 // The task's own: its cancel flag and its deadline.
                 // Every wait of a task comes through here, whichever
                 // frame of it waits.
@@ -2221,6 +2339,8 @@ impl Inner {
                         if timed {
                             self.timer_armed();
                         }
+                        #[cfg(test)]
+                        let _at = GivenAt::event("a task parked");
                         self.check(&group);
                     }
                 }
@@ -2314,6 +2434,10 @@ impl Inner {
                 // `None`: the program's thread is not among those that
                 // wait (its wait is over, or not yet begun).
                 if let Some(verdict) = verdict.flatten() {
+                    #[cfg(test)]
+                    {
+                        *self.verdict_given_at.lock() = GivenAt::now();
+                    }
                     *self.deadlock.lock() = Some(verdict);
                     self.parking.cancel(id);
                 }
@@ -2328,6 +2452,40 @@ impl Inner {
         for group in groups {
             self.check(&group);
         }
+    }
+}
+
+/// Test-only: which event the check that runs on this thread follows,
+/// while it runs (a task's end, a task's park). The check that gives a
+/// deadlock verdict notes it (`Inner::verdict_given_at`), so a test
+/// can say that the verdict came with the last event of the program,
+/// not later, without measuring a time.
+#[cfg(test)]
+struct GivenAt(Option<&'static str>);
+
+#[cfg(test)]
+thread_local! {
+    static GIVEN_AT: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+impl GivenAt {
+    /// The checks on this thread follow `event` until the value is
+    /// dropped.
+    fn event(event: &'static str) -> GivenAt {
+        GivenAt(GIVEN_AT.with(|at| at.replace(Some(event))))
+    }
+
+    /// The event the checks on this thread follow now.
+    fn now() -> Option<&'static str> {
+        GIVEN_AT.with(std::cell::Cell::get)
+    }
+}
+
+#[cfg(test)]
+impl Drop for GivenAt {
+    fn drop(&mut self) {
+        GIVEN_AT.with(|at| at.set(self.0));
     }
 }
 
@@ -2392,14 +2550,15 @@ fn waits_of_the_others(own: &[&Waiting<'_, Sleeper>], main: TaskId) -> Vec<(Stri
                     // A stream stage sends on its output, and waits there
                     // for its reader to ask for a value or to make room;
                     // a channel that its function sends to is named.
-                    Source::Send(channel) | Source::Demand(channel)
+                    Source::Send(channel)
                         if stage.is_some_and(|stage| stage.output == channel.id()) =>
                     {
                         "for its output to be read".to_string()
                     }
-                    Source::Send(channel) | Source::Demand(channel) => {
-                        format!("to send to <channel:{}>", channel.id())
-                    }
+                    // (Only what feeds a channel waits to be asked: a
+                    // stage, on its output.)
+                    Source::Demand(_) => "for its output to be read".to_string(),
+                    Source::Send(channel) => format!("to send to <channel:{}>", channel.id()),
                     Source::Cell(cell) => match cell.label() {
                         Some(label) => format!("for {label} to end"),
                         None => "for a task to end".to_string(),
@@ -2469,11 +2628,10 @@ const LATE_STEPS: usize = STANDARD_SLICE;
 pub(crate) fn time_slice() -> usize {
     static SLICE: OnceLock<usize> = OnceLock::new();
     *SLICE.get_or_init(|| {
-        std::env::var("SILT_TIME_SLICE")
+        time_slice_setting()
             .ok()
-            .and_then(|s| s.parse().ok())
+            .flatten()
             .unwrap_or(STANDARD_SLICE)
-            .max(1)
     })
 }
 
@@ -2547,6 +2705,7 @@ fn worker_loop(inner: Arc<Inner>) {
     let work = AssertUnwindSafe(|| {
         while let Some(task) = inner.next_task() {
             inner.run_slice(task, true);
+            run_deferred();
         }
     });
     if let Err(payload) = catch_unwind(work) {
@@ -2850,6 +3009,42 @@ fn report_unjoined_failures(inner: &Inner) -> usize {
     reported
 }
 
+/// What is to be done where the runtime holds no lock of its own: the
+/// stops of stream stages whose output every reader has let go of
+/// (`Channel`'s `Drop`). A channel is dropped wherever its last holder
+/// lets it go, maybe under the lock of another channel or of the
+/// registry of waits, which the stop (a cancel of the stage's task)
+/// takes. They are run after each slice a worker runs, after each slice
+/// of a thread that runs silt code, and before a task is spawned
+/// ([`run_deferred`]).
+static DEFERRED: std::sync::Mutex<Vec<Box<dyn FnOnce() + Send>>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// Whether [`DEFERRED`] has anything: the look without its lock.
+static DEFERRED_ANY: AtomicBool = AtomicBool::new(false);
+
+/// Do `stop` where the runtime holds no lock ([`DEFERRED`]).
+pub(crate) fn defer(stop: impl FnOnce() + Send + 'static) {
+    let mut deferred = DEFERRED.lock().unwrap_or_else(|e| e.into_inner());
+    deferred.push(Box::new(stop));
+    DEFERRED_ANY.store(true, Ordering::SeqCst);
+}
+
+/// Run what was deferred ([`defer`]), and what that defers in turn. The
+/// caller holds no lock of the runtime.
+pub(crate) fn run_deferred() {
+    while DEFERRED_ANY.load(Ordering::SeqCst) {
+        let stops = {
+            let mut deferred = DEFERRED.lock().unwrap_or_else(|e| e.into_inner());
+            DEFERRED_ANY.store(false, Ordering::SeqCst);
+            std::mem::take(&mut *deferred)
+        };
+        for stop in stops {
+            stop();
+        }
+    }
+}
+
 /// The schedulers whose workers a thread has started.
 ///
 /// The thread that spawns the first task of a program is the thread
@@ -3032,13 +3227,21 @@ impl NotShown {
             at,
             UnjoinedFailures::not_shown_message(self.count),
         )
-        .with_help(NOT_SHOWN_HELP)
+        .with_help(not_shown_help(self.count))
     }
 }
 
-/// What the report of the failures that are not shown advises.
-const NOT_SHOWN_HELP: &str = "the first of them was spawned here: join each task with \
-     task.join, or cancel it with task.cancel if you don't need its result";
+/// What the report of `count` failures that are not shown advises.
+fn not_shown_help(count: usize) -> String {
+    let spawned = match count {
+        1 => "it was spawned here",
+        _ => "the first of them was spawned here",
+    };
+    format!(
+        "{spawned}: join each task with task.join, or cancel it with task.cancel if you \
+         don't need its result"
+    )
+}
 
 impl UnjoinedFailures {
     /// True if there is nothing to report.
@@ -3050,9 +3253,12 @@ impl UnjoinedFailures {
     /// not shown. It names no place: which tasks they were is not
     /// told.
     pub fn not_shown_message(count: usize) -> String {
+        let failed = match count {
+            1 => "task failed and was",
+            _ => "tasks failed and were",
+        };
         format!(
-            "{count} more task(s) failed and were never joined (at most \
-             {MAX_SHOWN_FAILURES} failures are shown)"
+            "{count} more {failed} never joined (at most {MAX_SHOWN_FAILURES} failures are shown)"
         )
     }
 }
@@ -3136,12 +3342,34 @@ mod tests {
         (result, out, Instant::now())
     }
 
-    /// How long after the last event of a deadlocked program the
-    /// verdict may come. It is given by the event itself (the last
-    /// park, the last task's end, the last timer), so the bound is
-    /// that of waking one thread. A loaded Windows runner of CI has
-    /// taken 143 ms to wake one, so there the bound is wider.
-    const VERDICT_WITHIN: Duration = Duration::from_millis(if cfg!(windows) { 500 } else { 100 });
+    /// [`run`], with the event whose check gave the deadlock verdict
+    /// ([`super::GivenAt`]). A verdict is given by the last event of a
+    /// deadlocked program itself, not by a later look: that is what a
+    /// test asks here, not how soon after it the verdict came (a time
+    /// that a busy machine stretches: a CI runner took 109 ms once).
+    fn run_given(source: &str) -> (Result<Value, VmError>, Option<&'static str>) {
+        let (program, given) =
+            crate::session::testing::compile_given(source).expect("the program compiles");
+        let out = Timed::default();
+        let mut vm = Vm::new(HostIo::new(out.clone(), out));
+        let result = vm
+            .run_program(&program)
+            .map(|()| given.last().unwrap_or(Value::Unit));
+        let at = *vm.scheduler().inner.verdict_given_at.lock();
+        (result, at)
+    }
+
+    /// The verdict was given at `event`, the last event of the program.
+    /// (Its task sleeps 150 ms first, so that the program's thread has
+    /// parked by then. Where a busy machine held the program's thread
+    /// up for longer, its park was the last event and gave it: as
+    /// right, and no failure.)
+    fn assert_given_by_the_last(at: Option<&'static str>, event: &str) {
+        assert!(
+            at == Some(event) || at == Some("a thread parked"),
+            "the verdict was given at {at:?}, not at the last event ({event})"
+        );
+    }
 
     fn assert_deadlock(result: Result<Value, VmError>, what: &str) {
         let error = result.expect_err("the program is deadlocked");
@@ -3285,7 +3513,8 @@ fn main() {
 
     #[test]
     fn a_deadlock_is_reported_when_the_last_task_parks() {
-        let (result, out, end) = run(r#"
+        let (result, at) = run_given(
+            r#"
 import channel
 import task
 import time
@@ -3300,15 +3529,16 @@ fn main() {
   host.give(channel.receive(a))
 }
 import host
-"#);
+"#,
+        );
         assert_deadlock(result, "channel receive with no counterparty");
-        let after = end.duration_since(out.at("last"));
-        assert!(after < VERDICT_WITHIN, "the verdict came {after:?} late");
+        assert_given_by_the_last(at, "a task parked");
     }
 
     #[test]
     fn a_deadlock_is_reported_when_the_last_task_ends() {
-        let (result, out, end) = run(r#"
+        let (result, at) = run_given(
+            r#"
 import channel
 import task
 import time
@@ -3321,10 +3551,10 @@ fn main() {
   channel.send(ch, 1)
   task.join(ends)
 }
-"#);
+"#,
+        );
         assert_deadlock(result, "channel send with no counterparty");
-        let after = end.duration_since(out.at("last"));
-        assert!(after < VERDICT_WITHIN, "the verdict came {after:?} late");
+        assert_given_by_the_last(at, "a task ended");
     }
 
     #[test]
@@ -3530,7 +3760,7 @@ fn main() {
         let printed = out.take();
         let shown = printed.matches(what).count();
         let counted: usize = printed
-            .split(" more task(s) failed")
+            .split(" more task")
             .filter_map(|before| before.rsplit(' ').next()?.parse::<usize>().ok())
             .sum();
         (printed, shown, counted, most)
@@ -3807,5 +4037,186 @@ fn main() {
         let inner = Arc::downgrade(&vm.scheduler().inner);
         drop(vm);
         wait_for_the_end(inner);
+    }
+
+    /// A stream that nothing can read any more is closed, and its
+    /// stages end: a loop that reads one value of each of 1,000 streams
+    /// and leaves them keeps no stage of them. (They stayed, parked: two
+    /// tasks for each stream, and in a longer loop the task limit.)
+    /// The bound leaves room for the stages of the last streams, which
+    /// may still be running their last steps.
+    #[test]
+    fn streams_left_by_a_loop_keep_no_stage() {
+        let (program, _) = crate::session::testing::compile_given(
+            r#"
+import channel
+import list
+import stream
+fn main() {
+  list.each(1..1000) { i ->
+    let s = stream.from_range(i, i + 100) |> stream.map { x -> x + 1 }
+    let _ = channel.receive(s)
+  }
+}
+"#,
+        )
+        .expect("the program compiles");
+        let out = Timed::default();
+        let mut vm = Vm::new(HostIo::new(out.clone(), out));
+        vm.run_program(&program).expect("the program runs");
+        let left = vm.scheduler().inner.spawned.load(Ordering::SeqCst);
+        assert!(left <= 64, "{left} stages of left streams are still there");
+    }
+
+    /// One output that takes both streams of a program, as `2>&1` does:
+    /// each write is noted with the stream it came by.
+    #[derive(Clone)]
+    struct Joined(Arc<Mutex<Vec<String>>>, &'static str);
+
+    impl Output for Joined {
+        fn write(&self, text: &str) -> std::io::Result<()> {
+            self.0.lock().push(format!("{}{}", self.1, text));
+            Ok(())
+        }
+    }
+
+    /// The writer keeps the order of the prints to stdout and to stderr:
+    /// a line of each, in turn, come out in turn. (There were two
+    /// writers, one for each stream, and with `2>&1` the lines of one
+    /// stream came first.)
+    #[test]
+    fn prints_to_stdout_and_stderr_keep_their_order() {
+        let (program, _) = crate::session::testing::compile_given(
+            r#"
+import io
+import list
+fn main() {
+  list.each(1..300) { i ->
+    println("out {i}")
+    io.eprintln("err {i}")
+  }
+}
+"#,
+        )
+        .expect("the program compiles");
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        let io = HostIo::queued(Joined(lines.clone(), "1:"), Joined(lines.clone(), "2:"));
+        Vm::new(io).run_program(&program).expect("the program runs");
+        let got = lines.lock().clone();
+        let expected: Vec<String> = (1..=300)
+            .flat_map(|i| [format!("1:out {i}\n"), format!("2:err {i}\n")])
+            .collect();
+        assert_eq!(got, expected);
+    }
+
+    /// An output whose writes wait until the gate is opened: a reader
+    /// that takes nothing for now.
+    #[derive(Clone, Default)]
+    struct Gated {
+        open: Arc<(Mutex<bool>, parking_lot::Condvar)>,
+        text: Arc<Mutex<String>>,
+    }
+
+    impl Output for Gated {
+        fn write(&self, text: &str) -> std::io::Result<()> {
+            let (open, opened) = &*self.open;
+            let mut is_open = open.lock();
+            while !*is_open {
+                opened.wait(&mut is_open);
+            }
+            self.text.lock().push_str(text);
+            Ok(())
+        }
+    }
+
+    /// Prints into an output that takes nothing park their tasks, and
+    /// the program's other tasks and its deadlines go on: twelve tasks
+    /// that print more than the writer holds (more than there are
+    /// workers) do not stop a task that computes, and a deadline around
+    /// a print that waits ends it. When the reader takes the output,
+    /// every line is there, whole, each task's lines in their order.
+    /// (A print wrote on the worker that ran it: with the output held
+    /// up, every worker was soon held in a print, and nothing else ran.)
+    #[test]
+    fn prints_that_wait_for_the_output_hold_up_nothing_else() {
+        let (program, given) = crate::session::testing::compile_given(
+            r#"
+import io
+import list
+import string
+import task
+import time
+fn main() {
+  let line = string.repeat("x", 1000)
+  let printers = list.map(1..12) { p ->
+    task.spawn { -> list.each(1..100) { i -> println("{p} {i} {line}") } }
+  }
+  let sum = task.spawn { -> list.fold(1..1000, 0) { acc, i -> acc + i } }
+  let computed = task.join(sum)
+  let cut = task.deadline(time.ms(50)) { -> list.each(1..100) { _ -> println(line) } }
+  host.give("computed {computed}; the deadline: {cut}")
+  io.eprintln("on stderr, after them all")
+  list.each(printers, task.join)
+}
+import host
+"#,
+        )
+        .expect("the program compiles");
+        let out = Gated::default();
+        let err = Timed::default();
+        let ran = {
+            let (out, err) = (out.clone(), err.clone());
+            std::thread::spawn(move || {
+                let mut vm = Vm::new(HostIo::queued(out, err));
+                vm.run_program(&program)
+            })
+        };
+        // The task that computes, and the deadline, while the output
+        // takes nothing. (Told through the host: stderr goes through the
+        // same writer, after stdout, and waits with it.)
+        let limit = Instant::now() + Duration::from_secs(60);
+        let said = loop {
+            if let Some(Value::String(text, _)) = given.last() {
+                break text.to_string();
+            }
+            assert!(
+                Instant::now() < limit,
+                "the program stopped while its output took nothing"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        assert_eq!(
+            said,
+            "computed 500500; the deadline: Err(the function was ended by its deadline)"
+        );
+        assert!(err.0.lock().is_empty(), "stderr waits behind stdout");
+        // The reader takes it all.
+        {
+            let (open, opened) = &*out.open;
+            *open.lock() = true;
+            opened.notify_all();
+        }
+        ran.join().unwrap().expect("the program ends");
+        let said: Vec<String> = err.0.lock().iter().map(|(text, _)| text.clone()).collect();
+        assert_eq!(said, ["on stderr, after them all\n"]);
+        let text = out.text.lock().clone();
+        let mut next = [1; 13];
+        for line in text.lines() {
+            let mut parts = line.splitn(3, ' ');
+            let (Some(p), Some(i), Some(rest)) = (parts.next(), parts.next(), parts.next()) else {
+                // A line of the deadline's prints that went out before
+                // the cut: all of it, or none.
+                assert_eq!(line, "x".repeat(1000));
+                continue;
+            };
+            let (p, i): (usize, usize) = (p.parse().unwrap(), i.parse().unwrap());
+            assert_eq!(rest, "x".repeat(1000), "a line is whole");
+            assert_eq!(i, next[p], "the lines of task {p} are in their order");
+            next[p] += 1;
+        }
+        assert!(
+            next[1..].iter().all(|n| *n == 101),
+            "every line is there: {next:?}"
+        );
     }
 }

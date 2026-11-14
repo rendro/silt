@@ -1,0 +1,50 @@
+-- cmd: fmt
+-- `xs |> f()` and `xs |> f` are one call, as are a `return x` on a
+-- function's last line and `x`: `silt fmt` writes the shorter form of
+-- each (a call of a call, a stage with a comment between its
+-- parentheses and a `return` with a comment behind it stay).
+import list
+
+fn total(xs: List(Int)) -> Int {
+  let n = xs |> list.reverse |> list.sum
+  -- the total
+  n
+}
+
+fn first(xs: List(Int)) -> Option(Int) {
+  let y = xs |> list.first?
+  Some(y) -- behind
+}
+
+fn kept(xs: List(Int)) -> List(Int) {
+  let f = { -> { y -> y } }
+  let ys = xs |> f()()
+  let zs = ys |> list.reverse({- why -})
+  return {- note -} zs
+}
+
+fn header(xs: List(Int)) -> Int {
+  match (xs |> list.first) {
+    Some(x) -> x
+    None -> return 0
+  }
+}
+
+fn looped(xs: List(Int)) -> Int {
+  loop ys = (xs |> list.reverse) {
+    match ys {
+      [] -> 0
+      [y, ..] -> y
+    }
+  }
+}
+
+fn main() {
+  let xs = [3, 1, 2]
+  println(total(xs))
+  println(first(xs))
+  println(kept(xs))
+  println(header(xs))
+  println(looped(xs))
+  ()
+}

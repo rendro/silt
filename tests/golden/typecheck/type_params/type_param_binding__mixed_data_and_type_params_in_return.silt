@@ -1,6 +1,12 @@
--- A body-less signature; `a` comes from a data param, `b` from a type param.
+-- `a` comes from a data param, `b` from a type param: both count as
+-- introduced in the return type (the rule asks it of a bounded one).
 -- cmd: check
--- exit: 1
+-- exit: 0
 -- stderr-not-contains: in return type is not introduced
-fn tag(x: a, type b) -> (a, b)
-fn main() {}
+fn tag(x: a, type b) -> (a, b) where b: Display {
+  tag(x, b)
+}
+
+fn main() {
+  let _ = tag
+}

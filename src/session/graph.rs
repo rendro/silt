@@ -145,11 +145,11 @@ fn parse_module(
     let lexed = Lexer::new(file, text).tokenize();
     let cut_short = lexed.is_cut_short();
     let mut parser = Parser::new(lexed, text);
-    if host {
-        parser = parser.for_host();
-    }
     if cell.is_none() {
         parser = parser.with_docs();
+    }
+    if host {
+        parser = parser.with_signatures().for_host();
     }
     let (program, errors) = match cell {
         Some(n) => parser.parse_cell(intern(&cell_name(n))),
@@ -613,7 +613,6 @@ impl ModuleGraph {
             SourceName::Repl(n) => Some(n),
             _ => None,
         };
-        let host = matches!(name, SourceName::Host(_));
         let file = sources.add(name, text.into());
         // A module that could not be read and has a text now (an editor
         // opened the file): what each importer recorded about the failed
@@ -632,6 +631,7 @@ impl ModuleGraph {
         module.file = Some(file);
         module.imports.clear();
         module.load_error = None;
+        let host = module.host.is_some();
         let (ast, problems, cut_short, incomplete) = parse_module(file, text, cell, host);
         module.ast = Some(ast);
         module.problems = problems;

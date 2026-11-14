@@ -1,14 +1,14 @@
 error[type]: `W` takes no type arguments: write `W`
  --> type_args__a_builtin_type_and_an_impl_head_have_the_one_form.silt:21:13
     |
- 21 | trait Q for W() {
-    |             ^^^ `W` takes no type arguments: write `W`
+ 21 | trait Q for W(Int) {
+    |             ^^^^^^ `W` takes no type arguments: write `W`
 
 error[type]: `Box` takes 1 type argument here: write `Box(a)`
  --> type_args__a_builtin_type_and_an_impl_head_have_the_one_form.silt:25:13
     |
- 25 | trait Q for Box() {
-    |             ^^^^^ `Box` takes 1 type argument here: write `Box(a)`
+ 25 | trait Q for Box(Int, Int) {
+    |             ^^^^^^^^^^^^^ `Box` takes 1 type argument here: write `Box(a)`
 
 error[type]: `Map` takes 2 type arguments here: write `Map(k, v)`
  --> type_args__a_builtin_type_and_an_impl_head_have_the_one_form.silt:29:9
@@ -25,8 +25,8 @@ error[type]: `List` takes 1 type argument here: write `List(a)`
 error[type]: `Set` takes 1 type argument here: write `Set(a)`
  --> type_args__a_builtin_type_and_an_impl_head_have_the_one_form.silt:33:9
     |
- 33 | fn c(s: Set()) -> Int { 0 }
-    |         ^^^^^ `Set` takes 1 type argument here: write `Set(a)`
+ 33 | fn c(s: Set(Int, Int)) -> Int { 0 }
+    |         ^^^^^^^^^^^^^ `Set` takes 1 type argument here: write `Set(a)`
 
 error[type]: `Channel` takes 1 type argument here: write `Channel(a)`
  --> type_args__a_builtin_type_and_an_impl_head_have_the_one_form.silt:35:9

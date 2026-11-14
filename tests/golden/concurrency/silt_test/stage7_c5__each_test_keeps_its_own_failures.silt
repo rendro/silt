@@ -1,6 +1,6 @@
 -- cmd: test
 -- exit: 1
--- stderr-contains: task(s) failed and were never joined
+-- stderr-contains: more tasks failed and were never joined (at most 64 failures are shown)
 -- stderr-contains: failed and was never joined: panic: the one failure of test b
 -- stderr-contains: 2 tests: 0 passed, 2 failed
 -- At most 64 failures are shown for a test, and each test has its own

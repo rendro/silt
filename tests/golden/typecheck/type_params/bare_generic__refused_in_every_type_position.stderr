@@ -43,8 +43,8 @@ error[type]: `List` takes 1 type argument here: write `List(a)`
 error[type]: `Map` takes 2 type arguments here: write `Map(k, v)`
  --> bare_generic__refused_in_every_type_position.silt:18:10
     |
- 18 | fn f3(m: Map()) -> Int { 0 }
-    |          ^^^^^ `Map` takes 2 type arguments here: write `Map(k, v)`
+ 18 | fn f3(m: Map) -> Int { 0 }
+    |          ^^^ `Map` takes 2 type arguments here: write `Map(k, v)`
 
 error[type]: `Box` takes 1 type argument here: write `Box(a)`
  --> bare_generic__refused_in_every_type_position.silt:19:34

@@ -65,6 +65,20 @@ fn timer_span(dur: Duration) -> Duration {
     }
 }
 
+/// A send into the output of a stream's stage is refused: a stream's
+/// channel is only read. (It went ahead of what the stage gives, or,
+/// where the stage had ended, was refused as a send on a closed
+/// channel.)
+fn refuse_a_stream(ch: &Channel) -> Result<(), VmError> {
+    match ch.fed_by() {
+        Some(name) => Err(VmError::new(format!(
+            "cannot send into a stream: channel {} is the output of {name}",
+            ch.id()
+        ))),
+        None => Ok(()),
+    }
+}
+
 /// The arms of a `channel.select`: each operation is `Recv(channel)`
 /// or `Send(channel, value)`.
 fn select_arms(ops: List) -> Result<Vec<Arm>, VmError> {
@@ -108,6 +122,7 @@ pub(crate) mod channel {
         }
 
         fn send(vm, ch: Chan, value: &Value) -> Result<Step, VmError> {
+            refuse_a_stream(ch)?;
             let id = ch.id();
             let value = match ch.try_send(value.clone(), vm.scheduler().wake()) {
                 TrySend::Sent => return Ok(Step::Done(Value::Unit)),
@@ -163,6 +178,7 @@ pub(crate) mod channel {
         // `true` if the value was sent, `false` if there is no room and
         // no receiver for it now.
         fn try_send(vm, ch: Chan, value: &Value) -> Result<bool, VmError> {
+            refuse_a_stream(ch)?;
             match ch.try_send(value.clone(), vm.scheduler().wake()) {
                 TrySend::Sent => Ok(true),
                 TrySend::Full(_) => Ok(false),
@@ -191,8 +207,13 @@ pub(crate) mod channel {
                     "channel.select requires at least one operation".into(),
                 ));
             }
-            // A `Send` arm on a closed channel is the error of a send
-            // on it, whatever the other arms could do.
+            // A `Send` arm on a stream's channel, or on a closed one, is
+            // the error of a send on it, whatever the other arms could do.
+            for arm in &arms {
+                if let Arm::Send(ch, _) = arm {
+                    refuse_a_stream(ch)?;
+                }
+            }
             if let Some(closed) = arms.iter().find_map(|arm| match arm {
                 Arm::Send(ch, _) if ch.is_closed() => Some(ch.id()),
                 _ => None,
@@ -623,6 +644,19 @@ fn joined(
     }
 }
 
+/// The step of `task.cancel` once it has cancelled: wait until each
+/// task of `ends` has ended, one after the other, then return `()`.
+fn until_ended(vm: &mut Vm, mut ends: Vec<Arc<TaskHandle>>) -> Step {
+    ends.retain(|task| !task.has_stopped());
+    let Some(next) = ends.last() else {
+        return Step::Done(Value::Unit);
+    };
+    let wait = Wait::new(vec![Arm::Cell(next.stopped())]);
+    vm.park("task.cancel", wait, move |vm, _| {
+        Ok(until_ended(vm, std::mem::take(&mut ends)))
+    })
+}
+
 /// `task.*`
 pub(crate) mod task {
     use super::*;
@@ -677,8 +711,21 @@ pub(crate) mod task {
         // dismissed and not reported as an unjoined failure. A join
         // still raises that failure, because the handle keeps the
         // result that came first.
-        fn cancel(vm, handle: Handle) {
+        //
+        // The call returns when the task has ended, and every task
+        // below it that the cancel reached: their last steps are over,
+        // so what comes after the cancel (a close, a count) sees all
+        // they did. A caller that is cancelled itself (it cancelled
+        // itself, or a task above it) does not wait: it returns at
+        // once, and has the last steps of a cancelled task.
+        fn cancel(vm, handle: Handle) -> Result<Step, VmError> {
             vm.scheduler().cancel(handle);
+            if vm.cancelled.as_ref().is_some_and(|own| own.load(std::sync::atomic::Ordering::SeqCst)) {
+                return Ok(Step::Done(Value::Unit));
+            }
+            let mut ends = crate::runtime::family::not_stopped_below(handle);
+            ends.push(handle.clone());
+            Ok(until_ended(vm, ends))
         }
     }
 }

@@ -1,7 +1,12 @@
--- A body-less signature (so the empty body mismatches the tuple); the
--- point is that both `a` and `b` count as introduced.
+-- Both `a` and `b` count as introduced by the type params (the rule
+-- asks it of a bounded one).
 -- cmd: check
--- exit: 1
+-- exit: 0
 -- stderr-not-contains: in return type is not introduced
-fn make_pair(type a, type b) -> (a, b)
-fn main() {}
+fn make_pair(type a, type b) -> (a, b) where a: Display, b: Display {
+  make_pair(a, b)
+}
+
+fn main() {
+  let _ = make_pair
+}

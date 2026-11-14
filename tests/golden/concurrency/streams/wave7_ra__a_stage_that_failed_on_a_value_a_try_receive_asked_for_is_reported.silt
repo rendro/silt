@@ -3,10 +3,11 @@
 -- stderr-contains: a `stream.map` stage failed and its output was never read: division by zero
 -- `channel.try_receive` finds nothing yet, and asks the stage for a
 -- value all the same, for a later read. The stage takes 2 and fails
--- on it; nobody reads its output any more: the failure is reported
--- when the program ends.
+-- on it; nobody reads its output any more (a task holds it to the end,
+-- so it is not left): the failure is reported when the program ends.
 import channel
 import stream
+import task
 
 fn main() {
   let out = stream.from_list([2, 3]) |> stream.map { x -> 10 / (x - 2) }
@@ -14,5 +15,10 @@ fn main() {
     channel.Message(v) -> println("got {v}")
     channel.Empty -> println("nothing yet")
     channel.Closed -> println("closed")
+  }
+  let never: Channel(Int) = channel.new(0)
+  let _holds = task.spawn { ->
+    let _ = channel.receive(never)
+    out
   }
 }

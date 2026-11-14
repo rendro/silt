@@ -1,7 +1,7 @@
 //! What a task waits for, and the park that starts the wait.
 
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 
 use super::cell::Completion;
@@ -34,7 +34,7 @@ impl Arm {
             Arm::Recv(channel) => (Source::Recv(channel), None),
             Arm::Send(channel, value) => (Source::Send(channel), Some(value)),
             Arm::Cell(cell) => (Source::Cell(cell), None),
-            Arm::Demand(channel) => (Source::Demand(channel), None),
+            Arm::Demand(channel) => (Source::Demand(Arc::downgrade(&channel)), None),
         }
     }
 }
@@ -132,7 +132,12 @@ pub enum Source {
     Recv(Arc<Channel>),
     Send(Arc<Channel>),
     Cell(Arc<dyn Completion>),
-    Demand(Arc<Channel>),
+    /// Held weakly: what feeds a channel and waits to be asked does not
+    /// keep it. A stream's output that its readers have let go of is
+    /// dropped while its stage waits so, and that stops the stage
+    /// (`Channel`'s `Drop`). A wait on a channel that is gone ends as on
+    /// a closed one.
+    Demand(Weak<Channel>),
 }
 
 impl Source {
@@ -142,11 +147,12 @@ impl Source {
             .is_some_and(|channel| channel.closes_by_timer())
     }
 
-    fn channel(&self) -> Option<&Arc<Channel>> {
+    /// The channel it is on; `None` for a cell, and for a channel that
+    /// is gone.
+    fn channel(&self) -> Option<Arc<Channel>> {
         match self {
-            Source::Recv(channel) | Source::Send(channel) | Source::Demand(channel) => {
-                Some(channel)
-            }
+            Source::Recv(channel) | Source::Send(channel) => Some(channel.clone()),
+            Source::Demand(channel) => channel.upgrade(),
             Source::Cell(_) => None,
         }
     }
@@ -225,12 +231,14 @@ pub fn park(task: TaskId, wait: Wait, timer: &Arc<Timer>, wake: &dyn Wake) -> Pa
     // So while this task completes an arm no peer can find it on the
     // queue of another, and ending a wait never takes more than one
     // claim: that of the peer.
-    let mut channels: Vec<&Arc<Channel>> = sources.iter().filter_map(Source::channel).collect();
-    channels.sort_by_key(|channel| Arc::as_ptr(channel));
+    // (Held here until the task is queued: a channel of a `Demand` arm
+    // is not dropped meanwhile.)
+    let mut channels: Vec<Arc<Channel>> = sources.iter().filter_map(Source::channel).collect();
+    channels.sort_by_key(Arc::as_ptr);
     channels.dedup_by(|a, b| Arc::ptr_eq(a, b));
     let lock_of = |channel: &Arc<Channel>| {
         channels
-            .binary_search_by_key(&Arc::as_ptr(channel), |c| Arc::as_ptr(c))
+            .binary_search_by_key(&Arc::as_ptr(channel), Arc::as_ptr)
             .expect("every channel of the wait is locked")
     };
     let mut states: Vec<_> = channels.iter().map(|c| c.state.lock()).collect();
@@ -248,7 +256,10 @@ pub fn park(task: TaskId, wait: Wait, timer: &Arc<Timer>, wake: &dyn Wake) -> Pa
         let source = &sources[arm];
         let outcome = match source {
             Source::Recv(_) | Source::Demand(_) if no_takes => None,
-            Source::Demand(channel) => states[lock_of(channel)].demand(),
+            Source::Demand(channel) => match channel.upgrade() {
+                Some(channel) => states[lock_of(&channel)].demand(),
+                None => Some(Outcome::Closed(super::channel::Close::default())),
+            },
             Source::Recv(channel) => match states[lock_of(channel)].receive(&mut wakes) {
                 TryReceive::Value(value) => Some(Outcome::Received(value)),
                 TryReceive::Closed(close) => Some(Outcome::Closed(close)),
@@ -297,7 +308,12 @@ pub fn park(task: TaskId, wait: Wait, timer: &Arc<Timer>, wake: &dyn Wake) -> Pa
         match source {
             Source::Recv(channel) => states[lock_of(channel)].recvq.push_back(waiter),
             Source::Send(channel) => states[lock_of(channel)].sendq.push_back(waiter),
-            Source::Demand(channel) => states[lock_of(channel)].demandq.push_back(waiter),
+            // (Held in `channels`: there.)
+            Source::Demand(channel) => {
+                if let Some(channel) = channel.upgrade() {
+                    states[lock_of(&channel)].demandq.push_back(waiter);
+                }
+            }
             Source::Cell(_) => {}
         }
     }
@@ -381,7 +397,14 @@ fn park_one(
         // A receive, or a wait to be asked: the two take nothing that
         // is sent, so a task that takes nothing new is refused both.
         (source @ (Source::Recv(_) | Source::Demand(_)), _) => {
-            let channel = source.channel().expect("the arm is on a channel");
+            // A channel that is gone (the readers of a stream's output
+            // have let it go) ends the wait as a closed one.
+            let Some(channel) = source.channel() else {
+                return Park::Ready(Fired::Arm(
+                    0,
+                    Outcome::Closed(super::channel::Close::default()),
+                ));
+            };
             let mut state = channel.state.lock();
             let cancelled = is_set(&cancel);
             let outcome = match takes_nothing_new(cancelled, task_expired) {
@@ -518,8 +541,11 @@ impl Drop for Parked {
                 continue;
             }
             match source {
-                Source::Recv(channel) | Source::Send(channel) | Source::Demand(channel) => {
-                    channel.forget(&self.token)
+                Source::Recv(channel) | Source::Send(channel) => channel.forget(&self.token),
+                Source::Demand(channel) => {
+                    if let Some(channel) = channel.upgrade() {
+                        channel.forget(&self.token);
+                    }
                 }
                 Source::Cell(cell) => cell.forget(&self.token),
             }

@@ -1,12 +1,12 @@
-error[type]: operator '+' requires Int or Float, got 'String'; build strings with interpolation, e.g. "{a}{b}"
- --> control_characters_in_the_echoed_line_are_shown_visibly.silt:8:11
+error[lex]: a raw text-direction control character, U+202E: it can make the text show otherwise than it reads
+ --> control_characters_in_the_echoed_line_are_shown_visibly.silt:9:19
    |
- 8 |   let s = "a␇␈␛[2J�b␡" + 1
-   |           ^^^^^^^^^^^^ operator '+' requires Int or Float, got 'String'; build strings with interpolation, e.g. "{a}{b}"
+ 9 |   let s = "a␇␈␛[2J�b␡" + 1
+   |                   ^ a raw text-direction control character, U+202E: it can make the text show otherwise than it reads
+  = help: write `\u{202E}` in a string
 
-warning[type]: 's' is never used
- --> control_characters_in_the_echoed_line_are_shown_visibly.silt:8:7
+error[type]: operator '+' requires Int or Float, got 'String'; build strings with interpolation, e.g. "{a}{b}"
+ --> control_characters_in_the_echoed_line_are_shown_visibly.silt:9:11
    |
- 8 |   let s = "a␇␈␛[2J�b␡" + 1
-   |       ^ 's' is never used
-  = help: remove it, or name it `_s`
+ 9 |   let s = "a␇␈␛[2J�b␡" + 1
+   |           ^^^^^^^^^^^^ operator '+' requires Int or Float, got 'String'; build strings with interpolation, e.g. "{a}{b}"

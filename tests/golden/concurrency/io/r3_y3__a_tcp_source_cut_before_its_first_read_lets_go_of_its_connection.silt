@@ -2,10 +2,10 @@
 -- repeat: 5
 -- requires-feature: tcp
 -- A take of nothing cuts the source on the connection before it has
--- read anything: the source shuts its connection down all the same, as
--- a source does whenever it is stopped. The peer sends its lines, waits
--- for more, and sees the connection end; a write on the connection then
--- says closed.
+-- read anything: the source lets go of its connection, as a source does
+-- whenever it is stopped, and does not shut it: `conn` still holds it.
+-- The peer sends its lines, and reads what the program writes after the
+-- cut. (The source shut the connection, for every holder.)
 import bytes
 import channel
 import stream
@@ -41,12 +41,14 @@ fn main() {
   let none = stream.tcp_lines(conn) |> stream.take(0) |> stream.collect
   println("took {none}")
   channel.send(gone, ())
+  -- `conn` still holds the connection: it is open both ways.
+  match tcp.write(conn, bytes.from_string("x")) {
+    Ok(_) -> println("the connection is still open")
+    Err(e) -> println("the write: {e}")
+  }
   when let Some(said) = channel.receive(seen) else {
     panic("the peer said nothing")
   }
   println(said)
-  match tcp.write(conn, bytes.from_string("x")) {
-    Err(tcp.Closed) -> println("closed")
-    _ -> println("something else")
-  }
+  tcp.close(conn)
 }

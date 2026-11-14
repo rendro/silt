@@ -25,7 +25,7 @@ local-clock = ["chrono/clock"]
 http = ["tcp", "dep:ureq", "dep:httparse", "dep:flate2"]
 postgres = ["dep:tokio-postgres", "dep:tokio", "dep:futures-util", "dep:postgres-protocol", "dep:r2d2", "dep:fallible-iterator"]
 postgres-tls = ["postgres", "dep:native-tls", "dep:postgres-native-tls"]
-tcp = []
+tcp = ["dep:socket2"]
 tcp-tls = ["tcp", "dep:rustls", "dep:webpki-roots"]
 # The test API, which is no part of what the crate promises an
 # embedder: `silt::session::testing` (check or run a program given as
@@ -75,6 +75,10 @@ unicode-width = "0.2"
 # a response's Content-Encoding headers (ureq looks at the first).
 ureq = { version = "3.5.1", optional = true, default-features = false, features = ["rustls"] }
 flate2 = { version = "1", optional = true }
+# The socket of `tcp.connect`, made before it connects, so that a connect
+# nobody waits for any more can be shut down (src/builtins/tcp.rs,
+# connect_shuttered). tokio uses the same crate.
+socket2 = { version = "0.6", optional = true }
 httparse = { version = "1", optional = true }
 tokio-postgres = { version = "0.7", optional = true }
 # The runtimes the postgres module's connections run on (one each).

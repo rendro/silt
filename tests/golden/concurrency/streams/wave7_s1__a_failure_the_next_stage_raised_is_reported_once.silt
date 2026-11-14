@@ -2,12 +2,20 @@
 -- repeat: 3
 -- `stream.buffered` reads ahead without being asked: it asks the map,
 -- which fails on its second value; buffered reads the failure and
--- fails with it. Nobody reads buffered: one report, for buffered.
+-- fails with it. Nobody reads buffered (a task holds it to the end, so
+-- it is not left): one report, for buffered.
+import channel
 import stream
+import task
 
 fn main() {
   let src = stream.from_list([1, 2, 3])
   let a = stream.map(src) { x -> 10 / (x - 2) }
-  let _b = stream.buffered(a, 4)
+  let b = stream.buffered(a, 4)
+  let never: Channel(Int) = channel.new(0)
+  let _holds = task.spawn { ->
+    let _ = channel.receive(never)
+    b
+  }
   println("done")
 }

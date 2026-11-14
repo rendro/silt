@@ -1,0 +1,39 @@
+-- requires-feature: tcp
+-- A stream that nothing can read any more is closed. A connection
+-- handler reads lines of stream.tcp_lines up to a blank line and
+-- returns: its stream is gone with it, so its source stops and shuts the
+-- connection down, and the client sees the end. (The source stayed for
+-- the life of the program, and the client waited for ever.)
+import bytes
+import channel
+import stream
+import task
+import tcp
+
+fn handle(conn: tcp.TcpStream) -> Int {
+  let lines = stream.tcp_lines(conn)
+  loop n = 0 {
+    match channel.receive(lines) {
+      Some(Ok("")) -> n
+      Some(Ok(_)) -> loop(n + 1)
+      _ -> n
+    }
+  }
+}
+
+fn main() {
+  when let Ok(l) = tcp.listen("127.0.0.1:0") else { panic("cannot listen") }
+  let server = task.spawn { ->
+    match tcp.accept(l) {
+      Ok(conn) -> handle(conn)
+      Err(_) -> -1
+    }
+  }
+  when let Ok(c) = tcp.connect("127.0.0.1:{tcp.local_port(l)}") else { panic("cannot connect") }
+  let _ = tcp.write(c, bytes.from_string("a\nb\n\n"))
+  println("the handler read {task.join(server)} lines and returned")
+  match tcp.read(c, 10) {
+    Ok(b) -> println("the client read {bytes.length(b)} bytes: the end of the connection")
+    Err(e) -> println("the client: {e}")
+  }
+}

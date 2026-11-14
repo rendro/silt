@@ -1,10 +1,12 @@
 -- timeout: 10
 -- requires-feature: tcp
 -- The reader of a stream on a connection has gone when the source
--- comes with its first line: the source ends there, and shuts its
--- connection down like one that is stopped in a read. The peer sends
--- its lines when the stream is closed, waits for more, and sees the
--- connection end; a write on the connection then says closed.
+-- comes with its first line: the source ends there, and lets go of its
+-- connection like one that is stopped in a read; what it had read is
+-- gone with it. `conn` still holds the connection: the peer, which sent
+-- its lines when the stream was closed and waits for more, reads what
+-- the program writes then. (The source shut the connection, for every
+-- holder.)
 import bytes
 import channel
 import stream
@@ -40,12 +42,14 @@ fn main() {
   let lines = stream.tcp_lines(conn)
   channel.close(lines)
   channel.send(gone, ())
+  -- `conn` still holds the connection: it is open both ways.
+  match tcp.write(conn, bytes.from_string("x")) {
+    Ok(_) -> println("the connection is still open")
+    Err(e) -> println("the write: {e}")
+  }
   when let Some(said) = channel.receive(seen) else {
     panic("the peer said nothing")
   }
   println(said)
-  match tcp.write(conn, bytes.from_string("x")) {
-    Err(tcp.Closed) -> println("closed")
-    _ -> println("something else")
-  }
+  tcp.close(conn)
 }
