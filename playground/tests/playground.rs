@@ -258,3 +258,32 @@ fn a_text_with_errors_has_tokens_too() {
             .any(|t| TOKEN_KINDS[t[2] as usize] == "keyword")
     );
 }
+
+/// A run keeps at most `OUTPUT_LIMIT` bytes of output: a `println` past
+/// them is a runtime error, and what was printed before stays.
+#[test]
+fn the_output_stops_at_its_limit_with_a_runtime_error() {
+    let ran = run_it(
+        "import list\nfn main() {\n  list.each(1..200_000) { n -> println(\"line {n} of many\") }\n}\n",
+    );
+    assert!(!ran.ok);
+    assert!(ran.output.len() <= silt_playground::OUTPUT_LIMIT);
+    assert!(ran.output.starts_with("line 1 of many\nline 2 of many\n"));
+    assert!(
+        ran.error.contains(
+            "cannot write to stdout: the playground shows at most 1000000 bytes of output"
+        ),
+        "{}",
+        ran.error
+    );
+    // (What goes to stderr past it is dropped: the program runs on.)
+    let ran = run_it(
+        "import io\nimport list\nfn main() {\n  list.each(1..200_000) { n -> io.eprintln(\"line {n} of many\") }\n  println(\"done\")\n}\n",
+    );
+    assert!(!ran.ok, "{ran:?}");
+    assert!(
+        ran.error.contains("cannot write to stdout"),
+        "{}",
+        ran.error
+    );
+}

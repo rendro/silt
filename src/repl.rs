@@ -580,6 +580,7 @@ impl Repl {
                 project,
                 lock: LockPolicy::Update,
                 host: Vec::new(),
+                builtins: crate::session::Builtins::All,
             }),
             vm: Vm::new(crate::HostIo::process()),
             cwd,

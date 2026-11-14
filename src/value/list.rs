@@ -46,6 +46,21 @@ use std::sync::{Arc, OnceLock};
 /// or with a loop that appends for ever.
 pub(crate) const MAX_COLLECTION_LEN: usize = 10_000_000;
 
+/// The most bytes a string or a `Bytes` that a builtin or an operator
+/// makes may hold ([`text_limit`] of the build): as many as a list may
+/// hold elements, and a million in WebAssembly, where silt runs in a
+/// browser's page (the playground) and a few strings of ten million
+/// bytes freeze the tab.
+pub(crate) const MAX_TEXT_LEN: usize = text_limit(cfg!(target_arch = "wasm32"));
+
+/// [`MAX_TEXT_LEN`] of a build for WebAssembly (`wasm`) or another.
+pub(crate) const fn text_limit(wasm: bool) -> usize {
+    match wasm {
+        true => 1_000_000,
+        false => MAX_COLLECTION_LEN,
+    }
+}
+
 /// The most elements a list a change makes keeps side by side in a
 /// buffer; a longer one keeps them in a tree. A list made from one kept
 /// in a tree goes back to a buffer only when it has half as many, so

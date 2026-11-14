@@ -43,10 +43,8 @@ impl BuiltinEnv {
 }
 
 thread_local! {
-    /// The builtin environment of this thread, with the interner
-    /// generation it was built in. Symbols are per thread, and
-    /// `intern::reset` invalidates them, so the cache is too.
-    static BUILTIN_ENV: std::cell::RefCell<Option<(u64, Rc<BuiltinEnv>)>> =
+    /// The builtin environment of this thread (an `Rc`: one per thread).
+    static BUILTIN_ENV: std::cell::RefCell<Option<Rc<BuiltinEnv>>> =
         const { std::cell::RefCell::new(None) };
 }
 
@@ -55,18 +53,13 @@ pub(super) fn builtin_env_has(name: Symbol) -> bool {
     builtin_env().root.bindings.contains_key(&name)
 }
 
-/// The builtin environment, built on first use and after each
-/// `intern::reset`.
+/// The builtin environment, built on a thread's first use.
 pub(super) fn builtin_env() -> Rc<BuiltinEnv> {
-    let generation = crate::intern::generation();
-    if let Some(env) = BUILTIN_ENV.with(|cell| match &*cell.borrow() {
-        Some((built_in, env)) if *built_in == generation => Some(env.clone()),
-        _ => None,
-    }) {
+    if let Some(env) = BUILTIN_ENV.with(|cell| cell.borrow().clone()) {
         return env;
     }
     let env = Rc::new(BuiltinEnv::build());
-    BUILTIN_ENV.with(|cell| *cell.borrow_mut() = Some((generation, env.clone())));
+    BUILTIN_ENV.with(|cell| *cell.borrow_mut() = Some(env.clone()));
     env
 }
 
@@ -418,6 +411,7 @@ fn argument_checks(row: &crate::builtins::registry::Row, ty: &Type) -> Vec<Pred>
 ///
 /// Stringifies the `Symbol` keys so test code doesn't need access to
 /// the crate-private `Symbol`/`intern` types.
+#[cfg(any(test, feature = "test-hooks"))]
 #[doc(hidden)]
 pub fn __trait_init_fingerprint_check_program() -> std::collections::BTreeSet<String> {
     use std::collections::BTreeSet;
@@ -444,6 +438,7 @@ pub fn __trait_init_fingerprint_check_program() -> std::collections::BTreeSet<St
 ///    params_count, supertraits_count, param_where_clauses_count)
 ///
 /// Used by `tests/typecheck/unified_trait_registration_tests.rs`.
+#[cfg(any(test, feature = "test-hooks"))]
 #[doc(hidden)]
 pub fn __builtin_trait_registration_fingerprint() -> Vec<(
     String,

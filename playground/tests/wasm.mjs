@@ -222,5 +222,19 @@ await test('check, format, complete and tokens answer', (mod) => {
   ]);
 });
 
+await test('a string holds at most a million bytes in a page', (mod) => {
+  const ran = run(mod, 'import string\nfn main() {\n  println(string.length(string.repeat("ab", 400_000)))\n  println(string.length(string.repeat("ab", 600_000)))\n}\n');
+  assert.equal(ran.ok, false);
+  assert.equal(ran.output, '800000\n');
+  assert.match(ran.error, /string\.repeat: result would exceed maximum string size \(1200000 bytes > 1000000 limit\)/);
+});
+
+await test('the output stops at a million bytes with a runtime error', (mod) => {
+  const ran = run(mod, 'import list\nfn main() {\n  list.each(1..200_000) { n -> println("line {n} of many") }\n}\n');
+  assert.equal(ran.ok, false);
+  assert.ok(ran.output.length <= 1_000_000);
+  assert.match(ran.error, /cannot write to stdout: the playground shows at most 1000000 bytes of output/);
+});
+
 console.log(failed === 0 ? '\nall passed' : `\n${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

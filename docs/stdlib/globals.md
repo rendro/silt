@@ -103,6 +103,15 @@ println(value: a) -> () where a: Display
 Prints a value to stdout followed by a newline. Accepts a single value that
 implements `Display`.
 
+A value of any length is printed, all of it. A text longer than 1,000,000
+bytes is written out in pieces as it is made, so it takes no more memory than
+a few pieces; it still reaches stdout whole, with no other print's text in it.
+Such a print waits for the reader as any print does: a `task.deadline` around
+it, or a cancel of its task, ends it between two pieces, and what was written
+until then stays written. (In the playground a run keeps at most 1,000,000
+bytes of output: a print past them is a runtime error. A host program's own
+output gets each print as one write, of at most 10,000,000 bytes.)
+
 ```silt
 fn main() {
   println("hello, world")
@@ -118,7 +127,8 @@ panic(message: a) -> Never where a: Display
 ```
 
 Terminates execution with an error message. Accepts any value that implements
-`Display`. It never returns: its result is of type `Never`, the type of an expression
+`Display`. A message longer than 100,000 bytes is given cut there, ending with
+`… (N more bytes)`. It never returns: its result is of type `Never`, the type of an expression
 that does not return (`return`, `loop(...)`), which goes with every type, so
 `panic` can stand wherever a value is expected and ends an `else` block that
 must leave. A program writes `Never` only as the return type of a

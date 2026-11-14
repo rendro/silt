@@ -320,7 +320,6 @@ pub(crate) fn check_package(
 /// was found: each diagnostic once, also where two programs import one
 /// module; under `--format json` all of it as one JSON array.
 fn check_files(programs: &[PackageFiles], format: OutputFormat, deny_warnings: bool) {
-    silt::intern::reset();
     let mut failed = false;
     let mut warnings = 0;
     let mut json: Vec<serde_json::Value> = Vec::new();
