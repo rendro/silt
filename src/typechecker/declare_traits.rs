@@ -441,6 +441,32 @@ impl TypeChecker {
         (names, named, mapping)
     }
 
+    /// The help for a trait name `name` that names no trait: the declared
+    /// or prelude trait it is closest to, as an unknown value gets.
+    fn similar_trait_help(&self, name: Symbol) -> Option<String> {
+        let written = resolve(name);
+        let candidates: Vec<String> = (self.tables.traits.keys().map(|t| resolve(t.name)))
+            .chain(crate::defs::PRELUDE_TRAITS.iter().map(|t| t.to_string()))
+            .filter(|candidate| *candidate != written)
+            .collect();
+        // (Two neighbouring letters swapped, `Shwo` for `Show`, is one
+        // slip, which the edit distance counts as two.)
+        let swapped = |candidate: &&String| {
+            let (a, b): (Vec<char>, Vec<char>) =
+                (written.chars().collect(), candidate.chars().collect());
+            a.len() == b.len()
+                && (0..a.len().saturating_sub(1)).any(|i| {
+                    a[i] == b[i + 1]
+                        && a[i + 1] == b[i]
+                        && a[..i] == b[..i]
+                        && a[i + 2..] == b[i + 2..]
+                })
+        };
+        super::suggest::suggest_similar(&written, candidates.iter())
+            .or_else(|| candidates.iter().filter(swapped).min().cloned())
+            .map(|name| format!("did you mean `{name}`?"))
+    }
+
     /// The innermost part of `ty` (itself, or a type argument of it at
     /// any depth) that lacks the trait `tr` at `args` (`trait_needs`),
     /// for a message to name it. None where `ty` has it.
@@ -644,9 +670,10 @@ impl TypeChecker {
 
             // Check that the trait exists first.
             let Some(trait_info) = self.tables.traits.get(trait_name).cloned() else {
-                self.error(
+                let help = self.similar_trait_help(trait_name.name);
+                self.error_help(
                     Code::UnknownTrait,
-                    format!("trait '{trait_name}' is not declared"),
+                    (format!("trait '{trait_name}' is not declared"), help),
                     diag_span,
                 );
                 continue;
@@ -1961,6 +1988,13 @@ impl TypeChecker {
                          the error of main) by the Display it has"
                     ),
                 }
+            });
+            // (A trait name mistyped: the trait it is closest to, of the
+            // module's own and the prelude's, as an unknown value gets.)
+            let help = help.or_else(|| {
+                (ti.trait_module.is_none())
+                    .then(|| self.similar_trait_help(ti.trait_name))
+                    .flatten()
             });
             self.error_help(Code::UnknownTrait, (message, help), ti.span);
             return;

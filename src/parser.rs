@@ -2619,6 +2619,14 @@ impl<'src> Parser<'src> {
                 message,
             ));
         }
+        // `import match`: a keyword names no module.
+        if let Some(keyword) = self.peek().keyword() {
+            return Err(Diagnostic::error(
+                Code::ExpectedIdentifier,
+                self.span(),
+                format!("`{keyword}` is a keyword of silt, so no module is named by it"),
+            ));
+        }
         let (name, _) = self.expect_ident()?;
 
         // `.{ ... }` and `as` may continue the import on the next line;
@@ -4279,7 +4287,7 @@ impl<'src> Parser<'src> {
                     Err(Diagnostic::error(
                         Code::UnsupportedSyntax,
                         dots.span,
-                        "spread syntax is not supported; use `value.{ field: expr }` for record updates",
+                        "silt has no spread of a record: a record with some fields changed is written `p.{ x: 2 }`",
                     ))
                 } else {
                     self.parse_block()
@@ -4926,7 +4934,7 @@ impl<'src> Parser<'src> {
                     return Err(Diagnostic::error(
                         Code::UnsupportedSyntax,
                         p.span(),
-                        "spread syntax is not supported; use `value.{ field: expr }` for record updates",
+                        "silt has no spread of a record: a record with some fields changed is written `p.{ x: 2 }`",
                     ));
                 }
                 let keyword = p.peek().keyword();

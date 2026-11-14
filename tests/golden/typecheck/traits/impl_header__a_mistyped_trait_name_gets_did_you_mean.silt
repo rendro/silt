@@ -1,0 +1,12 @@
+-- cmd: check
+-- exit: 1
+-- An impl of a trait name that names no trait: the help names the declared or prelude trait it is closest to, a swap of two letters included.
+-- stderr-contains: trait 'Shwo2' is not declared
+-- stderr-contains: help: did you mean `Show2`?
+-- stderr-contains: trait 'Dispaly' is not declared
+-- stderr-contains: help: did you mean `Display`?
+trait Show2 { fn s(self) -> Int }
+type P { x: Int }
+trait Shwo2 for P { fn s(self) -> Int { 1 } }
+trait Dispaly for P { fn display(self) -> String { "p" } }
+fn main() {}
