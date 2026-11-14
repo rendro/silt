@@ -1460,10 +1460,30 @@ impl<'src> Parser<'src> {
             // A declaration of another language, `const X = 1`, `struct
             // P {`, `enum C { A, B }`, `def f(`: the name behind its
             // first word, and the variants in its braces.
+            // Several such declarations in a row fail as one item: each
+            // starts outside braces and parentheses with two names.
             Some(Token::Ident(_)) => {
-                if let Some(bound) = rest.get(1).and_then(name) {
-                    names.push(bound);
-                    Self::variants_of_failed(rest, &mut names);
+                let mut depth = 0i32;
+                let mut starts = Vec::new();
+                for (i, tok) in rest.iter().enumerate() {
+                    match tok.kind {
+                        Token::LBrace | Token::LParen | Token::LBracket => depth += 1,
+                        Token::RBrace | Token::RParen | Token::RBracket => depth -= 1,
+                        Token::Ident(_)
+                            if depth == 0 && rest.get(i + 1).and_then(name).is_some() =>
+                        {
+                            starts.push(i)
+                        }
+                        _ => {}
+                    }
+                }
+                for (k, &at) in starts.iter().enumerate() {
+                    let end = starts.get(k + 1).copied().unwrap_or(rest.len());
+                    let one = &rest[at..end];
+                    if let Some(bound) = one.get(1).and_then(name) {
+                        names.push(bound);
+                        Self::variants_of_failed(one, &mut names);
+                    }
                 }
             }
             _ => {}
