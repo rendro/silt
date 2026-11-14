@@ -627,6 +627,27 @@ fn test_a_walk_whose_root_leads_to_a_path_that_is_no_utf8_fails() {
     );
 }
 
+/// A link whose target is no UTF-8 fails fs.read_link, as a walk of a root
+/// that leads to such a path does: with U+FFFD in it, the target it gave
+/// named no file. (Not on macOS, nor on Windows, as above.)
+#[cfg(all(unix, not(target_os = "macos")))]
+#[test]
+fn test_a_link_whose_target_is_no_utf8_fails_read_link() {
+    use std::os::unix::ffi::OsStrExt;
+    let dir = TempDir::new("link_target");
+    let target = std::ffi::OsStr::from_bytes(b"bad\xfftarget");
+    let link = dir.path().join("link");
+    std::os::unix::fs::symlink(target, &link).unwrap();
+    let link = link.to_str().unwrap().to_string();
+    let got = err_msg(run(&format!(
+        "import fs\nimport host\nfn main() {{\n  host.give(fs.read_link(\"{link}\"))\n}}\n"
+    )));
+    assert_eq!(
+        got,
+        format!("invalid input: the target of {link} is not UTF-8: bad\u{FFFD}target")
+    );
+}
+
 // ── stream.file_lines: a line is as long as the file makes it ───────
 
 /// A line of a file longer than 10,000,000 bytes is read whole, as

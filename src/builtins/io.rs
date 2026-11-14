@@ -607,6 +607,18 @@ pub(crate) mod fs {
                     bv::IO_INVALID_INPUT,
                     [Value::string(format!("not a symlink: {path}"))],
                 )),
+                // (A target that is no UTF-8 is shown by no String: with
+                // U+FFFD in it, it named no file.)
+                Ok(target) if target.to_str().is_none() => {
+                    let why = std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!(
+                            "the target of {path} is not UTF-8: {}",
+                            target.to_string_lossy()
+                        ),
+                    );
+                    path_err(&why, path)
+                }
                 done => result(done, path, |target| {
                     Value::string(target.to_string_lossy().into_owned())
                 }),
