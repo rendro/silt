@@ -5099,8 +5099,10 @@ impl TypeChecker {
 
                 // A `?` returns from the function as `return` does: not
                 // from one that never returns. (A closure's `?` ends the
-                // closure: its body has a return type of its own.)
+                // closure: its body has a return type of its own.) A `?`
+                // of what never is never runs (below).
                 if let (Some(Type::Never), Some(name)) = (&self.current_return_type, self.never_fn)
+                    && !matches!(inner_ty, Type::Never)
                 {
                     self.error(
                         Code::InvalidControlFlow,
@@ -5129,6 +5131,11 @@ impl TypeChecker {
                     // An operand already reported (or from a module that
                     // failed to load): nothing more to say.
                     Type::Error => Type::Error,
+                    // An operand that never is (`todo()?`, `v.x?` of such
+                    // a `v`): the `?` never runs, and gives what never is,
+                    // as a call or a field read of it does, whatever the
+                    // function returns.
+                    Type::Never => Type::Never,
                     Type::Var(_) => {
                         // The operand's type is unknown: the `?` waits
                         // for it (`Goal::Try`).

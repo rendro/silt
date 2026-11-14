@@ -1,0 +1,22 @@
+-- exit: 1
+-- An impl that waits for a value that never comes cannot end: the run
+-- says so in the note, and the payload is shown by its structure.
+import channel
+
+type Waits {
+  a: Int,
+}
+
+trait Display for Waits {
+  fn display(self) -> String {
+    let ch = channel.new(0)
+    match channel.receive(ch) {
+      Some(text) -> text
+      None -> "closed"
+    }
+  }
+}
+
+fn main() -> Result((), Waits) {
+  Err(Waits { a: 1 })
+}

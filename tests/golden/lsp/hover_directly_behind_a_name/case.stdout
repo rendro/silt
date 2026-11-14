@@ -1,0 +1,28 @@
+> hover 13:16
+```silt
+module geometry
+```
+
+geometry.silt
+> definition 13:16
+geometry.silt:1:1-1:1
+> hover 17:13
+```silt
+Int
+```
+> definition 17:13
+main.silt:16:7-16:9
+> hover 18:12
+```silt
+Int
+```
+> hover 18:17
+```silt
+Int
+```
+> hover 18:18
+(nothing)
+> hover 16:25
+```silt
+Fn(Int) -> Int
+```

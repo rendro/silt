@@ -1,0 +1,91 @@
+-- cmd: check
+-- exit: 1
+-- The help of a bound only a value that never is met names a type that
+-- has the trait, in a form that compiles: `List(Int)` where only
+-- `List(a)` has it. Where no such type is known (no impl, an impl that
+-- asks something of its parameter) it names none. Where an open value
+-- of the program met the value that never is (`x` of `none()`), the
+-- help is the ordinary one. `fine` follows the help and is accepted.
+trait Sized {
+  fn size(self) -> Int
+}
+
+trait Sized for List(a) {
+  fn size(self) -> Int {
+    1
+  }
+}
+
+trait Lonely {
+  fn lonely(self) -> Int
+}
+
+trait Small {
+  fn small(self) -> Int
+}
+
+trait Small for Int {
+  fn small(self) -> Int {
+    self
+  }
+}
+
+trait Picky {
+  fn picky(self) -> Int
+}
+
+trait Picky for List(a) where a: Small {
+  fn picky(self) -> Int {
+    2
+  }
+}
+
+fn todo() -> Never {
+  panic("todo")
+}
+
+fn none() -> Option(a) {
+  None
+}
+
+fn sized(x: a) -> Int where a: Sized {
+  Sized.size(x)
+}
+
+fn lonely(x: a) -> Int where a: Lonely {
+  Lonely.lonely(x)
+}
+
+fn picky(x: a) -> Int where a: Picky {
+  Picky.picky(x)
+}
+
+fn stubs() -> Int {
+  sized(todo()) + lonely(todo()) + picky(todo())
+}
+
+fn mixed(b: Bool) -> Int {
+  match none() {
+    Some(x) -> {
+      let y = match b {
+        true -> panic("p")
+        false -> x
+      }
+      sized(y)
+    }
+    None -> 0
+  }
+}
+
+fn todo_list() -> List(Int) {
+  todo()
+}
+
+fn fine() -> Int {
+  let v: List(Int) = todo()
+  sized(v) + sized(todo_list())
+}
+
+fn main() {
+  println(stubs() + mixed(true) + fine())
+}

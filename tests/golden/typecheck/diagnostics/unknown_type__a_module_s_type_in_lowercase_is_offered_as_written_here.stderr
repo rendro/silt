@@ -1,24 +1,24 @@
-error[type]: unknown type 'regex' — did you mean `regex.Regex`? (type names are case-sensitive and start with a capital letter; a lowercase name in a type is a type variable)
- --> unknown_type__a_module_s_type_in_lowercase_is_offered_as_written_here.silt:8:9
-   |
- 8 | fn f(x: regex) -> Int { 1 }
-   |         ^^^^^ unknown type 'regex' — did you mean `regex.Regex`? (type names are case-sensitive and start with a capital letter; a lowercase name in a type is a type variable)
-
-error[type]: unknown type 'weekday' — did you mean `time.Weekday` (a type of module `time`, after `import time`)? (type names are case-sensitive and start with a capital letter; a lowercase name in a type is a type variable)
- --> unknown_type__a_module_s_type_in_lowercase_is_offered_as_written_here.silt:10:9
-    |
- 10 | fn g(d: weekday) -> Int { 1 }
-    |         ^^^^^^^ unknown type 'weekday' — did you mean `time.Weekday` (a type of module `time`, after `import time`)? (type names are case-sensitive and start with a capital letter; a lowercase name in a type is a type variable)
-
-error[type]: unknown type 'int' — did you mean `Int`? (type names are case-sensitive and start with a capital letter; a lowercase name in a type is a type variable)
- --> unknown_type__a_module_s_type_in_lowercase_is_offered_as_written_here.silt:12:9
-    |
- 12 | fn h(n: int) -> Int { n }
-    |         ^^^ unknown type 'int' — did you mean `Int`? (type names are case-sensitive and start with a capital letter; a lowercase name in a type is a type variable)
-
 warning[type]: unused import 'regex'
  --> unknown_type__a_module_s_type_in_lowercase_is_offered_as_written_here.silt:6:1
    |
  6 | import regex
    | ^^^^^^^^^^^^ unused import 'regex'
   = help: remove the line `import regex`
+
+error[type]: unknown type 'regex' — did you mean `regex.Regex`? (type names are case-sensitive and start with a capital letter; a lowercase name in a type is a type variable)
+ --> unknown_type__a_module_s_type_in_lowercase_is_offered_as_written_here.silt:8:9
+   |
+ 8 | fn f(x: regex) -> Int { 1 }
+   |         ^^^^^ here
+
+error[type]: unknown type 'weekday' — did you mean `time.Weekday` (a type of module `time`, after `import time`)? (type names are case-sensitive and start with a capital letter; a lowercase name in a type is a type variable)
+ --> unknown_type__a_module_s_type_in_lowercase_is_offered_as_written_here.silt:10:9
+    |
+ 10 | fn g(d: weekday) -> Int { 1 }
+    |         ^^^^^^^ here
+
+error[type]: unknown type 'int' — did you mean `Int`? (type names are case-sensitive and start with a capital letter; a lowercase name in a type is a type variable)
+ --> unknown_type__a_module_s_type_in_lowercase_is_offered_as_written_here.silt:12:9
+    |
+ 12 | fn h(n: int) -> Int { n }
+    |         ^^^ here

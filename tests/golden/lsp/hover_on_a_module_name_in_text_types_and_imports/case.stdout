@@ -2,25 +2,19 @@
 37:7 warning local 'json' hides the imported module 'json'\nhelp: rename the local, or import the module under another name: `import json as j`
 39:13 warning local 'list' hides the imported module 'list'\nhelp: rename the local, or import the module under another name: `import list as l`
 > hover 35:12
-```silt
-String
-```
+(nothing)
 > hover 35:27
-```silt
-String
-```
+(nothing)
 > hover 36:16
-```silt
-()
-```
+(nothing)
 > hover 36:27
-```silt
-()
-```
+(nothing)
 > hover 40:12
 ```silt
-()
+module shapes
 ```
+
+shapes.silt
 > hover 40:10
 ```silt
 module shapes
@@ -35,8 +29,10 @@ module json
 Parse JSON strings into typed silt values and serialize values to JSON.
 > hover 38:14
 ```silt
-()
+module json
 ```
+
+Parse JSON strings into typed silt values and serialize values to JSON.
 > hover 39:26
 ```silt
 Box

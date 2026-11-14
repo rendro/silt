@@ -3,7 +3,8 @@
 //! where it ends.
 //!
 //! - Hover at a position that is on no character (past the last line, or
-//!   past the end of its line) returns nothing. It used to return the
+//!   past the end of its line) returns nothing; one directly behind a
+//!   name is on the name. It used to return the
 //!   type of the last expression that started before the position.
 //! - The "Wrap expression in `Ok(...)`" quick fix wraps the whole
 //!   expression the type error is about. With point spans the diagnostic
@@ -45,9 +46,16 @@ fn hover_on_no_character_returns_nothing() {
         past_end.is_null(),
         "hover past the end of a line: {past_end}"
     );
-    // Just after the last character of a line: no character there either.
-    let at_end = hover(&mut client, uri, 2, 3);
+    // Just after the last character of a line that ends in no name: no
+    // character there either.
+    let at_end = hover(&mut client, uri, 1, 13);
     assert!(at_end.is_null(), "hover after the end of a line: {at_end}");
+    // Directly behind a name at the end of its line: the name.
+    let behind = hover(&mut client, uri, 2, 3);
+    assert!(
+        behind.to_string().contains("String"),
+        "hover directly behind a name: {behind}"
+    );
     client.shutdown();
 }
 

@@ -1,0 +1,38 @@
+-- exit: 1
+-- The note names the Display impl the showing ran, by the type it ran
+-- for: a method named `display` of another trait that fails under it
+-- is that impl's failure. Here E's impl calls `Show.display` of In (In
+-- has its own Display impl too, which works), and E's impl is named.
+type In {
+  n: Int,
+}
+
+trait Show {
+  fn display(self) -> String
+}
+
+trait Show for In {
+  fn display(self) -> String {
+    panic("Show of In fails")
+  }
+}
+
+trait Display for In {
+  fn display(self) -> String {
+    "in"
+  }
+}
+
+type E {
+  i: In,
+}
+
+trait Display for E {
+  fn display(self) -> String {
+    "E of {self.i} and {Show.display(self.i)}"
+  }
+}
+
+fn main() -> Result((), E) {
+  Err(E { i: In { n: 1 } })
+}

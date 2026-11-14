@@ -1,8 +1,9 @@
-error[parse]: expected fn, found =
- --> main.silt:17:31
-    |
- 17 |   fn describe(self) -> String = "TRAIT method on Shape with {self.sides} sides"
-    |                               ^ expected fn, found =
+error[compile]: `Shape` is not a valid module name: use lowercase letters, digits and `_`, not starting with a digit
+ --> main.silt:8:1
+   |
+ 8 | import Shape
+   | ^^^^^^^^^^^^ `Shape` is not a valid module name: use lowercase letters, digits and `_`, not starting with a digit
+  = help: name the file `shape.silt` and write `import shape`
 
 error[parse]: 'Shape' is bound twice at the top level: by the import and by the type here
  --> main.silt:10:6
@@ -15,12 +16,11 @@ error[parse]: 'Shape' is bound twice at the top level: by the import and by the 
    | ------------ first bound here, by the import
   = note: a top-level name can be bound only once
 
-error[compile]: `Shape` is not a valid module name: use lowercase letters, digits and `_`, not starting with a digit
- --> main.silt:8:1
-   |
- 8 | import Shape
-   | ^^^^^^^^^^^^ `Shape` is not a valid module name: use lowercase letters, digits and `_`, not starting with a digit
-  = help: name the file `shape.silt` and write `import shape`
+error[parse]: expected fn, found =
+ --> main.silt:17:31
+    |
+ 17 |   fn describe(self) -> String = "TRAIT method on Shape with {self.sides} sides"
+    |                               ^ expected fn, found =
 
 error[type]: type 'Shape' has no field 'describe'
  --> main.silt:22:11

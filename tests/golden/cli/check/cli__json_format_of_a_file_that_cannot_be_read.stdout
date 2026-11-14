@@ -1,0 +1,1 @@
+[{"code":"E0401","col":1,"end_col":1,"end_line":1,"file":"nosuch.silt","help":[],"kind":"compile","labels":[],"line":1,"message":"error reading nosuch.silt: no such file","notes":[],"severity":"error"}]

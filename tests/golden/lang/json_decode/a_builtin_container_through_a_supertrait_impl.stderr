@@ -2,7 +2,7 @@ error[type]: trait `Dec` for `Map(k, a)` needs `json.Decode` of each type parame
  --> a_builtin_container_through_a_supertrait_impl.silt:16:1
     |
  16 | trait Dec for Map(k, a) where a: json.Decode {}
-    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ trait `Dec` for `Map(k, a)` needs `json.Decode` of each type parameter, as `Dec` has `json.Decode` as a supertrait: `k` is not bounded by it
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ here
   = help: add `k: json.Decode` to the impl's `where` clause
 
 error[type]: `via` cannot decode `Map(Int, Int)`: a decoded map's key type must be String

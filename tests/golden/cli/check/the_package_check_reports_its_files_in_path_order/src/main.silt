@@ -1,0 +1,8 @@
+-- cmd: check
+-- exit: 1
+-- The package check goes through the files of src/ by path, those in
+-- sub-directories among them, as `silt check src` does: alpha.silt,
+-- util/aaa.silt, zeta.silt.
+fn main() {
+  println(1)
+}

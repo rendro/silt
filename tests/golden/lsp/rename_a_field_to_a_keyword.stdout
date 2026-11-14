@@ -1,0 +1,10 @@
+> rename 10:26 type
+rename_a_field_to_a_keyword.silt:8:11-8:12 => type
+rename_a_field_to_a_keyword.silt:10:26-10:27 => type
+rename_a_field_to_a_keyword.silt:15:16-15:17 => type: x
+rename_a_field_to_a_keyword.silt:16:15-16:16 => type
+rename_a_field_to_a_keyword.silt:18:10-18:11 => type: x
+> rename 13:7 match
+error: `match` is not a valid silt identifier
+> rename 8:6 fn
+error: `fn` is not a valid silt identifier

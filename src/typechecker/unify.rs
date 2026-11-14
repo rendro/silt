@@ -29,6 +29,10 @@ pub struct TyVarSupply {
     /// The variables each checked module allocated, in the order of the
     /// checks, and whether the module was forgotten since.
     ranges: Vec<(crate::session::ModuleId, TyVar, bool)>,
+    /// The variables made for a `Never` inside a type a variable was
+    /// bound to (`without_never`): each stands where a value that never
+    /// is was, as a variable that met one does (`met_never`).
+    pub(super) for_never: Vec<TyVar>,
 }
 
 impl TyVarSupply {
@@ -69,7 +73,11 @@ impl TyVarSupply {
             ts.iter().map(|t| this.without_never(t.clone())).collect()
         };
         match t {
-            Type::Never => Type::Var(self.fresh()),
+            Type::Never => {
+                let v = self.fresh();
+                self.for_never.push(v);
+                Type::Var(v)
+            }
             Type::Fun(params, ret) => {
                 let params = each(&params, self);
                 Type::Fun(params, Box::new(self.without_never(*ret)))
@@ -633,6 +641,12 @@ impl TypeChecker {
             // reported) has none either: nothing more is asked of it.
             (Type::Var(v), Type::Error) | (Type::Error, Type::Var(v)) => {
                 self.bind(*v, Type::Error, out);
+            }
+            // A value that never is meets a type still unknown without
+            // deciding it; that it met one is kept for the help of a
+            // bound nothing decides (`met_never`).
+            (Type::Var(v), Type::Never) | (Type::Never, Type::Var(v)) => {
+                self.met_never.insert(*v);
             }
             (Type::Error, _) | (_, Type::Error) | (Type::Never, _) | (_, Type::Never) => {}
             (Type::Int, Type::Int)

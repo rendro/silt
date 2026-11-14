@@ -523,17 +523,39 @@ impl SourceView for SourceMap {
 /// 1. `NO_COLOR` set to any non-empty value → never color (per <https://no-color.org/>).
 ///    This is the kill-switch and wins over every other signal, including
 ///    `FORCE_COLOR` and a real tty.
-/// 2. `FORCE_COLOR` set to any non-empty value → always color, even when
-///    stderr is redirected (matches cargo's behavior).
-/// 3. Otherwise: isatty(stderr).
+/// 2. `FORCE_COLOR` set to `0` → never color; to any other non-empty
+///    value → always color, even when stderr is redirected.
+/// 3. `TERM=dumb` (a terminal that shows no escapes) → no color.
+/// 4. Otherwise: isatty(stderr).
 pub(crate) fn use_color() -> bool {
-    if std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty()) {
+    let var = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty());
+    color_from(
+        var("NO_COLOR").is_some(),
+        var("FORCE_COLOR")
+            .as_deref()
+            .and_then(std::ffi::OsStr::to_str),
+        var("TERM").as_deref().and_then(std::ffi::OsStr::to_str),
+        || std::io::IsTerminal::is_terminal(&std::io::stderr()),
+    )
+}
+
+/// [`use_color`] of a `NO_COLOR` that is set or not, the non-empty values
+/// of `FORCE_COLOR` and `TERM` (`None`: unset or empty), and whether
+/// stderr is a terminal.
+fn color_from(
+    no_color: bool,
+    force_color: Option<&str>,
+    term: Option<&str>,
+    terminal: impl FnOnce() -> bool,
+) -> bool {
+    if no_color {
         return false;
     }
-    if std::env::var_os("FORCE_COLOR").is_some_and(|v| !v.is_empty()) {
-        return true;
+    match force_color {
+        Some("0") => false,
+        Some(_) => true,
+        None => term != Some("dumb") && terminal(),
     }
-    std::io::IsTerminal::is_terminal(&std::io::stderr())
 }
 
 pub(crate) struct Colors {
@@ -629,7 +651,7 @@ pub fn render_human(view: &dyn SourceView, d: &Diagnostic) -> String {
             "-->",
             &located,
             '^',
-            &visible_text(&d.message),
+            caret_label(&visible_text(&d.message)),
             color,
         );
     }
@@ -671,6 +693,21 @@ pub fn render_human(view: &dyn SourceView, d: &Diagnostic) -> String {
         }
     }
     out
+}
+
+/// The longest message, in characters, that is said again under the
+/// caret: a longer one (a panic's message can be a long text) is in the
+/// headline only.
+const CARET_LABEL_MAX: usize = 120;
+
+/// What stands after the caret of a diagnostic whose message is
+/// `message`: the message itself when it is one short line, else
+/// `here`, as the headline above says it already.
+fn caret_label(message: &str) -> &str {
+    match message.contains('\n') || message.chars().count() > CARET_LABEL_MAX {
+        true => "here",
+        false => message,
+    }
 }
 
 /// ` --> file:line:col`, then the line with marks under the span and
@@ -939,7 +976,9 @@ fn mark_width<'a>(chars: impl Iterator<Item = &'a char>) -> usize {
 
 /// `d` as `silt check --format json` prints it: the file, the start and
 /// end of the span, the message, the code, and labels, notes and help as
-/// data. A span in no file has file `"<unknown>"` and line 0.
+/// data. Lines and columns are 1-based, as the terminal shows them; a
+/// span at no place of a file (one that could not be read) is at line 1,
+/// column 1, and a span in no file also has file `"<unknown>"`.
 pub fn render_json(view: &dyn SourceView, d: &Diagnostic) -> serde_json::Value {
     let place = |span: Span| -> serde_json::Map<String, serde_json::Value> {
         let located = view.locate(span);
@@ -948,7 +987,7 @@ pub fn render_json(view: &dyn SourceView, d: &Diagnostic) -> serde_json::Value {
             .map_or("<unknown>".to_string(), |l| l.file.clone());
         let p = located.and_then(|l| l.position);
         let (line, col, end_line, end_col) =
-            p.map_or((0, 0, 0, 0), |p| (p.line, p.col, p.end_line, p.end_col));
+            p.map_or((1, 1, 1, 1), |p| (p.line, p.col, p.end_line, p.end_col));
         let mut map = serde_json::Map::new();
         map.insert("file".into(), file.into());
         map.insert("line".into(), line.into());
@@ -1095,6 +1134,42 @@ pub fn to_lsp(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `FORCE_COLOR=0` turns color off, and `TERM=dumb` keeps it off on a
+    /// terminal unless `FORCE_COLOR` forces it. FAILS on the base:
+    /// `FORCE_COLOR=0` forced color, `TERM` was not read.
+    #[test]
+    fn force_color_zero_and_a_dumb_terminal_have_no_color() {
+        let tty = || true;
+        assert!(!color_from(false, Some("0"), None, tty));
+        assert!(!color_from(false, Some("0"), Some("xterm"), tty));
+        assert!(!color_from(false, None, Some("dumb"), tty));
+        assert!(color_from(false, Some("1"), Some("dumb"), || false));
+        assert!(color_from(false, None, Some("xterm"), tty));
+        assert!(!color_from(false, None, None, || false));
+        assert!(!color_from(true, Some("1"), None, tty));
+    }
+
+    /// A message longer than one line of the terminal is not said again
+    /// under the caret (a panic's can be a long text); a short one is.
+    /// FAILS on the base: the label was always the message.
+    #[test]
+    fn a_long_message_is_not_repeated_under_the_caret() {
+        let map = sources("let x = 1");
+        let long = "x".repeat(CARET_LABEL_MAX + 1);
+        let out = render_human(
+            &map,
+            &Diagnostic::error(Code::CompileLimit, span(4, 5), &long),
+        );
+        assert_eq!(out.matches(&long).count(), 1, "{out}");
+        assert!(out.contains("^ here"), "{out}");
+        let short = "x".repeat(CARET_LABEL_MAX);
+        let out = render_human(
+            &map,
+            &Diagnostic::error(Code::CompileLimit, span(4, 5), &short),
+        );
+        assert_eq!(out.matches(&short).count(), 2, "{out}");
+    }
 
     fn sources(text: &str) -> SourceMap {
         let mut map = SourceMap::new();

@@ -1,0 +1,27 @@
+error[type]: cannot infer the type this use of 'sized' needs to implement trait 'Sized'
+ --> never_value__the_help_names_a_type_that_has_the_trait_or_none.silt:64:9
+    |
+ 64 |   sized(todo()) + lonely(todo()) + picky(todo())
+    |         ^^^^^^ cannot infer the type this use of 'sized' needs to implement trait 'Sized'
+  = help: a value that never is decides no type: give it the type it stands for, as in `let v: List(Int) = todo()`, or use a stub of that type, as in `fn todo_list() -> List(Int) { todo() }`
+
+error[type]: cannot infer the type this use of 'lonely' needs to implement trait 'Lonely'
+ --> never_value__the_help_names_a_type_that_has_the_trait_or_none.silt:64:26
+    |
+ 64 |   sized(todo()) + lonely(todo()) + picky(todo())
+    |                          ^^^^^^ cannot infer the type this use of 'lonely' needs to implement trait 'Lonely'
+  = help: a value that never is decides no type: give it the type it stands for in an annotated `let`, or use a stub function that returns that type
+
+error[type]: cannot infer the type this use of 'picky' needs to implement trait 'Picky'
+ --> never_value__the_help_names_a_type_that_has_the_trait_or_none.silt:64:42
+    |
+ 64 |   sized(todo()) + lonely(todo()) + picky(todo())
+    |                                          ^^^^^^ cannot infer the type this use of 'picky' needs to implement trait 'Picky'
+  = help: a value that never is decides no type: give it the type it stands for in an annotated `let`, or use a stub function that returns that type
+
+error[type]: cannot infer the type this use of 'sized' needs to implement trait 'Sized'
+ --> never_value__the_help_names_a_type_that_has_the_trait_or_none.silt:74:13
+    |
+ 74 |       sized(y)
+    |             ^ cannot infer the type this use of 'sized' needs to implement trait 'Sized'
+  = help: annotate the value it is given

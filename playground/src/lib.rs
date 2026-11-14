@@ -169,12 +169,16 @@ pub fn run(source: &str, clock: impl Clock + 'static, steps: u64) -> Run {
                 .with_note(format!("the playground ends a program after {steps} steps")),
         ),
         // `main` returned `Err(e)`: the program's message to its user,
-        // the one line `error: <e>`, as `silt run` writes it.
+        // the one line `error: <e>`, as `silt run` writes it, and the
+        // note of a `Display` impl of it that failed.
         Err(silt::VmError {
             returned: Some(text),
+            display_failure,
             ..
         }) => {
-            returned = Some(format!("error: {text}"));
+            let note = (display_failure.as_deref())
+                .map(|failure| format!("\nnote: {}", failure.note(session.sources())));
+            returned = Some(format!("error: {text}{}", note.unwrap_or_default()));
             None
         }
         Err(e) => Some(e.to_diagnostic()),

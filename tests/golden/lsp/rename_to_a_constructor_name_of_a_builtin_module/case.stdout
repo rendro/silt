@@ -1,0 +1,8 @@
+> rename 13:6 Other
+error: `Pattern` cannot be renamed to `Other`: `Other` is already a top-level name of main.silt, and the rename would change what a name means
+> rename 13:6 NotFound
+main.silt:13:6-13:13 => NotFound
+main.silt:15:12-15:19 => NotFound
+main.silt:23:16-23:23 => NotFound
+> rename 13:6 Some
+error: `Pattern` cannot be renamed to `Some`: `Some` is one of silt's own names, and the rename would change what a name means

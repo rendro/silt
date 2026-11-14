@@ -426,7 +426,7 @@ own name shadows as any `let` does:
 ```silt
 fn rename_one() {
   let f = { n -> n * 2 }
-  let f = { n -> f(n) + 1 } -- error: `f` here is the closure, and also the earlier `f`
+  let f = { n -> f(n) + 1 } -- error: `f` here is the closure that `let f` binds, and also the `f` in scope before that `let`
   let g = { n -> f(n) + 1 } -- OK: `f` is the earlier closure
 }
 ```

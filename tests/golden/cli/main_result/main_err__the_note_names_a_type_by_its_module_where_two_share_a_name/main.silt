@@ -1,0 +1,13 @@
+-- exit: 1
+-- Where two modules of the program have a type of one name, values of
+-- them are shown with the module's name, and so is the type in the note.
+import geo
+
+type Point {
+  x: Int,
+}
+
+fn main() -> Result((), geo.Point) {
+  println(Point { x: 1 }.x)
+  Err(geo.Point { x: 2 })
+}

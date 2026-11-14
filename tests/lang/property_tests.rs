@@ -364,6 +364,30 @@ proptest! {
     }
 }
 
+/// `number` (finite) as a silt program writes it: Rust's shortest text
+/// (`0.0`, `2.5`, `1e21`, `5e-324`), whose exponent, where it has one,
+/// is never zero and has no `+` and no leading zero, which a literal of
+/// silt may not have. The literal is lexed to check that: it is one
+/// Float, the number itself (a `-` in front is the operator).
+fn silt_literal(number: f64) -> String {
+    let text = format!("{number:?}");
+    let digits = text.strip_prefix('-').unwrap_or(&text);
+    let lexed = Lexer::new(silt::source::FileId::default(), digits)
+        .tokenize()
+        .checked()
+        .unwrap_or_else(|e| panic!("{text} is no silt literal: {}", e.message));
+    let tokens: Vec<silt::lexer::Token> = (lexed.tokens.into_iter())
+        .map(|token| token.kind)
+        .filter(|token| !matches!(token, silt::lexer::Token::Eof))
+        .collect();
+    assert_eq!(
+        tokens,
+        [silt::lexer::Token::Float(number.abs())],
+        "{text} lexes as the number"
+    );
+    text
+}
+
 /// A number for `float.format`: any finite one, or one of at most
 /// eight decimal places around zero, where a rounding to a few decimals
 /// gives zero or the digit beside it.
@@ -417,7 +441,7 @@ proptest! {
     #[test]
     fn float_format_writes_no_negative_zero(number in arb_to_format()) {
         let calls: Vec<String> = (0..=6)
-            .map(|decimals| format!("float.format({number:e}, {decimals})"))
+            .map(|decimals| format!("float.format({}, {decimals})", silt_literal(number)))
             .collect();
         let source = format!(
             "import float\nimport host\nimport string\nfn main() {{ host.give(string.join([{}], \"|\")) }}",
@@ -433,10 +457,10 @@ proptest! {
             let is_zero = |digits: &str| digits.chars().all(|c| c == '0' || c == '.');
             prop_assert!(
                 !text.strip_prefix('-').is_some_and(is_zero),
-                "float.format({number:e}, {decimals}) is {text}"
+                "float.format({number:?}, {decimals}) is {text}"
             );
             let expected = rounded(number, decimals);
-            prop_assert_eq!(text, expected, "float.format({:e}, {})", number, decimals);
+            prop_assert_eq!(text, expected, "float.format({:?}, {})", number, decimals);
         }
     }
 }

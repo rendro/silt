@@ -1,0 +1,17 @@
+-- exit: 1
+-- Where the Display impl of the `Err` that `main` returns fails, the
+-- error line shows the payload by its structure, and a note under it
+-- says which impl failed, what its failure said, and where.
+type E {
+  a: Int,
+}
+
+trait Display for E {
+  fn display(self) -> String {
+    panic("display panics")
+  }
+}
+
+fn main() -> Result((), E) {
+  Err(E { a: 1 })
+}

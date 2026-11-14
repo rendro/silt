@@ -2,12 +2,12 @@ error[type]: '?' operator requires Result or Option type, got 'Result(Int, Strin
  --> error_texts__question_on_a_program_type_named_result_is_told_apart.silt:27:11
     |
  27 |   let v = get()?
-    |           ^^^^^^ '?' operator requires Result or Option type, got 'Result(Int, String)', a type of this program that is not the builtin Result
+    |           ^^^^^^ here
   = help: give the type another name
 
 error[type]: '?' operator requires Result or Option type, got 'Result(Int, String)', a type of this program that is not the builtin Result
  --> error_texts__question_on_a_program_type_named_result_is_told_apart.silt:33:11
     |
  33 |   let v = g(1)?
-    |           ^^^^^ '?' operator requires Result or Option type, got 'Result(Int, String)', a type of this program that is not the builtin Result
+    |           ^^^^^ here
   = help: give the type another name

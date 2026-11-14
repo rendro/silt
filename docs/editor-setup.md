@@ -18,6 +18,9 @@ silt lsp
 ```
 
 The server communicates over stdin/stdout using the standard LSP protocol.
+As the protocol has it, it ends with status 0 after the editor's
+`shutdown` request and `exit`, and with 1 when the session ends without
+a shutdown: an `exit` that comes first, or an editor that goes away.
 
 A buffer that was never saved (`untitled:Untitled-1`) is checked as a
 file of its own, outside any package. It reads no file on disk; it can
@@ -112,7 +115,10 @@ Without the language server, an editor can pipe the buffer through
 `silt fmt -`, which reads the program from stdin and writes the
 formatted program to stdout, and through `silt check -` (add
 `--format json` for diagnostics a plugin can read), which names the
-buffer `<stdin>` in what it reports.
+buffer `<stdin>` in what it reports. Each diagnostic of the JSON form
+has its file and its start and end as `line`, `col`, `end_line` and
+`end_col`, counted from 1 as the terminal shows them; a file that could
+not be read is at line 1, column 1.
 
 ### Completion (nvim-cmp)
 
