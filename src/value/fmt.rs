@@ -2,9 +2,9 @@
 //!
 //! One formatter writes every text of a value, in one of two ways
 //! ([`Mode`]): as it is shown (`println`, interpolation: a string is
-//! its text, a date is `2024-03-09`, a builtin error is its message,
-//! and a record or variant of a type with a `Display` impl the program
-//! wrote is what the impl gave), and as it is inspected (`io.inspect`,
+//! its text, a date is `2024-03-09`, a builtin error is its message, a
+//! `Regex` is its pattern, and a record or variant of a type with a
+//! `Display` impl the program wrote is what the impl gave), and as it is inspected (`io.inspect`,
 //! `assert_eq`'s message, Rust's `{:?}`: the value as a program would
 //! write it). A string inside a structure is in quotes and escaped as a
 //! program writes it, `["a", "b, c"]`, however the value is written
@@ -345,6 +345,9 @@ fn begin<'a>(
         Value::Bytes(b) => return f.write_str(&format_bytes_preview(b)).map(|()| None),
         Value::TcpListener(t) => return write!(f, "<tcp-listener:{}>", t.id).map(|()| None),
         Value::TcpStream(t) => return write!(f, "<tcp-stream:{}>", t.id).map(|()| None),
+        // A Regex is shown as its pattern, the text its `==` compares,
+        // inside a structure too, as a value with a `Display` impl is.
+        Value::Regex(re) if shown => return f.write_str(&re.pattern).map(|()| None),
         Value::Regex(re) => return write!(f, "<regex:{}>", re.pattern).map(|()| None),
         Value::Dict(crate::bytecode::dict::Dict::Built(d)) => {
             return write!(f, "<dict:{}>", d.template.name).map(|()| None);

@@ -57,8 +57,26 @@ characters of any kind) and `\w{100}` are `TooBig`; `^\w{3,32}$` (about
 1.8 MB) is not, and the ASCII forms `[a-z0-9_]{100}` and `(?-u)\w{100}` are
 small. A length check is better written with `string.length`.
 
-Two `Regex` values of the same pattern are equal (`==`). A `Regex` has no
-`Display`: `io.inspect` shows it as `<regex:PATTERN>`.
+Two `Regex` values of the same pattern are equal (`==`). A `Regex` is shown
+as its pattern, the text `==` compares: `"{re}"` and `println(re)` write
+`\d+` for the pattern `\d+`, also inside a list, a record or a `Result`,
+as a value whose type has a `Display` impl is. `io.inspect` and the message
+of a failed `test.assert_eq` write it as `<regex:PATTERN>`, so that it does
+not read as a `String` there.
+
+```silt
+import io
+import regex
+
+fn main() -> Result((), regex.RegexError) {
+  let digits = regex.compile("""\d+""")?
+  println(digits) -- \d+
+  println("pattern: {digits}") -- pattern: \d+
+  println([digits]) -- [\d+]
+  println(io.inspect(digits)) -- <regex:\d+>
+  Ok(())
+}
+```
 
 A compiled pattern is kept for the next `regex.compile` of the same pattern,
 by every task of the program: up to 256 patterns and 128 MiB of them. When a
@@ -225,23 +243,6 @@ fn main() -> Result((), regex.RegexError) {
   let price = regex.compile("^{regex.escape("$1.50")}$")?
   println(regex.is_match("$1.50", price)) -- true
   println(regex.is_match("$1x50", price)) -- false
-  Ok(())
-}
-```
-
-```
-regex.find(text: String, re: Regex) -> Option(String)
-```
-
-Returns `Some(matched_text)` for the first match, or `None`.
-
-```silt
-import regex
-
-fn main() -> Result((), regex.RegexError) {
-  let digits = regex.compile("\\d+")?
-  println(regex.find("abc 123 def", digits)) -- Some("123")
-  println(regex.find("abc", digits)) -- None
   Ok(())
 }
 ```

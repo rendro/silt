@@ -984,7 +984,6 @@ impl Vm {
                 | Value::Handle(_)
                 | Value::TcpListener(_)
                 | Value::TcpStream(_)
-                | Value::Regex(_)
                 | Value::TypeDescriptor(_)
                 | Value::PrimitiveDescriptor(_)
         )
