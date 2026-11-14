@@ -1546,18 +1546,29 @@ impl Lexer {
             // mark of its kind stands behind it on that line to read it
             // again.
             '\'' | '`' | '“' | '”' | '‘' | '’' => {
-                let before = self.errors.len();
-                let error = self.unexpected(start, || format!("unexpected character: '{ch}'"));
-                if self.errors.len() > before
-                    && matches!(ch, '\'' | '`')
-                    && let Some(d) = self.errors.last_mut()
-                {
-                    d.help.push(
-                        "a string is written in double quotes, with `{x}` for a value: \
-                         `\"hello {name}\"`"
-                            .to_string(),
+                // (`'` is shown in backticks: in quotes it would read
+                // `'''`.) The same mark again is the same mistake: one
+                // error, with a count of the other places.
+                let shown = match ch {
+                    '\'' => "`'`".to_string(),
+                    _ => format!("'{ch}'"),
+                };
+                let span = self.since(start);
+                self.repeatable_error(shown.clone(), || {
+                    let d = Diagnostic::error(
+                        Code::UnexpectedChar,
+                        span,
+                        format!("unexpected character: {shown}"),
                     );
-                }
+                    match ch {
+                        '\'' | '`' => d.with_help(
+                            "a string is written in double quotes, with `{x}` for a value: \
+                             `\"hello {name}\"`",
+                        ),
+                        _ => d,
+                    }
+                });
+                let error = (Token::Error, start);
                 let is_partner = |c: char| match ch {
                     '\'' | '`' => c == ch,
                     _ => matches!(c, '“' | '”' | '‘' | '’'),
