@@ -629,6 +629,7 @@ src/lib.rs: pub use crate::types::*
 src/lib.rs: pub use crate::value::*
 src/lib.rs: pub use crate::vm::*
 src/lib.rs: pub use crate::vm::SystemClock
+src/lib.rs: pub use typeinfo::Tag
 src/lib.rs: pub use value::
 src/lib.rs: pub use vm::
 src/lockfile.rs: pub checksum
@@ -651,7 +652,6 @@ src/lsp/mod.rs: pub use rename::is_valid_silt_ident
 src/lsp/preload.rs: pub fn path_to_file_uri
 src/lsp/rename.rs: pub fn is_valid_silt_ident
 src/manifest.rs: pub dependencies
-src/manifest.rs: pub edition
 src/manifest.rs: pub enum Dependency
 src/manifest.rs: pub file
 src/manifest.rs: pub fn find
@@ -700,18 +700,18 @@ src/parser.rs: pub struct Parser
 src/playground.rs: pub const TOKEN_KINDS
 src/playground.rs: pub const VERSION
 src/playground.rs: pub fn completions
+src/playground.rs: pub fn error_diagnostic
+src/playground.rs: pub fn out_of_steps
+src/playground.rs: pub fn render_diagnostic
+src/playground.rs: pub fn returned
 src/playground.rs: pub fn tokens
 src/playground.rs: pub use crate::diagnostic::
 src/playground.rs: pub use crate::format::format
 src/playground.rs: pub use crate::source::FileId
-src/program.rs: pub entry
 src/program.rs: pub enum EntryPoint
 src/program.rs: pub enum TestKind
-src/program.rs: pub functions
-src/program.rs: pub globals
 src/program.rs: pub kind
 src/program.rs: pub name
-src/program.rs: pub settled
 src/program.rs: pub slot
 src/program.rs: pub span
 src/program.rs: pub struct Program
@@ -721,8 +721,8 @@ src/repl.rs: pub committed
 src/repl.rs: pub diagnostics
 src/repl.rs: pub diagnostics
 src/repl.rs: pub fn builtin_names
-src/repl.rs: pub fn completion_candidates_for_prefix
 src/repl.rs: pub fn completion_names
+src/repl.rs: pub fn completions_at
 src/repl.rs: pub fn eval
 src/repl.rs: pub fn new
 src/repl.rs: pub fn scope_completion_names
@@ -963,7 +963,6 @@ src/session/host.rs: pub fn fn1
 src/session/host.rs: pub fn fn2
 src/session/host.rs: pub fn function
 src/session/host.rs: pub fn new
-src/session/host.rs: pub fns
 src/session/host.rs: pub id
 src/session/host.rs: pub lookup
 src/session/host.rs: pub name
@@ -981,28 +980,11 @@ src/session/mod.rs: pub entry
 src/session/mod.rs: pub entry_display
 src/session/mod.rs: pub enum Builtins
 src/session/mod.rs: pub enum Entry
-src/session/mod.rs: pub fn add_cell
-src/session/mod.rs: pub fn allows
 src/session/mod.rs: pub fn analyze
-src/session/mod.rs: pub fn cell_value_scheme
-src/session/mod.rs: pub fn commit_cell
 src/session/mod.rs: pub fn compile
-src/session/mod.rs: pub fn defs
-src/session/mod.rs: pub fn entry_name_problems
-src/session/mod.rs: pub fn files
-src/session/mod.rs: pub fn graph
 src/session/mod.rs: pub fn has_errors
-src/session/mod.rs: pub fn into_sources
-src/session/mod.rs: pub fn module_analysis
-src/session/mod.rs: pub fn module_of
 src/session/mod.rs: pub fn new
-src/session/mod.rs: pub fn open
-src/session/mod.rs: pub fn packages
-src/session/mod.rs: pub fn project_problems
 src/session/mod.rs: pub fn set_overlay
-src/session/mod.rs: pub fn shadowed_cell_name
-src/session/mod.rs: pub fn sources
-src/session/mod.rs: pub fn tables
 src/session/mod.rs: pub host
 src/session/mod.rs: pub let_order
 src/session/mod.rs: pub lock
@@ -1053,6 +1035,12 @@ src/session/testing.rs: pub fn run_with_host
 src/session/testing.rs: pub fn session_with
 src/session/testing.rs: pub fn test_path
 src/session/testing.rs: pub struct Given
+src/session/testing.rs: pub trait BufferInside
+src/session/testing.rs: pub trait ProgramInside
+src/session/testing.rs: pub trait SessionInside
+src/session/testing.rs: pub trait ValueInside
+src/session/testing.rs: pub trait VmErrorInside
+src/session/testing.rs: pub trait VmInside
 src/source.rs: pub col
 src/source.rs: pub const BUILTIN
 src/source.rs: pub const BUILTIN
@@ -1140,17 +1128,6 @@ src/typechecker/names.rs: pub types
 src/typechecker/names.rs: pub types
 src/typechecker/names.rs: pub values
 src/typechecker/names.rs: pub values
-src/typechecker/tables.rs: pub fn fingerprint
-src/typechecker/tables.rs: pub fn for_session
-src/typechecker/tables.rs: pub fn forget
-src/typechecker/tables.rs: pub fn makers_of
-src/typechecker/tables.rs: pub fn record_fields
-src/typechecker/tables.rs: pub fn record_fields_of
-src/typechecker/tables.rs: pub fn resolver
-src/typechecker/tables.rs: pub fn scheme_of
-src/typechecker/tables.rs: pub fn variant_fields_at
-src/typechecker/tables.rs: pub fn variant_fields_of
-src/typechecker/tables.rs: pub struct Tables
 src/typeinfo.rs: pub arity
 src/typeinfo.rs: pub const ERR
 src/typeinfo.rs: pub const NONE
@@ -1161,7 +1138,6 @@ src/typeinfo.rs: pub enum FieldType
 src/typeinfo.rs: pub enum Shape
 src/typeinfo.rs: pub fields
 src/typeinfo.rs: pub fn applied
-src/typeinfo.rs: pub fn arity
 src/typeinfo.rs: pub fn builtin_type_named
 src/typeinfo.rs: pub fn extend
 src/typeinfo.rs: pub fn field_index
@@ -1171,22 +1147,16 @@ src/typeinfo.rs: pub fn get
 src/typeinfo.rs: pub fn insert
 src/typeinfo.rs: pub fn instances
 src/typeinfo.rs: pub fn instantiated
-src/typeinfo.rs: pub fn into_ty
 src/typeinfo.rs: pub fn is
 src/typeinfo.rs: pub fn is_builtin
 src/typeinfo.rs: pub fn iter
 src/typeinfo.rs: pub fn name
-src/typeinfo.rs: pub fn named
 src/typeinfo.rs: pub fn new
 src/typeinfo.rs: pub fn new_enum
 src/typeinfo.rs: pub fn new_record
-src/typeinfo.rs: pub fn of
-src/typeinfo.rs: pub fn ordinal
 src/typeinfo.rs: pub fn records
 src/typeinfo.rs: pub fn shown
 src/typeinfo.rs: pub fn tag
-src/typeinfo.rs: pub fn ty
-src/typeinfo.rs: pub fn type_id
 src/typeinfo.rs: pub fn variants
 src/typeinfo.rs: pub id
 src/typeinfo.rs: pub mod bv
@@ -1310,8 +1280,6 @@ src/value/convert.rs: pub vars
 src/value/float.rs: pub fn get
 src/value/float.rs: pub fn new
 src/value/float.rs: pub struct Float
-src/value/fmt.rs: pub fn format_silt
-src/value/fmt.rs: pub fn writable
 src/value/list.rs: pub enum IntTotal
 src/value/list.rs: pub fn concat
 src/value/list.rs: pub fn contains
@@ -1379,19 +1347,12 @@ src/value/map.rs: pub struct Set
 src/value/map.rs: pub struct SetIntoIter
 src/value/map.rs: pub struct SetIter
 src/value/mod.rs: pub enum Value
-src/value/mod.rs: pub fn builtin_record
-src/value/mod.rs: pub fn contains_fn
 src/value/mod.rs: pub fn is
-src/value/mod.rs: pub fn is_fn
-src/value/mod.rs: pub fn kind
-src/value/mod.rs: pub fn list
 src/value/mod.rs: pub fn map
 src/value/mod.rs: pub fn of
 src/value/mod.rs: pub fn record
 src/value/mod.rs: pub fn set
 src/value/mod.rs: pub fn string
-src/value/mod.rs: pub fn test_record
-src/value/mod.rs: pub fn tuple
 src/value/mod.rs: pub fn variant
 src/value/mod.rs: pub struct Ascii
 src/value/mod.rs: pub use convert::
@@ -1419,28 +1380,16 @@ src/value/obj.rs: pub struct Record
 src/value/obj.rs: pub struct Variant
 src/value/regex.rs: pub struct Compiled
 src/value/tuple.rs: pub struct Tuple
-src/vm/error.rs: pub call_stack
 src/vm/error.rs: pub exit
 src/vm/error.rs: pub fn new
-src/vm/error.rs: pub fn to_diagnostic
-src/vm/error.rs: pub fn type_confusion
-src/vm/error.rs: pub fn with_help
-src/vm/error.rs: pub fn with_help_at
-src/vm/error.rs: pub help
-src/vm/error.rs: pub help_at
 src/vm/error.rs: pub message
-src/vm/error.rs: pub out_of_steps
-src/vm/error.rs: pub returned
-src/vm/error.rs: pub span
 src/vm/error.rs: pub struct VmError
-src/vm/error.rs: pub type_confusion
 src/vm/io.rs: pub fn buffer
 src/vm/io.rs: pub fn clock
 src/vm/io.rs: pub fn contents
 src/vm/io.rs: pub fn new
 src/vm/io.rs: pub fn new
 src/vm/io.rs: pub fn process
-src/vm/io.rs: pub fn take
 src/vm/io.rs: pub struct Buffer
 src/vm/io.rs: pub struct HostIo
 src/vm/io.rs: pub struct SystemClock
@@ -1450,7 +1399,6 @@ src/vm/io_op.rs: pub enum IoFailure
 src/vm/io_op.rs: pub fn text
 src/vm/io_op.rs: pub struct Wanted
 src/vm/mod.rs: pub enum Exit
-src/vm/mod.rs: pub fn call_test
 src/vm/mod.rs: pub fn io_pool_live_threads
 src/vm/mod.rs: pub fn io_pool_threads
 src/vm/mod.rs: pub fn new
@@ -1458,16 +1406,10 @@ src/vm/mod.rs: pub fn panic_for_test
 src/vm/mod.rs: pub fn run_program
 src/vm/mod.rs: pub fn set_exit
 src/vm/mod.rs: pub fn set_step_budget
-src/vm/mod.rs: pub fn set_task_owner
-src/vm/mod.rs: pub fn set_task_owner_within
 src/vm/mod.rs: pub fn set_time_slice
 src/vm/mod.rs: pub fn settle
 src/vm/mod.rs: pub fn slots_set_again
-src/vm/mod.rs: pub fn stop_tasks
 src/vm/mod.rs: pub fn submit_panicking_io_for_test
-src/vm/mod.rs: pub fn user_facing_type_name
-src/vm/mod.rs: pub fn value_implements_display
-src/vm/mod.rs: pub fn wait_until_idle
 src/vm/mod.rs: pub struct Vm
 src/vm/mod.rs: pub use crate::runtime::handle::
 src/vm/mod.rs: pub use crate::scheduler::PanicAt
@@ -1475,7 +1417,6 @@ src/vm/mod.rs: pub use error::VmError
 src/vm/mod.rs: pub use io::
 src/vm/mod.rs: pub use io::SystemClock
 src/vm/mod.rs: pub use io_op::IoFailure
-src/vm/show.rs: pub fn show_text
 src/watch.rs: pub discovery
 src/watch.rs: pub entries
 src/watch.rs: pub lock

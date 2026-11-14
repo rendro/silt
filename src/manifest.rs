@@ -41,10 +41,6 @@ pub struct PackageMeta {
     /// The value of `name` in the file.
     pub name_span: Span,
     pub version: String,
-    /// What `edition` says, if anything. Nothing in silt reads it but a
-    /// test.
-    #[cfg_attr(not(feature = "test-hooks"), allow(dead_code))]
-    pub edition: Option<String>,
 }
 
 /// One `[dependencies]` entry and where it is written.
@@ -97,8 +93,6 @@ struct RawManifest {
 struct RawPackage {
     name: String,
     version: String,
-    #[serde(default)]
-    edition: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -211,7 +205,6 @@ impl Manifest {
                 name: intern::intern(&raw.package.name),
                 name_span: at(&["package", "name"], false),
                 version: raw.package.version,
-                edition: raw.package.edition,
             },
             dependencies,
             file,

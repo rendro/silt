@@ -67,7 +67,6 @@ version = "0.1.0"
     let manifest = load(&path).expect("load");
     assert_eq!(intern::resolve(manifest.package.name), "foo");
     assert_eq!(manifest.package.version, "0.1.0");
-    assert!(manifest.package.edition.is_none());
     assert!(manifest.dependencies.is_empty());
 }
 
@@ -97,22 +96,6 @@ bar = { path = "../bar" }
         }
         other => panic!("expected Path dep, got {other:?}"),
     }
-}
-
-#[test]
-fn test_manifest_with_edition() {
-    let dir = tempdir();
-    let path = write_manifest(
-        &dir,
-        r#"
-[package]
-name = "foo"
-version = "0.1.0"
-edition = "2026"
-"#,
-    );
-    let manifest = load(&path).expect("load");
-    assert_eq!(manifest.package.edition.as_deref(), Some("2026"));
 }
 
 // ── Schema errors ─────────────────────────────────────────────────────
