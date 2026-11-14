@@ -227,11 +227,12 @@ types, kept apart by their qualifiers: `a.Pt` and `b.Pt`, or a module's
 own `Pt` and an imported `b.Pt`. A value of one is not a value of the
 other, and each has its own trait impls.
 
-A value of such a type prints qualified, as the program names the
+A record of such a type prints qualified, as the program names the
 module: `a.Pt {x: 1}` for a module `a` of the program, `db.Pt {x: 1}`
 for the library of a dependency `db`, and `db.util.Pt {x: 1}` for its
-module `util`. A type whose name no other type of the program has
-prints bare: `Pt {x: 1}`.
+module `util`. A record type whose name no other type of the program has
+prints bare: `Pt {x: 1}`. A variant prints by its own name, whichever
+enum it is of: `a.V("s")` prints `V("s")`.
 
 Two modules may also each declare a trait of one name, say `Show` with
 a method `show`, and implement it for one type. A call names the trait
