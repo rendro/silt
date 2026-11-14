@@ -2045,9 +2045,10 @@ impl TypeChecker {
 // ── Helper functions ────────────────────────────────────────────────
 
 /// Whether a type declaration of this name is rejected: `TypeOf`, the
-/// type system's own, or a builtin scalar or container type's name.
+/// type system's own, or the name of a builtin scalar or container type
+/// of the prelude.
 fn rejected_type_name(name: &str) -> bool {
-    name == "TypeOf" || crate::types::builtins::lookup(name).is_some()
+    name == "TypeOf" || crate::types::builtins::is_prelude_name(name)
 }
 
 /// The name of a builtin type; `None` for a type a module declares.

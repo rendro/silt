@@ -38,7 +38,10 @@ impl Server {
             return Some(Hover {
                 contents: HoverContents::Markup(MarkupContent {
                     kind: MarkupKind::Markdown,
-                    value: format!("```silt\n{field_name}: {field_ty}\n```"),
+                    value: format!(
+                        "```silt\n{field_name}: {}\n```",
+                        self.written_here(doc, &field_ty)
+                    ),
                 }),
                 range: None,
             });
@@ -55,7 +58,7 @@ impl Server {
             // a generic value, `let f = id`, is general in what nothing
             // decides: written with letters, `Fn(a) -> a`, as a generic
             // function's hover is.)
-            let ty = super::ast_walk::written_with_letters(ty);
+            let ty = super::ast_walk::written_with_letters(&self.written_here(doc, ty));
             let value = format!("```silt\n{ty}\n```");
             return Some(Hover {
                 contents: HoverContents::Markup(MarkupContent {
@@ -245,6 +248,7 @@ impl Server {
             let untyped = has_unresolved_vars(&t) || matches!(t, crate::types::Type::Error);
             let render_top_signature = !(untyped && doc_text.is_some());
             if render_top_signature {
+                let t = self.written_here(doc, &t);
                 value.push_str(&format!("```silt\n{t}\n```"));
             }
         }

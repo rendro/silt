@@ -1,0 +1,26 @@
+-- cmd: lsp
+-- A rename to the name of a type of a builtin module is a rename to a
+-- name the program may declare (`Regex` beside `regex.Regex`); a rename
+-- to a name the file imports by name, or to a type of the prelude, is
+-- refused.
+-- lsp: rename 14:6 Regex
+-- lsp: rename 14:6 Weekday
+-- lsp: rename 14:6 Bytes
+-- lsp: rename 14:6 TcpStream
+import regex
+import time
+import time.{ Weekday }
+
+type Pattern { n: Int }
+
+fn uses(p: Pattern, r: regex.Regex, d: Weekday) -> Int {
+  match regex.is_match("a", r) {
+    true -> p.n
+    false -> 0
+  }
+}
+
+fn main() -> Result((), regex.RegexError) {
+  println(uses(Pattern { n: 1 }, regex.compile("a")?, time.Monday))
+  Ok(())
+}

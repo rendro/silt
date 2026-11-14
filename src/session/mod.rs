@@ -472,15 +472,27 @@ impl Session {
     /// How a message about the REPL cell `file` writes the type or
     /// trait `def`, named `name`, when it is one of an earlier cell that
     /// a later cell declared again: with its cell (`<repl:1>.T`), as the
-    /// cell's diagnostics write it. `None` for any other, which keeps
-    /// its name.
+    /// cell's diagnostics write it; or one of a builtin module whose
+    /// name the cell gives another type: with its module
+    /// (`regex.Regex`). `None` for any other, which keeps its name.
     pub fn shadowed_cell_name(
         &self,
         file: FileId,
         def: crate::defs::DefId,
         name: Symbol,
     ) -> Option<String> {
-        let cell = self.cells.info.get(&self.defs.get(def).module)?;
+        let owner = self.defs.get(def).module;
+        // A type of a builtin module whose bare name the cell binds to
+        // another type (`type Regex` of a cell beside `regex.Regex`):
+        // with its module, as messages write it.
+        if let Some(module) = owner.builtin_name() {
+            let scope = &self.analyses.get(&self.module_of(file))?.scope;
+            return match scope.types.get(&name) {
+                Some(names::Binding::Def(id)) if *id != def => Some(format!("{module}.{name}")),
+                _ => None,
+            };
+        }
+        let cell = self.cells.info.get(&owner)?;
         let scope = &self.analyses.get(&self.module_of(file))?.scope;
         match scope.types.get(&name) {
             Some(names::Binding::Def(id)) if *id == def => None,

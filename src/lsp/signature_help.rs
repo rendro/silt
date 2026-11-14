@@ -61,15 +61,17 @@ impl Server {
         // not that function, and a definition is the one the name reaches.
         let (label, params_info, doc_text) = match self.callee(uri, doc, &fn_name, callee_at) {
             Callee::Local(ty) => {
-                let (label, params_info) = local_signature(&ty?)?;
+                let (label, params_info) = local_signature(&self.written_here(doc, &ty?))?;
                 (label, params_info, None)
             }
             Callee::Own(def) => {
-                let (label, params_info) = build_signature_from_def(&fn_name, def);
+                let (label, params_info) =
+                    build_signature_from_def(&fn_name, &self.written_def(doc, def));
                 (label, params_info, def.doc.clone())
             }
             Callee::Definition(def) => {
-                let (label, params_info) = build_signature_from_def(&fn_name, &def);
+                let (label, params_info) =
+                    build_signature_from_def(&fn_name, &self.written_def(doc, &def));
                 (label, params_info, def.doc)
             }
             Callee::Builtin(name) => self.builtin_signature(&name)?,
@@ -89,7 +91,8 @@ impl Server {
                 };
                 match doc.definitions.get(&fn_sym).or(imported.as_ref()) {
                     Some(def) => {
-                        let (label, params_info) = build_signature_from_def(&fn_name, def);
+                        let (label, params_info) =
+                            build_signature_from_def(&fn_name, &self.written_def(doc, def));
                         (label, params_info, def.doc.clone())
                     }
                     None => self.builtin_signature(&fn_name)?,

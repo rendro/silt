@@ -1,0 +1,7 @@
+import regex
+import shapes.{ Regex }
+
+-- `Regex` here is the one imported from shapes.
+pub fn first(r: Regex, compiled: regex.Regex) -> String {
+  "{r.pattern} {regex.is_match(r.pattern, compiled)}"
+}

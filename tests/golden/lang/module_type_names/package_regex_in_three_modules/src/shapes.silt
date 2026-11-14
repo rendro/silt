@@ -1,0 +1,17 @@
+import regex
+
+pub type Regex { pattern: String }
+
+pub type TcpStream(a) { Open(a), Shut }
+
+pub trait Describe {
+  fn describe(self) -> String
+}
+
+trait Describe for Regex {
+  fn describe(self) -> String { "shapes.Regex {self.pattern}" }
+}
+
+trait Describe for regex.Regex {
+  fn describe(self) -> String { "regex.Regex" }
+}

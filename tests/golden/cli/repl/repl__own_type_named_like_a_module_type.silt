@@ -1,0 +1,8 @@
+-- cmd: repl
+-- A cell may declare `type Regex` beside `regex.Regex`: `:type` then
+-- writes the regex module's with its module, and the bare name means the
+-- cell's own. `:doc` finds a type of a builtin module by its module, as
+-- `time.Weekday`, not by its bare name.
+-- stderr-contains: no builtin named 'Regex'
+-- stderr-contains: no builtin named 'TcpStream'
+-- stdin: :doc Regex\n:doc TcpStream\nimport regex\nimport time\n:type regex.compile("a")\ntype Regex { n: Int }\ntype Weekday { n: Int }\n:type regex.compile("a")\n:type Regex { n: 1 }\nRegex { n: 3 }.n\n:type time.Monday\n:type [Weekday { n: 1 }]\n:quit\n

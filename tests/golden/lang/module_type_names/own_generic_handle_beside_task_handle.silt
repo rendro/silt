@@ -1,0 +1,45 @@
+-- A program's own generic enum `Handle(a)` beside `task.Handle(a)`:
+-- variants, match, equality, hashing and ordering are its own; a trait
+-- with an impl for each dispatches on the value's type.
+import list
+import set
+import task
+
+type Handle(a) { Done(a), Pending }
+
+trait Describe {
+  fn describe(self) -> String
+}
+
+trait Describe for Handle(a) {
+  fn describe(self) -> String {
+    match self {
+      Done(_) -> "mine, done"
+      Pending -> "mine, pending"
+    }
+  }
+}
+
+trait Describe for task.Handle(a) {
+  fn describe(self) -> String { "a task" }
+}
+
+fn total(mine: Handle(Int), running: task.Handle(Int)) -> Int {
+  let n = match mine {
+    Done(x) -> x
+    Pending -> 0
+  }
+  n + task.join(running)
+}
+
+fn main() {
+  let mine = Done(4)
+  let running = task.spawn { -> 5 }
+  println(Describe.describe(mine))
+  println(Describe.describe(Pending))
+  println(Describe.describe(running))
+  println(total(mine, running))
+  println(mine == Done(4))
+  println(set.length(set.from_list([mine, Pending, Done(4)])))
+  println(list.sort([Pending, Done(2), Done(1)]))
+}

@@ -1,0 +1,29 @@
+> hover 22:15
+```silt
+type Regex { n: Int }
+```
+> hover 22:39
+```silt
+type regex.Regex
+```
+> definition 22:15
+own_regex_beside_regex_regex.silt:18:6-18:11
+> references 18:6
+own_regex_beside_regex_regex.silt:18:6-18:11
+own_regex_beside_regex_regex.silt:22:15-22:20
+own_regex_beside_regex_regex.silt:33:16-33:21
+> hover 22:4
+```silt
+Fn(Regex, regex.Regex) -> Int
+```
+> hover 30:7
+```silt
+regex.Regex
+```
+> hover 31:7
+```silt
+time.Weekday
+```
+> signature 33:16
+fn both(mine: Regex, compiled: regex.Regex) -> Int
+argument 1: mine: Regex

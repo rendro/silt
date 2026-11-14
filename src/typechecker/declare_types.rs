@@ -83,17 +83,18 @@ impl TypeChecker {
             );
             return;
         }
-        // A type-decl whose name shadows a builtin
-        // scalar/container type (Int, Float, Bool, String, Unit, List,
-        // Map, Set, Channel, Tuple, Fn, Handle, Bytes,
-        // TcpListener, TcpStream — the authoritative list is
-        // `BUILTIN_TYPES` in `src/types/builtins.rs`) is rejected at
+        // A type-decl whose name shadows a builtin scalar/container
+        // type of the prelude (Int, Float, Bool, String, List, Map,
+        // Set, Channel, Tuple, Fn, Bytes — the authoritative list is
+        // `BUILTIN_TYPES` in `src/types/builtins.rs`, less the types of
+        // builtin modules such as `regex.Regex`, which reserve no name,
+        // as `time.Weekday` does not) is rejected at
         // the declaration with one diagnostic: it would overwrite the
         // builtin binding, and what is said of the type's structural
         // traits would go by fields the *builtin* type does not have
         // (a cascade of "unknown method 'x' on type Int" errors with no
         // place). Mirrors the variant-shadow error shape below.
-        if crate::types::builtins::lookup(td_name_str.as_str()).is_some() {
+        if crate::types::builtins::is_prelude_name(td_name_str.as_str()) {
             self.errors.push(
                 Diagnostic::error(
                     Code::InvalidTypeDeclaration,

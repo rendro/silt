@@ -49,6 +49,10 @@ impl Server {
                 let off = h.ident_span.start as usize;
                 off >= start_offset && off <= end_offset
             })
+            .map(|h| HintRecord {
+                ty: self.written_here(doc, &h.ty),
+                ..h
+            })
             .filter_map(|h| render_hint(h, source))
             .collect();
 
