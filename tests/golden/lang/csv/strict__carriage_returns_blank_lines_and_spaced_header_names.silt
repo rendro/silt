@@ -29,6 +29,10 @@ fn main() {
     Ok(rows) -> println(rows)
     Err(e) -> println("{e}")
   }
+  match csv.parse("\nid\na\n", One) {
+    Ok(rows) -> println(rows)
+    Err(e) -> println("{e}")
+  }
   println(csv.split_line("a,b\r"))
   println(csv.split_line("\"a\",\"b\"\r"))
   println(csv.split_line("a\rb"))

@@ -252,8 +252,9 @@ pub(crate) fn table(text: &str) -> Result<Table, Value> {
             return Err(syntax_at(line, why, at));
         }
         // (A text that begins with a blank line has a header of one empty
-        // column: the rows that follow are not what is wrong.)
-        if fields.len() != header.len() && header_blank {
+        // column: the rows that follow are not what is wrong, nor is a
+        // field of the type that no column names.)
+        if header_blank {
             let why = "the header is a blank line: the first line of the text names the columns";
             return Err(syntax_at(1, why, start));
         }

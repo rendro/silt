@@ -9,6 +9,7 @@ csv syntax error at byte 0: line 1: the header is a blank line: the first line o
 csv syntax error at byte 5: line 1: the header's column ' age' has spaces around it: column names are matched exactly
 csv syntax error at byte 5: line 1: the header's column 'age ' has spaces around it: column names are matched exactly
 [One {id: "a"}, One {id: ""}, One {id: "b"}]
+csv syntax error at byte 0: line 1: the header is a blank line: the first line of the text names the columns
 Err(csv syntax error at byte 3: a carriage return (\r) outside quotes: csv lines end in \n or \r\n)
 Err(csv syntax error at byte 7: a carriage return (\r) outside quotes: csv lines end in \n or \r\n)
 Err(csv syntax error at byte 1: a carriage return (\r) outside quotes: csv lines end in \n or \r\n)
