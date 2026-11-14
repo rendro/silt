@@ -28,4 +28,4 @@ error[type]: `json.parse` cannot decode `Box(Set(Int))`: field `v` has type `Set
  47 |   println(Box(Set(Int)).mk("\{\"v\": [1]}"))
     |           ^^^^^^^^^^^^^^^^ `json.parse` cannot decode `Box(Set(Int))`: field `v` has type `Set(Int)`, which has no decoder
   = note: `Box.mk` passes it to `json.parse`
-  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these
+  = help: decodable field types are Int, Float, String, Bool, time.Date, time.Time, time.DateTime, json.Value, List(T), Option(T), Map(String, T), tuples, time.Instant, time.Duration, record and enum types (a generic one with its type arguments), types with a `json.Decode` impl, and aliases of these

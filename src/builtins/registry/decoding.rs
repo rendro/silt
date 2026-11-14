@@ -235,10 +235,12 @@ impl Family {
             true => "record and enum types",
             false => "record types",
         };
+        // (`time.Instant` and `time.Duration` are decoded as the records
+        // they are written as: no leaves.)
         format!(
             "decodable field types are {}, List(T), Option(T), Map(String, T), tuples, \
-             {named} (a generic one with its type arguments), types with a `json.Decode` \
-             impl, and aliases of these",
+             time.Instant, time.Duration, {named} (a generic one with its type arguments), \
+             types with a `json.Decode` impl, and aliases of these",
             leaves.join(", ")
         )
     }
