@@ -70,6 +70,33 @@ fn an_io_timeout_silt_cannot_read_refuses_the_start() {
     }
 }
 
+/// A duration longer than silt can count is said to be that, not to be
+/// no duration (it read "is not a duration: write a whole number above 0
+/// with a unit", and it was one).
+#[test]
+fn an_io_timeout_too_long_to_wait_says_so() {
+    for (i, value) in ["9999999999999999h", "99999999999999999999s"]
+        .into_iter()
+        .enumerate()
+    {
+        let (code, out, err) = silt(
+            &format!("long{i}"),
+            &["run", "main.silt"],
+            &[("SILT_IO_TIMEOUT", value)],
+        );
+        assert_eq!(code, Some(1), "{value}: {err}");
+        assert_eq!(out, "", "{value}: the program did not run");
+        assert_eq!(
+            err,
+            format!(
+                "error: silt run: SILT_IO_TIMEOUT='{value}' is longer than silt can wait: write a \
+                 shorter duration, as in 500ms, 5s, 2m or 1h\n"
+            ),
+            "{value}"
+        );
+    }
+}
+
 #[test]
 fn a_time_slice_silt_cannot_read_refuses_the_start() {
     for (i, value) in ["abc", "0", "-5", "1.5", "500ms"].into_iter().enumerate() {

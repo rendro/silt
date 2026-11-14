@@ -119,19 +119,45 @@ pub const WORKER_STACK_BYTES: usize = if cfg!(target_pointer_width = "64") {
 /// whose tasks keep failing must not grow without bound.
 const MAX_SHOWN_FAILURES: usize = 64;
 
+/// Why a text is no duration that silt can wait for ([`parse_duration`]).
+#[derive(Debug, PartialEq, Eq)]
+enum NoDuration {
+    /// It is no whole number above 0 with a unit.
+    NotOne,
+    /// It is one, longer than a count of seconds holds.
+    TooLong,
+}
+
 /// A duration like `"30s"`, `"500ms"`, `"5m"`, `"2h"`: a whole number
-/// above 0 with a unit. `None` for anything else.
-fn parse_duration(s: &str) -> Option<Duration> {
+/// above 0 with a unit.
+fn parse_duration(s: &str) -> Result<Duration, NoDuration> {
     let s = s.trim();
-    let unit_start = s.find(|c: char| c.is_alphabetic())?;
+    let unit_start = s
+        .find(|c: char| c.is_alphabetic())
+        .ok_or(NoDuration::NotOne)?;
     let (num_part, unit) = s.split_at(unit_start);
-    let n: u64 = num_part.trim().parse().ok().filter(|n| *n > 0)?;
-    match unit.trim().to_lowercase().as_str() {
-        "ms" => Some(Duration::from_millis(n)),
-        "s" | "sec" | "secs" => Some(Duration::from_secs(n)),
-        "m" | "min" | "mins" => Some(Duration::from_secs(n.checked_mul(60)?)),
-        "h" | "hr" | "hrs" => Some(Duration::from_secs(n.checked_mul(3600)?)),
-        _ => None,
+    let per = match unit.trim().to_lowercase().as_str() {
+        "ms" => None,
+        "s" | "sec" | "secs" => Some(1),
+        "m" | "min" | "mins" => Some(60),
+        "h" | "hr" | "hrs" => Some(3600),
+        _ => return Err(NoDuration::NotOne),
+    };
+    let digits = num_part.trim();
+    let n: u64 = match digits.parse() {
+        Ok(n @ 1..) => n,
+        // (Digits alone, too many for the count.)
+        Err(_) if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) => {
+            return Err(NoDuration::TooLong);
+        }
+        _ => return Err(NoDuration::NotOne),
+    };
+    match per {
+        None => Ok(Duration::from_millis(n)),
+        Some(per) => n
+            .checked_mul(per)
+            .map(Duration::from_secs)
+            .ok_or(NoDuration::TooLong),
     }
 }
 
@@ -150,9 +176,12 @@ fn io_timeout_setting() -> Result<Option<Duration>, String> {
         return Ok(None);
     };
     match parse_duration(&value) {
-        Some(timeout) => Ok(Some(timeout)),
-        None => Err(format!(
+        Ok(timeout) => Ok(Some(timeout)),
+        Err(NoDuration::NotOne) => Err(format!(
             "SILT_IO_TIMEOUT='{value}' is not a duration: write a whole number above 0 with a unit, as in 500ms, 5s, 2m or 1h"
+        )),
+        Err(NoDuration::TooLong) => Err(format!(
+            "SILT_IO_TIMEOUT='{value}' is longer than silt can wait: write a shorter duration, as in 500ms, 5s, 2m or 1h"
         )),
     }
 }
