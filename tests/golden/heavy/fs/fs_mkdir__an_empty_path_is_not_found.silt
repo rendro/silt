@@ -1,0 +1,9 @@
+-- An empty path is no directory to make: NotFound(""), as io.read_file("")
+-- and fs.list_dir("") give (it was Ok(())).
+import fs
+import io
+
+fn main() {
+  println(io.inspect(fs.mkdir("")))
+  println(io.inspect(io.read_file("")))
+}

@@ -484,8 +484,14 @@ pub(crate) mod fs {
             result(names, path, Value::list)
         }
 
+        // (The system makes "" without a word: it is no path, as for
+        // every other function of the module.)
         fn mkdir(path: &str) -> Value {
-            result(std::fs::create_dir_all(path), path, unit)
+            let made = match path.is_empty() {
+                true => Err(std::io::ErrorKind::NotFound.into()),
+                false => std::fs::create_dir_all(path),
+            };
+            result(made, path, unit)
         }
 
         // The path itself is removed, never what a link leads to: a link
