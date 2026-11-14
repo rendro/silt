@@ -1486,3 +1486,24 @@ fn a_host_result_of_a_builtin_module_type_is_named_with_its_module() {
         "got: {err}"
     );
 }
+
+/// A host signature that names a parameter twice is refused, as a program
+/// function's is (it was taken, and the second argument was the one the
+/// name had).
+#[test]
+fn a_host_signature_that_names_a_parameter_twice_is_refused() {
+    for (signature, name) in [
+        ("fn f(a: Int, a: Int) -> Int", "f"),
+        ("fn g(a: Int, (b, a): (Int, Int)) -> Int", "g"),
+    ] {
+        let host =
+            HostModule::new("h").function(signature, |call: &HostCall| Ok(call.args[0].clone()));
+        let err = run("import h\nfn main() {\n  println(1)\n}", host).unwrap_err();
+        assert!(
+            err.contains(&format!(
+                "the host function `{name}` names the parameter `a` twice"
+            )),
+            "got: {err}"
+        );
+    }
+}

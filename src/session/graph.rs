@@ -471,6 +471,28 @@ impl ModuleGraph {
                         .with_help(help),
                     );
                 }
+                // (The checker reads no binding of a function with no
+                // body: a name given twice was taken.)
+                let mut names = Vec::new();
+                for param in &f.params {
+                    param_names(&param.pattern, &mut names);
+                }
+                for (at, (name, span)) in names.iter().enumerate() {
+                    if names[..at].iter().any(|(earlier, _)| earlier == name) {
+                        signature_problems.push(
+                            Diagnostic::error(
+                                Code::HostSignature,
+                                *span,
+                                format!(
+                                    "the host function `{}` names the parameter `{}` twice",
+                                    f.name,
+                                    resolve(*name)
+                                ),
+                            )
+                            .with_help("give each parameter a name of its own"),
+                        );
+                    }
+                }
                 let types = f.params.iter().filter_map(|p| p.ty.as_ref());
                 if types
                     .chain(&f.return_type)
@@ -1197,6 +1219,20 @@ fn builtin_qualifiers(ast: &ast::Program) -> Vec<(Symbol, Span)> {
         }
     }
     out
+}
+
+/// The names that `pattern`, a parameter of a host function, binds, with
+/// their places, in order.
+fn param_names(pattern: &ast::Pattern, names: &mut Vec<(Symbol, Span)>) {
+    match &pattern.kind {
+        ast::PatternKind::Ident(name) => names.push((*name, pattern.span)),
+        ast::PatternKind::Tuple(parts) => {
+            for part in parts {
+                param_names(part, names);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn decl_span(decl: &Decl) -> Span {
