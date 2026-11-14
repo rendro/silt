@@ -644,7 +644,7 @@ record FileStat {
     is_symlink: Bool,            // true if the path itself is a symlink
     modified: Option(DateTime),  // last-modified time, or None if unsupported
     readonly: Bool,              // true if the OS reports the path as read-only
-    mode: Int,                   // Unix file-type and permission bits; 0 on Windows
+    mode: Int,                   // Unix permission bits; 0 on Windows
     accessed: Option(DateTime),  // last-access time, or None if unsupported / noatime
     created: Option(DateTime),   // creation (birth) time, or None if unsupported
 }
@@ -656,15 +656,12 @@ is `true` and `is_file` / `is_dir` both report on the link rather than
 its target. To stat the target, call `fs.read_link` and then `fs.stat`
 on the result.
 
-`mode` carries the Unix file-type and permission bits as the system
-gives them: a regular file with the permissions `rw-r--r--` (octal 644)
-has the mode 33188, which is octal 100644. silt has no octal literal;
-take the permission bits with `int.bit_and` and a hex mask:
-`int.bit_and(s.mode, 0x1FF)` is 420 for octal 644 (so `== 0x1A4` tests for
-`rw-r--r--`), and the mask `0xFFF` adds the setuid, setgid and sticky bits.
-The file type is in `is_file`, `is_dir` and `is_symlink`. On Windows `mode`
-is always `0` because NTFS does not expose a Unix-style permission
-triple; use `readonly` / `is_dir` / `is_file` instead for portable code.
+`mode` holds the Unix permission bits: the permissions, with setuid,
+setgid and sticky above them (the low 12 bits of the system's mode). A
+file with the permissions `rw-r--r--` (octal 644) has the mode 420
+(`0x1A4`), a directory with `rwxrwxr-x` (octal 775) 509. The file type is in
+`is_file`, `is_dir` and `is_symlink`. On Windows `mode` is always `0`: it
+has no such bits; use `readonly` there.
 
 `modified`, `accessed` and `created` are `Option(DateTime)` because no
 timestamp is universally available:

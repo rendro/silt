@@ -100,11 +100,11 @@
         },
         {
           "name": "constant.numeric.float.silt",
-          "match": "\\b(?:0|[1-9](?:_?\\d)*)\\.\\d(?:_?\\d)*(?:e-?\\d(?:_?\\d)*)?\\b"
+          "match": "\\b(?:0|[1-9](?:_?\\d)*)\\.\\d(?:_?\\d)*(?:e-?(?:0|[1-9](?:_?\\d)*))?\\b"
         },
         {
           "name": "constant.numeric.float.silt",
-          "match": "\\b(?:0|[1-9](?:_?\\d)*)e-?\\d(?:_?\\d)*\\b"
+          "match": "\\b(?:0|[1-9](?:_?\\d)*)e-?(?:0|[1-9](?:_?\\d)*)\\b"
         },
         {
           "name": "constant.numeric.integer.silt",

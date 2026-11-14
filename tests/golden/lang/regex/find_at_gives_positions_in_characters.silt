@@ -1,0 +1,36 @@
+-- regex.find_at and regex.find_all_at give where a match is: (start,
+-- end) in characters, as string.slice and string.index_of count, the end
+-- not in the match. A character outside ASCII before a match counts
+-- once; a match of nothing is (n, n), between two characters.
+import list
+import regex
+import string
+
+fn main() -> Result((), regex.RegexError) {
+  let word = regex.compile("""\bab""")?
+  let text = "cab ab"
+  println(regex.find_at(text, word))
+  println(string.index_of(text, "ab"))
+  println(regex.find_all_at("ab ab", word))
+  println(regex.find_at("none", word))
+  println(regex.find_all_at("none", word))
+
+  -- Outside ASCII: the same numbers string.slice takes.
+  let digits = regex.compile("""\d+""")?
+  let mixed = "日本 12 é 345 😀6"
+  let at = regex.find_all_at(mixed, digits)
+  println(at)
+  println(list.map(at) { (s, e) -> string.slice(mixed, s, e) })
+  println(regex.find_all(mixed, digits))
+  let accented = regex.compile("é+")?
+  println(regex.find_at("aéé b", accented))
+
+  -- A match of nothing.
+  let nothing = regex.compile("")?
+  println(regex.find_all_at("aé", nothing))
+  println(regex.find_all_at("", nothing))
+  println(regex.find_at("", nothing))
+  let maybe_b = regex.compile("b*")?
+  println(regex.find_all_at("abb", maybe_b))
+  Ok(())
+}

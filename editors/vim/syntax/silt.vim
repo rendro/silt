@@ -69,16 +69,16 @@ syntax region siltRawString start='"""' end='"""\("\)\@!'
 " Mirrors the one spelling of a number in src/lexer.rs (scan_number,
 " number_spelling): the prefixes `0x` and `0b`, a `_` only between two
 " digits, no leading zero in a decimal number, and an exponent `e`
-" with an optional `-`. Float patterns are defined AFTER the integer
-" patterns: when two matches start at the same column vim prefers the
-" item defined last, so `1.5` highlights as siltFloat instead of
-" stopping at the leading `1`. Parity lock:
+" with an optional `-` and no leading zero. Float patterns are defined
+" AFTER the integer patterns: when two matches start at the same column
+" vim prefers the item defined last, so `1.5` highlights as siltFloat
+" instead of stopping at the leading `1`. Parity lock:
 " tests/meta/editor_grammar_number_literals_tests.rs.
 syntax match siltNumber "\<0x[0-9a-fA-F]\(_\=[0-9a-fA-F]\)*\>"
 syntax match siltNumber "\<0b[01]\(_\=[01]\)*\>"
 syntax match siltNumber "\<\(0\|[1-9]\(_\=\d\)*\)\>"
-syntax match siltFloat "\<\(0\|[1-9]\(_\=\d\)*\)e-\=\d\(_\=\d\)*\>"
-syntax match siltFloat "\<\(0\|[1-9]\(_\=\d\)*\)\.\d\(_\=\d\)*\(e-\=\d\(_\=\d\)*\)\=\>"
+syntax match siltFloat "\<\(0\|[1-9]\(_\=\d\)*\)e-\=\(0\|[1-9]\(_\=\d\)*\)\>"
+syntax match siltFloat "\<\(0\|[1-9]\(_\=\d\)*\)\.\d\(_\=\d\)*\(e-\=\(0\|[1-9]\(_\=\d\)*\)\)\=\>"
 
 " ── Operators ───────────────────────────────────────────────────────
 " Multi-character operators are listed first so vim's longest-match

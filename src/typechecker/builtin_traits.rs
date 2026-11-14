@@ -371,6 +371,8 @@ pub(super) fn register_builtin_trait_impls(checker: &mut TypeChecker) {
     }
     // Bytes are a map key and a set element by their content.
     register_structural_traits_for(checker, &["Bytes"], &["Hash"]);
+    // A Regex is shown as its pattern: the text its `==` compares.
+    register_structural_traits_for(checker, &["Regex"], &["Display"]);
 
     register_builtin_impls(checker);
 

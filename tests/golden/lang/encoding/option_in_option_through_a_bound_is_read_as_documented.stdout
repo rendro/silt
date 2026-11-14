@@ -1,0 +1,8 @@
+Ok(None)
+Ok(Some(Some(7)))
+Ok([None, Some(Some(7))])
+Err(Other("cannot decode field `v` of `W`: a value of type Option(Option(Int)) cannot be decoded"))
+Err(Other("cannot decode a field of variant `Has` of `E`: a value of type Option(Option(Int)) cannot be decoded"))
+Err(Other("cannot decode field `v` of `L`: a value of type List(Option(Option(Int))) cannot be decoded"))
+Err(Other("cannot decode field `v` of `W`: a value of type Option(Option(Int)) cannot be decoded"))
+Ok([Some(Some(7))])

@@ -356,6 +356,8 @@ pub(super) fn modules() -> Vec<Module> {
                 f("fn escape(text: String) -> String", "The text as a pattern that matches it and nothing else", regex::escape),
                 f("fn find(text: String, re: Regex) -> Option(String)", "First match", regex::find),
                 f("fn find_all(text: String, re: Regex) -> List(String)", "All matches", regex::find_all),
+                f("fn find_all_at(text: String, re: Regex) -> List((Int, Int))", "Where each match is: (start, end) in characters", regex::find_all_at),
+                f("fn find_at(text: String, re: Regex) -> Option((Int, Int))", "Where the first match is: (start, end) in characters", regex::find_at),
                 f("fn is_match(text: String, re: Regex) -> Bool", "Test if pattern matches", regex::is_match),
                 f("fn replace(text: String, re: Regex, replacement: String) -> String", "Replace all matches", regex::replace),
                 f("fn replace_first(text: String, re: Regex, replacement: String) -> String", "Replace first match", regex::replace_first),

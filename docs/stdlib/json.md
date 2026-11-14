@@ -86,6 +86,81 @@ either: `None` and `Some(None)` are both written as `null`, so `Some(None)`
 would never read back. `Option(json.Value)` is decoded: there a `null`
 reads as `None`, not as `Some(json.Null)`.
 
+An Option in an Option can still reach a decoder through a trait method
+called through a bound. The check below follows a type into a trait
+method called on a known type, but a call through a bound (`where a:
+Reader`, then `Reader.get(r, s, t)`) is judged by the trait's signature:
+which impl runs is known only where the generic function is used, and the
+signature says only `t: json.Decode`. An impl that decodes its type
+parameter inside an `Option` (`json.parse(s, Option(t))`), given an
+`Option` that way, decodes an `Option` in an `Option`. Nothing crashes;
+what the decoder does depends on where that `Option` in an `Option` is:
+
+- In a field of a record or a variant, or anywhere inside a field's type
+  (`v: Option(t)`, `items: List(Option(t))`, a map's value or a tuple's
+  part in a field): the decoder refuses the field when it runs,
+  `Err(Other(...))`, "a value of type List(Option(Option(Int))) cannot be
+  decoded".
+- Outside every field (the type the decoder is given, and an element of a
+  list, a value of a map or a part of a tuple of that type): a `null`
+  reads as `None` and any other value as `Some(Some(...))`, so a
+  `Some(None)` would come back as `None`.
+
+```silt
+import json
+
+type Box(a) {
+  items: List(Option(a)),
+}
+
+trait Reader {
+  fn get(self, s: String, type t) -> Result(Option(t), json.JsonError) where t: json.Decode
+  fn boxed(self, s: String, type t) -> Result(Box(t), json.JsonError) where t: json.Decode
+}
+
+type R {
+  tag: Int,
+}
+
+trait Reader for R {
+  fn get(self, s: String, type t) -> Result(Option(t), json.JsonError) where t: json.Decode {
+    json.parse(s, Option(t))
+  }
+
+  fn boxed(self, s: String, type t) -> Result(Box(t), json.JsonError) where t: json.Decode {
+    json.parse(s, Box(t))
+  }
+}
+
+fn through(r: a, s: String, type t) -> Result(Option(t), json.JsonError)
+  where
+    a: Reader,
+    t: json.Decode {
+  Reader.get(r, s, t)
+}
+
+fn boxed(r: a, s: String, type t) -> Result(Box(t), json.JsonError)
+  where
+    a: Reader,
+    t: json.Decode {
+  Reader.boxed(r, s, t)
+}
+
+fn main() {
+  let r = R { tag: 1 }
+  println(through(r, "null", Option(Int))) -- Ok(None)
+  println(through(r, "7", Option(Int))) -- Ok(Some(Some(7)))
+  match boxed(r, """{"items": [7]}""", Option(Int)) {
+    Ok(_) -> println("read")
+    Err(json.Other(why)) -> println(why) -- cannot decode field `items` of `Box`: a value of type List(Option(Option(Int))) cannot be decoded
+    Err(e) -> println(e)
+  }
+}
+```
+
+The same calls on the known type, `Reader.get(R { tag: 1 }, "null",
+Option(Int))`, are refused when the program is checked.
+
 A number of the document goes into an `Int` when it is a whole number in
 `Int`'s range (`1`, `1.0`, `1e3`). A number with a fraction (`1.5`), or one out of
 that range, is `Err(TypeMismatch("Int", ...))`: nothing is cut off or rounded.

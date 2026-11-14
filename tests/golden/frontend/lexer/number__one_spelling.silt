@@ -2,7 +2,8 @@
 -- exit: 1
 -- A number has one spelling: `_` only between two digits, the prefixes
 -- and the exponent in lower case, no `+` in an exponent, no leading
--- zero. Each other spelling is an error that writes the number right.
+-- zero in a number or in an exponent (zeros at the end of a fraction
+-- stay). Each other spelling is an error that writes the number right.
 fn main() {
   let a = 1_
   let b = 0x_F
@@ -13,7 +14,9 @@ fn main() {
   let g = 007
   let h = 00.5
   let i = 1__0
+  let j = 1e007
+  let k = 2.5e-07
   let ok = 0xFf_0a + 1_000 + 0b1010_0101
-  let fl = 0.5 + 2.5e-3 + 6.022e23
-  println("{a} {b} {c} {d} {e} {f} {g} {h} {i} {ok} {fl}")
+  let fl = 0.5 + 2.5e-3 + 6.022e23 + 1.50 + 1e0
+  println("{a} {b} {c} {d} {e} {f} {g} {h} {i} {j} {k} {ok} {fl}")
 }
