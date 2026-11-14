@@ -622,13 +622,13 @@ import host
 /// How long a run of `source` with the host module of
 /// `host_calls_program` takes; it must give `expected`.
 fn host_run_time(source: &str, expected: usize) -> Duration {
-    use silt::session::HostModule;
+    use silt::session::{HostCall, HostModule};
     use silt::value::Value;
     let host = HostModule::new("h")
         .function(
             "fn getopt(xs: List(Option(a)), i: Int) -> Option(a)",
-            |args: &[Value]| {
-                let (Value::List(xs), Value::Int(i)) = (&args[0], &args[1]) else {
+            |call: &HostCall| {
+                let (Value::List(xs), Value::Int(i)) = (&call.args[0], &call.args[1]) else {
                     return Err(silt::vm::VmError::new(
                         "expected a list and an index".into(),
                     ));
@@ -638,7 +638,7 @@ fn host_run_time(source: &str, expected: usize) -> Duration {
         )
         .function(
             "fn same(xs: List(List(a))) -> List(List(a))",
-            |args: &[Value]| Ok(args[0].clone()),
+            |call: &HostCall| Ok(call.args[0].clone()),
         );
     let started = Instant::now();
     let given = silt::session::testing::run_with_host(&[("main.silt", source)], vec![host]);
