@@ -455,11 +455,18 @@ impl TypeChecker {
         // (A trait of another module, as this one writes it
         // (`spelling_in_reach`), else with the import to add where one
         // written here can reach the module; else not offered.)
+        // (No import is offered of a name the file binds already, to
+        // another module (`import da as errs`) or a definition of its own:
+        // following it would bind the name twice.)
+        let bound_here = |path: Symbol| {
+            (self.module_spelled.values().chain(self.spelled.values())).any(|b| *b == path)
+                || (self.defs.as_ref()).is_some_and(|defs| !defs.named(self.module, path).is_empty())
+        };
         let spelled = |module: crate::session::ModuleId, name: &str| -> Option<String> {
             match self.spelling_in_reach(module, name) {
                 Some(written) => Some(format!("`{written}`")),
                 None => {
-                    let path = self.import_path(module)?;
+                    let path = self.import_path(module).filter(|path| !bound_here(*path))?;
                     Some(format!(
                         "`{path}.{name}` (a trait of module `{path}`, after `import {path}`)"
                     ))
